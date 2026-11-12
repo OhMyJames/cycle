@@ -1,127 +1,403 @@
+import { homedir } from "node:os";
+import { extname, join, normalize, sep } from "node:path";
 import {
+  CLOSE_UNAUTHORIZED,
   type ClientMessage,
+  type DaemonEvent,
+  type EventFrame,
   type Harness,
-  type Methods,
   type MethodName,
+  type Params,
+  type Result,
   type ServerMessage,
-  type SessionEvent,
-  type SessionState,
+  type Settings,
   WS_PATH,
-  initialSessionState,
-  reduceSession,
 } from "@cycle/protocol";
+import { allowedRequest, newToken, sameToken } from "./auth.ts";
+import { Files } from "./files.ts";
+import { Git } from "./git.ts";
+import { type MetaFile, SessionHub } from "./sessions.ts";
+import { JsonStore, diskFile, realSchedule } from "./store.ts";
+import { Terminals } from "./terminals.ts";
+import { type UsageFile, UsageLedger } from "./usage.ts";
 
-export const DAEMON_VERSION = "0.0.0";
+export const DAEMON_VERSION = "0.1.0";
 
 export interface DaemonOptions {
   harness: Harness;
+  /** Where the daemon keeps its data: an absolute path. */
+  home: string;
   port?: number;
-  hostname?: string;
+  /** The connection token. A new one is made when not given. */
+  token?: string;
+  /** A built page to serve at `/`, so a browser can be the client. */
+  uiDir?: string;
+  /** Origins besides the daemon's own that may connect. */
+  extraOrigins?: string[];
 }
 
 export interface Daemon {
   readonly port: number;
+  readonly token: string;
+  /** The WebSocket address, token included. */
   readonly url: string;
+  /** The page's address, token included, when a page is served. */
+  readonly pageUrl: string;
   stop(): Promise<void>;
 }
 
-type Handlers = { [M in MethodName]: (params: Methods[M]["params"]) => Promise<Methods[M]["result"]> };
+interface Client {
+  sessions: Set<string>;
+  terminals: Set<string>;
+}
+
+type Socket = Bun.ServerWebSocket<Client>;
+type Routes = {
+  [M in MethodName]: (params: Params<M>, socket: Socket) => Promise<Result<M>> | Result<M>;
+};
+
+const DEFAULT_SETTINGS: Settings = {
+  model: null,
+  effort: null,
+  mode: "auto",
+  worktree: false,
+  projects: [],
+};
+const MAX_PROJECTS = 30;
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".map": "application/json",
+};
+
+function sessionTopic(sessionId: string): string {
+  return `s:${sessionId}`;
+}
+
+function terminalTopic(id: string): string {
+  return `t:${id}`;
+}
 
 /**
- * The daemon owns agent sessions so they outlive any single UI window.
- * It exposes the `@cycle/protocol` wire API over a local WebSocket and
- * fans harness events out to every connected client.
+ * The daemon owns agent sessions so they outlive any single window. It
+ * serves the `@cycle/protocol` wire API over a WebSocket on loopback, behind
+ * a connection token, and sends each client only what it follows.
  */
 export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
-  const { harness } = options;
-  const sessions = new Map<string, SessionState>();
-  const TOPIC = "events";
+  const { harness, home } = options;
+  const token = options.token ?? newToken();
+
+  const [settings, meta, usageFile] = await Promise.all([
+    JsonStore.open<Settings>(diskFile(join(home, "settings.json")), { ...DEFAULT_SETTINGS }),
+    JsonStore.open<MetaFile>(diskFile(join(home, "sessions.json")), { sessions: {} }),
+    JsonStore.open<UsageFile>(diskFile(join(home, "usage.json")), { days: {} }),
+  ]);
 
   await harness.start();
 
-  const session = (id: string): SessionState => {
-    const state = sessions.get(id);
-    if (!state) throw new Error(`unknown session: ${id}`);
-    return state;
+  const viewers = new Map<string, number>();
+  const push = (event: DaemonEvent) => {
+    server.publish("all", JSON.stringify({ push: event } satisfies ServerMessage));
+  };
+  const usage = new UsageLedger(usageFile, Date.now);
+  const git = new Git((argv, execOptions) => harness.exec(argv, execOptions));
+  const hub = new SessionHub({
+    harness,
+    meta,
+    settings: () => settings.value,
+    usage,
+    git,
+    worktreeParent: join(home, "worktrees"),
+    schedule: realSchedule,
+    now: Date.now,
+    viewers: (sessionId) => viewers.get(sessionId) ?? 0,
+    publish: {
+      frame(frame: EventFrame) {
+        server.publish(
+          sessionTopic(frame.sessionId),
+          JSON.stringify({ frame } satisfies ServerMessage),
+        );
+      },
+      sessions: (sessions) => push({ type: "sessions.changed", sessions }),
+      removed: (sessionIds) => push({ type: "sessions.removed", sessionIds }),
+      usage: (day) => push({ type: "usage.today", day }),
+    },
+  });
+  const terminals = new Terminals({
+    harness,
+    schedule: realSchedule,
+    shell: process.env["SHELL"] || "/bin/bash",
+    env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "Cycle" },
+    publish: {
+      output(id, data) {
+        server.publish(
+          terminalTopic(id),
+          JSON.stringify({
+            push: { type: "terminal.output", id, data: Buffer.from(data).toString("base64") },
+          } satisfies ServerMessage),
+        );
+      },
+      changed: (sessionId, list) => push({ type: "terminals.changed", sessionId, terminals: list }),
+    },
+  });
+  const files = new Files(harness, () => [
+    ...hub.folders(),
+    ...settings.value.projects,
+    join(home, "worktrees"),
+  ]);
+
+  const follow = (socket: Socket, sessionId: string) => {
+    if (socket.data.sessions.has(sessionId)) return;
+    socket.data.sessions.add(sessionId);
+    socket.subscribe(sessionTopic(sessionId));
+    viewers.set(sessionId, (viewers.get(sessionId) ?? 0) + 1);
+  };
+  const unfollow = (socket: Socket, sessionId: string) => {
+    if (!socket.data.sessions.delete(sessionId)) return;
+    socket.unsubscribe(sessionTopic(sessionId));
+    const left = (viewers.get(sessionId) ?? 1) - 1;
+    if (left > 0) viewers.set(sessionId, left);
+    else viewers.delete(sessionId);
+  };
+  const setSettings = (change: (value: Settings) => void) => {
+    settings.update(change);
+    push({ type: "settings.changed", settings: settings.value });
+  };
+  const useProject = (path: string) => {
+    if (settings.value.projects[0] === path) return;
+    setSettings((value) => {
+      value.projects = [path, ...value.projects.filter((other) => other !== path)].slice(
+        0,
+        MAX_PROJECTS,
+      );
+    });
   };
 
-  const handlers: Handlers = {
-    "daemon.info": async () => ({ version: DAEMON_VERSION, harness: harness.name }),
+  const routes: Routes = {
+    "daemon.info": () => ({
+      version: DAEMON_VERSION,
+      harness: harness.name,
+      home,
+      platform: process.platform,
+      userHome: homedir(),
+    }),
+
+    "session.list": async ({ archived }) => ({ sessions: await hub.list(archived) }),
     "session.create": async (params) => {
-      const info = await harness.createSession(params);
-      sessions.set(info.id, initialSessionState(info));
+      const info = await hub.create(params);
+      useProject(info.worktree?.repo ?? params.cwd);
       return info;
     },
-    "session.list": async () => [...sessions.values()].map((s) => s.info),
-    "session.get": async ({ sessionId }) => session(sessionId),
-    "session.send": async ({ sessionId, text }) => {
-      session(sessionId);
-      return harness.sendMessage(sessionId, text);
+    "session.open": async ({ sessionId, after }, socket) => {
+      const answer = await hub.open(sessionId, after);
+      // From here to the reply nothing waits, so no frame can slip between them.
+      follow(socket, sessionId);
+      hub.markRead(sessionId);
+      return answer;
     },
-    "session.interrupt": async ({ sessionId }) => {
-      session(sessionId);
-      await harness.interrupt(sessionId);
+    "session.close": ({ sessionId }, socket) => {
+      unfollow(socket, sessionId);
       return {};
     },
-    "approval.respond": async ({ approvalId, decision }) => {
-      harness.respondApproval(approvalId, decision);
+    "session.send": ({ sessionId, text, images, delivery }) =>
+      hub.send(sessionId, { text, images: images ?? [] }, delivery ?? "auto"),
+    "session.unqueue": ({ sessionId, id }) => {
+      hub.unqueue(sessionId, id);
+      return {};
+    },
+    "session.interrupt": async ({ sessionId }) => {
+      await hub.interrupt(sessionId);
+      return {};
+    },
+    "session.update": async (params) => {
+      const info = await hub.update(params);
+      if (params.archived) terminals.closeSession(params.sessionId);
+      return info;
+    },
+    "session.delete": async ({ sessionId, removeWorktree }) => {
+      await hub.remove(sessionId, removeWorktree ?? false);
+      terminals.closeSession(sessionId);
+      return {};
+    },
+    "session.fork": ({ sessionId, turnId }) => hub.fork(sessionId, turnId ?? null),
+    "session.compact": async ({ sessionId }) => {
+      await hub.compact(sessionId);
+      return {};
+    },
+    "approval.respond": ({ approvalId, response }) => {
+      hub.respondApproval(approvalId, response);
+      return {};
+    },
+
+    "models.list": async () => ({ models: await harness.listModels() }),
+    "skills.list": async ({ cwd }) => ({ skills: await harness.listSkills(cwd) }),
+    "mcp.list": async () => ({ servers: await harness.listMcpServers() }),
+    "account.read": () => harness.readAccount(),
+    "settings.get": () => settings.value,
+    "settings.set": (patch) => {
+      setSettings((value) => {
+        if (patch.model !== undefined) value.model = patch.model;
+        if (patch.effort !== undefined) value.effort = patch.effort;
+        if (patch.mode !== undefined) value.mode = patch.mode;
+        if (patch.worktree !== undefined) value.worktree = patch.worktree;
+        if (patch.projects !== undefined) value.projects = patch.projects.slice(0, MAX_PROJECTS);
+      });
+      return settings.value;
+    },
+    "usage.daily": () => ({ days: usage.days() }),
+
+    "files.list": async ({ path }) => ({ entries: await files.list(path) }),
+    "files.read": ({ path }) => files.read(path),
+    "files.search": async ({ root, query }) => ({ files: await files.search(root, query) }),
+
+    "git.status": ({ cwd, base }) => git.status(cwd, base),
+    "git.diff": ({ cwd, from, path, status }) => git.diff(cwd, from, path, status),
+    "git.branches": ({ cwd }) => git.branches(cwd),
+    "git.checkout": async ({ cwd, branch }) => {
+      if (hub.busyIn(cwd)) throw new Error("A session is working in this checkout. Stop it first.");
+      await git.checkout(cwd, branch);
+      return {};
+    },
+    "git.commit": async ({ cwd, message }) => ({ commit: await git.commit(cwd, message) }),
+
+    "terminal.list": ({ sessionId }) => ({ terminals: terminals.list(sessionId) }),
+    "terminal.create": ({ sessionId, cwd, cols, rows }) =>
+      terminals.create(sessionId, cwd, cols, rows),
+    "terminal.attach": ({ id }, socket) => {
+      const { terminal, data } = terminals.snapshot(id);
+      socket.data.terminals.add(id);
+      socket.subscribe(terminalTopic(id));
+      return { terminal, data: Buffer.from(data).toString("base64") };
+    },
+    "terminal.detach": ({ id }, socket) => {
+      socket.data.terminals.delete(id);
+      socket.unsubscribe(terminalTopic(id));
+      return {};
+    },
+    "terminal.write": ({ id, data }) => {
+      terminals.write(id, new TextEncoder().encode(data));
+      return {};
+    },
+    "terminal.resize": ({ id, cols, rows }) => {
+      terminals.resize(id, cols, rows);
+      return {};
+    },
+    "terminal.close": ({ id }) => {
+      terminals.close(id);
       return {};
     },
   };
 
-  const server = Bun.serve({
+  const uiRoot = options.uiDir ? normalize(options.uiDir) : null;
+  const serveUi = async (pathname: string): Promise<Response> => {
+    if (!uiRoot) return new Response("not found", { status: 404 });
+    const relative = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
+    const path = normalize(join(uiRoot, relative));
+    if (path !== uiRoot && !path.startsWith(uiRoot + sep)) {
+      return new Response("not found", { status: 404 });
+    }
+    const file = Bun.file(path);
+    if (!(await file.exists())) return new Response("not found", { status: 404 });
+    return new Response(file, {
+      headers: {
+        "content-type": CONTENT_TYPES[extname(path)] ?? "application/octet-stream",
+        "cache-control": relative === "index.html" ? "no-cache" : "public, max-age=31536000",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer",
+        // The page talks to this daemon and nothing else.
+        "content-security-policy":
+          "default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; " +
+          "img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+      },
+    });
+  };
+
+  const server = Bun.serve<Client>({
     port: options.port ?? 0,
-    hostname: options.hostname ?? "127.0.0.1",
-    fetch(request, server) {
-      const { pathname } = new URL(request.url);
-      if (pathname === WS_PATH) {
-        return server.upgrade(request) ? undefined : new Response("expected websocket", { status: 426 });
+    hostname: "127.0.0.1",
+    async fetch(request, bunServer) {
+      const url = new URL(request.url);
+      const local = allowedRequest(
+        { host: request.headers.get("host"), origin: request.headers.get("origin") },
+        bunServer.port ?? 0,
+        options.extraOrigins,
+      );
+      if (!local) return new Response("forbidden", { status: 403 });
+      if (url.pathname === WS_PATH) {
+        if (!sameToken(url.searchParams.get("token"), token)) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        const data: Client = { sessions: new Set(), terminals: new Set() };
+        return bunServer.upgrade(request, { data })
+          ? undefined
+          : new Response("expected websocket", { status: 426 });
       }
-      if (pathname === "/health") {
+      if (url.pathname === "/health") {
         return Response.json({ ok: true, version: DAEMON_VERSION, harness: harness.name });
       }
-      return new Response("not found", { status: 404 });
+      return serveUi(url.pathname);
     },
     websocket: {
-      open(ws) {
-        ws.subscribe(TOPIC);
+      maxPayloadLength: 48 * 1024 * 1024,
+      // A client too slow to keep up is dropped, and catches up when it returns.
+      backpressureLimit: 32 * 1024 * 1024,
+      closeOnBackpressureLimit: true,
+      open(socket) {
+        socket.subscribe("all");
+        socket.send(JSON.stringify({ push: { type: "usage.today", day: usage.today() } }));
       },
-      async message(ws, raw) {
-        const reply = (message: ServerMessage) => ws.send(JSON.stringify(message));
-        let message: ClientMessage;
+      close(socket) {
+        for (const sessionId of socket.data.sessions) unfollow(socket, sessionId);
+      },
+      async message(socket, raw) {
+        let request: ClientMessage;
         try {
-          message = JSON.parse(String(raw));
+          request = JSON.parse(String(raw)) as ClientMessage;
         } catch {
+          socket.close(CLOSE_UNAUTHORIZED, "not json");
           return;
         }
-        const handler = handlers[message.method] as ((params: unknown) => Promise<unknown>) | undefined;
-        if (!handler) {
-          reply({ id: message.id, error: { message: `unknown method: ${message.method}` } });
+        const reply = (answer: ServerMessage) => socket.send(JSON.stringify(answer));
+        const route = routes[request.method] as
+          | ((params: unknown, socket: Socket) => unknown)
+          | undefined;
+        if (!route) {
+          reply({
+            id: request.id,
+            error: { message: `unknown method: ${String(request.method)}` },
+          });
           return;
         }
         try {
-          reply({ id: message.id, result: await handler(message.params) });
+          reply({ id: request.id, result: await route(request.params ?? {}, socket) });
         } catch (error) {
-          reply({ id: message.id, error: { message: error instanceof Error ? error.message : String(error) } });
+          reply({
+            id: request.id,
+            error: { message: error instanceof Error ? error.message : String(error) },
+          });
         }
       },
     },
   });
 
-  const unsubscribe = harness.onEvent((event: SessionEvent) => {
-    const state = sessions.get(event.sessionId);
-    if (state) sessions.set(event.sessionId, reduceSession(state, event));
-    server.publish(TOPIC, JSON.stringify({ event } satisfies ServerMessage));
-  });
-
-  const port = server.port!;
+  const port = server.port ?? 0;
   return {
     port,
-    url: `ws://127.0.0.1:${port}${WS_PATH}`,
+    token,
+    url: `ws://127.0.0.1:${port}${WS_PATH}?token=${token}`,
+    pageUrl: `http://127.0.0.1:${port}/#token=${token}`,
     async stop() {
-      unsubscribe();
+      terminals.closeAll();
       await server.stop(true);
       await harness.dispose();
+      await Promise.all([settings.flush(), meta.flush(), usageFile.flush()]);
     },
   };
 }

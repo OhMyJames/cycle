@@ -3,13 +3,14 @@
  * framing `codex app-server` uses on stdio. Both sides may send requests.
  */
 export class RpcError extends Error {
-  constructor(
-    message: string,
-    readonly code?: number,
-    readonly data?: unknown,
-  ) {
+  readonly code: number | undefined;
+  readonly data: unknown;
+
+  constructor(message: string, code?: number, data?: unknown) {
     super(message);
     this.name = "RpcError";
+    this.code = code;
+    this.data = data;
   }
 }
 
@@ -28,10 +29,13 @@ export class JsonRpcPeer {
   private pending = new Map<RpcId, Pending>();
   private closed = false;
 
-  constructor(
-    private readonly write: (line: string) => void,
-    private readonly handlers: RpcHandlers,
-  ) {}
+  private readonly write: (line: string) => void;
+  private readonly handlers: RpcHandlers;
+
+  constructor(write: (line: string) => void, handlers: RpcHandlers) {
+    this.write = write;
+    this.handlers = handlers;
+  }
 
   request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (this.closed) return Promise.reject(new RpcError("connection closed"));
@@ -89,14 +93,21 @@ export class JsonRpcPeer {
   }
 
   private dispatch(line: string): void {
-    let message: { id?: RpcId; method?: string; params?: unknown; result?: unknown; error?: { code?: number; message?: string; data?: unknown } };
+    let message: {
+      id?: RpcId;
+      method?: string;
+      params?: unknown;
+      result?: unknown;
+      error?: { code?: number; message?: string; data?: unknown };
+    };
     try {
-      message = JSON.parse(line);
+      message = JSON.parse(line) as typeof message;
     } catch {
       return; // not protocol output (e.g. a stray log line)
     }
     if (message.method !== undefined) {
-      if (message.id !== undefined) this.handlers.onRequest(message.id, message.method, message.params);
+      if (message.id !== undefined)
+        this.handlers.onRequest(message.id, message.method, message.params);
       else this.handlers.onNotification(message.method, message.params);
       return;
     }
@@ -105,7 +116,13 @@ export class JsonRpcPeer {
     if (!pending) return;
     this.pending.delete(message.id);
     if (message.error) {
-      pending.reject(new RpcError(message.error.message ?? "request failed", message.error.code, message.error.data));
+      pending.reject(
+        new RpcError(
+          message.error.message ?? "request failed",
+          message.error.code,
+          message.error.data,
+        ),
+      );
     } else {
       pending.resolve(message.result);
     }

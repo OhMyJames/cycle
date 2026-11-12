@@ -1,0 +1,114 @@
+# cycle
+
+A self-use agent client: one owner, one daemon, many sessions at once, with agents that can run commands.
+It is the successor of [old-cycle](https://github.com/OhMyJames/old-cycle), rebuilt on `codex app-server`.
+Bun, TypeScript 7, React, Electron.
+
+## The gate
+
+`bun run check` must pass before any commit. The pre-commit hook runs it with `--changed`, which limits
+only the unit tests to those the change affects. Do not bypass it with `--no-verify`, `@ts-ignore` or a
+lint-disable comment; fix the cause or change the rule on purpose.
+
+It runs, in order: the lockfile, then boundaries, format, typecheck and lint together, then the unit
+tests alone so their time limits measure the tests.
+
+## Red lines
+
+Each of these has cost, or could cost, something that cannot be undone. Stop and ask instead.
+
+- The daemon binds to loopback, requires a connection token, and checks `Host` and `Origin`, because
+  agents can run commands. Never loosen any of the three. Why:
+  [decision note](.agents/notes/2026-11-12-the-daemon-serves-its-own-page.md).
+- Never point a test at the real `CYCLE_HOME` (`~/.cycle-codex`) or the real `CODEX_HOME` (`~/.codex`).
+  Tests make their own under a temporary folder. `~/.cycle` belongs to old-cycle: never write there.
+- `session.delete` removes a conversation for good, whichever tool started it. Clients confirm first.
+- `fullAccess` mode runs with no sandbox and never asks. It is never a default, and nothing turns it on
+  for the owner.
+- No token, key or account secret may reach a page's storage beyond the connection token, or a log.
+
+## Testing
+
+Agents generate a lot of tests, so the suite has hard limits. The check enforces all of them.
+
+- Tests live in a `test/` directory beside `src/`, never beside the code they cover. A package with
+  tests needs `test/tsconfig.json`.
+- `test/` holds unit tests. They may not touch processes, network, disk or timers, and each has 200ms.
+  Code takes what it needs as ports (`Schedule`, `TextFile`, `Exec`, `Harness`), so tests pass fakes:
+  see `apps/daemon/test/fake-harness.ts`.
+- `test/integration/` holds everything slower. `bun run test:integration` runs it; the gate does not.
+  It runs the real `codex app-server` against a scripted model (`mock-model.ts`), with no account.
+- The whole unit suite has a 30s budget. `test.only`, `.skip` and `.todo` are not allowed. A test file
+  may not exceed 400 lines.
+- Test behavior through a package's public surface, and delete a test when the behavior it covers goes.
+
+`bun run demo` runs the whole app against the scripted model in a throwaway project. Use it to see a
+change in the real page, and drive it with Playwright when the change is in the page.
+
+## Runtime data
+
+Cycle keeps its data in `CYCLE_HOME`, which defaults to `~/.cycle-codex` and must be an absolute path:
+`daemon.json` (where the running daemon is, and its token, mode 0600), `settings.json` (what new
+sessions start with, and the owner's projects), `sessions.json` (what only Cycle knows of each session:
+pin, unread, mode, model, worktree), `usage.json` (tokens per local day, numbers only) and `worktrees/`.
+Conversations themselves are codex's, in `CODEX_HOME`: Cycle keeps no copy.
+Why: [decision note](.agents/notes/2026-11-12-codex-keeps-the-conversations.md).
+
+## Architecture
+
+```
+apps/desktop (Electron)      apps/daemon (Bun)                  harness/codex            codex app-server
+ main: starts the daemon  →   SessionHub: frames, queue     →    wire ↔ model         →   threads, turns, items
+ page: packages/ui        ←   Git, Terminals, Files, usage  ←    one child process    ←   exec, pty, fs, search
+            └──────────── packages/protocol: model, wire methods, the shared reducer ────────────┘
+```
+
+The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the check enforces them.
+
+- `packages/protocol` is the harness-agnostic model (`Item`, `Turn`, `SessionEvent`), the client-daemon
+  wire (`Methods`, `EventFrame`, `DaemonEvent`), the `Harness` interface, and `reduceSession`, which the
+  daemon and the page both fold events with. It is platform-neutral: no runtime modules.
+- `harness/codex` is the only code that knows codex. `translate.ts` is the pure mapping; `codex-harness.ts`
+  drives one `codex app-server` child, starts it again if it dies, and brings a session back into it the
+  next time it is used.
+- The daemon reaches the project only through the harness: git, files, search and terminals all run as
+  codex `command/exec` and `fs/*` calls, so the daemon follows the agent wherever it runs. Why:
+  [decision note](.agents/notes/2026-11-12-the-harness-is-the-machine.md).
+- `SessionHub` (`apps/daemon/src/sessions.ts`) owns session state. It folds harness events, batches
+  streamed text into one frame per 16ms, numbers frames per session, and keeps the last 512 so a client
+  that was away asks for what it missed instead of everything. Why:
+  [decision note](.agents/notes/2026-11-12-numbered-frames.md).
+- A prompt sent during a turn is queued in the daemon and sent when the turn completes, or put into the
+  running turn with `delivery: "steer"`. A stopped turn gives its queue back to the page.
+- The daemon serves the built page itself, and the desktop app loads it from there, so there is one
+  origin. A browser can use the same link.
+- `packages/ui` keeps state in stores by owner (`CycleApp`), read through `useStore` with a selector.
+  A streamed chunk redraws one conversation's last turn: frames are applied once per animation frame,
+  `reduceSession` keeps every other turn's identity, and `parseMarkdown` parses only the last block.
+- `apps/desktop` is the Electron shell: it starts the daemon, loads its page, and gives the page a small
+  bridge (`window.cycle`): a folder chooser, notifications, opening links.
+
+## Writing code
+
+The expected load is one owner and one daemon running many sessions at once. Judge scale against that.
+
+- Before writing, read the code the change touches and list every place it must reach: callers, tests,
+  fixtures, configuration and exports. That is the scope; extra features are not.
+- Take the first option that fully works: nothing at all, what the codebase already has, the platform
+  or the standard library, an installed dependency, and only then new code. Check what codex app-server
+  already offers before building it in the daemon.
+- Work left for later is one comment, `shortcut: <the limit>; upgrade when <the trigger>`. The check
+  refuses `TODO`, `FIXME`, `XXX`, `HACK` and a shortcut without its trigger.
+- A reply on finished work ends with what was skipped or not checked, and any risk the owner must know.
+
+## Conventions
+
+- Dependencies are pinned to exact versions. Packages are imported by name, never by a relative path
+  across packages or a deep path into one.
+- Each package is typechecked under its own `lib` and `types`, which decide the platform APIs it sees.
+- Icons are Cycle's own, in `packages/ui/src/components/icons.tsx`. No icon library.
+- The interface is in US English. A choice list never shows a bare "Default": it names the choice and
+  marks it, as "Auto (default)".
+- Decision notes live in `.agents/notes/`, one file per decision, named `YYYY-MM-DD-what-was-decided.md`,
+  with Status, Date, Basis, Problem, Decision, Alternatives considered and Consequences. Write one only
+  for a storage or wire format, a security boundary, or a rejected approach likely to be proposed again.

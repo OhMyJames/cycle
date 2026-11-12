@@ -1,73 +1,111 @@
 # cycle
 
-基于 [codex app-server](https://developers.openai.com/codex) 的 agent 运行时环境。Bun + TypeScript + Electron。
+A desktop client for coding agents, built on [codex app-server](https://developers.openai.com/codex).
+One owner, one daemon, many sessions at once. It is the successor of
+[old-cycle](https://github.com/OhMyJames/old-cycle): the same design language and working habits, on a
+smaller and faster base.
 
-## 架构
-
-```
-apps/desktop  (Electron)          apps/daemon  (Bun)             harness/codex               codex app-server
-┌──────────────────────┐  WS     ┌───────────────────┐  Harness  ┌──────────────┐  JSON-RPC  ┌──────────────┐
-│ main: 拉起 daemon     │ ──────▶ │ 会话管理 / 事件扇出 │ ────────▶ │ 协议翻译       │ ─────────▶ │ thread / turn │
-│ renderer: packages/ui │ ◀────── │ 会话快照           │ ◀──────── │ 子进程管理     │ ◀───────── │ item / 审批   │
-└──────────────────────┘ events  └───────────────────┘  events   └──────────────┘   stdio    └──────────────┘
-            └──────────────── packages/protocol（领域模型 + wire 协议 + reducer）────────────────┘
-```
-
-| 目录 | 职责 |
-| --- | --- |
-| `packages/protocol` | 与具体 agent 无关的领域模型（`Item` / `SessionEvent`）、client↔daemon 的 wire 协议、`Harness` 接口，以及 daemon 和 UI 共用的 `reduceSession` |
-| `harness/codex` | 用 stdio 驱动一个 `codex app-server` 子进程，把 codex 的 thread/turn/item 翻译成 `packages/protocol` 的事件 |
-| `apps/daemon` | 本地 WebSocket 服务（默认 `127.0.0.1:4747`）。持有会话，窗口关掉会话也还在；只依赖 `Harness` 接口 |
-| `packages/ui` | React 组件 + `CycleClient`（daemon 的类型化 WS 客户端） |
-| `apps/desktop` | Electron 壳：main 进程拉起 daemon，renderer 渲染 `packages/ui` |
-
-几个设计取舍：
-
-- **daemon 以上的层不认识 codex。** 接别的 agent 只需要新增一个 `harness/<name>` 实现 `Harness` 接口。
-- **状态是事件流的 fold。** daemon 和 UI 用同一个 `reduceSession`，所以后加入的客户端 `session.get` 拿快照、再叠加后续事件即可。
-- **一个 codex 进程承载多个会话**，Cycle 的 session 与 codex 的 thread 一一对应。
-
-## 运行
+## Try it
 
 ```bash
 bun install
 ```
 
 ```bash
+bun run demo
+```
+
+The demo runs the whole app against a scripted stand-in for the model, in a throwaway project: no
+account, no network. Open the link it prints. Ask it to "add a greeting" to see tools at work, or
+mention "approval" to see it ask first.
+
+With a real account (`bunx codex login`, or `OPENAI_API_KEY`):
+
+```bash
 bun run dev
 ```
 
-codex 需要凭证：先 `bunx codex login`，或设置 `OPENAI_API_KEY`。
-
-只跑 daemon（desktop 可用 `CYCLE_DAEMON_URL=ws://127.0.0.1:4747/ws` 连接已有 daemon）：
-
 ```bash
-bun run dev:daemon
+bun run web
 ```
 
-| 环境变量 | 作用 |
-| --- | --- |
-| `CYCLE_DAEMON_PORT` | daemon 端口，`0` 为随机 |
-| `CYCLE_DAEMON_URL` | desktop 连接已有 daemon，而不是自己拉起 |
-| `CYCLE_CODEX_BIN` | 指定 `codex` 可执行文件（默认用依赖里的 `@openai/codex`） |
-| `CYCLE_CODEX_CONFIG` | JSON，作为 `codex -c key=value` 覆盖项，如 `{"model":"gpt-5"}` |
-| `CYCLE_DEBUG=1` | 打印 codex app-server 的日志 |
+`dev` opens the desktop app. `web` runs the daemon and prints a link for a browser.
 
-## 测试
+## What it does
 
-```bash
-bun test
+- **Sessions**: a list grouped by what needs you, what runs, pins and days; search; rename, pin, fork,
+  archive, delete; unread marks; notifications when a session you are not watching stops or asks.
+  Sessions started in the codex CLI appear too.
+- **New session**: pick a folder, model, reasoning effort and permission mode; optionally a git
+  worktree on a new branch.
+- **Conversation**: streaming markdown with highlighted code and tables; commands, edits and tool calls
+  folded into one line per stretch of work; reasoning; plans; approvals and questions inline; retry,
+  copy, fork from any turn.
+- **Composer**: `@` to find files, `/` for commands and skills, images by paste, drop or attach, drafts
+  per session, prompt history. While a turn runs, Enter queues and ⌘Enter sends into the turn.
+- **Panels**: Changes (diffs against a worktree's base or HEAD, commit), Files (tree, search, viewer),
+  Terminal (real shells that outlive the panel), Overview (context, plan, MCP servers).
+- **Command palette** (⌘K), settings, light and dark themes, usage per day.
+
+## Architecture
+
+```
+apps/desktop (Electron)      apps/daemon (Bun)                  harness/codex            codex app-server
+ main: starts the daemon  →   SessionHub: frames, queue     →    wire ↔ model         →   threads, turns, items
+ page: packages/ui        ←   Git, Terminals, Files, usage  ←    one child process    ←   exec, pty, fs, search
+            └──────────── packages/protocol: model, wire methods, the shared reducer ────────────┘
 ```
 
-```bash
-bun run typecheck
-```
+| Directory           | What it is                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `packages/protocol` | The model, the client-daemon wire, the `Harness` interface, the shared reducer       |
+| `harness/codex`     | Drives `codex app-server` and translates it. The only code that knows codex          |
+| `apps/daemon`       | Local daemon: session state, queueing, git, terminals, files, usage, serves the page |
+| `packages/ui`       | The page: stores, conversation, composer, panels                                     |
+| `apps/desktop`      | Electron shell: starts the daemon, loads its page, a small native bridge             |
 
-`apps/daemon/test/e2e.test.ts` 用一个假的 Responses API（`mock-responses.ts`）顶替模型，真实地跑通
-codex app-server → harness → daemon → WS 客户端，不需要凭证和网络。
+[AGENTS.md](AGENTS.md) has the rules and the reasons; decisions are in [.agents/notes](.agents/notes).
 
-## MVP 范围
+## Compared with old-cycle
 
-已有：单会话聊天、流式输出、命令 / 文件改动条目展示、审批弹窗、中断。
+Measured on this branch with `bun run demo` in headless Chromium; old-cycle was read, not run, so its
+column is what its code does, not a timing.
 
-还没有：多会话 UI、会话持久化与恢复（`thread/resume`）、daemon 鉴权、断线重连、应用打包。
+|                           | old-cycle                                       | cycle                                                 |
+| ------------------------- | ----------------------------------------------- | ----------------------------------------------------- |
+| Source                    | about 70,000 lines                              | about 12,000 lines                                    |
+| Reconnect or switch back  | replays the session from its start              | only the frames missed (numbered frames, 512 kept)    |
+| Daemon memory per session | every update since it opened, never trimmed     | folded state; idle sessions let go past 32            |
+| Streamed reply            | whole thread selected and walked on every flush | one turn redrawn; markdown parses only the last block |
+| A 116,000-character reply | not measured                                    | drawn in 0.5s; three tasks over 50ms, longest 133ms   |
+| Typing in a long session  | not measured                                    | no frame over 17ms                                    |
+| Opening a long session    | not measured                                    | 190ms to paint                                        |
+| Prompt during a turn      | queued in the page                              | queued in the daemon, or steered into the turn        |
+| Git, files, terminals     | the daemon's own processes                      | codex app-server's `exec`, `fs` and pty               |
+| Browser as a client       | needs the separate server                       | the daemon serves the page                            |
+| Command palette, pins     | no                                              | yes                                                   |
+| Unit tests                | 30s budget                                      | 187 tests in 0.1s, same rules                         |
+
+Not here yet, and in old-cycle: schedules, the per-project bot, the Connector (adding MCP servers,
+signing in to them, plugins), the Browser panel and the agent's browser tools, the agent's terminal
+tools, remote access from a phone, SSH to another Mac, packaging and auto-update, mermaid diagrams, the
+per-turn context chart, and idle compaction. MCP servers are shown but not managed.
+
+## Commands
+
+| Command                    | What it does                                                    |
+| -------------------------- | --------------------------------------------------------------- |
+| `bun run check`            | The gate: lockfile, boundaries, format, types, lint, unit tests |
+| `bun run test:integration` | The real codex app-server against a scripted model              |
+| `bun run demo`             | The whole app with the scripted model                           |
+| `bun run dev`              | The desktop app                                                 |
+| `bun run web`              | The daemon and a link for a browser                             |
+
+| Variable             | What it does                                                        |
+| -------------------- | ------------------------------------------------------------------- |
+| `CYCLE_HOME`         | Where Cycle keeps its data. Default `~/.cycle-codex`                |
+| `CYCLE_DAEMON_PORT`  | The daemon's port. `0` picks a free one                             |
+| `CYCLE_CODEX_BIN`    | The `codex` executable. Default: the `@openai/codex` dependency     |
+| `CYCLE_CODEX_CONFIG` | JSON of `codex -c key=value` overrides, such as `{"model":"gpt-5"}` |
+| `CYCLE_PAGE_URL`     | Makes the desktop app show a daemon that is already running         |
+| `CYCLE_DEBUG=1`      | Prints codex app-server's log                                       |

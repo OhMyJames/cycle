@@ -1,0 +1,104 @@
+import type { Harness, HarnessEvent, HarnessSession, PromptInput, Turn } from "@cycle/protocol";
+
+/** A harness that runs nothing: tests say what it reports. */
+export class FakeHarness implements Harness {
+  readonly name = "fake";
+  readonly sent: { sessionId: string; text: string }[] = [];
+  readonly steered: string[] = [];
+  readonly calls: string[] = [];
+  stored: HarnessSession[] = [];
+  history: Turn[] = [];
+  failSend: string | null = null;
+  execResults: Record<string, { exitCode: number; stdout: string; stderr?: string }> = {};
+  private listener: (event: HarnessEvent) => void = () => {};
+  private ids = 0;
+
+  emit(event: HarnessEvent): void {
+    this.listener(event);
+  }
+
+  session(id: string, patch: Partial<HarnessSession> = {}): HarnessSession {
+    return {
+      id,
+      title: null,
+      preview: "",
+      cwd: "/project",
+      model: "model-a",
+      effort: null,
+      branch: null,
+      createdAt: 1,
+      updatedAt: 1,
+      forkedFrom: null,
+      ...patch,
+    };
+  }
+
+  start = async () => {};
+  dispose = async () => {};
+  onEvent(listener: (event: HarnessEvent) => void) {
+    this.listener = listener;
+    return () => {};
+  }
+  createSession = async (options: { cwd: string }) =>
+    this.session(`s${++this.ids}`, { cwd: options.cwd });
+  listSessions = async () => this.stored;
+  loadSession = async (sessionId: string) => {
+    this.calls.push(`load ${sessionId}`);
+    return { session: this.session(sessionId), turns: this.history, usage: null };
+  };
+  forkSession = async (sessionId: string) => this.session(`${sessionId}-fork`);
+  renameSession = async (sessionId: string, title: string) => {
+    this.calls.push(`rename ${sessionId} ${title}`);
+  };
+  archiveSession = async (sessionId: string, archived: boolean) => {
+    this.calls.push(`archive ${sessionId} ${archived}`);
+  };
+  deleteSession = async (sessionId: string) => {
+    this.calls.push(`delete ${sessionId}`);
+  };
+  compactSession = async () => {};
+  send = async (sessionId: string, input: PromptInput) => {
+    if (this.failSend) throw new Error(this.failSend);
+    this.sent.push({ sessionId, text: input.text });
+    return { turnId: `t${this.sent.length}` };
+  };
+  steer = async (_sessionId: string, input: PromptInput) => {
+    this.steered.push(input.text);
+  };
+  interrupt = async () => {};
+  respondApproval = (approvalId: string) => {
+    this.calls.push(`approve ${approvalId}`);
+  };
+  listModels = async () => [];
+  listSkills = async () => [];
+  listMcpServers = async () => [];
+  readAccount = async () => ({ kind: null, email: null, plan: null, limits: null });
+  exec: Harness["exec"] = async (argv) => {
+    const key = argv.slice(4).join(" ");
+    this.calls.push(`git ${key}`);
+    const result = this.execResults[key] ?? { exitCode: 0, stdout: "" };
+    return { stderr: "", ...result };
+  };
+  readDirectory = async () => [];
+  readFile = async () => new Uint8Array();
+  searchFiles = async () => [];
+  openTerminal: Harness["openTerminal"] = async () => ({ write() {}, resize() {}, kill() {} });
+}
+
+/** Scheduled work held until a test runs it. */
+export function manualSchedule() {
+  const waiting: (() => void)[] = [];
+  return {
+    schedule(callback: () => void) {
+      waiting.push(callback);
+      return () => {
+        const index = waiting.indexOf(callback);
+        if (index !== -1) waiting.splice(index, 1);
+      };
+    },
+    run() {
+      for (const callback of waiting.splice(0)) callback();
+    },
+    count: () => waiting.length,
+  };
+}
