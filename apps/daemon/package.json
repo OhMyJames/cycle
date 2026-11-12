@@ -1,0 +1,15 @@
+{
+  "name": "@cycle/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/daemon.ts" },
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "start": "bun src/main.ts"
+  },
+  "dependencies": {
+    "@cycle/harness-codex": "workspace:*",
+    "@cycle/protocol": "workspace:*"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "cycle",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "harness/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --filter @cycle/desktop dev",
+    "dev:daemon": "bun run --filter @cycle/daemon dev",
+    "build": "bun run --filter @cycle/desktop build",
+    "typecheck": "for p in packages/protocol packages/ui harness/codex apps/daemon apps/desktop; do tsc -p $p || exit 1; done",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^26.6.6",
+    "typescript": "^5.6.0"
+  },
+  "trustedDependencies": ["electron"]
+}
