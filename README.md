@@ -13,13 +13,13 @@ apps/desktop  (Electron)          apps/daemon  (Bun)             harness/codex  
             └──────────────── packages/protocol（领域模型 + wire 协议 + reducer）────────────────┘
 ```
 
-| 目录 | 职责 |
-| --- | --- |
+| 目录                | 职责                                                                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/protocol` | 与具体 agent 无关的领域模型（`Item` / `SessionEvent`）、client↔daemon 的 wire 协议、`Harness` 接口，以及 daemon 和 UI 共用的 `reduceSession` |
-| `harness/codex` | 用 stdio 驱动一个 `codex app-server` 子进程，把 codex 的 thread/turn/item 翻译成 `packages/protocol` 的事件 |
-| `apps/daemon` | 本地 WebSocket 服务（默认 `127.0.0.1:4747`）。持有会话，窗口关掉会话也还在；只依赖 `Harness` 接口 |
-| `packages/ui` | React 组件 + `CycleClient`（daemon 的类型化 WS 客户端） |
-| `apps/desktop` | Electron 壳：main 进程拉起 daemon，renderer 渲染 `packages/ui` |
+| `harness/codex`     | 用 stdio 驱动一个 `codex app-server` 子进程，把 codex 的 thread/turn/item 翻译成 `packages/protocol` 的事件                                  |
+| `apps/daemon`       | 本地 WebSocket 服务（默认 `127.0.0.1:4747`）。持有会话，窗口关掉会话也还在；只依赖 `Harness` 接口                                            |
+| `packages/ui`       | React 组件 + `CycleClient`（daemon 的类型化 WS 客户端）                                                                                      |
+| `apps/desktop`      | Electron 壳：main 进程拉起 daemon，renderer 渲染 `packages/ui`                                                                               |
 
 几个设计取舍：
 
@@ -45,13 +45,13 @@ codex 需要凭证：先 `bunx codex login`，或设置 `OPENAI_API_KEY`。
 bun run dev:daemon
 ```
 
-| 环境变量 | 作用 |
-| --- | --- |
-| `CYCLE_DAEMON_PORT` | daemon 端口，`0` 为随机 |
-| `CYCLE_DAEMON_URL` | desktop 连接已有 daemon，而不是自己拉起 |
-| `CYCLE_CODEX_BIN` | 指定 `codex` 可执行文件（默认用依赖里的 `@openai/codex`） |
+| 环境变量             | 作用                                                           |
+| -------------------- | -------------------------------------------------------------- |
+| `CYCLE_DAEMON_PORT`  | daemon 端口，`0` 为随机                                        |
+| `CYCLE_DAEMON_URL`   | desktop 连接已有 daemon，而不是自己拉起                        |
+| `CYCLE_CODEX_BIN`    | 指定 `codex` 可执行文件（默认用依赖里的 `@openai/codex`）      |
 | `CYCLE_CODEX_CONFIG` | JSON，作为 `codex -c key=value` 覆盖项，如 `{"model":"gpt-5"}` |
-| `CYCLE_DEBUG=1` | 打印 codex app-server 的日志 |
+| `CYCLE_DEBUG=1`      | 打印 codex app-server 的日志                                   |
 
 ## 测试
 

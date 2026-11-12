@@ -1,0 +1,15 @@
+{
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "rules": {
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/ban-ts-comment": "error",
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }],
+    "eslint/no-underscore-dangle": "error"
+  },
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/build/**"]
+}

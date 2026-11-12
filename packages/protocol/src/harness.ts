@@ -1,23 +1,136 @@
-import type { ApprovalDecision, SessionEvent, SessionInfo } from "./model.ts";
+import type {
+  AccountInfo,
+  ApprovalResponse,
+  McpServerInfo,
+  ModelInfo,
+  SessionEvent,
+  SessionMode,
+  SkillInfo,
+  Turn,
+  Usage,
+} from "./model.ts";
 
-export interface CreateSessionOptions {
-  cwd?: string;
+/** What a harness knows of a session. The daemon adds what only it keeps. */
+export interface HarnessSession {
+  id: string;
+  title: string | null;
+  preview: string;
+  cwd: string;
+  model: string;
+  effort: string | null;
+  branch: string | null;
+  createdAt: number;
+  updatedAt: number;
+  forkedFrom: string | null;
+}
+
+export interface TurnOptions {
   model?: string;
+  effort?: string;
+  mode?: SessionMode;
+}
+
+export interface CreateSessionOptions extends TurnOptions {
+  cwd: string;
+}
+
+export interface PromptInput {
+  text: string;
+  /** Data URLs or paths of images. */
+  images: string[];
+}
+
+export type HarnessEvent =
+  | SessionEvent
+  /** What the harness knows of a session changed, such as its title. */
+  | { type: "session.changed"; sessionId: string; patch: Partial<HarnessSession> }
+  /** The harness itself stopped: every session it held is gone until a restart. */
+  | { type: "harness.exited"; message: string };
+
+export interface ExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface ExecOptions {
+  cwd: string;
+  timeoutMs?: number;
+}
+
+export interface DirectoryEntry {
+  name: string;
+  directory: boolean;
+}
+
+export interface FileMatch {
+  /** Relative to the searched root. */
+  path: string;
+  directory: boolean;
+}
+
+export interface TerminalOptions {
+  id: string;
+  argv: string[];
+  cwd: string;
+  cols: number;
+  rows: number;
+  env?: Record<string, string>;
+  onData(bytes: Uint8Array): void;
+  onExit(exitCode: number | null): void;
+}
+
+export interface TerminalHandle {
+  write(bytes: Uint8Array): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
 }
 
 /**
  * The contract every agent backend (`harness/*`) implements. The daemon only
  * depends on this interface, so adding another agent means adding another
  * `harness/<name>` package and nothing else.
+ *
+ * It also gives the daemon the machine the agent runs on: files, processes
+ * and terminals all go through the harness, so the daemon reaches no disk or
+ * process of its own for a session's project and follows the agent wherever
+ * it runs.
  */
 export interface Harness {
   readonly name: string;
   start(): Promise<void>;
-  createSession(options?: CreateSessionOptions): Promise<SessionInfo>;
-  /** Starts a turn. Progress arrives through `onEvent`. */
-  sendMessage(sessionId: string, text: string): Promise<{ turnId: string }>;
-  interrupt(sessionId: string): Promise<void>;
-  respondApproval(approvalId: string, decision: ApprovalDecision): void;
-  onEvent(listener: (event: SessionEvent) => void): () => void;
   dispose(): Promise<void>;
+  onEvent(listener: (event: HarnessEvent) => void): () => void;
+
+  createSession(options: CreateSessionOptions): Promise<HarnessSession>;
+  listSessions(filter: { archived: boolean }): Promise<HarnessSession[]>;
+  /** Brings a stored session into memory and returns its conversation. */
+  loadSession(
+    sessionId: string,
+    options: TurnOptions,
+  ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }>;
+  /** Copies a session, up to and including `turnId` when given. */
+  forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession>;
+  renameSession(sessionId: string, title: string): Promise<void>;
+  archiveSession(sessionId: string, archived: boolean): Promise<void>;
+  deleteSession(sessionId: string): Promise<void>;
+  compactSession(sessionId: string): Promise<void>;
+
+  /** Starts a turn. Progress arrives through `onEvent`. */
+  send(sessionId: string, input: PromptInput, options: TurnOptions): Promise<{ turnId: string }>;
+  /** Adds input to the turn that is running. Fails when none is. */
+  steer(sessionId: string, input: PromptInput): Promise<void>;
+  interrupt(sessionId: string): Promise<void>;
+  respondApproval(approvalId: string, response: ApprovalResponse): void;
+
+  listModels(): Promise<ModelInfo[]>;
+  listSkills(cwd: string): Promise<SkillInfo[]>;
+  listMcpServers(): Promise<McpServerInfo[]>;
+  readAccount(): Promise<AccountInfo>;
+
+  exec(argv: string[], options: ExecOptions): Promise<ExecResult>;
+  readDirectory(path: string): Promise<DirectoryEntry[]>;
+  readFile(path: string): Promise<Uint8Array>;
+  searchFiles(root: string, query: string): Promise<FileMatch[]>;
+  openTerminal(options: TerminalOptions): Promise<TerminalHandle>;
 }

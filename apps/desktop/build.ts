@@ -3,22 +3,25 @@ import { rm } from "node:fs/promises";
 const outdir = `${import.meta.dir}/dist`;
 await rm(outdir, { recursive: true, force: true });
 
+const node: Partial<Bun.BuildConfig> = {
+  target: "node",
+  format: "cjs",
+  naming: "[name].cjs",
+  external: ["electron"],
+};
 const results = await Promise.all([
-  // Electron main process: CommonJS for Node, `electron` provided at runtime.
-  Bun.build({
-    entrypoints: [`${import.meta.dir}/src/main.ts`],
-    outdir,
-    target: "node",
-    format: "cjs",
-    naming: "[name].cjs",
-    external: ["electron"],
-  }),
-  // Renderer: a static bundle rooted at index.html.
+  // Electron's main process and preload: CommonJS, with `electron` given at run time.
+  Bun.build({ entrypoints: [`${import.meta.dir}/src/main.ts`], outdir, ...node }),
+  Bun.build({ entrypoints: [`${import.meta.dir}/src/preload.ts`], outdir, ...node }),
+  // The page: a static bundle rooted at index.html, which the daemon serves.
+  // Code only some views need, such as the terminal emulator, is split off.
   Bun.build({
     entrypoints: [`${import.meta.dir}/src/renderer/index.html`],
     outdir: `${outdir}/renderer`,
     target: "browser",
     minify: true,
+    splitting: true,
+    define: { "process.env.NODE_ENV": '"production"' },
   }),
 ]);
 

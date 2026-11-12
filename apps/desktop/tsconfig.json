@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "lib": ["ESNext", "DOM", "DOM.Iterable"] },
+  "compilerOptions": { "lib": ["ESNext", "DOM", "DOM.Iterable"], "types": ["bun", "node"] },
   "include": ["src", "build.ts"]
 }

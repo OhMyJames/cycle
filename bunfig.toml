@@ -1,0 +1,3 @@
+[install]
+# Every added dependency is pinned to an exact version.
+exact = true

@@ -1,11 +1,13 @@
 {
   "name": "@cycle/harness-codex",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
     "@cycle/protocol": "workspace:*",
-    "@openai/codex": "^0.167.2"
+    "@openai/codex": "0.167.2"
   }
 }
