@@ -28,6 +28,8 @@ beforeAll(async () => {
   Bun.spawnSync(["mkdir", "-p", project, join(root, "codex")]);
   writeFileSync(join(project, "hello.txt"), "hello\n");
   git("init", "-q", "-b", "main");
+  git("config", "user.name", "t");
+  git("config", "user.email", "t@example.com");
   git("add", "-A");
   git("commit", "-q", "-m", "first");
   script = () => ({ text: ["Hello", " from", " cycle"] });
@@ -88,7 +90,10 @@ test("a turn streams to a client, and a late client gets the same state", async 
   const snapshot = await late.call("session.open", { sessionId: session.id });
   if (!("state" in snapshot)) throw new Error("expected a snapshot");
   expect(snapshot.state.turns).toEqual(state.turns);
-  const replay = await late.call("session.open", { sessionId: session.id, afterSeq: 1 });
+  const replay = await late.call("session.open", {
+    sessionId: session.id,
+    after: { seq: 1, epoch: snapshot.state.epoch },
+  });
   if (!("frames" in replay)) throw new Error("expected frames");
   expect(replay.frames.map((frame) => frame.seq)).toEqual(client.frames.slice(1).map((f) => f.seq));
 
@@ -170,6 +175,11 @@ test("an approval waits for the owner, and a queued prompt runs after the turn",
     status: "U",
   });
   expect(diff.patch).toContain("+made");
+
+  // Committing takes everything, and leaves nothing uncommitted.
+  const done = await client.call("git.commit", { cwd: project, message: "Add made" });
+  expect(done.commit).toMatch(/^[0-9a-f]{7,}$/);
+  expect((await client.call("git.status", { cwd: project })).files).toEqual([]);
   client.close();
 }, 60_000);
 

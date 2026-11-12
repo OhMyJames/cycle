@@ -108,11 +108,12 @@ export interface Methods {
     result: SessionInfo;
   };
   /**
-   * Starts following a session. With `afterSeq`, answers with only the frames
-   * since then when the daemon still has them, else with the whole state.
+   * Starts following a session. With `after`, the frame the client last
+   * folded in, answers with only the frames since then when the daemon still
+   * has them and they continue the same run, else with the whole state.
    */
   "session.open": {
-    params: { sessionId: string; afterSeq?: number };
+    params: { sessionId: string; after?: { seq: number; epoch: string } };
     result: { state: SessionState } | { frames: EventFrame[] };
   };
   "session.close": { params: { sessionId: string }; result: Empty };

@@ -18,11 +18,17 @@ export interface SessionState {
   usage: Usage | null;
   queue: QueuedMessage[];
   notices: { level: "info" | "warning" | "error"; message: string }[];
-  /** Sequence number of the last event folded in. */
+  /** Number of the last frame folded in. */
   seq: number;
+  /**
+   * Names the run of frames `seq` counts in. A daemon that loads the session
+   * again starts a new run from zero, so a number from an earlier run says
+   * nothing about this one.
+   */
+  epoch: string;
 }
 
-export function initialSessionState(info: SessionInfo): SessionState {
+export function initialSessionState(info: SessionInfo, epoch = ""): SessionState {
   return {
     info,
     turns: [],
@@ -32,6 +38,7 @@ export function initialSessionState(info: SessionInfo): SessionState {
     queue: [],
     notices: [],
     seq: 0,
+    epoch,
   };
 }
 

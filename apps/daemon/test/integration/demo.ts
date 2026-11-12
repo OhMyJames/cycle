@@ -70,9 +70,16 @@ function progress(body: unknown): { prompt: string; outputs: number } {
   return { prompt, outputs };
 }
 
-function chunks(text: string): string[] {
-  return text.match(/[\s\S]{1,12}/g) ?? [];
+function chunks(text: string, size = 12): string[] {
+  return text.match(new RegExp(`[\\s\\S]{1,${size}}`, "g")) ?? [];
 }
+
+/** A very long reply, to see how the page holds up: about 150 KB of mixed markdown. */
+const STRESS = Array.from(
+  { length: 120 },
+  (_, index) =>
+    `## Section ${index + 1}\n\n${"A paragraph of ordinary prose with `inline code`, **bold** and a [link](https://example.com). ".repeat(6)}\n\n- first point\n- second point with \`src/file${index}.ts:${index + 1}\`\n\n\`\`\`ts\n${`export const value${index} = compute(${index}, "text", { deep: [1, 2, 3] });\n`.repeat(8)}\`\`\`\n`,
+).join("\n");
 
 const root = process.env["CYCLE_DEMO_DIR"] ?? mkdtempSync(join(tmpdir(), "cycle-demo-"));
 const project = join(root, "demo-project");
@@ -101,6 +108,7 @@ const model = startMockModel((_index, body) => {
       },
     };
   }
+  if (/stress/i.test(prompt)) return { text: chunks(STRESS, 48) };
   if (/change|add|fix|build|write/i.test(prompt)) {
     const step = STEPS[outputs];
     if (step) return step;

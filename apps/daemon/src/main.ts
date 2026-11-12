@@ -62,6 +62,9 @@ const daemon = await startDaemon({
   home,
   port: Number(env["CYCLE_DAEMON_PORT"] ?? DEFAULT_DAEMON_PORT),
   ...(uiDir ? { uiDir } : {}),
+}).catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 });
 
 const file: DaemonFile = {

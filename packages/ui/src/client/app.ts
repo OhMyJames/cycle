@@ -428,7 +428,7 @@ export class CycleApp {
     try {
       const answer = await this.request("session.open", {
         sessionId,
-        ...(known ? { afterSeq: known.seq } : {}),
+        ...(known ? { after: { seq: known.seq, epoch: known.epoch } } : {}),
       });
       if ("state" in answer) {
         store.set({ state: answer.state, loading: false, error: null });

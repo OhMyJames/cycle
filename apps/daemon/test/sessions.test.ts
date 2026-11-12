@@ -92,12 +92,14 @@ test("a client that was away gets only the frames it missed, or the whole state"
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
   harness.emit(end(info.id, "t1"));
-  const caughtUp = await hub.open(info.id, 1);
-  expect("frames" in caughtUp && caughtUp.frames.map((frame) => frame.seq)).toEqual([2]);
   const fresh = await hub.open(info.id, undefined);
+  const epoch = "state" in fresh ? fresh.state.epoch : "";
+  const caughtUp = await hub.open(info.id, { seq: 1, epoch });
+  expect("frames" in caughtUp && caughtUp.frames.map((frame) => frame.seq)).toEqual([2]);
   expect("state" in fresh && fresh.state.seq).toBe(2);
-  const ahead = await hub.open(info.id, 99);
-  expect("state" in ahead).toBe(true);
+  expect("state" in (await hub.open(info.id, { seq: 99, epoch }))).toBe(true);
+  // A number from another run of frames, such as before a restart, counts for nothing.
+  expect("state" in (await hub.open(info.id, { seq: 1, epoch: "earlier" }))).toBe(true);
 });
 
 test("a prompt sent during a turn waits, then runs when the turn completes", async () => {

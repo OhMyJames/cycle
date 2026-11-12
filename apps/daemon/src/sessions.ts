@@ -98,6 +98,7 @@ export class SessionHub {
   private readonly live = new Map<string, Live>();
   private readonly loading = new Map<string, Promise<Live>>();
   private queueIds = 0;
+  private epochs = 0;
 
   constructor(options: HubOptions) {
     this.options = options;
@@ -149,14 +150,15 @@ export class SessionHub {
 
   async open(
     sessionId: string,
-    afterSeq: number | undefined,
+    after: { seq: number; epoch: string } | undefined,
   ): Promise<{ state: SessionState } | { frames: EventFrame[] }> {
     const live = await this.ensureLive(sessionId);
     this.flush(live);
-    if (afterSeq !== undefined && afterSeq <= live.state.seq) {
+    if (after && after.epoch === live.state.epoch && after.seq <= live.state.seq) {
       const first = live.ring[0]?.seq ?? live.state.seq + 1;
-      if (afterSeq >= first - 1)
-        return { frames: live.ring.filter((frame) => frame.seq > afterSeq) };
+      if (after.seq >= first - 1) {
+        return { frames: live.ring.filter((frame) => frame.seq > after.seq) };
+      }
     }
     return { state: live.state };
   }
@@ -341,7 +343,7 @@ export class SessionHub {
 
   private newLive(state: SessionState, usageBaseline: boolean): Live {
     return {
-      state,
+      state: { ...state, epoch: `${this.options.now().toString(36)}-${++this.epochs}` },
       ring: [],
       pending: [],
       cancelFlush: null,

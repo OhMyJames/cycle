@@ -43,7 +43,6 @@ export interface Daemon {
   readonly url: string;
   /** The page's address, token included, when a page is served. */
   readonly pageUrl: string;
-  busy(): boolean;
   stop(): Promise<void>;
 }
 
@@ -196,8 +195,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       useProject(info.worktree?.repo ?? params.cwd);
       return info;
     },
-    "session.open": async ({ sessionId, afterSeq }, socket) => {
-      const answer = await hub.open(sessionId, afterSeq);
+    "session.open": async ({ sessionId, after }, socket) => {
+      const answer = await hub.open(sessionId, after);
       // From here to the reply nothing waits, so no frame can slip between them.
       follow(socket, sessionId);
       hub.markRead(sessionId);
@@ -394,7 +393,6 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     token,
     url: `ws://127.0.0.1:${port}${WS_PATH}?token=${token}`,
     pageUrl: `http://127.0.0.1:${port}/#token=${token}`,
-    busy: () => hub.folders().some((folder) => hub.busyIn(folder)),
     async stop() {
       terminals.closeAll();
       await server.stop(true);

@@ -10,8 +10,12 @@ import { Icon, Spinner } from "./icons.tsx";
 import { ItemView, isNarrative, plainCommand } from "./items.tsx";
 import { CopyButton, OpenFileContext } from "./markdown.tsx";
 
-/** How many turns are drawn at first, and how many more each time the top is reached. */
-const WINDOW = 30;
+/**
+ * How many turns are drawn at first, and how many more each time the top is
+ * reached. Few at first, so opening a long session costs what its end costs.
+ */
+const FIRST_TURNS = 12;
+const MORE_TURNS = 24;
 /** Steps of a running stretch of work that stay visible: the rest fold away. */
 const LIVE_STEPS = 6;
 const NEAR_BOTTOM = 48;
@@ -292,7 +296,7 @@ export function Thread({ sessionId }: { sessionId: string }) {
   const content = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
   const [away, setAway] = useState(false);
-  const [count, setCount] = useState(WINDOW);
+  const [count, setCount] = useState(FIRST_TURNS);
   const turns = conversation.state?.turns ?? [];
   const first = Math.max(0, turns.length - count);
   const visible = first ? turns.slice(first) : turns;
@@ -386,7 +390,7 @@ export function Thread({ sessionId }: { sessionId: string }) {
           if (atBottom === away) setAway(!atBottom);
           if (node.scrollTop < 600 && first > 0 && grew.current === null) {
             grew.current = node.scrollHeight;
-            setCount((value) => value + WINDOW);
+            setCount((value) => value + MORE_TURNS);
           }
         }}
       >

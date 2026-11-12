@@ -117,6 +117,8 @@ export class CodexHarness implements Harness {
   private readonly activeTurns = new Map<string, string>();
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly terminals = new Map<string, OpenTerminal>();
+  /** The latest lines codex logged, to explain a start that failed. */
+  private readonly recentLog: string[] = [];
 
   constructor(options: CodexHarnessOptions = {}) {
     this.options = options;
@@ -440,10 +442,19 @@ export class CodexHarness implements Harness {
     );
     void rpc.pump(proc.stdout);
     void this.pumpLogs(proc.stderr);
-    await rpc.request("initialize", {
-      clientInfo: { name: "cycle", title: "Cycle", version: "0.1.0" },
-      capabilities: { experimentalApi: true, requestAttestation: false },
-    });
+    try {
+      await rpc.request("initialize", {
+        clientInfo: { name: "cycle", title: "Cycle", version: "0.1.0" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      });
+    } catch (error) {
+      proc.kill();
+      // What codex printed last says why far better than a closed pipe does.
+      const said = this.recentLog.findLast((line) => /error/i.test(line)) ?? this.recentLog.at(-1);
+      throw new Error(`codex app-server could not start: ${said ?? String(error)}`, {
+        cause: error,
+      });
+    }
     rpc.notify("initialized");
     this.proc = proc;
     this.rpc = rpc;
@@ -735,7 +746,12 @@ export class CodexHarness implements Harness {
       buffer += decoder.decode(chunk, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      for (const line of lines) if (line.trim()) this.options.onLog?.(line);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        this.recentLog.push(line);
+        if (this.recentLog.length > 20) this.recentLog.shift();
+        this.options.onLog?.(line);
+      }
     }
   }
 }
