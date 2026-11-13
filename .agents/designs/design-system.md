@@ -99,6 +99,20 @@ class. The full text is in the `title`.
 - A status wording stays at least 650ms, so it does not flicker.
 - The scroll-to-bottom button floats above the composer, with the composer's shadow.
 
+## Interaction
+
+- The keyboard always has somewhere to go. A letter typed with nothing focused goes to the
+  composer; opening a session focuses it.
+- A dialog takes the focus when it opens, keeps Tab inside itself, and gives the focus back to
+  where it was when it closes. Escape closes the topmost thing only: a dialog before the panel or
+  menu it was opened from.
+- Every control with a `title` shows Cycle's own tip: after the pointer rests 500ms, at once when
+  moving from one tip to the next, above the control unless it is at the window's top, and never
+  cut by the window's edge. A tip names the control and its shortcut; it never holds something the
+  owner needs to act.
+- What was typed is never lost: each session keeps its unsent text, and a failed send puts the
+  text back.
+
 ## Empty and first states
 
 - Nothing open and a known folder: a new session, ready to type in. No "pick something" screen.
