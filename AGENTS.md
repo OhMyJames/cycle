@@ -138,6 +138,8 @@ The expected load is one owner and one daemon running many sessions at once. Jud
 - Dependencies are pinned to exact versions. Packages are imported by name, never by a relative path
   across packages or a deep path into one.
 - Each package is typechecked under its own `lib` and `types`, which decide the platform APIs it sees.
+- The design system is [.agents/designs/design-system.md](.agents/designs/design-system.md). Where the
+  experience should differ from it, change it first, then every screen it covers.
 - Icons are Cycle's own, in `packages/ui/src/components/icons.tsx`. No icon library.
 - The interface is in US English. A choice list never shows a bare "Default": it names the choice and
   marks it, as "Auto (default)".

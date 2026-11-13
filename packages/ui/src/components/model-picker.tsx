@@ -152,9 +152,8 @@ export function ModelPicker({
           setOpen((value) => !value);
         }}
       >
-        <span className="truncate">{label}</span>
+        <span className="fade-x">{label}</span>
         {effort ? <span className="muted">{effortName(effort)}</span> : null}
-        <Icon name="chevron-down" className={open ? "flip-y" : ""} />
       </button>
       {open ? (
         <div
@@ -193,7 +192,7 @@ export function ModelPicker({
           ) : null}
           <div className="picker-main">
             <div className="row picker-head">
-              <span className="muted grow truncate">
+              <span className="muted grow fade-x">
                 {needle ? "Models" : (group?.name ?? "Models")}
               </span>
               <label className="row picker-search">
@@ -233,7 +232,7 @@ export function ModelPicker({
                           setTuning(false);
                         }}
                       >
-                        <span className="truncate">{model.name}</span>
+                        <span className="fade-x">{model.name}</span>
                         {model.isDefault ? <span className="muted">(default)</span> : null}
                       </button>
                       {chosen && effort && model.efforts.length > 1 ? (

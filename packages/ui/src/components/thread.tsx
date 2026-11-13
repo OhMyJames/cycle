@@ -306,20 +306,6 @@ function Tail({ state, gap }: { state: SessionState; gap: number }) {
           </span>
         </div>
       ))}
-      {notices.slice(-1).map((notice) => (
-        <div key={notice.message} className="notice" data-level={notice.level}>
-          <p className="grow">{notice.message}</p>
-          <button
-            type="button"
-            className="icon-button small"
-            title="Dismiss"
-            aria-label="Dismiss"
-            onClick={() => setDismissed((list) => [...list, notice.message])}
-          >
-            <Icon name="x" />
-          </button>
-        </div>
-      ))}
       {approval ? (
         <ApprovalCard
           key={approval.id}
@@ -335,6 +321,20 @@ function Tail({ state, gap }: { state: SessionState; gap: number }) {
           {others === 1 ? "A subagent is still working" : `${others} subagents are still working`}
         </p>
       ) : null}
+      {notices.slice(-1).map((notice) => (
+        <div key={notice.message} className="notice" data-level={notice.level}>
+          <p className="grow">{notice.message}</p>
+          <button
+            type="button"
+            className="icon-button small"
+            title="Dismiss"
+            aria-label="Dismiss"
+            onClick={() => setDismissed((list) => [...list, notice.message])}
+          >
+            <Icon name="x" />
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

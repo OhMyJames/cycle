@@ -194,15 +194,13 @@ function DraftOptions({ draft }: { draft: Draft }) {
           />
         ) : null}
       </div>
-      <div className="caption muted hint-line">
-        {branch === null
-          ? "Not in a git repository: the session works in the folder itself."
-          : draft.worktree
-            ? "The session gets its own checkout on a new branch. Uncommitted changes are not carried over."
-            : branch
-              ? `The session works in the checkout, on ${branch}.`
-              : ""}
-      </div>
+      {branch === null || draft.worktree ? (
+        <div className="caption muted hint-line">
+          {branch === null
+            ? "Not in a git repository: the session works in the folder itself."
+            : "The session gets its own checkout on a new branch. Uncommitted changes are not carried over."}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -606,7 +604,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
                 },
               ])
             }
-            width={300}
+            width={320}
           >
             <span className={mode === "fullAccess" ? "tone-warning" : undefined}>
               {MODE_LABELS[mode].label}

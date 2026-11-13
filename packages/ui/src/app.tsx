@@ -23,10 +23,13 @@ import { TerminalPanel } from "./panels/terminal.tsx";
 function Resizer({
   edge,
   onResize,
+  onReset,
 }: {
   /** Which side of its region the handle sits on. */
   edge: "end" | "start";
   onResize(delta: number): void;
+  /** A double-click puts the width back to what it starts as. */
+  onReset(): void;
 }) {
   const last = useRef(0);
   return (
@@ -35,6 +38,7 @@ function Resizer({
       data-edge={edge}
       role="separator"
       aria-orientation="vertical"
+      onDoubleClick={onReset}
       onPointerDown={(event) => {
         last.current = event.clientX;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -93,16 +97,28 @@ function Welcome({ sessionId }: { sessionId: string | null }) {
   );
 }
 
+/** Nothing is open: a new session where there is a folder to start one in, or the way to one. */
 function Empty() {
   const app = useApp();
   const status = useStore(app.connection, (value) => value);
+  const folder = useStore(
+    app.settings,
+    (settings) => settings !== null && settings.projects.length > 0,
+  );
+  const project = useStore(app.view, (view) => view.project);
+  const ready = status === "open" && (folder || project !== null);
+  useEffect(() => {
+    if (ready) app.newSession();
+  }, [app, ready]);
+  if (ready) return null;
   return (
     <div className="thread-empty">
       {status === "open" ? (
         <>
-          <p className="muted">Open a session from the list, or start a new one.</p>
-          <button type="button" className="button primary" onClick={() => app.newSession()}>
-            New session
+          <h2 className="empty-title">Open a folder to start</h2>
+          <p className="muted">A session works in a folder on this machine.</p>
+          <button type="button" className="button primary" onClick={() => void app.pickFolder()}>
+            Open folder…
           </button>
         </>
       ) : (
@@ -235,9 +251,8 @@ function Shell() {
   }, [session]);
 
   const title = useMemo(() => {
-    if (view.page === "settings") return "Settings";
-    if (view.page === "connector") return "Connector";
-    if (view.page === "automatic") return "Automatic";
+    // A page says its own name in its heading.
+    if (view.page !== "thread") return "";
     if (view.draft) return `New session in ${basename(view.draft.cwd)}`;
     return "Cycle";
   }, [view.page, view.draft]);
@@ -252,6 +267,7 @@ function Shell() {
           <Sidebar />
           <Resizer
             edge="end"
+            onReset={() => app.setView({ sidebarWidth: 248 })}
             onResize={(delta) =>
               app.setView({ sidebarWidth: clamp(app.view.get().sidebarWidth + delta, 200, 420) })
             }
@@ -284,6 +300,7 @@ function Shell() {
             <aside className="panel" style={{ width: view.panelWidth }}>
               <Resizer
                 edge="start"
+                onReset={() => app.setView({ panelWidth: 460 })}
                 onResize={(delta) =>
                   app.setView({ panelWidth: clamp(app.view.get().panelWidth + delta, 320, 900) })
                 }

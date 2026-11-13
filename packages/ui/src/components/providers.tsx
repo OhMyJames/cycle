@@ -220,7 +220,7 @@ function CatalogModels({
                 )
               }
             />
-            <span className="grow truncate">{model.name}</span>
+            <span className="grow fade-x">{model.name}</span>
             <span className="caption muted tabular nowrap">
               {compactNumber(model.contextWindow)}
               {model.reasoning ? " · thinks" : ""}
@@ -377,10 +377,10 @@ function ProviderRow({ provider, onEdit }: { provider: ModelProvider; onEdit(): 
     <div className="setting">
       <div className="grow">
         <div className="row">
-          <span className="truncate">{provider.name}</span>
+          <span className="fade-x">{provider.name}</span>
           {provider.hasKey ? null : <span className="chip">No key</span>}
         </div>
-        <div className="caption muted truncate">
+        <div className="caption muted fade-x">
           {names.slice(0, 3).join(", ")}
           {names.length > 3 ? ` and ${names.length - 3} more` : ""}
         </div>
