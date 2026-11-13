@@ -1,5 +1,16 @@
 import { expect, test } from "bun:test";
-import { matchNames, matchPaths, matchSkills, sectioned, skillRows } from "../src/lib/suggest.ts";
+import {
+  expandMentions,
+  matchNames,
+  matchPaths,
+  matchSessions,
+  matchSkills,
+  mentionParts,
+  mentionTitle,
+  plainMentions,
+  sectioned,
+  skillRows,
+} from "../src/lib/suggest.ts";
 
 const names = (rows: readonly { name: string }[]) => rows.map((row) => row.name);
 const skill = (name: string) => ({ name, description: "" });
@@ -82,4 +93,40 @@ test("rows get headings only when there is more than one kind", () => {
     { heading: "Skills" },
     { group: "Skills", label: "$review" },
   ]);
+});
+
+test("at most four sessions show, a title that starts with the query first", () => {
+  const rows = ["Refactor login", "Login page", "Docs", "Fix login", "Relogin", "Login tests"].map(
+    (title, index) => ({ id: `s${index}`, title }),
+  );
+  expect(matchSessions(rows, "login").map((row) => row.title)).toEqual([
+    "Login page",
+    "Login tests",
+    "Refactor login",
+    "Fix login",
+  ]);
+});
+
+test("a picked mention is sent as its session's link, and drawn as its title again", () => {
+  const picked = new Map([
+    ["Fix", "s1"],
+    ["Fix login", "s2"],
+  ]);
+  const sent = expandMentions("see @Fix login and @Fix, not @Other", picked);
+  expect(sent).toBe(
+    "see [@Fix login](cycle://session/s2) and [@Fix](cycle://session/s1), not @Other",
+  );
+  expect(mentionParts(sent)).toEqual([
+    "see ",
+    { title: "Fix login", id: "s2" },
+    " and ",
+    { title: "Fix", id: "s1" },
+    ", not @Other",
+  ]);
+  expect(plainMentions(sent)).toBe("see @Fix login and @Fix, not @Other");
+  expect(mentionParts("plain")).toEqual(["plain"]);
+});
+
+test("a mention's title is one line without brackets", () => {
+  expect(mentionTitle("Fix [the]\n(login)  page")).toBe("Fix the login page");
 });

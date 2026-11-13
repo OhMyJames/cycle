@@ -8,7 +8,7 @@ export type MockReply =
   /** The model answers in text, streamed chunk by chunk. */
   | { text: string[]; delayMs?: number }
   /** The model calls a tool. Codex runs it and asks again. */
-  | { call: { name: string; arguments: Record<string, unknown> } };
+  | { call: { name: string; namespace?: string; arguments: Record<string, unknown> } };
 
 export interface MockModel {
   url: string;
@@ -45,6 +45,7 @@ function eventsFor(index: number, reply: MockReply): SseEvent[] {
       id: `fc_${index}`,
       call_id: `call_${index}`,
       name: reply.call.name,
+      ...(reply.call.namespace ? { namespace: reply.call.namespace } : {}),
       arguments: JSON.stringify(reply.call.arguments),
     };
     return [

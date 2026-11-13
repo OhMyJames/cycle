@@ -1,0 +1,38 @@
+# Publishes the macOS app when a `v<version>` tag is pushed. The packaged app updates itself from
+# these releases: apps/desktop/src/update.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    # Apple silicon. The app is signed ad hoc, as `bun run desktop:package` leaves it.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4 # the root package.json's packageManager
+
+      - run: bun install --frozen-lockfile
+
+      - name: The tag is the app's version
+        run: test "$GITHUB_REF_NAME" = "v$(jq -r .version apps/desktop/package.json)"
+
+      - run: bun run check
+
+      - run: bun run desktop:package
+
+      - name: Archive and manifest
+        run: bun run desktop:release-assets
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" apps/desktop/build/release/* --generate-notes

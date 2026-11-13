@@ -16,6 +16,7 @@
     "build": "bun run --filter @cycle/desktop build",
     "desktop:package": "bun run apps/desktop/src/package/main.ts",
     "desktop:install": "bun run apps/desktop/src/install/main.ts",
+    "desktop:release-assets": "bun run apps/desktop/src/package/release.ts",
     "check": "bun run scripts/check.ts",
     "boundaries": "bun run scripts/check-boundaries.ts",
     "typecheck": "bun run scripts/typecheck.ts",

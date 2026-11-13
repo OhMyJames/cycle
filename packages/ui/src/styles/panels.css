@@ -68,7 +68,8 @@
   flex: none;
 }
 .file-card[data-open="true"] {
-  overflow: hidden;
+  /* Clipped, not scrolled, so the header can stay at the top while its diff scrolls by. */
+  overflow: clip;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
   background: var(--surface-composer);
@@ -99,10 +100,14 @@
 .file-card[data-open="true"] .file-card-header {
   --focus-ring-offset: -1px;
   --focus-ring-glow: 1px;
+  position: sticky;
+  top: -4px;
+  z-index: 1;
   height: 32px;
   padding: 0 7px;
   border-bottom: 1px solid var(--border-subtle);
   border-radius: 0;
+  background: var(--surface-composer);
 }
 .path {
   font-family: var(--font-mono);
@@ -127,19 +132,23 @@
 }
 
 /* A file's kind, told by a tint on its icon, in the panels that list files. */
-.panel .icon[data-icon="file-code"] {
+.panel :is(.tree-row, .file-card-header) > .icon[data-icon="file-code"] {
   color: var(--hl-title);
 }
-.panel .icon:is([data-icon="file-json"], [data-icon="file-config"]) {
+.panel
+  :is(.tree-row, .file-card-header)
+  > .icon:is([data-icon="file-json"], [data-icon="file-config"]) {
   color: var(--hl-number);
 }
-.panel .icon[data-icon="file-style"] {
+.panel :is(.tree-row, .file-card-header) > .icon[data-icon="file-style"] {
   color: var(--hl-keyword);
 }
-.panel .icon:is([data-icon="file-image"], [data-icon="file-video"], [data-icon="file-audio"]) {
+.panel
+  :is(.tree-row, .file-card-header)
+  > .icon:is([data-icon="file-image"], [data-icon="file-video"], [data-icon="file-audio"]) {
   color: var(--hl-string);
 }
-.panel .icon[data-icon="file-markdown"] {
+.panel :is(.tree-row, .file-card-header) > .icon[data-icon="file-markdown"] {
   color: var(--accent-interactive);
 }
 
@@ -185,7 +194,10 @@
   word-break: break-all;
 }
 .diff-line[data-kind="hunk"] {
-  padding-top: 6px;
+  margin: 4px 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-control-hover);
   color: var(--text-muted);
 }
 .diff-line[data-kind="hunk"] .text {
@@ -252,6 +264,21 @@
 }
 .tree-row .chevron {
   color: var(--icon-default);
+}
+/* An open folder's entries, under a guide that runs down from its disclosure. */
+.tree-children {
+  position: relative;
+}
+.tree-children::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--guide);
+  z-index: 1;
+  width: 1px;
+  background: var(--border-subtle);
+  content: "";
+  pointer-events: none;
 }
 .tree-space {
   flex: none;
@@ -422,6 +449,61 @@
 }
 .fact > :first-child {
   flex: none;
+}
+.fact > :last-child {
+  min-width: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.fact-link {
+  max-width: 100%;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fact-link:hover {
+  color: var(--accent-interactive);
+}
+/* A fact that goes somewhere: a row the width of the panel's text, with the control's hover. */
+.fact-row {
+  align-items: center;
+  width: calc(100% + 12px);
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: var(--radius-row);
+  text-align: left;
+  transition: background-color var(--motion-state);
+}
+.fact-row:hover {
+  background: var(--surface-control-hover);
+}
+.fact-row > .muted:last-child {
+  color: var(--text-muted);
+}
+.server-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+.server-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--text-muted);
+}
+.server-dot[data-status="connected"] {
+  background: var(--state-success);
+}
+.server-dot[data-status="failed"] {
+  background: var(--state-error);
+}
+.server-dot:is([data-status="needsAuth"]) {
+  background: var(--state-warning);
 }
 .overview .plan-steps {
   max-height: none;

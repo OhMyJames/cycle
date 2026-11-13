@@ -14,6 +14,7 @@ import {
   ActivityCard,
   AgentBlock,
   Divider,
+  MentionText,
   PlanBlock,
   ReviewBlock,
   TextBlock,
@@ -292,7 +293,9 @@ function Tail({ state, gap }: { state: SessionState; gap: number }) {
     <div className="tail" style={{ marginTop: gap }}>
       {state.queue.map((queued) => (
         <div key={queued.id} className="user-message queued">
-          <div className="bubble">{queued.text}</div>
+          <div className="bubble">
+            <MentionText text={queued.text} />
+          </div>
           <span className="queued-label">
             <Icon name="clock" size={12} />
             Queued

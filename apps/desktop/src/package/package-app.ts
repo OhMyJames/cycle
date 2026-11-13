@@ -3,9 +3,10 @@
 // when there is no asar. On macOS the copy is a bundle with its Info.plist and icon changed, signed
 // ad hoc; on Linux it is the same files as a folder.
 //
-// shortcut: no update feed, no Developer ID and no notarization, so the app runs only on the Mac
-// that built it and changes only through `bun run desktop:install`; upgrade when it is installed on
-// a machine that does not have the repository.
+// shortcut: no Developer ID and no notarization, so macOS refuses a copy that was downloaded with a
+// browser until its quarantine is taken off, and the app updates itself only from GitHub releases
+// (`src/update`), which it fetches without that mark; upgrade when it is given to someone who will
+// not take the quarantine off by hand.
 import {
   chmodSync,
   cpSync,

@@ -5,6 +5,7 @@ import { host } from "../client/host.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
+import { updateOffer } from "../lib/update.ts";
 import { MODE_LABELS } from "./composer.tsx";
 import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
@@ -83,6 +84,26 @@ function UsageChart() {
       ))}
       <div className="caption muted chart-max">{compactNumber(max)}</div>
     </div>
+  );
+}
+
+/** The app's version and its update. Nothing in a browser, which has no app to update. */
+function AppUpdate() {
+  const app = useApp();
+  const update = useStore(app.update, (value) => value);
+  if (!update) return null;
+  const offer = updateOffer(update);
+  return (
+    <Setting title={`Version ${update.current}`} note={offer.note}>
+      <button
+        type="button"
+        className={offer.primary ? "button primary" : "button"}
+        disabled={offer.action === null}
+        onClick={() => (offer.action === "install" ? host.installUpdate() : host.checkForUpdate())}
+      >
+        <span className="tabular">{offer.label}</span>
+      </button>
+    </Setting>
   );
 }
 
@@ -285,6 +306,7 @@ export function SettingsPage() {
                 {tildePath(daemon?.home ?? "", daemon?.userHome)}
               </span>
             </Setting>
+            <AppUpdate />
           </div>
         ) : null}
       </div>

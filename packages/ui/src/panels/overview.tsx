@@ -1,6 +1,7 @@
 import type { SessionInfo } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "../components/panel.tsx";
+import { MODE_LABELS } from "../components/composer.tsx";
 import { PlanSteps } from "../components/plan.tsx";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -55,7 +56,14 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
       <div className="panel-body overview fade-y">
         <Section title="Environment">
           <Fact label="Folder">
-            <span title={info.cwd}>{tailPath(tildePath(info.cwd, home))}</span>
+            <button
+              type="button"
+              className="fact-link"
+              title={`${info.cwd}\nShow its files`}
+              onClick={() => app.setView({ panel: "files", file: null })}
+            >
+              {tailPath(tildePath(info.cwd, home))}
+            </button>
           </Fact>
           {info.branch ? <Fact label="Branch">{info.branch}</Fact> : null}
           {info.worktree ? (
@@ -65,6 +73,7 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
             {info.model}
             {info.effort ? ` · ${info.effort}` : ""}
           </Fact>
+          <Fact label="Mode">{MODE_LABELS[info.mode].label}</Fact>
           <Fact label="Turns">{turns}</Fact>
         </Section>
         <Section title="Context">
@@ -87,7 +96,9 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
               <Fact label="Reasoning">{usage.total.reasoning.toLocaleString()}</Fact>
               <button
                 type="button"
-                className="button"
+                className="button small"
+                disabled={running}
+                title="Sums the conversation up to free the context"
                 onClick={() =>
                   void app.attempt(app.request("session.compact", { sessionId: info.id }))
                 }
@@ -111,11 +122,23 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
             <div className="note">None configured for codex.</div>
           ) : (
             servers.map((server) => (
-              <Fact key={server.name} label={server.name}>
-                {server.status === "connected"
-                  ? `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`
-                  : server.status}
-              </Fact>
+              <button
+                key={server.name}
+                type="button"
+                className="fact fact-row"
+                title="Open the Connector"
+                onClick={() => app.setView({ page: "connector" })}
+              >
+                <span className="server-name">
+                  <span className="server-dot" data-status={server.status} />
+                  {server.name}
+                </span>
+                <span className="muted">
+                  {server.status === "connected"
+                    ? `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`
+                    : server.status}
+                </span>
+              </button>
             ))
           )}
         </Section>

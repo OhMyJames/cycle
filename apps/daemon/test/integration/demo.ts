@@ -8,7 +8,14 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexHarness } from "@cycle/harness-codex";
-import { diskFile, openProviders, startDaemon } from "../../src/index.ts";
+import {
+  TOOLS_KEY_ENV,
+  TOOLS_SERVER,
+  diskFile,
+  openProviders,
+  startDaemon,
+  startTools,
+} from "../../src/index.ts";
 import { type MockReply, startMockModel } from "./mock-model.ts";
 
 const ANSWER = `Here is what I found and changed.
@@ -130,12 +137,15 @@ const providers = await openProviders(
   diskFile(join(root, "home", "providers.json")),
   crypto.randomUUID(),
 );
+const tools = startTools("demo-tools-key");
 const harness = new CodexHarness({
+  tools: { name: TOOLS_SERVER, url: tools.url, keyEnv: TOOLS_KEY_ENV, key: tools.key },
   config: model.codexConfig,
   env: { CODEX_HOME: join(root, "codex") },
   provider: providers.provider,
 });
 const daemon = await startDaemon({
+  tools,
   harness,
   providers: providers.store,
   home: join(root, "home"),
@@ -161,6 +171,7 @@ console.error(`\nCycle demo is at ${daemon.pageUrl}\nProject: ${project}\n`);
 const stop = async () => {
   await daemon.stop();
   providers.stop();
+  tools.stop();
   model.stop();
   process.exit(0);
 };

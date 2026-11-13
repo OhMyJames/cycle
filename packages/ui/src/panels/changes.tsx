@@ -6,6 +6,7 @@ import { Chevron } from "../components/items.tsx";
 import { PanelHeader } from "../components/panel.tsx";
 import { Menu } from "../components/menu.tsx";
 import { useApp } from "../context.ts";
+import { fileIcon } from "../lib/file-icons.ts";
 import { basename, dirname } from "../lib/format.ts";
 
 const STATUS_LABEL: Record<GitFile["status"], string> = {
@@ -50,6 +51,7 @@ function FileCard({
     <div className="file-card" data-open={open}>
       <button type="button" className="file-card-header" aria-expanded={open} onClick={onToggle}>
         <Chevron open={open} small />
+        <Icon name={fileIcon(file.path)} />
         <span className="path fade-x-start grow" title={file.path}>
           {folder !== "/" && folder !== "." ? <span className="muted">{folder}/</span> : null}
           <span className="name">{basename(file.path)}</span>

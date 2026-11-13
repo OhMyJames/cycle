@@ -303,6 +303,28 @@ const THEMES = [
   { value: "dark", label: "Dark" },
 ] as const;
 
+/** Shown only while a downloaded update waits for the owner, who installs it from About. */
+function UpdateReady() {
+  const app = useApp();
+  const version = useStore(app.update, (update) =>
+    update?.status === "ready" ? update.version : null,
+  );
+  if (version === null) return null;
+  return (
+    <button
+      type="button"
+      className="nav-row"
+      title={`Version ${version} is downloaded`}
+      onClick={() => app.setView({ page: "settings", settingsSection: "about" })}
+    >
+      <span className="nav-icon">
+        <Icon name="download" />
+      </span>
+      <span className="grow fade-x">Update ready</span>
+    </button>
+  );
+}
+
 /**
  * The footer: a rule, then the account, which opens its menu, and today's tokens. Both run 12 from
  * either edge, as the rule over the project does.
@@ -323,6 +345,7 @@ function Footer() {
   return (
     <footer className="sidebar-footer">
       <div className="rule" />
+      <UpdateReady />
       <div className="footer-row">
         <Menu
           className="control-ghost account"

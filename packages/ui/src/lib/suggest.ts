@@ -120,3 +120,66 @@ export function sectioned<Row extends { group: string }>(
     ...rows.filter((row) => row.group === group),
   ]);
 }
+
+/*
+ * A mention of another session. The composer shows `@title`; what is sent is a link the agent
+ * reads the session from with Cycle's own tools, and a message draws the link as the title again.
+ */
+
+const SESSION_LINK = "cycle://session/";
+const MENTION = /\[@([^\]\n]*)\]\(cycle:\/\/session\/([\w-]+)\)/g;
+const MAX_SESSIONS = 4;
+
+export interface SessionRow {
+  id: string;
+  title: string;
+}
+
+/** A title as a mention shows it: one line, no brackets, not long. */
+export function mentionTitle(title: string): string {
+  return title
+    .replaceAll(/[[\]()\s]+/g, " ")
+    .trim()
+    .slice(0, 60)
+    .trim();
+}
+
+/** Sessions whose title holds the query, those that start with it first. Given newest first. */
+export function matchSessions(rows: readonly SessionRow[], query: string): SessionRow[] {
+  const named = rows.map((row) => ({ ...row, name: row.title }));
+  return matchNames(named, query)
+    .slice(0, MAX_SESSIONS)
+    .map(({ id, title }) => ({ id, title }));
+}
+
+/** The text to send: every `@title` that was picked becomes its session's link. */
+export function expandMentions(text: string, picked: ReadonlyMap<string, string>): string {
+  // One pass, the longest title first, so a title that starts another is not taken for it.
+  const titles = [...picked.keys()].toSorted((a, b) => b.length - a.length);
+  if (!titles.length) return text;
+  const escaped = titles.map((title) => title.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return text.replaceAll(
+    new RegExp(`@(${escaped.join("|")})`, "g"),
+    (_whole, title: string) => `[@${title}](${SESSION_LINK}${picked.get(title)})`,
+  );
+}
+
+export type MentionPart = string | SessionRow;
+
+/** A message's text, with each session link apart from the text around it. */
+export function mentionParts(text: string): MentionPart[] {
+  const parts: MentionPart[] = [];
+  let last = 0;
+  for (const match of text.matchAll(MENTION)) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push({ title: match[1] ?? "", id: match[2] ?? "" });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+/** A message's text as the composer shows it: `@title` where a link was. */
+export function plainMentions(text: string): string {
+  return text.replaceAll(MENTION, "@$1");
+}

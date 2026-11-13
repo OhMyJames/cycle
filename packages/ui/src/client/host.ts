@@ -2,6 +2,31 @@
  * What the page asks of whatever hosts it. The desktop app supplies a bridge
  * as `window.cycle`; a browser tab falls back to what the web platform has.
  */
+/**
+ * Where the desktop app is with its own updates. `current` is the running version. An update is
+ * downloaded in the background, and installed only when the owner asks, since that restarts the app.
+ */
+export type UpdateState = { readonly current: string } & (
+  | { readonly status: "idle" }
+  | { readonly status: "checking" }
+  | { readonly status: "upToDate"; readonly checkedAt: number }
+  /** `progress` runs from 0 to 1. */
+  | { readonly status: "downloading"; readonly version: string; readonly progress: number }
+  /** `message` says why the last try to install it was refused. */
+  | { readonly status: "ready"; readonly version: string; readonly message?: string }
+  | { readonly status: "error"; readonly message: string }
+);
+
+/** Present only in a packaged app that can replace itself. */
+export interface UpdateBridge {
+  state(): Promise<UpdateState>;
+  check(): Promise<void>;
+  /** Replaces the app with the downloaded version and starts it again. */
+  install(): Promise<void>;
+  /** Calls back on every change. Returns what stops it. */
+  onState(listener: (state: UpdateState) => void): () => void;
+}
+
 export interface HostBridge {
   /** A native folder chooser, or null where there is none. */
   pickDirectory?: () => Promise<string | null>;
@@ -9,6 +34,7 @@ export interface HostBridge {
   openExternal?: (url: string) => void;
   /** Whether the window draws its own title bar, so the page leaves room for its buttons. */
   insetTitleBar?: boolean;
+  update?: UpdateBridge;
 }
 
 declare global {
@@ -45,4 +71,17 @@ export const host = {
     return false;
   },
   insetTitleBar: (): boolean => window.cycle?.insetTitleBar ?? false,
+  /** Follows the app's updates. Nothing is ever said where the host has none, as in a browser. */
+  watchUpdate(listener: (state: UpdateState) => void): void {
+    const update = window.cycle?.update;
+    if (!update) return;
+    update.onState(listener);
+    void update.state().then(listener, () => {});
+  },
+  checkForUpdate(): void {
+    void window.cycle?.update?.check();
+  },
+  installUpdate(): void {
+    void window.cycle?.update?.install();
+  },
 };

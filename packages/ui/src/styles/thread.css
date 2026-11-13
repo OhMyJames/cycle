@@ -112,6 +112,26 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A session a prompt mentions: its title, in the link color, opening it. */
+.mention {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-interactive) 10%, transparent);
+  color: var(--accent-interactive);
+  font: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.mention:hover {
+  background: color-mix(in srgb, var(--accent-interactive) 18%, transparent);
+}
 .turn[data-running="true"] .user-message:not(.queued) .bubble {
   animation: rise 150ms var(--ease) both;
 }

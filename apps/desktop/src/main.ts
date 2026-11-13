@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -14,13 +14,36 @@ import {
 } from "electron";
 import { daemonLaunch } from "./launch";
 import { readLoginEnv } from "./login-env";
-import { BUILD_FILE, LINUX_ICON, PRELOAD } from "./shared/layout";
+import { BUILD_FILE, type BuildInfo, LINUX_ICON, PRELOAD } from "./shared/layout";
+import { updatesFolder } from "./update/plan";
+import { systemPorts } from "./update/system";
+import { createUpdater } from "./update/updater";
 
 /** A packaged app carries its daemon and codex; a repository run uses the repository's. */
 const packaged = existsSync(path.join(app.getAppPath(), BUILD_FILE));
 
+/**
+ * Only the packaged macOS app replaces itself. The preload is told with this argument, so the page
+ * is offered updates nowhere else.
+ */
+const selfUpdating = packaged && process.platform === "darwin";
+const UPDATES_ARGUMENT = "--cycle-updates";
+const FIRST_UPDATE_CHECK_MS = 15_000;
+const UPDATE_CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+
 let daemonProcess: ChildProcess | null = null;
 let pageOrigin = "";
+
+// Finder gives an app a bare environment. Agents and MCP servers need what a
+// terminal has: the `PATH` and proxy variables of the owner's shell profile.
+let ownerEnv: Promise<Record<string, string> | undefined> | undefined;
+const readOwnerEnv = (): Promise<Record<string, string> | undefined> =>
+  (ownerEnv ??= packaged
+    ? readLoginEnv({
+        shell: process.env["SHELL"] || "/bin/zsh",
+        log: (line) => console.error(`[cycle] ${line}`),
+      })
+    : Promise.resolve(undefined));
 
 /**
  * Finds the page to show. With CYCLE_PAGE_URL the app shows a daemon that is
@@ -35,14 +58,7 @@ async function ensureDaemon(): Promise<string> {
     packaged,
     bun: process.env["CYCLE_BUN_BIN"],
   });
-  // Finder gives an app a bare environment. Agents and MCP servers need what a
-  // terminal has: the `PATH` and proxy variables of the owner's shell profile.
-  const loginEnv = packaged
-    ? await readLoginEnv({
-        shell: process.env["SHELL"] || "/bin/zsh",
-        log: (line) => console.error(`[cycle] ${line}`),
-      })
-    : undefined;
+  const loginEnv = await readOwnerEnv();
   const child = spawn(launch.command, [...launch.args], {
     env: { ...process.env, ...loginEnv, ...launch.env },
     stdio: ["ignore", "pipe", packaged ? "pipe" : "inherit"],
@@ -106,6 +122,7 @@ function createWindow(pageUrl: string): void {
       nodeIntegration: false,
       sandbox: true,
       preload: path.join(app.getAppPath(), PRELOAD),
+      ...(selfUpdating ? { additionalArguments: [UPDATES_ARGUMENT] } : {}),
     },
   });
   // Agent output can contain links; never navigate the app window to them.
@@ -117,6 +134,43 @@ function createWindow(pageUrl: string): void {
     if (new URL(url).origin !== pageOrigin) event.preventDefault();
   });
   void window.loadURL(pageUrl);
+}
+
+/**
+ * The app's own updates: looked for shortly after it starts, then every few hours, and when the
+ * owner asks. A found one is downloaded, and installed only when the owner says so in the page,
+ * because that restarts the app and stops whatever turn is running.
+ */
+async function startUpdater(): Promise<void> {
+  const loginEnv = await readOwnerEnv();
+  const env = { ...process.env, ...loginEnv };
+  const info = JSON.parse(
+    readFileSync(path.join(app.getAppPath(), BUILD_FILE), "utf8"),
+  ) as BuildInfo;
+  const updater = createUpdater(
+    systemPorts({
+      // In the home the daemon itself uses, which the owner's shell profile may set.
+      updates: updatesFolder(env["CYCLE_HOME"], os.homedir()),
+      info,
+      appPath: app.getAppPath(),
+      env,
+      quit: () => app.quit(),
+      onState: (state) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send("cycle:update-state", state);
+        }
+      },
+    }),
+  );
+  ipcMain.handle("cycle:update-state", (event) => (fromPage(event) ? updater.state() : null));
+  ipcMain.handle("cycle:update-check", async (event) => {
+    if (fromPage(event)) await updater.check();
+  });
+  ipcMain.handle("cycle:update-install", async (event) => {
+    if (fromPage(event)) await updater.install();
+  });
+  setTimeout(() => void updater.check(), FIRST_UPDATE_CHECK_MS);
+  setInterval(() => void updater.check(), UPDATE_CHECK_EVERY_MS);
 }
 
 async function start(): Promise<void> {
@@ -149,6 +203,15 @@ async function start(): Promise<void> {
       void shell.openExternal(url);
     }
   });
+
+  if (selfUpdating) {
+    // Before the window, so the page's first question about updates has someone to answer it.
+    try {
+      await startUpdater();
+    } catch (error) {
+      console.error(`[cycle] updates are off: ${String(error)}`);
+    }
+  }
 
   createWindow(pageUrl);
   app.on("activate", () => {

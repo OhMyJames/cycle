@@ -28,11 +28,17 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
 - No token, key or account secret may reach a page's storage beyond the connection token, or a log.
   An MCP server's environment values count: the page is given their names only.
   A provider's key goes from the page to the daemon once, and no wire method gives it back.
-- `/Applications/Cycle.app` is old-cycle's and may be in use. The installer writes only
+- `/Applications/Cycle.app` is old-cycle's and may be in use. The installer and the updater write only
   `Cycle Codex.app`, and only over an app whose identifier is `dev.cycle.codex`.
+- An update restarts the app, which stops running turns. It is downloaded unasked and installed only
+  when the owner clicks. The owner's GitHub token stays in the main process, in request headers to
+  `api.github.com` only.
 - The gateway holds the reach of the owner's provider keys. It binds to loopback, checks `Host`, and
   answers only its bearer. Never loosen any of the three. Why:
   [decision note](.agents/notes/2026-11-13-providers-go-through-a-gateway-of-pi-ai.md).
+- Cycle's tools for agents are a server of the same kind: loopback, `Host`, its own bearer, which is
+  never the connection token. Never loosen any of the three, and its tools only read. Why:
+  [decision note](.agents/notes/2026-11-13-cycle-tools-behind-their-own-key.md).
 
 ## Testing
 
@@ -61,7 +67,9 @@ pin, unread, mode, model, worktree, the schedule that started it), `providers.js
 providers and their keys, mode 0600), `usage.json` (tokens per local day, numbers only),
 `schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
 [decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
-app's daemon printed, since its last start) and `worktrees/`.
+app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
+until the owner installs it, and `install.log`, what the last swap said;
+[decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)) and `worktrees/`.
 Conversations themselves are codex's, in `CODEX_HOME`: Cycle keeps no copy.
 Why: [decision note](.agents/notes/2026-11-12-codex-keeps-the-conversations.md). MCP servers and plugins
 are codex's too, in its `config.toml`: Cycle keeps no list of its own.
@@ -110,6 +118,11 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   a server added in Cycle works in the codex CLI and the other way round. A server's environment
   values never leave the harness: the page gets the names. Why:
   [decision note](.agents/notes/2026-11-13-the-connector-is-codex-config.md).
+- The daemon serves an MCP server of its own, `cycle` (`apps/daemon/src/tools.ts`), to every session's
+  agent: the owner's sessions as a list, and one session's conversation, which is what a mention of a
+  session in a prompt (`[@title](cycle://session/<id>)`) points to. It changes nothing. It is a server
+  apart, on loopback behind its own key, which codex gets at start and the agent's commands do not. Why:
+  [decision note](.agents/notes/2026-11-13-cycle-tools-behind-their-own-key.md).
 - `Scheduler` (`apps/daemon/src/schedules.ts`) starts each schedule's prompt in a new session when it is
   due, as the composer would. It waits on no timer of its own: the daemon calls `tick` every 15s, and a
   tick compares the clock with what already ran, so a daemon that was stopped catches up on the latest
@@ -119,6 +132,14 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   assembles a self-contained app from Electron's own dist, with the daemon compiled by Bun and codex's
   platform binary inside; `bun run desktop:install` puts it in `/Applications/Cycle Codex.app`. A
   packaged app starts its daemon with the owner's login shell environment, since Finder gives none.
+- The packaged macOS app updates itself from the GitHub releases of `OhMyJames/cycle`
+  (`apps/desktop/src/update`): `plan.ts` and `updater.ts` are the decisions, `system.ts` what they do
+  to the network and the disk. The main process looks for a newer release after it starts and every
+  four hours, with the owner's GitHub token from their shell or `gh`, downloads it to
+  `CYCLE_HOME/updates`, and checks it against the release's manifest (`src/shared/release.ts`). It
+  replaces the app only when the owner clicks in Settings, About. A `v<version>` tag makes the release:
+  `.github/workflows/release.yml`. Why:
+  [decision note](.agents/notes/2026-11-13-updates-from-github-releases.md).
 
 ## Writing code
 
