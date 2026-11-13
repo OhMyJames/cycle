@@ -76,6 +76,7 @@ export function Palette() {
         },
         {
           label: "Compact this session's context",
+          icon: "collapse",
           run: () => void app.attempt(app.request("session.compact", { sessionId })),
         },
       );

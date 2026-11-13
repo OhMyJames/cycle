@@ -48,6 +48,12 @@
   gap: 12px;
   padding: 24px;
 }
+.empty-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: var(--font-weight-medium);
+}
 .thread-empty .turn-failed {
   max-width: 560px;
 }
@@ -81,9 +87,9 @@
   width: 100%;
   max-width: var(--thread-width);
   margin: 0 auto 24px;
-  padding: 0 32px;
-  font-size: 24px;
-  line-height: 32px;
+  padding: 0 28px;
+  font-size: 20px;
+  line-height: 28px;
   font-weight: var(--font-weight-medium);
   letter-spacing: -0.025em;
   animation: rise var(--motion-enter) both;
@@ -882,6 +888,7 @@ button.code-diff-name:hover {
   border-radius: 9999px;
   background: var(--surface-composer);
   color: var(--text-primary);
+  box-shadow: var(--shadow-composer);
   transition: background-color var(--motion-state);
 }
 .to-bottom:hover {
