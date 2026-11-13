@@ -117,7 +117,7 @@ test.each([
       revisedPrompt: "a cat",
       failure: null,
     },
-    { id: "i", kind: "image", path: "a cat", generated: true },
+    { id: "i", kind: "image", path: "a cat", generated: true, status: "completed" },
   ],
   [
     { type: "functionCallOutput", id: "o", name: "run", namespace: null, output: "ok" },

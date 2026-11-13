@@ -232,6 +232,7 @@ export function toItem(raw: WireItem | WireUnknownItem): Item {
         kind: "image",
         path: raw.savedPath ?? raw.revisedPrompt ?? "",
         generated: true,
+        status: raw.failure ? "failed" : raw.status === "completed" ? "completed" : "running",
       };
     case "sleep":
       return {
@@ -279,13 +280,20 @@ export function toItem(raw: WireItem | WireUnknownItem): Item {
 }
 
 export function toTurn(raw: WireTurn): Turn {
+  const done = raw.status !== "inProgress";
   return {
     id: raw.id,
     status: raw.status === "inProgress" ? "running" : raw.status,
     error: raw.error?.message ?? null,
     startedAt: raw.startedAt === null ? null : raw.startedAt * 1000,
     durationMs: raw.durationMs,
-    items: raw.items.map(toItem),
+    // An item a history keeps as running in a turn that ended will never finish, as live.
+    items: raw.items.map((wire) => {
+      const item = toItem(wire);
+      return done && "status" in item && item.status === "running"
+        ? { ...item, status: raw.status === "completed" ? "completed" : "failed" }
+        : item;
+    }),
     diff: null,
   };
 }

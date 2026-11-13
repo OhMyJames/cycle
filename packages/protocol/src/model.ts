@@ -75,7 +75,7 @@ export type Item =
       status: ItemStatus;
     })
   /** An image the agent looked at, or made when `generated`. */
-  | (ItemBase & { kind: "image"; path: string; generated?: boolean })
+  | (ItemBase & { kind: "image"; path: string; generated?: boolean; status?: ItemStatus })
   /** The agent waited, on purpose, this long. */
   | (ItemBase & { kind: "wait"; durationMs: number; status: ItemStatus })
   /** What a hook of the owner's added to the conversation. */

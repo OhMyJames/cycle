@@ -5,6 +5,7 @@ import type {
   ModelInfo,
   PromptInput,
   Turn,
+  Usage,
 } from "@cycle/protocol";
 
 /** A harness that runs nothing: tests say what it reports. */
@@ -15,6 +16,8 @@ export class FakeHarness implements Harness {
   readonly calls: string[] = [];
   stored: HarnessSession[] = [];
   history: Turn[] = [];
+  /** What the next loaded session says it used before. */
+  loadedUsage: Usage | null = null;
   failSend: string | null = null;
   execResults: Record<string, { exitCode: number; stdout: string; stderr?: string }> = {};
   private listener: (event: HarnessEvent) => void = () => {};
@@ -51,7 +54,7 @@ export class FakeHarness implements Harness {
   listSessions = async () => this.stored;
   loadSession = async (sessionId: string) => {
     this.calls.push(`load ${sessionId}`);
-    return { session: this.session(sessionId), turns: this.history, usage: null };
+    return { session: this.session(sessionId), turns: this.history, usage: this.loadedUsage };
   };
   forkSession = async (sessionId: string) => this.session(`${sessionId}-fork`);
   renameSession = async (sessionId: string, title: string) => {

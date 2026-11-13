@@ -170,6 +170,7 @@ export class CodexHarness implements Harness {
   private readonly listeners = new Set<(event: HarnessEvent) => void>();
   /** Which sessions are the extra process's, as far as is known. */
   private readonly ofExtra = new Map<string, boolean>();
+  /** The turn codex runs in each session now: what an interrupt or a steer must name. */
   private readonly activeTurns = new Map<string, string>();
   private readonly approvals = new Map<string, PendingApproval>();
   /** The client's own MCP server, which is not the owner's to change. */
@@ -849,11 +850,14 @@ export class CodexHarness implements Harness {
     if (this.extra) {
       for (const [sessionId, turnId] of this.activeTurns) {
         if (!mine(sessionId)) continue;
+        // A review's conversation knows it by the turn it was asked as.
+        const known = this.reviews.get(sessionId) ?? turnId;
         this.activeTurns.delete(sessionId);
+        this.reviews.delete(sessionId);
         this.emit({
           type: "turn.completed",
           sessionId,
-          turnId,
+          turnId: known,
           status: "failed",
           error: `${message}. It starts again with your next message.`,
           durationMs: null,
@@ -869,6 +873,7 @@ export class CodexHarness implements Harness {
     // With one process, its end is every session's, and the daemon is told so in one event.
     if (this.extra) return;
     this.activeTurns.clear();
+    this.reviews.clear();
     this.emit({ type: "harness.exited", message });
   }
 
@@ -920,9 +925,10 @@ export class CodexHarness implements Harness {
         const turn = params["turn"] as WireTurn;
         // A review runs as a turn inside the one it was asked as, whose id its items and its end
         // carry. That outer turn is the one the conversation knows.
+        // Codex stops or steers only the inner one, by its own id.
         const review = this.reviews.get(sessionId);
         const id = review && turn.rootTurnId === review ? review : turn.id;
-        this.activeTurns.set(sessionId, id);
+        this.activeTurns.set(sessionId, turn.id);
         // A thread codex started itself, as for a sub-agent, is known first by its turn.
         this.ofExtra.set(sessionId, !main);
         this.emit({

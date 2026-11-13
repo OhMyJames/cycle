@@ -144,15 +144,36 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
     pushModels();
   });
+  // Limits move with every turn, of every session: one read at a time, and one more if they moved
+  // again while it ran.
+  let limits: "idle" | "reading" | "again" = "idle";
+  const readLimits = () => {
+    if (limits !== "idle") {
+      limits = "again";
+      return;
+    }
+    limits = "reading";
+    harness
+      .readAccount()
+      .then(
+        (account) => push({ type: "limits.changed", account }),
+        () => {},
+      )
+      .finally(() => {
+        const more = limits === "again";
+        limits = "idle";
+        if (more) readLimits();
+      });
+  };
   harness.onEvent((event) => {
-    if (event.type !== "account.changed" && event.type !== "limits.changed") return;
-    const error = event.type === "account.changed" ? event.error : null;
+    if (event.type === "limits.changed") readLimits();
+    if (event.type !== "account.changed") return;
+    const { error } = event;
     harness.readAccount().then(
       (account) => push({ type: "account.changed", account, error }),
       () => {},
     );
-    // Limits move with every turn; the models on offer only with the account.
-    if (event.type === "account.changed") pushModels();
+    pushModels();
   });
   const usage = new UsageLedger(usageFile, Date.now);
   const git = new Git((argv, execOptions) => harness.exec(argv, execOptions));

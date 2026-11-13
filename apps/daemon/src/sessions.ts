@@ -284,6 +284,9 @@ export class SessionHub {
 
   /** Takes the conversation back to before a turn. The files the agent changed stay. */
   async rewind(sessionId: string, turnId: string): Promise<void> {
+    if (this.info(sessionId).archived) {
+      throw new SessionError("Unarchive the session to change it.");
+    }
     const live = await this.ensureLive(sessionId);
     this.flush(live);
     if (live.starting || activeTurn(live.state)) {
@@ -295,6 +298,8 @@ export class SessionHub {
     const { from } = await this.options.harness.rewindSession(sessionId, turnId);
     const known = live.state.turns.some((turn) => turn.id === from);
     this.apply(live, { type: "turns.rewound", sessionId, turnId: known ? from : turnId });
+    // The agent counts again from the shorter history: its next report only sets the mark.
+    live.usageBaseline = true;
   }
 
   async compact(sessionId: string): Promise<void> {
@@ -474,7 +479,9 @@ export class SessionHub {
       turn.status === "running" ? { ...turn, status: "interrupted" } : turn,
     );
     state.usage = loaded.usage;
-    const live = this.newLive(state, true);
+    // Known as it loads, what was used before is the mark; else the next report sets it.
+    const live = this.newLive(state, loaded.usage === null);
+    live.usageSeen = loaded.usage?.total ?? null;
     this.live.set(sessionId, live);
     this.setInfo({ ...info, status: this.statusOf(live) });
     this.evict();

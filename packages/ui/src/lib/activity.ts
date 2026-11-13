@@ -106,7 +106,8 @@ export function activityKind(item: ActivityItem): ActivityKind {
 export type ActivityStatus = "running" | "completed" | "failed" | "declined";
 
 export function activityStatus(item: ActivityItem): ActivityStatus {
-  return item.kind === "webSearch" || item.kind === "image" ? "completed" : item.status;
+  if (item.kind === "webSearch") return "completed";
+  return item.status ?? "completed";
 }
 
 const files = (count: number): string => (count === 1 ? "1 file" : `${count} files`);

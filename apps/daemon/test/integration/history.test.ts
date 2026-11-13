@@ -11,7 +11,7 @@ import {
   openProviders,
   startDaemon,
 } from "../../src/index.ts";
-import { type MockModel, startMockModel } from "./mock-model.ts";
+import { type MockModel, type MockReply, startMockModel } from "./mock-model.ts";
 import { connect, type WireClient } from "./wire-client.ts";
 
 // What a conversation can be made to do after the fact: a review of the code, going back to before
@@ -22,6 +22,7 @@ let root: string;
 let project: string;
 let daemon: Daemon | null = null;
 let providers: OpenProviders;
+let reply: MockReply = { text: ["Looks fine."] };
 
 const start = () =>
   startDaemon({
@@ -49,7 +50,7 @@ beforeAll(async () => {
   git("init", "-q", "-b", "main");
   git("add", "-A");
   git("commit", "-q", "-m", "first");
-  model = startMockModel(() => ({ text: ["Looks fine."] }));
+  model = startMockModel(() => reply);
   providers = await openProviders(
     diskFile(join(root, "home", "providers.json")),
     "gateway-token",
@@ -139,5 +140,28 @@ test("a review, a step back, and the context after a restart", async () => {
   client = connect(daemon.url);
   await client.opened;
   expect((await opened(client, session.id)).turns.map((turn) => turn.id)).toEqual([first]);
+  client.close();
+}, 90_000);
+
+test("a review can be stopped", async () => {
+  if (!daemon) throw new Error("no daemon");
+  const client = connect(daemon.url);
+  await client.opened;
+  const session = await client.call("session.create", { cwd: project, mode: "readOnly" });
+  await opened(client, session.id);
+  reply = { text: ["one", " two", " three", " four", " five"], delayMs: 400 };
+  await client.call("session.review", {
+    sessionId: session.id,
+    target: { kind: "custom", instructions: "look closely" },
+  });
+  await client.until(() =>
+    client
+      .events()
+      .some((event) => event.type === "turn.started" && event.sessionId === session.id),
+  );
+  await client.call("session.interrupt", { sessionId: session.id });
+  await client.until(() => completions(client, session.id).length === 1);
+  expect(completions(client, session.id)[0]).toMatchObject({ status: "interrupted" });
+  reply = { text: ["Looks fine."] };
   client.close();
 }, 90_000);

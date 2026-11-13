@@ -277,6 +277,8 @@ export type DaemonEvent =
   | { type: "settings.changed"; settings: Settings }
   /** `error` says why a sign-in ended without one. */
   | { type: "account.changed"; account: AccountInfo; error: string | null }
+  /** The account's rate limits moved, as they do with each turn. Nothing else changed. */
+  | { type: "limits.changed"; account: AccountInfo }
   | { type: "models.changed"; models: ModelInfo[] }
   | { type: "providers.changed"; providers: ModelProvider[] }
   | { type: "terminals.changed"; sessionId: string | null; terminals: TerminalInfo[] }

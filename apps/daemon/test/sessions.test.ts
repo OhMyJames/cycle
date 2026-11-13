@@ -165,6 +165,23 @@ test("usage counts what a session adds, not what it had before it was opened", a
   expect(usage.at(-1)?.tokens.total).toBe(190);
 });
 
+test("what a session used before it loaded is the mark, and going back sets a new one", async () => {
+  const { harness, hub, usage } = await setup();
+  harness.loadedUsage = count(500);
+  await hub.open("old", undefined);
+  harness.emit({ type: "usage.updated", sessionId: "old", usage: count(650) });
+  expect(usage.at(-1)?.tokens.total).toBe(150);
+  await hub.send("old", { text: "go", images: [] }, "auto");
+  harness.emit(start("old", "t1"));
+  harness.emit(end("old", "t1"));
+  await hub.rewind("old", "t1");
+  // The shorter history's count is lower: it is not work done today.
+  harness.emit({ type: "usage.updated", sessionId: "old", usage: count(300) });
+  expect(usage.at(-1)?.tokens.total).toBe(150);
+  harness.emit({ type: "usage.updated", sessionId: "old", usage: count(340) });
+  expect(usage.at(-1)?.tokens.total).toBe(190);
+});
+
 test("a stored session is loaded once, and a turn its history left running is closed", async () => {
   const { harness, hub } = await setup();
   harness.stored = [harness.session("old", { preview: "earlier" })];

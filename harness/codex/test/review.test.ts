@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { toReviewTarget, toTurns } from "../src/index.ts";
 
-// A review: what it reads, and how codex keeps it in a history.
+// What a review reads, and how a history codex keeps is read back.
 
 test("a review names what it reads, and a commit only by its hash", () => {
   expect(toReviewTarget({ kind: "uncommitted" })).toEqual({ type: "uncommittedChanges" });
@@ -41,4 +41,10 @@ test("a turn kept inside another, as a review's is, joins it", () => {
     ["a", []],
     ["out", ["u", "x"]],
   ]);
+});
+
+test("an item a finished turn's history keeps as running is settled, as it is live", () => {
+  const nap = { type: "sleep", id: "z", durationMs: 5 };
+  const [done] = toTurns([wire("a", "a", [nap])]);
+  expect(done?.items[0]).toMatchObject({ kind: "wait", status: "completed" });
 });
