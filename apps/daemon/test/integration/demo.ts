@@ -136,6 +136,7 @@ const model = startMockModel((_index, body) => {
 const providers = await openProviders(
   diskFile(join(root, "home", "providers.json")),
   crypto.randomUUID(),
+  join(root, "home", "provider-models.json"),
 );
 const tools = startTools("demo-tools-key");
 const harness = new CodexHarness({

@@ -37,6 +37,11 @@ export class JsonRpcPeer {
     this.handlers = handlers;
   }
 
+  /** How many of our requests are still unanswered. */
+  get waiting(): number {
+    return this.pending.size;
+  }
+
   request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (this.closed) return Promise.reject(new RpcError("connection closed"));
     const id = this.nextId++;

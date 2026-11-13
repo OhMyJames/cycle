@@ -64,7 +64,9 @@ Cycle keeps its data in `CYCLE_HOME`, which defaults to `~/.cycle-codex` and mus
 `daemon.json` (where the running daemon is, and its token, mode 0600), `settings.json` (what new
 sessions start with, and the owner's projects), `sessions.json` (what only Cycle knows of each session:
 pin, unread, mode, model, worktree, the schedule that started it), `providers.json` (the owner's model
-providers and their keys, mode 0600), `usage.json` (tokens per local day, numbers only),
+providers and their keys, mode 0600), `provider-models.json` (codex's catalog of
+those providers' models, which says how much each can read; written as the second codex child starts),
+`usage.json` (tokens per local day, numbers only),
 `schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
 [decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
 app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
@@ -94,7 +96,8 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   drives `codex app-server` children (`process.ts`), starts one again if it dies, and brings a session
   back into it the next time it is used. Codex runs one model provider per process and keeps a thread
   with the provider it began on, so sessions on the owner's providers live in a second child, started
-  when first needed.
+  when first needed. Codex caps a model it does not know at 272k tokens, so that child starts with a
+  catalog of the owner's models (`catalog.ts`), and starts again, when idle, once they change.
 - `packages/gateway` is the only code that knows pi-ai. It is a Responses API endpoint on loopback that
   the second child takes for its model provider: `responses.ts` is the pure mapping to and from pi-ai's
   conversation, `catalog.ts` the services and models pi-ai knows. A provider's model is

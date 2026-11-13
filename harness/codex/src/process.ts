@@ -12,6 +12,8 @@ export interface CodexProcessSpec {
   env: Record<string, string | undefined>;
   /** Receives the app-server's stderr (its log output), line by line. */
   onLog?: ((line: string) => void) | undefined;
+  /** Runs before each start, and gives overrides that hold for that start alone. */
+  prepare?: (() => Promise<CodexConfig>) | undefined;
 }
 
 export interface CodexProcessHandlers {
@@ -66,6 +68,25 @@ export class CodexProcess {
     return rpc.request<T>(method, params);
   }
 
+  /** Whether a child is up with none of our requests waiting on it. */
+  get idle(): boolean {
+    return this.rpc !== null && this.rpc.waiting === 0;
+  }
+
+  /**
+   * Stops the child without telling anyone it went away, so the next request
+   * starts a new one. Its sessions are brought back in when next used.
+   */
+  async restart(): Promise<void> {
+    const proc = this.proc;
+    this.proc = null;
+    this.rpc = null;
+    this.loaded.clear();
+    if (!proc) return;
+    proc.kill();
+    await proc.exited;
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     const proc = this.proc;
@@ -79,7 +100,8 @@ export class CodexProcess {
 
   private async spawn(): Promise<JsonRpcPeer> {
     const bin = this.spec.bin ?? resolveCodexBin();
-    const overrides = Object.entries(this.spec.config).flatMap(([key, value]) => [
+    const config = { ...this.spec.config, ...(await this.spec.prepare?.()) };
+    const overrides = Object.entries(config).flatMap(([key, value]) => [
       "-c",
       `${key}=${typeof value === "number" || typeof value === "boolean" ? value : JSON.stringify(value)}`,
     ]);

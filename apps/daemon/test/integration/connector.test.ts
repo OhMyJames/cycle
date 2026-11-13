@@ -23,7 +23,11 @@ beforeAll(async () => {
   mkdirSync(join(root, "codex"));
   mkdirSync(join(root, "project"));
   model = startMockModel(() => ({ text: ["Done"] }));
-  providers = await openProviders(diskFile(join(root, "home", "providers.json")), "gateway-token");
+  providers = await openProviders(
+    diskFile(join(root, "home", "providers.json")),
+    "gateway-token",
+    join(root, "home", "provider-models.json"),
+  );
   daemon = await startDaemon({
     harness: new CodexHarness({
       config: model.codexConfig,

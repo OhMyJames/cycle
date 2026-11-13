@@ -25,6 +25,7 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
+import { modelCatalog } from "./catalog.ts";
 import { type CodexConfig, CodexProcess } from "./process.ts";
 import type { JsonRpcPeer, RpcId } from "./rpc.ts";
 import {
@@ -74,6 +75,8 @@ export interface ExtraProvider {
   token: string;
   /** The models it serves now, and how much each can read. */
   models(): { info: ModelInfo; contextWindow: number }[];
+  /** Where to write codex's catalog of those models, which tells it how much each can read. */
+  catalogPath: string;
 }
 
 export interface CodexHarnessOptions {
@@ -99,6 +102,13 @@ export interface OwnTools {
 }
 
 const PROVIDER_TOKEN_ENV = "CYCLE_PROVIDER_TOKEN";
+
+/** What the extra process's catalog says, to tell when it no longer matches the models. */
+function catalogKey(provider: ExtraProvider): string {
+  return JSON.stringify(
+    provider.models().map(({ info, contextWindow }) => [info.id, contextWindow]),
+  );
+}
 
 interface PendingApproval {
   rpc: JsonRpcPeer;
@@ -154,6 +164,8 @@ export class CodexHarness implements Harness {
   /** The client's own MCP server, which is not the owner's to change. */
   private readonly ownServer: string | null;
   private readonly terminals = new Map<string, OpenTerminal>();
+  /** The models the running extra process was given, as `catalogKey` puts them. */
+  private extraCatalog: string | null = null;
 
   constructor(options: CodexHarnessOptions = {}) {
     const provider = options.provider ?? null;
@@ -195,6 +207,7 @@ export class CodexHarness implements Harness {
               [`model_providers.${provider.id}.env_key`]: PROVIDER_TOKEN_ENV,
             },
             env: { ...env, [PROVIDER_TOKEN_ENV]: provider.token },
+            prepare: () => this.writeCatalog(provider),
           },
           {
             onNotification: (method, params) => this.handleNotification(method, params, false),
@@ -223,12 +236,9 @@ export class CodexHarness implements Harness {
 
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
     const policy = options.mode ? modePolicy(options.mode) : null;
-    const served = this.served(options.model);
-    const proc = served && this.extra ? this.extra : this.main;
-    const config = {
-      ...(options.effort ? { model_reasoning_effort: options.effort } : {}),
-      ...(served ? { model_context_window: served.contextWindow } : {}),
-    };
+    const proc = this.served(options.model) && this.extra ? this.extra : this.main;
+    await this.freshen(proc);
+    const config = options.effort ? { model_reasoning_effort: options.effort } : {};
     const response = await proc.request<WireThreadResponse>("thread/start", {
       cwd: options.cwd,
       model: options.model ?? null,
@@ -280,7 +290,9 @@ export class CodexHarness implements Harness {
     sessionId: string,
     options: TurnOptions,
   ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }> {
-    const response = await this.resume(await this.processOf(sessionId), sessionId, options);
+    const proc = await this.processOf(sessionId);
+    await this.freshen(proc);
+    const response = await this.resume(proc, sessionId, options);
     return {
       session: toSession(response.thread, {
         model: response.model,
@@ -631,10 +643,36 @@ export class CodexHarness implements Harness {
 
   // The processes
 
-  /** The extra provider's model of this id, when it serves one. */
-  private served(model: string | undefined): { contextWindow: number } | null {
-    if (!model || !this.provider) return null;
-    return this.provider.models().find(({ info }) => info.id === model) ?? null;
+  /** Whether the extra provider serves a model of this id. */
+  private served(model: string | undefined): boolean {
+    if (!model || !this.provider) return false;
+    return this.provider.models().some(({ info }) => info.id === model);
+  }
+
+  /** Writes the catalog the extra process starts with, and gives the override that names it. */
+  private async writeCatalog(provider: ExtraProvider): Promise<CodexConfig> {
+    this.extraCatalog = catalogKey(provider);
+    const catalog = modelCatalog(
+      provider.models().map(({ info, contextWindow }) => ({ slug: info.id, contextWindow })),
+    );
+    if (!catalog) return {};
+    await Bun.write(provider.catalogPath, catalog);
+    return { model_catalog_json: provider.catalogPath };
+  }
+
+  /**
+   * Codex reads its catalog only as it starts, so once the owner's models have changed, the extra
+   * process is started again: before a session is started or brought back into it, and only when
+   * nothing is under way there, since that would stop it. Until then a changed model reads no
+   * further than codex's own cap for a model it does not know.
+   */
+  private async freshen(proc: CodexProcess): Promise<void> {
+    if (proc !== this.extra || !this.provider || !proc.idle) return;
+    if (this.extraCatalog === catalogKey(this.provider)) return;
+    const busy = (sessionId: string) => this.ofExtra.get(sessionId) === true;
+    if ([...this.activeTurns.keys()].some(busy)) return;
+    if ([...this.approvals.values()].some(({ sessionId }) => busy(sessionId))) return;
+    await proc.restart();
   }
 
   private adopt(proc: CodexProcess, thread: WireThread): void {
@@ -701,15 +739,11 @@ export class CodexHarness implements Harness {
     options: TurnOptions,
   ): Promise<WireThreadResponse> {
     const policy = options.mode ? modePolicy(options.mode) : null;
-    const served = proc === this.extra ? this.served(options.model) : null;
     const response = await proc.request<WireThreadResponse>("thread/resume", {
       threadId: sessionId,
       model: options.model ?? null,
       approvalPolicy: policy?.approvalPolicy ?? null,
       sandbox: policy?.sandbox ?? null,
-      // shortcut: the window is the one of the model a session is loaded with; upgrade when
-      // codex takes a window with each turn, or reads the provider's models from a catalog.
-      ...(served ? { config: { model_context_window: served.contextWindow } } : {}),
     });
     proc.loaded.add(sessionId);
     return response;
@@ -718,6 +752,7 @@ export class CodexHarness implements Harness {
   private async ensureLoaded(sessionId: string, options: TurnOptions): Promise<CodexProcess> {
     const proc = await this.processOf(sessionId);
     await proc.peer();
+    await this.freshen(proc);
     if (!proc.loaded.has(sessionId)) await this.resume(proc, sessionId, options);
     return proc;
   }
