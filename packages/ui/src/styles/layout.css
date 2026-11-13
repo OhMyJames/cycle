@@ -959,7 +959,12 @@
 }
 .weekdays {
   display: flex;
+  align-items: center;
   gap: 4px;
+}
+/* What the chosen days come to, since seven chosen and none chosen look alike. */
+.weekdays-said {
+  margin-left: 8px;
 }
 .weekday {
   width: 36px;
@@ -1255,4 +1260,9 @@
     opacity: 0;
     transform: translateX(12px);
   }
+}
+
+/* An update that waits goes somewhere, so its icon is the link color. */
+.update-ready .nav-icon {
+  color: var(--accent-interactive);
 }

@@ -160,6 +160,11 @@ export function ScheduleEditor({
                       </button>
                     );
                   })}
+                  <span className="caption muted weekdays-said">
+                    {draft.weekdays.length === 0
+                      ? "Every day"
+                      : `${draft.weekdays.length} ${draft.weekdays.length === 1 ? "day" : "days"} a week`}
+                  </span>
                 </div>
               </div>
             </>

@@ -313,7 +313,7 @@ function UpdateReady() {
   return (
     <button
       type="button"
-      className="nav-row"
+      className="nav-row update-ready"
       title={`Version ${version} is downloaded`}
       onClick={() => app.setView({ page: "settings", settingsSection: "about" })}
     >
