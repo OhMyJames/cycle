@@ -7,6 +7,7 @@ import {
   type EventFrame,
   type Harness,
   type MethodName,
+  type ModelProvider,
   type Params,
   type Result,
   type ServerMessage,
@@ -16,6 +17,7 @@ import {
 import { allowedRequest, newToken, sameToken } from "./auth.ts";
 import { Files } from "./files.ts";
 import { Git } from "./git.ts";
+import { Providers, type ProvidersFile } from "./providers.ts";
 import { type MetaFile, SessionHub } from "./sessions.ts";
 import { JsonStore, diskFile, realSchedule } from "./store.ts";
 import { Terminals } from "./terminals.ts";
@@ -25,6 +27,8 @@ export const DAEMON_VERSION = "0.1.0";
 
 export interface DaemonOptions {
   harness: Harness;
+  /** The owner's model providers, opened before the harness that offers their models. */
+  providers: JsonStore<ProvidersFile>;
   /** Where the daemon keeps its data: an absolute path. */
   home: string;
   port?: number;
@@ -106,6 +110,34 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const push = (event: DaemonEvent) => {
     server.publish("all", JSON.stringify({ push: event } satisfies ServerMessage));
   };
+  // The models on offer follow the owner's providers and the account codex is signed in to.
+  const pushModels = () => {
+    harness.listModels().then(
+      (models) => push({ type: "models.changed", models }),
+      () => {},
+    );
+  };
+  const providers = new Providers(options.providers, (list: ModelProvider[]) => {
+    push({ type: "providers.changed", providers: list });
+    // A provider's model has its provider's id before a slash. One that is gone is no default.
+    const chosen = settings.value.model;
+    if (chosen?.includes("/") && !providers.models().some((model) => model.id === chosen)) {
+      setSettings((value) => {
+        value.model = null;
+        value.effort = null;
+      });
+    }
+    pushModels();
+  });
+  harness.onEvent((event) => {
+    if (event.type !== "account.changed") return;
+    const { error } = event;
+    harness.readAccount().then(
+      (account) => push({ type: "account.changed", account, error }),
+      () => {},
+    );
+    pushModels();
+  });
   const usage = new UsageLedger(usageFile, Date.now);
   const git = new Git((argv, execOptions) => harness.exec(argv, execOptions));
   const hub = new SessionHub({
@@ -240,6 +272,24 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "skills.list": async ({ cwd }) => ({ skills: await harness.listSkills(cwd) }),
     "mcp.list": async () => ({ servers: await harness.listMcpServers() }),
     "account.read": () => harness.readAccount(),
+    "account.login": () => harness.login(),
+    "account.login.cancel": async ({ id }) => {
+      await harness.cancelLogin(id);
+      return {};
+    },
+    "account.logout": async () => {
+      await harness.logout();
+      return {};
+    },
+
+    "providers.list": () => ({ providers: providers.list() }),
+    "providers.kinds": () => ({ kinds: providers.kinds() }),
+    "providers.catalog": ({ kind }) => ({ models: providers.catalog(kind) }),
+    "providers.save": (draft) => providers.save(draft),
+    "providers.delete": ({ id }) => {
+      providers.remove(id);
+      return {};
+    },
     "settings.get": () => settings.value,
     "settings.set": (patch) => {
       setSettings((value) => {
@@ -397,7 +447,12 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       terminals.closeAll();
       await server.stop(true);
       await harness.dispose();
-      await Promise.all([settings.flush(), meta.flush(), usageFile.flush()]);
+      await Promise.all([
+        settings.flush(),
+        meta.flush(),
+        usageFile.flush(),
+        options.providers.flush(),
+      ]);
     },
   };
 }

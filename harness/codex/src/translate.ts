@@ -269,6 +269,7 @@ export function toModel(raw: WireModel): ModelInfo {
     defaultEffort: raw.defaultReasoningEffort,
     isDefault: raw.isDefault,
     images: raw.inputModalities?.includes("image") ?? true,
+    provider: null,
   };
 }
 

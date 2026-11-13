@@ -1,5 +1,6 @@
 import type {
   AccountInfo,
+  AccountLogin,
   ApprovalResponse,
   McpServerInfo,
   ModelInfo,
@@ -44,6 +45,8 @@ export type HarnessEvent =
   | SessionEvent
   /** What the harness knows of a session changed, such as its title. */
   | { type: "session.changed"; sessionId: string; patch: Partial<HarnessSession> }
+  /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */
+  | { type: "account.changed"; error: string | null }
   /** The harness itself stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; message: string };
 
@@ -127,6 +130,10 @@ export interface Harness {
   listSkills(cwd: string): Promise<SkillInfo[]>;
   listMcpServers(): Promise<McpServerInfo[]>;
   readAccount(): Promise<AccountInfo>;
+  /** Starts a sign-in the owner finishes in a browser. `account.changed` follows. */
+  login(): Promise<AccountLogin>;
+  cancelLogin(id: string): Promise<void>;
+  logout(): Promise<void>;
 
   exec(argv: string[], options: ExecOptions): Promise<ExecResult>;
   readDirectory(path: string): Promise<DirectoryEntry[]>;

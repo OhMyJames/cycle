@@ -237,6 +237,74 @@ export interface ModelInfo {
   isDefault: boolean;
   /** Whether prompts to it may carry images. */
   images: boolean;
+  /** The owner's provider that serves it, or null when it is the agent's own. */
+  provider: { id: string; name: string } | null;
+}
+
+/**
+ * Whether a session on one model may move to the other. The agent keeps a
+ * conversation with the kind of provider it began on: its own, or the owner's.
+ */
+export function sameModelFamily(
+  a: Pick<ModelInfo, "provider">,
+  b: Pick<ModelInfo, "provider">,
+): boolean {
+  return (a.provider === null) === (b.provider === null);
+}
+
+/** The protocols an endpoint of the owner's own may speak. */
+export const PROVIDER_APIS = [
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+] as const;
+export type ProviderApi = (typeof PROVIDER_APIS)[number];
+
+/** The kind of a provider that is an endpoint the owner describes, not a known service. */
+export const CUSTOM_PROVIDER_KIND = "custom";
+
+export interface ProviderModel {
+  id: string;
+  name: string;
+  /** Whether it can think before it answers. */
+  reasoning: boolean;
+  images: boolean;
+  /** Tokens it can read, and the most it may write in one answer. */
+  contextWindow: number;
+  maxTokens: number;
+}
+
+/** A known service a provider can be for, with the models it is known to serve. */
+export interface ProviderKind {
+  id: string;
+  name: string;
+}
+
+/** A model provider of the owner's. Its key stays in the daemon. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  /** A `ProviderKind` id, or `CUSTOM_PROVIDER_KIND`. */
+  kind: string;
+  /** What a custom endpoint speaks. Null for a known service. */
+  api: ProviderApi | null;
+  /** A custom endpoint's address, or another address for a known service. */
+  baseUrl: string | null;
+  hasKey: boolean;
+  /** The models the owner chose to use. */
+  models: ProviderModel[];
+}
+
+/** What the owner sends to add a provider, or to change the one with this id. */
+export interface ModelProviderDraft {
+  id?: string;
+  name: string;
+  kind: string;
+  api: ProviderApi | null;
+  baseUrl: string | null;
+  /** A new key. Left out, the stored one stays. */
+  apiKey?: string;
+  models: ProviderModel[];
 }
 
 export interface SkillInfo {
@@ -266,4 +334,10 @@ export interface AccountInfo {
   email: string | null;
   plan: string | null;
   limits: { primary: RateLimitWindow | null; secondary: RateLimitWindow | null } | null;
+}
+
+/** A sign-in under way: the owner finishes it in a browser at `url`. */
+export interface AccountLogin {
+  id: string;
+  url: string;
 }

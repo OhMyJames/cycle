@@ -19,7 +19,8 @@ The demo runs the whole app against a scripted stand-in for the model, in a thro
 account, no network. Open the link it prints. Ask it to "add a greeting" to see tools at work, or
 mention "approval" to see it ask first.
 
-With a real account (`bunx codex login`, or `OPENAI_API_KEY`):
+With a real account: sign in with ChatGPT in Settings, add a model provider of your own there, or set
+`OPENAI_API_KEY` first.
 
 ```bash
 bun run dev
@@ -38,6 +39,10 @@ bun run web
   Sessions started in the codex CLI appear too.
 - **New session**: pick a folder, model, reasoning effort and permission mode; optionally a git
   worktree on a new branch.
+- **Models**: your ChatGPT plan's models by signing in from Settings, and model providers of your own:
+  Anthropic, Google, OpenRouter, DeepSeek and the other services [pi-ai](https://github.com/earendil-works/pi)
+  knows, with your key, or any OpenAI- or Anthropic-compatible endpoint. You choose which models to
+  use. A session stays with Codex's own models or with your providers', as codex requires.
 - **Conversation**: streaming markdown with highlighted code and tables; commands, edits and tool calls
   folded into one line per stretch of work; reasoning; plans; approvals and questions inline; retry,
   copy, fork from any turn.
@@ -52,17 +57,20 @@ bun run web
 ```
 apps/desktop (Electron)      apps/daemon (Bun)                  harness/codex            codex app-server
  main: starts the daemon  →   SessionHub: frames, queue     →    wire ↔ model         →   threads, turns, items
- page: packages/ui        ←   Git, Terminals, Files, usage  ←    one child process    ←   exec, pty, fs, search
+ page: packages/ui        ←   Git, Terminals, Files, usage  ←    its child processes  ←   exec, pty, fs, search
             └──────────── packages/protocol: model, wire methods, the shared reducer ────────────┘
+
+ a second codex child, for the owner's model providers  →  packages/gateway: Responses API ↔ pi-ai  →  the provider
 ```
 
-| Directory           | What it is                                                                           |
-| ------------------- | ------------------------------------------------------------------------------------ |
-| `packages/protocol` | The model, the client-daemon wire, the `Harness` interface, the shared reducer       |
-| `harness/codex`     | Drives `codex app-server` and translates it. The only code that knows codex          |
-| `apps/daemon`       | Local daemon: session state, queueing, git, terminals, files, usage, serves the page |
-| `packages/ui`       | The page: stores, conversation, composer, panels                                     |
-| `apps/desktop`      | Electron shell: starts the daemon, loads its page, a small native bridge             |
+| Directory           | What it is                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| `packages/protocol` | The model, the client-daemon wire, the `Harness` interface, the shared reducer               |
+| `harness/codex`     | Drives `codex app-server` and translates it. The only code that knows codex                  |
+| `packages/gateway`  | Answers codex for the owner's model providers, through pi-ai. The only code that knows pi-ai |
+| `apps/daemon`       | Local daemon: session state, queueing, git, terminals, files, usage, serves the page         |
+| `packages/ui`       | The page: stores, conversation, composer, panels                                             |
+| `apps/desktop`      | Electron shell: starts the daemon, loads its page, a small native bridge                     |
 
 [AGENTS.md](AGENTS.md) has the rules and the reasons; decisions are in [.agents/notes](.agents/notes).
 

@@ -102,6 +102,8 @@ export interface WireThread {
   forkedFromId: string | null;
   preview: string;
   model: string | null;
+  /** The codex model provider the thread began on, and stays with. */
+  modelProvider: string;
   reasoningEffort: string | null;
   createdAt: number;
   updatedAt: number;

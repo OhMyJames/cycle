@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexHarness } from "@cycle/harness-codex";
-import { startDaemon } from "../../src/index.ts";
+import { diskFile, openProviders, startDaemon } from "../../src/index.ts";
 import { type MockReply, startMockModel } from "./mock-model.ts";
 
 const ANSWER = `Here is what I found and changed.
@@ -51,7 +51,7 @@ const STEPS: MockReply[] = [
 interface InputItem {
   type?: string;
   role?: string;
-  content?: { text?: string }[];
+  content?: string | { text?: string }[];
 }
 
 /** The latest prompt, and how many tool results have come back since it. */
@@ -60,8 +60,12 @@ function progress(body: unknown): { prompt: string; outputs: number } {
   let prompt = "";
   let outputs = 0;
   for (const item of input) {
-    if (item.type === "message" && item.role === "user") {
-      const text = item.content?.map((part) => part.text ?? "").join("") ?? "";
+    // Codex marks a message as one; a request that came through a provider's client may not.
+    if ((item.type ?? "message") === "message" && item.role === "user") {
+      const text =
+        typeof item.content === "string"
+          ? item.content
+          : (item.content?.map((part) => part.text ?? "").join("") ?? "");
       if (text.startsWith("<")) continue;
       prompt = text;
       outputs = 0;
@@ -122,20 +126,30 @@ const model = startMockModel((_index, body) => {
   };
 });
 
+const providers = await openProviders(
+  diskFile(join(root, "home", "providers.json")),
+  crypto.randomUUID(),
+);
 const daemon = await startDaemon({
   harness: new CodexHarness({
     config: model.codexConfig,
     env: { CODEX_HOME: join(root, "codex") },
+    provider: providers.provider,
   }),
+  providers: providers.store,
   home: join(root, "home"),
   port: Number(process.env["CYCLE_DAEMON_PORT"] ?? 0),
   uiDir: new URL("../../../desktop/dist/renderer", import.meta.url).pathname,
 });
-console.log(JSON.stringify({ type: "listening", pageUrl: daemon.pageUrl, project }));
+// The scripted model speaks the Responses API, so its address also works as a custom provider's.
+console.log(
+  JSON.stringify({ type: "listening", pageUrl: daemon.pageUrl, project, modelUrl: model.url }),
+);
 console.error(`\nCycle demo is at ${daemon.pageUrl}\nProject: ${project}\n`);
 
 const stop = async () => {
   await daemon.stop();
+  providers.stop();
   model.stop();
   process.exit(0);
 };

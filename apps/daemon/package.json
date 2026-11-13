@@ -11,6 +11,7 @@
     "start": "bun src/main.ts"
   },
   "dependencies": {
+    "@cycle/gateway": "workspace:*",
     "@cycle/harness-codex": "workspace:*",
     "@cycle/protocol": "workspace:*"
   }
