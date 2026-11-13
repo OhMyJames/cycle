@@ -26,15 +26,35 @@ export function TitleBar({ info, title }: { info: SessionInfo | null; title: str
   return (
     <header className="titlebar" data-inset={host.insetTitleBar() && !sidebar}>
       {sidebar ? null : (
-        <button
-          type="button"
-          className="icon-button"
-          title="Show sidebar (⌘B)"
-          aria-label="Show sidebar"
-          onClick={() => app.setView({ sidebar: true })}
-        >
-          <Icon name="panel-left" />
-        </button>
+        <div className="titlebar-lead">
+          <button
+            type="button"
+            className="icon-button"
+            title="Show sidebar (⌘B)"
+            aria-label="Show sidebar"
+            onClick={() => app.setView({ sidebar: true })}
+          >
+            <Icon name="panel-left" />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="Search (⌘K)"
+            aria-label="Search"
+            onClick={() => app.setView({ palette: true })}
+          >
+            <Icon name="search" />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="New session (⌘N)"
+            aria-label="New session"
+            onClick={() => app.newSession()}
+          >
+            <Icon name="compose" />
+          </button>
+        </div>
       )}
       {info && renaming ? (
         <input

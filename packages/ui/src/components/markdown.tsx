@@ -1,5 +1,6 @@
 import { type ReactNode, createContext, memo, useContext, useRef, useState } from "react";
 import { host } from "../client/host.ts";
+import { useApp } from "../context.ts";
 import { highlight } from "../lib/highlight.ts";
 import {
   type MdToken,
@@ -99,7 +100,23 @@ function InlineCode({ text }: { text: string }) {
 }
 
 function Link({ href, children }: { href: string; children: ReactNode }) {
+  const app = useApp();
   const safe = /^(https?:|mailto:)/i.test(href);
+  // A session the agent names back, as a prompt's mention of it is drawn.
+  const session = /^cycle:\/\/session\/([\w-]+)$/.exec(href)?.[1];
+  if (session) {
+    return (
+      <button
+        type="button"
+        className="mention"
+        title="Open this session"
+        onClick={() => app.selectSession(session)}
+      >
+        <Icon name="message" size={12} />
+        {children}
+      </button>
+    );
+  }
   return (
     <a
       href={safe ? href : undefined}

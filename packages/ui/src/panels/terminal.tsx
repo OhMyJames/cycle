@@ -58,7 +58,16 @@ function TerminalView({ id }: { id: string }) {
         });
         const observer = new ResizeObserver(resize);
         observer.observe(node);
+        // The page's colors change with its appearance, and the terminal's follow.
+        const recolor = new MutationObserver(() => {
+          terminal.options.theme = themeColors();
+        });
+        recolor.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-theme"],
+        });
         cleanup = () => {
+          recolor.disconnect();
           observer.disconnect();
           input.dispose();
           stopOutput();
@@ -126,8 +135,12 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
   const shown = list.find((terminal) => terminal.id === active) ?? list.at(-1) ?? null;
   // The first time the panel opens for a session, a terminal starts by itself.
   const none = loaded && list.length === 0;
+  const closedLast = useRef(false);
   useEffect(() => {
-    if (none) create();
+    if (!none) return;
+    // Closing the last terminal closes the panel; opening the panel with none starts one.
+    if (closedLast.current) app.setView({ panel: null });
+    else create();
     // Runs when the list first comes back empty, not on every redraw.
   }, [none]);
 
@@ -145,7 +158,17 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
         </button>
         <div className="tabs no-scrollbar" role="tablist">
           {list.map((terminal) => (
-            <span key={terminal.id} className="tab" data-active={terminal.id === shown?.id}>
+            <span
+              key={terminal.id}
+              className="tab"
+              data-active={terminal.id === shown?.id}
+              onAuxClick={(event) => {
+                // The middle button closes a tab, as it does everywhere.
+                if (event.button !== 1) return;
+                closedLast.current = list.length === 1;
+                void app.attempt(app.request("terminal.close", { id: terminal.id }));
+              }}
+            >
               <button
                 type="button"
                 role="tab"
@@ -159,7 +182,10 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
                 type="button"
                 className="tab-close"
                 aria-label={`Close ${terminal.title}`}
-                onClick={() => void app.attempt(app.request("terminal.close", { id: terminal.id }))}
+                onClick={() => {
+                  closedLast.current = list.length === 1;
+                  void app.attempt(app.request("terminal.close", { id: terminal.id }));
+                }}
               >
                 <Icon name="x" size={14} />
               </button>
