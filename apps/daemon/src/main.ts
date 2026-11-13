@@ -4,7 +4,10 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { CodexHarness } from "@cycle/harness-codex";
 import { DEFAULT_DAEMON_PORT } from "@cycle/protocol";
+import { newToken } from "./auth.ts";
 import { DAEMON_VERSION, startDaemon } from "./daemon.ts";
+import { openProviders } from "./gateway.ts";
+import { diskFile } from "./store.ts";
 
 interface DaemonFile {
   url: string;
@@ -54,11 +57,15 @@ const config = env["CYCLE_CODEX_CONFIG"]
   ? (JSON.parse(env["CYCLE_CODEX_CONFIG"]) as Record<string, string | number | boolean>)
   : undefined;
 
+const providers = await openProviders(diskFile(join(home, "providers.json")), newToken());
+
 const daemon = await startDaemon({
   harness: new CodexHarness({
     ...(config ? { config } : {}),
     ...(env["CYCLE_DEBUG"] ? { onLog: (line: string) => console.error(`[codex] ${line}`) } : {}),
+    provider: providers.provider,
   }),
+  providers: providers.store,
   home,
   port: Number(env["CYCLE_DAEMON_PORT"] ?? DEFAULT_DAEMON_PORT),
   ...(uiDir ? { uiDir } : {}),
@@ -84,6 +91,7 @@ async function shutdown(): Promise<void> {
   stopping = true;
   await rm(daemonFile, { force: true });
   await daemon.stop();
+  providers.stop();
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown());

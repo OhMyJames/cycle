@@ -1,9 +1,14 @@
 import type {
   AccountInfo,
+  AccountLogin,
   ApprovalResponse,
   McpServerInfo,
   McpServerInput,
   ModelInfo,
+  ModelProvider,
+  ModelProviderDraft,
+  ProviderKind,
+  ProviderModel,
   PluginCatalog,
   PluginDetail,
   SessionEvent,
@@ -181,6 +186,18 @@ export interface Methods {
   "schedule.run": { params: { id: string }; result: ScheduleRun };
 
   "account.read": { params: Empty; result: AccountInfo };
+  /** Starts a ChatGPT sign-in. `account.changed` follows when it ends, either way. */
+  "account.login": { params: Empty; result: AccountLogin };
+  "account.login.cancel": { params: { id: string }; result: Empty };
+  "account.logout": { params: Empty; result: Empty };
+
+  "providers.list": { params: Empty; result: { providers: ModelProvider[] } };
+  /** The services a provider can be for. */
+  "providers.kinds": { params: Empty; result: { kinds: ProviderKind[] } };
+  /** The models a service is known to serve. */
+  "providers.catalog": { params: { kind: string }; result: { models: ProviderModel[] } };
+  "providers.save": { params: ModelProviderDraft; result: ModelProvider };
+  "providers.delete": { params: { id: string }; result: Empty };
   "settings.get": { params: Empty; result: Settings };
   "settings.set": { params: Partial<Settings>; result: Settings };
   "usage.daily": { params: Empty; result: { days: DayUsage[] } };
@@ -243,6 +260,10 @@ export type DaemonEvent =
   | { type: "sessions.changed"; sessions: SessionInfo[] }
   | { type: "sessions.removed"; sessionIds: string[] }
   | { type: "settings.changed"; settings: Settings }
+  /** `error` says why a sign-in ended without one. */
+  | { type: "account.changed"; account: AccountInfo; error: string | null }
+  | { type: "models.changed"; models: ModelInfo[] }
+  | { type: "providers.changed"; providers: ModelProvider[] }
   | { type: "terminals.changed"; sessionId: string | null; terminals: TerminalInfo[] }
   /** Base64 of what a terminal printed, to the clients attached to it. */
   | { type: "terminal.output"; id: string; data: string }

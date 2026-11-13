@@ -248,3 +248,27 @@ test("a worktree session starts in its own checkout and remembers its base", asy
     "git worktree add --no-track -b feature-2 /home/worktrees/repo/feature-2 abc123",
   );
 });
+
+const model = (id: string, provider: { id: string; name: string } | null) => ({
+  id,
+  name: id,
+  description: "",
+  efforts: [],
+  defaultEffort: null,
+  isDefault: false,
+  images: false,
+  provider,
+});
+
+test("a session stays with the kind of model it began on", async () => {
+  const { harness, hub } = await setup();
+  const mine = { id: "mine", name: "Mine" };
+  harness.models = [model("model-a", null), model("model-b", null), model("mine/x", mine)];
+  const info = await hub.create({ cwd: "/project" });
+  expect((await hub.update({ sessionId: info.id, model: "model-b" })).model).toBe("model-b");
+  expect(hub.update({ sessionId: info.id, model: "mine/x" })).rejects.toThrow(
+    "Start a new session",
+  );
+  // A model nobody lists any more is the harness's to refuse, not the daemon's to guess at.
+  expect((await hub.update({ sessionId: info.id, model: "gone" })).model).toBe("gone");
+});

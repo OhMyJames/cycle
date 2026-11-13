@@ -1,4 +1,4 @@
-export { CodexHarness, type CodexHarnessOptions } from "./codex-harness.ts";
+export { CodexHarness, type CodexHarnessOptions, type ExtraProvider } from "./codex-harness.ts";
 export {
   mcpServerEdits,
   modePolicy,

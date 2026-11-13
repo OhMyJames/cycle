@@ -21,6 +21,7 @@ import {
   coalesceEvents,
   initialSessionState,
   reduceSession,
+  sameModelFamily,
 } from "@cycle/protocol";
 import { type Git, defaultBranchName } from "./git.ts";
 import type { JsonStore, Delay } from "./store.ts";
@@ -288,7 +289,17 @@ export class SessionHub {
     }
     if (params.pinned !== undefined) info = { ...info, pinned: params.pinned };
     if (params.unread !== undefined) info = { ...info, unread: params.unread };
-    if (params.model !== undefined) info = { ...info, model: params.model };
+    if (params.model !== undefined && params.model !== info.model) {
+      const models = await harness.listModels();
+      const from = models.find((model) => model.id === info.model);
+      const to = models.find((model) => model.id === params.model);
+      if (from && to && !sameModelFamily(from, to)) {
+        throw new SessionError(
+          `This session began on ${from.provider ? "a model of your own provider" : "one of the agent's own models"} and stays with that kind. Start a new session to use ${to.name}.`,
+        );
+      }
+      info = { ...info, model: params.model };
+    }
     if (params.effort !== undefined) info = { ...info, effort: params.effort };
     if (params.mode !== undefined) info = { ...info, mode: params.mode };
     this.options.meta.update((file) => {
@@ -509,6 +520,8 @@ export class SessionHub {
       }
       return;
     }
+    // The account is the daemon's to pass on: no session's state holds it.
+    if (event.type === "account.changed") return;
     if (event.type === "session.changed") {
       const info = this.infos.get(event.sessionId);
       if (!info) return;

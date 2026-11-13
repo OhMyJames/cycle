@@ -1,12 +1,14 @@
-import { SESSION_MODES } from "@cycle/protocol";
+import { type ModelInfo, SESSION_MODES } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import type { Theme } from "../client/app.ts";
+import { host } from "../client/host.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
 import { MODE_LABELS } from "./composer.tsx";
 import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
+import { ProvidersSection } from "./providers.tsx";
 
 function Limit({
   label,
@@ -33,6 +35,16 @@ function Limit({
       </div>
     </div>
   );
+}
+
+/** Models under the name of whoever serves them, codex's own first. */
+function groupByProvider(models: ModelInfo[]): [string, ModelInfo[]][] {
+  const groups = new Map<string, ModelInfo[]>();
+  for (const model of models) {
+    const name = model.provider?.name ?? "Codex";
+    groups.set(name, [...(groups.get(name) ?? []), model]);
+  }
+  return [...groups];
 }
 
 function UsageChart() {
@@ -80,6 +92,7 @@ export function SettingsPage() {
   const account = useStore(app.account, (value) => value);
   const daemon = useStore(app.daemon, (value) => value);
   const models = useStore(app.models, (value) => value);
+  const login = useStore(app.login, (value) => value);
   const { theme, showReasoning } = useStore(app.view, (view) => ({
     theme: view.theme,
     showReasoning: view.showReasoning,
@@ -139,10 +152,14 @@ export function SettingsPage() {
               onChange={(event) => set({ model: event.currentTarget.value || null, effort: null })}
             >
               <option value="">Codex's choice (default)</option>
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
+              {groupByProvider(models).map(([name, group]) => (
+                <optgroup key={name} label={name}>
+                  {group.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </Setting>
@@ -175,13 +192,25 @@ export function SettingsPage() {
         <div className="card">
           {account === null ? (
             <div className="note">Reading the account…</div>
+          ) : login ? (
+            <Setting
+              title="Finish signing in in your browser"
+              note="The page that opened asks for your ChatGPT account. This updates when you are done."
+            >
+              <button type="button" className="button" onClick={() => host.openExternal(login.url)}>
+                Open it again
+              </button>
+              <button type="button" className="button" onClick={() => void app.cancelSignIn()}>
+                Cancel
+              </button>
+            </Setting>
           ) : account.kind === null ? (
             <Setting
               title="Not signed in"
-              note="Run `codex login` in a terminal, or set OPENAI_API_KEY before starting Cycle."
+              note="Sign in to use the models of your ChatGPT plan. An OPENAI_API_KEY set before Cycle starts works too."
             >
-              <button type="button" className="button" onClick={() => void app.refreshAccount()}>
-                Check again
+              <button type="button" className="button primary" onClick={() => void app.signIn()}>
+                Sign in with ChatGPT
               </button>
             </Setting>
           ) : (
@@ -197,6 +226,9 @@ export function SettingsPage() {
                 }
               >
                 <Icon name="check-circle" className="tone-success" />
+                <button type="button" className="button" onClick={() => void app.signOut()}>
+                  Sign out
+                </button>
               </Setting>
               {account.limits?.primary ? (
                 <Limit
@@ -215,6 +247,8 @@ export function SettingsPage() {
             </>
           )}
         </div>
+
+        <ProvidersSection />
 
         <h2>Usage</h2>
         <div className="card">

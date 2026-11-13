@@ -1,5 +1,6 @@
 import type {
   AccountInfo,
+  AccountLogin,
   ApprovalResponse,
   McpServerInfo,
   McpServerInput,
@@ -49,6 +50,8 @@ export type HarnessEvent =
   | { type: "session.changed"; sessionId: string; patch: Partial<HarnessSession> }
   /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
   | { type: "mcp.changed" }
+  /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */
+  | { type: "account.changed"; error: string | null }
   /** The harness itself stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; message: string };
 
@@ -148,6 +151,10 @@ export interface Harness {
   removeMarketplace(name: string): Promise<void>;
 
   readAccount(): Promise<AccountInfo>;
+  /** Starts a sign-in the owner finishes in a browser. `account.changed` follows. */
+  login(): Promise<AccountLogin>;
+  cancelLogin(id: string): Promise<void>;
+  logout(): Promise<void>;
 
   exec(argv: string[], options: ExecOptions): Promise<ExecResult>;
   readDirectory(path: string): Promise<DirectoryEntry[]>;

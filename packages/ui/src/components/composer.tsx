@@ -1,5 +1,4 @@
 import {
-  type ModelInfo,
   type Plan,
   SESSION_MODES,
   type SessionInfo,
@@ -18,6 +17,7 @@ import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Chevron } from "./items.tsx";
 import { PlanSteps } from "./plan.tsx";
 import { Menu, type MenuEntry, MenuList } from "./menu.tsx";
+import { ModelPicker } from "./model-picker.tsx";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
@@ -104,36 +104,6 @@ function ContextRing({ usage }: { usage: Usage | null }) {
       {percent}%
     </span>
   );
-}
-
-function modelEntries(
-  models: ModelInfo[],
-  current: { model: string | null; effort: string | null },
-  choose: (model: string, effort: string | null) => void,
-): MenuEntry[] {
-  const active =
-    models.find((model) => model.id === current.model) ?? models.find((m) => m.isDefault);
-  return [
-    { heading: "Model" },
-    ...models.map((model): MenuEntry => ({
-      label: model.isDefault ? `${model.name} (default)` : model.name,
-      sub: model.description,
-      checked: model.id === active?.id,
-      onSelect: () => choose(model.id, null),
-    })),
-    ...(active?.efforts.length
-      ? [
-          { separator: true } as const,
-          { heading: "Reasoning effort" } as const,
-          ...active.efforts.map((effort): MenuEntry => ({
-            label: effort.id === active.defaultEffort ? `${effort.id} (default)` : effort.id,
-            sub: effort.description,
-            checked: (current.effort ?? active.defaultEffort) === effort.id,
-            onSelect: () => choose(active.id, effort.id),
-          })),
-        ]
-      : []),
-  ];
 }
 
 /**
@@ -493,11 +463,6 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   const currentModel = info?.model || draft?.model || null;
   const currentEffort = (info ? info.effort : draft?.effort) ?? null;
   const mode = info?.mode ?? draft?.mode ?? "auto";
-  const modelName =
-    models.find((model) => model.id === currentModel)?.name ??
-    currentModel ??
-    models.find((model) => model.isDefault)?.name ??
-    "Model";
   const canSend = (text.trim().length > 0 || images.length > 0) && !sending;
   const archived = info?.archived ?? false;
 
@@ -615,16 +580,12 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
               }}
             />
           </label>
-          <Menu
-            side="top"
-            title="Model and reasoning effort"
-            entries={() =>
-              modelEntries(models, { model: currentModel, effort: currentEffort }, chooseModel)
-            }
-          >
-            <span className="fade-x">{modelName}</span>
-            {currentEffort ? <span className="muted">{currentEffort}</span> : null}
-          </Menu>
+          <ModelPicker
+            models={models}
+            current={{ model: currentModel, effort: currentEffort }}
+            begun={Boolean(sessionId)}
+            onChoose={chooseModel}
+          />
           <Menu
             side="top"
             title="How much the agent may do unasked"

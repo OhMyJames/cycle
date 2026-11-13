@@ -29,6 +29,10 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
   An MCP server's environment values count: the page is given their names only.
 - `/Applications/Cycle.app` is old-cycle's and may be in use. The installer writes only
   `Cycle Codex.app`, and only over an app whose identifier is `dev.cycle.codex`.
+  A provider's key goes from the page to the daemon once, and no wire method gives it back.
+- The gateway holds the reach of the owner's provider keys. It binds to loopback, checks `Host`, and
+  answers only its bearer. Never loosen any of the three. Why:
+  [decision note](.agents/notes/2026-11-13-providers-go-through-a-gateway-of-pi-ai.md).
 
 ## Testing
 
@@ -53,8 +57,9 @@ change in the real page, and drive it with Playwright when the change is in the 
 Cycle keeps its data in `CYCLE_HOME`, which defaults to `~/.cycle-codex` and must be an absolute path:
 `daemon.json` (where the running daemon is, and its token, mode 0600), `settings.json` (what new
 sessions start with, and the owner's projects), `sessions.json` (what only Cycle knows of each session:
-pin, unread, mode, model, worktree, the schedule that started it), `usage.json` (tokens per local day,
-numbers only), `schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
+pin, unread, mode, model, worktree, the schedule that started it), `providers.json` (the owner's model
+providers and their keys, mode 0600), `usage.json` (tokens per local day, numbers only),
+`schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
 [decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
 app's daemon printed, since its last start) and `worktrees/`.
 Conversations themselves are codex's, in `CODEX_HOME`: Cycle keeps no copy.
@@ -66,8 +71,10 @@ are codex's too, in its `config.toml`: Cycle keeps no list of its own.
 ```
 apps/desktop (Electron)      apps/daemon (Bun)                  harness/codex            codex app-server
  main: starts the daemon  →   SessionHub: frames, queue     →    wire ↔ model         →   threads, turns, items
- page: packages/ui        ←   Git, Terminals, Files, usage  ←    one child process    ←   exec, pty, fs, search
+ page: packages/ui        ←   Git, Terminals, Files, usage  ←    its child processes  ←   exec, pty, fs, search
             └──────────── packages/protocol: model, wire methods, the shared reducer ────────────┘
+
+ a second codex child, for the owner's model providers  →  packages/gateway: Responses API ↔ pi-ai  →  the provider
 ```
 
 The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the check enforces them.
@@ -76,8 +83,14 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   wire (`Methods`, `EventFrame`, `DaemonEvent`), the `Harness` interface, and `reduceSession`, which the
   daemon and the page both fold events with. It is platform-neutral: no runtime modules.
 - `harness/codex` is the only code that knows codex. `translate.ts` is the pure mapping; `codex-harness.ts`
-  drives one `codex app-server` child, starts it again if it dies, and brings a session back into it the
-  next time it is used.
+  drives `codex app-server` children (`process.ts`), starts one again if it dies, and brings a session
+  back into it the next time it is used. Codex runs one model provider per process and keeps a thread
+  with the provider it began on, so sessions on the owner's providers live in a second child, started
+  when first needed.
+- `packages/gateway` is the only code that knows pi-ai. It is a Responses API endpoint on loopback that
+  the second child takes for its model provider: `responses.ts` is the pure mapping to and from pi-ai's
+  conversation, `catalog.ts` the services and models pi-ai knows. A provider's model is
+  `<provider id>/<model id>` everywhere. The ChatGPT subscription is codex's own sign-in, not pi-ai's.
 - The daemon reaches the project only through the harness: git, files, search and terminals all run as
   codex `command/exec` and `fs/*` calls, so the daemon follows the agent wherever it runs. Why:
   [decision note](.agents/notes/2026-11-12-the-harness-is-the-machine.md).

@@ -3,30 +3,41 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexHarness } from "@cycle/harness-codex";
-import { type Daemon, startDaemon } from "../../src/index.ts";
+import {
+  type Daemon,
+  type OpenProviders,
+  diskFile,
+  openProviders,
+  startDaemon,
+} from "../../src/index.ts";
 import { type MockModel, startMockModel } from "./mock-model.ts";
 import { connect } from "./wire-client.ts";
 
 let model: MockModel;
 let daemon: Daemon;
 let root: string;
+let providers: OpenProviders;
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "cycle-connector-"));
   mkdirSync(join(root, "codex"));
   mkdirSync(join(root, "project"));
   model = startMockModel(() => ({ text: ["Done"] }));
+  providers = await openProviders(diskFile(join(root, "home", "providers.json")), "gateway-token");
   daemon = await startDaemon({
     harness: new CodexHarness({
       config: model.codexConfig,
       env: { CODEX_HOME: join(root, "codex") },
+      provider: providers.provider,
     }),
+    providers: providers.store,
     home: join(root, "home"),
   });
 });
 
 afterAll(async () => {
   await daemon?.stop();
+  providers?.stop();
   model?.stop();
   rmSync(root, { recursive: true, force: true });
 });
