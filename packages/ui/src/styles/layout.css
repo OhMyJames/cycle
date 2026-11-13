@@ -690,3 +690,167 @@
   font-family: var(--font-mono);
   font-size: 12px;
 }
+
+/* The model picker: providers in a rail, the chosen one's models beside it */
+.menu.model-picker {
+  display: flex;
+  width: 348px;
+  max-width: min(348px, 92vw);
+  padding: 0;
+  overflow: hidden;
+}
+
+.picker-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  overflow-y: auto;
+  background: var(--surface-message);
+}
+
+.rail-item {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  flex: none;
+}
+
+.rail-item:hover,
+.rail-item[aria-selected="true"] {
+  background: var(--surface-control-hover);
+  color: var(--text-primary);
+}
+
+.rail-item:disabled {
+  opacity: 0.35;
+  background: none;
+}
+
+.rail-item .mark {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.picker-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.picker-head {
+  padding: 8px 10px 4px 12px;
+  font-size: 13px;
+}
+
+.picker-search {
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.picker-search input {
+  width: 96px;
+  background: none;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  text-align: right;
+  font-size: 13px;
+}
+
+.picker-search input::placeholder {
+  color: var(--text-disabled);
+}
+
+.picker-list {
+  padding: 2px 6px 6px;
+  overflow-y: auto;
+  max-height: min(340px, 56vh);
+}
+
+.picker-row {
+  border-radius: 8px;
+  padding-right: 8px;
+}
+
+.picker-row:hover,
+.picker-row[data-chosen="true"] {
+  background: var(--surface-control-hover);
+}
+
+.picker-row > .row {
+  gap: 6px;
+}
+
+.picker-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 4px 0 8px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.effort-chip {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-control);
+  flex: none;
+}
+
+.picker-row[data-chosen="true"] .radio {
+  border: 4px solid var(--action-primary);
+}
+
+.effort-panel {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 0 8px;
+  padding: 8px 2px 10px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+
+.effort-panel > .row {
+  gap: 6px;
+}
+
+.effort-ends {
+  justify-content: space-between;
+}
+
+.effort-range {
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--action-primary);
+}
+
+.effort-ticks {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 7px;
+}
+
+.effort-ticks span {
+  width: 1px;
+  height: 5px;
+  background: var(--border-control);
+}
+
+.flip-y {
+  transform: rotate(180deg);
+}

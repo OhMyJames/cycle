@@ -1,12 +1,10 @@
 import {
-  type ModelInfo,
   type Plan,
   SESSION_MODES,
   type SessionInfo,
   type SessionMode,
   type Usage,
   activeTurn,
-  sameModelFamily,
 } from "@cycle/protocol";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CycleApp, Draft } from "../client/app.ts";
@@ -15,6 +13,7 @@ import { useApp } from "../context.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Menu, type MenuEntry, MenuList } from "./menu.tsx";
+import { ModelPicker } from "./model-picker.tsx";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
@@ -101,57 +100,6 @@ function ContextRing({ usage }: { usage: Usage | null }) {
       {percent}%
     </span>
   );
-}
-
-/** The models a session may use, under the provider that serves each. */
-function modelEntries(
-  models: ModelInfo[],
-  current: { model: string | null; effort: string | null },
-  choose: (model: string, effort: string | null) => void,
-  /** Whether the conversation has begun, and so stays with its kind of model. */
-  begun: boolean,
-): MenuEntry[] {
-  const known = models.find((model) => model.id === current.model);
-  const active = known ?? (current.model ? undefined : models.find((m) => m.isDefault));
-  const open = begun && active ? models.filter((model) => sameModelFamily(model, active)) : models;
-  const groups = new Map<string, ModelInfo[]>();
-  for (const model of open) {
-    const name = model.provider?.name ?? "Codex";
-    groups.set(name, [...(groups.get(name) ?? []), model]);
-  }
-  return [
-    ...[...groups].flatMap(([name, group]): MenuEntry[] => [
-      { heading: name },
-      ...group.map((model): MenuEntry => ({
-        label: model.isDefault ? `${model.name} (default)` : model.name,
-        ...(model.provider ? {} : { sub: model.description }),
-        checked: model.id === active?.id,
-        onSelect: () => choose(model.id, null),
-      })),
-    ]),
-    ...(open.length < models.length
-      ? [
-          { separator: true } as const,
-          {
-            heading: active?.provider
-              ? "Codex's own models need a new session"
-              : "Your providers' models need a new session",
-          } as const,
-        ]
-      : []),
-    ...(active?.efforts.length
-      ? [
-          { separator: true } as const,
-          { heading: "Reasoning effort" } as const,
-          ...active.efforts.map((effort): MenuEntry => ({
-            label: effort.id === active.defaultEffort ? `${effort.id} (default)` : effort.id,
-            ...(effort.description ? { sub: effort.description } : {}),
-            checked: (current.effort ?? active.defaultEffort) === effort.id,
-            onSelect: () => choose(active.id, effort.id),
-          })),
-        ]
-      : []),
-  ];
 }
 
 function PlanStrip({ plan }: { plan: Plan }) {
@@ -525,11 +473,6 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   const currentModel = info?.model || draft?.model || null;
   const currentEffort = (info ? info.effort : draft?.effort) ?? null;
   const mode = info?.mode ?? draft?.mode ?? "auto";
-  const modelName =
-    models.find((model) => model.id === currentModel)?.name ??
-    currentModel ??
-    models.find((model) => model.isDefault)?.name ??
-    "Model";
   const canSend = (text.trim().length > 0 || images.length > 0) && !sending;
   const archived = info?.archived ?? false;
 
@@ -647,21 +590,12 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
               }}
             />
           </label>
-          <Menu
-            side="top"
-            title="Model and reasoning effort"
-            entries={() =>
-              modelEntries(
-                models,
-                { model: currentModel, effort: currentEffort },
-                chooseModel,
-                Boolean(sessionId),
-              )
-            }
-          >
-            <span className="truncate">{modelName}</span>
-            {currentEffort ? <span className="muted">{currentEffort}</span> : null}
-          </Menu>
+          <ModelPicker
+            models={models}
+            current={{ model: currentModel, effort: currentEffort }}
+            begun={Boolean(sessionId)}
+            onChoose={chooseModel}
+          />
           <Menu
             side="top"
             title="How much the agent may do unasked"
