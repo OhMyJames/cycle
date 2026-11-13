@@ -538,7 +538,8 @@ export class CycleApp {
         break;
       case "account.changed":
         this.account.set(event.account);
-        this.login.set(null);
+        // Codex also says the account changed for reasons that end no sign-in.
+        if (event.error || event.account.kind) this.login.set(null);
         if (event.error) this.toast(`The sign-in did not finish: ${event.error}`, "error");
         break;
       case "models.changed":

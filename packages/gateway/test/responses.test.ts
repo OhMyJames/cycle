@@ -307,3 +307,32 @@ test("a provider's failure is reported, a stopped request is not, and too long a
   });
   expect(failure("r", "boom")).toMatchObject({ response: { error: { code: "server_error" } } });
 });
+
+test("what a model signed on a tool call returns with the call, to that model only", async () => {
+  const call = {
+    type: "toolCall",
+    id: "c1",
+    name: "exec_command",
+    arguments: {},
+    thoughtSignature: "SIGNED",
+  } as const;
+  const signatures = new Map();
+  const names = toContext({ model: "m", input: [] }, 0).names;
+  const answer = toResponseEvents(
+    play([{ type: "toolcall_end", contentIndex: 0, toolCall: call, partial: message([call]) }]),
+    "r1",
+    names,
+    ORIGIN,
+    signatures,
+  );
+  for await (const _ of answer);
+  const input = [{ type: "function_call", call_id: "c1", name: "exec_command", arguments: "{}" }];
+  const back = translate({ model: "m", input }, 0, ORIGIN, signatures).context.messages[0];
+  if (back?.role !== "assistant") throw new Error("expected the assistant");
+  expect(back.content[0]).toMatchObject({ thoughtSignature: "SIGNED" });
+  expect(back.provider).toBe("anthropic");
+  const other = { ...ORIGIN, model: "another" };
+  const moved = translate({ model: "m", input }, 0, other, signatures).context.messages[0];
+  if (moved?.role !== "assistant") throw new Error("expected the assistant");
+  expect(moved.content[0]).not.toHaveProperty("thoughtSignature");
+});

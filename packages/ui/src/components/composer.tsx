@@ -111,8 +111,8 @@ function modelEntries(
   /** Whether the conversation has begun, and so stays with its kind of model. */
   begun: boolean,
 ): MenuEntry[] {
-  const active =
-    models.find((model) => model.id === current.model) ?? models.find((m) => m.isDefault);
+  const known = models.find((model) => model.id === current.model);
+  const active = known ?? (current.model ? undefined : models.find((m) => m.isDefault));
   const open = begun && active ? models.filter((model) => sameModelFamily(model, active)) : models;
   const groups = new Map<string, ModelInfo[]>();
   for (const model of open) {

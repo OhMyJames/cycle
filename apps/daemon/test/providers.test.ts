@@ -58,6 +58,9 @@ test("changing a provider keeps its id and its key unless a new key is given", a
   // The id names its models in every session, and what it is for was chosen once.
   expect(renamed).toMatchObject({ id, name: "Renamed", kind: "custom", hasKey: true });
   expect(providers.configs()[0]?.apiKey).toBe("sk-secret");
+  // The key was given for one address: it does not follow the provider to another.
+  expect(providers.save({ ...noKey, id, baseUrl: "http://elsewhere.test" }).hasKey).toBe(false);
+  expect(providers.save({ ...custom, id }).hasKey).toBe(true);
   expect(providers.save({ ...custom, id, apiKey: "" }).hasKey).toBe(false);
   expect(providers.save({ ...custom, name: "My Ollama" }).id).toBe("my-ollama-2");
   providers.remove(id);
@@ -89,7 +92,10 @@ test("a known service takes its models from the catalog, not from the page", asy
     models: [{ ...known, contextWindow: 5, name: "Renamed by the page" }],
   });
   expect(saved).toMatchObject({ id: "anthropic", name: "Anthropic", api: null, models: [known] });
+  // A model the catalog does not have is let go, and a provider left with none is refused.
+  const both = providers.save({ ...saved, models: [known, { ...known, id: "made-up" }] });
+  expect(both.models).toEqual([known]);
   expect(() => providers.save({ ...saved, models: [{ ...known, id: "made-up" }] })).toThrow(
-    "not a model this service is known to serve",
+    "at least one model",
   );
 });

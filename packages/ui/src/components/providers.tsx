@@ -113,9 +113,9 @@ function CustomModels({
                 className="field tabular short"
                 inputMode="numeric"
                 aria-label="Context window, in tokens"
-                value={model.contextWindow}
+                value={model.contextWindow || ""}
                 onChange={(event) =>
-                  patch(index, { contextWindow: wholeNumber(event.currentTarget.value, 1) })
+                  patch(index, { contextWindow: wholeNumber(event.currentTarget.value, 0) })
                 }
               />
             </label>
@@ -125,9 +125,9 @@ function CustomModels({
                 className="field tabular short"
                 inputMode="numeric"
                 aria-label="Most tokens in one answer"
-                value={model.maxTokens}
+                value={model.maxTokens || ""}
                 onChange={(event) =>
-                  patch(index, { maxTokens: wholeNumber(event.currentTarget.value, 1) })
+                  patch(index, { maxTokens: wholeNumber(event.currentTarget.value, 0) })
                 }
               />
             </label>
@@ -423,26 +423,26 @@ export function ProvidersSection() {
   const app = useApp();
   const providers = useStore(app.providers, (value) => value);
   const [kinds, setKinds] = useState<ProviderKind[]>([]);
-  /** The id of the provider being changed, "new" for one being added, or null. */
-  const [editing, setEditing] = useState<string | null>(null);
+  /** The provider being changed, `{ id: null }` for one being added, or null. */
+  const [editing, setEditing] = useState<{ id: string | null } | null>(null);
   useEffect(() => {
     app.request("providers.kinds", {}).then(
       (answer) => setKinds(answer.kinds),
       () => {},
     );
   }, [app]);
-  const edited = providers.find((provider) => provider.id === editing) ?? null;
+  const edited = providers.find((provider) => provider.id === editing?.id) ?? null;
   return (
     <>
       <h2>Model providers</h2>
-      {providers.length || editing !== "new" ? (
+      {providers.length || !editing ? (
         <div className="card">
           {providers.map((provider) =>
-            provider.id === editing ? null : (
+            provider.id === editing?.id ? null : (
               <ProviderRow
                 key={provider.id}
                 provider={provider}
-                onEdit={() => setEditing(provider.id)}
+                onEdit={() => setEditing({ id: provider.id })}
               />
             ),
           )}
@@ -453,7 +453,7 @@ export function ProvidersSection() {
                   ? "Their models appear in the model menu, under each provider's name."
                   : "Use models from Anthropic, Google, OpenRouter and others with your own key, or any OpenAI- or Anthropic-compatible endpoint."}
               </div>
-              <button type="button" className="button" onClick={() => setEditing("new")}>
+              <button type="button" className="button" onClick={() => setEditing({ id: null })}>
                 <Icon name="plus" /> Add provider
               </button>
             </div>
@@ -462,7 +462,7 @@ export function ProvidersSection() {
       ) : null}
       {editing !== null ? (
         <ProviderForm
-          key={editing}
+          key={editing.id ?? ""}
           provider={edited}
           kinds={kinds}
           onDone={() => setEditing(null)}

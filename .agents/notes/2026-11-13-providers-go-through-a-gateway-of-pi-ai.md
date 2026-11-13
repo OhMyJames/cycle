@@ -65,13 +65,20 @@ Two facts about codex shaped the answer. Both were measured, not read:
   shell commands. The gateway already carries free-text tools, should codex offer one.
 - Codex's web search and image generation are tools of OpenAI's servers. They are left out of what a
   provider's model is offered.
-- A provider's refusal before any answer (a bad key, an unknown model) is an HTTP error, which codex
-  reports once. A failure mid-answer is `response.failed`, which codex retries. A conversation too
+- A provider's refusal before any answer that asking again cannot mend (400, 401, 403, 404, 422: a
+  bad key, an unknown model) is an HTTP error, which codex reports once. Any other failure is
+  `response.failed`, which codex retries. A conversation too
   long for the model is reported as `context_length_exceeded`, so codex compacts and asks again.
-- The agent's commands run as the owner, so they can read `providers.json` as they can read
-  `daemon.json`. The gateway's token is no boundary against the agent, only against other pages and
-  processes that are not the owner's.
+- Codex hands its environment to the commands the agent runs, so the second process is started with
+  `shell_environment_policy.exclude` naming the token. This replaces an `exclude` of the owner's own
+  codex config in that process.
+- The agent's commands still run as the owner and can read `providers.json`, as they can read
+  `daemon.json`. The files' mode keeps out other users, not the agent.
+- A key is kept for the address it was given for. Saving a provider with another address and no key
+  drops the key, so nobody who reaches the daemon can have it sent elsewhere.
 - A tool call's provider-specific signature (Gemini's `thoughtSignature`) has no field in the
-  Responses API and is not sent back. pi-ai repairs a history without it.
+  Responses API. The gateway remembers the last 4000 by call id, in memory, and puts each back on its
+  call. After the daemon restarts they are gone, and a model that insists on them may refuse the turn
+  that continues an unfinished tool call.
 - Not verified: any real provider. The path is tested against scripted OpenAI and Anthropic endpoints
   and the real codex, not against a live service.

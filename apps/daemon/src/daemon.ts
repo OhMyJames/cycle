@@ -119,6 +119,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   };
   const providers = new Providers(options.providers, (list: ModelProvider[]) => {
     push({ type: "providers.changed", providers: list });
+    // A provider's model has its provider's id before a slash. One that is gone is no default.
+    const chosen = settings.value.model;
+    if (chosen?.includes("/") && !providers.models().some((model) => model.id === chosen)) {
+      setSettings((value) => {
+        value.model = null;
+        value.effort = null;
+      });
+    }
     pushModels();
   });
   harness.onEvent((event) => {

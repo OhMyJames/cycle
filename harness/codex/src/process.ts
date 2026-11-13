@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
 import { JsonRpcPeer, type RpcId } from "./rpc.ts";
 
-export type CodexConfig = Record<string, string | number | boolean>;
+/** A string or a list of strings is written as TOML; anything else as it is. */
+export type CodexConfig = Record<string, string | number | boolean | string[]>;
 
 export interface CodexProcessSpec {
   /** Path to the `codex` executable. Defaults to the bundled `@openai/codex`. */
@@ -80,7 +81,7 @@ export class CodexProcess {
     const bin = this.spec.bin ?? resolveCodexBin();
     const overrides = Object.entries(this.spec.config).flatMap(([key, value]) => [
       "-c",
-      `${key}=${typeof value === "string" ? JSON.stringify(value) : value}`,
+      `${key}=${typeof value === "number" || typeof value === "boolean" ? value : JSON.stringify(value)}`,
     ]);
     // A .js entrypoint (the npm package's launcher) is run with our own runtime.
     const cmd = /\.[cm]?js$/.test(bin) ? [process.execPath, bin] : [bin];

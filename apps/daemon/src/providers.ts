@@ -70,10 +70,10 @@ function cleanModels(kind: string, models: ProviderModel[]): ProviderModel[] {
     if (!id || seen.has(id)) continue;
     seen.add(id);
     if (kind !== CUSTOM_PROVIDER_KIND) {
-      // What a known service's model can do is the catalog's to say, not the page's.
+      // What a known service's model can do is the catalog's to say, not the page's. One the
+      // catalog no longer has is let go, so a provider chosen before it left can still be saved.
       const entry = known.get(id);
-      if (!entry) throw new ProviderError(`${id} is not a model this service is known to serve.`);
-      clean.push(entry);
+      if (entry) clean.push(entry);
       continue;
     }
     clean.push({
@@ -153,7 +153,14 @@ export class Providers {
       kind,
       api: custom ? draft.api : null,
       baseUrl,
-      apiKey: key === undefined ? (existing?.apiKey ?? null) : key || null,
+      // A key was given for one address. At another it must be given again, or whoever can
+      // reach the daemon could have it sent wherever they like.
+      apiKey:
+        key === undefined
+          ? existing && existing.baseUrl === baseUrl
+            ? existing.apiKey
+            : null
+          : key || null,
       models: cleanModels(kind, draft.models),
     };
     this.store.update((file) => {

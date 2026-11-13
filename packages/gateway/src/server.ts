@@ -14,6 +14,7 @@ import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.l
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { CUSTOM_PI_PROVIDER, type Effort } from "./catalog.ts";
 import {
+  type CallSignatures,
   failure,
   type ResponseEvent,
   type ResponsesRequest,
@@ -82,6 +83,9 @@ export const piStream: ModelStream = (model, context, request) =>
     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
   });
 
+/** How pi-ai begins a provider's answer that the same request would get again. */
+const REFUSALS = /^(400|401|403|404|422)\b/;
+
 function digest(value: string): Buffer {
   return createHash("sha256").update(value).digest();
 }
@@ -105,9 +109,11 @@ async function firstEvents(
     head.push(next.value);
     if (next.value.type === "response.failed") {
       const response = next.value["response"] as { error: { code: string; message: string } };
-      // Codex makes room and asks again when the conversation is too long: that one it must read.
-      if (response.error.code === "context_length_exceeded") return { head, refused: null };
-      return { head, refused: response.error.message };
+      // Only what asking again cannot mend is refused. The rest codex reads and retries, and
+      // when the conversation is too long it makes room first.
+      const final = REFUSALS.test(response.error.message);
+      const overflow = response.error.code === "context_length_exceeded";
+      return { head, refused: final && !overflow ? response.error.message : null };
     }
     if (next.value.type !== "response.created") return { head, refused: null };
   }
@@ -122,6 +128,7 @@ async function firstEvents(
 export function startGateway(options: GatewayOptions): Gateway {
   const stream = options.stream ?? piStream;
   const expected = digest(`Bearer ${options.token}`);
+  const signatures: CallSignatures = new Map();
   const server = Bun.serve({
     port: options.port ?? 0,
     hostname: "127.0.0.1",
@@ -142,6 +149,7 @@ export function startGateway(options: GatewayOptions): Gateway {
       } catch {
         return refuse(400, "The request is not JSON.");
       }
+      if (!Array.isArray(body?.input)) return refuse(400, "The request has no input.");
       const target = options.resolve(body.model);
       if (!target) {
         return refuse(
@@ -156,7 +164,7 @@ export function startGateway(options: GatewayOptions): Gateway {
         model: target.model.id,
         contextWindow: target.model.contextWindow,
       };
-      const translated = toContext(body, Date.now(), origin);
+      const translated = toContext(body, Date.now(), origin, signatures);
       const events = toResponseEvents(
         stream(target.model, translated.context, {
           apiKey: target.apiKey,
@@ -167,6 +175,7 @@ export function startGateway(options: GatewayOptions): Gateway {
         responseId,
         translated.names,
         origin,
+        signatures,
       );
       let first: Awaited<ReturnType<typeof firstEvents>>;
       try {

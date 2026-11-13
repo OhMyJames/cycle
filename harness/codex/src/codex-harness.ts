@@ -154,6 +154,8 @@ export class CodexHarness implements Harness {
               [`model_providers.${provider.id}.base_url`]: provider.baseUrl,
               [`model_providers.${provider.id}.wire_api`]: "responses",
               [`model_providers.${provider.id}.env_key`]: PROVIDER_TOKEN_ENV,
+              // Codex hands its environment to the commands the agent runs. Not this.
+              "shell_environment_policy.exclude": [PROVIDER_TOKEN_ENV],
             },
             env: { ...options.env, [PROVIDER_TOKEN_ENV]: provider.token },
           },
@@ -523,8 +525,8 @@ export class CodexHarness implements Harness {
     for (const [approvalId, pending] of this.approvals) {
       if (mine(pending.sessionId)) this.approvals.delete(approvalId);
     }
-    if (extra) {
-      // The other process carries on, so only this one's turns are told they ended.
+    // The other process carries on, so only this one's turns are told they ended.
+    if (this.extra) {
       for (const [sessionId, turnId] of this.activeTurns) {
         if (!mine(sessionId)) continue;
         this.activeTurns.delete(sessionId);
@@ -537,16 +539,16 @@ export class CodexHarness implements Harness {
           durationMs: null,
         });
       }
-      return;
     }
-    for (const sessionId of this.activeTurns.keys()) {
-      if (mine(sessionId)) this.activeTurns.delete(sessionId);
-    }
+    if (extra) return;
     for (const [id, terminal] of this.terminals) {
       this.terminals.delete(id);
       terminal.onData(new TextEncoder().encode("\r\n[the agent process exited]\r\n"));
       terminal.onExit(null);
     }
+    // With one process, its end is every session's, and the daemon is told so in one event.
+    if (this.extra) return;
+    this.activeTurns.clear();
     this.emit({ type: "harness.exited", message });
   }
 

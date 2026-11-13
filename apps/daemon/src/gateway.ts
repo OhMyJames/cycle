@@ -1,4 +1,4 @@
-import { modelInfos, piModel, splitModelRef, startGateway } from "@cycle/gateway";
+import { modelInfos, modelRef, piModel, splitModelRef, startGateway } from "@cycle/gateway";
 import type { ExtraProvider } from "@cycle/harness-codex";
 import type { ProvidersFile } from "./providers.ts";
 import { JsonStore, type TextFile } from "./store.ts";
@@ -34,12 +34,15 @@ export async function openProviders(file: TextFile, token: string): Promise<Open
       baseUrl: gateway.url,
       token,
       models: () =>
-        store.value.providers.flatMap((config) =>
-          modelInfos(config).map((info, index) => ({
+        store.value.providers.flatMap((config) => {
+          const windows = new Map(
+            config.models.map((model) => [modelRef(config.id, model.id), model.contextWindow]),
+          );
+          return modelInfos(config).map((info) => ({
             info,
-            contextWindow: config.models[index]?.contextWindow ?? 0,
-          })),
-        ),
+            contextWindow: windows.get(info.id) ?? 0,
+          }));
+        }),
     },
     stop: () => gateway.stop(),
   };

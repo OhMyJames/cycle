@@ -48,6 +48,15 @@ export interface Origin {
   model: string;
 }
 
+/**
+ * What a model signed on a tool call, by the call's id. The Responses API has no field to
+ * carry it, and some models (Gemini) refuse a call sent back without it.
+ */
+export type CallSignatures = Map<string, { signature: string; origin: Origin }>;
+
+/** shortcut: signatures are forgotten when the daemon stops; upgrade when codex returns a call's own id. */
+const MAX_SIGNATURES = 4000;
+
 export interface Translated {
   context: Context;
   effort: Effort | null;
@@ -178,7 +187,12 @@ function toThinking(item: Json): { block: ThinkingContent; origin: Origin } | nu
 }
 
 /** What codex asks of the model, as pi-ai takes it. */
-export function toContext(request: ResponsesRequest, now: number, target: Origin): Translated {
+export function toContext(
+  request: ResponsesRequest,
+  now: number,
+  target: Origin,
+  signatures: CallSignatures = new Map(),
+): Translated {
   const names: ToolNames = { namespaced: new Map(), freeform: new Set() };
   const tools = toTools(request.tools ?? [], names);
   const system: string[] = request.instructions ? [request.instructions] : [];
@@ -206,7 +220,16 @@ export function toContext(request: ResponsesRequest, now: number, target: Origin
   };
   const call = (id: string, name: string, args: JsonObject) => {
     toolNames.set(id, name);
-    say({ type: "toolCall", id, name, arguments: args });
+    const signed = signatures.get(id);
+    const own = signed && sameOrigin(signed.origin, target);
+    say({
+      type: "toolCall",
+      id,
+      name,
+      arguments: args,
+      ...(own ? { thoughtSignature: signed.signature } : {}),
+    });
+    if (own) Object.assign(assistant ?? {}, target);
   };
   const result = (id: string, output: unknown) => {
     assistant = null;
@@ -355,6 +378,7 @@ export async function* toResponseEvents(
   responseId: string,
   names: ToolNames,
   origin: Origin & { contextWindow: number },
+  signatures: CallSignatures = new Map(),
 ): AsyncGenerator<ResponseEvent> {
   yield { type: "response.created", response: { id: responseId } };
   // One output item per block of the answer, in the order the blocks began.
@@ -441,6 +465,16 @@ export async function* toResponseEvents(
         break;
       }
       case "toolcall_end":
+        if (event.toolCall.thoughtSignature) {
+          signatures.set(event.toolCall.id, {
+            signature: event.toolCall.thoughtSignature,
+            origin: { api: origin.api, provider: origin.provider, model: origin.model },
+          });
+          for (const oldest of signatures.keys()) {
+            if (signatures.size <= MAX_SIGNATURES) break;
+            signatures.delete(oldest);
+          }
+        }
         yield {
           type: "response.output_item.done",
           output_index: event.contentIndex,
