@@ -27,9 +27,9 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
   for the owner.
 - No token, key or account secret may reach a page's storage beyond the connection token, or a log.
   An MCP server's environment values count: the page is given their names only.
+  A provider's key goes from the page to the daemon once, and no wire method gives it back.
 - `/Applications/Cycle.app` is old-cycle's and may be in use. The installer writes only
   `Cycle Codex.app`, and only over an app whose identifier is `dev.cycle.codex`.
-  A provider's key goes from the page to the daemon once, and no wire method gives it back.
 - The gateway holds the reach of the owner's provider keys. It binds to loopback, checks `Host`, and
   answers only its bearer. Never loosen any of the three. Why:
   [decision note](.agents/notes/2026-11-13-providers-go-through-a-gateway-of-pi-ai.md).
