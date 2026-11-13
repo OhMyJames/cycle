@@ -121,3 +121,11 @@ test("the history is each session a schedule started and each run that started n
     ["Yesterday", 2],
   ]);
 });
+
+test("a once that already ran is turned on again by a time still to come", () => {
+  const ran = schedule({ enabled: false, timing: { kind: "once", at: at(1, 9) } });
+  const draft = draftOf(ran, "", now);
+  expect(inputOf(draft, ran, now).enabled).toBe(false);
+  const later = { ...draft, at: "2030-01-01T09:00" };
+  expect(inputOf(later, ran, now).enabled).toBe(true);
+});

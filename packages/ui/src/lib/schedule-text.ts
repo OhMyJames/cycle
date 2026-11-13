@@ -144,17 +144,23 @@ function timingOf(draft: ScheduleDraft, existing: Schedule | null, now: Date): S
 
 /** What the form says, for the daemon. */
 export function inputOf(draft: ScheduleDraft, existing: Schedule | null, now: Date): ScheduleInput {
+  const timing = timingOf(draft, existing, now);
+  // A `once` that ran turned itself off: giving it a time still to come turns it on again.
+  const rearmed =
+    timing.kind === "once" &&
+    timing.at > now.getTime() &&
+    !(existing?.timing.kind === "once" && existing.timing.at === timing.at);
   return {
     ...(existing ? { id: existing.id } : {}),
     name: draft.name.trim(),
-    enabled: draft.enabled,
+    enabled: draft.enabled || rearmed,
     prompt: draft.prompt.trim(),
     cwd: draft.cwd,
     worktree: draft.worktree,
     model: draft.model,
     effort: draft.effort,
     mode: draft.mode,
-    timing: timingOf(draft, existing, now),
+    timing,
   };
 }
 

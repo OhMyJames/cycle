@@ -430,7 +430,11 @@ export class CycleApp {
   /** Starts a server's sign-in and opens where the owner finishes it. */
   async loginMcpServer(name: string): Promise<void> {
     const answer = await this.attempt(this.request("mcp.login", { name }));
-    if (answer) host.openExternal(answer.url);
+    if (!answer) return;
+    // A browser tab may refuse a window opened this long after the press, and does not say so.
+    if (!host.openExternal(answer.url)) {
+      this.toast(`If no window opened, sign in at ${answer.url}`);
+    }
   }
 
   installPlugin(marketplace: string, name: string): Promise<boolean> {
@@ -454,6 +458,11 @@ export class CycleApp {
   }
 
   // Schedules
+
+  async loadSchedules(): Promise<void> {
+    const answer = await this.attempt(this.request("schedule.list", {}));
+    if (answer) this.schedules.set(answer.schedules);
+  }
 
   async putSchedule(input: ScheduleInput): Promise<Schedule | null> {
     return this.attempt(this.request("schedule.put", input));
@@ -505,10 +514,6 @@ export class CycleApp {
         () => {},
       );
       void this.refreshAccount();
-      void this.request("schedule.list", {}).then(
-        ({ schedules }) => this.schedules.set(schedules),
-        () => {},
-      );
     } catch (error) {
       this.toast(error instanceof Error ? error.message : String(error), "error");
     }

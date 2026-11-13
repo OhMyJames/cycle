@@ -419,7 +419,9 @@ export function Thread({ sessionId }: { sessionId: string }) {
   if (conversation.error) {
     return (
       <div className="thread-empty">
-        <div className="error-box">{conversation.error}</div>
+        <div className="notice" data-level="error" role="alert">
+          {conversation.error}
+        </div>
       </div>
     );
   }

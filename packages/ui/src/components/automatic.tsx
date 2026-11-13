@@ -1,5 +1,5 @@
 import type { Schedule } from "@cycle/protocol";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename } from "../lib/format.ts";
@@ -97,6 +97,10 @@ export function AutomaticPage() {
   const app = useApp();
   const schedules = useStore(app.schedules, (value) => value);
   const sessions = useStore(app.sessions, (value) => value.byId);
+  const connected = useStore(app.connection, (status) => status === "open");
+  useEffect(() => {
+    if (connected) void app.loadSchedules();
+  }, [app, connected]);
   const [view, setView] = useState<AutomaticView>({ kind: "list" });
   const [deleting, setDeleting] = useState<Schedule | null>(null);
   const [filter, setFilter] = useState(ALL);

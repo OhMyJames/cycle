@@ -168,8 +168,10 @@ function PluginRow({ plugin, marketplace }: { plugin: PluginInfo; marketplace: s
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<PluginDetail | null>(null);
+  // Read each time it opens, so a failed read is tried again and an install shows what it brought.
   useEffect(() => {
-    if (!open || detail) return;
+    if (!open) return;
+    setDetail(null);
     let current = true;
     void app
       .attempt(app.request("plugins.read", { marketplace, name: plugin.name }))
@@ -177,7 +179,7 @@ function PluginRow({ plugin, marketplace }: { plugin: PluginInfo; marketplace: s
     return () => {
       current = false;
     };
-  }, [app, open, detail, marketplace, plugin.name]);
+  }, [app, open, marketplace, plugin.name, plugin.installed]);
   const during = (work: Promise<unknown>) => {
     setBusy(true);
     void work.finally(() => setBusy(false));

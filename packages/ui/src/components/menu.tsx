@@ -25,6 +25,9 @@ export type MenuEntry =
   | { separator: true }
   | { heading: string };
 
+/** Where popups are drawn: over the page, inside the root that the fades are watched in. */
+const overlayRoot = (): Element => document.querySelector(".app") ?? document.body;
+
 function isItem(entry: MenuEntry): entry is Extract<MenuEntry, { label: string }> {
   return "label" in entry;
 }
@@ -165,7 +168,7 @@ export function Menu({
       top: Math.max(8, Math.min(top, window.innerHeight - offsetHeight - 8)),
     });
   }, [open, side, align, count]);
-  const items = list.filter(isItem);
+  const items = list.filter(isItem).filter((entry) => !entry.disabled);
   const pick = (entry: Extract<MenuEntry, { label: string }>) => {
     setOpen(false);
     entry.onSelect();
@@ -216,7 +219,7 @@ export function Menu({
             >
               <MenuList entries={list} active={active} onPick={pick} />
             </div>,
-            document.body,
+            overlayRoot(),
           )
         : null}
     </span>
@@ -244,7 +247,8 @@ export function Dialog({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  // Drawn over the whole window, so no scroller or mask it was opened from clips it.
+  return createPortal(
     <div
       className={top ? "scrim top" : "scrim"}
       onPointerDown={(event) => {
@@ -259,6 +263,7 @@ export function Dialog({
       >
         {children}
       </div>
-    </div>
+    </div>,
+    overlayRoot(),
   );
 }
