@@ -1,6 +1,12 @@
 import type { SessionInfo } from "@cycle/protocol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type CycleApp, type PageId, projectOf, sessionTitle } from "../client/app.ts";
+import {
+  type CycleApp,
+  type PageId,
+  type SettingsSection,
+  projectOf,
+  sessionTitle,
+} from "../client/app.ts";
 import { host } from "../client/host.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -343,12 +349,14 @@ function Footer() {
           <span className="fade-x">{who}</span>
         </Menu>
         {usage && usage.tokens.total > 0 ? (
-          <span
-            className="meta muted tabular usage-today"
+          <button
+            type="button"
+            className="ghost meta muted tabular usage-today"
             title={`Today: ${usage.tokens.input.toLocaleString()} in, ${usage.tokens.output.toLocaleString()} out, ${usage.turns} turns`}
+            onClick={() => app.setView({ page: "settings", settingsSection: "account" })}
           >
             {compactNumber(usage.tokens.total)}
-          </span>
+          </button>
         ) : null}
       </div>
     </footer>
@@ -421,7 +429,69 @@ function Archived({ onDelete }: { onDelete(info: SessionInfo): void }) {
   );
 }
 
+const SETTINGS: { section: SettingsSection; label: string; icon: IconName }[] = [
+  { section: "general", label: "General", icon: "sliders" },
+  { section: "account", label: "Account and usage", icon: "user" },
+  { section: "providers", label: "Model providers", icon: "sparkle" },
+  { section: "about", label: "About", icon: "info" },
+];
+
+/** The sidebar while Settings is open: the way back, then its sections. */
+function SettingsSidebar() {
+  const app = useApp();
+  const section = useStore(app.view, (view) => view.settingsSection);
+  return (
+    <aside className="sidebar" data-inset={host.insetTitleBar()}>
+      <div className="sidebar-top">
+        <button
+          type="button"
+          className="icon-button"
+          title="Hide sidebar (⌘B)"
+          aria-label="Hide sidebar"
+          onClick={() => app.setView({ sidebar: false })}
+        >
+          <Icon name="panel-left" />
+        </button>
+      </div>
+      <nav className="sidebar-nav" aria-label="Settings">
+        <button type="button" className="nav-row" onClick={() => app.setView({ page: "thread" })}>
+          <span className="nav-icon">
+            <Icon name="arrow-left" />
+          </span>
+          <span className="grow fade-x">Back to sessions</span>
+          <span className="nav-trailing">
+            <kbd>Esc</kbd>
+          </span>
+        </button>
+      </nav>
+      <div className="rule inset" />
+      <nav className="sidebar-nav" aria-label="Settings sections">
+        {SETTINGS.map((each) => (
+          <button
+            key={each.section}
+            type="button"
+            className="nav-row"
+            aria-current={section === each.section ? "page" : undefined}
+            onClick={() => app.setView({ settingsSection: each.section })}
+          >
+            <span className="nav-icon">
+              <Icon name={each.icon} />
+            </span>
+            <span className="grow fade-x">{each.label}</span>
+          </button>
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
 export function Sidebar() {
+  const app = useApp();
+  const settings = useStore(app.view, (view) => view.page === "settings");
+  return settings ? <SettingsSidebar /> : <SessionSidebar />;
+}
+
+function SessionSidebar() {
   const app = useApp();
   const sessions = useStore(app.sessions, (value) => value);
   const projectsSetting = useStore(app.settings, (settings) => settings?.projects);

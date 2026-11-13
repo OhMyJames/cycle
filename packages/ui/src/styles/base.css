@@ -665,6 +665,15 @@ input::placeholder {
   line-height: var(--text-caption-line);
   white-space: normal;
 }
+/* A long list's row: the name, then what it is, on one line that fades. */
+.menu-item .one-line {
+  display: block;
+  white-space: nowrap;
+}
+.menu-item .detail {
+  margin-left: 10px;
+  color: var(--text-muted);
+}
 .menu-label {
   padding: 6px 8px 2px;
   color: var(--text-muted);

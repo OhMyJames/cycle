@@ -13,6 +13,8 @@ export type MenuEntry =
   | {
       label: string;
       sub?: string;
+      /** What it is, after its label on the same line, where a list is long. */
+      detail?: string;
       icon?: IconName;
       hint?: string;
       checked?: boolean;
@@ -104,12 +106,19 @@ export function MenuList({
         onClick={() => onPick(entry)}
       >
         {entry.icon ? <Icon name={entry.icon} /> : icons ? <span className="icon-space" /> : null}
-        <span className="grow">
-          <span className="fade-x" style={{ display: "block" }}>
-            {entry.label}
+        {entry.detail ? (
+          <span className="grow one-line fade-x" title={entry.detail}>
+            <span>{entry.label}</span>
+            <span className="detail">{entry.detail}</span>
           </span>
-          {entry.sub ? <span className="sub">{entry.sub}</span> : null}
-        </span>
+        ) : (
+          <span className="grow">
+            <span className="fade-x" style={{ display: "block" }}>
+              {entry.label}
+            </span>
+            {entry.sub ? <span className="sub">{entry.sub}</span> : null}
+          </span>
+        )}
         {entry.hint ? <span className="hint">{entry.hint}</span> : null}
         {entry.checked ? <Icon name="check" className="check" /> : null}
       </button>
