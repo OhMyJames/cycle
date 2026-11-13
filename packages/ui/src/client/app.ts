@@ -1,5 +1,6 @@
 import {
   type AccountInfo,
+  type AccountLogin,
   type ApprovalResponse,
   type DaemonEvent,
   type DaemonInfo,
@@ -8,6 +9,7 @@ import {
   type EventFrame,
   type MethodName,
   type ModelInfo,
+  type ModelProvider,
   type Params,
   type Result,
   type SessionInfo,
@@ -115,6 +117,9 @@ export class CycleApp {
   readonly settings = new Store<Settings | null>(null);
   readonly models = new Store<ModelInfo[]>([]);
   readonly account = new Store<AccountInfo | null>(null);
+  /** A sign-in the owner is finishing in a browser. */
+  readonly login = new Store<AccountLogin | null>(null);
+  readonly providers = new Store<ModelProvider[]>([]);
   readonly usage = new Store<DayUsage | null>(null);
   readonly terminals = new Store<Record<string, TerminalInfo[]>>({});
   readonly toasts = new Store<Toast[]>([]);
@@ -368,6 +373,26 @@ export class CycleApp {
     }
   }
 
+  /** Starts a ChatGPT sign-in and opens its page. The daemon says when it ends. */
+  async signIn(): Promise<void> {
+    const login = await this.attempt(this.request("account.login", {}));
+    if (!login) return;
+    this.login.set(login);
+    host.openExternal(login.url);
+  }
+
+  async cancelSignIn(): Promise<void> {
+    const login = this.login.get();
+    if (!login) return;
+    this.login.set(null);
+    await this.request("account.login.cancel", { id: login.id }).catch(() => {});
+  }
+
+  async signOut(): Promise<void> {
+    await this.attempt(this.request("account.logout", {}));
+    await this.refreshAccount();
+  }
+
   // Terminals
 
   onTerminalOutput(id: string, listener: (data: Uint8Array) => void): () => void {
@@ -401,6 +426,10 @@ export class CycleApp {
         void this.follow(view.sessionId);
       void this.request("models.list", {}).then(
         ({ models }) => this.models.set(models),
+        () => {},
+      );
+      void this.request("providers.list", {}).then(
+        ({ providers }) => this.providers.set(providers),
         () => {},
       );
       void this.refreshAccount();
@@ -506,6 +535,17 @@ export class CycleApp {
         break;
       case "settings.changed":
         this.settings.set(event.settings);
+        break;
+      case "account.changed":
+        this.account.set(event.account);
+        this.login.set(null);
+        if (event.error) this.toast(`The sign-in did not finish: ${event.error}`, "error");
+        break;
+      case "models.changed":
+        this.models.set(event.models);
+        break;
+      case "providers.changed":
+        this.providers.set(event.providers);
         break;
       case "terminals.changed":
         this.terminals.update((all) => ({ ...all, [event.sessionId ?? ""]: event.terminals }));

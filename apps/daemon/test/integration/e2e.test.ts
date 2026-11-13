@@ -4,12 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexHarness } from "@cycle/harness-codex";
 import { type SessionState, reduceSession } from "@cycle/protocol";
-import { type Daemon, startDaemon } from "../../src/index.ts";
+import {
+  type Daemon,
+  diskFile,
+  type OpenProviders,
+  openProviders,
+  startDaemon,
+} from "../../src/index.ts";
 import { type MockModel, type MockReply, startMockModel } from "./mock-model.ts";
 import { connect } from "./wire-client.ts";
 
 let model: MockModel;
 let daemon: Daemon;
+let providers: OpenProviders;
 let root: string;
 let project: string;
 /** What the model answers next, by the text of the latest prompt. */
@@ -38,17 +45,21 @@ beforeAll(async () => {
     const prompts = [...text.matchAll(/"input_text","text":"(PROMPT:[^"]*)"/g)];
     return script(prompts.at(-1)?.[1] ?? "", text.includes("function_call_output"));
   });
+  providers = await openProviders(diskFile(join(root, "home", "providers.json")), "gateway-token");
   daemon = await startDaemon({
     harness: new CodexHarness({
       config: model.codexConfig,
       env: { CODEX_HOME: join(root, "codex") },
+      provider: providers.provider,
     }),
+    providers: providers.store,
     home: join(root, "home"),
   });
 });
 
 afterAll(async () => {
   await daemon?.stop();
+  providers?.stop();
   model?.stop();
   rmSync(root, { recursive: true, force: true });
 });
@@ -243,5 +254,70 @@ test("a worktree session starts on its own branch, and archiving hides it", asyn
   expect(active.sessions.some((row) => row.id === session.id)).toBe(false);
   const archived = await client.call("session.list", { archived: true });
   expect(archived.sessions.some((row) => row.id === session.id)).toBe(true);
+  client.close();
+}, 60_000);
+
+test("a model of the owner's own provider answers through the gateway", async () => {
+  script = (prompt) => ({ text: [`provider says ${prompt}`] });
+  const client = connect(daemon.url);
+  await client.opened;
+  const { kinds } = await client.call("providers.kinds", {});
+  expect(kinds.map((kind) => kind.id)).toContain("anthropic");
+
+  // The mock model speaks the Responses API, so it stands in for an endpoint of the owner's.
+  const saved = await client.call("providers.save", {
+    name: "My endpoint",
+    kind: "custom",
+    api: "openai-responses",
+    baseUrl: model.url,
+    apiKey: "secret-key",
+    models: [
+      {
+        id: "mock-model",
+        name: "Mock",
+        reasoning: false,
+        images: false,
+        contextWindow: 64_000,
+        maxTokens: 4_000,
+      },
+    ],
+  });
+  expect(saved).toMatchObject({ id: "my-endpoint", hasKey: true });
+  // The key went in and does not come back out.
+  expect(JSON.stringify(await client.call("providers.list", {}))).not.toContain("secret-key");
+  await client.until(() => client.pushes.some((push) => push.type === "models.changed"));
+  const { models } = await client.call("models.list", {});
+  const mine = models.find((entry) => entry.id === "my-endpoint/mock-model");
+  expect(mine?.provider).toEqual({ id: "my-endpoint", name: "My endpoint" });
+
+  const before = model.requests.length;
+  const session = await client.call("session.create", {
+    cwd: project,
+    model: "my-endpoint/mock-model",
+    mode: "readOnly",
+  });
+  expect(session.model).toBe("my-endpoint/mock-model");
+  await client.call("session.open", { sessionId: session.id });
+  await client.call("session.send", { sessionId: session.id, text: "PROMPT:hi" });
+  await client.until(() => client.events().some((event) => event.type === "turn.completed"));
+  const said = client
+    .events()
+    .flatMap((event) => (event.type === "item.completed" ? [event.item] : []))
+    .find((item) => item.kind === "agentMessage");
+  expect(said).toMatchObject({ text: "provider says PROMPT:hi" });
+  // The provider was asked for the model by its own name, not by Cycle's.
+  expect(model.requests.slice(before).at(-1)).toMatchObject({ model: "mock-model" });
+
+  // The session is listed beside codex's own, and stays with its kind of model.
+  const { sessions } = await client.call("session.list", { archived: false });
+  expect(sessions.some((row) => row.id === session.id)).toBe(true);
+  const codexOwn = models.find((entry) => entry.provider === null);
+  if (!codexOwn) throw new Error("codex offers no model of its own");
+  expect(
+    client.call("session.update", { sessionId: session.id, model: codexOwn.id }),
+  ).rejects.toThrow("stays with that kind");
+
+  await client.call("providers.delete", { id: saved.id });
+  expect((await client.call("providers.list", {})).providers).toEqual([]);
   client.close();
 }, 60_000);

@@ -6,6 +6,7 @@ import {
   type SessionMode,
   type Usage,
   activeTurn,
+  sameModelFamily,
 } from "@cycle/protocol";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CycleApp, Draft } from "../client/app.ts";
@@ -102,28 +103,49 @@ function ContextRing({ usage }: { usage: Usage | null }) {
   );
 }
 
+/** The models a session may use, under the provider that serves each. */
 function modelEntries(
   models: ModelInfo[],
   current: { model: string | null; effort: string | null },
   choose: (model: string, effort: string | null) => void,
+  /** Whether the conversation has begun, and so stays with its kind of model. */
+  begun: boolean,
 ): MenuEntry[] {
   const active =
     models.find((model) => model.id === current.model) ?? models.find((m) => m.isDefault);
+  const open = begun && active ? models.filter((model) => sameModelFamily(model, active)) : models;
+  const groups = new Map<string, ModelInfo[]>();
+  for (const model of open) {
+    const name = model.provider?.name ?? "Codex";
+    groups.set(name, [...(groups.get(name) ?? []), model]);
+  }
   return [
-    { heading: "Model" },
-    ...models.map((model): MenuEntry => ({
-      label: model.isDefault ? `${model.name} (default)` : model.name,
-      sub: model.description,
-      checked: model.id === active?.id,
-      onSelect: () => choose(model.id, null),
-    })),
+    ...[...groups].flatMap(([name, group]): MenuEntry[] => [
+      { heading: name },
+      ...group.map((model): MenuEntry => ({
+        label: model.isDefault ? `${model.name} (default)` : model.name,
+        ...(model.provider ? {} : { sub: model.description }),
+        checked: model.id === active?.id,
+        onSelect: () => choose(model.id, null),
+      })),
+    ]),
+    ...(open.length < models.length
+      ? [
+          { separator: true } as const,
+          {
+            heading: active?.provider
+              ? "Codex's own models need a new session"
+              : "Your providers' models need a new session",
+          } as const,
+        ]
+      : []),
     ...(active?.efforts.length
       ? [
           { separator: true } as const,
           { heading: "Reasoning effort" } as const,
           ...active.efforts.map((effort): MenuEntry => ({
             label: effort.id === active.defaultEffort ? `${effort.id} (default)` : effort.id,
-            sub: effort.description,
+            ...(effort.description ? { sub: effort.description } : {}),
             checked: (current.effort ?? active.defaultEffort) === effort.id,
             onSelect: () => choose(active.id, effort.id),
           })),
@@ -629,7 +651,12 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
             side="top"
             title="Model and reasoning effort"
             entries={() =>
-              modelEntries(models, { model: currentModel, effort: currentEffort }, chooseModel)
+              modelEntries(
+                models,
+                { model: currentModel, effort: currentEffort },
+                chooseModel,
+                Boolean(sessionId),
+              )
             }
           >
             <span className="truncate">{modelName}</span>

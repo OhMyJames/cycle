@@ -590,3 +590,103 @@
 .link:hover {
   text-decoration: underline;
 }
+
+/* Forms inside a settings card */
+.provider-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.card + .provider-form {
+  margin-top: 8px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.form-row.top {
+  align-items: start;
+}
+
+.form-row.top > .form-label {
+  padding-top: 6px;
+}
+
+.form-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.form-actions {
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.model-rows {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  justify-items: start;
+}
+
+.model-rows > .row,
+.model-row,
+.model-list {
+  width: 100%;
+}
+
+.model-row {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.model-traits {
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.field.short {
+  width: 84px;
+}
+
+.check {
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.model-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 13px;
+}
+
+.model-option:hover {
+  background: var(--surface-control-hover);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}

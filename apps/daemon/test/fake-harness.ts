@@ -1,4 +1,11 @@
-import type { Harness, HarnessEvent, HarnessSession, PromptInput, Turn } from "@cycle/protocol";
+import type {
+  Harness,
+  HarnessEvent,
+  HarnessSession,
+  ModelInfo,
+  PromptInput,
+  Turn,
+} from "@cycle/protocol";
 
 /** A harness that runs nothing: tests say what it reports. */
 export class FakeHarness implements Harness {
@@ -69,10 +76,14 @@ export class FakeHarness implements Harness {
   respondApproval = (approvalId: string) => {
     this.calls.push(`approve ${approvalId}`);
   };
-  listModels = async () => [];
+  models: ModelInfo[] = [];
+  listModels = async () => this.models;
   listSkills = async () => [];
   listMcpServers = async () => [];
   readAccount = async () => ({ kind: null, email: null, plan: null, limits: null });
+  login = async () => ({ id: "login-1", url: "https://example.test/sign-in" });
+  cancelLogin = async () => {};
+  logout = async () => {};
   exec: Harness["exec"] = async (argv) => {
     const key = argv.slice(4).join(" ");
     this.calls.push(`git ${key}`);

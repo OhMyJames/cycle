@@ -50,8 +50,14 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
     external: ["@openai/codex"],
     runtimeModules: true,
   },
+  // The only code that knows pi-ai, which speaks each model provider's own protocol.
+  "@cycle/gateway": {
+    workspace: ["@cycle/protocol"],
+    external: ["@earendil-works/pi-ai"],
+    runtimeModules: true,
+  },
   "@cycle/daemon": {
-    workspace: ["@cycle/protocol", "@cycle/harness-codex"],
+    workspace: ["@cycle/protocol", "@cycle/harness-codex", "@cycle/gateway"],
     external: [],
     runtimeModules: true,
   },

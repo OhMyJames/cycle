@@ -1,6 +1,6 @@
-import { createRequire } from "node:module";
 import type {
   AccountInfo,
+  AccountLogin,
   Approval,
   ApprovalResponse,
   CreateSessionOptions,
@@ -22,7 +22,8 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
-import { JsonRpcPeer, type RpcId } from "./rpc.ts";
+import { type CodexConfig, CodexProcess } from "./process.ts";
+import type { JsonRpcPeer, RpcId } from "./rpc.ts";
 import {
   modePolicy,
   toInput,
@@ -47,27 +48,38 @@ import type {
   WireUnknownItem,
 } from "./wire.ts";
 
+/**
+ * A model provider of the owner's that codex reaches at an address on this
+ * machine. Codex keeps a conversation with the provider it began on and runs
+ * one provider per process, so its sessions get a process of their own.
+ */
+export interface ExtraProvider {
+  /** What codex knows the provider by, in its config and on each thread. */
+  id: string;
+  name: string;
+  /** Where it answers the Responses API. */
+  baseUrl: string;
+  /** The bearer it expects. It reaches codex in the environment, never in its arguments. */
+  token: string;
+  /** The models it serves now, and how much each can read. */
+  models(): { info: ModelInfo; contextWindow: number }[];
+}
+
 export interface CodexHarnessOptions {
   /** Path to the `codex` executable. Defaults to the bundled `@openai/codex`. */
   bin?: string;
   /** `-c key=value` config overrides passed to `codex app-server`. */
-  config?: Record<string, string | number | boolean>;
+  config?: CodexConfig;
   env?: Record<string, string | undefined>;
   /** Receives the app-server's stderr (its log output), line by line. */
   onLog?: (line: string) => void;
+  provider?: ExtraProvider;
 }
 
-function resolveCodexBin(): string {
-  const fromEnv = process.env["CYCLE_CODEX_BIN"];
-  if (fromEnv) return fromEnv;
-  try {
-    return createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");
-  } catch {
-    return "codex";
-  }
-}
+const PROVIDER_TOKEN_ENV = "CYCLE_PROVIDER_TOKEN";
 
 interface PendingApproval {
+  rpc: JsonRpcPeer;
   rpcId: RpcId;
   sessionId: string;
   method: string;
@@ -99,44 +111,68 @@ function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow 
 }
 
 /**
- * Drives one `codex app-server` child process over stdio. One process hosts
- * many threads; each Cycle session maps 1:1 onto a codex thread. Should the
- * process die it is started again on the next request, and each session is
- * brought back into it the next time it is used.
+ * Drives `codex app-server` over stdio. One process hosts many threads; each
+ * Cycle session maps 1:1 onto a codex thread. Sessions on a model of the
+ * owner's own provider live in a second process, started when first needed.
+ * Should a process die it is started again on the next request, and each
+ * session is brought back into it the next time it is used.
  */
 export class CodexHarness implements Harness {
   readonly name = "codex";
-  private readonly options: CodexHarnessOptions;
-  private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null;
-  private rpc: JsonRpcPeer | null = null;
-  private starting: Promise<JsonRpcPeer> | null = null;
-  private disposed = false;
+  private readonly provider: ExtraProvider | null;
+  /** Codex's own models, and the machine: files, commands, terminals, the account. */
+  private readonly main: CodexProcess;
+  /** The owner's provider's sessions. Null when there is no such provider. */
+  private readonly extra: CodexProcess | null;
   private readonly listeners = new Set<(event: HarnessEvent) => void>();
-  /** Sessions the running process has in memory. */
-  private readonly loaded = new Set<string>();
+  /** Which sessions are the extra process's, as far as is known. */
+  private readonly ofExtra = new Map<string, boolean>();
   private readonly activeTurns = new Map<string, string>();
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly terminals = new Map<string, OpenTerminal>();
-  /** The latest lines codex logged, to explain a start that failed. */
-  private readonly recentLog: string[] = [];
 
   constructor(options: CodexHarnessOptions = {}) {
-    this.options = options;
+    const provider = options.provider ?? null;
+    this.provider = provider;
+    const spec = { bin: options.bin, onLog: options.onLog };
+    this.main = new CodexProcess(
+      { ...spec, config: options.config ?? {}, env: options.env ?? {} },
+      {
+        onNotification: (method, params) => this.handleNotification(method, params, true),
+        onRequest: (rpc, id, method, params) => this.handleServerRequest(rpc, id, method, params),
+        onExit: (error) => this.handleExit(false, error),
+      },
+    );
+    this.extra = provider
+      ? new CodexProcess(
+          {
+            ...spec,
+            config: {
+              ...options.config,
+              model_provider: provider.id,
+              [`model_providers.${provider.id}.name`]: provider.name,
+              [`model_providers.${provider.id}.base_url`]: provider.baseUrl,
+              [`model_providers.${provider.id}.wire_api`]: "responses",
+              [`model_providers.${provider.id}.env_key`]: PROVIDER_TOKEN_ENV,
+            },
+            env: { ...options.env, [PROVIDER_TOKEN_ENV]: provider.token },
+          },
+          {
+            onNotification: (method, params) => this.handleNotification(method, params, false),
+            onRequest: (rpc, id, method, params) =>
+              this.handleServerRequest(rpc, id, method, params),
+            onExit: (error) => this.handleExit(true, error),
+          },
+        )
+      : null;
   }
 
   async start(): Promise<void> {
-    await this.peer();
+    await this.main.peer();
   }
 
   async dispose(): Promise<void> {
-    this.disposed = true;
-    const proc = this.proc;
-    this.proc = null;
-    this.rpc = null;
-    this.loaded.clear();
-    if (!proc) return;
-    proc.kill();
-    await proc.exited;
+    await Promise.all([this.main.dispose(), this.extra?.dispose()]);
   }
 
   onEvent(listener: (event: HarnessEvent) => void): () => void {
@@ -148,14 +184,20 @@ export class CodexHarness implements Harness {
 
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
     const policy = options.mode ? modePolicy(options.mode) : null;
-    const response = await this.request<WireThreadResponse>("thread/start", {
+    const served = this.served(options.model);
+    const proc = served && this.extra ? this.extra : this.main;
+    const config = {
+      ...(options.effort ? { model_reasoning_effort: options.effort } : {}),
+      ...(served ? { model_context_window: served.contextWindow } : {}),
+    };
+    const response = await proc.request<WireThreadResponse>("thread/start", {
       cwd: options.cwd,
       model: options.model ?? null,
       approvalPolicy: policy?.approvalPolicy ?? null,
       sandbox: policy?.sandbox ?? null,
-      ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}),
+      ...(Object.keys(config).length ? { config } : {}),
     });
-    this.loaded.add(response.thread.id);
+    this.adopt(proc, response.thread);
     return toSession(response.thread, {
       model: response.model,
       effort: response.reasoningEffort,
@@ -163,20 +205,33 @@ export class CodexHarness implements Harness {
   }
 
   async listSessions(filter: { archived: boolean }): Promise<HarnessSession[]> {
+    // Codex lists the threads of the provider it runs on, or of the ones it is asked for.
+    const lists = await Promise.all([
+      this.listThreads(filter.archived, null),
+      this.provider ? this.listThreads(filter.archived, this.provider.id) : [],
+    ]);
+    return lists.flat().toSorted((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  private async listThreads(archived: boolean, provider: string | null): Promise<HarnessSession[]> {
     const sessions: HarnessSession[] = [];
     let cursor: string | null = null;
     do {
-      const page: { data: WireThread[]; nextCursor: string | null } = await this.request(
+      const page: { data: WireThread[]; nextCursor: string | null } = await this.main.request(
         "thread/list",
         {
           cursor,
           limit: LIST_PAGE,
-          archived: filter.archived,
+          archived,
           sortKey: "updated_at",
           sourceKinds: ["cli", "vscode", "appServer"],
+          ...(provider ? { modelProviders: [provider] } : {}),
         },
       );
-      for (const thread of page.data) sessions.push(toSession(thread));
+      for (const thread of page.data) {
+        this.ofExtra.set(thread.id, provider !== null);
+        sessions.push(toSession(thread));
+      }
       cursor = page.nextCursor;
     } while (cursor && sessions.length < LIST_LIMIT);
     return sessions;
@@ -186,7 +241,7 @@ export class CodexHarness implements Harness {
     sessionId: string,
     options: TurnOptions,
   ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }> {
-    const response = await this.resume(sessionId, options);
+    const response = await this.resume(await this.processOf(sessionId), sessionId, options);
     return {
       session: toSession(response.thread, {
         model: response.model,
@@ -198,11 +253,12 @@ export class CodexHarness implements Harness {
   }
 
   async forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession> {
-    const response = await this.request<WireThreadResponse>("thread/fork", {
+    const proc = await this.processOf(sessionId);
+    const response = await proc.request<WireThreadResponse>("thread/fork", {
       threadId: sessionId,
       ...(turnId ? { lastTurnId: turnId } : {}),
     });
-    this.loaded.add(response.thread.id);
+    this.adopt(proc, response.thread);
     return toSession(response.thread, {
       model: response.model,
       effort: response.reasoningEffort,
@@ -210,22 +266,26 @@ export class CodexHarness implements Harness {
   }
 
   async renameSession(sessionId: string, title: string): Promise<void> {
-    await this.request("thread/name/set", { threadId: sessionId, name: title });
+    const proc = await this.processOf(sessionId);
+    await proc.request("thread/name/set", { threadId: sessionId, name: title });
   }
 
   async archiveSession(sessionId: string, archived: boolean): Promise<void> {
-    await this.request(archived ? "thread/archive" : "thread/unarchive", { threadId: sessionId });
-    if (archived) this.loaded.delete(sessionId);
+    const proc = await this.processOf(sessionId);
+    await proc.request(archived ? "thread/archive" : "thread/unarchive", { threadId: sessionId });
+    if (archived) proc.loaded.delete(sessionId);
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await this.request("thread/delete", { threadId: sessionId });
-    this.loaded.delete(sessionId);
+    const proc = await this.processOf(sessionId);
+    await proc.request("thread/delete", { threadId: sessionId });
+    proc.loaded.delete(sessionId);
+    this.ofExtra.delete(sessionId);
   }
 
   async compactSession(sessionId: string): Promise<void> {
-    await this.ensureLoaded(sessionId, {});
-    await this.request("thread/compact/start", { threadId: sessionId });
+    const proc = await this.ensureLoaded(sessionId, {});
+    await proc.request("thread/compact/start", { threadId: sessionId });
   }
 
   // Turns
@@ -235,9 +295,15 @@ export class CodexHarness implements Harness {
     input: PromptInput,
     options: TurnOptions,
   ): Promise<{ turnId: string }> {
-    await this.ensureLoaded(sessionId, options);
+    const proc = await this.ensureLoaded(sessionId, options);
+    if (proc === this.main && this.served(options.model)) {
+      throw new Error(
+        "This conversation began on one of Codex's own models, and codex keeps it there. " +
+          "Start a new session to use a model of your own provider.",
+      );
+    }
     const policy = options.mode ? modePolicy(options.mode) : null;
-    const response = await this.request<{ turn: WireTurn }>("turn/start", {
+    const response = await proc.request<{ turn: WireTurn }>("turn/start", {
       threadId: sessionId,
       input: toInput(input),
       ...(options.model ? { model: options.model } : {}),
@@ -253,7 +319,8 @@ export class CodexHarness implements Harness {
   async steer(sessionId: string, input: PromptInput): Promise<void> {
     const turnId = this.activeTurns.get(sessionId);
     if (!turnId) throw new Error("No turn is running to steer.");
-    await this.request("turn/steer", {
+    const proc = await this.processOf(sessionId);
+    await proc.request("turn/steer", {
       threadId: sessionId,
       input: toInput(input),
       expectedTurnId: turnId,
@@ -263,14 +330,15 @@ export class CodexHarness implements Harness {
   async interrupt(sessionId: string): Promise<void> {
     const turnId = this.activeTurns.get(sessionId);
     if (!turnId) return;
-    await this.request("turn/interrupt", { threadId: sessionId, turnId });
+    const proc = await this.processOf(sessionId);
+    await proc.request("turn/interrupt", { threadId: sessionId, turnId });
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
     const pending = this.approvals.get(approvalId);
-    if (!pending || !this.rpc) throw new Error(`unknown approval: ${approvalId}`);
+    if (!pending) throw new Error(`unknown approval: ${approvalId}`);
     this.approvals.delete(approvalId);
-    this.rpc.respond(pending.rpcId, this.approvalResult(pending, response));
+    pending.rpc.respond(pending.rpcId, this.approvalResult(pending, response));
     this.emit({ type: "approval.resolved", sessionId: pending.sessionId, approvalId });
   }
 
@@ -287,6 +355,7 @@ export class CodexHarness implements Harness {
       for (const model of page.data) if (!model.hidden) models.push(toModel(model));
       cursor = page.nextCursor;
     } while (cursor);
+    for (const { info } of this.provider?.models() ?? []) models.push(info);
     return models;
   }
 
@@ -327,6 +396,22 @@ export class CodexHarness implements Harness {
     return { kind, email: text(account["email"]), plan: text(account["planType"]), limits };
   }
 
+  async login(): Promise<AccountLogin> {
+    const response = await this.request<{ loginId: string; authUrl: string }>(
+      "account/login/start",
+      { type: "chatgpt" },
+    );
+    return { id: response.loginId, url: response.authUrl };
+  }
+
+  async cancelLogin(id: string): Promise<void> {
+    await this.request("account/login/cancel", { loginId: id });
+  }
+
+  async logout(): Promise<void> {
+    await this.request("account/logout", {});
+  }
+
   // The agent's machine
 
   async exec(argv: string[], options: ExecOptions): Promise<ExecResult> {
@@ -365,7 +450,7 @@ export class CodexHarness implements Harness {
   }
 
   async openTerminal(options: TerminalOptions): Promise<TerminalHandle> {
-    const rpc = await this.peer();
+    const rpc = await this.main.peer();
     const processId = options.id;
     const finish = (exitCode: number | null) => {
       if (this.terminals.delete(processId)) options.onExit(exitCode);
@@ -404,102 +489,97 @@ export class CodexHarness implements Harness {
     };
   }
 
-  // The process
+  // The processes
 
-  private peer(): Promise<JsonRpcPeer> {
-    if (this.rpc) return Promise.resolve(this.rpc);
-    if (this.disposed) return Promise.reject(new Error("The codex harness was shut down."));
-    this.starting ??= this.spawn().finally(() => {
-      this.starting = null;
-    });
-    return this.starting;
+  /** The extra provider's model of this id, when it serves one. */
+  private served(model: string | undefined): { contextWindow: number } | null {
+    if (!model || !this.provider) return null;
+    return this.provider.models().find(({ info }) => info.id === model) ?? null;
   }
 
-  private async spawn(): Promise<JsonRpcPeer> {
-    const bin = this.options.bin ?? resolveCodexBin();
-    const overrides = Object.entries(this.options.config ?? {}).flatMap(([key, value]) => [
-      "-c",
-      `${key}=${typeof value === "string" ? JSON.stringify(value) : value}`,
-    ]);
-    // A .js entrypoint (the npm package's launcher) is run with our own runtime.
-    const cmd = /\.[cm]?js$/.test(bin) ? [process.execPath, bin] : [bin];
-    const proc = Bun.spawn([...cmd, "app-server", ...overrides], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, ...this.options.env },
-    });
-    const rpc = new JsonRpcPeer(
-      (line) => {
-        void proc.stdin.write(line);
-      },
-      {
-        onNotification: (method, params) => this.handleNotification(method, (params ?? {}) as Json),
-        onRequest: (id, method, params) =>
-          this.handleServerRequest(id, method, (params ?? {}) as Json),
-        onClose: (error) => this.handleExit(rpc, error),
-      },
-    );
-    void rpc.pump(proc.stdout);
-    void this.pumpLogs(proc.stderr);
-    try {
-      await rpc.request("initialize", {
-        clientInfo: { name: "cycle", title: "Cycle", version: "0.1.0" },
-        capabilities: { experimentalApi: true, requestAttestation: false },
+  private adopt(proc: CodexProcess, thread: WireThread): void {
+    proc.loaded.add(thread.id);
+    this.ofExtra.set(thread.id, proc === this.extra);
+  }
+
+  /** The process a session lives in: the one that runs the provider it began on. */
+  private async processOf(sessionId: string): Promise<CodexProcess> {
+    if (!this.extra || !this.provider) return this.main;
+    let extra = this.ofExtra.get(sessionId);
+    if (extra === undefined) {
+      const { thread } = await this.main.request<{ thread: WireThread }>("thread/read", {
+        threadId: sessionId,
+        includeTurns: false,
       });
-    } catch (error) {
-      proc.kill();
-      // What codex printed last says why far better than a closed pipe does.
-      const said = this.recentLog.findLast((line) => /error/i.test(line)) ?? this.recentLog.at(-1);
-      throw new Error(`codex app-server could not start: ${said ?? String(error)}`, {
-        cause: error,
-      });
+      extra = thread.modelProvider === this.provider.id;
+      this.ofExtra.set(sessionId, extra);
     }
-    rpc.notify("initialized");
-    this.proc = proc;
-    this.rpc = rpc;
-    return rpc;
+    return extra ? this.extra : this.main;
   }
 
-  private handleExit(rpc: JsonRpcPeer, error: Error | undefined): void {
-    if (this.rpc !== rpc) return;
-    this.rpc = null;
-    this.proc = null;
-    this.loaded.clear();
-    this.activeTurns.clear();
-    this.approvals.clear();
+  private handleExit(extra: boolean, error: Error | undefined): void {
+    const message = `codex app-server exited${error ? `: ${error.message}` : ""}`;
+    const mine = (sessionId: string) => (this.ofExtra.get(sessionId) ?? false) === extra;
+    for (const [approvalId, pending] of this.approvals) {
+      if (mine(pending.sessionId)) this.approvals.delete(approvalId);
+    }
+    if (extra) {
+      // The other process carries on, so only this one's turns are told they ended.
+      for (const [sessionId, turnId] of this.activeTurns) {
+        if (!mine(sessionId)) continue;
+        this.activeTurns.delete(sessionId);
+        this.emit({
+          type: "turn.completed",
+          sessionId,
+          turnId,
+          status: "failed",
+          error: `${message}. It starts again with your next message.`,
+          durationMs: null,
+        });
+      }
+      return;
+    }
+    for (const sessionId of this.activeTurns.keys()) {
+      if (mine(sessionId)) this.activeTurns.delete(sessionId);
+    }
     for (const [id, terminal] of this.terminals) {
       this.terminals.delete(id);
       terminal.onData(new TextEncoder().encode("\r\n[the agent process exited]\r\n"));
       terminal.onExit(null);
     }
-    if (this.disposed) return;
-    this.emit({
-      type: "harness.exited",
-      message: `codex app-server exited${error ? `: ${error.message}` : ""}`,
-    });
+    this.emit({ type: "harness.exited", message });
   }
 
-  private async request<T = unknown>(method: string, params: unknown): Promise<T> {
-    const rpc = await this.peer();
-    return rpc.request<T>(method, params);
+  /** Asks the main process, which answers for everything that is not one session's. */
+  private request<T = unknown>(method: string, params: unknown): Promise<T> {
+    return this.main.request<T>(method, params);
   }
 
-  private async resume(sessionId: string, options: TurnOptions): Promise<WireThreadResponse> {
+  private async resume(
+    proc: CodexProcess,
+    sessionId: string,
+    options: TurnOptions,
+  ): Promise<WireThreadResponse> {
     const policy = options.mode ? modePolicy(options.mode) : null;
-    const response = await this.request<WireThreadResponse>("thread/resume", {
+    const served = proc === this.extra ? this.served(options.model) : null;
+    const response = await proc.request<WireThreadResponse>("thread/resume", {
       threadId: sessionId,
       model: options.model ?? null,
       approvalPolicy: policy?.approvalPolicy ?? null,
       sandbox: policy?.sandbox ?? null,
+      // shortcut: the window is the one of the model a session is loaded with; upgrade when
+      // codex takes a window with each turn, or reads the provider's models from a catalog.
+      ...(served ? { config: { model_context_window: served.contextWindow } } : {}),
     });
-    this.loaded.add(sessionId);
+    proc.loaded.add(sessionId);
     return response;
   }
 
-  private async ensureLoaded(sessionId: string, options: TurnOptions): Promise<void> {
-    await this.peer();
-    if (!this.loaded.has(sessionId)) await this.resume(sessionId, options);
+  private async ensureLoaded(sessionId: string, options: TurnOptions): Promise<CodexProcess> {
+    const proc = await this.processOf(sessionId);
+    await proc.peer();
+    if (!proc.loaded.has(sessionId)) await this.resume(proc, sessionId, options);
+    return proc;
   }
 
   private emit(event: HarnessEvent): void {
@@ -508,7 +588,7 @@ export class CodexHarness implements Harness {
 
   // What codex tells us
 
-  private handleNotification(method: string, params: Json): void {
+  private handleNotification(method: string, params: Json, main: boolean): void {
     const sessionId = text(params["threadId"]) ?? "";
     const turnId = text(params["turnId"]) ?? "";
     switch (method) {
@@ -623,6 +703,9 @@ export class CodexHarness implements Harness {
         break;
       }
       case "warning":
+        // Codex knows nothing of a provider's models, and says so every session. It is expected:
+        // the window it needs comes with the session, and the rest of its fallback serves.
+        if (!main && /^Model metadata for .* not found/.test(text(params["message"]) ?? "")) break;
         if (sessionId) {
           this.emit({
             type: "notice",
@@ -631,6 +714,19 @@ export class CodexHarness implements Harness {
             message: text(params["message"]) ?? "",
           });
         }
+        break;
+      case "account/login/completed":
+        if (main) {
+          this.emit({
+            type: "account.changed",
+            error: params["success"]
+              ? null
+              : (text(params["error"]) ?? "The sign-in did not finish."),
+          });
+        }
+        break;
+      case "account/updated":
+        if (main) this.emit({ type: "account.changed", error: null });
         break;
       case "model/rerouted":
         this.emit({
@@ -645,9 +741,7 @@ export class CodexHarness implements Harness {
     }
   }
 
-  private handleServerRequest(id: RpcId, method: string, params: Json): void {
-    const rpc = this.rpc;
-    if (!rpc) return;
+  private handleServerRequest(rpc: JsonRpcPeer, id: RpcId, method: string, params: Json): void {
     const sessionId = text(params["threadId"]);
     const approval = sessionId ? this.toApproval(`${sessionId}:${id}`, method, params) : null;
     if (!sessionId || !approval) {
@@ -659,7 +753,7 @@ export class CodexHarness implements Harness {
       }
       return;
     }
-    this.approvals.set(approval.id, { rpcId: id, sessionId, method, params });
+    this.approvals.set(approval.id, { rpc, rpcId: id, sessionId, method, params });
     this.emit({
       type: "approval.requested",
       sessionId,
@@ -737,21 +831,5 @@ export class CodexHarness implements Harness {
       };
     }
     return { decision };
-  }
-
-  private async pumpLogs(stream: ReadableStream<Uint8Array>): Promise<void> {
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for await (const chunk of stream) {
-      buffer += decoder.decode(chunk, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        this.recentLog.push(line);
-        if (this.recentLog.length > 20) this.recentLog.shift();
-        this.options.onLog?.(line);
-      }
-    }
   }
 }
