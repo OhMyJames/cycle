@@ -12,6 +12,7 @@ import { SettingsPage } from "./components/settings.tsx";
 import { Sidebar, groupSessions } from "./components/sidebar.tsx";
 import { Thread } from "./components/thread.tsx";
 import { TitleBar } from "./components/titlebar.tsx";
+import { Tooltips } from "./components/tooltip.tsx";
 import { AppContext, useApp } from "./context.ts";
 import { watchFades } from "./lib/fades.ts";
 import { basename } from "./lib/format.ts";
@@ -157,6 +158,20 @@ function useShortcuts(app: CycleApp): void {
         !view.folderPicker
       ) {
         app.setView({ page: "thread" });
+        return;
+      }
+      // A letter typed at nothing goes to the composer, so the owner never has to click it first.
+      const at = document.activeElement;
+      if (
+        event.key.length === 1 &&
+        event.key !== " " &&
+        !mod &&
+        !event.altKey &&
+        view.page === "thread" &&
+        (at === null || at === document.body) &&
+        !document.querySelector(".scrim, .menu")
+      ) {
+        document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus();
         return;
       }
       if (event.ctrlKey && event.code === "Backquote") {
@@ -318,6 +333,7 @@ function Shell() {
           ) : null}
         </div>
       </main>
+      <Tooltips />
       {view.palette ? <Palette /> : null}
       {view.folderPicker ? <FolderPicker /> : null}
       <Toasts />

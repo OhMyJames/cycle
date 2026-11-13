@@ -434,7 +434,6 @@ export function ProvidersSection() {
   const edited = providers.find((provider) => provider.id === editing?.id) ?? null;
   return (
     <>
-      <h2>Model providers</h2>
       {providers.length || !editing ? (
         <div className="card">
           {providers.map((provider) =>

@@ -13,6 +13,8 @@ export type MenuEntry =
   | {
       label: string;
       sub?: string;
+      /** What it is, after its label on the same line, where a list is long. */
+      detail?: string;
       icon?: IconName;
       hint?: string;
       checked?: boolean;
@@ -47,10 +49,14 @@ export function useDismiss(
       const target = event.target;
       if (!(target instanceof Node) || ref.current?.contains(target)) return;
       if (target instanceof Element && target.closest(".menu")) return;
+      if (target instanceof Element && target.closest(".scrim") && !under()) return;
       close();
     };
+    // A dialog opened from here is on top: a press in it, or Escape, is the dialog's.
+    const under = () => ref.current?.closest(".scrim") != null;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (document.querySelector(".scrim") && !under()) return;
         event.stopPropagation();
         close();
       }
@@ -100,12 +106,19 @@ export function MenuList({
         onClick={() => onPick(entry)}
       >
         {entry.icon ? <Icon name={entry.icon} /> : icons ? <span className="icon-space" /> : null}
-        <span className="grow">
-          <span className="fade-x" style={{ display: "block" }}>
-            {entry.label}
+        {entry.detail ? (
+          <span className="grow one-line fade-x" title={entry.detail}>
+            <span>{entry.label}</span>
+            <span className="detail">{entry.detail}</span>
           </span>
-          {entry.sub ? <span className="sub">{entry.sub}</span> : null}
-        </span>
+        ) : (
+          <span className="grow">
+            <span className="fade-x" style={{ display: "block" }}>
+              {entry.label}
+            </span>
+            {entry.sub ? <span className="sub">{entry.sub}</span> : null}
+          </span>
+        )}
         {entry.hint ? <span className="hint">{entry.hint}</span> : null}
         {entry.checked ? <Icon name="check" className="check" /> : null}
       </button>
@@ -240,13 +253,42 @@ export function Dialog({
   wide?: boolean;
   top?: boolean;
 }) {
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    const focusable = (): HTMLElement[] => [
+      ...(box.current?.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled), select, textarea, [tabindex='0']",
+      ) ?? []),
+    ];
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      // Tab stays inside the dialog: what is behind it cannot be reached while it is open.
+      if (event.key !== "Tab") return;
+      const all = focusable();
+      const first = all[0];
+      const last = all.at(-1);
+      if (!first || !last) return;
+      const at = document.activeElement;
+      const inside = at instanceof Node && box.current?.contains(at);
+      if (event.shiftKey ? at === first || !inside : at === last || !inside) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+  // Focus goes into the dialog when it opens, and back to where it was when it closes.
+  // Read while drawing, before a field inside takes the focus for itself.
+  const [before] = useState(() => document.activeElement);
+  useEffect(() => {
+    if (!box.current?.contains(document.activeElement)) {
+      box.current?.querySelector<HTMLElement>("input, textarea, button")?.focus();
+    }
+    return () => {
+      if (before instanceof HTMLElement && before.isConnected) before.focus();
+    };
+  }, [before]);
   // Drawn over the whole window, so no scroller or mask it was opened from clips it.
   return createPortal(
     <div
@@ -256,6 +298,7 @@ export function Dialog({
       }}
     >
       <div
+        ref={box}
         className={wide ? "dialog wide" : "dialog"}
         role="dialog"
         aria-modal="true"

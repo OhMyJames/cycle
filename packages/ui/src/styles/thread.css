@@ -288,6 +288,7 @@
 }
 /* Inline code naming a file opens it in Files: still code, marked as a link. */
 .markdown code.file-link {
+  color: var(--accent-interactive);
   cursor: pointer;
   text-decoration: underline dotted;
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
@@ -708,9 +709,9 @@ button.code-diff-name:hover {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  border: 1px solid var(--border-default);
+  border: 1px solid color-mix(in srgb, var(--state-warning) 32%, var(--border-default));
   border-radius: var(--radius-row);
-  background: var(--surface-message);
+  background: color-mix(in srgb, var(--state-warning) 5%, var(--surface-message));
   animation: rise var(--motion-enter) var(--ease) both;
 }
 .approval-title {
@@ -866,6 +867,9 @@ button.code-diff-name:hover {
   line-height: 20px;
   white-space: pre-wrap;
 }
+.notice[data-level="warning"] {
+  border-color: color-mix(in srgb, var(--state-warning) 32%, var(--border-default));
+}
 .notice[data-level="error"] {
   border-color: color-mix(in srgb, var(--state-error) 40%, transparent);
 }
@@ -996,8 +1000,14 @@ button.code-diff-name:hover {
   color: var(--text-muted);
   font-size: var(--text-caption);
 }
+.context-ring circle + circle {
+  stroke: var(--accent-interactive);
+}
 .context-ring[data-high="true"] {
   color: var(--state-warning);
+}
+.context-ring[data-high="true"] circle + circle {
+  stroke: currentColor;
 }
 /* Space is kept for it, so a turn starting or ending does not move the composer. */
 .hint-line {

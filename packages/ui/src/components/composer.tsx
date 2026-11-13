@@ -11,6 +11,16 @@ import type { CycleApp, Draft } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
+import {
+  type Named,
+  type PathRow,
+  matchNames,
+  matchPaths,
+  matchSkills,
+  pluginPrompt,
+  sectioned,
+  skillRows,
+} from "../lib/suggest.ts";
 import { MorphLoader } from "../loader/morph-loader.tsx";
 import { fileIcon } from "../lib/file-icons.ts";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
@@ -33,7 +43,10 @@ export const MODE_LABELS: Record<SessionMode, { label: string; sub: string; icon
 
 interface Suggestion {
   label: string;
-  sub?: string;
+  /** What it is, on the same line. */
+  detail?: string;
+  /** The heading it is listed under. */
+  group: string;
   icon?: IconName;
   /** Replaces the typed token with text, or runs something instead. */
   insert?: string;
@@ -54,7 +67,8 @@ export function triggerAt(text: string, caret: number): Trigger | null {
     const query = mention[2] ?? "";
     return { kind: "@", query, start: caret - query.length - 1 };
   }
-  const slash = /^\/([\w-]*)$/.exec(before);
+  // Only at the very start: a slash later on is a path or a fraction.
+  const slash = /^\/(\S*)$/.exec(before);
   if (slash) return { kind: "/", query: slash[1] ?? "", start: 0 };
   return null;
 }
@@ -214,43 +228,32 @@ const NO_SESSION = new Store<{ state: null; loading: boolean; error: null }>({
   error: null,
 });
 
-function slashCommands(app: CycleApp, info: SessionInfo | null): Suggestion[] {
-  const list: Suggestion[] = [
-    { label: "/new", sub: "Start a new session", icon: "compose", run: () => app.newSession() },
-  ];
+const command = (
+  name: string,
+  detail: string,
+  icon: IconName,
+  run: () => void,
+): Suggestion & Named => ({ name, label: `/${name}`, detail, icon, group: "Commands", run });
+
+function slashCommands(app: CycleApp, info: SessionInfo | null): (Suggestion & Named)[] {
+  const list = [command("new", "Start a new session", "compose", () => app.newSession())];
   if (!info) return list;
   const sessionId = info.id;
   return [
     ...list,
-    {
-      label: "/compact",
-      sub: "Summarize the conversation to free up context",
-      run: () => void app.attempt(app.request("session.compact", { sessionId })),
-    },
-    {
-      label: "/fork",
-      sub: "Continue in a copy of this session",
-      icon: "git-branch",
-      run: () => void app.fork(sessionId),
-    },
-    {
-      label: "/diff",
-      sub: "Show what changed",
-      icon: "file-diff",
-      run: () => app.setView({ panel: "changes" }),
-    },
-    {
-      label: "/terminal",
-      sub: "Open a terminal here",
-      icon: "terminal",
-      run: () => app.setView({ panel: "terminal" }),
-    },
-    {
-      label: "/archive",
-      sub: "Archive this session",
-      icon: "archive",
-      run: () => app.updateSession({ sessionId, archived: true }),
-    },
+    command("compact", "Summarize the conversation to free up context", "collapse", () => {
+      void app.attempt(app.request("session.compact", { sessionId }));
+    }),
+    command("fork", "Continue in a copy of this session", "git-fork", () => {
+      void app.fork(sessionId);
+    }),
+    command("diff", "Show what changed", "file-diff", () => app.setView({ panel: "changes" })),
+    command("terminal", "Open a terminal here", "terminal", () => {
+      app.setView({ panel: "terminal" });
+    }),
+    command("archive", "Archive this session", "archive", () => {
+      app.updateSession({ sessionId, archived: true });
+    }),
   ];
 }
 
@@ -353,23 +356,21 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     }
     setActive(0);
     if (found.kind === "/") {
-      const matching = commands.filter((command) => command.label.startsWith(`/${found.query}`));
+      const matching = matchNames(commands, found.query);
       setSuggestions(matching);
       if (!cwd) return;
       void app.request("skills.list", { cwd }).then(
         ({ skills }) => {
           if (ticket !== lookup.current) return;
-          const wanted = skills
-            .filter(
-              (skill) =>
-                skill.enabled && skill.name.toLowerCase().includes(found.query.toLowerCase()),
-            )
+          const rows = skillRows(skills.filter((skill) => skill.enabled));
+          const wanted = matchSkills(rows, found.query)
             .slice(0, 12)
             .map((skill): Suggestion => ({
-              label: `$${skill.name}`,
-              sub: skill.description.slice(0, 90),
-              icon: "sparkle",
-              insert: `$${skill.name} `,
+              label: skill.members ? skill.name : `$${skill.name}`,
+              detail: skill.description,
+              icon: skill.members ? "plug" : "sparkle",
+              group: "Skills",
+              insert: skill.members ? pluginPrompt(skill.name) : `$${skill.name} `,
             }));
           setSuggestions([...matching, ...wanted]);
         },
@@ -377,22 +378,36 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
       );
       return;
     }
-    if (!cwd || !found.query) {
+    if (!cwd) {
       setSuggestions([]);
       return;
     }
-    void app.request("files.search", { root: cwd, query: found.query }).then(
-      ({ files }) => {
-        if (ticket !== lookup.current) return;
-        setSuggestions(
-          files.slice(0, 12).map((file) => ({
-            label: basename(file.path),
-            sub: file.path,
+    const show = (rows: PathRow[]) => {
+      if (ticket !== lookup.current) return;
+      setSuggestions(
+        matchPaths(rows, found.query).map((file): Suggestion => {
+          const parent = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 0));
+          return {
+            label: `${basename(file.path)}${file.directory ? "/" : ""}`,
+            ...(parent ? { detail: parent } : {}),
             icon: file.directory ? "folder" : fileIcon(file.path),
+            group: "Files",
             insert: `${file.path}${file.directory ? "/" : ""} `,
-          })),
-        );
-      },
+          };
+        }),
+      );
+    };
+    // With nothing typed yet, what the folder holds; then what the search finds.
+    if (!found.query) {
+      void app.request("files.list", { path: cwd }).then(
+        ({ entries }) =>
+          show(entries.map((entry) => ({ path: entry.name, directory: entry.directory }))),
+        () => {},
+      );
+      return;
+    }
+    void app.request("files.search", { root: cwd, query: found.query }).then(
+      ({ files }) => show(files),
       () => {},
     );
   };
@@ -485,12 +500,16 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
         {suggestions.length ? (
           <div className="menu suggestions" data-side="top" data-align="start" role="listbox">
             <MenuList
-              entries={suggestions.map((suggestion) => ({
-                label: suggestion.label,
-                ...(suggestion.sub ? { sub: suggestion.sub } : {}),
-                ...(suggestion.icon ? { icon: suggestion.icon } : {}),
-                onSelect: () => pick(suggestion),
-              }))}
+              entries={sectioned(suggestions).map((row): MenuEntry =>
+                "heading" in row
+                  ? row
+                  : {
+                      label: row.label,
+                      ...(row.detail ? { detail: row.detail } : {}),
+                      ...(row.icon ? { icon: row.icon } : {}),
+                      onSelect: () => pick(row),
+                    },
+              )}
               active={active}
               onPick={(entry) => entry.onSelect()}
             />

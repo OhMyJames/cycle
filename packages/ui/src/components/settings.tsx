@@ -1,6 +1,6 @@
 import { type ModelInfo, SESSION_MODES } from "@cycle/protocol";
 import { useEffect, useState } from "react";
-import type { Theme } from "../client/app.ts";
+import type { SettingsSection, Theme } from "../client/app.ts";
 import { host } from "../client/host.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -86,6 +86,13 @@ function UsageChart() {
   );
 }
 
+const TITLES: Record<SettingsSection, string> = {
+  general: "General",
+  account: "Account and usage",
+  providers: "Model providers",
+  about: "About",
+};
+
 export function SettingsPage() {
   const app = useApp();
   const settings = useStore(app.settings, (value) => value);
@@ -93,7 +100,8 @@ export function SettingsPage() {
   const daemon = useStore(app.daemon, (value) => value);
   const models = useStore(app.models, (value) => value);
   const login = useStore(app.login, (value) => value);
-  const { theme, showReasoning } = useStore(app.view, (view) => ({
+  const { theme, showReasoning, section } = useStore(app.view, (view) => ({
+    section: view.settingsSection,
     theme: view.theme,
     showReasoning: view.showReasoning,
   }));
@@ -106,164 +114,179 @@ export function SettingsPage() {
     <div className="page fade-y">
       <div className="page-content">
         <header className="page-header">
-          <button
-            type="button"
-            className="ghost page-back"
-            title="Back (Esc)"
-            onClick={() => app.setView({ page: "thread" })}
-          >
-            <Icon name="chevron-left" />
-            Back
-          </button>
-          <h1>Settings</h1>
+          <h1>{TITLES[section]}</h1>
         </header>
 
-        <h2>Appearance</h2>
-        <div className="card">
-          <Setting title="Theme">
-            <Segmented<Theme>
-              value={theme}
-              onChange={(value) => app.setView({ theme: value })}
-              options={[
-                { value: "system", label: "System (default)" },
-                { value: "light", label: "Light" },
-                { value: "dark", label: "Dark" },
-              ]}
-            />
-          </Setting>
-          <Setting
-            title="Show the agent's thinking"
-            note="Reasoning summaries appear among the work of a turn."
-          >
-            <Switch
-              label="Show the agent's thinking"
-              checked={showReasoning}
-              onChange={(checked) => app.setView({ showReasoning: checked })}
-            />
-          </Setting>
-        </div>
-
-        <h2>New sessions</h2>
-        <div className="card">
-          <Setting title="Model" note="What a new session starts with. Each session can change it.">
-            <select
-              className="field select"
-              value={settings?.model ?? ""}
-              onChange={(event) => set({ model: event.currentTarget.value || null, effort: null })}
-            >
-              <option value="">Codex's choice (default)</option>
-              {groupByProvider(models).map(([name, group]) => (
-                <optgroup key={name} label={name}>
-                  {group.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </Setting>
-          <Setting title="Permissions" note={MODE_LABELS[settings?.mode ?? "auto"].sub}>
-            <Segmented
-              value={settings?.mode ?? "auto"}
-              onChange={(mode) => set({ mode })}
-              options={SESSION_MODES.map((mode) => ({
-                value: mode,
-                label:
-                  mode === "auto"
-                    ? `${MODE_LABELS[mode].label} (default)`
-                    : MODE_LABELS[mode].label,
-              }))}
-            />
-          </Setting>
-          <Setting
-            title="Start in a new worktree"
-            note="In a git repository, each session gets its own checkout and branch."
-          >
-            <Switch
-              label="Start in a new worktree"
-              checked={settings?.worktree ?? false}
-              onChange={(worktree) => set({ worktree })}
-            />
-          </Setting>
-        </div>
-
-        <h2>Codex account</h2>
-        <div className="card">
-          {account === null ? (
-            <div className="note">Reading the account…</div>
-          ) : login ? (
-            <Setting
-              title="Finish signing in in your browser"
-              note="The page that opened asks for your ChatGPT account. This updates when you are done."
-            >
-              <button type="button" className="button" onClick={() => host.openExternal(login.url)}>
-                Open it again
-              </button>
-              <button type="button" className="button" onClick={() => void app.cancelSignIn()}>
-                Cancel
-              </button>
-            </Setting>
-          ) : account.kind === null ? (
-            <Setting
-              title="Not signed in"
-              note="Sign in to use the models of your ChatGPT plan. An OPENAI_API_KEY set before Cycle starts works too."
-            >
-              <button type="button" className="button primary" onClick={() => void app.signIn()}>
-                Sign in with ChatGPT
-              </button>
-            </Setting>
-          ) : (
-            <>
-              <Setting
-                title={account.email ?? (account.kind === "apiKey" ? "API key" : "Signed in")}
-                note={
-                  account.plan
-                    ? `Plan: ${account.plan}`
-                    : account.kind === "apiKey"
-                      ? "Billed by usage"
-                      : ""
-                }
-              >
-                <Icon name="check-circle" className="tone-success" />
-                <button type="button" className="button" onClick={() => void app.signOut()}>
-                  Sign out
-                </button>
+        {section === "general" ? (
+          <>
+            <h2>Appearance</h2>
+            <div className="card">
+              <Setting title="Theme">
+                <Segmented<Theme>
+                  value={theme}
+                  onChange={(value) => app.setView({ theme: value })}
+                  options={[
+                    { value: "system", label: "System (default)" },
+                    { value: "light", label: "Light" },
+                    { value: "dark", label: "Dark" },
+                  ]}
+                />
               </Setting>
-              {account.limits?.primary ? (
-                <Limit
-                  label={`${Math.round((account.limits.primary.windowMinutes ?? 300) / 60)}-hour limit`}
-                  used={account.limits.primary.usedPercent}
-                  resetsAt={account.limits.primary.resetsAt}
+              <Setting
+                title="Show the agent's thinking"
+                note="Reasoning summaries appear among the work of a turn."
+              >
+                <Switch
+                  label="Show the agent's thinking"
+                  checked={showReasoning}
+                  onChange={(checked) => app.setView({ showReasoning: checked })}
                 />
-              ) : null}
-              {account.limits?.secondary ? (
-                <Limit
-                  label="Weekly limit"
-                  used={account.limits.secondary.usedPercent}
-                  resetsAt={account.limits.secondary.resetsAt}
+              </Setting>
+            </div>
+
+            <h2>New sessions</h2>
+            <div className="card">
+              <Setting
+                title="Model"
+                note="What a new session starts with. Each session can change it."
+              >
+                <select
+                  className="field select"
+                  value={settings?.model ?? ""}
+                  onChange={(event) =>
+                    set({ model: event.currentTarget.value || null, effort: null })
+                  }
+                >
+                  <option value="">Codex's choice (default)</option>
+                  {groupByProvider(models).map(([name, group]) => (
+                    <optgroup key={name} label={name}>
+                      {group.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </Setting>
+              <Setting title="Permissions" note={MODE_LABELS[settings?.mode ?? "auto"].sub}>
+                <Segmented
+                  value={settings?.mode ?? "auto"}
+                  onChange={(mode) => set({ mode })}
+                  options={SESSION_MODES.map((mode) => ({
+                    value: mode,
+                    label:
+                      mode === "auto"
+                        ? `${MODE_LABELS[mode].label} (default)`
+                        : MODE_LABELS[mode].label,
+                  }))}
                 />
-              ) : null}
-            </>
-          )}
-        </div>
+              </Setting>
+              <Setting
+                title="Start in a new worktree"
+                note="In a git repository, each session gets its own checkout and branch."
+              >
+                <Switch
+                  label="Start in a new worktree"
+                  checked={settings?.worktree ?? false}
+                  onChange={(worktree) => set({ worktree })}
+                />
+              </Setting>
+            </div>
+          </>
+        ) : null}
 
-        <ProvidersSection />
+        {section === "account" ? (
+          <>
+            <h2>Codex account</h2>
+            <div className="card">
+              {account === null ? (
+                <div className="note">Reading the account…</div>
+              ) : login ? (
+                <Setting
+                  title="Finish signing in in your browser"
+                  note="The page that opened asks for your ChatGPT account. This updates when you are done."
+                >
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => host.openExternal(login.url)}
+                  >
+                    Open it again
+                  </button>
+                  <button type="button" className="button" onClick={() => void app.cancelSignIn()}>
+                    Cancel
+                  </button>
+                </Setting>
+              ) : account.kind === null ? (
+                <Setting
+                  title="Not signed in"
+                  note="Sign in to use the models of your ChatGPT plan. An OPENAI_API_KEY set before Cycle starts works too."
+                >
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={() => void app.signIn()}
+                  >
+                    Sign in with ChatGPT
+                  </button>
+                </Setting>
+              ) : (
+                <>
+                  <Setting
+                    title={account.email ?? (account.kind === "apiKey" ? "API key" : "Signed in")}
+                    note={
+                      account.plan
+                        ? `Plan: ${account.plan}`
+                        : account.kind === "apiKey"
+                          ? "Billed by usage"
+                          : ""
+                    }
+                  >
+                    <Icon name="check-circle" className="tone-success" />
+                    <button type="button" className="button" onClick={() => void app.signOut()}>
+                      Sign out
+                    </button>
+                  </Setting>
+                  {account.limits?.primary ? (
+                    <Limit
+                      label={`${Math.round((account.limits.primary.windowMinutes ?? 300) / 60)}-hour limit`}
+                      used={account.limits.primary.usedPercent}
+                      resetsAt={account.limits.primary.resetsAt}
+                    />
+                  ) : null}
+                  {account.limits?.secondary ? (
+                    <Limit
+                      label="Weekly limit"
+                      used={account.limits.secondary.usedPercent}
+                      resetsAt={account.limits.secondary.resetsAt}
+                    />
+                  ) : null}
+                </>
+              )}
+            </div>
 
-        <h2>Usage</h2>
-        <div className="card">
-          <UsageChart />
-        </div>
+            <h2>Usage</h2>
+            <div className="card">
+              <UsageChart />
+            </div>
+          </>
+        ) : null}
 
-        <h2>About</h2>
-        <div className="card">
-          <Setting
-            title="Cycle"
-            note={`Daemon ${daemon?.version ?? "…"} on ${daemon?.harness ?? "…"}`}
-          >
-            <span className="caption muted">{tildePath(daemon?.home ?? "", daemon?.userHome)}</span>
-          </Setting>
-        </div>
+        {section === "providers" ? <ProvidersSection /> : null}
+
+        {section === "about" ? (
+          <div className="card">
+            <Setting
+              title="Cycle"
+              note={`Daemon ${daemon?.version ?? "…"} on ${daemon?.harness ?? "…"}`}
+            >
+              <span className="caption muted">
+                {tildePath(daemon?.home ?? "", daemon?.userHome)}
+              </span>
+            </Setting>
+          </div>
+        ) : null}
       </div>
     </div>
   );

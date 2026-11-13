@@ -7,7 +7,8 @@ in line with it.
 
 ## Principles
 
-1. Gray first. Color is for a reason: an error, a warning, a running session, a diff.
+1. Gray first, and color wherever it tells the owner something: each color has one meaning
+   (see Color roles), and what is only decoration stays gray.
 2. Shape follows the icons: 1.25 strokes with round ends, so radii are generous and concentric.
 3. Say it once. A page's name is in its heading, not also in the title bar; a row's meaning is in its
    words, so an icon goes only on an icon-only button, a disclosure, a status, or a navigation row.
@@ -36,10 +37,31 @@ message), 20 (the composer). A control inside a container sits so the two curves
 
 Motion: 100ms for a state, 160ms for a disclosure, 200ms to enter. Nothing bounces.
 
+## Color roles
+
+The interface is gray so that its colors can be read at a glance. Each color means one thing,
+everywhere:
+
+| Color                         | Means                    | Where                                                                                                                                   |
+| ----------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Brand red (`--brand-accent`)  | Alive, now               | A running session, the working loader, today's bar in Usage                                                                             |
+| Blue (`--accent-interactive`) | Goes somewhere, measures | Links, a file a reply names, the context ring and the limit meters while there is room, the selection                                   |
+| Green (`--state-success`)     | Good, added              | A connected server, a signed-in account, added lines, a new file's letter                                                               |
+| Amber (`--state-warning`)     | Needs the owner          | A session that waits, the approval card's edge and wash, Full access, a warning notice, a nearly full context, a modified file's letter |
+| Red (`--state-error`)         | Failed, removed          | A failed tool or server, an error notice, removed lines, a deleted file's letter                                                        |
+| Code red (`--text-code`)      | Code in prose            | Inline code                                                                                                                             |
+| Syntax colors (`--hl-*`)      | Kinds                    | Code blocks, and the tint of a file's icon by its kind in the Files and Changes panels                                                  |
+
+A wash is the color at about 5% on its surface, an edge at about a third; text and icons use it
+in full. Navigation, buttons and the composer stay gray: the primary action is the darkest thing,
+not the most colorful.
+
 ## Layout
 
 - The sidebar is 248 wide, 200 to 420 by its edge; a double-click on the edge puts it back. Rows
   are 28 high, 2 apart, with the icon in a 24 column and text from 36.
+- While Settings is open the sidebar is Settings' own: the way back, then its sections, one shown
+  at a time. The sidebar always lists what the main area can show.
 - The title bar is 42 high. It names the open session and its folder; on a page it is empty.
 - The content column is 768 wide. Blocks in a turn are 16 apart, turns 40.
 - A side panel is 460 wide, 320 to 900; a double-click on its edge puts it back.
@@ -78,6 +100,15 @@ Radius 20, padding 12. The controls under the input (model and effort, permissio
 with no chevron; their menus open upward. The send button is the only filled control. The line
 under it says what the keys do now, and changes with the state (send, queue, steer).
 
+### The composer's lists
+
+Typing `/` at the very start lists commands, then skills; typing `@` after a space lists the
+folder's files. Every row is one line: icon, name, then what it is in the muted color, fading
+where it does not fit. Kinds are under headings only when there is more than one. A name that
+starts with what was typed comes before one that holds it; a plugin's skills are one row; `@`
+with nothing typed shows what the folder holds, folders first, and at most eight paths. Hidden
+files show only when the query has a dot.
+
 ### Disclosure
 
 One glyph, `chevron-down`, turned -90° when closed. On a tool row it shows only on hover.
@@ -98,6 +129,20 @@ class. The full text is in the `title`.
   owner must act on is never below something they can ignore.
 - A status wording stays at least 650ms, so it does not flicker.
 - The scroll-to-bottom button floats above the composer, with the composer's shadow.
+
+## Interaction
+
+- The keyboard always has somewhere to go. A letter typed with nothing focused goes to the
+  composer; opening a session focuses it.
+- A dialog takes the focus when it opens, keeps Tab inside itself, and gives the focus back to
+  where it was when it closes. Escape closes the topmost thing only: a dialog before the panel or
+  menu it was opened from.
+- Every control with a `title` shows Cycle's own tip: after the pointer rests 500ms, at once when
+  moving from one tip to the next, above the control unless it is at the window's top, and never
+  cut by the window's edge. A tip names the control and its shortcut; it never holds something the
+  owner needs to act.
+- What was typed is never lost: each session keeps its unsent text, and a failed send puts the
+  text back.
 
 ## Empty and first states
 

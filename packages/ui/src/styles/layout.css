@@ -659,7 +659,7 @@
   display: block;
   height: 100%;
   border-radius: 9999px;
-  background: var(--text-primary);
+  background: var(--accent-interactive);
 }
 .meter[data-high="true"] span {
   background: var(--state-warning);
@@ -685,10 +685,12 @@
   width: 100%;
   max-width: 28px;
   border-radius: 4px 4px 0 0;
-  background: var(--text-muted);
+  background: color-mix(in srgb, var(--brand-accent) 30%, var(--border-default));
 }
+/* Today's bar is the one in full color. */
+.usage-chart .bar:nth-last-child(2) span,
 .usage-chart .bar:hover span {
-  background: var(--text-primary);
+  background: var(--brand-accent);
 }
 .usage-chart small {
   color: var(--text-muted);
@@ -819,6 +821,15 @@
   font-weight: var(--font-weight-medium);
 }
 .list-item[data-off="true"] .list-name,
+.list-lead[data-tone="success"] {
+  color: var(--state-success);
+}
+.list-lead[data-tone="warning"] {
+  color: var(--state-warning);
+}
+.list-lead[data-tone="error"] {
+  color: var(--state-error);
+}
 .list-item[data-off="true"] .list-lead {
   color: var(--text-muted);
 }

@@ -116,6 +116,32 @@
   color: var(--text-muted);
   text-align: center;
 }
+.status-letter:is([data-status="A"], [data-status="U"]) {
+  color: var(--state-success);
+}
+.status-letter:is([data-status="M"], [data-status="R"]) {
+  color: var(--state-warning);
+}
+.status-letter[data-status="D"] {
+  color: var(--state-error);
+}
+
+/* A file's kind, told by a tint on its icon, in the panels that list files. */
+.panel .icon[data-icon="file-code"] {
+  color: var(--hl-title);
+}
+.panel .icon:is([data-icon="file-json"], [data-icon="file-config"]) {
+  color: var(--hl-number);
+}
+.panel .icon[data-icon="file-style"] {
+  color: var(--hl-keyword);
+}
+.panel .icon:is([data-icon="file-image"], [data-icon="file-video"], [data-icon="file-audio"]) {
+  color: var(--hl-string);
+}
+.panel .icon[data-icon="file-markdown"] {
+  color: var(--accent-interactive);
+}
 
 /* A diff in a panel: the line's number, its sign, its text; added and removed on a faint wash. */
 .diff {

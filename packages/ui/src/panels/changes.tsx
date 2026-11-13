@@ -55,7 +55,7 @@ function FileCard({
           <span className="name">{basename(file.path)}</span>
         </span>
         <Stats additions={file.additions} deletions={file.deletions} />
-        <span className="status-letter" title={STATUS_LABEL[file.status]}>
+        <span className="status-letter" data-status={file.status} title={STATUS_LABEL[file.status]}>
           {file.status}
         </span>
       </button>

@@ -665,6 +665,15 @@ input::placeholder {
   line-height: var(--text-caption-line);
   white-space: normal;
 }
+/* A long list's row: the name, then what it is, on one line that fades. */
+.menu-item .one-line {
+  display: block;
+  white-space: nowrap;
+}
+.menu-item .detail {
+  margin-left: 10px;
+  color: var(--text-muted);
+}
 .menu-label {
   padding: 6px 8px 2px;
   color: var(--text-muted);
@@ -829,4 +838,25 @@ select.field {
   background-position: right 8px center;
   background-size: 16px 16px;
   background-repeat: no-repeat;
+}
+
+/* A tip: what a control is, on the inverse surface, above it unless it is at the window's top. */
+.tooltip {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: 320px;
+  padding: 3px 8px;
+  transform: translate(-50%, -100%);
+  border-radius: var(--radius-md);
+  background: var(--action-primary);
+  color: var(--icon-on-action);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-line);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: appear var(--motion-state) both;
+}
+.tooltip[data-below="true"] {
+  transform: translate(-50%, 0);
 }

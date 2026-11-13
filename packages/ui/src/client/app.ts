@@ -42,7 +42,11 @@ export interface Draft {
   mode: SessionMode;
 }
 
+export type SettingsSection = "general" | "account" | "providers" | "about";
+
 export interface ViewState {
+  /** Which part of Settings shows; the sidebar lists them while Settings is open. */
+  settingsSection: SettingsSection;
   sessionId: string | null;
   draft: Draft | null;
   page: PageId;
@@ -150,6 +154,7 @@ export class CycleApp {
       sessionId: null,
       draft: null,
       page: "thread",
+      settingsSection: "general",
       panel: prefs.panel ?? null,
       panelWidth: prefs.panelWidth ?? 460,
       sidebar: prefs.sidebar ?? true,

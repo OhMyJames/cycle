@@ -33,7 +33,18 @@ function ServerRow({
           aria-expanded={open}
           onClick={() => setOpen(!open)}
         >
-          <span className="list-lead">
+          <span
+            className="list-lead"
+            data-tone={
+              failed
+                ? "error"
+                : needsSignIn
+                  ? "warning"
+                  : server.enabled && server.status === "connected"
+                    ? "success"
+                    : undefined
+            }
+          >
             <Icon name={failed ? "alert" : server.enabled ? "plug" : "unplug"} />
           </span>
           <span className="list-text">
