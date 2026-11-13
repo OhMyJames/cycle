@@ -64,6 +64,14 @@ export class FakeHarness implements Harness {
     this.calls.push(`delete ${sessionId}`);
   };
   compactSession = async () => {};
+  rewindSession = async (sessionId: string, turnId: string) => {
+    this.calls.push(`rewind ${sessionId} ${turnId}`);
+    return { from: turnId };
+  };
+  review: Harness["review"] = async (sessionId, target) => {
+    this.calls.push(`review ${sessionId} ${target.kind}`);
+    return { turnId: "review-turn" };
+  };
   send = async (sessionId: string, input: PromptInput) => {
     if (this.failSend) throw new Error(this.failSend);
     this.sent.push({ sessionId, text: input.text });

@@ -12,6 +12,7 @@ import type {
   ProviderModel,
   PluginCatalog,
   PluginDetail,
+  ReviewTarget,
   SessionEvent,
   SessionInfo,
   SessionMode,
@@ -149,6 +150,13 @@ export interface Methods {
   "session.delete": { params: { sessionId: string; removeWorktree?: boolean }; result: Empty };
   "session.fork": { params: { sessionId: string; turnId?: string }; result: SessionInfo };
   "session.compact": { params: { sessionId: string }; result: Empty };
+  /** Starts a turn that reviews code. Refused while a turn runs. */
+  "session.review": { params: { sessionId: string; target: ReviewTarget }; result: Empty };
+  /**
+   * Removes a turn and every later one from the conversation, for good. Files the agent changed
+   * stay as they are. Clients confirm first.
+   */
+  "session.rewind": { params: { sessionId: string; turnId: string }; result: Empty };
   "approval.respond": {
     params: { sessionId: string; approvalId: string; response: ApprovalResponse };
     result: Empty;

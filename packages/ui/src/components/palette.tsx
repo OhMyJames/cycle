@@ -75,6 +75,11 @@ export function Palette() {
           run: () => app.updateSession({ sessionId, archived: true }),
         },
         {
+          label: "Review uncommitted changes",
+          icon: "eye",
+          run: () => void app.review(sessionId, { kind: "uncommitted" }),
+        },
+        {
           label: "Compact this session's context",
           icon: "collapse",
           run: () => void app.attempt(app.request("session.compact", { sessionId })),

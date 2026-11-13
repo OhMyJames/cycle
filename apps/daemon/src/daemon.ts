@@ -145,13 +145,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     pushModels();
   });
   harness.onEvent((event) => {
-    if (event.type !== "account.changed") return;
-    const { error } = event;
+    if (event.type !== "account.changed" && event.type !== "limits.changed") return;
+    const error = event.type === "account.changed" ? event.error : null;
     harness.readAccount().then(
       (account) => push({ type: "account.changed", account, error }),
       () => {},
     );
-    pushModels();
+    // Limits move with every turn; the models on offer only with the account.
+    if (event.type === "account.changed") pushModels();
   });
   const usage = new UsageLedger(usageFile, Date.now);
   const git = new Git((argv, execOptions) => harness.exec(argv, execOptions));
@@ -336,6 +337,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "session.fork": ({ sessionId, turnId }) => hub.fork(sessionId, turnId ?? null),
     "session.compact": async ({ sessionId }) => {
       await hub.compact(sessionId);
+      return {};
+    },
+    "session.review": async ({ sessionId, target }) => {
+      await hub.review(sessionId, target);
+      return {};
+    },
+    "session.rewind": async ({ sessionId, turnId }) => {
+      await hub.rewind(sessionId, turnId);
       return {};
     },
     "approval.respond": ({ approvalId, response }) => {

@@ -15,6 +15,7 @@ import {
   AgentBlock,
   Divider,
   MentionText,
+  NoteBlock,
   PlanBlock,
   ReviewBlock,
   TextBlock,
@@ -87,6 +88,17 @@ function BlockView({
         <UserBlock
           item={block.item}
           steeredAfter={block.steeredAfter}
+          onRewind={
+            block.steeredAfter === undefined && turn.status !== "running"
+              ? () =>
+                  // A review's prompt is codex's own: sent again it would be a turn, not a review.
+                  void app.rewind(
+                    sessionId,
+                    turn.id,
+                    turn.items.some((item) => item.kind === "review") ? "" : block.item.text,
+                  )
+              : undefined
+          }
           time={
             block.steeredAfter === undefined && turn.startedAt
               ? shortTime(turn.startedAt, Date.now())
@@ -99,6 +111,7 @@ function BlockView({
         <TextBlock
           item={block.item}
           streaming={streaming}
+          onAnswer={(answer) => app.putInComposer(sessionId, answer)}
           actions={
             block.final ? (
               <ReplyActions turn={turn} sessionId={sessionId} text={block.item.text} />
@@ -116,6 +129,8 @@ function BlockView({
       return <AgentBlock item={block.item} />;
     case "review":
       return <ReviewBlock item={block.item} />;
+    case "note":
+      return <NoteBlock item={block.item} />;
     case "activity":
       return (
         <ActivityCard

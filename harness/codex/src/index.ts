@@ -7,5 +7,7 @@ export {
   toCatalog,
   toItem,
   toMcpServers,
+  toReviewTarget,
   toTurn,
+  toTurns,
 } from "./translate.ts";

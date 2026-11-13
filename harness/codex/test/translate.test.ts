@@ -89,6 +89,51 @@ test.each([
     },
   ],
   [
+    {
+      type: "agentMessage",
+      id: "a",
+      text: "Done.",
+      questions: [{ title: "Ship?", options: null }],
+    },
+    { id: "a", kind: "agentMessage", text: "Done.", questions: [{ title: "Ship?", options: [] }] },
+  ],
+  [
+    { type: "sleep", id: "s", durationMs: 5000, completedAtMs: null },
+    { id: "s", kind: "wait", durationMs: 5000, status: "running" },
+  ],
+  [
+    { type: "hookPrompt", id: "h", fragments: [{ text: "a", hookRunId: "1" }, { text: "b" }] },
+    { id: "h", kind: "hook", text: "a\n\nb" },
+  ],
+  [
+    { type: "subAgentActivity", id: "g", kind: "started", agentPath: "/root/x", model: null },
+    { id: "g", kind: "agentActivity", activity: "started", agent: "/root/x", model: null },
+  ],
+  [
+    {
+      type: "imageGeneration",
+      id: "i",
+      status: "completed",
+      revisedPrompt: "a cat",
+      failure: null,
+    },
+    { id: "i", kind: "image", path: "a cat", generated: true },
+  ],
+  [
+    { type: "functionCallOutput", id: "o", name: "run", namespace: null, output: "ok" },
+    {
+      id: "o",
+      kind: "toolCall",
+      server: null,
+      tool: "run",
+      args: "",
+      result: "ok",
+      error: null,
+      durationMs: null,
+      status: "completed",
+    },
+  ],
+  [
     { type: "somethingNew", id: "n" },
     { id: "n", kind: "other", type: "somethingNew" },
   ],

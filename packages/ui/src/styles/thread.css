@@ -1199,3 +1199,23 @@ button.code-diff-name:hover {
   position: absolute;
   bottom: calc(100% + 6px);
 }
+
+/* Questions a reply leaves for later, each with the answers it offers. */
+.reply-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.reply-question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 20px;
+}
+.reply-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

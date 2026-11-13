@@ -31,7 +31,12 @@ export type Item =
       /** Paths or URLs of attached images. */
       images: string[];
     })
-  | (ItemBase & { kind: "agentMessage"; text: string })
+  | (ItemBase & {
+      kind: "agentMessage";
+      text: string;
+      /** Questions it leaves the owner to answer when they like, each with answers to pick from. */
+      questions?: { title: string; options: string[] }[];
+    })
   | (ItemBase & { kind: "reasoning"; text: string })
   /** A plan the agent proposed, as markdown. */
   | (ItemBase & { kind: "plan"; text: string })
@@ -69,7 +74,20 @@ export type Item =
       receivers: string[];
       status: ItemStatus;
     })
-  | (ItemBase & { kind: "image"; path: string })
+  /** An image the agent looked at, or made when `generated`. */
+  | (ItemBase & { kind: "image"; path: string; generated?: boolean })
+  /** The agent waited, on purpose, this long. */
+  | (ItemBase & { kind: "wait"; durationMs: number; status: ItemStatus })
+  /** What a hook of the owner's added to the conversation. */
+  | (ItemBase & { kind: "hook"; text: string })
+  /** News of a helper agent: it started, was messaged, was stopped or finished. */
+  | (ItemBase & {
+      kind: "agentActivity";
+      activity: "started" | "interacted" | "interrupted" | "completed";
+      /** The agent's name in the tree of agents, as `/root/explorer`. */
+      agent: string;
+      model: string | null;
+    })
   | (ItemBase & { kind: "review"; phase: "entered" | "exited"; text: string })
   | (ItemBase & { kind: "compaction" })
   /** A harness item the protocol has no first-class shape for yet. */
@@ -206,6 +224,15 @@ export interface QueuedMessage {
   images: string[];
 }
 
+/** What a code review reads. */
+export type ReviewTarget =
+  /** What is staged, unstaged and untracked in the session's folder. */
+  | { kind: "uncommitted" }
+  /** Everything since the current branch left this one. */
+  | { kind: "branch"; branch: string }
+  | { kind: "commit"; sha: string }
+  | { kind: "custom"; instructions: string };
+
 /** A change to one session's conversation. `sessionId` names the session. */
 export type SessionEvent =
   | { type: "turn.started"; sessionId: string; turnId: string; startedAt: number | null }
@@ -227,6 +254,8 @@ export type SessionEvent =
       error: string | null;
       durationMs: number | null;
     }
+  /** The conversation went back to before this turn: it and every later turn are gone. */
+  | { type: "turns.rewound"; sessionId: string; turnId: string }
   /** Something the owner should see that belongs to no item. */
   | { type: "notice"; sessionId: string; level: "info" | "warning" | "error"; message: string };
 

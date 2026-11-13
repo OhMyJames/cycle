@@ -177,6 +177,12 @@ export function reduceSession(state: SessionState, event: SessionEvent): Session
           ),
         })),
       };
+    case "turns.rewound": {
+      const index = state.turns.findIndex((turn) => turn.id === event.turnId);
+      if (index === -1) return state;
+      // What the context held included the turns now gone: it is known again after the next one.
+      return { ...state, turns: state.turns.slice(0, index), plan: null, usage: null };
+    }
     case "notice":
       return {
         ...state,
