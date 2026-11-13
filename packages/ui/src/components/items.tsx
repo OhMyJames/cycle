@@ -9,8 +9,10 @@ import {
   loaderStateOf,
   plainCommand,
 } from "../lib/activity.ts";
+import { useApp } from "../context.ts";
 import { parseDiff } from "../lib/diff.ts";
 import { basename, duration } from "../lib/format.ts";
+import { mentionParts, plainMentions } from "../lib/suggest.ts";
 import { MorphLoader } from "../loader/morph-loader.tsx";
 import { CodeDiff } from "./diff-view.tsx";
 import { Icon } from "./icons.tsx";
@@ -42,6 +44,29 @@ export function Chevron({
   );
 }
 
+/** A prompt's text, with each session it mentions as a link to that session. */
+export function MentionText({ text }: { text: string }) {
+  const app = useApp();
+  const parts = mentionParts(text);
+  if (parts.length === 1 && typeof parts[0] === "string") return text;
+  return parts.map((part, index) =>
+    typeof part === "string" ? (
+      part
+    ) : (
+      <button
+        key={index}
+        type="button"
+        className="mention"
+        title="Open this session"
+        onClick={() => app.selectSession(part.id)}
+      >
+        <Icon name="message" size={12} />
+        {part.title}
+      </button>
+    ),
+  );
+}
+
 /** What the user said: a bubble at the right, with what can be done to it floating under it. */
 export const UserBlock = memo(function UserBlock({
   item,
@@ -68,7 +93,11 @@ export const UserBlock = memo(function UserBlock({
           )}
         </div>
       ) : null}
-      {item.text ? <div className="bubble">{item.text}</div> : null}
+      {item.text ? (
+        <div className="bubble">
+          <MentionText text={item.text} />
+        </div>
+      ) : null}
       <div className="block-actions end">
         {steeredAfter !== undefined ? (
           <span className="caption muted">
@@ -76,7 +105,7 @@ export const UserBlock = memo(function UserBlock({
           </span>
         ) : null}
         {time ? <time className="caption muted tabular">{time}</time> : null}
-        {item.text ? <CopyButton text={item.text} label="Copy message" /> : null}
+        {item.text ? <CopyButton text={plainMentions(item.text)} label="Copy message" /> : null}
       </div>
     </div>
   );

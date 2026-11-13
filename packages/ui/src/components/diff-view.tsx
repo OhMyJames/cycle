@@ -24,15 +24,28 @@ export const DiffLines = memo(function DiffLines({
   return (
     <div className="diff no-scrollbar" data-wrap={wrap ?? false}>
       <div className="diff-lines">
-        {lines.map((line, index) => (
-          <div key={index} className="diff-line" data-kind={line.type}>
-            <span className="number" style={{ width: `${width}ch` }}>
-              {line.type === "hunk" ? "" : line.type === "del" ? line.oldLine : line.newLine}
-            </span>
-            <span className="sign">{SIGNS[line.type]}</span>
-            <span className="text">{line.text}</span>
-          </div>
-        ))}
+        {lines.map((line, index) =>
+          line.type === "hunk" ? (
+            // The first part needs no break before it; a later one names where it is.
+            index === 0 ? null : (
+              <div key={index} className="diff-line" data-kind="hunk">
+                <span className="number" style={{ width: `${width}ch` }}>
+                  ⋯
+                </span>
+                <span className="sign" />
+                <span className="text">{line.text.replace(/^@@.*?@@ ?/, "")}</span>
+              </div>
+            )
+          ) : (
+            <div key={index} className="diff-line" data-kind={line.type}>
+              <span className="number" style={{ width: `${width}ch` }}>
+                {line.type === "del" ? line.oldLine : line.newLine}
+              </span>
+              <span className="sign">{SIGNS[line.type]}</span>
+              <span className="text">{line.text}</span>
+            </div>
+          ),
+        )}
       </div>
       {!all && file.lines.length > FIRST_LINES ? (
         <button type="button" className="ghost" onClick={() => setAll(true)}>

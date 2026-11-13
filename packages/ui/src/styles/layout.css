@@ -296,6 +296,7 @@
   border-radius: var(--radius-card);
   background: var(--surface-composer);
   box-shadow: var(--shadow-popover);
+  animation: panel-in var(--motion-enter) both;
   animation: appear var(--motion-state) var(--ease);
 }
 .archived-search {
@@ -348,6 +349,11 @@
   flex: none;
   gap: 4px;
   padding: 8px 12px;
+}
+/* A row above the account, such as a waiting update, lines up with the rows of the lists. */
+.sidebar-footer > .nav-row {
+  width: auto;
+  margin: 0 -4px;
 }
 .footer-row {
   display: flex;
@@ -1241,4 +1247,12 @@
 
 .flip-y {
   transform: rotate(180deg);
+}
+
+/* A panel comes in from the edge it lives on. */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
 }

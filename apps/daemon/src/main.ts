@@ -7,6 +7,7 @@ import { DEFAULT_DAEMON_PORT } from "@cycle/protocol";
 import { newToken } from "./auth.ts";
 import { DAEMON_VERSION, startDaemon } from "./daemon.ts";
 import { openProviders } from "./gateway.ts";
+import { TOOLS_KEY_ENV, TOOLS_SERVER, startTools } from "./tools.ts";
 import { diskFile } from "./store.ts";
 
 interface DaemonFile {
@@ -59,8 +60,12 @@ const config = env["CYCLE_CODEX_CONFIG"]
 
 const providers = await openProviders(diskFile(join(home, "providers.json")), newToken());
 
+const tools = startTools(newToken());
+
 const daemon = await startDaemon({
+  tools,
   harness: new CodexHarness({
+    tools: { name: TOOLS_SERVER, url: tools.url, keyEnv: TOOLS_KEY_ENV, key: tools.key },
     ...(config ? { config } : {}),
     ...(env["CYCLE_DEBUG"] ? { onLog: (line: string) => console.error(`[codex] ${line}`) } : {}),
     provider: providers.provider,
@@ -92,6 +97,7 @@ async function shutdown(): Promise<void> {
   await rm(daemonFile, { force: true });
   await daemon.stop();
   providers.stop();
+  tools.stop();
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown());

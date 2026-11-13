@@ -7,16 +7,21 @@ import {
   activeTurn,
 } from "@cycle/protocol";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CycleApp, Draft } from "../client/app.ts";
+import { type CycleApp, type Draft, projectOf, sessionTitle } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
 import {
   type Named,
   type PathRow,
+  expandMentions,
   matchNames,
   matchPaths,
+  matchSessions,
   matchSkills,
+  mentionParts,
+  mentionTitle,
+  plainMentions,
   pluginPrompt,
   sectioned,
   skillRows,
@@ -52,6 +57,9 @@ interface Suggestion {
   insert?: string;
   run?: () => void;
 }
+
+/** Sessions picked with `@`, by the title the composer shows: what is sent names each by its id. */
+const mentioned = new Map<string, string>();
 
 interface Trigger {
   kind: "@" | "/";
@@ -378,14 +386,31 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
       );
       return;
     }
-    if (!cwd) {
-      setSuggestions([]);
-      return;
-    }
+    // The folder's other sessions first among sessions, each newest first.
+    const others = Object.values(app.sessions.get().byId)
+      .filter((other) => other.id !== sessionId && !other.archived)
+      .toSorted(
+        (a, b) =>
+          Number(projectOf(b) === cwd) - Number(projectOf(a) === cwd) || b.updatedAt - a.updatedAt,
+      )
+      .map((other) => ({ id: other.id, title: mentionTitle(sessionTitle(other)), info: other }));
+    const sessions = matchSessions(others, found.query).map((row): Suggestion => {
+      const folder = others.find((other) => other.id === row.id)?.info.cwd ?? "";
+      return {
+        label: row.title,
+        detail: basename(folder),
+        icon: "message",
+        group: "Sessions",
+        insert: `@${row.title} `,
+        run: () => void mentioned.set(row.title, row.id),
+      };
+    });
+    setSuggestions(sessions);
+    if (!cwd) return;
     const show = (rows: PathRow[]) => {
       if (ticket !== lookup.current) return;
-      setSuggestions(
-        matchPaths(rows, found.query).map((file): Suggestion => {
+      setSuggestions([
+        ...matchPaths(rows, found.query).map((file): Suggestion => {
           const parent = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 0));
           return {
             label: `${basename(file.path)}${file.directory ? "/" : ""}`,
@@ -395,7 +420,8 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
             insert: `${file.path}${file.directory ? "/" : ""} `,
           };
         }),
-      );
+        ...sessions,
+      ]);
     };
     // With nothing typed yet, what the folder holds; then what the search finds.
     if (!found.query) {
@@ -417,9 +443,11 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     setSuggestions([]);
     trigger.current = null;
     if (suggestion.run) {
-      change("");
       suggestion.run();
-      return;
+      if (suggestion.insert === undefined) {
+        change("");
+        return;
+      }
     }
     if (!found || suggestion.insert === undefined) return;
     const caret = field.current?.selectionStart ?? text.length;
@@ -430,7 +458,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   };
 
   const submit = async (steer: boolean) => {
-    const prompt = text.trim();
+    const prompt = expandMentions(text.trim(), mentioned);
     if ((!prompt && !images.length) || sending) return;
     const attached = images;
     change("");
@@ -444,7 +472,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     const created = await app.createAndSend(prompt, attached);
     setSending(false);
     if (!created) {
-      change(prompt);
+      change(plainMentions(prompt));
       setImages(attached);
     } else {
       app.saveDraftText(key, "");
@@ -460,7 +488,12 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     const next = history.current + step;
     if (next < -1 || next >= prompts.length) return false;
     history.current = next;
-    setText(next === -1 ? "" : (prompts[next] ?? ""));
+    const recalled = next === -1 ? "" : (prompts[next] ?? "");
+    // A recalled prompt shows its mentions as they were typed, and still sends their links.
+    for (const part of mentionParts(recalled)) {
+      if (typeof part !== "string") mentioned.set(part.title, part.id);
+    }
+    setText(plainMentions(recalled));
     return true;
   };
 

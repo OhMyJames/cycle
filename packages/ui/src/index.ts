@@ -1,6 +1,6 @@
 export { App } from "./app.tsx";
 export { CycleApp } from "./client/app.ts";
-export type { HostBridge } from "./client/host.ts";
+export type { HostBridge, UpdateBridge, UpdateState } from "./client/host.ts";
 
 /**
  * Where the daemon is, for a page the daemon itself serves: the same host,

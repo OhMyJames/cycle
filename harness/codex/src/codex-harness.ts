@@ -85,6 +85,17 @@ export interface CodexHarnessOptions {
   /** Receives the app-server's stderr (its log output), line by line. */
   onLog?: (line: string) => void;
   provider?: ExtraProvider;
+  /** An MCP server of the client's own that every session reaches, behind a key. */
+  tools?: OwnTools;
+}
+
+/** The client's own MCP server: where it is, and the key codex sends it. */
+export interface OwnTools {
+  name: string;
+  url: string;
+  /** The environment variable codex reads the key from. */
+  keyEnv: string;
+  key: string;
 }
 
 const PROVIDER_TOKEN_ENV = "CYCLE_PROVIDER_TOKEN";
@@ -140,14 +151,31 @@ export class CodexHarness implements Harness {
   private readonly ofExtra = new Map<string, boolean>();
   private readonly activeTurns = new Map<string, string>();
   private readonly approvals = new Map<string, PendingApproval>();
+  /** The client's own MCP server, which is not the owner's to change. */
+  private readonly ownServer: string | null;
   private readonly terminals = new Map<string, OpenTerminal>();
 
   constructor(options: CodexHarnessOptions = {}) {
     const provider = options.provider ?? null;
     this.provider = provider;
     const spec = { bin: options.bin, onLog: options.onLog };
+    const tools = options.tools;
+    this.ownServer = tools?.name ?? null;
+    // Codex hands its environment to the commands the agent runs. Not a key of ours.
+    const secrets = [...(tools ? [tools.keyEnv] : []), ...(provider ? [PROVIDER_TOKEN_ENV] : [])];
+    const shared: CodexConfig = {
+      ...options.config,
+      ...(tools
+        ? {
+            [`mcp_servers.${tools.name}.url`]: tools.url,
+            [`mcp_servers.${tools.name}.bearer_token_env_var`]: tools.keyEnv,
+          }
+        : {}),
+      ...(secrets.length ? { "shell_environment_policy.exclude": secrets } : {}),
+    };
+    const env = { ...options.env, ...(tools ? { [tools.keyEnv]: tools.key } : {}) };
     this.main = new CodexProcess(
-      { ...spec, config: options.config ?? {}, env: options.env ?? {} },
+      { ...spec, config: shared, env },
       {
         onNotification: (method, params) => this.handleNotification(method, params, true),
         onRequest: (rpc, id, method, params) => this.handleServerRequest(rpc, id, method, params),
@@ -159,16 +187,14 @@ export class CodexHarness implements Harness {
           {
             ...spec,
             config: {
-              ...options.config,
+              ...shared,
               model_provider: provider.id,
               [`model_providers.${provider.id}.name`]: provider.name,
               [`model_providers.${provider.id}.base_url`]: provider.baseUrl,
               [`model_providers.${provider.id}.wire_api`]: "responses",
               [`model_providers.${provider.id}.env_key`]: PROVIDER_TOKEN_ENV,
-              // Codex hands its environment to the commands the agent runs. Not this.
-              "shell_environment_policy.exclude": [PROVIDER_TOKEN_ENV],
             },
-            env: { ...options.env, [PROVIDER_TOKEN_ENV]: provider.token },
+            env: { ...env, [PROVIDER_TOKEN_ENV]: provider.token },
           },
           {
             onNotification: (method, params) => this.handleNotification(method, params, false),
@@ -395,7 +421,10 @@ export class CodexHarness implements Harness {
         detail: "toolsAndAuthOnly",
       }),
     ]);
-    return toMcpServers(configured, statuses.data);
+    // The client's own server is part of it, not one of the owner's connections.
+    return toMcpServers(configured, statuses.data).filter(
+      (server) => server.name !== this.ownServer,
+    );
   }
 
   /** Writes the owner's configuration and has codex's sessions take it up. */

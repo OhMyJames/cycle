@@ -22,6 +22,7 @@ import { LaunchError, Scheduler, type SchedulesFile } from "./schedules.ts";
 import { type MetaFile, SessionHub } from "./sessions.ts";
 import { JsonStore, diskFile, realDelay } from "./store.ts";
 import { Terminals } from "./terminals.ts";
+import type { SessionSource } from "./tools.ts";
 import { type UsageFile, UsageLedger } from "./usage.ts";
 
 export const DAEMON_VERSION = "0.1.0";
@@ -39,6 +40,8 @@ export interface DaemonOptions {
   uiDir?: string;
   /** Origins besides the daemon's own that may connect. */
   extraOrigins?: string[];
+  /** Cycle's own tools for agents, which read the sessions once there is a hub. */
+  tools?: { serve(source: SessionSource): void };
 }
 
 export interface Daemon {
@@ -96,6 +99,15 @@ function terminalTopic(id: string): string {
  * serves the `@cycle/protocol` wire API over a WebSocket on loopback, behind
  * a connection token, and sends each client only what it follows.
  */
+function known(hub: SessionHub, sessionId: string): boolean {
+  try {
+    hub.info(sessionId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const { harness, home } = options;
   const token = options.token ?? newToken();
@@ -556,6 +568,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   };
   const ticking = setInterval(tick, SCHEDULE_TICK_MS);
   tick();
+  options.tools?.serve({
+    list: () => hub.list(false),
+    async turns(sessionId) {
+      // A session the hub has not listed yet is still one of codex's.
+      if (!known(hub, sessionId)) await hub.list(false);
+      if (!known(hub, sessionId)) return null;
+      const opened = await hub.open(sessionId, undefined);
+      return "state" in opened ? { info: opened.state.info, turns: opened.state.turns } : null;
+    },
+  });
   return {
     port,
     token,

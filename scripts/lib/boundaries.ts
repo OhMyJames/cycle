@@ -62,7 +62,7 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
     runtimeModules: true,
   },
   // The page is the default. The main process and the preload run on Electron; the build, the
-  // packaging and the installer on Bun.
+  // packaging and the installer on Bun. The updater runs in the main process.
   "@cycle/desktop": {
     workspace: ["@cycle/ui"],
     external: ["react", "react-dom", "@types/react", "@types/react-dom"],
@@ -76,6 +76,7 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
           "src/preload.ts",
           "src/package/",
           "src/install/",
+          "src/update/",
           "build.ts",
         ],
         workspace: [],

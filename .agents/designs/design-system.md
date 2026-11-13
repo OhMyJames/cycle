@@ -107,11 +107,28 @@ folder's files. Every row is one line: icon, name, then what it is in the muted 
 where it does not fit. Kinds are under headings only when there is more than one. A name that
 starts with what was typed comes before one that holds it; a plugin's skills are one row; `@`
 with nothing typed shows what the folder holds, folders first, and at most eight paths. Hidden
-files show only when the query has a dot.
+files show only when the query has a dot. Under the files, `@` lists the owner's other sessions,
+this folder's first, at most four. A picked session reads `@title` in the composer and is a
+mention in the sent message: its title on a faint blue wash, which opens that session.
 
 ### Disclosure
 
 One glyph, `chevron-down`, turned -90° when closed. On a tool row it shows only on hover.
+
+## Panels
+
+A panel is a card at the right edge that comes in from that edge. Its header is 30 high: what it
+looks at on the left, its own actions and Close on the right. Rows are 28 high, as the sidebar's.
+
+- **Overview** is facts, a label in the muted color and its value in the primary one. A fact that
+  goes somewhere is a control: the folder opens Files, a server opens the Connector. A server has
+  a dot in its status color.
+- **Changes** lists files as cards. A file's header carries its icon, its counts and its status
+  letter, and stays at the top while its diff scrolls. A diff has no git header lines: a later
+  part of the file starts under a thin band that names where it is.
+- **Files** is a tree with a guide under each open folder. The arrow keys move through it: up and
+  down between rows, right to open a folder, left to close it, down from the filter into the list.
+- A file's icon is tinted by its kind in both, and nowhere else.
 
 ## Text that does not fit
 

@@ -25,8 +25,9 @@ import {
   reduceSession,
 } from "@cycle/protocol";
 import { Connection, type ConnectionStatus } from "./connection.ts";
-import { host } from "./host.ts";
+import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
+import { plainMentions } from "../lib/suggest.ts";
 
 export type PanelId = "changes" | "files" | "terminal" | "overview";
 export type Theme = "system" | "light" | "dark";
@@ -105,7 +106,7 @@ export function projectOf(info: SessionInfo): string {
 }
 
 export function sessionTitle(info: SessionInfo): string {
-  return info.title || info.preview.split("\n")[0]?.slice(0, 80) || "New session";
+  return info.title || plainMentions(info.preview).split("\n")[0]?.slice(0, 80) || "New session";
 }
 
 const ATTENTION: Partial<Record<SessionInfo["status"], string>> = {
@@ -137,6 +138,8 @@ export class CycleApp {
   readonly plugins = new Store<PluginCatalog | null>(null);
   readonly schedules = new Store<Schedule[] | null>(null);
   readonly toasts = new Store<Toast[]>([]);
+  /** The desktop app's own updates. Null in a browser, and in an app that cannot replace itself. */
+  readonly update = new Store<UpdateState | null>(null);
   readonly view: Store<ViewState>;
 
   private readonly link: Connection;
@@ -196,6 +199,7 @@ export class CycleApp {
   }
 
   start(): void {
+    host.watchUpdate((state) => this.update.set(state));
     this.link.connect();
   }
 

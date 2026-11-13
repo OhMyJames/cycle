@@ -54,6 +54,7 @@ function Folder({
           type="button"
           className="tree-row"
           data-active={full === selected}
+          {...(entry.directory ? { "aria-expanded": expanded } : {})}
           style={{ paddingLeft: 8 + depth * 12 }}
           onClick={() => {
             if (!entry.directory) return onOpen(full);
@@ -72,17 +73,43 @@ function Folder({
           <span className="fade-x">{entry.name}</span>
         </button>
         {entry.directory && expanded ? (
-          <Folder
-            path={full}
-            depth={depth + 1}
-            showHidden={showHidden}
-            selected={selected}
-            onOpen={onOpen}
-          />
+          <div className="tree-children" style={{ ["--guide" as string]: `${14 + depth * 12}px` }}>
+            <Folder
+              path={full}
+              depth={depth + 1}
+              showHidden={showHidden}
+              selected={selected}
+              onOpen={onOpen}
+            />
+          </div>
         ) : null}
       </div>
     );
   });
+}
+
+/** The arrow keys in a list of rows: up and down move, right opens a folder, left closes it. */
+function treeKeys(event: React.KeyboardEvent<HTMLElement>): void {
+  const rows = [...event.currentTarget.querySelectorAll<HTMLElement>(".tree-row")];
+  const at = rows.indexOf(document.activeElement as HTMLElement);
+  const row = rows[at];
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const next = rows[at + (event.key === "ArrowDown" ? 1 : -1)];
+    if (next) next.focus();
+    else if (event.key === "ArrowUp") {
+      event.currentTarget.parentElement?.querySelector<HTMLElement>(".panel-filter input")?.focus();
+    }
+    return;
+  }
+  const expanded = row?.getAttribute("aria-expanded");
+  if (
+    (event.key === "ArrowRight" && expanded === "false") ||
+    (event.key === "ArrowLeft" && expanded === "true")
+  ) {
+    event.preventDefault();
+    row?.click();
+  }
 }
 
 const Code = memo(function Code({
@@ -261,11 +288,18 @@ export function FilesPanel({ info }: { info: SessionInfo }) {
               onChange={(event) => setQuery(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") setQuery("");
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  event.currentTarget
+                    .closest(".panel")
+                    ?.querySelector<HTMLElement>(".tree-row")
+                    ?.focus();
+                }
                 if (event.key === "Enter" && matches[0]) open(`${root}/${matches[0].path}`);
               }}
             />
           </label>
-          <div className="panel-body tree fade-y">
+          <div className="panel-body tree fade-y" onKeyDown={treeKeys}>
             {query.trim() ? (
               matches.length ? (
                 matches.map((match) => (
