@@ -97,10 +97,14 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   back into it the next time it is used. Codex runs one model provider per process and keeps a thread
   with the provider it began on, so sessions on the owner's providers live in a second child, started
   when first needed. Codex caps a model it does not know at 272k tokens, so that child starts with a
-  catalog of the owner's models (`catalog.ts`), and starts again, when idle, once they change.
+  catalog of the owner's models (`catalog.ts`), and starts again, when idle, once they change. The
+  catalog turns tool search on, so the owner's MCP tools wait behind it there too, instead of each going
+  whole into every request.
 - `packages/gateway` is the only code that knows pi-ai. It is a Responses API endpoint on loopback that
   the second child takes for its model provider: `responses.ts` is the pure mapping to and from pi-ai's
-  conversation, `catalog.ts` the services and models pi-ai knows. A provider's model is
+  conversation, `catalog.ts` the services and models pi-ai knows. Codex's tool search, a kind of its
+  own in the Responses API, reaches the model as a function, and the tools it finds join the list for
+  the rest of the conversation. A provider's model is
   `<provider id>/<model id>` everywhere. The ChatGPT subscription is codex's own sign-in, not pi-ai's.
 - The daemon reaches the project only through the harness: git, files, search and terminals all run as
   codex `command/exec` and `fs/*` calls, so the daemon follows the agent wherever it runs. Why:
@@ -118,8 +122,10 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   `reduceSession` keeps every other turn's identity, and `parseMarkdown` parses only the last block.
 - The Connector is codex's own configuration, read and written through the harness (`config/read`,
   `config/batchWrite`, `mcpServerStatus/list`, `mcpServer/oauth/login`, `plugin/*`, `marketplace/*`), so
-  a server added in Cycle works in the codex CLI and the other way round. A server's environment
-  values never leave the harness: the page gets the names. Why:
+  a server added in Cycle works in the codex CLI and the other way round. A tool turned off is in
+  its server's `disabled_tools`, and subagents off are `features.multi_agent = false`, since both go
+  into every request. Codex lists only the tools it offers, so one turned off is known by name from
+  the configuration. A server's environment values never leave the harness: the page gets the names. Why:
   [decision note](.agents/notes/2026-11-13-the-connector-is-codex-config.md).
 - The daemon serves an MCP server of its own, `cycle` (`apps/daemon/src/tools.ts`), to every session's
   agent: the owner's sessions as a list, and one session's conversation, which is what a mention of a

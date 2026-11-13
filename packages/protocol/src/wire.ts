@@ -1,4 +1,5 @@
 import type {
+  AgentFeatures,
   AccountInfo,
   AccountLogin,
   ApprovalResponse,
@@ -165,6 +166,10 @@ export interface Methods {
     params: { name: string; enabled: boolean };
     result: { servers: McpServerInfo[] };
   };
+  "mcp.enableTool": {
+    params: { name: string; tool: string; enabled: boolean };
+    result: { servers: McpServerInfo[] };
+  };
   /** Starts a sign-in. The owner finishes it at `url`; `mcp.changed` follows. */
   "mcp.login": { params: { name: string }; result: { url: string } };
   "plugins.list": { params: Empty; result: PluginCatalog };
@@ -175,6 +180,8 @@ export interface Methods {
   /** `source` is a folder on the daemon's machine or a Git URL. */
   "marketplace.add": { params: { source: string }; result: PluginCatalog };
   "marketplace.remove": { params: { name: string }; result: PluginCatalog };
+  "features.read": { params: Empty; result: AgentFeatures };
+  "features.set": { params: AgentFeatures; result: AgentFeatures };
 
   // Schedules: prompts the daemon runs on a timing, each in a new session.
   "schedule.list": { params: Empty; result: { schedules: Schedule[] } };
@@ -270,6 +277,7 @@ export type DaemonEvent =
   | { type: "usage.today"; day: DayUsage }
   | { type: "mcp.changed"; servers: McpServerInfo[] }
   | { type: "plugins.changed"; catalog: PluginCatalog }
+  | { type: "features.changed"; features: AgentFeatures }
   /** The whole list, whenever a schedule changes, by a client or by a run. */
   | { type: "schedules.changed"; schedules: Schedule[] };
 

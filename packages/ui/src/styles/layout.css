@@ -866,6 +866,26 @@
   line-height: var(--text-caption-line);
 }
 
+/* A tool: its name and line, what it weighs, and its switch, on one 24-high row. */
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+.tool-row[data-off="true"] .tool-line {
+  opacity: 0.5;
+}
+.tool-line {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+.tool-weight {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Runs: day headings over 28-high rows. */
 .run-list {
   padding: 4px;

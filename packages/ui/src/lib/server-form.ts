@@ -1,4 +1,5 @@
 import type { McpServerInfo, McpServerInput } from "@cycle/protocol";
+import { compactNumber } from "./format.ts";
 
 /** One environment variable on the form. `kept` is a stored value the page was never given. */
 export interface EnvRow {
@@ -136,7 +137,16 @@ export function statusLabel(server: McpServerInfo): string {
   if (server.auth === "signedOut") return STATUS.needsAuth;
   const count = server.tools.length;
   if (server.status === "connected" || (server.status === "unknown" && count > 0)) {
-    return count === 1 ? "1 tool" : `${count} tools`;
+    const on = server.tools.filter((tool) => tool.enabled).length;
+    const tokens = toolTokens(server);
+    const tools =
+      on === count ? (count === 1 ? "1 tool" : `${count} tools`) : `${on} of ${count} tools on`;
+    return tokens ? `${tools} · ~${compactNumber(tokens)} tokens` : tools;
   }
   return STATUS[server.status];
+}
+
+/** About how much of a request a server's tools take, when they go into it whole. */
+export function toolTokens(server: McpServerInfo): number {
+  return server.tools.reduce((sum, tool) => sum + (tool.enabled ? (tool.tokens ?? 0) : 0), 0);
 }

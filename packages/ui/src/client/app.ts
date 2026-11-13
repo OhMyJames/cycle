@@ -1,6 +1,7 @@
 import {
   type AccountInfo,
   type AccountLogin,
+  type AgentFeatures,
   type ApprovalResponse,
   type DaemonEvent,
   type DaemonInfo,
@@ -136,6 +137,8 @@ export class CycleApp {
   /** Null until read: the Connector reads them when it opens, since asking starts the servers. */
   readonly mcp = new Store<McpServerInfo[] | null>(null);
   readonly plugins = new Store<PluginCatalog | null>(null);
+  /** Null until read: Settings reads them when it opens. */
+  readonly features = new Store<AgentFeatures | null>(null);
   readonly schedules = new Store<Schedule[] | null>(null);
   readonly toasts = new Store<Toast[]>([]);
   /** The desktop app's own updates. Null in a browser, and in an app that cannot replace itself. */
@@ -441,6 +444,20 @@ export class CycleApp {
     return this.mcpDid(this.request("mcp.enable", { name, enabled }));
   }
 
+  enableMcpTool(name: string, tool: string, enabled: boolean): Promise<boolean> {
+    return this.mcpDid(this.request("mcp.enableTool", { name, tool, enabled }));
+  }
+
+  async loadFeatures(): Promise<void> {
+    const features = await this.attempt(this.request("features.read", {}));
+    if (features) this.features.set(features);
+  }
+
+  async setFeatures(features: AgentFeatures): Promise<void> {
+    const now = await this.attempt(this.request("features.set", features));
+    if (now) this.features.set(now);
+  }
+
   /** Starts a server's sign-in and opens where the owner finishes it. */
   async loginMcpServer(name: string): Promise<void> {
     const answer = await this.attempt(this.request("mcp.login", { name }));
@@ -685,6 +702,9 @@ export class CycleApp {
         break;
       case "plugins.changed":
         this.plugins.set(event.catalog);
+        break;
+      case "features.changed":
+        this.features.set(event.features);
         break;
       case "schedules.changed":
         this.schedules.set(event.schedules);

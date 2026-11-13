@@ -92,8 +92,14 @@ test.each([
 });
 
 test("a row says what its server is doing and how it is reached", () => {
-  const tools = [{ name: "search", description: "" }];
+  const tools = [{ name: "search", description: "", enabled: true, tokens: null }];
   expect(statusLabel(server({ tools }))).toBe("1 tool");
+  const weighed = [
+    { name: "a", description: "", enabled: true, tokens: 1200 },
+    { name: "b", description: "", enabled: true, tokens: 300 },
+    { name: "c", description: "", enabled: false, tokens: null },
+  ];
+  expect(statusLabel(server({ tools: weighed }))).toBe("2 of 3 tools on · ~1.5k tokens");
   expect(statusLabel(server({ status: "unknown" }))).toBe("Not started yet");
   expect(statusLabel(server({ status: "failed" }))).toBe("Failed to start");
   expect(statusLabel(server({ auth: "signedOut" }))).toBe("Needs sign-in");

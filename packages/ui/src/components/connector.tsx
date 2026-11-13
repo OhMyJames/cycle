@@ -2,7 +2,7 @@ import type { McpServerInfo, PluginDetail, PluginInfo, PluginMarketplace } from 
 import { useEffect, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
-import { tildePath } from "../lib/format.ts";
+import { compactNumber, tildePath } from "../lib/format.ts";
 import { statusLabel, transportLabel } from "../lib/server-form.ts";
 import { ConfirmDialog, Segmented, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
@@ -104,16 +104,39 @@ function ServerRow({
                 : "Turn it on to see its tools."}
             </p>
           ) : (
-            <ul className="tool-list">
-              {server.tools.map((tool) => (
-                <li key={tool.name}>
-                  <span className="mono">{tool.name}</span>
-                  {tool.description ? (
-                    <span className="muted"> — {tool.description.split("\n")[0]}</span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <>
+              <p className="caption muted">
+                {server.transport
+                  ? "Each tool on goes into every request whole, unless the model searches for its tools. Turn off the ones sessions do not need."
+                  : "Each tool goes into every request whole, unless the model searches for its tools. Its plugin decides which are on."}
+              </p>
+              <ul className="tool-list">
+                {server.tools.map((tool) => (
+                  <li key={tool.name} className="tool-row" data-off={!tool.enabled}>
+                    <span className="tool-line fade-x">
+                      <span className="mono">{tool.name}</span>
+                      {tool.description ? (
+                        <span className="muted"> — {tool.description.split("\n")[0]}</span>
+                      ) : null}
+                    </span>
+                    {tool.tokens !== null ? (
+                      <span className="caption muted tool-weight">
+                        ~{compactNumber(tool.tokens)}
+                      </span>
+                    ) : null}
+                    {server.transport && server.enabled ? (
+                      <Switch
+                        label={tool.enabled ? `Turn ${tool.name} off` : `Turn ${tool.name} on`}
+                        checked={tool.enabled}
+                        onChange={(enabled) =>
+                          void app.enableMcpTool(server.name, tool.name, enabled)
+                        }
+                      />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       ) : null}

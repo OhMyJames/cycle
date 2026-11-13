@@ -160,7 +160,10 @@ export interface WireMcpServer {
   runtimeStatus: string | null;
   pluginId?: string | null;
   serverInfo?: unknown;
-  tools: Record<string, { description?: string | null } | undefined>;
+  tools: Record<
+    string,
+    { name?: string; description?: string | null; inputSchema?: unknown } | undefined
+  >;
   toolsError: string | null;
   authStatus: string;
 }
@@ -173,6 +176,8 @@ export interface WireMcpConfig {
   url?: string | null;
   bearer_token_env_var?: string | null;
   enabled?: boolean | null;
+  /** Tools codex leaves out of what the server offers. */
+  disabled_tools?: string[] | null;
 }
 
 export interface WireConfigEdit {

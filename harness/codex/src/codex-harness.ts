@@ -1,5 +1,6 @@
 import type {
   AccountInfo,
+  AgentFeatures,
   AccountLogin,
   Approval,
   ApprovalResponse,
@@ -32,6 +33,7 @@ import type { JsonRpcPeer, RpcId } from "./rpc.ts";
 import {
   checkServerName,
   mcpServerEdits,
+  mcpToolEdits,
   modePolicy,
   toInput,
   toCatalog,
@@ -447,10 +449,16 @@ export class CodexHarness implements Harness {
     );
   }
 
-  /** Writes the owner's configuration and has codex's sessions take it up. */
+  /**
+   * Writes the owner's configuration and has codex's sessions take it up, in the extra process
+   * too when it runs: it reads the same file, and would otherwise keep what it read as it started.
+   */
   private async writeConfig(edits: WireConfigEdit[]): Promise<void> {
     await this.request("config/batchWrite", { edits, reloadUserConfig: true });
     await this.request("config/mcpServer/reload", undefined);
+    if (!this.extra?.running) return;
+    await this.extra.request("config/batchWrite", { edits: [], reloadUserConfig: true });
+    await this.extra.request("config/mcpServer/reload", undefined);
   }
 
   async putMcpServer(server: McpServerInput): Promise<void> {
@@ -472,6 +480,11 @@ export class CodexHarness implements Harness {
     await this.writeConfig([
       { keyPath: `mcp_servers.${name}.enabled`, value: enabled, mergeStrategy: "replace" },
     ]);
+  }
+
+  async enableMcpTool(name: string, tool: string, enabled: boolean): Promise<void> {
+    const configured = await this.mcpConfig();
+    await this.writeConfig(mcpToolEdits(name, tool, enabled, configured[name]));
   }
 
   async loginMcpServer(name: string): Promise<{ url: string }> {
@@ -529,6 +542,28 @@ export class CodexHarness implements Harness {
 
   async removeMarketplace(name: string): Promise<void> {
     await this.request("marketplace/remove", { marketplaceName: name });
+  }
+
+  // What the agent can do
+
+  async readFeatures(): Promise<AgentFeatures> {
+    const { config } = await this.request<{
+      config: { features?: Record<string, unknown> | null };
+    }>("config/read", {});
+    // Codex has subagents on unless its configuration turns them off.
+    return { subagents: config.features?.["multi_agent"] !== false };
+  }
+
+  async setFeatures(features: AgentFeatures): Promise<void> {
+    if (typeof features.subagents !== "boolean") throw new Error("Say whether subagents are on.");
+    await this.writeConfig([
+      // On is codex's default, so turning them back on leaves no line behind.
+      {
+        keyPath: "features.multi_agent",
+        value: features.subagents ? null : false,
+        mergeStrategy: "replace",
+      },
+    ]);
   }
 
   async readAccount(): Promise<AccountInfo> {

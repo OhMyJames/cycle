@@ -331,8 +331,23 @@ export interface McpServerInfo {
   status: "connected" | "failed" | "needsAuth" | "disabled" | "unknown";
   /** `none`: it asks for no sign-in. `token`: it reads a token from the environment. */
   auth: "none" | "signedOut" | "signedIn" | "token";
-  tools: { name: string; description: string }[];
+  tools: McpToolInfo[];
   error: string | null;
+}
+
+/** One of a server's tools. A tool turned off is known by its name only. */
+export interface McpToolInfo {
+  name: string;
+  description: string;
+  enabled: boolean;
+  /** About how much of every request it takes, when it is on. */
+  tokens: number | null;
+}
+
+/** What the agent can do beyond its tools, as the harness's own configuration says. */
+export interface AgentFeatures {
+  /** It may start helper agents. Their tools go with every request of a model that offers them. */
+  subagents: boolean;
 }
 
 /** What the owner says about an MCP server of their own. */
