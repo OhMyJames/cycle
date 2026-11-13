@@ -11,6 +11,7 @@ import type {
   PluginInfo,
   ModelInfo,
   PromptInput,
+  ReviewTarget,
   SessionMode,
   SkillInfo,
   TokenCount,
@@ -114,6 +115,11 @@ const KNOWN = new Set([
   "collabAgentToolCall",
   "webSearch",
   "imageView",
+  "imageGeneration",
+  "sleep",
+  "hookPrompt",
+  "subAgentActivity",
+  "functionCallOutput",
   "enteredReviewMode",
   "exitedReviewMode",
   "contextCompaction",
@@ -134,8 +140,18 @@ export function toItem(raw: WireItem | WireUnknownItem): Item {
         text: userText(raw.content),
         images: userImages(raw.content),
       };
-    case "agentMessage":
-      return { id: raw.id, kind: "agentMessage", text: raw.text };
+    case "agentMessage": {
+      const questions = (raw.questions ?? []).map((question) => ({
+        title: question.title,
+        options: question.options ?? [],
+      }));
+      return {
+        id: raw.id,
+        kind: "agentMessage",
+        text: raw.text,
+        ...(questions.length ? { questions } : {}),
+      };
+    }
     case "plan":
       return { id: raw.id, kind: "plan", text: raw.text };
     case "reasoning":
@@ -210,6 +226,50 @@ export function toItem(raw: WireItem | WireUnknownItem): Item {
       return { id: raw.id, kind: "webSearch", query: raw.query || raw.action?.url || "" };
     case "imageView":
       return { id: raw.id, kind: "image", path: raw.path };
+    case "imageGeneration":
+      return {
+        id: raw.id,
+        kind: "image",
+        path: raw.savedPath ?? raw.revisedPrompt ?? "",
+        generated: true,
+        status: raw.failure ? "failed" : raw.status === "completed" ? "completed" : "running",
+      };
+    case "sleep":
+      return {
+        id: raw.id,
+        kind: "wait",
+        durationMs: raw.durationMs,
+        status: raw.completedAtMs ? "completed" : "running",
+      };
+    case "hookPrompt":
+      return {
+        id: raw.id,
+        kind: "hook",
+        text: raw.fragments.map((fragment) => fragment.text).join("\n\n"),
+      };
+    case "subAgentActivity":
+      return {
+        id: raw.id,
+        kind: "agentActivity",
+        activity: raw.kind,
+        agent: raw.agentPath,
+        model: raw.model,
+      };
+    case "functionCallOutput":
+      return {
+        id: raw.id,
+        kind: "toolCall",
+        server: raw.namespace,
+        tool: raw.name,
+        args: "",
+        result:
+          typeof raw.output === "string"
+            ? raw.output
+            : resultText(raw.output.filter((part) => part.type === "input_text")),
+        error: null,
+        durationMs: null,
+        status: "completed",
+      };
     case "enteredReviewMode":
       return { id: raw.id, kind: "review", phase: "entered", text: raw.review };
     case "exitedReviewMode":
@@ -220,15 +280,42 @@ export function toItem(raw: WireItem | WireUnknownItem): Item {
 }
 
 export function toTurn(raw: WireTurn): Turn {
+  const done = raw.status !== "inProgress";
   return {
     id: raw.id,
     status: raw.status === "inProgress" ? "running" : raw.status,
     error: raw.error?.message ?? null,
     startedAt: raw.startedAt === null ? null : raw.startedAt * 1000,
     durationMs: raw.durationMs,
-    items: raw.items.map(toItem),
+    // An item a history keeps as running in a turn that ended will never finish, as live.
+    items: raw.items.map((wire) => {
+      const item = toItem(wire);
+      return done && "status" in item && item.status === "running"
+        ? { ...item, status: raw.status === "completed" ? "completed" : "failed" }
+        : item;
+    }),
     diff: null,
   };
+}
+
+/**
+ * A history's turns. A turn that runs inside another, as a review's does, is kept by codex before
+ * the one it belongs to: its items join that turn, which is how the conversation saw it live.
+ */
+export function toTurns(raw: readonly WireTurn[]): Turn[] {
+  const out: Turn[] = [];
+  let carried: Turn["items"] = [];
+  raw.forEach((wire, index) => {
+    const turn = toTurn(wire);
+    const root = wire.rootTurnId;
+    if (root && root !== wire.id && raw[index + 1]?.id === root) {
+      carried = [...carried, ...turn.items];
+      return;
+    }
+    out.push(carried.length ? { ...turn, items: [...carried, ...turn.items] } : turn);
+    carried = [];
+  });
+  return out;
 }
 
 export function toSession(
@@ -571,5 +658,30 @@ export function modePolicy(mode: SessionMode): {
         sandbox: "danger-full-access",
         sandboxPolicy: { type: "dangerFullAccess" },
       };
+  }
+}
+
+/** What codex is asked to review. A commit is named by a hash, and nothing else reaches git. */
+export function toReviewTarget(target: ReviewTarget): unknown {
+  switch (target?.kind) {
+    case "uncommitted":
+      return { type: "uncommittedChanges" };
+    case "branch":
+      if (typeof target.branch !== "string" || !target.branch.trim()) {
+        throw new Error("Name the branch to review against.");
+      }
+      return { type: "baseBranch", branch: target.branch.trim() };
+    case "commit":
+      if (typeof target.sha !== "string" || !/^[0-9a-f]{4,64}$/i.test(target.sha.trim())) {
+        throw new Error("A commit is named by its hash.");
+      }
+      return { type: "commit", sha: target.sha.trim(), title: null };
+    case "custom":
+      if (typeof target.instructions !== "string" || !target.instructions.trim()) {
+        throw new Error("Say what to review.");
+      }
+      return { type: "custom", instructions: target.instructions.trim() };
+    default:
+      throw new Error("Say what to review.");
   }
 }

@@ -5,12 +5,13 @@ import { type ActivityItem, activityStatus, isActivity } from "./activity.ts";
  * How one turn is laid out, as a column of blocks. A pure function of the turn, so every rule here
  * can be tested without a page. The rules are old-cycle's:
  *
- * - What the user and the agent say, compactions, proposed plans, other agents and code reviews are
- *   blocks of their own. They cut a turn into stretches.
+ * - What the user and the agent say, compactions, proposed plans, other agents, code reviews and what
+ *   a hook added are blocks of their own. They cut a turn into stretches.
  * - The work of one stretch shares one card, where the first of it was. A stretch with only one piece
  *   of work shows it with no card around it.
  * - In a turn that stopped or failed, the failures of its last stretch are pulled out under the card,
  *   because they may be why it stopped. Elsewhere the agent dealt with them, and they stay in the card.
+ * - A review's findings that the agent then says as its reply show once, as the reply.
  * - Thinking shows only when the owner asks for it, and never cuts a stretch.
  * - A turn that stopped or failed says so at its end.
  */
@@ -24,6 +25,7 @@ type Laid =
   | { kind: "compaction"; item: Of<"compaction"> }
   | { kind: "agent"; item: Of<"agentCall"> }
   | { kind: "review"; item: Of<"review"> }
+  | { kind: "note"; item: Of<"hook" | "agentActivity"> }
   | { kind: "activity"; items: readonly ActivityItem[] }
   | { kind: "single"; item: ActivityItem }
   | { kind: "failed"; item: ActivityItem }
@@ -60,6 +62,9 @@ function layOut(turn: Turn, options: BlockOptions): Keyed[] {
   let opener = "start";
   let workSoFar = 0;
   let seenUser = false;
+  const replies = new Set(
+    turn.items.flatMap((item) => (item.kind === "agentMessage" ? [item.text.trim()] : [])),
+  );
 
   const flush = (last: boolean): void => {
     if (segment.length === 0) return;
@@ -113,7 +118,12 @@ function layOut(turn: Turn, options: BlockOptions): Keyed[] {
         cut({ kind: "agent", item }, item.id);
         break;
       case "review":
+        if (item.phase === "exited" && replies.has(item.text.trim())) break;
         cut({ kind: "review", item }, item.id);
+        break;
+      case "hook":
+      case "agentActivity":
+        cut({ kind: "note", item }, item.id);
         break;
       case "other":
         break;

@@ -12,6 +12,7 @@ import type {
   ProviderModel,
   PluginCatalog,
   PluginDetail,
+  ReviewTarget,
   SessionEvent,
   SessionInfo,
   SessionMode,
@@ -149,6 +150,13 @@ export interface Methods {
   "session.delete": { params: { sessionId: string; removeWorktree?: boolean }; result: Empty };
   "session.fork": { params: { sessionId: string; turnId?: string }; result: SessionInfo };
   "session.compact": { params: { sessionId: string }; result: Empty };
+  /** Starts a turn that reviews code. Refused while a turn runs. */
+  "session.review": { params: { sessionId: string; target: ReviewTarget }; result: Empty };
+  /**
+   * Removes a turn and every later one from the conversation, for good. Files the agent changed
+   * stay as they are. Clients confirm first.
+   */
+  "session.rewind": { params: { sessionId: string; turnId: string }; result: Empty };
   "approval.respond": {
     params: { sessionId: string; approvalId: string; response: ApprovalResponse };
     result: Empty;
@@ -269,6 +277,8 @@ export type DaemonEvent =
   | { type: "settings.changed"; settings: Settings }
   /** `error` says why a sign-in ended without one. */
   | { type: "account.changed"; account: AccountInfo; error: string | null }
+  /** The account's rate limits moved, as they do with each turn. Nothing else changed. */
+  | { type: "limits.changed"; account: AccountInfo }
   | { type: "models.changed"; models: ModelInfo[] }
   | { type: "providers.changed"; providers: ModelProvider[] }
   | { type: "terminals.changed"; sessionId: string | null; terminals: TerminalInfo[] }

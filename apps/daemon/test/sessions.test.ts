@@ -165,6 +165,23 @@ test("usage counts what a session adds, not what it had before it was opened", a
   expect(usage.at(-1)?.tokens.total).toBe(190);
 });
 
+test("what a session used before it loaded is the mark, and going back sets a new one", async () => {
+  const { harness, hub, usage } = await setup();
+  harness.loadedUsage = count(500);
+  await hub.open("old", undefined);
+  harness.emit({ type: "usage.updated", sessionId: "old", usage: count(650) });
+  expect(usage.at(-1)?.tokens.total).toBe(150);
+  await hub.send("old", { text: "go", images: [] }, "auto");
+  harness.emit(start("old", "t1"));
+  harness.emit(end("old", "t1"));
+  await hub.rewind("old", "t1");
+  // The shorter history's count is lower: it is not work done today.
+  harness.emit({ type: "usage.updated", sessionId: "old", usage: count(300) });
+  expect(usage.at(-1)?.tokens.total).toBe(150);
+  harness.emit({ type: "usage.updated", sessionId: "old", usage: count(340) });
+  expect(usage.at(-1)?.tokens.total).toBe(190);
+});
+
 test("a stored session is loaded once, and a turn its history left running is closed", async () => {
   const { harness, hub } = await setup();
   harness.stored = [harness.session("old", { preview: "earlier" })];
@@ -271,4 +288,35 @@ test("a session stays with the kind of model it began on", async () => {
   );
   // A model nobody lists any more is the harness's to refuse, not the daemon's to guess at.
   expect((await hub.update({ sessionId: info.id, model: "gone" })).model).toBe("gone");
+});
+
+test("a review starts a turn of its own, and waits for no turn nor makes one wait", async () => {
+  const { harness, hub, status } = await setup();
+  const info = await hub.create({ cwd: "/project" });
+  await hub.review(info.id, { kind: "uncommitted" });
+  expect(harness.calls).toContain(`review ${info.id} uncommitted`);
+  expect(status(info.id)).toBe("running");
+  harness.emit(start(info.id, "review-turn"));
+  expect(hub.review(info.id, { kind: "uncommitted" })).rejects.toThrow("before a review");
+  harness.emit(end(info.id, "review-turn"));
+  expect(status(info.id)).toBe("idle");
+});
+
+test("going back drops a turn and the ones after it, and never while one runs", async () => {
+  const { harness, hub } = await setup();
+  const info = await hub.create({ cwd: "/project" });
+  for (const turnId of ["t1", "t2"]) {
+    await hub.send(info.id, { text: turnId, images: [] }, "auto");
+    harness.emit(start(info.id, turnId));
+    harness.emit(end(info.id, turnId));
+  }
+  await hub.send(info.id, { text: "t3", images: [] }, "auto");
+  harness.emit(start(info.id, "t3"));
+  expect(hub.rewind(info.id, "t2")).rejects.toThrow("Stop the turn");
+  harness.emit(end(info.id, "t3"));
+  expect(hub.rewind(info.id, "elsewhere")).rejects.toThrow("not in this conversation");
+  await hub.rewind(info.id, "t2");
+  expect(harness.calls).toContain(`rewind ${info.id} t2`);
+  const state = await hub.open(info.id, undefined);
+  expect("state" in state && state.state.turns.map((turn) => turn.id)).toEqual(["t1"]);
 });

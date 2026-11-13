@@ -141,6 +141,12 @@ class. The full text is in the `title`.
 - The owner's message is a bubble at the right, radius 16. The reply is plain text on the page.
 - A turn's work is one summary line ("Listed 1 folder, read 1 file, ran 1 command") that opens to
   its rows. A single piece of work is its row alone.
+- What happens beside the conversation (a hook's addition, news of a helper agent) is one line in
+  the style of a row, which opens to its text when it has one.
+- Questions a reply leaves for later sit under it, each with its answers as buttons. An answer goes
+  to the composer, never straight to the agent.
+- Going back to before one of the owner's messages is under that message, and asks first: it
+  removes the turns for good, and the files stay as they are.
 - The tail, under the last turn, in this order: queued prompts, the approval that waits for the
   owner or else the status line (what the agent is doing, for how long), then one notice. What the
   owner must act on is never below something they can ignore.

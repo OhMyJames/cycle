@@ -9,6 +9,7 @@ import {
   type Params,
   type PromptInput,
   type QueuedMessage,
+  type ReviewTarget,
   type SessionEvent,
   type SessionInfo,
   type SessionMode,
@@ -16,6 +17,7 @@ import {
   type SessionStatus,
   type Settings,
   type TokenCount,
+  type TurnOptions,
   type WorktreeInfo,
   activeTurn,
   coalesceEvents,
@@ -243,7 +245,7 @@ export class SessionHub {
       this.apply(live, { type: "queue.updated", sessionId, queue: [...live.state.queue, queued] });
       return { queued: true };
     }
-    await this.startTurn(live, input);
+    await this.startTurn(live, (options) => this.options.harness.send(sessionId, input, options));
     return { queued: false };
   }
 
@@ -263,6 +265,41 @@ export class SessionHub {
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
     this.options.harness.respondApproval(approvalId, response);
+  }
+
+  /** Starts a turn that reviews code. It is not queued: it waits for no turn, and none for it. */
+  async review(sessionId: string, target: ReviewTarget): Promise<void> {
+    const live = await this.ensureLive(sessionId);
+    this.flush(live);
+    if (this.info(sessionId).archived) {
+      throw new SessionError("Unarchive the session to review in it.");
+    }
+    if (live.starting || activeTurn(live.state)) {
+      throw new SessionError("Wait for the turn to finish, or stop it, before a review.");
+    }
+    await this.startTurn(live, (options) =>
+      this.options.harness.review(sessionId, target, options),
+    );
+  }
+
+  /** Takes the conversation back to before a turn. The files the agent changed stay. */
+  async rewind(sessionId: string, turnId: string): Promise<void> {
+    if (this.info(sessionId).archived) {
+      throw new SessionError("Unarchive the session to change it.");
+    }
+    const live = await this.ensureLive(sessionId);
+    this.flush(live);
+    if (live.starting || activeTurn(live.state)) {
+      throw new SessionError("Stop the turn before going back.");
+    }
+    if (!live.state.turns.some((turn) => turn.id === turnId)) {
+      throw new SessionError("That turn is not in this conversation.");
+    }
+    const { from } = await this.options.harness.rewindSession(sessionId, turnId);
+    const known = live.state.turns.some((turn) => turn.id === from);
+    this.apply(live, { type: "turns.rewound", sessionId, turnId: known ? from : turnId });
+    // The agent counts again from the shorter history: its next report only sets the mark.
+    live.usageBaseline = true;
   }
 
   async compact(sessionId: string): Promise<void> {
@@ -442,7 +479,9 @@ export class SessionHub {
       turn.status === "running" ? { ...turn, status: "interrupted" } : turn,
     );
     state.usage = loaded.usage;
-    const live = this.newLive(state, true);
+    // Known as it loads, what was used before is the mark; else the next report sets it.
+    const live = this.newLive(state, loaded.usage === null);
+    live.usageSeen = loaded.usage?.total ?? null;
     this.live.set(sessionId, live);
     this.setInfo({ ...info, status: this.statusOf(live) });
     this.evict();
@@ -480,12 +519,16 @@ export class SessionHub {
     return live.state.turns.at(-1)?.status === "failed" ? "error" : "idle";
   }
 
-  private async startTurn(live: Live, input: PromptInput): Promise<void> {
+  /** Starts a turn with the session's mode, model and effort, and says why one did not start. */
+  private async startTurn(
+    live: Live,
+    start: (options: TurnOptions) => Promise<unknown>,
+  ): Promise<void> {
     const info = live.state.info;
     live.starting = true;
     this.syncStatus(live);
     try {
-      await this.options.harness.send(info.id, input, {
+      await start({
         mode: info.mode,
         ...(info.model ? { model: info.model } : {}),
         ...(info.effort ? { effort: info.effort } : {}),
@@ -496,7 +539,7 @@ export class SessionHub {
         type: "notice",
         sessionId: info.id,
         level: "error",
-        message: `The prompt could not be sent: ${message(error)}`,
+        message: `The turn could not start: ${message(error)}`,
       });
       throw error;
     }
@@ -534,7 +577,7 @@ export class SessionHub {
       return;
     }
     // The connector's news is the daemon's to pass on, not any session's.
-    if (event.type === "mcp.changed") return;
+    if (event.type === "mcp.changed" || event.type === "limits.changed") return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
     live.pending.push(event);
@@ -615,9 +658,12 @@ export class SessionHub {
       return;
     }
     this.apply(live, { type: "queue.updated", sessionId: info.id, queue: rest });
-    this.startTurn(live, { text: next.text, images: next.images }).catch(() => {
-      // startTurn already told the session why.
-    });
+    const input = { text: next.text, images: next.images };
+    this.startTurn(live, (options) => this.options.harness.send(info.id, input, options)).catch(
+      () => {
+        // startTurn already told the session why.
+      },
+    );
   }
 
   private syncStatus(live: Live): void {

@@ -19,6 +19,8 @@ import type {
   PluginDetail,
   PromptInput,
   RateLimitWindow,
+  ReviewTarget,
+  SessionMode,
   SkillInfo,
   TerminalHandle,
   TerminalOptions,
@@ -41,9 +43,10 @@ import {
   toMcpServers,
   toModel,
   toPluginDetail,
+  toReviewTarget,
   toSession,
   toSkill,
-  toTurn,
+  toTurns,
   toUsage,
 } from "./translate.ts";
 import type {
@@ -106,6 +109,9 @@ export interface OwnTools {
 
 const PROVIDER_TOKEN_ENV = "CYCLE_PROVIDER_TOKEN";
 
+/** How far each mode lets the agent reach, to tell a wider one from a narrower. */
+const MODE_REACH: Record<SessionMode, number> = { readOnly: 0, auto: 1, fullAccess: 2 };
+
 /** How much each of the provider's models can read now, by id. */
 function windowsOf(provider: ExtraProvider): Map<string, number> {
   return new Map(provider.models().map(({ info, contextWindow }) => [info.id, contextWindow]));
@@ -164,11 +170,21 @@ export class CodexHarness implements Harness {
   private readonly listeners = new Set<(event: HarnessEvent) => void>();
   /** Which sessions are the extra process's, as far as is known. */
   private readonly ofExtra = new Map<string, boolean>();
+  /** The turn codex runs in each session now: what an interrupt or a steer must name. */
   private readonly activeTurns = new Map<string, string>();
   private readonly approvals = new Map<string, PendingApproval>();
   /** The client's own MCP server, which is not the owner's to change. */
   private readonly ownServer: string | null;
   private readonly terminals = new Map<string, OpenTerminal>();
+  /**
+   * Each session's latest usage. Codex says it again as a session is resumed, before it answers,
+   * so a session brought back has its context from the start.
+   */
+  private readonly usage = new Map<string, Usage>();
+  /** The turn each running review was asked as, by session. */
+  private readonly reviews = new Map<string, string>();
+  /** The mode each thread was last given. Codex keeps it until a turn is started with another. */
+  private readonly modes = new Map<string, SessionMode>();
   /** The windows in the catalog the extra process last started with. */
   private extraWindows: ReadonlyMap<string, number> = new Map();
 
@@ -256,6 +272,7 @@ export class CodexHarness implements Harness {
       ...(Object.keys(config).length ? { config } : {}),
     });
     this.adopt(proc, response.thread);
+    if (options.mode) this.modes.set(response.thread.id, options.mode);
     return toSession(response.thread, {
       model: response.model,
       effort: response.reasoningEffort,
@@ -308,8 +325,8 @@ export class CodexHarness implements Harness {
         model: response.model,
         effort: response.reasoningEffort,
       }),
-      turns: response.thread.turns.map(toTurn),
-      usage: null,
+      turns: toTurns(response.thread.turns),
+      usage: this.usage.get(sessionId) ?? null,
     };
   }
 
@@ -342,11 +359,46 @@ export class CodexHarness implements Harness {
     await proc.request("thread/delete", { threadId: sessionId });
     proc.loaded.delete(sessionId);
     this.ofExtra.delete(sessionId);
+    this.usage.delete(sessionId);
+    this.modes.delete(sessionId);
   }
 
   async compactSession(sessionId: string): Promise<void> {
     const proc = await this.ensureLoaded(sessionId, {});
     await proc.request("thread/compact/start", { threadId: sessionId });
+  }
+
+  /**
+   * Codex keeps a review as two turns: the one it was asked in, which holds the prompt and names
+   * the other as its root, then the review itself. Only the first can be gone back to, and that
+   * takes both, so the earliest turn that is or belongs to `turnId` is the one gone back to.
+   */
+  async rewindSession(sessionId: string, turnId: string): Promise<{ from: string }> {
+    const proc = await this.ensureLoaded(sessionId, {});
+    let from: string | null = null;
+    let cursor: string | null = null;
+    search: do {
+      const page: { data: WireTurn[]; nextCursor: string | null } = await proc.request(
+        "thread/turns/list",
+        {
+          threadId: sessionId,
+          cursor,
+          limit: LIST_PAGE,
+          sortDirection: "desc",
+          itemsView: "notLoaded",
+        },
+      );
+      for (const turn of page.data) {
+        if (turn.id === turnId || turn.rootTurnId === turnId) from = turn.id;
+        else if (from) break search;
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+    if (!from) throw new Error("That turn is not in this conversation.");
+    await proc.request("thread/revert", { threadId: sessionId, beforeTurnId: from });
+    // What was measured counted the turns that are gone.
+    this.usage.delete(sessionId);
+    return { from };
   }
 
   // Turns
@@ -373,6 +425,35 @@ export class CodexHarness implements Harness {
         ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy }
         : {}),
     });
+    this.activeTurns.set(sessionId, response.turn.id);
+    if (options.mode) this.modes.set(sessionId, options.mode);
+    return { turnId: response.turn.id };
+  }
+
+  /**
+   * A review takes no mode of its own: it runs with the one the thread last had. That may be wider
+   * than the owner's choice now, if they narrowed it since, or not known, and then the review waits
+   * for a turn, which gives the thread the owner's mode.
+   */
+  async review(
+    sessionId: string,
+    target: ReviewTarget,
+    options: TurnOptions,
+  ): Promise<{ turnId: string }> {
+    const proc = await this.ensureLoaded(sessionId, options);
+    const held = this.modes.get(sessionId);
+    if (options.mode && (!held || MODE_REACH[held] > MODE_REACH[options.mode])) {
+      throw new Error(
+        "The agent may still have wider access than this session's mode allows now. " +
+          "Send it a message first, then start the review.",
+      );
+    }
+    const response = await proc.request<{ turn: WireTurn }>("review/start", {
+      threadId: sessionId,
+      target: toReviewTarget(target),
+      delivery: "inline",
+    });
+    this.reviews.set(sessionId, response.turn.id);
     this.activeTurns.set(sessionId, response.turn.id);
     return { turnId: response.turn.id };
   }
@@ -769,11 +850,14 @@ export class CodexHarness implements Harness {
     if (this.extra) {
       for (const [sessionId, turnId] of this.activeTurns) {
         if (!mine(sessionId)) continue;
+        // A review's conversation knows it by the turn it was asked as.
+        const known = this.reviews.get(sessionId) ?? turnId;
         this.activeTurns.delete(sessionId);
+        this.reviews.delete(sessionId);
         this.emit({
           type: "turn.completed",
           sessionId,
-          turnId,
+          turnId: known,
           status: "failed",
           error: `${message}. It starts again with your next message.`,
           durationMs: null,
@@ -789,6 +873,7 @@ export class CodexHarness implements Harness {
     // With one process, its end is every session's, and the daemon is told so in one event.
     if (this.extra) return;
     this.activeTurns.clear();
+    this.reviews.clear();
     this.emit({ type: "harness.exited", message });
   }
 
@@ -812,6 +897,9 @@ export class CodexHarness implements Harness {
       ...(stale ? { config: stale } : {}),
     });
     proc.loaded.add(sessionId);
+    // Resumed with no mode, the thread has whatever codex's configuration says.
+    if (options.mode) this.modes.set(sessionId, options.mode);
+    else this.modes.delete(sessionId);
     return response;
   }
 
@@ -835,13 +923,18 @@ export class CodexHarness implements Harness {
     switch (method) {
       case "turn/started": {
         const turn = params["turn"] as WireTurn;
+        // A review runs as a turn inside the one it was asked as, whose id its items and its end
+        // carry. That outer turn is the one the conversation knows.
+        // Codex stops or steers only the inner one, by its own id.
+        const review = this.reviews.get(sessionId);
+        const id = review && turn.rootTurnId === review ? review : turn.id;
         this.activeTurns.set(sessionId, turn.id);
         // A thread codex started itself, as for a sub-agent, is known first by its turn.
         this.ofExtra.set(sessionId, !main);
         this.emit({
           type: "turn.started",
           sessionId,
-          turnId: turn.id,
+          turnId: id,
           startedAt: turn.startedAt === null ? null : turn.startedAt * 1000,
         });
         break;
@@ -849,6 +942,7 @@ export class CodexHarness implements Harness {
       case "turn/completed": {
         const turn = params["turn"] as WireTurn;
         this.activeTurns.delete(sessionId);
+        this.reviews.delete(sessionId);
         for (const [approvalId, pending] of this.approvals) {
           if (pending.sessionId === sessionId) this.approvals.delete(approvalId);
         }
@@ -911,12 +1005,15 @@ export class CodexHarness implements Harness {
       case "turn/diff/updated":
         this.emit({ type: "diff.updated", sessionId, turnId, diff: text(params["diff"]) ?? "" });
         break;
-      case "thread/tokenUsage/updated":
-        this.emit({
-          type: "usage.updated",
-          sessionId,
-          usage: toUsage(params["tokenUsage"] as WireTokenUsage),
-        });
+      case "thread/tokenUsage/updated": {
+        const usage = toUsage(params["tokenUsage"] as WireTokenUsage);
+        this.usage.set(sessionId, usage);
+        this.emit({ type: "usage.updated", sessionId, usage });
+        break;
+      }
+      case "account/rateLimits/updated":
+        // A sparse update: what it leaves out is unknown, not gone, so the whole is read again.
+        if (main) this.emit({ type: "limits.changed" });
         break;
       case "mcpServer/oauthLogin/completed":
       case "mcpServer/startupStatus/updated":

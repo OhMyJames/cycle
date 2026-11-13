@@ -7,6 +7,7 @@ import type {
   McpServerInput,
   ModelInfo,
   PluginCatalog,
+  ReviewTarget,
   PluginDetail,
   SessionEvent,
   SessionMode,
@@ -53,6 +54,8 @@ export type HarnessEvent =
   | { type: "mcp.changed" }
   /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */
   | { type: "account.changed"; error: string | null }
+  /** The account's rate limits moved, as they do with each turn. */
+  | { type: "limits.changed" }
   /** The harness itself stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; message: string };
 
@@ -124,9 +127,21 @@ export interface Harness {
   archiveSession(sessionId: string, archived: boolean): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
+  /**
+   * Takes the conversation back to before `turnId`, which goes with every later turn. Only the
+   * conversation: what the agent changed on disk stays. Answers the turn it went back to before,
+   * which is an earlier one when the harness keeps `turnId` as more than one.
+   */
+  rewindSession(sessionId: string, turnId: string): Promise<{ from: string }>;
 
   /** Starts a turn. Progress arrives through `onEvent`. */
   send(sessionId: string, input: PromptInput, options: TurnOptions): Promise<{ turnId: string }>;
+  /** Starts a turn in which the agent reviews code. Progress arrives through `onEvent`. */
+  review(
+    sessionId: string,
+    target: ReviewTarget,
+    options: TurnOptions,
+  ): Promise<{ turnId: string }>;
   /** Adds input to the turn that is running. Fails when none is. */
   steer(sessionId: string, input: PromptInput): Promise<void>;
   interrupt(sessionId: string): Promise<void>;

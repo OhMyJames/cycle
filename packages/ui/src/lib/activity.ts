@@ -1,6 +1,6 @@
 import type { Item } from "@cycle/protocol";
 import type { IconName } from "../components/icons.tsx";
-import { basename } from "./format.ts";
+import { basename, duration } from "./format.ts";
 
 /**
  * What the agent did, as the conversation words it: each piece of work has a kind, which gives its
@@ -15,12 +15,13 @@ export type ActivityKind =
   | "list"
   | "execute"
   | "fetch"
+  | "wait"
   | "other";
 
 /** An item that is work rather than words: what a card holds. */
 export type ActivityItem = Extract<
   Item,
-  { kind: "command" | "fileChange" | "toolCall" | "webSearch" | "image" }
+  { kind: "command" | "fileChange" | "toolCall" | "webSearch" | "image" | "wait" }
 >;
 
 export function isActivity(item: Item): item is ActivityItem {
@@ -29,7 +30,8 @@ export function isActivity(item: Item): item is ActivityItem {
     item.kind === "fileChange" ||
     item.kind === "toolCall" ||
     item.kind === "webSearch" ||
-    item.kind === "image"
+    item.kind === "image" ||
+    item.kind === "wait"
   );
 }
 
@@ -42,6 +44,7 @@ const ACTIONS: Readonly<Record<ActivityKind, readonly [running: string, done: st
   list: ["Listing", "Listed"],
   execute: ["Running", "Ran"],
   fetch: ["Fetching", "Fetched"],
+  wait: ["Waiting", "Waited"],
   other: ["Calling", "Called"],
 };
 
@@ -55,6 +58,7 @@ export const KIND_ICONS: Readonly<Record<ActivityKind, IconName>> = {
   list: "folder",
   execute: "terminal",
   fetch: "globe",
+  wait: "clock",
   other: "wrench",
 };
 
@@ -93,14 +97,17 @@ export function activityKind(item: ActivityItem): ActivityKind {
     case "webSearch":
       return "search";
     case "image":
-      return "read";
+      return item.generated ? "other" : "read";
+    case "wait":
+      return "wait";
   }
 }
 
 export type ActivityStatus = "running" | "completed" | "failed" | "declined";
 
 export function activityStatus(item: ActivityItem): ActivityStatus {
-  return item.kind === "webSearch" || item.kind === "image" ? "completed" : item.status;
+  if (item.kind === "webSearch") return "completed";
+  return item.status ?? "completed";
 }
 
 const files = (count: number): string => (count === 1 ? "1 file" : `${count} files`);
@@ -158,7 +165,16 @@ export function activityRow(item: ActivityItem): {
     case "webSearch":
       return { kind, icon: "globe", action: "Searched the web", detail: item.query };
     case "image":
-      return { kind, icon: "image", action: "Viewed", detail: basename(item.path) };
+      return item.generated
+        ? {
+            kind,
+            icon: "image",
+            action: running ? "Generating an image" : "Generated an image",
+            detail: item.path.startsWith("/") ? basename(item.path) : item.path,
+          }
+        : { kind, icon: "image", action: "Viewed", detail: basename(item.path) };
+    case "wait":
+      return { kind, icon: KIND_ICONS[kind], action, detail: duration(item.durationMs) };
   }
 }
 
@@ -185,6 +201,7 @@ const PHRASES: Readonly<Record<ActivityKind, (count: number) => string>> = {
   list: (count) => `listed ${count === 1 ? "1 folder" : `${count} folders`}`,
   execute: (count) => `ran ${count === 1 ? "1 command" : `${count} commands`}`,
   fetch: (count) => `fetched ${count === 1 ? "1 page" : `${count} pages`}`,
+  wait: (count) => (count === 1 ? "waited once" : `waited ${count} times`),
   other: (count) => `used ${count === 1 ? "1 tool" : `${count} tools`}`,
 };
 
@@ -208,7 +225,11 @@ export function failedCount(items: readonly ActivityItem[]): number {
 
 /** What each kind of work looks like from outside, for the loader of dots. */
 export function loaderStateOf(kind: ActivityKind): "searching" | "executing" {
-  return kind === "read" || kind === "search" || kind === "list" || kind === "fetch"
+  return kind === "read" ||
+    kind === "search" ||
+    kind === "list" ||
+    kind === "fetch" ||
+    kind === "wait"
     ? "searching"
     : "executing";
 }

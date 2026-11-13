@@ -158,3 +158,34 @@ test("plan, usage, queue and notices are kept as last told", () => {
   expect(state.queue.map((queued) => queued.text)).toEqual(["next"]);
   expect(state.notices).toEqual([{ level: "warning", message: "careful" }]);
 });
+
+const turn = (turnId: string): SessionEvent[] => [
+  { type: "turn.started", sessionId: "s", turnId, startedAt: null },
+  {
+    type: "turn.completed",
+    sessionId: "s",
+    turnId,
+    status: "completed",
+    error: null,
+    durationMs: 1,
+  },
+];
+
+test("a rewind drops its turn and every later one, and forgets the context it measured", () => {
+  const count = { total: 3, input: 2, cachedInput: 0, output: 1, reasoning: 0 };
+  const before = fold([
+    ...turn("a"),
+    ...turn("b"),
+    ...turn("c"),
+    {
+      type: "usage.updated",
+      sessionId: "s",
+      usage: { total: count, last: count, contextWindow: 9 },
+    },
+  ]);
+  const after = reduceSession(before, { type: "turns.rewound", sessionId: "s", turnId: "b" });
+  expect(after.turns.map((each) => each.id)).toEqual(["a"]);
+  expect(after.turns[0]).toBe(before.turns[0]);
+  expect(after.usage).toBeNull();
+  expect(reduceSession(after, { type: "turns.rewound", sessionId: "s", turnId: "x" })).toBe(after);
+});

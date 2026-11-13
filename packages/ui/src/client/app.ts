@@ -16,6 +16,7 @@ import {
   type Params,
   type PluginCatalog,
   type Result,
+  type ReviewTarget,
   type Schedule,
   type ScheduleInput,
   type SessionInfo,
@@ -387,6 +388,21 @@ export class CycleApp {
     if (done) this.forget([sessionId]);
   }
 
+  /** Has the agent review code, in a turn of its own. */
+  async review(sessionId: string, target: ReviewTarget): Promise<boolean> {
+    host.prepareNotifications();
+    return (await this.attempt(this.request("session.review", { sessionId, target }))) !== null;
+  }
+
+  /**
+   * Takes a session back to before a turn, and gives the turn's prompt back to the composer so it
+   * can be changed and sent again.
+   */
+  async rewind(sessionId: string, turnId: string, prompt: string): Promise<void> {
+    const done = await this.attempt(this.request("session.rewind", { sessionId, turnId }));
+    if (done !== null && prompt) this.putInComposer(sessionId, prompt);
+  }
+
   async fork(sessionId: string, turnId?: string): Promise<void> {
     const info = await this.attempt(
       this.request("session.fork", { sessionId, ...(turnId ? { turnId } : {}) }),
@@ -642,10 +658,7 @@ export class CycleApp {
       for (const event of frame.events) {
         if (event.type === "turn.completed" && event.status !== "completed" && next.queue.length) {
           // A stopped turn sends nothing more: what was queued goes back to the field.
-          const key = frame.sessionId;
-          const returned = next.queue.map((queued) => queued.text).join("\n\n");
-          this.saveDraftText(key, [this.draftText(key), returned].filter(Boolean).join("\n\n"));
-          this.returned.set(this.returned.get() + 1);
+          this.putInComposer(frame.sessionId, next.queue.map((queued) => queued.text).join("\n\n"));
         }
         next = reduceSession(next, event);
       }
@@ -655,6 +668,12 @@ export class CycleApp {
       this.conversation(sessionId).update((conversation) => ({ ...conversation, state }));
     }
     for (const sessionId of gaps) void this.open(sessionId);
+  }
+
+  /** Adds text to a session's composer, after what is in it, for the owner to send. */
+  putInComposer(sessionId: string, text: string): void {
+    this.saveDraftText(sessionId, [this.draftText(sessionId), text].filter(Boolean).join("\n\n"));
+    this.returned.set(this.returned.get() + 1);
   }
 
   /** Counts drafts given back by a stopped turn, so the field re-reads its text. */
@@ -677,6 +696,9 @@ export class CycleApp {
         // Codex also says the account changed for reasons that end no sign-in.
         if (event.error || event.account.kind) this.login.set(null);
         if (event.error) this.toast(`The sign-in did not finish: ${event.error}`, "error");
+        break;
+      case "limits.changed":
+        this.account.set(event.account);
         break;
       case "models.changed":
         this.models.set(event.models);

@@ -14,6 +14,7 @@ import { parseDiff } from "../lib/diff.ts";
 import { basename, duration } from "../lib/format.ts";
 import { mentionParts, plainMentions } from "../lib/suggest.ts";
 import { MorphLoader } from "../loader/morph-loader.tsx";
+import { ConfirmDialog } from "./controls.tsx";
 import { CodeDiff } from "./diff-view.tsx";
 import { Icon } from "./icons.tsx";
 import { CopyButton, Markdown, OpenFileContext } from "./markdown.tsx";
@@ -72,12 +73,16 @@ export const UserBlock = memo(function UserBlock({
   item,
   steeredAfter,
   time,
+  onRewind,
 }: {
   item: Of<"userMessage">;
   /** How much work the turn had done when this joined it. */
   steeredAfter?: number | undefined;
   time?: string | undefined;
+  /** Takes the conversation back to before this message. Only a turn's first has it. */
+  onRewind?: (() => void) | undefined;
 }) {
+  const [confirming, setConfirming] = useState(false);
   return (
     <div className="user-message">
       {item.images.length ? (
@@ -106,24 +111,72 @@ export const UserBlock = memo(function UserBlock({
         ) : null}
         {time ? <time className="caption muted tabular">{time}</time> : null}
         {item.text ? <CopyButton text={plainMentions(item.text)} label="Copy message" /> : null}
+        {onRewind ? (
+          <button
+            type="button"
+            className="icon-button"
+            title="Go back to here"
+            aria-label="Go back to here"
+            onClick={() => setConfirming(true)}
+          >
+            <Icon name="undo" />
+          </button>
+        ) : null}
       </div>
+      {confirming && onRewind ? (
+        <ConfirmDialog
+          title="Go back to before this message?"
+          text="This message and everything after it leave the conversation for good. Files the agent changed stay as they are. The message returns to the composer, to change and send again."
+          action="Go back"
+          onConfirm={onRewind}
+          onClose={() => setConfirming(false)}
+        />
+      ) : null}
     </div>
   );
 });
 
-/** What the agent said. Only a turn's last reply has actions under it, which the turn passes in. */
+/**
+ * What the agent said. Only a turn's last reply has actions under it, which the turn passes in. The
+ * questions it leaves for later are under it, and an answer picked goes to the composer to be sent.
+ */
 export const TextBlock = memo(function TextBlock({
   item,
   streaming,
   actions,
+  onAnswer,
 }: {
   item: Of<"agentMessage">;
   streaming: boolean;
   actions?: ReactNode;
+  onAnswer?: (answer: string) => void;
 }) {
   return (
     <div className="agent-message">
       <Markdown text={item.text} streaming={streaming} />
+      {item.questions?.length ? (
+        <div className="reply-questions">
+          {item.questions.map((question, index) => (
+            <div key={index} className="reply-question">
+              <span className="text">{question.title}</span>
+              {question.options.length && onAnswer ? (
+                <div className="reply-options">
+                  {question.options.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className="button"
+                      onClick={() => onAnswer(`${question.title} ${option}`)}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {actions ? <div className="block-actions">{actions}</div> : null}
     </div>
   );
@@ -219,6 +272,48 @@ export const AgentBlock = memo(function AgentBlock({ item }: { item: Of<"agentCa
       {open && item.prompt ? (
         <div className="tool-body">
           <pre className="tool-text no-scrollbar">{item.prompt}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+const ACTIVITY_WORDS: Record<Of<"agentActivity">["activity"], string> = {
+  started: "Agent started",
+  interacted: "Agent messaged",
+  interrupted: "Agent stopped",
+  completed: "Agent finished",
+};
+
+/**
+ * Something that happened beside the conversation: what a hook added, or news of a helper agent. One
+ * line, which opens to a hook's text.
+ */
+export const NoteBlock = memo(function NoteBlock({ item }: { item: Of<"hook" | "agentActivity"> }) {
+  const [open, setOpen] = useState(false);
+  const text = item.kind === "hook" ? item.text.trim() : "";
+  const action = item.kind === "hook" ? "A hook added" : ACTIVITY_WORDS[item.activity];
+  const detail =
+    item.kind === "hook"
+      ? (text.split("\n")[0] ?? "")
+      : [item.agent, item.model].filter(Boolean).join(" · ");
+  return (
+    <div className="tool standalone" data-open={open}>
+      <button
+        type="button"
+        className="tool-trigger"
+        aria-expanded={open}
+        disabled={!text}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="fade-x">
+          <span className="action">{action}</span> <span className="detail">{detail}</span>
+        </span>
+        {text ? <Chevron open={open} reveal /> : null}
+      </button>
+      {open && text ? (
+        <div className="tool-body">
+          <pre className="tool-text no-scrollbar">{text}</pre>
         </div>
       ) : null}
     </div>
@@ -353,6 +448,7 @@ function bodyOf(item: ActivityItem): ReactNode {
       ) : null;
     case "webSearch":
     case "image":
+    case "wait":
       return null;
   }
 }

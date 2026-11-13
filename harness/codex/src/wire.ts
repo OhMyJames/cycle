@@ -22,7 +22,12 @@ export type WireUserInput =
 
 export type WireItem =
   | { type: "userMessage"; id: string; content: WireUserInput[] }
-  | { type: "agentMessage"; id: string; text: string }
+  | {
+      type: "agentMessage";
+      id: string;
+      text: string;
+      questions?: { title: string; options: string[] | null }[] | null;
+    }
   | { type: "plan"; id: string; text: string }
   | { type: "reasoning"; id: string; summary: string[]; content: string[] }
   | {
@@ -78,6 +83,30 @@ export type WireItem =
       action?: { type: string; url?: string | null } | null;
     }
   | { type: "imageView"; id: string; path: string }
+  | {
+      type: "imageGeneration";
+      id: string;
+      status: string;
+      revisedPrompt: string | null;
+      savedPath?: string;
+      failure: unknown;
+    }
+  | { type: "sleep"; id: string; durationMs: number; completedAtMs?: number | null }
+  | { type: "hookPrompt"; id: string; fragments: { text: string }[] }
+  | {
+      type: "subAgentActivity";
+      id: string;
+      kind: "started" | "interacted" | "interrupted" | "completed";
+      agentPath: string;
+      model: string | null;
+    }
+  | {
+      type: "functionCallOutput";
+      id: string;
+      name: string;
+      namespace: string | null;
+      output: string | { type: string; text?: string }[];
+    }
   | { type: "enteredReviewMode"; id: string; review: string }
   | { type: "exitedReviewMode"; id: string; review: string }
   | { type: "contextCompaction"; id: string };
@@ -90,6 +119,8 @@ export interface WireUnknownItem {
 
 export interface WireTurn {
   id: string;
+  /** The turn this one runs inside, as a review's does; its own id when it is a turn of its own. */
+  rootTurnId?: string | null;
   items: (WireItem | WireUnknownItem)[];
   status: "completed" | "interrupted" | "failed" | "inProgress";
   error: { message: string; additionalDetails?: string | null } | null;

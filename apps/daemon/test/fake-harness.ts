@@ -5,6 +5,7 @@ import type {
   ModelInfo,
   PromptInput,
   Turn,
+  Usage,
 } from "@cycle/protocol";
 
 /** A harness that runs nothing: tests say what it reports. */
@@ -15,6 +16,8 @@ export class FakeHarness implements Harness {
   readonly calls: string[] = [];
   stored: HarnessSession[] = [];
   history: Turn[] = [];
+  /** What the next loaded session says it used before. */
+  loadedUsage: Usage | null = null;
   failSend: string | null = null;
   execResults: Record<string, { exitCode: number; stdout: string; stderr?: string }> = {};
   private listener: (event: HarnessEvent) => void = () => {};
@@ -51,7 +54,7 @@ export class FakeHarness implements Harness {
   listSessions = async () => this.stored;
   loadSession = async (sessionId: string) => {
     this.calls.push(`load ${sessionId}`);
-    return { session: this.session(sessionId), turns: this.history, usage: null };
+    return { session: this.session(sessionId), turns: this.history, usage: this.loadedUsage };
   };
   forkSession = async (sessionId: string) => this.session(`${sessionId}-fork`);
   renameSession = async (sessionId: string, title: string) => {
@@ -64,6 +67,14 @@ export class FakeHarness implements Harness {
     this.calls.push(`delete ${sessionId}`);
   };
   compactSession = async () => {};
+  rewindSession = async (sessionId: string, turnId: string) => {
+    this.calls.push(`rewind ${sessionId} ${turnId}`);
+    return { from: turnId };
+  };
+  review: Harness["review"] = async (sessionId, target) => {
+    this.calls.push(`review ${sessionId} ${target.kind}`);
+    return { turnId: "review-turn" };
+  };
   send = async (sessionId: string, input: PromptInput) => {
     if (this.failSend) throw new Error(this.failSend);
     this.sent.push({ sessionId, text: input.text });

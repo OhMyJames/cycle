@@ -11,6 +11,7 @@ import { type CycleApp, type Draft, projectOf, sessionTitle } from "../client/ap
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
+import { reviewArgument, reviewTarget } from "../lib/review.ts";
 import {
   type Named,
   type PathRow,
@@ -252,6 +253,14 @@ function slashCommands(app: CycleApp, info: SessionInfo | null): (Suggestion & N
     command("compact", "Summarize the conversation to free up context", "collapse", () => {
       void app.attempt(app.request("session.compact", { sessionId }));
     }),
+    command(
+      "review",
+      "Review uncommitted changes, or a branch, a commit, or what you name",
+      "eye",
+      () => {
+        void app.review(sessionId, { kind: "uncommitted" });
+      },
+    ),
     command("fork", "Continue in a copy of this session", "git-fork", () => {
       void app.fork(sessionId);
     }),
@@ -457,7 +466,24 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     requestAnimationFrame(() => field.current?.setSelectionRange(position, position));
   };
 
+  /** `/review` with what to review after it: a turn of its own rather than a prompt. */
+  const submitReview = async (reviewed: string, argument: string) => {
+    const typed = text;
+    change("");
+    let branches: string[] = [];
+    if (argument && !/\s/.test(argument)) {
+      const found = await app.request("git.branches", { cwd }).catch(() => null);
+      branches = found ? [...found.local, ...found.remote] : [];
+    }
+    if (!(await app.review(reviewed, reviewTarget(argument, branches)))) change(typed);
+  };
+
   const submit = async (steer: boolean) => {
+    const argument = sessionId && !images.length ? reviewArgument(text) : null;
+    if (sessionId && argument !== null) {
+      await submitReview(sessionId, argument);
+      return;
+    }
     const prompt = expandMentions(text.trim(), mentioned);
     if ((!prompt && !images.length) || sending) return;
     const attached = images;

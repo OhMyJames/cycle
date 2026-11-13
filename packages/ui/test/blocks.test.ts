@@ -137,6 +137,28 @@ test.each<[string, Turn, string[]]>([
     ]),
     ["user(u)", "single(1)", "compaction(c)", "single(2)", "plan(p)", "agent(a)", "review(r)"],
   ],
+  [
+    "what a hook added and news of an agent cut a stretch; a wait is work in it",
+    turn([
+      user("u"),
+      run("1"),
+      { id: "w", kind: "wait", durationMs: 5000, status: "completed" },
+      { id: "h", kind: "hook", text: "remember the tests" },
+      run("2"),
+      { id: "g", kind: "agentActivity", activity: "started", agent: "/root/x", model: null },
+    ]),
+    ["user(u)", "activity(1,w)", "note(h)", "single(2)", "note(g)"],
+  ],
+  [
+    "a review's findings said again as the reply show once, as the reply",
+    turn([
+      user("u"),
+      { id: "in", kind: "review", phase: "entered", text: "changes" },
+      { id: "out", kind: "review", phase: "exited", text: "Looks fine." },
+      say("m", "Looks fine."),
+    ]),
+    ["user(u)", "review(in)", "text!(m)"],
+  ],
 ])("%s", (_name, subject, expected) => {
   expect(layout(subject)).toEqual(expected);
 });
