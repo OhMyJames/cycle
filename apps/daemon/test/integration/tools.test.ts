@@ -35,7 +35,11 @@ beforeAll(async () => {
   script = () => ({ text: ["ok"] });
   model = startMockModel((_index, body) => script(JSON.stringify(body)));
   tools = startTools("tools-key");
-  providers = await openProviders(diskFile(join(root, "home", "providers.json")), "gateway-token");
+  providers = await openProviders(
+    diskFile(join(root, "home", "providers.json")),
+    "gateway-token",
+    join(root, "home", "provider-models.json"),
+  );
   daemon = await startDaemon({
     tools,
     providers: providers.store,

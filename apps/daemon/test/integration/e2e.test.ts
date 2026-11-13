@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexHarness } from "@cycle/harness-codex";
-import { type SessionState, reduceSession } from "@cycle/protocol";
+import { type SessionEvent, type SessionState, reduceSession } from "@cycle/protocol";
 import {
   type Daemon,
   diskFile,
@@ -29,6 +29,21 @@ function git(...args: string[]): void {
   if (result.exitCode !== 0) throw new Error(result.stderr.toString());
 }
 
+/** The window codex last reported for a session, if it has. */
+function contextWindow(events: SessionEvent[], sessionId: string): number | null {
+  const usage = events.findLast(
+    (event) => event.type === "usage.updated" && event.sessionId === sessionId,
+  );
+  return usage?.type === "usage.updated" ? usage.usage.contextWindow : null;
+}
+
+/** The instructions codex opens a request with, when it reaches the model with no gateway between. */
+function instructionsOf(body: unknown): string | null {
+  const input = (body as { input?: { role?: string; content?: { text?: unknown }[] }[] }).input;
+  const text = input?.find((item) => item.role === "developer")?.content?.[0]?.text;
+  return typeof text === "string" && text.length ? text : null;
+}
+
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "cycle-e2e-"));
   project = join(root, "project");
@@ -45,7 +60,11 @@ beforeAll(async () => {
     const prompts = [...text.matchAll(/"input_text","text":"(PROMPT:[^"]*)"/g)];
     return script(prompts.at(-1)?.[1] ?? "", text.includes("function_call_output"));
   });
-  providers = await openProviders(diskFile(join(root, "home", "providers.json")), "gateway-token");
+  providers = await openProviders(
+    diskFile(join(root, "home", "providers.json")),
+    "gateway-token",
+    join(root, "home", "provider-models.json"),
+  );
   daemon = await startDaemon({
     harness: new CodexHarness({
       config: model.codexConfig,
@@ -277,7 +296,8 @@ test("a model of the owner's own provider answers through the gateway", async ()
         name: "Mock",
         reasoning: false,
         images: false,
-        contextWindow: 64_000,
+        // Beyond the 272k codex allows a model it does not know.
+        contextWindow: 1_000_000,
         maxTokens: 4_000,
       },
     ],
@@ -290,6 +310,14 @@ test("a model of the owner's own provider answers through the gateway", async ()
   const mine = models.find((entry) => entry.id === "my-endpoint/mock-model");
   expect(mine?.provider).toEqual({ id: "my-endpoint", name: "My endpoint" });
 
+  // What codex itself sends a model it does not know, to hold the catalog's instructions to.
+  const own = await client.call("session.create", { cwd: project, mode: "readOnly" });
+  await client.call("session.open", { sessionId: own.id });
+  const direct = model.requests.length;
+  await client.call("session.send", { sessionId: own.id, text: "PROMPT:own" });
+  await client.until(() => contextWindow(client.events(), own.id) !== null);
+  const ownInstructions = model.requests.slice(direct).map(instructionsOf).find(Boolean);
+
   const before = model.requests.length;
   const session = await client.call("session.create", {
     cwd: project,
@@ -299,14 +327,51 @@ test("a model of the owner's own provider answers through the gateway", async ()
   expect(session.model).toBe("my-endpoint/mock-model");
   await client.call("session.open", { sessionId: session.id });
   await client.call("session.send", { sessionId: session.id, text: "PROMPT:hi" });
-  await client.until(() => client.events().some((event) => event.type === "turn.completed"));
-  const said = client
-    .events()
+  const ofSession = () => client.events().filter((event) => event.sessionId === session.id);
+  await client.until(() => ofSession().some((event) => event.type === "turn.completed"));
+  const said = ofSession()
     .flatMap((event) => (event.type === "item.completed" ? [event.item] : []))
     .find((item) => item.kind === "agentMessage");
   expect(said).toMatchObject({ text: "provider says PROMPT:hi" });
   // The provider was asked for the model by its own name, not by Cycle's.
   expect(model.requests.slice(before).at(-1)).toMatchObject({ model: "mock-model" });
+  // Codex reads as far as the owner said the model can, less its 5% margin.
+  await client.until(() => contextWindow(client.events(), session.id) !== null);
+  expect(contextWindow(client.events(), session.id)).toBe(950_000);
+  // The catalog gives the model the instructions codex gives one it does not know. When an
+  // upgrade of codex changes them, copy its prompt.md to harness/codex/src again.
+  expect(ownInstructions).toBeTruthy();
+  expect(JSON.stringify(model.requests.slice(before).at(-1))).toContain(
+    JSON.stringify(ownInstructions).slice(1, -1),
+  );
+
+  // A window changed later reaches the next session, once the extra process starts again.
+  await client.call("providers.save", {
+    id: saved.id,
+    name: "My endpoint",
+    kind: "custom",
+    api: "openai-responses",
+    baseUrl: model.url,
+    models: [
+      {
+        id: "mock-model",
+        name: "Mock",
+        reasoning: false,
+        images: false,
+        contextWindow: 400_000,
+        maxTokens: 4_000,
+      },
+    ],
+  });
+  const second = await client.call("session.create", {
+    cwd: project,
+    model: "my-endpoint/mock-model",
+    mode: "readOnly",
+  });
+  await client.call("session.open", { sessionId: second.id });
+  await client.call("session.send", { sessionId: second.id, text: "PROMPT:again" });
+  await client.until(() => contextWindow(client.events(), second.id) !== null);
+  expect(contextWindow(client.events(), second.id)).toBe(380_000);
 
   // The session is listed beside codex's own, and stays with its kind of model.
   const { sessions } = await client.call("session.list", { archived: false });

@@ -13,9 +13,14 @@ export interface OpenProviders {
 /**
  * Opens the owner's providers and the gateway that answers codex for them.
  * Both read the same store, so a provider saved in the page serves its next
- * request with nothing started again.
+ * request with nothing started again. `catalogPath` is where codex is told
+ * how much each of their models can read.
  */
-export async function openProviders(file: TextFile, token: string): Promise<OpenProviders> {
+export async function openProviders(
+  file: TextFile,
+  token: string,
+  catalogPath: string,
+): Promise<OpenProviders> {
   const store = await JsonStore.open<ProvidersFile>(file, { providers: [] });
   const gateway = startGateway({
     token,
@@ -33,6 +38,7 @@ export async function openProviders(file: TextFile, token: string): Promise<Open
       name: "Cycle",
       baseUrl: gateway.url,
       token,
+      catalogPath,
       models: () =>
         store.value.providers.flatMap((config) => {
           const windows = new Map(

@@ -58,7 +58,11 @@ const config = env["CYCLE_CODEX_CONFIG"]
   ? (JSON.parse(env["CYCLE_CODEX_CONFIG"]) as Record<string, string | number | boolean>)
   : undefined;
 
-const providers = await openProviders(diskFile(join(home, "providers.json")), newToken());
+const providers = await openProviders(
+  diskFile(join(home, "providers.json")),
+  newToken(),
+  join(home, "provider-models.json"),
+);
 
 const tools = startTools(newToken());
 
