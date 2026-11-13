@@ -39,6 +39,8 @@ interface ToolNames {
   namespaced: Map<string, { namespace: string; name: string }>;
   /** Tools that take free text instead of JSON arguments. */
   freeform: Set<string>;
+  /** The name codex's tool search goes by, when codex offers it. */
+  search: string | null;
 }
 
 /** The model an answer came from. Thinking is only ever sent back to the model that did it. */
@@ -84,6 +86,9 @@ function isJson(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** What codex's tool search is called for a model that sees it as a function. */
+const TOOL_SEARCH = "tool_search";
+
 function flatName(namespace: string, name: string): string {
   return `${namespace}__${name}`;
 }
@@ -125,24 +130,57 @@ function partsText(content: unknown): string {
     .join("");
 }
 
-function toTools(raw: Json[], names: ToolNames): Tool[] {
-  const tools: Tool[] = [];
-  const add = (tool: Json, namespace: string | null) => {
+/**
+ * The tools codex offers, as pi-ai takes them: a namespace's tools are flattened, and tool search,
+ * which the Responses API runs as a kind of its own, becomes a function like any other.
+ */
+class ToolList {
+  readonly tools: Tool[] = [];
+  private readonly seen = new Set<string>();
+
+  readonly names: ToolNames;
+
+  constructor(names: ToolNames) {
+    this.names = names;
+  }
+
+  addAll(raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    for (const tool of raw) {
+      if (!isJson(tool)) continue;
+      if (tool["type"] === "namespace" && Array.isArray(tool["tools"])) {
+        for (const inner of tool["tools"]) if (isJson(inner)) this.add(inner, text(tool["name"]));
+      } else {
+        this.add(tool, null);
+      }
+    }
+  }
+
+  private push(tool: Tool): void {
+    // A tool found by a search may be offered again; a model refuses a name given twice.
+    if (this.seen.has(tool.name)) return;
+    this.seen.add(tool.name);
+    this.tools.push(tool);
+  }
+
+  private add(tool: Json, namespace: string | null): void {
+    const parameters = isJson(tool["parameters"])
+      ? tool["parameters"]
+      : { type: "object", properties: {} };
+    if (tool["type"] === "tool_search") {
+      this.names.search = TOOL_SEARCH;
+      this.push({ name: TOOL_SEARCH, description: text(tool["description"]), parameters });
+      return;
+    }
     const name = text(tool["name"]);
     if (!name) return;
     if (tool["type"] === "function") {
       const exposed = namespace ? flatName(namespace, name) : name;
-      if (namespace) names.namespaced.set(exposed, { namespace, name });
-      tools.push({
-        name: exposed,
-        description: text(tool["description"]),
-        parameters: isJson(tool["parameters"])
-          ? tool["parameters"]
-          : { type: "object", properties: {} },
-      });
+      if (namespace) this.names.namespaced.set(exposed, { namespace, name });
+      this.push({ name: exposed, description: text(tool["description"]), parameters });
     } else if (tool["type"] === "custom") {
-      names.freeform.add(name);
-      tools.push({
+      this.names.freeform.add(name);
+      this.push({
         name,
         description: text(tool["description"]),
         parameters: {
@@ -153,15 +191,17 @@ function toTools(raw: Json[], names: ToolNames): Tool[] {
         },
       });
     }
-  };
-  for (const tool of raw) {
-    if (tool["type"] === "namespace" && Array.isArray(tool["tools"])) {
-      for (const inner of tool["tools"]) if (isJson(inner)) add(inner, text(tool["name"]));
-    } else {
-      add(tool, null);
-    }
   }
-  return tools;
+}
+
+/** What the model reads of a search: the names found. The tools themselves join the list. */
+function foundText(raw: unknown): string {
+  const list = new ToolList({ namespaced: new Map(), freeform: new Set(), search: null });
+  list.addAll(raw);
+  const found = list.tools.map((tool) => tool.name);
+  return found.length
+    ? `Found these tools, which can be called now: ${found.join(", ")}.`
+    : "No tools matched. Try other words.";
 }
 
 function sameOrigin(a: Origin, b: Origin): boolean {
@@ -193,8 +233,9 @@ export function toContext(
   target: Origin,
   signatures: CallSignatures = new Map(),
 ): Translated {
-  const names: ToolNames = { namespaced: new Map(), freeform: new Set() };
-  const tools = toTools(request.tools ?? [], names);
+  const names: ToolNames = { namespaced: new Map(), freeform: new Set(), search: null };
+  const list = new ToolList(names);
+  list.addAll(request.tools);
   const system: string[] = request.instructions ? [request.instructions] : [];
   const messages: Message[] = [];
   /** The assistant's turn being gathered: codex sends its text, thinking and calls as separate items. */
@@ -294,6 +335,20 @@ export function toContext(
       case "custom_tool_call_output":
         result(text(item["call_id"]), item["output"]);
         break;
+      case "tool_search_call": {
+        const args = item["arguments"];
+        call(
+          text(item["call_id"]),
+          TOOL_SEARCH,
+          isJson(args) ? (args as JsonObject) : parseArguments(args),
+        );
+        break;
+      }
+      case "tool_search_output":
+        // The tools found stay in the conversation, and so on offer for the rest of it.
+        list.addAll(item["tools"]);
+        result(text(item["call_id"]), foundText(item["tools"]));
+        break;
       default:
         break;
     }
@@ -304,7 +359,7 @@ export function toContext(
     context: {
       ...(system.length ? { systemPrompt: system.join("\n\n") } : {}),
       messages,
-      ...(tools.length ? { tools } : {}),
+      ...(list.tools.length ? { tools: list.tools } : {}),
     },
     effort: isEffort(effort) ? effort : null,
     sessionId: request.prompt_cache_key ?? null,
@@ -339,6 +394,16 @@ function reasoningItem(id: string, block: ThinkingContent, origin: Origin): Json
 }
 
 function callItem(id: string, call: ToolCall, names: ToolNames): Json {
+  if (names.search && call.name === names.search) {
+    return {
+      type: "tool_search_call",
+      id,
+      call_id: call.id,
+      status: "completed",
+      execution: "client",
+      arguments: call.arguments,
+    };
+  }
   if (names.freeform.has(call.name)) {
     const input = call.arguments["input"];
     return {

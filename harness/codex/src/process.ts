@@ -68,6 +68,11 @@ export class CodexProcess {
     return rpc.request<T>(method, params);
   }
 
+  /** Whether a child is up. */
+  get running(): boolean {
+    return this.rpc !== null;
+  }
+
   /** Whether a child is up with none of our requests waiting on it. */
   get idle(): boolean {
     return this.rpc !== null && this.rpc.waiting === 0;

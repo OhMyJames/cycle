@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { McpServerInput } from "@cycle/protocol";
 import {
   mcpServerEdits,
+  mcpToolEdits,
   modePolicy,
   toCatalog,
   toItem,
@@ -290,4 +291,41 @@ test("a catalog names each plugin and says why one cannot be installed", () => {
     { available: false, unavailable: "Turned off by your organization." },
   ]);
   expect(catalog.errors).toEqual(["/bad: not JSON"]);
+});
+
+test("a server's tools say what each weighs, and one turned off is still listed, by name", () => {
+  const [server] = toMcpServers({ docs: { command: "docs", disabled_tools: ["write"] } }, [
+    {
+      name: "docs",
+      runtimeStatus: null,
+      tools: {
+        search: { description: "Searches", inputSchema: { type: "object" } },
+        fetch: { description: "Fetches a page in full. ".repeat(40), inputSchema: {} },
+      },
+      toolsError: null,
+      authStatus: "unsupported",
+    },
+  ]);
+  const tools = server?.tools ?? [];
+  expect(tools.map((tool) => [tool.name, tool.enabled])).toEqual([
+    ["fetch", true],
+    ["search", true],
+    ["write", false],
+  ]);
+  const [fetch, search, write] = tools;
+  expect(search?.tokens).toBeGreaterThan(10);
+  expect(fetch?.tokens).toBeGreaterThan((search?.tokens ?? 0) * 5);
+  expect(write?.tokens).toBeNull();
+});
+
+test("a tool is turned off and on by the server's list of tools left out", () => {
+  const off = mcpToolEdits("docs", "write", false, { command: "docs", disabled_tools: ["b"] });
+  expect(off).toEqual([
+    { keyPath: "mcp_servers.docs.disabled_tools", value: ["b", "write"], mergeStrategy: "replace" },
+  ]);
+  // The last one back on leaves no list behind.
+  const on = mcpToolEdits("docs", "write", true, { command: "docs", disabled_tools: ["write"] });
+  expect(on[0]?.value).toBeNull();
+  expect(() => mcpToolEdits("docs", "write", false, undefined)).toThrow("No MCP server");
+  expect(() => mcpToolEdits("a.b", "write", false, { command: "x" })).toThrow("name is letters");
 });

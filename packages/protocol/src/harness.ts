@@ -1,4 +1,5 @@
 import type {
+  AgentFeatures,
   AccountInfo,
   AccountLogin,
   ApprovalResponse,
@@ -140,6 +141,8 @@ export interface Harness {
   putMcpServer(server: McpServerInput): Promise<void>;
   removeMcpServer(name: string): Promise<void>;
   enableMcpServer(name: string, enabled: boolean): Promise<void>;
+  /** Turns one tool of an owner's server on or off, leaving the server's others as they are. */
+  enableMcpTool(name: string, tool: string, enabled: boolean): Promise<void>;
   /** Starts a sign-in and answers where the owner finishes it. */
   loginMcpServer(name: string): Promise<{ url: string }>;
   listPlugins(): Promise<PluginCatalog>;
@@ -149,6 +152,8 @@ export interface Harness {
   enablePlugin(id: string, enabled: boolean): Promise<void>;
   addMarketplace(source: string): Promise<void>;
   removeMarketplace(name: string): Promise<void>;
+  readFeatures(): Promise<AgentFeatures>;
+  setFeatures(features: AgentFeatures): Promise<void>;
 
   readAccount(): Promise<AccountInfo>;
   /** Starts a sign-in the owner finishes in a browser. `account.changed` follows. */

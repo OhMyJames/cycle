@@ -18,6 +18,10 @@ export interface CatalogEntry {
  * does not know gets 272k, so a larger window would be cut. Each entry is codex's own fallback for
  * an unknown model with the window put in, so a model behaves as it did without a catalog and only
  * reads as far as it can. Null when there is nothing to list: codex refuses an empty catalog.
+ *
+ * One thing differs from codex's fallback: tool search is on, so the owner's MCP tools wait behind
+ * it instead of each going into every request whole, as they do for a model codex knows. The
+ * gateway offers the search to the model as a function.
  */
 export function modelCatalog(models: readonly CatalogEntry[]): string | null {
   const entries = models.filter(
@@ -48,6 +52,7 @@ export function modelCatalog(models: readonly CatalogEntry[]): string | null {
       max_context_window: contextWindow,
       effective_context_window_percent: 95,
       experimental_supported_tools: [],
+      supports_search_tool: true,
     })),
   });
 }

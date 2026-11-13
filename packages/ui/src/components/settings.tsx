@@ -121,6 +121,7 @@ export function SettingsPage() {
   const daemon = useStore(app.daemon, (value) => value);
   const models = useStore(app.models, (value) => value);
   const login = useStore(app.login, (value) => value);
+  const features = useStore(app.features, (value) => value);
   const { theme, showReasoning, section } = useStore(app.view, (view) => ({
     section: view.settingsSection,
     theme: view.theme,
@@ -128,6 +129,7 @@ export function SettingsPage() {
   }));
   useEffect(() => {
     void app.refreshAccount();
+    void app.loadFeatures();
   }, [app]);
   const set = (patch: Parameters<typeof app.request<"settings.set">>[1]) =>
     void app.attempt(app.request("settings.set", patch));
@@ -212,6 +214,18 @@ export function SettingsPage() {
                   checked={settings?.worktree ?? false}
                   onChange={(worktree) => set({ worktree })}
                 />
+              </Setting>
+              <Setting
+                title="Subagents"
+                note="The agent may start helper agents. Their tools take about 2.5k tokens of every request to a model that offers them. A codex setting: every session follows it from its next request, and so does the codex CLI."
+              >
+                {features ? (
+                  <Switch
+                    label="Subagents"
+                    checked={features.subagents}
+                    onChange={(subagents) => void app.setFeatures({ subagents })}
+                  />
+                ) : null}
               </Setting>
             </div>
           </>

@@ -6,6 +6,7 @@ interface Entry {
   context_window: number;
   max_context_window: number;
   model_messages: { instructions_template: string };
+  supports_search_tool: boolean;
 }
 
 function entries(text: string | null): Entry[] {
@@ -19,6 +20,8 @@ test("each model may read as far as its own window, past codex's cap for one it 
     slug: "mine/big",
     context_window: 1_000_000,
     max_context_window: 1_000_000,
+    // MCP tools wait behind a search instead of each going whole into every request.
+    supports_search_tool: true,
   });
   // Codex refuses an entry without instructions; these are its own.
   expect(model?.model_messages.instructions_template).toStartWith("You are a coding agent");

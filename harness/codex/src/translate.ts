@@ -4,6 +4,7 @@ import type {
   Item,
   ItemStatus,
   McpServerInfo,
+  McpToolInfo,
   McpServerInput,
   PluginCatalog,
   PluginDetail,
@@ -292,6 +293,42 @@ export function toSkill(raw: WireSkill): SkillInfo {
   };
 }
 
+/**
+ * About how many tokens a tool takes of a request it goes into whole: its definition as codex
+ * sends it, at four characters a token. Good enough to say which tools weigh the most.
+ */
+export function toolTokens(name: string, description: string, schema: unknown): number {
+  const definition = JSON.stringify({
+    type: "function",
+    name,
+    description,
+    strict: false,
+    parameters: schema ?? {},
+  });
+  return Math.ceil(definition.length / 4);
+}
+
+/** The configuration writes that turn one of a server's tools on or off. */
+export function mcpToolEdits(
+  name: string,
+  tool: string,
+  enabled: boolean,
+  existing: WireMcpConfig | undefined,
+): WireConfigEdit[] {
+  checkServerName(name);
+  if (!existing) throw new Error(`No MCP server named ${name}.`);
+  if (typeof tool !== "string" || !tool) throw new Error("Name the tool to turn on or off.");
+  const disabled = (existing.disabled_tools ?? []).filter((entry) => entry !== tool);
+  if (!enabled) disabled.push(tool);
+  return [
+    {
+      keyPath: `mcp_servers.${name}.disabled_tools`,
+      value: disabled.length ? disabled.toSorted() : null,
+      mergeStrategy: "replace",
+    },
+  ];
+}
+
 const AUTH: Record<string, McpServerInfo["auth"]> = {
   notLoggedIn: "signedOut",
   oAuth: "signedIn",
@@ -305,10 +342,17 @@ function toMcpServer(
 ): McpServerInfo {
   const enabled = config?.enabled !== false;
   const auth = AUTH[raw?.authStatus ?? ""] ?? "none";
-  const tools = Object.entries(raw?.tools ?? {}).map(([tool, value]) => ({
+  const offered: McpToolInfo[] = Object.entries(raw?.tools ?? {}).map(([tool, value]) => ({
     name: tool,
     description: value?.description ?? "",
+    enabled: true,
+    tokens: toolTokens(tool, value?.description ?? "", value?.inputSchema),
   }));
+  // Codex lists only the tools it offers, so one turned off is known from the configuration.
+  const off = (config?.disabled_tools ?? [])
+    .filter((tool) => !offered.some((entry) => entry.name === tool))
+    .map((tool) => ({ name: tool, description: "", enabled: false, tokens: null }));
+  const tools = [...offered, ...off].toSorted((a, b) => a.name.localeCompare(b.name));
   const pluginId = raw?.pluginId ?? null;
   let transport: McpServerInfo["transport"] = null;
   if (config && !pluginId) {
@@ -326,7 +370,7 @@ function toMcpServer(
   else if (auth === "signedOut" || raw?.runtimeStatus === "authenticationRequired") {
     state = "needsAuth";
   } else if (raw?.toolsError || raw?.runtimeStatus === "failed") state = "failed";
-  else if (raw?.serverInfo || tools.length > 0 || raw?.runtimeStatus === "connected") {
+  else if (raw?.serverInfo || offered.length > 0 || raw?.runtimeStatus === "connected") {
     state = "connected";
   }
   return {

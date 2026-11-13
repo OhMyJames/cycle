@@ -83,6 +83,7 @@ export class FakeHarness implements Harness {
   putMcpServer = async () => {};
   removeMcpServer = async () => {};
   enableMcpServer = async () => {};
+  enableMcpTool = async () => {};
   loginMcpServer = async () => ({ url: "" });
   listPlugins = async () => ({ marketplaces: [], errors: [] });
   readPlugin: Harness["readPlugin"] = async () => {
@@ -93,6 +94,8 @@ export class FakeHarness implements Harness {
   enablePlugin = async () => {};
   addMarketplace = async () => {};
   removeMarketplace = async () => {};
+  readFeatures = async () => ({ subagents: true });
+  setFeatures = async () => {};
   readAccount = async () => ({ kind: null, email: null, plan: null, limits: null });
   login = async () => ({ id: "login-1", url: "https://example.test/sign-in" });
   cancelLogin = async () => {};

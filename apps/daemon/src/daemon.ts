@@ -355,6 +355,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "mcp.enable": async ({ name, enabled }) => {
       return mcpChange(harness.enableMcpServer(name, enabled));
     },
+    "mcp.enableTool": async ({ name, tool, enabled }) => {
+      return mcpChange(harness.enableMcpTool(name, tool, enabled));
+    },
     "mcp.login": ({ name }) => harness.loginMcpServer(name),
     "plugins.list": () => harness.listPlugins(),
     "plugins.read": ({ marketplace, name }) => harness.readPlugin(marketplace, name),
@@ -390,6 +393,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return {};
     },
     "schedule.run": ({ id }) => scheduler.run(id),
+    "features.read": () => harness.readFeatures(),
+    "features.set": async (features) => {
+      await harness.setFeatures({ subagents: features.subagents });
+      const now = await harness.readFeatures();
+      push({ type: "features.changed", features: now });
+      return now;
+    },
     "account.read": () => harness.readAccount(),
     "account.login": () => harness.login(),
     "account.login.cancel": async ({ id }) => {
