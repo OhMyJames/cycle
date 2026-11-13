@@ -2,7 +2,9 @@ import { activeTurn } from "@cycle/protocol";
 import { useEffect, useMemo, useRef } from "react";
 import { type CycleApp, type PanelId, projectOf, sessionTitle } from "./client/app.ts";
 import { useStore } from "./client/store.ts";
+import { AutomaticPage } from "./components/automatic.tsx";
 import { Composer } from "./components/composer.tsx";
+import { ConnectorPage } from "./components/connector.tsx";
 import { FolderPicker } from "./components/folder-picker.tsx";
 import { Icon } from "./components/icons.tsx";
 import { Palette } from "./components/palette.tsx";
@@ -132,7 +134,12 @@ function useShortcuts(app: CycleApp): void {
       if (event.repeat) return;
       const mod = event.metaKey || event.ctrlKey;
       const view = app.view.get();
-      if (event.key === "Escape" && view.page === "settings" && !view.palette) {
+      if (
+        event.key === "Escape" &&
+        view.page === "settings" &&
+        !view.palette &&
+        !view.folderPicker
+      ) {
         app.setView({ page: "thread" });
         return;
       }
@@ -229,6 +236,8 @@ function Shell() {
 
   const title = useMemo(() => {
     if (view.page === "settings") return "Settings";
+    if (view.page === "connector") return "Connector";
+    if (view.page === "automatic") return "Automatic";
     if (view.draft) return `New session in ${basename(view.draft.cwd)}`;
     return "Cycle";
   }, [view.page, view.draft]);
@@ -259,6 +268,10 @@ function Shell() {
           <section className="conversation">
             {view.page === "settings" ? (
               <SettingsPage />
+            ) : view.page === "connector" ? (
+              <ConnectorPage />
+            ) : view.page === "automatic" ? (
+              <AutomaticPage />
             ) : view.sessionId ? (
               <SessionView sessionId={view.sessionId} />
             ) : view.draft ? (

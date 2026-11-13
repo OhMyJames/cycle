@@ -14,7 +14,7 @@ export function FolderPicker() {
   const [typed, setTyped] = useState(home);
   const [folders, setFolders] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const close = () => app.setView({ folderPicker: false });
+  const close = () => app.answerFolder(null);
   useEffect(() => {
     let current = true;
     setFolders(null);
@@ -39,10 +39,7 @@ export function FolderPicker() {
       current = false;
     };
   }, [app, path]);
-  const choose = () => {
-    close();
-    app.newSession(path);
-  };
+  const choose = () => app.answerFolder(path);
   return (
     <Dialog label="Choose a folder" onClose={close} wide top>
       <form

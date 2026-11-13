@@ -44,6 +44,8 @@ export function Palette() {
         icon: panel.icon,
         run: () => app.togglePanel(panel.id),
       })),
+      { label: "Connector", icon: "plug", run: () => app.setView({ page: "connector" }) },
+      { label: "Automatic", icon: "automation", run: () => app.setView({ page: "automatic" }) },
       {
         label: "Settings",
         icon: "settings",

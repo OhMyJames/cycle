@@ -1,6 +1,6 @@
 import type { SessionInfo } from "@cycle/protocol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type CycleApp, projectOf, sessionTitle } from "../client/app.ts";
+import { type CycleApp, type PageId, projectOf, sessionTitle } from "../client/app.ts";
 import { host } from "../client/host.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -12,7 +12,7 @@ import {
   shortTime,
   tildePath,
 } from "../lib/format.ts";
-import { Icon, Spinner } from "./icons.tsx";
+import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
 
 const PAGE = 60;
@@ -200,6 +200,11 @@ const SessionRow = memo(function SessionRow({
             <StatusMark info={info} />
           </span>
           <span className="session-row-title fade-x">{title}</span>
+          {info.scheduleId ? (
+            <span className="schedule-mark" role="img" aria-label="Started by a schedule">
+              <Icon name="automation" size={12} />
+            </span>
+          ) : null}
         </button>
       )}
       {renaming ? null : (
@@ -279,6 +284,12 @@ function DeleteDialog({ info, onClose }: { info: SessionInfo; onClose(): void })
     </Dialog>
   );
 }
+
+/** The pages a nav row opens in the main area, and stays pressed for. */
+const PAGES: { page: PageId; label: string; icon: IconName }[] = [
+  { page: "connector", label: "Connector", icon: "plug" },
+  { page: "automatic", label: "Automatic", icon: "automation" },
+];
 
 const THEMES = [
   { value: "system", label: "System (default)" },
@@ -414,9 +425,10 @@ export function Sidebar() {
   const app = useApp();
   const sessions = useStore(app.sessions, (value) => value);
   const projectsSetting = useStore(app.settings, (settings) => settings?.projects);
-  const { sessionId, project } = useStore(app.view, (view) => ({
+  const { sessionId, project, page } = useStore(app.view, (view) => ({
     sessionId: view.sessionId,
     project: view.project,
+    page: view.page,
   }));
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -514,6 +526,20 @@ export function Sidebar() {
             <kbd>⌘ N</kbd>
           </span>
         </button>
+        {PAGES.map((each) => (
+          <button
+            key={each.page}
+            type="button"
+            className="nav-row"
+            aria-current={page === each.page ? "page" : undefined}
+            onClick={() => app.setView({ page: page === each.page ? "thread" : each.page })}
+          >
+            <span className="nav-icon">
+              <Icon name={each.icon} />
+            </span>
+            <span className="grow fade-x">{each.label}</span>
+          </button>
+        ))}
       </nav>
       <div className="rule inset" />
       <div className="sidebar-project">

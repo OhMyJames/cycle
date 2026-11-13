@@ -5,76 +5,8 @@ import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
 import { MODE_LABELS } from "./composer.tsx";
+import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
-
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  onChange(value: T): void;
-}) {
-  return (
-    <div className="segmented" role="radiogroup">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          className="segment"
-          aria-checked={option.value === value}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** On or off, taking effect at once: a 28 by 16 pill named by its row. */
-function Switch({
-  checked,
-  label,
-  onChange,
-}: {
-  checked: boolean;
-  label: string;
-  onChange(checked: boolean): void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      className="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-    />
-  );
-}
-
-function Setting({
-  title,
-  note,
-  children,
-}: {
-  title: string;
-  note?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="setting">
-      <div className="grow">
-        <div className="setting-name">{title}</div>
-        {note ? <div className="caption muted">{note}</div> : null}
-      </div>
-      {children}
-    </div>
-  );
-}
 
 function Limit({
   label,
