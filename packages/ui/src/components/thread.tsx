@@ -1,13 +1,27 @@
-import type { Item, SessionState, Turn } from "@cycle/protocol";
+import type { SessionState, Turn } from "@cycle/protocol";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
+import { activityRow, activityStatus, isActivity } from "../lib/activity.ts";
+import { type Block, blocksOf, gapBelow } from "../lib/blocks.ts";
 import { diffStats } from "../lib/diff.ts";
-import { basename, duration } from "../lib/format.ts";
+import { duration, shortTime } from "../lib/format.ts";
+import { type LoaderState, MorphLoader } from "../loader/morph-loader.tsx";
 import { ApprovalCard } from "./approval.tsx";
 import { Stats } from "./diff-view.tsx";
-import { Icon, Spinner } from "./icons.tsx";
-import { ItemView, isNarrative, plainCommand } from "./items.tsx";
+import { BackgroundDot, Icon } from "./icons.tsx";
+import {
+  ActivityCard,
+  AgentBlock,
+  Divider,
+  PlanBlock,
+  ReviewBlock,
+  TextBlock,
+  ThoughtBlock,
+  ToolRow,
+  TurnEnd,
+  UserBlock,
+} from "./items.tsx";
 import { CopyButton, OpenFileContext } from "./markdown.tsx";
 
 /**
@@ -16,111 +30,15 @@ import { CopyButton, OpenFileContext } from "./markdown.tsx";
  */
 const FIRST_TURNS = 12;
 const MORE_TURNS = 24;
-/** Steps of a running stretch of work that stay visible: the rest fold away. */
-const LIVE_STEPS = 6;
 const NEAR_BOTTOM = 48;
 
-type Segment = { type: "item"; item: Item } | { type: "work"; items: Item[] };
-
-/** Splits a turn into what the agent said and the stretches of work between. */
-export function segmentsOf(items: Item[]): Segment[] {
-  const out: Segment[] = [];
-  for (const item of items) {
-    const last = out.at(-1);
-    if (isNarrative(item)) out.push({ type: "item", item });
-    else if (last?.type === "work") last.items.push(item);
-    else out.push({ type: "work", items: [item] });
-  }
-  return out;
-}
-
-function plural(count: number, one: string, many = `${one}s`): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
-
-/** One line for a stretch of work: "Read 2 files, ran 3 commands, edited 1 file". */
-export function summarize(items: Item[]): string {
-  let read = 0;
-  let searched = 0;
-  let listed = 0;
-  let ran = 0;
-  let edited = 0;
-  let called = 0;
-  let thoughts = 0;
-  for (const item of items) {
-    if (item.kind === "command") {
-      const action = item.actions.length === 1 ? item.actions[0]?.type : undefined;
-      if (action === "read") read++;
-      else if (action === "search") searched++;
-      else if (action === "list") listed++;
-      else ran++;
-    } else if (item.kind === "fileChange") edited += item.changes.length;
-    else if (item.kind === "toolCall" || item.kind === "agentCall") called++;
-    else if (item.kind === "webSearch") searched++;
-    else if (item.kind === "reasoning") thoughts++;
-  }
-  const parts = [
-    read ? `read ${plural(read, "file")}` : "",
-    listed ? "listed files" : "",
-    searched ? `searched ${plural(searched, "time")}` : "",
-    ran ? `ran ${plural(ran, "command")}` : "",
-    edited ? `edited ${plural(edited, "file")}` : "",
-    called ? `called ${plural(called, "tool")}` : "",
-  ].filter(Boolean);
-  const text = parts.length ? parts.join(", ") : thoughts ? "thought it through" : "worked";
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function WorkGroup({
-  items,
-  live,
-  showReasoning,
-}: {
-  items: Item[];
-  /** The turn is still adding to this stretch. */
-  live: boolean;
-  showReasoning: boolean;
-}) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  const visible = showReasoning ? items : items.filter((item) => item.kind !== "reasoning");
-  if (!visible.length) return null;
-  const expanded = open ?? (live || visible.length === 1);
-  const shown = expanded ? (live && open === null ? visible.slice(-LIVE_STEPS) : visible) : [];
-  const hidden = visible.length - shown.length;
-  return (
-    <div className="work">
-      {visible.length > 1 && (!expanded || hidden > 0 || open !== null) ? (
-        <button
-          type="button"
-          className="work-summary"
-          aria-expanded={expanded && hidden === 0}
-          onClick={() => setOpen(!(expanded && hidden === 0))}
-        >
-          <Icon name={expanded && hidden === 0 ? "chevron-down" : "chevron-right"} size={12} />
-          {expanded && hidden > 0 ? `${hidden} earlier steps` : summarize(visible)}
-        </button>
-      ) : null}
-      {shown.map((item) => (
-        <ItemView
-          key={item.id}
-          item={item}
-          streaming={live && item === visible.at(-1)}
-          showReasoning={showReasoning}
-        />
-      ))}
-    </div>
-  );
-}
-
-function TurnFooter({ turn, sessionId }: { turn: Turn; sessionId: string }) {
+/** What floats under a turn's last reply: copy it, fork from it, how long it took, what it changed. */
+function ReplyActions({ turn, sessionId, text }: { turn: Turn; sessionId: string; text: string }) {
   const app = useApp();
-  const answer = turn.items.findLast((item) => item.kind === "agentMessage");
   const stats = useMemo(() => (turn.diff ? diffStats(turn.diff) : null), [turn.diff]);
-  if (turn.status === "running") return null;
   return (
-    <div className="turn-footer">
-      {turn.status === "interrupted" ? <span className="muted meta">Stopped</span> : null}
-      {answer && "text" in answer ? <CopyButton text={answer.text} label="Copy reply" /> : null}
+    <>
+      <CopyButton text={text} label="Copy reply" />
       <button
         type="button"
         className="icon-button"
@@ -128,123 +46,256 @@ function TurnFooter({ turn, sessionId }: { turn: Turn; sessionId: string }) {
         aria-label="Fork from here"
         onClick={() => void app.fork(sessionId, turn.id)}
       >
-        <Icon name="git-fork" />
+        <Icon name="git-branch" />
       </button>
       {turn.durationMs ? (
         <span className="caption muted tabular">{duration(turn.durationMs)}</span>
       ) : null}
       {stats && stats.additions + stats.deletions > 0 ? (
-        <button type="button" className="ghost" onClick={() => app.setView({ panel: "changes" })}>
-          <Icon name="file-diff" /> Changes <Stats {...stats} />
+        <button
+          type="button"
+          className="ghost"
+          title="Open Changes"
+          onClick={() => app.setView({ panel: "changes" })}
+        >
+          <Stats {...stats} />
         </button>
       ) : null}
-    </div>
+    </>
   );
 }
 
+function BlockView({
+  block,
+  turn,
+  sessionId,
+  streaming,
+  askingId,
+}: {
+  block: Block;
+  turn: Turn;
+  sessionId: string;
+  /** The block's item is the one being written. */
+  streaming: boolean;
+  askingId: string | undefined;
+}) {
+  const app = useApp();
+  switch (block.kind) {
+    case "user":
+      return (
+        <UserBlock
+          item={block.item}
+          steeredAfter={block.steeredAfter}
+          time={
+            block.steeredAfter === undefined && turn.startedAt
+              ? shortTime(turn.startedAt, Date.now())
+              : undefined
+          }
+        />
+      );
+    case "text":
+      return (
+        <TextBlock
+          item={block.item}
+          streaming={streaming}
+          actions={
+            block.final ? (
+              <ReplyActions turn={turn} sessionId={sessionId} text={block.item.text} />
+            ) : undefined
+          }
+        />
+      );
+    case "thought":
+      return <ThoughtBlock item={block.item} streaming={streaming} />;
+    case "plan":
+      return <PlanBlock item={block.item} streaming={streaming} />;
+    case "compaction":
+      return <Divider>Context compacted</Divider>;
+    case "agent":
+      return <AgentBlock item={block.item} />;
+    case "review":
+      return <ReviewBlock item={block.item} />;
+    case "activity":
+      return (
+        <ActivityCard
+          items={block.items}
+          asking={askingId !== undefined && block.items.some((item) => item.id === askingId)}
+        />
+      );
+    case "single":
+    case "failed":
+      return <ToolRow item={block.item} standalone />;
+    case "turnEnd": {
+      const prompt = turn.items.find((item) => item.kind === "userMessage");
+      return (
+        <TurnEnd
+          status={block.status}
+          error={block.error}
+          onRetry={
+            prompt?.kind === "userMessage"
+              ? () => void app.send(sessionId, prompt.text, prompt.images, "auto")
+              : undefined
+          }
+        />
+      );
+    }
+  }
+}
+
+/**
+ * One turn, as its blocks. Memoised on the turn's identity, which the shared reducer keeps for every
+ * turn a streamed chunk does not touch; its blocks are laid out once per turn object.
+ */
 const TurnView = memo(function TurnView({
   turn,
   sessionId,
-  showReasoning,
+  showThinking,
+  askingId,
 }: {
   turn: Turn;
   sessionId: string;
-  showReasoning: boolean;
+  showThinking: boolean;
+  askingId: string | undefined;
 }) {
-  const app = useApp();
   const running = turn.status === "running";
-  const segments = useMemo(() => segmentsOf(turn.items), [turn.items]);
+  const blocks = blocksOf(turn, { showThinking });
   const lastItem = turn.items.at(-1);
-  const prompt = turn.items.find((item) => item.kind === "userMessage");
   return (
     <article className="turn" data-running={running}>
-      {segments.map((segment, index) =>
-        segment.type === "item" ? (
-          <ItemView
-            key={segment.item.id}
-            item={segment.item}
-            streaming={running && segment.item === lastItem}
-            showReasoning={showReasoning}
+      {blocks.map((block) => (
+        <div
+          key={block.key}
+          className="block"
+          data-kind={block.kind}
+          style={{ marginTop: block.gap }}
+        >
+          <BlockView
+            block={block}
+            turn={turn}
+            sessionId={sessionId}
+            streaming={running && "item" in block && block.item === lastItem}
+            askingId={askingId}
           />
-        ) : (
-          <WorkGroup
-            key={segment.items[0]?.id ?? index}
-            items={segment.items}
-            live={running && index === segments.length - 1}
-            showReasoning={showReasoning}
-          />
-        ),
-      )}
-      {turn.status === "failed" ? (
-        <div className="error-box">
-          <span className="grow">{turn.error ?? "The turn stopped with an error."}</span>
-          {prompt?.kind === "userMessage" ? (
-            <button
-              type="button"
-              className="button"
-              onClick={() => void app.send(sessionId, prompt.text, prompt.images, "auto")}
-            >
-              Retry
-            </button>
-          ) : null}
         </div>
-      ) : null}
-      <TurnFooter turn={turn} sessionId={sessionId} />
+      ))}
     </article>
   );
 });
 
-function Elapsed({ since }: { since: number | null }) {
-  const [start] = useState(() => since ?? Date.now());
+/** How long the work has taken: "8s", then "1m 5s". */
+function Elapsed({ since }: { since: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  return <span className="tabular muted">{duration(Math.max(0, now - start))}</span>;
+  return <span className="tabular muted">{duration(Math.max(1000, now - since))}</span>;
 }
 
 /** What the agent is doing right now, in a few words. */
-export function activityLabel(turn: Turn): string {
-  const item = turn.items.at(-1);
-  if (!item) return "Starting";
-  switch (item.kind) {
-    case "agentMessage":
-    case "plan":
-      return "Writing";
-    case "command":
-      return item.status === "running"
-        ? `Running ${plainCommand(item.command).split("\n")[0]?.slice(0, 60)}`
-        : "Thinking";
-    case "fileChange":
-      return item.status === "running"
-        ? `Editing ${basename(item.changes[0]?.path ?? "files")}`
-        : "Thinking";
-    case "toolCall":
-      return item.status === "running" ? `Calling ${item.tool}` : "Thinking";
-    case "webSearch":
-      return "Searching the web";
-    case "agentCall":
-      return "Working with other agents";
-    default:
-      return "Thinking";
+export function currentStep(turn: Turn | undefined): string {
+  const item = turn?.items.at(-1);
+  if (!item) return "Working";
+  if (item.kind === "reasoning") return "Thinking";
+  if (item.kind === "agentMessage" || item.kind === "plan") return "Writing";
+  if (item.kind === "agentCall") {
+    return item.status === "running" ? "Waiting for a subagent" : "Working";
   }
+  if (isActivity(item) && activityStatus(item) === "running") {
+    const row = activityRow(item);
+    return `${row.action} ${row.detail.split("\n")[0]?.slice(0, 80) ?? ""}`.trim();
+  }
+  return "Working";
 }
 
-function Tail({ state }: { state: SessionState }) {
+function loaderState(turn: Turn | undefined): LoaderState {
+  const kind = turn?.items.at(-1)?.kind;
+  if (kind === "agentMessage" || kind === "plan") return "responding";
+  return kind === "agentCall" ? "executing" : "thinking";
+}
+
+/** A piece of the turn's work is running, which its own row, or its card's line, says. */
+function workAtWork(turn: Turn | undefined): boolean {
+  const item = turn?.items.at(-1);
+  return item !== undefined && isActivity(item) && activityStatus(item) === "running";
+}
+
+/** How long a wording stays before another replaces it, and how long a new one waits to show. */
+const MIN_SHOWN_MS = 650;
+
+/**
+ * `wanted`, held so that words do not flicker: what shows stays at least 650ms, however quickly the
+ * agent moves from one thing to the next.
+ */
+function useSteadyText(wanted: string): string {
+  const [shown, setShown] = useState(wanted);
+  const since = useRef(0);
+  useEffect(() => {
+    if (wanted === shown) return;
+    const wait = Math.max(0, MIN_SHOWN_MS - (performance.now() - since.current));
+    const timer = setTimeout(() => {
+      since.current = performance.now();
+      setShown(wanted);
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [wanted, shown]);
+  return shown;
+}
+
+/**
+ * What the agent is doing and for how long. While a piece of work runs its row says so, with its own
+ * loader, so this shows nothing but keeps its line, and the thread does not jump.
+ */
+function StatusLine({ turn, since }: { turn: Turn | undefined; since: number }) {
+  const step = useSteadyText(currentStep(turn));
+  const quiet = useSteadyText(workAtWork(turn) ? "quiet" : "full") === "quiet";
+  if (quiet) {
+    return (
+      <p className="status-line">
+        <span className="sr-only">Agent is working</span>
+      </p>
+    );
+  }
+  return (
+    <p className="status-line" aria-label="Agent is working">
+      <MorphLoader state={loaderState(turn)} />
+      <span className="fade-x">{step}</span>
+      <Elapsed since={since} />
+    </p>
+  );
+}
+
+/**
+ * The end of the conversation: what is about to happen, rather than what has. Prompts on their way,
+ * notices, then the one request waiting for the owner, or else what the agent is doing.
+ */
+function Tail({ state, gap }: { state: SessionState; gap: number }) {
   const app = useApp();
   const sessionId = state.info.id;
   const turn = state.turns.at(-1);
   const running = turn?.status === "running";
-  const notice = state.notices.at(-1);
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  const working = running || state.info.status === "running";
+  const [dismissed, setDismissed] = useState<readonly string[]>([]);
+  // When the work began. The tail stays mounted, so an approval does not start the count again.
+  const [start, setStart] = useState<number | null>(null);
+  if (working && start === null)
+    setStart(turn && running ? (turn.startedAt ?? Date.now()) : Date.now());
+  if (!working && start !== null) setStart(null);
+  const [approval] = state.approvals;
+  const notices = state.notices.filter(
+    (notice) => notice.level !== "info" && !dismissed.includes(notice.message),
+  );
+  const others = running
+    ? turn.items.filter((item) => item.kind === "agentCall" && item.status === "running").length
+    : 0;
   return (
-    <div className="tail">
+    <div className="tail" style={{ marginTop: gap }}>
       {state.queue.map((queued) => (
         <div key={queued.id} className="user-message queued">
           <div className="bubble">{queued.text}</div>
-          <span className="caption muted row">
-            <Icon name="clock" size={12} /> Queued
+          <span className="queued-label">
+            <Icon name="clock" size={12} />
+            Queued
             <button
               type="button"
               className="link"
@@ -255,32 +306,35 @@ function Tail({ state }: { state: SessionState }) {
           </span>
         </div>
       ))}
-      {notice && notice.level !== "info" && notice.message !== dismissed ? (
-        <div className={`notice ${notice.level}`}>
-          <Icon name="alert" />
-          <span className="grow">{notice.message}</span>
+      {notices.slice(-1).map((notice) => (
+        <div key={notice.message} className="notice" data-level={notice.level}>
+          <p className="grow">{notice.message}</p>
           <button
             type="button"
             className="icon-button small"
+            title="Dismiss"
             aria-label="Dismiss"
-            onClick={() => setDismissed(notice.message)}
+            onClick={() => setDismissed((list) => [...list, notice.message])}
           >
             <Icon name="x" />
           </button>
         </div>
-      ) : null}
-      {state.approvals.map((approval) => (
-        <ApprovalCard key={approval.id} sessionId={sessionId} approval={approval} />
       ))}
-      <div className="status-line" aria-live="off">
-        {(running && !state.approvals.length) || state.info.status === "running" ? (
-          <>
-            <Spinner />
-            <span className="truncate">{turn && running ? activityLabel(turn) : "Starting"}</span>
-            <Elapsed key={turn?.id ?? "start"} since={running ? (turn?.startedAt ?? null) : null} />
-          </>
-        ) : null}
-      </div>
+      {approval ? (
+        <ApprovalCard
+          key={approval.id}
+          sessionId={sessionId}
+          approval={approval}
+          waiting={state.approvals.length - 1}
+        />
+      ) : start !== null ? (
+        <StatusLine turn={running ? turn : undefined} since={start} />
+      ) : others > 0 ? (
+        <p className="status-line muted">
+          <BackgroundDot />
+          {others === 1 ? "A subagent is still working" : `${others} subagents are still working`}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -290,7 +344,7 @@ const positions = new Map<string, number | "bottom">();
 export function Thread({ sessionId }: { sessionId: string }) {
   const app = useApp();
   const conversation = useStore(app.conversation(sessionId), (value) => value);
-  const showReasoning = useStore(app.view, (view) => view.showReasoning);
+  const showThinking = useStore(app.view, (view) => view.showReasoning);
   const cwd = conversation.state?.info.cwd;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -301,6 +355,9 @@ export function Thread({ sessionId }: { sessionId: string }) {
   const first = Math.max(0, turns.length - count);
   const visible = first ? turns.slice(first) : turns;
   const loaded = conversation.state !== null;
+  const askingId = conversation.state?.approvals[0]?.itemId;
+  const lastTurn = turns.at(-1);
+  const tailGap = lastTurn ? gapBelow(blocksOf(lastTurn, { showThinking })) : 0;
 
   const toBottom = useCallback(() => {
     const node = scroller.current;
@@ -362,7 +419,9 @@ export function Thread({ sessionId }: { sessionId: string }) {
   if (conversation.error) {
     return (
       <div className="thread-empty">
-        <div className="error-box">{conversation.error}</div>
+        <div className="notice" data-level="error" role="alert">
+          {conversation.error}
+        </div>
       </div>
     );
   }
@@ -381,7 +440,7 @@ export function Thread({ sessionId }: { sessionId: string }) {
   return (
     <OpenFileContext.Provider value={openFile}>
       <div
-        className="thread-scroll"
+        className="thread-scroll fade-y"
         ref={scroller}
         onScroll={(event) => {
           const node = event.currentTarget;
@@ -395,28 +454,31 @@ export function Thread({ sessionId }: { sessionId: string }) {
         }}
       >
         <div className="thread-content" ref={content}>
-          {first > 0 ? <div className="divider-note">{first} earlier turns</div> : null}
-          {visible.map((turn) => (
+          {first > 0 ? <Divider>{first} earlier turns</Divider> : null}
+          {visible.map((turn, index) => (
             <TurnView
               key={turn.id}
               turn={turn}
               sessionId={sessionId}
-              showReasoning={showReasoning}
+              showThinking={showThinking}
+              askingId={index === visible.length - 1 ? askingId : undefined}
             />
           ))}
-          <Tail state={conversation.state} />
+          <Tail state={conversation.state} gap={tailGap} />
         </div>
       </div>
       {away ? (
-        <button
-          type="button"
-          className="to-bottom"
-          title="Scroll to the bottom"
-          aria-label="Scroll to the bottom"
-          onClick={toBottom}
-        >
-          <Icon name="arrow-down" />
-        </button>
+        <div className="to-bottom-anchor">
+          <button
+            type="button"
+            className="to-bottom"
+            title="Scroll to bottom"
+            aria-label="Scroll to bottom"
+            onClick={toBottom}
+          >
+            <Icon name="arrow-down" />
+          </button>
+        </div>
       ) : null}
     </OpenFileContext.Provider>
   );

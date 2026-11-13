@@ -1,70 +1,10 @@
 import { expect, test } from "bun:test";
 import type { Item, SessionInfo } from "@cycle/protocol";
 import { triggerAt } from "../src/components/composer.tsx";
-import { plainCommand } from "../src/components/items.tsx";
 import { groupSessions } from "../src/components/sidebar.tsx";
-import { activityLabel, segmentsOf, summarize } from "../src/components/thread.tsx";
+import { currentStep } from "../src/components/thread.tsx";
 
-const command = (
-  id: string,
-  action?: "read" | "search" | "list",
-  status: "running" | "completed" = "completed",
-): Item => ({
-  id,
-  kind: "command",
-  command: "/bin/bash -lc 'npm test'",
-  cwd: "/p",
-  output: "",
-  exitCode: 0,
-  durationMs: null,
-  actions:
-    action === "read"
-      ? [{ type: "read", path: "/p/a.ts" }]
-      : action === "search"
-        ? [{ type: "search", query: "x", path: null }]
-        : action === "list"
-          ? [{ type: "list", path: null }]
-          : [],
-  status,
-});
-const message = (id: string): Item => ({ id, kind: "agentMessage", text: "hi" });
-const edit: Item = {
-  id: "e",
-  kind: "fileChange",
-  status: "completed",
-  changes: [
-    { path: "a.ts", change: "update", diff: "" },
-    { path: "b.ts", change: "add", diff: "" },
-  ],
-};
-
-test("a turn is split into what was said and the stretches of work between", () => {
-  const items = [
-    { id: "u", kind: "userMessage", text: "go", images: [] } satisfies Item,
-    command("1", "read"),
-    command("2"),
-    message("m1"),
-    edit,
-    message("m2"),
-  ];
-  expect(
-    segmentsOf(items).map((segment) =>
-      segment.type === "work" ? segment.items.length : segment.item.id,
-    ),
-  ).toEqual(["u", 2, "m1", 1, "m2"]);
-});
-
-test("a stretch of work is summed up in one line", () => {
-  expect(summarize([command("1", "read"), command("2", "read"), command("3"), edit])).toBe(
-    "Read 2 files, ran 1 command, edited 2 files",
-  );
-  expect(summarize([command("1", "list"), command("2", "search")])).toBe(
-    "Listed files, searched 1 time",
-  );
-  expect(summarize([{ id: "r", kind: "reasoning", text: "hm" }])).toBe("Thought it through");
-});
-
-const turn = (items: Item[]) => ({
+const running = (items: Item[]) => ({
   id: "t",
   status: "running" as const,
   error: null,
@@ -73,21 +13,31 @@ const turn = (items: Item[]) => ({
   items,
   diff: null,
 });
-
-test("the status line says what the last item is doing", () => {
-  expect(activityLabel(turn([]))).toBe("Starting");
-  expect(activityLabel(turn([message("m")]))).toBe("Writing");
-  expect(activityLabel(turn([command("c", undefined, "running")]))).toBe("Running npm test");
-  expect(activityLabel(turn([command("c")]))).toBe("Thinking");
+const command = (status: "running" | "completed"): Item => ({
+  id: "c",
+  kind: "command",
+  command: "/bin/bash -lc 'npm test'",
+  cwd: "/p",
+  output: "",
+  exitCode: null,
+  durationMs: null,
+  actions: [],
+  status,
 });
 
-test.each([
-  ["/bin/bash -lc 'echo hi'", "echo hi"],
-  ["bash -lc 'it'\\''s'", "it's"],
-  ['/bin/zsh -lc "echo \\"q\\" && ls"', 'echo "q" && ls'],
-  ["git status", "git status"],
-])("the command %p is shown as %p", (wrapped, plain) => {
-  expect(plainCommand(wrapped)).toBe(plain);
+test.each<[string, Item[], string]>([
+  ["nothing yet", [], "Working"],
+  ["a thought", [{ id: "r", kind: "reasoning", text: "hm" }], "Thinking"],
+  ["a reply", [{ id: "m", kind: "agentMessage", text: "hi" }], "Writing"],
+  ["a command at work", [command("running")], "Running npm test"],
+  ["a command that ended", [command("completed")], "Working"],
+  [
+    "another agent at work",
+    [{ id: "a", kind: "agentCall", tool: "wait", prompt: null, receivers: [], status: "running" }],
+    "Waiting for a subagent",
+  ],
+])("the status line after %s", (_name, items, step) => {
+  expect(currentStep(running(items))).toBe(step);
 });
 
 test.each([
@@ -121,6 +71,7 @@ test("the list puts what needs the owner first, then what runs, then by day", ()
     pinned: false,
     unread: false,
     forkedFrom: null,
+    scheduleId: null,
     ...patch,
   });
   const groups = groupSessions(

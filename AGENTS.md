@@ -26,6 +26,9 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
 - `fullAccess` mode runs with no sandbox and never asks. It is never a default, and nothing turns it on
   for the owner.
 - No token, key or account secret may reach a page's storage beyond the connection token, or a log.
+  An MCP server's environment values count: the page is given their names only.
+- `/Applications/Cycle.app` is old-cycle's and may be in use. The installer writes only
+  `Cycle Codex.app`, and only over an app whose identifier is `dev.cycle.codex`.
   A provider's key goes from the page to the daemon once, and no wire method gives it back.
 - The gateway holds the reach of the owner's provider keys. It binds to loopback, checks `Host`, and
   answers only its bearer. Never loosen any of the three. Why:
@@ -38,7 +41,7 @@ Agents generate a lot of tests, so the suite has hard limits. The check enforces
 - Tests live in a `test/` directory beside `src/`, never beside the code they cover. A package with
   tests needs `test/tsconfig.json`.
 - `test/` holds unit tests. They may not touch processes, network, disk or timers, and each has 200ms.
-  Code takes what it needs as ports (`Schedule`, `TextFile`, `Exec`, `Harness`), so tests pass fakes:
+  Code takes what it needs as ports (`Delay`, `TextFile`, `Exec`, `Harness`), so tests pass fakes:
   see `apps/daemon/test/fake-harness.ts`.
 - `test/integration/` holds everything slower. `bun run test:integration` runs it; the gate does not.
   It runs the real `codex app-server` against a scripted model (`mock-model.ts`), with no account.
@@ -54,10 +57,14 @@ change in the real page, and drive it with Playwright when the change is in the 
 Cycle keeps its data in `CYCLE_HOME`, which defaults to `~/.cycle-codex` and must be an absolute path:
 `daemon.json` (where the running daemon is, and its token, mode 0600), `settings.json` (what new
 sessions start with, and the owner's projects), `sessions.json` (what only Cycle knows of each session:
-pin, unread, mode, model, worktree), `providers.json` (the owner's model providers and their keys,
-mode 0600), `usage.json` (tokens per local day, numbers only) and `worktrees/`.
+pin, unread, mode, model, worktree, the schedule that started it), `providers.json` (the owner's model
+providers and their keys, mode 0600), `usage.json` (tokens per local day, numbers only),
+`schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
+[decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
+app's daemon printed, since its last start) and `worktrees/`.
 Conversations themselves are codex's, in `CODEX_HOME`: Cycle keeps no copy.
-Why: [decision note](.agents/notes/2026-11-12-codex-keeps-the-conversations.md).
+Why: [decision note](.agents/notes/2026-11-12-codex-keeps-the-conversations.md). MCP servers and plugins
+are codex's too, in its `config.toml`: Cycle keeps no list of its own.
 
 ## Architecture
 
@@ -98,8 +105,20 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
 - `packages/ui` keeps state in stores by owner (`CycleApp`), read through `useStore` with a selector.
   A streamed chunk redraws one conversation's last turn: frames are applied once per animation frame,
   `reduceSession` keeps every other turn's identity, and `parseMarkdown` parses only the last block.
+- The Connector is codex's own configuration, read and written through the harness (`config/read`,
+  `config/batchWrite`, `mcpServerStatus/list`, `mcpServer/oauth/login`, `plugin/*`, `marketplace/*`), so
+  a server added in Cycle works in the codex CLI and the other way round. A server's environment
+  values never leave the harness: the page gets the names. Why:
+  [decision note](.agents/notes/2026-11-13-the-connector-is-codex-config.md).
+- `Scheduler` (`apps/daemon/src/schedules.ts`) starts each schedule's prompt in a new session when it is
+  due, as the composer would. It waits on no timer of its own: the daemon calls `tick` every 15s, and a
+  tick compares the clock with what already ran, so a daemon that was stopped catches up on the latest
+  missed occurrence only. Schedules run only while the daemon does.
 - `apps/desktop` is the Electron shell: it starts the daemon, loads its page, and gives the page a small
-  bridge (`window.cycle`): a folder chooser, notifications, opening links.
+  bridge (`window.cycle`): a folder chooser, notifications, opening links. `bun run desktop:package`
+  assembles a self-contained app from Electron's own dist, with the daemon compiled by Bun and codex's
+  platform binary inside; `bun run desktop:install` puts it in `/Applications/Cycle Codex.app`. A
+  packaged app starts its daemon with the owner's login shell environment, since Finder gives none.
 
 ## Writing code
 

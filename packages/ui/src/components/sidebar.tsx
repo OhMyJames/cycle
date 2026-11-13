@@ -1,6 +1,6 @@
 import type { SessionInfo } from "@cycle/protocol";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { type CycleApp, projectOf, sessionTitle } from "../client/app.ts";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CycleApp, type PageId, projectOf, sessionTitle } from "../client/app.ts";
 import { host } from "../client/host.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -12,8 +12,8 @@ import {
   shortTime,
   tildePath,
 } from "../lib/format.ts";
-import { Icon, Spinner } from "./icons.tsx";
-import { Dialog, Menu, type MenuEntry } from "./menu.tsx";
+import { Icon, type IconName, Spinner } from "./icons.tsx";
+import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
 
 const PAGE = 60;
 
@@ -44,28 +44,85 @@ export function groupSessions(sessions: SessionInfo[], now: number): Group[] {
   });
 }
 
+/** What a row leads with: what its session is doing, or else where it works. */
 function StatusMark({ info }: { info: SessionInfo }) {
   if (info.status === "running") {
     return (
-      <span className="mark running" title="Working">
-        <Spinner size={12} />
+      <span className="mark" role="img" aria-label="Running" title="Running">
+        <Spinner size={14} className="tone-running" />
       </span>
     );
   }
-  if (info.status === "waiting") return <span className="mark dot waiting" title="Needs you" />;
-  if (info.status === "error")
-    return <span className="mark dot error" title="Stopped with an error" />;
-  if (info.unread) return <span className="mark dot unread" title="Unread" />;
+  if (info.status === "waiting") {
+    return (
+      <span
+        className="mark"
+        role="img"
+        aria-label="Needs your approval"
+        title="Needs your approval"
+      >
+        <span className="dot waiting" />
+      </span>
+    );
+  }
+  if (info.status === "error") {
+    return (
+      <span
+        className="mark"
+        role="img"
+        aria-label="Stopped with an error"
+        title="Stopped with an error"
+      >
+        <span className="dot error" />
+      </span>
+    );
+  }
+  if (info.unread) {
+    return (
+      <span className="mark" role="img" aria-label="New activity" title="New activity">
+        <span className="dot unread" />
+      </span>
+    );
+  }
   if (info.worktree) {
     return (
-      <span className="mark" title={`Worktree on ${info.worktree.branch}`}>
+      <span className="mark place" title={`Worktree on ${info.worktree.branch}`}>
         <Icon name="git-branch" size={14} />
       </span>
     );
   }
-  return <span className="mark" />;
+  return null;
 }
 
+/** Up and down move between a list's rows, right from a row to its menu's button and left back. */
+function onRowsKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const { target } = event;
+  if (!(target instanceof HTMLElement)) return;
+  const row = target.closest(".session-row");
+  const trigger = row?.querySelector<HTMLElement>(".session-row-trigger");
+  if (!row || !trigger) return;
+  if (target === trigger) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const all = [...event.currentTarget.querySelectorAll<HTMLElement>(".session-row-trigger")];
+      const next = all[all.indexOf(trigger) + (event.key === "ArrowDown" ? 1 : -1)];
+      if (next) {
+        next.focus();
+        event.preventDefault();
+      }
+    } else if (event.key === "ArrowRight") {
+      row.querySelector<HTMLElement>(".row-menu button")?.focus();
+    }
+  } else if (event.key === "ArrowLeft" && target.closest(".row-menu")) {
+    trigger.focus();
+  }
+}
+
+/**
+ * One session in the sidebar: its status or where it runs in the gutter, its title, and its menu.
+ * Every row reaches the sidebar's edge, rounded on the left only, so the open session's row joins
+ * the workspace. The lead is a 24px column, the title starts at 28, and fades where it ends.
+ */
 const SessionRow = memo(function SessionRow({
   info,
   active,
@@ -99,41 +156,24 @@ const SessionRow = memo(function SessionRow({
     { separator: true },
     {
       label: info.archived ? "Unarchive" : "Archive",
-      icon: "archive",
+      icon: info.archived ? "undo" : "archive",
       onSelect: () => app.updateSession({ sessionId: info.id, archived: !info.archived }),
     },
     { label: "Delete…", icon: "trash", danger: true, onSelect: () => onDelete(info) },
   ];
   return (
     <div
-      className="session-row"
+      className="session-row control-row"
       data-active={active}
-      role="button"
-      tabIndex={0}
-      onClick={() => app.selectSession(info.id)}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.key === "Enter" || event.key === " ") app.selectSession(info.id);
-        const sibling =
-          event.key === "ArrowDown"
-            ? event.currentTarget.nextElementSibling
-            : event.key === "ArrowUp"
-              ? event.currentTarget.previousElementSibling
-              : null;
-        if (sibling instanceof HTMLElement && sibling.classList.contains("session-row")) {
-          event.preventDefault();
-          sibling.focus();
-        }
-      }}
+      aria-current={active ? "true" : undefined}
     >
-      <StatusMark info={info} />
       {renaming ? (
         <input
-          className="rename"
+          className="field rename"
+          aria-label="Rename conversation"
           defaultValue={title}
           autoFocus
           onFocus={(event) => event.currentTarget.select()}
-          onClick={(event) => event.stopPropagation()}
           onBlur={(event) => {
             setRenaming(false);
             const next = event.currentTarget.value.trim();
@@ -143,22 +183,43 @@ const SessionRow = memo(function SessionRow({
             if (event.nativeEvent.isComposing) return;
             if (event.key === "Enter") event.currentTarget.blur();
             if (event.key === "Escape") {
+              event.stopPropagation();
               event.currentTarget.value = title;
               event.currentTarget.blur();
             }
           }}
         />
       ) : (
-        <span className="truncate grow" title={title}>
-          {title}
+        <button
+          type="button"
+          className="session-row-trigger"
+          title={`${title} · ${shortTime(info.updatedAt, Date.now())}`}
+          onClick={() => app.selectSession(info.id)}
+        >
+          <span className="lead">
+            <StatusMark info={info} />
+          </span>
+          <span className="session-row-title fade-x">{title}</span>
+          {info.scheduleId ? (
+            <span className="schedule-mark" role="img" aria-label="Started by a schedule">
+              <Icon name="automation" size={12} />
+            </span>
+          ) : null}
+        </button>
+      )}
+      {renaming ? null : (
+        <span className="row-menu">
+          <Menu
+            entries={entries}
+            className="icon-button small"
+            title={`More options for ${title}`}
+            side="right"
+            width={200}
+          >
+            <Icon name="more" size={14} />
+          </Menu>
         </span>
       )}
-      <span className="time caption tabular">{shortTime(info.updatedAt, Date.now())}</span>
-      <span className="row-menu" onClick={(event) => event.stopPropagation()}>
-        <Menu entries={entries} className="icon-button small" title="Session actions" align="end">
-          <Icon name="more" />
-        </Menu>
-      </span>
     </div>
   );
 });
@@ -168,7 +229,7 @@ function projectEntries(app: CycleApp, projects: string[], current: string | nul
   return [
     {
       label: "All projects",
-      icon: "list",
+      icon: "projects",
       checked: current === null,
       onSelect: () => app.setView({ project: null }),
     },
@@ -191,8 +252,8 @@ function DeleteDialog({ info, onClose }: { info: SessionInfo; onClose(): void })
   return (
     <Dialog label="Delete session" onClose={onClose}>
       <div className="dialog-body">
-        <strong>Delete “{sessionTitle(info)}”?</strong>
-        <p className="meta muted">Its conversation is removed for good. This cannot be undone.</p>
+        <h2 className="dialog-title">Delete “{sessionTitle(info)}”?</h2>
+        <p className="dialog-text">Its conversation is removed for good. This cannot be undone.</p>
         {info.worktree ? (
           <label className="row meta">
             <input
@@ -224,6 +285,22 @@ function DeleteDialog({ info, onClose }: { info: SessionInfo; onClose(): void })
   );
 }
 
+/** The pages a nav row opens in the main area, and stays pressed for. */
+const PAGES: { page: PageId; label: string; icon: IconName }[] = [
+  { page: "connector", label: "Connector", icon: "plug" },
+  { page: "automatic", label: "Automatic", icon: "automation" },
+];
+
+const THEMES = [
+  { value: "system", label: "System (default)" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+] as const;
+
+/**
+ * The footer: a rule, then the account, which opens its menu, and today's tokens. Both run 12 from
+ * either edge, as the rule over the project does.
+ */
 function Footer() {
   const app = useApp();
   const account = useStore(app.account, (value) => value);
@@ -232,71 +309,112 @@ function Footer() {
   const settingsOpen = useStore(app.view, (view) => view.page === "settings");
   const who =
     account === null
-      ? "…"
+      ? "Account"
       : account.kind === null
         ? "Not signed in"
         : (account.email ?? (account.kind === "apiKey" ? "API key" : "Signed in"));
+  const initial = account?.email?.charAt(0).toUpperCase() ?? "";
   return (
-    <div className="sidebar-footer">
-      <button
-        type="button"
-        className="ghost grow"
-        aria-pressed={settingsOpen}
-        title="Settings (⌘,)"
-        onClick={() => app.setView({ page: settingsOpen ? "thread" : "settings" })}
-      >
-        <Icon name="settings" />
-        <span className="truncate">{who}</span>
-      </button>
-      {usage && usage.tokens.total > 0 ? (
-        <span
-          className="caption muted tabular"
-          title={`Today: ${usage.tokens.input.toLocaleString()} in, ${usage.tokens.output.toLocaleString()} out, ${usage.turns} turns`}
+    <footer className="sidebar-footer">
+      <div className="rule" />
+      <div className="footer-row">
+        <Menu
+          className="control-ghost account"
+          side="top"
+          width={232}
+          entries={() => [
+            { heading: who },
+            {
+              label: "Settings",
+              icon: "settings",
+              hint: "⌘,",
+              onSelect: () => app.setView({ page: settingsOpen ? "thread" : "settings" }),
+            },
+            { separator: true },
+            { heading: "Appearance" },
+            ...THEMES.map((each): MenuEntry => ({
+              label: each.label,
+              checked: theme === each.value,
+              onSelect: () => app.setView({ theme: each.value }),
+            })),
+          ]}
         >
-          {compactNumber(usage.tokens.total)} today
-        </span>
-      ) : null}
-      <button
-        type="button"
-        className="icon-button"
-        title="Switch between light and dark"
-        aria-label="Switch between light and dark"
-        onClick={() => {
-          const dark = document.documentElement.dataset["theme"] === "dark";
-          app.setView({ theme: theme === "system" ? (dark ? "light" : "dark") : "system" });
-        }}
-      >
-        <Icon name={document.documentElement.dataset["theme"] === "dark" ? "sun" : "moon"} />
-      </button>
-    </div>
+          <span className="avatar">{initial}</span>
+          <span className="fade-x">{who}</span>
+        </Menu>
+        {usage && usage.tokens.total > 0 ? (
+          <span
+            className="meta muted tabular usage-today"
+            title={`Today: ${usage.tokens.input.toLocaleString()} in, ${usage.tokens.output.toLocaleString()} out, ${usage.turns} turns`}
+          >
+            {compactNumber(usage.tokens.total)}
+          </span>
+        ) : null}
+      </div>
+    </footer>
   );
 }
 
+/**
+ * Archived sessions: a nav row with their count, opening a panel over the list with a field to
+ * search them and their rows, 32 high.
+ */
 function Archived({ onDelete }: { onDelete(info: SessionInfo): void }) {
   const app = useApp();
   const archived = useStore(app.archived, (value) => value);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, ref, close);
   useEffect(() => {
     if (open && archived === null) void app.loadArchived();
   }, [open, archived, app]);
+  const shown = (archived ?? []).filter(
+    (info) => !query || fuzzyScore(`${sessionTitle(info)} ${info.preview}`, query) > 0,
+  );
   return (
-    <div className="archived">
+    <div className="archived" ref={ref}>
       <button type="button" className="nav-row" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon name="archive" />
-        <span className="grow">Archived</span>
-        <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
+        <span className="nav-icon">
+          <Icon name="archive" />
+        </span>
+        <span className="grow fade-x">Archived</span>
+        <span className="nav-trailing">
+          {archived ? <span className="muted tabular">{archived.length}</span> : null}
+        </span>
       </button>
       {open ? (
-        <div className="archived-list">
-          {archived === null ? (
-            <div className="note">Reading the archive…</div>
-          ) : archived.length === 0 ? (
-            <div className="note">Nothing archived.</div>
-          ) : (
-            archived.map((info) => (
-              <SessionRow key={info.id} info={info} active={false} onDelete={onDelete} />
-            ))
-          )}
+        <div className="archived-panel" role="dialog" aria-label="Archived sessions">
+          <label className="archived-search">
+            <span className="nav-icon">
+              <Icon name="search" />
+            </span>
+            <input
+              type="search"
+              className="bare"
+              aria-label="Search archived sessions"
+              placeholder="Search archived"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+            />
+          </label>
+          <div className="archived-list fade-y no-scrollbar" onKeyDown={onRowsKeyDown}>
+            {archived === null ? (
+              <p className="archived-note">Reading the archive…</p>
+            ) : shown.length === 0 ? (
+              <p className="archived-note">
+                {archived.length ? "No archived sessions match." : "Nothing archived."}
+              </p>
+            ) : (
+              shown.map((info) => (
+                <SessionRow key={info.id} info={info} active={false} onDelete={onDelete} />
+              ))
+            )}
+          </div>
         </div>
       ) : null}
     </div>
@@ -307,11 +425,13 @@ export function Sidebar() {
   const app = useApp();
   const sessions = useStore(app.sessions, (value) => value);
   const projectsSetting = useStore(app.settings, (settings) => settings?.projects);
-  const { sessionId, project } = useStore(app.view, (view) => ({
+  const { sessionId, project, page } = useStore(app.view, (view) => ({
     sessionId: view.sessionId,
     project: view.project,
+    page: view.page,
   }));
   const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
   const [limit, setLimit] = useState(PAGE);
   const [deleting, setDeleting] = useState<SessionInfo | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -333,7 +453,10 @@ export function Sidebar() {
   }, [all, project, query]);
 
   useEffect(() => {
-    const focusSearch = () => searchRef.current?.focus();
+    const focusSearch = () => {
+      setSearching(true);
+      searchRef.current?.focus();
+    };
     window.addEventListener("cycle:search", focusSearch);
     return () => window.removeEventListener("cycle:search", focusSearch);
   }, []);
@@ -343,50 +466,98 @@ export function Sidebar() {
   return (
     <aside className="sidebar" data-inset={host.insetTitleBar()}>
       <div className="sidebar-top">
-        <Menu
-          entries={() => projectEntries(app, projects, project)}
-          className="ghost project-switch"
-          title="Choose a project"
-        >
-          <Icon name="folder" />
-          <span className="truncate">{project ? basename(project) : "All projects"}</span>
-          <Icon name="chevron-down" size={12} />
-        </Menu>
-        <span className="grow" />
         <button
           type="button"
           className="icon-button"
-          title="New session (⌘N)"
-          aria-label="New session"
-          onClick={() => app.newSession()}
+          title="Search sessions"
+          aria-label="Search sessions"
+          aria-pressed={searching}
+          onClick={() => {
+            setSearching(!searching);
+            setQuery("");
+          }}
         >
-          <Icon name="compose" />
+          <Icon name="search" />
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          title="Hide sidebar (⌘B)"
+          aria-label="Hide sidebar"
+          onClick={() => app.setView({ sidebar: false })}
+        >
+          <Icon name="panel-left" />
         </button>
       </div>
-      <div className="sidebar-search">
-        <Icon name="search" />
-        <input
-          ref={searchRef}
-          placeholder="Search sessions"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.currentTarget.value);
-            setLimit(PAGE);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setQuery("");
-              event.currentTarget.blur();
-            }
-            const first = groups[0]?.sessions[0];
-            if (event.key === "Enter" && first && !event.nativeEvent.isComposing) {
-              app.selectSession(first.id);
-            }
-          }}
-        />
-        {query ? null : <kbd>⌘K</kbd>}
+      {searching ? (
+        <div className="sidebar-search">
+          <input
+            ref={searchRef}
+            className="field"
+            aria-label="Search sessions"
+            placeholder="Search sessions"
+            autoFocus
+            value={query}
+            onChange={(event) => {
+              setQuery(event.currentTarget.value);
+              setLimit(PAGE);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setQuery("");
+                setSearching(false);
+              }
+              const first = groups[0]?.sessions[0];
+              if (event.key === "Enter" && first && !event.nativeEvent.isComposing) {
+                app.selectSession(first.id);
+              }
+            }}
+          />
+        </div>
+      ) : null}
+      <nav className="sidebar-nav" aria-label="Sidebar">
+        <button type="button" className="nav-row new-session" onClick={() => app.newSession()}>
+          <span className="nav-icon">
+            <Icon name="plus" />
+          </span>
+          <span className="grow fade-x">New</span>
+          <span className="nav-trailing">
+            <kbd>⌘ N</kbd>
+          </span>
+        </button>
+        {PAGES.map((each) => (
+          <button
+            key={each.page}
+            type="button"
+            className="nav-row"
+            aria-current={page === each.page ? "page" : undefined}
+            onClick={() => app.setView({ page: page === each.page ? "thread" : each.page })}
+          >
+            <span className="nav-icon">
+              <Icon name={each.icon} />
+            </span>
+            <span className="grow fade-x">{each.label}</span>
+          </button>
+        ))}
+      </nav>
+      <div className="rule inset" />
+      <div className="sidebar-project">
+        <Menu
+          entries={() => projectEntries(app, projects, project)}
+          className="nav-row project-switch"
+          title="Choose a project"
+        >
+          <span className="nav-icon">
+            <Icon name="folder" />
+          </span>
+          <span className="grow fade-x">{project ? basename(project) : "All projects"}</span>
+          <span className="nav-trailing">
+            <Icon name="chevrons-up-down" size={14} className="muted" />
+          </span>
+        </Menu>
       </div>
-      <div className="session-list" role="list">
+      <div className="session-list fade-y no-scrollbar" onKeyDown={onRowsKeyDown}>
         {!sessions.loaded ? (
           <div className="skeleton" role="status" aria-label="Reading sessions">
             {[72, 54, 88, 61, 79].map((width) => (
@@ -408,7 +579,9 @@ export function Sidebar() {
             shown += rows.length;
             return (
               <section key={group.label}>
-                <h3 data-attention={group.label === "Needs you"}>{group.label}</h3>
+                <h3>
+                  <span className="fade-x">{group.label}</span>
+                </h3>
                 {rows.map((info) => (
                   <SessionRow
                     key={info.id}
@@ -422,7 +595,11 @@ export function Sidebar() {
           })
         )}
         {total > limit ? (
-          <button type="button" className="nav-row muted" onClick={() => setLimit(limit + PAGE)}>
+          <button
+            type="button"
+            className="nav-row more muted"
+            onClick={() => setLimit(limit + PAGE)}
+          >
             Show {Math.min(PAGE, total - limit)} more
           </button>
         ) : null}

@@ -130,16 +130,27 @@ const providers = await openProviders(
   diskFile(join(root, "home", "providers.json")),
   crypto.randomUUID(),
 );
+const harness = new CodexHarness({
+  config: model.codexConfig,
+  env: { CODEX_HOME: join(root, "codex") },
+  provider: providers.provider,
+});
 const daemon = await startDaemon({
-  harness: new CodexHarness({
-    config: model.codexConfig,
-    env: { CODEX_HOME: join(root, "codex") },
-    provider: providers.provider,
-  }),
+  harness,
   providers: providers.store,
   home: join(root, "home"),
   port: Number(process.env["CYCLE_DAEMON_PORT"] ?? 0),
   uiDir: new URL("../../../desktop/dist/renderer", import.meta.url).pathname,
+});
+// Something for the Connector to show: a server that answers with one tool.
+await harness.putMcpServer({
+  name: "demo",
+  transport: {
+    kind: "stdio",
+    command: process.execPath,
+    args: [join(import.meta.dir, "mcp-server.ts")],
+    env: { DEMO_SUFFIX: "" },
+  },
 });
 // The scripted model speaks the Responses API, so its address also works as a custom provider's.
 console.log(

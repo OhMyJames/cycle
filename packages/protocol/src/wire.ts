@@ -3,11 +3,14 @@ import type {
   AccountLogin,
   ApprovalResponse,
   McpServerInfo,
+  McpServerInput,
   ModelInfo,
   ModelProvider,
   ModelProviderDraft,
   ProviderKind,
   ProviderModel,
+  PluginCatalog,
+  PluginDetail,
   SessionEvent,
   SessionInfo,
   SessionMode,
@@ -15,6 +18,7 @@ import type {
   TokenCount,
 } from "./model.ts";
 import type { SessionState } from "./reduce.ts";
+import type { Schedule, ScheduleInput, ScheduleRun } from "./schedule.ts";
 
 /**
  * Client <-> daemon wire protocol: JSON text frames over one WebSocket.
@@ -151,7 +155,36 @@ export interface Methods {
 
   "models.list": { params: Empty; result: { models: ModelInfo[] } };
   "skills.list": { params: { cwd: string }; result: { skills: SkillInfo[] } };
+
+  // The connector: the owner's MCP servers and plugins, as the harness keeps them.
   "mcp.list": { params: Empty; result: { servers: McpServerInfo[] } };
+  /** Adds a server, or changes the one of that name. */
+  "mcp.put": { params: { server: McpServerInput }; result: { servers: McpServerInfo[] } };
+  "mcp.remove": { params: { name: string }; result: { servers: McpServerInfo[] } };
+  "mcp.enable": {
+    params: { name: string; enabled: boolean };
+    result: { servers: McpServerInfo[] };
+  };
+  /** Starts a sign-in. The owner finishes it at `url`; `mcp.changed` follows. */
+  "mcp.login": { params: { name: string }; result: { url: string } };
+  "plugins.list": { params: Empty; result: PluginCatalog };
+  "plugins.read": { params: { marketplace: string; name: string }; result: PluginDetail };
+  "plugins.install": { params: { marketplace: string; name: string }; result: PluginCatalog };
+  "plugins.uninstall": { params: { id: string }; result: PluginCatalog };
+  "plugins.enable": { params: { id: string; enabled: boolean }; result: PluginCatalog };
+  /** `source` is a folder on the daemon's machine or a Git URL. */
+  "marketplace.add": { params: { source: string }; result: PluginCatalog };
+  "marketplace.remove": { params: { name: string }; result: PluginCatalog };
+
+  // Schedules: prompts the daemon runs on a timing, each in a new session.
+  "schedule.list": { params: Empty; result: { schedules: Schedule[] } };
+  /** Makes a schedule, or changes the one `id` names. */
+  "schedule.put": { params: ScheduleInput; result: Schedule };
+  /** Removes a schedule. The sessions it started stay. */
+  "schedule.delete": { params: { id: string }; result: Empty };
+  /** Runs it now, enabled or not, without moving its occurrences. */
+  "schedule.run": { params: { id: string }; result: ScheduleRun };
+
   "account.read": { params: Empty; result: AccountInfo };
   /** Starts a ChatGPT sign-in. `account.changed` follows when it ends, either way. */
   "account.login": { params: Empty; result: AccountLogin };
@@ -234,7 +267,11 @@ export type DaemonEvent =
   | { type: "terminals.changed"; sessionId: string | null; terminals: TerminalInfo[] }
   /** Base64 of what a terminal printed, to the clients attached to it. */
   | { type: "terminal.output"; id: string; data: string }
-  | { type: "usage.today"; day: DayUsage };
+  | { type: "usage.today"; day: DayUsage }
+  | { type: "mcp.changed"; servers: McpServerInfo[] }
+  | { type: "plugins.changed"; catalog: PluginCatalog }
+  /** The whole list, whenever a schedule changes, by a client or by a run. */
+  | { type: "schedules.changed"; schedules: Schedule[] };
 
 export type ServerMessage =
   | { id: number; result: unknown }

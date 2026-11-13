@@ -61,14 +61,23 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
     external: [],
     runtimeModules: true,
   },
-  // The page is the default. The main process and the preload run on Electron, the build on Bun.
+  // The page is the default. The main process and the preload run on Electron; the build, the
+  // packaging and the installer on Bun.
   "@cycle/desktop": {
     workspace: ["@cycle/ui"],
     external: ["react", "react-dom", "@types/react", "@types/react-dom"],
     runtimeModules: false,
     scopes: [
       {
-        paths: ["src/main.ts", "src/preload.ts", "build.ts"],
+        paths: [
+          "src/main.ts",
+          "src/launch.ts",
+          "src/login-env.ts",
+          "src/preload.ts",
+          "src/package/",
+          "src/install/",
+          "build.ts",
+        ],
         workspace: [],
         external: ["electron", "@types/node"],
         runtimeModules: true,

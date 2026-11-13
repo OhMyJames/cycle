@@ -1,6 +1,7 @@
 import type { SessionInfo, TerminalInfo } from "@cycle/protocol";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/icons.tsx";
+import { PanelHeader } from "../components/panel.tsx";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 
@@ -8,7 +9,7 @@ function themeColors(): Record<string, string> {
   const style = getComputedStyle(document.documentElement);
   const read = (name: string) => style.getPropertyValue(name).trim();
   return {
-    background: read("--surface-raised"),
+    background: read("--surface-composer"),
     foreground: read("--text-primary"),
     cursor: read("--text-primary"),
     selectionBackground: read("--surface-selected"),
@@ -132,11 +133,25 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
 
   return (
     <>
-      <header className="panel-header">
-        <div className="tabs grow">
+      <PanelHeader title="Terminal">
+        <button
+          type="button"
+          className="icon-button new-terminal"
+          title="New terminal"
+          aria-label="New terminal"
+          onClick={create}
+        >
+          <Icon name="plus" />
+        </button>
+        <div className="tabs no-scrollbar" role="tablist">
           {list.map((terminal) => (
             <span key={terminal.id} className="tab" data-active={terminal.id === shown?.id}>
-              <button type="button" onClick={() => setActive(terminal.id)}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={terminal.id === shown?.id}
+                onClick={() => setActive(terminal.id)}
+              >
                 {terminal.title}
                 {terminal.exited ? <span className="muted"> (exited)</span> : null}
               </button>
@@ -146,21 +161,12 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
                 aria-label={`Close ${terminal.title}`}
                 onClick={() => void app.attempt(app.request("terminal.close", { id: terminal.id }))}
               >
-                <Icon name="x" size={12} />
+                <Icon name="x" size={14} />
               </button>
             </span>
           ))}
         </div>
-        <button
-          type="button"
-          className="icon-button"
-          title="New terminal"
-          aria-label="New terminal"
-          onClick={create}
-        >
-          <Icon name="plus" />
-        </button>
-      </header>
+      </PanelHeader>
       {shown ? (
         <TerminalView key={shown.id} id={shown.id} />
       ) : (

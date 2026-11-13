@@ -2,6 +2,8 @@ import type { GitFile, GitStatus, SessionInfo } from "@cycle/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PatchView, Stats } from "../components/diff-view.tsx";
 import { Icon, Spinner } from "../components/icons.tsx";
+import { Chevron } from "../components/items.tsx";
+import { PanelHeader } from "../components/panel.tsx";
 import { Menu } from "../components/menu.tsx";
 import { useApp } from "../context.ts";
 import { basename, dirname } from "../lib/format.ts";
@@ -47,15 +49,15 @@ function FileCard({
   return (
     <div className="file-card" data-open={open}>
       <button type="button" className="file-card-header" aria-expanded={open} onClick={onToggle}>
-        <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
-        <span className={`status-letter s-${file.status}`} title={STATUS_LABEL[file.status]}>
-          {file.status}
-        </span>
-        <span className="truncate grow">
-          {basename(file.path)}
-          {folder !== "/" && folder !== "." ? <span className="muted"> {folder}</span> : null}
+        <Chevron open={open} small />
+        <span className="path fade-x-start grow" title={file.path}>
+          {folder !== "/" && folder !== "." ? <span className="muted">{folder}/</span> : null}
+          <span className="name">{basename(file.path)}</span>
         </span>
         <Stats additions={file.additions} deletions={file.deletions} />
+        <span className="status-letter" title={STATUS_LABEL[file.status]}>
+          {file.status}
+        </span>
       </button>
       {open ? (
         file.binary ? (
@@ -96,13 +98,15 @@ function CommitBox({ cwd, onDone }: { cwd: string; onDone(): void }) {
       }}
     >
       <input
-        className="field"
+        className="field small"
+        aria-label="Commit message"
         placeholder="Commit message"
         value={message}
         onChange={(event) => setMessage(event.currentTarget.value)}
       />
       <button type="submit" className="button primary" disabled={!message.trim() || busy}>
-        {busy ? <Spinner size={12} /> : null} Commit all
+        {busy ? <Spinner size={14} /> : null}
+        Commit all
       </button>
     </form>
   );
@@ -171,48 +175,61 @@ export function ChangesPanel({ info }: { info: SessionInfo }) {
   );
   return (
     <>
-      <header className="panel-header">
-        <span className="truncate grow">
-          Changes
-          {status?.repo?.branch ? <span className="muted"> on {status.repo.branch}</span> : null}
-        </span>
-        {files.length ? <Stats {...totals} /> : null}
-        <Menu
-          className="icon-button"
-          title="Options"
-          align="end"
-          entries={() => [
-            { label: "Refresh", icon: "refresh", onSelect: refresh },
-            {
-              label: "Expand all",
-              onSelect: () => {
-                touched.current = true;
-                setOpen(new Set(files.map((file) => file.path)));
+      <PanelHeader
+        title="Changes"
+        actions={
+          <Menu
+            className="icon-button"
+            title="More"
+            align="end"
+            width={200}
+            entries={() => [
+              { label: "Refresh", icon: "refresh", onSelect: refresh },
+              {
+                label: "Expand all",
+                onSelect: () => {
+                  touched.current = true;
+                  setOpen(new Set(files.map((file) => file.path)));
+                },
               },
-            },
-            {
-              label: "Collapse all",
-              onSelect: () => {
-                touched.current = true;
-                setOpen(new Set());
+              {
+                label: "Collapse all",
+                onSelect: () => {
+                  touched.current = true;
+                  setOpen(new Set());
+                },
               },
-            },
-            { label: "Wrap lines", checked: wrap, onSelect: () => setWrap(!wrap) },
-            ...(info.worktree
-              ? [
-                  {
-                    label: "Only uncommitted changes",
-                    checked: uncommitted,
-                    onSelect: () => setUncommitted(!uncommitted),
-                  },
-                ]
-              : []),
-          ]}
-        >
-          <Icon name="more" />
-        </Menu>
-      </header>
-      <div className="panel-body">
+              { label: "Wrap lines", checked: wrap, onSelect: () => setWrap(!wrap) },
+              ...(info.worktree
+                ? [
+                    {
+                      label: "Only uncommitted changes",
+                      checked: uncommitted,
+                      onSelect: () => setUncommitted(!uncommitted),
+                    },
+                  ]
+                : []),
+            ]}
+          >
+            <Icon name="more" />
+          </Menu>
+        }
+      >
+        {status?.repo?.branch ? (
+          <span className="fade-x mono">{status.repo.branch}</span>
+        ) : (
+          <span className="fade-x">Changes</span>
+        )}
+        {files.length ? (
+          <span className="panel-meta">
+            <span className="muted">
+              {files.length} {files.length === 1 ? "file" : "files"}
+            </span>
+            <Stats {...totals} />
+          </span>
+        ) : null}
+      </PanelHeader>
+      <div className="panel-body changes fade-y">
         {status === null ? (
           <div className="note">Reading the changes…</div>
         ) : !status.repo ? (

@@ -166,6 +166,8 @@ export interface SessionInfo {
   unread: boolean;
   /** The session this one was forked from. */
   forkedFrom: string | null;
+  /** The schedule whose run started it. It stays after the schedule is deleted. */
+  scheduleId: string | null;
 }
 
 export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
@@ -315,11 +317,74 @@ export interface SkillInfo {
   enabled: boolean;
 }
 
+/** How an MCP server is reached. A stdio server's environment is named, never shown. */
+export type McpTransport =
+  | { kind: "stdio"; command: string; args: string[]; env: string[] }
+  | { kind: "http"; url: string; bearerTokenEnvVar: string | null };
+
 export interface McpServerInfo {
   name: string;
-  status: "connected" | "connecting" | "failed" | "needsAuth" | "unknown";
+  enabled: boolean;
+  /** Null for a server a plugin brings: it is changed through its plugin. */
+  transport: McpTransport | null;
+  pluginId: string | null;
+  status: "connected" | "failed" | "needsAuth" | "disabled" | "unknown";
+  /** `none`: it asks for no sign-in. `token`: it reads a token from the environment. */
+  auth: "none" | "signedOut" | "signedIn" | "token";
   tools: { name: string; description: string }[];
   error: string | null;
+}
+
+/** What the owner says about an MCP server of their own. */
+export interface McpServerInput {
+  name: string;
+  transport:
+    | {
+        kind: "stdio";
+        command: string;
+        args: string[];
+        /** A null value keeps the one stored under that name: the page never holds it. */
+        env: Record<string, string | null>;
+      }
+    | { kind: "http"; url: string; bearerTokenEnvVar: string | null };
+}
+
+export interface PluginInfo {
+  /** `name@marketplace`. */
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  version: string | null;
+  installed: boolean;
+  enabled: boolean;
+  /** False when it cannot be installed here, with `unavailable` saying why. */
+  available: boolean;
+  unavailable: string | null;
+}
+
+export interface PluginMarketplace {
+  name: string;
+  displayName: string;
+  /** Where it was added from, when it is a folder or a repository on this machine. */
+  path: string | null;
+  plugins: PluginInfo[];
+}
+
+export interface PluginCatalog {
+  marketplaces: PluginMarketplace[];
+  /** Marketplaces that could not be read, each as one line. */
+  errors: string[];
+}
+
+/** What a plugin brings, read before it is installed. */
+export interface PluginDetail {
+  plugin: PluginInfo;
+  description: string;
+  skills: { name: string; description: string }[];
+  mcpServers: string[];
+  hooks: number;
+  apps: string[];
 }
 
 export interface RateLimitWindow {

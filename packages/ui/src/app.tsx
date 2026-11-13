@@ -2,7 +2,9 @@ import { activeTurn } from "@cycle/protocol";
 import { useEffect, useMemo, useRef } from "react";
 import { type CycleApp, type PanelId, projectOf, sessionTitle } from "./client/app.ts";
 import { useStore } from "./client/store.ts";
+import { AutomaticPage } from "./components/automatic.tsx";
 import { Composer } from "./components/composer.tsx";
+import { ConnectorPage } from "./components/connector.tsx";
 import { FolderPicker } from "./components/folder-picker.tsx";
 import { Icon } from "./components/icons.tsx";
 import { Palette } from "./components/palette.tsx";
@@ -11,6 +13,7 @@ import { Sidebar, groupSessions } from "./components/sidebar.tsx";
 import { Thread } from "./components/thread.tsx";
 import { TitleBar } from "./components/titlebar.tsx";
 import { AppContext, useApp } from "./context.ts";
+import { watchFades } from "./lib/fades.ts";
 import { basename } from "./lib/format.ts";
 import { ChangesPanel } from "./panels/changes.tsx";
 import { FilesPanel } from "./panels/files.tsx";
@@ -56,7 +59,7 @@ function ConnectionBanner() {
   if (status === "open" || status === "connecting") return null;
   return (
     <div className="banner" role="alert">
-      <Icon name="alert" />
+      <Icon name="cloud-off" />
       {status === "unauthorized"
         ? "The Cycle daemon refused this page. Open it again from the app or the daemon's link."
         : "Cannot reach the Cycle daemon. Retrying…"}
@@ -84,7 +87,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 function Welcome({ sessionId }: { sessionId: string | null }) {
   return (
     <div className="welcome">
-      <h2>What should we build?</h2>
+      <h2>How can I help you today?</h2>
       <Composer sessionId={sessionId} />
     </div>
   );
@@ -99,7 +102,7 @@ function Empty() {
         <>
           <p className="muted">Open a session from the list, or start a new one.</p>
           <button type="button" className="button primary" onClick={() => app.newSession()}>
-            <Icon name="compose" /> New session
+            New session
           </button>
         </>
       ) : (
@@ -131,7 +134,12 @@ function useShortcuts(app: CycleApp): void {
       if (event.repeat) return;
       const mod = event.metaKey || event.ctrlKey;
       const view = app.view.get();
-      if (event.key === "Escape" && view.page === "settings" && !view.palette) {
+      if (
+        event.key === "Escape" &&
+        view.page === "settings" &&
+        !view.palette &&
+        !view.folderPicker
+      ) {
         app.setView({ page: "thread" });
         return;
       }
@@ -197,6 +205,7 @@ function Toasts() {
           <button
             type="button"
             className="icon-button small"
+            title="Dismiss"
             aria-label="Dismiss"
             onClick={() => app.dismissToast(toast.id)}
           >
@@ -227,12 +236,17 @@ function Shell() {
 
   const title = useMemo(() => {
     if (view.page === "settings") return "Settings";
+    if (view.page === "connector") return "Connector";
+    if (view.page === "automatic") return "Automatic";
     if (view.draft) return `New session in ${basename(view.draft.cwd)}`;
     return "Cycle";
   }, [view.page, view.draft]);
   const panel = view.page === "thread" && session ? view.panel : null;
+  // One watcher says which lines overflow and what each scroller hides, for the fades.
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => (root.current ? watchFades(root.current) : undefined), []);
   return (
-    <div className="app">
+    <div className="app" ref={root}>
       {view.sidebar ? (
         <div className="sidebar-region" style={{ width: view.sidebarWidth }}>
           <Sidebar />
@@ -244,13 +258,20 @@ function Shell() {
           />
         </div>
       ) : null}
-      <main className="main">
+      <main
+        className="main"
+        style={{ ["--panel-room" as string]: panel ? `${view.panelWidth + 6}px` : "0px" }}
+      >
         <TitleBar info={view.page === "thread" ? session : null} title={title} />
         <ConnectionBanner />
         <div className="workspace">
           <section className="conversation">
             {view.page === "settings" ? (
               <SettingsPage />
+            ) : view.page === "connector" ? (
+              <ConnectorPage />
+            ) : view.page === "automatic" ? (
+              <AutomaticPage />
             ) : view.sessionId ? (
               <SessionView sessionId={view.sessionId} />
             ) : view.draft ? (

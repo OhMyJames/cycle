@@ -3,20 +3,20 @@ import { type PanelId, sessionTitle } from "../client/app.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename, fuzzyScore } from "../lib/format.ts";
-import type { IconName } from "./icons.tsx";
+import { Icon, type IconName } from "./icons.tsx";
 import { Dialog, MenuList } from "./menu.tsx";
 
 interface Command {
   label: string;
   sub?: string;
-  icon: IconName;
+  icon?: IconName;
   hint?: string;
   run(): void;
 }
 
 const PANELS: { id: PanelId; label: string; icon: IconName }[] = [
   { id: "changes", label: "Changes", icon: "file-diff" },
-  { id: "files", label: "Files", icon: "file" },
+  { id: "files", label: "Files", icon: "folder" },
   { id: "terminal", label: "Terminal", icon: "terminal" },
   { id: "overview", label: "Overview", icon: "overview" },
 ];
@@ -44,6 +44,8 @@ export function Palette() {
         icon: panel.icon,
         run: () => app.togglePanel(panel.id),
       })),
+      { label: "Connector", icon: "plug", run: () => app.setView({ page: "connector" }) },
+      { label: "Automatic", icon: "automation", run: () => app.setView({ page: "automatic" }) },
       {
         label: "Settings",
         icon: "settings",
@@ -74,7 +76,6 @@ export function Palette() {
         },
         {
           label: "Compact this session's context",
-          icon: "compress",
           run: () => void app.attempt(app.request("session.compact", { sessionId })),
         },
       );
@@ -87,7 +88,7 @@ export function Palette() {
         rows.push({
           label: title,
           sub: basename(info.cwd),
-          icon: info.status === "running" ? "zap" : "message",
+          icon: "message",
           run: () => app.selectSession(info.id),
           score,
         });
@@ -105,29 +106,32 @@ export function Palette() {
     command.run();
   };
   return (
-    <Dialog label="Command palette" onClose={close}>
-      <input
-        className="palette-input"
-        placeholder="Search sessions and commands"
-        autoFocus
-        value={query}
-        onChange={(event) => {
-          setQuery(event.currentTarget.value);
-          setActive(0);
-        }}
-        onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) return;
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            const step = event.key === "ArrowDown" ? 1 : -1;
-            setActive((active + step + flat.length) % Math.max(flat.length, 1));
-          } else if (event.key === "Enter") {
-            event.preventDefault();
-            run(flat[active]);
-          }
-        }}
-      />
-      <div className="palette-list">
+    <Dialog label="Command palette" onClose={close} wide top>
+      <label className="palette-search">
+        <Icon name="search" className="muted" />
+        <input
+          className="palette-input bare"
+          placeholder="Search sessions and commands"
+          autoFocus
+          value={query}
+          onChange={(event) => {
+            setQuery(event.currentTarget.value);
+            setActive(0);
+          }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const step = event.key === "ArrowDown" ? 1 : -1;
+              setActive((active + step + flat.length) % Math.max(flat.length, 1));
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              run(flat[active]);
+            }
+          }}
+        />
+      </label>
+      <div className="palette-list fade-y no-scrollbar">
         {flat.length === 0 ? <div className="note">Nothing matches.</div> : null}
         <MenuList
           active={active}
@@ -137,13 +141,13 @@ export function Palette() {
             ...results.sessions.map((command) => ({
               label: command.label,
               ...(command.sub ? { sub: command.sub } : {}),
-              icon: command.icon,
+              ...(command.icon ? { icon: command.icon } : {}),
               onSelect: () => run(command),
             })),
             ...(results.commands.length ? [{ heading: "Commands" } as const] : []),
             ...results.commands.map((command) => ({
               label: command.label,
-              icon: command.icon,
+              ...(command.icon ? { icon: command.icon } : {}),
               ...(command.hint ? { hint: command.hint } : {}),
               onSelect: () => run(command),
             })),

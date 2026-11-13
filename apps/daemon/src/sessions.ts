@@ -24,7 +24,7 @@ import {
   sameModelFamily,
 } from "@cycle/protocol";
 import { type Git, defaultBranchName } from "./git.ts";
-import type { JsonStore, Schedule } from "./store.ts";
+import type { JsonStore, Delay } from "./store.ts";
 import { type UsageLedger, ZERO_TOKENS, tokenDelta } from "./usage.ts";
 
 /** What the daemon alone keeps about a session, which no harness knows. */
@@ -36,6 +36,8 @@ export interface SessionMeta {
   model?: string;
   effort?: string | null;
   worktree?: WorktreeInfo;
+  /** The schedule whose run started it. */
+  scheduleId?: string;
 }
 
 export interface MetaFile {
@@ -50,7 +52,7 @@ export interface HubOptions {
   git: Git;
   /** Where worktrees are made. */
   worktreeParent: string;
-  schedule: Schedule;
+  schedule: Delay;
   now(): number;
   /** How many clients follow a session now. */
   viewers(sessionId: string): number;
@@ -131,6 +133,12 @@ export class SessionHub {
     return info;
   }
 
+  /** Whether a session is in the middle of a turn. A session nobody knows is not. */
+  working(sessionId: string): boolean {
+    const status = this.infos.get(sessionId)?.status;
+    return status === "running" || status === "waiting";
+  }
+
   /** Whether any session is in the middle of a turn in this folder. */
   busyIn(cwd: string): boolean {
     for (const info of this.infos.values()) {
@@ -166,7 +174,8 @@ export class SessionHub {
 
   // Changing
 
-  async create(params: Params<"session.create">): Promise<SessionInfo> {
+  /** `scheduleId` marks a session a schedule's run starts. */
+  async create(params: Params<"session.create">, scheduleId?: string): Promise<SessionInfo> {
     const { harness, git, now } = this.options;
     const settings = this.options.settings();
     let cwd = params.cwd;
@@ -203,6 +212,7 @@ export class SessionHub {
         ...(params.model ? { model: params.model } : {}),
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
+        ...(scheduleId ? { scheduleId } : {}),
       };
     });
     const info: SessionInfo = { ...this.remember(session, false), status: "idle" };
@@ -388,6 +398,7 @@ export class SessionHub {
       pinned: meta.pinned ?? false,
       unread: meta.unread ?? false,
       forkedFrom: session.forkedFrom,
+      scheduleId: meta.scheduleId ?? null,
     };
     this.infos.set(info.id, info);
     if (live) live.state = { ...live.state, info };
@@ -522,6 +533,8 @@ export class SessionHub {
       });
       return;
     }
+    // The connector's news is the daemon's to pass on, not any session's.
+    if (event.type === "mcp.changed") return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
     live.pending.push(event);

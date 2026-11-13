@@ -7,11 +7,16 @@ import {
   type DayUsage,
   type Delivery,
   type EventFrame,
+  type McpServerInfo,
+  type McpServerInput,
   type MethodName,
   type ModelInfo,
   type ModelProvider,
   type Params,
+  type PluginCatalog,
   type Result,
+  type Schedule,
+  type ScheduleInput,
   type SessionInfo,
   type SessionMode,
   type SessionState,
@@ -25,6 +30,7 @@ import { Store } from "./store.ts";
 
 export type PanelId = "changes" | "files" | "terminal" | "overview";
 export type Theme = "system" | "light" | "dark";
+export type PageId = "thread" | "settings" | "connector" | "automatic";
 
 /** A session being set up: it exists once its first prompt is sent. */
 export interface Draft {
@@ -39,7 +45,7 @@ export interface Draft {
 export interface ViewState {
   sessionId: string | null;
   draft: Draft | null;
-  page: "thread" | "settings";
+  page: PageId;
   panel: PanelId | null;
   panelWidth: number;
   sidebar: boolean;
@@ -122,6 +128,10 @@ export class CycleApp {
   readonly providers = new Store<ModelProvider[]>([]);
   readonly usage = new Store<DayUsage | null>(null);
   readonly terminals = new Store<Record<string, TerminalInfo[]>>({});
+  /** Null until read: the Connector reads them when it opens, since asking starts the servers. */
+  readonly mcp = new Store<McpServerInfo[] | null>(null);
+  readonly plugins = new Store<PluginCatalog | null>(null);
+  readonly schedules = new Store<Schedule[] | null>(null);
   readonly toasts = new Store<Toast[]>([]);
   readonly view: Store<ViewState>;
 
@@ -132,6 +142,7 @@ export class CycleApp {
   private flushing = false;
   private toastIds = 0;
   private readonly terminalListeners = new Map<string, Set<(data: Uint8Array) => void>>();
+  private folderChosen: ((folder: string | null) => void) | null = null;
 
   constructor(url: string) {
     const prefs = readPrefs();
@@ -142,12 +153,12 @@ export class CycleApp {
       panel: prefs.panel ?? null,
       panelWidth: prefs.panelWidth ?? 460,
       sidebar: prefs.sidebar ?? true,
-      sidebarWidth: prefs.sidebarWidth ?? 264,
+      sidebarWidth: prefs.sidebarWidth ?? 248,
       palette: false,
       folderPicker: false,
       project: prefs.project ?? null,
       file: null,
-      showReasoning: prefs.showReasoning ?? true,
+      showReasoning: prefs.showReasoning ?? false,
       theme: prefs.theme ?? "system",
     });
     this.applyTheme();
@@ -292,13 +303,26 @@ export class CycleApp {
     });
   }
 
-  async pickFolder(): Promise<void> {
+  /** Asks the owner for a folder: the host's chooser, or the page's own where there is none. */
+  chooseFolder(): Promise<string | null> {
     const native = host.pickDirectory();
-    if (!native) {
-      this.setView({ folderPicker: true, palette: false });
-      return;
-    }
-    const folder = await native;
+    if (native) return native;
+    this.folderChosen?.(null);
+    this.setView({ folderPicker: true, palette: false });
+    return new Promise((resolve) => {
+      this.folderChosen = resolve;
+    });
+  }
+
+  /** What the page's own chooser ended with: a folder, or null when it was closed. */
+  answerFolder(folder: string | null): void {
+    this.setView({ folderPicker: false });
+    this.folderChosen?.(folder);
+    this.folderChosen = null;
+  }
+
+  async pickFolder(): Promise<void> {
+    const folder = await this.chooseFolder();
     if (folder) this.newSession(folder);
   }
 
@@ -371,6 +395,92 @@ export class CycleApp {
     } catch {
       // The account is a courtesy: the page works without knowing it.
     }
+  }
+
+  // Connector
+
+  async loadConnector(): Promise<void> {
+    const [servers, catalog] = await Promise.all([
+      this.attempt(this.request("mcp.list", {})),
+      this.attempt(this.request("plugins.list", {})),
+    ]);
+    if (servers) this.mcp.set(servers.servers);
+    if (catalog) this.plugins.set(catalog);
+  }
+
+  private async mcpDid(work: Promise<{ servers: McpServerInfo[] }>): Promise<boolean> {
+    const answer = await this.attempt(work);
+    if (answer) this.mcp.set(answer.servers);
+    return answer !== null;
+  }
+
+  private async pluginsDid(work: Promise<PluginCatalog>): Promise<boolean> {
+    const catalog = await this.attempt(work);
+    if (catalog) this.plugins.set(catalog);
+    return catalog !== null;
+  }
+
+  putMcpServer(server: McpServerInput): Promise<boolean> {
+    return this.mcpDid(this.request("mcp.put", { server }));
+  }
+
+  removeMcpServer(name: string): Promise<boolean> {
+    return this.mcpDid(this.request("mcp.remove", { name }));
+  }
+
+  enableMcpServer(name: string, enabled: boolean): Promise<boolean> {
+    return this.mcpDid(this.request("mcp.enable", { name, enabled }));
+  }
+
+  /** Starts a server's sign-in and opens where the owner finishes it. */
+  async loginMcpServer(name: string): Promise<void> {
+    const answer = await this.attempt(this.request("mcp.login", { name }));
+    if (!answer) return;
+    // A browser tab may refuse a window opened this long after the press, and does not say so.
+    if (!host.openExternal(answer.url)) {
+      this.toast(`If no window opened, sign in at ${answer.url}`);
+    }
+  }
+
+  installPlugin(marketplace: string, name: string): Promise<boolean> {
+    return this.pluginsDid(this.request("plugins.install", { marketplace, name }));
+  }
+
+  uninstallPlugin(id: string): Promise<boolean> {
+    return this.pluginsDid(this.request("plugins.uninstall", { id }));
+  }
+
+  enablePlugin(id: string, enabled: boolean): Promise<boolean> {
+    return this.pluginsDid(this.request("plugins.enable", { id, enabled }));
+  }
+
+  addMarketplace(source: string): Promise<boolean> {
+    return this.pluginsDid(this.request("marketplace.add", { source }));
+  }
+
+  removeMarketplace(name: string): Promise<boolean> {
+    return this.pluginsDid(this.request("marketplace.remove", { name }));
+  }
+
+  // Schedules
+
+  async loadSchedules(): Promise<void> {
+    const answer = await this.attempt(this.request("schedule.list", {}));
+    if (answer) this.schedules.set(answer.schedules);
+  }
+
+  async putSchedule(input: ScheduleInput): Promise<Schedule | null> {
+    return this.attempt(this.request("schedule.put", input));
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    await this.attempt(this.request("schedule.delete", { id }));
+  }
+
+  /** Runs a schedule now, and says so when the run started no session. */
+  async runSchedule(id: string): Promise<void> {
+    const run = await this.attempt(this.request("schedule.run", { id }));
+    if (run?.error) this.toast(`Did not start: ${run.error}`, "error");
   }
 
   /** Starts a ChatGPT sign-in and opens its page. The daemon says when it ends. */
@@ -560,6 +670,15 @@ export class CycleApp {
       }
       case "usage.today":
         this.usage.set(event.day);
+        break;
+      case "mcp.changed":
+        this.mcp.set(event.servers);
+        break;
+      case "plugins.changed":
+        this.plugins.set(event.catalog);
+        break;
+      case "schedules.changed":
+        this.schedules.set(event.schedules);
         break;
     }
   }

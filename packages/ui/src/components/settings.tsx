@@ -6,54 +6,9 @@ import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
 import { MODE_LABELS } from "./composer.tsx";
+import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 import { ProvidersSection } from "./providers.tsx";
-
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  onChange(value: T): void;
-}) {
-  return (
-    <div className="segmented" role="radiogroup">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={option.value === value}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Setting({
-  title,
-  note,
-  children,
-}: {
-  title: string;
-  note?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="setting">
-      <div className="grow">
-        <div>{title}</div>
-        {note ? <div className="caption muted">{note}</div> : null}
-      </div>
-      {children}
-    </div>
-  );
-}
 
 function Limit({
   label,
@@ -148,20 +103,20 @@ export function SettingsPage() {
   const set = (patch: Parameters<typeof app.request<"settings.set">>[1]) =>
     void app.attempt(app.request("settings.set", patch));
   return (
-    <div className="page">
+    <div className="page fade-y">
       <div className="page-content">
-        <div className="row">
+        <header className="page-header">
           <button
             type="button"
-            className="icon-button"
+            className="ghost page-back"
             title="Back (Esc)"
-            aria-label="Back"
             onClick={() => app.setView({ page: "thread" })}
           >
-            <Icon name="chevron-right" className="flip" />
+            <Icon name="chevron-left" />
+            Back
           </button>
           <h1>Settings</h1>
-        </div>
+        </header>
 
         <h2>Appearance</h2>
         <div className="card">
@@ -170,7 +125,7 @@ export function SettingsPage() {
               value={theme}
               onChange={(value) => app.setView({ theme: value })}
               options={[
-                { value: "system", label: "System" },
+                { value: "system", label: "System (default)" },
                 { value: "light", label: "Light" },
                 { value: "dark", label: "Dark" },
               ]}
@@ -178,13 +133,12 @@ export function SettingsPage() {
           </Setting>
           <Setting
             title="Show the agent's thinking"
-            note="Reasoning summaries appear among the steps of a turn."
+            note="Reasoning summaries appear among the work of a turn."
           >
-            <input
-              type="checkbox"
-              className="switch"
+            <Switch
+              label="Show the agent's thinking"
               checked={showReasoning}
-              onChange={(event) => app.setView({ showReasoning: event.currentTarget.checked })}
+              onChange={(checked) => app.setView({ showReasoning: checked })}
             />
           </Setting>
         </div>
@@ -197,7 +151,7 @@ export function SettingsPage() {
               value={settings?.model ?? ""}
               onChange={(event) => set({ model: event.currentTarget.value || null, effort: null })}
             >
-              <option value="">Codex's own default</option>
+              <option value="">Codex's choice (default)</option>
               {groupByProvider(models).map(([name, group]) => (
                 <optgroup key={name} label={name}>
                   {group.map((model) => (
@@ -215,7 +169,10 @@ export function SettingsPage() {
               onChange={(mode) => set({ mode })}
               options={SESSION_MODES.map((mode) => ({
                 value: mode,
-                label: MODE_LABELS[mode].label,
+                label:
+                  mode === "auto"
+                    ? `${MODE_LABELS[mode].label} (default)`
+                    : MODE_LABELS[mode].label,
               }))}
             />
           </Setting>
@@ -223,11 +180,10 @@ export function SettingsPage() {
             title="Start in a new worktree"
             note="In a git repository, each session gets its own checkout and branch."
           >
-            <input
-              type="checkbox"
-              className="switch"
+            <Switch
+              label="Start in a new worktree"
               checked={settings?.worktree ?? false}
-              onChange={(event) => set({ worktree: event.currentTarget.checked })}
+              onChange={(worktree) => set({ worktree })}
             />
           </Setting>
         </div>

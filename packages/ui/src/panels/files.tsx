@@ -1,10 +1,13 @@
 import type { FileContent, SessionInfo } from "@cycle/protocol";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/icons.tsx";
+import { Chevron } from "../components/items.tsx";
 import { CopyButton, Markdown } from "../components/markdown.tsx";
+import { PanelHeader } from "../components/panel.tsx";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
-import { basename } from "../lib/format.ts";
+import { fileIcon } from "../lib/file-icons.ts";
+import { basename, dirname } from "../lib/format.ts";
 import { highlight, languageOf } from "../lib/highlight.ts";
 
 interface Entry {
@@ -51,7 +54,7 @@ function Folder({
           type="button"
           className="tree-row"
           data-active={full === selected}
-          style={{ paddingLeft: 8 + depth * 14 }}
+          style={{ paddingLeft: 8 + depth * 12 }}
           onClick={() => {
             if (!entry.directory) return onOpen(full);
             setOpen((value) => {
@@ -62,13 +65,11 @@ function Folder({
             });
           }}
         >
-          {entry.directory ? (
-            <Icon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
-          ) : (
-            <span style={{ width: 12 }} />
-          )}
-          <Icon name={entry.directory ? "folder" : "file"} size={14} />
-          <span className="truncate">{entry.name}</span>
+          {entry.directory ? <Chevron open={expanded} small /> : <span className="tree-space" />}
+          <Icon
+            name={entry.directory ? (expanded ? "folder-open" : "folder") : fileIcon(entry.name)}
+          />
+          <span className="fade-x">{entry.name}</span>
         </button>
         {entry.directory && expanded ? (
           <Folder
@@ -139,20 +140,38 @@ function FileView({ path, line, root }: { path: string; line: number | null; roo
       <div className="file-view-header">
         <button
           type="button"
-          className="icon-button small"
+          className="icon-button"
           title="Back to the files"
           aria-label="Back to the files"
           onClick={() => app.setView({ file: null })}
         >
-          <Icon name="chevron-right" className="flip" />
+          <Icon name="arrow-left" />
         </button>
-        <span className="truncate grow meta" title={path}>
-          {relative}
+        <span className="fade-x-start grow meta mono" title={path}>
+          <span className="muted">{dirname(relative) === "/" ? "" : `${dirname(relative)}/`}</span>
+          {basename(relative)}
         </span>
         {markdown ? (
-          <button type="button" className="ghost" onClick={() => setPreview(!preview)}>
-            {preview ? "Code" : "Preview"}
-          </button>
+          <div className="segmented small" role="radiogroup" aria-label="View">
+            <button
+              type="button"
+              role="radio"
+              className="segment"
+              aria-checked={preview}
+              onClick={() => setPreview(true)}
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              role="radio"
+              className="segment"
+              aria-checked={!preview}
+              onClick={() => setPreview(false)}
+            >
+              Code
+            </button>
+          </div>
         ) : null}
         <CopyButton text={path} label="Copy path" />
       </div>
@@ -211,26 +230,32 @@ export function FilesPanel({ info }: { info: SessionInfo }) {
   const open = (path: string) => app.setView({ file: { path, line: null } });
   return (
     <>
-      <header className="panel-header">
-        <span className="truncate grow">Files</span>
-        <button
-          type="button"
-          className="icon-button"
-          aria-pressed={showHidden}
-          title="Show hidden files"
-          aria-label="Show hidden files"
-          onClick={() => setShowHidden(!showHidden)}
-        >
-          <Icon name="eye" />
-        </button>
-      </header>
+      <PanelHeader
+        title="Files"
+        actions={
+          <button
+            type="button"
+            className="icon-button"
+            aria-pressed={showHidden}
+            title={showHidden ? "Hide hidden files" : "Show hidden files"}
+            aria-label="Show hidden files"
+            onClick={() => setShowHidden(!showHidden)}
+          >
+            <Icon name={showHidden ? "eye" : "eye-off"} />
+          </button>
+        }
+      >
+        <span className="fade-x mono">{basename(root)}</span>
+      </PanelHeader>
       {file ? (
         <FileView path={file.path} line={file.line} root={root} />
       ) : (
         <>
-          <div className="panel-filter">
+          <label className="panel-filter">
+            <Icon name="search" />
             <input
-              className="field"
+              className="bare"
+              aria-label="Find a file"
               placeholder="Find a file"
               value={query}
               onChange={(event) => setQuery(event.currentTarget.value)}
@@ -239,8 +264,8 @@ export function FilesPanel({ info }: { info: SessionInfo }) {
                 if (event.key === "Enter" && matches[0]) open(`${root}/${matches[0].path}`);
               }}
             />
-          </div>
-          <div className="panel-body tree">
+          </label>
+          <div className="panel-body tree fade-y">
             {query.trim() ? (
               matches.length ? (
                 matches.map((match) => (
@@ -250,9 +275,12 @@ export function FilesPanel({ info }: { info: SessionInfo }) {
                     className="tree-row"
                     onClick={() => open(`${root}/${match.path}`)}
                   >
-                    <Icon name="file" size={14} />
-                    <span className="truncate">
-                      {basename(match.path)} <span className="muted">{match.path}</span>
+                    <Icon name={fileIcon(match.path)} />
+                    <span className="fade-x-start grow mono">
+                      <span className="muted">
+                        {dirname(match.path) === "/" ? "" : `${dirname(match.path)}/`}
+                      </span>
+                      {basename(match.path)}
                     </span>
                   </button>
                 ))

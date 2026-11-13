@@ -18,8 +18,9 @@ import { allowedRequest, newToken, sameToken } from "./auth.ts";
 import { Files } from "./files.ts";
 import { Git } from "./git.ts";
 import { Providers, type ProvidersFile } from "./providers.ts";
+import { LaunchError, Scheduler, type SchedulesFile } from "./schedules.ts";
 import { type MetaFile, SessionHub } from "./sessions.ts";
-import { JsonStore, diskFile, realSchedule } from "./store.ts";
+import { JsonStore, diskFile, realDelay } from "./store.ts";
 import { Terminals } from "./terminals.ts";
 import { type UsageFile, UsageLedger } from "./usage.ts";
 
@@ -68,6 +69,7 @@ const DEFAULT_SETTINGS: Settings = {
   projects: [],
 };
 const MAX_PROJECTS = 30;
+const SCHEDULE_TICK_MS = 15_000;
 
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -98,10 +100,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const { harness, home } = options;
   const token = options.token ?? newToken();
 
-  const [settings, meta, usageFile] = await Promise.all([
+  const [settings, meta, usageFile, schedulesFile] = await Promise.all([
     JsonStore.open<Settings>(diskFile(join(home, "settings.json")), { ...DEFAULT_SETTINGS }),
     JsonStore.open<MetaFile>(diskFile(join(home, "sessions.json")), { sessions: {} }),
     JsonStore.open<UsageFile>(diskFile(join(home, "usage.json")), { days: {} }),
+    JsonStore.open<SchedulesFile>(diskFile(join(home, "schedules.json")), { schedules: [] }),
   ]);
 
   await harness.start();
@@ -147,7 +150,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     usage,
     git,
     worktreeParent: join(home, "worktrees"),
-    schedule: realSchedule,
+    schedule: realDelay,
     now: Date.now,
     viewers: (sessionId) => viewers.get(sessionId) ?? 0,
     publish: {
@@ -164,7 +167,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   });
   const terminals = new Terminals({
     harness,
-    schedule: realSchedule,
+    schedule: realDelay,
     shell: process.env["SHELL"] || "/bin/bash",
     env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "Cycle" },
     publish: {
@@ -184,6 +187,66 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     ...settings.value.projects,
     join(home, "worktrees"),
   ]);
+
+  const scheduler = new Scheduler({
+    file: schedulesFile,
+    isWorking: (sessionId) => hub.working(sessionId),
+    now: Date.now,
+    newId: () => crypto.randomUUID(),
+    onChange: (schedules) => push({ type: "schedules.changed", schedules }),
+    // A run starts as the composer would: a new session, then its first prompt.
+    // An approval it asks for waits for the owner, as in any session.
+    async launch(schedule) {
+      const info = await hub.create(
+        {
+          cwd: schedule.cwd,
+          ...(schedule.model ? { model: schedule.model } : {}),
+          ...(schedule.effort ? { effort: schedule.effort } : {}),
+          ...(schedule.mode ? { mode: schedule.mode } : {}),
+          ...(schedule.worktree ? { worktree: {} } : {}),
+        },
+        schedule.id,
+      );
+      try {
+        await hub.send(info.id, { text: schedule.prompt, images: [] }, "auto");
+      } catch (error) {
+        throw new LaunchError(error instanceof Error ? error.message : String(error), info.id);
+      }
+      return { sessionId: info.id };
+    },
+  });
+  /**
+   * Tells every client the servers changed, however they came to. Only the
+   * newest listing is pushed, so answers that come back out of order leave
+   * the pages with the latest.
+   */
+  let mcpListing = 0;
+  const mcpChanged = async () => {
+    const listing = ++mcpListing;
+    const servers = await harness.listMcpServers();
+    if (listing === mcpListing) push({ type: "mcp.changed", servers });
+    return { servers };
+  };
+  /** A change to the configuration, told to the pages whether or not it went through whole. */
+  const mcpChange = async (work: Promise<void>) => {
+    try {
+      await work;
+    } catch (error) {
+      void mcpChanged().catch(() => {});
+      throw error;
+    }
+    return mcpChanged();
+  };
+  const pluginsChanged = async () => {
+    const catalog = await harness.listPlugins();
+    push({ type: "plugins.changed", catalog });
+    // A plugin may bring servers of its own.
+    void mcpChanged().catch(() => {});
+    return catalog;
+  };
+  harness.onEvent((event) => {
+    if (event.type === "mcp.changed") void mcpChanged().catch(() => {});
+  });
 
   const follow = (socket: Socket, sessionId: string) => {
     if (socket.data.sessions.has(sessionId)) return;
@@ -271,6 +334,50 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "models.list": async () => ({ models: await harness.listModels() }),
     "skills.list": async ({ cwd }) => ({ skills: await harness.listSkills(cwd) }),
     "mcp.list": async () => ({ servers: await harness.listMcpServers() }),
+    "mcp.put": async ({ server }) => {
+      return mcpChange(harness.putMcpServer(server));
+    },
+    "mcp.remove": async ({ name }) => {
+      return mcpChange(harness.removeMcpServer(name));
+    },
+    "mcp.enable": async ({ name, enabled }) => {
+      return mcpChange(harness.enableMcpServer(name, enabled));
+    },
+    "mcp.login": ({ name }) => harness.loginMcpServer(name),
+    "plugins.list": () => harness.listPlugins(),
+    "plugins.read": ({ marketplace, name }) => harness.readPlugin(marketplace, name),
+    "plugins.install": async ({ marketplace, name }) => {
+      await harness.installPlugin(marketplace, name);
+      return pluginsChanged();
+    },
+    "plugins.uninstall": async ({ id }) => {
+      await harness.uninstallPlugin(id);
+      return pluginsChanged();
+    },
+    "plugins.enable": async ({ id, enabled }) => {
+      await harness.enablePlugin(id, enabled);
+      return pluginsChanged();
+    },
+    "marketplace.add": async ({ source }) => {
+      await harness.addMarketplace(source);
+      return pluginsChanged();
+    },
+    "marketplace.remove": async ({ name }) => {
+      await harness.removeMarketplace(name);
+      return pluginsChanged();
+    },
+
+    "schedule.list": () => ({ schedules: scheduler.list() }),
+    "schedule.put": (input) => {
+      const schedule = scheduler.put(input);
+      useProject(schedule.cwd);
+      return schedule;
+    },
+    "schedule.delete": ({ id }) => {
+      scheduler.remove(id);
+      return {};
+    },
+    "schedule.run": ({ id }) => scheduler.run(id),
     "account.read": () => harness.readAccount(),
     "account.login": () => harness.login(),
     "account.login.cancel": async ({ id }) => {
@@ -438,12 +545,24 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   });
 
   const port = server.port ?? 0;
+  // Only once there is a server to tell the pages through. Often enough that
+  // a run starts within the minute it is due, and at once for what was missed.
+  const tick = () => {
+    try {
+      scheduler.tick();
+    } catch (error) {
+      console.error(`[cycle] schedules: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const ticking = setInterval(tick, SCHEDULE_TICK_MS);
+  tick();
   return {
     port,
     token,
     url: `ws://127.0.0.1:${port}${WS_PATH}?token=${token}`,
     pageUrl: `http://127.0.0.1:${port}/#token=${token}`,
     async stop() {
+      clearInterval(ticking);
       terminals.closeAll();
       await server.stop(true);
       await harness.dispose();
@@ -451,6 +570,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         settings.flush(),
         meta.flush(),
         usageFile.flush(),
+        schedulesFile.flush(),
         options.providers.flush(),
       ]);
     },

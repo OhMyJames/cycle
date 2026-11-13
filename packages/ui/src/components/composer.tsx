@@ -11,7 +11,11 @@ import type { CycleApp, Draft } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
+import { MorphLoader } from "../loader/morph-loader.tsx";
+import { fileIcon } from "../lib/file-icons.ts";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
+import { Chevron } from "./items.tsx";
+import { PlanSteps } from "./plan.tsx";
 import { Menu, type MenuEntry, MenuList } from "./menu.tsx";
 import { ModelPicker } from "./model-picker.tsx";
 
@@ -21,16 +25,16 @@ export const MODE_LABELS: Record<SessionMode, { label: string; sub: string; icon
   readOnly: {
     label: "Ask first",
     sub: "Reads freely, asks before commands and edits",
-    icon: "eye",
+    icon: "lock",
   },
-  auto: { label: "Auto", sub: "Works inside the project, asks to leave it", icon: "zap" },
-  fullAccess: { label: "Full access", sub: "Never asks, no sandbox", icon: "alert" },
+  auto: { label: "Auto", sub: "Works inside the project, asks to leave it", icon: "automation" },
+  fullAccess: { label: "Full access", sub: "Never asks, no sandbox", icon: "warning" },
 };
 
 interface Suggestion {
   label: string;
   sub?: string;
-  icon: IconName;
+  icon?: IconName;
   /** Replaces the typed token with text, or runs something instead. */
   insert?: string;
   run?: () => void;
@@ -102,44 +106,28 @@ function ContextRing({ usage }: { usage: Usage | null }) {
   );
 }
 
+/**
+ * The agent's plan, once, above the composer: how far it has come and the step it is on, opening to
+ * every step. The loader runs only during a turn, since a step's would never stop once it ended.
+ */
 function PlanStrip({ plan }: { plan: Plan }) {
   const [open, setOpen] = useState(false);
   const done = plan.steps.filter((step) => step.status === "completed").length;
   const current = plan.steps.find((step) => step.status === "inProgress") ?? plan.steps[done];
   return (
-    <div className="plan-strip">
-      <button
-        type="button"
-        className="strip-row"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <Icon name="list" />
-        <span className="tabular muted">
+    <div className="plan-strip" data-open={open}>
+      <button type="button" className="strip" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <MorphLoader state="executing" />
+        <span className="mono caption muted tabular">
           {done}/{plan.steps.length}
         </span>
-        <span className="truncate grow">{current?.step ?? "Plan complete"}</span>
+        <span className="fade-x grow secondary">{current?.step ?? "Plan complete"}</span>
         <span className="progress" aria-hidden="true">
           <span style={{ width: `${(done / Math.max(plan.steps.length, 1)) * 100}%` }} />
         </span>
-        <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
+        <Chevron open={open} small />
       </button>
-      {open ? (
-        <ol className="plan-steps">
-          {plan.steps.map((step, index) => (
-            <li key={index} data-status={step.status}>
-              {step.status === "completed" ? (
-                <Icon name="check" />
-              ) : step.status === "inProgress" ? (
-                <Spinner size={12} />
-              ) : (
-                <span className="bullet" />
-              )}
-              {step.step}
-            </li>
-          ))}
-        </ol>
-      ) : null}
+      {open ? <PlanSteps plan={plan} live /> : null}
     </div>
   );
 }
@@ -175,15 +163,15 @@ function DraftOptions({ draft }: { draft: Draft }) {
   return (
     <div className="draft-options">
       <div className="row">
-        <Menu entries={folders} className="button" title="Where the session works">
+        <Menu entries={folders} className="ghost" title="Where the session works">
           <Icon name="folder" />
-          <span className="truncate" title={tildePath(draft.cwd, home)}>
+          <span className="fade-x" title={tildePath(draft.cwd, home)}>
             {basename(draft.cwd)}
           </span>
-          <Icon name="chevron-down" size={12} />
+          <Icon name="chevrons-up-down" size={14} className="muted" />
         </Menu>
         {branch ? (
-          <span className="chip">
+          <span className="chip mono">
             <Icon name="git-branch" size={14} /> {branch}
           </span>
         ) : null}
@@ -199,7 +187,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
         ) : null}
         {branch && draft.worktree ? (
           <input
-            className="field branch-field"
+            className="field small branch-field"
             placeholder="branch name (optional)"
             value={draft.branch}
             onChange={(event) => change({ branch: event.currentTarget.value })}
@@ -219,6 +207,9 @@ function DraftOptions({ draft }: { draft: Draft }) {
   );
 }
 
+const Key = ({ children }: { children: string }) => <kbd className="key">{children}</kbd>;
+const Dot = () => <span aria-hidden="true">·</span>;
+
 const NO_SESSION = new Store<{ state: null; loading: boolean; error: null }>({
   state: null,
   loading: false,
@@ -236,13 +227,12 @@ function slashCommands(app: CycleApp, info: SessionInfo | null): Suggestion[] {
     {
       label: "/compact",
       sub: "Summarize the conversation to free up context",
-      icon: "compress",
       run: () => void app.attempt(app.request("session.compact", { sessionId })),
     },
     {
       label: "/fork",
       sub: "Continue in a copy of this session",
-      icon: "git-fork",
+      icon: "git-branch",
       run: () => void app.fork(sessionId),
     },
     {
@@ -400,7 +390,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
           files.slice(0, 12).map((file) => ({
             label: basename(file.path),
             sub: file.path,
-            icon: file.directory ? "folder" : "file",
+            icon: file.directory ? "folder" : fileIcon(file.path),
             insert: `${file.path}${file.directory ? "/" : ""} `,
           })),
         );
@@ -481,12 +471,12 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
       {!sessionId && draft ? <DraftOptions draft={draft} /> : null}
       {session.plan && running ? <PlanStrip plan={session.plan} /> : null}
       {archived ? (
-        <div className="strip-row archived-strip">
-          <Icon name="archive" />
-          <span className="grow">This session is archived.</span>
+        <div className="strip">
+          <Icon name="info" size={14} className="muted" />
+          <span className="grow secondary">This session is archived.</span>
           <button
             type="button"
-            className="button"
+            className="ghost strip-action"
             onClick={() => sessionId && app.updateSession({ sessionId, archived: false })}
           >
             Unarchive
@@ -500,7 +490,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
               entries={suggestions.map((suggestion) => ({
                 label: suggestion.label,
                 ...(suggestion.sub ? { sub: suggestion.sub } : {}),
-                icon: suggestion.icon,
+                ...(suggestion.icon ? { icon: suggestion.icon } : {}),
                 onSelect: () => pick(suggestion),
               }))}
               active={active}
@@ -577,7 +567,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
           }}
         />
         <div className="composer-controls">
-          <label className="icon-button" title="Attach images">
+          <label className="icon-button" title="Attach images" aria-label="Attach images">
             <Icon name="paperclip" />
             <input
               type="file"
@@ -600,24 +590,27 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
             side="top"
             title="How much the agent may do unasked"
             entries={() =>
-              SESSION_MODES.map((value) => ({
-                label:
-                  value === "auto"
-                    ? `${MODE_LABELS[value].label} (default)`
-                    : MODE_LABELS[value].label,
-                sub: MODE_LABELS[value].sub,
-                icon: MODE_LABELS[value].icon,
-                checked: value === mode,
-                onSelect: () => chooseMode(value),
-              }))
+              // Full access runs everything unasked, so it stands apart and in the warning color.
+              SESSION_MODES.flatMap((value): MenuEntry[] => [
+                ...(value === "fullAccess" ? [{ separator: true } as const] : []),
+                {
+                  label:
+                    value === "auto"
+                      ? `${MODE_LABELS[value].label} (default)`
+                      : MODE_LABELS[value].label,
+                  sub: MODE_LABELS[value].sub,
+                  icon: MODE_LABELS[value].icon,
+                  warning: value === "fullAccess",
+                  checked: value === mode,
+                  onSelect: () => chooseMode(value),
+                },
+              ])
             }
+            width={300}
           >
-            <Icon
-              name={MODE_LABELS[mode].icon}
-              size={14}
-              className={mode === "fullAccess" ? "tone-warning" : ""}
-            />
-            <span>{MODE_LABELS[mode].label}</span>
+            <span className={mode === "fullAccess" ? "tone-warning" : undefined}>
+              {MODE_LABELS[mode].label}
+            </span>
           </Menu>
           <span className="grow" />
           <ContextRing usage={session.usage} />
@@ -629,7 +622,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
               aria-label="Stop"
               onClick={() => app.interrupt(sessionId)}
             >
-              <Icon name="stop" />
+              <Icon name="stop" size={12} />
             </button>
           ) : null}
           {!running || canSend ? (
@@ -641,15 +634,40 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
               disabled={!canSend}
               onClick={() => void submit(false)}
             >
-              {sending ? <Spinner /> : <Icon name={running ? "clock" : "arrow-up"} />}
+              {sending ? <Spinner /> : <Icon name="send" />}
             </button>
           ) : null}
         </div>
       </div>
-      <div className="hint-line caption muted">
-        {running
-          ? "↵ Queue · ⌘↵ Send into this turn · Esc Stop"
-          : "↵ Send · ⇧↵ New line · @ Files · / Commands"}
+      <div className="hint-line fade-x">
+        {archived ? null : running && !text ? (
+          <span>Type to queue a follow-up</span>
+        ) : running ? (
+          <>
+            <Key>↵</Key>
+            <span>Queue</span>
+            <Dot />
+            <Key>⌘↵</Key>
+            <span>Send into this turn</span>
+            <Dot />
+            <Key>Esc</Key>
+            <span>Stop</span>
+          </>
+        ) : (
+          <>
+            <Key>↵</Key>
+            <span>Send</span>
+            <Dot />
+            <Key>⇧↵</Key>
+            <span>New line</span>
+            <Dot />
+            <Key>@</Key>
+            <span>Mention</span>
+            <Dot />
+            <Key>/</Key>
+            <span>Commands</span>
+          </>
+        )}
       </div>
     </div>
   );

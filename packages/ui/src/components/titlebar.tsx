@@ -11,7 +11,7 @@ import { Menu } from "./menu.tsx";
 const PANELS: { id: PanelId; label: string; icon: IconName; hint: string }[] = [
   { id: "overview", label: "Overview", icon: "overview", hint: "⌥⌘O" },
   { id: "changes", label: "Changes", icon: "file-diff", hint: "⌥⌘C" },
-  { id: "files", label: "Files", icon: "file", hint: "⌥⌘F" },
+  { id: "files", label: "Files", icon: "folder", hint: "⌥⌘F" },
   { id: "terminal", label: "Terminal", icon: "terminal", hint: "⌃`" },
 ];
 
@@ -38,7 +38,8 @@ export function TitleBar({ info, title }: { info: SessionInfo | null; title: str
       )}
       {info && renaming ? (
         <input
-          className="rename title-rename"
+          className="field small title-rename"
+          aria-label="Rename conversation"
           defaultValue={name}
           autoFocus
           onFocus={(event) => event.currentTarget.select()}
@@ -58,7 +59,7 @@ export function TitleBar({ info, title }: { info: SessionInfo | null; title: str
         />
       ) : (
         <h1
-          className="truncate"
+          className="fade-x"
           title={info ? "Double-click to rename" : undefined}
           onDoubleClick={() => info && setRenaming(true)}
         >
@@ -67,13 +68,13 @@ export function TitleBar({ info, title }: { info: SessionInfo | null; title: str
       )}
       {info ? (
         <span className="chip muted" title={info.cwd}>
-          <Icon name={info.worktree ? "git-branch" : "folder"} size={14} />
-          <span className="truncate">{info.branch ?? basename(info.cwd)}</span>
+          <Icon name={info.branch ? "git-branch" : "folder"} size={14} />
+          <span className="fade-x mono">{info.branch ?? basename(info.cwd)}</span>
         </span>
       ) : null}
       <span className="grow drag" />
       {info ? (
-        <>
+        <div className="titlebar-actions">
           {PANELS.map((item) => (
             <button
               key={item.id}
@@ -87,16 +88,17 @@ export function TitleBar({ info, title }: { info: SessionInfo | null; title: str
               <Icon name={item.icon} />
             </button>
           ))}
+          <span className="titlebar-divider" aria-hidden="true" />
           <Menu
             className="icon-button"
             title="Session actions"
             align="end"
+            width={220}
             entries={() => [
               { label: "Rename", icon: "edit", onSelect: () => setRenaming(true) },
               { label: "Fork", icon: "git-fork", onSelect: () => void app.fork(info.id) },
               {
                 label: "Compact context",
-                icon: "compress",
                 onSelect: () =>
                   void app.attempt(app.request("session.compact", { sessionId: info.id })),
               },
@@ -113,14 +115,14 @@ export function TitleBar({ info, title }: { info: SessionInfo | null; title: str
               { separator: true },
               {
                 label: info.archived ? "Unarchive" : "Archive",
-                icon: "archive",
+                icon: info.archived ? "undo" : "archive",
                 onSelect: () => app.updateSession({ sessionId: info.id, archived: !info.archived }),
               },
             ]}
           >
             <Icon name="more" />
           </Menu>
-        </>
+        </div>
       ) : null}
     </header>
   );

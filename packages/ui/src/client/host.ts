@@ -35,9 +35,14 @@ export const host = {
     if (window.cycle?.notify || typeof Notification === "undefined") return;
     if (Notification.permission === "default") void Notification.requestPermission();
   },
-  openExternal(url: string): void {
-    if (window.cycle?.openExternal) window.cycle.openExternal(url);
-    else window.open(url, "_blank", "noopener,noreferrer");
+  /** Opens a link outside the page. False when it was left to a browser, which may refuse. */
+  openExternal(url: string): boolean {
+    if (window.cycle?.openExternal) {
+      window.cycle.openExternal(url);
+      return true;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+    return false;
   },
   insetTitleBar: (): boolean => window.cycle?.insetTitleBar ?? false,
 };
