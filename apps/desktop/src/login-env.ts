@@ -45,8 +45,10 @@ const readUntilComplete = (stream: Readable, token: string): Promise<string> =>
       stream.removeAllListeners();
       resolve(stdout);
     };
-    stream.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
+    // Decoded by the stream, so a character split between two chunks stays whole.
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk: string) => {
+      stdout += chunk;
       if (isComplete(stdout, token)) finish();
     });
     stream.on("end", finish);

@@ -222,6 +222,32 @@ test.each<[string, McpServerInput, string]>([
     { name: "a", transport: { kind: "stdio", command: "x", args: [], env: { A: null } } },
     "A has no value",
   ],
+  [
+    "arguments that are not words",
+    {
+      name: "a",
+      transport: { kind: "stdio", command: "x", args: "y", env: {} },
+    } as unknown as McpServerInput,
+    "list of words",
+  ],
+  [
+    "a value that is not text",
+    {
+      name: "a",
+      transport: { kind: "stdio", command: "x", args: [], env: { A: 1 } },
+    } as unknown as McpServerInput,
+    "A has no value",
+  ],
+  [
+    "a variable every object has",
+    { name: "a", transport: { kind: "stdio", command: "x", args: [], env: { constructor: null } } },
+    "constructor has no value",
+  ],
+  [
+    "no way to reach it",
+    { name: "a", transport: { kind: "pipe" } } as unknown as McpServerInput,
+    "a command or an address",
+  ],
 ])("a server with %s is refused", (_name, input, message) => {
   expect(() => mcpServerEdits(input, undefined)).toThrow(message);
 });

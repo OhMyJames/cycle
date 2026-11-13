@@ -246,3 +246,27 @@ test.each<[string, Partial<ScheduleInput>, string]>([
   const t = await setup();
   expect(() => t.scheduler.put(input(over))).toThrow(message);
 });
+
+test("a run whose news cannot be told still ends, and its schedule can run again", async () => {
+  const delay = manualSchedule();
+  const file = await JsonStore.open<SchedulesFile>(
+    { read: async () => null, write: async () => {} },
+    { schedules: [] },
+    delay.schedule,
+  );
+  let deaf = false;
+  const scheduler = new Scheduler({
+    file,
+    launch: async () => ({ sessionId: "s1" }),
+    isWorking: () => false,
+    now: () => at(2),
+    newId: () => "id1",
+    onChange: () => {
+      if (deaf) throw new Error("nobody to tell");
+    },
+  });
+  const { id } = scheduler.put(input());
+  deaf = true;
+  expect(await scheduler.run(id)).toMatchObject({ sessionId: "s1", error: null });
+  expect(await scheduler.run(id)).toMatchObject({ sessionId: "s1", error: null });
+});

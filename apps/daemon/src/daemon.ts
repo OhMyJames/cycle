@@ -183,15 +183,27 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return { sessionId: info.id };
     },
   });
-  // Often enough that a run starts within the minute it is due.
-  const ticking = setInterval(() => scheduler.tick(), SCHEDULE_TICK_MS);
-  scheduler.tick();
-
-  /** Tells every client the servers changed, however they came to. */
+  /**
+   * Tells every client the servers changed, however they came to. Only the
+   * newest listing is pushed, so answers that come back out of order leave
+   * the pages with the latest.
+   */
+  let mcpListing = 0;
   const mcpChanged = async () => {
+    const listing = ++mcpListing;
     const servers = await harness.listMcpServers();
-    push({ type: "mcp.changed", servers });
+    if (listing === mcpListing) push({ type: "mcp.changed", servers });
     return { servers };
+  };
+  /** A change to the configuration, told to the pages whether or not it went through whole. */
+  const mcpChange = async (work: Promise<void>) => {
+    try {
+      await work;
+    } catch (error) {
+      void mcpChanged().catch(() => {});
+      throw error;
+    }
+    return mcpChanged();
   };
   const pluginsChanged = async () => {
     const catalog = await harness.listPlugins();
@@ -291,16 +303,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "skills.list": async ({ cwd }) => ({ skills: await harness.listSkills(cwd) }),
     "mcp.list": async () => ({ servers: await harness.listMcpServers() }),
     "mcp.put": async ({ server }) => {
-      await harness.putMcpServer(server);
-      return mcpChanged();
+      return mcpChange(harness.putMcpServer(server));
     },
     "mcp.remove": async ({ name }) => {
-      await harness.removeMcpServer(name);
-      return mcpChanged();
+      return mcpChange(harness.removeMcpServer(name));
     },
     "mcp.enable": async ({ name, enabled }) => {
-      await harness.enableMcpServer(name, enabled);
-      return mcpChanged();
+      return mcpChange(harness.enableMcpServer(name, enabled));
     },
     "mcp.login": ({ name }) => harness.loginMcpServer(name),
     "plugins.list": () => harness.listPlugins(),
@@ -486,6 +495,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   });
 
   const port = server.port ?? 0;
+  // Only once there is a server to tell the pages through. Often enough that
+  // a run starts within the minute it is due, and at once for what was missed.
+  const tick = () => {
+    try {
+      scheduler.tick();
+    } catch (error) {
+      console.error(`[cycle] schedules: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const ticking = setInterval(tick, SCHEDULE_TICK_MS);
+  tick();
   return {
     port,
     token,

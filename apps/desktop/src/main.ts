@@ -50,7 +50,11 @@ async function ensureDaemon(): Promise<string> {
   daemonProcess = child;
   // From Finder there is no terminal to print to, so what the daemon says goes to a file.
   if (child.stderr) {
-    const home = process.env["CYCLE_HOME"] ?? path.join(os.homedir(), ".cycle-codex");
+    // The home the daemon itself will use, which the owner's shell profile may set.
+    const home =
+      loginEnv?.["CYCLE_HOME"] ??
+      process.env["CYCLE_HOME"] ??
+      path.join(os.homedir(), ".cycle-codex");
     mkdirSync(home, { recursive: true, mode: 0o700 });
     child.stderr.pipe(createWriteStream(path.join(home, "daemon.log"), { mode: 0o600 }));
   }
@@ -61,7 +65,8 @@ async function ensureDaemon(): Promise<string> {
       if (code !== 0) reject(new Error(`daemon exited before it was ready (code ${code})`));
     });
     if (!child.stdout) return;
-    createInterface({ input: child.stdout }).on("line", (line) => {
+    const lines = createInterface({ input: child.stdout });
+    lines.on("line", (line) => {
       try {
         const message = JSON.parse(line) as { type?: string; pageUrl?: string };
         if (message.type === "listening" && message.pageUrl) resolve(message.pageUrl);
@@ -69,6 +74,8 @@ async function ensureDaemon(): Promise<string> {
         console.log(`[daemon] ${line}`);
       }
     });
+    // A daemon that said all it had to without saying where it is will never say it.
+    lines.on("close", () => reject(new Error("daemon stopped before it said where it is")));
   });
 }
 

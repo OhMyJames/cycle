@@ -381,7 +381,14 @@ export function mcpServerEdits(
     mergeStrategy: "replace",
   });
   const { transport } = input;
+  // The wire is not typed at run time, and this is written to a file the codex CLI reads too.
+  if (transport?.kind !== "http" && transport?.kind !== "stdio") {
+    throw new Error("A server is reached by a command or an address.");
+  }
   if (transport.kind === "http") {
+    if (typeof transport.url !== "string") {
+      throw new Error("The address must be a full http or https URL.");
+    }
     let url: URL;
     try {
       url = new URL(transport.url);
@@ -391,7 +398,10 @@ export function mcpServerEdits(
     if (url.protocol !== "https:" && url.protocol !== "http:") {
       throw new Error("The address must be a full http or https URL.");
     }
-    const variable = transport.bearerTokenEnvVar?.trim() || null;
+    const variable =
+      typeof transport.bearerTokenEnvVar === "string"
+        ? transport.bearerTokenEnvVar.trim() || null
+        : null;
     if (variable && !ENV_NAME.test(variable)) {
       throw new Error(`${variable} is not a variable name.`);
     }
@@ -403,13 +413,20 @@ export function mcpServerEdits(
       set("env", null),
     ];
   }
-  const command = transport.command.trim();
+  const command = typeof transport.command === "string" ? transport.command.trim() : "";
   if (!command) throw new Error("A command is needed to start the server.");
+  if (!Array.isArray(transport.args) || transport.args.some((arg) => typeof arg !== "string")) {
+    throw new Error("A command's arguments are a list of words.");
+  }
+  const kept = existing?.env ?? {};
   const env: Record<string, string> = {};
-  for (const [name, given] of Object.entries(transport.env)) {
-    if (!ENV_NAME.test(name)) throw new Error(`${name} is not a variable name.`);
-    const value = given ?? existing?.env?.[name];
-    if (value === undefined) throw new Error(`${name} has no value.`);
+  for (const [name, given] of Object.entries(transport.env ?? {})) {
+    // `__proto__` is a variable name by its letters, and not one an object can be given safely.
+    if (!ENV_NAME.test(name) || name === "__proto__") {
+      throw new Error(`${name} is not a variable name.`);
+    }
+    const value = given ?? (Object.hasOwn(kept, name) ? kept[name] : undefined);
+    if (typeof value !== "string") throw new Error(`${name} has no value.`);
     env[name] = value;
   }
   return [

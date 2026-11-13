@@ -133,8 +133,13 @@ export class Scheduler {
     return this.options.file.value.schedules;
   }
 
+  /** Tells whoever listens. A listener that fails must not leave a run half recorded. */
   private changed(): void {
-    this.options.onChange(this.list());
+    try {
+      this.options.onChange(this.list());
+    } catch {
+      // The schedules are right in the file, and the next change tells them again.
+    }
   }
 
   list(): Schedule[] {
