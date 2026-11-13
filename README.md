@@ -86,10 +86,9 @@ column is what its code does, not a timing.
 | Command palette, pins     | no                                              | yes                                                   |
 | Unit tests                | 30s budget                                      | 187 tests in 0.1s, same rules                         |
 
-Not here yet, and in old-cycle: schedules, the per-project bot, the Connector (adding MCP servers,
-signing in to them, plugins), the Browser panel and the agent's browser tools, the agent's terminal
-tools, remote access from a phone, SSH to another Mac, packaging and auto-update, mermaid diagrams, the
-per-turn context chart, and idle compaction. MCP servers are shown but not managed.
+Not here yet, and in old-cycle: the per-project bot, the Browser panel and the agent's browser tools,
+the agent's terminal tools, remote access from a phone, SSH to another Mac, auto-update, mermaid
+diagrams, the per-turn context chart, and idle compaction.
 
 ## Commands
 
@@ -100,6 +99,8 @@ per-turn context chart, and idle compaction. MCP servers are shown but not manag
 | `bun run demo`             | The whole app with the scripted model                           |
 | `bun run dev`              | The desktop app                                                 |
 | `bun run web`              | The daemon and a link for a browser                             |
+| `bun run desktop:package`  | Builds a self-contained app in `apps/desktop/build/`            |
+| `bun run desktop:install`  | macOS: packages, then installs `/Applications/Cycle Codex.app`  |
 
 | Variable             | What it does                                                        |
 | -------------------- | ------------------------------------------------------------------- |

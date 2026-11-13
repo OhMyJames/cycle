@@ -1,92 +1,185 @@
-/* Design tokens. The palette, type scale and radii continue Cycle's own
-   design system (v0.8): warm neutrals, one brand red, radii that follow the icons. */
-:root {
+/*
+ * Cycle's colors, type and shape: the design system v0.8 of old-cycle, as plain CSS. Warm grays with a
+ * text ramp spaced so each step reads as one, near-black controls, blue links, and the brand red only
+ * for what is running. A background task at work is the link blue, breathing.
+ *
+ * PingFang has fixed weights, so the light theme's 420 would pick Medium and set all Chinese bold.
+ * These faces give it Light below 350, Regular below 450, Medium below 550 and Semibold above.
+ */
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Light"), local("PingFang SC Light");
+  font-weight: 1 349;
+}
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Regular"), local("PingFang SC Regular");
+  font-weight: 350 449;
+}
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Medium"), local("PingFang SC Medium");
+  font-weight: 450 549;
+}
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Semibold"), local("PingFang SC Semibold");
+  font-weight: 550 1000;
+}
+
+:root,
+[data-theme="light"] {
   color-scheme: light;
+  /* Dark text on a light ground reads thinner than the same weight in the dark theme. */
+  --font-weight-normal: 420;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
   --surface-window: #f7f7f5;
   --surface-sidebar: #f7f7f5;
+  --surface-titlebar: #fcfcfb;
   --surface-workspace: #fcfcfb;
-  --surface-hover: #efeeeb;
+  --surface-sidebar-hover: #efeeeb;
   --surface-selected: #e8e7e3;
   --surface-message: #f2f1ee;
   --surface-code: #f7f7f5;
-  --surface-raised: #ffffff;
+  --text-code: #c13e26;
+  --surface-composer: #ffffff;
   --surface-control-hover: #f0efec;
   --surface-control-pressed: #e8e7e3;
   --border-subtle: #efeeeb;
   --border-default: #e5e4e0;
+  --border-divider: #efeeeb;
   --border-control: #d4d2cd;
   --border-focus: #726e68;
+  --focus-glow: color-mix(in oklab, var(--border-focus) 13%, transparent);
   --text-primary: #1c1b1a;
   --text-secondary: #4f4c48;
   --text-muted: #726e68;
   --text-disabled: #a5a19a;
-  --text-code: #c13e26;
+  --text-on-interaction: #4f4c48;
+  --icon-default: #4f4c48;
+  --icon-on-action: #ffffff;
+  --icon-disabled: #a5a19a;
   --action-primary: #1c1b1a;
   --action-primary-hover: #2f2e2c;
-  --text-on-action: #ffffff;
-  --accent: #1d4ed8;
-  --brand: #f44728;
-  --success: #15803d;
-  --warning: #b45309;
-  --error: #be123c;
-  --diff-add: #15803d1a;
-  --diff-del: #be123c17;
-  --shadow-composer: 0 4px 20px rgb(0 0 0 / 3.5%);
-  --shadow-popover: 0 4px 12px rgb(0 0 0 / 8%), 0 1px 3px rgb(0 0 0 / 6%);
-  --shadow-dialog: 0 16px 40px rgb(0 0 0 / 16%), 0 2px 8px rgb(0 0 0 / 8%);
-  --weight-normal: 420;
+  --action-primary-pressed: #121211;
+  --accent-interactive: #1d4ed8;
+  --brand-accent: #f44728;
+  --state-running: var(--brand-accent);
+  --state-background: var(--accent-interactive);
+  --state-success: #15803d;
+  --state-warning: #b45309;
+  --state-error: #be123c;
+  --effect-composer: 0 4px 20px rgb(0 0 0 / 3.5%);
+  --effect-popover: 0 4px 12px rgb(0 0 0 / 8%), 0 1px 3px rgb(0 0 0 / 6%);
+  --effect-dialog: 0 16px 40px rgb(0 0 0 / 16%), 0 2px 8px rgb(0 0 0 / 8%);
+  --scrim: rgb(0 0 0 / 10%);
+
+  /* Lines of a diff, as old-cycle's inline diff draws them: emerald and red at a tenth. */
+  --diff-added: rgb(16 185 129 / 10%);
+  --diff-added-text: #047857;
+  --diff-removed: rgb(239 68 68 / 10%);
+  --diff-removed-text: #b91c1c;
+
   --hl-keyword: #a626a4;
   --hl-string: #50803c;
   --hl-number: #986801;
   --hl-comment: #9a968f;
   --hl-title: #2f5fd0;
   --hl-attr: #b8561a;
+}
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+:root {
+  /*
+   * Two typefaces: the system sans (SF, with PingFang for Chinese) for the interface and for what
+   * people and agents wrote, and JetBrains Mono for code, paths and branches where it is installed.
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Cycle PingFang", "PingFang SC", system-ui, sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, "Cycle PingFang",
+    "PingFang SC", monospace;
+
+  /* Body 14/22, meta 13/20 for labels, caption 12/18 for what a row says under its name. */
+  --text-body: 14px;
+  --text-body-line: 22px;
+  --text-meta: 13px;
+  --text-meta-line: 20px;
+  --text-caption: 12px;
+  --text-caption-line: 18px;
+
+  /*
+   * Radii echo the icons. Nested corners are concentric: a 12 menu with 4 of padding holds 8 rows,
+   * and the 20 composer with 12 of padding holds 8 controls.
+   */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-row: 8px;
   --radius-control: 8px;
   --radius-card: 12px;
   --radius-message: 16px;
   --radius-composer: 20px;
-  --thread-width: 768px;
+
+  --shadow-composer: var(--effect-composer);
+  --shadow-popover: var(--effect-popover);
+  --shadow-dialog: var(--effect-dialog);
+
+  /* Motion: 100ms for a state, 160ms for a disclosure, 200ms for something arriving. */
+  --motion-state: 100ms;
+  --motion-disclosure: 160ms;
+  --motion-enter: 200ms;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --thread-width: 768px;
+  --title-row: 42px;
 }
 
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+[data-theme="dark"] {
   color-scheme: dark;
+  --font-weight-normal: 400;
   --surface-window: #121211;
   --surface-sidebar: #121211;
+  --surface-titlebar: #161615;
   --surface-workspace: #161615;
-  --surface-hover: #252422;
+  --surface-sidebar-hover: #252422;
   --surface-selected: #33312e;
   --surface-message: #262523;
   --surface-code: #121211;
-  --surface-raised: #1c1b1a;
+  --text-code: #fb8b73;
+  --surface-composer: #1c1b1a;
   --surface-control-hover: #2a2927;
   --surface-control-pressed: #3a3835;
   --border-subtle: #2a2927;
   --border-default: #34322f;
+  --border-divider: #2a2927;
   --border-control: #4a4844;
   --border-focus: #8f8b84;
   --text-primary: #f2f1ee;
   --text-secondary: #c4c1bb;
   --text-muted: #8f8b84;
   --text-disabled: #5f5c58;
-  --text-code: #fb8b73;
+  --text-on-interaction: #c4c1bb;
+  --icon-default: #c4c1bb;
+  --icon-on-action: #1c1b1a;
+  --icon-disabled: #5f5c58;
   --action-primary: #f2f1ee;
   --action-primary-hover: #dddbd6;
-  --text-on-action: #1c1b1a;
-  --accent: #60a5fa;
-  --brand: #fb6f52;
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --error: #fb7185;
-  --diff-add: #4ade8022;
-  --diff-del: #fb718522;
-  --shadow-composer: 0 4px 20px rgb(0 0 0 / 40%);
-  --shadow-popover: 0 4px 12px rgb(0 0 0 / 40%), 0 1px 3px rgb(0 0 0 / 30%);
-  --shadow-dialog: 0 16px 40px rgb(0 0 0 / 50%), 0 2px 8px rgb(0 0 0 / 30%);
-  --weight-normal: 400;
+  --action-primary-pressed: #c4c1bb;
+  --accent-interactive: #60a5fa;
+  --brand-accent: #fb6f52;
+  --state-success: #4ade80;
+  --state-warning: #fbbf24;
+  --state-error: #fb7185;
+  --effect-composer: 0 4px 20px rgb(0 0 0 / 40%);
+  --effect-popover: 0 4px 12px rgb(0 0 0 / 40%), 0 1px 3px rgb(0 0 0 / 30%);
+  --effect-dialog: 0 16px 40px rgb(0 0 0 / 50%), 0 2px 8px rgb(0 0 0 / 30%);
+  --scrim: rgb(0 0 0 / 40%);
+
+  --diff-added-text: #6ee7b7;
+  --diff-removed-text: #fca5a5;
+
   --hl-keyword: #c792ea;
   --hl-string: #a5d6a0;
   --hl-number: #e5c07b;

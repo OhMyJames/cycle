@@ -1,4 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { createWriteStream, existsSync, mkdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -10,29 +12,48 @@ import {
   ipcMain,
   shell,
 } from "electron";
+import { daemonLaunch } from "./launch";
+import { readLoginEnv } from "./login-env";
+import { BUILD_FILE, LINUX_ICON, PRELOAD } from "./shared/layout";
+
+/** A packaged app carries its daemon and codex; a repository run uses the repository's. */
+const packaged = existsSync(path.join(app.getAppPath(), BUILD_FILE));
 
 let daemonProcess: ChildProcess | null = null;
 let pageOrigin = "";
 
 /**
  * Finds the page to show. With CYCLE_PAGE_URL the app shows a daemon that is
- * already running; otherwise it starts one (under Bun) on a free port, which
- * also serves the page, and owns its lifetime.
+ * already running; otherwise it starts one on a free port, which also serves
+ * the page, and owns its lifetime.
  */
-function ensureDaemon(): Promise<string> {
+async function ensureDaemon(): Promise<string> {
   const given = process.env["CYCLE_PAGE_URL"];
-  if (given) return Promise.resolve(given);
-  // Paths hang off the app root (apps/desktop): the bundler rewrites __dirname.
-  const entry = path.resolve(app.getAppPath(), "../daemon/src/main.ts");
-  const child = spawn(process.env["CYCLE_BUN_BIN"] ?? "bun", [entry], {
-    env: {
-      ...process.env,
-      CYCLE_DAEMON_PORT: "0",
-      CYCLE_UI_DIR: path.join(app.getAppPath(), "dist/renderer"),
-    },
-    stdio: ["ignore", "pipe", "inherit"],
+  if (given) return given;
+  const launch = daemonLaunch({
+    appPath: app.getAppPath(),
+    packaged,
+    bun: process.env["CYCLE_BUN_BIN"],
+  });
+  // Finder gives an app a bare environment. Agents and MCP servers need what a
+  // terminal has: the `PATH` and proxy variables of the owner's shell profile.
+  const loginEnv = packaged
+    ? await readLoginEnv({
+        shell: process.env["SHELL"] || "/bin/zsh",
+        log: (line) => console.error(`[cycle] ${line}`),
+      })
+    : undefined;
+  const child = spawn(launch.command, [...launch.args], {
+    env: { ...process.env, ...loginEnv, ...launch.env },
+    stdio: ["ignore", "pipe", packaged ? "pipe" : "inherit"],
   });
   daemonProcess = child;
+  // From Finder there is no terminal to print to, so what the daemon says goes to a file.
+  if (child.stderr) {
+    const home = process.env["CYCLE_HOME"] ?? path.join(os.homedir(), ".cycle-codex");
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    child.stderr.pipe(createWriteStream(path.join(home, "daemon.log"), { mode: 0o600 }));
+  }
   return new Promise((resolve, reject) => {
     child.once("error", (error) => reject(new Error(`failed to start daemon: ${error.message}`)));
     child.once("exit", (code) => {
@@ -67,6 +88,9 @@ function createWindow(pageUrl: string): void {
     minWidth: 560,
     minHeight: 400,
     title: "Cycle",
+    ...(packaged && process.platform === "linux"
+      ? { icon: path.join(app.getAppPath(), LINUX_ICON) }
+      : {}),
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 14, y: 13 } }
       : {}),
@@ -74,7 +98,7 @@ function createWindow(pageUrl: string): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      preload: path.join(app.getAppPath(), "dist/preload.cjs"),
+      preload: path.join(app.getAppPath(), PRELOAD),
     },
   });
   // Agent output can contain links; never navigate the app window to them.
@@ -88,7 +112,8 @@ function createWindow(pageUrl: string): void {
   void window.loadURL(pageUrl);
 }
 
-void app.whenReady().then(async () => {
+async function start(): Promise<void> {
+  await app.whenReady();
   let pageUrl: string;
   try {
     pageUrl = await ensureDaemon();
@@ -122,7 +147,22 @@ void app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(pageUrl);
   });
-});
+  // A second launch of the packaged app ends at once and leaves this one in front.
+  app.on("second-instance", () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) {
+      createWindow(pageUrl);
+      return;
+    }
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+}
+
+// Only a packaged app holds the lock, so repository runs can still sit side by side.
+if (packaged && !app.requestSingleInstanceLock()) app.quit();
+else void start();
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

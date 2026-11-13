@@ -15,26 +15,42 @@ export const OpenFileContext = createContext<((path: string, line: number | null
   null,
 );
 
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({
+  text,
+  label = "Copy",
+  className = "icon-button",
+  size,
+}: {
+  text: string | (() => string);
+  label?: string;
+  className?: string;
+  size?: number;
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      className="icon-button"
+      className={className}
       title={label}
       aria-label={label}
-      onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
+      onClick={(event) => {
+        event.stopPropagation();
+        void navigator.clipboard.writeText(typeof text === "string" ? text : text()).then(() => {
           setCopied(true);
           setTimeout(() => setCopied(false), 1200);
         });
       }}
     >
-      <Icon name={copied ? "check" : "copy"} />
+      <Icon name={copied ? "check" : "copy"} {...(size === undefined ? {} : { size })} />
     </button>
   );
 }
 
+/**
+ * A code block: a header 32 high with only the language, and copy 4 from the top and right. A block
+ * with no language, such as command output, has no header, and its copy floats over the code while
+ * hovered or focused.
+ */
 export const CodeBlock = memo(function CodeBlock({
   code,
   language,
@@ -47,17 +63,15 @@ export const CodeBlock = memo(function CodeBlock({
 }) {
   const html = plain ? null : highlight(code, language);
   return (
-    <div className="code-block">
-      <div className="code-block-header">
-        <span>{language || "text"}</span>
-        <CopyButton text={code} label="Copy code" />
-      </div>
+    <div className="code-block" data-language={language ?? ""}>
+      {language ? <div className="code-block-header">{language}</div> : null}
+      <CopyButton text={code} label="Copy code" className="code-copy" />
       {html === null ? (
-        <pre>
+        <pre className="no-scrollbar">
           <code>{code}</code>
         </pre>
       ) : (
-        <pre>
+        <pre className="no-scrollbar">
           <code dangerouslySetInnerHTML={{ __html: html }} />
         </pre>
       )}
@@ -175,7 +189,7 @@ function blockNode(token: MdToken, streaming: boolean): ReactNode {
     }
     case "table":
       return (
-        <div className="table-wrap">
+        <div className="table-wrap no-scrollbar">
           <table>
             <thead>
               <tr>

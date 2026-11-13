@@ -44,7 +44,7 @@ export function FolderPicker() {
     app.newSession(path);
   };
   return (
-    <Dialog label="Choose a folder" onClose={close}>
+    <Dialog label="Choose a folder" onClose={close} wide top>
       <form
         className="picker-path"
         onSubmit={(event) => {
@@ -59,7 +59,7 @@ export function FolderPicker() {
           aria-label="Up one folder"
           onClick={() => setPath(dirname(path))}
         >
-          <Icon name="arrow-up" />
+          <Icon name="arrow-left" />
         </button>
         <input
           className="field"
@@ -69,7 +69,7 @@ export function FolderPicker() {
           onChange={(event) => setTyped(event.currentTarget.value)}
         />
       </form>
-      <div className="picker-list">
+      <div className="picker-list fade-y no-scrollbar">
         {path === home && recent.length ? (
           <>
             <div className="menu-label">Recent</div>
@@ -81,7 +81,7 @@ export function FolderPicker() {
                 onClick={() => setPath(folder)}
               >
                 <Icon name="clock" />
-                <span className="truncate">{tildePath(folder, home)}</span>
+                <span className="fade-x">{tildePath(folder, home)}</span>
               </button>
             ))}
             <div className="menu-separator" />
@@ -102,13 +102,13 @@ export function FolderPicker() {
               onClick={() => setPath(path === "/" ? `/${name}` : `${path}/${name}`)}
             >
               <Icon name="folder" />
-              <span className="truncate">{name}</span>
+              <span className="fade-x">{name}</span>
             </button>
           ))
         )}
       </div>
       <div className="dialog-actions picker-actions">
-        <span className="truncate grow meta muted">{tildePath(path, home)}</span>
+        <span className="fade-x-start grow meta muted mono">{tildePath(path, home)}</span>
         <button type="button" className="button" onClick={close}>
           Cancel
         </button>

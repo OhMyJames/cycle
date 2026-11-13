@@ -1,6 +1,7 @@
 import type { SessionInfo } from "@cycle/protocol";
 import { useEffect, useState } from "react";
-import { Icon, Spinner } from "../components/icons.tsx";
+import { PanelHeader } from "../components/panel.tsx";
+import { PlanSteps } from "../components/plan.tsx";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber, tailPath, tildePath } from "../lib/format.ts";
@@ -18,7 +19,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   return (
     <div className="fact">
       <span className="muted">{label}</span>
-      <span className="truncate">{children}</span>
+      <span className="fade-x">{children}</span>
     </div>
   );
 }
@@ -27,7 +28,8 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 export function OverviewPanel({ info }: { info: SessionInfo }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
-  const { plan, usage, turns } = useStore(app.conversation(info.id), (conversation) => ({
+  const { plan, usage, turns, running } = useStore(app.conversation(info.id), (conversation) => ({
+    running: conversation.state?.turns.at(-1)?.status === "running",
     plan: conversation.state?.plan ?? null,
     usage: conversation.state?.usage ?? null,
     turns: conversation.state?.turns.length ?? 0,
@@ -49,10 +51,8 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
   const used = usage && window ? Math.min(1, usage.last.total / window) : null;
   return (
     <>
-      <header className="panel-header">
-        <span className="grow">Overview</span>
-      </header>
-      <div className="panel-body overview">
+      <PanelHeader title="Overview" />
+      <div className="panel-body overview fade-y">
         <Section title="Environment">
           <Fact label="Folder">
             <span title={info.cwd}>{tailPath(tildePath(info.cwd, home))}</span>
@@ -92,7 +92,7 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
                   void app.attempt(app.request("session.compact", { sessionId: info.id }))
                 }
               >
-                <Icon name="compress" /> Compact now
+                Compact now
               </button>
             </>
           ) : (
@@ -101,20 +101,7 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
         </Section>
         {plan ? (
           <Section title="Plan">
-            <ol className="plan-steps">
-              {plan.steps.map((step, index) => (
-                <li key={index} data-status={step.status}>
-                  {step.status === "completed" ? (
-                    <Icon name="check" />
-                  ) : step.status === "inProgress" ? (
-                    <Spinner size={12} />
-                  ) : (
-                    <span className="bullet" />
-                  )}
-                  {step.step}
-                </li>
-              ))}
-            </ol>
+            <PlanSteps plan={plan} live={running} />
           </Section>
         ) : null}
         <Section title="MCP servers">
@@ -125,7 +112,9 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
           ) : (
             servers.map((server) => (
               <Fact key={server.name} label={server.name}>
-                {server.status === "connected" ? `${server.tools.length} tools` : server.status}
+                {server.status === "connected"
+                  ? `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`
+                  : server.status}
               </Fact>
             ))
           )}

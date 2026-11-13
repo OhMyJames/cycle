@@ -27,6 +27,7 @@ const info: SessionInfo = {
   pinned: false,
   unread: false,
   forkedFrom: null,
+  scheduleId: null,
 };
 
 const fold = (events: SessionEvent[]) => events.reduce(reduceSession, initialSessionState(info));

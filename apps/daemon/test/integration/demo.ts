@@ -122,14 +122,25 @@ const model = startMockModel((_index, body) => {
   };
 });
 
+const harness = new CodexHarness({
+  config: model.codexConfig,
+  env: { CODEX_HOME: join(root, "codex") },
+});
 const daemon = await startDaemon({
-  harness: new CodexHarness({
-    config: model.codexConfig,
-    env: { CODEX_HOME: join(root, "codex") },
-  }),
+  harness,
   home: join(root, "home"),
   port: Number(process.env["CYCLE_DAEMON_PORT"] ?? 0),
   uiDir: new URL("../../../desktop/dist/renderer", import.meta.url).pathname,
+});
+// Something for the Connector to show: a server that answers with one tool.
+await harness.putMcpServer({
+  name: "demo",
+  transport: {
+    kind: "stdio",
+    command: process.execPath,
+    args: [join(import.meta.dir, "mcp-server.ts")],
+    env: { DEMO_SUFFIX: "" },
+  },
 });
 console.log(JSON.stringify({ type: "listening", pageUrl: daemon.pageUrl, project }));
 console.error(`\nCycle demo is at ${daemon.pageUrl}\nProject: ${project}\n`);

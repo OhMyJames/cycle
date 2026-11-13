@@ -1,8 +1,8 @@
 import type { Approval, ApprovalDecision, Question } from "@cycle/protocol";
 import { useState } from "react";
 import { useApp } from "../context.ts";
-import { Icon } from "./icons.tsx";
-import { plainCommand } from "./items.tsx";
+import { basename } from "../lib/format.ts";
+import { plainCommand } from "../lib/activity.ts";
 
 function QuestionCard({
   questions,
@@ -28,15 +28,16 @@ function QuestionCard({
   };
   return (
     <div className="approval">
-      <div className="card-title">
-        <Icon name="message" /> {question.header || "Question"}
+      <p className="approval-title">
+        {question.header ? <span className="muted">{question.header}: </span> : null}
+        <span className="label">{question.question}</span>
         {questions.length > 1 ? (
           <span className="muted caption">
+            {" "}
             {step + 1} of {questions.length}
           </span>
         ) : null}
-      </div>
-      <p>{question.question}</p>
+      </p>
       <div className="options">
         {question.options.map((option, index) => (
           <button
@@ -53,14 +54,14 @@ function QuestionCard({
       </div>
       {question.allowOther ? (
         <form
-          className="row"
+          className="row approval-other"
           onSubmit={(event) => {
             event.preventDefault();
             if (other.trim()) answer(other.trim());
           }}
         >
           <input
-            className="field"
+            className="field small"
             type={question.secret ? "password" : "text"}
             placeholder="Something else…"
             value={other}
@@ -76,15 +77,27 @@ function QuestionCard({
   );
 }
 
-const TITLES: Record<Approval["kind"], string> = {
+const TITLES: Record<Exclude<Approval["kind"], "question">, string> = {
   command: "Run this command?",
   fileChange: "Apply these file changes?",
   permissions: "Grant these permissions?",
-  question: "Question",
 };
 
-/** What a turn is waiting on the owner for. The first button takes the focus. */
-export function ApprovalCard({ sessionId, approval }: { sessionId: string; approval: Approval }) {
+/**
+ * What a turn is waiting on the owner for: one request at a time, where the status would be, so work
+ * folded away in a card cannot hide it. Allowing comes first and is the primary button, which takes
+ * the focus; refusing comes last.
+ */
+export function ApprovalCard({
+  sessionId,
+  approval,
+  waiting = 0,
+}: {
+  sessionId: string;
+  approval: Approval;
+  /** How many more requests wait behind this one. */
+  waiting?: number;
+}) {
   const app = useApp();
   if (approval.kind === "question") {
     return (
@@ -97,30 +110,27 @@ export function ApprovalCard({ sessionId, approval }: { sessionId: string; appro
   const decide = (decision: ApprovalDecision) => app.respond(sessionId, approval.id, { decision });
   return (
     <div className="approval" role="alertdialog" aria-label={TITLES[approval.kind]}>
-      <div className="card-title">
-        <Icon name="alert" className="tone-warning" /> {TITLES[approval.kind]}
-      </div>
-      {approval.reason ? <p className="meta">{approval.reason}</p> : null}
+      <p className="approval-title">
+        <span className="label">{TITLES[approval.kind]}</span>
+        {waiting > 0 ? <span className="muted caption"> {waiting} more waiting</span> : null}
+      </p>
+      {approval.reason ? <p className="approval-reason">{approval.reason}</p> : null}
       {approval.kind === "command" && approval.command ? (
-        <pre className="approval-command">
-          <span className="prompt">$ </span>
+        <pre className="approval-command no-scrollbar">
+          {approval.cwd ? <span className="muted">{basename(approval.cwd)} $ </span> : null}
           {plainCommand(approval.command)}
         </pre>
       ) : null}
-      {approval.kind === "command" && approval.cwd ? (
-        <div className="caption muted">in {approval.cwd}</div>
-      ) : null}
       {approval.kind === "permissions" ? (
-        <pre className="approval-command">{approval.summary}</pre>
+        <pre className="approval-command no-scrollbar">{approval.summary}</pre>
       ) : null}
-      <div className="row approval-actions">
+      <div className="approval-actions">
         <button type="button" className="button primary" autoFocus onClick={() => decide("accept")}>
           Allow once
         </button>
         <button type="button" className="button" onClick={() => decide("acceptForSession")}>
           Allow for this session
         </button>
-        <span className="grow" />
         <button type="button" className="button" onClick={() => decide("decline")}>
           Deny
         </button>

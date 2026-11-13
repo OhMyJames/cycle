@@ -14,6 +14,8 @@
     "web": "bun run scripts/web.ts",
     "demo": "bun run --filter @cycle/desktop build && bun run apps/daemon/test/integration/demo.ts",
     "build": "bun run --filter @cycle/desktop build",
+    "desktop:package": "bun run apps/desktop/src/package/main.ts",
+    "desktop:install": "bun run apps/desktop/src/install/main.ts",
     "check": "bun run scripts/check.ts",
     "boundaries": "bun run scripts/check-boundaries.ts",
     "typecheck": "bun run scripts/typecheck.ts",

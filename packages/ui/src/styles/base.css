@@ -11,12 +11,23 @@ body,
   margin: 0;
 }
 
+html {
+  font-family: var(--font-sans);
+  font-kerning: normal;
+}
+
 body {
-  font: var(--weight-normal) 14px/22px var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--text-body-line);
   color: var(--text-primary);
   background: var(--surface-window);
   overflow: hidden;
-  -webkit-font-smoothing: auto;
+}
+
+/* On a themed element too, so a miniature drawn in one theme takes that theme's weight. */
+:root,
+[data-theme] {
+  font-weight: var(--font-weight-normal);
 }
 
 button,
@@ -32,10 +43,18 @@ button {
   border: 0;
   padding: 0;
   cursor: default;
+  outline: none;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-interactive);
   text-decoration: none;
 }
 
@@ -43,56 +62,454 @@ a:hover {
   text-decoration: underline;
 }
 
+/* JetBrains Mono's ligatures would show => as an arrow and != as a crossed equals. */
 code,
 pre,
-kbd {
+kbd,
+samp,
+.mono {
   font-family: var(--font-mono);
   font-variant-ligatures: none;
 }
 
 kbd {
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: var(--text-meta);
   color: var(--text-muted);
 }
 
-::selection {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 18px;
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
 }
 
+::selection {
+  background: color-mix(in srgb, var(--accent-interactive) 24%, transparent);
+}
+
+/*
+ * Scrollbars: 6px visible in a 10px slot with 2px clear on each side, no track, round ends. They
+ * show only while the pointer is over the scroller, and go a step darker under the pointer. Code,
+ * menus and lists show none (`no-scrollbar`).
+ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  min-width: 32px;
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-color: transparent;
+  background-clip: padding-box;
+}
+:hover::-webkit-scrollbar-thumb {
+  background-color: var(--border-control);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-disabled);
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/*
+ * Keyboard focus: one fine line in `border-focus` with a faint glow of the same color, never a second
+ * outline beside a border. A button or row is ringed 1px outside its edge (the default here); an
+ * icon-only button or a segment on its own edge (`focus-edge`); a field's own border turns
+ * (`focus-field`), as does a box that holds one (`focus-field-within`).
+ */
 :focus-visible {
   outline: 1px solid var(--border-focus);
-  outline-offset: 1px;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus) 13%, transparent);
+  outline-offset: var(--focus-ring-offset, 1px);
+  box-shadow: 0 0 1px var(--focus-ring-glow, 3px) var(--focus-glow);
+}
+.focus-edge,
+.icon-button,
+.segment {
+  --focus-ring-offset: -1px;
+  --focus-ring-glow: 1px;
+}
+.focus-field:focus-visible,
+.field:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+  box-shadow: 0 0 1px 1px var(--focus-glow);
+}
+.focus-field[aria-invalid="true"],
+.field[aria-invalid="true"] {
+  border-color: var(--state-error);
+  --focus-glow: color-mix(in oklab, var(--state-error) 20%, transparent);
+}
+.focus-field-within:has(:is(input, textarea, select):focus-visible) {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 1px 1px var(--focus-glow);
+}
+.focus-field-within :is(input, textarea, select):focus-visible,
+.bare:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
-/* Scrollbars: a thin thumb, shown only while its scroller is hovered. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+/*
+ * Four kinds of control, each with one hover and one pressed state: ghost (no fill at rest),
+ * outline (a field-like border), primary (near-black) and a list row.
+ */
+.control-ghost,
+.icon-button,
+.ghost {
+  color: var(--text-secondary);
+  transition:
+    color var(--motion-state),
+    background-color var(--motion-state);
+}
+:is(.control-ghost, .icon-button, .ghost):hover {
+  background: var(--surface-control-hover);
+  color: var(--text-primary);
+}
+:is(.control-ghost, .icon-button, .ghost)[aria-expanded="true"] {
+  background: var(--surface-control-hover);
+}
+:is(.control-ghost, .icon-button, .ghost):active {
+  background: var(--surface-control-pressed);
+}
+:is(.control-ghost, .icon-button, .ghost):disabled {
+  color: var(--text-disabled);
+  background: transparent;
 }
 
-*:hover {
-  scrollbar-color: var(--border-control) transparent;
+.control-row {
+  transition:
+    color var(--motion-state),
+    background-color var(--motion-state);
+}
+.control-row:hover {
+  background: var(--surface-sidebar-hover);
+}
+.control-row:active {
+  background: var(--surface-selected);
+}
+
+/* The icon button: 28 square, radius 8. As a toggle that is on, it stays pressed. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-row);
+}
+.icon-button[aria-pressed="true"] {
+  background: var(--surface-control-pressed);
+  color: var(--text-primary);
+}
+.icon-button.small {
+  width: 24px;
+  height: 24px;
+}
+.icon-button.round {
+  border-radius: 9999px;
+}
+
+/* A text control with no fill at rest: a composer's choice, a strip's action. */
+.ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  white-space: nowrap;
+}
+
+/* Buttons: radius 8, medium weight; 32 high by default, 28 small. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-composer);
+  color: var(--text-primary);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  transition:
+    color var(--motion-state),
+    background-color var(--motion-state);
+}
+.button.large {
+  height: 32px;
+  font-size: var(--text-body);
+}
+.button:hover,
+.button[aria-expanded="true"] {
+  background: var(--surface-control-hover);
+}
+.button:active {
+  background: var(--surface-control-pressed);
+  transform: translateY(1px);
+}
+.button.primary {
+  border-color: transparent;
+  background: var(--action-primary);
+  color: var(--icon-on-action);
+}
+.button.primary:hover {
+  background: var(--action-primary-hover);
+}
+.button.primary:active {
+  background: var(--action-primary-pressed);
+}
+.button.danger {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--state-error) 10%, transparent);
+  color: var(--state-error);
+}
+.button.danger:hover {
+  background: color-mix(in srgb, var(--state-error) 15%, transparent);
+}
+.button.danger:active {
+  background: color-mix(in srgb, var(--state-error) 20%, transparent);
+}
+.button:disabled {
+  color: var(--text-disabled);
+  transform: none;
+}
+.button.primary:disabled {
+  background: var(--surface-control-hover);
+  color: var(--text-disabled);
+}
+
+.field {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-composer);
+  outline: none;
+  transition: border-color var(--motion-state);
+}
+.field.small {
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--text-meta);
+}
+.field::placeholder,
+textarea::placeholder,
+input::placeholder {
+  color: var(--text-muted);
+}
+
+/* The switch: a 28 by 16 pill with a 12 knob, on in the action color. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--border-control);
+  transition: background-color var(--motion-state);
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--surface-composer);
+  transform: translateX(2px);
+  transition: transform var(--motion-state);
+}
+.switch[aria-checked="true"] {
+  background: var(--action-primary);
+}
+.switch[aria-checked="true"]::after {
+  transform: translateX(14px);
+}
+.switch:disabled {
+  opacity: 0.5;
+}
+
+/* A segmented choice: a track, and the chosen segment raised on it. */
+.segmented {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--surface-control-hover);
+}
+.segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  white-space: nowrap;
+  transition: color var(--motion-state);
+}
+.segmented.small .segment {
+  height: 22px;
+  padding: 0 8px;
+}
+.segment:hover {
+  color: var(--text-primary);
+}
+.segment[aria-checked="true"],
+.segment[aria-selected="true"] {
+  background: var(--surface-composer);
+  box-shadow: 0 0 0 1px var(--border-default);
+  color: var(--text-primary);
+}
+
+/*
+ * Fades replace ellipses and rules; lib/fades.ts says when each applies. A line fades only while it
+ * overflows, and a scroller's edge fades by what is hidden there. Each is a mask, so it fades over
+ * any background, hover and selection included.
+ */
+.fade-x,
+.fade-x-start {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  min-width: 0;
+}
+.fade-x[data-overflowing] {
+  mask-image: linear-gradient(to left, transparent, black 24px);
+}
+.fade-x-start[data-overflowing] {
+  mask-image: linear-gradient(to right, transparent, black 24px);
+}
+.fade-y {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--fade-top, 0px),
+    black calc(100% - var(--fade-bottom, 0px)),
+    transparent
+  );
 }
 
 .icon {
   flex: none;
 }
 
-.spinner {
-  flex: none;
-  animation: spin 0.8s linear infinite;
+/* A spinner keeps turning under Reduce Motion, because it is what says the work goes on. */
+.spin {
+  animation: spin 1s linear infinite;
 }
-
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
 
+/* A background task at work: a dot that breathes, alive without a spinner's urgency. */
+.background-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--state-background);
+  animation: breathe 2s ease-in-out infinite;
+}
 @keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
   50% {
     opacity: 0.45;
+  }
+}
+
+/*
+ * The loader of dots that says what the agent is doing. Its box is an icon's 16px; the drawing is
+ * always 24px, centred on that box and spilling out of it.
+ */
+.morph-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--state-running);
+}
+.morph-loader > svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  max-width: none;
+  overflow: visible;
+}
+.morph-loader.quiet {
+  color: var(--text-muted);
+}
+
+/* Words that are still being worked on: a band of light crossing them. */
+.shimmer {
+  --shimmer-spread: calc(3ch + 40px);
+  --shimmer-light: color-mix(in oklch, currentColor 20%, transparent);
+  background-image: linear-gradient(
+    110deg,
+    currentColor calc(50% - var(--shimmer-spread)),
+    var(--shimmer-light) 50%,
+    currentColor calc(50% + var(--shimmer-spread))
+  );
+  background-repeat: no-repeat;
+  background-size: calc(200% + var(--shimmer-spread) * 2) 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2s linear infinite;
+}
+[data-theme="dark"] .shimmer {
+  --shimmer-light: color-mix(in oklch, currentColor 40%, white);
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
   }
 }
 
@@ -102,272 +519,225 @@ kbd {
     transform: translateY(4px);
   }
 }
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
 
 .muted {
   color: var(--text-muted);
 }
-
+.secondary {
+  color: var(--text-secondary);
+}
 .meta {
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
 }
-
 .caption {
-  font-size: 12px;
-  line-height: 18px;
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-line);
 }
-
 .tabular {
   font-variant-numeric: tabular-nums;
 }
-
+/* One line, cut with a fade where it overflows, never an ellipsis. */
 .truncate {
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  text-overflow: clip;
   min-width: 0;
 }
-
 .grow {
   flex: 1;
   min-width: 0;
 }
-
 .row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-
-/* Controls: one hover and one pressed state each. */
-.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-control);
-  color: var(--text-secondary);
-  flex: none;
-  transition: background 100ms;
-}
-
-.icon-button:hover,
-.icon-button[aria-pressed="true"],
-.icon-button[aria-expanded="true"] {
-  background: var(--surface-control-hover);
-  color: var(--text-primary);
-}
-
-.icon-button:active {
-  background: var(--surface-control-pressed);
-}
-
-.icon-button:disabled {
-  color: var(--text-disabled);
-  background: none;
-}
-
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius-control);
-  border: 1px solid var(--border-control);
-  background: var(--surface-raised);
-  font-size: 13px;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
-  transition: background 100ms;
+}
+/* A note in a panel or a list: what is loading, missing or empty. */
+.note {
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
 }
 
-.button:hover {
-  background: var(--surface-control-hover);
-}
-
-.button:active {
-  background: var(--surface-control-pressed);
-}
-
-.button.primary {
-  background: var(--action-primary);
-  border-color: var(--action-primary);
-  color: var(--text-on-action);
-}
-
-.button.primary:hover {
-  background: var(--action-primary-hover);
-}
-
-.button.danger {
-  color: var(--error);
-}
-
-.button:disabled {
-  opacity: 0.5;
-}
-
-.ghost {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 7px;
-  border-radius: var(--radius-control);
-  color: var(--text-secondary);
-  font-size: 13px;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.ghost:hover,
-.ghost[aria-expanded="true"] {
-  background: var(--surface-control-hover);
-  color: var(--text-primary);
-}
-
-.field {
-  height: 30px;
-  width: 100%;
-  padding: 0 9px;
-  border-radius: var(--radius-control);
-  border: 1px solid var(--border-default);
-  background: var(--surface-raised);
-  outline: none;
-}
-
-.field:focus {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus) 13%, transparent);
-}
-
-.field::placeholder,
-textarea::placeholder {
-  color: var(--text-disabled);
-}
-
-/* Menus and popovers */
+/* Menus and popovers: a 12 card with 4 of padding holding 28-high rows of radius 8. */
 .menu-anchor {
   position: relative;
   display: inline-flex;
   min-width: 0;
 }
-
 .menu {
-  position: absolute;
+  position: fixed;
   z-index: 50;
   min-width: 200px;
   max-width: 340px;
   max-height: min(420px, 70vh);
   overflow-y: auto;
+  scrollbar-width: none;
   padding: 4px;
-  background: var(--surface-raised);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
+  background: var(--surface-composer);
   box-shadow: var(--shadow-popover);
-  animation: rise 120ms var(--ease);
+  font-weight: var(--font-weight-normal);
+  animation: appear var(--motion-state) var(--ease);
 }
-
-.menu[data-side="bottom"] {
-  top: calc(100% + 4px);
+.menu::-webkit-scrollbar {
+  display: none;
 }
-
-.menu[data-side="top"] {
-  bottom: calc(100% + 4px);
-}
-
-.menu[data-align="start"] {
-  left: 0;
-}
-
-.menu[data-align="end"] {
-  right: 0;
-}
-
 .menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 30px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  text-align: left;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-row);
   color: var(--text-primary);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  text-align: left;
+  transition: background-color var(--motion-state);
 }
-
+.menu-item:has(.sub) {
+  align-items: flex-start;
+  padding-block: 6px;
+}
+.menu-item:has(.sub) > .icon {
+  margin-top: 2px;
+}
+.menu-item > .icon {
+  color: var(--icon-default);
+}
 .menu-item[data-active="true"],
 .menu-item:hover {
   background: var(--surface-control-hover);
 }
-
-.menu-item.danger {
-  color: var(--error);
+.menu-item:active {
+  background: var(--surface-control-pressed);
 }
-
+.menu-item:disabled {
+  color: var(--text-disabled);
+  background: transparent;
+}
+.menu-item:disabled > .icon {
+  color: var(--icon-disabled);
+}
+.menu-item.danger,
+.menu-item.danger > .icon {
+  color: var(--state-error);
+}
+.menu-item.danger:is(:hover, [data-active="true"]) {
+  background: color-mix(in srgb, var(--state-error) 10%, transparent);
+}
+.menu-item.warning,
+.menu-item.warning > .icon {
+  color: var(--state-warning);
+}
 .menu-item .hint {
   margin-left: auto;
+  flex: none;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-meta);
   white-space: nowrap;
 }
-
+.menu-item .check {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
 .menu-item .sub {
   display: block;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-line);
+  white-space: normal;
 }
-
 .menu-label {
   padding: 6px 8px 2px;
-  font-size: 12px;
   color: var(--text-muted);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
 }
-
 .menu-separator {
   height: 1px;
   margin: 4px 8px;
   background: var(--border-subtle);
 }
 
-/* Dialogs */
+/* Dialogs: centred, radius 16, 20 of padding, over a faint scrim. */
 .scrim {
   position: fixed;
   inset: 0;
   z-index: 80;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding-top: 14vh;
-  background: rgb(0 0 0 / 18%);
+  padding: 16px;
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+  animation: appear var(--motion-state) var(--ease);
 }
-
+.scrim.top {
+  align-items: flex-start;
+  padding-top: 14vh;
+}
 .dialog {
-  width: min(560px, calc(100vw - 32px));
-  max-height: 64vh;
+  position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--surface-raised);
+  width: min(384px, 100%);
+  max-height: 72vh;
+  overflow: hidden;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-message);
+  background: var(--surface-composer);
   box-shadow: var(--shadow-dialog);
-  overflow: hidden;
-  animation: rise 140ms var(--ease);
+  animation: pop var(--motion-state) var(--ease);
 }
-
+.dialog.wide {
+  width: min(560px, 100%);
+}
 .dialog-body {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px 20px 16px;
 }
-
+.dialog-title {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: var(--font-weight-semibold);
+}
+.dialog-text {
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 0 16px 16px;
+  padding: 0 20px 20px;
 }
 
 .toasts {
@@ -380,27 +750,42 @@ textarea::placeholder {
   gap: 8px;
   max-width: 380px;
 }
-
 .toast {
   display: flex;
-  gap: 8px;
   align-items: flex-start;
-  padding: 8px 10px 8px 12px;
-  font-size: 13px;
-  background: var(--surface-raised);
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
+  background: var(--surface-composer);
   box-shadow: var(--shadow-popover);
-  animation: rise 160ms var(--ease);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  animation: rise var(--motion-enter) var(--ease);
 }
-
 .toast.error {
-  border-color: color-mix(in srgb, var(--error) 40%, var(--border-default));
+  border-color: color-mix(in srgb, var(--state-error) 40%, var(--border-default));
 }
 
+/*
+ * Reduce Motion: nothing moves or scales, and state changes land at once. A spinner keeps turning,
+ * because it is what says the work goes on.
+ */
 @media (prefers-reduced-motion: reduce) {
-  *:not(.spinner) {
-    animation-duration: 0s !important;
+  *,
+  ::before,
+  ::after {
     transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  *:not(.spin),
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .shimmer {
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
   }
 }

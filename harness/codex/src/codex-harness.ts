@@ -12,7 +12,10 @@ import type {
   HarnessEvent,
   HarnessSession,
   McpServerInfo,
+  McpServerInput,
   ModelInfo,
+  PluginCatalog,
+  PluginDetail,
   PromptInput,
   RateLimitWindow,
   SkillInfo,
@@ -24,11 +27,15 @@ import type {
 } from "@cycle/protocol";
 import { JsonRpcPeer, type RpcId } from "./rpc.ts";
 import {
+  checkServerName,
+  mcpServerEdits,
   modePolicy,
   toInput,
+  toCatalog,
   toItem,
-  toMcpServer,
+  toMcpServers,
   toModel,
+  toPluginDetail,
   toSession,
   toSkill,
   toTurn,
@@ -36,7 +43,11 @@ import {
 } from "./translate.ts";
 import type {
   WireItem,
+  WireConfigEdit,
+  WireMcpConfig,
   WireMcpServer,
+  WirePluginDetail,
+  WirePluginList,
   WireModel,
   WireRateLimitWindow,
   WireSkill,
@@ -297,9 +308,107 @@ export class CodexHarness implements Harness {
     return response.data.flatMap((entry) => entry.skills.map(toSkill));
   }
 
+  // The connector
+
+  private async mcpConfig(): Promise<Record<string, WireMcpConfig | undefined>> {
+    const { config } = await this.request<{
+      config: { mcp_servers?: Record<string, WireMcpConfig> | null };
+    }>("config/read", {});
+    return config.mcp_servers ?? {};
+  }
+
   async listMcpServers(): Promise<McpServerInfo[]> {
-    const response = await this.request<{ data: WireMcpServer[] }>("mcpServerStatus/list", {});
-    return response.data.map(toMcpServer);
+    const [configured, statuses] = await Promise.all([
+      this.mcpConfig(),
+      this.request<{ data: WireMcpServer[] }>("mcpServerStatus/list", {
+        detail: "toolsAndAuthOnly",
+      }),
+    ]);
+    return toMcpServers(configured, statuses.data);
+  }
+
+  /** Writes the owner's configuration and has codex's sessions take it up. */
+  private async writeConfig(edits: WireConfigEdit[]): Promise<void> {
+    await this.request("config/batchWrite", { edits, reloadUserConfig: true });
+    await this.request("config/mcpServer/reload", undefined);
+  }
+
+  async putMcpServer(server: McpServerInput): Promise<void> {
+    const configured = await this.mcpConfig();
+    await this.writeConfig(mcpServerEdits(server, configured[server.name]));
+  }
+
+  async removeMcpServer(name: string): Promise<void> {
+    checkServerName(name);
+    await this.writeConfig([
+      { keyPath: `mcp_servers.${name}`, value: null, mergeStrategy: "replace" },
+    ]);
+  }
+
+  async enableMcpServer(name: string, enabled: boolean): Promise<void> {
+    checkServerName(name);
+    const configured = await this.mcpConfig();
+    if (!configured[name]) throw new Error(`No MCP server named ${name}.`);
+    await this.writeConfig([
+      { keyPath: `mcp_servers.${name}.enabled`, value: enabled, mergeStrategy: "replace" },
+    ]);
+  }
+
+  async loginMcpServer(name: string): Promise<{ url: string }> {
+    checkServerName(name);
+    const response = await this.request<{ authorizationUrl: string }>("mcpServer/oauth/login", {
+      name,
+    });
+    return { url: response.authorizationUrl };
+  }
+
+  private pluginList(): Promise<WirePluginList> {
+    return this.request<WirePluginList>("plugin/list", {});
+  }
+
+  async listPlugins(): Promise<PluginCatalog> {
+    return toCatalog(await this.pluginList());
+  }
+
+  /** Codex names a plugin's marketplace by the file it was read from. */
+  private async marketplacePath(marketplace: string): Promise<string> {
+    const list = await this.pluginList();
+    const path = list.marketplaces.find((entry) => entry.name === marketplace)?.path;
+    if (!path) throw new Error(`No marketplace named ${marketplace}.`);
+    return path;
+  }
+
+  async readPlugin(marketplace: string, name: string): Promise<PluginDetail> {
+    const marketplacePath = await this.marketplacePath(marketplace);
+    const { plugin } = await this.request<{ plugin: WirePluginDetail }>("plugin/read", {
+      marketplacePath,
+      pluginName: name,
+    });
+    return toPluginDetail(plugin);
+  }
+
+  async installPlugin(marketplace: string, name: string): Promise<void> {
+    const marketplacePath = await this.marketplacePath(marketplace);
+    await this.request("plugin/install", { marketplacePath, pluginName: name });
+  }
+
+  async uninstallPlugin(id: string): Promise<void> {
+    await this.request("plugin/uninstall", { pluginId: id });
+  }
+
+  async enablePlugin(id: string, enabled: boolean): Promise<void> {
+    if (!/^[\w.-]+@[\w.-]+$/.test(id)) throw new Error(`${id} is not a plugin.`);
+    await this.writeConfig([
+      { keyPath: `plugins."${id}".enabled`, value: enabled, mergeStrategy: "replace" },
+    ]);
+  }
+
+  async addMarketplace(source: string): Promise<void> {
+    await this.request("marketplace/add", { source: source.trim() });
+  }
+
+  async removeMarketplace(name: string): Promise<void> {
+    await this.request("marketplace/remove", { marketplaceName: name });
   }
 
   async readAccount(): Promise<AccountInfo> {
@@ -594,6 +703,10 @@ export class CodexHarness implements Harness {
           sessionId,
           usage: toUsage(params["tokenUsage"] as WireTokenUsage),
         });
+        break;
+      case "mcpServer/oauthLogin/completed":
+      case "mcpServer/startupStatus/updated":
+        this.emit({ type: "mcp.changed" });
         break;
       case "thread/name/updated":
         this.emit({

@@ -28,9 +28,10 @@ export function diskFile(path: string): TextFile {
   };
 }
 
-export type Schedule = (callback: () => void, ms: number) => () => void;
+/** Runs a callback after a while, and gives the way to call it off. Tests pass one they fire by hand. */
+export type Delay = (callback: () => void, ms: number) => () => void;
 
-export const realSchedule: Schedule = (callback, ms) => {
+export const realDelay: Delay = (callback, ms) => {
   const timer = setTimeout(callback, ms);
   return () => clearTimeout(timer);
 };
@@ -45,12 +46,12 @@ const WRITE_DELAY_MS = 150;
 export class JsonStore<T> {
   value: T;
   private readonly file: TextFile;
-  private readonly schedule: Schedule;
+  private readonly schedule: Delay;
   private dirty = false;
   private cancel: (() => void) | null = null;
   private writing: Promise<void> = Promise.resolve();
 
-  private constructor(file: TextFile, value: T, schedule: Schedule) {
+  private constructor(file: TextFile, value: T, schedule: Delay) {
     this.file = file;
     this.value = value;
     this.schedule = schedule;
@@ -60,7 +61,7 @@ export class JsonStore<T> {
   static async open<T>(
     file: TextFile,
     initial: T,
-    schedule: Schedule = realSchedule,
+    schedule: Delay = realDelay,
   ): Promise<JsonStore<T>> {
     const text = await file.read();
     const value = text === null ? initial : { ...initial, ...(JSON.parse(text) as T) };

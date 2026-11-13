@@ -156,9 +156,61 @@ export interface WireSkill {
 export interface WireMcpServer {
   name: string;
   runtimeStatus: string | null;
+  pluginId?: string | null;
+  serverInfo?: unknown;
   tools: Record<string, { description?: string | null } | undefined>;
   toolsError: string | null;
   authStatus: string;
+}
+
+/** One `mcp_servers` entry of codex's configuration, as `config/read` gives it. */
+export interface WireMcpConfig {
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+  url?: string | null;
+  bearer_token_env_var?: string | null;
+  enabled?: boolean | null;
+}
+
+export interface WireConfigEdit {
+  keyPath: string;
+  value: unknown;
+  mergeStrategy: "replace" | "upsert";
+}
+
+export interface WirePlugin {
+  id: string;
+  name: string;
+  version: string | null;
+  localVersion: string | null;
+  installed: boolean;
+  enabled: boolean;
+  availability: string;
+  installPolicy: string;
+  disabledReason: string | null;
+  interface: { displayName: string | null; shortDescription: string | null } | null;
+}
+
+export interface WireMarketplace {
+  name: string;
+  path: string | null;
+  interface: { displayName: string | null } | null;
+  plugins: WirePlugin[];
+}
+
+export interface WirePluginList {
+  marketplaces: WireMarketplace[];
+  marketplaceLoadErrors: { marketplacePath: string; message: string }[];
+}
+
+export interface WirePluginDetail {
+  summary: WirePlugin;
+  description: string | null;
+  skills: { name: string; description: string }[];
+  hooks: unknown[];
+  apps: { name?: string | null; id?: string | null }[];
+  mcpServers: string[];
 }
 
 export interface WireRateLimitWindow {

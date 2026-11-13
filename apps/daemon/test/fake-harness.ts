@@ -72,6 +72,19 @@ export class FakeHarness implements Harness {
   listModels = async () => [];
   listSkills = async () => [];
   listMcpServers = async () => [];
+  putMcpServer = async () => {};
+  removeMcpServer = async () => {};
+  enableMcpServer = async () => {};
+  loginMcpServer = async () => ({ url: "" });
+  listPlugins = async () => ({ marketplaces: [], errors: [] });
+  readPlugin: Harness["readPlugin"] = async () => {
+    throw new Error("no plugins");
+  };
+  installPlugin = async () => {};
+  uninstallPlugin = async () => {};
+  enablePlugin = async () => {};
+  addMarketplace = async () => {};
+  removeMarketplace = async () => {};
   readAccount = async () => ({ kind: null, email: null, plan: null, limits: null });
   exec: Harness["exec"] = async (argv) => {
     const key = argv.slice(4).join(" ");

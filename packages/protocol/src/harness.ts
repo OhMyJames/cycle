@@ -2,7 +2,10 @@ import type {
   AccountInfo,
   ApprovalResponse,
   McpServerInfo,
+  McpServerInput,
   ModelInfo,
+  PluginCatalog,
+  PluginDetail,
   SessionEvent,
   SessionMode,
   SkillInfo,
@@ -44,6 +47,8 @@ export type HarnessEvent =
   | SessionEvent
   /** What the harness knows of a session changed, such as its title. */
   | { type: "session.changed"; sessionId: string; patch: Partial<HarnessSession> }
+  /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
+  | { type: "mcp.changed" }
   /** The harness itself stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; message: string };
 
@@ -125,7 +130,23 @@ export interface Harness {
 
   listModels(): Promise<ModelInfo[]>;
   listSkills(cwd: string): Promise<SkillInfo[]>;
+
+  // The owner's MCP servers and plugins live in the harness's own
+  // configuration, so every session of it sees the same ones.
   listMcpServers(): Promise<McpServerInfo[]>;
+  putMcpServer(server: McpServerInput): Promise<void>;
+  removeMcpServer(name: string): Promise<void>;
+  enableMcpServer(name: string, enabled: boolean): Promise<void>;
+  /** Starts a sign-in and answers where the owner finishes it. */
+  loginMcpServer(name: string): Promise<{ url: string }>;
+  listPlugins(): Promise<PluginCatalog>;
+  readPlugin(marketplace: string, name: string): Promise<PluginDetail>;
+  installPlugin(marketplace: string, name: string): Promise<void>;
+  uninstallPlugin(id: string): Promise<void>;
+  enablePlugin(id: string, enabled: boolean): Promise<void>;
+  addMarketplace(source: string): Promise<void>;
+  removeMarketplace(name: string): Promise<void>;
+
   readAccount(): Promise<AccountInfo>;
 
   exec(argv: string[], options: ExecOptions): Promise<ExecResult>;

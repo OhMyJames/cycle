@@ -4,6 +4,10 @@ import type {
   Item,
   ItemStatus,
   McpServerInfo,
+  McpServerInput,
+  PluginCatalog,
+  PluginDetail,
+  PluginInfo,
   ModelInfo,
   PromptInput,
   SessionMode,
@@ -14,9 +18,14 @@ import type {
 } from "@cycle/protocol";
 import type {
   WireCommandAction,
+  WireConfigEdit,
   WireItem,
+  WireMcpConfig,
   WireMcpServer,
   WireModel,
+  WirePlugin,
+  WirePluginDetail,
+  WirePluginList,
   WireSandboxPolicy,
   WireSkill,
   WireStatus,
@@ -282,26 +291,180 @@ export function toSkill(raw: WireSkill): SkillInfo {
   };
 }
 
-export function toMcpServer(raw: WireMcpServer): McpServerInfo {
-  const needsAuth =
-    raw.runtimeStatus === "authenticationRequired" || raw.authStatus === "notLoggedIn";
-  const state: McpServerInfo["status"] = needsAuth
-    ? "needsAuth"
-    : raw.runtimeStatus === "connected"
-      ? "connected"
-      : raw.runtimeStatus === "starting"
-        ? "connecting"
-        : raw.runtimeStatus === "failed"
-          ? "failed"
-          : "unknown";
+const AUTH: Record<string, McpServerInfo["auth"]> = {
+  notLoggedIn: "signedOut",
+  oAuth: "signedIn",
+  bearerToken: "token",
+};
+
+function toMcpServer(
+  name: string,
+  config: WireMcpConfig | undefined,
+  raw: WireMcpServer | undefined,
+): McpServerInfo {
+  const enabled = config?.enabled !== false;
+  const auth = AUTH[raw?.authStatus ?? ""] ?? "none";
+  const tools = Object.entries(raw?.tools ?? {}).map(([tool, value]) => ({
+    name: tool,
+    description: value?.description ?? "",
+  }));
+  const pluginId = raw?.pluginId ?? null;
+  let transport: McpServerInfo["transport"] = null;
+  if (config && !pluginId) {
+    transport = config.url
+      ? { kind: "http", url: config.url, bearerTokenEnvVar: config.bearer_token_env_var ?? null }
+      : {
+          kind: "stdio",
+          command: config.command ?? "",
+          args: config.args ?? [],
+          env: Object.keys(config.env ?? {}).toSorted(),
+        };
+  }
+  let state: McpServerInfo["status"] = "unknown";
+  if (!enabled) state = "disabled";
+  else if (auth === "signedOut" || raw?.runtimeStatus === "authenticationRequired") {
+    state = "needsAuth";
+  } else if (raw?.toolsError || raw?.runtimeStatus === "failed") state = "failed";
+  else if (raw?.serverInfo || tools.length > 0 || raw?.runtimeStatus === "connected") {
+    state = "connected";
+  }
   return {
-    name: raw.name,
+    name,
+    enabled,
+    transport,
+    pluginId,
     status: state,
-    tools: Object.entries(raw.tools).map(([name, tool]) => ({
-      name,
-      description: tool?.description ?? "",
+    auth,
+    tools,
+    error: raw?.toolsError ?? null,
+  };
+}
+
+/**
+ * The owner's servers and those plugins bring, by name. What is configured
+ * comes from the configuration; what each offers, from asking the server.
+ */
+export function toMcpServers(
+  configured: Record<string, WireMcpConfig | undefined>,
+  statuses: WireMcpServer[],
+): McpServerInfo[] {
+  const byName = new Map(statuses.map((entry) => [entry.name, entry]));
+  const names = new Set([...Object.keys(configured), ...byName.keys()]);
+  return [...names]
+    .toSorted((a, b) => a.localeCompare(b))
+    .map((name) => toMcpServer(name, configured[name], byName.get(name)));
+}
+
+const SERVER_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export function checkServerName(name: string): void {
+  if (!SERVER_NAME.test(name)) {
+    throw new Error("A server's name is letters, digits, - and _, at most 64.");
+  }
+}
+
+/**
+ * The configuration writes that make `existing` what `input` says. Only the
+ * keys Cycle shows are written, so a timeout or header set by hand stays. A
+ * variable given without a value keeps the stored one.
+ */
+export function mcpServerEdits(
+  input: McpServerInput,
+  existing: WireMcpConfig | undefined,
+): WireConfigEdit[] {
+  checkServerName(input.name);
+  const at = (key: string) => `mcp_servers.${input.name}.${key}`;
+  const set = (key: string, value: unknown): WireConfigEdit => ({
+    keyPath: at(key),
+    value,
+    mergeStrategy: "replace",
+  });
+  const { transport } = input;
+  if (transport.kind === "http") {
+    let url: URL;
+    try {
+      url = new URL(transport.url);
+    } catch {
+      throw new Error("The address must be a full http or https URL.");
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      throw new Error("The address must be a full http or https URL.");
+    }
+    const variable = transport.bearerTokenEnvVar?.trim() || null;
+    if (variable && !ENV_NAME.test(variable)) {
+      throw new Error(`${variable} is not a variable name.`);
+    }
+    return [
+      set("url", transport.url),
+      set("bearer_token_env_var", variable),
+      set("command", null),
+      set("args", null),
+      set("env", null),
+    ];
+  }
+  const command = transport.command.trim();
+  if (!command) throw new Error("A command is needed to start the server.");
+  const env: Record<string, string> = {};
+  for (const [name, given] of Object.entries(transport.env)) {
+    if (!ENV_NAME.test(name)) throw new Error(`${name} is not a variable name.`);
+    const value = given ?? existing?.env?.[name];
+    if (value === undefined) throw new Error(`${name} has no value.`);
+    env[name] = value;
+  }
+  return [
+    set("command", command),
+    set("args", transport.args),
+    set("env", Object.keys(env).length > 0 ? env : null),
+    set("url", null),
+    set("bearer_token_env_var", null),
+  ];
+}
+
+const UNAVAILABLE: Record<string, string> = {
+  disabled_by_admin: "Turned off by your organization.",
+  plan_not_eligible: "Not included in your plan.",
+  required_app_unavailable: "An app it needs is not available.",
+};
+
+export function toPlugin(raw: WirePlugin): PluginInfo {
+  const available = raw.availability === "AVAILABLE" && raw.installPolicy !== "NOT_AVAILABLE";
+  return {
+    id: raw.id,
+    name: raw.name,
+    displayName: raw.interface?.displayName || raw.name,
+    description: raw.interface?.shortDescription ?? "",
+    version: raw.localVersion ?? raw.version,
+    installed: raw.installed,
+    enabled: raw.enabled,
+    available,
+    unavailable: available
+      ? null
+      : (UNAVAILABLE[raw.disabledReason ?? ""] ?? "Not available to install."),
+  };
+}
+
+export function toCatalog(raw: WirePluginList): PluginCatalog {
+  return {
+    marketplaces: raw.marketplaces.map((marketplace) => ({
+      name: marketplace.name,
+      displayName: marketplace.interface?.displayName || marketplace.name,
+      path: marketplace.path,
+      plugins: marketplace.plugins.map(toPlugin),
     })),
-    error: raw.toolsError,
+    errors: raw.marketplaceLoadErrors.map((error) => `${error.marketplacePath}: ${error.message}`),
+  };
+}
+
+export function toPluginDetail(raw: WirePluginDetail): PluginDetail {
+  const plugin = toPlugin(raw.summary);
+  return {
+    plugin,
+    description: raw.description ?? plugin.description,
+    skills: raw.skills.map((skill) => ({ name: skill.name, description: skill.description })),
+    mcpServers: raw.mcpServers,
+    hooks: raw.hooks.length,
+    apps: raw.apps.flatMap((app) => app.name ?? app.id ?? []),
   };
 }
 

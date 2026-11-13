@@ -137,12 +137,12 @@ export class CycleApp {
       panel: prefs.panel ?? null,
       panelWidth: prefs.panelWidth ?? 460,
       sidebar: prefs.sidebar ?? true,
-      sidebarWidth: prefs.sidebarWidth ?? 264,
+      sidebarWidth: prefs.sidebarWidth ?? 248,
       palette: false,
       folderPicker: false,
       project: prefs.project ?? null,
       file: null,
-      showReasoning: prefs.showReasoning ?? true,
+      showReasoning: prefs.showReasoning ?? false,
       theme: prefs.theme ?? "system",
     });
     this.applyTheme();

@@ -1,335 +1,406 @@
+/* A panel's header: 30 high, no fill; what it looks at on the left, its actions and Close on the right. */
 .panel-header {
-  flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 38px;
-  padding: 0 6px 0 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 13px;
-  font-weight: 500;
+  gap: 8px;
+  flex: none;
+  height: 30px;
+  padding: 0 1px 0 12px;
+  font-size: 14px;
 }
-
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+}
+.panel-title .mono {
+  font-size: var(--text-meta);
+}
+.panel-meta {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 12px;
+  font-size: var(--text-meta);
+}
+.panel-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+}
 .panel-body {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
+  overflow: hidden auto;
 }
-
+.panel-body.changes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 8px;
+}
 .panel-filter {
-  padding: 8px 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  color: var(--icon-default);
+}
+.panel-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: 14px;
 }
 
+/* A changed file: a ghost row while closed, a card with its diff while open. */
 .file-card {
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  margin-bottom: 8px;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: none;
 }
-
+.file-card[data-open="true"] {
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-composer);
+}
 .file-card-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  min-height: 32px;
-  padding: 0 10px;
-  font-size: 13px;
-  text-align: left;
-  background: var(--surface-message);
-}
-
-.file-card[data-open="true"] .file-card-header {
-  border-bottom: 1px solid var(--border-subtle);
-  position: sticky;
-  top: -8px;
-  z-index: 1;
-}
-
-.status-letter {
-  width: 14px;
-  font: 600 11px var(--font-mono);
-  text-align: center;
-  color: var(--text-muted);
-}
-
-.s-A,
-.s-U {
-  color: var(--success);
-}
-
-.s-D {
-  color: var(--error);
-}
-
-.s-M,
-.s-R {
-  color: var(--warning);
-}
-
-.stats {
-  display: inline-flex;
-  gap: 6px;
-  font-size: 12px;
   flex: none;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-row);
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+  text-align: left;
+  transition: background-color var(--motion-state);
 }
-
-.stats .plus {
-  color: var(--success);
+.file-card-header .chevron {
+  color: var(--icon-default);
 }
-
-.stats .minus {
-  color: var(--error);
+.file-card[data-open="false"] .file-card-header:hover {
+  background: var(--surface-control-hover);
 }
-
-.diff {
-  overflow-x: auto;
-  font: 12px/18px var(--font-mono);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--surface-raised);
+.file-card[data-open="false"] .file-card-header:active {
+  background: var(--surface-control-pressed);
 }
-
-.file-card .diff {
-  border: 0;
+.file-card[data-open="true"] .file-card-header {
+  --focus-ring-offset: -1px;
+  --focus-ring-glow: 1px;
+  height: 32px;
+  padding: 0 7px;
+  border-bottom: 1px solid var(--border-subtle);
   border-radius: 0;
 }
-
-.diff table {
-  border-collapse: collapse;
-  min-width: 100%;
+.path {
+  font-family: var(--font-mono);
+}
+.file-card[data-open="true"] .path .name {
+  color: var(--text-primary);
+}
+.status-letter {
+  flex: none;
+  width: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
-.diff td {
-  padding: 0 8px;
-  white-space: pre;
-  vertical-align: top;
+/* A diff in a panel: the line's number, its sign, its text; added and removed on a faint wash. */
+.diff {
+  padding-bottom: 6px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-line);
 }
-
-.diff[data-wrap="true"] td.code {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.diff-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: max-content;
 }
-
-.diff .gutter {
-  width: 1%;
-  min-width: 34px;
-  padding: 0 6px;
+.diff[data-wrap="true"] .diff-lines {
+  min-width: 0;
+}
+.diff-line {
+  display: flex;
+  gap: 12px;
+  padding: 0 12px;
+}
+.diff-line .number {
+  flex: none;
+  color: var(--text-muted);
   text-align: right;
-  color: var(--text-disabled);
   user-select: none;
 }
-
-.diff .sign {
-  display: inline-block;
-  width: 14px;
-  color: var(--text-muted);
+.diff-line .sign {
+  flex: none;
+  width: 8px;
   user-select: none;
 }
-
-.diff tr.add {
-  background: var(--diff-add);
+.diff-line .text {
+  min-width: 0;
+  color: var(--text-primary);
+  white-space: pre;
 }
-
-.diff tr.del {
-  background: var(--diff-del);
+.diff[data-wrap="true"] .diff-line .text {
+  white-space: pre-wrap;
+  word-break: break-all;
 }
-
-.diff tr.hunk td {
-  padding: 2px 8px;
+.diff-line[data-kind="hunk"] {
+  padding-top: 6px;
   color: var(--text-muted);
-  background: var(--surface-message);
+}
+.diff-line[data-kind="hunk"] .text {
+  color: var(--text-muted);
+}
+.diff-line[data-kind="add"] {
+  background: color-mix(in srgb, var(--state-success) 8%, transparent);
+}
+.diff-line[data-kind="add"] .sign {
+  color: var(--state-success);
+}
+.diff-line[data-kind="del"] {
+  background: color-mix(in srgb, var(--state-error) 8%, transparent);
+}
+.diff-line[data-kind="del"] .sign {
+  color: var(--state-error);
+}
+.diff > .ghost {
+  margin: 4px 8px 0;
 }
 
 .commit-box {
-  flex: none;
   display: flex;
-  gap: 6px;
+  gap: 8px;
+  flex: none;
   padding: 8px;
-  border-top: 1px solid var(--border-subtle);
 }
 
-.tree {
-  padding: 4px;
+/* The files of a folder: rows 28 high with a disclosure, the file's own icon and its name. */
+.panel-body.tree {
+  display: flex;
+  flex-direction: column;
+  padding: 0 4px 8px;
 }
-
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex: none;
   width: 100%;
-  height: 26px;
+  height: 28px;
   padding-right: 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  text-align: left;
+  border-radius: var(--radius-row);
   color: var(--text-secondary);
+  font-size: var(--text-meta);
+  text-align: left;
+  transition:
+    color var(--motion-state),
+    background-color var(--motion-state);
 }
-
-.tree-row:hover,
-.tree-row[data-active="true"] {
+.tree-row > .icon:not(.chevron) {
+  color: var(--icon-default);
+}
+.tree-row:hover {
   background: var(--surface-control-hover);
   color: var(--text-primary);
 }
-
-.file-view {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+.tree-row:active {
+  background: var(--surface-control-pressed);
+}
+.tree-row[data-active="true"] {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+.tree-row .chevron {
+  color: var(--icon-default);
+}
+.tree-space {
+  flex: none;
+  width: 12px;
 }
 
+.file-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .file-view-header {
-  flex: none;
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 34px;
-  padding: 0 6px;
-  border-bottom: 1px solid var(--border-subtle);
+  flex: none;
+  height: 32px;
+  padding: 0 4px;
 }
-
 .file-code {
+  display: flex;
+  align-items: flex-start;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  display: flex;
-  align-items: flex-start;
-  font: 12.5px/19px var(--font-mono);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-line);
 }
-
 .file-code pre {
   flex: 1;
-  padding-left: 4px;
+  padding: 0 12px 8px;
   overflow: visible;
+  font-size: inherit;
+  line-height: inherit;
 }
-
 .line-numbers {
-  flex: none;
   display: flex;
   flex-direction: column;
-  padding: 10px 8px 10px 12px;
+  flex: none;
+  padding: 0 0 8px 12px;
+  color: var(--text-muted);
   text-align: right;
-  color: var(--text-disabled);
   user-select: none;
 }
-
 .line-numbers span[data-target="true"] {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--warning) 25%, transparent);
   border-radius: 3px;
+  background: color-mix(in srgb, var(--state-warning) 25%, transparent);
+  color: var(--text-primary);
 }
-
 .file-markdown {
   flex: 1;
+  padding: 0 12px 12px;
   overflow-y: auto;
-  padding: 16px;
 }
-
 .image-view {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 1;
   padding: 16px;
   overflow: auto;
   background: repeating-conic-gradient(var(--surface-message) 0% 25%, transparent 0% 50%) 50% / 16px
     16px;
 }
-
 .image-view img {
   max-width: 100%;
   max-height: 100%;
 }
 
+/* Tabs: 24 high, the chosen one on the selected fill; a tab's close shows under the pointer. */
+.new-terminal {
+  margin-left: -8px;
+}
 .tabs {
   display: flex;
-  gap: 2px;
-  overflow-x: auto;
+  gap: 4px;
   min-width: 0;
+  overflow-x: auto;
 }
-
 .tab {
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  border-radius: 6px;
-  font-weight: var(--weight-normal);
-  color: var(--text-muted);
+  flex: none;
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border-radius: var(--radius-row);
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
   white-space: nowrap;
+  transition:
+    color var(--motion-state),
+    background-color var(--motion-state);
 }
-
-.tab[data-active="true"] {
+.tab:hover {
   background: var(--surface-control-hover);
   color: var(--text-primary);
 }
-
-.tab > button:first-child {
-  padding: 0 4px 0 8px;
-  height: 100%;
+.tab[data-active="true"] {
+  background: var(--surface-selected);
+  color: var(--text-primary);
 }
-
 .tab-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-right: 4px;
-  border-radius: 4px;
-  opacity: 0.6;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  opacity: 0;
 }
-
-.tab-close:hover {
-  background: var(--surface-control-pressed);
+.tab:is(:hover, [data-active="true"], :focus-within) .tab-close {
   opacity: 1;
+}
+.tab-close:hover {
+  color: var(--text-primary);
 }
 
 .terminal-view {
   flex: 1;
   min-height: 0;
-  padding: 8px 4px 4px 10px;
+  padding: 0 4px 8px 12px;
+  overflow: hidden;
 }
-
 .terminal-view .xterm,
 .terminal-view .xterm-viewport {
   height: 100%;
 }
 
+/* The session at a glance: sections with a quiet heading, facts as label and value. */
 .overview {
-  padding: 4px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 12px 16px;
 }
-
 .overview-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
-
 .overview-section h3 {
-  padding: 0;
-  margin-top: 16px;
+  margin: 0 0 2px;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-line);
+  font-weight: var(--font-weight-normal);
 }
-
 .overview-section .button {
   align-self: flex-start;
   margin-top: 4px;
 }
-
+.overview-section .note {
+  padding: 0;
+}
 .fact {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
-  font-size: 13px;
-  line-height: 20px;
+  gap: 12px;
+  min-height: 24px;
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
 }
-
 .fact > :first-child {
   flex: none;
 }
-
 .overview .plan-steps {
-  padding: 0;
   max-height: none;
+  padding: 0;
+}
+.terminal-view .xterm-viewport {
+  background-color: transparent !important;
 }
