@@ -25,6 +25,7 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
+import { rename } from "node:fs/promises";
 import { modelCatalog } from "./catalog.ts";
 import { type CodexConfig, CodexProcess } from "./process.ts";
 import type { JsonRpcPeer, RpcId } from "./rpc.ts";
@@ -103,11 +104,13 @@ export interface OwnTools {
 
 const PROVIDER_TOKEN_ENV = "CYCLE_PROVIDER_TOKEN";
 
-/** What the extra process's catalog says, to tell when it no longer matches the models. */
-function catalogKey(provider: ExtraProvider): string {
-  return JSON.stringify(
-    provider.models().map(({ info, contextWindow }) => [info.id, contextWindow]),
-  );
+/** How much each of the provider's models can read now, by id. */
+function windowsOf(provider: ExtraProvider): Map<string, number> {
+  return new Map(provider.models().map(({ info, contextWindow }) => [info.id, contextWindow]));
+}
+
+function sameWindows(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+  return a.size === b.size && [...a].every(([id, window]) => b.get(id) === window);
 }
 
 interface PendingApproval {
@@ -164,8 +167,8 @@ export class CodexHarness implements Harness {
   /** The client's own MCP server, which is not the owner's to change. */
   private readonly ownServer: string | null;
   private readonly terminals = new Map<string, OpenTerminal>();
-  /** The models the running extra process was given, as `catalogKey` puts them. */
-  private extraCatalog: string | null = null;
+  /** The windows in the catalog the extra process last started with. */
+  private extraWindows: ReadonlyMap<string, number> = new Map();
 
   constructor(options: CodexHarnessOptions = {}) {
     const provider = options.provider ?? null;
@@ -237,8 +240,12 @@ export class CodexHarness implements Harness {
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
     const policy = options.mode ? modePolicy(options.mode) : null;
     const proc = this.served(options.model) && this.extra ? this.extra : this.main;
+    await proc.peer();
     await this.freshen(proc);
-    const config = options.effort ? { model_reasoning_effort: options.effort } : {};
+    const config = {
+      ...(options.effort ? { model_reasoning_effort: options.effort } : {}),
+      ...this.staleWindow(proc, options.model),
+    };
     const response = await proc.request<WireThreadResponse>("thread/start", {
       cwd: options.cwd,
       model: options.model ?? null,
@@ -291,6 +298,7 @@ export class CodexHarness implements Harness {
     options: TurnOptions,
   ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }> {
     const proc = await this.processOf(sessionId);
+    await proc.peer();
     await this.freshen(proc);
     const response = await this.resume(proc, sessionId, options);
     return {
@@ -651,13 +659,30 @@ export class CodexHarness implements Harness {
 
   /** Writes the catalog the extra process starts with, and gives the override that names it. */
   private async writeCatalog(provider: ExtraProvider): Promise<CodexConfig> {
-    this.extraCatalog = catalogKey(provider);
+    const windows = windowsOf(provider);
+    this.extraWindows = windows;
     const catalog = modelCatalog(
-      provider.models().map(({ info, contextWindow }) => ({ slug: info.id, contextWindow })),
+      [...windows].map(([slug, contextWindow]) => ({ slug, contextWindow })),
     );
     if (!catalog) return {};
-    await Bun.write(provider.catalogPath, catalog);
+    // Codex reads it whole or not at all: a start that stopped halfway leaves the old file.
+    const tmp = `${provider.catalogPath}.${process.pid}.tmp`;
+    await Bun.write(tmp, catalog);
+    await rename(tmp, provider.catalogPath);
     return { model_catalog_json: provider.catalogPath };
+  }
+
+  /**
+   * A model the running catalog does not have right is held to its window for the session, so a
+   * window smaller than codex's cap still compacts in time. The catalog is better when it is right:
+   * this holds the session to that model's window even should it change model later.
+   */
+  private staleWindow(proc: CodexProcess, model: string | undefined): CodexConfig | null {
+    if (proc !== this.extra || !model || !this.provider) return null;
+    const window = windowsOf(this.provider).get(model);
+    return window && this.extraWindows.get(model) !== window
+      ? { model_context_window: window }
+      : null;
   }
 
   /**
@@ -668,7 +693,7 @@ export class CodexHarness implements Harness {
    */
   private async freshen(proc: CodexProcess): Promise<void> {
     if (proc !== this.extra || !this.provider || !proc.idle) return;
-    if (this.extraCatalog === catalogKey(this.provider)) return;
+    if (sameWindows(this.extraWindows, windowsOf(this.provider))) return;
     const busy = (sessionId: string) => this.ofExtra.get(sessionId) === true;
     if ([...this.activeTurns.keys()].some(busy)) return;
     if ([...this.approvals.values()].some(({ sessionId }) => busy(sessionId))) return;
@@ -739,11 +764,13 @@ export class CodexHarness implements Harness {
     options: TurnOptions,
   ): Promise<WireThreadResponse> {
     const policy = options.mode ? modePolicy(options.mode) : null;
+    const stale = this.staleWindow(proc, options.model);
     const response = await proc.request<WireThreadResponse>("thread/resume", {
       threadId: sessionId,
       model: options.model ?? null,
       approvalPolicy: policy?.approvalPolicy ?? null,
       sandbox: policy?.sandbox ?? null,
+      ...(stale ? { config: stale } : {}),
     });
     proc.loaded.add(sessionId);
     return response;
@@ -770,6 +797,8 @@ export class CodexHarness implements Harness {
       case "turn/started": {
         const turn = params["turn"] as WireTurn;
         this.activeTurns.set(sessionId, turn.id);
+        // A thread codex started itself, as for a sub-agent, is known first by its turn.
+        this.ofExtra.set(sessionId, !main);
         this.emit({
           type: "turn.started",
           sessionId,

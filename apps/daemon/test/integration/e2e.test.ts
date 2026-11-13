@@ -310,6 +310,14 @@ test("a model of the owner's own provider answers through the gateway", async ()
   const mine = models.find((entry) => entry.id === "my-endpoint/mock-model");
   expect(mine?.provider).toEqual({ id: "my-endpoint", name: "My endpoint" });
 
+  // What codex itself sends a model it does not know, to hold the catalog's instructions to.
+  const own = await client.call("session.create", { cwd: project, mode: "readOnly" });
+  await client.call("session.open", { sessionId: own.id });
+  const direct = model.requests.length;
+  await client.call("session.send", { sessionId: own.id, text: "PROMPT:own" });
+  await client.until(() => contextWindow(client.events(), own.id) !== null);
+  const ownInstructions = model.requests.slice(direct).map(instructionsOf).find(Boolean);
+
   const before = model.requests.length;
   const session = await client.call("session.create", {
     cwd: project,
@@ -319,9 +327,9 @@ test("a model of the owner's own provider answers through the gateway", async ()
   expect(session.model).toBe("my-endpoint/mock-model");
   await client.call("session.open", { sessionId: session.id });
   await client.call("session.send", { sessionId: session.id, text: "PROMPT:hi" });
-  await client.until(() => client.events().some((event) => event.type === "turn.completed"));
-  const said = client
-    .events()
+  const ofSession = () => client.events().filter((event) => event.sessionId === session.id);
+  await client.until(() => ofSession().some((event) => event.type === "turn.completed"));
+  const said = ofSession()
     .flatMap((event) => (event.type === "item.completed" ? [event.item] : []))
     .find((item) => item.kind === "agentMessage");
   expect(said).toMatchObject({ text: "provider says PROMPT:hi" });
@@ -332,7 +340,6 @@ test("a model of the owner's own provider answers through the gateway", async ()
   expect(contextWindow(client.events(), session.id)).toBe(950_000);
   // The catalog gives the model the instructions codex gives one it does not know. When an
   // upgrade of codex changes them, copy its prompt.md to harness/codex/src again.
-  const ownInstructions = model.requests.map(instructionsOf).find((text) => text !== null);
   expect(ownInstructions).toBeTruthy();
   expect(JSON.stringify(model.requests.slice(before).at(-1))).toContain(
     JSON.stringify(ownInstructions).slice(1, -1),
