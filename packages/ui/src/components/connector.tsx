@@ -97,7 +97,7 @@ function ServerRow({
               Environment: <span className="mono">{server.transport.env.join(", ")}</span>
             </p>
           ) : null}
-          {server.tools.length === 0 ? (
+          {!server.enabled || server.tools.length === 0 ? (
             <p className="caption muted">
               {server.enabled
                 ? "No tools listed. A server lists its tools once it has started."

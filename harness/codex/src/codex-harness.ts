@@ -457,8 +457,12 @@ export class CodexHarness implements Harness {
     await this.request("config/batchWrite", { edits, reloadUserConfig: true });
     await this.request("config/mcpServer/reload", undefined);
     if (!this.extra?.running) return;
-    await this.extra.request("config/batchWrite", { edits: [], reloadUserConfig: true });
-    await this.extra.request("config/mcpServer/reload", undefined);
+    try {
+      await this.extra.request("config/batchWrite", { edits: [], reloadUserConfig: true });
+      await this.extra.request("config/mcpServer/reload", undefined);
+    } catch {
+      // The change is saved. A process that went away reads it as it starts again.
+    }
   }
 
   async putMcpServer(server: McpServerInput): Promise<void> {

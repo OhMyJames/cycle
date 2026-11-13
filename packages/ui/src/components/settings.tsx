@@ -217,13 +217,15 @@ export function SettingsPage() {
               </Setting>
               <Setting
                 title="Subagents"
-                note="The agent may start helper agents. Their tools take about 2.5k tokens of every request to a model that offers them. A codex setting, so the codex CLI follows it."
+                note="The agent may start helper agents. Their tools take about 2.5k tokens of every request to a model that offers them. A codex setting: every session follows it from its next request, and so does the codex CLI."
               >
-                <Switch
-                  label="Subagents"
-                  checked={features?.subagents ?? true}
-                  onChange={(subagents) => void app.setFeatures({ subagents })}
-                />
+                {features ? (
+                  <Switch
+                    label="Subagents"
+                    checked={features.subagents}
+                    onChange={(subagents) => void app.setFeatures({ subagents })}
+                  />
+                ) : null}
               </Setting>
             </div>
           </>

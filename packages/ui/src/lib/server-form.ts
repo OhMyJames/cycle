@@ -136,8 +136,9 @@ export function statusLabel(server: McpServerInfo): string {
   if (!server.enabled) return STATUS.disabled;
   if (server.auth === "signedOut") return STATUS.needsAuth;
   const count = server.tools.length;
-  if (server.status === "connected" || (server.status === "unknown" && count > 0)) {
-    const on = server.tools.filter((tool) => tool.enabled).length;
+  // A tool turned off is known from the configuration, not from the server: it says nothing has started.
+  const on = server.tools.filter((tool) => tool.enabled).length;
+  if (server.status === "connected" || (server.status === "unknown" && on > 0)) {
     const tokens = toolTokens(server);
     const tools =
       on === count ? (count === 1 ? "1 tool" : `${count} tools`) : `${on} of ${count} tools on`;

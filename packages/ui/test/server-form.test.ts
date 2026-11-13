@@ -100,6 +100,9 @@ test("a row says what its server is doing and how it is reached", () => {
     { name: "c", description: "", enabled: false, tokens: null },
   ];
   expect(statusLabel(server({ tools: weighed }))).toBe("2 of 3 tools on · ~1.5k tokens");
+  // A tool turned off is no sign the server has started.
+  const offOnly = [{ name: "c", description: "", enabled: false, tokens: null }];
+  expect(statusLabel(server({ status: "unknown", tools: offOnly }))).toBe("Not started yet");
   expect(statusLabel(server({ status: "unknown" }))).toBe("Not started yet");
   expect(statusLabel(server({ status: "failed" }))).toBe("Failed to start");
   expect(statusLabel(server({ auth: "signedOut" }))).toBe("Needs sign-in");
