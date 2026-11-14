@@ -1,14 +1,20 @@
-import { type ModelInfo, sameModelFamily } from "@cycle/protocol";
+import { type ModelInfo, harnessLabel, sameModelFamily } from "@cycle/protocol";
 import { useRef, useState } from "react";
 import { Icon } from "./icons.tsx";
 import { useDismiss } from "./menu.tsx";
 
-/** Whoever serves a group of models: codex itself, or a provider of the owner's. */
+/** Whoever serves a group of models: an agent itself, or a provider of the owner's. */
 interface Group {
-  /** Null for codex's own. */
-  id: string | null;
+  id: string;
+  harness: string;
+  /** Null for the agent's own. */
+  provider: ModelInfo["provider"];
   name: string;
   models: ModelInfo[];
+}
+
+function groupId(model: Pick<ModelInfo, "harness" | "provider">): string {
+  return `${model.harness}/${model.provider?.id ?? ""}`;
 }
 
 const EFFORT_NAMES: Record<string, string> = {
@@ -18,6 +24,7 @@ const EFFORT_NAMES: Record<string, string> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra high",
+  max: "Max",
 };
 
 export function effortName(id: string): string {
@@ -27,10 +34,16 @@ export function effortName(id: string): string {
 function groupsOf(models: ModelInfo[]): Group[] {
   const groups: Group[] = [];
   for (const model of models) {
-    const id = model.provider?.id ?? null;
+    const id = groupId(model);
     let group = groups.find((other) => other.id === id);
     if (!group) {
-      group = { id, name: model.provider?.name ?? "Codex", models: [] };
+      group = {
+        id,
+        harness: model.harness,
+        provider: model.provider,
+        name: model.provider?.name ?? harnessLabel(model.harness),
+        models: [],
+      };
       groups.push(group);
     }
     group.models.push(model);
@@ -38,9 +51,9 @@ function groupsOf(models: ModelInfo[]): Group[] {
   return groups;
 }
 
-/** A provider's mark in the rail: codex's is Cycle's own, the others their first letter. */
+/** A group's mark in the rail: codex's is Cycle's own, the others their first letter. */
 function GroupMark({ group }: { group: Group }) {
-  if (group.id === null) return <Icon name="sparkle" />;
+  if (group.provider === null && group.harness === "codex") return <Icon name="sparkle" />;
   return <span className="mark">{group.name.trim().charAt(0).toUpperCase() || "?"}</span>;
 }
 
@@ -119,10 +132,7 @@ export function ModelPicker({
   const active = known ?? (current.model ? undefined : models.find((model) => model.isDefault));
   const effort = active ? (current.effort ?? active.defaultEffort) : current.effort;
   const groups = groupsOf(models);
-  const closed = (group: Group) =>
-    begun &&
-    active !== undefined &&
-    !sameModelFamily({ provider: active.provider }, toFamily(group));
+  const closed = (group: Group) => begun && active !== undefined && !sameModelFamily(active, group);
   const group = groups.find((other) => other.id === shown) ?? groups[0];
   const needle = query.trim().toLowerCase();
   const rows = needle
@@ -146,7 +156,7 @@ export function ModelPicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
-          setShown(active?.provider?.id ?? null);
+          setShown(active ? groupId(active) : null);
           setQuery("");
           setTuning(false);
           setOpen((value) => !value);
@@ -167,7 +177,7 @@ export function ModelPicker({
             <div className="picker-rail" role="tablist" aria-label="Providers">
               {groups.map((other) => (
                 <button
-                  key={other.id ?? ""}
+                  key={other.id}
                   type="button"
                   role="tab"
                   className="rail-item"
@@ -208,7 +218,7 @@ export function ModelPicker({
                       event.preventDefault();
                       onChoose(first.id, null);
                       setQuery("");
-                      setShown(first.provider?.id ?? null);
+                      setShown(groupId(first));
                     }
                   }}
                 />
@@ -266,8 +276,4 @@ export function ModelPicker({
       ) : null}
     </span>
   );
-}
-
-function toFamily(group: Group): Pick<ModelInfo, "provider"> {
-  return { provider: group.id === null ? null : { id: group.id, name: group.name } };
 }

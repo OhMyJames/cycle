@@ -120,7 +120,7 @@ export class Providers {
   }
 
   /** Every model the owner chose, as a session can choose it. */
-  models(): ModelInfo[] {
+  models(): Omit<ModelInfo, "harness" | "sandbox">[] {
     return this.store.value.providers.flatMap(modelInfos);
   }
 

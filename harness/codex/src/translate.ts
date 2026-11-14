@@ -318,18 +318,23 @@ export function toTurns(raw: readonly WireTurn[]): Turn[] {
   return out;
 }
 
+/** What this harness is known by: on its sessions, its models and its events. */
+export const HARNESS_NAME = "codex";
+
 export function toSession(
   thread: WireThread,
   extra?: { model?: string; effort?: string | null },
 ): HarnessSession {
   return {
     id: thread.id,
+    harness: HARNESS_NAME,
     title: thread.name?.trim() || null,
     preview: thread.preview,
     cwd: thread.cwd,
     model: extra?.model ?? thread.model ?? "",
     effort: extra?.effort ?? thread.reasoningEffort,
     branch: thread.gitInfo?.branch ?? null,
+    sandbox: null,
     createdAt: thread.createdAt * 1000,
     updatedAt: thread.updatedAt * 1000,
     forkedFrom: thread.forkedFromId,
@@ -357,6 +362,7 @@ export function toUsage(raw: WireTokenUsage): Usage {
 export function toModel(raw: WireModel): ModelInfo {
   return {
     id: raw.model || raw.id,
+    harness: HARNESS_NAME,
     name: raw.displayName || raw.model,
     description: raw.description,
     efforts: raw.supportedReasoningEfforts.map((effort) => ({
@@ -366,6 +372,7 @@ export function toModel(raw: WireModel): ModelInfo {
     defaultEffort: raw.defaultReasoningEffort,
     isDefault: raw.isDefault,
     images: raw.inputModalities?.includes("image") ?? true,
+    sandbox: false,
     provider: null,
   };
 }

@@ -21,6 +21,7 @@ import {
   type WorktreeInfo,
   activeTurn,
   coalesceEvents,
+  harnessLabel,
   initialSessionState,
   reduceSession,
   sameModelFamily,
@@ -38,6 +39,8 @@ export interface SessionMeta {
   model?: string;
   effort?: string | null;
   worktree?: WorktreeInfo;
+  /** The sandbox its agent runs in, by name. */
+  sandbox?: string;
   /** The schedule whose run started it. */
   scheduleId?: string;
 }
@@ -182,6 +185,10 @@ export class SessionHub {
     const settings = this.options.settings();
     let cwd = params.cwd;
     let worktree: WorktreeInfo | undefined;
+    if (params.sandbox && params.worktree) {
+      // A worktree's history is in its repository's folder, which its sandbox would not hold.
+      throw new SessionError("A session in a sandbox works in the folder itself, not a worktree.");
+    }
     if (params.worktree) {
       const made = await git.addWorktree({
         cwd,
@@ -202,6 +209,7 @@ export class SessionHub {
         mode,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+        ...(params.sandbox ? { sandboxed: params.sandbox } : {}),
       });
     } catch (error) {
       // A session that never started leaves no worktree behind.
@@ -214,10 +222,14 @@ export class SessionHub {
         ...(params.model ? { model: params.model } : {}),
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
+        ...(session.sandbox ? { sandbox: session.sandbox } : {}),
         ...(scheduleId ? { scheduleId } : {}),
       };
     });
-    const info: SessionInfo = { ...this.remember(session, false), status: "idle" };
+    const info: SessionInfo = {
+      ...this.remember(session, false),
+      status: "idle",
+    };
     this.live.set(session.id, this.newLive(initialSessionState(info), false));
     this.setInfo(info);
     return info;
@@ -242,7 +254,11 @@ export class SessionHub {
         }
       }
       const queued: QueuedMessage = { id: `q${++this.queueIds}`, ...input };
-      this.apply(live, { type: "queue.updated", sessionId, queue: [...live.state.queue, queued] });
+      this.apply(live, {
+        type: "queue.updated",
+        sessionId,
+        queue: [...live.state.queue, queued],
+      });
       return { queued: true };
     }
     await this.startTurn(live, (options) => this.options.harness.send(sessionId, input, options));
@@ -297,7 +313,11 @@ export class SessionHub {
     }
     const { from } = await this.options.harness.rewindSession(sessionId, turnId);
     const known = live.state.turns.some((turn) => turn.id === from);
-    this.apply(live, { type: "turns.rewound", sessionId, turnId: known ? from : turnId });
+    this.apply(live, {
+      type: "turns.rewound",
+      sessionId,
+      turnId: known ? from : turnId,
+    });
     // The agent counts again from the shorter history: its next report only sets the mark.
     live.usageBaseline = true;
   }
@@ -331,8 +351,14 @@ export class SessionHub {
       const from = models.find((model) => model.id === info.model);
       const to = models.find((model) => model.id === params.model);
       if (from && to && !sameModelFamily(from, to)) {
+        const began =
+          from.harness !== to.harness
+            ? harnessLabel(from.harness)
+            : from.provider
+              ? "a model of your own provider"
+              : "one of the agent's own models";
         throw new SessionError(
-          `This session began on ${from.provider ? "a model of your own provider" : "one of the agent's own models"} and stays with that kind. Start a new session to use ${to.name}.`,
+          `This session began on ${began} and stays with that kind. Start a new session to use ${to.name}.`,
         );
       }
       info = { ...info, model: params.model };
@@ -379,6 +405,7 @@ export class SessionHub {
         ...(sourceMeta.model ? { model: sourceMeta.model } : {}),
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
+        ...(source.sandbox ? { sandbox: source.sandbox } : {}),
       };
     });
     const info = this.remember({ ...session, forkedFrom: session.forkedFrom ?? sessionId }, false);
@@ -401,7 +428,10 @@ export class SessionHub {
 
   private newLive(state: SessionState, usageBaseline: boolean): Live {
     return {
-      state: { ...state, epoch: `${this.options.now().toString(36)}-${++this.epochs}` },
+      state: {
+        ...state,
+        epoch: `${this.options.now().toString(36)}-${++this.epochs}`,
+      },
       ring: [],
       pending: [],
       cancelFlush: null,
@@ -419,7 +449,7 @@ export class SessionHub {
     const live = this.live.get(session.id);
     const info: SessionInfo = {
       id: session.id,
-      harness: this.options.harness.name,
+      harness: session.harness,
       title: meta.title || session.title,
       preview: session.preview || known?.preview || "",
       cwd: session.cwd,
@@ -429,6 +459,7 @@ export class SessionHub {
       status: live ? this.statusOf(live) : "stored",
       branch: meta.worktree?.branch ?? session.branch,
       worktree: meta.worktree ?? null,
+      sandbox: meta.sandbox ?? session.sandbox,
       createdAt: session.createdAt,
       updatedAt: Math.max(session.updatedAt, known?.updatedAt ?? 0),
       archived,
@@ -469,6 +500,7 @@ export class SessionHub {
     const loaded = await this.options.harness.loadSession(sessionId, {
       mode: meta.mode ?? known?.mode ?? this.options.settings().mode,
       ...(meta.model ? { model: meta.model } : {}),
+      ...(meta.sandbox ? { sandbox: meta.sandbox } : {}),
     });
     const existing = this.live.get(sessionId);
     if (existing) return existing;
@@ -532,6 +564,7 @@ export class SessionHub {
         mode: info.mode,
         ...(info.model ? { model: info.model } : {}),
         ...(info.effort ? { effort: info.effort } : {}),
+        ...(info.sandbox ? { sandbox: info.sandbox } : {}),
       });
     } catch (error) {
       live.starting = false;
@@ -548,6 +581,8 @@ export class SessionHub {
   private handle(event: HarnessEvent): void {
     if (event.type === "harness.exited") {
       for (const live of this.live.values()) {
+        // Another harness's sessions carry on.
+        if (live.state.info.harness !== event.harness) continue;
         const turn = activeTurn(live.state);
         live.starting = false;
         if (turn) {
@@ -604,7 +639,11 @@ export class SessionHub {
     for (const event of events) state = reduceSession(state, event);
     state = { ...state, seq: state.seq + 1 };
     live.state = state;
-    const frame: EventFrame = { sessionId: state.info.id, seq: state.seq, events };
+    const frame: EventFrame = {
+      sessionId: state.info.id,
+      seq: state.seq,
+      events,
+    };
     live.ring.push(frame);
     if (live.ring.length > RING_FRAMES) live.ring.splice(0, live.ring.length - RING_FRAMES);
     this.options.publish.frame(frame);
@@ -649,15 +688,27 @@ export class SessionHub {
         (file.sessions[info.id] ??= {}).unread = true;
       });
     }
-    this.setInfo({ ...info, updatedAt: this.options.now(), unread: info.unread || unread });
+    this.setInfo({
+      ...info,
+      updatedAt: this.options.now(),
+      unread: info.unread || unread,
+    });
     const [next, ...rest] = live.state.queue;
     if (!next) return;
     if (!completed) {
       // A stopped turn sends nothing more by itself: clients take the queue back.
-      this.apply(live, { type: "queue.updated", sessionId: info.id, queue: [] });
+      this.apply(live, {
+        type: "queue.updated",
+        sessionId: info.id,
+        queue: [],
+      });
       return;
     }
-    this.apply(live, { type: "queue.updated", sessionId: info.id, queue: rest });
+    this.apply(live, {
+      type: "queue.updated",
+      sessionId: info.id,
+      queue: rest,
+    });
     const input = { text: next.text, images: next.images };
     this.startTurn(live, (options) => this.options.harness.send(info.id, input, options)).catch(
       () => {

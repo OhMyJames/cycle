@@ -559,6 +559,7 @@ const SETTINGS: { section: SettingsSection; label: string; icon: IconName }[] = 
   { section: "general", label: "General", icon: "sliders" },
   { section: "account", label: "Account and usage", icon: "user" },
   { section: "providers", label: "Model providers", icon: "sparkle" },
+  { section: "sandboxes", label: "Sandboxes", icon: "file-lock" },
   { section: "about", label: "About", icon: "info" },
 ];
 

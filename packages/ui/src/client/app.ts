@@ -13,6 +13,7 @@ import {
   type MethodName,
   type ModelInfo,
   type ModelProvider,
+  type SandboxEnvironment,
   type Params,
   type PluginCatalog,
   type Result,
@@ -26,6 +27,7 @@ import {
   type TerminalInfo,
   reduceSession,
 } from "@cycle/protocol";
+import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
 import { Connection, type ConnectionStatus } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
@@ -37,15 +39,22 @@ export type PageId = "thread" | "settings" | "connector" | "automatic";
 
 /** A session being set up: it exists once its first prompt is sent. */
 export interface Draft {
+  /** The agent it starts on, which it stays with. Its models and where it can run follow. */
+  harness: string;
   cwd: string;
   worktree: boolean;
   branch: string;
+  /**
+   * The environment its agent's sandbox is made with, by id, or null to run on this machine. Only
+   * what the chosen agent can do is sent.
+   */
+  sandbox: string | null;
   model: string | null;
   effort: string | null;
   mode: SessionMode;
 }
 
-export type SettingsSection = "general" | "account" | "providers" | "about";
+export type SettingsSection = "general" | "account" | "providers" | "sandboxes" | "about";
 
 export interface ViewState {
   /** Which part of Settings shows; the sidebar lists them while Settings is open. */
@@ -94,6 +103,30 @@ type Prefs = Pick<
   "panel" | "panelWidth" | "sidebar" | "sidebarWidth" | "showReasoning" | "theme" | "project"
 >;
 
+const LAST_KEY = "cycle.last-draft";
+
+function readLast(): LastDraft {
+  try {
+    const kept = JSON.parse(localStorage.getItem(LAST_KEY) ?? "{}") as Partial<LastDraft>;
+    return { harness: kept.harness ?? null, sandbox: kept.sandbox ?? {} };
+  } catch {
+    return { harness: null, sandbox: {} };
+  }
+}
+
+/** Keeps what a new session chose, so the next one starts the same way. */
+function keepLast(harness: string, sandbox: string | null): void {
+  const last = readLast();
+  try {
+    localStorage.setItem(
+      LAST_KEY,
+      JSON.stringify({ harness, sandbox: { ...last.sandbox, [harness]: sandbox } }),
+    );
+  } catch {
+    // A choice that cannot be kept is made again next time.
+  }
+}
+
 function readPrefs(): Partial<Prefs> {
   try {
     return JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Partial<Prefs>;
@@ -133,6 +166,11 @@ export class CycleApp {
   /** A sign-in the owner is finishing in a browser. */
   readonly login = new Store<AccountLogin | null>(null);
   readonly providers = new Store<ModelProvider[]>([]);
+  /** The owner's sandbox environments, and whether a sandbox can be made on the daemon's machine. */
+  readonly sandboxes = new Store<{ available: boolean; environments: SandboxEnvironment[] }>({
+    available: false,
+    environments: [],
+  });
   readonly usage = new Store<DayUsage | null>(null);
   readonly terminals = new Store<Record<string, TerminalInfo[]>>({});
   /** Null until read: the Connector reads them when it opens, since asking starts the servers. */
@@ -301,17 +339,57 @@ export class CycleApp {
       void this.pickFolder();
       return;
     }
+    const models = this.models.get();
+    const last = readLast();
+    const harness = draftStart(models, settings?.model ?? null, last);
     this.setView({
       sessionId: null,
       page: "thread",
       palette: false,
       draft: {
+        harness,
         cwd: folder,
         worktree: settings?.worktree ?? false,
         branch: "",
-        model: settings?.model ?? null,
+        sandbox: draftSandbox(models, this.sandboxes.get().environments, harness, last),
+        model: draftModel(models, harness, settings?.model ?? null),
         effort: settings?.effort ?? null,
         mode: settings?.mode ?? "auto",
+      },
+    });
+  }
+
+  /**
+   * Takes the models on offer. A session set up before any were known started on a guess: it is
+   * set up again, now that the agent and where the last one ran can be told.
+   */
+  private setModels(models: ModelInfo[]): void {
+    const guessed = this.models.get().length === 0 && models.length > 0;
+    this.models.set(models);
+    const view = this.view.get();
+    if (guessed && view.draft && view.page === "thread" && !view.sessionId) {
+      this.newSession(view.draft.cwd);
+    }
+  }
+
+  /** Moves the session being set up to another agent: its model and where it runs start over. */
+  setDraftHarness(harness: string): void {
+    const draft = this.view.get().draft;
+    if (!draft || draft.harness === harness) return;
+    const usual = this.settings.get()?.model ?? null;
+    const model = draftModel(this.models.get(), harness, usual);
+    this.setView({
+      draft: {
+        ...draft,
+        harness,
+        model,
+        effort: model === usual ? (this.settings.get()?.effort ?? null) : null,
+        sandbox: draftSandbox(
+          this.models.get(),
+          this.sandboxes.get().environments,
+          harness,
+          readLast(),
+        ),
       },
     });
   }
@@ -343,16 +421,30 @@ export class CycleApp {
   async createAndSend(text: string, images: string[]): Promise<boolean> {
     const draft = this.view.get().draft;
     if (!draft) return false;
+    const models = this.models.get();
+    // The agent decides: a model of another's, left from before the models were known, gives way.
+    const model = draftModel(models, draft.harness, draft.model);
+    const sandbox =
+      draft.sandbox !== null &&
+      canSandbox(models, draft.harness) &&
+      this.sandboxes.get().environments.some((one) => one.id === draft.sandbox)
+        ? draft.sandbox
+        : null;
     const info = await this.attempt(
       this.request("session.create", {
         cwd: draft.cwd,
         mode: draft.mode,
-        ...(draft.model ? { model: draft.model } : {}),
-        ...(draft.effort ? { effort: draft.effort } : {}),
-        ...(draft.worktree ? { worktree: draft.branch ? { branch: draft.branch } : {} } : {}),
+        ...(model ? { model } : {}),
+        ...(draft.effort && model === draft.model ? { effort: draft.effort } : {}),
+        ...(sandbox
+          ? { sandbox }
+          : draft.worktree
+            ? { worktree: draft.branch ? { branch: draft.branch } : {} }
+            : {}),
       }),
     );
     if (!info) return false;
+    keepLast(draft.harness, sandbox);
     this.upsertSessions([info]);
     this.selectSession(info.id);
     await this.send(info.id, text, images, "auto");
@@ -577,11 +669,15 @@ export class CycleApp {
       if (view.sessionId && !this.followed.includes(view.sessionId))
         void this.follow(view.sessionId);
       void this.request("models.list", {}).then(
-        ({ models }) => this.models.set(models),
+        ({ models }) => this.setModels(models),
         () => {},
       );
       void this.request("providers.list", {}).then(
         ({ providers }) => this.providers.set(providers),
+        () => {},
+      );
+      void this.request("sandboxes.list", {}).then(
+        (sandboxes) => this.sandboxes.set(sandboxes),
         () => {},
       );
       void this.refreshAccount();
@@ -716,6 +812,9 @@ export class CycleApp {
         break;
       case "providers.changed":
         this.providers.set(event.providers);
+        break;
+      case "sandboxes.changed":
+        this.sandboxes.update((value) => ({ ...value, environments: event.environments }));
         break;
       case "terminals.changed":
         this.terminals.update((all) => ({ ...all, [event.sessionId ?? ""]: event.terminals }));

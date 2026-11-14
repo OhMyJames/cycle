@@ -1,4 +1,4 @@
-import { type ModelInfo, SESSION_MODES } from "@cycle/protocol";
+import { type ModelInfo, SESSION_MODES, harnessLabel } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import type { SettingsSection, Theme } from "../client/app.ts";
 import { host } from "../client/host.ts";
@@ -10,6 +10,7 @@ import { MODE_LABELS } from "./composer.tsx";
 import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 import { ProvidersSection } from "./providers.tsx";
+import { SandboxesSection } from "./sandboxes.tsx";
 
 function Limit({
   label,
@@ -38,11 +39,11 @@ function Limit({
   );
 }
 
-/** Models under the name of whoever serves them, codex's own first. */
+/** Models under the name of whoever serves them, the main agent's own first. */
 function groupByProvider(models: ModelInfo[]): [string, ModelInfo[]][] {
   const groups = new Map<string, ModelInfo[]>();
   for (const model of models) {
-    const name = model.provider?.name ?? "Codex";
+    const name = model.provider?.name ?? harnessLabel(model.harness);
     groups.set(name, [...(groups.get(name) ?? []), model]);
   }
   return [...groups];
@@ -111,6 +112,7 @@ const TITLES: Record<SettingsSection, string> = {
   general: "General",
   account: "Account and usage",
   providers: "Model providers",
+  sandboxes: "Sandboxes",
   about: "About",
 };
 
@@ -314,6 +316,8 @@ export function SettingsPage() {
         ) : null}
 
         {section === "providers" ? <ProvidersSection /> : null}
+
+        {section === "sandboxes" ? <SandboxesSection /> : null}
 
         {section === "about" ? (
           <div className="card">

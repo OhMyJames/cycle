@@ -14,6 +14,7 @@ const info = (id: string, title: string, updatedAt: number): SessionInfo => ({
   status: "idle",
   branch: null,
   worktree: null,
+  sandbox: null,
   createdAt: 0,
   updatedAt,
   archived: false,

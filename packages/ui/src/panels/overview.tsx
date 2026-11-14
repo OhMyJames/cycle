@@ -66,6 +66,7 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
             </button>
           </Fact>
           {info.branch ? <Fact label="Branch">{info.branch}</Fact> : null}
+          {info.sandbox ? <Fact label="Sandbox">{info.sandbox}</Fact> : null}
           {info.worktree ? (
             <Fact label="Worktree of">{tailPath(tildePath(info.worktree.repo, home))}</Fact>
           ) : null}

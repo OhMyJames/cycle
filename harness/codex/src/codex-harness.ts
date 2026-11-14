@@ -33,6 +33,7 @@ import { modelCatalog } from "./catalog.ts";
 import { type CodexConfig, CodexProcess } from "./process.ts";
 import type { JsonRpcPeer, RpcId } from "./rpc.ts";
 import {
+  HARNESS_NAME,
   checkServerName,
   mcpServerEdits,
   mcpToolEdits,
@@ -80,7 +81,7 @@ export interface ExtraProvider {
   /** The bearer it expects. It reaches codex in the environment, never in its arguments. */
   token: string;
   /** The models it serves now, and how much each can read. */
-  models(): { info: ModelInfo; contextWindow: number }[];
+  models(): { info: Omit<ModelInfo, "harness" | "sandbox">; contextWindow: number }[];
   /** Where to write codex's catalog of those models, which tells it how much each can read. */
   catalogPath: string;
 }
@@ -161,7 +162,7 @@ function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow 
  * session is brought back into it the next time it is used.
  */
 export class CodexHarness implements Harness {
-  readonly name = "codex";
+  readonly name = HARNESS_NAME;
   private readonly provider: ExtraProvider | null;
   /** Codex's own models, and the machine: files, commands, terminals, the account. */
   private readonly main: CodexProcess;
@@ -256,6 +257,7 @@ export class CodexHarness implements Harness {
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
+    if (options.sandboxed) throw new Error("Codex sessions do not run in a sandbox yet.");
     const policy = options.mode ? modePolicy(options.mode) : null;
     const proc = this.served(options.model) && this.extra ? this.extra : this.main;
     await proc.peer();
@@ -497,7 +499,9 @@ export class CodexHarness implements Harness {
       for (const model of page.data) if (!model.hidden) models.push(toModel(model));
       cursor = page.nextCursor;
     } while (cursor);
-    for (const { info } of this.provider?.models() ?? []) models.push(info);
+    for (const { info } of this.provider?.models() ?? []) {
+      models.push({ ...info, harness: this.name, sandbox: false });
+    }
     return models;
   }
 
@@ -874,7 +878,7 @@ export class CodexHarness implements Harness {
     if (this.extra) return;
     this.activeTurns.clear();
     this.reviews.clear();
-    this.emit({ type: "harness.exited", message });
+    this.emit({ type: "harness.exited", harness: this.name, message });
   }
 
   /** Asks the main process, which answers for everything that is not one session's. */

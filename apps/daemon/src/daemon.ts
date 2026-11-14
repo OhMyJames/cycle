@@ -18,6 +18,12 @@ import { allowedRequest, newToken, sameToken } from "./auth.ts";
 import { Files } from "./files.ts";
 import { Git } from "./git.ts";
 import { Providers, type ProvidersFile } from "./providers.ts";
+import {
+  type SandboxAdmin,
+  SandboxEnvironments,
+  SandboxError,
+  type SandboxesFile,
+} from "./sandboxes.ts";
 import { LaunchError, Scheduler, type SchedulesFile } from "./schedules.ts";
 import { type MetaFile, SessionHub } from "./sessions.ts";
 import { JsonStore, diskFile, realDelay } from "./store.ts";
@@ -31,6 +37,11 @@ export interface DaemonOptions {
   harness: Harness;
   /** The owner's model providers, opened before the harness that offers their models. */
   providers: JsonStore<ProvidersFile>;
+  /**
+   * The owner's sandbox environments, opened before the harness that makes sandboxes of them, and
+   * the sandboxes themselves. Left out, no session runs in one.
+   */
+  sandboxes?: { store: JsonStore<SandboxesFile>; admin: SandboxAdmin };
   /** Where the daemon keeps its data: an absolute path. */
   home: string;
   port?: number;
@@ -113,10 +124,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const token = options.token ?? newToken();
 
   const [settings, meta, usageFile, schedulesFile] = await Promise.all([
-    JsonStore.open<Settings>(diskFile(join(home, "settings.json")), { ...DEFAULT_SETTINGS }),
-    JsonStore.open<MetaFile>(diskFile(join(home, "sessions.json")), { sessions: {} }),
+    JsonStore.open<Settings>(diskFile(join(home, "settings.json")), {
+      ...DEFAULT_SETTINGS,
+    }),
+    JsonStore.open<MetaFile>(diskFile(join(home, "sessions.json")), {
+      sessions: {},
+    }),
     JsonStore.open<UsageFile>(diskFile(join(home, "usage.json")), { days: {} }),
-    JsonStore.open<SchedulesFile>(diskFile(join(home, "schedules.json")), { schedules: [] }),
+    JsonStore.open<SchedulesFile>(diskFile(join(home, "schedules.json")), {
+      schedules: [],
+    }),
   ]);
 
   await harness.start();
@@ -144,6 +161,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
     pushModels();
   });
+  const environments = options.sandboxes
+    ? new SandboxEnvironments(options.sandboxes.store, (list) =>
+        push({ type: "sandboxes.changed", environments: list }),
+      )
+    : null;
+  const sandboxAdmin = options.sandboxes?.admin ?? null;
+  const sandboxes = () => {
+    if (!environments || !sandboxAdmin) throw new SandboxError("Sandboxes are not set up here.");
+    return { environments, admin: sandboxAdmin };
+  };
   // Limits move with every turn, of every session: one read at a time, and one more if they moved
   // again while it ran.
   let limits: "idle" | "reading" | "again" = "idle";
@@ -203,13 +230,21 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     harness,
     schedule: realDelay,
     shell: process.env["SHELL"] || "/bin/bash",
-    env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "Cycle" },
+    env: {
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      TERM_PROGRAM: "Cycle",
+    },
     publish: {
       output(id, data) {
         server.publish(
           terminalTopic(id),
           JSON.stringify({
-            push: { type: "terminal.output", id, data: Buffer.from(data).toString("base64") },
+            push: {
+              type: "terminal.output",
+              id,
+              data: Buffer.from(data).toString("base64"),
+            },
           } satisfies ServerMessage),
         );
       },
@@ -318,7 +353,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       userHome: homedir(),
     }),
 
-    "session.list": async ({ archived }) => ({ sessions: await hub.list(archived) }),
+    "session.list": async ({ archived }) => ({
+      sessions: await hub.list(archived),
+    }),
     "session.create": async (params) => {
       const info = await hub.create(params);
       useProject(info.worktree?.repo ?? params.cwd);
@@ -374,7 +411,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     },
 
     "models.list": async () => ({ models: await harness.listModels() }),
-    "skills.list": async ({ cwd }) => ({ skills: await harness.listSkills(cwd) }),
+    "skills.list": async ({ cwd }) => ({
+      skills: await harness.listSkills(cwd),
+    }),
     "mcp.list": async () => ({ servers: await harness.listMcpServers() }),
     "mcp.put": async ({ server }) => {
       return mcpChange(harness.putMcpServer(server));
@@ -449,6 +488,29 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       providers.remove(id);
       return {};
     },
+    "sandboxes.list": () => ({
+      available: sandboxAdmin?.available() ?? false,
+      environments: environments?.list() ?? [],
+    }),
+    "sandboxes.save": (draft) => sandboxes().environments.save(draft),
+    "sandboxes.delete": async ({ id }) => {
+      const { environments: kept, admin } = sandboxes();
+      kept.remove(id);
+      // What was made of it goes with it, but for a sandbox a session is running in.
+      await admin.forget(id).catch((error: unknown) => {
+        console.error(
+          `[cycle] sandboxes: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+      return {};
+    },
+    "sandboxes.secrets": async () => ({
+      secrets: await sandboxes().admin.secrets(),
+    }),
+    "sandboxes.secret.set": async ({ service, value }) => {
+      await sandboxes().admin.setSecret(service, value);
+      return {};
+    },
     "settings.get": () => settings.value,
     "settings.set": (patch) => {
       setSettings((value) => {
@@ -464,7 +526,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
 
     "files.list": async ({ path }) => ({ entries: await files.list(path) }),
     "files.read": ({ path }) => files.read(path),
-    "files.search": async ({ root, query }) => ({ files: await files.search(root, query) }),
+    "files.search": async ({ root, query }) => ({
+      files: await files.search(root, query),
+    }),
 
     "git.status": ({ cwd, base }) => git.status(cwd, base),
     "git.diff": ({ cwd, from, path, status }) => git.diff(cwd, from, path, status),
@@ -474,9 +538,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       await git.checkout(cwd, branch);
       return {};
     },
-    "git.commit": async ({ cwd, message }) => ({ commit: await git.commit(cwd, message) }),
+    "git.commit": async ({ cwd, message }) => ({
+      commit: await git.commit(cwd, message),
+    }),
 
-    "terminal.list": ({ sessionId }) => ({ terminals: terminals.list(sessionId) }),
+    "terminal.list": ({ sessionId }) => ({
+      terminals: terminals.list(sessionId),
+    }),
     "terminal.create": ({ sessionId, cwd, cols, rows }) =>
       terminals.create(sessionId, cwd, cols, rows),
     "terminal.attach": ({ id }, socket) => {
@@ -534,7 +602,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     async fetch(request, bunServer) {
       const url = new URL(request.url);
       const local = allowedRequest(
-        { host: request.headers.get("host"), origin: request.headers.get("origin") },
+        {
+          host: request.headers.get("host"),
+          origin: request.headers.get("origin"),
+        },
         bunServer.port ?? 0,
         options.extraOrigins,
       );
@@ -549,7 +620,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           : new Response("expected websocket", { status: 426 });
       }
       if (url.pathname === "/health") {
-        return Response.json({ ok: true, version: DAEMON_VERSION, harness: harness.name });
+        return Response.json({
+          ok: true,
+          version: DAEMON_VERSION,
+          harness: harness.name,
+        });
       }
       return serveUi(url.pathname);
     },
@@ -585,11 +660,16 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           return;
         }
         try {
-          reply({ id: request.id, result: await route(request.params ?? {}, socket) });
+          reply({
+            id: request.id,
+            result: await route(request.params ?? {}, socket),
+          });
         } catch (error) {
           reply({
             id: request.id,
-            error: { message: error instanceof Error ? error.message : String(error) },
+            error: {
+              message: error instanceof Error ? error.message : String(error),
+            },
           });
         }
       },
@@ -634,6 +714,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         usageFile.flush(),
         schedulesFile.flush(),
         options.providers.flush(),
+        options.sandboxes?.store.flush(),
       ]);
     },
   };

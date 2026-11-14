@@ -5,14 +5,17 @@ import {
   type SessionMode,
   type Usage,
   activeTurn,
+  harnessLabel,
 } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type CycleApp, type Draft, projectOf, sessionTitle } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
+import { canSandbox, harnessesOf } from "../lib/draft.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
 import { reviewArgument, reviewTarget } from "../lib/review.ts";
+import { sandboxSummary } from "../lib/sandbox-form.ts";
 import {
   type Named,
   type PathRow,
@@ -161,6 +164,14 @@ function DraftOptions({ draft }: { draft: Draft }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
   const projects = useStore(app.settings, (settings) => settings?.projects ?? []);
+  const harnesses = useStore(app.models, (models) => harnessesOf(models).join(" "))
+    .split(" ")
+    .filter(Boolean);
+  // A sandbox is offered for the agents that can run in one here.
+  const boxable = useStore(app.models, (models) => canSandbox(models, draft.harness));
+  const environments = useStore(app.sandboxes, (value) => value.environments);
+  const chosen = boxable ? environments.find((one) => one.id === draft.sandbox) : undefined;
+  const boxed = chosen !== undefined;
   const [branch, setBranch] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let current = true;
@@ -185,8 +196,60 @@ function DraftOptions({ draft }: { draft: Draft }) {
     ...(projects.length ? [{ separator: true } as const] : []),
     { label: "Open folder…", icon: "plus", onSelect: () => void app.pickFolder() },
   ];
+  const places = (): MenuEntry[] => [
+    {
+      label: "Local",
+      sub: "On this machine",
+      icon: "terminal",
+      checked: !boxed,
+      onSelect: () => change({ sandbox: null }),
+    },
+    ...environments.map((one): MenuEntry => ({
+      label: one.name,
+      sub: `Sandbox · ${sandboxSummary(one)}`,
+      icon: "file-lock",
+      checked: one.id === chosen?.id,
+      onSelect: () => change({ sandbox: one.id }),
+    })),
+    { separator: true },
+    {
+      label: "Edit environments…",
+      icon: "sliders",
+      onSelect: () => app.setView({ page: "settings", settingsSection: "sandboxes" }),
+    },
+  ];
   return (
     <div className="draft-options">
+      <div className="row">
+        {harnesses.length > 1 ? (
+          // The agent comes first: what follows is its to offer, and a session stays with it.
+          <div className="segmented small" role="radiogroup" aria-label="Agent">
+            {harnesses.map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="radio"
+                className="segment"
+                aria-checked={name === draft.harness}
+                onClick={() => app.setDraftHarness(name)}
+              >
+                {harnessLabel(name)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {boxable ? (
+          <Menu entries={places} className="ghost" title="Where the agent runs">
+            <Icon name={boxed ? "file-lock" : "terminal"} />
+            <span className="fade-x">{chosen?.name ?? "Local"}</span>
+            <Icon name="chevron-down-sm" size={14} className="muted" />
+          </Menu>
+        ) : (
+          <span className="chip" title="This agent runs on this machine only">
+            <Icon name="terminal" size={14} /> Local
+          </span>
+        )}
+      </div>
       <div className="row">
         <Menu entries={folders} className="ghost" title="Where the session works">
           <Icon name="folder" />
@@ -200,7 +263,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
             <Icon name="git-branch" size={14} /> {branch}
           </span>
         ) : null}
-        {branch ? (
+        {branch && !boxed ? (
           <label className="row meta">
             <input
               type="checkbox"
@@ -210,7 +273,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
             New worktree
           </label>
         ) : null}
-        {branch && draft.worktree ? (
+        {branch && draft.worktree && !boxed ? (
           <input
             className="field small branch-field"
             placeholder="branch name (optional)"
@@ -220,11 +283,13 @@ function DraftOptions({ draft }: { draft: Draft }) {
           />
         ) : null}
       </div>
-      {branch === null || draft.worktree ? (
+      {boxed || branch === null || draft.worktree ? (
         <div className="caption muted hint-line">
-          {branch === null
-            ? "Not in a git repository: the session works in the folder itself."
-            : "The session gets its own checkout on a new branch. Uncommitted changes are not carried over."}
+          {boxed
+            ? "The agent runs in a Docker sandbox that holds this folder, made the first time with what its environment says. Files, changes and terminals here are still this machine's."
+            : branch === null
+              ? "Not in a git repository: the session works in the folder itself."
+              : "The session gets its own checkout on a new branch. Uncommitted changes are not carried over."}
         </div>
       ) : null}
     </div>
@@ -293,6 +358,9 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     };
   });
   const { info, running } = session;
+  // A session stays with its agent, so only that agent's models are its to choose.
+  const harness = info?.harness ?? draft?.harness;
+  const pickable = harness ? models.filter((model) => model.harness === harness) : models;
   const key = sessionId ?? `new:${draft?.cwd ?? ""}`;
   const cwd = info?.cwd ?? draft?.cwd ?? "";
 
@@ -664,7 +732,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
             />
           </label>
           <ModelPicker
-            models={models}
+            models={pickable}
             current={{ model: currentModel, effort: currentEffort }}
             begun={Boolean(sessionId)}
             onChoose={chooseModel}

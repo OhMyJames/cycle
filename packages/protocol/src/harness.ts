@@ -19,12 +19,16 @@ import type {
 /** What a harness knows of a session. The daemon adds what only it keeps. */
 export interface HarnessSession {
   id: string;
+  /** The name of the harness that keeps it. */
+  harness: string;
   title: string | null;
   preview: string;
   cwd: string;
   model: string;
   effort: string | null;
   branch: string | null;
+  /** The sandbox its agent runs in, by name, when the harness knows. */
+  sandbox: string | null;
   createdAt: number;
   updatedAt: number;
   forkedFrom: string | null;
@@ -34,10 +38,17 @@ export interface TurnOptions {
   model?: string;
   effort?: string;
   mode?: SessionMode;
+  /** The sandbox the session's agent runs in, by name. Left out, it runs on this machine. */
+  sandbox?: string;
 }
 
 export interface CreateSessionOptions extends TurnOptions {
   cwd: string;
+  /**
+   * Run its agent in a sandbox of this environment of the owner's, by id, which the harness finds
+   * or makes for the folder.
+   */
+  sandboxed?: string;
 }
 
 export interface PromptInput {
@@ -49,15 +60,19 @@ export interface PromptInput {
 export type HarnessEvent =
   | SessionEvent
   /** What the harness knows of a session changed, such as its title. */
-  | { type: "session.changed"; sessionId: string; patch: Partial<HarnessSession> }
+  | {
+      type: "session.changed";
+      sessionId: string;
+      patch: Partial<HarnessSession>;
+    }
   /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
   | { type: "mcp.changed" }
   /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */
   | { type: "account.changed"; error: string | null }
   /** The account's rate limits moved, as they do with each turn. */
   | { type: "limits.changed" }
-  /** The harness itself stopped: every session it held is gone until a restart. */
-  | { type: "harness.exited"; message: string };
+  /** The harness of this name stopped: every session it held is gone until a restart. */
+  | { type: "harness.exited"; harness: string; message: string };
 
 export interface ExecResult {
   exitCode: number;
@@ -99,16 +114,11 @@ export interface TerminalHandle {
 }
 
 /**
- * The contract every agent backend (`harness/*`) implements. The daemon only
- * depends on this interface, so adding another agent means adding another
- * `harness/<name>` package and nothing else.
- *
- * It also gives the daemon the machine the agent runs on: files, processes
- * and terminals all go through the harness, so the daemon reaches no disk or
- * process of its own for a session's project and follows the agent wherever
- * it runs.
+ * What every agent backend (`harness/*`) offers: sessions, their turns, and
+ * the models they may run on. The daemon runs several at once, and a session
+ * stays with the one it began on.
  */
-export interface Harness {
+export interface Agent {
   readonly name: string;
   start(): Promise<void>;
   dispose(): Promise<void>;
@@ -148,10 +158,14 @@ export interface Harness {
   respondApproval(approvalId: string, response: ApprovalResponse): void;
 
   listModels(): Promise<ModelInfo[]>;
-  listSkills(cwd: string): Promise<SkillInfo[]>;
+}
 
-  // The owner's MCP servers and plugins live in the harness's own
-  // configuration, so every session of it sees the same ones.
+/**
+ * The owner's MCP servers and plugins, which live in a harness's own
+ * configuration, so every session of it sees the same ones.
+ */
+export interface Connector {
+  listSkills(cwd: string): Promise<SkillInfo[]>;
   listMcpServers(): Promise<McpServerInfo[]>;
   putMcpServer(server: McpServerInput): Promise<void>;
   removeMcpServer(name: string): Promise<void>;
@@ -169,16 +183,33 @@ export interface Harness {
   removeMarketplace(name: string): Promise<void>;
   readFeatures(): Promise<AgentFeatures>;
   setFeatures(features: AgentFeatures): Promise<void>;
+}
 
+/** The owner's account with whoever serves a harness's own models. */
+export interface Account {
   readAccount(): Promise<AccountInfo>;
   /** Starts a sign-in the owner finishes in a browser. `account.changed` follows. */
   login(): Promise<AccountLogin>;
   cancelLogin(id: string): Promise<void>;
   logout(): Promise<void>;
+}
 
+/**
+ * The machine the agents run on: files, processes and terminals. The daemon
+ * reaches no disk or process of its own for a session's project, so it follows
+ * the agent wherever it runs.
+ */
+export interface Machine {
   exec(argv: string[], options: ExecOptions): Promise<ExecResult>;
   readDirectory(path: string): Promise<DirectoryEntry[]>;
   readFile(path: string): Promise<Uint8Array>;
   searchFiles(root: string, query: string): Promise<FileMatch[]>;
   openTerminal(options: TerminalOptions): Promise<TerminalHandle>;
 }
+
+/**
+ * Everything the daemon depends on. One harness gives all of it; another
+ * agent beside it need only be an `Agent`, and the daemon joins them into one
+ * `Harness` (`apps/daemon/src/harnesses.ts`).
+ */
+export interface Harness extends Agent, Connector, Account, Machine {}

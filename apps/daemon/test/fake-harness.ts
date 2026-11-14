@@ -10,7 +10,7 @@ import type {
 
 /** A harness that runs nothing: tests say what it reports. */
 export class FakeHarness implements Harness {
-  readonly name = "fake";
+  readonly name: string;
   readonly sent: { sessionId: string; text: string }[] = [];
   readonly steered: string[] = [];
   readonly calls: string[] = [];
@@ -23,6 +23,10 @@ export class FakeHarness implements Harness {
   private listener: (event: HarnessEvent) => void = () => {};
   private ids = 0;
 
+  constructor(name = "fake") {
+    this.name = name;
+  }
+
   emit(event: HarnessEvent): void {
     this.listener(event);
   }
@@ -30,12 +34,14 @@ export class FakeHarness implements Harness {
   session(id: string, patch: Partial<HarnessSession> = {}): HarnessSession {
     return {
       id,
+      harness: this.name,
       title: null,
       preview: "",
       cwd: "/project",
       model: "model-a",
       effort: null,
       branch: null,
+      sandbox: null,
       createdAt: 1,
       updatedAt: 1,
       forkedFrom: null,
@@ -49,8 +55,10 @@ export class FakeHarness implements Harness {
     this.listener = listener;
     return () => {};
   }
-  createSession = async (options: { cwd: string }) =>
-    this.session(`s${++this.ids}`, { cwd: options.cwd });
+  createSession: Harness["createSession"] = async (options) =>
+    this.session(`${this.name === "fake" ? "s" : `${this.name}-`}${++this.ids}`, {
+      cwd: options.cwd,
+    });
   listSessions = async () => this.stored;
   loadSession = async (sessionId: string) => {
     this.calls.push(`load ${sessionId}`);
@@ -75,7 +83,7 @@ export class FakeHarness implements Harness {
     this.calls.push(`review ${sessionId} ${target.kind}`);
     return { turnId: "review-turn" };
   };
-  send = async (sessionId: string, input: PromptInput) => {
+  send: Harness["send"] = async (sessionId, input) => {
     if (this.failSend) throw new Error(this.failSend);
     this.sent.push({ sessionId, text: input.text });
     return { turnId: `t${this.sent.length}` };
