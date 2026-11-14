@@ -33,3 +33,30 @@ export function draftModel(
 export function canSandbox(models: Model[], harness: string): boolean {
   return models.some((model) => model.harness === harness && model.sandbox);
 }
+
+/** What the owner's last new session chose: its agent, and where each agent's last one ran. */
+export interface LastDraft {
+  harness: string | null;
+  /** By agent: an environment's id, or null for this machine. */
+  sandbox: Record<string, string | null>;
+}
+
+/** Where a new session on an agent starts: where the last one on it ran, if that is still there. */
+export function draftSandbox(
+  models: Model[],
+  environments: { id: string }[],
+  harness: string,
+  last: LastDraft,
+): string | null {
+  const used = last.sandbox[harness] ?? null;
+  return used !== null && canSandbox(models, harness) && environments.some((one) => one.id === used)
+    ? used
+    : null;
+}
+
+/** The agent a new session starts on: the last one chosen, while it is on offer, or the usual. */
+export function draftStart(models: Model[], preferred: string | null, last: LastDraft): string {
+  return last.harness !== null && harnessesOf(models).includes(last.harness)
+    ? last.harness
+    : draftHarness(models, preferred);
+}

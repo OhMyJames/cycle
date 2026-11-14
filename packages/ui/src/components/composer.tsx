@@ -14,6 +14,7 @@ import { useApp } from "../context.ts";
 import { canSandbox, harnessesOf } from "../lib/draft.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
 import { reviewArgument, reviewTarget } from "../lib/review.ts";
+import { sandboxSummary } from "../lib/sandbox-form.ts";
 import {
   type Named,
   type PathRow,
@@ -167,7 +168,8 @@ function DraftOptions({ draft }: { draft: Draft }) {
   // A sandbox is offered for the agents that can run in one here.
   const boxable = useStore(app.models, (models) => canSandbox(models, draft.harness));
   const environments = useStore(app.sandboxes, (value) => value.environments);
-  const boxed = boxable && environments.some((one) => one.id === draft.sandbox);
+  const chosen = boxable ? environments.find((one) => one.id === draft.sandbox) : undefined;
+  const boxed = chosen !== undefined;
   const [branch, setBranch] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let current = true;
@@ -192,6 +194,28 @@ function DraftOptions({ draft }: { draft: Draft }) {
     ...(projects.length ? [{ separator: true } as const] : []),
     { label: "Open folder…", icon: "plus", onSelect: () => void app.pickFolder() },
   ];
+  const places = (): MenuEntry[] => [
+    {
+      label: "Local",
+      sub: "On this machine",
+      icon: "terminal",
+      checked: !boxed,
+      onSelect: () => change({ sandbox: null }),
+    },
+    ...environments.map((one): MenuEntry => ({
+      label: one.name,
+      sub: `Sandbox · ${sandboxSummary(one)}`,
+      icon: "file-lock",
+      checked: one.id === chosen?.id,
+      onSelect: () => change({ sandbox: one.id }),
+    })),
+    { separator: true },
+    {
+      label: "Edit environments…",
+      icon: "sliders",
+      onSelect: () => app.setView({ page: "settings", settingsSection: "sandboxes" }),
+    },
+  ];
   return (
     <div className="draft-options">
       <div className="row">
@@ -212,6 +236,19 @@ function DraftOptions({ draft }: { draft: Draft }) {
             ))}
           </div>
         ) : null}
+        {boxable ? (
+          <Menu entries={places} className="ghost" title="Where the agent runs">
+            <Icon name={boxed ? "file-lock" : "terminal"} />
+            <span className="fade-x">{chosen?.name ?? "Local"}</span>
+            <Icon name="chevron-down-sm" size={14} className="muted" />
+          </Menu>
+        ) : (
+          <span className="chip" title="This agent runs on this machine only">
+            <Icon name="terminal" size={14} /> Local
+          </span>
+        )}
+      </div>
+      <div className="row">
         <Menu entries={folders} className="ghost" title="Where the session works">
           <Icon name="folder" />
           <span className="fade-x" title={tildePath(draft.cwd, home)}>
@@ -224,25 +261,6 @@ function DraftOptions({ draft }: { draft: Draft }) {
             <Icon name="git-branch" size={14} /> {branch}
           </span>
         ) : null}
-        {boxable ? (
-          <select
-            className="field small sandbox-field"
-            aria-label="Where the agent runs"
-            value={boxed ? (draft.sandbox ?? "") : ""}
-            onChange={(event) => change({ sandbox: event.currentTarget.value || null })}
-          >
-            <option value="">Local</option>
-            {environments.map((one) => (
-              <option key={one.id} value={one.id}>
-                Sandbox: {one.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="chip" title="This agent runs on this machine only">
-            Local
-          </span>
-        )}
         {branch && !boxed ? (
           <label className="row meta">
             <input

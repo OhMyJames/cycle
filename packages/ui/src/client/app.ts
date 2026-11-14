@@ -27,7 +27,7 @@ import {
   type TerminalInfo,
   reduceSession,
 } from "@cycle/protocol";
-import { canSandbox, draftHarness, draftModel } from "../lib/draft.ts";
+import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
 import { Connection, type ConnectionStatus } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
@@ -102,6 +102,30 @@ type Prefs = Pick<
   ViewState,
   "panel" | "panelWidth" | "sidebar" | "sidebarWidth" | "showReasoning" | "theme" | "project"
 >;
+
+const LAST_KEY = "cycle.last-draft";
+
+function readLast(): LastDraft {
+  try {
+    const kept = JSON.parse(localStorage.getItem(LAST_KEY) ?? "{}") as Partial<LastDraft>;
+    return { harness: kept.harness ?? null, sandbox: kept.sandbox ?? {} };
+  } catch {
+    return { harness: null, sandbox: {} };
+  }
+}
+
+/** Keeps what a new session chose, so the next one starts the same way. */
+function keepLast(harness: string, sandbox: string | null): void {
+  const last = readLast();
+  try {
+    localStorage.setItem(
+      LAST_KEY,
+      JSON.stringify({ harness, sandbox: { ...last.sandbox, [harness]: sandbox } }),
+    );
+  } catch {
+    // A choice that cannot be kept is made again next time.
+  }
+}
 
 function readPrefs(): Partial<Prefs> {
   try {
@@ -316,7 +340,8 @@ export class CycleApp {
       return;
     }
     const models = this.models.get();
-    const harness = draftHarness(models, settings?.model ?? null);
+    const last = readLast();
+    const harness = draftStart(models, settings?.model ?? null, last);
     this.setView({
       sessionId: null,
       page: "thread",
@@ -326,8 +351,8 @@ export class CycleApp {
         cwd: folder,
         worktree: settings?.worktree ?? false,
         branch: "",
-        sandbox: null,
-        model: settings?.model ?? null,
+        sandbox: draftSandbox(models, this.sandboxes.get().environments, harness, last),
+        model: draftModel(models, harness, settings?.model ?? null),
         effort: settings?.effort ?? null,
         mode: settings?.mode ?? "auto",
       },
@@ -346,7 +371,12 @@ export class CycleApp {
         harness,
         model,
         effort: model === usual ? (this.settings.get()?.effort ?? null) : null,
-        sandbox: null,
+        sandbox: draftSandbox(
+          this.models.get(),
+          this.sandboxes.get().environments,
+          harness,
+          readLast(),
+        ),
       },
     });
   }
@@ -401,6 +431,7 @@ export class CycleApp {
       }),
     );
     if (!info) return false;
+    keepLast(draft.harness, sandbox);
     this.upsertSessions([info]);
     this.selectSession(info.id);
     await this.send(info.id, text, images, "auto");

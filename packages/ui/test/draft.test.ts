@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { canSandbox, draftHarness, draftModel, harnessesOf } from "../src/lib/draft.ts";
+import {
+  canSandbox,
+  draftHarness,
+  draftModel,
+  draftSandbox,
+  draftStart,
+  harnessesOf,
+} from "../src/lib/draft.ts";
 
 const models = [
   { id: "gpt-a", harness: "codex", isDefault: false, sandbox: false },
@@ -33,4 +40,18 @@ test("an agent's session names a model of that agent's, so the usual one cannot 
 test("where a session can run is its agent's to say", () => {
   expect(canSandbox(models, "claude")).toBe(true);
   expect(canSandbox(models, "codex")).toBe(false);
+});
+
+test("a new session starts as the last one did, while what that chose is still there", () => {
+  const environments = [{ id: "standard" }, { id: "node" }];
+  const last = { harness: "claude", sandbox: { claude: "node", codex: "node" } };
+  expect(draftStart(models, "gpt-a", last)).toBe("claude");
+  expect(draftSandbox(models, environments, "claude", last)).toBe("node");
+  // Codex runs on this machine only, whatever was kept for it.
+  expect(draftSandbox(models, environments, "codex", last)).toBeNull();
+  // An environment that is gone, or an agent no longer on offer, falls back.
+  expect(draftSandbox(models, [{ id: "standard" }], "claude", last)).toBeNull();
+  expect(draftStart(models.slice(0, 3), "gpt-a", last)).toBe("codex");
+  expect(draftStart(models, "claude-opus", { harness: null, sandbox: {} })).toBe("claude");
+  expect(draftSandbox(models, environments, "claude", { harness: null, sandbox: {} })).toBeNull();
 });

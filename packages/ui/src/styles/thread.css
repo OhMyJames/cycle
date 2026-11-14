@@ -1222,9 +1222,3 @@ button.code-diff-name:hover {
   flex-wrap: wrap;
   gap: 6px;
 }
-.field.sandbox-field {
-  width: auto;
-  max-width: 240px;
-  /* Room for the arrow a select draws over its right end. */
-  padding-right: 28px;
-}
