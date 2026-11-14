@@ -171,6 +171,8 @@ The expected load is one owner and one daemon running many sessions at once. Jud
 - The design system is [.agents/designs/design-system.md](.agents/designs/design-system.md). Where the
   experience should differ from it, change it first, then every screen it covers.
 - Icons are Cycle's own, in `packages/ui/src/components/icons.tsx`. No icon library.
+- Components are Cycle's own too. A new interaction may be built on ui-sdk, a beta: how, and where
+  Cycle's rules come before its skill's, is in [packages/ui/AGENTS.md](packages/ui/AGENTS.md).
 - The interface is in US English. A choice list never shows a bare "Default": it names the choice and
   marks it, as "Auto (default)".
 - Decision notes live in `.agents/notes/`, one file per decision, named `YYYY-MM-DD-what-was-decided.md`,

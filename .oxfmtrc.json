@@ -1,4 +1,4 @@
 {
   "printWidth": 100,
-  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/build/**"]
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/build/**", ".agents/skills/**"]
 }
