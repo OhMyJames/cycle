@@ -5,11 +5,13 @@ import {
   type SessionMode,
   type Usage,
   activeTurn,
+  harnessLabel,
 } from "@cycle/protocol";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type CycleApp, type Draft, projectOf, sessionTitle } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
+import { canSandbox, harnessesOf } from "../lib/draft.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
 import { reviewArgument, reviewTarget } from "../lib/review.ts";
 import {
@@ -159,11 +161,11 @@ function DraftOptions({ draft }: { draft: Draft }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
   const projects = useStore(app.settings, (settings) => settings?.projects ?? []);
-  // A sandbox is offered for the models whose agent can run in one here.
-  const boxable = useStore(
-    app.models,
-    (models) => models.find((model) => model.id === draft.model)?.sandbox ?? false,
-  );
+  const harnesses = useStore(app.models, (models) => harnessesOf(models).join(" "))
+    .split(" ")
+    .filter(Boolean);
+  // A sandbox is offered for the agents that can run in one here.
+  const boxable = useStore(app.models, (models) => canSandbox(models, draft.harness));
   const environments = useStore(app.sandboxes, (value) => value.environments);
   const boxed = boxable && environments.some((one) => one.id === draft.sandbox);
   const [branch, setBranch] = useState<string | null | undefined>(undefined);
@@ -193,6 +195,23 @@ function DraftOptions({ draft }: { draft: Draft }) {
   return (
     <div className="draft-options">
       <div className="row">
+        {harnesses.length > 1 ? (
+          // The agent comes first: what follows is its to offer, and a session stays with it.
+          <div className="segmented small" role="radiogroup" aria-label="Agent">
+            {harnesses.map((name) => (
+              <button
+                key={name}
+                type="button"
+                role="radio"
+                className="segment"
+                aria-checked={name === draft.harness}
+                onClick={() => app.setDraftHarness(name)}
+              >
+                {harnessLabel(name)}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <Menu entries={folders} className="ghost" title="Where the session works">
           <Icon name="folder" />
           <span className="fade-x" title={tildePath(draft.cwd, home)}>
@@ -208,18 +227,22 @@ function DraftOptions({ draft }: { draft: Draft }) {
         {boxable ? (
           <select
             className="field small sandbox-field"
-            aria-label="Sandbox"
+            aria-label="Where the agent runs"
             value={boxed ? (draft.sandbox ?? "") : ""}
             onChange={(event) => change({ sandbox: event.currentTarget.value || null })}
           >
-            <option value="">No sandbox</option>
+            <option value="">Local</option>
             {environments.map((one) => (
               <option key={one.id} value={one.id}>
                 Sandbox: {one.name}
               </option>
             ))}
           </select>
-        ) : null}
+        ) : (
+          <span className="chip" title="This agent runs on this machine only">
+            Local
+          </span>
+        )}
         {branch && !boxed ? (
           <label className="row meta">
             <input
@@ -314,6 +337,9 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     };
   });
   const { info, running } = session;
+  // A session stays with its agent, so only that agent's models are its to choose.
+  const harness = info?.harness ?? draft?.harness;
+  const pickable = harness ? models.filter((model) => model.harness === harness) : models;
   const key = sessionId ?? `new:${draft?.cwd ?? ""}`;
   const cwd = info?.cwd ?? draft?.cwd ?? "";
 
@@ -681,7 +707,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
             />
           </label>
           <ModelPicker
-            models={models}
+            models={pickable}
             current={{ model: currentModel, effort: currentEffort }}
             begun={Boolean(sessionId)}
             onChoose={chooseModel}

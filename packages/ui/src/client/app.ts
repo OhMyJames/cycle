@@ -27,6 +27,7 @@ import {
   type TerminalInfo,
   reduceSession,
 } from "@cycle/protocol";
+import { canSandbox, draftHarness, draftModel } from "../lib/draft.ts";
 import { Connection, type ConnectionStatus } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
@@ -38,12 +39,14 @@ export type PageId = "thread" | "settings" | "connector" | "automatic";
 
 /** A session being set up: it exists once its first prompt is sent. */
 export interface Draft {
+  /** The agent it starts on, which it stays with. Its models and where it can run follow. */
+  harness: string;
   cwd: string;
   worktree: boolean;
   branch: string;
   /**
    * The environment its agent's sandbox is made with, by id, or null to run on this machine. Only
-   * what the chosen model can do is sent.
+   * what the chosen agent can do is sent.
    */
   sandbox: string | null;
   model: string | null;
@@ -312,11 +315,14 @@ export class CycleApp {
       void this.pickFolder();
       return;
     }
+    const models = this.models.get();
+    const harness = draftHarness(models, settings?.model ?? null);
     this.setView({
       sessionId: null,
       page: "thread",
       palette: false,
       draft: {
+        harness,
         cwd: folder,
         worktree: settings?.worktree ?? false,
         branch: "",
@@ -324,6 +330,23 @@ export class CycleApp {
         model: settings?.model ?? null,
         effort: settings?.effort ?? null,
         mode: settings?.mode ?? "auto",
+      },
+    });
+  }
+
+  /** Moves the session being set up to another agent: its model and where it runs start over. */
+  setDraftHarness(harness: string): void {
+    const draft = this.view.get().draft;
+    if (!draft || draft.harness === harness) return;
+    const usual = this.settings.get()?.model ?? null;
+    const model = draftModel(this.models.get(), harness, usual);
+    this.setView({
+      draft: {
+        ...draft,
+        harness,
+        model,
+        effort: model === usual ? (this.settings.get()?.effort ?? null) : null,
+        sandbox: null,
       },
     });
   }
@@ -355,9 +378,12 @@ export class CycleApp {
   async createAndSend(text: string, images: string[]): Promise<boolean> {
     const draft = this.view.get().draft;
     if (!draft) return false;
+    const models = this.models.get();
+    // The agent decides: a model of another's, left from before the models were known, gives way.
+    const model = draftModel(models, draft.harness, draft.model);
     const sandbox =
       draft.sandbox !== null &&
-      this.models.get().find((model) => model.id === draft.model)?.sandbox &&
+      canSandbox(models, draft.harness) &&
       this.sandboxes.get().environments.some((one) => one.id === draft.sandbox)
         ? draft.sandbox
         : null;
@@ -365,8 +391,8 @@ export class CycleApp {
       this.request("session.create", {
         cwd: draft.cwd,
         mode: draft.mode,
-        ...(draft.model ? { model: draft.model } : {}),
-        ...(draft.effort ? { effort: draft.effort } : {}),
+        ...(model ? { model } : {}),
+        ...(draft.effort && model === draft.model ? { effort: draft.effort } : {}),
         ...(sandbox
           ? { sandbox }
           : draft.worktree
