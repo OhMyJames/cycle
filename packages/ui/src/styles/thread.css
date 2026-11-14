@@ -765,6 +765,15 @@ button.code-diff-name:hover {
   gap: 8px;
   padding-top: 4px;
 }
+/* On the card's amber wash the muted color falls under 4.5:1, so the hint is one step darker. */
+.approval-keys {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+.approval-keys kbd {
+  color: inherit;
+  font-size: inherit;
+}
 .approval-actions .button:active {
   transform: scale(0.98);
 }
@@ -914,6 +923,16 @@ button.code-diff-name:hover {
   color: var(--text-primary);
   box-shadow: var(--shadow-composer);
   transition: background-color var(--motion-state);
+}
+/* While the button shows, what scrolls behind it fades out, so it never lies on a readable line. */
+.thread-scroll[data-away="true"] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--fade-top, 0px),
+    black calc(100% - 72px),
+    transparent
+  );
 }
 .to-bottom:hover {
   background: var(--surface-control-hover);

@@ -330,6 +330,7 @@ function Tail({ state, gap }: { state: SessionState; gap: number }) {
           sessionId={sessionId}
           approval={approval}
           waiting={state.approvals.length - 1}
+          keys
         />
       ) : start !== null ? (
         <StatusLine turn={running ? turn : undefined} since={start} />
@@ -459,6 +460,7 @@ export function Thread({ sessionId }: { sessionId: string }) {
     <OpenFileContext.Provider value={openFile}>
       <div
         className="thread-scroll fade-y"
+        data-away={away}
         ref={scroller}
         onScroll={(event) => {
           const node = event.currentTarget;

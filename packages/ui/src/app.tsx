@@ -118,7 +118,12 @@ function Empty() {
         <>
           <h2 className="empty-title">Open a folder to start</h2>
           <p className="muted">A session works in a folder on this machine.</p>
-          <button type="button" className="button primary" onClick={() => void app.pickFolder()}>
+          <button
+            type="button"
+            className="button primary"
+            autoFocus
+            onClick={() => void app.pickFolder()}
+          >
             Open folder…
           </button>
         </>

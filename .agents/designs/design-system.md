@@ -60,11 +60,18 @@ not the most colorful.
 
 - The sidebar is 248 wide, 200 to 420 by its edge; a double-click on the edge puts it back. Rows
   are 28 high, 2 apart, with the icon in a 24 column and text from 36.
+- The list of sessions is one Tab stop. Up and down move between its rows, Home and End to its
+  ends, right to the buttons at a row's end and left back.
+- A session that waits for the owner has "Answer" on its row, in amber. It opens the approval card
+  beside the row, with the command in it, so it is answered without leaving the conversation in
+  view. The focus starts on Deny.
 - While Settings is open the sidebar is Settings' own: the way back, then its sections, one shown
   at a time. The sidebar always lists what the main area can show.
 - The title bar is 42 high. It names the open session and its folder; on a page it is empty.
 - The content column is 768 wide. Blocks in a turn are 16 apart, turns 40.
-- A side panel is 460 wide, 320 to 900; a double-click on its edge puts it back.
+- A side panel is 460 wide, 320 to 900; a double-click on its edge puts it back. In a window
+  900 wide or less it lies over the conversation, under the title row, whose buttons still switch
+  and close it.
 - Pages (Settings, Connector, Automatic) are one column, 720 with its padding: heading, a lead line, then sections
   of cards.
 
@@ -80,9 +87,12 @@ Four kinds, each a class:
 | Row     | `.menu-item`, `.nav-row`, ... | A choice in a list                      |
 
 - States: hover fills with `--surface-control-hover`; an open menu keeps its trigger in hover;
-  disabled changes the text color and does not fade the control.
+  disabled changes the text color and does not fade the control. Disabled text keeps 3:1 against
+  its surface: it reads as off, and it still reads.
+- A control drawn smaller than 24 (the switch, a tab's close) takes a press within 24.
 - Focus: `:focus-visible` only. A control gets the outline, a field gets the edge and glow.
 - A destructive action is `.button.danger` and always behind a confirmation that says what is lost.
+  The confirmation opens with the focus on Cancel, so a second Enter never removes anything.
 - A switch (`Switch`) is for a setting that applies at once; a checkbox for a choice inside a
   form or dialog that applies with its action. Both are Cycle's own drawing, never the platform's.
 - A select is `select.field`, with the disclosure chevron drawn in. Prefer `Menu` when the choices
@@ -150,15 +160,21 @@ class. The full text is in the `title`.
 - The tail, under the last turn, in this order: queued prompts, the approval that waits for the
   owner or else the status line (what the agent is doing, for how long), then one notice. What the
   owner must act on is never below something they can ignore.
+- The approval card never takes the focus, so an Enter meant for the composer cannot allow a
+  command. `⌘ ↵` allows once and `⌘ .` denies, and the card says so; `⌘ ↵` stays the composer's
+  while it holds text to steer with. Allowing for the whole session is a press, never a key.
 - A status wording stays at least 650ms, so it does not flicker.
-- The scroll-to-bottom button floats above the composer, with the composer's shadow.
+- The scroll-to-bottom button floats above the composer, with the composer's shadow. While it
+  shows, the conversation fades out behind it, so it never lies on a line someone is reading.
 
 ## Interaction
 
 - The keyboard always has somewhere to go. A letter typed with nothing focused goes to the
   composer; opening a session focuses it.
+- A menu takes the focus when it opens: the arrow keys, Home, End and typing a name move in it,
+  and Escape gives the focus back to its button.
 - A dialog takes the focus when it opens, keeps Tab inside itself, and gives the focus back to
-  where it was when it closes. Escape closes the topmost thing only: a dialog before the panel or
+  where it was when it closes, or to the menu's button when a menu's row opened it. Escape closes the topmost thing only: a dialog before the panel or
   menu it was opened from.
 - Every control with a `title` shows Cycle's own tip: after the pointer rests 500ms, at once when
   moving from one tip to the next, above the control unless it is at the window's top, and never

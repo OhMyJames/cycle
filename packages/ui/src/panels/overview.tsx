@@ -90,10 +90,6 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
                   </div>
                 </>
               ) : null}
-              <Fact label="Input">{usage.total.input.toLocaleString()}</Fact>
-              <Fact label="Cached input">{usage.total.cachedInput.toLocaleString()}</Fact>
-              <Fact label="Output">{usage.total.output.toLocaleString()}</Fact>
-              <Fact label="Reasoning">{usage.total.reasoning.toLocaleString()}</Fact>
               <button
                 type="button"
                 className="button small"
@@ -110,6 +106,14 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
             <div className="note">Known after the next turn.</div>
           )}
         </Section>
+        {usage ? (
+          <Section title="Used by this session">
+            <Fact label="Input">{usage.total.input.toLocaleString()}</Fact>
+            <Fact label="Cached input">{usage.total.cachedInput.toLocaleString()}</Fact>
+            <Fact label="Output">{usage.total.output.toLocaleString()}</Fact>
+            <Fact label="Reasoning">{usage.total.reasoning.toLocaleString()}</Fact>
+          </Section>
+        ) : null}
         {plan ? (
           <Section title="Plan">
             <PlanSteps plan={plan} live={running} />

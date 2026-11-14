@@ -6,6 +6,7 @@ import {
   type Usage,
   activeTurn,
 } from "@cycle/protocol";
+import { isComposing } from "@ui-sdk/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type CycleApp, type Draft, projectOf, sessionTitle } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
@@ -29,6 +30,7 @@ import {
 } from "../lib/suggest.ts";
 import { MorphLoader } from "../loader/morph-loader.tsx";
 import { fileIcon } from "../lib/file-icons.ts";
+import { useRowKeys } from "./controls.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Chevron } from "./items.tsx";
 import { PlanSteps } from "./plan.tsx";
@@ -212,6 +214,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
           <input
             className="field small branch-field"
             placeholder="branch name (optional)"
+            aria-label="Branch name, optional"
             value={draft.branch}
             onChange={(event) => change({ branch: event.currentTarget.value })}
           />
@@ -295,6 +298,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
 
   const [text, setText] = useState(() => app.draftText(key));
   const [images, setImages] = useState<string[]>([]);
+  const thumbs = useRowKeys(images.length);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [active, setActive] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -577,12 +581,15 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
         {images.length ? (
           <div className="attachments">
             {images.map((src, index) => (
-              <span key={index} className="thumb">
+              <span key={thumbs.keys[index]} className="thumb">
                 <img src={src} alt="" />
                 <button
                   type="button"
                   aria-label="Remove image"
-                  onClick={() => setImages(images.filter((_, other) => other !== index))}
+                  onClick={() => {
+                    thumbs.remove(index);
+                    setImages(images.filter((_, other) => other !== index));
+                  }}
                 >
                   <Icon name="x" size={12} />
                 </button>
@@ -610,7 +617,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
           }}
           onBlur={() => setTimeout(() => setSuggestions([]), 120)}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (isComposing(event)) return;
             if (suggestions.length) {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();

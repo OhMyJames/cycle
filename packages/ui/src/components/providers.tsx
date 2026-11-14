@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber } from "../lib/format.ts";
+import { useRowKeys } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 
 const API_LABELS: Record<ProviderApi, string> = {
@@ -82,10 +83,11 @@ function CustomModels({
 }) {
   const patch = (index: number, change: Partial<ProviderModel>) =>
     onChange(models.map((model, at) => (at === index ? { ...model, ...change } : model)));
+  const rows = useRowKeys(models.length);
   return (
     <div className="model-rows">
       {models.map((model, index) => (
-        <div key={index} className="model-row">
+        <div key={rows.keys[index]} className="model-row">
           <div className="row">
             <input
               className="field mono"
@@ -101,7 +103,10 @@ function CustomModels({
               title="Remove this model"
               aria-label="Remove this model"
               disabled={models.length === 1}
-              onClick={() => onChange(models.filter((_, at) => at !== index))}
+              onClick={() => {
+                rows.remove(index);
+                onChange(models.filter((_, at) => at !== index));
+              }}
             >
               <Icon name="x" />
             </button>

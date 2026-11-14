@@ -55,8 +55,8 @@
   --focus-glow: color-mix(in oklab, var(--border-focus) 13%, transparent);
   --text-primary: #1c1b1a;
   --text-secondary: #4f4c48;
-  --text-muted: #726e68;
-  --text-disabled: #a5a19a;
+  --text-muted: #6f6b65;
+  --text-disabled: #8b8780;
   --text-on-interaction: #4f4c48;
   --icon-default: #4f4c48;
   --icon-on-action: #ffffff;
@@ -158,8 +158,8 @@
   --border-focus: #8f8b84;
   --text-primary: #f2f1ee;
   --text-secondary: #c4c1bb;
-  --text-muted: #8f8b84;
-  --text-disabled: #5f5c58;
+  --text-muted: #96928b;
+  --text-disabled: #787570;
   --text-on-interaction: #c4c1bb;
   --icon-default: #c4c1bb;
   --icon-on-action: #1c1b1a;

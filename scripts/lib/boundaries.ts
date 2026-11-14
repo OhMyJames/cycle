@@ -40,6 +40,7 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
       "marked",
       "highlight.js",
       "@xterm/",
+      "@ui-sdk/",
       "@types/react",
       "@types/react-dom",
     ],

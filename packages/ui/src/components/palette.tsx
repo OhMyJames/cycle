@@ -1,3 +1,4 @@
+import { isComposing } from "@ui-sdk/core";
 import { useMemo, useState } from "react";
 import { type PanelId, sessionTitle } from "../client/app.ts";
 import { useStore } from "../client/store.ts";
@@ -118,6 +119,7 @@ export function Palette() {
         <input
           className="palette-input bare"
           placeholder="Search sessions and commands"
+          aria-label="Search sessions and commands"
           autoFocus
           value={query}
           onChange={(event) => {
@@ -125,7 +127,7 @@ export function Palette() {
             setActive(0);
           }}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (isComposing(event)) return;
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
               const step = event.key === "ArrowDown" ? 1 : -1;

@@ -385,6 +385,7 @@
   color: var(--text-primary);
 }
 .tab-close {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -396,6 +397,12 @@
 }
 .tab:is(:hover, [data-active="true"], :focus-within) .tab-close {
   opacity: 1;
+}
+/* Drawn 16 square; a press within 4 of it counts, so the target is 24. */
+.tab-close::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
 }
 .tab-close:hover {
   color: var(--text-primary);

@@ -125,7 +125,12 @@ export function ScheduleEditor({
 
         <h2>When</h2>
         <div className="form">
-          <Segmented value={draft.kind} onChange={(kind) => set({ kind })} options={KINDS} />
+          <Segmented
+            label="How often"
+            value={draft.kind}
+            onChange={(kind) => set({ kind })}
+            options={KINDS}
+          />
           {draft.kind === "daily" ? (
             <>
               <FormField label="Time">
@@ -147,6 +152,7 @@ export function ScheduleEditor({
                         type="button"
                         className="weekday"
                         aria-pressed={on}
+                        aria-label={name}
                         title={name}
                         onClick={() => {
                           const all =
@@ -176,6 +182,7 @@ export function ScheduleEditor({
                   onChange={(event) => set({ every: event.currentTarget.valueAsNumber })}
                 />
                 <Segmented
+                  label="Unit"
                   value={draft.unit}
                   onChange={(unit) => set({ unit })}
                   options={[

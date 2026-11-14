@@ -248,6 +248,39 @@
 .session-row:is(:hover, :has(:focus-visible), :has([aria-expanded="true"])) .row-menu {
   opacity: 1;
 }
+/* On a row that waits for the owner: answers it from here. Amber, as all that needs the owner. */
+.row-answer {
+  flex: none;
+  height: 20px;
+  margin-right: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-md);
+  color: var(--state-warning);
+  font-size: var(--text-caption);
+  line-height: 20px;
+}
+.row-answer:is(:hover, [data-open]) {
+  background: color-mix(in srgb, var(--state-warning) 12%, transparent);
+  color: var(--text-primary);
+}
+.answer-popover {
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 420px;
+  max-width: calc(100vw - 24px);
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-composer);
+  box-shadow: var(--shadow-popover);
+}
+.answer-title {
+  margin: 0;
+  font-size: var(--text-meta);
+  font-weight: var(--font-weight-medium);
+}
 .mark {
   display: flex;
   align-items: center;
@@ -543,9 +576,16 @@
 .panel > :not(.resizer):first-of-type {
   border-radius: var(--radius-card) var(--radius-card) 0 0;
 }
+/*
+ * A narrow window has no room beside the panel, so it lies over the conversation, and starts under
+ * the title row: the buttons there still switch and close it.
+ */
 @media (max-width: 900px) {
   .main {
     --panel-room: 0px !important;
+  }
+  .panel {
+    top: 42px;
   }
 }
 
