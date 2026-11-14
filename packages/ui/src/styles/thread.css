@@ -1089,7 +1089,10 @@ button.code-diff-name:hover {
   color: var(--text-primary);
 }
 .draft-options .hint-line {
-  padding: 0;
+  /* A hint here can take two lines. */
+  height: auto;
+  min-height: 18px;
+  padding: 0 0 6px;
 }
 .branch-field {
   width: 200px;
@@ -1219,7 +1222,9 @@ button.code-diff-name:hover {
   flex-wrap: wrap;
   gap: 6px;
 }
-.sandbox-field {
+.field.sandbox-field {
   width: auto;
-  max-width: 220px;
+  max-width: 240px;
+  /* Room for the arrow a select draws over its right end. */
+  padding-right: 28px;
 }
