@@ -60,6 +60,11 @@ not the most colorful.
 
 - The sidebar is 248 wide, 200 to 420 by its edge; a double-click on the edge puts it back. Rows
   are 28 high, 2 apart, with the icon in a 24 column and text from 36.
+- The list of sessions is one Tab stop. Up and down move between its rows, Home and End to its
+  ends, right to the buttons at a row's end and left back.
+- A session that waits for the owner has "Answer" on its row, in amber. It opens the approval card
+  beside the row, with the command in it, so it is answered without leaving the conversation in
+  view. The focus starts on Deny.
 - While Settings is open the sidebar is Settings' own: the way back, then its sections, one shown
   at a time. The sidebar always lists what the main area can show.
 - The title bar is 42 high. It names the open session and its folder; on a page it is empty.
@@ -154,6 +159,9 @@ class. The full text is in the `title`.
 - The tail, under the last turn, in this order: queued prompts, the approval that waits for the
   owner or else the status line (what the agent is doing, for how long), then one notice. What the
   owner must act on is never below something they can ignore.
+- The approval card never takes the focus, so an Enter meant for the composer cannot allow a
+  command. `⌘ ↵` allows once and `⌘ .` denies, and the card says so; `⌘ ↵` stays the composer's
+  while it holds text to steer with. Allowing for the whole session is a press, never a key.
 - A status wording stays at least 650ms, so it does not flicker.
 - The scroll-to-bottom button floats above the composer, with the composer's shadow. While it
   shows, the conversation fades out behind it, so it never lies on a line someone is reading.

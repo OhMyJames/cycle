@@ -765,6 +765,15 @@ button.code-diff-name:hover {
   gap: 8px;
   padding-top: 4px;
 }
+/* On the card's amber wash the muted color falls under 4.5:1, so the hint is one step darker. */
+.approval-keys {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+.approval-keys kbd {
+  color: inherit;
+  font-size: inherit;
+}
 .approval-actions .button:active {
   transform: scale(0.98);
 }

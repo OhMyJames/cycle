@@ -590,6 +590,17 @@ export class CycleApp {
     }
   }
 
+  /**
+   * Follows a session that is not the one in view, to answer what it waits on from the sidebar.
+   * The session in view stays the latest followed, so looking at others never drops it.
+   */
+  peek(sessionId: string): void {
+    void this.follow(sessionId);
+    const current = this.view.get().sessionId;
+    const at = current && current !== sessionId ? this.followed.indexOf(current) : -1;
+    if (at !== -1) this.followed.push(...this.followed.splice(at, 1));
+  }
+
   private async follow(sessionId: string): Promise<void> {
     const index = this.followed.indexOf(sessionId);
     if (index !== -1) this.followed.splice(index, 1);

@@ -1,5 +1,6 @@
 import type { SessionInfo } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type CycleApp,
@@ -19,6 +20,7 @@ import {
   shortTime,
   tildePath,
 } from "../lib/format.ts";
+import { ApprovalCard } from "./approval.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
 
@@ -101,7 +103,93 @@ function StatusMark({ info }: { info: SessionInfo }) {
   return null;
 }
 
-/** Up and down move between a list's rows, right from a row to its menu's button and left back. */
+/**
+ * What a session waits on, answered from its row: the same card as in its conversation, beside the
+ * row, so the owner sees the command before allowing it and need not leave what they are reading.
+ * The focus starts on Deny: opening it is not yet an answer.
+ */
+function AnswerHere({ info }: { info: SessionInfo }) {
+  const app = useApp();
+  const [open, setOpen] = useState(false);
+  const approvals = useStore(app.conversation(info.id), (value) => value.state?.approvals);
+  const approval = approvals?.[0];
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) app.peek(info.id);
+      }}
+    >
+      <PopoverTrigger className="row-answer">Answer</PopoverTrigger>
+      <PopoverContent
+        className="answer-popover"
+        side="right"
+        align="start"
+        sideOffset={12}
+        initialFocus="[data-refuses]"
+      >
+        <PopoverTitle className="answer-title fade-x">{sessionTitle(info)}</PopoverTitle>
+        {approval ? (
+          <ApprovalCard
+            key={approval.id}
+            sessionId={info.id}
+            approval={approval}
+            waiting={(approvals?.length ?? 1) - 1}
+          />
+        ) : (
+          <p className="muted" role="status">
+            {approvals ? "Nothing waits here any more." : "Reading the session…"}
+          </p>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * A list of sessions is one Tab stop: the row the focus was last on, else the open session's, else
+ * the first. The arrow keys do the rest, so Tab crosses the sidebar in a few presses however many
+ * sessions there are.
+ */
+function useOneTabStop(list: React.RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const node = list.current;
+    if (!node) return;
+    const set = () => {
+      const triggers = [...node.querySelectorAll<HTMLElement>(".session-row-trigger")];
+      const at = document.activeElement;
+      const stop =
+        triggers.find((each) => each.closest(".session-row")?.contains(at)) ??
+        triggers.find((each) => each.closest('.session-row[data-active="true"]')) ??
+        triggers[0];
+      for (const each of triggers) each.tabIndex = each === stop ? 0 : -1;
+      for (const each of node.querySelectorAll<HTMLElement>(
+        ".session-row button:not(.session-row-trigger)",
+      )) {
+        each.tabIndex = -1;
+      }
+    };
+    set();
+    node.addEventListener("focusin", set);
+    const watch = new MutationObserver(set);
+    watch.observe(node, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-active"],
+    });
+    return () => {
+      node.removeEventListener("focusin", set);
+      watch.disconnect();
+    };
+  }, [list]);
+}
+
+/**
+ * Up and down move between a list's rows, Home and End to its ends, right from a row to the
+ * buttons at its end and left back.
+ */
 function onRowsKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const { target } = event;
@@ -110,19 +198,29 @@ function onRowsKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   const trigger = row?.querySelector<HTMLElement>(".session-row-trigger");
   if (!row || !trigger) return;
   if (target === trigger) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       const all = [...event.currentTarget.querySelectorAll<HTMLElement>(".session-row-trigger")];
-      const next = all[all.indexOf(trigger) + (event.key === "ArrowDown" ? 1 : -1)];
+      const next =
+        event.key === "Home"
+          ? all[0]
+          : event.key === "End"
+            ? all.at(-1)
+            : all[all.indexOf(trigger) + (event.key === "ArrowDown" ? 1 : -1)];
       if (next) {
         next.focus();
         event.preventDefault();
       }
     } else if (event.key === "ArrowRight") {
-      row.querySelector<HTMLElement>(".row-menu button")?.focus();
+      row.querySelector<HTMLElement>("button:not(.session-row-trigger)")?.focus();
     }
-  } else if (event.key === "ArrowLeft" && target.closest(".row-menu")) {
-    trigger.focus();
+    return;
   }
+  // Among the buttons at a row's end: right to the next, left to the one before or back to the row.
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  const ends = [...row.querySelectorAll<HTMLElement>("button:not(.session-row-trigger)")];
+  const at = ends.indexOf(target.closest("button") ?? target);
+  if (at === -1) return;
+  (event.key === "ArrowRight" ? ends[at + 1] : (ends[at - 1] ?? trigger))?.focus();
 }
 
 /**
@@ -214,6 +312,7 @@ const SessionRow = memo(function SessionRow({
           ) : null}
         </button>
       )}
+      {!renaming && info.status === "waiting" && !active ? <AnswerHere info={info} /> : null}
       {renaming ? null : (
         <span className="row-menu">
           <Menu
@@ -530,6 +629,8 @@ function SessionSidebar() {
   const [deleting, setDeleting] = useState<SessionInfo | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
+  const sessionList = useRef<HTMLDivElement>(null);
+  useOneTabStop(sessionList);
 
   const all = useMemo(() => Object.values(sessions.byId), [sessions.byId]);
   const projects = useMemo(() => {
@@ -655,7 +756,7 @@ function SessionSidebar() {
           </span>
         </Menu>
       </div>
-      <div className="session-list fade-y no-scrollbar" onKeyDown={onRowsKeyDown}>
+      <div className="session-list fade-y no-scrollbar" ref={sessionList} onKeyDown={onRowsKeyDown}>
         {!sessions.loaded ? (
           <div className="skeleton" role="status" aria-label="Reading sessions">
             {[72, 54, 88, 61, 79].map((width) => (

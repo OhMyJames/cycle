@@ -330,6 +330,7 @@ function Tail({ state, gap }: { state: SessionState; gap: number }) {
           sessionId={sessionId}
           approval={approval}
           waiting={state.approvals.length - 1}
+          keys
         />
       ) : start !== null ? (
         <StatusLine turn={running ? turn : undefined} since={start} />

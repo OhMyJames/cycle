@@ -1,5 +1,5 @@
 import type { Approval, ApprovalDecision, Question } from "@cycle/protocol";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "../context.ts";
 import { basename } from "../lib/format.ts";
 import { plainCommand } from "../lib/activity.ts";
@@ -86,20 +86,43 @@ const TITLES: Record<Exclude<Approval["kind"], "question">, string> = {
 
 /**
  * What a turn is waiting on the owner for: one request at a time, where the status would be, so work
- * folded away in a card cannot hide it. Allowing comes first and is the primary button, which takes
- * the focus; refusing comes last.
+ * folded away in a card cannot hide it. Allowing comes first and is the primary button; refusing
+ * comes last. The card never takes the focus: an Enter meant for something else must not allow a
+ * command. Its keys need a modifier, and leave ⌘↵ to the composer while it holds text to steer with.
  */
 export function ApprovalCard({
   sessionId,
   approval,
   waiting = 0,
+  keys = false,
 }: {
   sessionId: string;
   approval: Approval;
   /** How many more requests wait behind this one. */
   waiting?: number;
+  /** Whether ⌘↵ and ⌘. answer it: only for the card of the conversation in view. */
+  keys?: boolean;
 }) {
   const app = useApp();
+  const answerable = keys && approval.kind !== "question";
+  useEffect(() => {
+    if (!answerable) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.altKey || event.shiftKey) return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key !== "Enter" && event.key !== ".") return;
+      if (document.querySelector(".scrim, .menu")) return;
+      const typed = document.querySelector<HTMLTextAreaElement>(".composer textarea")?.value;
+      if (event.key === "Enter" && typed?.trim()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      app.respond(sessionId, approval.id, {
+        decision: event.key === "Enter" ? "accept" : "decline",
+      });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [app, answerable, sessionId, approval.id]);
   if (approval.kind === "question") {
     return (
       <QuestionCard
@@ -126,15 +149,20 @@ export function ApprovalCard({
         <pre className="approval-command no-scrollbar">{approval.summary}</pre>
       ) : null}
       <div className="approval-actions">
-        <button type="button" className="button primary" autoFocus onClick={() => decide("accept")}>
+        <button type="button" className="button primary" onClick={() => decide("accept")}>
           Allow once
         </button>
         <button type="button" className="button" onClick={() => decide("acceptForSession")}>
           Allow for this session
         </button>
-        <button type="button" className="button" onClick={() => decide("decline")}>
+        <button type="button" className="button" data-refuses onClick={() => decide("decline")}>
           Deny
         </button>
+        {answerable ? (
+          <span className="approval-keys caption">
+            <kbd>⌘ ↵</kbd> allows once · <kbd>⌘ .</kbd> denies
+          </span>
+        ) : null}
       </div>
     </div>
   );
