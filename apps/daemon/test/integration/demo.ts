@@ -1,14 +1,16 @@
 /**
  * Runs Cycle against a scripted stand-in for the model, in a throwaway
  * project, so the whole app can be tried (and driven by tests) with no
- * account and no network. Everything but the model is real: codex
- * app-server, its tools, the daemon and the page.
+ * account and no network. Everything but the models is real: codex
+ * app-server and Claude Code, their tools, the daemon and the page.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ClaudeHarness } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import {
+  Harnesses,
   TOOLS_KEY_ENV,
   TOOLS_SERVER,
   diskFile,
@@ -16,6 +18,7 @@ import {
   startDaemon,
   startTools,
 } from "../../src/index.ts";
+import { type ClaudeReply, startMockClaude } from "./mock-claude.ts";
 import { type MockReply, startMockModel } from "./mock-model.ts";
 
 const ANSWER = `Here is what I found and changed.
@@ -133,6 +136,40 @@ const model = startMockModel((_index, body) => {
   };
 });
 
+/** The same work as `STEPS`, with Claude Code's own tools. */
+const CLAUDE_STEPS: ClaudeReply[] = [
+  { call: { name: "Bash", input: { command: "ls -la", description: "List the files" } } },
+  { call: { name: "Read", input: { file_path: join(project, "README.md") } } },
+  {
+    call: {
+      name: "Write",
+      input: {
+        file_path: join(project, "src", "greet.ts"),
+        content: "export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n",
+      },
+    },
+  },
+];
+
+const claudeModel = startMockClaude(root, (prompt, results) => {
+  if (/approv|permission/i.test(prompt) && results === 0) {
+    const command = "python3 -c \"open('stamp.txt', 'w').write('now')\"";
+    return { call: { name: "Bash", input: { command, description: "Write stamp.txt" } } };
+  }
+  if (/stress/i.test(prompt)) return { text: chunks(STRESS, 48) };
+  if (/change|add|fix|build|write/i.test(prompt)) {
+    const step = CLAUDE_STEPS[results];
+    if (step) return step;
+    return { text: chunks(ANSWER), delayMs: Number(process.env["CYCLE_DEMO_DELAY"] ?? 25) };
+  }
+  return {
+    text: chunks(
+      `You said: **${prompt.trim()}**. Ask me to *change* something to see tools at work.`,
+    ),
+    delayMs: 20,
+  };
+});
+
 const providers = await openProviders(
   diskFile(join(root, "home", "providers.json")),
   crypto.randomUUID(),
@@ -145,9 +182,13 @@ const harness = new CodexHarness({
   env: { CODEX_HOME: join(root, "codex") },
   provider: providers.provider,
 });
+const claude = new ClaudeHarness({
+  env: claudeModel.env,
+  tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
+});
 const daemon = await startDaemon({
   tools,
-  harness,
+  harness: new Harnesses(harness, [claude], (line) => console.error(line)),
   providers: providers.store,
   home: join(root, "home"),
   port: Number(process.env["CYCLE_DAEMON_PORT"] ?? 0),
@@ -174,6 +215,7 @@ const stop = async () => {
   providers.stop();
   tools.stop();
   model.stop();
+  claudeModel.stop();
   process.exit(0);
 };
 process.on("SIGINT", () => void stop());

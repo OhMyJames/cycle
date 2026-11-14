@@ -16,6 +16,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@cycle/gateway": "workspace:*",
+        "@cycle/harness-claude": "workspace:*",
         "@cycle/harness-codex": "workspace:*",
         "@cycle/protocol": "workspace:*",
       },

@@ -13,6 +13,7 @@ test("a packaged app runs the daemon and codex it carries, and nothing from a re
       CYCLE_DAEMON_PORT: "0",
       CYCLE_UI_DIR: `${BUNDLE_APP}/dist/renderer`,
       CYCLE_CODEX_BIN: `${BUNDLE_APP}/codex/bin/codex`,
+      CYCLE_CLAUDE_BIN: "claude",
     },
   });
 });

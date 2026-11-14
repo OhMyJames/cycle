@@ -2,11 +2,13 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { ClaudeHarness } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import { DEFAULT_DAEMON_PORT } from "@cycle/protocol";
 import { newToken } from "./auth.ts";
 import { DAEMON_VERSION, startDaemon } from "./daemon.ts";
 import { openProviders } from "./gateway.ts";
+import { Harnesses } from "./harnesses.ts";
 import { TOOLS_KEY_ENV, TOOLS_SERVER, startTools } from "./tools.ts";
 import { diskFile } from "./store.ts";
 
@@ -66,14 +68,22 @@ const providers = await openProviders(
 
 const tools = startTools(newToken());
 
+const debug = env["CYCLE_DEBUG"];
+const codex = new CodexHarness({
+  tools: { name: TOOLS_SERVER, url: tools.url, keyEnv: TOOLS_KEY_ENV, key: tools.key },
+  ...(config ? { config } : {}),
+  ...(debug ? { onLog: (line: string) => console.error(`[codex] ${line}`) } : {}),
+  provider: providers.provider,
+});
+// Claude Code runs beside codex when it is installed and starts; codex is the machine.
+const claude = new ClaudeHarness({
+  tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
+  ...(debug ? { onLog: (line: string) => console.error(`[claude] ${line}`) } : {}),
+});
+
 const daemon = await startDaemon({
   tools,
-  harness: new CodexHarness({
-    tools: { name: TOOLS_SERVER, url: tools.url, keyEnv: TOOLS_KEY_ENV, key: tools.key },
-    ...(config ? { config } : {}),
-    ...(env["CYCLE_DEBUG"] ? { onLog: (line: string) => console.error(`[codex] ${line}`) } : {}),
-    provider: providers.provider,
-  }),
+  harness: new Harnesses(codex, [claude], (line) => console.error(line)),
   providers: providers.store,
   home,
   port: Number(env["CYCLE_DAEMON_PORT"] ?? DEFAULT_DAEMON_PORT),

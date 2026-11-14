@@ -20,8 +20,9 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
 - The daemon binds to loopback, requires a connection token, and checks `Host` and `Origin`, because
   agents can run commands. Never loosen any of the three. Why:
   [decision note](.agents/notes/2026-11-12-the-daemon-serves-its-own-page.md).
-- Never point a test at the real `CYCLE_HOME` (`~/.cycle-codex`) or the real `CODEX_HOME` (`~/.codex`).
-  Tests make their own under a temporary folder. `~/.cycle` belongs to old-cycle: never write there.
+- Never point a test at the real `CYCLE_HOME` (`~/.cycle-codex`), the real `CODEX_HOME` (`~/.codex`) or
+  Claude Code's real home (`~/.claude`, which `CLAUDE_CONFIG_DIR` moves). Tests make their own under a
+  temporary folder. `~/.cycle` belongs to old-cycle: never write there.
 - `session.delete` removes a conversation for good, whichever tool started it. Clients confirm first.
 - `fullAccess` mode runs with no sandbox and never asks. It is never a default, and nothing turns it on
   for the owner.
@@ -38,7 +39,9 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
   [decision note](.agents/notes/2026-11-13-providers-go-through-a-gateway-of-pi-ai.md).
 - Cycle's tools for agents are a server of the same kind: loopback, `Host`, its own bearer, which is
   never the connection token. Never loosen any of the three, and its tools only read. Why:
-  [decision note](.agents/notes/2026-11-13-cycle-tools-behind-their-own-key.md).
+  [decision note](.agents/notes/2026-11-13-cycle-tools-behind-their-own-key.md). The bearer never goes
+  into an agent process's arguments or environment, which the commands it runs can read: codex reads
+  it from a variable kept from its commands, and Claude Code is handed it over its own pipe.
 
 ## Testing
 
@@ -50,7 +53,8 @@ Agents generate a lot of tests, so the suite has hard limits. The check enforces
   Code takes what it needs as ports (`Delay`, `TextFile`, `Exec`, `Harness`), so tests pass fakes:
   see `apps/daemon/test/fake-harness.ts`.
 - `test/integration/` holds everything slower. `bun run test:integration` runs it; the gate does not.
-  It runs the real `codex app-server` against a scripted model (`mock-model.ts`), with no account.
+  It runs the real `codex app-server` and the real Claude Code against scripted models
+  (`mock-model.ts`, `mock-claude.ts`), with no account.
 - The whole unit suite has a 30s budget. `test.only`, `.skip` and `.todo` are not allowed. A test file
   may not exceed 400 lines.
 - Test behavior through a package's public surface, and delete a test when the behavior it covers goes.
@@ -72,7 +76,8 @@ those providers' models, which says how much each can read; written as the secon
 app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
 until the owner installs it, and `install.log`, what the last swap said;
 [decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)) and `worktrees/`.
-Conversations themselves are codex's, in `CODEX_HOME`: Cycle keeps no copy.
+Conversations themselves are the agent's that ran them: codex's in `CODEX_HOME`, Claude Code's in its
+own home. Cycle keeps no copy.
 Why: [decision note](.agents/notes/2026-11-12-codex-keeps-the-conversations.md). MCP servers and plugins
 are codex's too, in its `config.toml`: Cycle keeps no list of its own.
 
@@ -84,6 +89,9 @@ apps/desktop (Electron)      apps/daemon (Bun)                  harness/codex   
  page: packages/ui        ←   Git, Terminals, Files, usage  ←    its child processes  ←   exec, pty, fs, search
             └──────────── packages/protocol: model, wire methods, the shared reducer ────────────┘
 
+                              Harnesses: a session stays with       harness/claude        Claude Code
+                              the agent its model is of          →   SDK ↔ model       →   one process a session
+
  a second codex child, for the owner's model providers  →  packages/gateway: Responses API ↔ pi-ai  →  the provider
 ```
 
@@ -92,6 +100,18 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
 - `packages/protocol` is the harness-agnostic model (`Item`, `Turn`, `SessionEvent`), the client-daemon
   wire (`Methods`, `EventFrame`, `DaemonEvent`), the `Harness` interface, and `reduceSession`, which the
   daemon and the page both fold events with. It is platform-neutral: no runtime modules.
+- A `Harness` is four parts: `Agent` (sessions, turns, models), `Connector`, `Account` and `Machine`.
+  Codex gives all four and is the main one. Another agent beside it need only be an `Agent`, and
+  `Harnesses` (`apps/daemon/src/harnesses.ts`) joins them: a model says which agent a new session
+  starts on, the session stays there, and files, commands, terminals, the Connector and the account
+  are the main agent's. An agent that cannot start is left out and the daemon runs without it. Why:
+  [decision note](.agents/notes/2026-11-14-claude-code-beside-codex.md).
+- `harness/claude` is the only code that knows Claude Code, through the Claude Agent SDK.
+  `translate.ts` is the pure mapping; `claude-harness.ts` runs one Claude Code process for each session
+  in use, started with the session's mode, model and effort and closed after five idle minutes, and
+  reads stored sessions with the SDK's own calls. A turn is known by its prompt's id, live and stored.
+  Claude Code reads the owner's own settings, as its CLI does. Its `spawn` option starts Claude Code
+  somewhere other than this machine; nothing uses it yet.
 - `harness/codex` is the only code that knows codex. `translate.ts` is the pure mapping; `codex-harness.ts`
   drives `codex app-server` children (`process.ts`), starts one again if it dies, and brings a session
   back into it the next time it is used. Codex runs one model provider per process and keeps a thread
@@ -139,7 +159,8 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
 - `apps/desktop` is the Electron shell: it starts the daemon, loads its page, and gives the page a small
   bridge (`window.cycle`): a folder chooser, notifications, opening links. `bun run desktop:package`
   assembles a self-contained app from Electron's own dist, with the daemon compiled by Bun and codex's
-  platform binary inside; `bun run desktop:install` puts it in `/Applications/Cycle Codex.app`. A
+  platform binary inside; `bun run desktop:install` puts it in `/Applications/Cycle Codex.app`. Claude
+  Code is not carried: a packaged app uses the owner's own `claude` from their `PATH`. A
   packaged app starts its daemon with the owner's login shell environment, since Finder gives none.
 - The packaged macOS app updates itself from the GitHub releases of `OhMyJames/cycle`
   (`apps/desktop/src/update`): `plan.ts` and `updater.ts` are the decisions, `system.ts` what they do

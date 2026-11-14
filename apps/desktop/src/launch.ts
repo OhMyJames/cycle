@@ -10,8 +10,8 @@ export type DaemonLaunch = {
 
 /**
  * How the app starts its daemon. From the repository it runs the daemon's source under Bun, which
- * finds codex in `node_modules`. A packaged app has neither, so it runs the daemon it carries and
- * tells it where the codex it carries is. Either way the daemon takes a free port and serves the
+ * finds codex and Claude Code in `node_modules`. A packaged app has neither, so it runs the daemon
+ * it carries, tells it where the codex it carries is, and has it look for the owner's own `claude`. Either way the daemon takes a free port and serves the
  * page, and its data stays wherever `CYCLE_HOME` says, which the app does not set.
  */
 export function daemonLaunch(input: {
@@ -26,7 +26,8 @@ export function daemonLaunch(input: {
     return {
       command: path.join(appPath, DAEMON_BIN),
       args: [],
-      env: { ...env, CYCLE_CODEX_BIN: path.join(appPath, CODEX_BIN) },
+      // Claude Code is not carried: the owner's own `claude` is used, where there is one.
+      env: { ...env, CYCLE_CODEX_BIN: path.join(appPath, CODEX_BIN), CYCLE_CLAUDE_BIN: "claude" },
     };
   }
   // Paths hang off the app root (apps/desktop): the bundler rewrites __dirname.

@@ -48,7 +48,10 @@ export interface OwnTools {
 }
 
 export interface ClaudeHarnessOptions {
-  /** Path to the `claude` executable. Defaults to `CYCLE_CLAUDE_BIN`, then the one the SDK brings. */
+  /**
+   * The `claude` executable: a path, or a name to find on the `PATH`. Defaults to
+   * `CYCLE_CLAUDE_BIN`, then the one the SDK brings.
+   */
   bin?: string;
   env?: Record<string, string | undefined>;
   /** Receives what Claude Code prints to stderr. */
@@ -432,17 +435,18 @@ export class ClaudeHarness implements Agent {
   // Inside
 
   private async readModels(): Promise<ModelInfo[]> {
-    const query = this.sdk.query({
-      prompt: new Inbox<WireUserMessage>(),
-      options: { ...this.shared(), cwd: homedir(), permissionMode: "default" },
-    });
+    let query: ClaudeQuery | null = null;
     try {
+      query = this.sdk.query({
+        prompt: new Inbox<WireUserMessage>(),
+        options: { ...this.shared(), cwd: homedir(), permissionMode: "default" },
+      });
       const init = await query.initializationResult();
       return toModels(init.models ?? []);
     } catch (error) {
       throw new Error(`Claude Code could not start: ${message(error)}`, { cause: error });
     } finally {
-      query.close();
+      query?.close();
     }
   }
 
@@ -458,7 +462,7 @@ export class ClaudeHarness implements Agent {
     | "stderr"
   > {
     const { onLog, spawn } = this.options;
-    const bin = this.options.bin ?? process.env["CYCLE_CLAUDE_BIN"];
+    const bin = this.bin();
     return {
       env: this.env,
       settingSources: ["user", "project", "local"],
@@ -468,6 +472,15 @@ export class ClaudeHarness implements Agent {
       ...(spawn ? { spawnClaudeCodeProcess: spawn } : {}),
       ...(onLog ? { stderr: (data: string) => onLog(data.trimEnd()) } : {}),
     };
+  }
+
+  /** Where Claude Code is. A name is looked for where the owner's shell would look. */
+  private bin(): string | undefined {
+    const named = this.options.bin ?? this.env["CYCLE_CLAUDE_BIN"];
+    if (!named || named.includes("/")) return named || undefined;
+    const found = Bun.which(named, { PATH: this.env["PATH"] ?? "" });
+    if (!found) throw new Error(`\`${named}\` is not installed, or not on the PATH.`);
+    return found;
   }
 
   private emit(event: HarnessEvent): void {
