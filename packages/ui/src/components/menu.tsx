@@ -1,11 +1,14 @@
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
-  type CSSProperties,
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+  MenuCheckboxItem,
+  MenuContent,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+  Menu as UiMenu,
+} from "@ui-sdk/react/menu";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "./icons.tsx";
 
@@ -98,36 +101,52 @@ export function MenuList({
         type="button"
         role={entry.checked === undefined ? "menuitem" : "menuitemcheckbox"}
         aria-checked={entry.checked}
-        className={
-          entry.danger ? "menu-item danger" : entry.warning ? "menu-item warning" : "menu-item"
-        }
+        className={rowClass(entry)}
         disabled={entry.disabled}
         data-active={index === active}
         ref={index === active ? (node) => node?.scrollIntoView({ block: "nearest" }) : undefined}
         onClick={() => onPick(entry)}
       >
-        {entry.icon ? <Icon name={entry.icon} /> : icons ? <span className="icon-space" /> : null}
-        {entry.detail ? (
-          <span className="grow one-line fade-x" title={entry.detail}>
-            <span>{entry.label}</span>
-            <span className="detail">{entry.detail}</span>
-          </span>
-        ) : (
-          <span className="grow">
-            <span className="fade-x" style={{ display: "block" }}>
-              {entry.label}
-            </span>
-            {entry.sub ? <span className="sub">{entry.sub}</span> : null}
-          </span>
-        )}
-        {entry.hint ? <span className="hint">{entry.hint}</span> : null}
-        {entry.checked ? <Icon name="check" className="check" /> : null}
+        {rowContent(entry, icons)}
       </button>
     );
   });
 }
 
-/** A button that opens a list of choices beside it. */
+type MenuChoice = Extract<MenuEntry, { label: string }>;
+
+/** What a row shows, the same in a menu and in the palette's list. */
+function rowContent(entry: MenuChoice, icons: boolean): ReactNode {
+  return (
+    <>
+      {entry.icon ? <Icon name={entry.icon} /> : icons ? <span className="icon-space" /> : null}
+      {entry.detail ? (
+        <span className="grow one-line fade-x" title={entry.detail}>
+          <span>{entry.label}</span>
+          <span className="detail">{entry.detail}</span>
+        </span>
+      ) : (
+        <span className="grow">
+          <span className="fade-x" style={{ display: "block" }}>
+            {entry.label}
+          </span>
+          {entry.sub ? <span className="sub">{entry.sub}</span> : null}
+        </span>
+      )}
+      {entry.hint ? <span className="hint">{entry.hint}</span> : null}
+      {entry.checked ? <Icon name="check" className="check" /> : null}
+    </>
+  );
+}
+
+const rowClass = (entry: MenuChoice): string =>
+  entry.danger ? "menu-item danger" : entry.warning ? "menu-item warning" : "menu-item";
+
+/**
+ * A button that opens a list of choices beside it. The behavior is ui-sdk's menu: the focus goes
+ * into the list, the arrow keys, Home, End and typing a name move in it, Escape and a press outside
+ * close it, and the focus goes back to the button. The look is Cycle's `.menu`.
+ */
 export function Menu({
   children,
   entries,
@@ -149,93 +168,77 @@ export function Menu({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
-  const ref = useRef<HTMLSpanElement>(null);
-  const popup = useRef<HTMLDivElement>(null);
-  const [place, setPlace] = useState<CSSProperties | null>(null);
-  useDismiss(open, ref, () => setOpen(false));
   const list = open ? entries() : [];
-  const count = list.length;
-  // Placed against the window, 6 from its button, so no scroller or card it sits in can clip it.
-  useLayoutEffect(() => {
-    const anchor = ref.current?.getBoundingClientRect();
-    const node = popup.current;
-    if (!open || !anchor || !node) {
-      setPlace(null);
-      return;
-    }
-    const { offsetWidth, offsetHeight } = node;
-    const left =
-      side === "right"
-        ? anchor.right + 6
-        : align === "start"
-          ? anchor.left
-          : anchor.right - offsetWidth;
-    const top =
-      side === "right"
-        ? anchor.top
-        : side === "top"
-          ? anchor.top - 6 - offsetHeight
-          : anchor.bottom + 6;
-    setPlace({
-      left: Math.max(8, Math.min(left, window.innerWidth - offsetWidth - 8)),
-      top: Math.max(8, Math.min(top, window.innerHeight - offsetHeight - 8)),
-    });
-  }, [open, side, align, count]);
-  const items = list.filter(isItem).filter((entry) => !entry.disabled);
-  const pick = (entry: Extract<MenuEntry, { label: string }>) => {
-    setOpen(false);
-    entry.onSelect();
+  const icons = list.some((entry) => "label" in entry && entry.icon !== undefined);
+  // A heading names the rows under it, up to the next heading or line.
+  const groups: { heading?: string; rows: { entry: MenuEntry; at: number }[] }[] = [{ rows: [] }];
+  list.forEach((entry, at) => {
+    if ("heading" in entry) groups.push({ heading: entry.heading, rows: [] });
+    else if ("separator" in entry) groups.push({ rows: [{ entry, at }] }, { rows: [] });
+    else groups.at(-1)?.rows.push({ entry, at });
+  });
+  const row = ({ entry, at }: { entry: MenuEntry; at: number }) => {
+    if ("separator" in entry) return <MenuSeparator key={at} className="menu-separator" />;
+    if (!isItem(entry)) return null;
+    // A choice that is on or off says so; picking it closes the menu, as picking any row does.
+    return entry.checked === undefined ? (
+      <MenuItem
+        key={at}
+        className={rowClass(entry)}
+        label={entry.label}
+        disabled={entry.disabled ?? false}
+        onSelect={() => entry.onSelect()}
+      >
+        {rowContent(entry, icons)}
+      </MenuItem>
+    ) : (
+      <MenuCheckboxItem
+        key={at}
+        value={String(at)}
+        className={rowClass(entry)}
+        label={entry.label}
+        disabled={entry.disabled ?? false}
+        checked={entry.checked}
+        closeOnSelect
+        onCheckedChange={() => entry.onSelect()}
+      >
+        {rowContent(entry, icons)}
+      </MenuCheckboxItem>
+    );
   };
   return (
-    <span
-      className="menu-anchor"
-      ref={ref}
-      onKeyDown={(event) => {
-        if (!open) return;
-        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-          event.preventDefault();
-          const step = event.key === "ArrowDown" ? 1 : -1;
-          setActive((current) => (current + step + items.length) % Math.max(items.length, 1));
-        } else if (event.key === "Enter" && items[active]) {
-          event.preventDefault();
-          pick(items[active]);
-        }
-      }}
-    >
-      <button
-        type="button"
-        className={className}
-        title={title}
-        aria-label={title}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={(event) => {
-          event.stopPropagation();
-          setActive(-1);
-          setOpen((value) => !value);
-        }}
-      >
-        {children}
-      </button>
-      {open
-        ? createPortal(
-            <div
-              className="menu"
-              ref={popup}
-              role="menu"
-              data-side={side}
-              style={{
-                ...(width === undefined ? {} : { width, minWidth: width }),
-                ...(place ?? { visibility: "hidden" }),
-              }}
-            >
-              <MenuList entries={list} active={active} onPick={pick} />
-            </div>,
-            overlayRoot(),
-          )
-        : null}
+    <span className="menu-anchor">
+      <UiMenu open={open} onOpenChange={setOpen} modal={false}>
+        <MenuTrigger
+          className={className}
+          title={title}
+          aria-label={title}
+          disabled={disabled ?? false}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {children}
+        </MenuTrigger>
+        <MenuContent
+          className="menu"
+          side={side}
+          align={align}
+          sideOffset={6}
+          collisionPadding={8}
+          container={overlayRoot()}
+          style={width === undefined ? {} : { width, minWidth: width }}
+        >
+          {groups.map((group, index) =>
+            group.heading === undefined ? (
+              group.rows.map(row)
+            ) : (
+              <MenuGroup key={`group-${index}`}>
+                <MenuGroupLabel className="menu-label">{group.heading}</MenuGroupLabel>
+                {group.rows.map(row)}
+              </MenuGroup>
+            ),
+          )}
+        </MenuContent>
+      </UiMenu>
     </span>
   );
 }
@@ -281,7 +284,13 @@ export function Dialog({
   }, [onClose]);
   // Focus goes into the dialog when it opens, and back to where it was when it closes.
   // Read while drawing, before a field inside takes the focus for itself.
-  const [before] = useState(() => document.activeElement);
+  // A dialog opened from a menu's row comes back to that menu's button: the row is gone by then.
+  const [before] = useState(() => {
+    const at = document.activeElement;
+    return at?.closest(".menu")
+      ? document.querySelector('[data-slot="menu-trigger"][data-open]')
+      : at;
+  });
   useEffect(() => {
     if (!box.current?.contains(document.activeElement)) {
       box.current?.querySelector<HTMLElement>("input, textarea, button")?.focus();

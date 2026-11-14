@@ -372,13 +372,12 @@ function DeleteDialog({ info, onClose }: { info: SessionInfo; onClose(): void })
         ) : null}
       </div>
       <div className="dialog-actions">
-        <button type="button" className="button" onClick={onClose}>
+        <button type="button" className="button" autoFocus onClick={onClose}>
           Cancel
         </button>
         <button
           type="button"
           className="button danger"
-          autoFocus
           onClick={() => {
             onClose();
             void app.deleteSession(info.id, removeWorktree);

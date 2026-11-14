@@ -34,9 +34,9 @@ The skill in this repository is edited for Cycle: its tests, its commands, its s
 for agents follow the rules here, and its "In Cycle" section lists what was changed. Upstream's own
 copy does not, so an update from upstream is merged by hand.
 
-- A new interaction is built on ui-sdk. `Segmented` already is. The other components here (`Menu`,
-  `Dialog`, the palette, the model picker, the sidebar) are written by hand and work: move one only
-  when the owner asks.
+- A new interaction is built on ui-sdk. `Segmented`, `Menu` and the sidebar's Answer popover
+  already are. The other components here (`Dialog`, the palette, the model picker, the composer's
+  lists) are written by hand and work: move one only when the owner asks.
 - A ui-sdk part takes Cycle's class with `className`, and its states are styled in `src/styles/`.
   Never import `@ui-sdk/core/web.css`.
 - `createAgent`, agent tools and WebMCP let an agent read and operate the page, which holds the

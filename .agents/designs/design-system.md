@@ -92,6 +92,7 @@ Four kinds, each a class:
 - A control drawn smaller than 24 (the switch, a tab's close) takes a press within 24.
 - Focus: `:focus-visible` only. A control gets the outline, a field gets the edge and glow.
 - A destructive action is `.button.danger` and always behind a confirmation that says what is lost.
+  The confirmation opens with the focus on Cancel, so a second Enter never removes anything.
 - A switch (`Switch`) is for a setting that applies at once; a checkbox for a choice inside a
   form or dialog that applies with its action. Both are Cycle's own drawing, never the platform's.
 - A select is `select.field`, with the disclosure chevron drawn in. Prefer `Menu` when the choices
@@ -170,8 +171,10 @@ class. The full text is in the `title`.
 
 - The keyboard always has somewhere to go. A letter typed with nothing focused goes to the
   composer; opening a session focuses it.
+- A menu takes the focus when it opens: the arrow keys, Home, End and typing a name move in it,
+  and Escape gives the focus back to its button.
 - A dialog takes the focus when it opens, keeps Tab inside itself, and gives the focus back to
-  where it was when it closes. Escape closes the topmost thing only: a dialog before the panel or
+  where it was when it closes, or to the menu's button when a menu's row opened it. Escape closes the topmost thing only: a dialog before the panel or
   menu it was opened from.
 - Every control with a `title` shows Cycle's own tip: after the pointer rests 500ms, at once when
   moving from one tip to the next, above the control unless it is at the window's top, and never

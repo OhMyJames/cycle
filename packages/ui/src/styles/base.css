@@ -628,25 +628,29 @@ input::placeholder {
 .menu-item > .icon {
   color: var(--icon-default);
 }
-.menu-item[data-active="true"],
+/* The row the keys are on: `data-active` in the palette's list, `data-highlighted` in a menu. */
+.menu-item:is([data-active="true"], [data-highlighted]),
 .menu-item:hover {
   background: var(--surface-control-hover);
+}
+.menu-item:focus-visible {
+  outline: none;
 }
 .menu-item:active {
   background: var(--surface-control-pressed);
 }
-.menu-item:disabled {
+.menu-item:is(:disabled, [data-disabled]) {
   color: var(--text-disabled);
   background: transparent;
 }
-.menu-item:disabled > .icon {
+.menu-item:is(:disabled, [data-disabled]) > .icon {
   color: var(--icon-disabled);
 }
 .menu-item.danger,
 .menu-item.danger > .icon {
   color: var(--state-error);
 }
-.menu-item.danger:is(:hover, [data-active="true"]) {
+.menu-item.danger:is(:hover, [data-active="true"], [data-highlighted]) {
   background: color-mix(in srgb, var(--state-error) 10%, transparent);
 }
 .menu-item.warning,

@@ -60,7 +60,7 @@ Making it agent-ready is not a step in Cycle. Read [references/agent-ready.md](r
 - **Key lists by value or id**, never by index.
 - **Right to left needs no provider.** Components read the direction from the page.
 - **Comments are rare.** Write one only when a reader would get the code wrong without it, like a browser quirk or a trade-off, in one or two lines. Never comment what the code does, what a value is, or which section starts here, and no JSDoc blocks on app code.
-- **Don't hand-roll what we ship, in new code.** Before you write any `role=` attribute, look for the component in the table in [references/build-interface.md](references/build-interface.md). Cycle's older components (`Menu`, `Dialog`, the palette, the model picker, the sidebar) are written by hand and stay so until the owner asks for one to be moved: don't rewrite one in passing, and don't copy its hand-written roles into something new.
+- **Don't hand-roll what we ship, in new code.** Before you write any `role=` attribute, look for the component in the table in [references/build-interface.md](references/build-interface.md). Cycle's older components (`Dialog`, the palette, the model picker, the composer's lists) are written by hand and stay so until the owner asks for one to be moved: don't rewrite one in passing, and don't copy its hand-written roles into something new.
 - **A choice that is dangerous is never taken by moving.** In a radio group, the arrow keys check what they land on. Where one option runs without asking, like Full access, cancel a change whose `details.reason` is `list-navigation`, as `Segmented` in `packages/ui/src/components/controls.tsx` does for an option marked `deliberate`.
 
 ## When you're done

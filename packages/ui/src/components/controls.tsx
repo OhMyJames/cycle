@@ -122,13 +122,12 @@ export function ConfirmDialog({
         <p className="dialog-text">{text}</p>
       </div>
       <div className="dialog-actions">
-        <button type="button" className="button" onClick={onClose}>
+        <button type="button" className="button" autoFocus onClick={onClose}>
           Cancel
         </button>
         <button
           type="button"
           className="button danger"
-          autoFocus
           onClick={() => {
             onClose();
             onConfirm();
