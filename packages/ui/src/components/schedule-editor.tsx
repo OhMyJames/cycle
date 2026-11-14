@@ -152,6 +152,7 @@ export function ScheduleEditor({
                         type="button"
                         className="weekday"
                         aria-pressed={on}
+                        aria-label={name}
                         title={name}
                         onClick={() => {
                           const all =

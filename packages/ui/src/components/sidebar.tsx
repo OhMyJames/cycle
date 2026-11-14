@@ -529,6 +529,7 @@ function SessionSidebar() {
   const [limit, setLimit] = useState(PAGE);
   const [deleting, setDeleting] = useState<SessionInfo | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
 
   const all = useMemo(() => Object.values(sessions.byId), [sessions.byId]);
   const projects = useMemo(() => {
@@ -561,6 +562,7 @@ function SessionSidebar() {
     <aside className="sidebar" data-inset={host.insetTitleBar()}>
       <div className="sidebar-top">
         <button
+          ref={searchButton}
           type="button"
           className="icon-button"
           title="Search sessions"
@@ -601,6 +603,8 @@ function SessionSidebar() {
                 event.stopPropagation();
                 setQuery("");
                 setSearching(false);
+                // The field goes away with the focus in it: give it back to what opened it.
+                searchButton.current?.focus();
               }
               const first = groups[0]?.sessions[0];
               if (event.key === "Enter" && first && !isComposing(event)) {
