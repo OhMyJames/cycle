@@ -359,6 +359,19 @@ export class CycleApp {
     });
   }
 
+  /**
+   * Takes the models on offer. A session set up before any were known started on a guess: it is
+   * set up again, now that the agent and where the last one ran can be told.
+   */
+  private setModels(models: ModelInfo[]): void {
+    const guessed = this.models.get().length === 0 && models.length > 0;
+    this.models.set(models);
+    const view = this.view.get();
+    if (guessed && view.draft && view.page === "thread" && !view.sessionId) {
+      this.newSession(view.draft.cwd);
+    }
+  }
+
   /** Moves the session being set up to another agent: its model and where it runs start over. */
   setDraftHarness(harness: string): void {
     const draft = this.view.get().draft;
@@ -656,7 +669,7 @@ export class CycleApp {
       if (view.sessionId && !this.followed.includes(view.sessionId))
         void this.follow(view.sessionId);
       void this.request("models.list", {}).then(
-        ({ models }) => this.models.set(models),
+        ({ models }) => this.setModels(models),
         () => {},
       );
       void this.request("providers.list", {}).then(

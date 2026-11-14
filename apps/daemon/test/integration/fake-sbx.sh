@@ -1,7 +1,7 @@
 #!/bin/bash
 # A stand-in for Docker's `sbx`, for the commands Cycle gives it, as its CLI reference has them:
 #   sbx ls -q
-#   sbx --no-input create --name NAME [--cpus N] [--memory SIZE] [-e KEY...] [-t TAG --pull never]
+#   sbx --no-input create --name NAME [--cpus N] [--memory SIZE] [--env-file FILE] [-t TAG --pull never]
 #       claude WORKSPACE [HOST:TARGET...]
 #   sbx exec [-i] [-w DIR] [-e KEY=VALUE...] NAME COMMAND [ARG...]
 #   sbx rm --force NAME
@@ -31,8 +31,7 @@ case "$command" in
       case "$1" in
         --name) name="$2"; shift 2 ;;
         --cpus|--memory) made+=("$1 $2"); shift 2 ;;
-        # A variable named alone has its value in this process's environment.
-        -e) made+=("env $2=${!2}"); shift 2 ;;
+        --env-file) while read -r pair; do made+=("env $pair"); done < "$2"; shift 2 ;;
         -t) template="$2"; shift 2 ;;
         --pull) shift 2 ;;
         claude) shift; break ;;

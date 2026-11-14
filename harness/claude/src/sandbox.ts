@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { SpawnedProcess } from "./sdk.ts";
 
@@ -96,6 +96,10 @@ export function plainSpec(id: string): SandboxSpec {
 
 /** The home of the user an agent runs as in a sandbox Docker provides. */
 const SANDBOX_HOME = "/home/agent";
+/** How long `sbx` has to make a sandbox, pulling its image the first time. */
+const MAKE_TIMEOUT_MS = 20 * 60_000;
+/** How long a setup script has. One that waits for an answer waits this long, and has failed. */
+const SETUP_TIMEOUT_MS = 30 * 60_000;
 /** Claude Code names a long folder by a part of its path and a hash, which is not ours to guess. */
 const MAX_FOLDER = 200;
 
@@ -143,10 +147,19 @@ function templatePrefix(environment: string): string {
   return `cycle-env-${environment}:`;
 }
 
+/** An environment's variables as the file `sbx` reads them from: a `NAME=value` on each line. */
+export function envFile(variables: Record<string, string>): string {
+  return Object.entries(variables)
+    .toSorted(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}\n`)
+    .join("");
+}
+
 /**
  * `sbx` arguments that make a folder's sandbox, with the folder's conversations shared into it.
- * A variable goes by name alone: `sbx` takes its value from its own environment, so no value is in
- * an argument. `template` is a saved sandbox to start from.
+ * Its variables are read from a file, `variablesFile`: no value is in an argument, and none is in
+ * the environment `sbx` itself runs with, where a `PATH` or a `HOME` meant for the sandbox would
+ * change what `sbx` does here. `template` is a saved sandbox to start from.
  */
 export function createArgs(
   name: string,
@@ -154,6 +167,7 @@ export function createArgs(
   claudeHome: string,
   spec: SandboxSpec = plainSpec(""),
   template: string | null = null,
+  variablesFile: string | null = null,
 ): string[] {
   const folder = projectFolder(cwd);
   return [
@@ -163,9 +177,7 @@ export function createArgs(
     name,
     ...(spec.cpus ? ["--cpus", String(spec.cpus)] : []),
     ...(spec.memoryGb ? ["--memory", `${spec.memoryGb}g`] : []),
-    ...Object.keys(spec.variables)
-      .toSorted()
-      .flatMap((key) => ["-e", key]),
+    ...(variablesFile ? ["--env-file", variablesFile] : []),
     ...(template ? ["-t", template, "--pull", "never"] : []),
     "claude",
     cwd,
@@ -217,8 +229,13 @@ export interface SbxResult {
 export interface SbxPorts {
   /** Where `sbx` is, or null when it is not installed. */
   which(): string | null;
-  /** Runs `sbx` with these arguments to its end, with more in its environment and its input. */
-  run(args: string[], more?: { env?: Record<string, string>; input?: string }): Promise<SbxResult>;
+  /**
+   * Runs `sbx` with these arguments to its end, with this on its input. One that is not over
+   * after `timeoutMs` is stopped, and has failed.
+   */
+  run(args: string[], more?: { input?: string; timeoutMs?: number }): Promise<SbxResult>;
+  /** Keeps text in a file only the owner can read, for as long as `use` runs. */
+  withFile<T>(text: string, use: (path: string) => Promise<T>): Promise<T>;
   /** Starts `sbx` with these arguments and answers the process. */
   start(args: string[], signal: AbortSignal): SpawnedProcess;
   makeFolder(path: string): Promise<void>;
@@ -270,11 +287,17 @@ export class SbxSandboxes implements Sandboxes {
   start(name: string, request: SpawnRequest): SpawnedProcess {
     const child = this.ports.start(execArgs(name, request), request.signal);
     this.running.set(name, (this.running.get(name) ?? 0) + 1);
-    child.once("exit", () => {
+    let over = false;
+    const ended = () => {
+      if (over) return;
+      over = true;
       const left = (this.running.get(name) ?? 1) - 1;
       if (left > 0) this.running.set(name, left);
       else this.running.delete(name);
-    });
+    };
+    child.once("exit", ended);
+    // One that never started says so, and never exits.
+    child.once("error", ended);
     return child;
   }
 
@@ -286,8 +309,10 @@ export class SbxSandboxes implements Sandboxes {
     if (!this.available()) return;
     for (const [name, made] of Object.entries(this.book.allMade())) {
       if (made.environment !== environment || this.running.has(name)) continue;
-      await this.ports.run(["rm", "--force", name]);
-      this.book.setMade(name, null);
+      const removed = await this.ports.run(["rm", "--force", name]);
+      // One that could not be removed is still known, so it can be found and removed later.
+      if (removed.exitCode === 0) this.book.setMade(name, null);
+      else this.ports.log?.(said(`sbx could not remove ${name}`, removed));
     }
     await this.dropTemplates(environment, null);
   }
@@ -364,19 +389,22 @@ export class SbxSandboxes implements Sandboxes {
     await this.ports.makeFolder(join(this.claudeHome, "projects", projectFolder(cwd)));
     const tag = spec.setup.trim() ? templateTag(spec) : null;
     const saved = tag !== null && (await this.templates()).includes(tag);
-    const made = await this.ports.run(
-      createArgs(name, cwd, this.claudeHome, spec, saved ? tag : null),
-      {
-        env: spec.variables,
-      },
-    );
+    const create = (file: string | null) =>
+      this.ports.run(createArgs(name, cwd, this.claudeHome, spec, saved ? tag : null, file), {
+        timeoutMs: MAKE_TIMEOUT_MS,
+      });
+    const variables = envFile(spec.variables);
+    const made = variables ? await this.ports.withFile(variables, create) : await create(null);
     if (made.exitCode !== 0) throw new Error(said("sbx could not make the sandbox", made));
     if (tag === null || saved) return;
-    const setup = await this.ports.run(["exec", "-w", cwd, name, "bash", "-lc", spec.setup]);
+    const setup = await this.ports.run(["exec", "-w", cwd, name, "bash", "-lc", spec.setup], {
+      timeoutMs: SETUP_TIMEOUT_MS,
+    });
     if (setup.exitCode !== 0) {
       // A sandbox half set up is not one to work in, or to find again as if it were whole.
       await this.ports.run(["rm", "--force", name]);
-      throw new Error(said("The sandbox's setup script failed", setup));
+      // What the script printed may hold a variable's value, which is not for the page or a log.
+      throw new Error(hide(said("The sandbox's setup script failed", setup), spec.variables));
     }
     // Saved, the next folder's sandbox starts from here instead of running the script again.
     const kept = await this.ports.run(["template", "save", name, tag]);
@@ -430,6 +458,15 @@ export class SbxSandboxes implements Sandboxes {
   }
 }
 
+/** A text with each variable's value taken out of it. */
+function hide(text: string, variables: Record<string, string>): string {
+  let shown = text;
+  for (const value of Object.values(variables)) {
+    if (value.length >= 4) shown = shown.split(value).join("***");
+  }
+  return shown;
+}
+
 function plainMade(environment: string): MadeSandbox {
   return {
     environment,
@@ -462,14 +499,28 @@ export function sbxSandboxes(
           stdin: more?.input === undefined ? "ignore" : new Response(more.input),
           stdout: "pipe",
           stderr: "pipe",
-          env: { ...childEnv, ...more?.env },
+          env: childEnv,
+          ...(more?.timeoutMs ? { timeout: more.timeoutMs } : {}),
         });
         const [stdout, stderr, exitCode] = await Promise.all([
           new Response(child.stdout).text(),
           new Response(child.stderr).text(),
           child.exited,
         ]);
+        if (child.signalCode && more?.timeoutMs) {
+          return { exitCode: exitCode || 1, stdout, stderr: `${stderr}\nIt took too long.` };
+        }
         return { exitCode, stdout, stderr };
+      },
+      async withFile(text, use) {
+        const folder = await mkdtemp(join(tmpdir(), "cycle-sbx-"));
+        const file = join(folder, "variables");
+        try {
+          await writeFile(file, text, { mode: 0o600 });
+          return await use(file);
+        } finally {
+          await rm(folder, { recursive: true, force: true });
+        }
       },
       // A child process is what the SDK starts itself: it has all the SDK asks of one.
       start: (args, signal) =>

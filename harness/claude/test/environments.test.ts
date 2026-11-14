@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   type SandboxSpec,
   createArgs,
+  envFile,
   plainSpec,
   sandboxName,
   specVersion,
@@ -17,9 +18,9 @@ function node(change: Partial<SandboxSpec> = {}): SandboxSpec {
   return { ...plainSpec("node"), ...change };
 }
 
-test("a sandbox is made with its environment's size and variables, whose values are in no argument", async () => {
+test("a sandbox is made with its environment's size and variables, whose values are in a file alone", async () => {
   const spec = node({ cpus: 4, memoryGb: 8, variables: { NPM_TOKEN: "s3cret", CI: "1" } });
-  expect(createArgs("box", app, "/home/me/.claude", spec).slice(0, 12)).toEqual([
+  expect(createArgs("box", app, "/home/me/.claude", spec, null, "/tmp/v").slice(0, 10)).toEqual([
     "--no-input",
     "create",
     "--name",
@@ -28,17 +29,19 @@ test("a sandbox is made with its environment's size and variables, whose values 
     "4",
     "--memory",
     "8g",
-    "-e",
-    "CI",
-    "-e",
-    "NPM_TOKEN",
+    "--env-file",
+    "/tmp/v",
   ]);
-  const { sandboxes, given } = fakeSbx([], [spec]);
+  expect(envFile(spec.variables)).toBe("CI=1\nNPM_TOKEN=s3cret\n");
+  const { sandboxes, given, files } = fakeSbx([], [spec]);
   await sandboxes.ensure(app, { environment: "node" });
-  const create = given.find((one) => one.args.includes("create"));
-  // `sbx` reads a variable named alone from its own environment.
-  expect(create?.env).toEqual({ NPM_TOKEN: "s3cret", CI: "1" });
-  expect(JSON.stringify(create?.args)).not.toContain("s3cret");
+  // Not an argument, and not in the environment `sbx` itself runs with.
+  expect(files).toEqual(["CI=1\nNPM_TOKEN=s3cret\n"]);
+  expect(JSON.stringify(given)).not.toContain("s3cret");
+  // With no variables there is no file to keep.
+  const plain = fakeSbx();
+  await plain.sandboxes.ensure(app, { environment: "standard" });
+  expect(plain.files).toEqual([]);
 });
 
 test("the setup script runs once in a new sandbox, which is saved for the next folder's to start from", async () => {
@@ -69,6 +72,12 @@ test("a setup script that fails leaves no sandbox, and one that cannot be saved 
     "The sandbox's setup script failed: it broke",
   );
   await Promise.resolve();
+  // What the script printed may repeat a variable's value: it is not said on.
+  const leaky = fakeSbx([], [node({ setup: "exit 1", variables: { TOKEN: "it broke" } })]);
+  leaky.state.failing = "exec";
+  expect(leaky.sandboxes.ensure(app, { environment: "node" })).rejects.toThrow(
+    "The sandbox's setup script failed: ***",
+  );
   const unsaved = fakeSbx([], [spec]);
   unsaved.state.failing = "template save";
   const name = await unsaved.sandboxes.ensure(app, { environment: "node" });
@@ -132,11 +141,14 @@ test("hosts are opened and closed on the sandbox as it is, with no making again"
 
 test("an environment that is gone takes its sandboxes and saved sandbox with it, but for one in use", async () => {
   const spec = node({ setup: "npm ci" });
-  const { sandboxes, names, templates, made } = fakeSbx([], [spec, plainSpec("standard")]);
+  const { sandboxes, names, templates, made, started } = fakeSbx([], [spec, plainSpec("standard")]);
   const idle = await sandboxes.ensure(app, { environment: "node" });
   const busy = await sandboxes.ensure("/Users/me/other", { environment: "node" });
   const kept = await sandboxes.ensure(app, { environment: "standard" });
   sandboxes.start(busy, request);
+  // One that never started is not running.
+  sandboxes.start(idle, request);
+  started.at(-1)?.fail();
   await sandboxes.forget("node");
   expect(names.toSorted()).toEqual([busy, kept].toSorted());
   expect(Object.keys(made).toSorted()).toEqual([busy, kept].toSorted());

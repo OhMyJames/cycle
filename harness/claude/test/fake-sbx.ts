@@ -7,13 +7,14 @@ import {
   plainSpec,
 } from "../src/index.ts";
 
-/** A process that does nothing until a test ends it. */
-export function fakeProcess(): { process: SpawnedProcess; exit(): void } {
-  const listeners: (() => void)[] = [];
+/** A process that does nothing until a test ends it, or says it never started. */
+export function fakeProcess(): { process: SpawnedProcess; exit(): void; fail(): void } {
+  const listeners: Record<string, (() => void)[]> = {};
   const process = {
-    once: (_event: string, listener: () => void) => void listeners.push(listener),
+    once: (event: string, listener: () => void) => void (listeners[event] ??= []).push(listener),
   } as unknown as SpawnedProcess;
-  return { process, exit: () => listeners.splice(0).forEach((listener) => listener()) };
+  const fire = (event: string) => (listeners[event] ?? []).splice(0).forEach((each) => each());
+  return { process, exit: () => fire("exit"), fail: () => fire("error") };
 }
 
 /** The owner's environments and what was made of them, in memory. */
@@ -41,7 +42,8 @@ function ok(stdout = "") {
  */
 export function fakeSbx(names: string[] = [], specs?: SandboxSpec[]) {
   const asked: string[][] = [];
-  const given: { args: string[]; env?: Record<string, string>; input?: string }[] = [];
+  const given: { args: string[]; input?: string; timeoutMs?: number }[] = [];
+  const files: string[] = [];
   const folders: string[] = [];
   const templates: string[] = [];
   const secrets: string[] = [];
@@ -77,6 +79,10 @@ export function fakeSbx(names: string[] = [], specs?: SandboxSpec[]) {
         started.push(one);
         return one.process;
       },
+      withFile: async (text, use) => {
+        files.push(text);
+        return use("/tmp/variables");
+      },
       makeFolder: async (path) => void folders.push(path),
       log: (line) => void logged.push(line),
     },
@@ -88,5 +94,18 @@ export function fakeSbx(names: string[] = [], specs?: SandboxSpec[]) {
     asked
       .map((args) => args.filter((arg) => arg !== "--no-input").join(" "))
       .filter((line) => !/^(ls|template ls|secret ls)\b/.test(line));
-  return { sandboxes, asked, given, did, folders, templates, started, logged, state, made, names };
+  return {
+    sandboxes,
+    asked,
+    given,
+    files,
+    did,
+    folders,
+    templates,
+    started,
+    logged,
+    state,
+    made,
+    names,
+  };
 }

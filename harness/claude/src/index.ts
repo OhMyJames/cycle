@@ -11,6 +11,7 @@ export {
   SANDBOX_SERVICES,
   SbxSandboxes,
   createArgs,
+  envFile,
   execArgs,
   plainSpec,
   projectFolder,

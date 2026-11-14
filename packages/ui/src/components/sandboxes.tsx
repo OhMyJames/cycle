@@ -158,7 +158,7 @@ function EnvironmentForm({
           className="field area mono"
           aria-label="Setup script"
           placeholder={
-            "Run once with bash in a new sandbox, in the folder\nsudo apt-get install -y ripgrep\nnpm ci"
+            "Run once with bash for the environment, to install what its sandboxes need\nsudo apt-get install -y ripgrep"
           }
           spellCheck={false}
           value={form.setup}
@@ -167,8 +167,9 @@ function EnvironmentForm({
       </div>
       <div className="caption muted">
         Hosts take effect the next time a sandbox is used. For anything else that changes, a sandbox
-        is made again the next time it is used and no session is running in it. A sandbox that has
-        run the setup script is saved, and the next folder's starts from it.
+        is made again the next time it is used and no session is running in it. The setup script
+        runs in the first sandbox made, which is then saved: the next folder's starts from it
+        without running the script, so what one project needs (npm ci) is not for here.
       </div>
       {problem ? (
         <div className="caption tone-error" role="alert">
@@ -321,6 +322,13 @@ export function SandboxesSection() {
   /** The environment being changed, `{ id: null }` for one being added, or null. */
   const [editing, setEditing] = useState<{ id: string | null } | null>(null);
   const edited = environments.find((one) => one.id === editing?.id) ?? null;
+  // Docker's sandboxes may have been installed since the page connected.
+  useEffect(() => {
+    app.request("sandboxes.list", {}).then(
+      (value) => app.sandboxes.set(value),
+      () => {},
+    );
+  }, [app]);
   return (
     <>
       {available ? null : (

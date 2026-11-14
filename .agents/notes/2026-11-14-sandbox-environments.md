@@ -2,7 +2,7 @@
 
 Status: accepted
 Date: 2026-11-14
-Basis: the `sbx` CLI reference (docs.docker.com/reference/cli/sbx): `create --cpus --memory -e -t
+Basis: the `sbx` CLI reference (docs.docker.com/reference/cli/sbx): `create --cpus --memory --env-file -t
 --pull`, `exec`, `rm --force`, `template save|ls|rm`, `policy allow|rm network --sandbox`,
 `secret set|ls`. Checked against a stand-in for `sbx` and the real Claude Code, not a running `sbx`.
 
@@ -28,7 +28,12 @@ hash of its path and that id, so a folder has one sandbox for each environment.
   user. A sandbox that ran it is saved as `cycle-env-<id>:<hash of the script>`, and the next
   folder's sandbox of that environment starts from the saved one instead of running the script.
 - A variable's value never reaches the page (it is given names, and sends null to keep a value) and
-  is never an argument: `sbx create -e NAME` reads it from the environment `sbx` is started with.
+  is never an argument: `sbx create --env-file` reads it from a file only the owner can read, which
+  is removed once `sbx` is done. It is not put in the environment `sbx` itself runs with, where a
+  `PATH` or a `HOME` meant for the sandbox would change what `sbx` does on this machine.
+- The setup script's output is not said on with a variable's value in it, and making a sandbox and
+  its setup script each have a time limit, so one that waits for an answer fails instead of holding
+  the folder's sessions.
 - A sign-in is one of `sbx`'s own secrets, for every sandbox: the page sends it once, the daemon
   writes it to `sbx secret set <service>` on its input, and Cycle keeps none of it. What `sbx` says
   when that fails is not passed on, since it could repeat its input.

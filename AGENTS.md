@@ -30,7 +30,7 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
   An MCP server's environment values count: the page is given their names only.
   A provider's key goes from the page to the daemon once, and no wire method gives it back.
   A sandbox environment's variable values count too: the page is given their names, and `sbx` is
-  given a value through its own environment, never as an argument. A sandbox's sign-in is handed
+  given a value in a file only the owner can read, removed once read, never as an argument. A sandbox's sign-in is handed
   to `sbx` over its input and kept nowhere in Cycle.
 - `/Applications/Cycle.app` is old-cycle's and may be in use. The installer and the updater write only
   `Cycle Codex.app`, and only over an app whose identifier is `dev.cycle.codex`.
@@ -116,7 +116,7 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   reads stored sessions with the SDK's own calls. A turn is known by its prompt's id, live and stored.
   Claude Code reads the owner's own settings, as its CLI does.
 - A session can run its agent in a Docker sandbox (`sbx`) on this machine: `harness/claude/src/sandbox.ts`.
-  There is one sandbox for a folder, made when first asked for, and it sees the folder at the same
+  A folder's sandbox is made when first asked for, and it sees the folder at the same
   path, so only Claude Code moves into it, started with `sbx exec`; files, git and terminals stay this
   machine's. Of the owner's Claude Code home only the folder's conversations are shared into it, so
   they are stored and read here. The sandbox has its own sign-in (`sbx secret set anthropic`), no
