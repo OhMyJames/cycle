@@ -50,6 +50,12 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
     external: ["@openai/codex"],
     runtimeModules: true,
   },
+  // The only code that knows Claude Code, through the Claude Agent SDK.
+  "@cycle/harness-claude": {
+    workspace: ["@cycle/protocol"],
+    external: ["@anthropic-ai/claude-agent-sdk"],
+    runtimeModules: true,
+  },
   // The only code that knows pi-ai, which speaks each model provider's own protocol.
   "@cycle/gateway": {
     workspace: ["@cycle/protocol"],
@@ -57,7 +63,12 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
     runtimeModules: true,
   },
   "@cycle/daemon": {
-    workspace: ["@cycle/protocol", "@cycle/harness-codex", "@cycle/gateway"],
+    workspace: [
+      "@cycle/protocol",
+      "@cycle/harness-codex",
+      "@cycle/harness-claude",
+      "@cycle/gateway",
+    ],
     external: [],
     runtimeModules: true,
   },

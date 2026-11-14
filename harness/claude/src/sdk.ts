@@ -1,0 +1,115 @@
+import {
+  archiveSession,
+  deleteSession,
+  forkSession,
+  getSessionInfo,
+  getSessionMessages,
+  listSessions,
+  query,
+  renameSession,
+  unarchiveSession,
+} from "@anthropic-ai/claude-agent-sdk";
+import type {
+  WireHistoryMessage,
+  WireMessage,
+  WireModelInfo,
+  WirePermissionResult,
+  WirePermissionUpdate,
+  WireSessionInfo,
+  WireUserMessage,
+} from "./wire.ts";
+
+/** A process the SDK was given in place of one it starts itself. */
+export interface SpawnedProcess {
+  stdin: unknown;
+  stdout: unknown;
+  readonly killed: boolean;
+  readonly exitCode: number | null;
+  kill(signal: string): boolean;
+  on(event: string, listener: (...args: never[]) => void): void;
+  once(event: string, listener: (...args: never[]) => void): void;
+  off(event: string, listener: (...args: never[]) => void): void;
+}
+
+/** What the harness starts a Claude Code process with: the SDK's options it uses, and no others. */
+export interface QueryOptions {
+  cwd: string;
+  env: Record<string, string>;
+  model?: string;
+  effort?: string;
+  /** The id a new session takes. */
+  sessionId?: string;
+  /** The stored session to continue, and the entry to cut it after first. */
+  resume?: string;
+  resumeSessionAt?: string;
+  permissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  allowDangerouslySkipPermissions?: boolean;
+  sandbox?: { enabled: boolean; autoAllowBashIfSandboxed: boolean };
+  includePartialMessages: boolean;
+  settingSources: ("user" | "project" | "local")[];
+  systemPrompt: { type: "preset"; preset: "claude_code" };
+  canUseTool?: (
+    tool: string,
+    input: Record<string, unknown>,
+    context: {
+      signal: AbortSignal;
+      suggestions?: WirePermissionUpdate[];
+      title?: string;
+      decisionReason?: string;
+      toolUseID: string;
+    },
+  ) => Promise<WirePermissionResult>;
+  pathToClaudeCodeExecutable?: string;
+  spawnClaudeCodeProcess?: (options: {
+    command: string;
+    args: string[];
+    cwd?: string;
+    env: Record<string, string | undefined>;
+    signal: AbortSignal;
+  }) => SpawnedProcess;
+  stderr?: (data: string) => void;
+}
+
+/** A running Claude Code process: its stream, and what can be asked of it meanwhile. */
+export interface ClaudeQuery extends AsyncIterable<WireMessage> {
+  /** Answers once the process is up, with what it offers. Fails if it could not start. */
+  initializationResult(): Promise<{ models?: WireModelInfo[] }>;
+  interrupt(): Promise<unknown>;
+  /** Sets the MCP servers given to this process alone, over its own pipe. */
+  setMcpServers(servers: Record<string, unknown>): Promise<unknown>;
+  close(): void;
+}
+
+interface InFolder {
+  dir?: string;
+}
+
+/** The Claude Agent SDK as this harness uses it, so a test can stand in for it. */
+export interface ClaudeSdk {
+  query(params: { prompt: AsyncIterable<WireUserMessage>; options: QueryOptions }): ClaudeQuery;
+  listSessions(options?: { limit?: number }): Promise<WireSessionInfo[]>;
+  getSessionInfo(sessionId: string, options?: InFolder): Promise<WireSessionInfo | undefined>;
+  getSessionMessages(sessionId: string, options?: InFolder): Promise<WireHistoryMessage[]>;
+  forkSession(
+    sessionId: string,
+    options?: InFolder & { upToMessageId?: string },
+  ): Promise<{ sessionId: string }>;
+  renameSession(sessionId: string, title: string, options?: InFolder): Promise<void>;
+  archiveSession(sessionId: string, options?: InFolder): Promise<void>;
+  unarchiveSession(sessionId: string, options?: InFolder): Promise<void>;
+  deleteSession(sessionId: string, options?: InFolder): Promise<void>;
+}
+
+/** The SDK itself. Its types are wider than ours and are narrowed here, in one place. */
+export const realSdk: ClaudeSdk = {
+  query: (params) =>
+    query(params as unknown as Parameters<typeof query>[0]) as unknown as ClaudeQuery,
+  listSessions: (options) => listSessions(options),
+  getSessionInfo: (sessionId, options) => getSessionInfo(sessionId, options),
+  getSessionMessages: (sessionId, options) => getSessionMessages(sessionId, options),
+  forkSession: (sessionId, options) => forkSession(sessionId, options),
+  renameSession: (sessionId, title, options) => renameSession(sessionId, title, options),
+  archiveSession: (sessionId, options) => archiveSession(sessionId, options),
+  unarchiveSession: (sessionId, options) => unarchiveSession(sessionId, options),
+  deleteSession: (sessionId, options) => deleteSession(sessionId, options),
+};

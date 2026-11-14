@@ -1,0 +1,16 @@
+export { ClaudeHarness, type ClaudeHarnessOptions, type OwnTools } from "./claude-harness.ts";
+export type { ClaudeQuery, ClaudeSdk, QueryOptions, SpawnedProcess } from "./sdk.ts";
+export {
+  HARNESS_NAME,
+  StreamReader,
+  finishTool,
+  modeOptions,
+  reviewPrompt,
+  toApproval,
+  toModels,
+  toPermission,
+  toSession,
+  toTurns,
+  toUserMessage,
+  toolItem,
+} from "./translate.ts";

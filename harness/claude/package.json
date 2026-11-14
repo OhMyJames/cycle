@@ -1,0 +1,13 @@
+{
+  "name": "@cycle/harness-claude",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.325",
+    "@cycle/protocol": "workspace:*"
+  }
+}
