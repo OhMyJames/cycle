@@ -50,7 +50,11 @@ export type Item =
       actions: CommandAction[];
       status: ItemStatus;
     })
-  | (ItemBase & { kind: "fileChange"; changes: FileChange[]; status: ItemStatus })
+  | (ItemBase & {
+      kind: "fileChange";
+      changes: FileChange[];
+      status: ItemStatus;
+    })
   | (ItemBase & {
       kind: "toolCall";
       /** The MCP server, or null for a harness-native tool. */
@@ -75,7 +79,12 @@ export type Item =
       status: ItemStatus;
     })
   /** An image the agent looked at, or made when `generated`. */
-  | (ItemBase & { kind: "image"; path: string; generated?: boolean; status?: ItemStatus })
+  | (ItemBase & {
+      kind: "image";
+      path: string;
+      generated?: boolean;
+      status?: ItemStatus;
+    })
   /** The agent waited, on purpose, this long. */
   | (ItemBase & { kind: "wait"; durationMs: number; status: ItemStatus })
   /** What a hook of the owner's added to the conversation. */
@@ -212,7 +221,13 @@ export type Approval =
       reason: string | null;
     }
   | { id: string; kind: "fileChange"; itemId: string; reason: string | null }
-  | { id: string; kind: "permissions"; itemId: string; reason: string | null; summary: string }
+  | {
+      id: string;
+      kind: "permissions";
+      itemId: string;
+      reason: string | null;
+      summary: string;
+    }
   | { id: string; kind: "question"; itemId: string; questions: Question[] };
 
 export type ApprovalResponse =
@@ -237,15 +252,31 @@ export type ReviewTarget =
 
 /** A change to one session's conversation. `sessionId` names the session. */
 export type SessionEvent =
-  | { type: "turn.started"; sessionId: string; turnId: string; startedAt: number | null }
+  | {
+      type: "turn.started";
+      sessionId: string;
+      turnId: string;
+      startedAt: number | null;
+    }
   | { type: "item.started"; sessionId: string; turnId: string; item: Item }
   /** Appends text to an item: message, reasoning or plan text, or command output. */
-  | { type: "item.delta"; sessionId: string; turnId: string; itemId: string; delta: string }
+  | {
+      type: "item.delta";
+      sessionId: string;
+      turnId: string;
+      itemId: string;
+      delta: string;
+    }
   | { type: "item.completed"; sessionId: string; turnId: string; item: Item }
   | { type: "plan.updated"; sessionId: string; plan: Plan }
   | { type: "diff.updated"; sessionId: string; turnId: string; diff: string }
   | { type: "usage.updated"; sessionId: string; usage: Usage }
-  | { type: "approval.requested"; sessionId: string; turnId: string | null; approval: Approval }
+  | {
+      type: "approval.requested";
+      sessionId: string;
+      turnId: string | null;
+      approval: Approval;
+    }
   | { type: "approval.resolved"; sessionId: string; approvalId: string }
   | { type: "queue.updated"; sessionId: string; queue: QueuedMessage[] }
   | {
@@ -259,7 +290,12 @@ export type SessionEvent =
   /** The conversation went back to before this turn: it and every later turn are gone. */
   | { type: "turns.rewound"; sessionId: string; turnId: string }
   /** Something the owner should see that belongs to no item. */
-  | { type: "notice"; sessionId: string; level: "info" | "warning" | "error"; message: string };
+  | {
+      type: "notice";
+      sessionId: string;
+      level: "info" | "warning" | "error";
+      message: string;
+    };
 
 export interface ModelInfo {
   id: string;
@@ -348,6 +384,43 @@ export interface ModelProviderDraft {
   /** A new key. Left out, the stored one stays. */
   apiKey?: string;
   models: ProviderModel[];
+}
+
+/**
+ * What a session's sandbox is made with. The owner keeps a few, by name, and a new session chooses
+ * one. A variable's value stays in the daemon: the page is given the names.
+ */
+export interface SandboxEnvironment {
+  id: string;
+  name: string;
+  /** How many CPUs a sandbox may use. Null leaves it to Docker, which gives it all of them. */
+  cpus: number | null;
+  /** Its memory in GiB. Null leaves it to Docker, which gives it half of the machine's. */
+  memoryGb: number | null;
+  /** The hosts it may reach beyond what Docker allows every sandbox. */
+  hosts: string[];
+  /** The names of its environment variables. */
+  variables: string[];
+  /** A script run once in a new sandbox, in the folder. */
+  setup: string;
+}
+
+/** What the owner sends to add an environment, or to change the one with this id. */
+export interface SandboxEnvironmentDraft {
+  id?: string;
+  name: string;
+  cpus: number | null;
+  memoryGb: number | null;
+  hosts: string[];
+  /** Every variable by name. Null keeps the value stored under that name. */
+  variables: Record<string, string | null>;
+  setup: string;
+}
+
+/** A service a sandbox can be signed in to, and whether a secret is kept for it. */
+export interface SandboxSecret {
+  service: string;
+  set: boolean;
 }
 
 export interface SkillInfo {
@@ -454,7 +527,10 @@ export interface AccountInfo {
   kind: "apiKey" | "chatgpt" | "other" | null;
   email: string | null;
   plan: string | null;
-  limits: { primary: RateLimitWindow | null; secondary: RateLimitWindow | null } | null;
+  limits: {
+    primary: RateLimitWindow | null;
+    secondary: RateLimitWindow | null;
+  } | null;
 }
 
 /** A sign-in under way: the owner finishes it in a browser at `url`. */

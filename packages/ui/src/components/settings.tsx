@@ -10,6 +10,7 @@ import { MODE_LABELS } from "./composer.tsx";
 import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 import { ProvidersSection } from "./providers.tsx";
+import { SandboxesSection } from "./sandboxes.tsx";
 
 function Limit({
   label,
@@ -111,6 +112,7 @@ const TITLES: Record<SettingsSection, string> = {
   general: "General",
   account: "Account and usage",
   providers: "Model providers",
+  sandboxes: "Sandboxes",
   about: "About",
 };
 
@@ -309,6 +311,8 @@ export function SettingsPage() {
         ) : null}
 
         {section === "providers" ? <ProvidersSection /> : null}
+
+        {section === "sandboxes" ? <SandboxesSection /> : null}
 
         {section === "about" ? (
           <div className="card">

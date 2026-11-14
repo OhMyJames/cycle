@@ -10,7 +10,8 @@ import { DAEMON_VERSION, startDaemon } from "./daemon.ts";
 import { openProviders } from "./gateway.ts";
 import { Harnesses } from "./harnesses.ts";
 import { TOOLS_KEY_ENV, TOOLS_SERVER, startTools } from "./tools.ts";
-import { diskFile } from "./store.ts";
+import { newSandboxesFile, sandboxBook, type SandboxesFile } from "./sandboxes.ts";
+import { JsonStore, diskFile } from "./store.ts";
 
 interface DaemonFile {
   url: string;
@@ -70,14 +71,26 @@ const tools = startTools(newToken());
 
 const debug = env["CYCLE_DEBUG"];
 const codex = new CodexHarness({
-  tools: { name: TOOLS_SERVER, url: tools.url, keyEnv: TOOLS_KEY_ENV, key: tools.key },
+  tools: {
+    name: TOOLS_SERVER,
+    url: tools.url,
+    keyEnv: TOOLS_KEY_ENV,
+    key: tools.key,
+  },
   ...(config ? { config } : {}),
   ...(debug ? { onLog: (line: string) => console.error(`[codex] ${line}`) } : {}),
   provider: providers.provider,
 });
+const sandboxFile = await JsonStore.open<SandboxesFile>(
+  diskFile(join(home, "sandboxes.json")),
+  newSandboxesFile(),
+);
+const sandboxes = sbxSandboxes(sandboxBook(sandboxFile), env, (line) =>
+  console.error(`[cycle] sandboxes: ${line}`),
+);
 // Claude Code runs beside codex when it is installed and starts; codex is the machine.
 const claude = new ClaudeHarness({
-  sandboxes: sbxSandboxes(),
+  sandboxes,
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
   ...(debug ? { onLog: (line: string) => console.error(`[claude] ${line}`) } : {}),
 });
@@ -86,6 +99,7 @@ const daemon = await startDaemon({
   tools,
   harness: new Harnesses(codex, [claude], (line) => console.error(line)),
   providers: providers.store,
+  sandboxes: { store: sandboxFile, admin: sandboxes },
   home,
   port: Number(env["CYCLE_DAEMON_PORT"] ?? DEFAULT_DAEMON_PORT),
   ...(uiDir ? { uiDir } : {}),
@@ -101,7 +115,9 @@ const file: DaemonFile = {
   pid: process.pid,
   version: DAEMON_VERSION,
 };
-await writeFile(daemonFile, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+await writeFile(daemonFile, `${JSON.stringify(file, null, 2)}\n`, {
+  mode: 0o600,
+});
 await chmod(daemonFile, 0o600);
 ready(file);
 

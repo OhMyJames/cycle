@@ -209,7 +209,7 @@ export class SessionHub {
         mode,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
-        ...(params.sandbox ? { sandboxed: true } : {}),
+        ...(params.sandbox ? { sandboxed: params.sandbox } : {}),
       });
     } catch (error) {
       // A session that never started leaves no worktree behind.
@@ -226,7 +226,10 @@ export class SessionHub {
         ...(scheduleId ? { scheduleId } : {}),
       };
     });
-    const info: SessionInfo = { ...this.remember(session, false), status: "idle" };
+    const info: SessionInfo = {
+      ...this.remember(session, false),
+      status: "idle",
+    };
     this.live.set(session.id, this.newLive(initialSessionState(info), false));
     this.setInfo(info);
     return info;
@@ -251,7 +254,11 @@ export class SessionHub {
         }
       }
       const queued: QueuedMessage = { id: `q${++this.queueIds}`, ...input };
-      this.apply(live, { type: "queue.updated", sessionId, queue: [...live.state.queue, queued] });
+      this.apply(live, {
+        type: "queue.updated",
+        sessionId,
+        queue: [...live.state.queue, queued],
+      });
       return { queued: true };
     }
     await this.startTurn(live, (options) => this.options.harness.send(sessionId, input, options));
@@ -306,7 +313,11 @@ export class SessionHub {
     }
     const { from } = await this.options.harness.rewindSession(sessionId, turnId);
     const known = live.state.turns.some((turn) => turn.id === from);
-    this.apply(live, { type: "turns.rewound", sessionId, turnId: known ? from : turnId });
+    this.apply(live, {
+      type: "turns.rewound",
+      sessionId,
+      turnId: known ? from : turnId,
+    });
     // The agent counts again from the shorter history: its next report only sets the mark.
     live.usageBaseline = true;
   }
@@ -417,7 +428,10 @@ export class SessionHub {
 
   private newLive(state: SessionState, usageBaseline: boolean): Live {
     return {
-      state: { ...state, epoch: `${this.options.now().toString(36)}-${++this.epochs}` },
+      state: {
+        ...state,
+        epoch: `${this.options.now().toString(36)}-${++this.epochs}`,
+      },
       ring: [],
       pending: [],
       cancelFlush: null,
@@ -625,7 +639,11 @@ export class SessionHub {
     for (const event of events) state = reduceSession(state, event);
     state = { ...state, seq: state.seq + 1 };
     live.state = state;
-    const frame: EventFrame = { sessionId: state.info.id, seq: state.seq, events };
+    const frame: EventFrame = {
+      sessionId: state.info.id,
+      seq: state.seq,
+      events,
+    };
     live.ring.push(frame);
     if (live.ring.length > RING_FRAMES) live.ring.splice(0, live.ring.length - RING_FRAMES);
     this.options.publish.frame(frame);
@@ -670,15 +688,27 @@ export class SessionHub {
         (file.sessions[info.id] ??= {}).unread = true;
       });
     }
-    this.setInfo({ ...info, updatedAt: this.options.now(), unread: info.unread || unread });
+    this.setInfo({
+      ...info,
+      updatedAt: this.options.now(),
+      unread: info.unread || unread,
+    });
     const [next, ...rest] = live.state.queue;
     if (!next) return;
     if (!completed) {
       // A stopped turn sends nothing more by itself: clients take the queue back.
-      this.apply(live, { type: "queue.updated", sessionId: info.id, queue: [] });
+      this.apply(live, {
+        type: "queue.updated",
+        sessionId: info.id,
+        queue: [],
+      });
       return;
     }
-    this.apply(live, { type: "queue.updated", sessionId: info.id, queue: rest });
+    this.apply(live, {
+      type: "queue.updated",
+      sessionId: info.id,
+      queue: rest,
+    });
     const input = { text: next.text, images: next.images };
     this.startTurn(live, (options) => this.options.harness.send(info.id, input, options)).catch(
       () => {

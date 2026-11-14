@@ -5,6 +5,14 @@
  */
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { type SbxSandboxes, sbxSandboxes } from "@cycle/harness-claude";
+import {
+  JsonStore,
+  type SandboxesFile,
+  diskFile,
+  newSandboxesFile,
+  sandboxBook,
+} from "../../src/index.ts";
 
 export interface FakeSbx {
   /** Where the stand-in keeps its sandboxes: `names`, `execs`, and a home for each. */
@@ -38,4 +46,16 @@ export function installFakeSbx(root: string): FakeSbx {
       SBX_FAKE_PATH: `${inside}:/usr/bin:/bin`,
     },
   };
+}
+
+/** The sandboxes of a home under `root`, as the daemon's own start opens them. */
+export async function openSandboxes(
+  root: string,
+  env: Record<string, string | undefined>,
+): Promise<{ store: JsonStore<SandboxesFile>; admin: SbxSandboxes }> {
+  const store = await JsonStore.open<SandboxesFile>(
+    diskFile(join(root, "home", "sandboxes.json")),
+    newSandboxesFile(),
+  );
+  return { store, admin: sbxSandboxes(sandboxBook(store), env) };
 }

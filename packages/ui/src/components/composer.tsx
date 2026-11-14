@@ -164,7 +164,8 @@ function DraftOptions({ draft }: { draft: Draft }) {
     app.models,
     (models) => models.find((model) => model.id === draft.model)?.sandbox ?? false,
   );
-  const boxed = boxable && draft.sandbox;
+  const environments = useStore(app.sandboxes, (value) => value.environments);
+  const boxed = boxable && environments.some((one) => one.id === draft.sandbox);
   const [branch, setBranch] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let current = true;
@@ -205,14 +206,19 @@ function DraftOptions({ draft }: { draft: Draft }) {
           </span>
         ) : null}
         {boxable ? (
-          <label className="row meta">
-            <input
-              type="checkbox"
-              checked={draft.sandbox}
-              onChange={(event) => change({ sandbox: event.currentTarget.checked })}
-            />
-            Sandbox
-          </label>
+          <select
+            className="field small sandbox-field"
+            aria-label="Sandbox"
+            value={boxed ? (draft.sandbox ?? "") : ""}
+            onChange={(event) => change({ sandbox: event.currentTarget.value || null })}
+          >
+            <option value="">No sandbox</option>
+            {environments.map((one) => (
+              <option key={one.id} value={one.id}>
+                Sandbox: {one.name}
+              </option>
+            ))}
+          </select>
         ) : null}
         {branch && !boxed ? (
           <label className="row meta">
@@ -236,7 +242,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
       {boxed || branch === null || draft.worktree ? (
         <div className="caption muted hint-line">
           {boxed
-            ? "The agent runs in a Docker sandbox that holds this folder. Files, changes and terminals here are still this machine's."
+            ? "The agent runs in a Docker sandbox that holds this folder, made the first time with what its environment says. Files, changes and terminals here are still this machine's."
             : branch === null
               ? "Not in a git repository: the session works in the folder itself."
               : "The session gets its own checkout on a new branch. Uncommitted changes are not carried over."}

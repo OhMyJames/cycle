@@ -303,13 +303,13 @@ test("a session's sandbox is kept, and given again with every turn", async () =>
     seen.push(options.sandbox);
     return { turnId: "t1" };
   };
-  const info = await hub.create({ cwd: "/project", sandbox: true });
+  const info = await hub.create({ cwd: "/project", sandbox: "standard" });
   expect(info.sandbox).toBe("cycle-project-1");
   expect(meta.value.sessions["boxed"]?.sandbox).toBe("cycle-project-1");
   await hub.send(info.id, { text: "go", images: [] }, "auto");
-  expect(seen).toEqual([true, "cycle-project-1"]);
+  expect(seen).toEqual(["standard", "cycle-project-1"]);
   expect((await hub.fork(info.id, null)).sandbox).toBe("cycle-project-1");
-  expect(hub.create({ cwd: "/project", sandbox: true, worktree: {} })).rejects.toThrow(
+  expect(hub.create({ cwd: "/project", sandbox: "standard", worktree: {} })).rejects.toThrow(
     "not a worktree",
   );
 });

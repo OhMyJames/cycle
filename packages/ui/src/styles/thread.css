@@ -1219,3 +1219,7 @@ button.code-diff-name:hover {
   flex-wrap: wrap;
   gap: 6px;
 }
+.sandbox-field {
+  width: auto;
+  max-width: 220px;
+}

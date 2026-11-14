@@ -29,6 +29,9 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
 - No token, key or account secret may reach a page's storage beyond the connection token, or a log.
   An MCP server's environment values count: the page is given their names only.
   A provider's key goes from the page to the daemon once, and no wire method gives it back.
+  A sandbox environment's variable values count too: the page is given their names, and `sbx` is
+  given a value through its own environment, never as an argument. A sandbox's sign-in is handed
+  to `sbx` over its input and kept nowhere in Cycle.
 - `/Applications/Cycle.app` is old-cycle's and may be in use. The installer and the updater write only
   `Cycle Codex.app`, and only over an app whose identifier is `dev.cycle.codex`.
 - An update restarts the app, which stops running turns. It is downloaded unasked and installed only
@@ -70,7 +73,8 @@ sessions start with, and the owner's projects), `sessions.json` (what only Cycle
 pin, unread, mode, model, worktree, sandbox, the schedule that started it), `providers.json` (the owner's model
 providers and their keys, mode 0600), `provider-models.json` (codex's catalog of
 those providers' models, which says how much each can read; written as the second codex child starts),
-`usage.json` (tokens per local day, numbers only),
+`sandboxes.json` (the owner's sandbox environments, variable values included, and what each sandbox
+Cycle made was made with, mode 0600), `usage.json` (tokens per local day, numbers only),
 `schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
 [decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
 app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
@@ -118,6 +122,14 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   they are stored and read here. The sandbox has its own sign-in (`sbx secret set anthropic`), no
   settings of the owner's, and no reach to Cycle's tools. Codex sessions and worktrees do not run in
   one. Why: [decision note](.agents/notes/2026-11-14-a-local-sandbox-holds-the-agent-only.md).
+- A sandbox is made with an environment of the owner's (`apps/daemon/src/sandboxes.ts`, Settings,
+  Sandboxes): CPUs, memory, variables, hosts to allow and a setup script. A new session chooses one,
+  and a folder has a sandbox for each environment it is worked in. The daemon keeps the environments
+  and the sandboxes keep to them: `SbxSandboxes` makes a sandbox again, the next time it is used
+  with no session running in it, once anything changed that only its making sets; opens and closes
+  hosts on it as it is; and saves a sandbox that has run the setup script (`sbx template save`), so
+  the next folder's starts from that. Sign-ins are `sbx`'s own secrets, for every sandbox. Why:
+  [decision note](.agents/notes/2026-11-14-sandbox-environments.md).
 - `harness/codex` is the only code that knows codex. `translate.ts` is the pure mapping; `codex-harness.ts`
   drives `codex app-server` children (`process.ts`), starts one again if it dies, and brings a session
   back into it the next time it is used. Codex runs one model provider per process and keeps a thread

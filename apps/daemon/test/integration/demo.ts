@@ -7,7 +7,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeHarness, sbxSandboxes } from "@cycle/harness-claude";
+import { ClaudeHarness } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import {
   Harnesses,
@@ -18,7 +18,7 @@ import {
   startDaemon,
   startTools,
 } from "../../src/index.ts";
-import { installFakeSbx } from "./fake-sbx.ts";
+import { installFakeSbx, openSandboxes } from "./fake-sbx.ts";
 import { type ClaudeReply, startMockClaude } from "./mock-claude.ts";
 import { type MockReply, startMockModel } from "./mock-model.ts";
 
@@ -185,15 +185,17 @@ const harness = new CodexHarness({
 });
 // A stand-in for Docker's `sbx`, so a session can be asked into a sandbox here too.
 const sbx = installFakeSbx(root);
+const sandboxes = await openSandboxes(root, { ...process.env, ...claudeModel.env, ...sbx.env });
 const claude = new ClaudeHarness({
   env: claudeModel.env,
-  sandboxes: sbxSandboxes({ ...process.env, ...claudeModel.env, ...sbx.env }),
+  sandboxes: sandboxes.admin,
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
 });
 const daemon = await startDaemon({
   tools,
   harness: new Harnesses(harness, [claude], (line) => console.error(line)),
   providers: providers.store,
+  sandboxes,
   home: join(root, "home"),
   port: Number(process.env["CYCLE_DAEMON_PORT"] ?? 0),
   uiDir: new URL("../../../desktop/dist/renderer", import.meta.url).pathname,

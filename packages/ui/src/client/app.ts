@@ -13,6 +13,7 @@ import {
   type MethodName,
   type ModelInfo,
   type ModelProvider,
+  type SandboxEnvironment,
   type Params,
   type PluginCatalog,
   type Result,
@@ -40,14 +41,17 @@ export interface Draft {
   cwd: string;
   worktree: boolean;
   branch: string;
-  /** Run its agent in a sandbox. Only what the chosen model can do is sent. */
-  sandbox: boolean;
+  /**
+   * The environment its agent's sandbox is made with, by id, or null to run on this machine. Only
+   * what the chosen model can do is sent.
+   */
+  sandbox: string | null;
   model: string | null;
   effort: string | null;
   mode: SessionMode;
 }
 
-export type SettingsSection = "general" | "account" | "providers" | "about";
+export type SettingsSection = "general" | "account" | "providers" | "sandboxes" | "about";
 
 export interface ViewState {
   /** Which part of Settings shows; the sidebar lists them while Settings is open. */
@@ -135,6 +139,11 @@ export class CycleApp {
   /** A sign-in the owner is finishing in a browser. */
   readonly login = new Store<AccountLogin | null>(null);
   readonly providers = new Store<ModelProvider[]>([]);
+  /** The owner's sandbox environments, and whether a sandbox can be made on the daemon's machine. */
+  readonly sandboxes = new Store<{ available: boolean; environments: SandboxEnvironment[] }>({
+    available: false,
+    environments: [],
+  });
   readonly usage = new Store<DayUsage | null>(null);
   readonly terminals = new Store<Record<string, TerminalInfo[]>>({});
   /** Null until read: the Connector reads them when it opens, since asking starts the servers. */
@@ -311,7 +320,7 @@ export class CycleApp {
         cwd: folder,
         worktree: settings?.worktree ?? false,
         branch: "",
-        sandbox: false,
+        sandbox: null,
         model: settings?.model ?? null,
         effort: settings?.effort ?? null,
         mode: settings?.mode ?? "auto",
@@ -347,7 +356,11 @@ export class CycleApp {
     const draft = this.view.get().draft;
     if (!draft) return false;
     const sandbox =
-      draft.sandbox && this.models.get().find((model) => model.id === draft.model)?.sandbox;
+      draft.sandbox !== null &&
+      this.models.get().find((model) => model.id === draft.model)?.sandbox &&
+      this.sandboxes.get().environments.some((one) => one.id === draft.sandbox)
+        ? draft.sandbox
+        : null;
     const info = await this.attempt(
       this.request("session.create", {
         cwd: draft.cwd,
@@ -355,7 +368,7 @@ export class CycleApp {
         ...(draft.model ? { model: draft.model } : {}),
         ...(draft.effort ? { effort: draft.effort } : {}),
         ...(sandbox
-          ? { sandbox: true }
+          ? { sandbox }
           : draft.worktree
             ? { worktree: draft.branch ? { branch: draft.branch } : {} }
             : {}),
@@ -593,6 +606,10 @@ export class CycleApp {
         ({ providers }) => this.providers.set(providers),
         () => {},
       );
+      void this.request("sandboxes.list", {}).then(
+        (sandboxes) => this.sandboxes.set(sandboxes),
+        () => {},
+      );
       void this.refreshAccount();
     } catch (error) {
       this.toast(error instanceof Error ? error.message : String(error), "error");
@@ -714,6 +731,9 @@ export class CycleApp {
         break;
       case "providers.changed":
         this.providers.set(event.providers);
+        break;
+      case "sandboxes.changed":
+        this.sandboxes.update((value) => ({ ...value, environments: event.environments }));
         break;
       case "terminals.changed":
         this.terminals.update((all) => ({ ...all, [event.sessionId ?? ""]: event.terminals }));

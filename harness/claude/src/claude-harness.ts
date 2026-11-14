@@ -227,7 +227,9 @@ export class ClaudeHarness implements Agent {
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
-    const sandbox = options.sandboxed ? await this.sandboxes().ensure(options.cwd) : null;
+    const sandbox = options.sandboxed
+      ? await this.sandboxes().ensure(options.cwd, { environment: options.sandboxed })
+      : null;
     const id = this.newId();
     const at = this.now();
     this.known.set(id, {
@@ -590,8 +592,11 @@ export class ClaudeHarness implements Agent {
       known.stored = false;
     }
     const input = new Inbox<WireUserMessage>();
-    // The sandbox may have been removed since: it is made again, and its agent starts in it.
-    const sandbox = known.sandbox ? await this.sandboxes().ensure(known.cwd, known.sandbox) : null;
+    // The sandbox may have been removed since, or its environment changed: it is made again, and
+    // its agent starts in it.
+    const sandbox = known.sandbox
+      ? await this.sandboxes().ensure(known.cwd, { name: known.sandbox })
+      : null;
     // Cycle's tools answer on this machine's loopback alone, which a sandbox is not on.
     const tools = sandbox ? undefined : this.options.tools;
     const running: Running = {

@@ -44,8 +44,11 @@ export interface TurnOptions {
 
 export interface CreateSessionOptions extends TurnOptions {
   cwd: string;
-  /** Run its agent in a sandbox, which the harness finds or makes for the folder. */
-  sandboxed?: boolean;
+  /**
+   * Run its agent in a sandbox of this environment of the owner's, by id, which the harness finds
+   * or makes for the folder.
+   */
+  sandboxed?: string;
 }
 
 export interface PromptInput {
@@ -57,7 +60,11 @@ export interface PromptInput {
 export type HarnessEvent =
   | SessionEvent
   /** What the harness knows of a session changed, such as its title. */
-  | { type: "session.changed"; sessionId: string; patch: Partial<HarnessSession> }
+  | {
+      type: "session.changed";
+      sessionId: string;
+      patch: Partial<HarnessSession>;
+    }
   /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
   | { type: "mcp.changed" }
   /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */

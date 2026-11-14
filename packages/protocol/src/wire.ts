@@ -8,6 +8,9 @@ import type {
   ModelInfo,
   ModelProvider,
   ModelProviderDraft,
+  SandboxEnvironment,
+  SandboxEnvironmentDraft,
+  SandboxSecret,
   ProviderKind,
   ProviderModel,
   PluginCatalog,
@@ -106,7 +109,10 @@ type Empty = Record<string, never>;
 export interface Methods {
   "daemon.info": { params: Empty; result: DaemonInfo };
 
-  "session.list": { params: { archived: boolean }; result: { sessions: SessionInfo[] } };
+  "session.list": {
+    params: { archived: boolean };
+    result: { sessions: SessionInfo[] };
+  };
   "session.create": {
     params: {
       cwd: string;
@@ -115,8 +121,8 @@ export interface Methods {
       mode?: SessionMode;
       /** Make a worktree for it, on a branch of this name when given. */
       worktree?: { branch?: string; base?: string };
-      /** Run its agent in a sandbox for the folder. Not with a worktree. */
-      sandbox?: boolean;
+      /** Run its agent in a sandbox of this environment, by id. Not with a worktree. */
+      sandbox?: string;
     };
     result: SessionInfo;
   };
@@ -131,10 +137,18 @@ export interface Methods {
   };
   "session.close": { params: { sessionId: string }; result: Empty };
   "session.send": {
-    params: { sessionId: string; text: string; images?: string[]; delivery?: Delivery };
+    params: {
+      sessionId: string;
+      text: string;
+      images?: string[];
+      delivery?: Delivery;
+    };
     result: { queued: boolean };
   };
-  "session.unqueue": { params: { sessionId: string; id: string }; result: Empty };
+  "session.unqueue": {
+    params: { sessionId: string; id: string };
+    result: Empty;
+  };
   "session.interrupt": { params: { sessionId: string }; result: Empty };
   "session.update": {
     params: {
@@ -149,18 +163,34 @@ export interface Methods {
     };
     result: SessionInfo;
   };
-  "session.delete": { params: { sessionId: string; removeWorktree?: boolean }; result: Empty };
-  "session.fork": { params: { sessionId: string; turnId?: string }; result: SessionInfo };
+  "session.delete": {
+    params: { sessionId: string; removeWorktree?: boolean };
+    result: Empty;
+  };
+  "session.fork": {
+    params: { sessionId: string; turnId?: string };
+    result: SessionInfo;
+  };
   "session.compact": { params: { sessionId: string }; result: Empty };
   /** Starts a turn that reviews code. Refused while a turn runs. */
-  "session.review": { params: { sessionId: string; target: ReviewTarget }; result: Empty };
+  "session.review": {
+    params: { sessionId: string; target: ReviewTarget };
+    result: Empty;
+  };
   /**
    * Removes a turn and every later one from the conversation, for good. Files the agent changed
    * stay as they are. Clients confirm first.
    */
-  "session.rewind": { params: { sessionId: string; turnId: string }; result: Empty };
+  "session.rewind": {
+    params: { sessionId: string; turnId: string };
+    result: Empty;
+  };
   "approval.respond": {
-    params: { sessionId: string; approvalId: string; response: ApprovalResponse };
+    params: {
+      sessionId: string;
+      approvalId: string;
+      response: ApprovalResponse;
+    };
     result: Empty;
   };
 
@@ -170,8 +200,14 @@ export interface Methods {
   // The connector: the owner's MCP servers and plugins, as the harness keeps them.
   "mcp.list": { params: Empty; result: { servers: McpServerInfo[] } };
   /** Adds a server, or changes the one of that name. */
-  "mcp.put": { params: { server: McpServerInput }; result: { servers: McpServerInfo[] } };
-  "mcp.remove": { params: { name: string }; result: { servers: McpServerInfo[] } };
+  "mcp.put": {
+    params: { server: McpServerInput };
+    result: { servers: McpServerInfo[] };
+  };
+  "mcp.remove": {
+    params: { name: string };
+    result: { servers: McpServerInfo[] };
+  };
   "mcp.enable": {
     params: { name: string; enabled: boolean };
     result: { servers: McpServerInfo[] };
@@ -183,10 +219,19 @@ export interface Methods {
   /** Starts a sign-in. The owner finishes it at `url`; `mcp.changed` follows. */
   "mcp.login": { params: { name: string }; result: { url: string } };
   "plugins.list": { params: Empty; result: PluginCatalog };
-  "plugins.read": { params: { marketplace: string; name: string }; result: PluginDetail };
-  "plugins.install": { params: { marketplace: string; name: string }; result: PluginCatalog };
+  "plugins.read": {
+    params: { marketplace: string; name: string };
+    result: PluginDetail;
+  };
+  "plugins.install": {
+    params: { marketplace: string; name: string };
+    result: PluginCatalog;
+  };
   "plugins.uninstall": { params: { id: string }; result: PluginCatalog };
-  "plugins.enable": { params: { id: string; enabled: boolean }; result: PluginCatalog };
+  "plugins.enable": {
+    params: { id: string; enabled: boolean };
+    result: PluginCatalog;
+  };
   /** `source` is a folder on the daemon's machine or a Git URL. */
   "marketplace.add": { params: { source: string }; result: PluginCatalog };
   "marketplace.remove": { params: { name: string }; result: PluginCatalog };
@@ -212,9 +257,31 @@ export interface Methods {
   /** The services a provider can be for. */
   "providers.kinds": { params: Empty; result: { kinds: ProviderKind[] } };
   /** The models a service is known to serve. */
-  "providers.catalog": { params: { kind: string }; result: { models: ProviderModel[] } };
+  "providers.catalog": {
+    params: { kind: string };
+    result: { models: ProviderModel[] };
+  };
   "providers.save": { params: ModelProviderDraft; result: ModelProvider };
   "providers.delete": { params: { id: string }; result: Empty };
+
+  /** The owner's sandbox environments, and whether sandboxes can be made on this machine. */
+  "sandboxes.list": {
+    params: Empty;
+    result: { available: boolean; environments: SandboxEnvironment[] };
+  };
+  "sandboxes.save": {
+    params: SandboxEnvironmentDraft;
+    result: SandboxEnvironment;
+  };
+  /** Removes an environment, and the sandboxes made of it that no session is running in. */
+  "sandboxes.delete": { params: { id: string }; result: Empty };
+  /** The services a sandbox can be signed in to, and whether a secret is kept for each. */
+  "sandboxes.secrets": { params: Empty; result: { secrets: SandboxSecret[] } };
+  /** Hands a service's secret to what keeps it outside every sandbox. Nothing gives it back. */
+  "sandboxes.secret.set": {
+    params: { service: string; value: string };
+    result: Empty;
+  };
   "settings.get": { params: Empty; result: Settings };
   "settings.set": { params: Partial<Settings>; result: Settings };
   "usage.daily": { params: Empty; result: { days: DayUsage[] } };
@@ -231,7 +298,12 @@ export interface Methods {
 
   "git.status": { params: { cwd: string; base?: string }; result: GitStatus };
   "git.diff": {
-    params: { cwd: string; from: string; path: string; status: GitFile["status"] };
+    params: {
+      cwd: string;
+      from: string;
+      path: string;
+      status: GitFile["status"];
+    };
     result: { patch: string; truncated: boolean };
   };
   "git.branches": {
@@ -239,18 +311,35 @@ export interface Methods {
     result: { current: string | null; local: string[]; remote: string[] };
   };
   "git.checkout": { params: { cwd: string; branch: string }; result: Empty };
-  "git.commit": { params: { cwd: string; message: string }; result: { commit: string } };
+  "git.commit": {
+    params: { cwd: string; message: string };
+    result: { commit: string };
+  };
 
-  "terminal.list": { params: { sessionId: string | null }; result: { terminals: TerminalInfo[] } };
+  "terminal.list": {
+    params: { sessionId: string | null };
+    result: { terminals: TerminalInfo[] };
+  };
   "terminal.create": {
-    params: { sessionId: string | null; cwd: string; cols: number; rows: number };
+    params: {
+      sessionId: string | null;
+      cwd: string;
+      cols: number;
+      rows: number;
+    };
     result: TerminalInfo;
   };
   /** Answers with what the terminal has printed, then streams `terminal.output`. */
-  "terminal.attach": { params: { id: string }; result: { terminal: TerminalInfo; data: string } };
+  "terminal.attach": {
+    params: { id: string };
+    result: { terminal: TerminalInfo; data: string };
+  };
   "terminal.detach": { params: { id: string }; result: Empty };
   "terminal.write": { params: { id: string; data: string }; result: Empty };
-  "terminal.resize": { params: { id: string; cols: number; rows: number }; result: Empty };
+  "terminal.resize": {
+    params: { id: string; cols: number; rows: number };
+    result: Empty;
+  };
   "terminal.close": { params: { id: string }; result: Empty };
 }
 
@@ -283,7 +372,12 @@ export type DaemonEvent =
   | { type: "limits.changed"; account: AccountInfo }
   | { type: "models.changed"; models: ModelInfo[] }
   | { type: "providers.changed"; providers: ModelProvider[] }
-  | { type: "terminals.changed"; sessionId: string | null; terminals: TerminalInfo[] }
+  | { type: "sandboxes.changed"; environments: SandboxEnvironment[] }
+  | {
+      type: "terminals.changed";
+      sessionId: string | null;
+      terminals: TerminalInfo[];
+    }
   /** Base64 of what a terminal printed, to the clients attached to it. */
   | { type: "terminal.output"; id: string; data: string }
   | { type: "usage.today"; day: DayUsage }
