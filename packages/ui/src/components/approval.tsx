@@ -112,6 +112,12 @@ export function ApprovalCard({
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.key !== "Enter" && event.key !== ".") return;
       if (document.querySelector(".scrim, .menu")) return;
+      // Only from nowhere, the composer or the card itself: the same keys pressed in the terminal,
+      // a panel's field or another session's popover are that surface's own.
+      const at = document.activeElement;
+      const here =
+        at === null || at === document.body || at.closest(".composer, .thread-scroll") !== null;
+      if (!here) return;
       const typed = document.querySelector<HTMLTextAreaElement>(".composer textarea")?.value;
       if (event.key === "Enter" && typed?.trim()) return;
       event.preventDefault();

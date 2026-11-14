@@ -150,40 +150,38 @@ function AnswerHere({ info }: { info: SessionInfo }) {
 /**
  * A list of sessions is one Tab stop: the row the focus was last on, else the open session's, else
  * the first. The arrow keys do the rest, so Tab crosses the sidebar in a few presses however many
- * sessions there are.
+ * sessions there are. A list takes it as its `ref`.
  */
-function useOneTabStop(list: React.RefObject<HTMLElement | null>): void {
-  useEffect(() => {
-    const node = list.current;
-    if (!node) return;
-    const set = () => {
-      const triggers = [...node.querySelectorAll<HTMLElement>(".session-row-trigger")];
-      const at = document.activeElement;
-      const stop =
-        triggers.find((each) => each.closest(".session-row")?.contains(at)) ??
-        triggers.find((each) => each.closest('.session-row[data-active="true"]')) ??
-        triggers[0];
-      for (const each of triggers) each.tabIndex = each === stop ? 0 : -1;
-      for (const each of node.querySelectorAll<HTMLElement>(
-        ".session-row button:not(.session-row-trigger)",
-      )) {
-        each.tabIndex = -1;
-      }
-    };
-    set();
-    node.addEventListener("focusin", set);
-    const watch = new MutationObserver(set);
-    watch.observe(node, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["data-active"],
-    });
-    return () => {
-      node.removeEventListener("focusin", set);
-      watch.disconnect();
-    };
-  }, [list]);
+function oneTabStop(node: HTMLElement | null): (() => void) | undefined {
+  if (!node) return undefined;
+  const set = () => {
+    const triggers = [...node.querySelectorAll<HTMLElement>(".session-row-trigger")];
+    const at = document.activeElement;
+    const stop =
+      triggers.find((each) => each.closest(".session-row")?.contains(at)) ??
+      triggers.find((each) => each.closest('.session-row[data-active="true"]')) ??
+      triggers[0];
+    for (const each of triggers) each.tabIndex = each === stop ? 0 : -1;
+    // The buttons at a row's end are reached with the right arrow. What the Answer popover holds
+    // is drawn inside its row and keeps its own Tab order.
+    const ends = node.querySelectorAll<HTMLElement>(
+      ".session-row button:not(.session-row-trigger)",
+    );
+    for (const each of ends) if (!each.closest(".answer-popover")) each.tabIndex = -1;
+  };
+  set();
+  node.addEventListener("focusin", set);
+  const watch = new MutationObserver(set);
+  watch.observe(node, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["data-active"],
+  });
+  return () => {
+    node.removeEventListener("focusin", set);
+    watch.disconnect();
+  };
 }
 
 /**
@@ -194,6 +192,8 @@ function onRowsKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const { target } = event;
   if (!(target instanceof HTMLElement)) return;
+  // The Answer popover is drawn inside its row: keys pressed in it are its own.
+  if (target.closest(".answer-popover")) return;
   const row = target.closest(".session-row");
   const trigger = row?.querySelector<HTMLElement>(".session-row-trigger");
   if (!row || !trigger) return;
@@ -532,7 +532,11 @@ function Archived({ onDelete }: { onDelete(info: SessionInfo): void }) {
               onChange={(event) => setQuery(event.currentTarget.value)}
             />
           </label>
-          <div className="archived-list fade-y no-scrollbar" onKeyDown={onRowsKeyDown}>
+          <div
+            className="archived-list fade-y no-scrollbar"
+            ref={oneTabStop}
+            onKeyDown={onRowsKeyDown}
+          >
             {archived === null ? (
               <p className="archived-note">Reading the archive…</p>
             ) : shown.length === 0 ? (
@@ -628,8 +632,6 @@ function SessionSidebar() {
   const [deleting, setDeleting] = useState<SessionInfo | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
-  const sessionList = useRef<HTMLDivElement>(null);
-  useOneTabStop(sessionList);
 
   const all = useMemo(() => Object.values(sessions.byId), [sessions.byId]);
   const projects = useMemo(() => {
@@ -755,7 +757,7 @@ function SessionSidebar() {
           </span>
         </Menu>
       </div>
-      <div className="session-list fade-y no-scrollbar" ref={sessionList} onKeyDown={onRowsKeyDown}>
+      <div className="session-list fade-y no-scrollbar" ref={oneTabStop} onKeyDown={onRowsKeyDown}>
         {!sessions.loaded ? (
           <div className="skeleton" role="status" aria-label="Reading sessions">
             {[72, 54, 88, 61, 79].map((width) => (
