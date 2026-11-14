@@ -176,6 +176,8 @@ export interface SessionInfo {
   status: SessionStatus;
   branch: string | null;
   worktree: WorktreeInfo | null;
+  /** The sandbox its agent runs in, by name. Null when it runs on this machine. */
+  sandbox: string | null;
   createdAt: number;
   updatedAt: number;
   archived: boolean;
@@ -270,6 +272,8 @@ export interface ModelInfo {
   isDefault: boolean;
   /** Whether prompts to it may carry images. */
   images: boolean;
+  /** Whether a session on it can run in a sandbox here. */
+  sandbox: boolean;
   /** The owner's provider that serves it, or null when it is the agent's own. */
   provider: { id: string; name: string } | null;
 }

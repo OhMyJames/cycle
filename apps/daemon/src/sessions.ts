@@ -39,6 +39,8 @@ export interface SessionMeta {
   model?: string;
   effort?: string | null;
   worktree?: WorktreeInfo;
+  /** The sandbox its agent runs in, by name. */
+  sandbox?: string;
   /** The schedule whose run started it. */
   scheduleId?: string;
 }
@@ -183,6 +185,10 @@ export class SessionHub {
     const settings = this.options.settings();
     let cwd = params.cwd;
     let worktree: WorktreeInfo | undefined;
+    if (params.sandbox && params.worktree) {
+      // A worktree's history is in its repository's folder, which its sandbox would not hold.
+      throw new SessionError("A session in a sandbox works in the folder itself, not a worktree.");
+    }
     if (params.worktree) {
       const made = await git.addWorktree({
         cwd,
@@ -203,6 +209,7 @@ export class SessionHub {
         mode,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+        ...(params.sandbox ? { sandboxed: true } : {}),
       });
     } catch (error) {
       // A session that never started leaves no worktree behind.
@@ -215,6 +222,7 @@ export class SessionHub {
         ...(params.model ? { model: params.model } : {}),
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
+        ...(session.sandbox ? { sandbox: session.sandbox } : {}),
         ...(scheduleId ? { scheduleId } : {}),
       };
     });
@@ -386,6 +394,7 @@ export class SessionHub {
         ...(sourceMeta.model ? { model: sourceMeta.model } : {}),
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
+        ...(source.sandbox ? { sandbox: source.sandbox } : {}),
       };
     });
     const info = this.remember({ ...session, forkedFrom: session.forkedFrom ?? sessionId }, false);
@@ -436,6 +445,7 @@ export class SessionHub {
       status: live ? this.statusOf(live) : "stored",
       branch: meta.worktree?.branch ?? session.branch,
       worktree: meta.worktree ?? null,
+      sandbox: meta.sandbox ?? session.sandbox,
       createdAt: session.createdAt,
       updatedAt: Math.max(session.updatedAt, known?.updatedAt ?? 0),
       archived,
@@ -476,6 +486,7 @@ export class SessionHub {
     const loaded = await this.options.harness.loadSession(sessionId, {
       mode: meta.mode ?? known?.mode ?? this.options.settings().mode,
       ...(meta.model ? { model: meta.model } : {}),
+      ...(meta.sandbox ? { sandbox: meta.sandbox } : {}),
     });
     const existing = this.live.get(sessionId);
     if (existing) return existing;
@@ -539,6 +550,7 @@ export class SessionHub {
         mode: info.mode,
         ...(info.model ? { model: info.model } : {}),
         ...(info.effort ? { effort: info.effort } : {}),
+        ...(info.sandbox ? { sandbox: info.sandbox } : {}),
       });
     } catch (error) {
       live.starting = false;

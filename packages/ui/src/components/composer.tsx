@@ -159,6 +159,12 @@ function DraftOptions({ draft }: { draft: Draft }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
   const projects = useStore(app.settings, (settings) => settings?.projects ?? []);
+  // A sandbox is offered for the models whose agent can run in one here.
+  const boxable = useStore(
+    app.models,
+    (models) => models.find((model) => model.id === draft.model)?.sandbox ?? false,
+  );
+  const boxed = boxable && draft.sandbox;
   const [branch, setBranch] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let current = true;
@@ -198,7 +204,17 @@ function DraftOptions({ draft }: { draft: Draft }) {
             <Icon name="git-branch" size={14} /> {branch}
           </span>
         ) : null}
-        {branch ? (
+        {boxable ? (
+          <label className="row meta">
+            <input
+              type="checkbox"
+              checked={draft.sandbox}
+              onChange={(event) => change({ sandbox: event.currentTarget.checked })}
+            />
+            Sandbox
+          </label>
+        ) : null}
+        {branch && !boxed ? (
           <label className="row meta">
             <input
               type="checkbox"
@@ -208,7 +224,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
             New worktree
           </label>
         ) : null}
-        {branch && draft.worktree ? (
+        {branch && draft.worktree && !boxed ? (
           <input
             className="field small branch-field"
             placeholder="branch name (optional)"
@@ -217,11 +233,13 @@ function DraftOptions({ draft }: { draft: Draft }) {
           />
         ) : null}
       </div>
-      {branch === null || draft.worktree ? (
+      {boxed || branch === null || draft.worktree ? (
         <div className="caption muted hint-line">
-          {branch === null
-            ? "Not in a git repository: the session works in the folder itself."
-            : "The session gets its own checkout on a new branch. Uncommitted changes are not carried over."}
+          {boxed
+            ? "The agent runs in a Docker sandbox that holds this folder. Files, changes and terminals here are still this machine's."
+            : branch === null
+              ? "Not in a git repository: the session works in the folder itself."
+              : "The session gets its own checkout on a new branch. Uncommitted changes are not carried over."}
         </div>
       ) : null}
     </div>

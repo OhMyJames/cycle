@@ -41,6 +41,7 @@ export class FakeHarness implements Harness {
       model: "model-a",
       effort: null,
       branch: null,
+      sandbox: null,
       createdAt: 1,
       updatedAt: 1,
       forkedFrom: null,
@@ -54,7 +55,7 @@ export class FakeHarness implements Harness {
     this.listener = listener;
     return () => {};
   }
-  createSession = async (options: { cwd: string }) =>
+  createSession: Harness["createSession"] = async (options) =>
     this.session(`${this.name === "fake" ? "s" : `${this.name}-`}${++this.ids}`, {
       cwd: options.cwd,
     });
@@ -82,7 +83,7 @@ export class FakeHarness implements Harness {
     this.calls.push(`review ${sessionId} ${target.kind}`);
     return { turnId: "review-turn" };
   };
-  send = async (sessionId: string, input: PromptInput) => {
+  send: Harness["send"] = async (sessionId, input) => {
     if (this.failSend) throw new Error(this.failSend);
     this.sent.push({ sessionId, text: input.text });
     return { turnId: `t${this.sent.length}` };

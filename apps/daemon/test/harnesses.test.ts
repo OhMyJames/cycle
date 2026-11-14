@@ -12,6 +12,7 @@ const model = (id: string, harness: string, isDefault = false): ModelInfo => ({
   defaultEffort: null,
   isDefault,
   images: false,
+  sandbox: false,
   provider: null,
 });
 

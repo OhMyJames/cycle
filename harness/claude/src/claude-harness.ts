@@ -12,6 +12,7 @@ import type {
   Usage,
 } from "@cycle/protocol";
 import { homedir } from "node:os";
+import type { Sandboxes } from "./sandbox.ts";
 import { type ClaudeQuery, type ClaudeSdk, type QueryOptions, realSdk } from "./sdk.ts";
 import {
   DEFAULT_EFFORT,
@@ -64,6 +65,8 @@ export interface ClaudeHarnessOptions {
    * whose stdin and stdout reach it. Sessions are then that place's to keep.
    */
   spawn?: QueryOptions["spawnClaudeCodeProcess"];
+  /** Sandboxes a session's agent can run in. Without them, a session asked into one is refused. */
+  sandboxes?: Sandboxes;
   sdk?: ClaudeSdk;
   /** Runs something later, and answers how to call it off. */
   schedule?: (run: () => void, ms: number) => () => void;
@@ -77,6 +80,8 @@ interface Known {
   /** Whether Claude Code has written it down: one with no turn yet is only ours. */
   stored: boolean;
   model?: string;
+  /** The sandbox its agent runs in, by name. */
+  sandbox?: string;
 }
 
 /** One Claude Code process, which holds one session. */
@@ -222,12 +227,14 @@ export class ClaudeHarness implements Agent {
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
+    const sandbox = options.sandboxed ? await this.sandboxes().ensure(options.cwd) : null;
     const id = this.newId();
     const at = this.now();
     this.known.set(id, {
       cwd: options.cwd,
       stored: false,
       ...(options.model ? { model: options.model } : {}),
+      ...(sandbox ? { sandbox } : {}),
     });
     this.asked.set(id, options);
     return {
@@ -239,6 +246,7 @@ export class ClaudeHarness implements Agent {
       model: options.model ?? "",
       effort: options.effort ?? null,
       branch: null,
+      sandbox,
       createdAt: at,
       updatedAt: at,
       forkedFrom: null,
@@ -254,7 +262,12 @@ export class ClaudeHarness implements Agent {
       const known = this.known.get(info.sessionId);
       if (known) known.stored = true;
       else this.known.set(info.sessionId, { cwd: info.cwd, stored: true });
-      out.push(toSession(info, known?.model ? { model: known.model } : undefined));
+      out.push(
+        toSession(info, {
+          ...(known?.model ? { model: known.model } : {}),
+          ...(known?.sandbox ? { sandbox: known.sandbox } : {}),
+        }),
+      );
     }
     return out;
   }
@@ -265,6 +278,7 @@ export class ClaudeHarness implements Agent {
   ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }> {
     const known = await this.find(sessionId);
     this.asked.set(sessionId, options);
+    if (options.sandbox) known.sandbox = options.sandbox;
     const at = this.now();
     const fresh: HarnessSession = {
       id: sessionId,
@@ -275,6 +289,7 @@ export class ClaudeHarness implements Agent {
       model: options.model ?? known.model ?? "",
       effort: options.effort ?? null,
       branch: null,
+      sandbox: known.sandbox ?? null,
       createdAt: at,
       updatedAt: at,
       forkedFrom: null,
@@ -289,7 +304,9 @@ export class ClaudeHarness implements Agent {
     const model = options.model ?? known.model ?? historyModel(messages) ?? "";
     if (model) known.model = model;
     return {
-      session: info ? toSession(info, { model }) : { ...fresh, model },
+      session: info
+        ? toSession(info, { model, ...(known.sandbox ? { sandbox: known.sandbox } : {}) })
+        : { ...fresh, model },
       turns: toTurns(messages, known.cwd),
       usage: this.usage.get(sessionId) ?? null,
     };
@@ -312,6 +329,7 @@ export class ClaudeHarness implements Agent {
     return toSession(info, {
       forkedFrom: sessionId,
       ...(known.model ? { model: known.model } : {}),
+      ...(known.sandbox ? { sandbox: known.sandbox } : {}),
     });
   }
 
@@ -442,7 +460,7 @@ export class ClaudeHarness implements Agent {
         options: { ...this.shared(), cwd: homedir(), permissionMode: "default" },
       });
       const init = await query.initializationResult();
-      return toModels(init.models ?? []);
+      return toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
     } catch (error) {
       throw new Error(`Claude Code could not start: ${message(error)}`, { cause: error });
     } finally {
@@ -451,7 +469,9 @@ export class ClaudeHarness implements Agent {
   }
 
   /** What every process is started with. The owner's own Claude Code settings apply, as in its CLI. */
-  private shared(): Pick<
+  private shared(
+    sandbox: string | null = null,
+  ): Pick<
     QueryOptions,
     | "env"
     | "settingSources"
@@ -461,8 +481,12 @@ export class ClaudeHarness implements Agent {
     | "spawnClaudeCodeProcess"
     | "stderr"
   > {
-    const { onLog, spawn } = this.options;
-    const bin = this.bin();
+    const { onLog } = this.options;
+    // A sandbox has a Claude Code of its own, which `sbx` starts.
+    const bin = sandbox ? undefined : this.bin();
+    const spawn = sandbox
+      ? (request: Parameters<Sandboxes["start"]>[1]) => this.sandboxes().start(sandbox, request)
+      : this.options.spawn;
     return {
       env: this.env,
       settingSources: ["user", "project", "local"],
@@ -481,6 +505,14 @@ export class ClaudeHarness implements Agent {
     const found = Bun.which(named, { PATH: this.env["PATH"] ?? "" });
     if (!found) throw new Error(`\`${named}\` is not installed, or not on the PATH.`);
     return found;
+  }
+
+  private sandboxes(): Sandboxes {
+    const { sandboxes } = this.options;
+    if (!sandboxes?.available()) {
+      throw new Error("Docker Sandboxes is not installed: `sbx` is not on the PATH.");
+    }
+    return sandboxes;
   }
 
   private emit(event: HarnessEvent): void {
@@ -517,6 +549,8 @@ export class ClaudeHarness implements Agent {
   /** The session's process, started if it has none, and started again if it must run otherwise. */
   private async running(sessionId: string, options: TurnOptions): Promise<Running> {
     const known = await this.find(sessionId);
+    // A daemon that started since the session was made is told where it runs.
+    if (options.sandbox) known.sandbox = options.sandbox;
     const model = options.model ?? known.model;
     const effort = options.effort ?? (await this.defaultEffort(model));
     const spec = JSON.stringify([options.mode ?? "readOnly", model ?? "", effort ?? ""]);
@@ -556,7 +590,10 @@ export class ClaudeHarness implements Agent {
       known.stored = false;
     }
     const input = new Inbox<WireUserMessage>();
-    const { tools } = this.options;
+    // The sandbox may have been removed since: it is made again, and its agent starts in it.
+    const sandbox = known.sandbox ? await this.sandboxes().ensure(known.cwd, known.sandbox) : null;
+    // Cycle's tools answer on this machine's loopback alone, which a sandbox is not on.
+    const tools = sandbox ? undefined : this.options.tools;
     const running: Running = {
       sessionId,
       known,
@@ -571,8 +608,8 @@ export class ClaudeHarness implements Agent {
       query: this.sdk.query({
         prompt: input,
         options: {
-          ...this.shared(),
-          ...modeOptions(options.mode ?? "readOnly"),
+          ...this.shared(sandbox),
+          ...modeOptions(options.mode ?? "readOnly", sandbox !== null),
           cwd: known.cwd,
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),

@@ -115,6 +115,8 @@ export interface Methods {
       mode?: SessionMode;
       /** Make a worktree for it, on a branch of this name when given. */
       worktree?: { branch?: string; base?: string };
+      /** Run its agent in a sandbox for the folder. Not with a worktree. */
+      sandbox?: boolean;
     };
     result: SessionInfo;
   };

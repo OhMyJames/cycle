@@ -27,6 +27,8 @@ export interface HarnessSession {
   model: string;
   effort: string | null;
   branch: string | null;
+  /** The sandbox its agent runs in, by name, when the harness knows. */
+  sandbox: string | null;
   createdAt: number;
   updatedAt: number;
   forkedFrom: string | null;
@@ -36,10 +38,14 @@ export interface TurnOptions {
   model?: string;
   effort?: string;
   mode?: SessionMode;
+  /** The sandbox the session's agent runs in, by name. Left out, it runs on this machine. */
+  sandbox?: string;
 }
 
 export interface CreateSessionOptions extends TurnOptions {
   cwd: string;
+  /** Run its agent in a sandbox, which the harness finds or makes for the folder. */
+  sandboxed?: boolean;
 }
 
 export interface PromptInput {

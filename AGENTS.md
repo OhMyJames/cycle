@@ -54,7 +54,7 @@ Agents generate a lot of tests, so the suite has hard limits. The check enforces
   see `apps/daemon/test/fake-harness.ts`.
 - `test/integration/` holds everything slower. `bun run test:integration` runs it; the gate does not.
   It runs the real `codex app-server` and the real Claude Code against scripted models
-  (`mock-model.ts`, `mock-claude.ts`), with no account.
+  (`mock-model.ts`, `mock-claude.ts`), with no account, and a stand-in for `sbx` (`fake-sbx.sh`).
 - The whole unit suite has a 30s budget. `test.only`, `.skip` and `.todo` are not allowed. A test file
   may not exceed 400 lines.
 - Test behavior through a package's public surface, and delete a test when the behavior it covers goes.
@@ -67,7 +67,7 @@ change in the real page, and drive it with Playwright when the change is in the 
 Cycle keeps its data in `CYCLE_HOME`, which defaults to `~/.cycle-codex` and must be an absolute path:
 `daemon.json` (where the running daemon is, and its token, mode 0600), `settings.json` (what new
 sessions start with, and the owner's projects), `sessions.json` (what only Cycle knows of each session:
-pin, unread, mode, model, worktree, the schedule that started it), `providers.json` (the owner's model
+pin, unread, mode, model, worktree, sandbox, the schedule that started it), `providers.json` (the owner's model
 providers and their keys, mode 0600), `provider-models.json` (codex's catalog of
 those providers' models, which says how much each can read; written as the second codex child starts),
 `usage.json` (tokens per local day, numbers only),
@@ -110,8 +110,14 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   `translate.ts` is the pure mapping; `claude-harness.ts` runs one Claude Code process for each session
   in use, started with the session's mode, model and effort and closed after five idle minutes, and
   reads stored sessions with the SDK's own calls. A turn is known by its prompt's id, live and stored.
-  Claude Code reads the owner's own settings, as its CLI does. Its `spawn` option starts Claude Code
-  somewhere other than this machine; nothing uses it yet.
+  Claude Code reads the owner's own settings, as its CLI does.
+- A session can run its agent in a Docker sandbox (`sbx`) on this machine: `harness/claude/src/sandbox.ts`.
+  There is one sandbox for a folder, made when first asked for, and it sees the folder at the same
+  path, so only Claude Code moves into it, started with `sbx exec`; files, git and terminals stay this
+  machine's. Of the owner's Claude Code home only the folder's conversations are shared into it, so
+  they are stored and read here. The sandbox has its own sign-in (`sbx secret set anthropic`), no
+  settings of the owner's, and no reach to Cycle's tools. Codex sessions and worktrees do not run in
+  one. Why: [decision note](.agents/notes/2026-11-14-a-local-sandbox-holds-the-agent-only.md).
 - `harness/codex` is the only code that knows codex. `translate.ts` is the pure mapping; `codex-harness.ts`
   drives `codex app-server` children (`process.ts`), starts one again if it dies, and brings a session
   back into it the next time it is used. Codex runs one model provider per process and keeps a thread

@@ -334,6 +334,7 @@ export function toSession(
     model: extra?.model ?? thread.model ?? "",
     effort: extra?.effort ?? thread.reasoningEffort,
     branch: thread.gitInfo?.branch ?? null,
+    sandbox: null,
     createdAt: thread.createdAt * 1000,
     updatedAt: thread.updatedAt * 1000,
     forkedFrom: thread.forkedFromId,
@@ -371,6 +372,7 @@ export function toModel(raw: WireModel): ModelInfo {
     defaultEffort: raw.defaultReasoningEffort,
     isDefault: raw.isDefault,
     images: raw.inputModalities?.includes("image") ?? true,
+    sandbox: false,
     provider: null,
   };
 }

@@ -575,7 +575,7 @@ export function historyModel(messages: WireHistoryMessage[]): string | null {
 
 export function toSession(
   info: WireSessionInfo,
-  extra?: { model?: string; forkedFrom?: string },
+  extra?: { model?: string; forkedFrom?: string; sandbox?: string },
 ): HarnessSession {
   return {
     id: info.sessionId,
@@ -587,6 +587,7 @@ export function toSession(
     effort: null,
     // A commit checked out by itself is no branch.
     branch: info.gitBranch && info.gitBranch !== "HEAD" ? info.gitBranch : null,
+    sandbox: extra?.sandbox ?? null,
     createdAt: info.createdAt ?? info.lastModified,
     updatedAt: info.lastModified,
     forkedFrom: extra?.forkedFrom ?? null,
@@ -603,7 +604,7 @@ export const DEFAULT_EFFORT = "high";
  * and two aliases may mean one model: each model is offered once, under its
  * own id, so a session keeps the model it began on when an alias moves.
  */
-export function toModels(raw: WireModelInfo[]): ModelInfo[] {
+export function toModels(raw: WireModelInfo[], sandbox = false): ModelInfo[] {
   const models: ModelInfo[] = [];
   for (const model of raw) {
     const id = model.resolvedModel ?? model.value;
@@ -620,6 +621,7 @@ export function toModels(raw: WireModelInfo[]): ModelInfo[] {
       defaultEffort: efforts.includes(DEFAULT_EFFORT) ? DEFAULT_EFFORT : (efforts[0] ?? null),
       isDefault: model.value === "default",
       images: true,
+      sandbox,
       provider: null,
     });
   }
@@ -638,15 +640,18 @@ export interface ModeOptions {
  * unasked and runs commands in Claude Code's sandbox, which keeps them to the
  * folder; where the sandbox cannot start, a command asks first instead.
  * `fullAccess` never asks and has no sandbox.
+ *
+ * `contained` is a session whose agent already runs in a sandbox of the machine's: Claude Code's
+ * own is left off there, so in `auto` a command asks first.
  */
-export function modeOptions(mode: SessionMode): ModeOptions {
+export function modeOptions(mode: SessionMode, contained = false): ModeOptions {
   switch (mode) {
     case "readOnly":
       return { permissionMode: "default" };
     case "auto":
       return {
         permissionMode: "acceptEdits",
-        sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+        ...(contained ? {} : { sandbox: { enabled: true, autoAllowBashIfSandboxed: true } }),
       };
     case "fullAccess":
       return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };

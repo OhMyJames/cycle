@@ -65,6 +65,7 @@ test("the list puts what needs the owner first, then what runs, then by day", ()
     status: "idle",
     branch: null,
     worktree: null,
+    sandbox: null,
     createdAt: 0,
     updatedAt: now - 1000,
     archived: false,

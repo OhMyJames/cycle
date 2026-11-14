@@ -81,7 +81,7 @@ export interface ExtraProvider {
   /** The bearer it expects. It reaches codex in the environment, never in its arguments. */
   token: string;
   /** The models it serves now, and how much each can read. */
-  models(): { info: Omit<ModelInfo, "harness">; contextWindow: number }[];
+  models(): { info: Omit<ModelInfo, "harness" | "sandbox">; contextWindow: number }[];
   /** Where to write codex's catalog of those models, which tells it how much each can read. */
   catalogPath: string;
 }
@@ -257,6 +257,7 @@ export class CodexHarness implements Harness {
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
+    if (options.sandboxed) throw new Error("Codex sessions do not run in a sandbox yet.");
     const policy = options.mode ? modePolicy(options.mode) : null;
     const proc = this.served(options.model) && this.extra ? this.extra : this.main;
     await proc.peer();
@@ -499,7 +500,7 @@ export class CodexHarness implements Harness {
       cursor = page.nextCursor;
     } while (cursor);
     for (const { info } of this.provider?.models() ?? []) {
-      models.push({ ...info, harness: this.name });
+      models.push({ ...info, harness: this.name, sandbox: false });
     }
     return models;
   }

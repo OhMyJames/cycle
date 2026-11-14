@@ -40,6 +40,8 @@ export interface Draft {
   cwd: string;
   worktree: boolean;
   branch: string;
+  /** Run its agent in a sandbox. Only what the chosen model can do is sent. */
+  sandbox: boolean;
   model: string | null;
   effort: string | null;
   mode: SessionMode;
@@ -309,6 +311,7 @@ export class CycleApp {
         cwd: folder,
         worktree: settings?.worktree ?? false,
         branch: "",
+        sandbox: false,
         model: settings?.model ?? null,
         effort: settings?.effort ?? null,
         mode: settings?.mode ?? "auto",
@@ -343,13 +346,19 @@ export class CycleApp {
   async createAndSend(text: string, images: string[]): Promise<boolean> {
     const draft = this.view.get().draft;
     if (!draft) return false;
+    const sandbox =
+      draft.sandbox && this.models.get().find((model) => model.id === draft.model)?.sandbox;
     const info = await this.attempt(
       this.request("session.create", {
         cwd: draft.cwd,
         mode: draft.mode,
         ...(draft.model ? { model: draft.model } : {}),
         ...(draft.effort ? { effort: draft.effort } : {}),
-        ...(draft.worktree ? { worktree: draft.branch ? { branch: draft.branch } : {} } : {}),
+        ...(sandbox
+          ? { sandbox: true }
+          : draft.worktree
+            ? { worktree: draft.branch ? { branch: draft.branch } : {} }
+            : {}),
       }),
     );
     if (!info) return false;

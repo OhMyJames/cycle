@@ -21,6 +21,7 @@ const info: SessionInfo = {
   status: "idle",
   branch: null,
   worktree: null,
+  sandbox: null,
   createdAt: 0,
   updatedAt: 0,
   archived: false,
