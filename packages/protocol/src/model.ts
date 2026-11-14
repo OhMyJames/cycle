@@ -261,6 +261,8 @@ export type SessionEvent =
 
 export interface ModelInfo {
   id: string;
+  /** The name of the harness that runs it. */
+  harness: string;
   name: string;
   description: string;
   efforts: { id: string; description: string }[];
@@ -272,15 +274,21 @@ export interface ModelInfo {
   provider: { id: string; name: string } | null;
 }
 
+/** A harness's name as the owner reads it: `codex` is Codex. */
+export function harnessLabel(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 /**
- * Whether a session on one model may move to the other. The agent keeps a
- * conversation with the kind of provider it began on: its own, or the owner's.
+ * Whether a session on one model may move to the other. A session stays with
+ * the harness it began on, and that agent keeps a conversation with the kind
+ * of provider it began on: its own, or the owner's.
  */
 export function sameModelFamily(
-  a: Pick<ModelInfo, "provider">,
-  b: Pick<ModelInfo, "provider">,
+  a: Pick<ModelInfo, "harness" | "provider">,
+  b: Pick<ModelInfo, "harness" | "provider">,
 ): boolean {
-  return (a.provider === null) === (b.provider === null);
+  return a.harness === b.harness && (a.provider === null) === (b.provider === null);
 }
 
 /** The protocols an endpoint of the owner's own may speak. */

@@ -224,7 +224,7 @@ test("the harness stopping fails the turns it was running", async () => {
   const { harness, hub, status } = await setup();
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
-  harness.emit({ type: "harness.exited", message: "codex app-server exited" });
+  harness.emit({ type: "harness.exited", harness: "fake", message: "codex app-server exited" });
   expect(status(info.id)).toBe("error");
   const state = await hub.open(info.id, undefined);
   expect("state" in state && state.state.turns[0]?.error).toContain("codex app-server exited");
@@ -266,8 +266,9 @@ test("a worktree session starts in its own checkout and remembers its base", asy
   );
 });
 
-const model = (id: string, provider: { id: string; name: string } | null) => ({
+const model = (id: string, provider: { id: string; name: string } | null, harness = "fake") => ({
   id,
+  harness,
   name: id,
   description: "",
   efforts: [],
@@ -288,6 +289,26 @@ test("a session stays with the kind of model it began on", async () => {
   );
   // A model nobody lists any more is the harness's to refuse, not the daemon's to guess at.
   expect((await hub.update({ sessionId: info.id, model: "gone" })).model).toBe("gone");
+});
+
+test("a session stays with the harness it began on", async () => {
+  const { harness, hub } = await setup();
+  harness.models = [model("model-a", null), model("other-a", null, "other")];
+  const info = await hub.create({ cwd: "/project" });
+  expect(hub.update({ sessionId: info.id, model: "other-a" })).rejects.toThrow(
+    "This session began on Fake",
+  );
+});
+
+test("a harness that stops ends only its own sessions' turns", async () => {
+  const { harness, hub, status } = await setup();
+  const info = await hub.create({ cwd: "/project" });
+  await hub.send(info.id, { text: "go", images: [] }, "auto");
+  harness.emit(start(info.id, "t1"));
+  harness.emit({ type: "harness.exited", harness: "other", message: "other exited" });
+  expect(status(info.id)).toBe("running");
+  harness.emit({ type: "harness.exited", harness: "fake", message: "fake exited" });
+  expect(status(info.id)).toBe("error");
 });
 
 test("a review starts a turn of its own, and waits for no turn nor makes one wait", async () => {

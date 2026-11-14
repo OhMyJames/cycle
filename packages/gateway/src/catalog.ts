@@ -117,7 +117,7 @@ export function splitModelRef(ref: string): { providerId: string; modelId: strin
 }
 
 /** A provider's models as a session can choose them. */
-export function modelInfos(config: ProviderConfig): ModelInfo[] {
+export function modelInfos(config: ProviderConfig): Omit<ModelInfo, "harness">[] {
   return config.models.flatMap((chosen) => {
     const model = piModel(config, chosen.id);
     if (!model) return [];

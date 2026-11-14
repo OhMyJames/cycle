@@ -21,6 +21,7 @@ import {
   type WorktreeInfo,
   activeTurn,
   coalesceEvents,
+  harnessLabel,
   initialSessionState,
   reduceSession,
   sameModelFamily,
@@ -331,8 +332,14 @@ export class SessionHub {
       const from = models.find((model) => model.id === info.model);
       const to = models.find((model) => model.id === params.model);
       if (from && to && !sameModelFamily(from, to)) {
+        const began =
+          from.harness !== to.harness
+            ? harnessLabel(from.harness)
+            : from.provider
+              ? "a model of your own provider"
+              : "one of the agent's own models";
         throw new SessionError(
-          `This session began on ${from.provider ? "a model of your own provider" : "one of the agent's own models"} and stays with that kind. Start a new session to use ${to.name}.`,
+          `This session began on ${began} and stays with that kind. Start a new session to use ${to.name}.`,
         );
       }
       info = { ...info, model: params.model };
@@ -419,7 +426,7 @@ export class SessionHub {
     const live = this.live.get(session.id);
     const info: SessionInfo = {
       id: session.id,
-      harness: this.options.harness.name,
+      harness: session.harness,
       title: meta.title || session.title,
       preview: session.preview || known?.preview || "",
       cwd: session.cwd,
@@ -548,6 +555,8 @@ export class SessionHub {
   private handle(event: HarnessEvent): void {
     if (event.type === "harness.exited") {
       for (const live of this.live.values()) {
+        // Another harness's sessions carry on.
+        if (live.state.info.harness !== event.harness) continue;
         const turn = activeTurn(live.state);
         live.starting = false;
         if (turn) {

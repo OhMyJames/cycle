@@ -10,7 +10,7 @@ import type {
 
 /** A harness that runs nothing: tests say what it reports. */
 export class FakeHarness implements Harness {
-  readonly name = "fake";
+  readonly name: string;
   readonly sent: { sessionId: string; text: string }[] = [];
   readonly steered: string[] = [];
   readonly calls: string[] = [];
@@ -23,6 +23,10 @@ export class FakeHarness implements Harness {
   private listener: (event: HarnessEvent) => void = () => {};
   private ids = 0;
 
+  constructor(name = "fake") {
+    this.name = name;
+  }
+
   emit(event: HarnessEvent): void {
     this.listener(event);
   }
@@ -30,6 +34,7 @@ export class FakeHarness implements Harness {
   session(id: string, patch: Partial<HarnessSession> = {}): HarnessSession {
     return {
       id,
+      harness: this.name,
       title: null,
       preview: "",
       cwd: "/project",
@@ -50,7 +55,9 @@ export class FakeHarness implements Harness {
     return () => {};
   }
   createSession = async (options: { cwd: string }) =>
-    this.session(`s${++this.ids}`, { cwd: options.cwd });
+    this.session(`${this.name === "fake" ? "s" : `${this.name}-`}${++this.ids}`, {
+      cwd: options.cwd,
+    });
   listSessions = async () => this.stored;
   loadSession = async (sessionId: string) => {
     this.calls.push(`load ${sessionId}`);

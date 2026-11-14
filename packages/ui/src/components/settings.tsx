@@ -1,4 +1,4 @@
-import { type ModelInfo, SESSION_MODES } from "@cycle/protocol";
+import { type ModelInfo, SESSION_MODES, harnessLabel } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import type { SettingsSection, Theme } from "../client/app.ts";
 import { host } from "../client/host.ts";
@@ -38,11 +38,11 @@ function Limit({
   );
 }
 
-/** Models under the name of whoever serves them, codex's own first. */
+/** Models under the name of whoever serves them, the main agent's own first. */
 function groupByProvider(models: ModelInfo[]): [string, ModelInfo[]][] {
   const groups = new Map<string, ModelInfo[]>();
   for (const model of models) {
-    const name = model.provider?.name ?? "Codex";
+    const name = model.provider?.name ?? harnessLabel(model.harness);
     groups.set(name, [...(groups.get(name) ?? []), model]);
   }
   return [...groups];
