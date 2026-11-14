@@ -56,6 +56,7 @@ export function ServerEditor({ server, onDone }: { server: McpServerInfo | null;
           <div className="form-field">
             <span className="form-label">Reached by</span>
             <Segmented<ServerDraft["kind"]>
+              label="Reached by"
               value={draft.kind}
               onChange={(kind) => set({ kind })}
               options={[

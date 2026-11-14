@@ -146,6 +146,7 @@ export function SettingsPage() {
             <div className="card">
               <Setting title="Theme">
                 <Segmented<Theme>
+                  label="Theme"
                   value={theme}
                   onChange={(value) => app.setView({ theme: value })}
                   options={[
@@ -175,6 +176,7 @@ export function SettingsPage() {
               >
                 <select
                   className="field select"
+                  aria-label="Model"
                   value={settings?.model ?? ""}
                   onChange={(event) =>
                     set({ model: event.currentTarget.value || null, effort: null })
@@ -194,6 +196,7 @@ export function SettingsPage() {
               </Setting>
               <Setting title="Permissions" note={MODE_LABELS[settings?.mode ?? "auto"].sub}>
                 <Segmented
+                  label="Permissions"
                   value={settings?.mode ?? "auto"}
                   onChange={(mode) => set({ mode })}
                   options={SESSION_MODES.map((mode) => ({
@@ -202,6 +205,8 @@ export function SettingsPage() {
                       mode === "auto"
                         ? `${MODE_LABELS[mode].label} (default)`
                         : MODE_LABELS[mode].label,
+                    // No sandbox and no questions: a press chooses it, never an arrow key.
+                    deliberate: mode === "fullAccess",
                   }))}
                 />
               </Setting>

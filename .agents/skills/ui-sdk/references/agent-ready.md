@@ -1,5 +1,9 @@
 # Make it agent-ready
 
+## In Cycle: ask first
+
+Don't do any of this unless the owner asked for it. `createAgent`, agent tools and WebMCP let an agent read the page and act in it, and Cycle's page holds the connection token, sends prompts and approves commands. Who may operate it is a security boundary, in `AGENTS.md` under Red lines. The parts of this page that only name things well (a label on every control, a name on every root) are worth doing anyway: screen readers use the same names.
+
 An app built with ui-sdk can let an agent read its components and call their actions directly, through `createAgent`, instead of clicking through the page. An interface is agent-ready when an agent can find every control by name, call what it needs, and the app sees each change as the agent's and can refuse it.
 
 The full docs are the Agents pages: `docs/agents.md` in each package, or https://ui-sdk.dev/docs/agents.

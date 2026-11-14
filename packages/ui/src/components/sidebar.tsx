@@ -1,4 +1,5 @@
 import type { SessionInfo } from "@cycle/protocol";
+import { isComposing } from "@ui-sdk/core";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type CycleApp,
@@ -186,7 +187,7 @@ const SessionRow = memo(function SessionRow({
             if (next && next !== title) app.updateSession({ sessionId: info.id, title: next });
           }}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (isComposing(event)) return;
             if (event.key === "Enter") event.currentTarget.blur();
             if (event.key === "Escape") {
               event.stopPropagation();
@@ -602,7 +603,7 @@ function SessionSidebar() {
                 setSearching(false);
               }
               const first = groups[0]?.sessions[0];
-              if (event.key === "Enter" && first && !event.nativeEvent.isComposing) {
+              if (event.key === "Enter" && first && !isComposing(event)) {
                 app.selectSession(first.id);
               }
             }}

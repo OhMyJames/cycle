@@ -1,5 +1,7 @@
 # Style it
 
+In Cycle, skip to [Slots](#slots): `web.css` is never imported, so its tokens, icons and sizes below don't exist in the page. The look comes from `.agents/designs/design-system.md` and `packages/ui/src/styles/`.
+
 Components render no styles of their own. `@ui-sdk/core/web.css` is an optional stylesheet that gives every component a default look. The setup prompt imports it, so most apps start with it.
 
 ## web.css

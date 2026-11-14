@@ -440,6 +440,7 @@ export function ConnectorPage() {
           </p>
         </header>
         <Segmented<Tab>
+          label="What to connect"
           value={tab}
           onChange={setTab}
           options={[

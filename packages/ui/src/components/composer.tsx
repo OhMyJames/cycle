@@ -6,6 +6,7 @@ import {
   type Usage,
   activeTurn,
 } from "@cycle/protocol";
+import { isComposing } from "@ui-sdk/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type CycleApp, type Draft, projectOf, sessionTitle } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
@@ -212,6 +213,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
           <input
             className="field small branch-field"
             placeholder="branch name (optional)"
+            aria-label="Branch name, optional"
             value={draft.branch}
             onChange={(event) => change({ branch: event.currentTarget.value })}
           />
@@ -610,7 +612,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
           }}
           onBlur={() => setTimeout(() => setSuggestions([]), 120)}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (isComposing(event)) return;
             if (suggestions.length) {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();

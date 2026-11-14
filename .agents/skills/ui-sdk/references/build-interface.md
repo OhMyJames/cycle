@@ -88,12 +88,11 @@ Use the default prop to start (`defaultValue`, `defaultOpen`, `defaultChecked`, 
 
 ## 5. Styles
 
-- With `web.css`, read [styles.md](styles.md) first: its tokens, the icons it draws and the sizes it sets.
+- Cycle doesn't use `web.css`: give each part Cycle's class with `className`, and write its states in `packages/ui/src/styles/`.
 - Every part has `data-slot`: the component's name on a root (`switch`), `<component>-<part>` on a part (`switch-thumb`). Read it from the rendered DOM before you write a selector, since a few differ. State shows as attributes like `data-open`, `data-pressed`, `data-disabled`, `data-side="top"`. Each component page lists its attributes and CSS variables.
-- Tailwind: `data-pressed:bg-neutral-100`. CSS: `[data-slot="select-trigger"][data-open]`.
+- CSS: `[data-slot="select-trigger"][data-open]`. Cycle has no Tailwind.
 - Popups get `data-starting-style` before they enter and `data-ending-style` while they exit, and stay mounted until the exit finishes. Put exit styles on `data-ending-style`.
 - Popups expose `--anchor-width`, `--available-height` and `--transform-origin`.
-- `@layer ui-sdk;` goes at the top of the global stylesheet so your styles win.
 
 ## 6. Framework rules
 
@@ -184,4 +183,4 @@ Check each part name against the component pages; they're the source of truth.
 
 ## 8. Test it
 
-Every interface gets tests, and at least the agent test from [agent-ready.md](agent-ready.md#prove-it-with-a-test). Follow [testing.md](testing.md) for the rest.
+Every interface gets checked as [testing.md](testing.md) says for Cycle. The agent test in [agent-ready.md](agent-ready.md#prove-it-with-a-test) is only for an interface the owner asked to be agent-ready.

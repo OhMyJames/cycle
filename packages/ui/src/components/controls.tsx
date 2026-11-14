@@ -1,30 +1,42 @@
+import { SegmentedControl, SegmentedControlItem } from "@ui-sdk/react/segmented-control";
 import type { ReactNode } from "react";
 import { Dialog } from "./menu.tsx";
 
+/**
+ * One of a few choices, all in view: a radio group with one Tab stop, where the arrow keys move
+ * the choice. The behavior is ui-sdk's; the look is Cycle's `.segmented`.
+ */
 export function Segmented<T extends string>({
+  label,
   value,
   options,
   onChange,
 }: {
+  /** What is being chosen, for a reader that cannot see the row it sits in. */
+  label: string;
   value: T;
-  options: { value: T; label: string }[];
+  /** An option marked `deliberate` is chosen by a press only: the arrow keys never land on it. */
+  options: { value: T; label: string; deliberate?: boolean }[];
   onChange(value: T): void;
 }) {
   return (
-    <div className="segmented" role="radiogroup">
+    <SegmentedControl<T>
+      className="segmented"
+      aria-label={label}
+      value={value}
+      onValueChange={(next, details) => {
+        if (next === null) return;
+        const deliberate = options.some((option) => option.value === next && option.deliberate);
+        if (deliberate && details.reason === "list-navigation") details.cancel();
+        else onChange(next);
+      }}
+    >
       {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          className="segment"
-          aria-checked={option.value === value}
-          onClick={() => onChange(option.value)}
-        >
+        <SegmentedControlItem key={option.value} className="segment" value={option.value}>
           {option.label}
-        </button>
+        </SegmentedControlItem>
       ))}
-    </div>
+    </SegmentedControl>
   );
 }
 

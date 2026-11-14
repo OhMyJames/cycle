@@ -12,10 +12,7 @@ Don't read compiled JavaScript in `dist/*.js`. When the docs and types don't say
 
 ### Probe what the docs don't say
 
-Write a throwaway test that renders our component in jsdom, fires events, and logs the DOM and the callbacks' arguments. Run it with `--silent=false` to see the logs, then delete it. This is how to learn, for example, whether a part hides when it's empty, which reason a change reports, where focus goes, or which tag names a web components entry defines. Two things every probe needs:
-
-- **Wait a tick after mounting.** Some state, like an input group's `filled`, arrives after mount: `await act(() => new Promise((r) => setTimeout(r, 0)))`.
-- **Stub what jsdom lacks before anything opens:** see [testing.md](testing.md#jsdom).
+Cycle has no jsdom, so probe in a real browser: render our component on a page in `bun run demo`, drive it with a throwaway Playwright script outside the repository, and log the DOM and the callbacks' arguments. This is how to learn, for example, whether a part hides when it's empty, which reason a change reports, where focus goes, or which tag names a web components entry defines.
 
 ## Steps
 
@@ -57,9 +54,9 @@ When the same interaction repeats across several components, like a "press and h
 
 `createParts(primitive, { root: "div", item: "div" })` from `@ui-sdk/<framework>/primitive` returns `Root` and one part per tagged slot, typed from the primitive (`@ui-sdk/web` has `createParts`). Write your own part with `usePart` only when it renders something of its own, like a list from data, and a root with `usePrimitive`. The adapter only renders: no key handlers, focus moves, ARIA or `data-slot` in it. In React, the file that calls `createParts` starts with `"use client"`.
 
-### 5. Make it agent-ready and test it
+### 5. Test it
 
-Follow [agent-ready.md](agent-ready.md), then [testing.md](testing.md). The mutation check there is not optional for a new component.
+Follow [testing.md](testing.md). The mutation check there is not optional for a new component. [agent-ready.md](agent-ready.md) is only for when the owner asks.
 
 ## Compose ours
 

@@ -1,4 +1,5 @@
 import type { SessionInfo } from "@cycle/protocol";
+import { isComposing } from "@ui-sdk/core";
 import { useState } from "react";
 import { type PanelId, sessionTitle } from "../client/app.ts";
 import { host } from "../client/host.ts";
@@ -49,7 +50,7 @@ export function TitleBar({ info, title }: { info: SessionInfo | null; title: str
             if (next && next !== name) app.updateSession({ sessionId: info.id, title: next });
           }}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (isComposing(event)) return;
             if (event.key === "Enter") event.currentTarget.blur();
             if (event.key === "Escape") {
               event.currentTarget.value = name;

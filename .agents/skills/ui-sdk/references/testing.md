@@ -6,53 +6,20 @@ Test what you built, not what ui-sdk already tests: for an interface, check that
 
 Wiring includes what a person does with the keyboard: press Space on every switch or checkbox you placed, not just one, and check that closing a dialog or menu returns focus where it should. Press each button in every dialog, Cancel as well as the confirming one, and check what happened. Submit each required field empty. Assert every button's name in the page's own markup, not in a fixture, and assert that state attributes you don't set, like `aria-disabled`, are absent. The same goes when you're asked to add tests to existing code: tests that pass on a broken page don't count.
 
-## Set up tests
+## In Cycle
 
-For React with Vite and Vitest. Other frameworks swap the testing library, like `@testing-library/vue`:
+Cycle's unit tests (`bun test`, in `packages/ui/test/`) have no document: no jsdom, no Testing Library, no vitest, and none may be installed. Each test has 200ms and may not touch timers, the network or the disk. So the two halves of this page land in different places:
 
-```bash
-npm i -D vitest jsdom @testing-library/react @testing-library/dom @testing-library/user-event
-```
+- **What is pure goes in a unit test.** Put a component's decisions in a function under `packages/ui/src/lib/` and test that, as `suggest.ts` and `schedule-text.ts` are. `checkServer`, `partAttrs` and `partState` from `@ui-sdk/core/testing` need no document either.
+- **What needs a document goes to a real browser.** `mount`, `checkPattern` and `checkDirection` need one, so they don't run in the gate. Run `bun run demo`, which prints the page's address, and drive it with Playwright (already installed: `require("playwright")`, `chromium.launch()`). Press the real keys, read roles, names, `aria-checked` and `tabIndex` from the DOM, and look at a screenshot. Everything below about what to press and what to assert still applies there.
 
-`vitest.config.ts`:
-
-```ts
-import { defineConfig, mergeConfig } from "vitest/config"
-import viteConfig from "./vite.config.ts"
-
-export default mergeConfig(
-  viteConfig,
-  defineConfig({
-    test: {
-      environment: "jsdom",
-      setupFiles: ["./src/test/setup.ts"],
-      css: false,
-    },
-  })
-)
-```
-
-`src/test/setup.ts` holds the [jsdom stubs](#jsdom), strict mode and cleanup:
-
-```ts
-import { cleanup } from "@testing-library/react"
-import { afterEach } from "vitest"
-
-declare global {
-  var __UI_SDK_STRICT__: boolean | undefined
-}
-globalThis.__UI_SDK_STRICT__ = true
-
-// The jsdom stubs below go here.
-
-afterEach(cleanup)
-```
+Wherever this page says vitest, jsdom or Testing Library, read it as that browser run. The jsdom section is kept only as a record of what jsdom lacks.
 
 ## Which tool for what
 
 | You built                                                   | Test with                                                                                                                                                                                                                                                                                                                                    |
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| An interface from our components                            | The framework's testing library for what you wired (names, values, callbacks, what submits), and the [agent test](agent-ready.md#prove-it-with-a-test). Our components are tested already: don't run `checkPattern` on them.                                                                                                                 |
+| An interface from our components                            | The framework's testing library for what you wired (names, values, callbacks, what submits), and, only if the owner asked for it to be agent-ready, the [agent test](agent-ready.md#prove-it-with-a-test). Our components are tested already: don't run `checkPattern` on them.                                                                                                                 |
 | A primitive                                                 | `mount` with `keys`, `type`, `click`, `hover` and `drag`, then `checkPattern`, `checkServer` and `checkDirection`. If a page in the app uses it, also render that page: press its keys there, click each of its buttons that moves between steps (Next, Back), assert where focus lands after each, and assert its name in the page's markup |
 | Anything with popups, layout or focus moving between fields | Also a real browser                                                                                                                                                                                                                                                                                                                          |
 

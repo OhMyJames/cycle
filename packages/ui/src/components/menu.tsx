@@ -96,7 +96,8 @@ export function MenuList({
       <button
         key={position}
         type="button"
-        role="menuitem"
+        role={entry.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+        aria-checked={entry.checked}
         className={
           entry.danger ? "menu-item danger" : entry.warning ? "menu-item warning" : "menu-item"
         }

@@ -64,6 +64,7 @@ function QuestionCard({
             className="field small"
             type={question.secret ? "password" : "text"}
             placeholder="Something else…"
+            aria-label="Another answer"
             value={other}
             autoFocus={question.options.length === 0}
             onChange={(event) => setOther(event.currentTarget.value)}
