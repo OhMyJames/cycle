@@ -352,6 +352,12 @@ input::placeholder {
   transform: translateX(2px);
   transition: transform var(--motion-state);
 }
+/* The pill is 16 high; a press within 4 of it counts, so the target is 24. */
+.switch::before {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
 .switch[aria-checked="true"] {
   background: var(--action-primary);
 }

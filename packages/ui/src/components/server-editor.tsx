@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { type ServerDraft, serverDraft, serverInput, serverProblem } from "../lib/server-form.ts";
-import { FormField, Segmented } from "./controls.tsx";
+import { FormField, Segmented, useRowKeys } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 
 /** The page that adds an MCP server or changes one. A server keeps its name once made. */
@@ -14,6 +14,7 @@ export function ServerEditor({ server, onDone }: { server: McpServerInfo | null;
   );
   const [draft, setDraft] = useState<ServerDraft>(() => serverDraft(server));
   const [saving, setSaving] = useState(false);
+  const rows = useRowKeys(draft.env.length);
   const set = (patch: Partial<ServerDraft>) => setDraft((old) => ({ ...old, ...patch }));
   const problem = serverProblem(draft, others);
   const save = () => {
@@ -79,7 +80,7 @@ export function ServerEditor({ server, onDone }: { server: McpServerInfo | null;
               <div className="form-field">
                 <span className="form-label">Environment</span>
                 {draft.env.map((row, index) => (
-                  <div key={index} className="pair-row">
+                  <div key={rows.keys[index]} className="pair-row">
                     <input
                       className="field mono"
                       value={row.name}
@@ -111,7 +112,10 @@ export function ServerEditor({ server, onDone }: { server: McpServerInfo | null;
                       className="icon-button"
                       title={`Remove variable ${index + 1}`}
                       aria-label={`Remove variable ${index + 1}`}
-                      onClick={() => set({ env: draft.env.toSpliced(index, 1) })}
+                      onClick={() => {
+                        rows.remove(index);
+                        set({ env: draft.env.toSpliced(index, 1) });
+                      }}
                     >
                       <Icon name="x" />
                     </button>

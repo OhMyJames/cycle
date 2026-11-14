@@ -1,5 +1,5 @@
 import { SegmentedControl, SegmentedControlItem } from "@ui-sdk/react/segmented-control";
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 import { Dialog } from "./menu.tsx";
 
 /**
@@ -139,4 +139,20 @@ export function ConfirmDialog({
       </div>
     </Dialog>
   );
+}
+
+/**
+ * A key for each row of a list the owner edits, where the rows have no id of their own. A row keeps
+ * its key while rows before it come and go, so its field keeps the focus and what is being typed.
+ * Call `remove` with the index as a row is taken out; new rows at the end get new keys.
+ */
+export function useRowKeys(count: number): {
+  keys: readonly number[];
+  remove(index: number): void;
+} {
+  const keys = useRef<number[]>([]);
+  const next = useRef(0);
+  while (keys.current.length < count) keys.current.push(next.current++);
+  keys.current.length = count;
+  return { keys: keys.current, remove: (index) => void keys.current.splice(index, 1) };
 }

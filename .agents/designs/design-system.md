@@ -64,7 +64,9 @@ not the most colorful.
   at a time. The sidebar always lists what the main area can show.
 - The title bar is 42 high. It names the open session and its folder; on a page it is empty.
 - The content column is 768 wide. Blocks in a turn are 16 apart, turns 40.
-- A side panel is 460 wide, 320 to 900; a double-click on its edge puts it back.
+- A side panel is 460 wide, 320 to 900; a double-click on its edge puts it back. In a window
+  900 wide or less it lies over the conversation, under the title row, whose buttons still switch
+  and close it.
 - Pages (Settings, Connector, Automatic) are one column, 720 with its padding: heading, a lead line, then sections
   of cards.
 
@@ -80,7 +82,9 @@ Four kinds, each a class:
 | Row     | `.menu-item`, `.nav-row`, ... | A choice in a list                      |
 
 - States: hover fills with `--surface-control-hover`; an open menu keeps its trigger in hover;
-  disabled changes the text color and does not fade the control.
+  disabled changes the text color and does not fade the control. Disabled text keeps 3:1 against
+  its surface: it reads as off, and it still reads.
+- A control drawn smaller than 24 (the switch, a tab's close) takes a press within 24.
 - Focus: `:focus-visible` only. A control gets the outline, a field gets the edge and glow.
 - A destructive action is `.button.danger` and always behind a confirmation that says what is lost.
 - A switch (`Switch`) is for a setting that applies at once; a checkbox for a choice inside a
@@ -151,7 +155,8 @@ class. The full text is in the `title`.
   owner or else the status line (what the agent is doing, for how long), then one notice. What the
   owner must act on is never below something they can ignore.
 - A status wording stays at least 650ms, so it does not flicker.
-- The scroll-to-bottom button floats above the composer, with the composer's shadow.
+- The scroll-to-bottom button floats above the composer, with the composer's shadow. While it
+  shows, the conversation fades out behind it, so it never lies on a line someone is reading.
 
 ## Interaction
 

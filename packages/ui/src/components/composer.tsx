@@ -30,6 +30,7 @@ import {
 } from "../lib/suggest.ts";
 import { MorphLoader } from "../loader/morph-loader.tsx";
 import { fileIcon } from "../lib/file-icons.ts";
+import { useRowKeys } from "./controls.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Chevron } from "./items.tsx";
 import { PlanSteps } from "./plan.tsx";
@@ -297,6 +298,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
 
   const [text, setText] = useState(() => app.draftText(key));
   const [images, setImages] = useState<string[]>([]);
+  const thumbs = useRowKeys(images.length);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [active, setActive] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -579,12 +581,15 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
         {images.length ? (
           <div className="attachments">
             {images.map((src, index) => (
-              <span key={index} className="thumb">
+              <span key={thumbs.keys[index]} className="thumb">
                 <img src={src} alt="" />
                 <button
                   type="button"
                   aria-label="Remove image"
-                  onClick={() => setImages(images.filter((_, other) => other !== index))}
+                  onClick={() => {
+                    thumbs.remove(index);
+                    setImages(images.filter((_, other) => other !== index));
+                  }}
                 >
                   <Icon name="x" size={12} />
                 </button>

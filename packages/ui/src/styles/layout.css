@@ -543,9 +543,16 @@
 .panel > :not(.resizer):first-of-type {
   border-radius: var(--radius-card) var(--radius-card) 0 0;
 }
+/*
+ * A narrow window has no room beside the panel, so it lies over the conversation, and starts under
+ * the title row: the buttons there still switch and close it.
+ */
 @media (max-width: 900px) {
   .main {
     --panel-room: 0px !important;
+  }
+  .panel {
+    top: 42px;
   }
 }
 

@@ -915,6 +915,16 @@ button.code-diff-name:hover {
   box-shadow: var(--shadow-composer);
   transition: background-color var(--motion-state);
 }
+/* While the button shows, what scrolls behind it fades out, so it never lies on a readable line. */
+.thread-scroll[data-away="true"] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--fade-top, 0px),
+    black calc(100% - 72px),
+    transparent
+  );
+}
 .to-bottom:hover {
   background: var(--surface-control-hover);
 }

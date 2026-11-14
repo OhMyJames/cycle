@@ -459,6 +459,7 @@ export function Thread({ sessionId }: { sessionId: string }) {
     <OpenFileContext.Provider value={openFile}>
       <div
         className="thread-scroll fade-y"
+        data-away={away}
         ref={scroller}
         onScroll={(event) => {
           const node = event.currentTarget;
