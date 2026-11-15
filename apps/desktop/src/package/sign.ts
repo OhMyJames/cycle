@@ -22,11 +22,8 @@ const required = (name: string): string => {
 
 const key = required("APPLE_API_KEY_PATH");
 
-await sign({
-  app,
-  platform: "darwin",
-  ...(process.env["CYCLE_KEYCHAIN"] ? { keychain: process.env["CYCLE_KEYCHAIN"] } : {}),
-});
+// The workflow puts the identity's keychain in the search list, which is what codesign reads.
+await sign({ app, platform: "darwin" });
 await notarize({
   appPath: app,
   appleApiKey: key,
