@@ -78,7 +78,8 @@ Cycle made was made with, mode 0600), `usage.json` (tokens per local day, number
 `schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
 [decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
 app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
-until the owner installs it, and `install.log`, what the last swap said;
+until the owner installs it, `update.log`, what each check and install did, and `install.log`, what
+the last swap said;
 [decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)) and `worktrees/`.
 Conversations themselves are the agent's that ran them: codex's in `CODEX_HOME`, Claude Code's in its
 own home. Cycle keeps no copy.
@@ -182,8 +183,9 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   packaged app starts its daemon with the owner's login shell environment, since Finder gives none.
 - The packaged macOS app updates itself from the GitHub releases of `OhMyJames/cycle`
   (`apps/desktop/src/update`): `plan.ts` and `updater.ts` are the decisions, `system.ts` what they do
-  to the network and the disk. The main process looks for a newer release after it starts and every
-  four hours, with the owner's GitHub token from their shell or `gh`, downloads it to
+  to the network and the disk. The main process looks for a newer release when its page is there,
+  when the owner comes back to the app and every four hours, with the owner's GitHub token from their
+  shell or `gh` when it has one, downloads it to
   `CYCLE_HOME/updates`, and checks it against the release's manifest (`src/shared/release.ts`). It
   replaces the app only when the owner clicks in Settings, About. A `v<version>` tag makes the release:
   `.github/workflows/release.yml`. Why:

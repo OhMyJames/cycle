@@ -28,8 +28,9 @@ const packaged = existsSync(path.join(app.getAppPath(), BUILD_FILE));
  */
 const selfUpdating = packaged && process.platform === "darwin";
 const UPDATES_ARGUMENT = "--cycle-updates";
-const FIRST_UPDATE_CHECK_MS = 15_000;
 const UPDATE_CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+/** A focus asks GitHub at most this often, so switching windows does not spend its allowance. */
+const FOCUS_UPDATE_CHECK_MS = 5 * 60 * 1000;
 
 let daemonProcess: ChildProcess | null = null;
 let pageOrigin = "";
@@ -141,7 +142,7 @@ function createWindow(pageUrl: string): void {
  * owner asks. A found one is downloaded, and installed only when the owner says so in the page,
  * because that restarts the app and stops whatever turn is running.
  */
-async function startUpdater(): Promise<void> {
+async function startUpdater(): Promise<() => void> {
   const loginEnv = await readOwnerEnv();
   const env = { ...process.env, ...loginEnv };
   const info = JSON.parse(
@@ -169,8 +170,15 @@ async function startUpdater(): Promise<void> {
   ipcMain.handle("cycle:update-install", async (event) => {
     if (fromPage(event)) await updater.install();
   });
-  setTimeout(() => void updater.check(), FIRST_UPDATE_CHECK_MS);
-  setInterval(() => void updater.check(), UPDATE_CHECK_EVERY_MS);
+  let askedAt = 0;
+  const check = (): void => {
+    const now = Date.now();
+    if (now - askedAt < FOCUS_UPDATE_CHECK_MS) return;
+    askedAt = now;
+    void updater.check();
+  };
+  setInterval(check, UPDATE_CHECK_EVERY_MS);
+  return check;
 }
 
 async function start(): Promise<void> {
@@ -204,16 +212,22 @@ async function start(): Promise<void> {
     }
   });
 
+  let checkForUpdates: (() => void) | undefined;
   if (selfUpdating) {
     // Before the window, so the page's first question about updates has someone to answer it.
     try {
-      await startUpdater();
+      checkForUpdates = await startUpdater();
     } catch (error) {
       console.error(`[cycle] updates are off: ${String(error)}`);
     }
   }
 
   createWindow(pageUrl);
+  if (checkForUpdates) {
+    // As soon as the page is there, and again whenever the owner comes back to it.
+    checkForUpdates();
+    app.on("browser-window-focus", () => checkForUpdates?.());
+  }
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(pageUrl);
   });

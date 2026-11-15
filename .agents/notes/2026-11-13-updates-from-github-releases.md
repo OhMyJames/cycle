@@ -12,8 +12,8 @@ against a public repository's release; nothing that needs macOS was run.
 The app changed only through `bun run desktop:install`, on a Mac with the repository. It is signed ad
 hoc, with no Developer ID, so Electron's `autoUpdater` (Squirrel.Mac) refuses it: Squirrel checks that
 an update is signed by the same identity as the running app, and an ad hoc signature has none. The
-repository is private, so its releases answer only to a token. And an update restarts the app, which
-stops the daemon and every running turn.
+repository was private when this was written, so its releases then answered only to a token; it is
+public now. And an update restarts the app, which stops the daemon and every running turn.
 
 ## Decision
 
@@ -39,9 +39,11 @@ stops the daemon and every running turn.
   bundle is moved beside it under a hidden name, then a detached `/bin/sh` helper, given its paths as
   arguments, waits for the app to quit, renames the old bundle aside, renames the new one into place,
   puts the old one back if that fails, and opens the app. What it said is `updates/install.log`.
-- **When.** A check 15 seconds after the app starts, every four hours, and when the owner asks in
-  Settings, About. A found update is downloaded to `CYCLE_HOME/updates` in the background. It is
-  installed only when the owner clicks "Restart to update", which says that running turns stop.
+- **When.** A check as soon as the app's page is there, again when the owner comes back to the app
+  (at most every five minutes), every four hours, and when the owner asks in Settings, About. A found
+  update is downloaded to `CYCLE_HOME/updates` in the background. It is installed only when the owner
+  clicks "Restart to update", which says that running turns stop. Each check and install leaves a line
+  in `updates/update.log`, which never holds the token.
 
 ## Alternatives considered
 
@@ -63,8 +65,8 @@ stops the daemon and every running turn.
 - Integrity rests on GitHub over TLS and the hash in the same release. Whoever can publish a release
   in the repository can replace the app, and so run commands as the owner. This is the `shortcut:`
   at the top of `apps/desktop/src/update/updater.ts`.
-- While the repository is private, a Mac with no token and no `gh` sign-in finds no updates, and About
-  says so.
+- The repository is public, so a check needs no token. When it was private, a Mac with no token and no
+  `gh` sign-in found no updates, and About said so.
 - Requests go through Chromium's network stack (`net.request`), so they follow the system's proxy, not
   the shell's `HTTPS_PROXY`.
 - Releases are built for Apple silicon only. An Intel Mac is told the release has no build for it.
