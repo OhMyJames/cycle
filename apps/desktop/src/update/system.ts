@@ -4,6 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
+  appendFileSync,
   constants,
   createWriteStream,
   existsSync,
@@ -35,6 +36,8 @@ const TOOL_TIMEOUT_MS = 120_000;
 const MAX_REDIRECTS = 5;
 /** What the swap helper said, the last time it ran. */
 const SWAP_LOG = "install.log";
+/** What each check and install did, one line each. */
+const UPDATE_LOG = "update.log";
 
 const run: Exec = (command, args, env) =>
   new Promise((resolve, reject) => {
@@ -157,11 +160,24 @@ export function systemPorts(options: SystemOptions): UpdatePorts {
   const folderOf = (version: string): string => path.join(updates, version);
   const running = bundleOf(appPath);
 
+  // A log that cannot be written must not stop an update, so it is best effort.
+  const log = (line: string): void => {
+    try {
+      mkdirSync(updates, { recursive: true, mode: 0o700 });
+      appendFileSync(path.join(updates, UPDATE_LOG), `${new Date().toISOString()} ${line}\n`, {
+        mode: 0o600,
+      });
+    } catch {
+      // The update itself still runs.
+    }
+  };
+
   return {
     current: info.version,
     platform: info.platform,
     arch: info.arch,
     now: Date.now,
+    log,
     token: () => findToken(env, run),
     get,
 
@@ -212,7 +228,7 @@ export function systemPorts(options: SystemOptions): UpdatePorts {
     async clean(keep) {
       if (!existsSync(updates)) return;
       for (const name of readdirSync(updates)) {
-        if (name === SWAP_LOG || keep.includes(name)) continue;
+        if (name === SWAP_LOG || name === UPDATE_LOG || keep.includes(name)) continue;
         rmSync(path.join(updates, name), { recursive: true, force: true });
       }
     },
@@ -253,11 +269,11 @@ export function systemPorts(options: SystemOptions): UpdatePorts {
           throw new Error(problem, { cause: error });
         }
       }
-      const log = openSync(path.join(updates, SWAP_LOG), "w", 0o600);
+      const swapLog = openSync(path.join(updates, SWAP_LOG), "w", 0o600);
       // Its own session, so it outlives the app it waits for.
       spawn(plan.command, [...plan.args], {
         detached: true,
-        stdio: ["ignore", log, log],
+        stdio: ["ignore", swapLog, swapLog],
         cwd: "/",
       }).unref();
       options.quit();

@@ -23,6 +23,7 @@ function world(
   const states: UpdateState[] = [];
   const calls: string[] = [];
   const sent: (string | undefined)[] = [];
+  const logs: string[] = [];
   const unpacked = new Map<string, BundleFacts>();
   const network = { offline: false };
   const release = JSON.stringify({
@@ -40,6 +41,7 @@ function world(
     platform: "darwin",
     arch: "arm64",
     now: () => 1000,
+    log: (line) => logs.push(line),
     token: async () => change.githubToken,
     get: async (url, headers) => {
       if (network.offline) throw new Error("offline");
@@ -69,7 +71,7 @@ function world(
     onState: (state) => states.push(state),
     ...change,
   };
-  return { updater: createUpdater(ports), states, calls, sent, unpacked, network };
+  return { updater: createUpdater(ports), states, calls, sent, logs, unpacked, network };
 }
 
 const statuses = (states: UpdateState[]) =>
@@ -78,7 +80,7 @@ const statuses = (states: UpdateState[]) =>
   );
 
 test("a newer release is downloaded, verified and offered, and nothing is installed", async () => {
-  const { updater, states, calls, sent } = world({ githubToken: "secret" });
+  const { updater, states, calls, sent, logs } = world({ githubToken: "secret" });
   expect(updater.state()).toEqual({ current: "0.1.0", status: "idle" });
   await updater.check();
   expect(statuses(states)).toEqual([
@@ -93,6 +95,25 @@ test("a newer release is downloaded, verified and offered, and nothing is instal
   expect(calls).toEqual(["clean ", `download ${API}/2`, "unpack 0.2.0", "clean 0.2.0"]);
   expect(sent).toEqual(["Bearer secret", "Bearer secret", "Bearer secret"]);
   expect(JSON.stringify(states)).not.toContain("secret");
+  expect(logs).toContain("check: running 0.1.0, darwin arm64");
+  expect(logs).toContain("download: 0.2.0 verified, 200 bytes");
+  expect(logs).toContain("ready: 0.2.0");
+  expect(logs.join("\n")).not.toContain("secret");
+});
+
+test("a check that failed says why in the log", async () => {
+  const { updater, logs } = world({ get: async () => ({ status: 500, text: "{}" }) });
+  await updater.check();
+  expect(logs).toContain("check: failed: GitHub answered 500.");
+});
+
+test("an install that may not replace the app says so in the log", async () => {
+  const { updater, logs } = world({
+    running: async () => ({ ...APP, identifier: "dev.other" }),
+  });
+  await updater.check();
+  await updater.install();
+  expect(logs.some((line) => line.startsWith("install: refused:"))).toBe(true);
 });
 
 test("with no token it asks GitHub all the same", async () => {

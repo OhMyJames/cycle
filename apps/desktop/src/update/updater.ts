@@ -29,6 +29,8 @@ export type UpdatePorts = {
   readonly platform: string;
   readonly arch: string;
   now(): number;
+  /** One line at a time, for the owner to read after the fact: what a check found and what went wrong. */
+  log(line: string): void;
   /** The owner's GitHub token, if they have one. It is passed on in request headers only. */
   token(): Promise<string | undefined>;
   /** A small answer, whole. */
@@ -120,11 +122,13 @@ export function createUpdater(ports: UpdatePorts): Updater {
     const problem =
       downloadProblem(manifest, got) ?? bundleProblem(await ports.unpack(version), version);
     if (problem) throw new Error(problem);
+    ports.log(`download: ${version} verified, ${manifest.size} bytes`);
   }
 
   async function check(): Promise<void> {
     if (busy) return;
     busy = true;
+    ports.log(`check: running ${current}, ${platform} ${arch}`);
     // An update that already waits stays offered, whatever becomes of looking for a newer one.
     const staged = state.status === "ready" ? state.version : undefined;
     const kept = staged ? [staged] : [];
@@ -133,20 +137,26 @@ export function createUpdater(ports: UpdatePorts): Updater {
       const token = await ports.token();
       const release = await newerRelease(staged ?? current, token);
       if (!release) {
+        ports.log("check: no newer release");
         await ports.clean(kept);
         if (!staged) set({ status: "upToDate", checkedAt: ports.now() });
         return;
       }
       const { version } = release;
+      ports.log(`check: ${version} is newer`);
       // What an earlier run of the app downloaded is used again, if it still holds.
       const earlier = await ports.inspect(version);
       if (!earlier || bundleProblem(earlier, version)) {
         await ports.clean(kept);
         await fetchRelease(release, token);
+      } else {
+        ports.log(`check: using ${version} downloaded earlier`);
       }
       await ports.clean([version]);
       set({ status: "ready", version });
+      ports.log(`ready: ${version}`);
     } catch (error) {
+      ports.log(`check: failed: ${messageOf(error)}`);
       await ports.clean(kept).catch(() => {});
       if (staged) set({ status: "ready", version: staged });
       else set({ status: "error", message: messageOf(error) });
@@ -162,6 +172,7 @@ export function createUpdater(ports: UpdatePorts): Updater {
     try {
       const refusal = installRefusal(await ports.running());
       if (refusal) {
+        ports.log(`install: refused: ${refusal}`);
         set({ status: "ready", version, message: refusal });
         return;
       }
@@ -169,12 +180,15 @@ export function createUpdater(ports: UpdatePorts): Updater {
       const facts = await ports.inspect(version);
       const problem = facts ? bundleProblem(facts, version) : "The downloaded update is gone.";
       if (problem) {
+        ports.log(`install: failed: ${problem}`);
         await ports.clean([]).catch(() => {});
         set({ status: "error", message: problem });
         return;
       }
+      ports.log(`install: handing ${version} to the swap helper`);
       await ports.swap(version);
     } catch (error) {
+      ports.log(`install: failed: ${messageOf(error)}`);
       set({ status: "ready", version, message: messageOf(error) });
     } finally {
       busy = false;
