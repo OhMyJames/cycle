@@ -1,12 +1,11 @@
 // Assembles the packaged app from Electron's own distribution and Cycle's files. No packager: the
 // app is a copy of Electron with its default app replaced by a folder, `app`, where Electron looks
 // when there is no asar. On macOS the copy is a bundle with its Info.plist and icon changed, signed
-// ad hoc; on Linux it is the same files as a folder.
+// ad hoc; on Linux it is the same files as a folder. A release signs the bundle with a Developer ID
+// and notarizes it (`src/package/sign.ts`), which leaves only this script's own copies ad hoc.
 //
-// shortcut: no Developer ID and no notarization, so macOS refuses a copy that was downloaded with a
-// browser until its quarantine is taken off, and the app updates itself only from GitHub releases
-// (`src/update`), which it fetches without that mark; upgrade when it is given to someone who will
-// not take the quarantine off by hand.
+// shortcut: a local copy is ad hoc, so macOS refuses one that is downloaded with a browser until its
+// quarantine is taken off; upgrade when local builds must leave this Mac.
 import {
   chmodSync,
   cpSync,

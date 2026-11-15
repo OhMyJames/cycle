@@ -187,8 +187,10 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   when the owner comes back to the app and every four hours, with the owner's GitHub token from their
   shell or `gh` when it has one, downloads it to
   `CYCLE_HOME/updates`, and checks it against the release's manifest (`src/shared/release.ts`). It
-  replaces the app only when the owner clicks in Settings, About. A `v<version>` tag makes the release:
-  `.github/workflows/release.yml`. Why:
+  replaces the app only when the owner clicks in Settings, About. A `v<version>` tag makes the
+  release: `.github/workflows/release.yml`, which signs the bundle with the team's Developer ID and
+  notarizes it (`apps/desktop/src/package/sign.ts`), so a copy downloaded with a browser passes
+  Gatekeeper too. Why:
   [decision note](.agents/notes/2026-11-13-updates-from-github-releases.md).
 
 ## Writing code

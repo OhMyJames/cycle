@@ -92,7 +92,7 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
           "build.ts",
         ],
         workspace: [],
-        external: ["electron", "@types/node"],
+        external: ["electron", "@electron/notarize", "@electron/osx-sign", "@types/node"],
         runtimeModules: true,
       },
     ],

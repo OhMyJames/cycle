@@ -48,9 +48,9 @@ public now. And an update restarts the app, which stops the daemon and every run
 ## Alternatives considered
 
 - Electron's `autoUpdater`. Rejected: Squirrel.Mac needs a Developer ID signature.
-- A Developer ID and notarization. Not yet: it costs an Apple account and secrets in CI for an app
-  with one user. Without them a copy downloaded with a browser is quarantined, and the first install
-  on a new Mac needs `xattr -dr com.apple.quarantine`; what the updater downloads carries no such mark.
+- A Developer ID and notarization. Now done:
+  [releases are signed and notarized](2026-11-15-releases-are-signed-and-notarized.md). A local
+  build is still ad hoc; what the updater downloads carries no quarantine mark either way.
 - A signing key of Cycle's own over the manifest. Not yet: its private half would live in the same
   GitHub repository's secrets, so it would add nothing against someone who can publish a release.
 - Installing on quit or at night, as old-cycle retried a waiting restart. Rejected: a schedule's run or
