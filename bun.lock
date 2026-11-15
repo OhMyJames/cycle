@@ -23,7 +23,7 @@
     },
     "apps/desktop": {
       "name": "@cycle/desktop",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "dependencies": {
         "@cycle/ui": "workspace:*",
         "react": "19.3.1",

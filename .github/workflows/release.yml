@@ -45,6 +45,9 @@ jobs:
             -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$PASSWORD" "$KEYCHAIN" > /dev/null
           rm "$RUNNER_TEMP/cycle.p12"
+          EXISTING=$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' | tr '\n' ' ')
+          security list-keychains -d user -s "$KEYCHAIN" $EXISTING
+          security find-identity -v -p codesigning
           echo "CYCLE_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
       - name: Sign and notarize
@@ -68,7 +71,10 @@ jobs:
       - name: Remove the signing keychain
         if: always()
         run: |
-          if [ -n "$CYCLE_KEYCHAIN" ]; then security delete-keychain "$CYCLE_KEYCHAIN" || true; fi
+          if [ -n "$CYCLE_KEYCHAIN" ]; then
+            security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db" || true
+            security delete-keychain "$CYCLE_KEYCHAIN" || true
+          fi
 
       - name: Publish
         env:
