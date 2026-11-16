@@ -255,6 +255,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     worktreeParent: join(home, "worktrees"),
     schedule: realDelay,
     now: Date.now,
+    log: (line) => console.error(`[cycle] ${line}`),
     viewers: (sessionId) => viewers.get(sessionId) ?? 0,
     publish: {
       frame(frame: EventFrame) {

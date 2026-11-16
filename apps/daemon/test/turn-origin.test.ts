@@ -28,6 +28,7 @@ async function setup() {
     worktreeParent: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
+    log: () => {},
     viewers: () => 1,
     publish: {
       frame: (frame) => frames.push(frame),

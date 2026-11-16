@@ -33,6 +33,7 @@ async function setup() {
     worktreeParent: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
+    log: () => {},
     viewers: () => 0,
     publish: { frame: () => {}, sessions: () => {}, removed: () => {}, usage: () => {} },
   });

@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -12,6 +12,7 @@ import {
   ipcMain,
   shell,
 } from "electron";
+import { DaemonLog } from "./daemon-log";
 import { daemonLaunch } from "./launch";
 import { readLoginEnv } from "./login-env";
 import { BUILD_FILE, type BuildInfo, LINUX_ICON, PRELOAD } from "./shared/layout";
@@ -73,7 +74,20 @@ async function ensureDaemon(): Promise<string> {
       process.env["CYCLE_HOME"] ??
       path.join(os.homedir(), ".cycle-codex");
     mkdirSync(home, { recursive: true, mode: 0o700 });
-    child.stderr.pipe(createWriteStream(path.join(home, "daemon.log"), { mode: 0o600 }));
+    // Kept from one start to the next, up to a size: what a turn waited for is read long after it ran.
+    const file = path.join(home, "daemon.log");
+    const log = new DaemonLog(
+      {
+        size: () => (existsSync(file) ? statSync(file).size : 0),
+        append: (text) => appendFileSync(file, text, { mode: 0o600 }),
+        rotate: () => renameSync(file, `${file}.1`),
+      },
+      () => new Date(),
+    );
+    log.start();
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => log.write(chunk));
+    child.stderr.on("end", () => log.end());
   }
   return new Promise((resolve, reject) => {
     child.once("error", (error) => reject(new Error(`failed to start daemon: ${error.message}`)));
