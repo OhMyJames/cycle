@@ -1,9 +1,10 @@
-import { type ModelInfo, harnessLabel } from "@cycle/protocol";
+import { type LimitWindow, type ModelInfo, harnessLabel } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import type { SettingsSection, Theme } from "../client/app.ts";
 import { host } from "../client/host.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
+import { accountDetails, accountTitle, limitText } from "../lib/account.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
 import { modeNamed, modesOf } from "../lib/modes.ts";
 import { updateOffer } from "../lib/update.ts";
@@ -13,30 +14,92 @@ import { ModeMenu } from "./mode-menu.tsx";
 import { ProvidersSection } from "./providers.tsx";
 import { SandboxesSection } from "./sandboxes.tsx";
 
-function Limit({
-  label,
-  used,
-  resetsAt,
-}: {
-  label: string;
-  used: number;
-  resetsAt: number | null;
-}) {
+function Limit({ limit }: { limit: LimitWindow }) {
+  const used = limit.usedPercent;
+  const high = limit.status !== "ok" || (used ?? 0) > 80;
   return (
     <div className="limit">
       <div className="row meta">
-        <span className="grow">{label}</span>
-        <span className="tabular muted">
-          {Math.round(used)}% used
-          {resetsAt
-            ? ` · resets ${new Date(resetsAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
+        <span className="grow">{limit.name}</span>
+        <span className={`tabular ${limit.status === "exceeded" ? "tone-warning" : "muted"}`}>
+          {limitText(limit)}
+          {limit.resetsAt
+            ? ` · resets ${new Date(limit.resetsAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
             : ""}
         </span>
       </div>
-      <div className="meter" data-high={used > 80}>
-        <span style={{ width: `${Math.min(100, used)}%` }} />
-      </div>
+      {used !== null ? (
+        <div className="meter" data-high={high}>
+          <span style={{ width: `${Math.min(100, used)}%` }} />
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+/** One agent's account: who is signed in, how, and the limits it is under. */
+function AccountCard({ harness }: { harness: string }) {
+  const app = useApp();
+  const account = useStore(app.accounts, (all) => all[harness] ?? null);
+  const login = useStore(app.login, (value) => (value?.harness === harness ? value : null));
+  const canLogin = app.capabilities(harness).login;
+  const label = harnessLabel(harness);
+  const details = account ? accountDetails(account) : "";
+  return (
+    <>
+      <h2>{label} account</h2>
+      <div className="card">
+        {account === null ? (
+          <div className="note">Reading the account…</div>
+        ) : login ? (
+          <Setting
+            title="Finish signing in in your browser"
+            note="The page that opened asks for your ChatGPT account. This updates when you are done."
+          >
+            <button type="button" className="button" onClick={() => host.openExternal(login.url)}>
+              Open it again
+            </button>
+            <button type="button" className="button" onClick={() => void app.cancelSignIn()}>
+              Cancel
+            </button>
+          </Setting>
+        ) : account.kind === null ? (
+          canLogin ? (
+            <Setting
+              title="Not signed in"
+              note="Sign in to use the models of your ChatGPT plan. An OPENAI_API_KEY set before Cycle starts works too."
+            >
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => void app.signIn(harness)}
+              >
+                Sign in with ChatGPT
+              </button>
+            </Setting>
+          ) : (
+            <Setting
+              title="Not signed in"
+              note={`Sign in with the \`${harness}\` command line, then reopen this page.`}
+            />
+          )
+        ) : (
+          <>
+            <Setting title={accountTitle(account)} note={details}>
+              <Icon name="check-circle" className="tone-success" />
+              {canLogin ? (
+                <button type="button" className="button" onClick={() => void app.signOut(harness)}>
+                  Sign out
+                </button>
+              ) : null}
+            </Setting>
+            {account.limits.map((limit) => (
+              <Limit key={limit.id} limit={limit} />
+            ))}
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -120,12 +183,11 @@ const TITLES: Record<SettingsSection, string> = {
 export function SettingsPage() {
   const app = useApp();
   const settings = useStore(app.settings, (value) => value);
-  const account = useStore(app.account, (value) => value);
   const daemon = useStore(app.daemon, (value) => value);
   const models = useStore(app.models, (value) => value);
   const modes = useStore(app.modes, (value) => value);
   const agents = [...new Set(modes.map((mode) => mode.harness))];
-  const login = useStore(app.login, (value) => value);
+  const harnesses = useStore(app.harnesses, (value) => value);
   const features = useStore(app.features, (value) => value);
   const { theme, showReasoning, section } = useStore(app.view, (view) => ({
     section: view.settingsSection,
@@ -246,73 +308,9 @@ export function SettingsPage() {
 
         {section === "account" ? (
           <>
-            <h2>Codex account</h2>
-            <div className="card">
-              {account === null ? (
-                <div className="note">Reading the account…</div>
-              ) : login ? (
-                <Setting
-                  title="Finish signing in in your browser"
-                  note="The page that opened asks for your ChatGPT account. This updates when you are done."
-                >
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => host.openExternal(login.url)}
-                  >
-                    Open it again
-                  </button>
-                  <button type="button" className="button" onClick={() => void app.cancelSignIn()}>
-                    Cancel
-                  </button>
-                </Setting>
-              ) : account.kind === null ? (
-                <Setting
-                  title="Not signed in"
-                  note="Sign in to use the models of your ChatGPT plan. An OPENAI_API_KEY set before Cycle starts works too."
-                >
-                  <button
-                    type="button"
-                    className="button primary"
-                    onClick={() => void app.signIn()}
-                  >
-                    Sign in with ChatGPT
-                  </button>
-                </Setting>
-              ) : (
-                <>
-                  <Setting
-                    title={account.email ?? (account.kind === "apiKey" ? "API key" : "Signed in")}
-                    note={
-                      account.plan
-                        ? `Plan: ${account.plan}`
-                        : account.kind === "apiKey"
-                          ? "Billed by usage"
-                          : ""
-                    }
-                  >
-                    <Icon name="check-circle" className="tone-success" />
-                    <button type="button" className="button" onClick={() => void app.signOut()}>
-                      Sign out
-                    </button>
-                  </Setting>
-                  {account.limits?.primary ? (
-                    <Limit
-                      label={`${Math.round((account.limits.primary.windowMinutes ?? 300) / 60)}-hour limit`}
-                      used={account.limits.primary.usedPercent}
-                      resetsAt={account.limits.primary.resetsAt}
-                    />
-                  ) : null}
-                  {account.limits?.secondary ? (
-                    <Limit
-                      label="Weekly limit"
-                      used={account.limits.secondary.usedPercent}
-                      resetsAt={account.limits.secondary.resetsAt}
-                    />
-                  ) : null}
-                </>
-              )}
-            </div>
+            {harnesses.map((each) => (
+              <AccountCard key={each.name} harness={each.name} />
+            ))}
 
             <h2>Usage</h2>
             <div className="card">

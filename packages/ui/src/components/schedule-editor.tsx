@@ -65,10 +65,16 @@ export function ScheduleEditor({
   const agentOf = (id: string | null) =>
     models.find((each) => each.id === (id ?? usual))?.harness ?? main;
   const agent = agentOf(draft.model);
-  const mode = draft.mode === null ? undefined : modeNamed(modes, agent, draft.mode);
+  // A mode is one agent's: one chosen for another agent than the run's is chosen again.
+  const stale = draft.mode !== null && draft.modeHarness !== null && draft.modeHarness !== agent;
+  const mode = draft.mode === null || stale ? undefined : modeNamed(modes, agent, draft.mode);
   // A mode is one agent's: another agent's model leaves it to what that agent's sessions start in.
   const chooseModel = (id: string | null) =>
-    set({ model: id, effort: null, ...(agentOf(id) === agent ? {} : { mode: null }) });
+    set({
+      model: id,
+      effort: null,
+      ...(agentOf(id) === agent ? {} : { mode: null, modeHarness: null }),
+    });
   const modelEntries = (): MenuEntry[] => [
     {
       label: "What new sessions start with (default)",
@@ -86,10 +92,12 @@ export function ScheduleEditor({
     {
       label: "What new sessions start with (default)",
       checked: draft.mode === null,
-      onSelect: () => set({ mode: null }),
+      onSelect: () => set({ mode: null, modeHarness: null }),
     },
     { separator: true },
-    ...modeRows(modesOf(modes, agent), mode?.id ?? null, (id) => set({ mode: id })),
+    ...modeRows(modesOf(modes, agent), mode?.id ?? null, (id) =>
+      set({ mode: id, modeHarness: agent }),
+    ),
   ];
   return (
     <div className="page fade-y">
@@ -255,7 +263,7 @@ export function ScheduleEditor({
           >
             <Menu className="button" align="end" width={300} entries={modeEntries}>
               <span className={mode?.dangerous ? "tone-warning" : undefined}>
-                {mode ? mode.name : "New sessions' mode (default)"}
+                {mode ? mode.name : stale ? "Choose a mode again" : "New sessions' mode (default)"}
               </span>
               <Icon name="chevron-down-sm" size={14} className="muted" />
             </Menu>

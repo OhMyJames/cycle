@@ -1,35 +1,49 @@
-import { formFields, toMachinePath } from "@cycle/protocol";
+import { defineModes, formFields, toMachinePath } from "@cycle/protocol";
 import type {
+  AccountInfo,
   Approval,
   ApprovalResponse,
   ApprovalRule,
   CommandAction,
+  ContextUsage,
+  DocumentKind,
+  FileRewind,
   HarnessSession,
   Item,
   ItemStatus,
   ModeInfo,
+  LimitWindow,
+  McpServerInfo,
   ModelInfo,
   PromptInput,
   Question,
   ReviewTarget,
   SessionEvent,
   SessionMode,
+  SkillInfo,
+  SlashCommand,
   TokenCount,
   Turn,
 } from "@cycle/protocol";
 import type {
+  WireAccountInfo,
   WireApiMessage,
   WireBlock,
   WireElicitation,
   WireElicitationResult,
+  WireContextUsage,
   WireHistoryMessage,
+  WireMcpServerStatus,
   WireMessage,
   WireModelInfo,
   WireModelUsage,
   WirePermissionMode,
   WirePermissionResult,
   WirePermissionUpdate,
+  WireRateLimitInfo,
+  WireRewindFilesResult,
   WireSessionInfo,
+  WireSlashCommand,
   WireUsage,
   WireUserMessage,
 } from "./wire.ts";
@@ -248,15 +262,24 @@ export function finishTool(
 
 export function toCount(usage: WireUsage | undefined): TokenCount {
   const cached = usage?.cache_read_input_tokens ?? 0;
-  const input = (usage?.input_tokens ?? 0) + cached + (usage?.cache_creation_input_tokens ?? 0);
+  const written = usage?.cache_creation_input_tokens ?? 0;
+  const input = (usage?.input_tokens ?? 0) + cached + written;
   const output = usage?.output_tokens ?? 0;
-  return { total: input + output, input, cachedInput: cached, output, reasoning: 0 };
+  return {
+    total: input + output,
+    input,
+    cachedInput: cached,
+    cacheWrite: written,
+    output,
+    reasoning: 0,
+  };
 }
 
 export const NO_TOKENS: TokenCount = {
   total: 0,
   input: 0,
   cachedInput: 0,
+  cacheWrite: 0,
   output: 0,
   reasoning: 0,
 };
@@ -266,6 +289,7 @@ export function addCounts(a: TokenCount, b: TokenCount): TokenCount {
     total: a.total + b.total,
     input: a.input + b.input,
     cachedInput: a.cachedInput + b.cachedInput,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
     output: a.output + b.output,
     reasoning: a.reasoning + b.reasoning,
   };
@@ -275,23 +299,28 @@ export function addCounts(a: TokenCount, b: TokenCount): TokenCount {
 export function usedBy(models: Record<string, WireModelUsage> | undefined): {
   count: TokenCount;
   contextWindow: number | null;
+  costUsd: number | null;
 } {
   let count = NO_TOKENS;
   let contextWindow: number | null = null;
+  let costUsd: number | null = null;
   for (const used of Object.values(models ?? {})) {
     const cached = used.cacheReadInputTokens ?? 0;
-    const input = (used.inputTokens ?? 0) + cached + (used.cacheCreationInputTokens ?? 0);
+    const written = used.cacheCreationInputTokens ?? 0;
+    const input = (used.inputTokens ?? 0) + cached + written;
     const output = used.outputTokens ?? 0;
     count = addCounts(count, {
       total: input + output,
       input,
       cachedInput: cached,
+      cacheWrite: written,
       output,
       reasoning: 0,
     });
     if (used.contextWindow) contextWindow = Math.max(contextWindow ?? 0, used.contextWindow);
+    if (used.costUSD !== undefined) costUsd = (costUsd ?? 0) + used.costUSD;
   }
-  return { count, contextWindow };
+  return { count, contextWindow, costUsd };
 }
 
 interface Streamed {
@@ -477,6 +506,21 @@ function imageOf(block: WireBlock): string | null {
   return source.data ? `data:${source.media_type ?? "image/png"};base64,${source.data}` : null;
 }
 
+/** The documents a prompt carried, by name, when it carried any. */
+function documentsOf(blocks: WireBlock[]): { documents?: { kind: DocumentKind; name: string }[] } {
+  const documents = blocks.flatMap((block) =>
+    block.type === "document"
+      ? [
+          {
+            kind: block.source?.type === "text" ? ("text" as const) : ("pdf" as const),
+            name: block.title ?? "",
+          },
+        ]
+      : [],
+  );
+  return documents.length ? { documents } : {};
+}
+
 /** Whether a stored message begins a turn: a prompt of the owner's, or a summary of what came before. */
 function beginsTurn(message: WireHistoryMessage): boolean {
   if (message.type !== "user" || message.parent_tool_use_id) return false;
@@ -566,6 +610,7 @@ export function toTurns(
             .filter(Boolean)
             .join("\n"),
           images: blocks.map(imageOf).filter((image) => image !== null),
+          ...documentsOf(blocks),
         });
         break;
       case "noise":
@@ -688,53 +733,44 @@ export function toModels(raw: WireModelInfo[], sandbox = false): ModelInfo[] {
 }
 
 /** Claude Code's modes, each as it names it. */
-export const CLAUDE_MODES: readonly ModeInfo[] = (
-  [
-    {
-      id: "default",
-      name: "Ask first",
-      description: "Reads freely, asks before commands and edits",
-      replaces: "readOnly",
-    },
-    {
-      id: "acceptEdits",
-      name: "Accept edits",
-      description: "Edits in the project and runs commands in a sandbox, asks to leave it",
-      isDefault: true,
-      replaces: "auto",
-    },
-    {
-      id: "plan",
-      name: "Plan",
-      description: "Reads and plans, changes nothing until you approve the plan",
-      plan: true,
-    },
-    {
-      id: "auto",
-      name: "Auto",
-      description: "A classifier approves each call, and asks you when it cannot tell",
-    },
-    {
-      id: "dontAsk",
-      name: "Don't ask",
-      description: "Never asks: does what your rules allow and is refused the rest",
-    },
-    {
-      id: "bypassPermissions",
-      name: "Bypass permissions",
-      description: "Never asks, no sandbox",
-      dangerous: true,
-      replaces: "fullAccess",
-    },
-  ] satisfies (Partial<ModeInfo> & Pick<ModeInfo, "id" | "name" | "description">)[]
-).map((mode): ModeInfo => ({
-  harness: HARNESS_NAME,
-  dangerous: false,
-  plan: false,
-  isDefault: false,
-  replaces: null,
-  ...mode,
-}));
+export const CLAUDE_MODES: readonly ModeInfo[] = defineModes(HARNESS_NAME, [
+  {
+    id: "default",
+    name: "Ask first",
+    description: "Reads freely, asks before commands and edits",
+    replaces: "readOnly",
+  },
+  {
+    id: "acceptEdits",
+    name: "Accept edits",
+    description: "Edits in the project and runs commands in a sandbox, asks to leave it",
+    isDefault: true,
+    replaces: "auto",
+  },
+  {
+    id: "plan",
+    name: "Plan",
+    description: "Reads and plans, changes nothing until you approve the plan",
+    plan: true,
+  },
+  {
+    id: "auto",
+    name: "Auto",
+    description: "A classifier approves each call, and asks you when it cannot tell",
+  },
+  {
+    id: "dontAsk",
+    name: "Don't ask",
+    description: "Never asks: does what your rules allow and is refused the rest",
+  },
+  {
+    id: "bypassPermissions",
+    name: "Bypass permissions",
+    description: "Never asks, no sandbox",
+    dangerous: true,
+    replaces: "fullAccess",
+  },
+]);
 
 /** Claude Code's mode of this id; anything it does not offer is the one that asks first. */
 function wireMode(mode: SessionMode): WirePermissionMode {
@@ -801,7 +837,13 @@ export class PlanDraft {
     if (!PLAN_FILE.test(text(input["file_path"]))) return;
     if (name === "Write") this.written = text(input["content"]);
     else if (name === "Edit") {
-      this.written = this.written.replace(text(input["old_string"]), text(input["new_string"]));
+      const before = text(input["old_string"]);
+      const after = text(input["new_string"]);
+      // Taken as it is: a `$` in it is no replacement pattern.
+      this.written =
+        input["replace_all"] === true
+          ? this.written.split(before).join(after)
+          : this.written.replace(before, () => after);
     }
   }
 
@@ -1076,6 +1118,32 @@ export function toUserMessage(
       said += `${said ? "\n\n" : ""}[Image: ${image}]`;
     }
   }
+  for (const document of input.documents ?? []) {
+    const data = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(document.data);
+    if (!data) continue;
+    const body = data[3] ?? "";
+    content.push(
+      document.kind === "pdf"
+        ? {
+            type: "document",
+            source: { type: "base64", media_type: "application/pdf", data: body },
+            title: document.name,
+          }
+        : {
+            type: "document",
+            source: {
+              type: "text",
+              media_type: "text/plain",
+              data: data[2]
+                ? new TextDecoder().decode(
+                    Uint8Array.from(atob(body), (char) => char.charCodeAt(0)),
+                  )
+                : decodeURIComponent(body),
+            },
+            title: document.name,
+          },
+    );
+  }
   content.push({ type: "text", text: said });
   return {
     type: "user",
@@ -1102,4 +1170,157 @@ export function reviewPrompt(target: ReviewTarget): string {
     case "custom":
       return target.instructions;
   }
+}
+
+// What the agent offers and reads
+
+export function toCommands(raw: WireSlashCommand[]): SlashCommand[] {
+  return raw.map((command) => ({
+    name: command.name,
+    description: command.description,
+    argumentHint: command.argumentHint,
+    aliases: command.aliases ?? [],
+    builtin: command.builtin === true,
+  }));
+}
+
+/** The commands a skill of the owner's, a project's or a plugin's brings: what Claude Code's skills are. */
+export function toSkills(commands: SlashCommand[]): SkillInfo[] {
+  return commands
+    .filter((command) => !command.builtin)
+    .map((command) => ({
+      name: command.name,
+      description: command.description,
+      path: "",
+      scope: "claude",
+      enabled: true,
+    }));
+}
+
+const LIMIT_NAMES: Record<string, { name: string; minutes: number | null }> = {
+  five_hour: { name: "5-hour limit", minutes: 5 * 60 },
+  seven_day: { name: "Weekly limit", minutes: 7 * 24 * 60 },
+  seven_day_opus: { name: "Weekly Opus limit", minutes: 7 * 24 * 60 },
+  seven_day_sonnet: { name: "Weekly Sonnet limit", minutes: 7 * 24 * 60 },
+  seven_day_overage_included: { name: "Weekly limit, with overage", minutes: 7 * 24 * 60 },
+  overage: { name: "Overage", minutes: null },
+};
+
+/** One of a subscription's limits, as a `rate_limit_event` tells of it. */
+export function toLimit(raw: WireRateLimitInfo): LimitWindow {
+  const id = raw.rateLimitType ?? "limit";
+  const known = LIMIT_NAMES[id];
+  return {
+    id,
+    name: known?.name ?? id.replaceAll("_", " "),
+    usedPercent: raw.utilization === undefined ? null : Math.round(raw.utilization * 100),
+    windowMinutes: known?.minutes ?? null,
+    resetsAt: raw.resetsAt === undefined ? null : raw.resetsAt * 1000,
+    status:
+      raw.status === "rejected" ? "exceeded" : raw.status === "allowed_warning" ? "warning" : "ok",
+    overage: raw.isUsingOverage === true,
+  };
+}
+
+/**
+ * Who is signed in to Claude Code, and how. Of the credential only where it is read from is kept:
+ * the SDK says no more, and none of it is a secret.
+ */
+export function toAccount(raw: WireAccountInfo | null, limits: LimitWindow[]): AccountInfo {
+  const info = raw ?? {};
+  const provider = info.apiProvider && info.apiProvider !== "firstParty" ? info.apiProvider : null;
+  const kind: AccountInfo["kind"] = provider
+    ? "cloud"
+    : info.apiKeySource && info.apiKeySource !== "none"
+      ? "apiKey"
+      : info.subscriptionType || info.email
+        ? "subscription"
+        : info.tokenSource && info.tokenSource !== "none"
+          ? "other"
+          : null;
+  return {
+    harness: HARNESS_NAME,
+    kind,
+    email: info.email ?? null,
+    plan: info.subscriptionType ?? null,
+    organization: info.organization ?? null,
+    provider,
+    source:
+      (info.apiKeySource && info.apiKeySource !== "none" ? info.apiKeySource : null) ??
+      (info.tokenSource && info.tokenSource !== "none" ? info.tokenSource : null),
+    limits,
+  };
+}
+
+/**
+ * Claude Code's MCP servers as one of its processes sees them. A server's headers are never read,
+ * and of its environment only the names. `own` is the client's own server, which is not the owner's.
+ */
+export function toMcpServers(raw: WireMcpServerStatus[], own: string | null): McpServerInfo[] {
+  return raw
+    .filter((server) => server.name !== own)
+    .map((server) => {
+      const config = server.config;
+      const transport: McpServerInfo["transport"] =
+        config?.command !== undefined
+          ? {
+              kind: "stdio",
+              command: config.command,
+              args: config.args ?? [],
+              env: Object.keys(config.env ?? {}),
+            }
+          : config?.url !== undefined
+            ? { kind: "http", url: config.url, bearerTokenEnvVar: null }
+            : null;
+      return {
+        name: server.name,
+        enabled: server.status !== "disabled",
+        transport,
+        // A plugin's server is named `plugin:<plugin>:<server>`, a name its author chose, and the SDK
+        // says nothing of its marketplace: the `name@marketplace` id a plugin is known by cannot be
+        // made from it. A server that says it comes from a plugin is still marked by `source`.
+        pluginId: null,
+        status:
+          server.status === "needs-auth"
+            ? "needsAuth"
+            : server.status === "pending"
+              ? "unknown"
+              : server.status,
+        auth: server.status === "needs-auth" ? "signedOut" : "none",
+        tools: (server.tools ?? []).map((tool) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+          enabled: true,
+          tokens: null,
+        })),
+        error: server.error ?? null,
+      };
+    });
+}
+
+export function toContext(raw: WireContextUsage): ContextUsage {
+  return {
+    tokens: raw.totalTokens,
+    window: raw.maxTokens || null,
+    parts: raw.categories.map((part) => ({
+      id: part.id ?? part.name,
+      name: part.name,
+      tokens: part.tokens,
+      kind: part.kind,
+    })),
+  };
+}
+
+/** What putting files back did or would do. `place` turns a path the agent saw into this machine's. */
+export function toFileRewind(
+  raw: WireRewindFilesResult,
+  place: (path: string) => string = (path) => path,
+): FileRewind {
+  return {
+    possible: raw.canRewind,
+    error: raw.error ?? null,
+    files: (raw.filesChanged ?? []).map(place),
+    insertions: raw.insertions ?? 0,
+    deletions: raw.deletions ?? 0,
+  };
 }

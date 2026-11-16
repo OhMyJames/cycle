@@ -1,5 +1,6 @@
 import type {
   AccountInfo,
+  AgentCapabilities,
   AgentFeatures,
   AccountLogin,
   Approval,
@@ -19,7 +20,6 @@ import type {
   PluginCatalog,
   PluginDetail,
   PromptInput,
-  RateLimitWindow,
   ReviewTarget,
   SessionMode,
   SkillInfo,
@@ -53,6 +53,7 @@ import {
   toSession,
   toSkill,
   toTurns,
+  toLimits,
   toUsage,
 } from "./translate.ts";
 import type {
@@ -147,15 +148,6 @@ function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow | null {
-  if (!raw) return null;
-  return {
-    usedPercent: raw.usedPercent,
-    windowMinutes: raw.windowDurationMins,
-    resetsAt: raw.resetsAt === null ? null : raw.resetsAt * 1000,
-  };
-}
-
 /**
  * Drives `codex app-server` over stdio. One process hosts many threads; each
  * Cycle session maps 1:1 onto a codex thread. Sessions on a model of the
@@ -165,6 +157,15 @@ function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow 
  */
 export class CodexHarness implements Harness {
   readonly name = HARNESS_NAME;
+  readonly capabilities: AgentCapabilities = {
+    attachments: ["image"],
+    rewindFiles: false,
+    commands: false,
+    directories: false,
+    connector: "edit",
+    login: true,
+    features: true,
+  };
   private readonly provider: ExtraProvider | null;
   /** Codex's own models, and the machine: files, commands, terminals, the account. */
   private readonly main: CodexProcess;
@@ -188,8 +189,11 @@ export class CodexHarness implements Harness {
   private readonly reviews = new Map<string, string>();
   /** The mode each thread was last given. Codex keeps it until a turn is started with another. */
   private readonly modes = new Map<string, SessionMode>();
-  /** Threads in codex's plan mode, which they stay in until a turn is given another. */
-  private readonly planning = new Set<string>();
+  /**
+   * Threads in codex's plan mode, which they stay in until a turn is given another, and the model
+   * each was put there with.
+   */
+  private readonly planning = new Map<string, string>();
   /** The windows in the catalog the extra process last started with. */
   private extraWindows: ReadonlyMap<string, number> = new Map();
 
@@ -424,7 +428,7 @@ export class CodexHarness implements Harness {
     }
     const policy = options.mode ? modePolicy(options.mode) : null;
     const collaboration = options.mode
-      ? collaborationMode(options.mode, this.planning.has(sessionId), options)
+      ? collaborationMode(options.mode, this.planning.get(sessionId), options)
       : {};
     const response = await proc.request<{ turn: WireTurn }>("turn/start", {
       threadId: sessionId,
@@ -439,7 +443,11 @@ export class CodexHarness implements Harness {
     this.activeTurns.set(sessionId, response.turn.id);
     if (options.mode) this.modes.set(sessionId, options.mode);
     if ("collaborationMode" in collaboration) {
-      if (options.mode === "plan") this.planning.add(sessionId);
+      const given = collaboration.collaborationMode as {
+        mode: string;
+        settings: { model: string };
+      };
+      if (given.mode === "plan") this.planning.set(sessionId, given.settings.model);
       else this.planning.delete(sessionId);
     }
     return { turnId: response.turn.id };
@@ -677,10 +685,11 @@ export class CodexHarness implements Harness {
 
   async readAccount(): Promise<AccountInfo> {
     const { account } = await this.request<{ account: Json | null }>("account/read", {});
-    if (!account) return { kind: null, email: null, plan: null, limits: null };
+    const none = { harness: this.name, organization: null, provider: null, source: null };
+    if (!account) return { ...none, kind: null, email: null, plan: null, limits: [] };
     const kind =
       account["type"] === "apiKey" || account["type"] === "chatgpt" ? account["type"] : "other";
-    let limits: AccountInfo["limits"] = null;
+    let limits: AccountInfo["limits"] = [];
     if (kind === "chatgpt") {
       try {
         const { rateLimits } = await this.request<{
@@ -689,15 +698,18 @@ export class CodexHarness implements Harness {
             secondary: WireRateLimitWindow | null;
           };
         }>("account/rateLimits/read", {});
-        limits = {
-          primary: toWindow(rateLimits.primary),
-          secondary: toWindow(rateLimits.secondary),
-        };
+        limits = toLimits(rateLimits);
       } catch {
         // Limits are a courtesy: an account without them still works.
       }
     }
-    return { kind, email: text(account["email"]), plan: text(account["planType"]), limits };
+    return {
+      ...none,
+      kind,
+      email: text(account["email"]),
+      plan: text(account["planType"]),
+      limits,
+    };
   }
 
   async login(): Promise<AccountLogin> {
@@ -921,7 +933,8 @@ export class CodexHarness implements Harness {
       ...(stale ? { config: stale } : {}),
     });
     proc.loaded.add(sessionId);
-    if (response.collaborationMode?.mode === "plan") this.planning.add(sessionId);
+    const kept = response.collaborationMode;
+    if (kept?.mode === "plan") this.planning.set(sessionId, kept.settings?.model ?? response.model);
     else this.planning.delete(sessionId);
     // Resumed with no mode, the thread has whatever codex's configuration says.
     if (options.mode) this.modes.set(sessionId, options.mode);
@@ -1039,7 +1052,7 @@ export class CodexHarness implements Harness {
       }
       case "account/rateLimits/updated":
         // A sparse update: what it leaves out is unknown, not gone, so the whole is read again.
-        if (main) this.emit({ type: "limits.changed" });
+        if (main) this.emit({ type: "limits.changed", harness: this.name });
         break;
       case "mcpServer/oauthLogin/completed":
       case "mcpServer/startupStatus/updated":
@@ -1089,6 +1102,7 @@ export class CodexHarness implements Harness {
         if (main) {
           this.emit({
             type: "account.changed",
+            harness: this.name,
             error: params["success"]
               ? null
               : (text(params["error"]) ?? "The sign-in did not finish."),
@@ -1096,7 +1110,7 @@ export class CodexHarness implements Harness {
         }
         break;
       case "account/updated":
-        if (main) this.emit({ type: "account.changed", error: null });
+        if (main) this.emit({ type: "account.changed", harness: this.name, error: null });
         break;
       case "model/rerouted":
         this.emit({

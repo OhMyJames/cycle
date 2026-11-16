@@ -749,6 +749,20 @@ input::placeholder {
   font-size: var(--text-meta);
   line-height: var(--text-meta-line);
 }
+/* Putting the files back too, under a rewind's question. */
+.files-back {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.files-back-list {
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

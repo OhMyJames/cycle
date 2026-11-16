@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   AFTER_PLAN,
+  PlanDraft,
   StreamReader,
   toApproval,
   toElicitation,
@@ -253,4 +254,17 @@ test("an MCP server's form is drawn as fields when it can be, and answered as th
   });
   expect(toElicitationResult({ decision: "decline" })).toEqual({ action: "decline" });
   expect(toElicitationResult({ decision: "cancel" })).toEqual({ action: "cancel" });
+});
+
+test("the plan file is followed as edited, `$` and every match alike", () => {
+  const draft = new PlanDraft();
+  const file_path = "/home/me/.claude/plans/a.md";
+  draft.see("Write", { file_path, content: "cost: X, then X" });
+  draft.see("Edit", { file_path, old_string: "X", new_string: "$& and $1" });
+  expect(draft.fill("ExitPlanMode", {})).toEqual({ plan: "cost: $& and $1, then X" });
+  draft.see("Edit", { file_path, old_string: "X", new_string: "Y", replace_all: true });
+  expect(draft.fill("ExitPlanMode", {})).toEqual({ plan: "cost: $& and $1, then Y" });
+  // A file elsewhere is no plan.
+  draft.see("Write", { file_path: "/project/plans.md", content: "no" });
+  expect(draft.fill("ExitPlanMode", {})).toEqual({ plan: "cost: $& and $1, then Y" });
 });

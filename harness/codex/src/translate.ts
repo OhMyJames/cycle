@@ -3,13 +3,13 @@ import type {
   HarnessSession,
   Item,
   ItemStatus,
+  LimitWindow,
   McpServerInfo,
   McpToolInfo,
   McpServerInput,
   PluginCatalog,
   PluginDetail,
   PluginInfo,
-  ModeInfo,
   ModelInfo,
   PromptInput,
   ReviewTarget,
@@ -19,6 +19,7 @@ import type {
   Turn,
   Usage,
 } from "@cycle/protocol";
+import { type ModeInfo, defineModes } from "@cycle/protocol";
 import type {
   WireCommandAction,
   WireConfigEdit,
@@ -32,6 +33,7 @@ import type {
   WireSandboxPolicy,
   WireSkill,
   WireStatus,
+  WireRateLimitWindow,
   WireThread,
   WireTokenBreakdown,
   WireTokenUsage,
@@ -348,6 +350,8 @@ function toCount(raw: WireTokenBreakdown): TokenCount {
     total: raw.totalTokens,
     input: raw.inputTokens,
     cachedInput: raw.cachedInputTokens,
+    // Codex does not say what it wrote to the cache.
+    cacheWrite: 0,
     output: raw.outputTokens,
     reasoning: raw.reasoningOutputTokens,
   };
@@ -358,7 +362,42 @@ export function toUsage(raw: WireTokenUsage): Usage {
     total: toCount(raw.total),
     last: toCount(raw.last),
     contextWindow: raw.modelContextWindow,
+    costUsd: null,
   };
+}
+
+/** A window's name as the owner reads it, from how long it is. */
+function windowName(minutes: number | null, fallback: string): string {
+  if (minutes === null) return fallback;
+  if (minutes % (7 * 24 * 60) === 0)
+    return minutes === 7 * 24 * 60 ? "Weekly limit" : `${minutes / (7 * 24 * 60)}-week limit`;
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)}-day limit`;
+  if (minutes % 60 === 0) return `${minutes / 60}-hour limit`;
+  return `${minutes}-minute limit`;
+}
+
+/** Codex's two windows, the shorter first, as a list of limits. */
+export function toLimits(raw: {
+  primary: WireRateLimitWindow | null;
+  secondary: WireRateLimitWindow | null;
+}): LimitWindow[] {
+  const out: LimitWindow[] = [];
+  for (const [id, window, fallback] of [
+    ["primary", raw.primary, "Short limit"],
+    ["secondary", raw.secondary, "Long limit"],
+  ] as const) {
+    if (!window) continue;
+    out.push({
+      id,
+      name: windowName(window.windowDurationMins, fallback),
+      usedPercent: window.usedPercent,
+      windowMinutes: window.windowDurationMins,
+      resetsAt: window.resetsAt === null ? null : window.resetsAt * 1000,
+      status: window.usedPercent >= 100 ? "exceeded" : "ok",
+      overage: false,
+    });
+  }
+  return out;
 }
 
 export function toModel(raw: WireModel): ModelInfo {
@@ -637,43 +676,34 @@ export function toInput(input: PromptInput): WireUserInput[] {
 }
 
 /** Codex's modes. Their ids are the ones Cycle had for every agent before each named its own. */
-export const CODEX_MODES: readonly ModeInfo[] = (
-  [
-    {
-      id: "readOnly",
-      name: "Ask first",
-      description: "Reads freely, asks before commands and edits",
-      replaces: "readOnly",
-    },
-    {
-      id: "auto",
-      name: "Auto",
-      description: "Works inside the project, asks to leave it",
-      isDefault: true,
-      replaces: "auto",
-    },
-    {
-      id: "plan",
-      name: "Plan",
-      description: "Reads and proposes a plan, changes nothing",
-      plan: true,
-    },
-    {
-      id: "fullAccess",
-      name: "Full access",
-      description: "Never asks, no sandbox",
-      dangerous: true,
-      replaces: "fullAccess",
-    },
-  ] satisfies (Partial<ModeInfo> & Pick<ModeInfo, "id" | "name" | "description">)[]
-).map((mode): ModeInfo => ({
-  harness: HARNESS_NAME,
-  dangerous: false,
-  plan: false,
-  isDefault: false,
-  replaces: null,
-  ...mode,
-}));
+export const CODEX_MODES: readonly ModeInfo[] = defineModes(HARNESS_NAME, [
+  {
+    id: "readOnly",
+    name: "Ask first",
+    description: "Reads freely, asks before commands and edits",
+    replaces: "readOnly",
+  },
+  {
+    id: "auto",
+    name: "Auto",
+    description: "Works inside the project, asks to leave it",
+    isDefault: true,
+    replaces: "auto",
+  },
+  {
+    id: "plan",
+    name: "Plan",
+    description: "Reads and proposes a plan, changes nothing",
+    plan: true,
+  },
+  {
+    id: "fullAccess",
+    name: "Full access",
+    description: "Never asks, no sandbox",
+    dangerous: true,
+    replaces: "fullAccess",
+  },
+]);
 
 /** How far a mode lets the agent reach, to tell a wider one from a narrower. */
 export function modeReach(mode: SessionMode): number {
@@ -683,25 +713,29 @@ export function modeReach(mode: SessionMode): number {
 /**
  * Codex's collaboration mode for a turn: its plan mode, or its default to leave it. Codex keeps a
  * thread in the one it was last given, so the default is given only to leave plan mode. Codex's
- * own instructions for each are kept.
+ * own instructions for each are kept. `planning` is the model a thread in plan mode was put there
+ * with, which leaving it takes when the turn names none: a thread is never left planning unsaid.
  */
 export function collaborationMode(
   mode: SessionMode,
-  /** Whether the thread is in plan mode now. */
-  planning: boolean,
+  planning: string | undefined,
   settings: { model?: string | undefined; effort?: string | undefined },
 ): { collaborationMode: unknown } | Record<string, never> {
   const plan = mode === "plan";
-  if (plan === planning && !plan) return {};
-  if (!settings.model) {
-    if (plan) throw new Error("Choose a model for this session before it plans.");
-    return {};
+  if (!plan && planning === undefined) return {};
+  const model = settings.model ?? planning;
+  if (!model) {
+    throw new Error(
+      plan
+        ? "Choose a model for this session before it plans."
+        : "Choose a model for this session to take it out of plan mode.",
+    );
   }
   return {
     collaborationMode: {
       mode: plan ? "plan" : "default",
       settings: {
-        model: settings.model,
+        model,
         reasoning_effort: settings.effort ?? null,
         developer_instructions: null,
       },

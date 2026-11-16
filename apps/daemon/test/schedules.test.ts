@@ -1,10 +1,16 @@
 import { expect, test } from "bun:test";
-import type { Schedule, ScheduleInput, ScheduleTiming } from "@cycle/protocol";
+import {
+  type Schedule,
+  type ScheduleInput,
+  type ScheduleTiming,
+  defineModes,
+} from "@cycle/protocol";
 import {
   JsonStore,
   LaunchError,
   Scheduler,
   type SchedulesFile,
+  runAgentProblem,
   latestOccurrence,
   nextOccurrence,
 } from "../src/index.ts";
@@ -60,6 +66,15 @@ test.each<[string, ScheduleTiming, number, number, number | null]>([
   expect(latestOccurrence(timing, floor, now)).toBe(latest);
 });
 
+/** `auto` is a mode of both agents, and means another thing on each. */
+const MODES = [
+  ...defineModes(
+    "codex",
+    ["readOnly", "auto", "plan"].map((id) => ({ id, name: id, description: "" })),
+  ),
+  ...defineModes("claude", [{ id: "auto", name: "Auto", description: "" }]),
+];
+
 const input = (over: Partial<ScheduleInput> = {}): ScheduleInput => ({
   name: "Morning check",
   enabled: true,
@@ -101,7 +116,7 @@ async function setup(stored: SchedulesFile = { schedules: [] }) {
     now: () => now,
     newId: () => `id${++ids}`,
     onChange: (schedules) => changes.push(schedules),
-    modes: () => ["readOnly", "auto", "plan"],
+    modes: () => MODES,
   });
   return {
     scheduler,
@@ -277,9 +292,36 @@ test("a mode from before each agent named its own reads as it was meant, and sta
   const kept = { ...input({ mode: "auto" }), id: "kept", since: at(1), runs: [] };
   const t = await setup({ schedules: [kept] });
   expect(t.scheduler.list()[0]?.mode).toBe("legacy:auto");
-  expect(t.scheduler.put({ ...input({ mode: "plan" }), id: "kept" }).mode).toBe("plan");
-  expect(t.file.value.schedules[0]).toMatchObject({ mode: "auto", agentMode: "plan" });
+  const plan = { ...input({ mode: "plan", modeHarness: "codex" }), id: "kept" };
+  expect(t.scheduler.put(plan).mode).toBe("plan");
+  expect(t.file.value.schedules[0]).toMatchObject({
+    mode: "auto",
+    agentMode: "plan",
+    modeHarness: "codex",
+  });
   const back = t.scheduler.put({ ...input({ mode: "legacy:auto" }), id: "kept" });
   expect(back.mode).toBe("legacy:auto");
   expect(() => t.scheduler.put(input({ mode: "legacy:root" }))).toThrow("Unknown mode");
+});
+
+test("a schedule's mode is one agent's, and a run that would start on another is refused", async () => {
+  const t = await setup();
+  // Which agent's `auto` it is must be said, and be one that agent offers.
+  expect(() => t.scheduler.put(input({ mode: "auto" }))).toThrow("Unknown mode");
+  expect(() => t.scheduler.put(input({ mode: "plan", modeHarness: "claude" }))).toThrow(
+    "Unknown mode",
+  );
+  const saved = t.scheduler.put(input({ mode: "auto", modeHarness: "codex" }));
+  expect(saved).toMatchObject({ mode: "auto", modeHarness: "codex" });
+  const stored = t.file.value.schedules[0];
+  if (!stored) throw new Error("expected a schedule");
+  expect(runAgentProblem(stored, "codex")).toBeNull();
+  expect(runAgentProblem(stored, "claude")).toBe(
+    "Its mode is one of Codex's, and this run would start on Claude. Choose its mode again.",
+  );
+  // A mode kept from before is read by each agent as it was meant, and no mode is anyone's.
+  expect(
+    runAgentProblem({ ...stored, agentMode: "legacy:auto", modeHarness: null }, "claude"),
+  ).toBeNull();
+  expect(runAgentProblem({ ...stored, agentMode: null }, "claude")).toBeNull();
 });

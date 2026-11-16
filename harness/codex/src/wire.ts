@@ -150,7 +150,7 @@ export interface WireThreadResponse {
   cwd: string;
   reasoningEffort: string | null;
   /** Codex's collaboration mode the thread is in, on a resume. */
-  collaborationMode?: { mode: string } | null;
+  collaborationMode?: { mode: string; settings?: { model?: string } } | null;
 }
 
 export interface WireTokenBreakdown {

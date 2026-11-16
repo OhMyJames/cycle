@@ -1,8 +1,12 @@
 import type {
+  AgentCapabilities,
   AgentFeatures,
   AccountInfo,
   AccountLogin,
   ApprovalResponse,
+  ContextUsage,
+  FileRewind,
+  HarnessInfo,
   McpServerInfo,
   McpServerInput,
   ModeInfo,
@@ -10,9 +14,11 @@ import type {
   PluginCatalog,
   ReviewTarget,
   PluginDetail,
+  PromptDocument,
   SessionEvent,
   SessionMode,
   SkillInfo,
+  SlashCommand,
   Turn,
   Usage,
 } from "./model.ts";
@@ -43,6 +49,15 @@ export interface TurnOptions {
   mode?: SessionMode;
   /** The sandbox the session's agent runs in, by name. Left out, it runs on this machine. */
   sandbox?: string;
+  /** Folders beyond the session's own its agent may reach, for an agent whose capabilities say so. */
+  directories?: string[];
+}
+
+/** What a session is moved to while it may run. An effort of null is the model's own default. */
+export interface ConfigureOptions {
+  mode?: SessionMode;
+  model?: string;
+  effort?: string | null;
 }
 
 export interface CreateSessionOptions extends TurnOptions {
@@ -58,6 +73,8 @@ export interface PromptInput {
   text: string;
   /** Data URLs or paths of images. */
   images: string[];
+  /** Only the kinds the agent's capabilities name. */
+  documents?: PromptDocument[];
 }
 
 export type HarnessEvent =
@@ -73,9 +90,11 @@ export type HarnessEvent =
   /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
   | { type: "mcp.changed" }
   /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */
-  | { type: "account.changed"; error: string | null }
+  | { type: "account.changed"; harness: string; error: string | null }
   /** The account's rate limits moved, as they do with each turn. */
-  | { type: "limits.changed" }
+  | { type: "limits.changed"; harness: string }
+  /** The commands a session's prompt can begin with changed, as skills were found. */
+  | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
   /** The harness of this name stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; harness: string; message: string };
 
@@ -125,6 +144,8 @@ export interface TerminalHandle {
  */
 export interface Agent {
   readonly name: string;
+  /** What it can do beyond what every agent does. A method below that is optional, it has when they say. */
+  readonly capabilities: AgentCapabilities;
   start(): Promise<void>;
   dispose(): Promise<void>;
   onEvent(listener: (event: HarnessEvent) => void): () => void;
@@ -165,12 +186,27 @@ export interface Agent {
    * Takes the session's changed mode, model or effort in now, while it runs, where the agent can;
    * else it applies from the next turn, which is given them too.
    */
-  configure(sessionId: string, options: TurnOptions): Promise<void>;
+  configure(sessionId: string, options: ConfigureOptions): Promise<void>;
 
   listModels(): Promise<ModelInfo[]>;
   /** The modes a session of this agent can be in. */
   listModes(): ModeInfo[];
+
+  /**
+   * Puts the files back as they were before `turnId`, or with `dryRun` says what that would change.
+   * Its conversation stays: `rewindSession` takes that back. With `rewindFiles` capability.
+   */
+  rewindFiles?(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind>;
+  /** The commands a session's prompt can begin with, or a new session's in a folder. With `commands`. */
+  listCommands?(target: { sessionId: string } | { cwd: string }): Promise<SlashCommand[]>;
+  /** What the session's context holds, part by part. Null when it cannot tell now. */
+  readContext?(sessionId: string): Promise<ContextUsage | null>;
 }
+
+/** What an agent besides the main one may read of its own Connector and Account. */
+export type AgentReads = Partial<
+  Pick<Connector, "listSkills" | "listMcpServers"> & Pick<Account, "readAccount">
+>;
 
 /**
  * The owner's MCP servers and plugins, which live in a harness's own
@@ -225,3 +261,25 @@ export interface Machine {
  * `Harness` (`apps/daemon/src/harnesses.ts`).
  */
 export interface Harness extends Agent, Connector, Account, Machine {}
+
+/**
+ * Every agent the daemon runs, as the daemon sees them (`apps/daemon/src/harnesses.ts`). A session
+ * goes to the agent it began on; a Connector and an Account are chosen by the agent's name, the main
+ * one's when none is given, and the machine is the main one's.
+ */
+export interface Agents
+  extends Omit<Agent, "capabilities" | "rewindFiles" | "listCommands" | "readContext">, Machine {
+  /** The agents running, the main one first. */
+  harnesses(): HarnessInfo[];
+  /** An agent's Connector. What it cannot do, it refuses saying so. */
+  connector(harness?: string): Connector;
+  account(harness?: string): Account;
+  rewindFiles(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind>;
+  /** A session's commands, or those of a new session in a folder, of the agent `harness` names. */
+  listCommands(
+    target: { sessionId: string } | { harness: string; cwd: string },
+  ): Promise<SlashCommand[]>;
+  readContext(sessionId: string): Promise<ContextUsage | null>;
+  /** The capabilities of the agent that keeps a session. */
+  capabilitiesOf(sessionId: string): Promise<AgentCapabilities>;
+}

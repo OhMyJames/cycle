@@ -26,6 +26,24 @@ async function begun(mode = "default") {
   return { sdk, harness, events, session, options, query: sdk.last };
 }
 
+/** Asks to leave plan mode with a plan, and answers it as the owner did. */
+async function approvePlan(mode: string) {
+  const all = await begun("plan");
+  const plan = { type: "tool_use", id: "x", name: "ExitPlanMode", input: { plan: "# Do it" } };
+  all.query.say({ type: "assistant", message: { content: [plan] } });
+  await settle();
+  all.events.length = 0;
+  const answer = all.query.options.canUseTool?.(
+    "ExitPlanMode",
+    {},
+    { signal: new AbortController().signal, toolUseID: "x" },
+  );
+  await settle();
+  const asked = all.events.find((event) => event.type === "approval.requested");
+  all.harness.respondApproval("x", { decision: "accept", mode });
+  return { ...all, asked, answer: await answer };
+}
+
 test("Claude Code offers its six modes, and a session is always started in one by name", async () => {
   const { harness, query } = await begun();
   expect(harness.listModes().map((mode) => mode.id)).toEqual([
@@ -43,7 +61,7 @@ test("Claude Code offers its six modes, and a session is always started in one b
 test("a mode, model or effort the owner changes moves the process in place, mid-turn too", async () => {
   const { sdk, harness, session, query } = await begun();
   await harness.configure(session.id, { mode: "plan", model: "claude-opus-5-5", effort: "low" });
-  expect(query.moves).toEqual(["mode plan", "model claude-opus-5-5", "effort low"]);
+  expect(query.moves).toEqual(["model claude-opus-5-5", "effort low", "mode plan"]);
   // Claude Code saying the mode it was moved to is not the model's own move.
   query.say({ type: "system", subtype: "status", permissionMode: "plan" });
   query.say(result);
@@ -57,10 +75,17 @@ test("a mode, model or effort the owner changes moves the process in place, mid-
   expect(query.moves).toHaveLength(3);
 });
 
-test("a mode only a new process can give waits for the turn, or ends an idle process", async () => {
+test("back to the model's own effort is its default effort, in place", async () => {
+  const { harness, session, query } = await begun();
+  await harness.configure(session.id, { effort: "low" });
+  await harness.configure(session.id, { effort: null });
+  expect(query.moves).toEqual(["effort low", "effort high"]);
+});
+
+test("a mode only a new process can give waits for the turn, and its model moves meanwhile", async () => {
   const { sdk, harness, session, options, query } = await begun();
-  await harness.configure(session.id, { mode: "bypassPermissions" });
-  expect(query.moves).toEqual([]);
+  await harness.configure(session.id, { mode: "bypassPermissions", model: "claude-opus-5-5" });
+  expect(query.moves).toEqual(["model claude-opus-5-5"]);
   expect(query.closed).toBe(false);
   query.say(result);
   await settle();
@@ -68,6 +93,23 @@ test("a mode only a new process can give waits for the turn, or ends an idle pro
   expect(query.closed).toBe(true);
   await harness.send(session.id, { text: "go", images: [] }, { ...options, mode: "acceptEdits" });
   expect(sdk.last.options).toMatchObject({ permissionMode: "acceptEdits", resume: session.id });
+});
+
+test("a process that will not move is ended, and the turn runs in a new one", async () => {
+  const { sdk, harness, session, query } = await begun();
+  query.say(result);
+  await settle();
+  query.refuseMoves = true;
+  const { turnId } = await harness.send(
+    session.id,
+    { text: "again", images: [] },
+    { mode: "default", model: "claude-opus-5-5" },
+  );
+  expect(query.closed).toBe(true);
+  expect(sdk.queries).toHaveLength(3);
+  expect(sdk.last.options).toMatchObject({ model: "claude-opus-5-5", resume: session.id });
+  await settle();
+  expect(sdk.last.prompts.map((prompt) => prompt.uuid)).toEqual([turnId]);
 });
 
 test("the model moving itself to another mode is told, once", async () => {
@@ -79,24 +121,31 @@ test("the model moving itself to another mode is told, once", async () => {
   expect(events).toEqual([{ type: "mode.changed", sessionId: session.id, mode: "plan" }]);
 });
 
-test("leaving plan mode asks the owner with the plan, and goes on in the mode they pick", async () => {
-  const { harness, events, query } = await begun("plan");
-  const plan = { type: "tool_use", id: "x", name: "ExitPlanMode", input: { plan: "# Do it" } };
-  query.say({ type: "assistant", message: { content: [plan] } });
-  await settle();
-  const answer = query.options.canUseTool?.(
-    "ExitPlanMode",
-    {},
-    { signal: new AbortController().signal, toolUseID: "x" },
-  );
-  await settle();
-  const asked = events.find((event) => event.type === "approval.requested");
+test("leaving plan mode asks the owner with the plan, and goes on in a mode this process has", async () => {
+  const { asked, answer, events, session } = await approvePlan("default");
   expect(asked).toMatchObject({ approval: { kind: "plan", plan: "# Do it", itemId: "x" } });
-  harness.respondApproval("x", { decision: "accept", mode: "acceptEdits" });
-  expect(await answer).toMatchObject({
+  expect(answer).toMatchObject({
     behavior: "allow",
-    updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }],
+    updatedPermissions: [{ type: "setMode", mode: "default", destination: "session" }],
   });
+  expect(events.filter((event) => event.type === "mode.changed")).toEqual([
+    { type: "mode.changed", sessionId: session.id, mode: "default" },
+  ]);
+});
+
+test("a plan approved into a mode that needs Claude Code's sandbox asks first until a new process", async () => {
+  const { answer, events, session, query } = await approvePlan("auto");
+  // Planning ran with no sandbox: nothing runs unsandboxed and unasked in the rest of the turn.
+  expect(answer).toMatchObject({
+    updatedPermissions: [{ type: "setMode", mode: "default", destination: "session" }],
+  });
+  expect(events).toContainEqual({ type: "mode.changed", sessionId: session.id, mode: "auto" });
+  expect(events).toContainEqual(expect.objectContaining({ type: "notice", level: "info" }));
+  // Claude Code's word for the mode it is in now is no move of the model's own.
+  events.length = 0;
+  query.say({ type: "system", subtype: "status", permissionMode: "default" });
+  await settle();
+  expect(events).toEqual([]);
 });
 
 test("an MCP server's request is the owner's to answer, and is called off with its turn", async () => {

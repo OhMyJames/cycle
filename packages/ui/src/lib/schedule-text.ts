@@ -85,6 +85,8 @@ export interface ScheduleDraft {
   model: string | null;
   effort: string | null;
   mode: SessionMode | null;
+  /** The agent `mode` is one of. */
+  modeHarness: string | null;
   kind: ScheduleTiming["kind"];
   /** `HH:MM`, for `daily`. */
   time: string;
@@ -115,6 +117,7 @@ export function draftOf(schedule: Schedule | null, cwd: string, now: Date): Sche
     model: schedule?.model ?? null,
     effort: schedule?.effort ?? null,
     mode: schedule?.mode ?? null,
+    modeHarness: schedule?.modeHarness ?? null,
     kind: timing?.kind ?? "daily",
     time: timing?.kind === "daily" ? timing.time : "09:00",
     weekdays: timing?.kind === "daily" ? (timing.weekdays ?? []) : [],
@@ -160,6 +163,7 @@ export function inputOf(draft: ScheduleDraft, existing: Schedule | null, now: Da
     model: draft.model,
     effort: draft.effort,
     mode: draft.mode,
+    modeHarness: draft.mode ? draft.modeHarness : null,
     timing,
   };
 }

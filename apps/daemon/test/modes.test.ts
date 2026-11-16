@@ -31,7 +31,7 @@ async function setup(stored: MetaFile = { sessions: {} }) {
   const meta = await JsonStore.open<MetaFile>(memory(), stored, timers.schedule);
   const usageFile = await JsonStore.open<UsageFile>(memory(), { days: {} }, timers.schedule);
   const hub = new SessionHub({
-    harness,
+    harness: harness.asAgents(),
     meta,
     settings: () => settings,
     usage: new UsageLedger(usageFile, () => 0),
@@ -93,7 +93,25 @@ test("a mode the owner changes is kept apart from the old word, and a live agent
   expect(harness.calls).toEqual([`configure ${info.id} {"mode":"plan"}`]);
   await hub.update({ sessionId: info.id, effort: "low" });
   expect(harness.calls.at(-1)).toBe(`configure ${info.id} {"effort":"low"}`);
+  // Back to the model's own effort reaches it too.
+  await hub.update({ sessionId: info.id, effort: null });
+  expect(harness.calls.at(-1)).toBe(`configure ${info.id} {"effort":null}`);
   expect(hub.update({ sessionId: info.id, mode: "root" })).rejects.toThrow("no mode named root");
+});
+
+test("a mode that never asks is the owner's to choose: the agent's word does not keep it", async () => {
+  const { harness, hub, meta, frames } = await setup();
+  const info = await hub.create({ cwd: "/project", mode: "readOnly" });
+  harness.emit({ type: "mode.changed", sessionId: info.id, mode: "fullAccess" });
+  expect(hub.info(info.id).mode).toBe("readOnly");
+  expect(meta.value.sessions[info.id]?.agentMode).toBe("readOnly");
+  expect(frames.at(-1)?.events).toMatchObject([{ type: "notice", level: "warning" }]);
+});
+
+test("a session whose agent is known only once loaded is told its mode before anything runs", async () => {
+  const { harness, hub } = await setup({ sessions: { s9: { agentMode: "plan" } } });
+  await hub.open("s9", undefined);
+  expect(harness.calls).toEqual(["load s9", `configure s9 {"mode":"plan"}`]);
 });
 
 test("the agent moving itself to another mode is kept and said in the conversation", async () => {

@@ -4,9 +4,11 @@ import {
   type Schedule,
   type ScheduleInput,
   type ScheduleRun,
+  type ModeInfo,
   type ScheduleTiming,
   type SessionMode,
   LEGACY_MODE_PREFIX,
+  harnessLabel,
   legacyMode,
 } from "@cycle/protocol";
 import { latestOccurrence, nextOccurrence } from "./schedule-timing.ts";
@@ -39,6 +41,16 @@ export function scheduleMode(schedule: StoredSchedule): SessionMode | null {
   return schedule.mode === null ? null : legacyMode(schedule.mode);
 }
 
+/**
+ * Why a run cannot start on `agent`: its mode is another agent's, where the same id can let other
+ * things through. Null when it can.
+ */
+export function runAgentProblem(schedule: StoredSchedule, agent: string): string | null {
+  const mode = scheduleMode(schedule);
+  if (!mode || !schedule.modeHarness || schedule.modeHarness === agent) return null;
+  return `Its mode is one of ${harnessLabel(schedule.modeHarness)}'s, and this run would start on ${harnessLabel(agent)}. Choose its mode again.`;
+}
+
 /** A stored schedule as the wire carries it. */
 function wireSchedule(schedule: StoredSchedule, next: number | null): Schedule {
   const { agentMode: _, ...rest } = structuredClone(schedule);
@@ -55,8 +67,8 @@ export interface SchedulerOptions {
   newId(): string;
   /** Called with the list after it changed. */
   onChange(schedules: Schedule[]): void;
-  /** The ids of every agent's modes. Which agent a run is on is known only as it starts. */
-  modes(): readonly string[];
+  /** Every agent's modes. Which agent a run is on is known only as it starts. */
+  modes(): readonly ModeInfo[];
 }
 
 const MAX_MINUTES = 60 * 24 * 366;
@@ -101,7 +113,7 @@ function checkTiming(timing: ScheduleTiming): ScheduleTiming {
  */
 export function checkScheduleInput(
   input: ScheduleInput,
-  modes: readonly string[] = [],
+  modes: readonly ModeInfo[] = [],
 ): ScheduleInput {
   const name = typeof input.name === "string" ? input.name.trim() : "";
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
@@ -116,7 +128,11 @@ export function checkScheduleInput(
   const kept =
     mode?.startsWith(LEGACY_MODE_PREFIX) &&
     legacyMode(mode.slice(LEGACY_MODE_PREFIX.length)) === mode;
-  if (input.mode !== null && (mode === null || (!modes.includes(mode) && !kept))) {
+  // A mode is one agent's: the same id can be another agent's, which lets other things through.
+  const modeHarness =
+    mode && !kept && typeof input.modeHarness === "string" ? input.modeHarness : null;
+  const offered = modes.some((each) => each.harness === modeHarness && each.id === mode);
+  if (input.mode !== null && (mode === null || (!kept && !offered))) {
     throw new Error("Unknown mode.");
   }
   return {
@@ -129,6 +145,7 @@ export function checkScheduleInput(
     model: typeof input.model === "string" && input.model ? input.model : null,
     effort: typeof input.effort === "string" && input.effort ? input.effort : null,
     mode: input.mode,
+    modeHarness,
     timing: checkTiming(input.timing),
   };
 }
