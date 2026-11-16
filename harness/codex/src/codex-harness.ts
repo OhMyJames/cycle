@@ -2,6 +2,7 @@ import type {
   AccountInfo,
   AgentCapabilities,
   AgentFeatures,
+  HookSettings,
   AccountLogin,
   Approval,
   ApprovalResponse,
@@ -163,6 +164,7 @@ export class CodexHarness implements Harness {
     connector: "edit",
     login: true,
     features: true,
+    hooks: false,
   };
   private readonly provider: ExtraProvider | null;
   /** Codex's own models, and the machine: files, commands, terminals, the account. */
@@ -654,6 +656,20 @@ export class CodexHarness implements Harness {
         mergeStrategy: "replace",
       },
     ]);
+  }
+
+  // What Cycle keeps for Claude Code alone: codex's skills and hooks are its own files.
+
+  async enableSkill(): Promise<void> {
+    throw new Error("Turning a skill off is not supported for codex in Cycle yet.");
+  }
+
+  async readHooks(): Promise<HookSettings> {
+    throw new Error("Hooks are not supported for codex in Cycle yet.");
+  }
+
+  async setHooks(): Promise<void> {
+    throw new Error("Hooks are not supported for codex in Cycle yet.");
   }
 
   async readAccount(): Promise<AccountInfo> {

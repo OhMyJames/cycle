@@ -62,6 +62,13 @@ export interface QueryOptions {
   /** Folders beyond `cwd` the session may reach. */
   additionalDirectories?: string[];
   settingSources: ("user" | "project" | "local")[];
+  /** A settings file, the flag layer. Only its path goes on the command line. */
+  settings?: string;
+  /** Tools it may not use, by name. Names only: they go on the command line. */
+  disallowedTools?: string[];
+  /** Plugin folders, handed over its pipe with `pluginDelivery: "initialize"`. */
+  plugins?: { type: "local"; path: string }[];
+  pluginDelivery?: "initialize";
   systemPrompt: { type: "preset"; preset: "claude_code" };
   canUseTool?: (
     tool: string,
@@ -104,6 +111,12 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   rewindFiles(userMessageId: string, options: { dryRun: boolean }): Promise<WireRewindFilesResult>;
   /** Sets the MCP servers given to this process alone, over its own pipe. */
   setMcpServers(servers: Record<string, unknown>): Promise<unknown>;
+  /** Merges settings into this process's flag layer, over its own pipe. */
+  applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
+  /** Loads its plugins again, and answers which it has. Waits while a turn runs. */
+  reloadPlugins(): Promise<{
+    plugins: { name: string; path: string; source?: string; version?: string }[];
+  }>;
   close(): void;
 }
 

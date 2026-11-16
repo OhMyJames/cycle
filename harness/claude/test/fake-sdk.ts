@@ -71,6 +71,16 @@ export class FakeQuery implements ClaudeQuery {
   setMcpServers = async (servers: Record<string, unknown>) => {
     this.servers = servers;
   };
+  /** Each flag layer merged in after start, in order. */
+  readonly flags: Record<string, unknown>[] = [];
+  applyFlagSettings = async (settings: Record<string, unknown>) => {
+    this.flags.push(settings);
+  };
+  reloads = 0;
+  reloadPlugins = async () => {
+    this.reloads++;
+    return { plugins: this.sdk.plugins };
+  };
   close(): void {
     this.closed = true;
     this.exit();
@@ -94,6 +104,8 @@ export class FakeQuery implements ClaudeQuery {
 /** The SDK with nothing behind it: what is stored is what a test put there. */
 export class FakeSdk implements ClaudeSdk {
   readonly queries: FakeQuery[] = [];
+  /** The plugins a process says it loaded. */
+  plugins: { name: string; path: string; source?: string; version?: string }[] = [];
   readonly calls: string[] = [];
   stored: WireSessionInfo[] = [];
   messages: Record<string, WireHistoryMessage[]> = {};

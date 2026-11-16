@@ -7,12 +7,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeHarness } from "@cycle/harness-claude";
+import { type ClaudeConfig, ClaudeHarness, emptyConfig } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import {
   Harnesses,
+  JsonStore,
   TOOLS_KEY_ENV,
   TOOLS_SERVER,
+  claudeConfigBook,
   diskFile,
   openProviders,
   startDaemon,
@@ -233,8 +235,13 @@ const harness = new CodexHarness({
 // A stand-in for Docker's `sbx`, so a session can be asked into a sandbox here too.
 const sbx = installFakeSbx(root);
 const sandboxes = await openSandboxes(root, { ...process.env, ...claudeModel.env, ...sbx.env });
+const claudeFile = await JsonStore.open<ClaudeConfig>(
+  diskFile(join(root, "home", "claude.json")),
+  emptyConfig(),
+);
 const claude = new ClaudeHarness({
   env: claudeModel.env,
+  config: { book: claudeConfigBook(claudeFile), dir: join(root, "home", "claude") },
   sandboxes: sandboxes.admin,
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
 });

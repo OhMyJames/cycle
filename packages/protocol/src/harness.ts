@@ -1,6 +1,7 @@
 import type {
   AgentCapabilities,
   AgentFeatures,
+  HookSettings,
   AccountInfo,
   AccountLogin,
   ApprovalResponse,
@@ -192,10 +193,11 @@ export interface Agent {
   readContext?(sessionId: string): Promise<ContextUsage | null>;
 }
 
-/** What an agent besides the main one may read of its own Connector and Account. */
-export type AgentReads = Partial<
-  Pick<Connector, "listSkills" | "listMcpServers"> & Pick<Account, "readAccount">
->;
+/**
+ * What an agent besides the main one gives of its own Connector and Account. What it leaves out is
+ * refused for it, never done by the main agent in its place.
+ */
+export type AgentReads = Partial<Connector> & Partial<Pick<Account, "readAccount">>;
 
 /**
  * The owner's MCP servers and plugins, which live in a harness's own
@@ -220,6 +222,12 @@ export interface Connector {
   removeMarketplace(name: string): Promise<void>;
   readFeatures(): Promise<AgentFeatures>;
   setFeatures(features: AgentFeatures): Promise<void>;
+  /** Turns a skill on or off for every session. With the `hooks` capability. */
+  enableSkill(name: string, enabled: boolean): Promise<void>;
+  /** With the `hooks` capability. */
+  readHooks(): Promise<HookSettings>;
+  /** Replaces the hooks and the switches of the owner's own. With the `hooks` capability. */
+  setHooks(settings: HookSettings): Promise<void>;
 }
 
 /** The owner's account with whoever serves a harness's own models. */

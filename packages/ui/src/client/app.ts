@@ -10,6 +10,7 @@ import {
   type Delivery,
   type EventFrame,
   type HarnessInfo,
+  type HookSettings,
   type McpServerInfo,
   type McpServerInput,
   type MethodName,
@@ -26,6 +27,7 @@ import {
   type SessionInfo,
   type SessionMode,
   type SessionState,
+  type SkillInfo,
   type Settings,
   type SlashCommand,
   type TerminalInfo,
@@ -74,6 +76,7 @@ export const NO_CAPABILITIES: AgentCapabilities = {
   connector: "read",
   login: false,
   features: false,
+  hooks: false,
 };
 
 export type SettingsSection = "general" | "account" | "providers" | "sandboxes" | "about";
@@ -203,6 +206,11 @@ export class CycleApp {
   /** Null until read: the Connector reads them when it opens, since asking starts the servers. */
   readonly mcp = new Store<McpServerInfo[] | null>(null);
   readonly plugins = new Store<PluginCatalog | null>(null);
+  /** Whose Connector the page shows: null for the main agent's. */
+  readonly connectorAgent = new Store<string | null>(null);
+  /** The shown agent's skills, and the hooks Cycle keeps for it, when it has them. */
+  readonly skills = new Store<SkillInfo[] | null>(null);
+  readonly hooks = new Store<HookSettings | null>(null);
   /** Null until read: Settings reads them when it opens. */
   readonly features = new Store<AgentFeatures | null>(null);
   readonly schedules = new Store<Schedule[] | null>(null);
@@ -618,13 +626,58 @@ export class CycleApp {
 
   // Connector
 
+  /** The agent whose Connector is shown, by name. */
+  shownAgent(): string {
+    return this.connectorAgent.get() ?? this.mainHarness();
+  }
+
+  /** What every Connector request names: the shown agent, or none for the main one. */
+  private agent(): { harness?: string } {
+    const name = this.connectorAgent.get();
+    return name ? { harness: name } : {};
+  }
+
+  /** Shows another agent's Connector, read afresh. */
+  showConnector(harness: string | null): void {
+    this.connectorAgent.set(harness === this.mainHarness() ? null : harness);
+    this.mcp.set(null);
+    this.plugins.set(null);
+    this.skills.set(null);
+    this.hooks.set(null);
+    void this.loadConnector();
+  }
+
   async loadConnector(): Promise<void> {
-    const [servers, catalog] = await Promise.all([
-      this.attempt(this.request("mcp.list", {})),
-      this.attempt(this.request("plugins.list", {})),
+    const agent = this.agent();
+    const hooks = this.capabilities(this.shownAgent()).hooks;
+    const [servers, catalog, settings] = await Promise.all([
+      this.attempt(this.request("mcp.list", agent)),
+      this.attempt(this.request("plugins.list", agent)),
+      hooks ? this.attempt(this.request("hooks.read", agent)) : null,
     ]);
     if (servers) this.mcp.set(servers.servers);
     if (catalog) this.plugins.set(catalog);
+    if (settings) this.hooks.set(settings);
+  }
+
+  /** The shown agent's skills in a folder. */
+  async loadSkills(cwd: string): Promise<void> {
+    const answer = await this.attempt(this.request("skills.list", { cwd, ...this.agent() }));
+    if (answer) this.skills.set(answer.skills);
+  }
+
+  async enableSkill(cwd: string, name: string, enabled: boolean): Promise<void> {
+    const answer = await this.attempt(
+      this.request("skills.enable", { cwd, name, enabled, ...this.agent() }),
+    );
+    if (answer) this.skills.set(answer.skills);
+  }
+
+  /** Sets the shown agent's hooks. The page has asked the owner first. */
+  async setHooks(settings: HookSettings): Promise<boolean> {
+    const now = await this.attempt(this.request("hooks.set", { settings, ...this.agent() }));
+    if (now) this.hooks.set(now);
+    return now !== null;
   }
 
   private async mcpDid(work: Promise<{ servers: McpServerInfo[] }>): Promise<boolean> {
@@ -640,19 +693,19 @@ export class CycleApp {
   }
 
   putMcpServer(server: McpServerInput): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.put", { server }));
+    return this.mcpDid(this.request("mcp.put", { server, ...this.agent() }));
   }
 
   removeMcpServer(name: string): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.remove", { name }));
+    return this.mcpDid(this.request("mcp.remove", { name, ...this.agent() }));
   }
 
   enableMcpServer(name: string, enabled: boolean): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.enable", { name, enabled }));
+    return this.mcpDid(this.request("mcp.enable", { name, enabled, ...this.agent() }));
   }
 
   enableMcpTool(name: string, tool: string, enabled: boolean): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.enableTool", { name, tool, enabled }));
+    return this.mcpDid(this.request("mcp.enableTool", { name, tool, enabled, ...this.agent() }));
   }
 
   async loadFeatures(): Promise<void> {
@@ -667,7 +720,7 @@ export class CycleApp {
 
   /** Starts a server's sign-in and opens where the owner finishes it. */
   async loginMcpServer(name: string): Promise<void> {
-    const answer = await this.attempt(this.request("mcp.login", { name }));
+    const answer = await this.attempt(this.request("mcp.login", { name, ...this.agent() }));
     if (!answer) return;
     // A browser tab may refuse a window opened this long after the press, and does not say so.
     if (!host.openExternal(answer.url)) {
@@ -676,23 +729,23 @@ export class CycleApp {
   }
 
   installPlugin(marketplace: string, name: string): Promise<boolean> {
-    return this.pluginsDid(this.request("plugins.install", { marketplace, name }));
+    return this.pluginsDid(this.request("plugins.install", { marketplace, name, ...this.agent() }));
   }
 
   uninstallPlugin(id: string): Promise<boolean> {
-    return this.pluginsDid(this.request("plugins.uninstall", { id }));
+    return this.pluginsDid(this.request("plugins.uninstall", { id, ...this.agent() }));
   }
 
   enablePlugin(id: string, enabled: boolean): Promise<boolean> {
-    return this.pluginsDid(this.request("plugins.enable", { id, enabled }));
+    return this.pluginsDid(this.request("plugins.enable", { id, enabled, ...this.agent() }));
   }
 
   addMarketplace(source: string): Promise<boolean> {
-    return this.pluginsDid(this.request("marketplace.add", { source }));
+    return this.pluginsDid(this.request("marketplace.add", { source, ...this.agent() }));
   }
 
   removeMarketplace(name: string): Promise<boolean> {
-    return this.pluginsDid(this.request("marketplace.remove", { name }));
+    return this.pluginsDid(this.request("marketplace.remove", { name, ...this.agent() }));
   }
 
   // Schedules
@@ -951,12 +1004,12 @@ export class CycleApp {
       case "usage.today":
         this.usage.set(event.day);
         break;
-      // The Connector page shows the main agent's.
+      // The Connector page shows one agent's at a time.
       case "mcp.changed":
-        if (event.harness === this.mainHarness()) this.mcp.set(event.servers);
+        if (event.harness === this.shownAgent()) this.mcp.set(event.servers);
         break;
       case "plugins.changed":
-        if (event.harness === this.mainHarness()) this.plugins.set(event.catalog);
+        if (event.harness === this.shownAgent()) this.plugins.set(event.catalog);
         break;
       case "features.changed":
         this.features.set(event.features);

@@ -745,6 +745,19 @@ input::placeholder {
   font-size: var(--text-meta);
   line-height: var(--text-meta-line);
 }
+/* A command shown whole before it is kept, as a hook's. */
+.dialog-code {
+  max-height: 160px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-control-hover);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 /* Putting the files back too, under a rewind's question. */
 .files-back {
   display: flex;

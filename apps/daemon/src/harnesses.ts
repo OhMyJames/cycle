@@ -235,25 +235,35 @@ export class Harnesses implements Agents {
   connector(harness?: string): Connector {
     const agent = this.named(harness);
     if (agent === this.main) return this.main;
-    const no = (what: string) => async () => unsupported(agent.name, what);
-    const change = no("Changing the connector");
+    // What the agent gives of its own Connector; the rest is refused for it.
+    const { capabilities } = agent;
+    const own = <K extends keyof Connector>(key: K, what: string, can = true): Connector[K] => {
+      const method = agent[key];
+      if (can && typeof method === "function") return method.bind(agent) as Connector[K];
+      return (async () => unsupported(agent.name, what)) as unknown as Connector[K];
+    };
+    const edits = capabilities.connector === "edit";
+    const change = "Changing the connector";
     return {
-      listSkills: agent.listSkills?.bind(agent) ?? no("Listing skills"),
-      listMcpServers: agent.listMcpServers?.bind(agent) ?? no("Listing MCP servers"),
-      putMcpServer: change,
-      removeMcpServer: change,
-      enableMcpServer: change,
-      enableMcpTool: change,
-      loginMcpServer: no("Signing in to an MCP server"),
-      listPlugins: no("Listing plugins"),
-      readPlugin: no("Reading a plugin"),
-      installPlugin: change,
-      uninstallPlugin: change,
-      enablePlugin: change,
-      addMarketplace: change,
-      removeMarketplace: change,
-      readFeatures: no("Reading features"),
-      setFeatures: change,
+      listSkills: own("listSkills", "Listing skills"),
+      listMcpServers: own("listMcpServers", "Listing MCP servers"),
+      putMcpServer: own("putMcpServer", change, edits),
+      removeMcpServer: own("removeMcpServer", change, edits),
+      enableMcpServer: own("enableMcpServer", change, edits),
+      enableMcpTool: own("enableMcpTool", change, edits),
+      loginMcpServer: own("loginMcpServer", "Signing in to an MCP server"),
+      listPlugins: own("listPlugins", "Listing plugins", edits),
+      readPlugin: own("readPlugin", "Reading a plugin", edits),
+      installPlugin: own("installPlugin", change, edits),
+      uninstallPlugin: own("uninstallPlugin", change, edits),
+      enablePlugin: own("enablePlugin", change, edits),
+      addMarketplace: own("addMarketplace", change, edits),
+      removeMarketplace: own("removeMarketplace", change, edits),
+      readFeatures: own("readFeatures", "Reading features", capabilities.features),
+      setFeatures: own("setFeatures", change, capabilities.features),
+      enableSkill: own("enableSkill", change, capabilities.hooks),
+      readHooks: own("readHooks", "Reading hooks", capabilities.hooks),
+      setHooks: own("setHooks", change, capabilities.hooks),
     };
   }
 

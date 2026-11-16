@@ -1408,6 +1408,8 @@ export function toMcpServers(raw: WireMcpServerStatus[], own: string | null): Mc
       return {
         name: server.name,
         enabled: server.status !== "disabled",
+        // A plugin names its servers `plugin:<plugin>:<server>`; the rest are the owner's own.
+        origin: server.name.startsWith("plugin:") ? ("plugin" as const) : ("owner" as const),
         transport,
         // A plugin's server is named `plugin:<plugin>:<server>`, a name its author chose, and the SDK
         // says nothing of its marketplace: the `name@marketplace` id a plugin is known by cannot be

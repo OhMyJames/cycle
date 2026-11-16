@@ -30,6 +30,7 @@ function setup() {
     connector: "read",
     login: false,
     features: false,
+    hooks: false,
   };
   const all = new Harnesses(main, [other]);
   return { main, other, all };
@@ -72,6 +73,29 @@ test("what another agent cannot do is refused, never done by the main one in its
   await expect(all.account("other").login()).rejects.toThrow("Signing in is not supported");
   await expect(all.account("other").logout()).rejects.toBeInstanceOf(NotSupported);
   expect(main.calls).toEqual([]);
+});
+
+test("another agent that can change its connector does so itself, within what it says it can", async () => {
+  const { main, other, all } = setup();
+  other.capabilities = { ...other.capabilities, connector: "edit", hooks: true };
+  const changed: string[] = [];
+  (other as { putMcpServer: (server: { name: string }) => Promise<void> }).putMcpServer = async (
+    server,
+  ) => {
+    changed.push(`other:${server.name}`);
+  };
+  other.setHooks = async () => {
+    changed.push("other:hooks");
+  };
+  main.putMcpServer = async () => {
+    changed.push("main");
+  };
+  await all.connector("other").putMcpServer({ name: "docs" } as never);
+  await all.connector("other").setHooks({ hooks: [], ownerHooks: true, ownerSettings: true });
+  expect(changed).toEqual(["other:docs", "other:hooks"]);
+  await expect(all.connector("other").setFeatures({ subagents: false })).rejects.toBeInstanceOf(
+    NotSupported,
+  );
 });
 
 test("putting files back and listing commands go to the session's agent, when it can", async () => {

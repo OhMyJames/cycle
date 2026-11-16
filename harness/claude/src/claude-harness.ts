@@ -9,8 +9,12 @@ import {
   type FileRewind,
   type HarnessEvent,
   type HarnessSession,
+  type HookSettings,
   type LimitWindow,
   type McpServerInfo,
+  type McpServerInput,
+  type PluginCatalog,
+  type PluginDetail,
   type ModelInfo,
   type PromptInput,
   type ReviewTarget,
@@ -25,6 +29,20 @@ import {
 import { cp, mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  type ClaudeConfig,
+  enablePlugin,
+  enableServer,
+  enableSkill,
+  enableTool,
+  putServer,
+  removeServer,
+  setHooks,
+  shownServers,
+  toHookSettings,
+} from "./config.ts";
+import { ClaudeConfiguration, type ClaudeConfigOptions } from "./configuration.ts";
+import type { OwnerPlugin } from "./plugins.ts";
 import { type Sandboxes, claudeHomeOf, projectFolder, sandboxCwd } from "./sandbox.ts";
 import { agentBegins, turnOrigin } from "./tasks.ts";
 import {
@@ -106,6 +124,11 @@ export interface ClaudeHarnessOptions {
   sandboxes?: Sandboxes;
   /** Where a conversation kept in the owner's home is moved from, once. */
   files?: SessionFiles;
+  /**
+   * Cycle's own configuration of Claude Code, which every process on this machine starts with.
+   * Without it, a process has the owner's alone, and the Connector only reads.
+   */
+  config?: ClaudeConfigOptions;
   sdk?: ClaudeSdk;
   /** Runs something later, and answers how to call it off. */
   schedule?: (run: () => void, ms: number) => () => void;
@@ -134,6 +157,8 @@ interface Running {
   reader: StreamReader;
   /** The mode, model and effort it was started with: another means another process. */
   spec: string;
+  /** What of Cycle's configuration only its start takes, as it was then. */
+  configKey: string;
   /** The turn it runs now, known by the prompt that began it. */
   turn: string | null;
   /** Whether the owner began that turn here, rather than the agent by itself. */
@@ -205,6 +230,11 @@ class Inbox<T> implements AsyncIterable<T> {
   }
 }
 
+/** The plugins a process has, as it loads them again. */
+async function loadedPlugins(query: ClaudeQuery) {
+  return (await query.reloadPlugins()).plugins;
+}
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -237,15 +267,11 @@ const realFiles: SessionFiles = {
  */
 export class ClaudeHarness implements Agent, AgentReads {
   readonly name = HARNESS_NAME;
-  readonly capabilities: AgentCapabilities = {
-    attachments: ["image", "pdf", "text"],
-    rewindFiles: true,
-    commands: true,
-    directories: true,
-    connector: "read",
-    login: false,
-    features: false,
-  };
+  readonly capabilities: AgentCapabilities;
+  /** Cycle's configuration of Claude Code; null when it keeps none. */
+  private readonly configuration: ClaudeConfiguration | null;
+  /** The owner's own plugins as last listed, and when. */
+  private ownerPlugins: { at: number; plugins: OwnerPlugin[] } | null = null;
   private readonly sdk: ClaudeSdk;
   private readonly options: ClaudeHarnessOptions;
   private readonly env: Record<string, string>;
@@ -315,6 +341,25 @@ export class ClaudeHarness implements Agent, AgentReads {
       });
     this.now = options.now ?? Date.now;
     this.newId = options.newId ?? (() => crypto.randomUUID());
+    this.configuration = options.config
+      ? new ClaudeConfiguration(
+          options.config,
+          this.env,
+          () => this.bin(),
+          options.onLog ?? (() => {}),
+        )
+      : null;
+    const edits = this.configuration !== null;
+    this.capabilities = {
+      attachments: ["image", "pdf", "text"],
+      rewindFiles: true,
+      commands: true,
+      directories: true,
+      connector: edits ? "edit" : "read",
+      login: false,
+      features: false,
+      hooks: edits,
+    };
   }
 
   /** Claude Code must be there and start: its models are the proof. */
@@ -663,14 +708,108 @@ export class ClaudeHarness implements Agent, AgentReads {
       this.mcp = { at: this.now(), servers };
       return servers;
     };
-    if (running) return read(running.query);
-    if (this.mcp && this.now() - this.mcp.at < MCP_KEEP_MS) return this.mcp.servers;
-    return this.probe(read);
+    const listed = running
+      ? await read(running.query)
+      : this.mcp && this.now() - this.mcp.at < MCP_KEEP_MS
+        ? this.mcp.servers
+        : await this.probe(read);
+    return this.configuration ? shownServers(this.configuration.read(), listed) : listed;
   }
 
-  /** Claude Code's skills in a folder are the commands the owner, its project or a plugin brings. */
+  /**
+   * Claude Code's skills in a folder are the commands the owner, its project or a plugin brings.
+   * One turned off is not listed by a process, so it is added back, off.
+   */
   async listSkills(cwd: string): Promise<SkillInfo[]> {
-    return toSkills(await this.listCommands({ cwd }));
+    const skills = toSkills(await this.listCommands({ cwd }));
+    const off = this.configuration?.read().skillsOff ?? [];
+    const shown = skills.map((skill) => ({ ...skill, enabled: !off.includes(skill.name) }));
+    for (const name of off) {
+      if (!skills.some((skill) => skill.name === name)) {
+        shown.push({ name, description: "", path: "", scope: "claude", enabled: false });
+      }
+    }
+    return shown;
+  }
+
+  // The Connector's changes: Cycle's own configuration, never the owner's files.
+
+  async putMcpServer(server: McpServerInput): Promise<void> {
+    const owners = (this.mcp?.servers ?? [])
+      .filter((each) => !this.config().mcpServers[each.name])
+      .map((each) => each.name);
+    await this.change((config) => putServer(config, server, owners));
+  }
+
+  async removeMcpServer(name: string): Promise<void> {
+    await this.change((config) => removeServer(config, name));
+  }
+
+  async enableMcpServer(name: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enableServer(config, name, enabled));
+  }
+
+  async enableMcpTool(name: string, tool: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enableTool(config, name, tool, enabled));
+  }
+
+  async enableSkill(name: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enableSkill(config, name, enabled));
+  }
+
+  async readHooks(): Promise<HookSettings> {
+    return toHookSettings(this.config());
+  }
+
+  async setHooks(settings: HookSettings): Promise<void> {
+    await this.change((config) => setHooks(config, settings, this.newId));
+  }
+
+  async listPlugins(): Promise<PluginCatalog> {
+    const configuration = this.configured();
+    return configuration.plugins.catalog(await this.ownersPlugins(), configuration.read());
+  }
+
+  async readPlugin(marketplace: string, name: string): Promise<PluginDetail> {
+    const catalog = await this.listPlugins();
+    const plugin = catalog.marketplaces
+      .find((each) => each.name === marketplace)
+      ?.plugins.find((each) => each.name === name);
+    if (!plugin) throw new Error(`${name} is not in ${marketplace}.`);
+    // Claude Code says what a plugin brings only once it is loaded.
+    return {
+      plugin,
+      description: plugin.description,
+      skills: [],
+      mcpServers: [],
+      hooks: 0,
+      apps: [],
+    };
+  }
+
+  async installPlugin(marketplace: string, name: string): Promise<void> {
+    await this.configured().plugins.install(marketplace, name);
+    await this.reconfigure(true);
+  }
+
+  async uninstallPlugin(id: string): Promise<void> {
+    const configuration = this.configured();
+    await configuration.plugins.uninstall(id);
+    const { [id]: _gone, ...plugins } = configuration.read().plugins;
+    await configuration.write({ ...configuration.read(), plugins });
+    await this.reconfigure(true);
+  }
+
+  async enablePlugin(id: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enablePlugin(config, id, enabled), true);
+  }
+
+  async addMarketplace(source: string): Promise<void> {
+    await this.configured().plugins.addMarketplace(source);
+  }
+
+  async removeMarketplace(name: string): Promise<void> {
+    await this.configured().plugins.removeMarketplace(name);
   }
 
   /**
@@ -690,6 +829,94 @@ export class ClaudeHarness implements Agent, AgentReads {
 
   // Inside
 
+  private configured(): ClaudeConfiguration {
+    if (!this.configuration) throw new Error("Cycle keeps no configuration of Claude Code here.");
+    return this.configuration;
+  }
+
+  private config(): ClaudeConfig {
+    return this.configured().read();
+  }
+
+  /** Changes Cycle's configuration, keeps it, and gives it to the processes that run. */
+  private async change(
+    next: (config: ClaudeConfig) => ClaudeConfig,
+    plugins = false,
+  ): Promise<void> {
+    const configuration = this.configured();
+    await configuration.write(next(configuration.read()));
+    await this.reconfigure(plugins);
+  }
+
+  /**
+   * Gives the processes on this machine what can change while they run: Cycle's servers, over their
+   * pipe, and the switches of the owner's own, which `reloadPlugins` applies to plugins. The rest
+   * waits for a process's next start, which its next prompt brings when no task runs in it.
+   */
+  private async reconfigure(plugins: boolean): Promise<void> {
+    const configuration = this.configured();
+    this.mcp = null;
+    this.ownerPlugins = null;
+    const servers = this.serversFor(configuration);
+    const flags = configuration.flags();
+    await Promise.all(
+      [...this.live.values()]
+        .filter((running) => !running.known.sandbox)
+        .map(async (running) => {
+          try {
+            await running.query.setMcpServers(servers);
+            await running.query.applyFlagSettings(flags);
+            if (plugins) await running.query.reloadPlugins();
+          } catch (error) {
+            this.options.onLog?.(`A change did not reach a running Claude Code: ${message(error)}`);
+          }
+        }),
+    );
+  }
+
+  /** Every server a process on this machine is given over its pipe: Cycle's tools, and its own. */
+  private serversFor(configuration: ClaudeConfiguration | null): Record<string, unknown> {
+    const { tools } = this.options;
+    return {
+      ...configuration?.servers(),
+      // The key goes down the process's own pipe: not its arguments, which any command can list,
+      // nor its environment, which the commands it runs inherit.
+      ...(tools
+        ? {
+            [tools.name]: {
+              type: "http",
+              url: tools.url,
+              headers: { Authorization: `Bearer ${tools.key}` },
+            },
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * The owner's own installed plugins, as a process loads them. One Cycle turned off is not loaded;
+   * the catalog adds it back from the configuration.
+   */
+  private async ownersPlugins(): Promise<OwnerPlugin[]> {
+    if (this.ownerPlugins && this.now() - this.ownerPlugins.at < MCP_KEEP_MS) {
+      return this.ownerPlugins.plugins;
+    }
+    const running = this.here();
+    const loaded = running ? await loadedPlugins(running.query) : await this.probe(loadedPlugins);
+    const plugins = loaded
+      .filter((each) => {
+        const source = each.source ?? "";
+        return source.includes("@") && !source.endsWith("@inline") && !source.endsWith("@builtin");
+      })
+      .map((each) => ({
+        id: each.source ?? each.name,
+        name: each.name,
+        version: each.version ?? null,
+      }));
+    this.ownerPlugins = { at: this.now(), plugins };
+    return plugins;
+  }
+
   private readModels(): Promise<ModelInfo[]> {
     return this.probe(async () => this.offered);
   }
@@ -704,13 +931,15 @@ export class ClaudeHarness implements Agent, AgentReads {
   private async probe<T>(ask: (query: ClaudeQuery) => Promise<T>, cwd = homedir()): Promise<T> {
     let query: ClaudeQuery | null = null;
     try {
+      const start = await this.configuration?.forStart();
       query = await withHome(this.home, () =>
         this.sdk.query({
           prompt: new Inbox<WireUserMessage>(),
-          options: { ...this.shared(), cwd, permissionMode: "default" },
+          options: { ...this.shared(), ...start?.options, cwd, permissionMode: "default" },
         }),
       );
       const init = await query.initializationResult();
+      if (this.configuration) await query.setMcpServers(this.serversFor(this.configuration));
       this.offered = toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
       this.heard(init, cwd);
       return await ask(query);
@@ -914,10 +1143,19 @@ export class ClaudeHarness implements Agent, AgentReads {
     const starting = this.starting.get(sessionId);
     if (starting) return starting;
     const running = this.live.get(sessionId);
-    if (running && (running.spec === spec || running.turn !== null)) return running;
+    const configKey = known.sandbox ? "" : ((await this.configuration?.startKey()) ?? "");
+    if (running && running.turn !== null) return running;
+    // What changed of Cycle's configuration waits for a start that stops nothing.
+    if (
+      running &&
+      running.spec === spec &&
+      (running.configKey === configKey || running.reader.background.length > 0)
+    ) {
+      return running;
+    }
     // Another mode, model or effort is another process, and the tasks of this one would stop with
     // it. They are not changed in place: what a mode lets run unasked is set as the process starts.
-    if (running && running.reader.background.length > 0) {
+    if (running && running.spec !== spec && running.reader.background.length > 0) {
       throw new Error(
         "A task is still running in the background here. Stop it or let it finish before changing the mode, model or effort: Claude Code starts again with them, which would stop it.",
       );
@@ -960,15 +1198,23 @@ export class ClaudeHarness implements Agent, AgentReads {
     const sandbox = known.sandbox
       ? await this.sandboxes().ensure(known.cwd, { name: known.sandbox })
       : null;
-    // Cycle's tools answer on this machine's loopback alone, which a sandbox is not on.
-    const tools = sandbox ? undefined : this.options.tools;
+    // Cycle's tools and configuration are this machine's: a sandbox has neither.
+    const here = sandbox === null;
+    const { sandbox: commandSandbox, ...mode } = modeOptions(
+      options.mode ?? "readOnly",
+      sandbox !== null,
+    );
+    const configuration = here ? this.configuration : null;
+    // The mode's command sandbox goes into the settings file, which the SDK takes none beside.
+    const start = await configuration?.forStart(commandSandbox);
     // The SDK's own reads of a home are the owner's here, whichever home the agent runs in.
     const query = await withHome(this.home, () =>
       this.sdk.query({
         prompt: input,
         options: {
           ...this.shared(sandbox),
-          ...modeOptions(options.mode ?? "readOnly", sandbox !== null),
+          ...mode,
+          ...(start ? start.options : commandSandbox ? { sandbox: commandSandbox } : {}),
           cwd: this.cwdOf(known),
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
@@ -994,6 +1240,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       input,
       reader: new StreamReader(sessionId, known.cwd, inside),
       spec,
+      configKey: start?.key ?? "",
       turn: null,
       own: false,
       notified: null,
@@ -1011,17 +1258,8 @@ export class ClaudeHarness implements Agent, AgentReads {
         await running.query.initializationResult(),
         sandbox === null ? known.cwd : null,
       );
-      // The key goes down the process's own pipe: not its arguments, which any command can list,
-      // nor its environment, which the commands it runs inherit.
-      if (tools) {
-        await running.query.setMcpServers({
-          [tools.name]: {
-            type: "http",
-            url: tools.url,
-            headers: { Authorization: `Bearer ${tools.key}` },
-          },
-        });
-      }
+      const servers = here ? this.serversFor(configuration) : {};
+      if (Object.keys(servers).length > 0) await running.query.setMcpServers(servers);
     } catch (error) {
       running.closed = true;
       running.query.close();

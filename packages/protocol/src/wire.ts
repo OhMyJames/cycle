@@ -1,5 +1,6 @@
 import type {
   AgentFeatures,
+  HookSettings,
   AccountInfo,
   AccountLogin,
   ApprovalResponse,
@@ -231,6 +232,14 @@ export interface Methods {
 
   "models.list": { params: Empty; result: { models: ModelInfo[] } };
   "skills.list": { params: { cwd: string } & OfHarness; result: { skills: SkillInfo[] } };
+  /** Turns a skill on or off for every session of the agent. Answers the folder's skills. */
+  "skills.enable": {
+    params: { cwd: string; name: string; enabled: boolean } & OfHarness;
+    result: { skills: SkillInfo[] };
+  };
+  /** The hooks Cycle keeps for an agent. The page asks the owner before it sets any. */
+  "hooks.read": { params: OfHarness; result: HookSettings };
+  "hooks.set": { params: { settings: HookSettings } & OfHarness; result: HookSettings };
 
   // The connector: the owner's MCP servers and plugins, as each agent keeps them. An agent other
   // than the main one may only read: what it cannot do, it refuses saying so.

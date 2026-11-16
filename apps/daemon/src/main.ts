@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { ClaudeHarness, sbxSandboxes } from "@cycle/harness-claude";
+import { type ClaudeConfig, ClaudeHarness, emptyConfig, sbxSandboxes } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import { DEFAULT_DAEMON_PORT } from "@cycle/protocol";
 import { newToken } from "./auth.ts";
@@ -10,6 +10,7 @@ import { DAEMON_VERSION, startDaemon } from "./daemon.ts";
 import { openProviders } from "./gateway.ts";
 import { Harnesses } from "./harnesses.ts";
 import { TOOLS_KEY_ENV, TOOLS_SERVER, startTools } from "./tools.ts";
+import { claudeConfigBook } from "./claude-config.ts";
 import { newSandboxesFile, sandboxBook, type SandboxesFile } from "./sandboxes.ts";
 import { JsonStore, diskFile } from "./store.ts";
 
@@ -88,9 +89,14 @@ const sandboxFile = await JsonStore.open<SandboxesFile>(
 const sandboxes = sbxSandboxes(sandboxBook(sandboxFile), join(home, "sandboxes"), env, (line) =>
   console.error(`[cycle] sandboxes: ${line}`),
 );
+const claudeFile = await JsonStore.open<ClaudeConfig>(
+  diskFile(join(home, "claude.json")),
+  emptyConfig(),
+);
 // Claude Code runs beside codex when it is installed and starts; codex is the machine.
 const claude = new ClaudeHarness({
   sandboxes,
+  config: { book: claudeConfigBook(claudeFile), dir: join(home, "claude") },
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
   ...(debug ? { onLog: (line: string) => console.error(`[claude] ${line}`) } : {}),
 });

@@ -510,6 +510,8 @@ function toMcpServer(
   return {
     name,
     enabled,
+    // Codex's `config.toml` is what Cycle edits; a plugin's server is changed through its plugin.
+    origin: transport ? "config" : "plugin",
     transport,
     pluginId,
     status: state,
