@@ -147,15 +147,16 @@ test("a session asked into a sandbox has its agent started there, and nowhere el
   await harness.send(session.id, { text: "hello", images: [] }, { ...options, sandbox: name });
   await settle();
   const query = sdk.last;
-  // The sandbox's own Claude Code, not this machine's.
-  expect(query.options.pathToClaudeCodeExecutable).toBeUndefined();
+  // The sandbox's own Claude Code, not this machine's: `sbx exec` starts it by name, and the SDK
+  // is given that name so it does not look for the native binary it was packaged without.
+  expect(query.options.pathToClaudeCodeExecutable).toBe("claude");
   // Its walls are the sandbox's: Claude Code's own are left off inside.
   expect(query.options).toMatchObject({ permissionMode: "acceptEdits" });
   expect(query.options.sandbox).toBeUndefined();
   // Cycle's tools answer on this machine's loopback, which the sandbox is not on.
   expect(query.servers).toBeNull();
   const request = {
-    command: "/opt/claude",
+    command: "claude",
     args: ["--verbose"],
     cwd: "/Users/me/app",
     env: {},
