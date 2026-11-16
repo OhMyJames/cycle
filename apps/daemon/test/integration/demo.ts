@@ -207,6 +207,13 @@ const claudeModel = startMockClaude(root, (prompt, results, body) => {
     return { call: { name: "Bash", input: { command, description: "Write stamp.txt" } } };
   }
   if (/stress/i.test(prompt)) return { text: chunks(STRESS, 48) };
+  // "use mcp docs" calls the echo tool of a server named docs, as one added in the Connector.
+  const server = /\buse mcp ([\w-]+)/i.exec(prompt)?.[1];
+  if (server) {
+    return results === 0
+      ? { call: { name: `mcp__${server}__echo`, input: { text: "hello" } } }
+      : { text: chunks(`${server} answered.`) };
+  }
   if (/change|add|fix|build|write/i.test(prompt)) {
     const step = CLAUDE_STEPS[results];
     if (step) return step;
