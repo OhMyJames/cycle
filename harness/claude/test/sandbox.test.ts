@@ -5,11 +5,12 @@ import {
   execArgs,
   modeOptions,
   projectFolder,
+  sandboxCwd,
   sandboxEnv,
   sandboxName,
 } from "../src/index.ts";
 import { fakeSbx } from "./fake-sbx.ts";
-import { FakeSdk, settle } from "./fake-sdk.ts";
+import { FakeSdk, settle, user } from "./fake-sdk.ts";
 
 const signal = new AbortController().signal;
 const STANDARD = { environment: "standard" };
@@ -26,16 +27,22 @@ test("a folder's sandbox is named for it, and two folders of one name are told a
   expect(sandboxName(`/x/${"long-".repeat(30)}`, "standard").length).toBeLessThanOrEqual(63);
 });
 
-test("the sandbox is made with the folder, and the folder's conversations alone, shared into it", () => {
+test("a sandbox sees the folder by its name alone, and keeps its conversations in its own home", () => {
   expect(projectFolder("/Users/me/my project/a.b_c")).toBe("-Users-me-my-project-a-b-c");
-  expect(createArgs("cycle-app-1", "/Users/me/app", "/Users/me/.claude")).toEqual([
+  expect(sandboxCwd("/Users/me/My App")).toBe("/home/agent/workspace/My-App");
+  expect(sandboxCwd("/")).toBe("/home/agent/workspace/project");
+  expect(
+    createArgs("cycle-app-1", "/Users/me/app", "/home/me/.cycle/sandboxes/cycle-app-1/claude"),
+  ).toEqual([
     "--no-input",
     "create",
     "--name",
     "cycle-app-1",
     "claude",
-    "/Users/me/app",
-    "/Users/me/.claude/projects/-Users-me-app:/home/agent/.claude/projects/-Users-me-app",
+    // The workspace sbx insists on naming itself, and then the folder under a name of its own.
+    expect.stringMatching(/^\/tmp\/cycle-sandbox\/[0-9a-f]{8}$/),
+    "/Users/me/app:/home/agent/workspace/app",
+    "/home/me/.cycle/sandboxes/cycle-app-1/claude/projects/-home-agent-workspace-app:/home/agent/.claude/projects/-home-agent-workspace-app",
   ]);
 });
 
@@ -91,7 +98,10 @@ test("a sandbox is made once, and found after that", async () => {
     ]),
   ).toEqual([name, name]);
   expect(asked.map((args) => (args[0] === "ls" ? "ls" : args[1]))).toEqual(["ls", "create"]);
-  expect(folders).toEqual(["/home/me/.claude/projects/-Users-me-app"]);
+  expect(folders).toEqual([
+    expect.stringMatching(/^\/tmp\/cycle-sandbox\/[0-9a-f]{8}$/),
+    `/home/me/.cycle/sandboxes/${name}/claude/projects/-home-agent-workspace-app`,
+  ]);
   await sandboxes.ensure("/Users/me/app", STANDARD);
   expect(asked.at(-1)).toEqual(["ls", "-q"]);
   // One made before under another name is the one to find.
@@ -106,7 +116,6 @@ test("what sbx says when it cannot is said on, and without sbx there are no sand
     "sbx could not list its sandboxes: Error: sign in with `sbx login`",
   );
   state.fail = "";
-  expect(sandboxes.ensure(`/${"x".repeat(250)}`, STANDARD)).rejects.toThrow("too long");
   state.installed = false;
   expect(sandboxes.available()).toBe(false);
   expect(sandboxes.ensure("/Users/me/app", { environment: "gone" })).rejects.toThrow(
@@ -118,18 +127,25 @@ test("what sbx says when it cannot is said on, and without sbx there are no sand
 function setup(names: string[] = []) {
   const sdk = new FakeSdk();
   const sbx = fakeSbx(names);
+  const moved: [string, string][] = [];
   let ids = 0;
   const harness = new ClaudeHarness({
     sdk,
-    env: {},
+    env: { CLAUDE_CONFIG_DIR: "/home/me/.claude" },
     bin: "/opt/claude",
     sandboxes: sbx.sandboxes,
+    files: {
+      async move(from, to) {
+        moved.push([from, to]);
+        return true;
+      },
+    },
     tools: { name: "cycle", url: "http://127.0.0.1:1/mcp", key: "the-tools-key" },
     schedule: () => () => {},
     now: () => 1000,
     newId: () => `id${++ids}`,
   });
-  return { sdk, harness, ...sbx };
+  return { sdk, harness, moved, ...sbx };
 }
 
 const options = { mode: "auto" as const, model: "claude-sonnet-5-5" };
@@ -155,15 +171,25 @@ test("a session asked into a sandbox has its agent started there, and nowhere el
   expect(query.options.sandbox).toBeUndefined();
   // Cycle's tools answer on this machine's loopback, which the sandbox is not on.
   expect(query.servers).toBeNull();
+  // The agent works at the sandbox's own path for the folder, not this machine's.
+  expect(query.options.cwd).toBe("/home/agent/workspace/app");
   const request = {
     command: "claude",
     args: ["--verbose"],
-    cwd: "/Users/me/app",
+    cwd: "/home/agent/workspace/app",
     env: {},
     signal,
   };
   expect(query.options.spawnClaudeCodeProcess?.(request)).toBe(started[0]?.process);
-  expect(asked.at(-1)).toEqual(["exec", "-i", "-w", "/Users/me/app", name, "claude", "--verbose"]);
+  expect(asked.at(-1)).toEqual([
+    "exec",
+    "-i",
+    "-w",
+    "/home/agent/workspace/app",
+    name,
+    "claude",
+    "--verbose",
+  ]);
   expect((await harness.loadSession(session.id, {})).session.sandbox).toBe(name);
 });
 
@@ -184,6 +210,51 @@ test("a daemon that never made the session is told its sandbox, and one on this 
   });
   expect(sdk.last.options.spawnClaudeCodeProcess).toBeUndefined();
   expect(sdk.last.servers).not.toBeNull();
+});
+
+test("a sandbox's conversation is read from its own home, as this machine's folder", async () => {
+  const { sdk, harness, made } = setup(["kept-sandbox"]);
+  const name = "kept-sandbox";
+  const home = `/home/me/.cycle/sandboxes/${name}/claude`;
+  made[name] = { environment: "standard", version: "v", hosts: [], cwd: "/Users/me/app" };
+  sdk.homes[home] = {
+    stored: [{ sessionId: "s1", summary: "", lastModified: 5, cwd: "/home/agent/workspace/app" }],
+    messages: { s1: [user("u1", "hello")] },
+  };
+  const listed = (await harness.listSessions({ archived: false })).find((each) => each.id === "s1");
+  expect(listed).toMatchObject({
+    cwd: "/Users/me/app",
+    sandbox: name,
+    sandboxCwd: "/home/agent/workspace/app",
+  });
+  const loaded = await harness.loadSession("s1", { sandbox: name });
+  expect(loaded.session).toMatchObject({
+    cwd: "/Users/me/app",
+    sandbox: name,
+    sandboxCwd: "/home/agent/workspace/app",
+  });
+  expect(loaded.turns).toHaveLength(1);
+  expect(sdk.read).toContain(home);
+});
+
+test("a conversation this machine kept is moved into its sandbox's home once", async () => {
+  const { sdk, harness, made, moved } = setup(["kept-sandbox"]);
+  const name = "kept-sandbox";
+  const home = `/home/me/.cycle/sandboxes/${name}/claude`;
+  // Made before a sandbox kept the folder it works in.
+  made[name] = { environment: "standard", version: "v", hosts: [] };
+  sdk.stored = [{ sessionId: "s1", summary: "", lastModified: 5, cwd: "/Users/me/app" }];
+  sdk.messages = { s1: [user("u1", "before")] };
+  await harness.loadSession("s1", { sandbox: name });
+  expect(moved).toEqual([
+    [
+      "/home/me/.claude/projects/-Users-me-app/s1.jsonl",
+      `${home}/projects/-home-agent-workspace-app/s1.jsonl`,
+    ],
+    ["/home/me/.claude/projects/-Users-me-app/s1", `${home}/projects/-home-agent-workspace-app/s1`],
+  ]);
+  // Its conversations are under the sandbox now, so the folder is kept for finding them again.
+  expect(made[name]?.cwd).toBe("/Users/me/app");
 });
 
 test("without sbx no model offers a sandbox, and a session asked into one is refused", async () => {

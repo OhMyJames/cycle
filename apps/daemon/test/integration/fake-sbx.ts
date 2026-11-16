@@ -57,5 +57,5 @@ export async function openSandboxes(
     diskFile(join(root, "home", "sandboxes.json")),
     newSandboxesFile(),
   );
-  return { store, admin: sbxSandboxes(sandboxBook(store), env) };
+  return { store, admin: sbxSandboxes(sandboxBook(store), join(root, "home", "sandboxes"), env) };
 }

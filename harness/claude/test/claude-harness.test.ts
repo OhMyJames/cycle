@@ -10,7 +10,7 @@ function setup(tools?: { name: string; url: string; key: string }) {
   let ids = 0;
   const harness = new ClaudeHarness({
     sdk,
-    env: {},
+    env: { CLAUDE_CONFIG_DIR: "/home/me/.claude" },
     schedule: (run) => {
       later.push(run);
       return () => void later.splice(later.indexOf(run), 1);

@@ -20,7 +20,12 @@ function node(change: Partial<SandboxSpec> = {}): SandboxSpec {
 
 test("a sandbox is made with its environment's size and variables, whose values are in a file alone", async () => {
   const spec = node({ cpus: 4, memoryGb: 8, variables: { NPM_TOKEN: "s3cret", CI: "1" } });
-  expect(createArgs("box", app, "/home/me/.claude", spec, null, "/tmp/v").slice(0, 10)).toEqual([
+  expect(
+    createArgs("box", app, "/home/me/.cycle/sandboxes/box/claude", spec, null, "/tmp/v").slice(
+      0,
+      10,
+    ),
+  ).toEqual([
     "--no-input",
     "create",
     "--name",
@@ -50,7 +55,7 @@ test("the setup script runs once in a new sandbox, which is saved for the next f
   const { sandboxes, did, templates } = fakeSbx([], [spec]);
   const first = await sandboxes.ensure(app, { environment: "node" });
   expect(did().slice(1)).toEqual([
-    `exec -w ${app} ${first} bash -lc npm ci`,
+    `exec -w /home/agent/workspace/app ${first} bash -lc npm ci`,
     `template save ${first} ${tag}`,
   ]);
   expect(templates).toEqual([tag]);
@@ -59,9 +64,16 @@ test("the setup script runs once in a new sandbox, which is saved for the next f
   expect(did()).toHaveLength(3);
   // Another folder's sandbox starts from the saved one, with nothing to run.
   const second = await sandboxes.ensure("/Users/me/other", { environment: "node" });
-  expect(did().slice(3)).toEqual([
-    `create --name ${second} -t ${tag} --pull never claude /Users/me/other /home/me/.claude/projects/-Users-me-other:/home/agent/.claude/projects/-Users-me-other`,
-  ]);
+  const started = did().slice(3);
+  expect(started).toHaveLength(1);
+  expect(started[0]).toMatch(
+    new RegExp(
+      `^create --name ${second} -t ${tag} --pull never claude /tmp/cycle-sandbox/[0-9a-f]{8} ` +
+        `/Users/me/other:/home/agent/workspace/other ` +
+        `/home/me/.cycle/sandboxes/${second}/claude/projects/-home-agent-workspace-other:` +
+        `/home/agent/.claude/projects/-home-agent-workspace-other$`,
+    ),
+  );
 });
 
 test("a setup script that fails leaves no sandbox, and one that cannot be saved is still used", async () => {
@@ -97,7 +109,13 @@ test("a sandbox is made again once its environment changed, but not under a runn
   const spec = node({ cpus: 2 });
   const { sandboxes, did, started, made, templates } = fakeSbx([], [spec]);
   const name = await sandboxes.ensure(app, { environment: "node" });
-  expect(made[name]).toEqual({ environment: "node", version: specVersion(spec), hosts: [] });
+  expect(made[name]).toEqual({
+    environment: "node",
+    version: specVersion(spec),
+    hosts: [],
+    cwd: app,
+    layout: 2,
+  });
   sandboxes.start(name, request);
   spec.cpus = 4;
   spec.setup = "npm ci";
@@ -107,10 +125,16 @@ test("a sandbox is made again once its environment changed, but not under a runn
   started[0]?.exit();
   // The session's own name finds its environment, and the sandbox is made again as that says now.
   await sandboxes.ensure(app, { name });
-  expect(did().slice(2, 4)).toEqual([
-    `rm --force ${name}`,
-    `create --name ${name} --cpus 4 claude ${app} /home/me/.claude/projects/-Users-me-app:/home/agent/.claude/projects/-Users-me-app`,
-  ]);
+  const again = did().slice(2, 4);
+  expect(again[0]).toBe(`rm --force ${name}`);
+  expect(again[1]).toMatch(
+    new RegExp(
+      `^create --name ${name} --cpus 4 claude /tmp/cycle-sandbox/[0-9a-f]{8} ` +
+        `${app}:/home/agent/workspace/app ` +
+        `/home/me/.cycle/sandboxes/${name}/claude/projects/-home-agent-workspace-app:` +
+        `/home/agent/.claude/projects/-home-agent-workspace-app$`,
+    ),
+  );
   expect(made[name]?.version).toBe(specVersion(spec));
   // A new script is a new saved sandbox, and the one of the script before it is dropped.
   const before = templateTag(spec);
@@ -118,6 +142,24 @@ test("a sandbox is made again once its environment changed, but not under a runn
   await sandboxes.ensure(app, { name });
   expect(templates).toEqual([templateTag(spec)]);
   expect(templates).not.toContain(before);
+});
+
+test("a sandbox whose paths changed is not used by a session running in it", async () => {
+  const { sandboxes, made, names } = fakeSbx([], [node()]);
+  const name = sandboxName(app, "node");
+  names.push(name);
+  made[name] = { environment: "node", version: "old", hosts: [], cwd: app, layout: 1 };
+  sandboxes.start(name, request);
+  expect(sandboxes.ensure(app, { name })).rejects.toThrow("must be made again");
+});
+
+test("a sandbox made before its folder was kept is told it when it is found", async () => {
+  const { sandboxes, made, names } = fakeSbx([], [node()]);
+  const name = sandboxName(app, "node");
+  names.push(name);
+  made[name] = { environment: "node", version: specVersion(node()), hosts: [] };
+  expect(await sandboxes.ensure(app, { environment: "node" })).toBe(name);
+  expect(made[name]?.cwd).toBe(app);
 });
 
 test("hosts are opened and closed on the sandbox as it is, with no making again", async () => {

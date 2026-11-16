@@ -1,4 +1,4 @@
-import type { SessionState, Turn } from "@cycle/protocol";
+import { toMachinePath, type SessionState, type Turn } from "@cycle/protocol";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -365,6 +365,7 @@ export function Thread({ sessionId }: { sessionId: string }) {
   const conversation = useStore(app.conversation(sessionId), (value) => value);
   const showThinking = useStore(app.view, (view) => view.showReasoning);
   const cwd = conversation.state?.info.cwd;
+  const sandboxCwd = conversation.state?.info.sandboxCwd;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
@@ -430,9 +431,12 @@ export function Thread({ sessionId }: { sessionId: string }) {
   }, [count]);
 
   const openFile = useCallback(
-    (path: string, line: number | null) =>
-      app.openFile(path.startsWith("/") || !cwd ? path : `${cwd}/${path}`, line),
-    [app, cwd],
+    (path: string, line: number | null) => {
+      // A sandbox names the folder its own way: its paths point here at the same files.
+      const local = toMachinePath(path, { cwd: cwd ?? "", sandboxCwd: sandboxCwd ?? null });
+      app.openFile(local.startsWith("/") || !cwd ? local : `${cwd}/${local}`, line);
+    },
+    [app, cwd, sandboxCwd],
   );
 
   if (conversation.error) {

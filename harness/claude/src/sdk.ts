@@ -100,6 +100,52 @@ export interface ClaudeSdk {
   deleteSession(sessionId: string, options?: InFolder): Promise<void>;
 }
 
+/**
+ * The SDK finds a Claude Code home in the environment, and reads it as it is called. One call at a
+ * time is given a home, so two homes are never read as one.
+ */
+let reading: Promise<unknown> = Promise.resolve();
+
+/** Runs `use` with the SDK pointed at `home`, after every call before it has finished. */
+export function withHome<T>(home: string, use: () => T | Promise<T>): Promise<T> {
+  const next = reading.then(async () => {
+    const before = process.env["CLAUDE_CONFIG_DIR"];
+    process.env["CLAUDE_CONFIG_DIR"] = home;
+    try {
+      return await use();
+    } finally {
+      if (before === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
+      else process.env["CLAUDE_CONFIG_DIR"] = before;
+    }
+  });
+  reading = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+/** The SDK as it reads one home: its session calls are given that home, one at a time. */
+export function atHome(sdk: ClaudeSdk, home: string): ClaudeSdk {
+  return {
+    query: (params) => sdk.query(params),
+    listSessions: (options) => withHome(home, () => sdk.listSessions(options)),
+    getSessionInfo: (sessionId, options) =>
+      withHome(home, () => sdk.getSessionInfo(sessionId, options)),
+    getSessionMessages: (sessionId, options) =>
+      withHome(home, () => sdk.getSessionMessages(sessionId, options)),
+    forkSession: (sessionId, options) => withHome(home, () => sdk.forkSession(sessionId, options)),
+    renameSession: (sessionId, title, options) =>
+      withHome(home, () => sdk.renameSession(sessionId, title, options)),
+    archiveSession: (sessionId, options) =>
+      withHome(home, () => sdk.archiveSession(sessionId, options)),
+    unarchiveSession: (sessionId, options) =>
+      withHome(home, () => sdk.unarchiveSession(sessionId, options)),
+    deleteSession: (sessionId, options) =>
+      withHome(home, () => sdk.deleteSession(sessionId, options)),
+  };
+}
+
 /** The SDK itself. Its types are wider than ours and are narrowed here, in one place. */
 export const realSdk: ClaudeSdk = {
   query: (params) =>

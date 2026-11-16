@@ -460,6 +460,7 @@ export class SessionHub {
       branch: meta.worktree?.branch ?? session.branch,
       worktree: meta.worktree ?? null,
       sandbox: meta.sandbox ?? session.sandbox,
+      sandboxCwd: session.sandboxCwd,
       createdAt: session.createdAt,
       updatedAt: Math.max(session.updatedAt, known?.updatedAt ?? 0),
       archived,

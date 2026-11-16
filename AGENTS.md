@@ -80,9 +80,10 @@ Cycle made was made with, mode 0600), `usage.json` (tokens per local day, number
 app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
 until the owner installs it, `update.log`, what each check and install did, and `install.log`, what
 the last swap said;
-[decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)) and `worktrees/`.
+[decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)) and `worktrees/`, and
+`sandboxes/` (each sandbox's own Claude Code home, which is its conversations).
 Conversations themselves are the agent's that ran them: codex's in `CODEX_HOME`, Claude Code's in its
-own home. Cycle keeps no copy.
+own home, a sandbox's in its own home under `CYCLE_HOME/sandboxes/`. Cycle keeps no copy.
 Why: [decision note](.agents/notes/2026-11-12-codex-keeps-the-conversations.md). MCP servers and plugins
 are codex's too, in its `config.toml`: Cycle keeps no list of its own.
 
@@ -117,12 +118,16 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   reads stored sessions with the SDK's own calls. A turn is known by its prompt's id, live and stored.
   Claude Code reads the owner's own settings, as its CLI does.
 - A session can run its agent in a Docker sandbox (`sbx`) on this machine: `harness/claude/src/sandbox.ts`.
-  A folder's sandbox is made when first asked for, and it sees the folder at the same
-  path, so only Claude Code moves into it, started with `sbx exec`; files, git and terminals stay this
-  machine's. Of the owner's Claude Code home only the folder's conversations are shared into it, so
-  they are stored and read here. The sandbox has its own sign-in (`sbx secret set anthropic`), no
-  settings of the owner's, and no reach to Cycle's tools. Codex sessions and worktrees do not run in
-  one. Why: [decision note](.agents/notes/2026-11-14-a-local-sandbox-holds-the-agent-only.md).
+  A folder's sandbox is made when first asked for, and it sees the folder under a name of its own
+  (`/home/agent/workspace/<name>`), so no path of this machine is in it; only Claude Code moves into
+  it, started with `sbx exec`; files, git and terminals stay this machine's. `sbx` mounts the
+  workspace it is made on at its host path alone, so an empty folder is that workspace and the
+  folder is mounted beside it. The sandbox has a Claude Code home of its own under
+  `CYCLE_HOME/sandboxes/`, whose conversations folder alone is shared into it; a conversation kept in
+  the owner's home before is moved there when first opened. The sandbox has its own sign-in
+  (`sbx secret set anthropic`), no settings of the owner's, and no reach to Cycle's tools. Codex
+  sessions and worktrees do not run in one. Why:
+  [decision note](.agents/notes/2026-11-14-a-local-sandbox-holds-the-agent-only.md).
 - A sandbox is made with an environment of the owner's (`apps/daemon/src/sandboxes.ts`, Settings,
   Sandboxes): CPUs, memory, variables, hosts to allow and a setup script. A new session chooses one,
   and a folder has a sandbox for each environment it is worked in. The daemon keeps the environments

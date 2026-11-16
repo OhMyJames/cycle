@@ -47,11 +47,30 @@ case "$command" in
       [ -d "$state/templates/$template" ] || { echo "no such template: $template" >&2; exit 125; }
       cp -R "$state/templates/$template/." "$home/"
     fi
+    # Each shared folder is a link where the sandbox sees it. A real sandbox runs the agent at the
+    # path inside; this one runs it here, so the folder's own name for it is linked as well.
+    : > "$state/$name/mounts"
+    project_host=""
     for shared in "$@"; do
-      target="$home/${shared#*:/home/agent/}"
+      host="${shared%%:*}"
+      where="${shared#*:}"
+      printf '%s\t%s\n' "$host" "$where" >> "$state/$name/mounts"
+      [ -z "$project_host" ] && project_host="$host"
+      target="$home/${where#/home/agent/}"
       mkdir -p "$(dirname "$target")"
-      ln -s "${shared%%:*}" "$target"
+      ln -sfn "$host" "$target"
     done
+    kept=""
+    while IFS=$'\t' read -r host where; do
+      case "$where" in /home/agent/.claude/projects/*) kept="$home/${where#/home/agent/}" ;; esac
+    done < "$state/$name/mounts"
+    if [ -n "$project_host" ] && [ -n "$kept" ]; then
+      # Claude Code names the folder by the path it resolves, which a link here is not.
+      own=$(cd "$project_host" 2>/dev/null && pwd -P || printf '%s' "$project_host")
+      own=$(printf '%s' "$own" | sed 's/[^a-zA-Z0-9]/-/g')
+      mkdir -p "$home/.claude/projects"
+      ln -sfn "$kept" "$home/.claude/projects/$own"
+    fi
     echo "$workspace" > "$state/$name/workspace"
     printf '%s\n' "${made[@]:-}" > "$state/$name/made"
     echo "$name" >> "$state/names"
@@ -102,7 +121,16 @@ case "$command" in
     name="$1"
     shift
     [ -d "$state/$name" ] || { echo "no such sandbox: $name" >&2; exit 125; }
-    echo "$name $workdir $1" >> "$state/execs"
+    inside="$workdir"
+    # The agent's path inside is translated to where that folder is here.
+    if [ -n "$workdir" ] && [ -f "$state/$name/mounts" ]; then
+      while IFS=$'\t' read -r host where; do
+        case "$workdir" in
+          "$where"|"$where"/*) workdir="$host${workdir#"$where"}"; break ;;
+        esac
+      done < "$state/$name/mounts"
+    fi
+    echo "$name $inside $1" >> "$state/execs"
     cd "$workdir" || exit 125
     home="$state/$name/home"
     while read -r kind pair; do

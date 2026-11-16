@@ -85,7 +85,7 @@ const sandboxFile = await JsonStore.open<SandboxesFile>(
   diskFile(join(home, "sandboxes.json")),
   newSandboxesFile(),
 );
-const sandboxes = sbxSandboxes(sandboxBook(sandboxFile), env, (line) =>
+const sandboxes = sbxSandboxes(sandboxBook(sandboxFile), join(home, "sandboxes"), env, (line) =>
   console.error(`[cycle] sandboxes: ${line}`),
 );
 // Claude Code runs beside codex when it is installed and starts; codex is the machine.

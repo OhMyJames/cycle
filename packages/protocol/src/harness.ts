@@ -29,6 +29,8 @@ export interface HarnessSession {
   branch: string | null;
   /** The sandbox its agent runs in, by name, when the harness knows. */
   sandbox: string | null;
+  /** Where that sandbox sees the folder, when its paths are not this machine's. */
+  sandboxCwd: string | null;
   createdAt: number;
   updatedAt: number;
   forkedFrom: string | null;

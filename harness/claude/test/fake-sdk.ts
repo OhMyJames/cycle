@@ -72,6 +72,15 @@ export class FakeSdk implements ClaudeSdk {
   readonly calls: string[] = [];
   stored: WireSessionInfo[] = [];
   messages: Record<string, WireHistoryMessage[]> = {};
+  /** What each Claude Code home holds, when a test wants two homes to differ. */
+  homes: Record<
+    string,
+    { stored?: WireSessionInfo[]; messages?: Record<string, WireHistoryMessage[]> }
+  > = {};
+  /** Each home a stored session was asked for, in order. */
+  readonly read: string[] = [];
+  /** The home the owner's own sessions are kept in, unless a test says another. */
+  ownerHome = "/home/me/.claude";
   models: WireModelInfo[] = [
     {
       value: "default",
@@ -99,10 +108,32 @@ export class FakeSdk implements ClaudeSdk {
     return query;
   }
 
-  listSessions = async () => this.stored;
+  /** The Claude Code home the SDK is pointed at now, which is what it reads. */
+  private get home(): string {
+    return process.env["CLAUDE_CONFIG_DIR"] ?? "";
+  }
+
+  private at<T>(value: T): T {
+    this.read.push(this.home);
+    return value;
+  }
+
+  private get kept(): WireSessionInfo[] {
+    const each = this.homes[this.home]?.stored;
+    if (each) return each;
+    return this.home === this.ownerHome ? this.stored : [];
+  }
+
+  private get said(): Record<string, WireHistoryMessage[]> {
+    const each = this.homes[this.home]?.messages;
+    if (each) return each;
+    return this.home === this.ownerHome ? this.messages : {};
+  }
+
+  listSessions = async () => this.at(this.kept);
   getSessionInfo = async (sessionId: string) =>
-    this.stored.find((info) => info.sessionId === sessionId);
-  getSessionMessages = async (sessionId: string) => this.messages[sessionId] ?? [];
+    this.at(this.kept.find((info) => info.sessionId === sessionId));
+  getSessionMessages = async (sessionId: string) => this.at(this.said[sessionId] ?? []);
   forkSession = async (sessionId: string, options?: { upToMessageId?: string }) => {
     this.calls.push(`fork ${sessionId} ${options?.upToMessageId ?? "all"}`);
     const fork = `${sessionId}-fork`;

@@ -66,6 +66,7 @@ test("the list puts what needs the owner first, then what runs, then by day", ()
     branch: null,
     worktree: null,
     sandbox: null,
+    sandboxCwd: null,
     createdAt: 0,
     updatedAt: now - 1000,
     archived: false,
