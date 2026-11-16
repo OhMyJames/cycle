@@ -83,6 +83,8 @@ export interface HubOptions {
   worktreeParent: string;
   schedule: Delay;
   now(): number;
+  /** Takes a line for the daemon's log. Never a prompt or an answer: ids, names and times. */
+  log(line: string): void;
   /** How many clients follow a session now. */
   viewers(sessionId: string): number;
   publish: {
@@ -93,6 +95,21 @@ export interface HubOptions {
   };
 }
 
+/** When each step of a turn happened on the daemon's clock, to say where its wait went. */
+interface TurnTiming {
+  /** The turn it is of, once it has been announced: an earlier turn's end is not this one's. */
+  turnId: string | null;
+  /** The prompt reached the daemon, or left its queue. */
+  asked: number;
+  /** The harness took the prompt. */
+  accepted: number | null;
+  started: number | null;
+  /** The first thing the agent did, and what kind of thing. */
+  item: { at: number; kind: string } | null;
+  /** The first streamed chunk of anything. */
+  stream: number | null;
+}
+
 interface Live {
   state: SessionState;
   /** The latest frames, for a client that was away briefly. */
@@ -101,6 +118,8 @@ interface Live {
   cancelFlush: (() => void) | null;
   /** A turn was asked for and has not been announced yet. */
   starting: boolean;
+  /** The steps of the turn that was asked for last, until it ends. */
+  timing: TurnTiming | null;
   /** Who asked for that turn, when not the owner: its announcement is marked with it. */
   origin: TurnOrigin | null;
   /** The agent began a turn of its own while that turn was being asked for. */
@@ -291,6 +310,7 @@ export class SessionHub {
     delivery: Delivery,
     origin?: TurnOrigin,
   ): Promise<{ queued: boolean; id?: string }> {
+    const asked = this.options.now();
     const live = await this.ensureLive(sessionId);
     this.flush(live);
     if (this.info(sessionId).archived)
@@ -323,6 +343,7 @@ export class SessionHub {
       () => {
         id = this.enqueue(live, input, origin);
       },
+      asked,
     );
     return id ? { queued: true, id } : { queued: false };
   }
@@ -588,6 +609,7 @@ export class SessionHub {
       pending: [],
       cancelFlush: null,
       starting: false,
+      timing: null,
       origin: null,
       overtaken: false,
       queuedOrigins: new Map(),
@@ -753,8 +775,19 @@ export class SessionHub {
     origin?: TurnOrigin,
     /** Puts what was asked in the queue, when the agent began a turn of its own first. */
     busy?: () => void,
+    /** When the prompt reached the daemon, or left its queue. */
+    asked = this.options.now(),
   ): Promise<void> {
     const info = live.state.info;
+    const timing: TurnTiming = {
+      turnId: null,
+      asked,
+      accepted: null,
+      started: null,
+      item: null,
+      stream: null,
+    };
+    live.timing = timing;
     live.starting = true;
     live.origin = origin ?? null;
     live.overtaken = false;
@@ -767,9 +800,11 @@ export class SessionHub {
         ...(info.sandbox ? { sandbox: info.sandbox } : {}),
         ...(info.directories.length ? { directories: info.directories } : {}),
       });
+      timing.accepted = this.options.now();
     } catch (error) {
       live.starting = false;
       live.origin = null;
+      live.timing = null;
       // The agent began a turn of its own while this one was asked for: what was asked waits behind
       // it, or, when that turn already ended, is asked for again.
       if (busy && live.overtaken) {
@@ -858,6 +893,7 @@ export class SessionHub {
       return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
+    this.mark(live, event);
     live.pending.push(this.marked(live, event));
     if (event.type === "item.delta") {
       live.cancelFlush ??= this.options.schedule(() => this.flush(live), DELTA_FLUSH_MS);
@@ -931,10 +967,51 @@ export class SessionHub {
         break;
       }
       case "turn.completed":
+        // Before the queue's next prompt starts a timing of its own.
+        this.report(live, event.turnId, event.status);
         this.finished(live, event.status === "completed");
         break;
       default:
     }
+  }
+
+  /** Notes when a step of the running turn first happened, as it arrives and before any batching. */
+  private mark(live: Live, event: SessionEvent): void {
+    const timing = live.timing;
+    if (!timing) return;
+    const at = this.options.now();
+    if (event.type === "turn.started") {
+      // The first turn announced after the ask is the one asked for.
+      if (timing.turnId === null) {
+        timing.turnId = event.turnId;
+        timing.started = at;
+      }
+      return;
+    }
+    if (!("turnId" in event) || event.turnId !== timing.turnId) return;
+    if (event.type === "item.delta") timing.stream ??= at;
+    else if (event.type === "item.started" && event.item.kind !== "userMessage") {
+      timing.item ??= { at, kind: event.item.kind };
+    }
+  }
+
+  /**
+   * One line for a turn that ended: how long after the prompt each step came. Ids, the model's name
+   * and times only: never what was asked or answered, nor anything that is a secret.
+   */
+  private report(live: Live, turnId: string, status: string): void {
+    const timing = live.timing;
+    // The end of a turn stopped just before is not this one's.
+    if (!timing || timing.turnId !== turnId) return;
+    live.timing = null;
+    const info = live.state.info;
+    const after = (at: number | null) => (at === null ? "-" : `${at - timing.asked}ms`);
+    this.options.log(
+      `turn ${info.id} ${status}: model=${info.model || "auto"} effort=${info.effort ?? "auto"} ` +
+        `accepted=${after(timing.accepted)} started=${after(timing.started)} ` +
+        `item=${after(timing.item?.at ?? null)}${timing.item ? `:${timing.item.kind}` : ""} ` +
+        `stream=${after(timing.stream)} done=${after(this.options.now())}`,
+    );
   }
 
   private finished(live: Live, completed: boolean): void {

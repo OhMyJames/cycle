@@ -39,6 +39,7 @@ async function setup(stored: MetaFile = { sessions: {} }) {
     worktreeParent: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
+    log: () => {},
     viewers: () => 0,
     publish: {
       frame: (frame) => frames.push(frame),

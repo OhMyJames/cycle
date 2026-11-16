@@ -82,7 +82,9 @@ Claude Code home Cycle installs plugins into;
 `usage.json` (tokens per local day, numbers only),
 `schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
 [decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
-app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
+app's daemon printed, each line stamped and each start marked, kept across starts up to 1 MB and
+then rotated to `daemon.log.1`; it holds a line for each turn that ended, with ids, the model's name
+and times only, never a prompt, an answer or a secret), `updates/` (the app's own update, downloaded and unpacked
 until the owner installs it, `update.log`, what each check and install did, and `install.log`, what
 the last swap said;
 [decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)) and `worktrees/`, and
