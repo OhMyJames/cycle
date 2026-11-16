@@ -141,7 +141,7 @@ test("a task in the background goes on after its turn, in that turn, until its n
   expect(later[3]?.[0]).toMatchObject({ item: { summary: "Slow finished", background: true } });
 });
 
-test("a command in the background is a task beside its call, and the list names its item", () => {
+test("a command in the background is the task its call began, and the list names its item", () => {
   const reader = new StreamReader("s", "/project");
   reader.read(
     "t",
@@ -170,14 +170,47 @@ test("a command in the background is a task beside its call, and the list names 
   ];
   expect(brief(events)).toEqual([
     "tasks.updated",
-    "item.started t task:b1 task running",
+    "item.started t toolu_1 task running",
     "tasks.updated",
-    "item.completed t task:b1 task stopped",
+    "item.completed t toolu_1 task stopped",
   ]);
   expect(events[0]).toMatchObject({ tasks: [{ id: "b1", itemId: null }] });
   expect(events[1]).toMatchObject({ item: { task: "command", taskId: "b1", background: true } });
   expect(events[2]).toMatchObject({
-    tasks: [{ id: "b1", task: "command", description: "make", agent: null, itemId: "task:b1" }],
+    tasks: [{ id: "b1", task: "command", description: "make", agent: null, itemId: "toolu_1" }],
+  });
+  // The call's own result says only that it started: it is no "Ran" command that is done.
+  const again = new StreamReader("s", "/project");
+  again.read(
+    "t",
+    said("a1", [call("toolu_1", "Bash", { command: "make", run_in_background: true })]),
+  );
+  const [started] = again.read("t", {
+    type: "user",
+    message: {
+      content: [
+        { type: "tool_result", tool_use_id: "toolu_1", content: "Command running in background" },
+      ],
+    },
+  });
+  expect(started).toMatchObject({
+    type: "item.started",
+    item: { kind: "task", status: "running" },
+  });
+});
+
+test("a task that ends is not left with a line of how it was going", () => {
+  const reader = new StreamReader("s", "/project");
+  reader.read("t", said("a1", [call("toolu_1", "Agent", { description: "Look" })]));
+  reader.read("t", system("task_started", { task_id: "t1", tool_use_id: "toolu_1" }));
+  reader.read("t", system("task_progress", { task_id: "t1", summary: "Reading README.md" }));
+  const [ended] = reader.read(
+    "t",
+    system("task_updated", { task_id: "t1", patch: { status: "completed" } }),
+  );
+  expect(ended).toMatchObject({
+    type: "item.completed",
+    item: { status: "completed", summary: null },
   });
 });
 

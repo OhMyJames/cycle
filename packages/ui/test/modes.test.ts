@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ModeInfo } from "@cycle/protocol";
+import { modeEntries } from "../src/components/mode-menu.tsx";
 import { modeIcon, modeLabel, modeNamed, modesOf } from "../src/lib/modes.ts";
 
 const mode = (id: string, harness: string, extra: Partial<ModeInfo> = {}): ModeInfo => ({
@@ -53,4 +54,15 @@ test("a mode is drawn by how much it lets through, and its default is marked", (
   ]);
   expect(modeLabel(all[2] as ModeInfo)).toBe("acceptEdits (default)");
   expect(modeLabel(all[3] as ModeInfo)).toBe("plan");
+});
+
+const labels = (mark: boolean) =>
+  modeEntries(all, null, () => {}, mark).flatMap((entry) =>
+    "label" in entry ? [entry.label] : [],
+  );
+
+test("a list with a default of its own does not mark the agent's mode as a second one", () => {
+  expect(labels(true)).toContain("acceptEdits (default)");
+  expect(labels(false)).toContain("acceptEdits");
+  expect(labels(false).join()).not.toContain("(default)");
 });

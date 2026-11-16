@@ -162,6 +162,8 @@ interface Known {
 /** One Claude Code process, which holds one session. */
 interface Running {
   sessionId: string;
+  /** When it started: what it read of the owner's configuration is as old as this. */
+  startedAt: number;
   known: Known;
   query: ClaudeQuery;
   input: Inbox<WireUserMessage>;
@@ -746,7 +748,12 @@ export class ClaudeHarness implements Agent, AgentReads {
    */
   async listMcpServers(): Promise<McpServerInfo[]> {
     const own = this.options.tools?.name ?? null;
-    const running = this.here();
+    // A process reads the owner's servers as it starts, and one waiting on an approval can run
+    // for days: only a recent one says what the owner has now.
+    //
+    // shortcut: a server the owner adds in their own files shows within MCP_KEEP_MS, not at once;
+    // upgrade when the harness can watch the owner's Claude Code files.
+    const running = this.here(MCP_KEEP_MS);
     const read = async (query: ClaudeQuery) => {
       const servers = toMcpServers(await this.connected(query), own);
       this.mcp = { at: this.now(), servers };
@@ -995,8 +1002,10 @@ export class ClaudeHarness implements Agent, AgentReads {
   }
 
   /** A process that runs on this machine, with the owner's own settings and sign-in. */
-  private here(): Running | undefined {
-    return [...this.live.values()].find((each) => !each.known.sandbox);
+  private here(within = Number.POSITIVE_INFINITY): Running | undefined {
+    return [...this.live.values()]
+      .filter((each) => !each.known.sandbox && this.now() - each.startedAt < within)
+      .toSorted((a, b) => b.startedAt - a.startedAt)[0];
   }
 
   /**
@@ -1274,6 +1283,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     );
     const running: Running = {
       sessionId,
+      startedAt: this.now(),
       known,
       input,
       reader: new StreamReader(sessionId, known.cwd, inside),

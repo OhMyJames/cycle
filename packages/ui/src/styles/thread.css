@@ -835,9 +835,15 @@ button.code-diff-name:hover {
   padding: 0;
   color: var(--text-secondary);
 }
+.approval-rules .row {
+  align-items: flex-start;
+  min-width: 0;
+}
 .approval-rules code {
+  min-width: 0;
   font-size: 12px;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 /* A plan is read before it is approved: it scrolls in its own box, as a reply reads. */
 .approval-plan {
@@ -1042,10 +1048,14 @@ button.code-diff-name:hover {
   min-width: 0;
   cursor: default;
 }
+/* On a narrow window the model's name gives way (it fades), so the mode and send keep their room. */
 .composer-controls .menu-anchor {
+  display: flex;
   flex-shrink: 1;
+  min-width: 0;
 }
 .composer-controls .ghost {
+  flex: 0 1 auto;
   height: 32px;
   gap: 6px;
   max-width: 224px;

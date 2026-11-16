@@ -82,6 +82,29 @@ test("a server that never finishes connecting is read as it is, after a while", 
   expect((await harness.listMcpServers())[0]).toMatchObject({ name: "slow", status: "unknown" });
 });
 
+test("a process that has run for long is not what lists the servers: the owner's may have changed", async () => {
+  const { sdk, harness, clock } = setup();
+  await harness.start();
+  const session = await harness.createSession({ cwd: "/p", model: options.model });
+  // A turn that waits on an approval keeps its process for as long as the owner takes.
+  await harness.send(session.id, { text: "go", images: [] }, options);
+  await settle();
+  const old = sdk.last;
+  sdk.servers = [{ name: "first", status: "connected" }];
+  expect((await harness.listMcpServers()).map((server) => server.name)).toEqual(["first"]);
+  expect(sdk.last).toBe(old);
+
+  // The owner adds a server. Minutes later the old process still does not have it.
+  sdk.servers = [
+    { name: "first", status: "connected" },
+    { name: "second", status: "connected" },
+  ];
+  clock.now += 6 * 60_000;
+  const names = (await harness.listMcpServers()).map((server) => server.name);
+  expect(names).toEqual(["first", "second"]);
+  expect(sdk.last).not.toBe(old);
+});
+
 test("a plugin's server is marked as no plugin id, which the SDK does not give", () => {
   const [server] = toMcpServers(
     [{ name: "plugin:formatter:fmt", status: "connected", source: "plugin" }],

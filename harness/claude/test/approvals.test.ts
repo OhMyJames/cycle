@@ -6,6 +6,7 @@ import {
   toApproval,
   toElicitation,
   toElicitationResult,
+  toOwner,
   toPermission,
   toTurns,
 } from "../src/index.ts";
@@ -267,4 +268,28 @@ test("the plan file is followed as edited, `$` and every match alike", () => {
   // A file elsewhere is no plan.
   draft.see("Write", { file_path: "/project/plans.md", content: "no" });
   expect(draft.fill("ExitPlanMode", {})).toEqual({ plan: "cost: $& and $1, then Y" });
+});
+
+test("a refusal is shown to the owner in words of the app's, not Claude Code's advice to the model", () => {
+  const model = `Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: You *may* attempt another way. STOP and explain to the user what you need.`;
+  const reader = new StreamReader("s", "/project");
+  reader.read("t", {
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id: "b", name: "Bash", input: { command: "rm x" } }] },
+  });
+  // As live, it was told of no refusal beforehand: the result alone says so, as stored ones do.
+  const [done] = reader.read("t", {
+    type: "user",
+    message: {
+      content: [{ type: "tool_result", tool_use_id: "b", content: model, is_error: true }],
+    },
+  });
+  expect(done).toMatchObject({ item: { kind: "command", status: "declined", exitCode: null } });
+  const output =
+    done?.type === "item.completed" && done.item.kind === "command" ? done.item.output : "";
+  expect(output).toBe("Not run: Don't ask mode refuses what is not already allowed.");
+  expect(toOwner("Permission to use Edit has been denied by a rule. IMPORTANT: STOP.")).toBe(
+    "Permission to use Edit has been denied by a rule.",
+  );
+  expect(toOwner("Exit code 1")).toBe("Exit code 1");
 });

@@ -95,8 +95,11 @@ export function ScheduleEditor({
       onSelect: () => set({ mode: null, modeHarness: null }),
     },
     { separator: true },
-    ...modeRows(modesOf(modes, agent), mode?.id ?? null, (id) =>
-      set({ mode: id, modeHarness: agent }),
+    ...modeRows(
+      modesOf(modes, agent),
+      mode?.id ?? null,
+      (id) => set({ mode: id, modeHarness: agent }),
+      false,
     ),
   ];
   return (

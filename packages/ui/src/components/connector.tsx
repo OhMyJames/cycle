@@ -5,10 +5,11 @@ import {
   type PluginMarketplace,
   harnessLabel,
 } from "@cycle/protocol";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
+import { PLUGINS_FIRST, PLUGINS_MORE, matchPlugins, orderMarketplaces } from "../lib/plugins.ts";
 import { statusLabel, transportLabel } from "../lib/server-form.ts";
 import { ConfirmDialog, Segmented, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
@@ -342,6 +343,11 @@ function PluginsTab() {
   const [source, setSource] = useState("");
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<PluginMarketplace | null>(null);
+  const [query, setQuery] = useState("");
+  /** How many of each marketplace's plugins are drawn, where the owner asked for more. */
+  const [limits, setLimits] = useState<Record<string, number>>({});
+  const markets = useMemo(() => orderMarketplaces(catalog?.marketplaces ?? []), [catalog]);
+  const searching = query.trim() !== "";
   const add = () => {
     const text = source.trim();
     if (!text || adding) return;
@@ -375,6 +381,17 @@ function PluginsTab() {
           {adding ? "Adding…" : "Add marketplace"}
         </button>
       </form>
+      {catalog !== null && catalog.marketplaces.length > 0 ? (
+        <input
+          type="search"
+          className="field"
+          value={query}
+          spellCheck={false}
+          aria-label="Search plugins"
+          placeholder="Search plugins"
+          onChange={(event) => setQuery(event.currentTarget.value)}
+        />
+      ) : null}
       {catalog === null ? (
         <p className="note" role="status">
           Reading the plugins…
@@ -387,43 +404,67 @@ function PluginsTab() {
           </p>
         </div>
       ) : (
-        catalog.marketplaces.map((marketplace) => (
-          <div key={marketplace.name} className="marketplace">
-            <div className="section-head sub">
-              <h3 className="fade-x">
-                {marketplace.displayName}
-                {marketplace.path ? (
-                  <span className="caption muted mono"> {tildePath(marketplace.path, home)}</span>
-                ) : null}
-              </h3>
-              <Menu
-                className="icon-button small"
-                title={`More options for ${marketplace.displayName}`}
-                align="end"
-                width={200}
-                entries={() => [
-                  {
-                    label: "Remove marketplace…",
-                    icon: "trash",
-                    danger: true,
-                    onSelect: () => setRemoving(marketplace),
-                  },
-                ]}
-              >
-                <Icon name="more" size={14} />
-              </Menu>
-            </div>
-            {marketplace.plugins.length === 0 ? (
-              <p className="note">It lists no plugins.</p>
-            ) : (
-              <div className="card">
-                {marketplace.plugins.map((plugin) => (
-                  <PluginRow key={plugin.id} plugin={plugin} marketplace={marketplace.name} />
-                ))}
+        markets.map((marketplace) => {
+          const { shown, total } = matchPlugins(
+            marketplace.plugins,
+            query,
+            limits[marketplace.name] ?? PLUGINS_FIRST,
+          );
+          // A search hides the marketplaces it finds nothing in.
+          if (searching && total === 0) return null;
+          return (
+            <div key={marketplace.name} className="marketplace">
+              <div className="section-head sub">
+                <h3 className="fade-x">
+                  {marketplace.displayName}
+                  {marketplace.path ? (
+                    <span className="caption muted mono"> {tildePath(marketplace.path, home)}</span>
+                  ) : null}
+                </h3>
+                <Menu
+                  className="icon-button small"
+                  title={`More options for ${marketplace.displayName}`}
+                  align="end"
+                  width={200}
+                  entries={() => [
+                    {
+                      label: "Remove marketplace…",
+                      icon: "trash",
+                      danger: true,
+                      onSelect: () => setRemoving(marketplace),
+                    },
+                  ]}
+                >
+                  <Icon name="more" size={14} />
+                </Menu>
               </div>
-            )}
-          </div>
-        ))
+              {marketplace.plugins.length === 0 ? (
+                <p className="note">It lists no plugins.</p>
+              ) : (
+                <div className="card">
+                  {shown.map((plugin) => (
+                    <PluginRow key={plugin.id} plugin={plugin} marketplace={marketplace.name} />
+                  ))}
+                  {total > shown.length ? (
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() =>
+                        setLimits((all) => ({
+                          ...all,
+                          [marketplace.name]: shown.length + PLUGINS_MORE,
+                        }))
+                      }
+                    >
+                      Show {Math.min(PLUGINS_MORE, total - shown.length)} more of{" "}
+                      {total - shown.length}
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          );
+        })
       )}
       {catalog?.errors.map((line) => (
         <p key={line} className="caption tone-error" role="alert">
@@ -482,7 +523,7 @@ export function ConnectorPage() {
           <p className="page-lead">
             {own
               ? "What every session can reach. These are codex's own settings, so the codex CLI uses the same servers and plugins."
-              : `What every ${harnessLabel(agent)} session can reach. Cycle keeps these itself: the \`claude\` command line does not see what is added here, and what you set up there shows here, to turn off.`}
+              : `What every ${harnessLabel(agent)} session can reach. Cycle keeps these itself: the claude command line does not see what is added here, and what you set up there shows here, to turn off.`}
           </p>
         </header>
         {agents.length > 1 ? (
