@@ -8,6 +8,7 @@ import {
   type RunEntry,
   type ScheduleDraft,
   WEEKDAYS,
+  daysSaid,
   describeTiming,
   draftOf,
   draftProblem,
@@ -182,6 +183,7 @@ export function ScheduleEditor({
                       </button>
                     );
                   })}
+                  <span className="caption muted weekdays-said">{daysSaid(draft.weekdays)}</span>
                 </div>
               </div>
             </>

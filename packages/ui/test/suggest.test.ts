@@ -9,6 +9,7 @@ import {
   mentionTitle,
   plainMentions,
   sectioned,
+  sessionOfLink,
   skillRows,
 } from "../src/lib/suggest.ts";
 
@@ -129,4 +130,11 @@ test("a picked mention is sent as its session's link, and drawn as its title aga
 
 test("a mention's title is one line without brackets", () => {
   expect(mentionTitle("Fix [the]\n(login)  page")).toBe("Fix the login page");
+});
+
+test("a link in a reply is a session only when it is one of Cycle's", () => {
+  expect(sessionOfLink("cycle://session/abc-123")).toBe("abc-123");
+  expect(sessionOfLink("cycle://session/")).toBeNull();
+  expect(sessionOfLink("cycle://session/a/b")).toBeNull();
+  expect(sessionOfLink("https://example.com/cycle://session/abc")).toBeNull();
 });

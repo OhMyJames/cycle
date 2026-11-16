@@ -19,7 +19,6 @@ import {
   loaderStateOf,
   plainCommand,
 } from "../lib/activity.ts";
-import { useApp } from "../context.ts";
 import { parseDiff } from "../lib/diff.ts";
 import { basename, duration } from "../lib/format.ts";
 import { mentionParts, plainMentions } from "../lib/suggest.ts";
@@ -27,7 +26,7 @@ import { MorphLoader } from "../loader/morph-loader.tsx";
 import { ConfirmDialog } from "./controls.tsx";
 import { CodeDiff } from "./diff-view.tsx";
 import { Icon } from "./icons.tsx";
-import { CopyButton, Markdown, OpenFileContext } from "./markdown.tsx";
+import { CopyButton, Markdown, OpenFileContext, SessionMention } from "./markdown.tsx";
 
 const MAX_OUTPUT = 40_000;
 
@@ -57,23 +56,15 @@ export function Chevron({
 
 /** A prompt's text, with each session it mentions as a link to that session. */
 export function MentionText({ text }: { text: string }) {
-  const app = useApp();
   const parts = mentionParts(text);
   if (parts.length === 1 && typeof parts[0] === "string") return text;
   return parts.map((part, index) =>
     typeof part === "string" ? (
       part
     ) : (
-      <button
-        key={index}
-        type="button"
-        className="mention"
-        title="Open this session"
-        onClick={() => app.selectSession(part.id)}
-      >
-        <Icon name="message" size={12} />
+      <SessionMention key={index} id={part.id}>
         {part.title}
-      </button>
+      </SessionMention>
     ),
   );
 }

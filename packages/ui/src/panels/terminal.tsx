@@ -16,6 +16,11 @@ function themeColors(): Record<string, string> {
   };
 }
 
+/** A program's colors are made for a dark screen: on a light one they are kept readable. */
+function contrastFor(): number {
+  return document.documentElement.dataset["theme"] === "dark" ? 1 : 4.5;
+}
+
 function TerminalView({ id }: { id: string }) {
   const app = useApp();
   const holder = useRef<HTMLDivElement>(null);
@@ -34,6 +39,7 @@ function TerminalView({ id }: { id: string }) {
           lineHeight: 1.25,
           cursorBlink: true,
           scrollback: 5000,
+          minimumContrastRatio: contrastFor(),
           theme: themeColors(),
         });
         const fit = new FitAddon();
@@ -58,7 +64,17 @@ function TerminalView({ id }: { id: string }) {
         });
         const observer = new ResizeObserver(resize);
         observer.observe(node);
+        // The page's colors change with its appearance, and the terminal's follow.
+        const recolor = new MutationObserver(() => {
+          terminal.options.theme = themeColors();
+          terminal.options.minimumContrastRatio = contrastFor();
+        });
+        recolor.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-theme"],
+        });
         cleanup = () => {
+          recolor.disconnect();
           observer.disconnect();
           input.dispose();
           stopOutput();
@@ -126,8 +142,23 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
   const shown = list.find((terminal) => terminal.id === active) ?? list.at(-1) ?? null;
   // The first time the panel opens for a session, a terminal starts by itself.
   const none = loaded && list.length === 0;
+  const closedLast = useRef(false);
+  // One way to close a tab: the middle button and the tab's own button. Closing the last one closes
+  // the panel too, unless the daemon would not close it.
+  const closeTab = (terminal: TerminalInfo) => {
+    closedLast.current = list.length === 1;
+    void app.attempt(app.request("terminal.close", { id: terminal.id })).then((closed) => {
+      if (closed === null) closedLast.current = false;
+    });
+  };
   useEffect(() => {
-    if (none) create();
+    if (!none) {
+      closedLast.current = false;
+      return;
+    }
+    // Closing the last terminal closes the panel; opening the panel with none starts one.
+    if (closedLast.current) app.setView({ panel: null });
+    else create();
     // Runs when the list first comes back empty, not on every redraw.
   }, [none]);
 
@@ -145,7 +176,15 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
         </button>
         <div className="tabs no-scrollbar" role="tablist">
           {list.map((terminal) => (
-            <span key={terminal.id} className="tab" data-active={terminal.id === shown?.id}>
+            <span
+              key={terminal.id}
+              className="tab"
+              data-active={terminal.id === shown?.id}
+              onAuxClick={(event) => {
+                // The middle button closes a tab, as it does everywhere.
+                if (event.button === 1) closeTab(terminal);
+              }}
+            >
               <button
                 type="button"
                 role="tab"
@@ -159,7 +198,7 @@ export function TerminalPanel({ info }: { info: SessionInfo }) {
                 type="button"
                 className="tab-close"
                 aria-label={`Close ${terminal.title}`}
-                onClick={() => void app.attempt(app.request("terminal.close", { id: terminal.id }))}
+                onClick={() => closeTab(terminal)}
               >
                 <Icon name="x" size={14} />
               </button>
