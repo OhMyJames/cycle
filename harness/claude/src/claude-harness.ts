@@ -484,8 +484,9 @@ export class ClaudeHarness implements Agent {
     | "stderr"
   > {
     const { onLog } = this.options;
-    // A sandbox has a Claude Code of its own, which `sbx` starts.
-    const bin = sandbox ? undefined : this.bin();
+    // A sandbox has a Claude Code of its own, which `sbx` starts. The SDK still wants the path to
+    // one before it hands the process over; `sbx exec` starts the sandbox's `claude` by name.
+    const bin = sandbox ? "claude" : this.bin();
     const spawn = sandbox
       ? (request: Parameters<Sandboxes["start"]>[1]) => this.sandboxes().start(sandbox, request)
       : this.options.spawn;
