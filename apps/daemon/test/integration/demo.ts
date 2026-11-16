@@ -7,12 +7,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeHarness } from "@cycle/harness-claude";
+import { type ClaudeConfig, ClaudeHarness, emptyConfig } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import {
   Harnesses,
+  JsonStore,
   TOOLS_KEY_ENV,
   TOOLS_SERVER,
+  claudeConfigBook,
   diskFile,
   openProviders,
   startDaemon,
@@ -215,6 +217,13 @@ const claudeModel = startMockClaude(root, (prompt, results, body) => {
     return { call: { name: "Bash", input: { command, description: "Write stamp.txt" } } };
   }
   if (/stress/i.test(prompt)) return { text: chunks(STRESS, 48) };
+  // "use mcp docs" calls the echo tool of a server named docs, as one added in the Connector.
+  const server = /\buse mcp ([\w-]+)/i.exec(prompt)?.[1];
+  if (server) {
+    return results === 0
+      ? { call: { name: `mcp__${server}__echo`, input: { text: "hello" } } }
+      : { text: chunks(`${server} answered.`) };
+  }
   if (/change|add|fix|build|write/i.test(prompt)) {
     const step = CLAUDE_STEPS[results];
     if (step) return step;
@@ -243,8 +252,13 @@ const harness = new CodexHarness({
 // A stand-in for Docker's `sbx`, so a session can be asked into a sandbox here too.
 const sbx = installFakeSbx(root);
 const sandboxes = await openSandboxes(root, { ...process.env, ...claudeModel.env, ...sbx.env });
+const claudeFile = await JsonStore.open<ClaudeConfig>(
+  diskFile(join(root, "home", "claude.json")),
+  emptyConfig(),
+);
 const claude = new ClaudeHarness({
   env: claudeModel.env,
+  config: { book: claudeConfigBook(claudeFile), dir: join(root, "home", "claude") },
   sandboxes: sandboxes.admin,
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
 });

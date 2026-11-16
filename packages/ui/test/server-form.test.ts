@@ -12,6 +12,7 @@ import {
 const server = (patch: Partial<McpServerInfo>): McpServerInfo => ({
   name: "docs",
   enabled: true,
+  origin: "config",
   transport: { kind: "stdio", command: "npx", args: ["-y", "my server"], env: ["API_KEY"] },
   pluginId: null,
   status: "connected",

@@ -1,7 +1,7 @@
 # Agent Note: Cycle keeps Claude Code's configuration and hands it to each process
 
 Status: accepted
-Date: 2026-11-16
+Date: 2026-11-16, revised 2026-11-16 as it was built
 Basis: The owner chose that Cycle keeps its own Claude Code configuration and gives it to every
 process, never writing the owner's `~/.claude` (2026-11-16). Read from `@anthropic-ai/claude-agent-sdk`
 0.3.325 (`sdk.d.ts`, and `sdk.mjs` where it builds Claude Code's arguments and its `initialize`
@@ -107,10 +107,13 @@ read back as truth.
 - Cycle's MCP servers go with `setMcpServers` once the process has started, together with Cycle's
   tools server, which already goes this way. Their values reach the server's process only.
 - Cycle's plugins go as `plugins: [{ type: "local", path }]` with `pluginDelivery: "initialize"`.
-- Skills turned off go as the SDK's `skills` list (every skill the process would load, less those).
-  The names are on the command line as `--allowedTools Skill(<name>)`; they are not secrets.
+- Skills turned off go as `skillOverrides: { <name>: "off" }` in the file, which hides an owner's
+  skill from the model, and as `disallowedTools: Skill(<name>)`, which stops one a plugin brings
+  being run, since `skillOverrides` does not reach those. The SDK's `skills` list would need every
+  skill's name before the process that lists them has started. Names are not secrets.
 - One MCP tool turned off goes as `disallowedTools`, names only.
-- `agents` go with the `initialize` request.
+- `agents` go with the `initialize` request. `shortcut: Cycle keeps no subagents of its own yet;
+  upgrade when the owner asks for one in Cycle.`
 - `mcpServers` and `--mcp-config` are not used. `toggleMcpServer` is not used, since it writes the
   owner's `.claude.json`.
 
@@ -134,15 +137,20 @@ of `sbx` or a file in the sandbox.
 **When a change takes effect.** A new process reads the whole configuration. In a running one:
 
 - Cycle's MCP servers: `setMcpServers` with the new set, at once.
-- The owner's MCP servers and hooks turned off or on, and plugins of the owner's turned off or on:
-  `applyFlagSettings` with the whole flag layer, then `reloadPlugins`, which waits while a turn runs.
-- Everything else (Cycle's hooks and plugins, skills, `agents`, MCP tools, reading the user layer)
-  takes effect when the process starts again: a new session, or one that was idle five minutes. The
-  page says which kind a change is.
+- The flag layer: `applyFlagSettings` with the whole of it, at once. Checked against Claude Code
+  2.1.325: `disableAllHooks` changes both ways and a hook added is run, but a server denied and then
+  allowed again does not come back, and plugins need `reloadPlugins`, which waits while a turn runs.
+  An idle process is given the change before its next prompt; one in a turn is not waited on.
+- What a running process cannot take back (Cycle's hooks and plugins, the owner's servers and
+  plugins, skills, MCP tools, reading the user layer) takes effect when the process starts again. A
+  process is started again with its next prompt when any of it has changed, unless a task of its
+  own still runs in the background, which a new start would stop; then it waits for a prompt after
+  the task, or for a new session. The owner's plugins are listed by a process started for it, never
+  one a session runs in.
 
 **Hooks.** A hook runs any command as the owner, outside Claude Code's own sandbox, in every Claude
 session, whatever its mode. The page shows the command and asks before it saves a new or changed one,
-and before it installs a plugin that has hooks.
+and before it installs any plugin, since Claude Code says what a plugin brings only once it is in.
 
 **Plugins.** Cycle installs with `claude plugin install <plugin> --marketplace <source>`, run with
 `CLAUDE_CONFIG_DIR` set to `CYCLE_HOME/claude/plugins`, and keeps the folder it was installed to.
@@ -177,16 +185,22 @@ downloads nothing itself.
 - `claude.json` and the files made from it are readable by the agent's commands, as `providers.json`
   is: one owner, one user. Values never reach a command line, an environment of Claude Code's, a log,
   or the page.
-- A process started before a change and not running a turn is not restarted for it; it picks it up
-  when it is next started.
+- A process started before a change is not stopped for it: what cannot reach it over its pipe waits
+  for its next prompt.
+- The wire: `McpServerInfo.origin` says where a server is kept (`config`, `owner`, `plugin`), for
+  codex too. `skills.enable`, `hooks.read` and `hooks.set` take an agent's name; codex refuses them.
+  `AgentCapabilities.hooks` says which agent has them.
 - The harness takes over the merge the SDK does of its `sandbox` option. A new SDK that changes that
   merge must be checked against it.
 - The configuration lives in the `CYCLE_HOME` of the machine the daemon runs on. With a daemon on a
   server (goal 2), it is the server's, paths and plugin folders included; the page edits it the same
   way.
-- `CLAUDE.md`'s Runtime data names `claude.json` and `claude/` once they exist.
-- Not checked: `applyFlagSettings` adding a hook to a running process; whether `applyFlagSettings`
-  replaces or merges the flag layer (the harness always sends all of it); `permissions.deny` in the
-  file instead of `disallowedTools`; whether not reading the user layer keeps a subscription sign-in
-  (the check used an API key). Each is checked when it is built, in `test/integration`, with a
-  temporary `CLAUDE_CONFIG_DIR`.
+- Cycle's plugin home lists Claude Code's own directory of plugins, some thousands, fetched by its
+  `plugin` command.
+- Checked in `apps/daemon/test/integration/claude-config.test.ts` against the real Claude Code: a
+  server added in Cycle is used in a new session and its values are in no command's `ps` or `env`;
+  an owner's server turned off is off in Cycle alone; Cycle's hook runs beside the owner's, and the
+  owner's switch, sent to a running process, stops both. The owner's files are unchanged after each.
+- Hooks are kept with a revision: a page that read them before another changed them is refused.
+- Not checked: whether not reading the user layer keeps a subscription sign-in (the checks used
+  an API key).

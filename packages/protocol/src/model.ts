@@ -546,6 +546,8 @@ export interface AgentCapabilities {
   login: boolean;
   /** It has switches of its own configuration: `features.*`. */
   features: boolean;
+  /** Cycle keeps hooks for it, and can turn the owner's own off: `hooks.*`, `skills.enable`. */
+  hooks: boolean;
 }
 
 /** An agent the daemon runs, and what it can do. */
@@ -756,7 +758,13 @@ export type McpTransport =
 export interface McpServerInfo {
   name: string;
   enabled: boolean;
-  /** Null for a server a plugin brings: it is changed through its plugin. */
+  /**
+   * Where it is kept. `config`: in the configuration Cycle edits, so it can be changed and removed.
+   * `owner`: in the owner's own configuration of the agent, which Cycle only turns on or off.
+   * `plugin`: a plugin brings it, and it is changed through its plugin.
+   */
+  origin: "config" | "owner" | "plugin";
+  /** Null when Cycle does not know how it is reached: a plugin's, or an owner's turned off. */
   transport: McpTransport | null;
   pluginId: string | null;
   status: "connected" | "failed" | "needsAuth" | "disabled" | "unknown";
@@ -779,6 +787,43 @@ export interface McpToolInfo {
 export interface AgentFeatures {
   /** It may start helper agents. Their tools go with every request of a model that offers them. */
   subagents: boolean;
+}
+
+/** The events Claude Code runs a command hook on, by its names for them. */
+export const HOOK_EVENTS = [
+  "PreToolUse",
+  "PostToolUse",
+  "UserPromptSubmit",
+  "Stop",
+  "SubagentStop",
+  "SessionStart",
+  "SessionEnd",
+  "Notification",
+  "PreCompact",
+] as const;
+
+/** A command an agent runs as the owner when one of its events comes. */
+export interface HookInfo {
+  /** Cycle's own name for it, stable while it is kept. */
+  id: string;
+  /** The agent's name for the event, as `PreToolUse`. */
+  event: string;
+  /** Which tools it is for, as the agent matches them; empty for all. */
+  matcher: string;
+  command: string;
+  /** Seconds it may run; null for the agent's own limit. */
+  timeout: number | null;
+}
+
+/** The hooks Cycle keeps for an agent, and how much of the owner's own configuration applies. */
+export interface HookSettings {
+  hooks: HookInfo[];
+  /** The owner's own hooks run. Off, every hook is off, Cycle's too: the agent has one switch. */
+  ownerHooks: boolean;
+  /** The owner's own configuration of the agent is read: their settings, servers, plugins, skills. */
+  ownerSettings: boolean;
+  /** Which change of them this is. A change sent with an older one is refused. */
+  revision: number;
 }
 
 /** What the owner says about an MCP server of their own. */

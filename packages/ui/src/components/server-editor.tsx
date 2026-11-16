@@ -130,8 +130,9 @@ export function ServerEditor({ server, onDone }: { server: McpServerInfo | null;
                   Add variable
                 </button>
                 <span className="caption muted">
-                  Values stay in codex's settings on the agent's machine. Cycle shows their names
-                  only.
+                  {app.shownAgent() === app.mainHarness()
+                    ? "Values stay in codex's settings on the agent's machine. Cycle shows their names only."
+                    : "Values stay in Cycle's own file on the daemon's machine, and reach Claude Code over its pipe. Cycle shows their names only."}
                 </span>
               </div>
             </>

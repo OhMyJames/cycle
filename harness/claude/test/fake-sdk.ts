@@ -75,13 +75,26 @@ export class FakeQuery implements ClaudeQuery {
   }
   setPermissionMode = async (mode: string) => this.moved(`mode ${mode}`);
   setModel = async (model?: string) => this.moved(`model ${model ?? ""}`);
-  applyFlagSettings = async (settings: { effortLevel?: string | null }) =>
-    this.moved(`effort ${settings.effortLevel ?? "default"}`);
   stopTask = async (taskId: string) => {
     this.stopped.push(taskId);
   };
   setMcpServers = async (servers: Record<string, unknown>) => {
     this.servers = servers;
+  };
+  /** Each flag layer merged in after start, in order. */
+  readonly flags: Record<string, unknown>[] = [];
+  /** An effort is a move in place; anything else is Cycle's configuration, kept in `flags`. */
+  applyFlagSettings = async (settings: Record<string, unknown>) => {
+    if ("effortLevel" in settings) {
+      this.moved(`effort ${(settings["effortLevel"] as string | null) ?? "default"}`);
+    } else {
+      this.flags.push(settings);
+    }
+  };
+  reloads = 0;
+  reloadPlugins = async () => {
+    this.reloads++;
+    return { plugins: this.sdk.plugins };
   };
   close(): void {
     this.closed = true;
@@ -106,6 +119,8 @@ export class FakeQuery implements ClaudeQuery {
 /** The SDK with nothing behind it: what is stored is what a test put there. */
 export class FakeSdk implements ClaudeSdk {
   readonly queries: FakeQuery[] = [];
+  /** The plugins a process says it loaded. */
+  plugins: { name: string; path: string; source?: string; version?: string }[] = [];
   readonly calls: string[] = [];
   stored: WireSessionInfo[] = [];
   messages: Record<string, WireHistoryMessage[]> = {};

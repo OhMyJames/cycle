@@ -25,6 +25,7 @@ export class FakeHarness implements Harness {
     connector: "edit",
     login: true,
     features: true,
+    hooks: false,
   };
   readonly sent: { sessionId: string; text: string }[] = [];
   readonly steered: string[] = [];
@@ -156,6 +157,9 @@ export class FakeHarness implements Harness {
   removeMarketplace = async () => {};
   readFeatures = async () => ({ subagents: true });
   setFeatures = async () => {};
+  enableSkill = async () => {};
+  readHooks = async () => ({ hooks: [], ownerHooks: true, ownerSettings: true, revision: 0 });
+  setHooks = async () => {};
   readAccount = async () => ({
     harness: this.name,
     kind: null,

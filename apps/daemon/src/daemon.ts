@@ -486,6 +486,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "skills.list": async ({ cwd, harness: name }) => ({
       skills: await harness.connector(name).listSkills(cwd),
     }),
+    "skills.enable": async ({ cwd, name: skill, enabled, harness: name }) => {
+      const connector = harness.connector(name);
+      await connector.enableSkill(skill, enabled);
+      push({ type: "skills.changed", harness: name ?? harness.name });
+      return { skills: await connector.listSkills(cwd) };
+    },
+    "hooks.read": ({ harness: name }) => harness.connector(name).readHooks(),
+    "hooks.set": async ({ settings: hooks, harness: name }) => {
+      const connector = harness.connector(name);
+      await connector.setHooks(hooks);
+      const now = await connector.readHooks();
+      push({ type: "hooks.changed", harness: name ?? harness.name, settings: now });
+      // The owner's own servers come and go with their settings.
+      void mcpChanged(name).catch(() => {});
+      return now;
+    },
     "mcp.list": async ({ harness: name }) => ({
       servers: await harness.connector(name).listMcpServers(),
     }),

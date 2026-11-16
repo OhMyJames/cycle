@@ -1,4 +1,10 @@
-import type { McpServerInfo, PluginDetail, PluginInfo, PluginMarketplace } from "@cycle/protocol";
+import {
+  type McpServerInfo,
+  type PluginDetail,
+  type PluginInfo,
+  type PluginMarketplace,
+  harnessLabel,
+} from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -7,9 +13,10 @@ import { statusLabel, transportLabel } from "../lib/server-form.ts";
 import { ConfirmDialog, Segmented, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 import { Menu } from "./menu.tsx";
+import { HooksTab, SkillsTab } from "./agent-config.tsx";
 import { ServerEditor } from "./server-editor.tsx";
 
-type Tab = "mcp" | "plugins";
+type Tab = "mcp" | "plugins" | "skills" | "hooks";
 
 function ServerRow({
   server,
@@ -72,7 +79,7 @@ function ServerRow({
           checked={server.enabled}
           onChange={(enabled) => void app.enableMcpServer(server.name, enabled)}
         />
-        {server.transport ? (
+        {server.origin === "config" ? (
           <Menu
             className="icon-button small"
             title={`More options for ${server.name}`}
@@ -106,7 +113,7 @@ function ServerRow({
           ) : (
             <>
               <p className="caption muted">
-                {server.transport
+                {server.origin !== "plugin"
                   ? "Each tool on goes into every request whole, unless the model searches for its tools. Turn off the ones sessions do not need."
                   : "Each tool goes into every request whole, unless the model searches for its tools. Its plugin decides which are on."}
               </p>
@@ -124,7 +131,7 @@ function ServerRow({
                         ~{compactNumber(tool.tokens)}
                       </span>
                     ) : null}
-                    {server.transport && server.enabled ? (
+                    {server.origin !== "plugin" && server.enabled ? (
                       <Switch
                         label={tool.enabled ? `Turn ${tool.name} off` : `Turn ${tool.name} on`}
                         checked={tool.enabled}
@@ -169,7 +176,9 @@ function McpTab({ onEdit }: { onEdit(server: McpServerInfo | null): void }) {
         <div className="empty-card">
           <p>No MCP servers yet</p>
           <p className="caption muted">
-            A server gives every session its tools. The codex CLI sees the same ones.
+            {app.shownAgent() === app.mainHarness()
+              ? "A server gives every session its tools. The codex CLI sees the same ones."
+              : "A server gives every session its tools."}
           </p>
         </div>
       ) : (
@@ -187,7 +196,7 @@ function McpTab({ onEdit }: { onEdit(server: McpServerInfo | null): void }) {
       {removing ? (
         <ConfirmDialog
           title={`Remove ${removing.name}?`}
-          text="Sessions lose its tools, and so does the codex CLI. What it kept in its environment is removed with it."
+          text={`Sessions lose its tools${app.shownAgent() === app.mainHarness() ? ", and so does the codex CLI" : ""}. What it kept in its environment is removed with it.`}
           action="Remove"
           onConfirm={() => void app.removeMcpServer(removing.name)}
           onClose={() => setRemoving(null)}
@@ -202,6 +211,10 @@ function PluginRow({ plugin, marketplace }: { plugin: PluginInfo; marketplace: s
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<PluginDetail | null>(null);
+  const [asking, setAsking] = useState(false);
+  // A plugin can bring hooks, which run commands as the owner: where Cycle keeps an agent's hooks,
+  // it asks before installing one, since what a plugin brings is known only once it is in.
+  const asks = app.capabilities(app.shownAgent()).hooks;
   // Read each time it opens, so a failed read is tried again and an install shows what it brought.
   useEffect(() => {
     if (!open) return;
@@ -281,11 +294,22 @@ function PluginRow({ plugin, marketplace }: { plugin: PluginInfo; marketplace: s
             type="button"
             className="button"
             disabled={busy || !plugin.available}
-            onClick={() => during(app.installPlugin(marketplace, plugin.name))}
+            onClick={() =>
+              asks ? setAsking(true) : during(app.installPlugin(marketplace, plugin.name))
+            }
           >
             {busy ? "Installing…" : "Install"}
           </button>
         )}
+        {asking ? (
+          <ConfirmDialog
+            title={`Install ${plugin.displayName}?`}
+            text="A plugin can bring hooks: commands that run as you in every session, whatever its mode. Install only one you trust."
+            action="Install"
+            onConfirm={() => during(app.installPlugin(marketplace, plugin.name))}
+            onClose={() => setAsking(false)}
+          />
+        ) : null}
       </div>
       {open ? (
         <div className="list-detail">
@@ -419,36 +443,66 @@ function PluginsTab() {
   );
 }
 
-/** The Connector: codex's own MCP servers and plugins, which every session and the CLI share. */
+/**
+ * The Connector: each agent's MCP servers and plugins. Codex's are its own settings, which its CLI
+ * shares; Claude Code's are what Cycle keeps for it, over the owner's own, which it can turn off.
+ */
 export function ConnectorPage() {
   const app = useApp();
   const [tab, setTab] = useState<Tab>("mcp");
   const [editing, setEditing] = useState<{ server: McpServerInfo | null } | null>(null);
   const connected = useStore(app.connection, (status) => status === "open");
+  const shown = useStore(app.connectorAgent, (value) => value);
+  const agents = useStore(app.harnesses, (all) =>
+    all.filter((each) => each.capabilities.connector === "edit").map((each) => each.name),
+  );
+  const agent = shown ?? app.mainHarness();
+  const hooks = app.capabilities(agent).hooks;
+  const own = agent === app.mainHarness();
   useEffect(() => {
     if (connected) void app.loadConnector();
   }, [app, connected]);
   if (editing) return <ServerEditor server={editing.server} onDone={() => setEditing(null)} />;
+  const tabs: { value: Tab; label: string }[] = [
+    { value: "mcp", label: "MCP servers" },
+    { value: "plugins", label: "Plugins" },
+    ...(hooks
+      ? [
+          { value: "skills" as const, label: "Skills" },
+          { value: "hooks" as const, label: "Hooks" },
+        ]
+      : []),
+  ];
+  const current = tabs.some((each) => each.value === tab) ? tab : "mcp";
   return (
     <div className="page fade-y">
       <div className="page-content">
         <header className="page-header">
           <h1>Connector</h1>
           <p className="page-lead">
-            What every session can reach. These are codex's own settings, so the codex CLI uses the
-            same servers and plugins.
+            {own
+              ? "What every session can reach. These are codex's own settings, so the codex CLI uses the same servers and plugins."
+              : `What every ${harnessLabel(agent)} session can reach. Cycle keeps these itself: the \`claude\` command line does not see what is added here, and what you set up there shows here, to turn off.`}
           </p>
         </header>
-        <Segmented<Tab>
-          label="What to connect"
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "mcp", label: "MCP servers" },
-            { value: "plugins", label: "Plugins" },
-          ]}
-        />
-        {tab === "mcp" ? <McpTab onEdit={(server) => setEditing({ server })} /> : <PluginsTab />}
+        {agents.length > 1 ? (
+          <Segmented<string>
+            label="Whose connector"
+            value={agent}
+            onChange={(next) => app.showConnector(next)}
+            options={agents.map((name) => ({ value: name, label: harnessLabel(name) }))}
+          />
+        ) : null}
+        <Segmented<Tab> label="What to connect" value={current} onChange={setTab} options={tabs} />
+        {current === "mcp" ? (
+          <McpTab onEdit={(server) => setEditing({ server })} />
+        ) : current === "plugins" ? (
+          <PluginsTab />
+        ) : current === "skills" ? (
+          <SkillsTab />
+        ) : (
+          <HooksTab />
+        )}
       </div>
     </div>
   );
