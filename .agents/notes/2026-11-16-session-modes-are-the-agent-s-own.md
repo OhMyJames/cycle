@@ -51,6 +51,11 @@ Stored values are read by what they meant then, and left where an older daemon r
   wire carries its old mode marked until then, and the page reads it the same way.
 - A value an agent does not offer is its default. A mode the owner names that the agent does not
   offer is refused.
+- A schedule's mode is kept with the agent it is of (`modeHarness`), since one id can be two agents'
+  modes that let different things through (`auto`). A run that would start on another agent, as when
+  the schedule follows the owner's default model and that changed, is refused, not read across.
+- An agent's own word for its mode (`mode.changed`) never puts a session in a mode that never asks:
+  only the owner chooses one.
 
 ## Alternatives considered
 
