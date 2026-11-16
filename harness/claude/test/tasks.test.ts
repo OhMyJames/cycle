@@ -148,6 +148,13 @@ test("a command in the background is a task beside its call, and the list names 
     said("a1", [call("toolu_1", "Bash", { command: "make", run_in_background: true })]),
   );
   const events = [
+    // Claude Code lists a task in the background before it tells of it.
+    ...reader.read(
+      "t",
+      system("background_tasks_changed", {
+        tasks: [{ task_id: "b1", task_type: "local_bash", description: "make" }],
+      }),
+    ),
     ...reader.read(
       "t",
       system("task_started", {
@@ -158,22 +165,18 @@ test("a command in the background is a task beside its call, and the list names 
         is_backgrounded: true,
       }),
     ),
-    ...reader.read(
-      "t",
-      system("background_tasks_changed", {
-        tasks: [{ task_id: "b1", task_type: "local_bash", description: "make" }],
-      }),
-    ),
     // A stop the owner asked for, which arrives after the turn.
     ...reader.read(null, system("task_updated", { task_id: "b1", patch: { status: "killed" } })),
   ];
   expect(brief(events)).toEqual([
+    "tasks.updated",
     "item.started t task:b1 task running",
     "tasks.updated",
     "item.completed t task:b1 task stopped",
   ]);
-  expect(events[0]).toMatchObject({ item: { task: "command", taskId: "b1", background: true } });
-  expect(events[1]).toMatchObject({
+  expect(events[0]).toMatchObject({ tasks: [{ id: "b1", itemId: null }] });
+  expect(events[1]).toMatchObject({ item: { task: "command", taskId: "b1", background: true } });
+  expect(events[2]).toMatchObject({
     tasks: [{ id: "b1", task: "command", description: "make", agent: null, itemId: "task:b1" }],
   });
 });

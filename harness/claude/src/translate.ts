@@ -593,6 +593,20 @@ export class StreamReader {
    * its own, in the turn of the call that started it.
    */
   private taskStarted(turnId: string | null, message: WireMessage): SessionEvent[] {
+    const events = this.startTask(turnId, message);
+    // A task in the background is listed before it is told of: the list learns its item now.
+    const taskId = message.task_id;
+    const itemId = taskId ? this.taskItems.get(taskId) : undefined;
+    if (itemId && this.background.some((task) => task.id === taskId && task.itemId === null)) {
+      this.background = this.background.map((task) =>
+        task.id === taskId ? { ...task, itemId } : task,
+      );
+      events.push({ type: "tasks.updated", sessionId: this.sessionId, tasks: this.background });
+    }
+    return events;
+  }
+
+  private startTask(turnId: string | null, message: WireMessage): SessionEvent[] {
     const taskId = message.task_id;
     if (!taskId) return [];
     const fields = {
