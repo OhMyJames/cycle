@@ -46,6 +46,15 @@ interface CliList {
   }[];
 }
 
+/** A plugin's or a marketplace's name, as it goes to Claude Code as part of an argument. */
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Refuses what is not a plain name: it would be read as an option, or as something else. */
+function checked(name: string, what: string): string {
+  if (!NAME.test(name)) throw new Error(`"${name.slice(0, 60)}" is not ${what}.`);
+  return name;
+}
+
 function nameOf(id: string): string {
   return id.split("@")[0] ?? id;
 }
@@ -176,6 +185,10 @@ export function toCatalog(
 export class CyclePlugins {
   private readonly cli: PluginCli;
   private installedNow: Promise<InstalledPlugin[]> | null = null;
+  /** What was installed when last read, for what cannot wait for a read. */
+  private known: InstalledPlugin[] = [];
+  /** Changes under way: what is read meanwhile is not kept. */
+  private changing = 0;
 
   constructor(cli: PluginCli) {
     this.cli = cli;
@@ -183,18 +196,26 @@ export class CyclePlugins {
 
   /** What is installed, read once and again after each change. */
   installed(): Promise<InstalledPlugin[]> {
-    this.installedNow ??= this.list(false)
-      .then(toInstalled)
-      .catch((error: unknown) => {
+    if (this.installedNow) return this.installedNow;
+    const read = this.list(false).then((list) => this.keep(toInstalled(list)));
+    if (this.changing === 0) {
+      this.installedNow = read.catch((error: unknown) => {
         this.installedNow = null;
         throw error;
       });
-    return this.installedNow;
+    }
+    return read;
+  }
+
+  /** What was installed when last read, without reading. */
+  installedKnown(): InstalledPlugin[] {
+    return this.known;
   }
 
   async catalog(owner: OwnerPlugin[], config: ClaudeConfig): Promise<PluginCatalog> {
     const [markets, list] = await Promise.all([this.markets(), this.list(true)]);
-    this.installedNow = Promise.resolve(toInstalled(list));
+    const installed = this.keep(toInstalled(list));
+    if (this.changing === 0) this.installedNow = Promise.resolve(installed);
     return toCatalog(markets, list, owner, config);
   }
 
@@ -202,10 +223,12 @@ export class CyclePlugins {
     if (marketplace === OWNER_MARKETPLACE) {
       throw new Error("Plugins of Claude Code's own are installed with `claude plugin install`.");
     }
-    await this.change(["install", `${name}@${marketplace}`, "--json"], "Installing");
+    const id = `${checked(name, "a plugin")}@${checked(marketplace, "a marketplace")}`;
+    await this.change(["install", id, "--json"], "Installing");
   }
 
   async uninstall(id: string): Promise<void> {
+    // Only an id Claude Code listed as installed here goes to it.
     if (!(await this.installed()).some((each) => each.id === id)) {
       throw new Error(`${id} is Claude Code's own: uninstall it with \`claude plugin uninstall\`.`);
     }
@@ -220,16 +243,31 @@ export class CyclePlugins {
   }
 
   async removeMarketplace(name: string): Promise<void> {
-    if (name === OWNER_MARKETPLACE || name.startsWith("-")) {
+    if (name === OWNER_MARKETPLACE) {
       throw new Error("Claude Code's own plugins are not a marketplace Cycle can remove.");
     }
-    await this.change(["marketplace", "remove", name], "Removing the marketplace");
+    await this.change(
+      ["marketplace", "remove", checked(name, "a marketplace")],
+      "Removing the marketplace",
+    );
   }
 
   private async change(args: string[], what: string): Promise<void> {
+    this.changing++;
     this.installedNow = null;
-    const result = await this.cli.run(["plugin", ...args]);
-    if (result.code !== 0) throw failed(result, what);
+    try {
+      const result = await this.cli.run(["plugin", ...args]);
+      if (result.code !== 0) throw failed(result, what);
+    } finally {
+      this.changing--;
+      // What was read while it ran may be from before it.
+      this.installedNow = null;
+    }
+  }
+
+  private keep(installed: InstalledPlugin[]): InstalledPlugin[] {
+    if (this.changing === 0) this.known = installed;
+    return installed;
   }
 
   private async list(available: boolean): Promise<CliList> {

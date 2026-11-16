@@ -433,6 +433,10 @@ export type DaemonEvent =
   | { type: "usage.today"; day: DayUsage }
   | { type: "mcp.changed"; harness: string; servers: McpServerInfo[] }
   | { type: "plugins.changed"; harness: string; catalog: PluginCatalog }
+  /** The hooks Cycle keeps for an agent, and the switches of the owner's own, as they now are. */
+  | { type: "hooks.changed"; harness: string; settings: HookSettings }
+  /** A skill was turned on or off: a page that shows an agent's skills reads them again. */
+  | { type: "skills.changed"; harness: string }
   | { type: "features.changed"; features: AgentFeatures }
   /** The whole list, whenever a schedule changes, by a client or by a run. */
   | { type: "schedules.changed"; schedules: Schedule[] };

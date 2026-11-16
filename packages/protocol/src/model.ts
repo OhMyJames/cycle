@@ -674,6 +674,8 @@ export interface HookSettings {
   ownerHooks: boolean;
   /** The owner's own configuration of the agent is read: their settings, servers, plugins, skills. */
   ownerSettings: boolean;
+  /** Which change of them this is. A change sent with an older one is refused. */
+  revision: number;
 }
 
 /** What the owner says about an MCP server of their own. */

@@ -133,11 +133,13 @@ export class ClaudeConfiguration {
     };
   }
 
-  /** What only a start takes, to tell whether a running process has it. */
-  async startKey(): Promise<string> {
-    const installed = await this.plugins.installed().catch(() => []);
+  /**
+   * What only a start takes, to tell whether a running process has it. It reads nothing: the plugins
+   * are as Cycle last read them, which every start does first.
+   */
+  startKey(): string {
     const config = this.read();
-    return startKey(config, pluginDirs(installed, config));
+    return startKey(config, pluginDirs(this.plugins.installedKnown(), config));
   }
 
   /** Cycle's servers that are on, to hand a process over its pipe. */

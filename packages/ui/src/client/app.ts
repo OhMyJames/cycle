@@ -1011,6 +1011,15 @@ export class CycleApp {
       case "plugins.changed":
         if (event.harness === this.shownAgent()) this.plugins.set(event.catalog);
         break;
+      case "hooks.changed":
+        if (event.harness === this.shownAgent()) this.hooks.set(event.settings);
+        break;
+      case "skills.changed": {
+        const home = this.daemon.get()?.userHome;
+        if (event.harness === this.shownAgent() && home && this.skills.get())
+          void this.loadSkills(home);
+        break;
+      }
       case "features.changed":
         this.features.set(event.features);
         break;

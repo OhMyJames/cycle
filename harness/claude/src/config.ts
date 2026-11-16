@@ -26,12 +26,14 @@ export interface ClaudeConfig {
   mcpServers: Record<string, StoredServer>;
   /** The owner's servers turned off, by name. */
   ownerServersOff: string[];
-  /** Tools turned off, as Claude Code names them: `mcp__<server>__<tool>`. */
-  toolsOff: string[];
+  /** Tools turned off, each by its server and its own name. */
+  toolsOff: { server: string; tool: string }[];
   /** Plugins turned on or off by id, the owner's and Cycle's alike. One not here is on. */
   plugins: Record<string, boolean>;
   skillsOff: string[];
   hooks: HookInfo[];
+  /** Counts changes to the hooks and the owner's switches, so a page's stale copy is refused. */
+  hooksRevision: number;
   /** The owner's own hooks run. */
   ownerHooks: boolean;
   /** The owner's own user settings are read. */
@@ -54,6 +56,7 @@ export function emptyConfig(): ClaudeConfig {
     plugins: {},
     skillsOff: [],
     hooks: [],
+    hooksRevision: 0,
     ownerHooks: true,
     ownerSettings: true,
   };
@@ -113,16 +116,20 @@ export function toStoredServer(
   return { transport: { kind: "stdio", command, args: transport.args, env }, enabled };
 }
 
-/** Puts a server in, checking it fits beside the owner's own. */
+/**
+ * Puts a server in, checking it fits beside the others. `taken` is every name not Cycle's to give:
+ * the owner's servers, those turned off included, and Cycle's own tools.
+ */
 export function putServer(
   config: ClaudeConfig,
   input: McpServerInput,
-  ownerNames: string[],
+  taken: string[],
 ): ClaudeConfig {
   const stored = config.mcpServers[input.name];
-  // `deniedMcpServers` goes by name: one of Cycle's would be turned off with the owner's.
-  if (!stored && ownerNames.includes(input.name)) {
-    throw new ConfigError(`Claude Code already has a server named ${input.name}.`);
+  // `deniedMcpServers` goes by name: one of Cycle's would be turned off with the owner's, and the
+  // tools server is given last, over one of the same name.
+  if (!stored && (taken.includes(input.name) || config.ownerServersOff.includes(input.name))) {
+    throw new ConfigError(`There is already a server named ${input.name}.`);
   }
   if (!stored && Object.keys(config.mcpServers).length >= MAX_SERVERS) {
     throw new ConfigError(`At most ${MAX_SERVERS} servers.`);
@@ -156,7 +163,8 @@ export function enableTool(
   tool: string,
   enabled: boolean,
 ): ClaudeConfig {
-  return { ...config, toolsOff: toggle(config.toolsOff, toolName(server, tool), enabled) };
+  const rest = config.toolsOff.filter((each) => each.server !== server || each.tool !== tool);
+  return { ...config, toolsOff: enabled ? rest : [...rest, { server, tool }] };
 }
 
 export function removeServer(config: ClaudeConfig, name: string): ClaudeConfig {
@@ -164,11 +172,10 @@ export function removeServer(config: ClaudeConfig, name: string): ClaudeConfig {
     throw new ConfigError(`${name} is Claude Code's own: turn it off here, or remove it there.`);
   }
   const { [name]: _gone, ...rest } = config.mcpServers;
-  const prefix = toolName(name, "");
   return {
     ...config,
     mcpServers: rest,
-    toolsOff: config.toolsOff.filter((each) => !each.startsWith(prefix)),
+    toolsOff: config.toolsOff.filter((each) => each.server !== name),
   };
 }
 
@@ -180,12 +187,18 @@ export function enablePlugin(config: ClaudeConfig, id: string, enabled: boolean)
   return { ...config, plugins: { ...config.plugins, [id]: enabled } };
 }
 
-/** Checks hooks the owner gives. Each keeps its id, or is given one. */
+/**
+ * Checks hooks the owner gives. Each keeps its id, or is given one. A page that read them before
+ * another changed them is refused, rather than putting back what it read.
+ */
 export function setHooks(
   config: ClaudeConfig,
   settings: HookSettings,
   newId: () => string,
 ): ClaudeConfig {
+  if (settings.revision !== config.hooksRevision) {
+    throw new ConfigError("The hooks changed elsewhere since this page read them. Look again.");
+  }
   if (settings.hooks.length > MAX_HOOKS) throw new ConfigError(`At most ${MAX_HOOKS} hooks.`);
   const hooks = settings.hooks.map((hook): HookInfo => {
     if (!(HOOK_EVENTS as readonly string[]).includes(hook.event)) {
@@ -211,6 +224,7 @@ export function setHooks(
   return {
     ...config,
     hooks,
+    hooksRevision: config.hooksRevision + 1,
     ownerHooks: settings.ownerHooks,
     ownerSettings: settings.ownerSettings,
   };
@@ -221,6 +235,7 @@ export function toHookSettings(config: ClaudeConfig): HookSettings {
     hooks: config.hooks,
     ownerHooks: config.ownerHooks,
     ownerSettings: config.ownerSettings,
+    revision: config.hooksRevision,
   };
 }
 
@@ -295,16 +310,25 @@ export function ownServers(
 
 /** The tools a process may not use: the ones turned off, and the skills turned off. */
 export function disallowedTools(config: ClaudeConfig): string[] {
-  return [...config.toolsOff, ...config.skillsOff.map((name) => `Skill(${name})`)];
+  return [
+    ...config.toolsOff.map((each) => toolName(each.server, each.tool)),
+    ...config.skillsOff.map((name) => `Skill(${name})`),
+  ];
 }
 
-/** What only a process's start takes. Two processes started apart from it need not start again. */
+/**
+ * What only a process's start takes. A running process is not given a server or a plugin back:
+ * one denied or unloaded stays so until it starts again (checked against Claude Code 2.1.325), so
+ * the owner's servers and the plugins are here too. `disableAllHooks` changes both ways as it runs.
+ */
 export function startKey(config: ClaudeConfig, pluginDirs: string[]): string {
   return JSON.stringify([
     config.toolsOff,
     config.skillsOff,
     config.hooks,
     config.ownerSettings,
+    config.ownerServersOff.toSorted(),
+    config.plugins,
     pluginDirs,
   ]);
 }
@@ -340,7 +364,8 @@ function quiet(
  * what is turned off, which a process does not list, added.
  */
 export function shownServers(config: ClaudeConfig, listed: McpServerInfo[]): McpServerInfo[] {
-  const off = (server: string, tool: string) => config.toolsOff.includes(toolName(server, tool));
+  const off = (server: string, tool: string) =>
+    config.toolsOff.some((each) => each.server === server && each.tool === tool);
   const shown = listed.map((server): McpServerInfo => {
     const stored = config.mcpServers[server.name];
     const tools = server.tools.map((tool) => ({ ...tool, enabled: !off(server.name, tool.name) }));

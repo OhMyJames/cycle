@@ -17,7 +17,11 @@ function setup(withConfig = true) {
   const cli: PluginCli = {
     run: async (args) => ({
       code: 0,
-      stdout: args.join(" ") === "plugin list --json" ? JSON.stringify(installed) : "",
+      stdout: args.join(" ").startsWith("plugin list")
+        ? JSON.stringify(installed)
+        : args.join(" ") === "plugin marketplace list --json"
+          ? "[]"
+          : "",
       stderr: "",
     }),
   };
@@ -93,7 +97,7 @@ test("a process gets Cycle's configuration by a file's path and over its pipe, n
   expect(JSON.stringify(query?.servers)).toContain(SECRET);
 });
 
-test("a change reaches a running process over its pipe; plugins are loaded again", async () => {
+test("a change reaches a running process over its pipe, without waiting on its turn", async () => {
   const { sdk, harness } = setup();
   const session = await harness.createSession({ cwd: "/project", model: auto.model });
   const query = await turn(harness, sdk, session.id);
@@ -107,10 +111,38 @@ test("a change reaches a running process over its pipe; plugins are loaded again
     headers: { Authorization: "Bearer t0k" },
   });
   expect(query?.flags.at(-1)?.["deniedMcpServers"]).toEqual([]);
-  expect(query?.reloads).toBe(0);
   await harness.enablePlugin("fmt@theirs", false);
+  await settle();
   expect(query?.flags.at(-1)?.["enabledPlugins"]).toEqual({ "fmt@theirs": false });
-  expect(query?.reloads).toBe(1);
+  // Loading plugins again waits for a turn: the owner's are read of a process started for it.
+  await harness.listPlugins();
+  expect(query?.reloads).toBe(0);
+  expect(sdk.queries.at(-1)?.reloads).toBe(1);
+});
+
+test("two asks of a session at once start one process, whatever the configuration", async () => {
+  const { sdk, harness } = setup();
+  const session = await harness.createSession({ cwd: "/project", model: auto.model });
+  const before = sdk.queries.length;
+  await Promise.allSettled([
+    harness.send(session.id, { text: "one", images: [] }, auto),
+    harness.send(session.id, { text: "two", images: [] }, auto),
+  ]);
+  const started = sdk.queries
+    .slice(before)
+    .filter((query) => query.options.sessionId === session.id);
+  expect(started).toHaveLength(1);
+});
+
+test("a server of the owner's given back starts the process again at its next prompt", async () => {
+  const { sdk, harness } = setup();
+  await harness.enableMcpServer("github", false);
+  const session = await harness.createSession({ cwd: "/project", model: auto.model });
+  const first = await turn(harness, sdk, session.id);
+  await harness.enableMcpServer("github", true);
+  const again = await turn(harness, sdk, session.id);
+  expect(again).not.toBe(first);
+  expect(first?.closed).toBe(true);
 });
 
 test("what only a start takes waits for the next prompt, which starts the process again", async () => {
@@ -128,7 +160,7 @@ test("what only a start takes waits for the next prompt, which starts the proces
 
 test("without the owner's own settings, the user layer is not read", async () => {
   const { sdk, harness, config } = setup();
-  await harness.setHooks({ hooks: [], ownerHooks: true, ownerSettings: false });
+  await harness.setHooks({ hooks: [], ownerHooks: true, ownerSettings: false, revision: 0 });
   expect(config().ownerSettings).toBe(false);
   const session = await harness.createSession({ cwd: "/project", model: auto.model });
   const query = await turn(harness, sdk, session.id);

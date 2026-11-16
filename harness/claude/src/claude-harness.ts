@@ -735,10 +735,12 @@ export class ClaudeHarness implements Agent, AgentReads {
   // The Connector's changes: Cycle's own configuration, never the owner's files.
 
   async putMcpServer(server: McpServerInput): Promise<void> {
-    const owners = (this.mcp?.servers ?? [])
-      .filter((each) => !this.config().mcpServers[each.name])
+    // Every name not Cycle's to give: the owner's servers, those turned off included, and its tools.
+    const taken = (await this.listMcpServers())
+      .filter((each) => each.origin !== "config")
       .map((each) => each.name);
-    await this.change((config) => putServer(config, server, owners));
+    if (this.options.tools) taken.push(this.options.tools.name);
+    await this.change((config) => putServer(config, server, taken));
   }
 
   async removeMcpServer(name: string): Promise<void> {
@@ -789,7 +791,7 @@ export class ClaudeHarness implements Agent, AgentReads {
 
   async installPlugin(marketplace: string, name: string): Promise<void> {
     await this.configured().plugins.install(marketplace, name);
-    await this.reconfigure(true);
+    await this.reconfigure();
   }
 
   async uninstallPlugin(id: string): Promise<void> {
@@ -797,11 +799,11 @@ export class ClaudeHarness implements Agent, AgentReads {
     await configuration.plugins.uninstall(id);
     const { [id]: _gone, ...plugins } = configuration.read().plugins;
     await configuration.write({ ...configuration.read(), plugins });
-    await this.reconfigure(true);
+    await this.reconfigure();
   }
 
   async enablePlugin(id: string, enabled: boolean): Promise<void> {
-    await this.change((config) => enablePlugin(config, id, enabled), true);
+    await this.change((config) => enablePlugin(config, id, enabled));
   }
 
   async addMarketplace(source: string): Promise<void> {
@@ -839,39 +841,37 @@ export class ClaudeHarness implements Agent, AgentReads {
   }
 
   /** Changes Cycle's configuration, keeps it, and gives it to the processes that run. */
-  private async change(
-    next: (config: ClaudeConfig) => ClaudeConfig,
-    plugins = false,
-  ): Promise<void> {
+  private async change(next: (config: ClaudeConfig) => ClaudeConfig): Promise<void> {
     const configuration = this.configured();
     await configuration.write(next(configuration.read()));
-    await this.reconfigure(plugins);
+    await this.reconfigure();
   }
 
   /**
    * Gives the processes on this machine what can change while they run: Cycle's servers, over their
-   * pipe, and the switches of the owner's own, which `reloadPlugins` applies to plugins. The rest
-   * waits for a process's next start, which its next prompt brings when no task runs in it.
+   * pipe, and the switches of the owner's own. An idle process has it before its next prompt; one
+   * in a turn is not waited on, so a long turn holds nobody up. Plugins are not loaded again, since
+   * that waits for the turn; what cannot change as a process runs waits for its next start, which
+   * its next prompt brings when no task runs in it.
    */
-  private async reconfigure(plugins: boolean): Promise<void> {
+  private async reconfigure(): Promise<void> {
     const configuration = this.configured();
     this.mcp = null;
     this.ownerPlugins = null;
     const servers = this.serversFor(configuration);
     const flags = configuration.flags();
-    await Promise.all(
-      [...this.live.values()]
-        .filter((running) => !running.known.sandbox)
-        .map(async (running) => {
-          try {
-            await running.query.setMcpServers(servers);
-            await running.query.applyFlagSettings(flags);
-            if (plugins) await running.query.reloadPlugins();
-          } catch (error) {
-            this.options.onLog?.(`A change did not reach a running Claude Code: ${message(error)}`);
-          }
-        }),
-    );
+    const idle: Promise<void>[] = [];
+    for (const running of this.live.values()) {
+      if (running.known.sandbox) continue;
+      const given = running.query
+        .setMcpServers(servers)
+        .then(() => running.query.applyFlagSettings(flags))
+        .catch((error: unknown) => {
+          this.options.onLog?.(`A change did not reach a running Claude Code: ${message(error)}`);
+        });
+      if (running.turn === null) idle.push(given);
+    }
+    await Promise.all(idle);
   }
 
   /** Every server a process on this machine is given over its pipe: Cycle's tools, and its own. */
@@ -901,8 +901,8 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (this.ownerPlugins && this.now() - this.ownerPlugins.at < MCP_KEEP_MS) {
       return this.ownerPlugins.plugins;
     }
-    const running = this.here();
-    const loaded = running ? await loadedPlugins(running.query) : await this.probe(loadedPlugins);
+    // Asked of a process started for it, which runs no turn: one a session runs in would wait for it.
+    const loaded = await this.probe(loadedPlugins);
     const plugins = loaded
       .filter((each) => {
         const source = each.source ?? "";
@@ -1143,8 +1143,10 @@ export class ClaudeHarness implements Agent, AgentReads {
     const starting = this.starting.get(sessionId);
     if (starting) return starting;
     const running = this.live.get(sessionId);
-    const configKey = known.sandbox ? "" : ((await this.configuration?.startKey()) ?? "");
     if (running && running.turn !== null) return running;
+    // Nothing is waited on between the look at `starting` and its entry below: a second ask in the
+    // meantime would start a second process and leave the first behind.
+    const configKey = known.sandbox ? "" : (this.configuration?.startKey() ?? "");
     // What changed of Cycle's configuration waits for a start that stops nothing.
     if (
       running &&

@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import type { McpServerInfo } from "@cycle/protocol";
 import {
+  type ClaudeConfig,
   ConfigError,
   disallowedTools,
   emptyConfig,
+  enablePlugin,
   enableServer,
   enableTool,
   flagSettings,
@@ -13,6 +15,7 @@ import {
   removeServer,
   setHooks,
   shownServers,
+  startKey,
 } from "../src/config.ts";
 
 const stdio = (env: Record<string, string | null>) => ({
@@ -38,7 +41,7 @@ test("a server's environment value is kept when the page sends its name alone", 
 });
 
 test("a server is not given a name one of the owner's has: the owner's switch goes by name", () => {
-  expect(() => putServer(emptyConfig(), stdio({}), ["docs"])).toThrow("already has");
+  expect(() => putServer(emptyConfig(), stdio({}), ["docs"])).toThrow("already a server");
   expect(() =>
     putServer(emptyConfig(), { name: "../x", transport: stdio({}).transport }, []),
   ).toThrow(ConfigError);
@@ -56,7 +59,7 @@ test("removing one of Cycle's servers forgets its tools turned off", () => {
   let config = putServer(emptyConfig(), stdio({}), []);
   config = enableTool(config, "docs", "search", false);
   config = enableTool(config, "other", "read", false);
-  expect(removeServer(config, "docs").toolsOff).toEqual(["mcp__other__read"]);
+  expect(removeServer(config, "docs").toolsOff).toEqual([{ server: "other", tool: "read" }]);
 });
 
 test("the flag layer says what is on as plainly as what is off, since a running one merges it", () => {
@@ -71,6 +74,7 @@ test("the flag layer says what is on as plainly as what is off, since a running 
       ],
       ownerHooks: false,
       ownerSettings: true,
+      revision: 0,
     },
     () => "new",
   );
@@ -98,7 +102,7 @@ test("a hook is refused on an event Claude Code has none of, or with no command"
   const set = (patch: object) =>
     setHooks(
       emptyConfig(),
-      { hooks: [{ ...hook, ...patch }], ownerHooks: true, ownerSettings: true },
+      { hooks: [{ ...hook, ...patch }], ownerHooks: true, ownerSettings: true, revision: 0 },
       () => "id",
     );
   expect(() => set({ event: "Whenever" })).toThrow(ConfigError);
@@ -156,4 +160,39 @@ test("the page sees Cycle's servers by their variables' names, and what is off i
   });
   expect(shown[0]?.tools[0]?.enabled).toBe(false);
   expect(JSON.stringify(shown)).not.toContain("secret");
+});
+
+test("removing a server forgets its own tools only, not those of one whose name begins the same", () => {
+  let config = putServer(emptyConfig(), { ...stdio({}), name: "a" }, []);
+  config = enableTool(config, "a", "x", false);
+  config = enableTool(config, "a_", "x", false);
+  config = enableTool(config, "a", "_x", false);
+  expect(removeServer(config, "a").toolsOff).toEqual([{ server: "a_", tool: "x" }]);
+  expect(disallowedTools(config)).toContain("mcp__a___x");
+});
+
+test("a name the owner turned off, or Cycle's tools have, is not given to a server of Cycle's", () => {
+  const off = enableServer(emptyConfig(), "github", false);
+  expect(() => putServer(off, { ...stdio({}), name: "github" }, [])).toThrow("already a server");
+  expect(() => putServer(emptyConfig(), { ...stdio({}), name: "cycle" }, ["cycle"])).toThrow(
+    "already a server",
+  );
+});
+
+test("hooks read before another change are refused, not written over it", () => {
+  const settings = { hooks: [], ownerHooks: false, ownerSettings: true, revision: 0 };
+  const once = setHooks(emptyConfig(), settings, () => "id");
+  expect(once.hooksRevision).toBe(1);
+  expect(() => setHooks(once, settings, () => "id")).toThrow("changed elsewhere");
+  expect(setHooks(once, { ...settings, revision: 1 }, () => "id").hooksRevision).toBe(2);
+});
+
+const key = (config: ClaudeConfig) => startKey(config, []);
+
+test("a server or a plugin given back needs a new start: a running process does not take it back", () => {
+  const off = enableServer(emptyConfig(), "github", false);
+  expect(key(off)).not.toBe(key(emptyConfig()));
+  expect(key(enablePlugin(emptyConfig(), "p@m", false))).not.toBe(key(emptyConfig()));
+  // The owner's hooks switch reaches a running process both ways.
+  expect(key({ ...emptyConfig(), ownerHooks: false })).toBe(key(emptyConfig()));
 });

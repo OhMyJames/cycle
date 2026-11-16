@@ -137,12 +137,16 @@ of `sbx` or a file in the sandbox.
 **When a change takes effect.** A new process reads the whole configuration. In a running one:
 
 - Cycle's MCP servers: `setMcpServers` with the new set, at once.
-- The owner's MCP servers and hooks turned off or on, and plugins of the owner's turned off or on:
-  `applyFlagSettings` with the whole flag layer, then `reloadPlugins`, which waits while a turn runs.
-- Everything else (Cycle's hooks and plugins, skills, MCP tools, reading the user layer) takes
-  effect when the process starts again. A process is started again with its next prompt when what
-  only a start takes has changed, unless a task of its own still runs in the background, which a
-  new start would stop; then it waits for a prompt after the task, or for a new session.
+- The flag layer: `applyFlagSettings` with the whole of it, at once. Checked against Claude Code
+  2.1.325: `disableAllHooks` changes both ways and a hook added is run, but a server denied and then
+  allowed again does not come back, and plugins need `reloadPlugins`, which waits while a turn runs.
+  An idle process is given the change before its next prompt; one in a turn is not waited on.
+- What a running process cannot take back (Cycle's hooks and plugins, the owner's servers and
+  plugins, skills, MCP tools, reading the user layer) takes effect when the process starts again. A
+  process is started again with its next prompt when any of it has changed, unless a task of its
+  own still runs in the background, which a new start would stop; then it waits for a prompt after
+  the task, or for a new session. The owner's plugins are listed by a process started for it, never
+  one a session runs in.
 
 **Hooks.** A hook runs any command as the owner, outside Claude Code's own sandbox, in every Claude
 session, whatever its mode. The page shows the command and asks before it saves a new or changed one,
@@ -197,6 +201,6 @@ downloads nothing itself.
   server added in Cycle is used in a new session and its values are in no command's `ps` or `env`;
   an owner's server turned off is off in Cycle alone; Cycle's hook runs beside the owner's, and the
   owner's switch, sent to a running process, stops both. The owner's files are unchanged after each.
-- Not checked: `applyFlagSettings` adding a hook to a running process (a hook waits for the next
-  start instead); whether not reading the user layer keeps a subscription sign-in (the checks used
+- Hooks are kept with a revision: a page that read them before another changed them is refused.
+- Not checked: whether not reading the user layer keeps a subscription sign-in (the checks used
   an API key).

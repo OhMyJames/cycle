@@ -82,3 +82,40 @@ test("a failed command says what Claude Code said", async () => {
   await expect(plugins.install("market", "docs")).rejects.toThrow("runs a command to install");
   await expect(plugins.addMarketplace("x/y")).rejects.toThrow("repository not found");
 });
+
+test("a plugin's or a marketplace's name that is not a plain name never reaches Claude Code", async () => {
+  const { cli, asked } = fakeCli({ "plugin list --json": { stdout: JSON.stringify(list) } });
+  const plugins = new CyclePlugins(cli);
+  await expect(plugins.install("market", "--config=x")).rejects.toThrow("not a plugin");
+  await expect(plugins.install("-m", "docs")).rejects.toThrow("not a marketplace");
+  await expect(plugins.removeMarketplace("--all")).rejects.toThrow("not a marketplace");
+  // An id goes to uninstall only when Claude Code listed it as installed here.
+  await expect(plugins.uninstall("--prune")).rejects.toThrow("claude plugin uninstall");
+  expect(asked.filter((line) => !line.startsWith("plugin list"))).toEqual([]);
+});
+
+test("what is read while a change runs is not kept: it may be from before the change", async () => {
+  const gate = Promise.withResolvers<void>();
+  const asked: string[] = [];
+  let installs = list.installed;
+  const cli: PluginCli = {
+    async run(args) {
+      const line = args.join(" ");
+      asked.push(line);
+      if (line.startsWith("plugin install")) {
+        await gate.promise;
+        installs = [...installs, { id: "docs@market", version: "1.0.0", installPath: "/d" }];
+      }
+      return { code: 0, stdout: JSON.stringify({ installed: installs }), stderr: "" };
+    },
+  };
+  const plugins = new CyclePlugins(cli);
+  const install = plugins.install("market", "docs");
+  expect((await plugins.installed()).map((each) => each.id)).toEqual(["lint@market"]);
+  gate.resolve();
+  await install;
+  expect((await plugins.installed()).map((each) => each.id)).toEqual([
+    "lint@market",
+    "docs@market",
+  ]);
+});

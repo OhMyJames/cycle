@@ -188,7 +188,7 @@ test("a server added in Cycle is in a new session, and its values in no command'
   expect(ownerFiles()).toBe(before);
 });
 
-test("an owner's server is turned off in Cycle and nowhere else", async () => {
+test("an owner's server is turned off in Cycle and nowhere else, and comes back", async () => {
   const before = ownerFiles();
   const { servers } = await client.call("mcp.enable", {
     ...CLAUDE,
@@ -204,8 +204,11 @@ test("an owner's server is turned off in Cycle and nowhere else", async () => {
   script = (_prompt, results) => (results ? { text: ["tried"] } : { call: echo });
   const tried = items(await turn(session.id, "use theirs"));
   expect(tried.find((item) => item.kind === "toolCall")).not.toMatchObject({ status: "completed" });
-  expect(ownerFiles()).toBe(before);
+  // A running process does not take a denied server back: its next prompt starts it again.
   await client.call("mcp.enable", { ...CLAUDE, name: "owner-mcp", enabled: true });
+  const back = items(await turn(session.id, "use theirs again"));
+  expect(back.find((item) => item.kind === "toolCall")).toMatchObject({ status: "completed" });
+  expect(ownerFiles()).toBe(before);
 });
 
 test("a hook kept in Cycle runs beside the owner's, and turning the owner's off stops both", async () => {
@@ -224,6 +227,7 @@ test("a hook kept in Cycle runs beside the owner's, and turning the owner's off 
       ],
       ownerHooks: true,
       ownerSettings: true,
+      revision: 0,
     },
   });
   expect(kept.hooks[0]?.id).not.toBe("");

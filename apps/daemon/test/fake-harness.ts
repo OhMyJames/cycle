@@ -135,7 +135,7 @@ export class FakeHarness implements Harness {
   readFeatures = async () => ({ subagents: true });
   setFeatures = async () => {};
   enableSkill = async () => {};
-  readHooks = async () => ({ hooks: [], ownerHooks: true, ownerSettings: true });
+  readHooks = async () => ({ hooks: [], ownerHooks: true, ownerSettings: true, revision: 0 });
   setHooks = async () => {};
   readAccount = async () => ({
     harness: this.name,
