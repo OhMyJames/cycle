@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -36,20 +36,40 @@ export function folderFiles(cwd: string): string[] {
 }
 
 /**
- * The modified time of each path, or a dash for one that is not there. A folder's changes when an
- * entry directly in it is added or removed, which is how a new command or skill shows.
+ * The part of Claude Code's user config that says which servers there are. Claude Code rewrites the
+ * rest of the file itself, as it starts and as it runs, so the file's time says nothing.
+ */
+export function serversOf(text: string): string {
+  try {
+    const found = (JSON.parse(text) as { mcpServers?: unknown }).mcpServers;
+    return JSON.stringify(found ?? null);
+  } catch {
+    return "unreadable";
+  }
+}
+
+/**
+ * The modified time of each path, or a dash for one that is not there; for the user config, the
+ * servers in it, as a digest so no value is kept. A folder's time changes when an entry directly
+ * in it is added or removed, which is how a new command or skill shows.
  *
- * shortcut: a command or skill edited in place, with no entry added or removed, is not seen;
- * upgrade when a changed description should show before the next process starts.
+ * shortcut: a command or skill edited in place, one in a folder nested in the commands, and a
+ * project's own `.mcp.json` are not seen; upgrade when those should show before the next process
+ * starts.
  */
 export const fileStamp: Stamp = async (paths) => {
-  const times = await Promise.all(
+  const parts = await Promise.all(
     paths.map((path) =>
-      stat(path).then(
-        (found) => String(found.mtimeMs),
-        () => "-",
-      ),
+      path.endsWith(".claude.json")
+        ? readFile(path, "utf8").then(
+            (text) => String(Bun.hash(serversOf(text))),
+            () => "-",
+          )
+        : stat(path).then(
+            (found) => String(found.mtimeMs),
+            () => "-",
+          ),
     ),
   );
-  return times.join("|");
+  return parts.join("|");
 };

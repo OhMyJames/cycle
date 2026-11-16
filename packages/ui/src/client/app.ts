@@ -525,8 +525,12 @@ export class CycleApp {
         (await this.deleteSession(info.id, false)),
     });
     if (result === "dropped") {
-      // Back to the draft it was sent from, with the prompt in its composer.
-      this.setView({ sessionId: null, draft, page: "thread" });
+      // Back to the draft it was sent from, with the prompt in its composer, unless the owner has
+      // gone somewhere else meanwhile.
+      const view = this.view.get();
+      if (view.sessionId === null && !view.draft) {
+        this.setView({ draft, page: "thread" });
+      }
       this.putInComposer(draftKey(draft.cwd), plainMentions(text), { images, documents });
       return false;
     }
