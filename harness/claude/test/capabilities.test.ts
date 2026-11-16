@@ -3,6 +3,7 @@ import type { HarnessEvent } from "@cycle/protocol";
 import {
   ClaudeHarness,
   toAccount,
+  toCommands,
   toContext,
   toLimit,
   toMcpServers,
@@ -68,8 +69,8 @@ test("commands are the process's own, and its news of them is passed on", async 
   const { harness, session, query, events } = await running();
   expect(
     (await harness.listCommands({ sessionId: session.id })).map((command) => command.name),
-  ).toEqual(["compact", "deploy"]);
-  expect((await harness.listCommands({ cwd: "/project" }))[1]).toEqual({
+  ).toEqual(["deploy", "compact"]);
+  expect((await harness.listCommands({ cwd: "/project" }))[0]).toEqual({
     name: "deploy",
     description: "Ship it",
     argumentHint: "<env>",
@@ -221,4 +222,23 @@ test("documents go with a prompt, and come back by name from the history", () =>
       { kind: "text", name: "b.txt" },
     ],
   });
+});
+
+const command = (name: string, builtin = false, description = "") => ({
+  name,
+  description,
+  argumentHint: "",
+  builtin,
+});
+
+test("the list leads with what the folder brings, and leaves out plumbing and what is removed", () => {
+  expect(
+    toCommands([
+      command("__remote-workflow", true),
+      command("agents", true, "(removed) use /config"),
+      command("config", true),
+      command("deploy"),
+      command("heapdump", true),
+    ]).map((each) => each.name),
+  ).toEqual(["deploy", "config", "heapdump"]);
 });

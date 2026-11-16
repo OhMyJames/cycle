@@ -483,7 +483,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     setImages(kept.images);
     setDocuments(kept.documents);
     app.toast(
-      `Removed ${kept.dropped.join(", ")}: ${harnessLabel(harness ?? "")} cannot read it.`,
+      `Removed ${kept.dropped.join(", ")}: ${harnessLabel(harness ?? "")} cannot read ${kept.dropped.length > 1 ? "them" : "it"}.`,
       "info",
     );
   }, [app, accepted, harness]);

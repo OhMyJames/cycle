@@ -1,9 +1,18 @@
 import { type FileRewind, type Item, type TurnOrigin, taskLive } from "@cycle/protocol";
-import { type ReactNode, memo, useContext, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   type ActivityItem,
   activityRow,
   activityStatus,
+  taskResult,
   activitySummary,
   failedCount,
   isActivity,
@@ -421,7 +430,7 @@ export const TaskBlock = memo(function TaskBlock({
   const live = taskLive(item.status);
   const failed = item.status === "failed";
   const said = live ? (item.summary ?? item.description) : item.description;
-  const ended = !live && item.summary && item.summary !== item.description ? item.summary : null;
+  const ended = live ? null : taskResult(item, inside);
   const openable = Boolean(item.prompt || item.error || ended || inside.length > 0);
   const time = item.usage && item.usage.durationMs >= 1000 ? duration(item.usage.durationMs) : null;
   const word = TASK_ENDS[item.status];
@@ -659,6 +668,9 @@ function bodyOf(item: ActivityItem): ReactNode {
   }
 }
 
+/** The item the owner is asked about now, which has not begun: its row says so. */
+export const AskingContext = createContext<string | undefined>(undefined);
+
 /** A change of a few lines is read at a glance, so alone in the conversation it starts open. */
 const startsOpen = (item: ActivityItem): boolean =>
   item.kind === "fileChange" &&
@@ -678,7 +690,8 @@ export const ToolRow = memo(function ToolRow({
   standalone?: boolean;
 }) {
   const [open, setOpen] = useState<boolean | null>(null);
-  const row = activityRow(item);
+  const asking = useContext(AskingContext) === item.id;
+  const row = activityRow(item, asking);
   const status = activityStatus(item);
   const running = status === "running";
   const failed = status === "failed";
@@ -743,7 +756,8 @@ export const ActivityCard = memo(function ActivityCard({
   const open = toggled ?? asking;
   const running = items.findLast((item) => activityStatus(item) === "running");
   const failed = failedCount(items);
-  const now = running ? activityRow(running) : null;
+  const askingId = useContext(AskingContext);
+  const now = running ? activityRow(running, running.id === askingId) : null;
   return (
     <div className="activity" data-open={open}>
       <button

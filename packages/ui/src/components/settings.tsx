@@ -80,7 +80,7 @@ function AccountCard({ harness }: { harness: string }) {
           ) : (
             <Setting
               title="Not signed in"
-              note={`Sign in with the \`${harness}\` command line, then reopen this page.`}
+              note={`Sign in with the ${harness} command line, then reopen this page.`}
             />
           )
         ) : (

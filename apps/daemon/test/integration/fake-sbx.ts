@@ -3,7 +3,7 @@
  * can be asked into a sandbox with no Docker and no virtual machine. Everything on this side of
  * `sbx` is real, and so is the Claude Code it starts.
  */
-import { mkdirSync, symlinkSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type SbxSandboxes, sbxSandboxes } from "@cycle/harness-claude";
 import {
@@ -36,8 +36,14 @@ export function installFakeSbx(root: string): FakeSbx {
     `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/package.json`,
     dirname(sdk),
   );
-  symlinkSync(join(dirname(binary), "claude"), join(inside, "claude"));
-  symlinkSync(join(import.meta.dir, "fake-sbx.sh"), join(outside, "sbx"));
+  // A folder kept from an earlier run has them already.
+  for (const [target, link] of [
+    [join(dirname(binary), "claude"), join(inside, "claude")],
+    [join(import.meta.dir, "fake-sbx.sh"), join(outside, "sbx")],
+  ] as const) {
+    rmSync(link, { force: true });
+    symlinkSync(target, link);
+  }
   return {
     state,
     env: {
