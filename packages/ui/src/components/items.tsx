@@ -1,4 +1,4 @@
-import type { Item } from "@cycle/protocol";
+import type { Item, TurnOrigin } from "@cycle/protocol";
 import { type ReactNode, memo, useContext, useMemo, useState } from "react";
 import {
   type ActivityItem,
@@ -6,6 +6,7 @@ import {
   activityStatus,
   activitySummary,
   failedCount,
+  isActivity,
   loaderStateOf,
   plainCommand,
 } from "../lib/activity.ts";
@@ -277,6 +278,119 @@ export const AgentBlock = memo(function AgentBlock({ item }: { item: Of<"agentCa
     </div>
   );
 });
+
+const TASK_WORDS: Record<Of<"task">["task"], string> = {
+  agent: "Agent",
+  command: "Background command",
+  workflow: "Workflow",
+  other: "Task",
+};
+
+const TASK_ENDS: Partial<Record<Of<"task">["status"], string>> = {
+  pending: "Waiting",
+  paused: "Paused",
+  failed: "Failed",
+  stopped: "Stopped",
+};
+
+/** One piece of what a task did, as it shows inside the task. */
+function NestedItem({
+  item,
+  nested,
+}: {
+  item: Item;
+  nested: ReadonlyMap<string, readonly Item[]>;
+}) {
+  if (item.kind === "task") return <TaskBlock item={item} nested={nested} />;
+  if (item.kind === "agentMessage" && item.text.trim()) {
+    return (
+      <div className="task-said">
+        <Markdown text={item.text} />
+      </div>
+    );
+  }
+  return isActivity(item) ? <ToolRow item={item} /> : null;
+}
+
+/**
+ * Work the agent handed off: a helper agent, a command in the background, a workflow. One line, which
+ * opens to what it was asked and what it did, each piece as a row, a helper's helpers nested in turn.
+ * Closed, it mounts none of them.
+ */
+export const TaskBlock = memo(function TaskBlock({
+  item,
+  nested,
+}: {
+  item: Of<"task">;
+  nested: ReadonlyMap<string, readonly Item[]>;
+}) {
+  const [open, setOpen] = useState(false);
+  const inside = nested.get(item.id) ?? [];
+  const live = item.status === "running" || item.status === "pending" || item.status === "paused";
+  const failed = item.status === "failed";
+  const said = live ? (item.summary ?? item.description) : item.description;
+  const ended = !live && item.summary && item.summary !== item.description ? item.summary : null;
+  const openable = Boolean(item.prompt || item.error || ended || inside.length > 0);
+  const time = item.usage && item.usage.durationMs >= 1000 ? duration(item.usage.durationMs) : null;
+  const word = TASK_ENDS[item.status];
+  return (
+    <div className="tool standalone task" data-open={open}>
+      <button
+        type="button"
+        className="tool-trigger"
+        aria-expanded={open}
+        disabled={!openable}
+        onClick={() => setOpen(!open)}
+      >
+        {item.status === "running" ? <MorphLoader state="executing" /> : null}
+        <span className="fade-x">
+          <span className={failed ? "action failed" : "action"}>{TASK_WORDS[item.task]}</span>{" "}
+          <span className={item.status === "running" ? "detail shimmer" : "detail"}>
+            {said.split("\n")[0]}
+            {item.agent ? ` · ${item.agent}` : ""}
+          </span>
+        </span>
+        {openable ? <Chevron open={open} reveal /> : null}
+        <span className="grow" />
+        {word ? (
+          <span className={failed ? "caption tone-error" : "caption muted"}>{word}</span>
+        ) : null}
+        {time ? <span className="caption muted tabular">{time}</span> : null}
+      </button>
+      {open ? (
+        <div className="tool-body">
+          {item.prompt ? <pre className="tool-text no-scrollbar">{item.prompt}</pre> : null}
+          {inside.length > 0 ? (
+            <div className="activity-rows task-rows">
+              {inside.map((each) => (
+                <NestedItem key={each.id} item={each} nested={nested} />
+              ))}
+            </div>
+          ) : null}
+          {ended ? <pre className="tool-text result no-scrollbar">{ended}</pre> : null}
+          {item.error ? <pre className="tool-text failed no-scrollbar">{item.error}</pre> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+const ORIGIN_WORDS: Record<Exclude<TurnOrigin, { kind: "owner" }>["kind"], string> = {
+  schedule: "Started by a schedule",
+  task: "The agent took up a task that ended",
+  peer: "Sent from another session",
+  agent: "The agent began this turn by itself",
+};
+
+/** Who began a turn the owner did not: one muted line at its start. */
+export function OriginLine({ origin }: { origin: Exclude<TurnOrigin, { kind: "owner" }> }) {
+  return (
+    <p className="turn-origin">
+      <Icon name={origin.kind === "schedule" ? "automation" : "sparkle"} size={14} />
+      {ORIGIN_WORDS[origin.kind]}
+    </p>
+  );
+}
 
 const ACTIVITY_WORDS: Record<Of<"agentActivity">["activity"], string> = {
   started: "Agent started",

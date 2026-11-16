@@ -1,4 +1,4 @@
-import type { Item, Turn } from "@cycle/protocol";
+import type { Item, Turn, TurnOrigin } from "@cycle/protocol";
 import { type ActivityItem, activityStatus, isActivity } from "./activity.ts";
 
 /**
@@ -14,6 +14,8 @@ import { type ActivityItem, activityStatus, isActivity } from "./activity.ts";
  * - A review's findings that the agent then says as its reply show once, as the reply.
  * - Thinking shows only when the owner asks for it, and never cuts a stretch.
  * - A turn that stopped or failed says so at its end.
+ * - A task is a block of its own, and what was done inside it is in it, not in the turn.
+ * - A turn the owner did not begin says who did, first.
  */
 type Of<K extends Item["kind"]> = Extract<Item, { kind: K }>;
 
@@ -24,6 +26,10 @@ type Laid =
   | { kind: "plan"; item: Of<"plan"> }
   | { kind: "compaction"; item: Of<"compaction"> }
   | { kind: "agent"; item: Of<"agentCall"> }
+  /** Work handed off, with what was done inside it, by the id of the task each piece is in. */
+  | { kind: "task"; item: Of<"task">; nested: ReadonlyMap<string, readonly Item[]> }
+  /** Who began a turn the owner did not. */
+  | { kind: "origin"; origin: Exclude<TurnOrigin, { kind: "owner" }> }
   | { kind: "review"; item: Of<"review"> }
   | { kind: "note"; item: Of<"hook" | "agentActivity"> }
   | { kind: "activity"; items: readonly ActivityItem[] }
@@ -50,12 +56,33 @@ type Keyed = Laid & { key: string };
 const isStopped = (status: Turn["status"]): status is "interrupted" | "failed" =>
   status === "interrupted" || status === "failed";
 
+/** What each task of a turn did, by the task's id: only tasks the turn holds count as parents. */
+function nestedOf(items: readonly Item[]): {
+  parents: ReadonlySet<string>;
+  items: ReadonlyMap<string, readonly Item[]>;
+} {
+  const parents = new Set<string>();
+  for (const item of items) if (item.kind === "task") parents.add(item.id);
+  const byParent = new Map<string, Item[]>();
+  if (parents.size === 0) return { parents, items: byParent };
+  for (const item of items) {
+    if (item.parentId === undefined || !parents.has(item.parentId)) continue;
+    const list = byParent.get(item.parentId);
+    if (list) list.push(item);
+    else byParent.set(item.parentId, [item]);
+  }
+  return { parents, items: byParent };
+}
+
 function layOut(turn: Turn, options: BlockOptions): Keyed[] {
   const out: Keyed[] = [];
   const finalText =
     turn.status === "running"
       ? undefined
-      : turn.items.findLast((item) => item.kind === "agentMessage" && item.text.trim() !== "")?.id;
+      : turn.items.findLast(
+          (item) =>
+            item.kind === "agentMessage" && item.parentId === undefined && item.text.trim() !== "",
+        )?.id;
   let segment: ActivityItem[] = [];
   /** Thoughts after a stretch's first piece of work, which go under its card rather than above it. */
   let later: Keyed[] = [];
@@ -65,6 +92,10 @@ function layOut(turn: Turn, options: BlockOptions): Keyed[] {
   const replies = new Set(
     turn.items.flatMap((item) => (item.kind === "agentMessage" ? [item.text.trim()] : [])),
   );
+  const nested = nestedOf(turn.items);
+  if (turn.origin && turn.origin.kind !== "owner") {
+    out.push({ kind: "origin", key: `${turn.id}/origin`, origin: turn.origin });
+  }
 
   const flush = (last: boolean): void => {
     if (segment.length === 0) return;
@@ -90,6 +121,8 @@ function layOut(turn: Turn, options: BlockOptions): Keyed[] {
   };
 
   for (const item of turn.items) {
+    // What a task did is shown inside it.
+    if (item.parentId !== undefined && nested.parents.has(item.parentId)) continue;
     switch (item.kind) {
       case "userMessage":
         if (item.text.trim() === "" && item.images.length === 0) break;
@@ -116,6 +149,10 @@ function layOut(turn: Turn, options: BlockOptions): Keyed[] {
       case "agentCall":
         workSoFar += 1;
         cut({ kind: "agent", item }, item.id);
+        break;
+      case "task":
+        workSoFar += 1;
+        cut({ kind: "task", item, nested: nested.items }, item.id);
         break;
       case "review":
         if (item.phase === "exited" && replies.has(item.text.trim())) break;
