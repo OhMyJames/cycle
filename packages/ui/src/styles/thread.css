@@ -809,6 +809,55 @@ button.code-diff-name:hover {
 .approval-other {
   max-width: 448px;
 }
+/* What runs, as the owner changes it: the command's own box, as a field. */
+.approval-edit {
+  width: 100%;
+  min-height: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  resize: vertical;
+}
+.approval-problem {
+  color: var(--state-error);
+}
+.approval-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+/* On the card's amber wash the muted color falls under 4.5:1, so the legend is one step darker. */
+.approval-rules legend {
+  margin-bottom: 4px;
+  padding: 0;
+  color: var(--text-secondary);
+}
+.approval-rules code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+/* A plan is read before it is approved: it scrolls in its own box, as a reply reads. */
+.approval-plan {
+  max-height: 360px;
+  padding: 4px 16px;
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  background: var(--surface-composer);
+}
+.approval-then {
+  gap: 6px;
+  color: var(--text-secondary);
+}
+.approval-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 448px;
+}
 
 /* How a turn that did not finish ended. */
 .turn-stopped {

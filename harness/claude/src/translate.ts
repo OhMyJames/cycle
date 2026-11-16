@@ -1,11 +1,13 @@
-import { toMachinePath } from "@cycle/protocol";
+import { formFields, toMachinePath } from "@cycle/protocol";
 import type {
   Approval,
   ApprovalResponse,
+  ApprovalRule,
   CommandAction,
   HarnessSession,
   Item,
   ItemStatus,
+  ModeInfo,
   ModelInfo,
   PromptInput,
   Question,
@@ -18,10 +20,13 @@ import type {
 import type {
   WireApiMessage,
   WireBlock,
+  WireElicitation,
+  WireElicitationResult,
   WireHistoryMessage,
   WireMessage,
   WireModelInfo,
   WireModelUsage,
+  WirePermissionMode,
   WirePermissionResult,
   WirePermissionUpdate,
   WireSessionInfo,
@@ -144,6 +149,8 @@ export function toolItem(
     }
     case "WebSearch":
       return { id, kind: "webSearch", query: text(input["query"]) };
+    case "ExitPlanMode":
+      return { id, kind: "plan", text: text(input["plan"]) };
     case "Agent":
     case "Task":
       return {
@@ -312,11 +319,20 @@ export class StreamReader {
   /** Items the pieces started, waiting for the whole text. */
   private readonly open: Streamed[] = [];
   private readonly tools = new Map<string, Item>();
+  private readonly draft = new PlanDraft();
+  /** Why calls refused without asking were refused, until their results come in. */
+  private readonly refused = new Map<string, string>();
 
   constructor(sessionId: string, cwd: string, sandboxCwd: string | null = null) {
     this.sessionId = sessionId;
     this.cwd = cwd;
     this.sandboxCwd = sandboxCwd;
+  }
+
+  /** The plan a request to leave plan mode carries, by the call's id. */
+  planFor(toolUseId: string): string {
+    const item = this.tools.get(toolUseId);
+    return item?.kind === "plan" ? item.text : "";
   }
 
   read(turnId: string, message: WireMessage): SessionEvent[] {
@@ -372,10 +388,12 @@ export class StreamReader {
         const events: SessionEvent[] = [];
         blocksOf(message.message?.content).forEach((block, index) => {
           if (block.type === "tool_use" && block.id) {
+            const name = block.name ?? "";
+            this.draft.see(name, block.input ?? {});
             const item = toolItem(
               block.id,
-              block.name ?? "",
-              block.input ?? {},
+              name,
+              this.draft.fill(name, block.input ?? {}),
               this.cwd,
               this.sandboxCwd,
             );
@@ -404,11 +422,24 @@ export class StreamReader {
           if (!item) continue;
           this.tools.delete(block.tool_use_id);
           const declined = this.declined.delete(block.tool_use_id);
+          const why = this.refused.get(block.tool_use_id);
+          this.refused.delete(block.tool_use_id);
           events.push(completed(finishTool(item, block, message.tool_use_result, declined)));
+          // A command or a tool says why in its output; an edit has nowhere to.
+          if (why && item.kind !== "command" && item.kind !== "toolCall") {
+            events.push({ type: "notice", sessionId, level: "warning", message: why });
+          }
         }
         return events;
       }
       case "system":
+        if (message.subtype === "permission_denied" && message.tool_use_id) {
+          // Refused by a rule, the mode or the classifier, without asking: the result says why.
+          this.declined.add(message.tool_use_id);
+          const why = text(record(message)["message"]);
+          if (why) this.refused.set(message.tool_use_id, why);
+          return [];
+        }
         if (message.subtype !== "compact_boundary" || !message.uuid) return [];
         return [completed({ id: message.uuid, kind: "compaction" })];
       default:
@@ -464,6 +495,7 @@ export function toTurns(
 ): Turn[] {
   const turns: Turn[] = [];
   const tools = new Map<string, { turn: Turn; at: number }>();
+  const draft = new PlanDraft();
   let turn: Turn | null = null;
   const open = (id: string): Turn => {
     const next: Turn = {
@@ -485,9 +517,11 @@ export function toTurns(
       const current: Turn = (turn ??= open(message.uuid));
       blocks.forEach((block, index) => {
         if (block.type === "tool_use" && block.id) {
+          const name = block.name ?? "";
+          draft.see(name, block.input ?? {});
           tools.set(block.id, { turn: current, at: current.items.length });
           current.items.push(
-            toolItem(block.id, block.name ?? "", block.input ?? {}, cwd, sandboxCwd),
+            toolItem(block.id, name, draft.fill(name, block.input ?? {}), cwd, sandboxCwd),
           );
         } else if (block.type === "text" && block.text) {
           current.items.push({
@@ -653,33 +687,129 @@ export function toModels(raw: WireModelInfo[], sandbox = false): ModelInfo[] {
   return models;
 }
 
+/** Claude Code's modes, each as it names it. */
+export const CLAUDE_MODES: readonly ModeInfo[] = (
+  [
+    {
+      id: "default",
+      name: "Ask first",
+      description: "Reads freely, asks before commands and edits",
+      replaces: "readOnly",
+    },
+    {
+      id: "acceptEdits",
+      name: "Accept edits",
+      description: "Edits in the project and runs commands in a sandbox, asks to leave it",
+      isDefault: true,
+      replaces: "auto",
+    },
+    {
+      id: "plan",
+      name: "Plan",
+      description: "Reads and plans, changes nothing until you approve the plan",
+      plan: true,
+    },
+    {
+      id: "auto",
+      name: "Auto",
+      description: "A classifier approves each call, and asks you when it cannot tell",
+    },
+    {
+      id: "dontAsk",
+      name: "Don't ask",
+      description: "Never asks: does what your rules allow and is refused the rest",
+    },
+    {
+      id: "bypassPermissions",
+      name: "Bypass permissions",
+      description: "Never asks, no sandbox",
+      dangerous: true,
+      replaces: "fullAccess",
+    },
+  ] satisfies (Partial<ModeInfo> & Pick<ModeInfo, "id" | "name" | "description">)[]
+).map((mode): ModeInfo => ({
+  harness: HARNESS_NAME,
+  dangerous: false,
+  plan: false,
+  isDefault: false,
+  replaces: null,
+  ...mode,
+}));
+
+/** Claude Code's mode of this id; anything it does not offer is the one that asks first. */
+function wireMode(mode: SessionMode): WirePermissionMode {
+  const found = CLAUDE_MODES.find((each) => each.id === mode);
+  return (found?.id ?? "default") as WirePermissionMode;
+}
+
+/** The modes a plan, once approved, can be carried out in: none that never asks, nor planning. */
+export const AFTER_PLAN: readonly SessionMode[] = CLAUDE_MODES.filter(
+  (mode) => !mode.dangerous && !mode.plan,
+).map((mode) => mode.id);
+
 export interface ModeOptions {
-  permissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  permissionMode: WirePermissionMode;
   allowDangerouslySkipPermissions?: boolean;
   sandbox?: { enabled: boolean; autoAllowBashIfSandboxed: boolean };
 }
 
 /**
- * How each of Cycle's modes is put to Claude Code. `readOnly` asks before any
- * edit and any command that changes something. `auto` edits inside the folder
- * unasked and runs commands in Claude Code's sandbox, which keeps them to the
- * folder; where the sandbox cannot start, a command asks first instead.
- * `fullAccess` never asks and has no sandbox.
+ * How each mode is put to Claude Code. Every mode is given by name, so Claude Code never picks
+ * its own. `acceptEdits` and `auto` run commands in Claude Code's sandbox, which keeps them to the
+ * folder; where the sandbox cannot start, a command asks first instead. `bypassPermissions` never
+ * asks and has no sandbox, and must be allowed as the process starts.
  *
  * `contained` is a session whose agent already runs in a sandbox of the machine's: Claude Code's
- * own is left off there, so in `auto` a command asks first.
+ * own is left off there, so in `acceptEdits` a command asks first.
  */
 export function modeOptions(mode: SessionMode, contained = false): ModeOptions {
-  switch (mode) {
-    case "readOnly":
-      return { permissionMode: "default" };
+  const permissionMode = wireMode(mode);
+  const sandboxed = contained ? {} : { sandbox: { enabled: true, autoAllowBashIfSandboxed: true } };
+  switch (permissionMode) {
+    case "acceptEdits":
     case "auto":
-      return {
-        permissionMode: "acceptEdits",
-        ...(contained ? {} : { sandbox: { enabled: true, autoAllowBashIfSandboxed: true } }),
-      };
-    case "fullAccess":
-      return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
+      return { permissionMode, ...sandboxed };
+    case "bypassPermissions":
+      return { permissionMode, allowDangerouslySkipPermissions: true };
+    default:
+      return { permissionMode };
+  }
+}
+
+/**
+ * What only a process's start can set for a mode. Two modes alike in it are one process, which
+ * moves between them in place; any other move needs another process.
+ */
+export function processSpec(mode: SessionMode, contained = false): string {
+  const { permissionMode: _, ...rest } = modeOptions(mode, contained);
+  return JSON.stringify(rest);
+}
+
+// Plans
+
+const PLAN_FILE = /\/plans\/[^/]+\.md$/;
+
+/**
+ * The plan Claude Code is writing. The model writes it to a file of Claude Code's, then asks to
+ * leave plan mode, and the request itself does not carry it.
+ */
+export class PlanDraft {
+  private written = "";
+
+  /** Follows a tool call, which may be one that writes the plan. */
+  see(name: string, input: Record<string, unknown>): void {
+    if (!PLAN_FILE.test(text(input["file_path"]))) return;
+    if (name === "Write") this.written = text(input["content"]);
+    else if (name === "Edit") {
+      this.written = this.written.replace(text(input["old_string"]), text(input["new_string"]));
+    }
+  }
+
+  /** A call's input, given the plan as written when it asks to leave plan mode without one. */
+  fill(name: string, input: Record<string, unknown>): Record<string, unknown> {
+    return name === "ExitPlanMode" && !text(input["plan"]) && this.written
+      ? { ...input, plan: this.written }
+      : input;
   }
 }
 
@@ -700,14 +830,55 @@ function toQuestions(input: Record<string, unknown>): Question[] {
   }));
 }
 
+/** What a suggested change lets through, as the owner reads it. Null for one not offered. */
+function ruleLabel(update: WirePermissionUpdate): string | null {
+  switch (update.type) {
+    case "addRules": {
+      if (update["behavior"] !== "allow") return null;
+      const rules = Array.isArray(update["rules"]) ? update["rules"].map(record) : [];
+      const said = rules.map((rule) => {
+        const content = text(rule["ruleContent"]);
+        return content ? `${text(rule["toolName"])}(${content})` : text(rule["toolName"]);
+      });
+      return said.length ? said.join(", ") : null;
+    }
+    case "addDirectories": {
+      const directories = Array.isArray(update["directories"]) ? update["directories"] : [];
+      return directories.length ? `Work in ${directories.map(String).join(", ")}` : null;
+    }
+    case "setMode": {
+      const mode = CLAUDE_MODES.find((each) => each.id === update["mode"]);
+      return mode && !mode.dangerous ? `Switch to ${mode.name}` : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** The changes Claude Code suggests, as rules the owner can keep: each by its place in the list. */
+export function toRules(suggestions: WirePermissionUpdate[] | undefined): ApprovalRule[] {
+  return (suggestions ?? []).flatMap((update, index) => {
+    const label = ruleLabel(update);
+    return label ? [{ id: String(index), label }] : [];
+  });
+}
+
 /** What Claude Code asks before a tool call, as the owner is asked it. The call's id names both. */
 export function toApproval(
   id: string,
   tool: string,
   input: Record<string, unknown>,
-  hint: { cwd: string; title?: string | undefined; reason?: string | undefined },
+  hint: {
+    cwd: string;
+    title?: string | undefined;
+    reason?: string | undefined;
+    suggestions?: WirePermissionUpdate[] | undefined;
+    /** The plan, for a request to leave plan mode. */
+    plan?: string | undefined;
+  },
 ): Approval {
   const reason = hint.reason ?? null;
+  const rules = toRules(hint.suggestions);
   if (tool === "Bash") {
     return {
       id,
@@ -716,28 +887,65 @@ export function toApproval(
       command: text(input["command"]) || null,
       cwd: hint.cwd,
       reason: reason ?? (text(input["description"]) || null),
+      rules,
+      editable: true,
+      notes: true,
     };
   }
-  if (EDIT_TOOLS.has(tool)) return { id, kind: "fileChange", itemId: id, reason };
+  if (EDIT_TOOLS.has(tool)) {
+    return { id, kind: "fileChange", itemId: id, reason, rules, notes: true };
+  }
   if (tool === "AskUserQuestion") {
     return { id, kind: "question", itemId: id, questions: toQuestions(input) };
   }
+  if (tool === "ExitPlanMode") {
+    return {
+      id,
+      kind: "plan",
+      itemId: id,
+      plan: hint.plan || text(input["plan"]),
+      modes: [...AFTER_PLAN],
+    };
+  }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
-  const name = mcp ? `${mcp[1]}.${mcp[2]}` : tool;
-  const args = JSON.stringify(input);
   return {
     id,
-    kind: "permissions",
+    kind: "tool",
     itemId: id,
+    server: mcp?.[1] ?? null,
+    tool: mcp?.[2] ?? tool,
+    input: JSON.stringify(input, null, 2),
+    title: hint.title ?? null,
     reason,
-    summary: hint.title ?? `${name} ${args.length > 200 ? `${args.slice(0, 200)}…` : args}`,
+    rules,
   };
 }
 
+/** A tool's input as the owner changed it. What is not a JSON object leaves it as it was. */
+function editedInput(
+  tool: string,
+  input: Record<string, unknown>,
+  edited: string | undefined,
+): Record<string, unknown> {
+  if (edited === undefined) return input;
+  if (tool === "Bash") return edited.trim() ? { ...input, command: edited } : input;
+  if (EDIT_TOOLS.has(tool)) return input;
+  try {
+    const parsed: unknown = JSON.parse(edited);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : input;
+  } catch {
+    return input;
+  }
+}
+
 /**
- * The owner's answer as Claude Code takes it. "For the session" keeps the
- * rules Claude Code proposed, for this session only: nothing is written to
- * the owner's settings, and the mode stays Cycle's to set.
+ * The owner's answer as Claude Code takes it. A rule the owner keeps holds for this session only:
+ * nothing is written to the owner's settings.
+ *
+ * shortcut: every rule is kept for the session alone, wherever Claude Code suggested keeping it;
+ * upgrade when Cycle keeps a Claude configuration of its own to keep one in.
  */
 export function toPermission(
   tool: string,
@@ -751,9 +959,37 @@ export function toPermission(
     );
     return { behavior: "allow", updatedInput: { ...input, answers } };
   }
+  const said = response.message?.trim();
+  if (tool === "ExitPlanMode" && response.decision !== "cancel") {
+    if (response.decision === "decline") {
+      return {
+        behavior: "deny",
+        message: said
+          ? `The owner wants the plan changed: ${said}`
+          : "The owner did not approve the plan. Ask what to change.",
+      };
+    }
+    const mode = response.mode && AFTER_PLAN.includes(response.mode) ? response.mode : "default";
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      updatedPermissions: [{ type: "setMode", mode, destination: "session" }],
+    };
+  }
   switch (response.decision) {
-    case "accept":
-      return { behavior: "allow", updatedInput: input };
+    case "accept": {
+      const chosen = new Set(response.rules ?? []);
+      const kept = (suggestions ?? []).filter(
+        (update, index) => chosen.has(String(index)) && ruleLabel(update) !== null,
+      );
+      return {
+        behavior: "allow",
+        updatedInput: editedInput(tool, input, response.edited),
+        ...(kept.length
+          ? { updatedPermissions: kept.map((update) => ({ ...update, destination: "session" })) }
+          : {}),
+      };
+    }
     case "acceptForSession": {
       const rules: WirePermissionUpdate[] = (suggestions ?? [])
         .filter((update) => update.type === "addRules" || update.type === "addDirectories")
@@ -766,15 +1002,53 @@ export function toPermission(
           destination: "session",
         });
       }
-      return { behavior: "allow", updatedInput: input, updatedPermissions: rules };
+      return {
+        behavior: "allow",
+        updatedInput: editedInput(tool, input, response.edited),
+        updatedPermissions: rules,
+      };
     }
     case "decline":
       return {
         behavior: "deny",
-        message: "The owner declined this. Do not try it another way: ask what to do instead.",
+        message: said
+          ? `The owner declined this: ${said}`
+          : "The owner declined this. Do not try it another way: ask what to do instead.",
       };
     case "cancel":
       return { behavior: "deny", message: "The owner stopped the turn.", interrupt: true };
+  }
+}
+
+// Elicitation
+
+/** What an MCP server asks of the owner, as an approval. */
+export function toElicitation(id: string, request: WireElicitation): Approval {
+  const url = request.mode === "url" ? (request.url ?? null) : null;
+  const schema = url ? undefined : request.requestedSchema;
+  return {
+    id,
+    kind: "elicitation",
+    itemId: id,
+    server: request.serverName,
+    message: request.message,
+    url,
+    fields: url ? null : formFields(schema),
+    schema: schema ? JSON.stringify(schema, null, 2) : null,
+  };
+}
+
+/** The owner's answer to an MCP server's request. */
+export function toElicitationResult(response: ApprovalResponse): WireElicitationResult {
+  if ("answers" in response) return { action: "decline" };
+  switch (response.decision) {
+    case "accept":
+    case "acceptForSession":
+      return { action: "accept", ...(response.content ? { content: response.content } : {}) };
+    case "decline":
+      return { action: "decline" };
+    case "cancel":
+      return { action: "cancel" };
   }
 }
 

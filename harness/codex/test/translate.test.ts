@@ -3,7 +3,6 @@ import type { McpServerInput } from "@cycle/protocol";
 import {
   mcpServerEdits,
   mcpToolEdits,
-  modePolicy,
   toCatalog,
   toItem,
   toMcpServers,
@@ -153,21 +152,6 @@ test("a turn keeps its timing in milliseconds", () => {
     durationMs: null,
   });
   expect(turn).toMatchObject({ status: "running", startedAt: 10_000 });
-});
-
-test("only full access goes without asking or a sandbox", () => {
-  expect(modePolicy("readOnly")).toMatchObject({
-    approvalPolicy: "on-request",
-    sandbox: "read-only",
-  });
-  expect(modePolicy("auto")).toMatchObject({
-    approvalPolicy: "on-request",
-    sandbox: "workspace-write",
-  });
-  expect(modePolicy("fullAccess")).toMatchObject({
-    approvalPolicy: "never",
-    sandbox: "danger-full-access",
-  });
 });
 
 test("servers are the configured ones and what each reports, by name", () => {

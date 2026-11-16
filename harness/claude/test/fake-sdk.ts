@@ -13,6 +13,8 @@ export class FakeQuery implements ClaudeQuery {
   /** The prompts it was handed, in order. */
   readonly prompts: WireUserMessage[] = [];
   servers: Record<string, unknown> | null = null;
+  /** What it was asked to change in place, in order: `mode plan`, `model x`, `effort low`. */
+  readonly moves: string[] = [];
   interrupts = 0;
   closed = false;
   private readonly sdk: FakeSdk;
@@ -42,6 +44,15 @@ export class FakeQuery implements ClaudeQuery {
   };
   interrupt = async () => {
     this.interrupts++;
+  };
+  setPermissionMode = async (mode: string) => {
+    this.moves.push(`mode ${mode}`);
+  };
+  setModel = async (model?: string) => {
+    this.moves.push(`model ${model ?? ""}`);
+  };
+  applyFlagSettings = async (settings: { effortLevel?: string | null }) => {
+    this.moves.push(`effort ${settings.effortLevel ?? ""}`);
   };
   setMcpServers = async (servers: Record<string, unknown>) => {
     this.servers = servers;

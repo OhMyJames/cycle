@@ -14,6 +14,7 @@ import type {
   HarnessSession,
   McpServerInfo,
   McpServerInput,
+  ModeInfo,
   ModelInfo,
   PluginCatalog,
   PluginDetail,
@@ -28,6 +29,7 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
+import { formFields } from "@cycle/protocol";
 import { rename } from "node:fs/promises";
 import { modelCatalog } from "./catalog.ts";
 import { type CodexConfig, CodexProcess } from "./process.ts";
@@ -37,7 +39,10 @@ import {
   checkServerName,
   mcpServerEdits,
   mcpToolEdits,
+  CODEX_MODES,
+  collaborationMode,
   modePolicy,
+  modeReach,
   toInput,
   toCatalog,
   toItem,
@@ -109,9 +114,6 @@ export interface OwnTools {
 }
 
 const PROVIDER_TOKEN_ENV = "CYCLE_PROVIDER_TOKEN";
-
-/** How far each mode lets the agent reach, to tell a wider one from a narrower. */
-const MODE_REACH: Record<SessionMode, number> = { readOnly: 0, auto: 1, fullAccess: 2 };
 
 /** How much each of the provider's models can read now, by id. */
 function windowsOf(provider: ExtraProvider): Map<string, number> {
@@ -186,6 +188,8 @@ export class CodexHarness implements Harness {
   private readonly reviews = new Map<string, string>();
   /** The mode each thread was last given. Codex keeps it until a turn is started with another. */
   private readonly modes = new Map<string, SessionMode>();
+  /** Threads in codex's plan mode, which they stay in until a turn is given another. */
+  private readonly planning = new Set<string>();
   /** The windows in the catalog the extra process last started with. */
   private extraWindows: ReadonlyMap<string, number> = new Map();
 
@@ -363,6 +367,7 @@ export class CodexHarness implements Harness {
     this.ofExtra.delete(sessionId);
     this.usage.delete(sessionId);
     this.modes.delete(sessionId);
+    this.planning.delete(sessionId);
   }
 
   async compactSession(sessionId: string): Promise<void> {
@@ -418,6 +423,9 @@ export class CodexHarness implements Harness {
       );
     }
     const policy = options.mode ? modePolicy(options.mode) : null;
+    const collaboration = options.mode
+      ? collaborationMode(options.mode, this.planning.has(sessionId), options)
+      : {};
     const response = await proc.request<{ turn: WireTurn }>("turn/start", {
       threadId: sessionId,
       input: toInput(input),
@@ -426,9 +434,14 @@ export class CodexHarness implements Harness {
       ...(policy
         ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy }
         : {}),
+      ...collaboration,
     });
     this.activeTurns.set(sessionId, response.turn.id);
     if (options.mode) this.modes.set(sessionId, options.mode);
+    if ("collaborationMode" in collaboration) {
+      if (options.mode === "plan") this.planning.add(sessionId);
+      else this.planning.delete(sessionId);
+    }
     return { turnId: response.turn.id };
   }
 
@@ -444,7 +457,7 @@ export class CodexHarness implements Harness {
   ): Promise<{ turnId: string }> {
     const proc = await this.ensureLoaded(sessionId, options);
     const held = this.modes.get(sessionId);
-    if (options.mode && (!held || MODE_REACH[held] > MODE_REACH[options.mode])) {
+    if (options.mode && (!held || modeReach(held) > modeReach(options.mode))) {
       throw new Error(
         "The agent may still have wider access than this session's mode allows now. " +
           "Send it a message first, then start the review.",
@@ -484,6 +497,13 @@ export class CodexHarness implements Harness {
     this.approvals.delete(approvalId);
     pending.rpc.respond(pending.rpcId, this.approvalResult(pending, response));
     this.emit({ type: "approval.resolved", sessionId: pending.sessionId, approvalId });
+  }
+
+  /** Codex takes a mode, model and effort with each turn: a change waits for the next. */
+  async configure(): Promise<void> {}
+
+  listModes(): ModeInfo[] {
+    return [...CODEX_MODES];
   }
 
   // What the agent offers
@@ -901,6 +921,8 @@ export class CodexHarness implements Harness {
       ...(stale ? { config: stale } : {}),
     });
     proc.loaded.add(sessionId);
+    if (response.collaborationMode?.mode === "plan") this.planning.add(sessionId);
+    else this.planning.delete(sessionId);
     // Resumed with no mode, the thread has whatever codex's configuration says.
     if (options.mode) this.modes.set(sessionId, options.mode);
     else this.modes.delete(sessionId);
@@ -1094,7 +1116,7 @@ export class CodexHarness implements Harness {
     const approval = sessionId ? this.toApproval(`${sessionId}:${id}`, method, params) : null;
     if (!sessionId || !approval) {
       if (method === "mcpServer/elicitation/request") {
-        // No form for these yet: declining lets the tool carry on without one.
+        // Asked outside any session: declining lets the tool carry on without it.
         rpc.respond(id, { action: "decline", content: null, _meta: null });
       } else {
         rpc.respondError(id, -32601, `cycle does not handle ${method}`);
@@ -1156,6 +1178,21 @@ export class CodexHarness implements Harness {
           })),
         };
       }
+      case "mcpServer/elicitation/request": {
+        const url = params["mode"] === "url" ? text(params["url"]) : null;
+        const schema = url ? null : (params["requestedSchema"] ?? null);
+        return {
+          id,
+          kind: "elicitation",
+          itemId: id,
+          server: text(params["serverName"]) ?? "",
+          message: text(params["message"]) ?? "",
+          url,
+          // Only MCP's own form is drawn as fields; OpenAI's are shown as their schema.
+          fields: params["mode"] === "form" ? formFields(schema) : null,
+          schema: schema === null ? null : JSON.stringify(schema, null, 2),
+        };
+      }
       default:
         return null;
     }
@@ -1171,6 +1208,14 @@ export class CodexHarness implements Harness {
       };
     }
     const decision = "decision" in response ? response.decision : "cancel";
+    if (pending.method === "mcpServer/elicitation/request") {
+      const accepted = decision === "accept" || decision === "acceptForSession";
+      return {
+        action: accepted ? "accept" : decision,
+        content: accepted && "decision" in response ? (response.content ?? null) : null,
+        _meta: null,
+      };
+    }
     if (pending.method === "item/permissions/requestApproval") {
       const granted = decision === "accept" || decision === "acceptForSession";
       return {

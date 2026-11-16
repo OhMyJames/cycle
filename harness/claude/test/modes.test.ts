@@ -1,0 +1,124 @@
+import { expect, test } from "bun:test";
+import type { HarnessEvent } from "@cycle/protocol";
+import { ClaudeHarness } from "../src/index.ts";
+import type { WireMessage } from "../src/wire.ts";
+import { FakeSdk, settle } from "./fake-sdk.ts";
+
+const SONNET = "claude-sonnet-5-5";
+const result: WireMessage = { type: "result", subtype: "success", is_error: false };
+
+async function begun(mode = "default") {
+  const sdk = new FakeSdk();
+  let ids = 0;
+  const harness = new ClaudeHarness({
+    sdk,
+    env: { CLAUDE_CONFIG_DIR: "/home/me/.claude" },
+    schedule: () => () => {},
+    now: () => 1000,
+    newId: () => `id${++ids}`,
+  });
+  const events: HarnessEvent[] = [];
+  harness.onEvent((event) => events.push(event));
+  const session = await harness.createSession({ cwd: "/project", model: SONNET });
+  const options = { mode, model: SONNET };
+  await harness.send(session.id, { text: "hello", images: [] }, options);
+  await settle();
+  return { sdk, harness, events, session, options, query: sdk.last };
+}
+
+test("Claude Code offers its six modes, and a session is always started in one by name", async () => {
+  const { harness, query } = await begun();
+  expect(harness.listModes().map((mode) => mode.id)).toEqual([
+    "default",
+    "acceptEdits",
+    "plan",
+    "auto",
+    "dontAsk",
+    "bypassPermissions",
+  ]);
+  expect(query.options.permissionMode).toBe("default");
+  expect(query.options.onElicitation).toBeFunction();
+});
+
+test("a mode, model or effort the owner changes moves the process in place, mid-turn too", async () => {
+  const { sdk, harness, session, query } = await begun();
+  await harness.configure(session.id, { mode: "plan", model: "claude-opus-5-5", effort: "low" });
+  expect(query.moves).toEqual(["mode plan", "model claude-opus-5-5", "effort low"]);
+  // Claude Code saying the mode it was moved to is not the model's own move.
+  query.say({ type: "system", subtype: "status", permissionMode: "plan" });
+  query.say(result);
+  await settle();
+  expect(sdk.queries).toHaveLength(2);
+
+  // The next turn asks for what the process already is: nothing moves, nothing starts.
+  const options = { mode: "plan", model: "claude-opus-5-5", effort: "low" };
+  await harness.send(session.id, { text: "more", images: [] }, options);
+  expect(sdk.queries).toHaveLength(2);
+  expect(query.moves).toHaveLength(3);
+});
+
+test("a mode only a new process can give waits for the turn, or ends an idle process", async () => {
+  const { sdk, harness, session, options, query } = await begun();
+  await harness.configure(session.id, { mode: "bypassPermissions" });
+  expect(query.moves).toEqual([]);
+  expect(query.closed).toBe(false);
+  query.say(result);
+  await settle();
+  await harness.configure(session.id, { mode: "bypassPermissions" });
+  expect(query.closed).toBe(true);
+  await harness.send(session.id, { text: "go", images: [] }, { ...options, mode: "acceptEdits" });
+  expect(sdk.last.options).toMatchObject({ permissionMode: "acceptEdits", resume: session.id });
+});
+
+test("the model moving itself to another mode is told, once", async () => {
+  const { events, session, query } = await begun();
+  events.length = 0;
+  query.say({ type: "system", subtype: "status", permissionMode: "plan" });
+  query.say({ type: "system", subtype: "status", permissionMode: "plan" });
+  await settle();
+  expect(events).toEqual([{ type: "mode.changed", sessionId: session.id, mode: "plan" }]);
+});
+
+test("leaving plan mode asks the owner with the plan, and goes on in the mode they pick", async () => {
+  const { harness, events, query } = await begun("plan");
+  const plan = { type: "tool_use", id: "x", name: "ExitPlanMode", input: { plan: "# Do it" } };
+  query.say({ type: "assistant", message: { content: [plan] } });
+  await settle();
+  const answer = query.options.canUseTool?.(
+    "ExitPlanMode",
+    {},
+    { signal: new AbortController().signal, toolUseID: "x" },
+  );
+  await settle();
+  const asked = events.find((event) => event.type === "approval.requested");
+  expect(asked).toMatchObject({ approval: { kind: "plan", plan: "# Do it", itemId: "x" } });
+  harness.respondApproval("x", { decision: "accept", mode: "acceptEdits" });
+  expect(await answer).toMatchObject({
+    behavior: "allow",
+    updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }],
+  });
+});
+
+test("an MCP server's request is the owner's to answer, and is called off with its turn", async () => {
+  const { harness, events, session, query } = await begun();
+  const stop = new AbortController();
+  const form = { serverName: "docs", message: "Name?", requestedSchema: { properties: {} } };
+  const first = query.options.onElicitation?.(form, { signal: new AbortController().signal });
+  const second = query.options.onElicitation?.(form, { signal: stop.signal });
+  await settle();
+  const asked = events.flatMap((event) =>
+    event.type === "approval.requested" ? [event.approval] : [],
+  );
+  expect(asked).toMatchObject([
+    { kind: "elicitation", server: "docs", message: "Name?", fields: [] },
+    { kind: "elicitation" },
+  ]);
+  harness.respondApproval(asked[0]?.id ?? "", { decision: "accept", content: { name: "me" } });
+  expect(await first).toEqual({ action: "accept", content: { name: "me" } });
+  stop.abort();
+  expect(await second).toEqual({ action: "cancel" });
+  expect(events.filter((event) => event.type === "approval.resolved")).toEqual([
+    { type: "approval.resolved", sessionId: session.id, approvalId: asked[0]?.id ?? "" },
+    { type: "approval.resolved", sessionId: session.id, approvalId: asked[1]?.id ?? "" },
+  ]);
+});

@@ -4,3 +4,4 @@ export * from "./wire.ts";
 export * from "./harness.ts";
 export * from "./reduce.ts";
 export * from "./paths.ts";
+export * from "./forms.ts";

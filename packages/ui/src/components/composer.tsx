@@ -1,6 +1,5 @@
 import {
   type Plan,
-  SESSION_MODES,
   type SessionInfo,
   type SessionMode,
   type Usage,
@@ -14,6 +13,7 @@ import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { canSandbox, harnessesOf } from "../lib/draft.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
+import { modeNamed, modesOf } from "../lib/modes.ts";
 import { reviewArgument, reviewTarget } from "../lib/review.ts";
 import { sandboxSummary } from "../lib/sandbox-form.ts";
 import {
@@ -38,19 +38,10 @@ import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Chevron } from "./items.tsx";
 import { PlanSteps } from "./plan.tsx";
 import { Menu, type MenuEntry, MenuList } from "./menu.tsx";
+import { ModeMenu } from "./mode-menu.tsx";
 import { ModelPicker } from "./model-picker.tsx";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-
-export const MODE_LABELS: Record<SessionMode, { label: string; sub: string; icon: IconName }> = {
-  readOnly: {
-    label: "Ask first",
-    sub: "Reads freely, asks before commands and edits",
-    icon: "lock",
-  },
-  auto: { label: "Auto", sub: "Works inside the project, asks to leave it", icon: "automation" },
-  fullAccess: { label: "Full access", sub: "Never asks, no sandbox", icon: "warning" },
-};
 
 interface Suggestion {
   label: string;
@@ -606,7 +597,10 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   };
   const currentModel = info?.model || draft?.model || null;
   const currentEffort = (info ? info.effort : draft?.effort) ?? null;
-  const mode = info?.mode ?? draft?.mode ?? "auto";
+  const agent = info?.harness ?? draft?.harness ?? "";
+  const allModes = useStore(app.modes, (modes) => modes);
+  const agentModes = modesOf(allModes, agent);
+  const mode = modeNamed(allModes, agent, info?.mode ?? draft?.mode);
   const canSend = (text.trim().length > 0 || images.length > 0) && !sending;
   const archived = info?.archived ?? false;
 
@@ -737,32 +731,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
             begun={Boolean(sessionId)}
             onChoose={chooseModel}
           />
-          <Menu
-            side="top"
-            title="How much the agent may do unasked"
-            entries={() =>
-              // Full access runs everything unasked, so it stands apart and in the warning color.
-              SESSION_MODES.flatMap((value): MenuEntry[] => [
-                ...(value === "fullAccess" ? [{ separator: true } as const] : []),
-                {
-                  label:
-                    value === "auto"
-                      ? `${MODE_LABELS[value].label} (default)`
-                      : MODE_LABELS[value].label,
-                  sub: MODE_LABELS[value].sub,
-                  icon: MODE_LABELS[value].icon,
-                  warning: value === "fullAccess",
-                  checked: value === mode,
-                  onSelect: () => chooseMode(value),
-                },
-              ])
-            }
-            width={320}
-          >
-            <span className={mode === "fullAccess" ? "tone-warning" : undefined}>
-              {MODE_LABELS[mode].label}
-            </span>
-          </Menu>
+          <ModeMenu side="top" modes={agentModes} current={mode} onChoose={chooseMode} />
           <span className="grow" />
           <ContextRing usage={session.usage} />
           {running && sessionId ? (

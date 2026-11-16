@@ -5,6 +5,7 @@ import type {
   Harness,
   HarnessEvent,
   HarnessSession,
+  ModeInfo,
   ModelInfo,
   PromptInput,
   ReviewTarget,
@@ -137,6 +138,15 @@ export class Harnesses implements Harness {
 
   async interrupt(sessionId: string): Promise<void> {
     await (await this.of(sessionId)).interrupt(sessionId);
+  }
+
+  async configure(sessionId: string, options: TurnOptions): Promise<void> {
+    await (await this.of(sessionId)).configure(sessionId, options);
+  }
+
+  /** Every agent's modes. One that was left out offers none. */
+  listModes(): ModeInfo[] {
+    return this.agents.flatMap((agent) => agent.listModes());
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {

@@ -4,9 +4,11 @@ import type {
   CreateSessionOptions,
   HarnessEvent,
   HarnessSession,
+  ModeInfo,
   ModelInfo,
   PromptInput,
   ReviewTarget,
+  SessionMode,
   Turn,
   TurnOptions,
   Usage,
@@ -24,6 +26,7 @@ import {
   withHome,
 } from "./sdk.ts";
 import {
+  CLAUDE_MODES,
   DEFAULT_EFFORT,
   HARNESS_NAME,
   NO_TOKENS,
@@ -32,8 +35,11 @@ import {
   historyModel,
   lastEntryOf,
   modeOptions,
+  processSpec,
   reviewPrompt,
   toApproval,
+  toElicitation,
+  toElicitationResult,
   toModels,
   toPermission,
   toSession,
@@ -43,8 +49,11 @@ import {
   usedBy,
 } from "./translate.ts";
 import type {
+  WireElicitation,
+  WireElicitationResult,
   WireHistoryMessage,
   WireMessage,
+  WirePermissionMode,
   WireSessionInfo,
   WirePermissionResult,
   WirePermissionUpdate,
@@ -109,8 +118,14 @@ interface Running {
   query: ClaudeQuery;
   input: Inbox<WireUserMessage>;
   reader: StreamReader;
-  /** The mode, model and effort it was started with: another means another process. */
+  /** What its mode needed at its start: a mode that needs otherwise means another process. */
   spec: string;
+  /** Its session runs in a sandbox of the machine's. */
+  contained: boolean;
+  /** The mode, model and effort it is in now, which it can be moved off in place. */
+  mode: SessionMode;
+  model: string | undefined;
+  effort: string | undefined;
   /** The turn it runs now, known by the prompt that began it. */
   turn: string | null;
   /** Prompts sent into the running turn, until it is known whether it took them. */
@@ -515,6 +530,29 @@ export class ClaudeHarness implements Agent {
   }
 
   /**
+   * Claude Code moves to another mode, model or effort in place, mid-turn too. A mode that needs
+   * another process waits for the next turn, or ends an idle one now so the next starts as it must.
+   */
+  async configure(sessionId: string, options: TurnOptions): Promise<void> {
+    const asked = { ...this.asked.get(sessionId), ...options };
+    this.asked.set(sessionId, asked);
+    const running = this.live.get(sessionId);
+    if (!running) return;
+    if (
+      options.mode !== undefined &&
+      processSpec(options.mode, running.contained) !== running.spec
+    ) {
+      if (running.turn === null) this.stop(running);
+      return;
+    }
+    await this.move(running, options);
+  }
+
+  listModes(): ModeInfo[] {
+    return [...CLAUDE_MODES];
+  }
+
+  /**
    * Claude Code says which models it offers as a process starts, so one is
    * started for the answer and closed.
    *
@@ -679,13 +717,17 @@ export class ClaudeHarness implements Agent {
     if (options.sandbox) known.sandbox = options.sandbox;
     const model = options.model ?? known.model;
     const effort = options.effort ?? (await this.defaultEffort(model));
-    const spec = JSON.stringify([options.mode ?? "readOnly", model ?? "", effort ?? ""]);
+    const mode = options.mode ?? DEFAULT_MODE;
+    const spec = processSpec(mode, known.sandbox !== undefined);
     const starting = this.starting.get(sessionId);
     if (starting) return starting;
     const running = this.live.get(sessionId);
-    if (running && (running.spec === spec || running.turn !== null)) return running;
+    if (running && (running.spec === spec || running.turn !== null)) {
+      await this.move(running, { mode, model, effort });
+      return running;
+    }
     if (running) this.stop(running);
-    const launch = this.launch(sessionId, known, options, spec, model, effort).finally(() =>
+    const launch = this.launch(sessionId, known, mode, spec, model, effort).finally(() =>
       this.starting.delete(sessionId),
     );
     this.starting.set(sessionId, launch);
@@ -704,7 +746,7 @@ export class ClaudeHarness implements Agent {
   private async launch(
     sessionId: string,
     known: Known,
-    options: TurnOptions,
+    mode: SessionMode,
     spec: string,
     model: string | undefined,
     effort: string | undefined,
@@ -730,7 +772,7 @@ export class ClaudeHarness implements Agent {
         prompt: input,
         options: {
           ...this.shared(sandbox),
-          ...modeOptions(options.mode ?? "readOnly", sandbox !== null),
+          ...modeOptions(mode, sandbox !== null),
           cwd: this.cwdOf(known),
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
@@ -738,6 +780,7 @@ export class ClaudeHarness implements Agent {
             ? { resume: sessionId, ...(cut && cut !== CUT_START ? { resumeSessionAt: cut } : {}) }
             : { sessionId }),
           canUseTool: (tool, toolInput, context) => this.ask(running, tool, toolInput, context),
+          onElicitation: (request, context) => this.elicit(running, request, context.signal),
         },
       }),
     );
@@ -747,6 +790,10 @@ export class ClaudeHarness implements Agent {
       input,
       reader: new StreamReader(sessionId, known.cwd, inside),
       spec,
+      contained: sandbox !== null,
+      mode,
+      model,
+      effort,
       turn: null,
       steers: new Map(),
       stopping: false,
@@ -776,6 +823,33 @@ export class ClaudeHarness implements Agent {
     this.live.set(sessionId, running);
     void this.pump(running);
     return running;
+  }
+
+  /** Moves a process to what it is asked to run with now, as far as it can in place. */
+  private async move(
+    running: Running,
+    to: { mode?: SessionMode | undefined; model?: string | undefined; effort?: string | undefined },
+  ): Promise<void> {
+    try {
+      if (to.mode !== undefined && to.mode !== running.mode) {
+        if (processSpec(to.mode, running.contained) !== running.spec) return;
+        // Known before Claude Code says so, so its word is not taken for the model's own move.
+        running.mode = to.mode;
+        await running.query.setPermissionMode(to.mode as WirePermissionMode);
+      }
+      if (to.model !== undefined && to.model !== running.model) {
+        running.model = to.model;
+        await running.query.setModel(to.model);
+      }
+      if (to.effort !== undefined && to.effort !== running.effort) {
+        running.effort = to.effort;
+        await running.query.applyFlagSettings({ effortLevel: to.effort });
+      }
+    } catch (error) {
+      // A process that would not move is ended when idle: the next turn starts one as asked.
+      this.options.onLog?.(`claude: ${message(error)}`);
+      if (running.turn === null) this.stop(running);
+    }
   }
 
   private stop(running: Running): void {
@@ -821,6 +895,18 @@ export class ClaudeHarness implements Agent {
   }
 
   private handle(running: Running, each: WireMessage): void {
+    if (each.type === "system" && each.subtype === "status" && each.permissionMode) {
+      // The model moved itself, as into plan mode or out of it once its plan was approved.
+      if (each.permissionMode !== running.mode) {
+        running.mode = each.permissionMode;
+        this.emit({
+          type: "mode.changed",
+          sessionId: running.sessionId,
+          mode: each.permissionMode,
+        });
+      }
+      return;
+    }
     if (each.type === "result") {
       this.finish(running, each);
       return;
@@ -938,11 +1024,46 @@ export class ClaudeHarness implements Agent {
           cwd: running.known.cwd,
           title: context.title,
           reason: context.decisionReason,
+          suggestions: context.suggestions,
+          plan: running.reader.planFor(id),
         }),
       });
     });
   }
+
+  /** An MCP server asks the owner for something: they answer as they answer an approval. */
+  private elicit(
+    running: Running,
+    request: WireElicitation,
+    signal: AbortSignal,
+  ): Promise<WireElicitationResult> {
+    const { sessionId } = running;
+    const id = this.newId();
+    return new Promise((resolve) => {
+      const settle = (result: WireElicitationResult) => {
+        if (!this.approvals.delete(id)) return;
+        signal.removeEventListener("abort", stopped);
+        this.emit({ type: "approval.resolved", sessionId, approvalId: id });
+        resolve(result);
+      };
+      const stopped = () => settle({ action: "cancel" });
+      this.approvals.set(id, {
+        sessionId,
+        answer: (response) => settle(toElicitationResult(response)),
+      });
+      signal.addEventListener("abort", stopped);
+      this.emit({
+        type: "approval.requested",
+        sessionId,
+        turnId: running.turn,
+        approval: toElicitation(id, request),
+      });
+    });
+  }
 }
+
+/** The mode a session is in when it was given none: the one that asks first. */
+const DEFAULT_MODE: SessionMode = "default";
 
 /** A cut before a conversation's first turn, where there is no entry to end at. */
 const CUT_START = "start";

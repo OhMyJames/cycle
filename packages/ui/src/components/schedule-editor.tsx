@@ -1,8 +1,9 @@
-import { SESSION_MODES, type Schedule, type ScheduleTiming } from "@cycle/protocol";
+import type { Schedule, ScheduleTiming } from "@cycle/protocol";
 import { useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { tildePath } from "../lib/format.ts";
+import { modeNamed, modesOf } from "../lib/modes.ts";
 import {
   type RunEntry,
   type ScheduleDraft,
@@ -12,10 +13,10 @@ import {
   draftProblem,
   inputOf,
 } from "../lib/schedule-text.ts";
-import { MODE_LABELS } from "./composer.tsx";
 import { FormField, Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 import { Menu, type MenuEntry } from "./menu.tsx";
+import { modeEntries as modeRows } from "./mode-menu.tsx";
 import { RunList } from "./run-list.tsx";
 
 const KINDS: { value: ScheduleTiming["kind"]; label: string }[] = [
@@ -39,6 +40,9 @@ export function ScheduleEditor({
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
   const models = useStore(app.models, (value) => value);
+  const modes = useStore(app.modes, (value) => value);
+  const usual = useStore(app.settings, (settings) => settings?.model ?? null);
+  const main = useStore(app.daemon, (daemon) => daemon?.harness ?? "");
   const [draft, setDraft] = useState<ScheduleDraft>(() => {
     const { project } = app.view.get();
     const folder = project ?? app.settings.get()?.projects[0] ?? "";
@@ -57,17 +61,25 @@ export function ScheduleEditor({
       .finally(() => setSaving(false));
   };
   const model = models.find((each) => each.id === draft.model);
+  /** The agent a run starts on: its model's, else that of what new sessions start with. */
+  const agentOf = (id: string | null) =>
+    models.find((each) => each.id === (id ?? usual))?.harness ?? main;
+  const agent = agentOf(draft.model);
+  const mode = draft.mode === null ? undefined : modeNamed(modes, agent, draft.mode);
+  // A mode is one agent's: another agent's model leaves it to what that agent's sessions start in.
+  const chooseModel = (id: string | null) =>
+    set({ model: id, effort: null, ...(agentOf(id) === agent ? {} : { mode: null }) });
   const modelEntries = (): MenuEntry[] => [
     {
       label: "What new sessions start with (default)",
       checked: draft.model === null,
-      onSelect: () => set({ model: null, effort: null }),
+      onSelect: () => chooseModel(null),
     },
     { separator: true },
     ...models.map((each): MenuEntry => ({
       label: each.name,
       checked: each.id === draft.model,
-      onSelect: () => set({ model: each.id, effort: null }),
+      onSelect: () => chooseModel(each.id),
     })),
   ];
   const modeEntries = (): MenuEntry[] => [
@@ -77,14 +89,7 @@ export function ScheduleEditor({
       onSelect: () => set({ mode: null }),
     },
     { separator: true },
-    ...SESSION_MODES.map((mode): MenuEntry => ({
-      label: MODE_LABELS[mode].label,
-      sub: MODE_LABELS[mode].sub,
-      icon: MODE_LABELS[mode].icon,
-      warning: mode === "fullAccess",
-      checked: mode === draft.mode,
-      onSelect: () => set({ mode }),
-    })),
+    ...modeRows(modesOf(modes, agent), mode?.id ?? null, (id) => set({ mode: id })),
   ];
   return (
     <div className="page fade-y">
@@ -243,14 +248,14 @@ export function ScheduleEditor({
           <Setting
             title="Permissions"
             note={
-              draft.mode === "fullAccess"
+              mode?.dangerous
                 ? "Runs unattended with no sandbox and never asks."
                 : "A run that has to ask waits for you."
             }
           >
             <Menu className="button" align="end" width={300} entries={modeEntries}>
-              <span className={draft.mode === "fullAccess" ? "tone-warning" : undefined}>
-                {draft.mode ? MODE_LABELS[draft.mode].label : "New sessions' mode (default)"}
+              <span className={mode?.dangerous ? "tone-warning" : undefined}>
+                {mode ? mode.name : "New sessions' mode (default)"}
               </span>
               <Icon name="chevron-down-sm" size={14} className="muted" />
             </Menu>

@@ -32,12 +32,19 @@ export {
 export type { ClaudeQuery, ClaudeSdk, QueryOptions, SpawnedProcess } from "./sdk.ts";
 export { atHome, withHome } from "./sdk.ts";
 export {
+  AFTER_PLAN,
+  CLAUDE_MODES,
   HARNESS_NAME,
+  PlanDraft,
   StreamReader,
   finishTool,
   modeOptions,
+  processSpec,
   reviewPrompt,
   toApproval,
+  toElicitation,
+  toElicitationResult,
+  toRules,
   toModels,
   toPermission,
   toSession,

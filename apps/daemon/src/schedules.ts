@@ -6,6 +6,8 @@ import {
   type ScheduleRun,
   type ScheduleTiming,
   type SessionMode,
+  LEGACY_MODE_PREFIX,
+  legacyMode,
 } from "@cycle/protocol";
 import { latestOccurrence, nextOccurrence } from "./schedule-timing.ts";
 import type { JsonStore } from "./store.ts";
@@ -20,11 +22,27 @@ export class LaunchError extends Error {
   }
 }
 
-/** A schedule as it is stored: without what only the wire carries. */
-export type StoredSchedule = Omit<Schedule, "next">;
+/**
+ * A schedule as it is stored: without what only the wire carries. Its `mode` is what a daemon from
+ * before each agent named its own modes reads, one of `LegacyMode`, and is no longer written;
+ * `agentMode`, when there is one, is the mode since.
+ */
+export type StoredSchedule = Omit<Schedule, "next"> & { agentMode?: SessionMode | null };
 
 export interface SchedulesFile {
   schedules: StoredSchedule[];
+}
+
+/** A stored schedule's mode: its own, else one from before, marked to be read as it was meant. */
+export function scheduleMode(schedule: StoredSchedule): SessionMode | null {
+  if (schedule.agentMode !== undefined) return schedule.agentMode;
+  return schedule.mode === null ? null : legacyMode(schedule.mode);
+}
+
+/** A stored schedule as the wire carries it. */
+function wireSchedule(schedule: StoredSchedule, next: number | null): Schedule {
+  const { agentMode: _, ...rest } = structuredClone(schedule);
+  return { ...rest, mode: scheduleMode(schedule), next };
 }
 
 export interface SchedulerOptions {
@@ -37,9 +55,10 @@ export interface SchedulerOptions {
   newId(): string;
   /** Called with the list after it changed. */
   onChange(schedules: Schedule[]): void;
+  /** The ids of every agent's modes. Which agent a run is on is known only as it starts. */
+  modes(): readonly string[];
 }
 
-const MODES: readonly SessionMode[] = ["readOnly", "auto", "fullAccess"];
 const MAX_MINUTES = 60 * 24 * 366;
 
 function isTime(value: unknown): value is number {
@@ -80,7 +99,10 @@ function checkTiming(timing: ScheduleTiming): ScheduleTiming {
  * time, and a schedule runs unattended for as long as it is kept, so nothing
  * is taken on trust.
  */
-export function checkScheduleInput(input: ScheduleInput): ScheduleInput {
+export function checkScheduleInput(
+  input: ScheduleInput,
+  modes: readonly string[] = [],
+): ScheduleInput {
   const name = typeof input.name === "string" ? input.name.trim() : "";
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
   if (!name) throw new Error("A schedule needs a name.");
@@ -88,7 +110,15 @@ export function checkScheduleInput(input: ScheduleInput): ScheduleInput {
   if (typeof input.cwd !== "string" || !input.cwd.startsWith("/")) {
     throw new Error("The folder must be an absolute path.");
   }
-  if (input.mode !== null && !MODES.includes(input.mode)) throw new Error("Unknown mode.");
+  // A run whose agent does not offer the mode is refused as it starts. One kept from before each
+  // agent named its own is read by what it meant then, and stays as it was.
+  const mode = typeof input.mode === "string" ? input.mode : null;
+  const kept =
+    mode?.startsWith(LEGACY_MODE_PREFIX) &&
+    legacyMode(mode.slice(LEGACY_MODE_PREFIX.length)) === mode;
+  if (input.mode !== null && (mode === null || (!modes.includes(mode) && !kept))) {
+    throw new Error("Unknown mode.");
+  }
   return {
     ...(typeof input.id === "string" && input.id ? { id: input.id } : {}),
     name,
@@ -145,16 +175,13 @@ export class Scheduler {
   list(): Schedule[] {
     const now = this.options.now();
     return this.schedules.map((schedule) =>
-      structuredClone({
-        ...schedule,
-        next: schedule.enabled ? nextOccurrence(schedule.timing, now) : null,
-      }),
+      wireSchedule(schedule, schedule.enabled ? nextOccurrence(schedule.timing, now) : null),
     );
   }
 
   /** Makes a schedule, or changes the one `input.id` names. Throws on what it cannot take. */
   put(raw: ScheduleInput): Schedule {
-    const input = checkScheduleInput(raw);
+    const input = checkScheduleInput(raw, this.options.modes());
     const now = this.options.now();
     if (input.enabled && input.timing.kind === "once" && input.timing.at <= now) {
       throw new Error("That time has passed.");
@@ -166,6 +193,8 @@ export class Scheduler {
       !old || !sameTiming(old.timing, input.timing) || (input.enabled && !old.enabled);
     const schedule: StoredSchedule = {
       ...input,
+      mode: old?.mode ?? null,
+      agentMode: input.mode,
       id: old?.id ?? this.options.newId(),
       since: old && !restarts ? old.since : now,
       runs: old?.runs ?? [],
@@ -176,7 +205,7 @@ export class Scheduler {
       else file.schedules[index] = schedule;
     });
     this.changed();
-    return { ...structuredClone(schedule), next: this.nextOf(schedule) };
+    return wireSchedule(schedule, this.nextOf(schedule));
   }
 
   private nextOf(schedule: StoredSchedule): number | null {

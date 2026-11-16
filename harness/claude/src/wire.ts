@@ -52,6 +52,15 @@ export interface WireModelUsage {
   contextWindow?: number;
 }
 
+/** Claude Code's modes, as it names them. */
+export type WirePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "plan"
+  | "dontAsk"
+  | "auto";
+
 /** One message of a running query's stream. */
 export interface WireMessage {
   type: string;
@@ -71,6 +80,10 @@ export interface WireMessage {
   /** The prompts the turn took in: the one that began it, and any that joined it. */
   user_message_uuids?: string[];
   modelUsage?: Record<string, WireModelUsage>;
+  /** A `status` message: the mode the process is in now, which the model may have changed. */
+  permissionMode?: string;
+  /** A `permission_denied` message: the call refused without asking. Its reason is `message`. */
+  tool_use_id?: string;
 }
 
 /** One stored message of a session, as `getSessionMessages` gives it. */
@@ -117,6 +130,20 @@ export type WirePermissionResult =
       updatedPermissions?: WirePermissionUpdate[];
     }
   | { behavior: "deny"; message: string; interrupt?: boolean };
+
+/** What an MCP server asks the owner for: a form, or a page to visit. */
+export interface WireElicitation {
+  serverName: string;
+  message: string;
+  mode?: "form" | "url";
+  url?: string;
+  requestedSchema?: Record<string, unknown>;
+}
+
+export interface WireElicitationResult {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+}
 
 /** A prompt as the SDK takes it. `uuid` is what the stored conversation knows it by. */
 export interface WireUserMessage {

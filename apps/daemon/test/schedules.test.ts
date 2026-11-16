@@ -101,6 +101,7 @@ async function setup(stored: SchedulesFile = { schedules: [] }) {
     now: () => now,
     newId: () => `id${++ids}`,
     onChange: (schedules) => changes.push(schedules),
+    modes: () => ["readOnly", "auto", "plan"],
   });
   return {
     scheduler,
@@ -264,9 +265,21 @@ test("a run whose news cannot be told still ends, and its schedule can run again
     onChange: () => {
       if (deaf) throw new Error("nobody to tell");
     },
+    modes: () => [],
   });
   const { id } = scheduler.put(input());
   deaf = true;
   expect(await scheduler.run(id)).toMatchObject({ sessionId: "s1", error: null });
   expect(await scheduler.run(id)).toMatchObject({ sessionId: "s1", error: null });
+});
+
+test("a mode from before each agent named its own reads as it was meant, and stays for older daemons", async () => {
+  const kept = { ...input({ mode: "auto" }), id: "kept", since: at(1), runs: [] };
+  const t = await setup({ schedules: [kept] });
+  expect(t.scheduler.list()[0]?.mode).toBe("legacy:auto");
+  expect(t.scheduler.put({ ...input({ mode: "plan" }), id: "kept" }).mode).toBe("plan");
+  expect(t.file.value.schedules[0]).toMatchObject({ mode: "auto", agentMode: "plan" });
+  const back = t.scheduler.put({ ...input({ mode: "legacy:auto" }), id: "kept" });
+  expect(back.mode).toBe("legacy:auto");
+  expect(() => t.scheduler.put(input({ mode: "legacy:root" }))).toThrow("Unknown mode");
 });

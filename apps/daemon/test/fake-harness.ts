@@ -2,6 +2,7 @@ import type {
   Harness,
   HarnessEvent,
   HarnessSession,
+  ModeInfo,
   ModelInfo,
   PromptInput,
   Turn,
@@ -96,8 +97,30 @@ export class FakeHarness implements Harness {
   respondApproval = (approvalId: string) => {
     this.calls.push(`approve ${approvalId}`);
   };
+  /** What it was asked to take in mid-session, as `configure s1 {"mode":"plan"}`. */
+  configure: Harness["configure"] = async (sessionId, options) => {
+    this.calls.push(`configure ${sessionId} ${JSON.stringify(options)}`);
+  };
   models: ModelInfo[] = [];
   listModels = async () => this.models;
+  /** The modes Cycle had for every agent, and a plan mode, under this harness's name. */
+  modes: Omit<ModeInfo, "harness">[] = (
+    [
+      ["readOnly", false, false, "readOnly"],
+      ["auto", true, false, "auto"],
+      ["plan", false, false, null],
+      ["fullAccess", false, true, "fullAccess"],
+    ] as const
+  ).map(([id, isDefault, dangerous, replaces]) => ({
+    id,
+    name: id,
+    description: "",
+    dangerous,
+    plan: id === "plan",
+    isDefault,
+    replaces,
+  }));
+  listModes = (): ModeInfo[] => this.modes.map((mode) => ({ ...mode, harness: this.name }));
   listSkills = async () => [];
   listMcpServers = async () => [];
   putMcpServer = async () => {};

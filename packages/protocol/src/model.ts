@@ -145,14 +145,61 @@ export interface Usage {
 }
 
 /**
- * How much an agent may do unasked.
- * - `readOnly`: reads freely, asks before any command or edit.
- * - `auto`: edits and runs inside the workspace, asks to leave it.
- * - `fullAccess`: never asks and has no sandbox.
+ * How much an agent may do unasked: the id of one of the modes its harness offers (`ModeInfo`).
+ * Each agent names its own, so one id may mean different things on two agents.
  */
-export type SessionMode = "readOnly" | "auto" | "fullAccess";
+export type SessionMode = string;
 
-export const SESSION_MODES: readonly SessionMode[] = ["readOnly", "auto", "fullAccess"];
+/**
+ * Cycle's own modes from before each agent named its own, as stored then: `readOnly` asked before
+ * any command or edit, `auto` worked inside the workspace, `fullAccess` never asked.
+ */
+export type LegacyMode = "readOnly" | "auto" | "fullAccess";
+
+/** How a stored mode from before agents named their own is marked, to be read as `replaces` says. */
+export const LEGACY_MODE_PREFIX = "legacy:";
+
+/** One mode an agent offers. */
+export interface ModeInfo {
+  id: SessionMode;
+  /** The name of the harness that offers it. */
+  harness: string;
+  name: string;
+  /** What it lets the agent do unasked, in a line. */
+  description: string;
+  /** It runs commands unasked with no sandbox. Never a default, and taken only by a press. */
+  dangerous: boolean;
+  /** The agent only plans, and changes nothing until the owner approves its plan. */
+  plan: boolean;
+  /** What a session of this agent starts in when the owner chose nothing. */
+  isDefault: boolean;
+  /** The mode of Cycle's own that this one is, for what was stored before. */
+  replaces: LegacyMode | null;
+}
+
+/** Marks a mode stored before agents named their own, so it is read by what it meant then. */
+export function legacyMode(value: string): string {
+  return value === "readOnly" || value === "auto" || value === "fullAccess"
+    ? `${LEGACY_MODE_PREFIX}${value}`
+    : value;
+}
+
+/**
+ * The mode a stored or chosen value means among one agent's modes: its own id, or a marked legacy
+ * mode by what it replaces. Anything else, or nothing, is the agent's default.
+ */
+export function resolveMode(
+  modes: readonly ModeInfo[],
+  value: string | null | undefined,
+): ModeInfo | undefined {
+  const legacy = value?.startsWith(LEGACY_MODE_PREFIX)
+    ? value.slice(LEGACY_MODE_PREFIX.length)
+    : null;
+  const found = legacy
+    ? modes.find((mode) => mode.replaces === legacy)
+    : modes.find((mode) => mode.id === value);
+  return found ?? modes.find((mode) => mode.isDefault) ?? modes[0];
+}
 
 export type SessionStatus =
   /** Known to the harness but not loaded into memory. */
@@ -213,6 +260,30 @@ export interface Question {
   secret: boolean;
 }
 
+/**
+ * A rule the agent offers with a request, which lets what is asked, and what is like it, through
+ * without asking again. It holds for the rest of the session.
+ *
+ * shortcut: a rule is kept for the session alone; upgrade when Cycle keeps a Claude configuration
+ * of its own, and a rule can be kept in it for the project or for the owner.
+ */
+export interface ApprovalRule {
+  id: string;
+  /** What it lets through, as `Bash(npm test:*)`, or a folder it opens. */
+  label: string;
+}
+
+/** One field of a form an MCP server asks the owner to fill. */
+export interface FormField {
+  name: string;
+  title: string;
+  description: string;
+  type: "string" | "number" | "integer" | "boolean";
+  /** The values it may take, when it is one of a list. */
+  options: string[] | null;
+  required: boolean;
+}
+
 export type Approval =
   | {
       id: string;
@@ -221,8 +292,21 @@ export type Approval =
       command: string | null;
       cwd: string | null;
       reason: string | null;
+      /** Rules that would let it, and the like of it, through from now on. */
+      rules?: ApprovalRule[];
+      /** The owner may change the command before it runs. */
+      editable?: boolean;
+      /** The agent is told what the owner says on declining it. */
+      notes?: boolean;
     }
-  | { id: string; kind: "fileChange"; itemId: string; reason: string | null }
+  | {
+      id: string;
+      kind: "fileChange";
+      itemId: string;
+      reason: string | null;
+      rules?: ApprovalRule[];
+      notes?: boolean;
+    }
   | {
       id: string;
       kind: "permissions";
@@ -230,10 +314,59 @@ export type Approval =
       reason: string | null;
       summary: string;
     }
-  | { id: string; kind: "question"; itemId: string; questions: Question[] };
+  /** Any other tool the agent asks to call. */
+  | {
+      id: string;
+      kind: "tool";
+      itemId: string;
+      /** The MCP server, or null for one of the agent's own tools. */
+      server: string | null;
+      tool: string;
+      /** JSON text of its input, which the owner may change before it runs. */
+      input: string;
+      /** The request as the agent puts it, as a sentence. */
+      title: string | null;
+      reason: string | null;
+      rules: ApprovalRule[];
+    }
+  | { id: string; kind: "question"; itemId: string; questions: Question[] }
+  /**
+   * The agent finished planning and asks to go on. Approved, it works in the mode the owner picks
+   * of `modes`; declined, it plans again, with what the owner said.
+   */
+  | { id: string; kind: "plan"; itemId: string; plan: string; modes: SessionMode[] }
+  /** An MCP server asks the owner for something: a form to fill, or a page to visit. */
+  | {
+      id: string;
+      kind: "elicitation";
+      itemId: string;
+      server: string;
+      message: string;
+      /** A page to open and finish there. Null for a form. */
+      url: string | null;
+      /** The form's fields, or null when it is not one, or too involved to draw as fields. */
+      fields: FormField[] | null;
+      /** JSON text of the form's schema, for a form that has no `fields`. */
+      schema: string | null;
+    };
+
+/** The owner's answer to an approval. What does not apply to its kind is ignored. */
+export interface ApprovalAnswer {
+  decision: ApprovalDecision;
+  /** On accept: the offered rules, by id, to keep for the rest of the session. */
+  rules?: string[];
+  /** On accept: the command as the owner changed it, or a tool's input as JSON text. */
+  edited?: string;
+  /** On decline: what the agent is told, as why or what to do instead. */
+  message?: string;
+  /** On accepting a plan: the mode to work in. */
+  mode?: SessionMode;
+  /** On accepting a form: what the owner filled in. */
+  content?: Record<string, unknown>;
+}
 
 export type ApprovalResponse =
-  | { decision: ApprovalDecision }
+  | ApprovalAnswer
   /** For a `question` approval: answers by question id. */
   | { answers: Record<string, string[]> };
 
