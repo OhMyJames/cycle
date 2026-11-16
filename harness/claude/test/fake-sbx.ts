@@ -86,7 +86,7 @@ export function fakeSbx(names: string[] = [], specs?: SandboxSpec[]) {
       makeFolder: async (path) => void folders.push(path),
       log: (line) => void logged.push(line),
     },
-    "/home/me/.claude",
+    "/home/me/.cycle/sandboxes",
     book,
   );
   /** What was asked, each as one line, without the listings. */

@@ -187,6 +187,8 @@ export interface SessionInfo {
   worktree: WorktreeInfo | null;
   /** The sandbox its agent runs in, by name. Null when it runs on this machine. */
   sandbox: string | null;
+  /** Where that sandbox sees the folder. Null when its paths are this machine's. */
+  sandboxCwd: string | null;
   createdAt: number;
   updatedAt: number;
   archived: boolean;

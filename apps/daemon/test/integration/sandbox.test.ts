@@ -7,7 +7,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeHarness, projectFolder, sandboxName } from "@cycle/harness-claude";
+import { ClaudeHarness, projectFolder, sandboxCwd, sandboxName } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import type { Item, SessionEvent } from "@cycle/protocol";
 import {
@@ -36,6 +36,7 @@ let root: string;
 let project: string;
 let state: string;
 let client: WireClient;
+let sandboxes: Awaited<ReturnType<typeof openSandboxes>>;
 let script: (prompt: string, results: number) => ClaudeReply;
 
 beforeAll(async () => {
@@ -55,7 +56,7 @@ beforeAll(async () => {
     "gateway-token",
     join(root, "home", "provider-models.json"),
   );
-  const sandboxes = await openSandboxes(root, { ...process.env, ...claude.env, ...sbx.env });
+  sandboxes = await openSandboxes(root, { ...process.env, ...claude.env, ...sbx.env });
   daemon = await startDaemon({
     tools,
     providers: providers.store,
@@ -139,8 +140,10 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
   const events = await turn(session.id, "hello from outside");
   expect(events.at(-1)).toMatchObject({ type: "turn.completed", status: "completed" });
   expect(items(events).at(-1)).toMatchObject({ text: "You said: hello from outside" });
-  // It was the sandbox's own Claude Code that ran, in the folder.
-  expect(readFileSync(join(state, "execs"), "utf8")).toBe(`${name} ${project} claude\n`);
+  // It was the sandbox's own Claude Code that ran, at the sandbox's path for the folder.
+  expect(readFileSync(join(state, "execs"), "utf8")).toBe(
+    `${name} ${sandboxCwd(project)} claude\n`,
+  );
 
   // A command of the agent's runs inside: its home is the sandbox's, and it holds no key of ours.
   const look = { name: "Bash", input: { command: "echo home=$HOME; env" } };
@@ -153,15 +156,15 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
   expect(output).not.toContain("sandbox-test-tools-key");
   expect(output).not.toContain("CODEX_HOME");
 
-  // The conversation is where this machine's Claude Code keeps the folder's, and nowhere else of
-  // its home went into the sandbox.
-  const kept = join(root, "claude", "projects", projectFolder(project));
-  expect(readdirSync(kept)).toContain(`${session.id}.jsonl`);
-  expect(readdirSync(join(state, name, "home", ".claude", "projects"))).toEqual([
-    projectFolder(project),
-  ]);
-  const reader = new ClaudeHarness({ env: claude.env });
-  const stored = await reader.loadSession(session.id, {});
+  // The conversation is in the sandbox's own home, under the folder's name there; none of the
+  // owner's Claude Code home went into the sandbox.
+  const home = join(root, "home", "sandboxes", name, "claude");
+  const folder = projectFolder(sandboxCwd(project));
+  expect(readdirSync(join(home, "projects", folder))).toContain(`${session.id}.jsonl`);
+  expect(readdirSync(join(state, name, "home", ".claude", "projects"))).toContain(folder);
+  expect(existsSync(join(root, "claude", "projects", projectFolder(project)))).toBe(false);
+  const reader = new ClaudeHarness({ env: claude.env, sandboxes: sandboxes.admin });
+  const stored = await reader.loadSession(session.id, { sandbox: name });
   await reader.dispose();
   expect(stored.turns.map((each) => each.items.map((item) => item.kind))).toEqual([
     ["userMessage", "agentMessage"],

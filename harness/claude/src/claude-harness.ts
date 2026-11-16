@@ -11,9 +11,18 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
+import { cp, mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import type { Sandboxes } from "./sandbox.ts";
-import { type ClaudeQuery, type ClaudeSdk, type QueryOptions, realSdk } from "./sdk.ts";
+import { dirname, join } from "node:path";
+import { type Sandboxes, claudeHomeOf, projectFolder, sandboxCwd } from "./sandbox.ts";
+import {
+  atHome,
+  type ClaudeQuery,
+  type ClaudeSdk,
+  type QueryOptions,
+  realSdk,
+  withHome,
+} from "./sdk.ts";
 import {
   DEFAULT_EFFORT,
   HARNESS_NAME,
@@ -36,6 +45,7 @@ import {
 import type {
   WireHistoryMessage,
   WireMessage,
+  WireSessionInfo,
   WirePermissionResult,
   WirePermissionUpdate,
   WireUserMessage,
@@ -46,6 +56,12 @@ export interface OwnTools {
   name: string;
   url: string;
   key: string;
+}
+
+/** The few file moves a sandbox's conversations need, so a test can give its own. */
+export interface SessionFiles {
+  /** Moves a file or a folder; answers false when there was nothing there. */
+  move(from: string, to: string): Promise<boolean>;
 }
 
 export interface ClaudeHarnessOptions {
@@ -67,6 +83,8 @@ export interface ClaudeHarnessOptions {
   spawn?: QueryOptions["spawnClaudeCodeProcess"];
   /** Sandboxes a session's agent can run in. Without them, a session asked into one is refused. */
   sandboxes?: Sandboxes;
+  /** Where a conversation kept in the owner's home is moved from, once. */
+  files?: SessionFiles;
   sdk?: ClaudeSdk;
   /** Runs something later, and answers how to call it off. */
   schedule?: (run: () => void, ms: number) => () => void;
@@ -153,6 +171,23 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Moves a conversation, and the folder that holds what it read, into a sandbox's home. */
+const realFiles: SessionFiles = {
+  async move(from, to) {
+    await mkdir(dirname(to), { recursive: true });
+    try {
+      await rename(from, to);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    }
+    await cp(from, to, { recursive: true, errorOnExist: false, force: true });
+    await rm(from, { recursive: true, force: true });
+    return true;
+  },
+};
+
 /**
  * Drives Claude Code through the Claude Agent SDK. Each session that is in
  * use has a process of its own, started with the session's mode, model and
@@ -167,6 +202,9 @@ export class ClaudeHarness implements Agent {
   private readonly sdk: ClaudeSdk;
   private readonly options: ClaudeHarnessOptions;
   private readonly env: Record<string, string>;
+  /** The owner's Claude Code home: what a session on this machine reads and writes. */
+  private readonly home: string;
+  private readonly files: SessionFiles;
   private readonly schedule: (run: () => void, ms: number) => () => void;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -200,6 +238,8 @@ export class ClaudeHarness implements Agent {
     for (const [key, value] of Object.entries({ ...process.env, ...options.env })) {
       if (value !== undefined) this.env[key] = value;
     }
+    this.home = claudeHomeOf(this.env);
+    this.files = options.files ?? realFiles;
     this.schedule =
       options.schedule ??
       ((run, ms) => {
@@ -249,27 +289,49 @@ export class ClaudeHarness implements Agent {
       effort: options.effort ?? null,
       branch: null,
       sandbox,
+      sandboxCwd: sandbox ? sandboxCwd(options.cwd) : null,
       createdAt: at,
       updatedAt: at,
       forkedFrom: null,
     };
   }
 
+  /**
+   * What Claude Code keeps here, and what each sandbox keeps in its own home. A sandbox's
+   * conversation says the folder as the sandbox knows it, which is put back to this machine's.
+   */
   async listSessions(filter: { archived: boolean }): Promise<HarnessSession[]> {
-    const all = await this.sdk.listSessions({ limit: LIST_LIMIT });
     const out: HarnessSession[] = [];
-    for (const info of all) {
+    const seen = new Set<string>();
+    const take = (info: WireSessionInfo, sandbox: { name: string; cwd: string } | null): void => {
       // One with no folder cannot be continued.
-      if (!info.cwd || (info.archived === true) !== filter.archived) continue;
+      if (!info.cwd || (info.archived === true) !== filter.archived) return;
+      if (seen.has(info.sessionId)) return;
+      seen.add(info.sessionId);
+      const cwd = sandbox?.cwd ?? info.cwd;
+      const where = sandbox?.name;
       const known = this.known.get(info.sessionId);
       if (known) known.stored = true;
-      else this.known.set(info.sessionId, { cwd: info.cwd, stored: true });
-      out.push(
-        toSession(info, {
-          ...(known?.model ? { model: known.model } : {}),
-          ...(known?.sandbox ? { sandbox: known.sandbox } : {}),
-        }),
-      );
+      else
+        this.known.set(info.sessionId, {
+          cwd,
+          stored: true,
+          ...(sandbox ? { sandbox: sandbox.name } : {}),
+        });
+      const extra: { model?: string; sandbox?: string } = {};
+      if (known?.model) extra.model = known.model;
+      const named = known?.sandbox ?? where;
+      if (named !== undefined) extra.sandbox = named;
+      out.push(toSession(info, { cwd, sandboxCwd: sandbox ? sandboxCwd(cwd) : null, ...extra }));
+    };
+    for (const info of await atHome(this.sdk, this.home).listSessions({ limit: LIST_LIMIT })) {
+      take(info, null);
+    }
+    for (const each of this.options.sandboxes?.made() ?? []) {
+      const list = await atHome(this.sdk, this.homeOf(each.name)).listSessions({
+        limit: LIST_LIMIT,
+      });
+      for (const info of list) take(info, each);
     }
     return out;
   }
@@ -281,7 +343,9 @@ export class ClaudeHarness implements Agent {
     const known = await this.find(sessionId);
     this.asked.set(sessionId, options);
     if (options.sandbox) known.sandbox = options.sandbox;
+    if (known.sandbox && known.stored) await this.adopt(sessionId, known);
     const at = this.now();
+    const inside = known.sandbox ? this.cwdOf(known) : null;
     const fresh: HarnessSession = {
       id: sessionId,
       harness: this.name,
@@ -292,24 +356,31 @@ export class ClaudeHarness implements Agent {
       effort: options.effort ?? null,
       branch: null,
       sandbox: known.sandbox ?? null,
+      sandboxCwd: inside,
       createdAt: at,
       updatedAt: at,
       forkedFrom: null,
     };
     if (!known.stored) return { session: fresh, turns: [], usage: null };
-    const dir = { dir: known.cwd };
+    const sdk = this.sdkFor(known);
+    const dir = { dir: inside ?? known.cwd };
     const [info, stored] = await Promise.all([
-      this.sdk.getSessionInfo(sessionId, dir),
-      this.sdk.getSessionMessages(sessionId, dir),
+      sdk.getSessionInfo(sessionId, dir),
+      sdk.getSessionMessages(sessionId, dir),
     ]);
     const messages = this.kept(sessionId, stored);
     const model = options.model ?? known.model ?? historyModel(messages) ?? "";
     if (model) known.model = model;
     return {
       session: info
-        ? toSession(info, { model, ...(known.sandbox ? { sandbox: known.sandbox } : {}) })
+        ? toSession(info, {
+            cwd: known.cwd,
+            sandboxCwd: inside,
+            model,
+            ...(known.sandbox ? { sandbox: known.sandbox } : {}),
+          })
         : { ...fresh, model },
-      turns: toTurns(messages, known.cwd),
+      turns: toTurns(messages, known.cwd, inside),
       usage: this.usage.get(sessionId) ?? null,
     };
   }
@@ -317,19 +388,22 @@ export class ClaudeHarness implements Agent {
   async forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession> {
     const known = await this.find(sessionId);
     if (!known.stored) throw new Error("There is nothing in this session to copy yet.");
-    const dir = { dir: known.cwd };
-    const messages = this.kept(sessionId, await this.sdk.getSessionMessages(sessionId, dir));
+    const sdk = this.sdkFor(known);
+    const dir = { dir: this.cwdOf(known) };
+    const messages = this.kept(sessionId, await sdk.getSessionMessages(sessionId, dir));
     // The whole of a conversation that was taken back ends where it was cut.
     const upTo = (turnId ? lastEntryOf(messages, turnId) : null) ?? this.cutOf(sessionId, messages);
-    const fork = await this.sdk.forkSession(sessionId, {
+    const fork = await sdk.forkSession(sessionId, {
       ...dir,
       ...(upTo ? { upToMessageId: upTo } : {}),
     });
     this.known.set(fork.sessionId, { ...known, stored: true });
-    const info = await this.sdk.getSessionInfo(fork.sessionId, dir);
+    const info = await sdk.getSessionInfo(fork.sessionId, dir);
     if (!info) throw new Error("Claude Code made the copy, and then could not find it.");
     return toSession(info, {
       forkedFrom: sessionId,
+      cwd: known.cwd,
+      sandboxCwd: known.sandbox ? dir.dir : null,
       ...(known.model ? { model: known.model } : {}),
       ...(known.sandbox ? { sandbox: known.sandbox } : {}),
     });
@@ -338,7 +412,8 @@ export class ClaudeHarness implements Agent {
   async renameSession(sessionId: string, title: string): Promise<void> {
     const known = await this.find(sessionId);
     // One with no turn yet has no place for a name: the client keeps the owner's own.
-    if (known.stored) await this.sdk.renameSession(sessionId, title, { dir: known.cwd });
+    if (known.stored)
+      await this.sdkFor(known).renameSession(sessionId, title, { dir: this.cwdOf(known) });
   }
 
   async archiveSession(sessionId: string, archived: boolean): Promise<void> {
@@ -346,15 +421,17 @@ export class ClaudeHarness implements Agent {
     const running = this.live.get(sessionId);
     if (running) this.stop(running);
     if (!known.stored) return;
-    if (archived) await this.sdk.archiveSession(sessionId, { dir: known.cwd });
-    else await this.sdk.unarchiveSession(sessionId, { dir: known.cwd });
+    const sdk = this.sdkFor(known);
+    const dir = { dir: this.cwdOf(known) };
+    if (archived) await sdk.archiveSession(sessionId, dir);
+    else await sdk.unarchiveSession(sessionId, dir);
   }
 
   async deleteSession(sessionId: string): Promise<void> {
     const known = await this.find(sessionId);
     const running = this.live.get(sessionId);
     if (running) this.stop(running);
-    if (known.stored) await this.sdk.deleteSession(sessionId, { dir: known.cwd });
+    if (known.stored) await this.sdkFor(known).deleteSession(sessionId, { dir: this.cwdOf(known) });
     this.known.delete(sessionId);
     this.cuts.delete(sessionId);
     this.asked.delete(sessionId);
@@ -373,7 +450,7 @@ export class ClaudeHarness implements Agent {
   async rewindSession(sessionId: string, turnId: string): Promise<{ from: string }> {
     const known = await this.find(sessionId);
     const stored = known.stored
-      ? await this.sdk.getSessionMessages(sessionId, { dir: known.cwd })
+      ? await this.sdkFor(known).getSessionMessages(sessionId, { dir: this.cwdOf(known) })
       : [];
     const messages = this.kept(sessionId, stored);
     const place = turnPlace(messages, turnId);
@@ -457,10 +534,12 @@ export class ClaudeHarness implements Agent {
   private async readModels(): Promise<ModelInfo[]> {
     let query: ClaudeQuery | null = null;
     try {
-      query = this.sdk.query({
-        prompt: new Inbox<WireUserMessage>(),
-        options: { ...this.shared(), cwd: homedir(), permissionMode: "default" },
-      });
+      query = await withHome(this.home, () =>
+        this.sdk.query({
+          prompt: new Inbox<WireUserMessage>(),
+          options: { ...this.shared(), cwd: homedir(), permissionMode: "default" },
+        }),
+      );
       const init = await query.initializationResult();
       return toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
     } catch (error) {
@@ -525,11 +604,55 @@ export class ClaudeHarness implements Agent {
   private async find(sessionId: string): Promise<Known> {
     const known = this.known.get(sessionId);
     if (known) return known;
-    const info = await this.sdk.getSessionInfo(sessionId);
-    if (!info?.cwd) throw new Error("This session is not in Claude Code's history.");
-    const found: Known = { cwd: info.cwd, stored: true };
-    this.known.set(sessionId, found);
-    return found;
+    const here = await atHome(this.sdk, this.home).getSessionInfo(sessionId);
+    if (here?.cwd) {
+      const found: Known = { cwd: here.cwd, stored: true };
+      this.known.set(sessionId, found);
+      return found;
+    }
+    for (const each of this.options.sandboxes?.made() ?? []) {
+      const info = await atHome(this.sdk, this.homeOf(each.name)).getSessionInfo(sessionId);
+      if (!info?.cwd) continue;
+      const found: Known = { cwd: each.cwd, stored: true, sandbox: each.name };
+      this.known.set(sessionId, found);
+      return found;
+    }
+    throw new Error("This session is not in Claude Code's history.");
+  }
+
+  /** The SDK as the session's conversation is kept: its sandbox's home, or the owner's. */
+  private sdkFor(known: Known): ClaudeSdk {
+    const sandbox = known.sandbox;
+    return atHome(this.sdk, sandbox ? this.homeOf(sandbox) : this.home);
+  }
+
+  /** Where a sandbox keeps its conversations, which reads without sbx being there. */
+  private homeOf(name: string): string {
+    const sandboxes = this.options.sandboxes;
+    if (!sandboxes) throw new Error("Sandboxes are not set up here.");
+    return sandboxes.home(name);
+  }
+
+  /** The folder as the session's agent knows it: a sandbox's own name for it, or this path. */
+  private cwdOf(known: Known): string {
+    return known.sandbox ? sandboxCwd(known.cwd) : known.cwd;
+  }
+
+  /**
+   * A conversation this machine kept before sandboxes had a home of their own is moved into its
+   * sandbox's, the first time it is opened. One already there is left as it is.
+   */
+  private async adopt(sessionId: string, known: Known): Promise<void> {
+    const sandbox = known.sandbox;
+    if (!sandbox) return;
+    const home = this.homeOf(sandbox);
+    if (await atHome(this.sdk, home).getSessionInfo(sessionId)) return;
+    if (!(await atHome(this.sdk, this.home).getSessionInfo(sessionId))) return;
+    // Its conversations are about to be found under the sandbox, so the folder it works in is kept.
+    this.options.sandboxes?.remember(sandbox, known.cwd);
+    const from = join(this.home, "projects", projectFolder(known.cwd), sessionId);
+    const to = join(home, "projects", projectFolder(sandboxCwd(known.cwd)), sessionId);
+    if (await this.files.move(`${from}.jsonl`, `${to}.jsonl`)) await this.files.move(from, to);
   }
 
   /** A stored conversation up to where the owner took it back. */
@@ -589,9 +712,10 @@ export class ClaudeHarness implements Agent {
     const cut = this.cuts.get(sessionId);
     if (cut === CUT_START && known.stored) {
       // Back before its first turn, a conversation begins again under the id it had.
-      await this.sdk.deleteSession(sessionId, { dir: known.cwd });
+      await this.sdkFor(known).deleteSession(sessionId, { dir: this.cwdOf(known) });
       known.stored = false;
     }
+    const inside = known.sandbox ? this.cwdOf(known) : null;
     const input = new Inbox<WireUserMessage>();
     // The sandbox may have been removed since, or its environment changed: it is made again, and
     // its agent starts in it.
@@ -600,23 +724,14 @@ export class ClaudeHarness implements Agent {
       : null;
     // Cycle's tools answer on this machine's loopback alone, which a sandbox is not on.
     const tools = sandbox ? undefined : this.options.tools;
-    const running: Running = {
-      sessionId,
-      known,
-      input,
-      reader: new StreamReader(sessionId, known.cwd),
-      spec,
-      turn: null,
-      steers: new Map(),
-      stopping: false,
-      cancelIdle: null,
-      closed: false,
-      query: this.sdk.query({
+    // The SDK's own reads of a home are the owner's here, whichever home the agent runs in.
+    const query = await withHome(this.home, () =>
+      this.sdk.query({
         prompt: input,
         options: {
           ...this.shared(sandbox),
           ...modeOptions(options.mode ?? "readOnly", sandbox !== null),
-          cwd: known.cwd,
+          cwd: this.cwdOf(known),
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
           ...(known.stored
@@ -625,6 +740,19 @@ export class ClaudeHarness implements Agent {
           canUseTool: (tool, toolInput, context) => this.ask(running, tool, toolInput, context),
         },
       }),
+    );
+    const running: Running = {
+      sessionId,
+      known,
+      input,
+      reader: new StreamReader(sessionId, known.cwd, inside),
+      spec,
+      turn: null,
+      steers: new Map(),
+      stopping: false,
+      cancelIdle: null,
+      closed: false,
+      query,
     };
     try {
       await running.query.initializationResult();

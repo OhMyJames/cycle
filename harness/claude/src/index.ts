@@ -1,4 +1,9 @@
-export { ClaudeHarness, type ClaudeHarnessOptions, type OwnTools } from "./claude-harness.ts";
+export {
+  ClaudeHarness,
+  type ClaudeHarnessOptions,
+  type OwnTools,
+  type SessionFiles,
+} from "./claude-harness.ts";
 export {
   type MadeSandbox,
   type SandboxAsk,
@@ -10,18 +15,22 @@ export {
   type SpawnRequest,
   SANDBOX_SERVICES,
   SbxSandboxes,
+  claudeHomeOf,
   createArgs,
   envFile,
   execArgs,
   plainSpec,
   projectFolder,
+  sandboxCwd,
   sandboxEnv,
+  sandboxHome,
   sandboxName,
   sbxSandboxes,
   specVersion,
   templateTag,
 } from "./sandbox.ts";
 export type { ClaudeQuery, ClaudeSdk, QueryOptions, SpawnedProcess } from "./sdk.ts";
+export { atHome, withHome } from "./sdk.ts";
 export {
   HARNESS_NAME,
   StreamReader,

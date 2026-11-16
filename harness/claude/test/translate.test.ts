@@ -112,6 +112,18 @@ test("each of Claude Code's tools is the item the conversation has for it", () =
     kind: "fileChange",
     changes: [{ path: "a.ts", change: "update", diff: "-a\n+b\n+c" }],
   });
+  // A sandbox's path for the folder is this machine's path for it, so a file it touched opens here.
+  expect(
+    toolItem(
+      "i",
+      "Read",
+      { file_path: "/home/agent/workspace/app/a.ts" },
+      "/Users/me/app",
+      "/home/agent/workspace/app",
+    ),
+  ).toMatchObject({
+    actions: [{ type: "read", path: "/Users/me/app/a.ts" }],
+  });
   expect(toolItem("i", "mcp__cycle__list_sessions", { n: 1 }, "/p")).toMatchObject({
     kind: "toolCall",
     server: "cycle",

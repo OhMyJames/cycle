@@ -335,6 +335,7 @@ export function toSession(
     effort: extra?.effort ?? thread.reasoningEffort,
     branch: thread.gitInfo?.branch ?? null,
     sandbox: null,
+    sandboxCwd: null,
     createdAt: thread.createdAt * 1000,
     updatedAt: thread.updatedAt * 1000,
     forkedFrom: thread.forkedFromId,

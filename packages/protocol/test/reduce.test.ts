@@ -22,6 +22,7 @@ const info: SessionInfo = {
   branch: null,
   worktree: null,
   sandbox: null,
+  sandboxCwd: null,
   createdAt: 0,
   updatedAt: 0,
   archived: false,

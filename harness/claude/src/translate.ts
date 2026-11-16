@@ -1,3 +1,4 @@
+import { toMachinePath } from "@cycle/protocol";
 import type {
   Approval,
   ApprovalResponse,
@@ -83,7 +84,10 @@ export function toolItem(
   name: string,
   input: Record<string, unknown>,
   cwd: string,
+  sandboxCwd: string | null = null,
 ): Item {
+  /** The path as this machine knows it: a sandbox names the folder its own way. */
+  const at = (path: string): string => toMachinePath(path, { cwd, sandboxCwd });
   const status: ItemStatus = "running";
   const command = (line: string, actions: CommandAction[]): Item => ({
     id,
@@ -106,22 +110,21 @@ export function toolItem(
     case "Bash":
       return command(text(input["command"]), []);
     case "Read": {
-      const path = text(input["file_path"]);
+      const path = at(text(input["file_path"]));
       return command(`Read ${path}`, [{ type: "read", path }]);
     }
     case "Glob":
     case "Grep": {
       const query = text(input["pattern"]);
-      return command(`${name} ${query}`, [
-        { type: "search", query, path: text(input["path"]) || null },
-      ]);
+      const path = text(input["path"]);
+      return command(`${name} ${query}`, [{ type: "search", query, path: path ? at(path) : null }]);
     }
     case "Edit":
-      return change(input["file_path"], input["old_string"], input["new_string"]);
+      return change(at(text(input["file_path"])), input["old_string"], input["new_string"]);
     case "Write":
-      return change(input["file_path"], "", input["content"]);
+      return change(at(text(input["file_path"])), "", input["content"]);
     case "NotebookEdit":
-      return change(input["notebook_path"], "", input["new_source"]);
+      return change(at(text(input["notebook_path"])), "", input["new_source"]);
     case "MultiEdit": {
       const edits = Array.isArray(input["edits"]) ? input["edits"].map(record) : [];
       return {
@@ -129,7 +132,7 @@ export function toolItem(
         kind: "fileChange",
         changes: [
           {
-            path: text(input["file_path"]),
+            path: at(text(input["file_path"])),
             change: "update",
             diff: edits
               .map((edit) => bareDiff(text(edit["old_string"]), text(edit["new_string"])))
@@ -303,15 +306,17 @@ export class StreamReader {
   last: TokenCount | null = null;
   private readonly sessionId: string;
   private readonly cwd: string;
+  private readonly sandboxCwd: string | null;
   private messageId = "";
   private readonly blocks = new Map<number, Streamed>();
   /** Items the pieces started, waiting for the whole text. */
   private readonly open: Streamed[] = [];
   private readonly tools = new Map<string, Item>();
 
-  constructor(sessionId: string, cwd: string) {
+  constructor(sessionId: string, cwd: string, sandboxCwd: string | null = null) {
     this.sessionId = sessionId;
     this.cwd = cwd;
+    this.sandboxCwd = sandboxCwd;
   }
 
   read(turnId: string, message: WireMessage): SessionEvent[] {
@@ -367,7 +372,13 @@ export class StreamReader {
         const events: SessionEvent[] = [];
         blocksOf(message.message?.content).forEach((block, index) => {
           if (block.type === "tool_use" && block.id) {
-            const item = toolItem(block.id, block.name ?? "", block.input ?? {}, this.cwd);
+            const item = toolItem(
+              block.id,
+              block.name ?? "",
+              block.input ?? {},
+              this.cwd,
+              this.sandboxCwd,
+            );
             this.tools.set(block.id, item);
             events.push(started(item));
             return;
@@ -446,7 +457,11 @@ function beginsTurn(message: WireHistoryMessage): boolean {
  * A stored conversation as turns. A turn begins at each prompt and is known by
  * that prompt's id, which is also what a running turn is known by.
  */
-export function toTurns(messages: WireHistoryMessage[], cwd: string): Turn[] {
+export function toTurns(
+  messages: WireHistoryMessage[],
+  cwd: string,
+  sandboxCwd: string | null = null,
+): Turn[] {
   const turns: Turn[] = [];
   const tools = new Map<string, { turn: Turn; at: number }>();
   let turn: Turn | null = null;
@@ -471,7 +486,9 @@ export function toTurns(messages: WireHistoryMessage[], cwd: string): Turn[] {
       blocks.forEach((block, index) => {
         if (block.type === "tool_use" && block.id) {
           tools.set(block.id, { turn: current, at: current.items.length });
-          current.items.push(toolItem(block.id, block.name ?? "", block.input ?? {}, cwd));
+          current.items.push(
+            toolItem(block.id, block.name ?? "", block.input ?? {}, cwd, sandboxCwd),
+          );
         } else if (block.type === "text" && block.text) {
           current.items.push({
             id: `${message.uuid}:${index}`,
@@ -575,19 +592,27 @@ export function historyModel(messages: WireHistoryMessage[]): string | null {
 
 export function toSession(
   info: WireSessionInfo,
-  extra?: { model?: string; forkedFrom?: string; sandbox?: string },
+  extra?: {
+    model?: string;
+    forkedFrom?: string;
+    sandbox?: string;
+    /** The folder as this machine knows it, when Claude Code stored another path. */
+    cwd?: string;
+    sandboxCwd?: string | null;
+  },
 ): HarnessSession {
   return {
     id: info.sessionId,
     harness: HARNESS_NAME,
     title: info.customTitle?.trim() || null,
     preview: info.firstPrompt ?? "",
-    cwd: info.cwd ?? "",
+    cwd: extra?.cwd ?? info.cwd ?? "",
     model: extra?.model ?? "",
     effort: null,
     // A commit checked out by itself is no branch.
     branch: info.gitBranch && info.gitBranch !== "HEAD" ? info.gitBranch : null,
     sandbox: extra?.sandbox ?? null,
+    sandboxCwd: extra?.sandboxCwd ?? null,
     createdAt: info.createdAt ?? info.lastModified,
     updatedAt: info.lastModified,
     forkedFrom: extra?.forkedFrom ?? null,
