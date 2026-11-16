@@ -18,6 +18,7 @@ import {
   type Settings,
   type TokenCount,
   type TurnOptions,
+  type TurnOrigin,
   type WorktreeInfo,
   activeTurn,
   coalesceEvents,
@@ -77,6 +78,8 @@ interface Live {
   cancelFlush: (() => void) | null;
   /** A turn was asked for and has not been announced yet. */
   starting: boolean;
+  /** Who asked for that turn, when not the owner: its announcement is marked with it. */
+  origin: TurnOrigin | null;
   usageSeen: TokenCount | null;
   /** The next usage report only sets the mark: it counts work done before now. */
   usageBaseline: boolean;
@@ -235,10 +238,12 @@ export class SessionHub {
     return info;
   }
 
+  /** `origin` marks a turn the owner did not ask for here, as a schedule's. */
   async send(
     sessionId: string,
     input: PromptInput,
     delivery: Delivery,
+    origin?: TurnOrigin,
   ): Promise<{ queued: boolean }> {
     const live = await this.ensureLive(sessionId);
     this.flush(live);
@@ -261,7 +266,11 @@ export class SessionHub {
       });
       return { queued: true };
     }
-    await this.startTurn(live, (options) => this.options.harness.send(sessionId, input, options));
+    await this.startTurn(
+      live,
+      (options) => this.options.harness.send(sessionId, input, options),
+      origin,
+    );
     return { queued: false };
   }
 
@@ -277,6 +286,13 @@ export class SessionHub {
 
   async interrupt(sessionId: string): Promise<void> {
     await this.options.harness.interrupt(sessionId);
+  }
+
+  /** Stops one task of the session's. Its end comes as the harness's news, as any other. */
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    const stop = this.options.harness.stopTask;
+    if (!stop) throw new SessionError("This session has no tasks to stop alone.");
+    await stop.call(this.options.harness, sessionId, taskId);
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
@@ -436,6 +452,7 @@ export class SessionHub {
       pending: [],
       cancelFlush: null,
       starting: false,
+      origin: null,
       usageSeen: null,
       usageBaseline,
       usedAt: this.options.now(),
@@ -556,9 +573,11 @@ export class SessionHub {
   private async startTurn(
     live: Live,
     start: (options: TurnOptions) => Promise<unknown>,
+    origin?: TurnOrigin,
   ): Promise<void> {
     const info = live.state.info;
     live.starting = true;
+    live.origin = origin ?? null;
     this.syncStatus(live);
     try {
       await start({
@@ -569,6 +588,7 @@ export class SessionHub {
       });
     } catch (error) {
       live.starting = false;
+      live.origin = null;
       this.apply(live, {
         type: "notice",
         sessionId: info.id,
@@ -586,6 +606,10 @@ export class SessionHub {
         if (live.state.info.harness !== event.harness) continue;
         const turn = activeTurn(live.state);
         live.starting = false;
+        // Its tasks went with it.
+        if (live.state.tasks.length > 0) {
+          this.apply(live, { type: "tasks.updated", sessionId: live.state.info.id, tasks: [] });
+        }
         if (turn) {
           this.apply(live, {
             type: "turn.completed",
@@ -616,12 +640,23 @@ export class SessionHub {
     if (event.type === "mcp.changed" || event.type === "limits.changed") return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
-    live.pending.push(event);
+    live.pending.push(this.marked(live, event));
     if (event.type === "item.delta") {
       live.cancelFlush ??= this.options.schedule(() => this.flush(live), DELTA_FLUSH_MS);
     } else {
       this.flush(live);
     }
+  }
+
+  /**
+   * The turn asked for here is the next one announced, and takes the origin it was asked with. A
+   * turn the agent began by itself says so, and is left as it is.
+   */
+  private marked(live: Live, event: SessionEvent): SessionEvent {
+    if (event.type !== "turn.started") return event;
+    const origin = live.starting && !event.origin ? live.origin : null;
+    live.origin = null;
+    return origin ? { ...event, origin } : event;
   }
 
   private apply(live: Live, event: SessionEvent): void {

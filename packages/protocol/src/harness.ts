@@ -156,7 +156,13 @@ export interface Agent {
   ): Promise<{ turnId: string }>;
   /** Adds input to the turn that is running. Fails when none is. */
   steer(sessionId: string, input: PromptInput): Promise<void>;
+  /** Stops the turn. Tasks in the background go on when the harness can stop them one by one. */
   interrupt(sessionId: string): Promise<void>;
+  /**
+   * Stops one task, which `tasks.updated` named. Only a harness whose tasks go on by themselves has
+   * it.
+   */
+  stopTask?(sessionId: string, taskId: string): Promise<void>;
   respondApproval(approvalId: string, response: ApprovalResponse): void;
 
   listModels(): Promise<ModelInfo[]>;

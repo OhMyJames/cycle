@@ -93,6 +93,9 @@ export class FakeHarness implements Harness {
     this.steered.push(input.text);
   };
   interrupt = async () => {};
+  stopTask = async (sessionId: string, taskId: string) => {
+    this.calls.push(`stop ${sessionId} ${taskId}`);
+  };
   respondApproval = (approvalId: string) => {
     this.calls.push(`approve ${approvalId}`);
   };

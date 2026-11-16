@@ -1,14 +1,15 @@
-import type {
-  Agent,
-  ApprovalResponse,
-  CreateSessionOptions,
-  Harness,
-  HarnessEvent,
-  HarnessSession,
-  ModelInfo,
-  PromptInput,
-  ReviewTarget,
-  TurnOptions,
+import {
+  type Agent,
+  type ApprovalResponse,
+  type CreateSessionOptions,
+  type Harness,
+  type HarnessEvent,
+  type HarnessSession,
+  type ModelInfo,
+  type PromptInput,
+  type ReviewTarget,
+  type TurnOptions,
+  harnessLabel,
 } from "@cycle/protocol";
 
 /**
@@ -137,6 +138,12 @@ export class Harnesses implements Harness {
 
   async interrupt(sessionId: string): Promise<void> {
     await (await this.of(sessionId)).interrupt(sessionId);
+  }
+
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    const agent = await this.of(sessionId);
+    if (!agent.stopTask) throw new Error(`${harnessLabel(agent.name)} has no tasks to stop alone.`);
+    await agent.stopTask(sessionId, taskId);
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {

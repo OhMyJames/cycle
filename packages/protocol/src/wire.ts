@@ -150,6 +150,8 @@ export interface Methods {
     result: Empty;
   };
   "session.interrupt": { params: { sessionId: string }; result: Empty };
+  /** Stops one task of the session's, by the id its `tasks` list gives. Its turn, if any, goes on. */
+  "session.stopTask": { params: { sessionId: string; taskId: string }; result: Empty };
   "session.update": {
     params: {
       sessionId: string;

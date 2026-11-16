@@ -277,7 +277,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         schedule.id,
       );
       try {
-        await hub.send(info.id, { text: schedule.prompt, images: [] }, "auto");
+        await hub.send(info.id, { text: schedule.prompt, images: [] }, "auto", {
+          kind: "schedule",
+          scheduleId: schedule.id,
+        });
       } catch (error) {
         throw new LaunchError(error instanceof Error ? error.message : String(error), info.id);
       }
@@ -380,6 +383,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     },
     "session.interrupt": async ({ sessionId }) => {
       await hub.interrupt(sessionId);
+      return {};
+    },
+    "session.stopTask": async ({ sessionId, taskId }) => {
+      await hub.stopTask(sessionId, taskId);
       return {};
     },
     "session.update": async (params) => {
