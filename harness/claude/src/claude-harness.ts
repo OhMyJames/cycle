@@ -18,6 +18,7 @@ import {
   type SlashCommand,
   type Turn,
   type TurnOptions,
+  type TurnOrigin,
   type Usage,
   toMachinePath,
 } from "@cycle/protocol";
@@ -25,6 +26,7 @@ import { cp, mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { type Sandboxes, claudeHomeOf, projectFolder, sandboxCwd } from "./sandbox.ts";
+import { agentBegins, turnOrigin } from "./tasks.ts";
 import {
   atHome,
   type ClaudeQuery,
@@ -134,6 +136,12 @@ interface Running {
   spec: string;
   /** The turn it runs now, known by the prompt that began it. */
   turn: string | null;
+  /** Whether the owner began that turn here, rather than the agent by itself. */
+  own: boolean;
+  /** The task whose news came since the last turn ended: the agent's next turn is for it. */
+  notified: string | null;
+  /** What the agent streamed for a turn of its own before the message that names the turn. */
+  early: WireMessage[];
   /** Prompts sent into the running turn, until it is known whether it took them. */
   steers: Map<string, PromptInput>;
   /** The owner asked it to stop: the turn's end is theirs, not a failure. */
@@ -425,9 +433,10 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (!known.stored) return { session: fresh, turns: [], usage: null };
     const sdk = this.sdkFor(known);
     const dir = { dir: inside ?? known.cwd };
-    const [info, stored] = await Promise.all([
+    const [info, stored, helpers] = await Promise.all([
       sdk.getSessionInfo(sessionId, dir),
       sdk.getSessionMessages(sessionId, dir),
+      this.helpers(sdk, sessionId, dir),
     ]);
     const messages = this.kept(sessionId, stored);
     const model = options.model ?? known.model ?? historyModel(messages) ?? "";
@@ -441,7 +450,7 @@ export class ClaudeHarness implements Agent, AgentReads {
             ...(known.sandbox ? { sandbox: known.sandbox } : {}),
           })
         : { ...fresh, model },
-      turns: toTurns(messages, known.cwd, inside),
+      turns: toTurns(messages, known.cwd, inside, helpers),
       usage: this.usage.get(sessionId) ?? null,
     };
   }
@@ -565,11 +574,18 @@ export class ClaudeHarness implements Agent, AgentReads {
     running.input.push(toUserMessage(input, id, sessionId, "next"));
   }
 
+  /** Stops the turn. Tasks in the background go on: each is stopped by itself. */
   async interrupt(sessionId: string): Promise<void> {
     const running = this.live.get(sessionId);
     if (!running || running.turn === null) return;
     running.stopping = true;
     await running.query.interrupt();
+  }
+
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    const running = this.live.get(sessionId);
+    if (!running) throw new Error("That task is no longer running.");
+    await running.query.stopTask(taskId);
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
@@ -846,6 +862,24 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (await this.files.move(`${from}.jsonl`, `${to}.jsonl`)) await this.files.move(from, to);
   }
 
+  /**
+   * What a stored session's helper agents said and did. One that cannot be read is left out: the
+   * conversation still opens.
+   *
+   * shortcut: every helper is read whole as the session opens; upgrade when sessions with many
+   * helpers open slowly, by reading one as the owner opens its task.
+   */
+  private async helpers(
+    sdk: ClaudeSdk,
+    sessionId: string,
+    dir: { dir: string },
+  ): Promise<WireHistoryMessage[][]> {
+    const ids = await sdk.listSubagents(sessionId, dir).catch(() => []);
+    return Promise.all(
+      ids.map((id) => sdk.getSubagentMessages(sessionId, id, dir).catch(() => [])),
+    );
+  }
+
   /** A stored conversation up to where the owner took it back. */
   private kept(sessionId: string, messages: WireHistoryMessage[]): WireHistoryMessage[] {
     const cut = this.cuts.get(sessionId);
@@ -881,6 +915,13 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (starting) return starting;
     const running = this.live.get(sessionId);
     if (running && (running.spec === spec || running.turn !== null)) return running;
+    // Another mode, model or effort is another process, and the tasks of this one would stop with
+    // it. They are not changed in place: what a mode lets run unasked is set as the process starts.
+    if (running && running.reader.background.length > 0) {
+      throw new Error(
+        "A task is still running in the background here. Stop it or let it finish before changing the mode, model or effort: Claude Code starts again with them, which would stop it.",
+      );
+    }
     if (running) this.stop(running);
     const launch = this.launch(sessionId, known, options, spec, model, effort).finally(() =>
       this.starting.delete(sessionId),
@@ -940,6 +981,9 @@ export class ClaudeHarness implements Agent, AgentReads {
           ...(known.stored
             ? { resume: sessionId, ...(cut && cut !== CUT_START ? { resumeSessionAt: cut } : {}) }
             : { sessionId }),
+          // What helper agents do is shown, and a task in the background is the owner's to stop.
+          forwardSubagentText: true,
+          perTaskStopAffordance: true,
           canUseTool: (tool, toolInput, context) => this.ask(running, tool, toolInput, context),
         },
       }),
@@ -951,6 +995,9 @@ export class ClaudeHarness implements Agent, AgentReads {
       reader: new StreamReader(sessionId, known.cwd, inside),
       spec,
       turn: null,
+      own: false,
+      notified: null,
+      early: [],
       steers: new Map(),
       stopping: false,
       cancelIdle: null,
@@ -994,19 +1041,40 @@ export class ClaudeHarness implements Agent, AgentReads {
     running.query.close();
   }
 
-  /** Starts a turn in the conversation. With `input`, the prompt is its first item. */
-  private begin(running: Running, turnId: string, input?: PromptInput): void {
+  /**
+   * Starts a turn in the conversation. With `input`, the prompt is its first item. With `origin`,
+   * the agent began it by itself.
+   */
+  private begin(running: Running, turnId: string, input?: PromptInput, origin?: TurnOrigin): void {
     running.cancelIdle?.();
     running.cancelIdle = null;
     running.turn = turnId;
+    running.own = origin === undefined;
+    running.notified = null;
     running.stopping = false;
     this.emit({
       type: "turn.started",
       sessionId: running.sessionId,
       turnId,
       startedAt: this.now(),
+      ...(origin ? { origin } : {}),
     });
     if (input) this.said(running, turnId, turnId, input);
+  }
+
+  /**
+   * A process with no turn is closed once it has been idle a while. One with a task in the
+   * background is not idle: closing it would stop the task.
+   */
+  private idle(running: Running): void {
+    running.cancelIdle?.();
+    running.cancelIdle = null;
+    if (running.turn !== null || running.closed || running.reader.background.length > 0) return;
+    running.cancelIdle = this.schedule(() => {
+      if (running.turn === null && !running.closed && running.reader.background.length === 0) {
+        this.stop(running);
+      }
+    }, IDLE_MS);
   }
 
   private said(running: Running, turnId: string, id: string, input: PromptInput): void {
@@ -1057,15 +1125,40 @@ export class ClaudeHarness implements Agent, AgentReads {
       this.finish(running, each);
       return;
     }
-    if (running.turn === null) return;
+    if (running.turn === null) {
+      // A task's news that comes between turns is what the agent's next turn of its own is for.
+      if (each.subtype === "task_notification") running.notified = each.task_id ?? null;
+      // The agent answers by itself, as it does a task's news: that is a turn of its own. Stored,
+      // it is known by its first whole message, so it waits for that message to begin, and what
+      // streamed before it follows.
+      if (agentBegins(each)) {
+        if (each.type !== "assistant") {
+          running.early.push(each);
+          return;
+        }
+        const origin = turnOrigin(undefined, running.notified);
+        this.begin(running, each.uuid ?? this.newId(), undefined, origin);
+        for (const early of running.early.splice(0)) {
+          for (const event of running.reader.read(running.turn, early)) this.emit(event);
+        }
+      }
+    }
     for (const event of running.reader.read(running.turn, each)) this.emit(event);
+    if (each.subtype === "background_tasks_changed") this.idle(running);
   }
 
   /** A turn ended: what it used, how it went, and the turn that follows by itself, if one does. */
   private finish(running: Running, result: WireMessage): void {
     const { sessionId } = running;
     const turnId = running.turn;
+    // A turn of the agent's that never said a whole message has nothing to show.
+    running.early.length = 0;
     if (turnId === null) return;
+    // The agent may have begun a turn for a task's news just as the owner's prompt went in, which
+    // then waits behind it: that turn's end is not the prompt's.
+    if (running.own && result.origin && result.origin.kind !== "human") {
+      if (!(result.user_message_uuids ?? []).includes(turnId)) return;
+    }
     const used = usedBy(result.modelUsage);
     const before = this.usage.get(sessionId);
     const usage: Usage = {
@@ -1095,16 +1188,14 @@ export class ClaudeHarness implements Agent, AgentReads {
     // A prompt sent into the turn that it ended without taking begins the next one.
     const taken = result.user_message_uuids;
     if (taken) for (const id of taken) running.steers.delete(id);
-    else running.steers.clear();
+    else if (running.own) running.steers.clear();
     const [next] = running.steers;
     if (next) {
       running.steers.delete(next[0]);
       this.begin(running, next[0], next[1]);
       return;
     }
-    running.cancelIdle = this.schedule(() => {
-      if (running.turn === null && !running.closed) this.stop(running);
-    }, IDLE_MS);
+    this.idle(running);
   }
 
   /**
@@ -1141,6 +1232,8 @@ export class ClaudeHarness implements Agent, AgentReads {
       this.emit({ type: "approval.resolved", sessionId, approvalId: id });
     }
     if (failure && !running.closed) this.options.onLog?.(`claude: ${message(failure)}`);
+    // Its tasks went with it.
+    for (const event of running.reader.abandon()) this.emit(event);
     const turnId = running.turn;
     if (turnId === null) return;
     running.turn = null;

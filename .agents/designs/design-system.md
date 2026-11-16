@@ -153,13 +153,20 @@ class. The full text is in the `title`.
   its rows. A single piece of work is its row alone.
 - What happens beside the conversation (a hook's addition, news of a helper agent) is one line in
   the style of a row, which opens to its text when it has one.
+- Work the agent handed off (a helper agent, a command in the background) is a task: one row that
+  says what it is and what it does now, with "Stopped", "Failed" or "Paused" at its end when it is.
+  It opens to what it was asked, then what it did, each piece as a row, a helper's own helpers nested
+  the same way. It stays in the turn that began it, however long it runs.
+- A turn the owner did not begin says who did in one muted line at its start: a schedule, the agent
+  taking up a task that ended, another session.
 - Questions a reply leaves for later sit under it, each with its answers as buttons. An answer goes
   to the composer, never straight to the agent.
 - Going back to before one of the owner's messages is under that message, and asks first: it
   removes the turns for good, and the files stay as they are.
 - The tail, under the last turn, in this order: queued prompts, the approval that waits for the
-  owner or else the status line (what the agent is doing, for how long), then one notice. What the
-  owner must act on is never below something they can ignore.
+  owner or else the status line (what the agent is doing, for how long), what runs in the background
+  (each task with its own Stop), then one notice. What the owner must act on is never below something
+  they can ignore.
 - The approval card never takes the focus, so an Enter meant for the composer cannot allow a
   command. `⌘ ↵` allows once and `⌘ .` denies, and the card says so; `⌘ ↵` stays the composer's
   while it holds text to steer with. Allowing for the whole session is a press, never a key.

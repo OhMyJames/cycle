@@ -1,12 +1,16 @@
-import type {
-  Approval,
-  Item,
-  Plan,
-  QueuedMessage,
-  SessionEvent,
-  SessionInfo,
-  Turn,
-  Usage,
+import {
+  type Approval,
+  type BackgroundTask,
+  type Item,
+  type ItemStatus,
+  type Plan,
+  type QueuedMessage,
+  type SessionEvent,
+  type SessionInfo,
+  type Turn,
+  type TurnOrigin,
+  type Usage,
+  taskLive,
 } from "./model.ts";
 
 /** Materialized view of a session's conversation: the fold of its event stream. */
@@ -17,6 +21,8 @@ export interface SessionState {
   plan: Plan | null;
   usage: Usage | null;
   queue: QueuedMessage[];
+  /** Tasks running in the background now, whichever turn began them. */
+  tasks: BackgroundTask[];
   notices: { level: "info" | "warning" | "error"; message: string }[];
   /** Number of the last frame folded in. */
   seq: number;
@@ -36,6 +42,7 @@ export function initialSessionState(info: SessionInfo, epoch = ""): SessionState
     plan: null,
     usage: null,
     queue: [],
+    tasks: [],
     notices: [],
     seq: 0,
     epoch,
@@ -61,8 +68,46 @@ function appendDelta(item: Item, delta: string): Item {
   }
 }
 
-function newTurn(id: string, startedAt: number | null): Turn {
-  return { id, status: "running", error: null, startedAt, durationMs: null, items: [], diff: null };
+function newTurn(id: string, startedAt: number | null, origin?: TurnOrigin): Turn {
+  return {
+    id,
+    ...(origin && origin.kind !== "owner" ? { origin } : {}),
+    status: "running",
+    error: null,
+    startedAt,
+    durationMs: null,
+    items: [],
+    diff: null,
+  };
+}
+
+/**
+ * Ends what is still running among `items`: what `ended` chooses. A task outlives its turn, and
+ * what it does is its own to end, so both are left as they are.
+ */
+export function endRunning(
+  items: Item[],
+  status: ItemStatus,
+  ended: (item: Item) => boolean,
+): Item[] {
+  let changed = false;
+  const next = items.map((item) => {
+    if (item.kind === "task" || !("status" in item) || item.status !== "running" || !ended(item)) {
+      return item;
+    }
+    changed = true;
+    return { ...item, status };
+  });
+  return changed ? next : items;
+}
+
+/** Puts an item in, and when it is a task that ended, ends what it left running. */
+function putItem(items: Item[], item: Item): Item[] {
+  const next = upsertItem(items, item);
+  if (item.kind !== "task" || taskLive(item.status)) return next;
+  return endRunning(next, item.status === "completed" ? "completed" : "failed", (each) => {
+    return each.parentId === item.id;
+  });
 }
 
 /**
@@ -116,7 +161,7 @@ export function reduceSession(state: SessionState, event: SessionEvent): Session
       return {
         ...state,
         plan: null,
-        turns: [...state.turns, newTurn(event.turnId, event.startedAt)],
+        turns: [...state.turns, newTurn(event.turnId, event.startedAt, event.origin)],
       };
     }
     case "item.started":
@@ -125,7 +170,7 @@ export function reduceSession(state: SessionState, event: SessionEvent): Session
         ...state,
         turns: withTurn(state.turns, event.turnId, (turn) => ({
           ...turn,
-          items: upsertItem(turn.items, event.item),
+          items: putItem(turn.items, event.item),
         })),
       };
     case "item.delta":
@@ -169,14 +214,16 @@ export function reduceSession(state: SessionState, event: SessionEvent): Session
           status: event.status,
           error: event.error,
           durationMs: event.durationMs,
-          // An item still running when its turn ends will never finish.
-          items: turn.items.map((item) =>
-            "status" in item && item.status === "running"
-              ? { ...item, status: event.status === "completed" ? "completed" : "failed" }
-              : item,
+          // An item still running when its turn ends will never finish, but for a task's.
+          items: endRunning(
+            turn.items,
+            event.status === "completed" ? "completed" : "failed",
+            (item) => item.parentId === undefined,
           ),
         })),
       };
+    case "tasks.updated":
+      return { ...state, tasks: event.tasks };
     case "turns.rewound": {
       const index = state.turns.findIndex((turn) => turn.id === event.turnId);
       if (index === -1) return state;

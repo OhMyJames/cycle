@@ -4,7 +4,9 @@ import {
   forkSession,
   getSessionInfo,
   getSessionMessages,
+  getSubagentMessages,
   listSessions,
+  listSubagents,
   query,
   renameSession,
   unarchiveSession,
@@ -51,6 +53,10 @@ export interface QueryOptions {
   allowDangerouslySkipPermissions?: boolean;
   sandbox?: { enabled: boolean; autoAllowBashIfSandboxed: boolean };
   includePartialMessages: boolean;
+  /** Helper agents' text and reasoning come too, not only their tool calls. */
+  forwardSubagentText?: boolean;
+  /** Tasks are stopped one by one, so stopping a turn leaves those in the background running. */
+  perTaskStopAffordance?: boolean;
   /** Keeps a copy of each file before the agent changes it, so `rewindFiles` can put it back. */
   enableFileCheckpointing?: boolean;
   /** Folders beyond `cwd` the session may reach. */
@@ -88,6 +94,8 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
     account?: WireAccountInfo;
   }>;
   interrupt(): Promise<unknown>;
+  /** Stops one task. Its news, that it stopped, follows on the stream. */
+  stopTask(taskId: string): Promise<void>;
   accountInfo(): Promise<WireAccountInfo>;
   supportedCommands(): Promise<WireSlashCommand[]>;
   mcpServerStatus(): Promise<WireMcpServerStatus[]>;
@@ -109,6 +117,14 @@ export interface ClaudeSdk {
   listSessions(options?: { limit?: number }): Promise<WireSessionInfo[]>;
   getSessionInfo(sessionId: string, options?: InFolder): Promise<WireSessionInfo | undefined>;
   getSessionMessages(sessionId: string, options?: InFolder): Promise<WireHistoryMessage[]>;
+  /** The helper agents a stored session ran, by id. */
+  listSubagents(sessionId: string, options?: InFolder): Promise<string[]>;
+  /** What one helper agent of a stored session said and did. */
+  getSubagentMessages(
+    sessionId: string,
+    agentId: string,
+    options?: InFolder,
+  ): Promise<WireHistoryMessage[]>;
   forkSession(
     sessionId: string,
     options?: InFolder & { upToMessageId?: string },
@@ -153,6 +169,10 @@ export function atHome(sdk: ClaudeSdk, home: string): ClaudeSdk {
       withHome(home, () => sdk.getSessionInfo(sessionId, options)),
     getSessionMessages: (sessionId, options) =>
       withHome(home, () => sdk.getSessionMessages(sessionId, options)),
+    listSubagents: (sessionId, options) =>
+      withHome(home, () => sdk.listSubagents(sessionId, options)),
+    getSubagentMessages: (sessionId, agentId, options) =>
+      withHome(home, () => sdk.getSubagentMessages(sessionId, agentId, options)),
     forkSession: (sessionId, options) => withHome(home, () => sdk.forkSession(sessionId, options)),
     renameSession: (sessionId, title, options) =>
       withHome(home, () => sdk.renameSession(sessionId, title, options)),
@@ -172,6 +192,9 @@ export const realSdk: ClaudeSdk = {
   listSessions: (options) => listSessions(options),
   getSessionInfo: (sessionId, options) => getSessionInfo(sessionId, options),
   getSessionMessages: (sessionId, options) => getSessionMessages(sessionId, options),
+  listSubagents: (sessionId, options) => listSubagents(sessionId, options),
+  getSubagentMessages: (sessionId, agentId, options) =>
+    getSubagentMessages(sessionId, agentId, options),
   forkSession: (sessionId, options) => forkSession(sessionId, options),
   renameSession: (sessionId, title, options) => renameSession(sessionId, title, options),
   archiveSession: (sessionId, options) => archiveSession(sessionId, options),

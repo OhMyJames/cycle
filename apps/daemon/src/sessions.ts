@@ -21,6 +21,7 @@ import {
   type Settings,
   type TokenCount,
   type TurnOptions,
+  type TurnOrigin,
   type WorktreeInfo,
   activeTurn,
   coalesceEvents,
@@ -82,6 +83,12 @@ interface Live {
   cancelFlush: (() => void) | null;
   /** A turn was asked for and has not been announced yet. */
   starting: boolean;
+  /** Who asked for that turn, when not the owner: its announcement is marked with it. */
+  origin: TurnOrigin | null;
+  /** The agent began a turn of its own while that turn was being asked for. */
+  overtaken: boolean;
+  /** Who asked for each queued prompt, when not the owner. */
+  queuedOrigins: Map<string, TurnOrigin>;
   usageSeen: TokenCount | null;
   /** The next usage report only sets the mark: it counts work done before now. */
   usageBaseline: boolean;
@@ -254,10 +261,12 @@ export class SessionHub {
     return info;
   }
 
+  /** `origin` marks a turn the owner did not ask for here, as a schedule's. */
   async send(
     sessionId: string,
     input: PromptInput,
     delivery: Delivery,
+    origin?: TurnOrigin,
   ): Promise<{ queued: boolean; id?: string }> {
     const live = await this.ensureLive(sessionId);
     this.flush(live);
@@ -281,30 +290,49 @@ export class SessionHub {
           // The turn ended first: the prompt waits its turn like any other.
         }
       }
-      const id = `q${++this.queueIds}`;
-      const { documents, ...rest } = input;
-      const queued: QueuedMessage = {
-        id,
-        ...rest,
-        ...(documents?.length
-          ? { documents: documents.map(({ kind, name }) => ({ kind, name })) }
-          : {}),
-      };
-      if (documents?.length) live.documents.set(id, documents);
-      this.apply(live, {
-        type: "queue.updated",
-        sessionId,
-        queue: [...live.state.queue, queued],
-      });
-      return { queued: true, id };
+      return { queued: true, id: this.enqueue(live, input, origin) };
     }
-    await this.startTurn(live, (options) => this.options.harness.send(sessionId, input, options));
-    return { queued: false };
+    let id: string | null = null;
+    await this.startTurn(
+      live,
+      (options) => this.options.harness.send(sessionId, input, options),
+      origin,
+      () => {
+        id = this.enqueue(live, input, origin);
+      },
+    );
+    return id ? { queued: true, id } : { queued: false };
+  }
+
+  /**
+   * Puts a prompt in the queue, at its end or, when it was already next, at its front, and answers
+   * its id. The page is told its documents by name: the daemon holds them until it is sent.
+   */
+  private enqueue(live: Live, input: PromptInput, origin?: TurnOrigin, front = false): string {
+    const id = `q${++this.queueIds}`;
+    const { documents, ...rest } = input;
+    const queued: QueuedMessage = {
+      id,
+      ...rest,
+      ...(documents?.length
+        ? { documents: documents.map(({ kind, name }) => ({ kind, name })) }
+        : {}),
+    };
+    if (documents?.length) live.documents.set(id, documents);
+    if (origin) live.queuedOrigins.set(id, origin);
+    const queue = live.state.queue;
+    this.apply(live, {
+      type: "queue.updated",
+      sessionId: live.state.info.id,
+      queue: front ? [queued, ...queue] : [...queue, queued],
+    });
+    return id;
   }
 
   unqueue(sessionId: string, id: string): void {
     const live = this.live.get(sessionId);
     if (!live) return;
+    live.queuedOrigins.delete(id);
     live.documents.delete(id);
     this.apply(live, {
       type: "queue.updated",
@@ -315,6 +343,13 @@ export class SessionHub {
 
   async interrupt(sessionId: string): Promise<void> {
     await this.options.harness.interrupt(sessionId);
+  }
+
+  /** Stops one task of the session's. Its end comes as the harness's news, as any other. */
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    const stop = this.options.harness.stopTask;
+    if (!stop) throw new SessionError("This session has no tasks to stop alone.");
+    await stop.call(this.options.harness, sessionId, taskId);
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
@@ -516,6 +551,9 @@ export class SessionHub {
       pending: [],
       cancelFlush: null,
       starting: false,
+      origin: null,
+      overtaken: false,
+      queuedOrigins: new Map(),
       usageSeen: null,
       usageBaseline,
       usedAt: this.options.now(),
@@ -639,9 +677,14 @@ export class SessionHub {
   private async startTurn(
     live: Live,
     start: (options: TurnOptions) => Promise<unknown>,
+    origin?: TurnOrigin,
+    /** Puts what was asked in the queue, when the agent began a turn of its own first. */
+    busy?: () => void,
   ): Promise<void> {
     const info = live.state.info;
     live.starting = true;
+    live.origin = origin ?? null;
+    live.overtaken = false;
     this.syncStatus(live);
     try {
       await start({
@@ -653,6 +696,18 @@ export class SessionHub {
       });
     } catch (error) {
       live.starting = false;
+      live.origin = null;
+      // The agent began a turn of its own while this one was asked for: what was asked waits behind
+      // it, or, when that turn already ended, is asked for again.
+      if (busy && live.overtaken) {
+        live.overtaken = false;
+        if (activeTurn(live.state)) {
+          busy();
+          this.syncStatus(live);
+          return;
+        }
+        return this.startTurn(live, start, origin, busy);
+      }
       this.apply(live, {
         type: "notice",
         sessionId: info.id,
@@ -670,6 +725,10 @@ export class SessionHub {
         if (live.state.info.harness !== event.harness) continue;
         const turn = activeTurn(live.state);
         live.starting = false;
+        // Its tasks went with it.
+        if (live.state.tasks.length > 0) {
+          this.apply(live, { type: "tasks.updated", sessionId: live.state.info.id, tasks: [] });
+        }
         if (turn) {
           this.apply(live, {
             type: "turn.completed",
@@ -705,12 +764,29 @@ export class SessionHub {
       return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
-    live.pending.push(event);
+    live.pending.push(this.marked(live, event));
     if (event.type === "item.delta") {
       live.cancelFlush ??= this.options.schedule(() => this.flush(live), DELTA_FLUSH_MS);
     } else {
       this.flush(live);
     }
+  }
+
+  /**
+   * The turn asked for here is the next one announced, and takes the origin it was asked with. A
+   * turn the agent began by itself says so, and is left as it is.
+   */
+  private marked(live: Live, event: SessionEvent): SessionEvent {
+    if (event.type !== "turn.started") return event;
+    if (event.origin) {
+      // Not the turn asked for, which is still to come, or is refused and then waits behind it.
+      if (live.starting) live.overtaken = true;
+      return event;
+    }
+    const origin = live.starting ? live.origin : null;
+    live.origin = null;
+    live.starting = false;
+    return origin ? { ...event, origin } : event;
   }
 
   private apply(live: Live, event: SessionEvent): void {
@@ -744,9 +820,6 @@ export class SessionHub {
   private after(live: Live, event: SessionEvent): void {
     const info = live.state.info;
     switch (event.type) {
-      case "turn.started":
-        live.starting = false;
-        break;
       case "item.started":
         if (event.item.kind === "userMessage" && !info.preview) {
           this.setInfo({ ...info, preview: event.item.text.slice(0, 200) });
@@ -789,6 +862,7 @@ export class SessionHub {
       // A stopped turn sends nothing more by itself: clients take the queue back, and the page that
       // queued a document still holds it.
       live.documents.clear();
+      live.queuedOrigins.clear();
       this.apply(live, {
         type: "queue.updated",
         sessionId: info.id,
@@ -808,11 +882,16 @@ export class SessionHub {
       images: next.images,
       ...(documents ? { documents } : {}),
     };
-    this.startTurn(live, (options) => this.options.harness.send(info.id, input, options)).catch(
-      () => {
-        // startTurn already told the session why.
-      },
-    );
+    const origin = live.queuedOrigins.get(next.id);
+    live.queuedOrigins.delete(next.id);
+    this.startTurn(
+      live,
+      (options) => this.options.harness.send(info.id, input, options),
+      origin,
+      () => this.enqueue(live, input, origin, true),
+    ).catch(() => {
+      // startTurn already told the session why.
+    });
   }
 
   private syncStatus(live: Live): void {
