@@ -63,8 +63,10 @@ Three things the SDK does not do the way codex does, and what was done instead:
   sandbox itself was not run: not on macOS, not on Linux.
 - A cut is lost if the daemon stops before the next prompt, and the turns come back.
 - A session compacted in Claude Code reads back from the summary on: the SDK gives nothing earlier.
-- Skills, the Connector and the account page are codex's only. Claude Code's plan steps are shown as
-  plain tool calls. What its helper agents do is shown inside their tasks since 2026-11-16:
-  [decision note](2026-11-16-helper-agents-are-tasks.md).
+- Skills, the Connector and the account page were codex's only. Since 2026-11-16 each agent has
+  its own, and Claude Code's are read in Cycle but not yet changed:
+  [2026-11-16-each-agent-declares-what-it-can-do.md](2026-11-16-each-agent-declares-what-it-can-do.md).
+  Claude Code's plan steps are shown as plain tool calls. What its helper agents do is shown inside
+  their tasks since 2026-11-16: [decision note](2026-11-16-helper-agents-are-tasks.md).
 - The SDK and the owner's `claude` may be of different versions in a packaged app. Not seen to fail;
   not tested across versions.

@@ -1,5 +1,5 @@
-import { type Item, type TurnOrigin, taskLive } from "@cycle/protocol";
-import { type ReactNode, memo, useContext, useMemo, useState } from "react";
+import { type FileRewind, type Item, type TurnOrigin, taskLive } from "@cycle/protocol";
+import { type ReactNode, memo, useContext, useEffect, useMemo, useState } from "react";
 import {
   type ActivityItem,
   activityRow,
@@ -75,17 +75,34 @@ export const UserBlock = memo(function UserBlock({
   steeredAfter,
   time,
   onRewind,
+  previewFiles,
 }: {
   item: Of<"userMessage">;
   /** How much work the turn had done when this joined it. */
   steeredAfter?: number | undefined;
   time?: string | undefined;
-  /** Takes the conversation back to before this message. Only a turn's first has it. */
-  onRewind?: (() => void) | undefined;
+  /**
+   * Takes the conversation back to before this message, and the files too with `files`. Only a
+   * turn's first has it.
+   */
+  onRewind?: ((files: boolean) => void) | undefined;
+  /** What putting the files back would change, for an agent that can. */
+  previewFiles?: (() => Promise<FileRewind | null>) | undefined;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [files, setFiles] = useState(false);
   return (
     <div className="user-message">
+      {item.documents?.length ? (
+        <div className="attachments">
+          {item.documents.map((document, index) => (
+            <span key={index} className="chip" title={document.name}>
+              <Icon name={document.kind === "pdf" ? "file" : "file-text"} size={14} />
+              {document.name || (document.kind === "pdf" ? "PDF" : "Text")}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {item.images.length ? (
         <div className="attachments">
           {item.images.map((src, index) =>
@@ -127,15 +144,89 @@ export const UserBlock = memo(function UserBlock({
       {confirming && onRewind ? (
         <ConfirmDialog
           title="Go back to before this message?"
-          text="This message and everything after it leave the conversation for good. Files the agent changed stay as they are. The message returns to the composer, to change and send again."
+          text={
+            files
+              ? "This message and everything after it leave the conversation for good, and the files the agent changed since go back as they were. The message returns to the composer, to change and send again."
+              : "This message and everything after it leave the conversation for good. Files the agent changed stay as they are. The message returns to the composer, to change and send again."
+          }
           action="Go back"
-          onConfirm={onRewind}
-          onClose={() => setConfirming(false)}
-        />
+          onConfirm={() => onRewind(files)}
+          onClose={() => {
+            setConfirming(false);
+            setFiles(false);
+          }}
+        >
+          {previewFiles ? (
+            <FilesBack preview={previewFiles} chosen={files} onChoose={setFiles} />
+          ) : null}
+        </ConfirmDialog>
       ) : null}
     </div>
   );
 });
+
+/** The choice to put the files back too, and what that would change once chosen. */
+function FilesBack({
+  preview,
+  chosen,
+  onChoose,
+}: {
+  preview: () => Promise<FileRewind | null>;
+  chosen: boolean;
+  onChoose(files: boolean): void;
+}) {
+  const [seen, setSeen] = useState<FileRewind | null | "reading">("reading");
+  // Read once, when the dialog opens: the turn's files do not move while it is up.
+  const [ask] = useState(() => preview);
+  useEffect(() => {
+    let current = true;
+    void ask().then((answer) => {
+      if (!current) return;
+      setSeen(answer);
+      if (!answer?.possible) onChoose(false);
+    });
+    return () => {
+      current = false;
+    };
+  }, [ask, onChoose]);
+  const possible = seen !== "reading" && seen !== null && seen.possible;
+  return (
+    <div className="files-back">
+      <label className="row meta">
+        <input
+          type="checkbox"
+          checked={chosen}
+          disabled={!possible}
+          onChange={(event) => onChoose(event.currentTarget.checked)}
+        />
+        Also put the files back
+      </label>
+      {seen === "reading" ? (
+        <p className="caption muted">Reading what would change…</p>
+      ) : seen === null || !seen.possible ? (
+        <p className="caption muted">{seen?.error ?? "The files cannot be put back."}</p>
+      ) : seen.files.length === 0 ? (
+        <p className="caption muted">No file changed since.</p>
+      ) : chosen ? (
+        <ul className="caption mono files-back-list">
+          {seen.files.map((path) => (
+            <li key={path} className="fade-x" title={path}>
+              {path}
+            </li>
+          ))}
+          <li className="muted tabular">
+            +{seen.insertions} −{seen.deletions}
+          </li>
+        </ul>
+      ) : (
+        <p className="caption muted tabular">
+          {seen.files.length} {seen.files.length === 1 ? "file" : "files"}, +{seen.insertions} −
+          {seen.deletions}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * What the agent said. Only a turn's last reply has actions under it, which the turn passes in. The

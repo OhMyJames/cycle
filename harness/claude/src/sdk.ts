@@ -12,9 +12,14 @@ import {
   unarchiveSession,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  WireAccountInfo,
+  WireContextUsage,
   WireHistoryMessage,
+  WireMcpServerStatus,
   WireMessage,
   WireModelInfo,
+  WireRewindFilesResult,
+  WireSlashCommand,
   WirePermissionResult,
   WirePermissionUpdate,
   WireSessionInfo,
@@ -52,6 +57,10 @@ export interface QueryOptions {
   forwardSubagentText?: boolean;
   /** Tasks are stopped one by one, so stopping a turn leaves those in the background running. */
   perTaskStopAffordance?: boolean;
+  /** Keeps a copy of each file before the agent changes it, so `rewindFiles` can put it back. */
+  enableFileCheckpointing?: boolean;
+  /** Folders beyond `cwd` the session may reach. */
+  additionalDirectories?: string[];
   settingSources: ("user" | "project" | "local")[];
   systemPrompt: { type: "preset"; preset: "claude_code" };
   canUseTool?: (
@@ -79,10 +88,20 @@ export interface QueryOptions {
 /** A running Claude Code process: its stream, and what can be asked of it meanwhile. */
 export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   /** Answers once the process is up, with what it offers. Fails if it could not start. */
-  initializationResult(): Promise<{ models?: WireModelInfo[] }>;
+  initializationResult(): Promise<{
+    models?: WireModelInfo[];
+    commands?: WireSlashCommand[];
+    account?: WireAccountInfo;
+  }>;
   interrupt(): Promise<unknown>;
   /** Stops one task. Its news, that it stopped, follows on the stream. */
   stopTask(taskId: string): Promise<void>;
+  accountInfo(): Promise<WireAccountInfo>;
+  supportedCommands(): Promise<WireSlashCommand[]>;
+  mcpServerStatus(): Promise<WireMcpServerStatus[]>;
+  /** `summary` answers from the last request's usage, with no request of its own. */
+  getContextUsage(options: { detail: "summary" | "full" }): Promise<WireContextUsage>;
+  rewindFiles(userMessageId: string, options: { dryRun: boolean }): Promise<WireRewindFilesResult>;
   /** Sets the MCP servers given to this process alone, over its own pipe. */
   setMcpServers(servers: Record<string, unknown>): Promise<unknown>;
   close(): void;

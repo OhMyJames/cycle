@@ -18,6 +18,8 @@ export interface WireBlock {
   content?: string | WireBlock[];
   is_error?: boolean;
   source?: { type: string; media_type?: string; data?: string; url?: string };
+  /** A `document` block's name. */
+  title?: string;
 }
 
 export interface WireUsage {
@@ -50,6 +52,72 @@ export interface WireModelUsage {
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
   contextWindow?: number;
+  costUSD?: number;
+}
+
+/** A `rate_limit_event`'s news of one of a subscription's limits. */
+export interface WireRateLimitInfo {
+  status: "allowed" | "allowed_warning" | "rejected";
+  /** Seconds since the epoch. */
+  resetsAt?: number;
+  rateLimitType?: string;
+  /** From 0 to 1. */
+  utilization?: number;
+  isUsingOverage?: boolean;
+}
+
+export interface WireSlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+  aliases?: string[];
+  builtin?: boolean;
+}
+
+/** Who is signed in. Of the credential, only where it is read from: no value. */
+export interface WireAccountInfo {
+  email?: string;
+  organization?: string;
+  subscriptionType?: string;
+  tokenSource?: string;
+  apiKeySource?: string;
+  apiProvider?: string;
+}
+
+export interface WireMcpServerStatus {
+  name: string;
+  status: "connected" | "failed" | "needs-auth" | "pending" | "disabled";
+  error?: string;
+  /** Its headers and environment hold secrets: only the names of the latter are ever read. */
+  config?: {
+    type?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string;
+  };
+  scope?: string;
+  source?: string;
+  tools?: { name: string; description?: string }[];
+}
+
+export interface WireContextUsage {
+  categories: {
+    id?: string;
+    name: string;
+    tokens: number;
+    kind: "used" | "free" | "buffer" | "deferred";
+  }[];
+  totalTokens: number;
+  maxTokens: number;
+}
+
+export interface WireRewindFilesResult {
+  canRewind: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
 }
 
 /** One message of a running query's stream. */
@@ -71,6 +139,12 @@ export interface WireMessage {
   /** The prompts the turn took in: the one that began it, and any that joined it. */
   user_message_uuids?: string[];
   modelUsage?: Record<string, WireModelUsage>;
+  /** What the process has cost so far, in all. */
+  total_cost_usd?: number;
+  /** A `rate_limit_event`. */
+  rate_limit_info?: WireRateLimitInfo;
+  /** A `commands_changed` system message: the whole list. */
+  commands?: WireSlashCommand[];
   /** Who a `result`'s turn was for, when not the owner: as a task's news. */
   origin?: WireOrigin;
   // A task's news: `system` messages with a `task_*` subtype.

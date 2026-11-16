@@ -1,9 +1,12 @@
 import {
+  type Agents,
   type ApprovalResponse,
+  type ContextUsage,
   type DayUsage,
   type Delivery,
   type EventFrame,
-  type Harness,
+  type FileRewind,
+  type PromptDocument,
   type HarnessEvent,
   type HarnessSession,
   type Params,
@@ -42,6 +45,8 @@ export interface SessionMeta {
   worktree?: WorktreeInfo;
   /** The sandbox its agent runs in, by name. */
   sandbox?: string;
+  /** Folders beyond its own its agent may reach. */
+  directories?: string[];
   /** The schedule whose run started it. */
   scheduleId?: string;
 }
@@ -51,7 +56,7 @@ export interface MetaFile {
 }
 
 export interface HubOptions {
-  harness: Harness;
+  harness: Agents;
   meta: JsonStore<MetaFile>;
   settings(): Settings;
   usage: UsageLedger;
@@ -88,6 +93,12 @@ interface Live {
   /** The next usage report only sets the mark: it counts work done before now. */
   usageBaseline: boolean;
   usedAt: number;
+  /**
+   * The documents of each queued prompt, by its id. The queue in the state names them only: up to
+   * 8 MB each would otherwise go out with every change to the queue and stay in the frames kept for
+   * a client that was away.
+   */
+  documents: Map<string, PromptDocument[]>;
 }
 
 /** Streamed text is sent on at most this often, as one frame. */
@@ -165,6 +176,7 @@ export class SessionHub {
     for (const info of this.infos.values()) {
       out.add(info.cwd);
       if (info.worktree) out.add(info.worktree.repo);
+      for (const directory of info.directories) out.add(directory);
     }
     return [...out];
   }
@@ -196,6 +208,11 @@ export class SessionHub {
       // A worktree's history is in its repository's folder, which its sandbox would not hold.
       throw new SessionError("A session in a sandbox works in the folder itself, not a worktree.");
     }
+    const directories = [...new Set(params.directories ?? [])].filter((path) => path !== cwd);
+    if (directories.length && params.sandbox) {
+      // A sandbox holds the session's folder alone.
+      throw new SessionError("A session in a sandbox reaches its own folder only.");
+    }
     if (params.worktree) {
       const made = await git.addWorktree({
         cwd,
@@ -217,6 +234,7 @@ export class SessionHub {
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(params.sandbox ? { sandboxed: params.sandbox } : {}),
+        ...(directories.length ? { directories } : {}),
       });
     } catch (error) {
       // A session that never started leaves no worktree behind.
@@ -230,6 +248,7 @@ export class SessionHub {
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
         ...(session.sandbox ? { sandbox: session.sandbox } : {}),
+        ...(directories.length ? { directories } : {}),
         ...(scheduleId ? { scheduleId } : {}),
       };
     });
@@ -248,11 +267,20 @@ export class SessionHub {
     input: PromptInput,
     delivery: Delivery,
     origin?: TurnOrigin,
-  ): Promise<{ queued: boolean }> {
+  ): Promise<{ queued: boolean; id?: string }> {
     const live = await this.ensureLive(sessionId);
     this.flush(live);
     if (this.info(sessionId).archived)
       throw new SessionError("Unarchive the session to continue it.");
+    if (input.documents?.length) {
+      const takes = (await this.options.harness.capabilitiesOf(sessionId)).attachments;
+      const refused = input.documents.find((document) => !takes.includes(document.kind));
+      if (refused) {
+        throw new SessionError(
+          `${harnessLabel(live.state.info.harness)} cannot read ${refused.kind === "pdf" ? "a PDF" : "a text file"} attached to a prompt.`,
+        );
+      }
+    }
     if (live.starting || activeTurn(live.state)) {
       if (delivery === "steer" && !live.starting) {
         try {
@@ -262,38 +290,50 @@ export class SessionHub {
           // The turn ended first: the prompt waits its turn like any other.
         }
       }
-      this.enqueue(live, input, origin);
-      return { queued: true };
+      return { queued: true, id: this.enqueue(live, input, origin) };
     }
-    let queued = false;
+    let id: string | null = null;
     await this.startTurn(
       live,
       (options) => this.options.harness.send(sessionId, input, options),
       origin,
       () => {
-        queued = true;
-        this.enqueue(live, input, origin);
+        id = this.enqueue(live, input, origin);
       },
     );
-    return { queued };
+    return id ? { queued: true, id } : { queued: false };
   }
 
-  /** Puts a prompt in the queue, at its end or, when it was already next, at its front. */
-  private enqueue(live: Live, input: PromptInput, origin?: TurnOrigin, front = false): void {
-    const queued: QueuedMessage = { id: `q${++this.queueIds}`, ...input };
-    if (origin) live.queuedOrigins.set(queued.id, origin);
+  /**
+   * Puts a prompt in the queue, at its end or, when it was already next, at its front, and answers
+   * its id. The page is told its documents by name: the daemon holds them until it is sent.
+   */
+  private enqueue(live: Live, input: PromptInput, origin?: TurnOrigin, front = false): string {
+    const id = `q${++this.queueIds}`;
+    const { documents, ...rest } = input;
+    const queued: QueuedMessage = {
+      id,
+      ...rest,
+      ...(documents?.length
+        ? { documents: documents.map(({ kind, name }) => ({ kind, name })) }
+        : {}),
+    };
+    if (documents?.length) live.documents.set(id, documents);
+    if (origin) live.queuedOrigins.set(id, origin);
     const queue = live.state.queue;
     this.apply(live, {
       type: "queue.updated",
       sessionId: live.state.info.id,
       queue: front ? [queued, ...queue] : [...queue, queued],
     });
+    return id;
   }
 
   unqueue(sessionId: string, id: string): void {
     const live = this.live.get(sessionId);
     if (!live) return;
     live.queuedOrigins.delete(id);
+    live.documents.delete(id);
     this.apply(live, {
       type: "queue.updated",
       sessionId,
@@ -331,20 +371,28 @@ export class SessionHub {
     );
   }
 
-  /** Takes the conversation back to before a turn. The files the agent changed stay. */
-  async rewind(sessionId: string, turnId: string): Promise<void> {
-    if (this.info(sessionId).archived) {
-      throw new SessionError("Unarchive the session to change it.");
+  /**
+   * Takes the conversation back to before a turn. With `files`, the files the agent changed since go
+   * back first, and nothing is taken back when they cannot; else they stay.
+   */
+  async rewind(sessionId: string, turnId: string, files = false): Promise<void> {
+    const live = await this.rewindable(sessionId, turnId);
+    if (files) {
+      const done = await this.options.harness.rewindFiles(sessionId, turnId, false);
+      if (!done.possible) {
+        throw new SessionError(done.error ?? "The files could not be put back.");
+      }
     }
-    const live = await this.ensureLive(sessionId);
-    this.flush(live);
-    if (live.starting || activeTurn(live.state)) {
-      throw new SessionError("Stop the turn before going back.");
+    let from: string;
+    try {
+      ({ from } = await this.options.harness.rewindSession(sessionId, turnId));
+    } catch (error) {
+      if (!files) throw error;
+      // The two would no longer agree: the owner must know which half happened.
+      throw new SessionError(
+        `The files were put back as they were before that turn, but the conversation could not go back: ${message(error)}. Its later turns are still there.`,
+      );
     }
-    if (!live.state.turns.some((turn) => turn.id === turnId)) {
-      throw new SessionError("That turn is not in this conversation.");
-    }
-    const { from } = await this.options.harness.rewindSession(sessionId, turnId);
     const known = live.state.turns.some((turn) => turn.id === from);
     this.apply(live, {
       type: "turns.rewound",
@@ -353,6 +401,24 @@ export class SessionHub {
     });
     // The agent counts again from the shorter history: its next report only sets the mark.
     live.usageBaseline = true;
+  }
+
+  /** What going back before a turn would do to the files. Nothing is changed. */
+  async previewRewind(sessionId: string, turnId: string): Promise<FileRewind> {
+    await this.rewindable(sessionId, turnId);
+    return this.options.harness.rewindFiles(sessionId, turnId, true);
+  }
+
+  /**
+   * What the session's context holds: its agent's parts when it can tell, else what the latest
+   * request read.
+   */
+  async context(sessionId: string): Promise<ContextUsage | null> {
+    const live = await this.ensureLive(sessionId);
+    const told = await this.options.harness.readContext(sessionId);
+    if (told) return told;
+    const usage = live.state.usage;
+    return usage ? { tokens: usage.last.total, window: usage.contextWindow, parts: [] } : null;
   }
 
   async compact(sessionId: string): Promise<void> {
@@ -439,6 +505,7 @@ export class SessionHub {
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
         ...(source.sandbox ? { sandbox: source.sandbox } : {}),
+        ...(source.directories.length ? { directories: source.directories } : {}),
       };
     });
     const info = this.remember({ ...session, forkedFrom: session.forkedFrom ?? sessionId }, false);
@@ -459,6 +526,21 @@ export class SessionHub {
 
   // Inside
 
+  private async rewindable(sessionId: string, turnId: string): Promise<Live> {
+    if (this.info(sessionId).archived) {
+      throw new SessionError("Unarchive the session to change it.");
+    }
+    const live = await this.ensureLive(sessionId);
+    this.flush(live);
+    if (live.starting || activeTurn(live.state)) {
+      throw new SessionError("Stop the turn before going back.");
+    }
+    if (!live.state.turns.some((turn) => turn.id === turnId)) {
+      throw new SessionError("That turn is not in this conversation.");
+    }
+    return live;
+  }
+
   private newLive(state: SessionState, usageBaseline: boolean): Live {
     return {
       state: {
@@ -475,6 +557,7 @@ export class SessionHub {
       usageSeen: null,
       usageBaseline,
       usedAt: this.options.now(),
+      documents: new Map(),
     };
   }
 
@@ -497,6 +580,7 @@ export class SessionHub {
       worktree: meta.worktree ?? null,
       sandbox: meta.sandbox ?? session.sandbox,
       sandboxCwd: session.sandboxCwd,
+      directories: meta.directories ?? [],
       createdAt: session.createdAt,
       updatedAt: Math.max(session.updatedAt, known?.updatedAt ?? 0),
       archived,
@@ -538,6 +622,7 @@ export class SessionHub {
       mode: meta.mode ?? known?.mode ?? this.options.settings().mode,
       ...(meta.model ? { model: meta.model } : {}),
       ...(meta.sandbox ? { sandbox: meta.sandbox } : {}),
+      ...(meta.directories?.length ? { directories: meta.directories } : {}),
     });
     const existing = this.live.get(sessionId);
     if (existing) return existing;
@@ -607,6 +692,7 @@ export class SessionHub {
         ...(info.model ? { model: info.model } : {}),
         ...(info.effort ? { effort: info.effort } : {}),
         ...(info.sandbox ? { sandbox: info.sandbox } : {}),
+        ...(info.directories.length ? { directories: info.directories } : {}),
       });
     } catch (error) {
       live.starting = false;
@@ -669,8 +755,13 @@ export class SessionHub {
       });
       return;
     }
-    // The connector's news is the daemon's to pass on, not any session's.
-    if (event.type === "mcp.changed" || event.type === "limits.changed") return;
+    // The connector's news, and the commands a prompt may begin with, are the daemon's to pass on.
+    if (
+      event.type === "mcp.changed" ||
+      event.type === "limits.changed" ||
+      event.type === "commands.changed"
+    )
+      return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
     live.pending.push(this.marked(live, event));
@@ -768,7 +859,9 @@ export class SessionHub {
     const [next, ...rest] = live.state.queue;
     if (!next) return;
     if (!completed) {
-      // A stopped turn sends nothing more by itself: clients take the queue back.
+      // A stopped turn sends nothing more by itself: clients take the queue back, and the page that
+      // queued a document still holds it.
+      live.documents.clear();
       live.queuedOrigins.clear();
       this.apply(live, {
         type: "queue.updated",
@@ -782,7 +875,13 @@ export class SessionHub {
       sessionId: info.id,
       queue: rest,
     });
-    const input = { text: next.text, images: next.images };
+    const documents = live.documents.get(next.id);
+    live.documents.delete(next.id);
+    const input = {
+      text: next.text,
+      images: next.images,
+      ...(documents ? { documents } : {}),
+    };
     const origin = live.queuedOrigins.get(next.id);
     live.queuedOrigins.delete(next.id);
     this.startTurn(

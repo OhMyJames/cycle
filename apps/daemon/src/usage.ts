@@ -11,6 +11,7 @@ export const ZERO_TOKENS: TokenCount = {
   total: 0,
   input: 0,
   cachedInput: 0,
+  cacheWrite: 0,
   output: 0,
   reasoning: 0,
 };
@@ -31,6 +32,7 @@ export function tokenDelta(from: TokenCount | null, to: TokenCount): TokenCount 
     total: to.total - from.total,
     input: to.input - from.input,
     cachedInput: to.cachedInput - from.cachedInput,
+    cacheWrite: to.cacheWrite - from.cacheWrite,
     output: to.output - from.output,
     reasoning: to.reasoning - from.reasoning,
   };
@@ -53,6 +55,8 @@ export class UsageLedger {
       day.tokens.total += tokens.total;
       day.tokens.input += tokens.input;
       day.tokens.cachedInput += tokens.cachedInput;
+      // A day written before cache writes were counted has none.
+      day.tokens.cacheWrite = (day.tokens.cacheWrite ?? 0) + tokens.cacheWrite;
       day.tokens.output += tokens.output;
       day.tokens.reasoning += tokens.reasoning;
       day.turns += turns;
@@ -66,12 +70,12 @@ export class UsageLedger {
   today(): DayUsage {
     const date = localDate(this.now());
     const day = this.store.value.days[date];
-    return { date, tokens: day?.tokens ?? { ...ZERO_TOKENS }, turns: day?.turns ?? 0 };
+    return { date, tokens: { ...ZERO_TOKENS, ...day?.tokens }, turns: day?.turns ?? 0 };
   }
 
   days(): DayUsage[] {
     return Object.entries(this.store.value.days)
-      .map(([date, day]) => ({ date, tokens: day.tokens, turns: day.turns }))
+      .map(([date, day]) => ({ date, tokens: { ...ZERO_TOKENS, ...day.tokens }, turns: day.turns }))
       .toSorted((a, b) => a.date.localeCompare(b.date));
   }
 }

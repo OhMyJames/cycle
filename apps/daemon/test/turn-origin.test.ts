@@ -20,7 +20,7 @@ async function setup() {
   const usageFile = await JsonStore.open<UsageFile>(memory(), { days: {} }, timers.schedule);
   const infos: SessionInfo[] = [];
   const hub = new SessionHub({
-    harness,
+    harness: harness.asAgents(),
     meta,
     settings: () => ({ model: null, effort: null, mode: "auto", worktree: false, projects: [] }),
     usage: new UsageLedger(usageFile, () => 0),
@@ -78,7 +78,9 @@ test("a schedule's prompt begins a turn marked as the schedule's, and the owner'
 test("a turn the agent begins by itself makes the owner's prompt wait for it", async () => {
   const { harness, hub, info, events } = await setup();
   harness.emit(begun(info.id, "a1", { kind: "task", taskId: "k" }));
-  expect(await hub.send(info.id, { text: "next", images: [] }, "auto")).toEqual({ queued: true });
+  expect(await hub.send(info.id, { text: "next", images: [] }, "auto")).toMatchObject({
+    queued: true,
+  });
   expect(harness.sent).toEqual([]);
   harness.emit(ended(info.id, "a1"));
   expect(harness.sent).toEqual([{ sessionId: info.id, text: "next" }]);
@@ -96,7 +98,7 @@ test("a prompt the agent's own turn got ahead of waits behind it, with whoever a
     throw new Error("A turn is already running in this session.");
   };
   const origin = { kind: "schedule", scheduleId: "sch1" } as const;
-  expect(await hub.send(info.id, { text: "nightly", images: [] }, "auto", origin)).toEqual({
+  expect(await hub.send(info.id, { text: "nightly", images: [] }, "auto", origin)).toMatchObject({
     queued: true,
   });
   expect(events().some((event) => event.type === "notice")).toBe(false);

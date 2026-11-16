@@ -1,4 +1,4 @@
-import type { Harness, TerminalHandle, TerminalInfo } from "@cycle/protocol";
+import type { Machine, TerminalHandle, TerminalInfo } from "@cycle/protocol";
 import type { Delay } from "./store.ts";
 
 interface Terminal {
@@ -12,7 +12,7 @@ interface Terminal {
 }
 
 export interface TerminalsOptions {
-  harness: Harness;
+  harness: Machine;
   schedule: Delay;
   shell: string;
   env: Record<string, string>;

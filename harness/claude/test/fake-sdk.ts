@@ -1,9 +1,14 @@
 import type { ClaudeQuery, ClaudeSdk, QueryOptions } from "../src/index.ts";
 import type {
+  WireAccountInfo,
+  WireContextUsage,
   WireHistoryMessage,
+  WireMcpServerStatus,
   WireMessage,
   WireModelInfo,
+  WireRewindFilesResult,
   WireSessionInfo,
+  WireSlashCommand,
   WireUserMessage,
 } from "../src/wire.ts";
 
@@ -38,9 +43,24 @@ export class FakeQuery implements ClaudeQuery {
     this.wake?.();
   }
 
+  /** Each file rewind asked of it: the prompt's id, and whether it was a dry run. */
+  readonly rewinds: { id: string; dryRun: boolean }[] = [];
+
   initializationResult = async () => {
     if (this.sdk.failStart) throw new Error(this.sdk.failStart);
-    return { models: this.sdk.models };
+    return {
+      models: this.sdk.models,
+      commands: this.sdk.commandsAt[this.options.cwd] ?? this.sdk.commands,
+      account: this.sdk.account,
+    };
+  };
+  accountInfo = async () => this.sdk.account;
+  supportedCommands = async () => this.sdk.commands;
+  mcpServerStatus = async () => this.sdk.serverReads.shift() ?? this.sdk.servers;
+  getContextUsage = async () => this.sdk.context;
+  rewindFiles = async (id: string, options: { dryRun: boolean }) => {
+    this.rewinds.push({ id, dryRun: options.dryRun });
+    return this.sdk.rewound;
   };
   interrupt = async () => {
     this.interrupts++;
@@ -98,6 +118,23 @@ export class FakeSdk implements ClaudeSdk {
     },
   ];
   failStart: string | null = null;
+  commands: WireSlashCommand[] = [
+    { name: "compact", description: "Compact the conversation", argumentHint: "", builtin: true },
+    { name: "deploy", description: "Ship it", argumentHint: "<env>" },
+  ];
+  account: WireAccountInfo = { email: "me@example.test", subscriptionType: "max" };
+  servers: WireMcpServerStatus[] = [];
+  /** What the next reads of the servers answer, in order, before `servers`. */
+  serverReads: WireMcpServerStatus[][] = [];
+  /** The commands a process started in a folder offers, when they differ from `commands`. */
+  commandsAt: Record<string, WireSlashCommand[]> = {};
+  context: WireContextUsage = { categories: [], totalTokens: 0, maxTokens: 200_000 };
+  rewound: WireRewindFilesResult = {
+    canRewind: true,
+    filesChanged: [],
+    insertions: 0,
+    deletions: 0,
+  };
 
   /** The process started last. */
   get last(): FakeQuery {

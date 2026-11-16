@@ -1,17 +1,34 @@
 import {
+  type AttachmentKind,
   type Plan,
+  type PromptDocument,
   SESSION_MODES,
   type SessionInfo,
   type SessionMode,
+  type SlashCommand,
   type Usage,
   activeTurn,
   harnessLabel,
 } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { type CycleApp, type Draft, projectOf, sessionTitle } from "../client/app.ts";
+import {
+  type CycleApp,
+  type Draft,
+  NO_CAPABILITIES,
+  projectOf,
+  sessionTitle,
+} from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
+import {
+  MAX_ATTACHMENT_BYTES,
+  acceptOf,
+  attachLabel,
+  attachmentKind,
+  matchCommands,
+  keepAccepted,
+} from "../lib/attach.ts";
 import { canSandbox, harnessesOf } from "../lib/draft.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
 import { reviewArgument, reviewTarget } from "../lib/review.ts";
@@ -39,8 +56,6 @@ import { Chevron } from "./items.tsx";
 import { PlanSteps } from "./plan.tsx";
 import { Menu, type MenuEntry, MenuList } from "./menu.tsx";
 import { ModelPicker } from "./model-picker.tsx";
-
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 export const MODE_LABELS: Record<SessionMode, { label: string; sub: string; icon: IconName }> = {
   readOnly: {
@@ -87,14 +102,30 @@ export function triggerAt(text: string, caret: number): Trigger | null {
   return null;
 }
 
-function readImage(file: File): Promise<string | null> {
-  if (!file.type.startsWith("image/") || file.size > MAX_IMAGE_BYTES) return Promise.resolve(null);
+function readDataUrl(file: File): Promise<string | null> {
+  if (file.size > MAX_ATTACHMENT_BYTES) return Promise.resolve(null);
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.addEventListener("load", () => resolve(String(reader.result)));
     reader.addEventListener("error", () => resolve(null));
     reader.readAsDataURL(file);
   });
+}
+
+/** A file the composer attaches: an image, or a document the agent can read. */
+type Attached = { kind: "image"; data: string } | { kind: "document"; document: PromptDocument };
+
+async function readAttachment(
+  file: File,
+  accepted: readonly AttachmentKind[],
+): Promise<Attached | null> {
+  const kind = attachmentKind(file, accepted);
+  if (!kind) return null;
+  const data = await readDataUrl(file);
+  if (!data) return null;
+  return kind === "image"
+    ? { kind: "image", data }
+    : { kind: "document", document: { kind, name: file.name, data } };
 }
 
 function ContextRing({ usage }: { usage: Usage | null }) {
@@ -106,7 +137,7 @@ function ContextRing({ usage }: { usage: Usage | null }) {
     <span
       className="context-ring tabular"
       data-high={used > 0.8}
-      title={`Context: ${compactNumber(usage.last.total)} of ${compactNumber(usage.contextWindow)} tokens (${percent}%). This session has used ${compactNumber(usage.total.total)} in all.`}
+      title={`Context: ${compactNumber(usage.last.total)} of ${compactNumber(usage.contextWindow)} tokens (${percent}%). This session has used ${compactNumber(usage.total.total)} in all${usage.costUsd !== null ? `, about $${usage.costUsd.toFixed(2)} so far` : ""}.`}
     >
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
         <circle
@@ -172,6 +203,17 @@ function DraftOptions({ draft }: { draft: Draft }) {
   const environments = useStore(app.sandboxes, (value) => value.environments);
   const chosen = boxable ? environments.find((one) => one.id === draft.sandbox) : undefined;
   const boxed = chosen !== undefined;
+  // Folders beyond its own, for an agent that can reach them outside a sandbox.
+  const reaches = useStore(
+    app.harnesses,
+    (list) => list.find((each) => each.name === draft.harness)?.capabilities.directories ?? false,
+  );
+  const addFolder = async () => {
+    const folder = await app.chooseFolder();
+    const now = app.view.get().draft;
+    if (!folder || !now || folder === now.cwd || now.directories.includes(folder)) return;
+    app.setView({ draft: { ...now, directories: [...now.directories, folder] } });
+  };
   const [branch, setBranch] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let current = true;
@@ -283,6 +325,33 @@ function DraftOptions({ draft }: { draft: Draft }) {
           />
         ) : null}
       </div>
+      {reaches && !boxed ? (
+        <div className="row">
+          {draft.directories.map((path) => (
+            <span key={path} className="chip" title={tildePath(path, home)}>
+              <Icon name="folder" size={14} /> {basename(path)}
+              <button
+                type="button"
+                className="ghost"
+                aria-label={`Stop reaching ${basename(path)}`}
+                onClick={() =>
+                  change({ directories: draft.directories.filter((other) => other !== path) })
+                }
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            className="ghost meta"
+            title="Let the agent reach another folder too"
+            onClick={() => void addFolder()}
+          >
+            <Icon name="plus" size={14} /> Add folder
+          </button>
+        </div>
+      ) : null}
       {boxed || branch === null || draft.worktree ? (
         <div className="caption muted hint-line">
           {boxed
@@ -363,10 +432,21 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   const pickable = harness ? models.filter((model) => model.harness === harness) : models;
   const key = sessionId ?? `new:${draft?.cwd ?? ""}`;
   const cwd = info?.cwd ?? draft?.cwd ?? "";
+  const capabilities = useStore(
+    app.harnesses,
+    (list) => list.find((each) => each.name === harness)?.capabilities ?? NO_CAPABILITIES,
+  );
 
   const [text, setText] = useState(() => app.draftText(key));
   const [images, setImages] = useState<string[]>([]);
   const thumbs = useRowKeys(images.length);
+  const [documents, setDocuments] = useState<PromptDocument[]>([]);
+  const chips = useRowKeys(documents.length);
+  // The latest attachments, for an effect that runs only when the agent changes.
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  const documentsRef = useRef(documents);
+  documentsRef.current = documents;
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [active, setActive] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -379,7 +459,10 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   // Each session keeps its own unsent text.
   useEffect(() => {
     setText(app.draftText(key));
-    setImages([]);
+    // What a stopped turn or an unsent first prompt gave back comes with its attachments.
+    const back = app.takeReturned(key);
+    setImages(back?.images ?? []);
+    setDocuments(back?.documents ?? []);
     setSuggestions([]);
     history.current = -1;
     field.current?.focus();
@@ -397,14 +480,38 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     app.saveDraftText(key, next);
   };
 
+  const accepted = capabilities.attachments;
+
+  // Another agent may take less: what it cannot read leaves the composer, and the owner is told.
+  useEffect(() => {
+    const kept = keepAccepted(
+      { images: imagesRef.current, documents: documentsRef.current },
+      accepted,
+    );
+    if (!kept.dropped.length) return;
+    setImages(kept.images);
+    setDocuments(kept.documents);
+    app.toast(
+      `Removed ${kept.dropped.join(", ")}: ${harnessLabel(harness ?? "")} cannot read it.`,
+      "info",
+    );
+  }, [app, accepted, harness]);
   const addFiles = useCallback(
     async (files: Iterable<File>) => {
-      const read = await Promise.all([...files].map(readImage));
-      const ok = read.filter((value): value is string => value !== null);
-      if (ok.length < read.length) app.toast("Only images up to 8 MB can be attached.", "error");
-      if (ok.length) setImages((current) => [...current, ...ok]);
+      const read = await Promise.all([...files].map((file) => readAttachment(file, accepted)));
+      const ok = read.filter((value): value is Attached => value !== null);
+      if (ok.length < read.length) {
+        const what = accepted.some((kind) => kind !== "image")
+          ? "Only images, PDFs and text files"
+          : "Only images";
+        app.toast(`${what} up to 8 MB can be attached.`, "error");
+      }
+      const added = ok.flatMap((each) => (each.kind === "image" ? [each.data] : []));
+      const readDocs = ok.flatMap((each) => (each.kind === "document" ? [each.document] : []));
+      if (added.length) setImages((current) => [...current, ...added]);
+      if (readDocs.length) setDocuments((current) => [...current, ...readDocs]);
     },
-    [app],
+    [app, accepted],
   );
 
   // A file dropped anywhere in the window lands here.
@@ -447,8 +554,38 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     if (found.kind === "/") {
       const matching = matchNames(commands, found.query);
       setSuggestions(matching);
+      if (capabilities.commands && harness) {
+        const show = (list: SlashCommand[]) => {
+          if (ticket !== lookup.current) return;
+          const own = new Set(matching.map((row) => row.label));
+          const wanted = matchCommands(list, found.query)
+            .filter((each) => !own.has(`/${each.name}`))
+            .slice(0, 12)
+            .map((each): Suggestion => ({
+              label: `/${each.name}`,
+              detail: [each.argumentHint, each.description].filter(Boolean).join(" · "),
+              icon: each.builtin ? "terminal" : "sparkle",
+              group: `${harnessLabel(harness)} commands`,
+              insert: `/${each.name} `,
+            }));
+          setSuggestions([...matching, ...wanted]);
+        };
+        const cached = sessionId ? app.commands.get()[sessionId] : undefined;
+        if (cached) {
+          show(cached);
+          return;
+        }
+        void app
+          .request("commands.list", sessionId ? { sessionId } : { harness, cwd })
+          .then(({ commands: list }) => {
+            if (sessionId) app.commands.update((all) => ({ ...all, [sessionId]: list }));
+            show(list);
+          })
+          .catch(() => {});
+        return;
+      }
       if (!cwd) return;
-      void app.request("skills.list", { cwd }).then(
+      void app.request("skills.list", { cwd, ...(harness ? { harness } : {}) }).then(
         ({ skills }) => {
           if (ticket !== lookup.current) return;
           const rows = skillRows(skills.filter((skill) => skill.enabled));
@@ -551,27 +688,35 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   };
 
   const submit = async (steer: boolean) => {
-    const argument = sessionId && !images.length ? reviewArgument(text) : null;
+    const argument = sessionId && !images.length && !documents.length ? reviewArgument(text) : null;
     if (sessionId && argument !== null) {
       await submitReview(sessionId, argument);
       return;
     }
     const prompt = expandMentions(text.trim(), mentioned);
-    if ((!prompt && !images.length) || sending) return;
+    if ((!prompt && !images.length && !documents.length) || sending) return;
     const attached = images;
+    const carried = documents;
     change("");
     setImages([]);
+    setDocuments([]);
     history.current = -1;
     if (sessionId) {
-      await app.send(sessionId, prompt, attached, steer ? "steer" : "auto");
+      if (!(await app.send(sessionId, prompt, attached, steer ? "steer" : "auto", carried))) {
+        // Not sent: the owner gets it back to try again.
+        change(plainMentions(prompt));
+        setImages(attached);
+        setDocuments(carried);
+      }
       return;
     }
     setSending(true);
-    const created = await app.createAndSend(prompt, attached);
+    const created = await app.createAndSend(prompt, attached, carried);
     setSending(false);
     if (!created) {
       change(plainMentions(prompt));
       setImages(attached);
+      setDocuments(carried);
     } else {
       app.saveDraftText(key, "");
     }
@@ -607,7 +752,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   const currentModel = info?.model || draft?.model || null;
   const currentEffort = (info ? info.effort : draft?.effort) ?? null;
   const mode = info?.mode ?? draft?.mode ?? "auto";
-  const canSend = (text.trim().length > 0 || images.length > 0) && !sending;
+  const canSend = (text.trim().length > 0 || images.length > 0 || documents.length > 0) && !sending;
   const archived = info?.archived ?? false;
 
   return (
@@ -644,6 +789,27 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
               active={active}
               onPick={(entry) => entry.onSelect()}
             />
+          </div>
+        ) : null}
+        {documents.length ? (
+          <div className="attachments">
+            {documents.map((document, index) => (
+              <span key={chips.keys[index]} className="chip" title={document.name}>
+                <Icon name={document.kind === "pdf" ? "file" : "file-text"} size={14} />
+                <span className="fade-x">{document.name}</span>
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-label={`Remove ${document.name}`}
+                  onClick={() => {
+                    chips.remove(index);
+                    setDocuments(documents.filter((_, other) => other !== index));
+                  }}
+                >
+                  <Icon name="x" size={12} />
+                </button>
+              </span>
+            ))}
           </div>
         ) : null}
         {images.length ? (
@@ -718,11 +884,15 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
           }}
         />
         <div className="composer-controls">
-          <label className="icon-button" title="Attach images" aria-label="Attach images">
+          <label
+            className="icon-button"
+            title={attachLabel(accepted)}
+            aria-label={attachLabel(accepted)}
+          >
             <Icon name="paperclip" />
             <input
               type="file"
-              accept="image/*"
+              accept={acceptOf(accepted)}
               multiple
               hidden
               onChange={(event) => {

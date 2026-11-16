@@ -85,6 +85,10 @@ function BlockView({
   askingId: string | undefined;
 }) {
   const app = useApp();
+  const rewindsFiles = useStore(app.harnesses, (list) => {
+    const harness = app.conversation(sessionId).get().state?.info.harness;
+    return list.find((each) => each.name === harness)?.capabilities.rewindFiles ?? false;
+  });
   switch (block.kind) {
     case "user":
       return (
@@ -93,13 +97,28 @@ function BlockView({
           steeredAfter={block.steeredAfter}
           onRewind={
             block.steeredAfter === undefined && turn.status !== "running"
-              ? () =>
+              ? (files) =>
                   // A review's prompt is codex's own: sent again it would be a turn, not a review.
                   void app.rewind(
                     sessionId,
                     turn.id,
                     turn.items.some((item) => item.kind === "review") ? "" : block.item.text,
+                    files,
                   )
+              : undefined
+          }
+          previewFiles={
+            block.steeredAfter === undefined && rewindsFiles
+              ? () =>
+                  app
+                    .request("session.rewind.preview", { sessionId, turnId: turn.id })
+                    .catch((error: unknown) => ({
+                      possible: false,
+                      error: error instanceof Error ? error.message : String(error),
+                      files: [],
+                      insertions: 0,
+                      deletions: 0,
+                    }))
               : undefined
           }
           time={

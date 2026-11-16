@@ -19,6 +19,7 @@ const count = (total: number) => ({
   total,
   input: total,
   cachedInput: 0,
+  cacheWrite: 0,
   output: 0,
   reasoning: 0,
 });
@@ -87,6 +88,22 @@ test("usage adds up per local day, and a total that fell counts in full", async 
     ["2026-01-06", 1, 1],
   ]);
   expect(localDate(now)).toBe("2026-01-06");
+});
+
+test("a day kept before cache writes were counted reads as none, and counts on", async () => {
+  const timers = manualSchedule();
+  const old = { total: 5, input: 5, cachedInput: 0, output: 0, reasoning: 0 };
+  const file = {
+    read: async () => JSON.stringify({ days: { "2026-01-05": { tokens: old, turns: 1 } } }),
+    write: async () => {},
+  };
+  const store = await JsonStore.open<UsageFile>(file, { days: {} }, timers.schedule);
+  const ledger = new UsageLedger(store, () => new Date(2026, 0, 5, 12).getTime());
+  expect(ledger.today().tokens.cacheWrite).toBe(0);
+  expect(ledger.add({ ...count(1), cacheWrite: 1 }, 0).tokens).toMatchObject({
+    total: 6,
+    cacheWrite: 1,
+  });
 });
 
 test("a store writes once for a burst of changes, and reads back what was written", async () => {
