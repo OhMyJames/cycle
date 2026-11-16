@@ -8,6 +8,9 @@ import {
   type ServerMessage,
 } from "@cycle/protocol";
 
+/** What the daemon answered a request with, as against a connection that failed under it. */
+export class DaemonError extends Error {}
+
 export type ConnectionStatus = "connecting" | "open" | "retrying" | "unauthorized";
 
 export interface ConnectionHandlers {
@@ -96,7 +99,7 @@ export class Connection {
       const pending = this.pending.get(message.id);
       if (!pending) return;
       this.pending.delete(message.id);
-      if ("error" in message) pending.reject(new Error(message.error.message));
+      if ("error" in message) pending.reject(new DaemonError(message.error.message));
       else pending.resolve(message.result);
     }
   }

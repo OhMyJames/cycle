@@ -36,7 +36,7 @@ import {
   reduceSession,
 } from "@cycle/protocol";
 import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
-import { Connection, type ConnectionStatus } from "./connection.ts";
+import { Connection, type ConnectionStatus, DaemonError } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
 import { draftKey, opening } from "../lib/opening.ts";
@@ -518,7 +518,7 @@ export class CycleApp {
     this.upsertSessions([info]);
     this.selectSession(info.id);
     const result = await opening({
-      send: () => this.send(info.id, text, images, "auto", documents),
+      send: () => this.trySend(info.id, text, images, "auto", documents),
       // Only a session with no turn is dropped; the owner chose this, for one that never started.
       drop: async () =>
         (this.conversation(info.id).get().state?.turns.length ?? 0) === 0 &&
@@ -546,19 +546,36 @@ export class CycleApp {
     delivery: Delivery,
     documents: PromptDocument[] = [],
   ): Promise<boolean> {
+    return (await this.trySend(sessionId, text, images, delivery, documents)) === "sent";
+  }
+
+  /**
+   * Sends a prompt. "Refused" is the daemon's own answer, so nothing was started; "lost" is a
+   * connection that failed under the request, which leaves it unknown whether the daemon took it.
+   */
+  private async trySend(
+    sessionId: string,
+    text: string,
+    images: string[],
+    delivery: Delivery,
+    documents: PromptDocument[],
+  ): Promise<"sent" | "refused" | "lost"> {
     host.prepareNotifications();
-    const sent = await this.attempt(
-      this.request("session.send", {
+    try {
+      const sent = await this.request("session.send", {
         sessionId,
         text,
         images,
         ...(documents.length ? { documents } : {}),
         delivery,
-      }),
-    );
-    // The daemon keeps a queued prompt's documents by name only: they come back from here.
-    if (sent?.id && documents.length) this.queuedDocuments.set(sent.id, documents);
-    return sent !== null;
+      });
+      // The daemon keeps a queued prompt's documents by name only: they come back from here.
+      if (sent?.id && documents.length) this.queuedDocuments.set(sent.id, documents);
+      return "sent";
+    } catch (error) {
+      this.toast(error instanceof Error ? error.message : String(error), "error");
+      return error instanceof DaemonError ? "refused" : "lost";
+    }
   }
 
   /** The documents of prompts this page queued, by queue id, to give back if the turn stops. */

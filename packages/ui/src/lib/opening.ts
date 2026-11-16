@@ -5,16 +5,19 @@ export const draftKey = (cwd: string): string => `new:${cwd}`;
 export type Opening = "sent" | "dropped" | "kept";
 
 /**
- * A session the page just made has nothing in it until its first prompt is taken. When the agent
- * does not take it (Claude Code cannot start, say), the session would stay as an empty "New
- * session": it is deleted instead, and the prompt stays in the composer it came from. A session
- * that cannot be deleted stays, and the prompt waits in its own composer.
+ * A session the page just made has nothing in it until its first prompt is taken. When the daemon
+ * refuses the prompt (Claude Code cannot start, say), the session would stay as an empty "New
+ * session": it is deleted instead, and the prompt stays in the composer it came from. When the
+ * connection failed under the request, the daemon may have taken it, so the session stays; so does
+ * one that cannot be deleted, and the prompt waits in its own composer.
  */
 export async function opening(ports: {
-  send: () => Promise<boolean>;
+  send: () => Promise<"sent" | "refused" | "lost">;
   /** Deletes the session, which holds nothing but the notice of what went wrong. True when it is gone. */
   drop: () => Promise<boolean>;
 }): Promise<Opening> {
-  if (await ports.send()) return "sent";
+  const sent = await ports.send();
+  if (sent === "sent") return "sent";
+  if (sent === "lost") return "kept";
   return (await ports.drop()) ? "dropped" : "kept";
 }

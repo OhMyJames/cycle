@@ -1542,9 +1542,12 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (each.type === "system" && each.subtype === "commands_changed" && each.commands) {
       running.commands = toCommands(each.commands);
       if (!running.known.sandbox) {
-        this.commandsAt.set(running.known.cwd, {
-          seen: running.seen.folder,
-          commands: running.commands,
+        // The process read the folder again to say this: the files as they are now are what it has.
+        const { cwd } = running.known;
+        const commands = running.commands;
+        void this.seen(cwd).then(({ folder }) => {
+          running.seen = { ...running.seen, folder };
+          this.commandsAt.set(cwd, { seen: folder, commands });
         });
       }
       this.emit({

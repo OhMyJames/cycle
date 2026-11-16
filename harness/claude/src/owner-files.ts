@@ -48,6 +48,24 @@ export function serversOf(text: string): string {
   }
 }
 
+/** The digests of the user config read so far, by the file's time and size, which it is read again for. */
+const digests = new Map<string, { at: string; digest: string }>();
+
+async function serversDigest(path: string): Promise<string> {
+  try {
+    // The file is large and rewritten often: it is read only when its time or size says so.
+    const found = await stat(path);
+    const at = `${found.mtimeMs}:${found.size}`;
+    const kept = digests.get(path);
+    if (kept?.at === at) return kept.digest;
+    const digest = String(Bun.hash(serversOf(await readFile(path, "utf8"))));
+    digests.set(path, { at, digest });
+    return digest;
+  } catch {
+    return "-";
+  }
+}
+
 /**
  * The modified time of each path, or a dash for one that is not there; for the user config, the
  * servers in it, as a digest so no value is kept. A folder's time changes when an entry directly
@@ -61,10 +79,7 @@ export const fileStamp: Stamp = async (paths) => {
   const parts = await Promise.all(
     paths.map((path) =>
       path.endsWith(".claude.json")
-        ? readFile(path, "utf8").then(
-            (text) => String(Bun.hash(serversOf(text))),
-            () => "-",
-          )
+        ? serversDigest(path)
         : stat(path).then(
             (found) => String(found.mtimeMs),
             () => "-",
