@@ -29,7 +29,7 @@ async function setup() {
   const meta = await JsonStore.open<MetaFile>(memory(), { sessions: {} }, timers.schedule);
   const usageFile = await JsonStore.open<UsageFile>(memory(), { days: {} }, timers.schedule);
   const hub = new SessionHub({
-    harness,
+    harness: harness.asAgents(),
     meta,
     settings: () => settings,
     usage: new UsageLedger(usageFile, () => 0),
@@ -60,9 +60,10 @@ const delta = (sessionId: string, text: string) =>
   ({ type: "item.delta", sessionId, turnId: "t1", itemId: "m", delta: text }) as const;
 
 const count = (total: number) => ({
-  total: { total, input: total, cachedInput: 0, output: 0, reasoning: 0 },
-  last: { total, input: total, cachedInput: 0, output: 0, reasoning: 0 },
+  total: { total, input: total, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+  last: { total, input: total, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0 },
   contextWindow: null,
+  costUsd: null,
 });
 
 test("streamed text is batched into one frame, numbered without gaps", async () => {

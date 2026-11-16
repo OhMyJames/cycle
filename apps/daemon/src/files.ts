@@ -1,4 +1,4 @@
-import type { FileContent, Harness } from "@cycle/protocol";
+import type { FileContent, Machine } from "@cycle/protocol";
 
 const MAX_TEXT = 1024 * 1024;
 const MAX_IMAGE = 8 * 1024 * 1024;
@@ -54,11 +54,11 @@ export function describeFile(path: string, bytes: Uint8Array): FileContent {
 
 /** Reads the agent's machine for the page, through the harness. */
 export class Files {
-  private readonly harness: Harness;
+  private readonly harness: Machine;
   /** The folders a file may be read under. */
   private readonly allowed: () => string[];
 
-  constructor(harness: Harness, allowed: () => string[]) {
+  constructor(harness: Machine, allowed: () => string[]) {
     this.harness = harness;
     this.allowed = allowed;
   }

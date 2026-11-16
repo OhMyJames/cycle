@@ -109,9 +109,16 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
 - A `Harness` is four parts: `Agent` (sessions, turns, models), `Connector`, `Account` and `Machine`.
   Codex gives all four and is the main one. Another agent beside it need only be an `Agent`, and
   `Harnesses` (`apps/daemon/src/harnesses.ts`) joins them: a model says which agent a new session
-  starts on, the session stays there, and files, commands, terminals, the Connector and the account
-  are the main agent's. An agent that cannot start is left out and the daemon runs without it. Why:
+  starts on, the session stays there, and files, commands and terminals are the main agent's. An
+  agent that cannot start is left out and the daemon runs without it. Why:
   [decision note](.agents/notes/2026-11-14-claude-code-beside-codex.md).
+- Each agent declares what it can do (`AgentCapabilities`: attachments, putting files back, its
+  commands, other folders, whether its Connector can be changed and whether it signs in through
+  Cycle), and `daemon.info` gives them to the page, which shows a session what its agent can. The
+  daemon sees the agents as `Agents`: a Connector and an Account are each agent's own, chosen by
+  name (`harness` on the wire, the main agent's when left out). Another agent's may only be read;
+  the rest is refused, never done by codex in its place. Why:
+  [decision note](.agents/notes/2026-11-16-each-agent-declares-what-it-can-do.md).
 - `harness/claude` is the only code that knows Claude Code, through the Claude Agent SDK.
   `translate.ts` is the pure mapping; `claude-harness.ts` runs one Claude Code process for each session
   in use, started with the session's mode, model and effort and closed after five idle minutes, and

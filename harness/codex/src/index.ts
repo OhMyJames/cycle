@@ -6,6 +6,7 @@ export {
   modePolicy,
   toCatalog,
   toItem,
+  toLimits,
   toMcpServers,
   toReviewTarget,
   toTurn,

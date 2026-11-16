@@ -30,6 +30,8 @@ export type Item =
       text: string;
       /** Paths or URLs of attached images. */
       images: string[];
+      /** Documents attached beside them, by name. */
+      documents?: { kind: DocumentKind; name: string }[];
     })
   | (ItemBase & {
       kind: "agentMessage";
@@ -130,8 +132,12 @@ export interface Plan {
 
 export interface TokenCount {
   total: number;
+  /** Everything read, cached or not. */
   input: number;
+  /** Of `input`, what was read from the cache. */
   cachedInput: number;
+  /** Of `input`, what was written to the cache. */
+  cacheWrite: number;
   output: number;
   reasoning: number;
 }
@@ -142,6 +148,45 @@ export interface Usage {
   /** The latest request alone: `last.total` is what the context holds now. */
   last: TokenCount;
   contextWindow: number | null;
+  /** What the session has cost, in US dollars, when the agent estimates it. */
+  costUsd: number | null;
+}
+
+/** What a session's context holds now, part by part when its agent can tell. */
+export interface ContextUsage {
+  tokens: number;
+  window: number | null;
+  parts: ContextPart[];
+}
+
+export interface ContextPart {
+  /** The agent's own name for the part, as `system_prompt` or `mcp_tools`; else its `name`. */
+  id: string;
+  name: string;
+  tokens: number;
+  /** `free` is room left; `buffer` is kept back for compaction; `deferred` is outside the window. */
+  kind: "used" | "free" | "buffer" | "deferred";
+}
+
+/** A command a session's agent runs when a prompt begins with `/name`. */
+export interface SlashCommand {
+  name: string;
+  description: string;
+  /** What it takes after its name, as `<file>`. */
+  argumentHint: string;
+  aliases: string[];
+  /** The agent's own, rather than the owner's, a project's or a plugin's. */
+  builtin: boolean;
+}
+
+/** What putting a session's files back before a turn changes, or changed. */
+export interface FileRewind {
+  /** False when the agent cannot, with `error` saying why. */
+  possible: boolean;
+  error: string | null;
+  files: string[];
+  insertions: number;
+  deletions: number;
 }
 
 /**
@@ -189,6 +234,8 @@ export interface SessionInfo {
   sandbox: string | null;
   /** Where that sandbox sees the folder. Null when its paths are this machine's. */
   sandboxCwd: string | null;
+  /** Folders beyond `cwd` its agent may reach. */
+  directories: string[];
   createdAt: number;
   updatedAt: number;
   archived: boolean;
@@ -241,6 +288,45 @@ export interface QueuedMessage {
   id: string;
   text: string;
   images: string[];
+  documents?: PromptDocument[];
+}
+
+export type DocumentKind = "pdf" | "text";
+export type AttachmentKind = "image" | DocumentKind;
+
+/** A document a prompt carries, beside its images. */
+export interface PromptDocument {
+  kind: DocumentKind;
+  name: string;
+  /** A base64 data URL. */
+  data: string;
+}
+
+/**
+ * What an agent can do beyond what every agent does. The page offers a session what its agent can,
+ * and the daemon refuses the rest.
+ */
+export interface AgentCapabilities {
+  /** What a prompt may carry. */
+  attachments: AttachmentKind[];
+  /** It can put the files back as they were before a turn, with the conversation. */
+  rewindFiles: boolean;
+  /** It lists the commands a prompt can begin with (`commands.list`); without, its skills. */
+  commands: boolean;
+  /** A session can reach folders beyond its own. */
+  directories: boolean;
+  /** Whether its MCP servers, skills and plugins can be changed in Cycle, or only read. */
+  connector: "edit" | "read";
+  /** Whether the owner signs in to it in Cycle. Without, its own command line does it. */
+  login: boolean;
+  /** It has switches of its own configuration: `features.*`. */
+  features: boolean;
+}
+
+/** An agent the daemon runs, and what it can do. */
+export interface HarnessInfo {
+  name: string;
+  capabilities: AgentCapabilities;
 }
 
 /** What a code review reads. */
@@ -460,7 +546,7 @@ export interface McpToolInfo {
   tokens: number | null;
 }
 
-/** What the agent can do beyond its tools, as the harness's own configuration says. */
+/** Codex's switches of what it may do beyond its tools, as its own configuration says. */
 export interface AgentFeatures {
   /** It may start helper agents. Their tools go with every request of a model that offers them. */
   subagents: boolean;
@@ -518,21 +604,39 @@ export interface PluginDetail {
   apps: string[];
 }
 
-export interface RateLimitWindow {
-  usedPercent: number;
+/** One of an account's usage limits. */
+export interface LimitWindow {
+  /** The agent's own name for it, as `five_hour` or `primary`. */
+  id: string;
+  /** As the owner reads it: "5-hour limit". */
+  name: string;
+  /** Null when the agent says only whether it is reached. */
+  usedPercent: number | null;
   windowMinutes: number | null;
+  /** Milliseconds since the epoch. */
   resetsAt: number | null;
+  /** `warning`: close to it. `exceeded`: requests are refused, or paid for as overage. */
+  status: "ok" | "warning" | "exceeded";
+  /** Requests past it are being paid for as overage. */
+  overage: boolean;
 }
 
+/** The owner's account with whoever serves a harness's models. No secret is in it. */
 export interface AccountInfo {
-  /** Null when signed out. */
-  kind: "apiKey" | "chatgpt" | "other" | null;
+  harness: string;
+  /**
+   * Null when signed out. `subscription`: a plan of the agent's maker, as ChatGPT's or Claude's.
+   * `cloud`: a cloud provider serves it, which signs in on its own.
+   */
+  kind: "apiKey" | "chatgpt" | "subscription" | "cloud" | "other" | null;
   email: string | null;
   plan: string | null;
-  limits: {
-    primary: RateLimitWindow | null;
-    secondary: RateLimitWindow | null;
-  } | null;
+  organization: string | null;
+  /** Who serves the models, when it is not the agent's maker: `bedrock`, `vertex`. */
+  provider: string | null;
+  /** Where the credential is read from, by name alone: never its value. */
+  source: string | null;
+  limits: LimitWindow[];
 }
 
 /** A sign-in under way: the owner finishes it in a browser at `url`. */

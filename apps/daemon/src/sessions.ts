@@ -1,9 +1,11 @@
 import {
+  type Agents,
   type ApprovalResponse,
+  type ContextUsage,
   type DayUsage,
   type Delivery,
   type EventFrame,
-  type Harness,
+  type FileRewind,
   type HarnessEvent,
   type HarnessSession,
   type Params,
@@ -41,6 +43,8 @@ export interface SessionMeta {
   worktree?: WorktreeInfo;
   /** The sandbox its agent runs in, by name. */
   sandbox?: string;
+  /** Folders beyond its own its agent may reach. */
+  directories?: string[];
   /** The schedule whose run started it. */
   scheduleId?: string;
 }
@@ -50,7 +54,7 @@ export interface MetaFile {
 }
 
 export interface HubOptions {
-  harness: Harness;
+  harness: Agents;
   meta: JsonStore<MetaFile>;
   settings(): Settings;
   usage: UsageLedger;
@@ -158,6 +162,7 @@ export class SessionHub {
     for (const info of this.infos.values()) {
       out.add(info.cwd);
       if (info.worktree) out.add(info.worktree.repo);
+      for (const directory of info.directories) out.add(directory);
     }
     return [...out];
   }
@@ -189,6 +194,11 @@ export class SessionHub {
       // A worktree's history is in its repository's folder, which its sandbox would not hold.
       throw new SessionError("A session in a sandbox works in the folder itself, not a worktree.");
     }
+    const directories = [...new Set(params.directories ?? [])].filter((path) => path !== cwd);
+    if (directories.length && params.sandbox) {
+      // A sandbox holds the session's folder alone.
+      throw new SessionError("A session in a sandbox reaches its own folder only.");
+    }
     if (params.worktree) {
       const made = await git.addWorktree({
         cwd,
@@ -210,6 +220,7 @@ export class SessionHub {
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(params.sandbox ? { sandboxed: params.sandbox } : {}),
+        ...(directories.length ? { directories } : {}),
       });
     } catch (error) {
       // A session that never started leaves no worktree behind.
@@ -223,6 +234,7 @@ export class SessionHub {
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
         ...(session.sandbox ? { sandbox: session.sandbox } : {}),
+        ...(directories.length ? { directories } : {}),
         ...(scheduleId ? { scheduleId } : {}),
       };
     });
@@ -244,6 +256,15 @@ export class SessionHub {
     this.flush(live);
     if (this.info(sessionId).archived)
       throw new SessionError("Unarchive the session to continue it.");
+    if (input.documents?.length) {
+      const takes = (await this.options.harness.capabilitiesOf(sessionId)).attachments;
+      const refused = input.documents.find((document) => !takes.includes(document.kind));
+      if (refused) {
+        throw new SessionError(
+          `${harnessLabel(live.state.info.harness)} cannot read ${refused.kind === "pdf" ? "a PDF" : "a text file"} attached to a prompt.`,
+        );
+      }
+    }
     if (live.starting || activeTurn(live.state)) {
       if (delivery === "steer" && !live.starting) {
         try {
@@ -298,18 +319,17 @@ export class SessionHub {
     );
   }
 
-  /** Takes the conversation back to before a turn. The files the agent changed stay. */
-  async rewind(sessionId: string, turnId: string): Promise<void> {
-    if (this.info(sessionId).archived) {
-      throw new SessionError("Unarchive the session to change it.");
-    }
-    const live = await this.ensureLive(sessionId);
-    this.flush(live);
-    if (live.starting || activeTurn(live.state)) {
-      throw new SessionError("Stop the turn before going back.");
-    }
-    if (!live.state.turns.some((turn) => turn.id === turnId)) {
-      throw new SessionError("That turn is not in this conversation.");
+  /**
+   * Takes the conversation back to before a turn. With `files`, the files the agent changed since go
+   * back first, and nothing is taken back when they cannot; else they stay.
+   */
+  async rewind(sessionId: string, turnId: string, files = false): Promise<void> {
+    const live = await this.rewindable(sessionId, turnId);
+    if (files) {
+      const done = await this.options.harness.rewindFiles(sessionId, turnId, false);
+      if (!done.possible) {
+        throw new SessionError(done.error ?? "The files could not be put back.");
+      }
     }
     const { from } = await this.options.harness.rewindSession(sessionId, turnId);
     const known = live.state.turns.some((turn) => turn.id === from);
@@ -320,6 +340,24 @@ export class SessionHub {
     });
     // The agent counts again from the shorter history: its next report only sets the mark.
     live.usageBaseline = true;
+  }
+
+  /** What going back before a turn would do to the files. Nothing is changed. */
+  async previewRewind(sessionId: string, turnId: string): Promise<FileRewind> {
+    await this.rewindable(sessionId, turnId);
+    return this.options.harness.rewindFiles(sessionId, turnId, true);
+  }
+
+  /**
+   * What the session's context holds: its agent's parts when it can tell, else what the latest
+   * request read.
+   */
+  async context(sessionId: string): Promise<ContextUsage | null> {
+    const live = await this.ensureLive(sessionId);
+    const told = await this.options.harness.readContext(sessionId);
+    if (told) return told;
+    const usage = live.state.usage;
+    return usage ? { tokens: usage.last.total, window: usage.contextWindow, parts: [] } : null;
   }
 
   async compact(sessionId: string): Promise<void> {
@@ -406,6 +444,7 @@ export class SessionHub {
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
         ...(source.sandbox ? { sandbox: source.sandbox } : {}),
+        ...(source.directories.length ? { directories: source.directories } : {}),
       };
     });
     const info = this.remember({ ...session, forkedFrom: session.forkedFrom ?? sessionId }, false);
@@ -425,6 +464,21 @@ export class SessionHub {
   }
 
   // Inside
+
+  private async rewindable(sessionId: string, turnId: string): Promise<Live> {
+    if (this.info(sessionId).archived) {
+      throw new SessionError("Unarchive the session to change it.");
+    }
+    const live = await this.ensureLive(sessionId);
+    this.flush(live);
+    if (live.starting || activeTurn(live.state)) {
+      throw new SessionError("Stop the turn before going back.");
+    }
+    if (!live.state.turns.some((turn) => turn.id === turnId)) {
+      throw new SessionError("That turn is not in this conversation.");
+    }
+    return live;
+  }
 
   private newLive(state: SessionState, usageBaseline: boolean): Live {
     return {
@@ -461,6 +515,7 @@ export class SessionHub {
       worktree: meta.worktree ?? null,
       sandbox: meta.sandbox ?? session.sandbox,
       sandboxCwd: session.sandboxCwd,
+      directories: meta.directories ?? [],
       createdAt: session.createdAt,
       updatedAt: Math.max(session.updatedAt, known?.updatedAt ?? 0),
       archived,
@@ -502,6 +557,7 @@ export class SessionHub {
       mode: meta.mode ?? known?.mode ?? this.options.settings().mode,
       ...(meta.model ? { model: meta.model } : {}),
       ...(meta.sandbox ? { sandbox: meta.sandbox } : {}),
+      ...(meta.directories?.length ? { directories: meta.directories } : {}),
     });
     const existing = this.live.get(sessionId);
     if (existing) return existing;
@@ -566,6 +622,7 @@ export class SessionHub {
         ...(info.model ? { model: info.model } : {}),
         ...(info.effort ? { effort: info.effort } : {}),
         ...(info.sandbox ? { sandbox: info.sandbox } : {}),
+        ...(info.directories.length ? { directories: info.directories } : {}),
       });
     } catch (error) {
       live.starting = false;
@@ -612,8 +669,13 @@ export class SessionHub {
       });
       return;
     }
-    // The connector's news is the daemon's to pass on, not any session's.
-    if (event.type === "mcp.changed" || event.type === "limits.changed") return;
+    // The connector's news, and the commands a prompt may begin with, are the daemon's to pass on.
+    if (
+      event.type === "mcp.changed" ||
+      event.type === "limits.changed" ||
+      event.type === "commands.changed"
+    )
+      return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
     live.pending.push(event);
@@ -710,7 +772,11 @@ export class SessionHub {
       sessionId: info.id,
       queue: rest,
     });
-    const input = { text: next.text, images: next.images };
+    const input = {
+      text: next.text,
+      images: next.images,
+      ...(next.documents ? { documents: next.documents } : {}),
+    };
     this.startTurn(live, (options) => this.options.harness.send(info.id, input, options)).catch(
       () => {
         // startTurn already told the session why.

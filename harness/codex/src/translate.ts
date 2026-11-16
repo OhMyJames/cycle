@@ -3,6 +3,7 @@ import type {
   HarnessSession,
   Item,
   ItemStatus,
+  LimitWindow,
   McpServerInfo,
   McpToolInfo,
   McpServerInput,
@@ -31,6 +32,7 @@ import type {
   WireSandboxPolicy,
   WireSkill,
   WireStatus,
+  WireRateLimitWindow,
   WireThread,
   WireTokenBreakdown,
   WireTokenUsage,
@@ -347,6 +349,8 @@ function toCount(raw: WireTokenBreakdown): TokenCount {
     total: raw.totalTokens,
     input: raw.inputTokens,
     cachedInput: raw.cachedInputTokens,
+    // Codex does not say what it wrote to the cache.
+    cacheWrite: 0,
     output: raw.outputTokens,
     reasoning: raw.reasoningOutputTokens,
   };
@@ -357,7 +361,42 @@ export function toUsage(raw: WireTokenUsage): Usage {
     total: toCount(raw.total),
     last: toCount(raw.last),
     contextWindow: raw.modelContextWindow,
+    costUsd: null,
   };
+}
+
+/** A window's name as the owner reads it, from how long it is. */
+function windowName(minutes: number | null, fallback: string): string {
+  if (minutes === null) return fallback;
+  if (minutes % (7 * 24 * 60) === 0)
+    return minutes === 7 * 24 * 60 ? "Weekly limit" : `${minutes / (7 * 24 * 60)}-week limit`;
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)}-day limit`;
+  if (minutes % 60 === 0) return `${minutes / 60}-hour limit`;
+  return `${minutes}-minute limit`;
+}
+
+/** Codex's two windows, the shorter first, as a list of limits. */
+export function toLimits(raw: {
+  primary: WireRateLimitWindow | null;
+  secondary: WireRateLimitWindow | null;
+}): LimitWindow[] {
+  const out: LimitWindow[] = [];
+  for (const [id, window, fallback] of [
+    ["primary", raw.primary, "Short limit"],
+    ["secondary", raw.secondary, "Long limit"],
+  ] as const) {
+    if (!window) continue;
+    out.push({
+      id,
+      name: windowName(window.windowDurationMins, fallback),
+      usedPercent: window.usedPercent,
+      windowMinutes: window.windowDurationMins,
+      resetsAt: window.resetsAt === null ? null : window.resetsAt * 1000,
+      status: window.usedPercent >= 100 ? "exceeded" : "ok",
+      overage: false,
+    });
+  }
+  return out;
 }
 
 export function toModel(raw: WireModel): ModelInfo {
