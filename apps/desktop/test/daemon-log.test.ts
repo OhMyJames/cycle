@@ -45,6 +45,38 @@ test("what an earlier start wrote is kept, and the file never grows past its lim
   expect(state.text.endsWith("line 19\n")).toBe(true);
 });
 
+test("the size is counted in bytes, a line with no end is not held for ever, and a disk that fails loses a line only", () => {
+  const { state, file } = memory();
+  const log = new DaemonLog(file, at("2026-11-16T10:00:00.000Z"), 120);
+  log.write("é".repeat(40) + "\n");
+  log.write("é".repeat(40) + "\n");
+  // Two lines of 80 bytes each do not fit in 120: the first was kept as the previous log.
+  expect(state.previous).not.toBeNull();
+  const quiet = memory();
+  const flood = new DaemonLog(quiet.file, at("2026-11-16T10:00:00.000Z"));
+  flood.write("x".repeat(20_000));
+  expect(quiet.state.text.length).toBeGreaterThan(20_000);
+  const broken = new DaemonLog(
+    {
+      size: () => {
+        throw new Error("gone");
+      },
+      append: () => {
+        throw new Error("disk full");
+      },
+      rotate: () => {
+        throw new Error("denied");
+      },
+    },
+    at("2026-11-16T10:00:00.000Z"),
+  );
+  expect(() => {
+    broken.start();
+    broken.write("a line\n");
+    broken.end();
+  }).not.toThrow();
+});
+
 test("a log opened already over its limit rotates before its first line", () => {
   const { state, file } = memory("x".repeat(500));
   const log = new DaemonLog(file, at("2026-11-16T10:00:00.000Z"), 200);

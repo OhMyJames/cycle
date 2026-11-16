@@ -97,6 +97,8 @@ export interface HubOptions {
 
 /** When each step of a turn happened on the daemon's clock, to say where its wait went. */
 interface TurnTiming {
+  /** The turn it is of, once it has been announced: an earlier turn's end is not this one's. */
+  turnId: string | null;
   /** The prompt reached the daemon, or left its queue. */
   asked: number;
   /** The harness took the prompt. */
@@ -777,7 +779,14 @@ export class SessionHub {
     asked = this.options.now(),
   ): Promise<void> {
     const info = live.state.info;
-    const timing: TurnTiming = { asked, accepted: null, started: null, item: null, stream: null };
+    const timing: TurnTiming = {
+      turnId: null,
+      asked,
+      accepted: null,
+      started: null,
+      item: null,
+      stream: null,
+    };
     live.timing = timing;
     live.starting = true;
     live.origin = origin ?? null;
@@ -959,7 +968,7 @@ export class SessionHub {
       }
       case "turn.completed":
         // Before the queue's next prompt starts a timing of its own.
-        this.report(live, event.status);
+        this.report(live, event.turnId, event.status);
         this.finished(live, event.status === "completed");
         break;
       default:
@@ -971,8 +980,16 @@ export class SessionHub {
     const timing = live.timing;
     if (!timing) return;
     const at = this.options.now();
-    if (event.type === "turn.started") timing.started ??= at;
-    else if (event.type === "item.delta") timing.stream ??= at;
+    if (event.type === "turn.started") {
+      // The first turn announced after the ask is the one asked for.
+      if (timing.turnId === null) {
+        timing.turnId = event.turnId;
+        timing.started = at;
+      }
+      return;
+    }
+    if (!("turnId" in event) || event.turnId !== timing.turnId) return;
+    if (event.type === "item.delta") timing.stream ??= at;
     else if (event.type === "item.started" && event.item.kind !== "userMessage") {
       timing.item ??= { at, kind: event.item.kind };
     }
@@ -982,9 +999,10 @@ export class SessionHub {
    * One line for a turn that ended: how long after the prompt each step came. Ids, the model's name
    * and times only: never what was asked or answered, nor anything that is a secret.
    */
-  private report(live: Live, status: string): void {
+  private report(live: Live, turnId: string, status: string): void {
     const timing = live.timing;
-    if (!timing) return;
+    // The end of a turn stopped just before is not this one's.
+    if (!timing || timing.turnId !== turnId) return;
     live.timing = null;
     const info = live.state.info;
     const after = (at: number | null) => (at === null ? "-" : `${at - timing.asked}ms`);

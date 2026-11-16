@@ -1,5 +1,13 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -84,6 +92,12 @@ async function ensureDaemon(): Promise<string> {
       },
       () => new Date(),
     );
+    // A file made before with wider rights is held to the owner's alone.
+    try {
+      chmodSync(file, 0o600);
+    } catch {
+      // Not there yet: it is made with them.
+    }
     log.start();
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => log.write(chunk));

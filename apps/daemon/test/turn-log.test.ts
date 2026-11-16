@@ -98,3 +98,24 @@ test("a turn the agent began by itself, and one that could not start, leave no l
   await expect(hub.send(info.id, { text: "x", images: [] }, "auto")).rejects.toThrow();
   expect(log).toEqual([]);
 });
+
+test("the end of a turn stopped just before is not charged to the turn that follows it", async () => {
+  const { harness, hub, clock, log } = await setup();
+  const info = await hub.create({ cwd: "/project" });
+  await hub.send(info.id, { text: "a", images: [] }, "auto");
+  harness.emit(start(info.id, "a"));
+  harness.emit(end(info.id, "a", "failed"));
+  expect(log).toHaveLength(1);
+  // The owner sends again at once, and the stopped turn's end arrives late.
+  clock.now = 3000;
+  await hub.send(info.id, { text: "b", images: [] }, "auto");
+  harness.emit(end(info.id, "a", "failed"));
+  expect(log).toHaveLength(1);
+  clock.now = 3100;
+  harness.emit(start(info.id, "b"));
+  clock.now = 3400;
+  harness.emit(end(info.id, "b", "completed"));
+  expect(log).toHaveLength(2);
+  expect(log[1]).toContain("completed");
+  expect(log[1]).toContain("started=100ms");
+});
