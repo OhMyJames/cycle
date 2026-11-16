@@ -180,8 +180,8 @@ export interface Agent {
    * Its conversation stays: `rewindSession` takes that back. With `rewindFiles` capability.
    */
   rewindFiles?(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind>;
-  /** The commands a session's prompt can begin with, or a new one's in no session. With `commands`. */
-  listCommands?(sessionId: string | null): Promise<SlashCommand[]>;
+  /** The commands a session's prompt can begin with, or a new session's in a folder. With `commands`. */
+  listCommands?(target: { sessionId: string } | { cwd: string }): Promise<SlashCommand[]>;
   /** What the session's context holds, part by part. Null when it cannot tell now. */
   readContext?(sessionId: string): Promise<ContextUsage | null>;
 }
@@ -258,8 +258,10 @@ export interface Agents
   connector(harness?: string): Connector;
   account(harness?: string): Account;
   rewindFiles(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind>;
-  /** A session's commands, or those of a new session of the agent `harness` names. */
-  listCommands(target: { sessionId: string } | { harness: string }): Promise<SlashCommand[]>;
+  /** A session's commands, or those of a new session in a folder, of the agent `harness` names. */
+  listCommands(
+    target: { sessionId: string } | { harness: string; cwd: string },
+  ): Promise<SlashCommand[]>;
   readContext(sessionId: string): Promise<ContextUsage | null>;
   /** The capabilities of the agent that keeps a session. */
   capabilitiesOf(sessionId: string): Promise<AgentCapabilities>;

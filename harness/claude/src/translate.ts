@@ -1005,7 +1005,10 @@ export function toMcpServers(raw: WireMcpServerStatus[], own: string | null): Mc
         name: server.name,
         enabled: server.status !== "disabled",
         transport,
-        pluginId: server.source === "plugin" ? server.name : null,
+        // A plugin's server is named `plugin:<plugin>:<server>`, a name its author chose, and the SDK
+        // says nothing of its marketplace: the `name@marketplace` id a plugin is known by cannot be
+        // made from it. A server that says it comes from a plugin is still marked by `source`.
+        pluginId: null,
         status:
           server.status === "needs-auth"
             ? "needsAuth"

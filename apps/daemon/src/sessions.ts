@@ -6,6 +6,7 @@ import {
   type Delivery,
   type EventFrame,
   type FileRewind,
+  type PromptDocument,
   type HarnessEvent,
   type HarnessSession,
   type Params,
@@ -85,6 +86,12 @@ interface Live {
   /** The next usage report only sets the mark: it counts work done before now. */
   usageBaseline: boolean;
   usedAt: number;
+  /**
+   * The documents of each queued prompt, by its id. The queue in the state names them only: up to
+   * 8 MB each would otherwise go out with every change to the queue and stay in the frames kept for
+   * a client that was away.
+   */
+  documents: Map<string, PromptDocument[]>;
 }
 
 /** Streamed text is sent on at most this often, as one frame. */
@@ -251,7 +258,7 @@ export class SessionHub {
     sessionId: string,
     input: PromptInput,
     delivery: Delivery,
-  ): Promise<{ queued: boolean }> {
+  ): Promise<{ queued: boolean; id?: string }> {
     const live = await this.ensureLive(sessionId);
     this.flush(live);
     if (this.info(sessionId).archived)
@@ -274,13 +281,22 @@ export class SessionHub {
           // The turn ended first: the prompt waits its turn like any other.
         }
       }
-      const queued: QueuedMessage = { id: `q${++this.queueIds}`, ...input };
+      const id = `q${++this.queueIds}`;
+      const { documents, ...rest } = input;
+      const queued: QueuedMessage = {
+        id,
+        ...rest,
+        ...(documents?.length
+          ? { documents: documents.map(({ kind, name }) => ({ kind, name })) }
+          : {}),
+      };
+      if (documents?.length) live.documents.set(id, documents);
       this.apply(live, {
         type: "queue.updated",
         sessionId,
         queue: [...live.state.queue, queued],
       });
-      return { queued: true };
+      return { queued: true, id };
     }
     await this.startTurn(live, (options) => this.options.harness.send(sessionId, input, options));
     return { queued: false };
@@ -289,6 +305,7 @@ export class SessionHub {
   unqueue(sessionId: string, id: string): void {
     const live = this.live.get(sessionId);
     if (!live) return;
+    live.documents.delete(id);
     this.apply(live, {
       type: "queue.updated",
       sessionId,
@@ -331,7 +348,16 @@ export class SessionHub {
         throw new SessionError(done.error ?? "The files could not be put back.");
       }
     }
-    const { from } = await this.options.harness.rewindSession(sessionId, turnId);
+    let from: string;
+    try {
+      ({ from } = await this.options.harness.rewindSession(sessionId, turnId));
+    } catch (error) {
+      if (!files) throw error;
+      // The two would no longer agree: the owner must know which half happened.
+      throw new SessionError(
+        `The files were put back as they were before that turn, but the conversation could not go back: ${message(error)}. Its later turns are still there.`,
+      );
+    }
     const known = live.state.turns.some((turn) => turn.id === from);
     this.apply(live, {
       type: "turns.rewound",
@@ -493,6 +519,7 @@ export class SessionHub {
       usageSeen: null,
       usageBaseline,
       usedAt: this.options.now(),
+      documents: new Map(),
     };
   }
 
@@ -759,7 +786,9 @@ export class SessionHub {
     const [next, ...rest] = live.state.queue;
     if (!next) return;
     if (!completed) {
-      // A stopped turn sends nothing more by itself: clients take the queue back.
+      // A stopped turn sends nothing more by itself: clients take the queue back, and the page that
+      // queued a document still holds it.
+      live.documents.clear();
       this.apply(live, {
         type: "queue.updated",
         sessionId: info.id,
@@ -772,10 +801,12 @@ export class SessionHub {
       sessionId: info.id,
       queue: rest,
     });
+    const documents = live.documents.get(next.id);
+    live.documents.delete(next.id);
     const input = {
       text: next.text,
       images: next.images,
-      ...(next.documents ? { documents: next.documents } : {}),
+      ...(documents ? { documents } : {}),
     };
     this.startTurn(live, (options) => this.options.harness.send(info.id, input, options)).catch(
       () => {

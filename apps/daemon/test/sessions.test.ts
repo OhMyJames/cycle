@@ -108,7 +108,9 @@ test("a prompt sent during a turn waits, then runs when the turn completes", asy
   const info = await hub.create({ cwd: "/project" });
   await hub.send(info.id, { text: "one", images: [] }, "auto");
   harness.emit(start(info.id, "t1"));
-  expect(await hub.send(info.id, { text: "two", images: [] }, "auto")).toEqual({ queued: true });
+  expect(await hub.send(info.id, { text: "two", images: [] }, "auto")).toMatchObject({
+    queued: true,
+  });
   expect(await hub.send(info.id, { text: "now", images: [] }, "steer")).toEqual({ queued: false });
   expect(harness.steered).toEqual(["now"]);
   expect(harness.sent.map((sent) => sent.text)).toEqual(["one"]);

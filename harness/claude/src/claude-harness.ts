@@ -62,6 +62,7 @@ import {
 import type {
   WireAccountInfo,
   WireHistoryMessage,
+  WireMcpServerStatus,
   WireMessage,
   WireSessionInfo,
   WirePermissionResult,
@@ -142,6 +143,8 @@ interface Running {
   closed: boolean;
   /** The commands its prompts can begin with, as it last said. */
   commands: SlashCommand[];
+  /** What it said the session had cost at its last result. Null before its first. */
+  costSeen: number | null;
 }
 
 interface PendingApproval {
@@ -159,6 +162,11 @@ interface AskContext {
 
 /** A process nobody has prompted for this long is closed. Its session comes back with the next prompt. */
 const IDLE_MS = 5 * 60_000;
+/** A list of MCP servers read without a session's process is kept this long. */
+const MCP_KEEP_MS = 5 * 60_000;
+/** How often, and how many times, a process is asked again while its servers are still connecting. */
+const MCP_POLL_MS = 250;
+const MCP_POLLS = 40;
 const LIST_LIMIT = 500;
 
 /** Prompts handed to a process as they come, for as long as it lives. */
@@ -266,10 +274,19 @@ export class ClaudeHarness implements Agent, AgentReads {
    * session can begin with. Claude Code reads its sign-in as it starts, so a new one shows with the
    * next process.
    */
-  private latest: { account: WireAccountInfo | null; commands: SlashCommand[] } = {
-    account: null,
-    commands: [],
-  };
+  private latest: { account: WireAccountInfo | null } = { account: null };
+  /**
+   * The commands a prompt can begin with in each folder, as a process on this machine in it last
+   * said: the owner's, and the folder's project's own.
+   */
+  private readonly commandsAt = new Map<string, SlashCommand[]>();
+  /** The MCP servers as last read, and when. */
+  private mcp: { at: number; servers: McpServerInfo[] } | null = null;
+  /**
+   * What each session has cost so far, over all its processes. Kept apart from `usage`, which going
+   * back clears: what was spent stays spent.
+   */
+  private readonly costs = new Map<string, number>();
   /** The subscription's limits, as the processes last told of each. */
   private readonly limits = new Map<string, LimitWindow>();
 
@@ -480,6 +497,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     this.cuts.delete(sessionId);
     this.asked.delete(sessionId);
     this.usage.delete(sessionId);
+    this.costs.delete(sessionId);
   }
 
   /** Claude Code compacts when asked as a prompt would ask it: the turn it makes holds the mark. */
@@ -573,14 +591,25 @@ export class ClaudeHarness implements Agent, AgentReads {
   }
 
   /**
-   * A session's commands, as its process last said. A session with no process, or no session, has
-   * those the latest process said, which a project of its own may add to once it runs.
+   * A session's commands, as its process last said, or those of a folder: a project brings commands
+   * of its own, so each folder has its own list. A folder no process has run in yet is asked of one
+   * started there for the answer, once.
+   *
+   * shortcut: a folder's list is kept until a process runs there again; upgrade when commands added
+   * in a project with no session running should show at once.
    */
-  async listCommands(sessionId: string | null): Promise<SlashCommand[]> {
-    const running = sessionId ? this.live.get(sessionId) : undefined;
-    if (running) return running.commands;
-    if (!this.latest.commands.length) await this.listModels();
-    return this.latest.commands;
+  async listCommands(target: { sessionId: string } | { cwd: string }): Promise<SlashCommand[]> {
+    let cwd: string;
+    if ("sessionId" in target) {
+      const running = this.live.get(target.sessionId);
+      if (running) return running.commands;
+      cwd = (await this.find(target.sessionId)).cwd;
+    } else {
+      cwd = target.cwd;
+    }
+    const kept = this.commandsAt.get(cwd);
+    if (kept) return kept;
+    return this.probe(async () => this.commandsAt.get(cwd) ?? [], cwd);
   }
 
   /** What a session's context holds, from its last request. Null when it has no process now. */
@@ -604,17 +633,28 @@ export class ClaudeHarness implements Agent, AgentReads {
     return toAccount(this.latest.account, [...this.limits.values()]);
   }
 
-  /** The servers Claude Code reaches, asked of a process that runs, or of one started for it. */
+  /**
+   * The servers Claude Code reaches, once they have finished connecting. A process on this machine
+   * that runs is asked. With none, the last answer is given while it is a few minutes old; after
+   * that a process is started for the answer, which starts every stdio server of the owner's too,
+   * so it is kept rather than asked again with each look at the page.
+   */
   async listMcpServers(): Promise<McpServerInfo[]> {
     const own = this.options.tools?.name ?? null;
     const running = this.here();
-    if (running) return toMcpServers(await running.query.mcpServerStatus(), own);
-    return this.probe(async (query) => toMcpServers(await query.mcpServerStatus(), own));
+    const read = async (query: ClaudeQuery) => {
+      const servers = toMcpServers(await this.connected(query), own);
+      this.mcp = { at: this.now(), servers };
+      return servers;
+    };
+    if (running) return read(running.query);
+    if (this.mcp && this.now() - this.mcp.at < MCP_KEEP_MS) return this.mcp.servers;
+    return this.probe(read);
   }
 
-  /** Claude Code's skills are the commands the owner, a project or a plugin brings. */
-  async listSkills(): Promise<SkillInfo[]> {
-    return toSkills(await this.listCommands(null));
+  /** Claude Code's skills in a folder are the commands the owner, its project or a plugin brings. */
+  async listSkills(cwd: string): Promise<SkillInfo[]> {
+    return toSkills(await this.listCommands({ cwd }));
   }
 
   /**
@@ -645,18 +685,18 @@ export class ClaudeHarness implements Agent, AgentReads {
    * Starts a process that holds no session, for what only a running one says, and closes it. What it
    * says as it starts is kept.
    */
-  private async probe<T>(ask: (query: ClaudeQuery) => Promise<T>): Promise<T> {
+  private async probe<T>(ask: (query: ClaudeQuery) => Promise<T>, cwd = homedir()): Promise<T> {
     let query: ClaudeQuery | null = null;
     try {
       query = await withHome(this.home, () =>
         this.sdk.query({
           prompt: new Inbox<WireUserMessage>(),
-          options: { ...this.shared(), cwd: homedir(), permissionMode: "default" },
+          options: { ...this.shared(), cwd, permissionMode: "default" },
         }),
       );
       const init = await query.initializationResult();
       this.offered = toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
-      this.heard(init);
+      this.heard(init, cwd);
       return await ask(query);
     } catch (error) {
       throw new Error(`Claude Code could not start: ${message(error)}`, { cause: error });
@@ -676,13 +716,28 @@ export class ClaudeHarness implements Agent, AgentReads {
    */
   private heard(
     init: Awaited<ReturnType<ClaudeQuery["initializationResult"]>>,
-    sandboxed = false,
+    /** The folder it runs in on this machine; null for a sandbox's. */
+    cwd: string | null,
   ): SlashCommand[] {
-    const commands = init.commands ? toCommands(init.commands) : this.latest.commands;
-    if (sandboxed) return commands;
+    const commands = toCommands(init.commands ?? []);
+    if (cwd === null) return commands;
     if (init.account) this.latest.account = init.account;
-    this.latest.commands = commands;
+    this.commandsAt.set(cwd, commands);
     return commands;
+  }
+
+  /**
+   * A process's MCP servers once none is still connecting, or as they are after a while: a server
+   * read too soon shows no tools.
+   */
+  private async connected(query: ClaudeQuery): Promise<WireMcpServerStatus[]> {
+    for (let poll = 1; ; poll++) {
+      const servers = await query.mcpServerStatus();
+      if (poll >= MCP_POLLS || !servers.some((server) => server.status === "pending")) {
+        return servers;
+      }
+      await new Promise<void>((resolve) => this.schedule(resolve, MCP_POLL_MS));
+    }
   }
 
   /** What every process is started with. The owner's own Claude Code settings apply, as in its CLI. */
@@ -901,10 +956,14 @@ export class ClaudeHarness implements Agent, AgentReads {
       cancelIdle: null,
       closed: false,
       query,
-      commands: this.latest.commands,
+      commands: [],
+      costSeen: null,
     };
     try {
-      running.commands = this.heard(await running.query.initializationResult(), sandbox !== null);
+      running.commands = this.heard(
+        await running.query.initializationResult(),
+        sandbox === null ? known.cwd : null,
+      );
       // The key goes down the process's own pipe: not its arguments, which any command can list,
       // nor its environment, which the commands it runs inherit.
       if (tools) {
@@ -986,6 +1045,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     }
     if (each.type === "system" && each.subtype === "commands_changed" && each.commands) {
       running.commands = toCommands(each.commands);
+      if (!running.known.sandbox) this.commandsAt.set(running.known.cwd, running.commands);
       this.emit({
         type: "commands.changed",
         sessionId: running.sessionId,
@@ -1012,7 +1072,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       total: used.count,
       last: running.reader.last ?? NO_TOKENS,
       contextWindow: used.contextWindow ?? before?.contextWindow ?? null,
-      costUsd: result.total_cost_usd ?? used.costUsd ?? before?.costUsd ?? null,
+      costUsd: this.cost(running, result.total_cost_usd ?? used.costUsd),
     };
     this.usage.set(sessionId, usage);
     this.emit({ type: "usage.updated", sessionId, usage });
@@ -1045,6 +1105,29 @@ export class ClaudeHarness implements Agent, AgentReads {
     running.cancelIdle = this.schedule(() => {
       if (running.turn === null && !running.closed) this.stop(running);
     }, IDLE_MS);
+  }
+
+  /**
+   * What the session has cost, from what a process says it has: a total for its session, which a
+   * process resuming a conversation carries on from what was spent before it (as seen with Claude
+   * Code 2.1.325), and which one that does not begins at nothing. A process's first total below what
+   * the session had cost began at nothing, and adds to it; one at or above it carried on. Later
+   * totals add what they grew by; one that fell began again (`/clear`) and adds in full.
+   *
+   * shortcut: a process that began at nothing and spends more on its first turn than the session had
+   * before is taken to have carried on, and that earlier cost is lost; upgrade when the SDK says
+   * whether a total carried on.
+   */
+  private cost(running: Running, said: number | null | undefined): number | null {
+    const { sessionId } = running;
+    const before = this.costs.get(sessionId);
+    if (said === null || said === undefined) return before ?? null;
+    let now: number;
+    if (running.costSeen === null) now = said >= (before ?? 0) ? said : (before ?? 0) + said;
+    else now = (before ?? 0) + (said >= running.costSeen ? said - running.costSeen : said);
+    running.costSeen = said;
+    this.costs.set(sessionId, now);
+    return now;
   }
 
   /** The process went away. A turn it was in the middle of will never finish. */

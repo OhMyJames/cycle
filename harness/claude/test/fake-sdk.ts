@@ -46,11 +46,15 @@ export class FakeQuery implements ClaudeQuery {
 
   initializationResult = async () => {
     if (this.sdk.failStart) throw new Error(this.sdk.failStart);
-    return { models: this.sdk.models, commands: this.sdk.commands, account: this.sdk.account };
+    return {
+      models: this.sdk.models,
+      commands: this.sdk.commandsAt[this.options.cwd] ?? this.sdk.commands,
+      account: this.sdk.account,
+    };
   };
   accountInfo = async () => this.sdk.account;
   supportedCommands = async () => this.sdk.commands;
-  mcpServerStatus = async () => this.sdk.servers;
+  mcpServerStatus = async () => this.sdk.serverReads.shift() ?? this.sdk.servers;
   getContextUsage = async () => this.sdk.context;
   rewindFiles = async (id: string, options: { dryRun: boolean }) => {
     this.rewinds.push({ id, dryRun: options.dryRun });
@@ -113,6 +117,10 @@ export class FakeSdk implements ClaudeSdk {
   ];
   account: WireAccountInfo = { email: "me@example.test", subscriptionType: "max" };
   servers: WireMcpServerStatus[] = [];
+  /** What the next reads of the servers answer, in order, before `servers`. */
+  serverReads: WireMcpServerStatus[][] = [];
+  /** The commands a process started in a folder offers, when they differ from `commands`. */
+  commandsAt: Record<string, WireSlashCommand[]> = {};
   context: WireContextUsage = { categories: [], totalTokens: 0, maxTokens: 200_000 };
   rewound: WireRewindFilesResult = {
     canRewind: true,

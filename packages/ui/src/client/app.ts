@@ -29,6 +29,7 @@ import {
   type Settings,
   type SlashCommand,
   type TerminalInfo,
+  harnessLabel,
   reduceSession,
 } from "@cycle/protocol";
 import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
@@ -36,6 +37,7 @@ import { Connection, type ConnectionStatus } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
 import { plainMentions } from "../lib/suggest.ts";
+import { type Attachments, givenBack, keepAccepted } from "../lib/attach.ts";
 
 export type PanelId = "changes" | "files" | "terminal" | "overview";
 export type Theme = "system" | "light" | "dark";
@@ -474,6 +476,15 @@ export class CycleApp {
         : null;
     const directories =
       !sandbox && this.capabilities(draft.harness).directories ? draft.directories : [];
+    // The composer keeps to what the agent takes; one that changed since keeps the prompt unsent.
+    const kept = keepAccepted({ images, documents }, this.capabilities(draft.harness).attachments);
+    if (kept.dropped.length) {
+      this.toast(
+        `${harnessLabel(draft.harness)} cannot read ${kept.dropped.join(", ")}. Remove it to send.`,
+        "error",
+      );
+      return false;
+    }
     const info = await this.attempt(
       this.request("session.create", {
         cwd: draft.cwd,
@@ -492,7 +503,10 @@ export class CycleApp {
     keepLast(draft.harness, sandbox);
     this.upsertSessions([info]);
     this.selectSession(info.id);
-    await this.send(info.id, text, images, "auto", documents);
+    // The session is made either way: a prompt it would not take waits in its composer.
+    if (!(await this.send(info.id, text, images, "auto", documents))) {
+      this.putInComposer(info.id, plainMentions(text), { images, documents });
+    }
     return true;
   }
 
@@ -502,9 +516,9 @@ export class CycleApp {
     images: string[],
     delivery: Delivery,
     documents: PromptDocument[] = [],
-  ): Promise<void> {
+  ): Promise<boolean> {
     host.prepareNotifications();
-    await this.attempt(
+    const sent = await this.attempt(
       this.request("session.send", {
         sessionId,
         text,
@@ -513,6 +527,21 @@ export class CycleApp {
         delivery,
       }),
     );
+    // The daemon keeps a queued prompt's documents by name only: they come back from here.
+    if (sent?.id && documents.length) this.queuedDocuments.set(sent.id, documents);
+    return sent !== null;
+  }
+
+  /** The documents of prompts this page queued, by queue id, to give back if the turn stops. */
+  private readonly queuedDocuments = new Map<string, PromptDocument[]>();
+  /** Attachments given back to a composer, by its key, until it takes them. */
+  private readonly returnedAttachments = new Map<string, Attachments>();
+
+  /** The attachments given back to a composer, once. */
+  takeReturned(key: string): Attachments | null {
+    const back = this.returnedAttachments.get(key) ?? null;
+    this.returnedAttachments.delete(key);
+    return back;
   }
 
   interrupt(sessionId: string): void {
@@ -837,8 +866,14 @@ export class CycleApp {
       let next = state;
       for (const event of frame.events) {
         if (event.type === "turn.completed" && event.status !== "completed" && next.queue.length) {
-          // A stopped turn sends nothing more: what was queued goes back to the field.
-          this.putInComposer(frame.sessionId, next.queue.map((queued) => queued.text).join("\n\n"));
+          // A stopped turn sends nothing more: what was queued goes back to the field, attachments
+          // and all.
+          const back = givenBack(next.queue, this.queuedDocuments);
+          for (const queued of next.queue) this.queuedDocuments.delete(queued.id);
+          this.putInComposer(frame.sessionId, back.text, back);
+          if (back.lost.length) {
+            this.toast(`Attach ${back.lost.join(", ")} again: it was queued elsewhere.`, "error");
+          }
         }
         next = reduceSession(next, event);
       }
@@ -850,9 +885,16 @@ export class CycleApp {
     for (const sessionId of gaps) void this.open(sessionId);
   }
 
-  /** Adds text to a session's composer, after what is in it, for the owner to send. */
-  putInComposer(sessionId: string, text: string): void {
+  /** Adds text, and attachments, to a session's composer, after what is in it, for the owner to send. */
+  putInComposer(sessionId: string, text: string, attached?: Attachments): void {
     this.saveDraftText(sessionId, [this.draftText(sessionId), text].filter(Boolean).join("\n\n"));
+    if (attached && (attached.images.length || attached.documents.length)) {
+      const before = this.returnedAttachments.get(sessionId);
+      this.returnedAttachments.set(sessionId, {
+        images: [...(before?.images ?? []), ...attached.images],
+        documents: [...(before?.documents ?? []), ...attached.documents],
+      });
+    }
     this.returned.set(this.returned.get() + 1);
   }
 

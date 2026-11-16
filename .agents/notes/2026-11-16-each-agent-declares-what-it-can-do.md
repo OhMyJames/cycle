@@ -56,9 +56,20 @@ configuration yet). The page could not tell which session could do what, and `ac
 
 - Session 4 fills Claude Code's Connector in: what is refused now becomes its writes, behind
   `connector("claude")`, with no change to the wire.
-- Claude Code's account and commands are what its latest process said as it started, or a running
-  one says when asked. A sign-in made in its command line shows with the next process.
-- Its MCP servers are asked of a running process on this machine, or of one started for the answer.
+- Claude Code's account is what its latest process said as it started, or a running one says when
+  asked. A sign-in made in its command line shows with the next process.
+- Its commands are each folder's: a project brings its own. A folder's list is what the last process
+  there said; one no process ran in is asked of one started there, once.
+- Its MCP servers are asked of a running process on this machine, once none is still connecting.
+  With none running, the last answer is given for five minutes; then a process is started for it,
+  which starts the owner's stdio servers too, so it is not asked with every look at the page.
+- A queued prompt's documents stay in the daemon, named in the session's state: up to 8 MB each
+  would otherwise go out with every change to the queue and stay in the frames kept for a client
+  that was away. The page that queued them gives them back when a turn stops; another page names
+  what it cannot give back.
+- What a session cost adds up over its processes. Claude Code 2.1.325 was seen to carry a resumed
+  conversation's cost on; a process that begins at nothing is told by a first total below what
+  was spent before.
 - Its limits are known only once a turn has run since the daemon started.
 - A session's context in parts needs its process: with none, the daemon answers the total the last
   request read, as it does for codex. Claude Code's `summary` breakdown has no row for the

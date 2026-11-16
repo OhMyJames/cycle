@@ -288,7 +288,11 @@ export interface QueuedMessage {
   id: string;
   text: string;
   images: string[];
-  documents?: PromptDocument[];
+  /**
+   * The documents it carries, by name. Their data stays in the daemon until the prompt is sent, so a
+   * session's state and the frames kept for a returning client never hold it.
+   */
+  documents?: { kind: DocumentKind; name: string }[];
 }
 
 export type DocumentKind = "pdf" | "text";

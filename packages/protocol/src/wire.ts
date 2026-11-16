@@ -157,7 +157,8 @@ export interface Methods {
       documents?: PromptDocument[];
       delivery?: Delivery;
     };
-    result: { queued: boolean };
+    /** `id` names it in the queue, when it was queued. */
+    result: { queued: boolean; id?: string };
   };
   "session.unqueue": {
     params: { sessionId: string; id: string };
@@ -214,7 +215,7 @@ export interface Methods {
    * command is a prompt like any other.
    */
   "commands.list": {
-    params: { sessionId: string } | { harness: string };
+    params: { sessionId: string } | { harness: string; cwd: string };
     result: { commands: SlashCommand[] };
   };
   "approval.respond": {

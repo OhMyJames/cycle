@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
 import type { AccountInfo, SlashCommand } from "@cycle/protocol";
 import { accountDetails, accountTitle, limitText } from "../src/lib/account.ts";
-import { acceptOf, attachLabel, attachmentKind, matchCommands } from "../src/lib/attach.ts";
+import {
+  acceptOf,
+  attachLabel,
+  attachmentKind,
+  givenBack,
+  keepAccepted,
+  matchCommands,
+} from "../src/lib/attach.ts";
 
 test("a file is attached as the kind the agent takes, or not at all", () => {
   const all = ["image", "pdf", "text"] as const;
@@ -73,4 +80,37 @@ test("a limit says how much is used, or only whether it is reached", () => {
   expect(limitText({ ...limit, usedPercent: null, status: "exceeded", overage: true })).toBe(
     "Reached · using overage",
   );
+});
+
+test("moving to an agent that takes less keeps what it reads, and names what it does not", () => {
+  const pdf = { kind: "pdf" as const, name: "plan.pdf", data: "data:application/pdf;base64,AA==" };
+  const notes = { kind: "text" as const, name: "notes.md", data: "data:text/plain;base64,AA==" };
+  const attached = { images: ["data:image/png;base64,AA=="], documents: [pdf, notes] };
+  expect(keepAccepted(attached, ["image", "pdf", "text"]).dropped).toEqual([]);
+  expect(keepAccepted(attached, ["image"])).toEqual({
+    images: attached.images,
+    documents: [],
+    dropped: ["plan.pdf", "notes.md"],
+  });
+  expect(keepAccepted(attached, ["pdf"])).toMatchObject({ images: [], documents: [pdf] });
+  expect(keepAccepted(attached, ["pdf"]).dropped).toEqual(["1 image", "notes.md"]);
+});
+
+test("a stopped turn's queue comes back with its images, and the documents this page holds", () => {
+  const pdf = { kind: "pdf" as const, name: "plan.pdf", data: "data:application/pdf;base64,AA==" };
+  const queue = [
+    {
+      id: "q1",
+      text: "one",
+      images: ["img"],
+      documents: [{ kind: "pdf" as const, name: "plan.pdf" }],
+    },
+    { id: "q2", text: "two", images: [], documents: [{ kind: "text" as const, name: "far.md" }] },
+  ];
+  expect(givenBack(queue, new Map([["q1", [pdf]]]))).toEqual({
+    text: "one\n\ntwo",
+    images: ["img"],
+    documents: [pdf],
+    lost: ["far.md"],
+  });
 });

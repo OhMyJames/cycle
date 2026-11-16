@@ -1,4 +1,4 @@
-import type { AttachmentKind, SlashCommand } from "@cycle/protocol";
+import type { AttachmentKind, PromptDocument, QueuedMessage, SlashCommand } from "@cycle/protocol";
 
 /** The largest file a prompt carries: its data goes to the daemon whole. */
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -61,4 +61,52 @@ export function matchCommands(commands: readonly SlashCommand[], query: string):
     )
     .map((row) => row.command)
     .filter((command) => !seen.has(command.name) && seen.add(command.name));
+}
+
+/** What a prompt carries besides its text. */
+export interface Attachments {
+  images: string[];
+  documents: PromptDocument[];
+}
+
+/** The attachments an agent takes, and the names of those it does not. */
+export function keepAccepted(
+  attached: Attachments,
+  accepted: readonly AttachmentKind[],
+): Attachments & { dropped: string[] } {
+  const images = accepted.includes("image") ? attached.images : [];
+  const documents = attached.documents.filter((document) => accepted.includes(document.kind));
+  const dropped = [
+    ...(images.length < attached.images.length
+      ? [`${attached.images.length} image${attached.images.length === 1 ? "" : "s"}`]
+      : []),
+    ...attached.documents
+      .filter((document) => !accepted.includes(document.kind))
+      .map((document) => document.name),
+  ];
+  return { images, documents, dropped };
+}
+
+/**
+ * A stopped turn's queue as the composer takes it back: its text, its images, and its documents,
+ * whose data only the page that queued them holds (`held`, by queue id). `lost` names those it
+ * does not hold.
+ */
+export function givenBack(
+  queue: readonly QueuedMessage[],
+  held: ReadonlyMap<string, PromptDocument[]>,
+): { text: string; lost: string[] } & Attachments {
+  const documents: PromptDocument[] = [];
+  const lost: string[] = [];
+  for (const queued of queue) {
+    const kept = held.get(queued.id);
+    if (kept) documents.push(...kept);
+    else lost.push(...(queued.documents ?? []).map((document) => document.name));
+  }
+  return {
+    text: queue.map((queued) => queued.text).join("\n\n"),
+    images: queue.flatMap((queued) => queued.images),
+    documents,
+    lost,
+  };
 }

@@ -157,13 +157,17 @@ export class Harnesses implements Agents {
     return agent.rewindFiles(sessionId, turnId, dryRun);
   }
 
-  async listCommands(target: { sessionId: string } | { harness: string }): Promise<SlashCommand[]> {
+  async listCommands(
+    target: { sessionId: string } | { harness: string; cwd: string },
+  ): Promise<SlashCommand[]> {
     const agent =
       "sessionId" in target ? await this.of(target.sessionId) : this.named(target.harness);
     if (!agent.capabilities.commands || !agent.listCommands) {
       return unsupported(agent.name, "Listing commands");
     }
-    return agent.listCommands("sessionId" in target ? target.sessionId : null);
+    return agent.listCommands(
+      "sessionId" in target ? { sessionId: target.sessionId } : { cwd: target.cwd },
+    );
   }
 
   async readContext(sessionId: string): Promise<ContextUsage | null> {

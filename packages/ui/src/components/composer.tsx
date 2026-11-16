@@ -27,6 +27,7 @@ import {
   attachLabel,
   attachmentKind,
   matchCommands,
+  keepAccepted,
 } from "../lib/attach.ts";
 import { canSandbox, harnessesOf } from "../lib/draft.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
@@ -441,6 +442,11 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   const thumbs = useRowKeys(images.length);
   const [documents, setDocuments] = useState<PromptDocument[]>([]);
   const chips = useRowKeys(documents.length);
+  // The latest attachments, for an effect that runs only when the agent changes.
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  const documentsRef = useRef(documents);
+  documentsRef.current = documents;
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [active, setActive] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -453,8 +459,10 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   // Each session keeps its own unsent text.
   useEffect(() => {
     setText(app.draftText(key));
-    setImages([]);
-    setDocuments([]);
+    // What a stopped turn or an unsent first prompt gave back comes with its attachments.
+    const back = app.takeReturned(key);
+    setImages(back?.images ?? []);
+    setDocuments(back?.documents ?? []);
     setSuggestions([]);
     history.current = -1;
     field.current?.focus();
@@ -473,6 +481,21 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   };
 
   const accepted = capabilities.attachments;
+
+  // Another agent may take less: what it cannot read leaves the composer, and the owner is told.
+  useEffect(() => {
+    const kept = keepAccepted(
+      { images: imagesRef.current, documents: documentsRef.current },
+      accepted,
+    );
+    if (!kept.dropped.length) return;
+    setImages(kept.images);
+    setDocuments(kept.documents);
+    app.toast(
+      `Removed ${kept.dropped.join(", ")}: ${harnessLabel(harness ?? "")} cannot read it.`,
+      "info",
+    );
+  }, [app, accepted, harness]);
   const addFiles = useCallback(
     async (files: Iterable<File>) => {
       const read = await Promise.all([...files].map((file) => readAttachment(file, accepted)));
@@ -553,7 +576,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
           return;
         }
         void app
-          .request("commands.list", sessionId ? { sessionId } : { harness })
+          .request("commands.list", sessionId ? { sessionId } : { harness, cwd })
           .then(({ commands: list }) => {
             if (sessionId) app.commands.update((all) => ({ ...all, [sessionId]: list }));
             show(list);
@@ -679,7 +702,12 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     setDocuments([]);
     history.current = -1;
     if (sessionId) {
-      await app.send(sessionId, prompt, attached, steer ? "steer" : "auto", carried);
+      if (!(await app.send(sessionId, prompt, attached, steer ? "steer" : "auto", carried))) {
+        // Not sent: the owner gets it back to try again.
+        change(plainMentions(prompt));
+        setImages(attached);
+        setDocuments(carried);
+      }
       return;
     }
     setSending(true);

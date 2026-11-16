@@ -83,17 +83,27 @@ test("putting files back and listing commands go to the session's agent, when it
     asked = [sessionId, turnId, String(dryRun)];
     return { possible: true, error: null, files: ["/p/a"], insertions: 1, deletions: 0 };
   };
-  other.listCommands = async (sessionId) => [
-    { name: `for ${sessionId}`, description: "", argumentHint: "", aliases: [], builtin: false },
+  other.listCommands = async (target) => [
+    {
+      name: "sessionId" in target ? `for ${target.sessionId}` : `in ${target.cwd}`,
+      description: "",
+      argumentHint: "",
+      aliases: [],
+      builtin: false,
+    },
   ];
   expect((await all.rewindFiles(theirs.id, "t1", true)).files).toEqual(["/p/a"]);
   expect(asked).toEqual([theirs.id, "t1", "true"]);
   expect(await all.listCommands({ sessionId: theirs.id })).toMatchObject([
     { name: `for ${theirs.id}` },
   ]);
-  expect(await all.listCommands({ harness: "other" })).toMatchObject([{ name: "for null" }]);
+  expect(await all.listCommands({ harness: "other", cwd: "/q" })).toMatchObject([
+    { name: "in /q" },
+  ]);
   await expect(all.rewindFiles(ours.id, "t1", false)).rejects.toBeInstanceOf(NotSupported);
-  await expect(all.listCommands({ harness: "main" })).rejects.toBeInstanceOf(NotSupported);
+  await expect(all.listCommands({ harness: "main", cwd: "/q" })).rejects.toBeInstanceOf(
+    NotSupported,
+  );
   expect((await all.capabilitiesOf(theirs.id)).connector).toBe("read");
   expect(await all.readContext(ours.id)).toBeNull();
 });

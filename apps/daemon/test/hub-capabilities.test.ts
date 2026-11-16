@@ -144,3 +144,52 @@ test("the context is the agent's own account of it, else what the latest request
   };
   expect((await hub.context(info.id))?.parts).toHaveLength(1);
 });
+
+test("when the files went back but the conversation could not, the owner is told both", async () => {
+  const { harness, hub, info } = await withTurn();
+  harness.rewindSession = async () => {
+    throw new Error("Claude Code no longer keeps that turn");
+  };
+  await expect(hub.rewind(info.id, "t1", true)).rejects.toThrow(
+    "The files were put back as they were before that turn, but the conversation could not go back: Claude Code no longer keeps that turn. Its later turns are still there.",
+  );
+  // Without the files, the agent's own reason is enough.
+  await expect(hub.rewind(info.id, "t1")).rejects.toThrow("Claude Code no longer keeps that turn");
+});
+
+test("a queued prompt's documents stay out of the session's state, and go with it when it is sent", async () => {
+  const { harness, hub } = await setup();
+  harness.capabilities = { ...harness.capabilities, attachments: ["image", "pdf"] };
+  const given: unknown[] = [];
+  harness.send = async (_sessionId, input) => {
+    given.push(input.documents);
+    return { turnId: `t${given.length}` };
+  };
+  const info = await hub.create({ cwd: "/project" });
+  await hub.send(info.id, { text: "first", images: [] }, "auto");
+  harness.emit({ type: "turn.started", sessionId: info.id, turnId: "t1", startedAt: null });
+  const data = "data:application/pdf;base64,JVBERi0xLjQ=";
+  const pdf = { kind: "pdf" as const, name: "plan.pdf", data };
+  const queued = await hub.send(info.id, { text: "then", images: [], documents: [pdf] }, "auto");
+  expect(queued).toEqual({ queued: true, id: expect.any(String) });
+  const opened = await hub.open(info.id, undefined);
+  if (!("state" in opened)) throw new Error("expected a snapshot");
+  expect(opened.state.queue).toEqual([
+    {
+      id: queued.id ?? "",
+      text: "then",
+      images: [],
+      documents: [{ kind: "pdf", name: "plan.pdf" }],
+    },
+  ]);
+  expect(JSON.stringify(opened.state)).not.toContain(data);
+  harness.emit({
+    type: "turn.completed",
+    sessionId: info.id,
+    turnId: "t1",
+    status: "completed",
+    error: null,
+    durationMs: 1,
+  });
+  expect(given).toEqual([undefined, [pdf]]);
+});

@@ -66,18 +66,17 @@ test("the files go back through the session's process, as they were when the tur
 
 test("commands are the process's own, and its news of them is passed on", async () => {
   const { harness, session, query, events } = await running();
-  expect((await harness.listCommands(session.id)).map((command) => command.name)).toEqual([
-    "compact",
-    "deploy",
-  ]);
-  expect((await harness.listCommands(null))[1]).toEqual({
+  expect(
+    (await harness.listCommands({ sessionId: session.id })).map((command) => command.name),
+  ).toEqual(["compact", "deploy"]);
+  expect((await harness.listCommands({ cwd: "/project" }))[1]).toEqual({
     name: "deploy",
     description: "Ship it",
     argumentHint: "<env>",
     aliases: [],
     builtin: false,
   });
-  expect((await harness.listSkills()).map((skill) => skill.name)).toEqual(["deploy"]);
+  expect((await harness.listSkills("/project")).map((skill) => skill.name)).toEqual(["deploy"]);
   query.say({
     type: "system",
     subtype: "commands_changed",
@@ -85,7 +84,11 @@ test("commands are the process's own, and its news of them is passed on", async 
   });
   await settle();
   expect(events.at(-1)).toMatchObject({ type: "commands.changed", sessionId: session.id });
-  expect((await harness.listCommands(session.id)).map((command) => command.name)).toEqual([
+  expect(
+    (await harness.listCommands({ sessionId: session.id })).map((command) => command.name),
+  ).toEqual(["found"]);
+  // The folder's list follows the news, for a new session there.
+  expect((await harness.listCommands({ cwd: "/project" })).map((command) => command.name)).toEqual([
     "found",
   ]);
 });

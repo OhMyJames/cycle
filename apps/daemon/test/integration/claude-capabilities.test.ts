@@ -156,9 +156,15 @@ test("a Claude session lists its commands, its project's own among them", async 
     builtin: false,
   });
   expect(commands.some((command) => command.builtin)).toBe(true);
-  const fresh = await client.call("commands.list", { harness: "claude" });
-  expect(fresh.commands.length).toBeGreaterThan(0);
-  await expect(client.call("commands.list", { harness: "codex" })).rejects.toThrow("not supported");
+  // A new session in the folder has its project's commands; one elsewhere does not.
+  const here = await client.call("commands.list", { harness: "claude", cwd: project });
+  expect(here.commands.some((command) => command.name === "greet")).toBe(true);
+  const elsewhere = await client.call("commands.list", { harness: "claude", cwd: root });
+  expect(elsewhere.commands.length).toBeGreaterThan(0);
+  expect(elsewhere.commands.some((command) => command.name === "greet")).toBe(false);
+  await expect(client.call("commands.list", { harness: "codex", cwd: project })).rejects.toThrow(
+    "not supported",
+  );
 });
 
 test("a Claude session's context comes in parts", async () => {
