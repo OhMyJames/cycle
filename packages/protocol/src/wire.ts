@@ -9,6 +9,7 @@ import type {
   HarnessInfo,
   McpServerInfo,
   McpServerInput,
+  ModeInfo,
   ModelInfo,
   ModelProvider,
   ModelProviderDraft,
@@ -53,7 +54,8 @@ export interface DaemonInfo {
 export interface Settings {
   model: string | null;
   effort: string | null;
-  mode: SessionMode;
+  /** The mode a new session starts in, by the name of the agent it runs on. */
+  modes: Record<string, SessionMode>;
   /** Whether a new session in a repository gets its own worktree. */
   worktree: boolean;
   /** Folders the owner works in, most recent first. */
@@ -231,6 +233,8 @@ export interface Methods {
   };
 
   "models.list": { params: Empty; result: { models: ModelInfo[] } };
+  /** Every agent's modes. A session can be in those of the agent it runs on. */
+  "modes.list": { params: Empty; result: { modes: ModeInfo[] } };
   "skills.list": { params: { cwd: string } & OfHarness; result: { skills: SkillInfo[] } };
   /** Turns a skill on or off for every session of the agent. Answers the folder's skills. */
   "skills.enable": {

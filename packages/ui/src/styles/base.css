@@ -324,6 +324,10 @@ kbd {
   padding: 0 8px;
   font-size: var(--text-meta);
 }
+/* A small select keeps the room its drawn chevron needs. */
+select.field.small {
+  padding-right: 28px;
+}
 .field::placeholder,
 textarea::placeholder,
 input::placeholder {

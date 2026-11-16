@@ -26,7 +26,7 @@ function setup(tools?: { name: string; url: string; key: string }) {
   return { sdk, harness, events, seen, later };
 }
 
-const options = { mode: "readOnly" as const, model: "claude-sonnet-5-5" };
+const options = { mode: "default", model: "claude-sonnet-5-5" };
 const prompt = (text: string) => ({ text, images: [] });
 const result = (extra: Partial<WireMessage> = {}): WireMessage => ({
   type: "result",
@@ -88,7 +88,7 @@ test("a turn ends with what it used, and the next continues the stored session",
   query.say(result());
   await settle();
   // Another mode is another process, which continues what Claude Code stored.
-  await harness.send(session.id, prompt("more"), { ...options, mode: "fullAccess" });
+  await harness.send(session.id, prompt("more"), { ...options, mode: "bypassPermissions" });
   expect(query.closed).toBe(true);
   expect(sdk.last.options).toMatchObject({
     resume: session.id,
@@ -271,7 +271,7 @@ test("sessions Claude Code keeps are listed, the archived apart, and read back a
   // One with no folder cannot be continued, so it is not offered.
   expect((await harness.listSessions({ archived: false })).map((info) => info.id)).toEqual(["s1"]);
   expect((await harness.listSessions({ archived: true })).map((info) => info.id)).toEqual(["s2"]);
-  const loaded = await harness.loadSession("s1", { mode: "auto" });
+  const loaded = await harness.loadSession("s1", { mode: "acceptEdits" });
   expect(loaded.session).toMatchObject({ id: "s1", model: "claude-sonnet-5-5", preview: "first" });
   expect(loaded.turns.map((turn) => turn.id)).toEqual(["p1", "p2"]);
   // What it used is Claude Code's to say, with its next turn.

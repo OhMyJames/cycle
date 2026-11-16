@@ -4,7 +4,7 @@ import { ClaudeHarness } from "../src/index.ts";
 import type { WireMessage } from "../src/wire.ts";
 import { FakeSdk, assistant, settle, user } from "./fake-sdk.ts";
 
-const options = { mode: "readOnly" as const, model: "claude-sonnet-5-5" };
+const options = { mode: "default", model: "claude-sonnet-5-5" };
 const prompt = (text: string) => ({ text, images: [] });
 const result = (extra: Partial<WireMessage> = {}): WireMessage => ({
   type: "result",
@@ -128,12 +128,16 @@ test("what the agent streams for a turn of its own waits for the message the tur
 test("a task in the background keeps its process: another mode waits until it is done", async () => {
   const { harness, session, query, sdk } = await backgrounded();
   await expect(
-    harness.send(session.id, prompt("next"), { ...options, mode: "fullAccess" }),
+    harness.send(session.id, prompt("next"), { ...options, mode: "bypassPermissions" }),
   ).rejects.toThrow("still running in the background");
+  expect(query.closed).toBe(false);
+  // What moves in place leaves the task running.
+  await harness.configure(session.id, { model: "claude-opus-5-5" });
+  expect(query.moves).toEqual(["model claude-opus-5-5"]);
   expect(query.closed).toBe(false);
   query.say(listed([]));
   await settle();
-  await harness.send(session.id, prompt("next"), { ...options, mode: "fullAccess" });
+  await harness.send(session.id, prompt("next"), { ...options, mode: "bypassPermissions" });
   expect(query.closed).toBe(true);
   expect(sdk.last).not.toBe(query);
 });

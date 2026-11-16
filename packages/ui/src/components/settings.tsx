@@ -1,4 +1,4 @@
-import { type LimitWindow, type ModelInfo, SESSION_MODES, harnessLabel } from "@cycle/protocol";
+import { type LimitWindow, type ModelInfo, harnessLabel } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import type { SettingsSection, Theme } from "../client/app.ts";
 import { host } from "../client/host.ts";
@@ -6,10 +6,11 @@ import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { accountDetails, accountTitle, limitText } from "../lib/account.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
+import { modeNamed, modesOf } from "../lib/modes.ts";
 import { updateOffer } from "../lib/update.ts";
-import { MODE_LABELS } from "./composer.tsx";
 import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
+import { ModeMenu } from "./mode-menu.tsx";
 import { ProvidersSection } from "./providers.tsx";
 import { SandboxesSection } from "./sandboxes.tsx";
 
@@ -184,6 +185,8 @@ export function SettingsPage() {
   const settings = useStore(app.settings, (value) => value);
   const daemon = useStore(app.daemon, (value) => value);
   const models = useStore(app.models, (value) => value);
+  const modes = useStore(app.modes, (value) => value);
+  const agents = [...new Set(modes.map((mode) => mode.harness))];
   const harnesses = useStore(app.harnesses, (value) => value);
   const features = useStore(app.features, (value) => value);
   const { theme, showReasoning, section } = useStore(app.view, (view) => ({
@@ -258,22 +261,25 @@ export function SettingsPage() {
                   ))}
                 </select>
               </Setting>
-              <Setting title="Permissions" note={MODE_LABELS[settings?.mode ?? "auto"].sub}>
-                <Segmented
-                  label="Permissions"
-                  value={settings?.mode ?? "auto"}
-                  onChange={(mode) => set({ mode })}
-                  options={SESSION_MODES.map((mode) => ({
-                    value: mode,
-                    label:
-                      mode === "auto"
-                        ? `${MODE_LABELS[mode].label} (default)`
-                        : MODE_LABELS[mode].label,
-                    // No sandbox and no questions: a press chooses it, never an arrow key.
-                    deliberate: mode === "fullAccess",
-                  }))}
-                />
-              </Setting>
+              {agents.map((agent) => {
+                const current = modeNamed(modes, agent, settings?.modes[agent]);
+                return (
+                  <Setting
+                    key={agent}
+                    title={
+                      agents.length > 1 ? `Permissions in ${harnessLabel(agent)}` : "Permissions"
+                    }
+                    note={current?.description ?? ""}
+                  >
+                    <ModeMenu
+                      modes={modesOf(modes, agent)}
+                      current={current}
+                      onChoose={(mode) => set({ modes: { [agent]: mode } })}
+                      className="button"
+                    />
+                  </Setting>
+                );
+              })}
               <Setting
                 title="Start in a new worktree"
                 note="In a git repository, each session gets its own checkout and branch."

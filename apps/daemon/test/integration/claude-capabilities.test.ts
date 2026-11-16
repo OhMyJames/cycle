@@ -93,7 +93,7 @@ async function start() {
   const session = await client.call("session.create", {
     cwd: project,
     model: SONNET,
-    mode: "readOnly",
+    mode: "default",
   });
   await client.call("session.open", { sessionId: session.id });
   return session;

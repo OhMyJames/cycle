@@ -133,7 +133,7 @@ async function start() {
   const session = await client.call("session.create", {
     cwd: project,
     model: SONNET,
-    mode: "fullAccess",
+    mode: "bypassPermissions",
   });
   await client.call("session.open", { sessionId: session.id });
   return session;

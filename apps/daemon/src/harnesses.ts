@@ -7,12 +7,14 @@ import {
   type ApprovalResponse,
   type Connector,
   type ContextUsage,
+  type ConfigureOptions,
   type CreateSessionOptions,
   type FileRewind,
   type Harness,
   type HarnessEvent,
   type HarnessInfo,
   type HarnessSession,
+  type ModeInfo,
   type ModelInfo,
   type PromptInput,
   type ReviewTarget,
@@ -194,6 +196,15 @@ export class Harnesses implements Agents {
 
   async interrupt(sessionId: string): Promise<void> {
     await (await this.of(sessionId)).interrupt(sessionId);
+  }
+
+  async configure(sessionId: string, options: ConfigureOptions): Promise<void> {
+    await (await this.of(sessionId)).configure(sessionId, options);
+  }
+
+  /** Every agent's modes. One that was left out offers none. */
+  listModes(): ModeInfo[] {
+    return this.agents.flatMap((agent) => agent.listModes());
   }
 
   async stopTask(sessionId: string, taskId: string): Promise<void> {

@@ -154,6 +154,13 @@ const CLAUDE_STEPS: ClaudeReply[] = [
   },
 ];
 
+/** What the scripted Claude proposes when asked to plan, which it asks the owner to approve. */
+const PLAN = `# Add a greeting
+
+1. Write \`src/greet.ts\` with one exported \`greet(name)\`.
+2. Mention it in the README.
+3. Leave the tests alone: there are none yet.`;
+
 /** Whether the latest thing Claude Code sent is a task's news, which the agent answers by itself. */
 function taskNews(body: unknown): boolean {
   const messages = (body as { messages?: { role: string; content: unknown }[] }).messages ?? [];
@@ -202,6 +209,9 @@ const claudeModel = startMockClaude(root, (prompt, results, body) => {
     return { text: chunks("A task I started has ended; here is what came of it.") };
   const helped = helperReply(prompt, results);
   if (helped) return helped;
+  if (/\bplan\b/i.test(prompt) && results === 0) {
+    return { call: { name: "ExitPlanMode", input: { plan: PLAN } } };
+  }
   if (/approv|permission/i.test(prompt) && results === 0) {
     const command = "python3 -c \"open('stamp.txt', 'w').write('now')\"";
     return { call: { name: "Bash", input: { command, description: "Write stamp.txt" } } };

@@ -29,6 +29,11 @@ export interface ScheduleInput {
   model: string | null;
   effort: string | null;
   mode: SessionMode | null;
+  /**
+   * The agent `mode` is one of. A run that starts on another agent is refused, since one id can
+   * mean another thing there. Null for no mode, or one kept from before each agent named its own.
+   */
+  modeHarness?: string | null;
   timing: ScheduleTiming;
 }
 

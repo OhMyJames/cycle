@@ -14,6 +14,7 @@ import {
   type McpServerInfo,
   type McpServerInput,
   type MethodName,
+  type ModeInfo,
   type ModelInfo,
   type ModelProvider,
   type SandboxEnvironment,
@@ -187,6 +188,8 @@ export class CycleApp {
   readonly archived = new Store<SessionInfo[] | null>(null);
   readonly settings = new Store<Settings | null>(null);
   readonly models = new Store<ModelInfo[]>([]);
+  /** Every agent's modes. A session can be in those of the agent it runs on. */
+  readonly modes = new Store<ModeInfo[]>([]);
   /** The agents the daemon runs, the main one first, and what each can do. */
   readonly harnesses = new Store<HarnessInfo[]>([]);
   /** Each agent's account, by the agent's name, once read. */
@@ -389,7 +392,7 @@ export class CycleApp {
         sandbox: draftSandbox(models, this.sandboxes.get().environments, harness, last),
         model: draftModel(models, harness, settings?.model ?? null),
         effort: settings?.effort ?? null,
-        mode: settings?.mode ?? "auto",
+        mode: settings?.modes[harness] ?? "",
         directories: [],
       },
     });
@@ -432,6 +435,8 @@ export class CycleApp {
         harness,
         model,
         effort: model === usual ? (this.settings.get()?.effort ?? null) : null,
+        // Each agent has modes of its own: the session starts in what the owner keeps for it.
+        mode: this.settings.get()?.modes[harness] ?? "",
         sandbox: draftSandbox(
           this.models.get(),
           this.sandboxes.get().environments,
@@ -496,7 +501,7 @@ export class CycleApp {
     const info = await this.attempt(
       this.request("session.create", {
         cwd: draft.cwd,
-        mode: draft.mode,
+        ...(draft.mode ? { mode: draft.mode } : {}),
         ...(model ? { model } : {}),
         ...(draft.effort && model === draft.model ? { effort: draft.effort } : {}),
         ...(sandbox
@@ -825,6 +830,10 @@ export class CycleApp {
         void this.follow(view.sessionId);
       void this.request("models.list", {}).then(
         ({ models }) => this.setModels(models),
+        () => {},
+      );
+      void this.request("modes.list", {}).then(
+        ({ modes }) => this.modes.set(modes),
         () => {},
       );
       void this.request("providers.list", {}).then(

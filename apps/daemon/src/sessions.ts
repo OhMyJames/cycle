@@ -23,10 +23,13 @@ import {
   type TurnOptions,
   type TurnOrigin,
   type WorktreeInfo,
+  LEGACY_MODE_PREFIX,
   activeTurn,
   coalesceEvents,
   harnessLabel,
   initialSessionState,
+  legacyMode,
+  resolveMode,
   reduceSession,
   sameModelFamily,
 } from "@cycle/protocol";
@@ -39,7 +42,14 @@ export interface SessionMeta {
   title?: string;
   pinned?: boolean;
   unread?: boolean;
-  mode?: SessionMode;
+  /**
+   * The mode as a daemon from before each agent named its own reads it: one of `LegacyMode`. It is
+   * read when there is no `agentMode`, and no longer written, so such a daemon still reads a mode it
+   * knows.
+   */
+  mode?: string;
+  /** The session's mode, one its agent offers. */
+  agentMode?: SessionMode;
   model?: string;
   effort?: string | null;
   worktree?: WorktreeInfo;
@@ -53,6 +63,14 @@ export interface SessionMeta {
 
 export interface MetaFile {
   sessions: Record<string, SessionMeta>;
+}
+
+/**
+ * The mode kept for a session: its own, else one kept before each agent named its own, marked to be
+ * read by what it meant then, since the same word can be another of an agent's modes now.
+ */
+export function keptMode(meta: SessionMeta): string | undefined {
+  return meta.agentMode ?? (meta.mode === undefined ? undefined : legacyMode(meta.mode));
 }
 
 export interface HubOptions {
@@ -223,9 +241,14 @@ export class SessionHub {
       cwd = made.cwd;
       worktree = made.worktree;
     }
-    const mode = params.mode ?? settings.mode;
     const model = params.model ?? settings.model ?? undefined;
     const effort = params.effort ?? settings.effort ?? undefined;
+    const agent = await this.agentFor(model);
+    const mode = this.modeFor(
+      agent,
+      params.mode ?? settings.modes[agent],
+      params.mode !== undefined,
+    );
     let session: HarnessSession;
     try {
       session = await harness.createSession({
@@ -243,7 +266,7 @@ export class SessionHub {
     }
     this.options.meta.update((file) => {
       file.sessions[session.id] = {
-        mode,
+        agentMode: mode,
         ...(params.model ? { model: params.model } : {}),
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
@@ -463,7 +486,10 @@ export class SessionHub {
       info = { ...info, model: params.model };
     }
     if (params.effort !== undefined) info = { ...info, effort: params.effort };
-    if (params.mode !== undefined) info = { ...info, mode: params.mode };
+    if (params.mode !== undefined) {
+      info = { ...info, mode: this.modeFor(info.harness, params.mode, true) };
+    }
+    const mode = params.mode !== undefined ? info.mode : undefined;
     this.options.meta.update((file) => {
       const meta = (file.sessions[sessionId] ??= {});
       if (params.title !== undefined) meta.title = params.title.trim();
@@ -471,9 +497,20 @@ export class SessionHub {
       if (params.unread !== undefined) meta.unread = params.unread;
       if (params.model !== undefined) meta.model = params.model;
       if (params.effort !== undefined) meta.effort = params.effort;
-      if (params.mode !== undefined) meta.mode = params.mode;
+      if (mode !== undefined) meta.agentMode = mode;
     });
     this.setInfo(info);
+    // A running agent takes them in now where it can: a mode that asks less matters mid-turn.
+    const moved = {
+      ...(mode !== undefined ? { mode } : {}),
+      ...(params.model !== undefined ? { model: info.model } : {}),
+      ...(params.effort !== undefined ? { effort: params.effort } : {}),
+    };
+    if (Object.keys(moved).length && this.live.has(sessionId)) {
+      await harness.configure(sessionId, moved).catch((error: unknown) => {
+        this.notice(sessionId, "warning", `It takes this from its next turn: ${message(error)}`);
+      });
+    }
     return info;
   }
 
@@ -500,7 +537,7 @@ export class SessionHub {
     const sourceMeta = this.options.meta.value.sessions[sessionId] ?? {};
     this.options.meta.update((file) => {
       file.sessions[session.id] = {
-        mode: source.mode,
+        agentMode: source.mode,
         ...(sourceMeta.model ? { model: sourceMeta.model } : {}),
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
@@ -561,6 +598,32 @@ export class SessionHub {
     };
   }
 
+  /** The agent a new session on this model runs on: its model's, or the main one's. */
+  async agentFor(model: string | undefined): Promise<string> {
+    const { harness } = this.options;
+    if (!model) return harness.name;
+    const found = (await harness.listModels()).find((each) => each.id === model);
+    return found?.harness ?? harness.name;
+  }
+
+  /**
+   * The mode a value means on an agent: one of its own, a legacy one by what it replaces, else
+   * its default. A mode the owner asked for by name that the agent does not offer is refused.
+   */
+  private modeFor(agent: string, value: string | undefined, strict = false): string {
+    const modes = this.options.harness.listModes().filter((mode) => mode.harness === agent);
+    const named = value !== undefined && !value.startsWith(LEGACY_MODE_PREFIX);
+    if (strict && named && !modes.some((mode) => mode.id === value)) {
+      throw new SessionError(`${harnessLabel(agent)} has no mode named ${value}.`);
+    }
+    return resolveMode(modes, value)?.id ?? value ?? "";
+  }
+
+  private notice(sessionId: string, level: "info" | "warning", text: string): void {
+    const live = this.live.get(sessionId);
+    if (live) this.apply(live, { type: "notice", sessionId, level, message: text });
+  }
+
   /** Joins what the harness says of a session with what the daemon keeps. */
   private remember(session: HarnessSession, archived: boolean): SessionInfo {
     const meta = this.options.meta.value.sessions[session.id] ?? {};
@@ -574,7 +637,10 @@ export class SessionHub {
       cwd: session.cwd,
       model: meta.model ?? (session.model || known?.model || ""),
       effort: meta.effort !== undefined ? meta.effort : (session.effort ?? known?.effort ?? null),
-      mode: meta.mode ?? this.options.settings().mode,
+      mode: this.modeFor(
+        session.harness,
+        keptMode(meta) ?? this.options.settings().modes[session.harness],
+      ),
       status: live ? this.statusOf(live) : "stored",
       branch: meta.worktree?.branch ?? session.branch,
       worktree: meta.worktree ?? null,
@@ -618,8 +684,13 @@ export class SessionHub {
   private async load(sessionId: string): Promise<Live> {
     const meta = this.options.meta.value.sessions[sessionId] ?? {};
     const known = this.infos.get(sessionId);
+    // The session's mode, where its agent is known before it loads.
+    const agent = known?.harness;
+    const mode = agent
+      ? this.modeFor(agent, keptMode(meta) ?? this.options.settings().modes[agent])
+      : undefined;
     const loaded = await this.options.harness.loadSession(sessionId, {
-      mode: meta.mode ?? known?.mode ?? this.options.settings().mode,
+      ...(mode ? { mode } : {}),
       ...(meta.model ? { model: meta.model } : {}),
       ...(meta.sandbox ? { sandbox: meta.sandbox } : {}),
       ...(meta.directories?.length ? { directories: meta.directories } : {}),
@@ -627,6 +698,8 @@ export class SessionHub {
     const existing = this.live.get(sessionId);
     if (existing) return existing;
     const info = this.remember(loaded.session, known?.archived ?? false);
+    // Known only now, its agent is told the mode before anything runs: a compaction too.
+    if (!mode) await this.options.harness.configure(sessionId, { mode: info.mode });
     const state = initialSessionState(info);
     // A turn the history left running was cut off: nothing will finish it.
     state.turns = loaded.turns.map((turn) =>
@@ -744,6 +817,27 @@ export class SessionHub {
     }
     // The account is the daemon's to pass on: no session's state holds it.
     if (event.type === "account.changed") return;
+    if (event.type === "mode.changed") {
+      const info = this.infos.get(event.sessionId);
+      const mode = this.options.harness
+        .listModes()
+        .find((each) => each.harness === info?.harness && each.id === event.mode);
+      if (!info || !mode || info.mode === mode.id) return;
+      if (mode.dangerous) {
+        this.notice(
+          info.id,
+          "warning",
+          `${harnessLabel(info.harness)} moved to ${mode.name}. The session stays in its mode, and its next turn starts in it.`,
+        );
+        return;
+      }
+      this.options.meta.update((file) => {
+        (file.sessions[info.id] ??= {}).agentMode = mode.id;
+      });
+      this.setInfo({ ...info, mode: mode.id });
+      this.notice(info.id, "info", `${harnessLabel(info.harness)} moved to ${mode.name}.`);
+      return;
+    }
     if (event.type === "session.changed") {
       const info = this.infos.get(event.sessionId);
       if (!info) return;

@@ -1,11 +1,11 @@
 import type { SessionInfo } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "../components/panel.tsx";
-import { MODE_LABELS } from "../components/composer.tsx";
 import { PlanSteps } from "../components/plan.tsx";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { compactNumber, tailPath, tildePath } from "../lib/format.ts";
+import { modeNamed } from "../lib/modes.ts";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -29,6 +29,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 export function OverviewPanel({ info }: { info: SessionInfo }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
+  const mode = useStore(app.modes, (modes) => modeNamed(modes, info.harness, info.mode));
   const { plan, usage, turns, running } = useStore(app.conversation(info.id), (conversation) => ({
     running: conversation.state?.turns.at(-1)?.status === "running",
     plan: conversation.state?.plan ?? null,
@@ -74,7 +75,7 @@ export function OverviewPanel({ info }: { info: SessionInfo }) {
             {info.model}
             {info.effort ? ` · ${info.effort}` : ""}
           </Fact>
-          <Fact label="Mode">{MODE_LABELS[info.mode].label}</Fact>
+          <Fact label="Mode">{mode?.name ?? info.mode}</Fact>
           <Fact label="Turns">{turns}</Fact>
         </Section>
         <Section title="Context">

@@ -19,6 +19,7 @@ import type {
   Turn,
   Usage,
 } from "@cycle/protocol";
+import { type ModeInfo, defineModes } from "@cycle/protocol";
 import type {
   WireCommandAction,
   WireConfigEdit,
@@ -676,19 +677,84 @@ export function toInput(input: PromptInput): WireUserInput[] {
   return out;
 }
 
-/** How each of Cycle's modes is put to codex: when it asks, and what it may touch. */
+/** Codex's modes. Their ids are the ones Cycle had for every agent before each named its own. */
+export const CODEX_MODES: readonly ModeInfo[] = defineModes(HARNESS_NAME, [
+  {
+    id: "readOnly",
+    name: "Ask first",
+    description: "Reads freely, asks before commands and edits",
+    replaces: "readOnly",
+  },
+  {
+    id: "auto",
+    name: "Auto",
+    description: "Works inside the project, asks to leave it",
+    isDefault: true,
+    replaces: "auto",
+  },
+  {
+    id: "plan",
+    name: "Plan",
+    description: "Reads and proposes a plan, changes nothing",
+    plan: true,
+  },
+  {
+    id: "fullAccess",
+    name: "Full access",
+    description: "Never asks, no sandbox",
+    dangerous: true,
+    replaces: "fullAccess",
+  },
+]);
+
+/** How far a mode lets the agent reach, to tell a wider one from a narrower. */
+export function modeReach(mode: SessionMode): number {
+  return mode === "fullAccess" ? 2 : mode === "auto" ? 1 : 0;
+}
+
+/**
+ * Codex's collaboration mode for a turn: its plan mode, or its default to leave it. Codex keeps a
+ * thread in the one it was last given, so the default is given only to leave plan mode. Codex's
+ * own instructions for each are kept. `planning` is the model a thread in plan mode was put there
+ * with, which leaving it takes when the turn names none: a thread is never left planning unsaid.
+ */
+export function collaborationMode(
+  mode: SessionMode,
+  planning: string | undefined,
+  settings: { model?: string | undefined; effort?: string | undefined },
+): { collaborationMode: unknown } | Record<string, never> {
+  const plan = mode === "plan";
+  if (!plan && planning === undefined) return {};
+  const model = settings.model ?? planning;
+  if (!model) {
+    throw new Error(
+      plan
+        ? "Choose a model for this session before it plans."
+        : "Choose a model for this session to take it out of plan mode.",
+    );
+  }
+  return {
+    collaborationMode: {
+      mode: plan ? "plan" : "default",
+      settings: {
+        model,
+        reasoning_effort: settings.effort ?? null,
+        developer_instructions: null,
+      },
+    },
+  };
+}
+
+/**
+ * How each mode is put to codex: when it asks, and what it may touch. `plan` reaches as `readOnly`
+ * does, and is codex's plan collaboration mode besides. A mode codex does not offer asks first.
+ */
 export function modePolicy(mode: SessionMode): {
   approvalPolicy: "on-request" | "never";
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
   sandboxPolicy: WireSandboxPolicy;
 } {
   switch (mode) {
-    case "readOnly":
-      return {
-        approvalPolicy: "on-request",
-        sandbox: "read-only",
-        sandboxPolicy: { type: "readOnly", networkAccess: false },
-      };
     case "auto":
       return {
         approvalPolicy: "on-request",
@@ -706,6 +772,12 @@ export function modePolicy(mode: SessionMode): {
         approvalPolicy: "never",
         sandbox: "danger-full-access",
         sandboxPolicy: { type: "dangerFullAccess" },
+      };
+    default:
+      return {
+        approvalPolicy: "on-request",
+        sandbox: "read-only",
+        sandboxPolicy: { type: "readOnly", networkAccess: false },
       };
   }
 }

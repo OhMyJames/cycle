@@ -22,7 +22,7 @@ async function setup() {
   const hub = new SessionHub({
     harness: harness.asAgents(),
     meta,
-    settings: () => ({ model: null, effort: null, mode: "auto", worktree: false, projects: [] }),
+    settings: () => ({ model: null, effort: null, modes: {}, worktree: false, projects: [] }),
     usage: new UsageLedger(usageFile, () => 0),
     git: new Git((argv, options) => harness.exec(argv, options)),
     worktreeParent: "/home/worktrees",
