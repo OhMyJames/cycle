@@ -12,12 +12,15 @@ import {
   unarchiveSession,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  WireElicitation,
+  WireElicitationResult,
   WireAccountInfo,
   WireContextUsage,
   WireHistoryMessage,
   WireMcpServerStatus,
   WireMessage,
   WireModelInfo,
+  WirePermissionMode,
   WireRewindFilesResult,
   WireSlashCommand,
   WirePermissionResult,
@@ -49,7 +52,8 @@ export interface QueryOptions {
   /** The stored session to continue, and the entry to cut it after first. */
   resume?: string;
   resumeSessionAt?: string;
-  permissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  /** Always given: left out, Claude Code may start in a mode of its own choosing. */
+  permissionMode: WirePermissionMode;
   allowDangerouslySkipPermissions?: boolean;
   sandbox?: { enabled: boolean; autoAllowBashIfSandboxed: boolean };
   includePartialMessages: boolean;
@@ -74,6 +78,14 @@ export interface QueryOptions {
       toolUseID: string;
     },
   ) => Promise<WirePermissionResult>;
+  /** An MCP server asks the owner for something. Left out, every such request is declined. */
+  onElicitation?: (
+    request: WireElicitation,
+    options: { signal: AbortSignal },
+  ) => Promise<WireElicitationResult>;
+  // shortcut: no `onUserDialog`, so Claude Code sends no dialog and a refused answer ends the turn
+  // with its error, as in its CLI without a fallback model; upgrade when the SDK documents the
+  // `refusal_fallback_prompt` payload, or another dialog kind is worth drawing.
   pathToClaudeCodeExecutable?: string;
   spawnClaudeCodeProcess?: (options: {
     command: string;
@@ -94,6 +106,10 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
     account?: WireAccountInfo;
   }>;
   interrupt(): Promise<unknown>;
+  setPermissionMode(mode: WirePermissionMode): Promise<void>;
+  setModel(model?: string): Promise<void>;
+  /** Sets settings for this process alone, over its pipe: here, the effort as `effortLevel`. */
+  applyFlagSettings(settings: { effortLevel?: string | null }): Promise<void>;
   /** Stops one task. Its news, that it stopped, follows on the stream. */
   stopTask(taskId: string): Promise<void>;
   accountInfo(): Promise<WireAccountInfo>;

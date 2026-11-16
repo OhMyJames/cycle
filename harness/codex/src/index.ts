@@ -3,7 +3,10 @@ export { CodexHarness, type CodexHarnessOptions, type ExtraProvider } from "./co
 export {
   mcpServerEdits,
   mcpToolEdits,
+  CODEX_MODES,
+  collaborationMode,
   modePolicy,
+  modeReach,
   toCatalog,
   toItem,
   toLimits,

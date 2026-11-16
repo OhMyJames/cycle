@@ -11,8 +11,11 @@ import {
   type Params,
   type Result,
   type ServerMessage,
+  type SessionMode,
   type Settings,
   WS_PATH,
+  legacyMode,
+  resolveMode,
 } from "@cycle/protocol";
 import { allowedRequest, newToken, sameToken } from "./auth.ts";
 import { Files } from "./files.ts";
@@ -25,7 +28,13 @@ import {
   SandboxError,
   type SandboxesFile,
 } from "./sandboxes.ts";
-import { LaunchError, Scheduler, type SchedulesFile } from "./schedules.ts";
+import {
+  LaunchError,
+  Scheduler,
+  type SchedulesFile,
+  runAgentProblem,
+  scheduleMode,
+} from "./schedules.ts";
 import { type MetaFile, SessionHub } from "./sessions.ts";
 import { JsonStore, diskFile, realDelay } from "./store.ts";
 import { Terminals } from "./terminals.ts";
@@ -79,10 +88,13 @@ type Routes = {
 const DEFAULT_SETTINGS: Settings = {
   model: null,
   effort: null,
-  mode: "auto",
+  modes: {},
   worktree: false,
   projects: [],
 };
+
+/** Settings as kept. `mode` is what every agent's new sessions started in, before each had its own. */
+type StoredSettings = Settings & { mode?: string };
 const MAX_PROJECTS = 30;
 const SCHEDULE_TICK_MS = 15_000;
 
@@ -125,7 +137,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const token = options.token ?? newToken();
 
   const [settings, meta, usageFile, schedulesFile] = await Promise.all([
-    JsonStore.open<Settings>(diskFile(join(home, "settings.json")), {
+    JsonStore.open<StoredSettings>(diskFile(join(home, "settings.json")), {
       ...DEFAULT_SETTINGS,
     }),
     JsonStore.open<MetaFile>(diskFile(join(home, "sessions.json")), {
@@ -138,6 +150,28 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   ]);
 
   await harness.start();
+
+  /**
+   * What new sessions start in on each agent: the owner's choice for it, else what they chose for
+   * every agent before each had modes of its own, else the agent's default.
+   */
+  const newModes = (): Record<string, SessionMode> => {
+    const { modes, mode } = settings.value;
+    const all = harness.listModes();
+    const out: Record<string, SessionMode> = {};
+    for (const agent of new Set(all.map((each) => each.harness))) {
+      const own = all.filter((each) => each.harness === agent);
+      const chosen = resolveMode(own, modes[agent] ?? (mode ? legacyMode(mode) : undefined));
+      if (chosen) out[agent] = chosen.id;
+    }
+    return out;
+  };
+  /** Settings as the clients and the sessions read them, worked out again when they change. */
+  const view = (): Settings => {
+    const { mode: _, ...rest } = settings.value;
+    return { ...rest, modes: newModes() };
+  };
+  let settingsView = view();
 
   const viewers = new Map<string, number>();
   const push = (event: DaemonEvent) => {
@@ -215,7 +249,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const hub = new SessionHub({
     harness,
     meta,
-    settings: () => settings.value,
+    settings: () => settingsView,
     usage,
     git,
     worktreeParent: join(home, "worktrees"),
@@ -271,15 +305,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     now: Date.now,
     newId: () => crypto.randomUUID(),
     onChange: (schedules) => push({ type: "schedules.changed", schedules }),
+    modes: () => harness.listModes(),
     // A run starts as the composer would: a new session, then its first prompt.
     // An approval it asks for waits for the owner, as in any session.
     async launch(schedule) {
+      const mode = scheduleMode(schedule);
+      // One id can be two agents' modes, which let through different things: a run starts only on
+      // the agent its mode is of.
+      const agent = await hub.agentFor(schedule.model ?? settingsView.model ?? undefined);
+      const problem = runAgentProblem(schedule, agent);
+      if (problem) throw new Error(problem);
       const info = await hub.create(
         {
           cwd: schedule.cwd,
           ...(schedule.model ? { model: schedule.model } : {}),
           ...(schedule.effort ? { effort: schedule.effort } : {}),
-          ...(schedule.mode ? { mode: schedule.mode } : {}),
+          ...(mode ? { mode } : {}),
           ...(schedule.worktree ? { worktree: {} } : {}),
         },
         schedule.id,
@@ -349,7 +390,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   };
   const setSettings = (change: (value: Settings) => void) => {
     settings.update(change);
-    push({ type: "settings.changed", settings: settings.value });
+    settingsView = view();
+    push({ type: "settings.changed", settings: settingsView });
   };
   const useProject = (path: string) => {
     if (settings.value.projects[0] === path) return;
@@ -440,6 +482,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     },
 
     "models.list": async () => ({ models: await harness.listModels() }),
+    "modes.list": () => ({ modes: harness.listModes() }),
     "skills.list": async ({ cwd, harness: name }) => ({
       skills: await harness.connector(name).listSkills(cwd),
     }),
@@ -531,16 +574,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       await sandboxes().admin.setSecret(service, value);
       return {};
     },
-    "settings.get": () => settings.value,
+    "settings.get": () => settingsView,
     "settings.set": (patch) => {
+      const offered = harness.listModes();
+      for (const [agent, mode] of Object.entries(patch.modes ?? {})) {
+        if (!offered.some((each) => each.harness === agent && each.id === mode)) {
+          throw new Error(`${agent} has no mode named ${mode}.`);
+        }
+      }
       setSettings((value) => {
         if (patch.model !== undefined) value.model = patch.model;
         if (patch.effort !== undefined) value.effort = patch.effort;
-        if (patch.mode !== undefined) value.mode = patch.mode;
+        if (patch.modes !== undefined) value.modes = { ...value.modes, ...patch.modes };
         if (patch.worktree !== undefined) value.worktree = patch.worktree;
         if (patch.projects !== undefined) value.projects = patch.projects.slice(0, MAX_PROJECTS);
       });
-      return settings.value;
+      return settingsView;
     },
     "usage.daily": () => ({ days: usage.days() }),
 

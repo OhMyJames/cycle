@@ -97,11 +97,11 @@ test("what a session cost adds up over its processes, whether or not a process c
       event.type === "usage.updated" ? [(event.usage as Usage).costUsd] : [],
     );
   const session = await harness.createSession({ cwd: "/p", model: options.model });
-  const turn = async (cost: number, effort?: string) => {
+  const turn = async (cost: number, mode?: string) => {
     await harness.send(
       session.id,
       { text: "go", images: [] },
-      { ...options, ...(effort ? { effort } : {}) },
+      { ...options, ...(mode ? { mode } : {}) },
     );
     await settle();
     sdk.last.say(result(cost));
@@ -109,10 +109,10 @@ test("what a session cost adds up over its processes, whether or not a process c
   };
   await turn(0.5);
   await turn(0.75);
-  // Another effort is another process. This one began at nothing.
-  await turn(0.1, "low");
-  await turn(0.3, "low");
+  // A mode only a start can give is another process. This one began at nothing.
+  await turn(0.1, "bypassPermissions");
+  await turn(0.3, "bypassPermissions");
   // And this one carried on from what the conversation had cost.
-  await turn(1.25, "medium");
+  await turn(1.25, "acceptEdits");
   expect(costs()).toEqual([0.5, 0.75, 0.85, 1.05, 1.25]);
 });

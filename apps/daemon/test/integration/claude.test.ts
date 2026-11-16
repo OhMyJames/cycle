@@ -94,7 +94,7 @@ const ended = (sessionId: string) =>
 const items = (events: SessionEvent[]): Item[] =>
   events.flatMap((event) => (event.type === "item.completed" ? [event.item] : []));
 
-async function start(mode: "readOnly" | "auto" = "readOnly") {
+async function start(mode: "default" | "acceptEdits" = "default") {
   const session = await client.call("session.create", { cwd: project, model: SONNET, mode });
   await client.call("session.open", { sessionId: session.id });
   return session;
@@ -197,7 +197,7 @@ test("Claude Code asks the owner before a command that changes something", async
 });
 
 test("an edit shows what changed, and a stored conversation reads back the same turns", async () => {
-  const session = await start("auto");
+  const session = await start("acceptEdits");
   const edit = {
     file_path: join(project, "hello.txt"),
     old_string: "hello",

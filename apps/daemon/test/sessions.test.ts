@@ -22,7 +22,7 @@ async function setup() {
   const settings: Settings = {
     model: null,
     effort: null,
-    mode: "auto",
+    modes: {},
     worktree: false,
     projects: [],
   };

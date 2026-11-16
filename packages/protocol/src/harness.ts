@@ -9,6 +9,7 @@ import type {
   HarnessInfo,
   McpServerInfo,
   McpServerInput,
+  ModeInfo,
   ModelInfo,
   PluginCatalog,
   ReviewTarget,
@@ -52,6 +53,13 @@ export interface TurnOptions {
   directories?: string[];
 }
 
+/** What a session is moved to while it may run. An effort of null is the model's own default. */
+export interface ConfigureOptions {
+  mode?: SessionMode;
+  model?: string;
+  effort?: string | null;
+}
+
 export interface CreateSessionOptions extends TurnOptions {
   cwd: string;
   /**
@@ -77,6 +85,8 @@ export type HarnessEvent =
       sessionId: string;
       patch: Partial<HarnessSession>;
     }
+  /** The agent moved itself to another of its modes, as on leaving its plan. */
+  | { type: "mode.changed"; sessionId: string; mode: SessionMode }
   /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
   | { type: "mcp.changed" }
   /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */
@@ -178,8 +188,15 @@ export interface Agent {
    */
   stopTask?(sessionId: string, taskId: string): Promise<void>;
   respondApproval(approvalId: string, response: ApprovalResponse): void;
+  /**
+   * Takes the session's changed mode, model or effort in now, while it runs, where the agent can;
+   * else it applies from the next turn, which is given them too.
+   */
+  configure(sessionId: string, options: ConfigureOptions): Promise<void>;
 
   listModels(): Promise<ModelInfo[]>;
+  /** The modes a session of this agent can be in. */
+  listModes(): ModeInfo[];
 
   /**
    * Puts the files back as they were before `turnId`, or with `dryRun` says what that would change.

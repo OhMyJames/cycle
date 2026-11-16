@@ -18,6 +18,10 @@ export class FakeQuery implements ClaudeQuery {
   /** The prompts it was handed, in order. */
   readonly prompts: WireUserMessage[] = [];
   servers: Record<string, unknown> | null = null;
+  /** What it was asked to change in place, in order: `mode plan`, `model x`, `effort low`. */
+  readonly moves: string[] = [];
+  /** Refuses the next change in place, as a process that went away would. */
+  refuseMoves = false;
   interrupts = 0;
   /** The tasks it was asked to stop. */
   readonly stopped: string[] = [];
@@ -65,6 +69,14 @@ export class FakeQuery implements ClaudeQuery {
   interrupt = async () => {
     this.interrupts++;
   };
+  private moved(what: string): void {
+    if (this.refuseMoves) throw new Error("the process is gone");
+    this.moves.push(what);
+  }
+  setPermissionMode = async (mode: string) => this.moved(`mode ${mode}`);
+  setModel = async (model?: string) => this.moved(`model ${model ?? ""}`);
+  applyFlagSettings = async (settings: { effortLevel?: string | null }) =>
+    this.moved(`effort ${settings.effortLevel ?? "default"}`);
   stopTask = async (taskId: string) => {
     this.stopped.push(taskId);
   };

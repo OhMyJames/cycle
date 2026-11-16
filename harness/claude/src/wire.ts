@@ -120,6 +120,15 @@ export interface WireRewindFilesResult {
   deletions?: number;
 }
 
+/** Claude Code's modes, as it names them. */
+export type WirePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "plan"
+  | "dontAsk"
+  | "auto";
+
 /** One message of a running query's stream. */
 export interface WireMessage {
   type: string;
@@ -139,6 +148,8 @@ export interface WireMessage {
   /** The prompts the turn took in: the one that began it, and any that joined it. */
   user_message_uuids?: string[];
   modelUsage?: Record<string, WireModelUsage>;
+  /** A `status` message: the mode the process is in now, which the model may have changed. */
+  permissionMode?: string;
   /** What the process has cost so far, in all. */
   total_cost_usd?: number;
   /** A `rate_limit_event`. */
@@ -149,7 +160,10 @@ export interface WireMessage {
   origin?: WireOrigin;
   // A task's news: `system` messages with a `task_*` subtype.
   task_id?: string;
-  /** The tool call that started the task. */
+  /**
+   * The tool call that started the task; in a `permission_denied` message, the call refused
+   * without asking, whose reason is `message`.
+   */
   tool_use_id?: string;
   description?: string;
   subagent_type?: string;
@@ -234,6 +248,20 @@ export type WirePermissionResult =
       updatedPermissions?: WirePermissionUpdate[];
     }
   | { behavior: "deny"; message: string; interrupt?: boolean };
+
+/** What an MCP server asks the owner for: a form, or a page to visit. */
+export interface WireElicitation {
+  serverName: string;
+  message: string;
+  mode?: "form" | "url";
+  url?: string;
+  requestedSchema?: Record<string, unknown>;
+}
+
+export interface WireElicitationResult {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+}
 
 /** A prompt as the SDK takes it. `uuid` is what the stored conversation knows it by. */
 export interface WireUserMessage {
