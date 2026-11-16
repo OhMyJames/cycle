@@ -353,7 +353,12 @@ export function shownServers(config: ClaudeConfig, listed: McpServerInfo[]): Mcp
         tools,
       };
     }
-    return { ...server, origin: server.name.startsWith("plugin:") ? "plugin" : "owner", tools };
+    const origin = server.name.startsWith("plugin:") ? "plugin" : "owner";
+    // A process started before it was turned off may still list it as it was.
+    if (config.ownerServersOff.includes(server.name)) {
+      return { ...server, origin, tools, enabled: false, status: "disabled" };
+    }
+    return { ...server, origin, tools };
   });
   const names = new Set(shown.map((server) => server.name));
   for (const [name, server] of Object.entries(config.mcpServers)) {
