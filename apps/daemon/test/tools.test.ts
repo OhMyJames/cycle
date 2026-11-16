@@ -16,6 +16,7 @@ const info = (id: string, title: string, updatedAt: number): SessionInfo => ({
   worktree: null,
   sandbox: null,
   sandboxCwd: null,
+  directories: [],
   createdAt: 0,
   updatedAt,
   archived: false,

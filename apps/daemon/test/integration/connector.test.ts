@@ -8,6 +8,7 @@ import {
   type OpenProviders,
   diskFile,
   openProviders,
+  Harnesses,
   startDaemon,
 } from "../../src/index.ts";
 import { type MockModel, startMockModel } from "./mock-model.ts";
@@ -29,11 +30,14 @@ beforeAll(async () => {
     join(root, "home", "provider-models.json"),
   );
   daemon = await startDaemon({
-    harness: new CodexHarness({
-      config: model.codexConfig,
-      env: { CODEX_HOME: join(root, "codex") },
-      provider: providers.provider,
-    }),
+    harness: new Harnesses(
+      new CodexHarness({
+        config: model.codexConfig,
+        env: { CODEX_HOME: join(root, "codex") },
+        provider: providers.provider,
+      }),
+      [],
+    ),
     providers: providers.store,
     home: join(root, "home"),
   });
@@ -174,6 +178,7 @@ test("a schedule's run starts a session marked as its own, and is kept", async (
     model: null,
     effort: null,
     mode: "readOnly",
+    modeHarness: "codex",
     timing: { kind: "daily", time: "03:00", weekdays: null },
   });
   expect(schedule.next).toBeGreaterThan(Date.now());

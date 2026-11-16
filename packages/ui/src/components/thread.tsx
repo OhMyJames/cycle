@@ -1,4 +1,4 @@
-import { toMachinePath, type SessionState, type Turn } from "@cycle/protocol";
+import { type BackgroundTask, type SessionState, type Turn, toMachinePath } from "@cycle/protocol";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -16,8 +16,11 @@ import {
   Divider,
   MentionText,
   NoteBlock,
+  OriginLine,
   PlanBlock,
   ReviewBlock,
+  TASK_WORDS,
+  TaskBlock,
   TextBlock,
   ThoughtBlock,
   ToolRow,
@@ -82,6 +85,10 @@ function BlockView({
   askingId: string | undefined;
 }) {
   const app = useApp();
+  const rewindsFiles = useStore(app.harnesses, (list) => {
+    const harness = app.conversation(sessionId).get().state?.info.harness;
+    return list.find((each) => each.name === harness)?.capabilities.rewindFiles ?? false;
+  });
   switch (block.kind) {
     case "user":
       return (
@@ -90,13 +97,28 @@ function BlockView({
           steeredAfter={block.steeredAfter}
           onRewind={
             block.steeredAfter === undefined && turn.status !== "running"
-              ? () =>
+              ? (files) =>
                   // A review's prompt is codex's own: sent again it would be a turn, not a review.
                   void app.rewind(
                     sessionId,
                     turn.id,
                     turn.items.some((item) => item.kind === "review") ? "" : block.item.text,
+                    files,
                   )
+              : undefined
+          }
+          previewFiles={
+            block.steeredAfter === undefined && rewindsFiles
+              ? () =>
+                  app
+                    .request("session.rewind.preview", { sessionId, turnId: turn.id })
+                    .catch((error: unknown) => ({
+                      possible: false,
+                      error: error instanceof Error ? error.message : String(error),
+                      files: [],
+                      insertions: 0,
+                      deletions: 0,
+                    }))
               : undefined
           }
           time={
@@ -127,6 +149,10 @@ function BlockView({
       return <Divider>Context compacted</Divider>;
     case "agent":
       return <AgentBlock item={block.item} />;
+    case "task":
+      return <TaskBlock item={block.item} nested={block.nested} />;
+    case "origin":
+      return <OriginLine origin={block.origin} />;
     case "review":
       return <ReviewBlock item={block.item} />;
     case "note":
@@ -208,14 +234,22 @@ function Elapsed({ since }: { since: number }) {
   return <span className="tabular muted">{duration(Math.max(1000, now - since))}</span>;
 }
 
+/** The turn's latest item of its own: what a task did is inside the task. */
+function lastOwn(turn: Turn | undefined) {
+  return turn?.items.findLast((item) => item.parentId === undefined);
+}
+
 /** What the agent is doing right now, in a few words. */
 export function currentStep(turn: Turn | undefined): string {
-  const item = turn?.items.at(-1);
+  const item = lastOwn(turn);
   if (!item) return "Working";
   if (item.kind === "reasoning") return "Thinking";
   if (item.kind === "agentMessage" || item.kind === "plan") return "Writing";
   if (item.kind === "agentCall") {
     return item.status === "running" ? "Waiting for a subagent" : "Working";
+  }
+  if (item.kind === "task" && item.status === "running") {
+    return item.task === "agent" ? "Waiting for an agent" : "Waiting for a task";
   }
   if (isActivity(item) && activityStatus(item) === "running") {
     const row = activityRow(item);
@@ -225,14 +259,14 @@ export function currentStep(turn: Turn | undefined): string {
 }
 
 function loaderState(turn: Turn | undefined): LoaderState {
-  const kind = turn?.items.at(-1)?.kind;
+  const kind = lastOwn(turn)?.kind;
   if (kind === "agentMessage" || kind === "plan") return "responding";
-  return kind === "agentCall" ? "executing" : "thinking";
+  return kind === "agentCall" || kind === "task" ? "executing" : "thinking";
 }
 
 /** A piece of the turn's work is running, which its own row, or its card's line, says. */
 function workAtWork(turn: Turn | undefined): boolean {
-  const item = turn?.items.at(-1);
+  const item = lastOwn(turn);
   return item !== undefined && isActivity(item) && activityStatus(item) === "running";
 }
 
@@ -278,6 +312,49 @@ function StatusLine({ turn, since }: { turn: Turn | undefined; since: number }) 
       <span className="fade-x">{step}</span>
       <Elapsed since={since} />
     </p>
+  );
+}
+
+/**
+ * What the agent left running, whichever turn began it, each with a way to stop it alone. Its end
+ * comes back as the task's news; until then the press waits.
+ */
+function BackgroundTasks({ sessionId, tasks }: { sessionId: string; tasks: BackgroundTask[] }) {
+  const app = useApp();
+  const [stopping, setStopping] = useState<readonly string[]>([]);
+  return (
+    <section className="background-tasks" aria-label="Running in the background">
+      <p className="background-title">Running in the background</p>
+      {tasks.map((task) => (
+        <div key={task.id} className="background-task">
+          <BackgroundDot />
+          <span className="fade-x" title={task.description}>
+            <span className="action">{TASK_WORDS[task.task]}</span>{" "}
+            <span className="detail">
+              {task.description}
+              {task.agent ? ` · ${task.agent}` : ""}
+            </span>
+          </span>
+          <span className="grow" />
+          <button
+            type="button"
+            className="ghost"
+            aria-label={`Stop ${task.description || TASK_WORDS[task.task]}`}
+            disabled={stopping.includes(task.id)}
+            onClick={() => {
+              setStopping((list) => [...list, task.id]);
+              void app
+                .attempt(app.request("session.stopTask", { sessionId, taskId: task.id }))
+                .then((done) => {
+                  if (done === null) setStopping((list) => list.filter((id) => id !== task.id));
+                });
+            }}
+          >
+            {stopping.includes(task.id) ? "Stopping" : "Stop"}
+          </button>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -339,6 +416,9 @@ function Tail({ state, gap }: { state: SessionState; gap: number }) {
           <BackgroundDot />
           {others === 1 ? "A subagent is still working" : `${others} subagents are still working`}
         </p>
+      ) : null}
+      {state.tasks.length > 0 ? (
+        <BackgroundTasks sessionId={sessionId} tasks={state.tasks} />
       ) : null}
       {notices.slice(-1).map((notice) => (
         <div key={notice.message} className="notice" data-level={notice.level}>

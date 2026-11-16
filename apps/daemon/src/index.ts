@@ -1,7 +1,8 @@
 export { type Daemon, type DaemonOptions, DAEMON_VERSION, startDaemon } from "./daemon.ts";
-export { Harnesses } from "./harnesses.ts";
+export { Harnesses, NotSupported, type OtherAgent } from "./harnesses.ts";
+export { claudeConfigBook } from "./claude-config.ts";
 export { Git, GitError, parseNameStatus, parseNumstat, parseBranches, branchSlug } from "./git.ts";
-export { SessionHub, type HubOptions, type MetaFile, SessionError } from "./sessions.ts";
+export { SessionHub, type HubOptions, type MetaFile, SessionError, keptMode } from "./sessions.ts";
 export { diskFile, JsonStore, type Delay, type TextFile } from "./store.ts";
 export { type OpenProviders, openProviders } from "./gateway.ts";
 export {
@@ -24,6 +25,8 @@ export {
   type SchedulesFile,
   type StoredSchedule,
   checkScheduleInput,
+  runAgentProblem,
+  scheduleMode,
 } from "./schedules.ts";
 export { latestOccurrence, nextOccurrence } from "./schedule-timing.ts";
 export {

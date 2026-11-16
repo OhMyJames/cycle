@@ -148,7 +148,7 @@ function setup(names: string[] = []) {
   return { sdk, harness, moved, ...sbx };
 }
 
-const options = { mode: "auto" as const, model: "claude-sonnet-5-5" };
+const options = { mode: "acceptEdits", model: "claude-sonnet-5-5" };
 
 test("a session asked into a sandbox has its agent started there, and nowhere else", async () => {
   const { sdk, harness, asked, started } = setup();
@@ -264,5 +264,5 @@ test("without sbx no model offers a sandbox, and a session asked into one is ref
   expect(harness.createSession({ cwd: "/Users/me/app", sandboxed: "standard" })).rejects.toThrow(
     "Docker Sandboxes is not installed",
   );
-  expect(modeOptions("fullAccess", true)).toEqual(modeOptions("fullAccess"));
+  expect(modeOptions("bypassPermissions", true)).toEqual(modeOptions("bypassPermissions"));
 });

@@ -1,20 +1,53 @@
-import type {
-  Agent,
-  ApprovalResponse,
-  CreateSessionOptions,
-  HarnessEvent,
-  HarnessSession,
-  ModelInfo,
-  PromptInput,
-  ReviewTarget,
-  Turn,
-  TurnOptions,
-  Usage,
+import {
+  type AccountInfo,
+  type Agent,
+  type AgentCapabilities,
+  type AgentReads,
+  type ApprovalResponse,
+  type ConfigureOptions,
+  type ContextUsage,
+  type CreateSessionOptions,
+  type FileRewind,
+  type HarnessEvent,
+  type HarnessSession,
+  type HookSettings,
+  type LimitWindow,
+  type McpServerInfo,
+  type McpServerInput,
+  type ModeInfo,
+  type PluginCatalog,
+  type PluginDetail,
+  type ModelInfo,
+  type PromptInput,
+  type ReviewTarget,
+  type SessionMode,
+  type SkillInfo,
+  type SlashCommand,
+  type Turn,
+  type TurnOptions,
+  type TurnOrigin,
+  type Usage,
+  toMachinePath,
 } from "@cycle/protocol";
 import { cp, mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  type ClaudeConfig,
+  enablePlugin,
+  enableServer,
+  enableSkill,
+  enableTool,
+  putServer,
+  removeServer,
+  setHooks,
+  shownServers,
+  toHookSettings,
+} from "./config.ts";
+import { ClaudeConfiguration, type ClaudeConfigOptions } from "./configuration.ts";
+import type { OwnerPlugin } from "./plugins.ts";
 import { type Sandboxes, claudeHomeOf, projectFolder, sandboxCwd } from "./sandbox.ts";
+import { agentBegins, turnOrigin } from "./tasks.ts";
 import {
   atHome,
   type ClaudeQuery,
@@ -24,6 +57,8 @@ import {
   withHome,
 } from "./sdk.ts";
 import {
+  AFTER_PLAN,
+  CLAUDE_MODES,
   DEFAULT_EFFORT,
   HARNESS_NAME,
   NO_TOKENS,
@@ -32,19 +67,34 @@ import {
   historyModel,
   lastEntryOf,
   modeOptions,
+  processSpec,
   reviewPrompt,
+  toAccount,
   toApproval,
+  toElicitation,
+  toElicitationResult,
+  toCommands,
+  toContext,
+  toFileRewind,
+  toLimit,
+  toMcpServers,
   toModels,
   toPermission,
   toSession,
+  toSkills,
   toTurns,
   toUserMessage,
   turnPlace,
   usedBy,
 } from "./translate.ts";
 import type {
+  WireElicitation,
+  WireElicitationResult,
+  WireAccountInfo,
   WireHistoryMessage,
+  WireMcpServerStatus,
   WireMessage,
+  WirePermissionMode,
   WireSessionInfo,
   WirePermissionResult,
   WirePermissionUpdate,
@@ -85,6 +135,11 @@ export interface ClaudeHarnessOptions {
   sandboxes?: Sandboxes;
   /** Where a conversation kept in the owner's home is moved from, once. */
   files?: SessionFiles;
+  /**
+   * Cycle's own configuration of Claude Code, which every process on this machine starts with.
+   * Without it, a process has the owner's alone, and the Connector only reads.
+   */
+  config?: ClaudeConfigOptions;
   sdk?: ClaudeSdk;
   /** Runs something later, and answers how to call it off. */
   schedule?: (run: () => void, ms: number) => () => void;
@@ -100,6 +155,8 @@ interface Known {
   model?: string;
   /** The sandbox its agent runs in, by name. */
   sandbox?: string;
+  /** Folders beyond `cwd` its agent may reach. */
+  directories?: string[];
 }
 
 /** One Claude Code process, which holds one session. */
@@ -109,10 +166,22 @@ interface Running {
   query: ClaudeQuery;
   input: Inbox<WireUserMessage>;
   reader: StreamReader;
-  /** The mode, model and effort it was started with: another means another process. */
+  /** What its mode needed at its start: a mode that needs otherwise means another process. */
   spec: string;
+  /** What of Cycle's configuration only its start takes, as it was then. */
+  configKey: string;
+  /** The mode, model and effort it is in now, which it can be moved off in place. */
+  mode: SessionMode;
+  model: string | undefined;
+  effort: string | undefined;
   /** The turn it runs now, known by the prompt that began it. */
   turn: string | null;
+  /** Whether the owner began that turn here, rather than the agent by itself. */
+  own: boolean;
+  /** The task whose news came since the last turn ended: the agent's next turn is for it. */
+  notified: string | null;
+  /** What the agent streamed for a turn of its own before the message that names the turn. */
+  early: WireMessage[];
   /** Prompts sent into the running turn, until it is known whether it took them. */
   steers: Map<string, PromptInput>;
   /** The owner asked it to stop: the turn's end is theirs, not a failure. */
@@ -120,6 +189,10 @@ interface Running {
   cancelIdle: (() => void) | null;
   /** We closed it ourselves. */
   closed: boolean;
+  /** The commands its prompts can begin with, as it last said. */
+  commands: SlashCommand[];
+  /** What it said the session had cost at its last result. Null before its first. */
+  costSeen: number | null;
 }
 
 interface PendingApproval {
@@ -137,6 +210,11 @@ interface AskContext {
 
 /** A process nobody has prompted for this long is closed. Its session comes back with the next prompt. */
 const IDLE_MS = 5 * 60_000;
+/** A list of MCP servers read without a session's process is kept this long. */
+const MCP_KEEP_MS = 5 * 60_000;
+/** How often, and how many times, a process is asked again while its servers are still connecting. */
+const MCP_POLL_MS = 250;
+const MCP_POLLS = 40;
 const LIST_LIMIT = 500;
 
 /** Prompts handed to a process as they come, for as long as it lives. */
@@ -165,6 +243,11 @@ class Inbox<T> implements AsyncIterable<T> {
       this.wake = null;
     }
   }
+}
+
+/** The plugins a process has, as it loads them again. */
+async function loadedPlugins(query: ClaudeQuery) {
+  return (await query.reloadPlugins()).plugins;
 }
 
 function message(error: unknown): string {
@@ -197,8 +280,13 @@ const realFiles: SessionFiles = {
  *
  * It is an agent only: files, commands and terminals are the main harness's.
  */
-export class ClaudeHarness implements Agent {
+export class ClaudeHarness implements Agent, AgentReads {
   readonly name = HARNESS_NAME;
+  readonly capabilities: AgentCapabilities;
+  /** Cycle's configuration of Claude Code; null when it keeps none. */
+  private readonly configuration: ClaudeConfiguration | null;
+  /** The owner's own plugins as last listed, and when. */
+  private ownerPlugins: { at: number; plugins: OwnerPlugin[] } | null = null;
   private readonly sdk: ClaudeSdk;
   private readonly options: ClaudeHarnessOptions;
   private readonly env: Record<string, string>;
@@ -230,6 +318,26 @@ export class ClaudeHarness implements Agent {
    */
   private readonly cuts = new Map<string, string>();
   private models: Promise<ModelInfo[]> | null = null;
+  /**
+   * What the latest process to start said of the account and of the commands a prompt outside any
+   * session can begin with. Claude Code reads its sign-in as it starts, so a new one shows with the
+   * next process.
+   */
+  private latest: { account: WireAccountInfo | null } = { account: null };
+  /**
+   * The commands a prompt can begin with in each folder, as a process on this machine in it last
+   * said: the owner's, and the folder's project's own.
+   */
+  private readonly commandsAt = new Map<string, SlashCommand[]>();
+  /** The MCP servers as last read, and when. */
+  private mcp: { at: number; servers: McpServerInfo[] } | null = null;
+  /**
+   * What each session has cost so far, over all its processes. Kept apart from `usage`, which going
+   * back clears: what was spent stays spent.
+   */
+  private readonly costs = new Map<string, number>();
+  /** The subscription's limits, as the processes last told of each. */
+  private readonly limits = new Map<string, LimitWindow>();
 
   constructor(options: ClaudeHarnessOptions = {}) {
     this.options = options;
@@ -248,6 +356,25 @@ export class ClaudeHarness implements Agent {
       });
     this.now = options.now ?? Date.now;
     this.newId = options.newId ?? (() => crypto.randomUUID());
+    this.configuration = options.config
+      ? new ClaudeConfiguration(
+          options.config,
+          this.env,
+          () => this.bin(),
+          options.onLog ?? (() => {}),
+        )
+      : null;
+    const edits = this.configuration !== null;
+    this.capabilities = {
+      attachments: ["image", "pdf", "text"],
+      rewindFiles: true,
+      commands: true,
+      directories: true,
+      connector: edits ? "edit" : "read",
+      login: false,
+      features: false,
+      hooks: edits,
+    };
   }
 
   /** Claude Code must be there and start: its models are the proof. */
@@ -277,6 +404,7 @@ export class ClaudeHarness implements Agent {
       stored: false,
       ...(options.model ? { model: options.model } : {}),
       ...(sandbox ? { sandbox } : {}),
+      ...(options.directories?.length ? { directories: options.directories } : {}),
     });
     this.asked.set(id, options);
     return {
@@ -343,6 +471,7 @@ export class ClaudeHarness implements Agent {
     const known = await this.find(sessionId);
     this.asked.set(sessionId, options);
     if (options.sandbox) known.sandbox = options.sandbox;
+    if (options.directories) known.directories = options.directories;
     if (known.sandbox && known.stored) await this.adopt(sessionId, known);
     const at = this.now();
     const inside = known.sandbox ? this.cwdOf(known) : null;
@@ -364,9 +493,10 @@ export class ClaudeHarness implements Agent {
     if (!known.stored) return { session: fresh, turns: [], usage: null };
     const sdk = this.sdkFor(known);
     const dir = { dir: inside ?? known.cwd };
-    const [info, stored] = await Promise.all([
+    const [info, stored, helpers] = await Promise.all([
       sdk.getSessionInfo(sessionId, dir),
       sdk.getSessionMessages(sessionId, dir),
+      this.helpers(sdk, sessionId, dir),
     ]);
     const messages = this.kept(sessionId, stored);
     const model = options.model ?? known.model ?? historyModel(messages) ?? "";
@@ -380,7 +510,7 @@ export class ClaudeHarness implements Agent {
             ...(known.sandbox ? { sandbox: known.sandbox } : {}),
           })
         : { ...fresh, model },
-      turns: toTurns(messages, known.cwd, inside),
+      turns: toTurns(messages, known.cwd, inside, helpers),
       usage: this.usage.get(sessionId) ?? null,
     };
   }
@@ -436,6 +566,7 @@ export class ClaudeHarness implements Agent {
     this.cuts.delete(sessionId);
     this.asked.delete(sessionId);
     this.usage.delete(sessionId);
+    this.costs.delete(sessionId);
   }
 
   /** Claude Code compacts when asked as a prompt would ask it: the turn it makes holds the mark. */
@@ -503,6 +634,7 @@ export class ClaudeHarness implements Agent {
     running.input.push(toUserMessage(input, id, sessionId, "next"));
   }
 
+  /** Stops the turn. Tasks in the background go on: each is stopped by itself. */
   async interrupt(sessionId: string): Promise<void> {
     const running = this.live.get(sessionId);
     if (!running || running.turn === null) return;
@@ -510,8 +642,220 @@ export class ClaudeHarness implements Agent {
     await running.query.interrupt();
   }
 
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    const running = this.live.get(sessionId);
+    if (!running) throw new Error("That task is no longer running.");
+    await running.query.stopTask(taskId);
+  }
+
   respondApproval(approvalId: string, response: ApprovalResponse): void {
     this.approvals.get(approvalId)?.answer(response);
+  }
+
+  /**
+   * Claude Code moves to another mode, model or effort in place, mid-turn too. A mode that needs
+   * what only a start gives waits for the next turn, or ends an idle process now so the next starts
+   * as it must. An effort of null is the model's own.
+   */
+  async configure(sessionId: string, options: ConfigureOptions): Promise<void> {
+    const { effort, ...rest } = options;
+    const asked: TurnOptions = { ...this.asked.get(sessionId), ...rest };
+    if (effort === null) delete asked.effort;
+    else if (effort !== undefined) asked.effort = effort;
+    this.asked.set(sessionId, asked);
+    const running = this.live.get(sessionId);
+    if (!running) return;
+    const level =
+      effort === null
+        ? ((await this.defaultEffort(options.model ?? running.model)) ?? null)
+        : effort;
+    if (!(await this.move(running, { ...rest, effort: level }))) return;
+    const mode = options.mode;
+    if (mode !== undefined && this.specOf(mode, running.known) !== running.spec) {
+      // The next turn starts the process the mode needs, unless a task here would stop with this one.
+      if (running.turn === null && running.reader.background.length === 0) this.stop(running);
+    }
+  }
+
+  listModes(): ModeInfo[] {
+    return [...CLAUDE_MODES];
+  }
+
+  /**
+   * Puts the files back as they were when the turn's prompt was sent, from the copies Claude Code
+   * kept as the agent changed them. The session's process is started for it if it has none.
+   */
+  async rewindFiles(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind> {
+    const running = await this.running(sessionId, this.asked.get(sessionId) ?? {});
+    if (running.turn !== null) throw new Error("Stop the turn before putting files back.");
+    const inside = running.known.sandbox ? this.cwdOf(running.known) : null;
+    const done = await running.query.rewindFiles(turnId, { dryRun });
+    return toFileRewind(done, (path) =>
+      toMachinePath(path, { cwd: running.known.cwd, sandboxCwd: inside }),
+    );
+  }
+
+  /**
+   * A session's commands, as its process last said, or those of a folder: a project brings commands
+   * of its own, so each folder has its own list. A folder no process has run in yet is asked of one
+   * started there for the answer, once.
+   *
+   * shortcut: a folder's list is kept until a process runs there again; upgrade when commands added
+   * in a project with no session running should show at once.
+   */
+  async listCommands(target: { sessionId: string } | { cwd: string }): Promise<SlashCommand[]> {
+    let cwd: string;
+    if ("sessionId" in target) {
+      const running = this.live.get(target.sessionId);
+      if (running) return running.commands;
+      cwd = (await this.find(target.sessionId)).cwd;
+    } else {
+      cwd = target.cwd;
+    }
+    const kept = this.commandsAt.get(cwd);
+    if (kept) return kept;
+    return this.probe(async () => this.commandsAt.get(cwd) ?? [], cwd);
+  }
+
+  /** What a session's context holds, from its last request. Null when it has no process now. */
+  async readContext(sessionId: string): Promise<ContextUsage | null> {
+    const running = this.live.get(sessionId);
+    if (!running) return null;
+    return toContext(await running.query.getContextUsage({ detail: "summary" }));
+  }
+
+  /**
+   * Who Claude Code is signed in as here, asked of a process that runs on this machine, and the
+   * limits seen so far. A sandbox's sign-in is its own, and not the owner's account.
+   */
+  async readAccount(): Promise<AccountInfo> {
+    const running = this.here();
+    if (running) {
+      this.latest.account = await running.query.accountInfo().catch(() => this.latest.account);
+    } else if (!this.latest.account) {
+      await this.listModels();
+    }
+    return toAccount(this.latest.account, [...this.limits.values()]);
+  }
+
+  /**
+   * The servers Claude Code reaches, once they have finished connecting. A process on this machine
+   * that runs is asked. With none, the last answer is given while it is a few minutes old; after
+   * that a process is started for the answer, which starts every stdio server of the owner's too,
+   * so it is kept rather than asked again with each look at the page.
+   */
+  async listMcpServers(): Promise<McpServerInfo[]> {
+    const own = this.options.tools?.name ?? null;
+    const running = this.here();
+    const read = async (query: ClaudeQuery) => {
+      const servers = toMcpServers(await this.connected(query), own);
+      this.mcp = { at: this.now(), servers };
+      return servers;
+    };
+    const listed = running
+      ? await read(running.query)
+      : this.mcp && this.now() - this.mcp.at < MCP_KEEP_MS
+        ? this.mcp.servers
+        : await this.probe(read);
+    return this.configuration ? shownServers(this.configuration.read(), listed) : listed;
+  }
+
+  /**
+   * Claude Code's skills in a folder are the commands the owner, its project or a plugin brings.
+   * One turned off is not listed by a process, so it is added back, off.
+   */
+  async listSkills(cwd: string): Promise<SkillInfo[]> {
+    const skills = toSkills(await this.listCommands({ cwd }));
+    const off = this.configuration?.read().skillsOff ?? [];
+    const shown = skills.map((skill) => ({ ...skill, enabled: !off.includes(skill.name) }));
+    for (const name of off) {
+      if (!skills.some((skill) => skill.name === name)) {
+        shown.push({ name, description: "", path: "", scope: "claude", enabled: false });
+      }
+    }
+    return shown;
+  }
+
+  // The Connector's changes: Cycle's own configuration, never the owner's files.
+
+  async putMcpServer(server: McpServerInput): Promise<void> {
+    // Every name not Cycle's to give: the owner's servers, those turned off included, and its tools.
+    const taken = (await this.listMcpServers())
+      .filter((each) => each.origin !== "config")
+      .map((each) => each.name);
+    if (this.options.tools) taken.push(this.options.tools.name);
+    await this.change((config) => putServer(config, server, taken));
+  }
+
+  async removeMcpServer(name: string): Promise<void> {
+    await this.change((config) => removeServer(config, name));
+  }
+
+  async enableMcpServer(name: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enableServer(config, name, enabled));
+  }
+
+  async enableMcpTool(name: string, tool: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enableTool(config, name, tool, enabled));
+  }
+
+  async enableSkill(name: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enableSkill(config, name, enabled));
+  }
+
+  async readHooks(): Promise<HookSettings> {
+    return toHookSettings(this.config());
+  }
+
+  async setHooks(settings: HookSettings): Promise<void> {
+    await this.change((config) => setHooks(config, settings, this.newId));
+  }
+
+  async listPlugins(): Promise<PluginCatalog> {
+    const configuration = this.configured();
+    return configuration.plugins.catalog(await this.ownersPlugins(), configuration.read());
+  }
+
+  async readPlugin(marketplace: string, name: string): Promise<PluginDetail> {
+    const catalog = await this.listPlugins();
+    const plugin = catalog.marketplaces
+      .find((each) => each.name === marketplace)
+      ?.plugins.find((each) => each.name === name);
+    if (!plugin) throw new Error(`${name} is not in ${marketplace}.`);
+    // Claude Code says what a plugin brings only once it is loaded.
+    return {
+      plugin,
+      description: plugin.description,
+      skills: [],
+      mcpServers: [],
+      hooks: 0,
+      apps: [],
+    };
+  }
+
+  async installPlugin(marketplace: string, name: string): Promise<void> {
+    await this.configured().plugins.install(marketplace, name);
+    await this.reconfigure();
+  }
+
+  async uninstallPlugin(id: string): Promise<void> {
+    const configuration = this.configured();
+    await configuration.plugins.uninstall(id);
+    const { [id]: _gone, ...plugins } = configuration.read().plugins;
+    await configuration.write({ ...configuration.read(), plugins });
+    await this.reconfigure();
+  }
+
+  async enablePlugin(id: string, enabled: boolean): Promise<void> {
+    await this.change((config) => enablePlugin(config, id, enabled));
+  }
+
+  async addMarketplace(source: string): Promise<void> {
+    await this.configured().plugins.addMarketplace(source);
+  }
+
+  async removeMarketplace(name: string): Promise<void> {
+    await this.configured().plugins.removeMarketplace(name);
   }
 
   /**
@@ -531,21 +875,157 @@ export class ClaudeHarness implements Agent {
 
   // Inside
 
-  private async readModels(): Promise<ModelInfo[]> {
+  private configured(): ClaudeConfiguration {
+    if (!this.configuration) throw new Error("Cycle keeps no configuration of Claude Code here.");
+    return this.configuration;
+  }
+
+  private config(): ClaudeConfig {
+    return this.configured().read();
+  }
+
+  /** Changes Cycle's configuration, keeps it, and gives it to the processes that run. */
+  private async change(next: (config: ClaudeConfig) => ClaudeConfig): Promise<void> {
+    const configuration = this.configured();
+    await configuration.write(next(configuration.read()));
+    await this.reconfigure();
+  }
+
+  /**
+   * Gives the processes on this machine what can change while they run: Cycle's servers, over their
+   * pipe, and the switches of the owner's own. An idle process has it before its next prompt; one
+   * in a turn is not waited on, so a long turn holds nobody up. Plugins are not loaded again, since
+   * that waits for the turn; what cannot change as a process runs waits for its next start, which
+   * its next prompt brings when no task runs in it.
+   */
+  private async reconfigure(): Promise<void> {
+    const configuration = this.configured();
+    this.mcp = null;
+    this.ownerPlugins = null;
+    const servers = this.serversFor(configuration);
+    const flags = configuration.flags();
+    const idle: Promise<void>[] = [];
+    for (const running of this.live.values()) {
+      if (running.known.sandbox) continue;
+      const given = running.query
+        .setMcpServers(servers)
+        .then(() => running.query.applyFlagSettings(flags))
+        .catch((error: unknown) => {
+          this.options.onLog?.(`A change did not reach a running Claude Code: ${message(error)}`);
+        });
+      if (running.turn === null) idle.push(given);
+    }
+    await Promise.all(idle);
+  }
+
+  /** Every server a process on this machine is given over its pipe: Cycle's tools, and its own. */
+  private serversFor(configuration: ClaudeConfiguration | null): Record<string, unknown> {
+    const { tools } = this.options;
+    return {
+      ...configuration?.servers(),
+      // The key goes down the process's own pipe: not its arguments, which any command can list,
+      // nor its environment, which the commands it runs inherit.
+      ...(tools
+        ? {
+            [tools.name]: {
+              type: "http",
+              url: tools.url,
+              headers: { Authorization: `Bearer ${tools.key}` },
+            },
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * The owner's own installed plugins, as a process loads them. One Cycle turned off is not loaded;
+   * the catalog adds it back from the configuration.
+   */
+  private async ownersPlugins(): Promise<OwnerPlugin[]> {
+    if (this.ownerPlugins && this.now() - this.ownerPlugins.at < MCP_KEEP_MS) {
+      return this.ownerPlugins.plugins;
+    }
+    // Asked of a process started for it, which runs no turn: one a session runs in would wait for it.
+    const loaded = await this.probe(loadedPlugins);
+    const plugins = loaded
+      .filter((each) => {
+        const source = each.source ?? "";
+        return source.includes("@") && !source.endsWith("@inline") && !source.endsWith("@builtin");
+      })
+      .map((each) => ({
+        id: each.source ?? each.name,
+        name: each.name,
+        version: each.version ?? null,
+      }));
+    this.ownerPlugins = { at: this.now(), plugins };
+    return plugins;
+  }
+
+  private readModels(): Promise<ModelInfo[]> {
+    return this.probe(async () => this.offered);
+  }
+
+  /** The models the latest process to start for the purpose said it offers. */
+  private offered: ModelInfo[] = [];
+
+  /**
+   * Starts a process that holds no session, for what only a running one says, and closes it. What it
+   * says as it starts is kept.
+   */
+  private async probe<T>(ask: (query: ClaudeQuery) => Promise<T>, cwd = homedir()): Promise<T> {
     let query: ClaudeQuery | null = null;
     try {
+      const start = await this.configuration?.forStart();
       query = await withHome(this.home, () =>
         this.sdk.query({
           prompt: new Inbox<WireUserMessage>(),
-          options: { ...this.shared(), cwd: homedir(), permissionMode: "default" },
+          options: { ...this.shared(), ...start?.options, cwd, permissionMode: "default" },
         }),
       );
       const init = await query.initializationResult();
-      return toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
+      if (this.configuration) await query.setMcpServers(this.serversFor(this.configuration));
+      this.offered = toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
+      this.heard(init, cwd);
+      return await ask(query);
     } catch (error) {
       throw new Error(`Claude Code could not start: ${message(error)}`, { cause: error });
     } finally {
       query?.close();
+    }
+  }
+
+  /** A process that runs on this machine, with the owner's own settings and sign-in. */
+  private here(): Running | undefined {
+    return [...this.live.values()].find((each) => !each.known.sandbox);
+  }
+
+  /**
+   * Keeps what a process said as it started, and answers its commands. A sandbox's process has a
+   * sign-in and settings of its own, which are not the owner's: only its commands are its own.
+   */
+  private heard(
+    init: Awaited<ReturnType<ClaudeQuery["initializationResult"]>>,
+    /** The folder it runs in on this machine; null for a sandbox's. */
+    cwd: string | null,
+  ): SlashCommand[] {
+    const commands = toCommands(init.commands ?? []);
+    if (cwd === null) return commands;
+    if (init.account) this.latest.account = init.account;
+    this.commandsAt.set(cwd, commands);
+    return commands;
+  }
+
+  /**
+   * A process's MCP servers once none is still connecting, or as they are after a while: a server
+   * read too soon shows no tools.
+   */
+  private async connected(query: ClaudeQuery): Promise<WireMcpServerStatus[]> {
+    for (let poll = 1; ; poll++) {
+      const servers = await query.mcpServerStatus();
+      if (poll >= MCP_POLLS || !servers.some((server) => server.status === "pending")) {
+        return servers;
+      }
+      await new Promise<void>((resolve) => this.schedule(resolve, MCP_POLL_MS));
     }
   }
 
@@ -655,6 +1135,24 @@ export class ClaudeHarness implements Agent {
     if (await this.files.move(`${from}.jsonl`, `${to}.jsonl`)) await this.files.move(from, to);
   }
 
+  /**
+   * What a stored session's helper agents said and did. One that cannot be read is left out: the
+   * conversation still opens.
+   *
+   * shortcut: every helper is read whole as the session opens; upgrade when sessions with many
+   * helpers open slowly, by reading one as the owner opens its task.
+   */
+  private async helpers(
+    sdk: ClaudeSdk,
+    sessionId: string,
+    dir: { dir: string },
+  ): Promise<WireHistoryMessage[][]> {
+    const ids = await sdk.listSubagents(sessionId, dir).catch(() => []);
+    return Promise.all(
+      ids.map((id) => sdk.getSubagentMessages(sessionId, id, dir).catch(() => [])),
+    );
+  }
+
   /** A stored conversation up to where the owner took it back. */
   private kept(sessionId: string, messages: WireHistoryMessage[]): WireHistoryMessage[] {
     const cut = this.cuts.get(sessionId);
@@ -677,15 +1175,33 @@ export class ClaudeHarness implements Agent {
     const known = await this.find(sessionId);
     // A daemon that started since the session was made is told where it runs.
     if (options.sandbox) known.sandbox = options.sandbox;
+    if (options.directories) known.directories = options.directories;
     const model = options.model ?? known.model;
     const effort = options.effort ?? (await this.defaultEffort(model));
-    const spec = JSON.stringify([options.mode ?? "readOnly", model ?? "", effort ?? ""]);
+    const mode = options.mode ?? DEFAULT_MODE;
+    const spec = this.specOf(mode, known);
     const starting = this.starting.get(sessionId);
     if (starting) return starting;
     const running = this.live.get(sessionId);
-    if (running && (running.spec === spec || running.turn !== null)) return running;
-    if (running) this.stop(running);
-    const launch = this.launch(sessionId, known, options, spec, model, effort).finally(() =>
+    // Read with no wait: what is decided here is decided before anything else can start one.
+    const configKey = known.sandbox ? "" : (this.configuration?.startKey() ?? "");
+    // What changed of Cycle's configuration waits for a start that stops nothing: not in a turn,
+    // and with no task in the background.
+    const keeps =
+      running !== undefined &&
+      (running.configKey === configKey ||
+        running.turn !== null ||
+        running.reader.background.length > 0);
+    // A process that would not move was ended: another is started.
+    if (running && keeps && (running.spec === spec || running.turn !== null)) {
+      if (await this.move(running, { mode, model, effort })) return running;
+    } else if (running) {
+      this.refuseRestart(running);
+      this.stop(running);
+    }
+    const again = this.starting.get(sessionId);
+    if (again) return again;
+    const launch = this.launch(sessionId, known, mode, spec, model, effort).finally(() =>
       this.starting.delete(sessionId),
     );
     this.starting.set(sessionId, launch);
@@ -704,7 +1220,7 @@ export class ClaudeHarness implements Agent {
   private async launch(
     sessionId: string,
     known: Known,
-    options: TurnOptions,
+    mode: SessionMode,
     spec: string,
     model: string | undefined,
     effort: string | undefined,
@@ -722,22 +1238,37 @@ export class ClaudeHarness implements Agent {
     const sandbox = known.sandbox
       ? await this.sandboxes().ensure(known.cwd, { name: known.sandbox })
       : null;
-    // Cycle's tools answer on this machine's loopback alone, which a sandbox is not on.
-    const tools = sandbox ? undefined : this.options.tools;
+    // Cycle's tools and configuration are this machine's: a sandbox has neither.
+    const here = sandbox === null;
+    const { sandbox: commandSandbox, ...permissions } = modeOptions(mode, sandbox !== null);
+    const configuration = here ? this.configuration : null;
+    // The mode's command sandbox goes into the settings file, which the SDK takes none beside.
+    const start = await configuration?.forStart(commandSandbox);
     // The SDK's own reads of a home are the owner's here, whichever home the agent runs in.
     const query = await withHome(this.home, () =>
       this.sdk.query({
         prompt: input,
         options: {
           ...this.shared(sandbox),
-          ...modeOptions(options.mode ?? "readOnly", sandbox !== null),
+          ...permissions,
+          ...(start ? start.options : commandSandbox ? { sandbox: commandSandbox } : {}),
           cwd: this.cwdOf(known),
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
+          // So the files can go back with the conversation.
+          enableFileCheckpointing: true,
+          // A sandbox holds the session's folder alone.
+          ...(known.directories?.length && !sandbox
+            ? { additionalDirectories: known.directories }
+            : {}),
           ...(known.stored
             ? { resume: sessionId, ...(cut && cut !== CUT_START ? { resumeSessionAt: cut } : {}) }
             : { sessionId }),
+          // What helper agents do is shown, and a task in the background is the owner's to stop.
+          forwardSubagentText: true,
+          perTaskStopAffordance: true,
           canUseTool: (tool, toolInput, context) => this.ask(running, tool, toolInput, context),
+          onElicitation: (request, context) => this.elicit(running, request, context.signal),
         },
       }),
     );
@@ -747,26 +1278,29 @@ export class ClaudeHarness implements Agent {
       input,
       reader: new StreamReader(sessionId, known.cwd, inside),
       spec,
+      configKey: start?.key ?? "",
+      mode,
+      model,
+      effort,
       turn: null,
+      own: false,
+      notified: null,
+      early: [],
       steers: new Map(),
       stopping: false,
       cancelIdle: null,
       closed: false,
       query,
+      commands: [],
+      costSeen: null,
     };
     try {
-      await running.query.initializationResult();
-      // The key goes down the process's own pipe: not its arguments, which any command can list,
-      // nor its environment, which the commands it runs inherit.
-      if (tools) {
-        await running.query.setMcpServers({
-          [tools.name]: {
-            type: "http",
-            url: tools.url,
-            headers: { Authorization: `Bearer ${tools.key}` },
-          },
-        });
-      }
+      running.commands = this.heard(
+        await running.query.initializationResult(),
+        sandbox === null ? known.cwd : null,
+      );
+      const servers = here ? this.serversFor(configuration) : {};
+      if (Object.keys(servers).length > 0) await running.query.setMcpServers(servers);
     } catch (error) {
       running.closed = true;
       running.query.close();
@@ -778,6 +1312,95 @@ export class ClaudeHarness implements Agent {
     return running;
   }
 
+  /**
+   * A new process is refused while a task of this one runs in the background: it would stop with it.
+   * What moves in place leaves the tasks running, so only a mode that needs a new start waits.
+   */
+  private refuseRestart(running: Running): void {
+    if (running.reader.background.length === 0) return;
+    throw new Error(
+      "A task is still running in the background here. Stop it or let it finish before changing to a mode that starts Claude Code again: the task would stop with it.",
+    );
+  }
+
+  /** What only a process's start sets for a mode: what the mode needs, and the folders it reaches. */
+  private specOf(mode: SessionMode, known: Known): string {
+    return JSON.stringify([
+      processSpec(mode, known.sandbox !== undefined),
+      known.directories ?? [],
+    ]);
+  }
+
+  /**
+   * Moves a process to what it is asked to run with now, as far as it can in place: its model and
+   * effort always, its mode when that needs nothing only a start sets. Answers false when the process
+   * would not move and was ended, so the caller starts another.
+   */
+  private async move(
+    running: Running,
+    to: {
+      mode?: SessionMode | undefined;
+      model?: string | undefined;
+      effort?: string | null | undefined;
+    },
+  ): Promise<boolean> {
+    try {
+      if (to.model !== undefined && to.model !== running.model) {
+        running.model = to.model;
+        await running.query.setModel(to.model);
+      }
+      if (to.effort !== undefined && to.effort !== (running.effort ?? null)) {
+        running.effort = to.effort ?? undefined;
+        await running.query.applyFlagSettings({ effortLevel: to.effort });
+      }
+      const mode = to.mode;
+      if (
+        mode !== undefined &&
+        mode !== running.mode &&
+        this.specOf(mode, running.known) === running.spec
+      ) {
+        // Known before Claude Code says so, so its word is not taken for the model's own move.
+        running.mode = mode;
+        await running.query.setPermissionMode(mode as WirePermissionMode);
+      }
+      return true;
+    } catch (error) {
+      this.options.onLog?.(`claude: ${message(error)}`);
+      // One in a turn, or with a task in the background, goes on as it is; an idle one is ended, and
+      // the next turn starts another.
+      if (running.turn !== null || running.reader.background.length > 0) return true;
+      this.stop(running);
+      return false;
+    }
+  }
+
+  /**
+   * An approved plan goes on in the owner's mode where this process can be in it. A mode that needs
+   * what only a start gives, as Claude Code's sandbox, waits for the next turn's process: until then
+   * the agent asks first. The session is in the owner's mode either way.
+   */
+  private planAnswer(running: Running, tool: string, response: ApprovalResponse): ApprovalResponse {
+    if (tool !== "ExitPlanMode" || "answers" in response) return response;
+    if (response.decision !== "accept" && response.decision !== "acceptForSession") return response;
+    const chosen =
+      response.mode && AFTER_PLAN.includes(response.mode) ? response.mode : DEFAULT_MODE;
+    const now = this.specOf(chosen, running.known) === running.spec ? chosen : DEFAULT_MODE;
+    // Known before Claude Code says so, so its word is not taken for the model's own move.
+    running.mode = now;
+    const { sessionId } = running;
+    this.emit({ type: "mode.changed", sessionId, mode: chosen });
+    if (now !== chosen) {
+      const name = CLAUDE_MODES.find((each) => each.id === chosen)?.name ?? chosen;
+      this.emit({
+        type: "notice",
+        sessionId,
+        level: "info",
+        message: `Claude Code asks before each step until this turn ends: ${name} starts with your next message.`,
+      });
+    }
+    return { ...response, mode: now };
+  }
+
   private stop(running: Running): void {
     running.closed = true;
     running.cancelIdle?.();
@@ -786,19 +1409,40 @@ export class ClaudeHarness implements Agent {
     running.query.close();
   }
 
-  /** Starts a turn in the conversation. With `input`, the prompt is its first item. */
-  private begin(running: Running, turnId: string, input?: PromptInput): void {
+  /**
+   * Starts a turn in the conversation. With `input`, the prompt is its first item. With `origin`,
+   * the agent began it by itself.
+   */
+  private begin(running: Running, turnId: string, input?: PromptInput, origin?: TurnOrigin): void {
     running.cancelIdle?.();
     running.cancelIdle = null;
     running.turn = turnId;
+    running.own = origin === undefined;
+    running.notified = null;
     running.stopping = false;
     this.emit({
       type: "turn.started",
       sessionId: running.sessionId,
       turnId,
       startedAt: this.now(),
+      ...(origin ? { origin } : {}),
     });
     if (input) this.said(running, turnId, turnId, input);
+  }
+
+  /**
+   * A process with no turn is closed once it has been idle a while. One with a task in the
+   * background is not idle: closing it would stop the task.
+   */
+  private idle(running: Running): void {
+    running.cancelIdle?.();
+    running.cancelIdle = null;
+    if (running.turn !== null || running.closed || running.reader.background.length > 0) return;
+    running.cancelIdle = this.schedule(() => {
+      if (running.turn === null && !running.closed && running.reader.background.length === 0) {
+        this.stop(running);
+      }
+    }, IDLE_MS);
   }
 
   private said(running: Running, turnId: string, id: string, input: PromptInput): void {
@@ -806,7 +1450,15 @@ export class ClaudeHarness implements Agent {
       type: "item.completed",
       sessionId: running.sessionId,
       turnId,
-      item: { id, kind: "userMessage", text: input.text, images: input.images },
+      item: {
+        id,
+        kind: "userMessage",
+        text: input.text,
+        images: input.images,
+        ...(input.documents?.length
+          ? { documents: input.documents.map(({ kind, name }) => ({ kind, name })) }
+          : {}),
+      },
     });
   }
 
@@ -821,24 +1473,79 @@ export class ClaudeHarness implements Agent {
   }
 
   private handle(running: Running, each: WireMessage): void {
+    if (each.type === "system" && each.subtype === "status" && each.permissionMode) {
+      // The model moved itself, as into plan mode or out of it once its plan was approved.
+      if (each.permissionMode !== running.mode) {
+        running.mode = each.permissionMode;
+        this.emit({
+          type: "mode.changed",
+          sessionId: running.sessionId,
+          mode: each.permissionMode,
+        });
+      }
+      return;
+    }
+    if (each.type === "rate_limit_event" && each.rate_limit_info) {
+      const limit = toLimit(each.rate_limit_info);
+      this.limits.set(limit.id, limit);
+      this.emit({ type: "limits.changed", harness: this.name });
+      return;
+    }
+    if (each.type === "system" && each.subtype === "commands_changed" && each.commands) {
+      running.commands = toCommands(each.commands);
+      if (!running.known.sandbox) this.commandsAt.set(running.known.cwd, running.commands);
+      this.emit({
+        type: "commands.changed",
+        sessionId: running.sessionId,
+        commands: running.commands,
+      });
+      return;
+    }
     if (each.type === "result") {
       this.finish(running, each);
       return;
     }
-    if (running.turn === null) return;
+    if (running.turn === null) {
+      // A task's news that comes between turns is what the agent's next turn of its own is for.
+      if (each.subtype === "task_notification") running.notified = each.task_id ?? null;
+      // The agent answers by itself, as it does a task's news: that is a turn of its own. Stored,
+      // it is known by its first whole message, so it waits for that message to begin, and what
+      // streamed before it follows.
+      if (agentBegins(each)) {
+        if (each.type !== "assistant") {
+          running.early.push(each);
+          return;
+        }
+        const origin = turnOrigin(undefined, running.notified);
+        this.begin(running, each.uuid ?? this.newId(), undefined, origin);
+        for (const early of running.early.splice(0)) {
+          for (const event of running.reader.read(running.turn, early)) this.emit(event);
+        }
+      }
+    }
     for (const event of running.reader.read(running.turn, each)) this.emit(event);
+    if (each.subtype === "background_tasks_changed") this.idle(running);
   }
 
   /** A turn ended: what it used, how it went, and the turn that follows by itself, if one does. */
   private finish(running: Running, result: WireMessage): void {
     const { sessionId } = running;
     const turnId = running.turn;
+    // A turn of the agent's that never said a whole message has nothing to show.
+    running.early.length = 0;
     if (turnId === null) return;
+    // The agent may have begun a turn for a task's news just as the owner's prompt went in, which
+    // then waits behind it: that turn's end is not the prompt's.
+    if (running.own && result.origin && result.origin.kind !== "human") {
+      if (!(result.user_message_uuids ?? []).includes(turnId)) return;
+    }
     const used = usedBy(result.modelUsage);
+    const before = this.usage.get(sessionId);
     const usage: Usage = {
       total: used.count,
       last: running.reader.last ?? NO_TOKENS,
-      contextWindow: used.contextWindow ?? this.usage.get(sessionId)?.contextWindow ?? null,
+      contextWindow: used.contextWindow ?? before?.contextWindow ?? null,
+      costUsd: this.cost(running, result.total_cost_usd ?? used.costUsd),
     };
     this.usage.set(sessionId, usage);
     this.emit({ type: "usage.updated", sessionId, usage });
@@ -861,16 +1568,37 @@ export class ClaudeHarness implements Agent {
     // A prompt sent into the turn that it ended without taking begins the next one.
     const taken = result.user_message_uuids;
     if (taken) for (const id of taken) running.steers.delete(id);
-    else running.steers.clear();
+    else if (running.own) running.steers.clear();
     const [next] = running.steers;
     if (next) {
       running.steers.delete(next[0]);
       this.begin(running, next[0], next[1]);
       return;
     }
-    running.cancelIdle = this.schedule(() => {
-      if (running.turn === null && !running.closed) this.stop(running);
-    }, IDLE_MS);
+    this.idle(running);
+  }
+
+  /**
+   * What the session has cost, from what a process says it has: a total for its session, which a
+   * process resuming a conversation carries on from what was spent before it (as seen with Claude
+   * Code 2.1.325), and which one that does not begins at nothing. A process's first total below what
+   * the session had cost began at nothing, and adds to it; one at or above it carried on. Later
+   * totals add what they grew by; one that fell began again (`/clear`) and adds in full.
+   *
+   * shortcut: a process that began at nothing and spends more on its first turn than the session had
+   * before is taken to have carried on, and that earlier cost is lost; upgrade when the SDK says
+   * whether a total carried on.
+   */
+  private cost(running: Running, said: number | null | undefined): number | null {
+    const { sessionId } = running;
+    const before = this.costs.get(sessionId);
+    if (said === null || said === undefined) return before ?? null;
+    let now: number;
+    if (running.costSeen === null) now = said >= (before ?? 0) ? said : (before ?? 0) + said;
+    else now = (before ?? 0) + (said >= running.costSeen ? said - running.costSeen : said);
+    running.costSeen = said;
+    this.costs.set(sessionId, now);
+    return now;
   }
 
   /** The process went away. A turn it was in the middle of will never finish. */
@@ -884,6 +1612,8 @@ export class ClaudeHarness implements Agent {
       this.emit({ type: "approval.resolved", sessionId, approvalId: id });
     }
     if (failure && !running.closed) this.options.onLog?.(`claude: ${message(failure)}`);
+    // Its tasks went with it.
+    for (const event of running.reader.abandon()) this.emit(event);
     const turnId = running.turn;
     if (turnId === null) return;
     running.turn = null;
@@ -927,7 +1657,15 @@ export class ClaudeHarness implements Agent {
       const stopped = () => settle({ behavior: "deny", message: "The turn was stopped." });
       this.approvals.set(id, {
         sessionId,
-        answer: (response) => settle(toPermission(tool, input, context.suggestions, response)),
+        answer: (response) =>
+          settle(
+            toPermission(
+              tool,
+              input,
+              context.suggestions,
+              this.planAnswer(running, tool, response),
+            ),
+          ),
       });
       context.signal.addEventListener("abort", stopped);
       this.emit({
@@ -938,11 +1676,46 @@ export class ClaudeHarness implements Agent {
           cwd: running.known.cwd,
           title: context.title,
           reason: context.decisionReason,
+          suggestions: context.suggestions,
+          plan: running.reader.planFor(id),
         }),
       });
     });
   }
+
+  /** An MCP server asks the owner for something: they answer as they answer an approval. */
+  private elicit(
+    running: Running,
+    request: WireElicitation,
+    signal: AbortSignal,
+  ): Promise<WireElicitationResult> {
+    const { sessionId } = running;
+    const id = this.newId();
+    return new Promise((resolve) => {
+      const settle = (result: WireElicitationResult) => {
+        if (!this.approvals.delete(id)) return;
+        signal.removeEventListener("abort", stopped);
+        this.emit({ type: "approval.resolved", sessionId, approvalId: id });
+        resolve(result);
+      };
+      const stopped = () => settle({ action: "cancel" });
+      this.approvals.set(id, {
+        sessionId,
+        answer: (response) => settle(toElicitationResult(response)),
+      });
+      signal.addEventListener("abort", stopped);
+      this.emit({
+        type: "approval.requested",
+        sessionId,
+        turnId: running.turn,
+        approval: toElicitation(id, request),
+      });
+    });
+  }
 }
+
+/** The mode a session is in when it was given none: the one that asks first. */
+const DEFAULT_MODE: SessionMode = "default";
 
 /** A cut before a conversation's first turn, where there is no entry to end at. */
 const CUT_START = "start";

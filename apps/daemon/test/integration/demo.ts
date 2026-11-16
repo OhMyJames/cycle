@@ -7,12 +7,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeHarness } from "@cycle/harness-claude";
+import { type ClaudeConfig, ClaudeHarness, emptyConfig } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import {
   Harnesses,
+  JsonStore,
   TOOLS_KEY_ENV,
   TOOLS_SERVER,
+  claudeConfigBook,
   diskFile,
   openProviders,
   startDaemon,
@@ -152,12 +154,76 @@ const CLAUDE_STEPS: ClaudeReply[] = [
   },
 ];
 
-const claudeModel = startMockClaude(root, (prompt, results) => {
+/** What the scripted Claude proposes when asked to plan, which it asks the owner to approve. */
+const PLAN = `# Add a greeting
+
+1. Write \`src/greet.ts\` with one exported \`greet(name)\`.
+2. Mention it in the README.
+3. Leave the tests alone: there are none yet.`;
+
+/** Whether the latest thing Claude Code sent is a task's news, which the agent answers by itself. */
+function taskNews(body: unknown): boolean {
+  const messages = (body as { messages?: { role: string; content: unknown }[] }).messages ?? [];
+  const last = messages.at(-1);
+  return last?.role === "user" && JSON.stringify(last.content).includes("<task-notification>");
+}
+
+/** A call that starts a helper agent, which waits for it or leaves it in the background. */
+const agent = (background: boolean) => ({
+  name: "Agent",
+  input: {
+    description: background ? "Survey the folder slowly" : "Survey the folder",
+    prompt: "Helper: look through the folder and say what is in it.",
+    subagent_type: "general-purpose",
+    run_in_background: background,
+  },
+});
+
+/**
+ * Helper agents: "delegate" hands work to one and waits; "background" leaves one and a long command
+ * running after the turn, for the list of tasks and its Stop. A helper is asked as a prompt of its own.
+ */
+function helperReply(prompt: string, results: number): ClaudeReply | null {
+  if (prompt.startsWith("Helper:")) {
+    if (results === 0) {
+      return { call: { name: "Bash", input: { command: "sleep 2; ls", description: "List" } } };
+    }
+    if (results === 1)
+      return { call: { name: "Read", input: { file_path: join(project, "README.md") } } };
+    return { text: chunks("The folder holds a README and `src/`. Nothing looks out of place.") };
+  }
+  if (/delegate/i.test(prompt)) {
+    return results === 0 ? { call: agent(false) } : { text: chunks("The helper looked around.") };
+  }
+  if (/background/i.test(prompt)) {
+    const slow = { command: "sleep 120", description: "Wait two minutes", run_in_background: true };
+    if (results === 0) return { call: agent(true) };
+    if (results === 1) return { call: { name: "Bash", input: slow } };
+    return { text: chunks("Both are running in the background. I will say when they are done.") };
+  }
+  return null;
+}
+
+const claudeModel = startMockClaude(root, (prompt, results, body) => {
+  if (taskNews(body))
+    return { text: chunks("A task I started has ended; here is what came of it.") };
+  const helped = helperReply(prompt, results);
+  if (helped) return helped;
+  if (/\bplan\b/i.test(prompt) && results === 0) {
+    return { call: { name: "ExitPlanMode", input: { plan: PLAN } } };
+  }
   if (/approv|permission/i.test(prompt) && results === 0) {
     const command = "python3 -c \"open('stamp.txt', 'w').write('now')\"";
     return { call: { name: "Bash", input: { command, description: "Write stamp.txt" } } };
   }
   if (/stress/i.test(prompt)) return { text: chunks(STRESS, 48) };
+  // "use mcp docs" calls the echo tool of a server named docs, as one added in the Connector.
+  const server = /\buse mcp ([\w-]+)/i.exec(prompt)?.[1];
+  if (server) {
+    return results === 0
+      ? { call: { name: `mcp__${server}__echo`, input: { text: "hello" } } }
+      : { text: chunks(`${server} answered.`) };
+  }
   if (/change|add|fix|build|write/i.test(prompt)) {
     const step = CLAUDE_STEPS[results];
     if (step) return step;
@@ -186,8 +252,13 @@ const harness = new CodexHarness({
 // A stand-in for Docker's `sbx`, so a session can be asked into a sandbox here too.
 const sbx = installFakeSbx(root);
 const sandboxes = await openSandboxes(root, { ...process.env, ...claudeModel.env, ...sbx.env });
+const claudeFile = await JsonStore.open<ClaudeConfig>(
+  diskFile(join(root, "home", "claude.json")),
+  emptyConfig(),
+);
 const claude = new ClaudeHarness({
   env: claudeModel.env,
+  config: { book: claudeConfigBook(claudeFile), dir: join(root, "home", "claude") },
   sandboxes: sandboxes.admin,
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
 });

@@ -74,7 +74,12 @@ pin, unread, mode, model, worktree, sandbox, the schedule that started it), `pro
 providers and their keys, mode 0600), `provider-models.json` (codex's catalog of
 those providers' models, which says how much each can read; written as the second codex child starts),
 `sandboxes.json` (the owner's sandbox environments, variable values included, and what each sandbox
-Cycle made was made with, mode 0600), `usage.json` (tokens per local day, numbers only),
+Cycle made was made with, mode 0600), `claude.json` (Cycle's own configuration of Claude Code: its
+MCP servers, environment values included, what it turns off of the owner's own, and its hooks, mode
+0600), `claude/` (what is made from it: the settings files processes start with, and `plugins/`, the
+Claude Code home Cycle installs plugins into;
+[decision note](.agents/notes/2026-11-16-cycle-keeps-claude-code-s-configuration.md)),
+`usage.json` (tokens per local day, numbers only),
 `schedules.json` (prompts the daemon runs on a timing, with each one's latest runs;
 [decision note](.agents/notes/2026-11-13-schedules-in-the-daemon.md)), `daemon.log` (what the packaged
 app's daemon printed, since its last start), `updates/` (the app's own update, downloaded and unpacked
@@ -109,14 +114,24 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
 - A `Harness` is four parts: `Agent` (sessions, turns, models), `Connector`, `Account` and `Machine`.
   Codex gives all four and is the main one. Another agent beside it need only be an `Agent`, and
   `Harnesses` (`apps/daemon/src/harnesses.ts`) joins them: a model says which agent a new session
-  starts on, the session stays there, and files, commands, terminals, the Connector and the account
-  are the main agent's. An agent that cannot start is left out and the daemon runs without it. Why:
+  starts on, the session stays there, and files, commands and terminals are the main agent's. An
+  agent that cannot start is left out and the daemon runs without it. Why:
   [decision note](.agents/notes/2026-11-14-claude-code-beside-codex.md).
+- Each agent declares what it can do (`AgentCapabilities`: attachments, putting files back, its
+  commands, other folders, whether its Connector can be changed and whether it signs in through
+  Cycle), and `daemon.info` gives them to the page, which shows a session what its agent can. The
+  daemon sees the agents as `Agents`: a Connector and an Account are each agent's own, chosen by
+  name (`harness` on the wire, the main agent's when left out). Another agent's may only be read;
+  the rest is refused, never done by codex in its place. Why:
+  [decision note](.agents/notes/2026-11-16-each-agent-declares-what-it-can-do.md).
 - `harness/claude` is the only code that knows Claude Code, through the Claude Agent SDK.
   `translate.ts` is the pure mapping; `claude-harness.ts` runs one Claude Code process for each session
   in use, started with the session's mode, model and effort and closed after five idle minutes, and
   reads stored sessions with the SDK's own calls. A turn is known by its prompt's id, live and stored.
-  Claude Code reads the owner's own settings, as its CLI does.
+  Claude Code reads the owner's own settings, as its CLI does, and Cycle's over them
+  (`config.ts`, `configuration.ts`, `plugins.ts`): a settings file by its path, Cycle's servers
+  through `setMcpServers` and its plugins over the process's pipe, so no value is on a command line.
+  Cycle never writes the owner's Claude Code files, and its CLI does not see what Cycle adds.
 - A session can run its agent in a Docker sandbox (`sbx`) on this machine: `harness/claude/src/sandbox.ts`.
   A folder's sandbox is made when first asked for, and it sees the folder under a name of its own
   (`/home/agent/workspace/<name>`), so no path of this machine is in it; only Claude Code moves into

@@ -3,10 +3,10 @@ import type { SessionEvent } from "@cycle/protocol";
 import {
   StreamReader,
   finishTool,
+  CLAUDE_MODES,
   modeOptions,
-  toApproval,
+  processSpec,
   toModels,
-  toPermission,
   toSession,
   toTurns,
   toUserMessage,
@@ -57,7 +57,7 @@ test("text arrives in pieces and then whole, as one item", () => {
   expect(events.at(-1)).toMatchObject({ item: { text: "Hello" } });
 });
 
-test("text that never streamed is still said, and a helper agent's is left out", () => {
+test("text that never streamed is still said, and a helper's of no known task is left out", () => {
   const events = read([
     said("a1", [{ type: "text", text: "whole" }]),
     said("a2", [{ type: "text", text: "from a helper" }], { parent_tool_use_id: "toolu_9" }),
@@ -136,9 +136,12 @@ test("each of Claude Code's tools is the item the conversation has for it", () =
     kind: "webSearch",
     query: "bun",
   });
-  expect(toolItem("i", "Agent", { prompt: "look" }, "/p")).toMatchObject({
-    kind: "agentCall",
+  expect(toolItem("i", "Agent", { prompt: "look", description: "Look" }, "/p")).toMatchObject({
+    kind: "task",
+    task: "agent",
+    description: "Look",
     prompt: "look",
+    status: "running",
   });
 });
 
@@ -197,7 +200,7 @@ test("a stored conversation is a turn for each prompt, known by the prompt's id"
   expect(historyModel(history)).toBe("claude-sonnet-5-5");
 });
 
-test("what came before a compaction is one mark, and what a helper said is left out", () => {
+test("what came before a compaction is one mark, and a helper's of no known task is left out", () => {
   const turns = toTurns(
     [
       user("c1", "This session is being continued from a previous conversation that ran out"),
@@ -245,77 +248,32 @@ test("each model is offered once, under its own id and name", () => {
   ]);
 });
 
-test("only full access runs with nothing asked, and only when it is the mode", () => {
+test("every mode is given by name, and only bypassing permissions runs with nothing asked", () => {
+  expect(modeOptions("default")).toEqual({ permissionMode: "default" });
   expect(modeOptions("readOnly")).toEqual({ permissionMode: "default" });
-  expect(modeOptions("auto")).toEqual({
-    permissionMode: "acceptEdits",
-    sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
-  });
-  expect(modeOptions("fullAccess")).toEqual({
+  for (const mode of ["acceptEdits", "auto"] as const) {
+    expect(modeOptions(mode)).toEqual({
+      permissionMode: mode,
+      sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+    });
+  }
+  expect(modeOptions("plan")).toEqual({ permissionMode: "plan" });
+  expect(modeOptions("dontAsk")).toEqual({ permissionMode: "dontAsk" });
+  expect(modeOptions("bypassPermissions")).toEqual({
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
   });
-});
-
-test("what Claude Code asks is asked of the owner in the shape of what it is", () => {
-  const hint = { cwd: "/project" };
-  expect(toApproval("i", "Bash", { command: "rm x", description: "remove" }, hint)).toEqual({
-    id: "i",
-    kind: "command",
-    itemId: "i",
-    command: "rm x",
-    cwd: "/project",
-    reason: "remove",
-  });
-  expect(toApproval("i", "Write", {}, hint)).toMatchObject({ kind: "fileChange" });
-  expect(toApproval("i", "mcp__docs__search", { q: "x" }, hint)).toMatchObject({
-    kind: "permissions",
-    summary: 'docs.search {"q":"x"}',
-  });
-  const asked = { question: "Which?", header: "Pick", options: [{ label: "A", description: "a" }] };
-  expect(toApproval("i", "AskUserQuestion", { questions: [asked] }, hint)).toMatchObject({
-    kind: "question",
-    questions: [{ id: "Which?", header: "Pick", options: [{ label: "A", description: "a" }] }],
-  });
-});
-
-test("the owner's answer keeps to the session, and never changes the mode or their settings", () => {
-  const input = { command: "make" };
-  const rule = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "make" }] };
-  const suggestions = [
-    { ...rule, behavior: "allow", destination: "localSettings" },
-    { type: "setMode", mode: "acceptEdits", destination: "session" },
-  ];
-  expect(toPermission("Bash", input, suggestions, { decision: "accept" })).toEqual({
-    behavior: "allow",
-    updatedInput: input,
-  });
-  expect(toPermission("Bash", input, suggestions, { decision: "acceptForSession" })).toEqual({
-    behavior: "allow",
-    updatedInput: input,
-    updatedPermissions: [{ ...rule, behavior: "allow", destination: "session" }],
-  });
-  // With no rule proposed, the tool itself is allowed for the session.
-  expect(
-    toPermission("Edit", {}, [suggestions[1] as never], { decision: "acceptForSession" }),
-  ).toMatchObject({
-    updatedPermissions: [
-      { type: "addRules", rules: [{ toolName: "Edit" }], destination: "session" },
-    ],
-  });
-  expect(toPermission("Bash", input, [], { decision: "decline" })).toMatchObject({
-    behavior: "deny",
-  });
-  expect(toPermission("Bash", input, [], { decision: "cancel" })).toMatchObject({
-    behavior: "deny",
-    interrupt: true,
-  });
-  expect(
-    toPermission("AskUserQuestion", { questions: [] }, [], { answers: { "Which?": ["A", "B"] } }),
-  ).toEqual({
-    behavior: "allow",
-    updatedInput: { questions: [], answers: { "Which?": "A, B" } },
-  });
+  // A mode that needs nothing of the start another does is the same process.
+  expect(processSpec("acceptEdits")).toBe(processSpec("auto"));
+  expect(processSpec("default")).toBe(processSpec("plan"));
+  expect(processSpec("default")).not.toBe(processSpec("acceptEdits"));
+  expect(processSpec("default")).not.toBe(processSpec("bypassPermissions"));
+  expect(processSpec("default")).toBe(processSpec("acceptEdits", true));
+  const defaults = CLAUDE_MODES.filter((mode) => mode.isDefault);
+  expect(defaults.map((mode) => mode.id)).toEqual(["acceptEdits"]);
+  expect(CLAUDE_MODES.filter((mode) => mode.dangerous).map((mode) => mode.id)).toEqual([
+    "bypassPermissions",
+  ]);
 });
 
 test("a prompt carries its images, and names one that is a path", () => {

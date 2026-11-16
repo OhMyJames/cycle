@@ -1,7 +1,13 @@
 import type {
+  Agent,
+  AgentCapabilities,
+  Agents,
+  ContextUsage,
+  FileRewind,
   Harness,
   HarnessEvent,
   HarnessSession,
+  ModeInfo,
   ModelInfo,
   PromptInput,
   Turn,
@@ -11,6 +17,16 @@ import type {
 /** A harness that runs nothing: tests say what it reports. */
 export class FakeHarness implements Harness {
   readonly name: string;
+  capabilities: AgentCapabilities = {
+    attachments: ["image"],
+    rewindFiles: false,
+    commands: false,
+    directories: false,
+    connector: "edit",
+    login: true,
+    features: true,
+    hooks: false,
+  };
   readonly sent: { sessionId: string; text: string }[] = [];
   readonly steered: string[] = [];
   readonly calls: string[] = [];
@@ -93,11 +109,36 @@ export class FakeHarness implements Harness {
     this.steered.push(input.text);
   };
   interrupt = async () => {};
+  stopTask = async (sessionId: string, taskId: string) => {
+    this.calls.push(`stop ${sessionId} ${taskId}`);
+  };
   respondApproval = (approvalId: string) => {
     this.calls.push(`approve ${approvalId}`);
   };
+  /** What it was asked to take in mid-session, as `configure s1 {"mode":"plan"}`. */
+  configure: Harness["configure"] = async (sessionId, options) => {
+    this.calls.push(`configure ${sessionId} ${JSON.stringify(options)}`);
+  };
   models: ModelInfo[] = [];
   listModels = async () => this.models;
+  /** The modes Cycle had for every agent, and a plan mode, under this harness's name. */
+  modes: Omit<ModeInfo, "harness">[] = (
+    [
+      ["readOnly", false, false, "readOnly"],
+      ["auto", true, false, "auto"],
+      ["plan", false, false, null],
+      ["fullAccess", false, true, "fullAccess"],
+    ] as const
+  ).map(([id, isDefault, dangerous, replaces]) => ({
+    id,
+    name: id,
+    description: "",
+    dangerous,
+    plan: id === "plan",
+    isDefault,
+    replaces,
+  }));
+  listModes = (): ModeInfo[] => this.modes.map((mode) => ({ ...mode, harness: this.name }));
   listSkills = async () => [];
   listMcpServers = async () => [];
   putMcpServer = async () => {};
@@ -116,7 +157,19 @@ export class FakeHarness implements Harness {
   removeMarketplace = async () => {};
   readFeatures = async () => ({ subagents: true });
   setFeatures = async () => {};
-  readAccount = async () => ({ kind: null, email: null, plan: null, limits: null });
+  enableSkill = async () => {};
+  readHooks = async () => ({ hooks: [], ownerHooks: true, ownerSettings: true, revision: 0 });
+  setHooks = async () => {};
+  readAccount = async () => ({
+    harness: this.name,
+    kind: null,
+    email: null,
+    plan: null,
+    organization: null,
+    provider: null,
+    source: null,
+    limits: [],
+  });
   login = async () => ({ id: "login-1", url: "https://example.test/sign-in" });
   cancelLogin = async () => {};
   logout = async () => {};
@@ -130,6 +183,61 @@ export class FakeHarness implements Harness {
   readFile = async () => new Uint8Array();
   searchFiles = async () => [];
   openTerminal: Harness["openTerminal"] = async () => ({ write() {}, resize() {}, kill() {} });
+  rewindFiles?: NonNullable<Agent["rewindFiles"]>;
+  listCommands?: NonNullable<Agent["listCommands"]>;
+  /** What putting the files back would do, and does. */
+  fileRewind: FileRewind = { possible: true, error: null, files: [], insertions: 0, deletions: 0 };
+  context: ContextUsage | null = null;
+
+  /**
+   * This one agent as the daemon sees its agents, with nothing between them, so what a test emits
+   * or asks arrives when it would from the agent itself.
+   */
+  private get harness(): Harness {
+    return this;
+  }
+
+  asAgents(): Agents {
+    return {
+      name: this.name,
+      start: (...args) => this.harness.start(...args),
+      dispose: (...args) => this.harness.dispose(...args),
+      onEvent: (listener) => this.onEvent(listener),
+      createSession: (...args) => this.harness.createSession(...args),
+      listSessions: (...args) => this.harness.listSessions(...args),
+      loadSession: (...args) => this.harness.loadSession(...args),
+      forkSession: (...args) => this.harness.forkSession(...args),
+      renameSession: (...args) => this.harness.renameSession(...args),
+      archiveSession: (...args) => this.harness.archiveSession(...args),
+      deleteSession: (...args) => this.harness.deleteSession(...args),
+      compactSession: (...args) => this.harness.compactSession(...args),
+      rewindSession: (...args) => this.harness.rewindSession(...args),
+      send: (...args) => this.harness.send(...args),
+      review: (...args) => this.harness.review(...args),
+      steer: (...args) => this.harness.steer(...args),
+      interrupt: (...args) => this.harness.interrupt(...args),
+      stopTask: (...args) => this.stopTask(...args),
+      respondApproval: (...args) => this.harness.respondApproval(...args),
+      configure: (...args) => this.harness.configure(...args),
+      listModes: (...args) => this.harness.listModes(...args),
+      listModels: (...args) => this.harness.listModels(...args),
+      exec: (...args) => this.harness.exec(...args),
+      readDirectory: (...args) => this.harness.readDirectory(...args),
+      readFile: (...args) => this.harness.readFile(...args),
+      searchFiles: (...args) => this.harness.searchFiles(...args),
+      openTerminal: (...args) => this.harness.openTerminal(...args),
+      harnesses: () => [{ name: this.name, capabilities: this.capabilities }],
+      connector: () => this,
+      account: () => this,
+      rewindFiles: async (sessionId, turnId, dryRun) => {
+        this.calls.push(`rewind files ${sessionId} ${turnId}${dryRun ? " dry" : ""}`);
+        return this.fileRewind;
+      },
+      listCommands: async () => [],
+      readContext: async () => this.context,
+      capabilitiesOf: async () => this.capabilities,
+    };
+  }
 }
 
 /** Scheduled work held until a test runs it. */

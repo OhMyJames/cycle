@@ -1,11 +1,12 @@
-import type { Item } from "@cycle/protocol";
-import { type ReactNode, memo, useContext, useMemo, useState } from "react";
+import { type FileRewind, type Item, type TurnOrigin, taskLive } from "@cycle/protocol";
+import { type ReactNode, memo, useContext, useEffect, useMemo, useState } from "react";
 import {
   type ActivityItem,
   activityRow,
   activityStatus,
   activitySummary,
   failedCount,
+  isActivity,
   loaderStateOf,
   plainCommand,
 } from "../lib/activity.ts";
@@ -74,17 +75,34 @@ export const UserBlock = memo(function UserBlock({
   steeredAfter,
   time,
   onRewind,
+  previewFiles,
 }: {
   item: Of<"userMessage">;
   /** How much work the turn had done when this joined it. */
   steeredAfter?: number | undefined;
   time?: string | undefined;
-  /** Takes the conversation back to before this message. Only a turn's first has it. */
-  onRewind?: (() => void) | undefined;
+  /**
+   * Takes the conversation back to before this message, and the files too with `files`. Only a
+   * turn's first has it.
+   */
+  onRewind?: ((files: boolean) => void) | undefined;
+  /** What putting the files back would change, for an agent that can. */
+  previewFiles?: (() => Promise<FileRewind | null>) | undefined;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [files, setFiles] = useState(false);
   return (
     <div className="user-message">
+      {item.documents?.length ? (
+        <div className="attachments">
+          {item.documents.map((document, index) => (
+            <span key={index} className="chip" title={document.name}>
+              <Icon name={document.kind === "pdf" ? "file" : "file-text"} size={14} />
+              {document.name || (document.kind === "pdf" ? "PDF" : "Text")}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {item.images.length ? (
         <div className="attachments">
           {item.images.map((src, index) =>
@@ -126,15 +144,89 @@ export const UserBlock = memo(function UserBlock({
       {confirming && onRewind ? (
         <ConfirmDialog
           title="Go back to before this message?"
-          text="This message and everything after it leave the conversation for good. Files the agent changed stay as they are. The message returns to the composer, to change and send again."
+          text={
+            files
+              ? "This message and everything after it leave the conversation for good, and the files the agent changed since go back as they were. The message returns to the composer, to change and send again."
+              : "This message and everything after it leave the conversation for good. Files the agent changed stay as they are. The message returns to the composer, to change and send again."
+          }
           action="Go back"
-          onConfirm={onRewind}
-          onClose={() => setConfirming(false)}
-        />
+          onConfirm={() => onRewind(files)}
+          onClose={() => {
+            setConfirming(false);
+            setFiles(false);
+          }}
+        >
+          {previewFiles ? (
+            <FilesBack preview={previewFiles} chosen={files} onChoose={setFiles} />
+          ) : null}
+        </ConfirmDialog>
       ) : null}
     </div>
   );
 });
+
+/** The choice to put the files back too, and what that would change once chosen. */
+function FilesBack({
+  preview,
+  chosen,
+  onChoose,
+}: {
+  preview: () => Promise<FileRewind | null>;
+  chosen: boolean;
+  onChoose(files: boolean): void;
+}) {
+  const [seen, setSeen] = useState<FileRewind | null | "reading">("reading");
+  // Read once, when the dialog opens: the turn's files do not move while it is up.
+  const [ask] = useState(() => preview);
+  useEffect(() => {
+    let current = true;
+    void ask().then((answer) => {
+      if (!current) return;
+      setSeen(answer);
+      if (!answer?.possible) onChoose(false);
+    });
+    return () => {
+      current = false;
+    };
+  }, [ask, onChoose]);
+  const possible = seen !== "reading" && seen !== null && seen.possible;
+  return (
+    <div className="files-back">
+      <label className="row meta">
+        <input
+          type="checkbox"
+          checked={chosen}
+          disabled={!possible}
+          onChange={(event) => onChoose(event.currentTarget.checked)}
+        />
+        Also put the files back
+      </label>
+      {seen === "reading" ? (
+        <p className="caption muted">Reading what would change…</p>
+      ) : seen === null || !seen.possible ? (
+        <p className="caption muted">{seen?.error ?? "The files cannot be put back."}</p>
+      ) : seen.files.length === 0 ? (
+        <p className="caption muted">No file changed since.</p>
+      ) : chosen ? (
+        <ul className="caption mono files-back-list">
+          {seen.files.map((path) => (
+            <li key={path} className="fade-x" title={path}>
+              {path}
+            </li>
+          ))}
+          <li className="muted tabular">
+            +{seen.insertions} −{seen.deletions}
+          </li>
+        </ul>
+      ) : (
+        <p className="caption muted tabular">
+          {seen.files.length} {seen.files.length === 1 ? "file" : "files"}, +{seen.insertions} −
+          {seen.deletions}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * What the agent said. Only a turn's last reply has actions under it, which the turn passes in. The
@@ -277,6 +369,120 @@ export const AgentBlock = memo(function AgentBlock({ item }: { item: Of<"agentCa
     </div>
   );
 });
+
+/** What each kind of task is called, in a row and in the list of what runs in the background. */
+export const TASK_WORDS: Record<Of<"task">["task"], string> = {
+  agent: "Agent",
+  command: "Background command",
+  workflow: "Workflow",
+  other: "Task",
+};
+
+const TASK_ENDS: Partial<Record<Of<"task">["status"], string>> = {
+  pending: "Waiting",
+  paused: "Paused",
+  failed: "Failed",
+  stopped: "Stopped",
+};
+
+/** One piece of what a task did, as it shows inside the task. */
+function NestedItem({
+  item,
+  nested,
+}: {
+  item: Item;
+  nested: ReadonlyMap<string, readonly Item[]>;
+}) {
+  if (item.kind === "task") return <TaskBlock item={item} nested={nested} />;
+  if (item.kind === "agentMessage" && item.text.trim()) {
+    return (
+      <div className="task-said">
+        <Markdown text={item.text} />
+      </div>
+    );
+  }
+  return isActivity(item) ? <ToolRow item={item} /> : null;
+}
+
+/**
+ * Work the agent handed off: a helper agent, a command in the background, a workflow. One line, which
+ * opens to what it was asked and what it did, each piece as a row, a helper's helpers nested in turn.
+ * Closed, it mounts none of them.
+ */
+export const TaskBlock = memo(function TaskBlock({
+  item,
+  nested,
+}: {
+  item: Of<"task">;
+  nested: ReadonlyMap<string, readonly Item[]>;
+}) {
+  const [open, setOpen] = useState(false);
+  const inside = nested.get(item.id) ?? [];
+  const live = taskLive(item.status);
+  const failed = item.status === "failed";
+  const said = live ? (item.summary ?? item.description) : item.description;
+  const ended = !live && item.summary && item.summary !== item.description ? item.summary : null;
+  const openable = Boolean(item.prompt || item.error || ended || inside.length > 0);
+  const time = item.usage && item.usage.durationMs >= 1000 ? duration(item.usage.durationMs) : null;
+  const word = TASK_ENDS[item.status];
+  return (
+    <div className="tool standalone task" data-open={open}>
+      <button
+        type="button"
+        className="tool-trigger"
+        aria-expanded={open}
+        disabled={!openable}
+        onClick={() => setOpen(!open)}
+      >
+        {item.status === "running" ? <MorphLoader state="executing" /> : null}
+        <span className="fade-x">
+          <span className={failed ? "action failed" : "action"}>{TASK_WORDS[item.task]}</span>{" "}
+          <span className={item.status === "running" ? "detail shimmer" : "detail"}>
+            {said.split("\n")[0]}
+            {item.agent ? ` · ${item.agent}` : ""}
+          </span>
+        </span>
+        {openable ? <Chevron open={open} reveal /> : null}
+        <span className="grow" />
+        {word ? (
+          <span className={failed ? "caption tone-error" : "caption muted"}>{word}</span>
+        ) : null}
+        {time ? <span className="caption muted tabular">{time}</span> : null}
+      </button>
+      {open ? (
+        <div className="tool-body">
+          {item.prompt ? <pre className="tool-text no-scrollbar">{item.prompt}</pre> : null}
+          {inside.length > 0 ? (
+            <div className="activity-rows task-rows">
+              {inside.map((each) => (
+                <NestedItem key={each.id} item={each} nested={nested} />
+              ))}
+            </div>
+          ) : null}
+          {ended ? <pre className="tool-text result no-scrollbar">{ended}</pre> : null}
+          {item.error ? <pre className="tool-text failed no-scrollbar">{item.error}</pre> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+const ORIGIN_WORDS: Record<Exclude<TurnOrigin, { kind: "owner" }>["kind"], string> = {
+  schedule: "Started by a schedule",
+  task: "The agent took up a task that ended",
+  peer: "Sent from another session",
+  agent: "The agent began this turn by itself",
+};
+
+/** Who began a turn the owner did not: one muted line at its start. */
+export function OriginLine({ origin }: { origin: Exclude<TurnOrigin, { kind: "owner" }> }) {
+  return (
+    <p className="turn-origin">
+      <Icon name={origin.kind === "schedule" ? "automation" : "sparkle"} size={14} />
+      {ORIGIN_WORDS[origin.kind]}
+    </p>
+  );
+}
 
 const ACTIVITY_WORDS: Record<Of<"agentActivity">["activity"], string> = {
   started: "Agent started",

@@ -5,6 +5,16 @@ export {
   type SessionFiles,
 } from "./claude-harness.ts";
 export {
+  type ClaudeConfig,
+  type ClaudeConfigBook,
+  type StoredServer,
+  ConfigError,
+  emptyConfig,
+  readConfig,
+} from "./config.ts";
+export type { ClaudeConfigOptions } from "./configuration.ts";
+export type { PluginCli } from "./plugins.ts";
+export {
   type MadeSandbox,
   type SandboxAsk,
   type SandboxBook,
@@ -32,12 +42,26 @@ export {
 export type { ClaudeQuery, ClaudeSdk, QueryOptions, SpawnedProcess } from "./sdk.ts";
 export { atHome, withHome } from "./sdk.ts";
 export {
+  AFTER_PLAN,
+  CLAUDE_MODES,
   HARNESS_NAME,
+  PlanDraft,
   StreamReader,
   finishTool,
   modeOptions,
+  processSpec,
+  toAccount,
+  toCommands,
+  toContext,
+  toFileRewind,
+  toLimit,
+  toMcpServers,
+  toSkills,
   reviewPrompt,
   toApproval,
+  toElicitation,
+  toElicitationResult,
+  toRules,
   toModels,
   toPermission,
   toSession,

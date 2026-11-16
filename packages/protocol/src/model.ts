@@ -22,6 +22,40 @@ export interface FileChange {
 
 interface ItemBase {
   id: string;
+  /**
+   * The `task` item this one is part of: what a helper agent did. Absent for the turn's own items.
+   * A view shows it inside its task, and a task that ends ends what it left running.
+   */
+  parentId?: string;
+}
+
+/** What kind of work a task is. */
+export type TaskKind = "agent" | "command" | "workflow" | "other";
+
+/** Where a task is. Unlike an item's, it can outlive its turn: a task in the background goes on. */
+export type TaskStatus = "pending" | "running" | "paused" | "completed" | "failed" | "stopped";
+
+/** Whether a task can still change by itself. */
+export function taskLive(status: TaskStatus): boolean {
+  return status === "pending" || status === "running" || status === "paused";
+}
+
+export interface TaskUsage {
+  tokens: number;
+  toolUses: number;
+  durationMs: number;
+}
+
+/** A task that runs in the background now, which the owner can stop by itself. */
+export interface BackgroundTask {
+  /** The harness's id for it, which `session.stopTask` takes. */
+  id: string;
+  task: TaskKind;
+  description: string;
+  /** A helper agent's kind, as `general-purpose`. */
+  agent: string | null;
+  /** The `task` item that shows it in the conversation, when there is one. */
+  itemId: string | null;
 }
 
 export type Item =
@@ -30,6 +64,8 @@ export type Item =
       text: string;
       /** Paths or URLs of attached images. */
       images: string[];
+      /** Documents attached beside them, by name. */
+      documents?: { kind: DocumentKind; name: string }[];
     })
   | (ItemBase & {
       kind: "agentMessage";
@@ -69,6 +105,7 @@ export type Item =
       status: ItemStatus;
     })
   | (ItemBase & { kind: "webSearch"; query: string })
+  /** A call that reaches codex's helper agents, each a session of its own: spawn, send, wait, close. */
   | (ItemBase & {
       kind: "agentCall";
       /** What was asked of the other agents: spawn, send, wait, close. */
@@ -89,7 +126,31 @@ export type Item =
   | (ItemBase & { kind: "wait"; durationMs: number; status: ItemStatus })
   /** What a hook of the owner's added to the conversation. */
   | (ItemBase & { kind: "hook"; text: string })
-  /** News of a helper agent: it started, was messaged, was stopped or finished. */
+  /**
+   * Work the agent handed off and is told about: a helper agent, a command or a workflow. It may go
+   * on in the background after its turn ends. What a helper agent does names it as `parentId`.
+   */
+  | (ItemBase & {
+      kind: "task";
+      /** The harness's id for it, once it has started. */
+      taskId: string | null;
+      task: TaskKind;
+      description: string;
+      /** A helper agent's kind, as `general-purpose`. */
+      agent: string | null;
+      /** What it was asked to do. */
+      prompt: string | null;
+      status: TaskStatus;
+      background: boolean;
+      usage: TaskUsage | null;
+      /** The latest word of how it goes, or of how it ended. */
+      summary: string | null;
+      error: string | null;
+    })
+  /**
+   * News of one of codex's helper agents, which are sessions of their own rather than tasks inside
+   * this one: it started, was messaged, was stopped or finished.
+   */
   | (ItemBase & {
       kind: "agentActivity";
       activity: "started" | "interacted" | "interrupted" | "completed";
@@ -106,8 +167,22 @@ export type ItemKind = Item["kind"];
 
 export type TurnStatus = "completed" | "interrupted" | "failed";
 
+/** Who began a turn. */
+export type TurnOrigin =
+  | { kind: "owner" }
+  /** A schedule of the owner's ran its prompt. */
+  | { kind: "schedule"; scheduleId: string }
+  /** The agent took up the news of a task of its own that ended. */
+  | { kind: "task"; taskId: string | null }
+  /** Another session sent it something. */
+  | { kind: "peer"; from: string | null }
+  /** The agent began it for a reason the harness does not say. */
+  | { kind: "agent" };
+
 export interface Turn {
   id: string;
+  /** Who began it. Absent: the owner. */
+  origin?: TurnOrigin;
   status: "running" | TurnStatus;
   error: string | null;
   /** Milliseconds since the epoch, when the harness reports it. */
@@ -130,8 +205,12 @@ export interface Plan {
 
 export interface TokenCount {
   total: number;
+  /** Everything read, cached or not. */
   input: number;
+  /** Of `input`, what was read from the cache. */
   cachedInput: number;
+  /** Of `input`, what was written to the cache. */
+  cacheWrite: number;
   output: number;
   reasoning: number;
 }
@@ -142,17 +221,118 @@ export interface Usage {
   /** The latest request alone: `last.total` is what the context holds now. */
   last: TokenCount;
   contextWindow: number | null;
+  /** What the session has cost, in US dollars, when the agent estimates it. */
+  costUsd: number | null;
+}
+
+/** What a session's context holds now, part by part when its agent can tell. */
+export interface ContextUsage {
+  tokens: number;
+  window: number | null;
+  parts: ContextPart[];
+}
+
+export interface ContextPart {
+  /** The agent's own name for the part, as `system_prompt` or `mcp_tools`; else its `name`. */
+  id: string;
+  name: string;
+  tokens: number;
+  /** `free` is room left; `buffer` is kept back for compaction; `deferred` is outside the window. */
+  kind: "used" | "free" | "buffer" | "deferred";
+}
+
+/** A command a session's agent runs when a prompt begins with `/name`. */
+export interface SlashCommand {
+  name: string;
+  description: string;
+  /** What it takes after its name, as `<file>`. */
+  argumentHint: string;
+  aliases: string[];
+  /** The agent's own, rather than the owner's, a project's or a plugin's. */
+  builtin: boolean;
+}
+
+/** What putting a session's files back before a turn changes, or changed. */
+export interface FileRewind {
+  /** False when the agent cannot, with `error` saying why. */
+  possible: boolean;
+  error: string | null;
+  files: string[];
+  insertions: number;
+  deletions: number;
 }
 
 /**
- * How much an agent may do unasked.
- * - `readOnly`: reads freely, asks before any command or edit.
- * - `auto`: edits and runs inside the workspace, asks to leave it.
- * - `fullAccess`: never asks and has no sandbox.
+ * How much an agent may do unasked: the id of one of the modes its harness offers (`ModeInfo`).
+ * Each agent names its own, so one id may mean different things on two agents.
  */
-export type SessionMode = "readOnly" | "auto" | "fullAccess";
+export type SessionMode = string;
 
-export const SESSION_MODES: readonly SessionMode[] = ["readOnly", "auto", "fullAccess"];
+/**
+ * Cycle's own modes from before each agent named its own, as stored then: `readOnly` asked before
+ * any command or edit, `auto` worked inside the workspace, `fullAccess` never asked.
+ */
+export type LegacyMode = "readOnly" | "auto" | "fullAccess";
+
+/** How a stored mode from before agents named their own is marked, to be read as `replaces` says. */
+export const LEGACY_MODE_PREFIX = "legacy:";
+
+/** One mode an agent offers. */
+export interface ModeInfo {
+  id: SessionMode;
+  /** The name of the harness that offers it. */
+  harness: string;
+  name: string;
+  /** What it lets the agent do unasked, in a line. */
+  description: string;
+  /** It runs commands unasked with no sandbox. Never a default, and taken only by a press. */
+  dangerous: boolean;
+  /** The agent only plans, and changes nothing until the owner approves its plan. */
+  plan: boolean;
+  /** What a session of this agent starts in when the owner chose nothing. */
+  isDefault: boolean;
+  /** The mode of Cycle's own that this one is, for what was stored before. */
+  replaces: LegacyMode | null;
+}
+
+/** An agent's modes from what each says of itself: the rest is the same for every mode. */
+export function defineModes(
+  harness: string,
+  modes: (Partial<ModeInfo> & Pick<ModeInfo, "id" | "name" | "description">)[],
+): ModeInfo[] {
+  return modes.map((mode) => ({
+    harness,
+    dangerous: false,
+    plan: false,
+    isDefault: false,
+    replaces: null,
+    ...mode,
+  }));
+}
+
+/** Marks a mode stored before agents named their own, so it is read by what it meant then. */
+export function legacyMode(value: string): string {
+  return value === "readOnly" || value === "auto" || value === "fullAccess"
+    ? `${LEGACY_MODE_PREFIX}${value}`
+    : value;
+}
+
+/**
+ * The mode a stored or chosen value means among one agent's modes: its own id, or a marked legacy
+ * mode by what it replaces. Anything else, or nothing, is the agent's default.
+ */
+export function resolveMode(
+  modes: readonly ModeInfo[],
+  value: string | null | undefined,
+): ModeInfo | undefined {
+  const legacy = value?.startsWith(LEGACY_MODE_PREFIX)
+    ? value.slice(LEGACY_MODE_PREFIX.length)
+    : null;
+  const found = legacy
+    ? modes.find((mode) => mode.replaces === legacy)
+    : modes.find((mode) => mode.id === value);
+  return found ?? modes.find((mode) => mode.isDefault) ?? modes[0];
+}
 
 export type SessionStatus =
   /** Known to the harness but not loaded into memory. */
@@ -189,6 +369,8 @@ export interface SessionInfo {
   sandbox: string | null;
   /** Where that sandbox sees the folder. Null when its paths are this machine's. */
   sandboxCwd: string | null;
+  /** Folders beyond `cwd` its agent may reach. */
+  directories: string[];
   createdAt: number;
   updatedAt: number;
   archived: boolean;
@@ -213,6 +395,30 @@ export interface Question {
   secret: boolean;
 }
 
+/**
+ * A rule the agent offers with a request, which lets what is asked, and what is like it, through
+ * without asking again. It holds for the rest of the session.
+ *
+ * shortcut: a rule is kept for the session alone; upgrade when Cycle keeps a Claude configuration
+ * of its own, and a rule can be kept in it for the project or for the owner.
+ */
+export interface ApprovalRule {
+  id: string;
+  /** What it lets through, as `Bash(npm test:*)`, or a folder it opens. */
+  label: string;
+}
+
+/** One field of a form an MCP server asks the owner to fill. */
+export interface FormField {
+  name: string;
+  title: string;
+  description: string;
+  type: "string" | "number" | "integer" | "boolean";
+  /** The values it may take, when it is one of a list. */
+  options: string[] | null;
+  required: boolean;
+}
+
 export type Approval =
   | {
       id: string;
@@ -221,8 +427,21 @@ export type Approval =
       command: string | null;
       cwd: string | null;
       reason: string | null;
+      /** Rules that would let it, and the like of it, through from now on. */
+      rules?: ApprovalRule[];
+      /** The owner may change the command before it runs. */
+      editable?: boolean;
+      /** The agent is told what the owner says on declining it. */
+      notes?: boolean;
     }
-  | { id: string; kind: "fileChange"; itemId: string; reason: string | null }
+  | {
+      id: string;
+      kind: "fileChange";
+      itemId: string;
+      reason: string | null;
+      rules?: ApprovalRule[];
+      notes?: boolean;
+    }
   | {
       id: string;
       kind: "permissions";
@@ -230,10 +449,59 @@ export type Approval =
       reason: string | null;
       summary: string;
     }
-  | { id: string; kind: "question"; itemId: string; questions: Question[] };
+  /** Any other tool the agent asks to call. */
+  | {
+      id: string;
+      kind: "tool";
+      itemId: string;
+      /** The MCP server, or null for one of the agent's own tools. */
+      server: string | null;
+      tool: string;
+      /** JSON text of its input, which the owner may change before it runs. */
+      input: string;
+      /** The request as the agent puts it, as a sentence. */
+      title: string | null;
+      reason: string | null;
+      rules: ApprovalRule[];
+    }
+  | { id: string; kind: "question"; itemId: string; questions: Question[] }
+  /**
+   * The agent finished planning and asks to go on. Approved, it works in the mode the owner picks
+   * of `modes`; declined, it plans again, with what the owner said.
+   */
+  | { id: string; kind: "plan"; itemId: string; plan: string; modes: SessionMode[] }
+  /** An MCP server asks the owner for something: a form to fill, or a page to visit. */
+  | {
+      id: string;
+      kind: "elicitation";
+      itemId: string;
+      server: string;
+      message: string;
+      /** A page to open and finish there. Null for a form. */
+      url: string | null;
+      /** The form's fields, or null when it is not one, or too involved to draw as fields. */
+      fields: FormField[] | null;
+      /** JSON text of the form's schema, for a form that has no `fields`. */
+      schema: string | null;
+    };
+
+/** The owner's answer to an approval. What does not apply to its kind is ignored. */
+export interface ApprovalAnswer {
+  decision: ApprovalDecision;
+  /** On accept: the offered rules, by id, to keep for the rest of the session. */
+  rules?: string[];
+  /** On accept: the command as the owner changed it, or a tool's input as JSON text. */
+  edited?: string;
+  /** On decline: what the agent is told, as why or what to do instead. */
+  message?: string;
+  /** On accepting a plan: the mode to work in. */
+  mode?: SessionMode;
+  /** On accepting a form: what the owner filled in. */
+  content?: Record<string, unknown>;
+}
 
 export type ApprovalResponse =
-  | { decision: ApprovalDecision }
+  | ApprovalAnswer
   /** For a `question` approval: answers by question id. */
   | { answers: Record<string, string[]> };
 
@@ -241,6 +509,51 @@ export interface QueuedMessage {
   id: string;
   text: string;
   images: string[];
+  /**
+   * The documents it carries, by name. Their data stays in the daemon until the prompt is sent, so a
+   * session's state and the frames kept for a returning client never hold it.
+   */
+  documents?: { kind: DocumentKind; name: string }[];
+}
+
+export type DocumentKind = "pdf" | "text";
+export type AttachmentKind = "image" | DocumentKind;
+
+/** A document a prompt carries, beside its images. */
+export interface PromptDocument {
+  kind: DocumentKind;
+  name: string;
+  /** A base64 data URL. */
+  data: string;
+}
+
+/**
+ * What an agent can do beyond what every agent does. The page offers a session what its agent can,
+ * and the daemon refuses the rest.
+ */
+export interface AgentCapabilities {
+  /** What a prompt may carry. */
+  attachments: AttachmentKind[];
+  /** It can put the files back as they were before a turn, with the conversation. */
+  rewindFiles: boolean;
+  /** It lists the commands a prompt can begin with (`commands.list`); without, its skills. */
+  commands: boolean;
+  /** A session can reach folders beyond its own. */
+  directories: boolean;
+  /** Whether its MCP servers, skills and plugins can be changed in Cycle, or only read. */
+  connector: "edit" | "read";
+  /** Whether the owner signs in to it in Cycle. Without, its own command line does it. */
+  login: boolean;
+  /** It has switches of its own configuration: `features.*`. */
+  features: boolean;
+  /** Cycle keeps hooks for it, and can turn the owner's own off: `hooks.*`, `skills.enable`. */
+  hooks: boolean;
+}
+
+/** An agent the daemon runs, and what it can do. */
+export interface HarnessInfo {
+  name: string;
+  capabilities: AgentCapabilities;
 }
 
 /** What a code review reads. */
@@ -259,6 +572,8 @@ export type SessionEvent =
       sessionId: string;
       turnId: string;
       startedAt: number | null;
+      /** Absent: the owner. */
+      origin?: TurnOrigin;
     }
   | { type: "item.started"; sessionId: string; turnId: string; item: Item }
   /** Appends text to an item: message, reasoning or plan text, or command output. */
@@ -289,6 +604,8 @@ export type SessionEvent =
       error: string | null;
       durationMs: number | null;
     }
+  /** Every task running in the background now, replacing the list before. It belongs to no turn. */
+  | { type: "tasks.updated"; sessionId: string; tasks: BackgroundTask[] }
   /** The conversation went back to before this turn: it and every later turn are gone. */
   | { type: "turns.rewound"; sessionId: string; turnId: string }
   /** Something the owner should see that belongs to no item. */
@@ -441,7 +758,13 @@ export type McpTransport =
 export interface McpServerInfo {
   name: string;
   enabled: boolean;
-  /** Null for a server a plugin brings: it is changed through its plugin. */
+  /**
+   * Where it is kept. `config`: in the configuration Cycle edits, so it can be changed and removed.
+   * `owner`: in the owner's own configuration of the agent, which Cycle only turns on or off.
+   * `plugin`: a plugin brings it, and it is changed through its plugin.
+   */
+  origin: "config" | "owner" | "plugin";
+  /** Null when Cycle does not know how it is reached: a plugin's, or an owner's turned off. */
   transport: McpTransport | null;
   pluginId: string | null;
   status: "connected" | "failed" | "needsAuth" | "disabled" | "unknown";
@@ -460,10 +783,47 @@ export interface McpToolInfo {
   tokens: number | null;
 }
 
-/** What the agent can do beyond its tools, as the harness's own configuration says. */
+/** Codex's switches of what it may do beyond its tools, as its own configuration says. */
 export interface AgentFeatures {
   /** It may start helper agents. Their tools go with every request of a model that offers them. */
   subagents: boolean;
+}
+
+/** The events Claude Code runs a command hook on, by its names for them. */
+export const HOOK_EVENTS = [
+  "PreToolUse",
+  "PostToolUse",
+  "UserPromptSubmit",
+  "Stop",
+  "SubagentStop",
+  "SessionStart",
+  "SessionEnd",
+  "Notification",
+  "PreCompact",
+] as const;
+
+/** A command an agent runs as the owner when one of its events comes. */
+export interface HookInfo {
+  /** Cycle's own name for it, stable while it is kept. */
+  id: string;
+  /** The agent's name for the event, as `PreToolUse`. */
+  event: string;
+  /** Which tools it is for, as the agent matches them; empty for all. */
+  matcher: string;
+  command: string;
+  /** Seconds it may run; null for the agent's own limit. */
+  timeout: number | null;
+}
+
+/** The hooks Cycle keeps for an agent, and how much of the owner's own configuration applies. */
+export interface HookSettings {
+  hooks: HookInfo[];
+  /** The owner's own hooks run. Off, every hook is off, Cycle's too: the agent has one switch. */
+  ownerHooks: boolean;
+  /** The owner's own configuration of the agent is read: their settings, servers, plugins, skills. */
+  ownerSettings: boolean;
+  /** Which change of them this is. A change sent with an older one is refused. */
+  revision: number;
 }
 
 /** What the owner says about an MCP server of their own. */
@@ -518,21 +878,39 @@ export interface PluginDetail {
   apps: string[];
 }
 
-export interface RateLimitWindow {
-  usedPercent: number;
+/** One of an account's usage limits. */
+export interface LimitWindow {
+  /** The agent's own name for it, as `five_hour` or `primary`. */
+  id: string;
+  /** As the owner reads it: "5-hour limit". */
+  name: string;
+  /** Null when the agent says only whether it is reached. */
+  usedPercent: number | null;
   windowMinutes: number | null;
+  /** Milliseconds since the epoch. */
   resetsAt: number | null;
+  /** `warning`: close to it. `exceeded`: requests are refused, or paid for as overage. */
+  status: "ok" | "warning" | "exceeded";
+  /** Requests past it are being paid for as overage. */
+  overage: boolean;
 }
 
+/** The owner's account with whoever serves a harness's models. No secret is in it. */
 export interface AccountInfo {
-  /** Null when signed out. */
-  kind: "apiKey" | "chatgpt" | "other" | null;
+  harness: string;
+  /**
+   * Null when signed out. `subscription`: a plan of the agent's maker, as ChatGPT's or Claude's.
+   * `cloud`: a cloud provider serves it, which signs in on its own.
+   */
+  kind: "apiKey" | "chatgpt" | "subscription" | "cloud" | "other" | null;
   email: string | null;
   plan: string | null;
-  limits: {
-    primary: RateLimitWindow | null;
-    secondary: RateLimitWindow | null;
-  } | null;
+  organization: string | null;
+  /** Who serves the models, when it is not the agent's maker: `bedrock`, `vertex`. */
+  provider: string | null;
+  /** Where the credential is read from, by name alone: never its value. */
+  source: string | null;
+  limits: LimitWindow[];
 }
 
 /** A sign-in under way: the owner finishes it in a browser at `url`. */

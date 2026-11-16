@@ -15,6 +15,7 @@ import {
   type ToolsServer,
   diskFile,
   openProviders,
+  Harnesses,
   startDaemon,
   startTools,
 } from "../../src/index.ts";
@@ -43,11 +44,14 @@ beforeAll(async () => {
   daemon = await startDaemon({
     tools,
     providers: providers.store,
-    harness: new CodexHarness({
-      config: model.codexConfig,
-      env: { CODEX_HOME: join(root, "codex") },
-      tools: { name: TOOLS_SERVER, url: tools.url, keyEnv: TOOLS_KEY_ENV, key: tools.key },
-    }),
+    harness: new Harnesses(
+      new CodexHarness({
+        config: model.codexConfig,
+        env: { CODEX_HOME: join(root, "codex") },
+        tools: { name: TOOLS_SERVER, url: tools.url, keyEnv: TOOLS_KEY_ENV, key: tools.key },
+      }),
+      [],
+    ),
     home: join(root, "home"),
   });
 });

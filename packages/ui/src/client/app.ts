@@ -1,6 +1,7 @@
 import {
   type AccountInfo,
   type AccountLogin,
+  type AgentCapabilities,
   type AgentFeatures,
   type ApprovalResponse,
   type DaemonEvent,
@@ -8,14 +9,18 @@ import {
   type DayUsage,
   type Delivery,
   type EventFrame,
+  type HarnessInfo,
+  type HookSettings,
   type McpServerInfo,
   type McpServerInput,
   type MethodName,
+  type ModeInfo,
   type ModelInfo,
   type ModelProvider,
   type SandboxEnvironment,
   type Params,
   type PluginCatalog,
+  type PromptDocument,
   type Result,
   type ReviewTarget,
   type Schedule,
@@ -23,8 +28,11 @@ import {
   type SessionInfo,
   type SessionMode,
   type SessionState,
+  type SkillInfo,
   type Settings,
+  type SlashCommand,
   type TerminalInfo,
+  harnessLabel,
   reduceSession,
 } from "@cycle/protocol";
 import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
@@ -32,6 +40,7 @@ import { Connection, type ConnectionStatus } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
 import { plainMentions } from "../lib/suggest.ts";
+import { type Attachments, givenBack, keepAccepted } from "../lib/attach.ts";
 
 export type PanelId = "changes" | "files" | "terminal" | "overview";
 export type Theme = "system" | "light" | "dark";
@@ -52,7 +61,24 @@ export interface Draft {
   model: string | null;
   effort: string | null;
   mode: SessionMode;
+  /** Folders beyond `cwd` its agent may reach, sent only when the agent can and not with a sandbox. */
+  directories: string[];
 }
+
+/** A sign-in the owner is finishing in a browser, and whose account it is for. */
+export type PendingLogin = AccountLogin & { harness: string };
+
+/** What an agent nobody has described yet is taken to do: what every agent does, and no more. */
+export const NO_CAPABILITIES: AgentCapabilities = {
+  attachments: ["image"],
+  rewindFiles: false,
+  commands: false,
+  directories: false,
+  connector: "read",
+  login: false,
+  features: false,
+  hooks: false,
+};
 
 export type SettingsSection = "general" | "account" | "providers" | "sandboxes" | "about";
 
@@ -162,9 +188,16 @@ export class CycleApp {
   readonly archived = new Store<SessionInfo[] | null>(null);
   readonly settings = new Store<Settings | null>(null);
   readonly models = new Store<ModelInfo[]>([]);
-  readonly account = new Store<AccountInfo | null>(null);
+  /** Every agent's modes. A session can be in those of the agent it runs on. */
+  readonly modes = new Store<ModeInfo[]>([]);
+  /** The agents the daemon runs, the main one first, and what each can do. */
+  readonly harnesses = new Store<HarnessInfo[]>([]);
+  /** Each agent's account, by the agent's name, once read. */
+  readonly accounts = new Store<Record<string, AccountInfo>>({});
   /** A sign-in the owner is finishing in a browser. */
-  readonly login = new Store<AccountLogin | null>(null);
+  readonly login = new Store<PendingLogin | null>(null);
+  /** The commands each session's prompt can begin with, as its agent last said. */
+  readonly commands = new Store<Record<string, SlashCommand[]>>({});
   readonly providers = new Store<ModelProvider[]>([]);
   /** The owner's sandbox environments, and whether a sandbox can be made on the daemon's machine. */
   readonly sandboxes = new Store<{ available: boolean; environments: SandboxEnvironment[] }>({
@@ -176,6 +209,11 @@ export class CycleApp {
   /** Null until read: the Connector reads them when it opens, since asking starts the servers. */
   readonly mcp = new Store<McpServerInfo[] | null>(null);
   readonly plugins = new Store<PluginCatalog | null>(null);
+  /** Whose Connector the page shows: null for the main agent's. */
+  readonly connectorAgent = new Store<string | null>(null);
+  /** The shown agent's skills, and the hooks Cycle keeps for it, when it has them. */
+  readonly skills = new Store<SkillInfo[] | null>(null);
+  readonly hooks = new Store<HookSettings | null>(null);
   /** Null until read: Settings reads them when it opens. */
   readonly features = new Store<AgentFeatures | null>(null);
   readonly schedules = new Store<Schedule[] | null>(null);
@@ -354,9 +392,22 @@ export class CycleApp {
         sandbox: draftSandbox(models, this.sandboxes.get().environments, harness, last),
         model: draftModel(models, harness, settings?.model ?? null),
         effort: settings?.effort ?? null,
-        mode: settings?.mode ?? "auto",
+        mode: settings?.modes[harness] ?? "",
+        directories: [],
       },
     });
+  }
+
+  /** What the agent of this name can do. */
+  capabilities(harness: string | null | undefined): AgentCapabilities {
+    return (
+      this.harnesses.get().find((each) => each.name === harness)?.capabilities ?? NO_CAPABILITIES
+    );
+  }
+
+  /** The main agent's name: whose machine, Connector and features they are. */
+  mainHarness(): string {
+    return this.daemon.get()?.harness ?? "codex";
   }
 
   /**
@@ -384,6 +435,8 @@ export class CycleApp {
         harness,
         model,
         effort: model === usual ? (this.settings.get()?.effort ?? null) : null,
+        // Each agent has modes of its own: the session starts in what the owner keeps for it.
+        mode: this.settings.get()?.modes[harness] ?? "",
         sandbox: draftSandbox(
           this.models.get(),
           this.sandboxes.get().environments,
@@ -418,7 +471,11 @@ export class CycleApp {
   }
 
   /** Makes the drafted session and sends its first prompt. */
-  async createAndSend(text: string, images: string[]): Promise<boolean> {
+  async createAndSend(
+    text: string,
+    images: string[],
+    documents: PromptDocument[] = [],
+  ): Promise<boolean> {
     const draft = this.view.get().draft;
     if (!draft) return false;
     const models = this.models.get();
@@ -430,10 +487,21 @@ export class CycleApp {
       this.sandboxes.get().environments.some((one) => one.id === draft.sandbox)
         ? draft.sandbox
         : null;
+    const directories =
+      !sandbox && this.capabilities(draft.harness).directories ? draft.directories : [];
+    // The composer keeps to what the agent takes; one that changed since keeps the prompt unsent.
+    const kept = keepAccepted({ images, documents }, this.capabilities(draft.harness).attachments);
+    if (kept.dropped.length) {
+      this.toast(
+        `${harnessLabel(draft.harness)} cannot read ${kept.dropped.join(", ")}. Remove it to send.`,
+        "error",
+      );
+      return false;
+    }
     const info = await this.attempt(
       this.request("session.create", {
         cwd: draft.cwd,
-        mode: draft.mode,
+        ...(draft.mode ? { mode: draft.mode } : {}),
         ...(model ? { model } : {}),
         ...(draft.effort && model === draft.model ? { effort: draft.effort } : {}),
         ...(sandbox
@@ -441,19 +509,52 @@ export class CycleApp {
           : draft.worktree
             ? { worktree: draft.branch ? { branch: draft.branch } : {} }
             : {}),
+        ...(directories.length ? { directories } : {}),
       }),
     );
     if (!info) return false;
     keepLast(draft.harness, sandbox);
     this.upsertSessions([info]);
     this.selectSession(info.id);
-    await this.send(info.id, text, images, "auto");
+    // The session is made either way: a prompt it would not take waits in its composer.
+    if (!(await this.send(info.id, text, images, "auto", documents))) {
+      this.putInComposer(info.id, plainMentions(text), { images, documents });
+    }
     return true;
   }
 
-  async send(sessionId: string, text: string, images: string[], delivery: Delivery): Promise<void> {
+  async send(
+    sessionId: string,
+    text: string,
+    images: string[],
+    delivery: Delivery,
+    documents: PromptDocument[] = [],
+  ): Promise<boolean> {
     host.prepareNotifications();
-    await this.attempt(this.request("session.send", { sessionId, text, images, delivery }));
+    const sent = await this.attempt(
+      this.request("session.send", {
+        sessionId,
+        text,
+        images,
+        ...(documents.length ? { documents } : {}),
+        delivery,
+      }),
+    );
+    // The daemon keeps a queued prompt's documents by name only: they come back from here.
+    if (sent?.id && documents.length) this.queuedDocuments.set(sent.id, documents);
+    return sent !== null;
+  }
+
+  /** The documents of prompts this page queued, by queue id, to give back if the turn stops. */
+  private readonly queuedDocuments = new Map<string, PromptDocument[]>();
+  /** Attachments given back to a composer, by its key, until it takes them. */
+  private readonly returnedAttachments = new Map<string, Attachments>();
+
+  /** The attachments given back to a composer, once. */
+  takeReturned(key: string): Attachments | null {
+    const back = this.returnedAttachments.get(key) ?? null;
+    this.returnedAttachments.delete(key);
+    return back;
   }
 
   interrupt(sessionId: string): void {
@@ -490,8 +591,10 @@ export class CycleApp {
    * Takes a session back to before a turn, and gives the turn's prompt back to the composer so it
    * can be changed and sent again.
    */
-  async rewind(sessionId: string, turnId: string, prompt: string): Promise<void> {
-    const done = await this.attempt(this.request("session.rewind", { sessionId, turnId }));
+  async rewind(sessionId: string, turnId: string, prompt: string, files = false): Promise<void> {
+    const done = await this.attempt(
+      this.request("session.rewind", { sessionId, turnId, ...(files ? { files: true } : {}) }),
+    );
     if (done !== null && prompt) this.putInComposer(sessionId, prompt);
   }
 
@@ -509,23 +612,77 @@ export class CycleApp {
     if (answer) this.archived.set(answer.sessions);
   }
 
+  /** Reads every agent's account. Each is a courtesy: the page works without knowing it. */
   async refreshAccount(): Promise<void> {
-    try {
-      this.account.set(await this.request("account.read", {}));
-    } catch {
-      // The account is a courtesy: the page works without knowing it.
-    }
+    const names = this.harnesses.get().map((each) => each.name);
+    await Promise.all(
+      (names.length ? names : [this.mainHarness()]).map((harness) =>
+        this.request("account.read", { harness }).then(
+          (account) => this.setAccount(account),
+          () => {},
+        ),
+      ),
+    );
+  }
+
+  private setAccount(account: AccountInfo): void {
+    this.accounts.update((all) => ({ ...all, [account.harness]: account }));
   }
 
   // Connector
 
+  /** The agent whose Connector is shown, by name. */
+  shownAgent(): string {
+    return this.connectorAgent.get() ?? this.mainHarness();
+  }
+
+  /** What every Connector request names: the shown agent, or none for the main one. */
+  private agent(): { harness?: string } {
+    const name = this.connectorAgent.get();
+    return name ? { harness: name } : {};
+  }
+
+  /** Shows another agent's Connector, read afresh. */
+  showConnector(harness: string | null): void {
+    this.connectorAgent.set(harness === this.mainHarness() ? null : harness);
+    this.mcp.set(null);
+    this.plugins.set(null);
+    this.skills.set(null);
+    this.hooks.set(null);
+    void this.loadConnector();
+  }
+
   async loadConnector(): Promise<void> {
-    const [servers, catalog] = await Promise.all([
-      this.attempt(this.request("mcp.list", {})),
-      this.attempt(this.request("plugins.list", {})),
+    const agent = this.agent();
+    const hooks = this.capabilities(this.shownAgent()).hooks;
+    const [servers, catalog, settings] = await Promise.all([
+      this.attempt(this.request("mcp.list", agent)),
+      this.attempt(this.request("plugins.list", agent)),
+      hooks ? this.attempt(this.request("hooks.read", agent)) : null,
     ]);
     if (servers) this.mcp.set(servers.servers);
     if (catalog) this.plugins.set(catalog);
+    if (settings) this.hooks.set(settings);
+  }
+
+  /** The shown agent's skills in a folder. */
+  async loadSkills(cwd: string): Promise<void> {
+    const answer = await this.attempt(this.request("skills.list", { cwd, ...this.agent() }));
+    if (answer) this.skills.set(answer.skills);
+  }
+
+  async enableSkill(cwd: string, name: string, enabled: boolean): Promise<void> {
+    const answer = await this.attempt(
+      this.request("skills.enable", { cwd, name, enabled, ...this.agent() }),
+    );
+    if (answer) this.skills.set(answer.skills);
+  }
+
+  /** Sets the shown agent's hooks. The page has asked the owner first. */
+  async setHooks(settings: HookSettings): Promise<boolean> {
+    const now = await this.attempt(this.request("hooks.set", { settings, ...this.agent() }));
+    if (now) this.hooks.set(now);
+    return now !== null;
   }
 
   private async mcpDid(work: Promise<{ servers: McpServerInfo[] }>): Promise<boolean> {
@@ -541,19 +698,19 @@ export class CycleApp {
   }
 
   putMcpServer(server: McpServerInput): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.put", { server }));
+    return this.mcpDid(this.request("mcp.put", { server, ...this.agent() }));
   }
 
   removeMcpServer(name: string): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.remove", { name }));
+    return this.mcpDid(this.request("mcp.remove", { name, ...this.agent() }));
   }
 
   enableMcpServer(name: string, enabled: boolean): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.enable", { name, enabled }));
+    return this.mcpDid(this.request("mcp.enable", { name, enabled, ...this.agent() }));
   }
 
   enableMcpTool(name: string, tool: string, enabled: boolean): Promise<boolean> {
-    return this.mcpDid(this.request("mcp.enableTool", { name, tool, enabled }));
+    return this.mcpDid(this.request("mcp.enableTool", { name, tool, enabled, ...this.agent() }));
   }
 
   async loadFeatures(): Promise<void> {
@@ -568,7 +725,7 @@ export class CycleApp {
 
   /** Starts a server's sign-in and opens where the owner finishes it. */
   async loginMcpServer(name: string): Promise<void> {
-    const answer = await this.attempt(this.request("mcp.login", { name }));
+    const answer = await this.attempt(this.request("mcp.login", { name, ...this.agent() }));
     if (!answer) return;
     // A browser tab may refuse a window opened this long after the press, and does not say so.
     if (!host.openExternal(answer.url)) {
@@ -577,23 +734,23 @@ export class CycleApp {
   }
 
   installPlugin(marketplace: string, name: string): Promise<boolean> {
-    return this.pluginsDid(this.request("plugins.install", { marketplace, name }));
+    return this.pluginsDid(this.request("plugins.install", { marketplace, name, ...this.agent() }));
   }
 
   uninstallPlugin(id: string): Promise<boolean> {
-    return this.pluginsDid(this.request("plugins.uninstall", { id }));
+    return this.pluginsDid(this.request("plugins.uninstall", { id, ...this.agent() }));
   }
 
   enablePlugin(id: string, enabled: boolean): Promise<boolean> {
-    return this.pluginsDid(this.request("plugins.enable", { id, enabled }));
+    return this.pluginsDid(this.request("plugins.enable", { id, enabled, ...this.agent() }));
   }
 
   addMarketplace(source: string): Promise<boolean> {
-    return this.pluginsDid(this.request("marketplace.add", { source }));
+    return this.pluginsDid(this.request("marketplace.add", { source, ...this.agent() }));
   }
 
   removeMarketplace(name: string): Promise<boolean> {
-    return this.pluginsDid(this.request("marketplace.remove", { name }));
+    return this.pluginsDid(this.request("marketplace.remove", { name, ...this.agent() }));
   }
 
   // Schedules
@@ -617,11 +774,11 @@ export class CycleApp {
     if (run?.error) this.toast(`Did not start: ${run.error}`, "error");
   }
 
-  /** Starts a ChatGPT sign-in and opens its page. The daemon says when it ends. */
-  async signIn(): Promise<void> {
-    const login = await this.attempt(this.request("account.login", {}));
+  /** Starts an agent's sign-in and opens its page. The daemon says when it ends. */
+  async signIn(harness: string): Promise<void> {
+    const login = await this.attempt(this.request("account.login", { harness }));
     if (!login) return;
-    this.login.set(login);
+    this.login.set({ ...login, harness });
     host.openExternal(login.url);
   }
 
@@ -629,11 +786,13 @@ export class CycleApp {
     const login = this.login.get();
     if (!login) return;
     this.login.set(null);
-    await this.request("account.login.cancel", { id: login.id }).catch(() => {});
+    await this.request("account.login.cancel", { id: login.id, harness: login.harness }).catch(
+      () => {},
+    );
   }
 
-  async signOut(): Promise<void> {
-    await this.attempt(this.request("account.logout", {}));
+  async signOut(harness: string): Promise<void> {
+    await this.attempt(this.request("account.logout", { harness }));
     await this.refreshAccount();
   }
 
@@ -659,6 +818,7 @@ export class CycleApp {
         this.request("session.list", { archived: false }),
       ]);
       this.daemon.set(daemon);
+      this.harnesses.set(daemon.harnesses);
       this.settings.set(settings);
       const byId: Record<string, SessionInfo> = {};
       for (const info of list.sessions) byId[info.id] = info;
@@ -670,6 +830,10 @@ export class CycleApp {
         void this.follow(view.sessionId);
       void this.request("models.list", {}).then(
         ({ models }) => this.setModels(models),
+        () => {},
+      );
+      void this.request("modes.list", {}).then(
+        ({ modes }) => this.modes.set(modes),
         () => {},
       );
       void this.request("providers.list", {}).then(
@@ -764,8 +928,14 @@ export class CycleApp {
       let next = state;
       for (const event of frame.events) {
         if (event.type === "turn.completed" && event.status !== "completed" && next.queue.length) {
-          // A stopped turn sends nothing more: what was queued goes back to the field.
-          this.putInComposer(frame.sessionId, next.queue.map((queued) => queued.text).join("\n\n"));
+          // A stopped turn sends nothing more: what was queued goes back to the field, attachments
+          // and all.
+          const back = givenBack(next.queue, this.queuedDocuments);
+          for (const queued of next.queue) this.queuedDocuments.delete(queued.id);
+          this.putInComposer(frame.sessionId, back.text, back);
+          if (back.lost.length) {
+            this.toast(`Attach ${back.lost.join(", ")} again: it was queued elsewhere.`, "error");
+          }
         }
         next = reduceSession(next, event);
       }
@@ -777,9 +947,16 @@ export class CycleApp {
     for (const sessionId of gaps) void this.open(sessionId);
   }
 
-  /** Adds text to a session's composer, after what is in it, for the owner to send. */
-  putInComposer(sessionId: string, text: string): void {
+  /** Adds text, and attachments, to a session's composer, after what is in it, for the owner to send. */
+  putInComposer(sessionId: string, text: string, attached?: Attachments): void {
     this.saveDraftText(sessionId, [this.draftText(sessionId), text].filter(Boolean).join("\n\n"));
+    if (attached && (attached.images.length || attached.documents.length)) {
+      const before = this.returnedAttachments.get(sessionId);
+      this.returnedAttachments.set(sessionId, {
+        images: [...(before?.images ?? []), ...attached.images],
+        documents: [...(before?.documents ?? []), ...attached.documents],
+      });
+    }
     this.returned.set(this.returned.get() + 1);
   }
 
@@ -799,13 +976,20 @@ export class CycleApp {
         this.settings.set(event.settings);
         break;
       case "account.changed":
-        this.account.set(event.account);
+        this.setAccount(event.account);
         // Codex also says the account changed for reasons that end no sign-in.
-        if (event.error || event.account.kind) this.login.set(null);
+        if (
+          this.login.get()?.harness === event.account.harness &&
+          (event.error || event.account.kind)
+        )
+          this.login.set(null);
         if (event.error) this.toast(`The sign-in did not finish: ${event.error}`, "error");
         break;
       case "limits.changed":
-        this.account.set(event.account);
+        this.setAccount(event.account);
+        break;
+      case "commands.changed":
+        this.commands.update((all) => ({ ...all, [event.sessionId]: event.commands }));
         break;
       case "models.changed":
         this.models.set(event.models);
@@ -829,12 +1013,22 @@ export class CycleApp {
       case "usage.today":
         this.usage.set(event.day);
         break;
+      // The Connector page shows one agent's at a time.
       case "mcp.changed":
-        this.mcp.set(event.servers);
+        if (event.harness === this.shownAgent()) this.mcp.set(event.servers);
         break;
       case "plugins.changed":
-        this.plugins.set(event.catalog);
+        if (event.harness === this.shownAgent()) this.plugins.set(event.catalog);
         break;
+      case "hooks.changed":
+        if (event.harness === this.shownAgent()) this.hooks.set(event.settings);
+        break;
+      case "skills.changed": {
+        const home = this.daemon.get()?.userHome;
+        if (event.harness === this.shownAgent() && home && this.skills.get())
+          void this.loadSkills(home);
+        break;
+      }
       case "features.changed":
         this.features.set(event.features);
         break;

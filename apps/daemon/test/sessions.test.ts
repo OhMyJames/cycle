@@ -22,14 +22,14 @@ async function setup() {
   const settings: Settings = {
     model: null,
     effort: null,
-    mode: "auto",
+    modes: {},
     worktree: false,
     projects: [],
   };
   const meta = await JsonStore.open<MetaFile>(memory(), { sessions: {} }, timers.schedule);
   const usageFile = await JsonStore.open<UsageFile>(memory(), { days: {} }, timers.schedule);
   const hub = new SessionHub({
-    harness,
+    harness: harness.asAgents(),
     meta,
     settings: () => settings,
     usage: new UsageLedger(usageFile, () => 0),
@@ -60,9 +60,10 @@ const delta = (sessionId: string, text: string) =>
   ({ type: "item.delta", sessionId, turnId: "t1", itemId: "m", delta: text }) as const;
 
 const count = (total: number) => ({
-  total: { total, input: total, cachedInput: 0, output: 0, reasoning: 0 },
-  last: { total, input: total, cachedInput: 0, output: 0, reasoning: 0 },
+  total: { total, input: total, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+  last: { total, input: total, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0 },
   contextWindow: null,
+  costUsd: null,
 });
 
 test("streamed text is batched into one frame, numbered without gaps", async () => {
@@ -107,7 +108,9 @@ test("a prompt sent during a turn waits, then runs when the turn completes", asy
   const info = await hub.create({ cwd: "/project" });
   await hub.send(info.id, { text: "one", images: [] }, "auto");
   harness.emit(start(info.id, "t1"));
-  expect(await hub.send(info.id, { text: "two", images: [] }, "auto")).toEqual({ queued: true });
+  expect(await hub.send(info.id, { text: "two", images: [] }, "auto")).toMatchObject({
+    queued: true,
+  });
   expect(await hub.send(info.id, { text: "now", images: [] }, "steer")).toEqual({ queued: false });
   expect(harness.steered).toEqual(["now"]);
   expect(harness.sent.map((sent) => sent.text)).toEqual(["one"]);

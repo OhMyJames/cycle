@@ -4,15 +4,25 @@ import {
   forkSession,
   getSessionInfo,
   getSessionMessages,
+  getSubagentMessages,
   listSessions,
+  listSubagents,
   query,
   renameSession,
   unarchiveSession,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  WireElicitation,
+  WireElicitationResult,
+  WireAccountInfo,
+  WireContextUsage,
   WireHistoryMessage,
+  WireMcpServerStatus,
   WireMessage,
   WireModelInfo,
+  WirePermissionMode,
+  WireRewindFilesResult,
+  WireSlashCommand,
   WirePermissionResult,
   WirePermissionUpdate,
   WireSessionInfo,
@@ -42,11 +52,27 @@ export interface QueryOptions {
   /** The stored session to continue, and the entry to cut it after first. */
   resume?: string;
   resumeSessionAt?: string;
-  permissionMode: "default" | "acceptEdits" | "bypassPermissions";
+  /** Always given: left out, Claude Code may start in a mode of its own choosing. */
+  permissionMode: WirePermissionMode;
   allowDangerouslySkipPermissions?: boolean;
   sandbox?: { enabled: boolean; autoAllowBashIfSandboxed: boolean };
   includePartialMessages: boolean;
+  /** Helper agents' text and reasoning come too, not only their tool calls. */
+  forwardSubagentText?: boolean;
+  /** Tasks are stopped one by one, so stopping a turn leaves those in the background running. */
+  perTaskStopAffordance?: boolean;
+  /** Keeps a copy of each file before the agent changes it, so `rewindFiles` can put it back. */
+  enableFileCheckpointing?: boolean;
+  /** Folders beyond `cwd` the session may reach. */
+  additionalDirectories?: string[];
   settingSources: ("user" | "project" | "local")[];
+  /** A settings file, the flag layer. Only its path goes on the command line. */
+  settings?: string;
+  /** Tools it may not use, by name. Names only: they go on the command line. */
+  disallowedTools?: string[];
+  /** Plugin folders, handed over its pipe with `pluginDelivery: "initialize"`. */
+  plugins?: { type: "local"; path: string }[];
+  pluginDelivery?: "initialize";
   systemPrompt: { type: "preset"; preset: "claude_code" };
   canUseTool?: (
     tool: string,
@@ -59,6 +85,14 @@ export interface QueryOptions {
       toolUseID: string;
     },
   ) => Promise<WirePermissionResult>;
+  /** An MCP server asks the owner for something. Left out, every such request is declined. */
+  onElicitation?: (
+    request: WireElicitation,
+    options: { signal: AbortSignal },
+  ) => Promise<WireElicitationResult>;
+  // shortcut: no `onUserDialog`, so Claude Code sends no dialog and a refused answer ends the turn
+  // with its error, as in its CLI without a fallback model; upgrade when the SDK documents the
+  // `refusal_fallback_prompt` payload, or another dialog kind is worth drawing.
   pathToClaudeCodeExecutable?: string;
   spawnClaudeCodeProcess?: (options: {
     command: string;
@@ -73,10 +107,33 @@ export interface QueryOptions {
 /** A running Claude Code process: its stream, and what can be asked of it meanwhile. */
 export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   /** Answers once the process is up, with what it offers. Fails if it could not start. */
-  initializationResult(): Promise<{ models?: WireModelInfo[] }>;
+  initializationResult(): Promise<{
+    models?: WireModelInfo[];
+    commands?: WireSlashCommand[];
+    account?: WireAccountInfo;
+  }>;
   interrupt(): Promise<unknown>;
+  setPermissionMode(mode: WirePermissionMode): Promise<void>;
+  setModel(model?: string): Promise<void>;
+  /** Stops one task. Its news, that it stopped, follows on the stream. */
+  stopTask(taskId: string): Promise<void>;
+  accountInfo(): Promise<WireAccountInfo>;
+  supportedCommands(): Promise<WireSlashCommand[]>;
+  mcpServerStatus(): Promise<WireMcpServerStatus[]>;
+  /** `summary` answers from the last request's usage, with no request of its own. */
+  getContextUsage(options: { detail: "summary" | "full" }): Promise<WireContextUsage>;
+  rewindFiles(userMessageId: string, options: { dryRun: boolean }): Promise<WireRewindFilesResult>;
   /** Sets the MCP servers given to this process alone, over its own pipe. */
   setMcpServers(servers: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Merges settings into this process's flag layer, over its own pipe: the effort as `effortLevel`,
+   * and Cycle's configuration of Claude Code.
+   */
+  applyFlagSettings(settings: Record<string, unknown>): Promise<void>;
+  /** Loads its plugins again, and answers which it has. Waits while a turn runs. */
+  reloadPlugins(): Promise<{
+    plugins: { name: string; path: string; source?: string; version?: string }[];
+  }>;
   close(): void;
 }
 
@@ -90,6 +147,14 @@ export interface ClaudeSdk {
   listSessions(options?: { limit?: number }): Promise<WireSessionInfo[]>;
   getSessionInfo(sessionId: string, options?: InFolder): Promise<WireSessionInfo | undefined>;
   getSessionMessages(sessionId: string, options?: InFolder): Promise<WireHistoryMessage[]>;
+  /** The helper agents a stored session ran, by id. */
+  listSubagents(sessionId: string, options?: InFolder): Promise<string[]>;
+  /** What one helper agent of a stored session said and did. */
+  getSubagentMessages(
+    sessionId: string,
+    agentId: string,
+    options?: InFolder,
+  ): Promise<WireHistoryMessage[]>;
   forkSession(
     sessionId: string,
     options?: InFolder & { upToMessageId?: string },
@@ -134,6 +199,10 @@ export function atHome(sdk: ClaudeSdk, home: string): ClaudeSdk {
       withHome(home, () => sdk.getSessionInfo(sessionId, options)),
     getSessionMessages: (sessionId, options) =>
       withHome(home, () => sdk.getSessionMessages(sessionId, options)),
+    listSubagents: (sessionId, options) =>
+      withHome(home, () => sdk.listSubagents(sessionId, options)),
+    getSubagentMessages: (sessionId, agentId, options) =>
+      withHome(home, () => sdk.getSubagentMessages(sessionId, agentId, options)),
     forkSession: (sessionId, options) => withHome(home, () => sdk.forkSession(sessionId, options)),
     renameSession: (sessionId, title, options) =>
       withHome(home, () => sdk.renameSession(sessionId, title, options)),
@@ -153,6 +222,9 @@ export const realSdk: ClaudeSdk = {
   listSessions: (options) => listSessions(options),
   getSessionInfo: (sessionId, options) => getSessionInfo(sessionId, options),
   getSessionMessages: (sessionId, options) => getSessionMessages(sessionId, options),
+  listSubagents: (sessionId, options) => listSubagents(sessionId, options),
+  getSubagentMessages: (sessionId, agentId, options) =>
+    getSubagentMessages(sessionId, agentId, options),
   forkSession: (sessionId, options) => forkSession(sessionId, options),
   renameSession: (sessionId, title, options) => renameSession(sessionId, title, options),
   archiveSession: (sessionId, options) => archiveSession(sessionId, options),

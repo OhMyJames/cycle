@@ -4,19 +4,23 @@ import {
   CLOSE_UNAUTHORIZED,
   type ClientMessage,
   type DaemonEvent,
+  type Agents,
   type EventFrame,
-  type Harness,
   type MethodName,
   type ModelProvider,
   type Params,
   type Result,
   type ServerMessage,
+  type SessionMode,
   type Settings,
   WS_PATH,
+  legacyMode,
+  resolveMode,
 } from "@cycle/protocol";
 import { allowedRequest, newToken, sameToken } from "./auth.ts";
 import { Files } from "./files.ts";
 import { Git } from "./git.ts";
+import { NotSupported } from "./harnesses.ts";
 import { Providers, type ProvidersFile } from "./providers.ts";
 import {
   type SandboxAdmin,
@@ -24,7 +28,13 @@ import {
   SandboxError,
   type SandboxesFile,
 } from "./sandboxes.ts";
-import { LaunchError, Scheduler, type SchedulesFile } from "./schedules.ts";
+import {
+  LaunchError,
+  Scheduler,
+  type SchedulesFile,
+  runAgentProblem,
+  scheduleMode,
+} from "./schedules.ts";
 import { type MetaFile, SessionHub } from "./sessions.ts";
 import { JsonStore, diskFile, realDelay } from "./store.ts";
 import { Terminals } from "./terminals.ts";
@@ -34,7 +44,7 @@ import { type UsageFile, UsageLedger } from "./usage.ts";
 export const DAEMON_VERSION = "0.1.0";
 
 export interface DaemonOptions {
-  harness: Harness;
+  harness: Agents;
   /** The owner's model providers, opened before the harness that offers their models. */
   providers: JsonStore<ProvidersFile>;
   /**
@@ -78,10 +88,13 @@ type Routes = {
 const DEFAULT_SETTINGS: Settings = {
   model: null,
   effort: null,
-  mode: "auto",
+  modes: {},
   worktree: false,
   projects: [],
 };
+
+/** Settings as kept. `mode` is what every agent's new sessions started in, before each had its own. */
+type StoredSettings = Settings & { mode?: string };
 const MAX_PROJECTS = 30;
 const SCHEDULE_TICK_MS = 15_000;
 
@@ -124,7 +137,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const token = options.token ?? newToken();
 
   const [settings, meta, usageFile, schedulesFile] = await Promise.all([
-    JsonStore.open<Settings>(diskFile(join(home, "settings.json")), {
+    JsonStore.open<StoredSettings>(diskFile(join(home, "settings.json")), {
       ...DEFAULT_SETTINGS,
     }),
     JsonStore.open<MetaFile>(diskFile(join(home, "sessions.json")), {
@@ -137,6 +150,28 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   ]);
 
   await harness.start();
+
+  /**
+   * What new sessions start in on each agent: the owner's choice for it, else what they chose for
+   * every agent before each had modes of its own, else the agent's default.
+   */
+  const newModes = (): Record<string, SessionMode> => {
+    const { modes, mode } = settings.value;
+    const all = harness.listModes();
+    const out: Record<string, SessionMode> = {};
+    for (const agent of new Set(all.map((each) => each.harness))) {
+      const own = all.filter((each) => each.harness === agent);
+      const chosen = resolveMode(own, modes[agent] ?? (mode ? legacyMode(mode) : undefined));
+      if (chosen) out[agent] = chosen.id;
+    }
+    return out;
+  };
+  /** Settings as the clients and the sessions read them, worked out again when they change. */
+  const view = (): Settings => {
+    const { mode: _, ...rest } = settings.value;
+    return { ...rest, modes: newModes() };
+  };
+  let settingsView = view();
 
   const viewers = new Map<string, number>();
   const push = (event: DaemonEvent) => {
@@ -171,35 +206,42 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (!environments || !sandboxAdmin) throw new SandboxError("Sandboxes are not set up here.");
     return { environments, admin: sandboxAdmin };
   };
-  // Limits move with every turn, of every session: one read at a time, and one more if they moved
-  // again while it ran.
-  let limits: "idle" | "reading" | "again" = "idle";
-  const readLimits = () => {
-    if (limits !== "idle") {
-      limits = "again";
+  // Limits move with every turn, of every session: one read at a time for each agent, and one more
+  // if they moved again while it ran.
+  const limits = new Map<string, "reading" | "again">();
+  const readLimits = (name: string) => {
+    if (limits.has(name)) {
+      limits.set(name, "again");
       return;
     }
-    limits = "reading";
+    limits.set(name, "reading");
     harness
+      .account(name)
       .readAccount()
       .then(
         (account) => push({ type: "limits.changed", account }),
         () => {},
       )
       .finally(() => {
-        const more = limits === "again";
-        limits = "idle";
-        if (more) readLimits();
+        const more = limits.get(name) === "again";
+        limits.delete(name);
+        if (more) readLimits(name);
       });
   };
   harness.onEvent((event) => {
-    if (event.type === "limits.changed") readLimits();
+    if (event.type === "limits.changed") readLimits(event.harness);
+    if (event.type === "commands.changed") {
+      push({ type: "commands.changed", sessionId: event.sessionId, commands: event.commands });
+    }
     if (event.type !== "account.changed") return;
     const { error } = event;
-    harness.readAccount().then(
-      (account) => push({ type: "account.changed", account, error }),
-      () => {},
-    );
+    harness
+      .account(event.harness)
+      .readAccount()
+      .then(
+        (account) => push({ type: "account.changed", account, error }),
+        () => {},
+      );
     pushModels();
   });
   const usage = new UsageLedger(usageFile, Date.now);
@@ -207,7 +249,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const hub = new SessionHub({
     harness,
     meta,
-    settings: () => settings.value,
+    settings: () => settingsView,
     usage,
     git,
     worktreeParent: join(home, "worktrees"),
@@ -263,21 +305,31 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     now: Date.now,
     newId: () => crypto.randomUUID(),
     onChange: (schedules) => push({ type: "schedules.changed", schedules }),
+    modes: () => harness.listModes(),
     // A run starts as the composer would: a new session, then its first prompt.
     // An approval it asks for waits for the owner, as in any session.
     async launch(schedule) {
+      const mode = scheduleMode(schedule);
+      // One id can be two agents' modes, which let through different things: a run starts only on
+      // the agent its mode is of.
+      const agent = await hub.agentFor(schedule.model ?? settingsView.model ?? undefined);
+      const problem = runAgentProblem(schedule, agent);
+      if (problem) throw new Error(problem);
       const info = await hub.create(
         {
           cwd: schedule.cwd,
           ...(schedule.model ? { model: schedule.model } : {}),
           ...(schedule.effort ? { effort: schedule.effort } : {}),
-          ...(schedule.mode ? { mode: schedule.mode } : {}),
+          ...(mode ? { mode } : {}),
           ...(schedule.worktree ? { worktree: {} } : {}),
         },
         schedule.id,
       );
       try {
-        await hub.send(info.id, { text: schedule.prompt, images: [] }, "auto");
+        await hub.send(info.id, { text: schedule.prompt, images: [] }, "auto", {
+          kind: "schedule",
+          scheduleId: schedule.id,
+        });
       } catch (error) {
         throw new LaunchError(error instanceof Error ? error.message : String(error), info.id);
       }
@@ -289,29 +341,35 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
    * newest listing is pushed, so answers that come back out of order leave
    * the pages with the latest.
    */
-  let mcpListing = 0;
-  const mcpChanged = async () => {
-    const listing = ++mcpListing;
-    const servers = await harness.listMcpServers();
-    if (listing === mcpListing) push({ type: "mcp.changed", servers });
+  const mcpListing = new Map<string, number>();
+  const mcpChanged = async (name = harness.name) => {
+    const listing = (mcpListing.get(name) ?? 0) + 1;
+    mcpListing.set(name, listing);
+    const servers = await harness.connector(name).listMcpServers();
+    if (listing === mcpListing.get(name)) push({ type: "mcp.changed", harness: name, servers });
     return { servers };
   };
   /** A change to the configuration, told to the pages whether or not it went through whole. */
-  const mcpChange = async (work: Promise<void>) => {
+  const mcpChange = async (name: string | undefined, work: () => Promise<void>) => {
     try {
-      await work;
+      await work();
     } catch (error) {
-      void mcpChanged().catch(() => {});
+      // What an agent refuses changed nothing.
+      if (!(error instanceof NotSupported)) void mcpChanged(name).catch(() => {});
       throw error;
     }
-    return mcpChanged();
+    return mcpChanged(name);
   };
-  const pluginsChanged = async () => {
-    const catalog = await harness.listPlugins();
-    push({ type: "plugins.changed", catalog });
+  const pluginsChanged = async (name = harness.name) => {
+    const catalog = await harness.connector(name).listPlugins();
+    push({ type: "plugins.changed", harness: name, catalog });
     // A plugin may bring servers of its own.
-    void mcpChanged().catch(() => {});
+    void mcpChanged(name).catch(() => {});
     return catalog;
+  };
+  const pluginChange = async (name: string | undefined, work: () => Promise<void>) => {
+    await work();
+    return pluginsChanged(name);
   };
   harness.onEvent((event) => {
     if (event.type === "mcp.changed") void mcpChanged().catch(() => {});
@@ -332,7 +390,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   };
   const setSettings = (change: (value: Settings) => void) => {
     settings.update(change);
-    push({ type: "settings.changed", settings: settings.value });
+    settingsView = view();
+    push({ type: "settings.changed", settings: settingsView });
   };
   const useProject = (path: string) => {
     if (settings.value.projects[0] === path) return;
@@ -348,6 +407,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "daemon.info": () => ({
       version: DAEMON_VERSION,
       harness: harness.name,
+      harnesses: harness.harnesses(),
       home,
       platform: process.platform,
       userHome: homedir(),
@@ -372,14 +432,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       unfollow(socket, sessionId);
       return {};
     },
-    "session.send": ({ sessionId, text, images, delivery }) =>
-      hub.send(sessionId, { text, images: images ?? [] }, delivery ?? "auto"),
+    "session.send": ({ sessionId, text, images, documents, delivery }) =>
+      hub.send(
+        sessionId,
+        { text, images: images ?? [], ...(documents?.length ? { documents } : {}) },
+        delivery ?? "auto",
+      ),
     "session.unqueue": ({ sessionId, id }) => {
       hub.unqueue(sessionId, id);
       return {};
     },
     "session.interrupt": async ({ sessionId }) => {
       await hub.interrupt(sessionId);
+      return {};
+    },
+    "session.stopTask": async ({ sessionId, taskId }) => {
+      await hub.stopTask(sessionId, taskId);
       return {};
     },
     "session.update": async (params) => {
@@ -401,55 +469,65 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       await hub.review(sessionId, target);
       return {};
     },
-    "session.rewind": async ({ sessionId, turnId }) => {
-      await hub.rewind(sessionId, turnId);
+    "session.rewind": async ({ sessionId, turnId, files: withFiles }) => {
+      await hub.rewind(sessionId, turnId, withFiles ?? false);
       return {};
     },
+    "session.rewind.preview": ({ sessionId, turnId }) => hub.previewRewind(sessionId, turnId),
+    "session.context": async ({ sessionId }) => ({ context: await hub.context(sessionId) }),
+    "commands.list": async (target) => ({ commands: await harness.listCommands(target) }),
     "approval.respond": ({ approvalId, response }) => {
       hub.respondApproval(approvalId, response);
       return {};
     },
 
     "models.list": async () => ({ models: await harness.listModels() }),
-    "skills.list": async ({ cwd }) => ({
-      skills: await harness.listSkills(cwd),
+    "modes.list": () => ({ modes: harness.listModes() }),
+    "skills.list": async ({ cwd, harness: name }) => ({
+      skills: await harness.connector(name).listSkills(cwd),
     }),
-    "mcp.list": async () => ({ servers: await harness.listMcpServers() }),
-    "mcp.put": async ({ server }) => {
-      return mcpChange(harness.putMcpServer(server));
+    "skills.enable": async ({ cwd, name: skill, enabled, harness: name }) => {
+      const connector = harness.connector(name);
+      await connector.enableSkill(skill, enabled);
+      push({ type: "skills.changed", harness: name ?? harness.name });
+      return { skills: await connector.listSkills(cwd) };
     },
-    "mcp.remove": async ({ name }) => {
-      return mcpChange(harness.removeMcpServer(name));
+    "hooks.read": ({ harness: name }) => harness.connector(name).readHooks(),
+    "hooks.set": async ({ settings: hooks, harness: name }) => {
+      const connector = harness.connector(name);
+      await connector.setHooks(hooks);
+      const now = await connector.readHooks();
+      push({ type: "hooks.changed", harness: name ?? harness.name, settings: now });
+      // The owner's own servers come and go with their settings.
+      void mcpChanged(name).catch(() => {});
+      return now;
     },
-    "mcp.enable": async ({ name, enabled }) => {
-      return mcpChange(harness.enableMcpServer(name, enabled));
-    },
-    "mcp.enableTool": async ({ name, tool, enabled }) => {
-      return mcpChange(harness.enableMcpTool(name, tool, enabled));
-    },
-    "mcp.login": ({ name }) => harness.loginMcpServer(name),
-    "plugins.list": () => harness.listPlugins(),
-    "plugins.read": ({ marketplace, name }) => harness.readPlugin(marketplace, name),
-    "plugins.install": async ({ marketplace, name }) => {
-      await harness.installPlugin(marketplace, name);
-      return pluginsChanged();
-    },
-    "plugins.uninstall": async ({ id }) => {
-      await harness.uninstallPlugin(id);
-      return pluginsChanged();
-    },
-    "plugins.enable": async ({ id, enabled }) => {
-      await harness.enablePlugin(id, enabled);
-      return pluginsChanged();
-    },
-    "marketplace.add": async ({ source }) => {
-      await harness.addMarketplace(source);
-      return pluginsChanged();
-    },
-    "marketplace.remove": async ({ name }) => {
-      await harness.removeMarketplace(name);
-      return pluginsChanged();
-    },
+    "mcp.list": async ({ harness: name }) => ({
+      servers: await harness.connector(name).listMcpServers(),
+    }),
+    "mcp.put": ({ server, harness: name }) =>
+      mcpChange(name, () => harness.connector(name).putMcpServer(server)),
+    "mcp.remove": ({ name: server, harness: name }) =>
+      mcpChange(name, () => harness.connector(name).removeMcpServer(server)),
+    "mcp.enable": ({ name: server, enabled, harness: name }) =>
+      mcpChange(name, () => harness.connector(name).enableMcpServer(server, enabled)),
+    "mcp.enableTool": ({ name: server, tool, enabled, harness: name }) =>
+      mcpChange(name, () => harness.connector(name).enableMcpTool(server, tool, enabled)),
+    "mcp.login": ({ name: server, harness: name }) =>
+      harness.connector(name).loginMcpServer(server),
+    "plugins.list": ({ harness: name }) => harness.connector(name).listPlugins(),
+    "plugins.read": ({ marketplace, name: plugin, harness: name }) =>
+      harness.connector(name).readPlugin(marketplace, plugin),
+    "plugins.install": ({ marketplace, name: plugin, harness: name }) =>
+      pluginChange(name, () => harness.connector(name).installPlugin(marketplace, plugin)),
+    "plugins.uninstall": ({ id, harness: name }) =>
+      pluginChange(name, () => harness.connector(name).uninstallPlugin(id)),
+    "plugins.enable": ({ id, enabled, harness: name }) =>
+      pluginChange(name, () => harness.connector(name).enablePlugin(id, enabled)),
+    "marketplace.add": ({ source, harness: name }) =>
+      pluginChange(name, () => harness.connector(name).addMarketplace(source)),
+    "marketplace.remove": ({ name: marketplace, harness: name }) =>
+      pluginChange(name, () => harness.connector(name).removeMarketplace(marketplace)),
 
     "schedule.list": () => ({ schedules: scheduler.list() }),
     "schedule.put": (input) => {
@@ -462,21 +540,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return {};
     },
     "schedule.run": ({ id }) => scheduler.run(id),
-    "features.read": () => harness.readFeatures(),
+    // Codex's own switches: the main agent's.
+    "features.read": () => harness.connector().readFeatures(),
     "features.set": async (features) => {
-      await harness.setFeatures({ subagents: features.subagents });
-      const now = await harness.readFeatures();
+      await harness.connector().setFeatures({ subagents: features.subagents });
+      const now = await harness.connector().readFeatures();
       push({ type: "features.changed", features: now });
       return now;
     },
-    "account.read": () => harness.readAccount(),
-    "account.login": () => harness.login(),
-    "account.login.cancel": async ({ id }) => {
-      await harness.cancelLogin(id);
+    "account.read": ({ harness: name }) => harness.account(name).readAccount(),
+    "account.login": ({ harness: name }) => harness.account(name).login(),
+    "account.login.cancel": async ({ id, harness: name }) => {
+      await harness.account(name).cancelLogin(id);
       return {};
     },
-    "account.logout": async () => {
-      await harness.logout();
+    "account.logout": async ({ harness: name }) => {
+      await harness.account(name).logout();
       return {};
     },
 
@@ -511,16 +590,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       await sandboxes().admin.setSecret(service, value);
       return {};
     },
-    "settings.get": () => settings.value,
+    "settings.get": () => settingsView,
     "settings.set": (patch) => {
+      const offered = harness.listModes();
+      for (const [agent, mode] of Object.entries(patch.modes ?? {})) {
+        if (!offered.some((each) => each.harness === agent && each.id === mode)) {
+          throw new Error(`${agent} has no mode named ${mode}.`);
+        }
+      }
       setSettings((value) => {
         if (patch.model !== undefined) value.model = patch.model;
         if (patch.effort !== undefined) value.effort = patch.effort;
-        if (patch.mode !== undefined) value.mode = patch.mode;
+        if (patch.modes !== undefined) value.modes = { ...value.modes, ...patch.modes };
         if (patch.worktree !== undefined) value.worktree = patch.worktree;
         if (patch.projects !== undefined) value.projects = patch.projects.slice(0, MAX_PROJECTS);
       });
-      return settings.value;
+      return settingsView;
     },
     "usage.daily": () => ({ days: usage.days() }),
 

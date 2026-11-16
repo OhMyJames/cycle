@@ -1,6 +1,8 @@
 import type {
   AccountInfo,
+  AgentCapabilities,
   AgentFeatures,
+  HookSettings,
   AccountLogin,
   Approval,
   ApprovalResponse,
@@ -14,11 +16,11 @@ import type {
   HarnessSession,
   McpServerInfo,
   McpServerInput,
+  ModeInfo,
   ModelInfo,
   PluginCatalog,
   PluginDetail,
   PromptInput,
-  RateLimitWindow,
   ReviewTarget,
   SessionMode,
   SkillInfo,
@@ -28,6 +30,7 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
+import { formFields } from "@cycle/protocol";
 import { rename } from "node:fs/promises";
 import { modelCatalog } from "./catalog.ts";
 import { type CodexConfig, CodexProcess } from "./process.ts";
@@ -37,7 +40,10 @@ import {
   checkServerName,
   mcpServerEdits,
   mcpToolEdits,
+  CODEX_MODES,
+  collaborationMode,
   modePolicy,
+  modeReach,
   toInput,
   toCatalog,
   toItem,
@@ -48,6 +54,7 @@ import {
   toSession,
   toSkill,
   toTurns,
+  toLimits,
   toUsage,
 } from "./translate.ts";
 import type {
@@ -110,9 +117,6 @@ export interface OwnTools {
 
 const PROVIDER_TOKEN_ENV = "CYCLE_PROVIDER_TOKEN";
 
-/** How far each mode lets the agent reach, to tell a wider one from a narrower. */
-const MODE_REACH: Record<SessionMode, number> = { readOnly: 0, auto: 1, fullAccess: 2 };
-
 /** How much each of the provider's models can read now, by id. */
 function windowsOf(provider: ExtraProvider): Map<string, number> {
   return new Map(provider.models().map(({ info, contextWindow }) => [info.id, contextWindow]));
@@ -145,15 +149,6 @@ function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow | null {
-  if (!raw) return null;
-  return {
-    usedPercent: raw.usedPercent,
-    windowMinutes: raw.windowDurationMins,
-    resetsAt: raw.resetsAt === null ? null : raw.resetsAt * 1000,
-  };
-}
-
 /**
  * Drives `codex app-server` over stdio. One process hosts many threads; each
  * Cycle session maps 1:1 onto a codex thread. Sessions on a model of the
@@ -163,6 +158,16 @@ function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow 
  */
 export class CodexHarness implements Harness {
   readonly name = HARNESS_NAME;
+  readonly capabilities: AgentCapabilities = {
+    attachments: ["image"],
+    rewindFiles: false,
+    commands: false,
+    directories: false,
+    connector: "edit",
+    login: true,
+    features: true,
+    hooks: false,
+  };
   private readonly provider: ExtraProvider | null;
   /** Codex's own models, and the machine: files, commands, terminals, the account. */
   private readonly main: CodexProcess;
@@ -186,6 +191,11 @@ export class CodexHarness implements Harness {
   private readonly reviews = new Map<string, string>();
   /** The mode each thread was last given. Codex keeps it until a turn is started with another. */
   private readonly modes = new Map<string, SessionMode>();
+  /**
+   * Threads in codex's plan mode, which they stay in until a turn is given another, and the model
+   * each was put there with.
+   */
+  private readonly planning = new Map<string, string>();
   /** The windows in the catalog the extra process last started with. */
   private extraWindows: ReadonlyMap<string, number> = new Map();
 
@@ -363,6 +373,7 @@ export class CodexHarness implements Harness {
     this.ofExtra.delete(sessionId);
     this.usage.delete(sessionId);
     this.modes.delete(sessionId);
+    this.planning.delete(sessionId);
   }
 
   async compactSession(sessionId: string): Promise<void> {
@@ -418,6 +429,9 @@ export class CodexHarness implements Harness {
       );
     }
     const policy = options.mode ? modePolicy(options.mode) : null;
+    const collaboration = options.mode
+      ? collaborationMode(options.mode, this.planning.get(sessionId), options)
+      : {};
     const response = await proc.request<{ turn: WireTurn }>("turn/start", {
       threadId: sessionId,
       input: toInput(input),
@@ -426,9 +440,18 @@ export class CodexHarness implements Harness {
       ...(policy
         ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy }
         : {}),
+      ...collaboration,
     });
     this.activeTurns.set(sessionId, response.turn.id);
     if (options.mode) this.modes.set(sessionId, options.mode);
+    if ("collaborationMode" in collaboration) {
+      const given = collaboration.collaborationMode as {
+        mode: string;
+        settings: { model: string };
+      };
+      if (given.mode === "plan") this.planning.set(sessionId, given.settings.model);
+      else this.planning.delete(sessionId);
+    }
     return { turnId: response.turn.id };
   }
 
@@ -444,7 +467,7 @@ export class CodexHarness implements Harness {
   ): Promise<{ turnId: string }> {
     const proc = await this.ensureLoaded(sessionId, options);
     const held = this.modes.get(sessionId);
-    if (options.mode && (!held || MODE_REACH[held] > MODE_REACH[options.mode])) {
+    if (options.mode && (!held || modeReach(held) > modeReach(options.mode))) {
       throw new Error(
         "The agent may still have wider access than this session's mode allows now. " +
           "Send it a message first, then start the review.",
@@ -484,6 +507,13 @@ export class CodexHarness implements Harness {
     this.approvals.delete(approvalId);
     pending.rpc.respond(pending.rpcId, this.approvalResult(pending, response));
     this.emit({ type: "approval.resolved", sessionId: pending.sessionId, approvalId });
+  }
+
+  /** Codex takes a mode, model and effort with each turn: a change waits for the next. */
+  async configure(): Promise<void> {}
+
+  listModes(): ModeInfo[] {
+    return [...CODEX_MODES];
   }
 
   // What the agent offers
@@ -655,12 +685,27 @@ export class CodexHarness implements Harness {
     ]);
   }
 
+  // What Cycle keeps for Claude Code alone: codex's skills and hooks are its own files.
+
+  async enableSkill(): Promise<void> {
+    throw new Error("Turning a skill off is not supported for codex in Cycle yet.");
+  }
+
+  async readHooks(): Promise<HookSettings> {
+    throw new Error("Hooks are not supported for codex in Cycle yet.");
+  }
+
+  async setHooks(): Promise<void> {
+    throw new Error("Hooks are not supported for codex in Cycle yet.");
+  }
+
   async readAccount(): Promise<AccountInfo> {
     const { account } = await this.request<{ account: Json | null }>("account/read", {});
-    if (!account) return { kind: null, email: null, plan: null, limits: null };
+    const none = { harness: this.name, organization: null, provider: null, source: null };
+    if (!account) return { ...none, kind: null, email: null, plan: null, limits: [] };
     const kind =
       account["type"] === "apiKey" || account["type"] === "chatgpt" ? account["type"] : "other";
-    let limits: AccountInfo["limits"] = null;
+    let limits: AccountInfo["limits"] = [];
     if (kind === "chatgpt") {
       try {
         const { rateLimits } = await this.request<{
@@ -669,15 +714,18 @@ export class CodexHarness implements Harness {
             secondary: WireRateLimitWindow | null;
           };
         }>("account/rateLimits/read", {});
-        limits = {
-          primary: toWindow(rateLimits.primary),
-          secondary: toWindow(rateLimits.secondary),
-        };
+        limits = toLimits(rateLimits);
       } catch {
         // Limits are a courtesy: an account without them still works.
       }
     }
-    return { kind, email: text(account["email"]), plan: text(account["planType"]), limits };
+    return {
+      ...none,
+      kind,
+      email: text(account["email"]),
+      plan: text(account["planType"]),
+      limits,
+    };
   }
 
   async login(): Promise<AccountLogin> {
@@ -901,6 +949,9 @@ export class CodexHarness implements Harness {
       ...(stale ? { config: stale } : {}),
     });
     proc.loaded.add(sessionId);
+    const kept = response.collaborationMode;
+    if (kept?.mode === "plan") this.planning.set(sessionId, kept.settings?.model ?? response.model);
+    else this.planning.delete(sessionId);
     // Resumed with no mode, the thread has whatever codex's configuration says.
     if (options.mode) this.modes.set(sessionId, options.mode);
     else this.modes.delete(sessionId);
@@ -1017,7 +1068,7 @@ export class CodexHarness implements Harness {
       }
       case "account/rateLimits/updated":
         // A sparse update: what it leaves out is unknown, not gone, so the whole is read again.
-        if (main) this.emit({ type: "limits.changed" });
+        if (main) this.emit({ type: "limits.changed", harness: this.name });
         break;
       case "mcpServer/oauthLogin/completed":
       case "mcpServer/startupStatus/updated":
@@ -1067,6 +1118,7 @@ export class CodexHarness implements Harness {
         if (main) {
           this.emit({
             type: "account.changed",
+            harness: this.name,
             error: params["success"]
               ? null
               : (text(params["error"]) ?? "The sign-in did not finish."),
@@ -1074,7 +1126,7 @@ export class CodexHarness implements Harness {
         }
         break;
       case "account/updated":
-        if (main) this.emit({ type: "account.changed", error: null });
+        if (main) this.emit({ type: "account.changed", harness: this.name, error: null });
         break;
       case "model/rerouted":
         this.emit({
@@ -1094,7 +1146,7 @@ export class CodexHarness implements Harness {
     const approval = sessionId ? this.toApproval(`${sessionId}:${id}`, method, params) : null;
     if (!sessionId || !approval) {
       if (method === "mcpServer/elicitation/request") {
-        // No form for these yet: declining lets the tool carry on without one.
+        // Asked outside any session: declining lets the tool carry on without it.
         rpc.respond(id, { action: "decline", content: null, _meta: null });
       } else {
         rpc.respondError(id, -32601, `cycle does not handle ${method}`);
@@ -1156,6 +1208,21 @@ export class CodexHarness implements Harness {
           })),
         };
       }
+      case "mcpServer/elicitation/request": {
+        const url = params["mode"] === "url" ? text(params["url"]) : null;
+        const schema = url ? null : (params["requestedSchema"] ?? null);
+        return {
+          id,
+          kind: "elicitation",
+          itemId: id,
+          server: text(params["serverName"]) ?? "",
+          message: text(params["message"]) ?? "",
+          url,
+          // Only MCP's own form is drawn as fields; OpenAI's are shown as their schema.
+          fields: params["mode"] === "form" ? formFields(schema) : null,
+          schema: schema === null ? null : JSON.stringify(schema, null, 2),
+        };
+      }
       default:
         return null;
     }
@@ -1171,6 +1238,14 @@ export class CodexHarness implements Harness {
       };
     }
     const decision = "decision" in response ? response.decision : "cancel";
+    if (pending.method === "mcpServer/elicitation/request") {
+      const accepted = decision === "accept" || decision === "acceptForSession";
+      return {
+        action: accepted ? "accept" : decision,
+        content: accepted && "decision" in response ? (response.content ?? null) : null,
+        _meta: null,
+      };
+    }
     if (pending.method === "item/permissions/requestApproval") {
       const granted = decision === "accept" || decision === "acceptForSession";
       return {

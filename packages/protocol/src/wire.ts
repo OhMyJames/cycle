@@ -1,10 +1,15 @@
 import type {
   AgentFeatures,
+  HookSettings,
   AccountInfo,
   AccountLogin,
   ApprovalResponse,
+  ContextUsage,
+  FileRewind,
+  HarnessInfo,
   McpServerInfo,
   McpServerInput,
+  ModeInfo,
   ModelInfo,
   ModelProvider,
   ModelProviderDraft,
@@ -15,11 +20,13 @@ import type {
   ProviderModel,
   PluginCatalog,
   PluginDetail,
+  PromptDocument,
   ReviewTarget,
   SessionEvent,
   SessionInfo,
   SessionMode,
   SkillInfo,
+  SlashCommand,
   TokenCount,
 } from "./model.ts";
 import type { SessionState } from "./reduce.ts";
@@ -32,7 +39,10 @@ import type { Schedule, ScheduleInput, ScheduleRun } from "./schedule.ts";
 
 export interface DaemonInfo {
   version: string;
+  /** The main agent's name. */
   harness: string;
+  /** Every agent running, the main one first, with what each can do. */
+  harnesses: HarnessInfo[];
   /** Where the daemon keeps its data. */
   home: string;
   platform: string;
@@ -44,7 +54,8 @@ export interface DaemonInfo {
 export interface Settings {
   model: string | null;
   effort: string | null;
-  mode: SessionMode;
+  /** The mode a new session starts in, by the name of the agent it runs on. */
+  modes: Record<string, SessionMode>;
   /** Whether a new session in a repository gets its own worktree. */
   worktree: boolean;
   /** Folders the owner works in, most recent first. */
@@ -105,6 +116,8 @@ export type Delivery =
   | "steer";
 
 type Empty = Record<string, never>;
+/** Which agent's Connector or Account: the main one's when left out. */
+type OfHarness = { harness?: string };
 
 export interface Methods {
   "daemon.info": { params: Empty; result: DaemonInfo };
@@ -123,6 +136,8 @@ export interface Methods {
       worktree?: { branch?: string; base?: string };
       /** Run its agent in a sandbox of this environment, by id. Not with a worktree. */
       sandbox?: string;
+      /** Folders beyond `cwd` its agent may reach, when the agent can. Not with a sandbox. */
+      directories?: string[];
     };
     result: SessionInfo;
   };
@@ -141,15 +156,20 @@ export interface Methods {
       sessionId: string;
       text: string;
       images?: string[];
+      /** Only the kinds the session's agent takes. */
+      documents?: PromptDocument[];
       delivery?: Delivery;
     };
-    result: { queued: boolean };
+    /** `id` names it in the queue, when it was queued. */
+    result: { queued: boolean; id?: string };
   };
   "session.unqueue": {
     params: { sessionId: string; id: string };
     result: Empty;
   };
   "session.interrupt": { params: { sessionId: string }; result: Empty };
+  /** Stops one task of the session's, by the id its `tasks` list gives. Its turn, if any, goes on. */
+  "session.stopTask": { params: { sessionId: string; taskId: string }; result: Empty };
   "session.update": {
     params: {
       sessionId: string;
@@ -178,12 +198,30 @@ export interface Methods {
     result: Empty;
   };
   /**
-   * Removes a turn and every later one from the conversation, for good. Files the agent changed
-   * stay as they are. Clients confirm first.
+   * Removes a turn and every later one from the conversation, for good. With `files`, also puts
+   * back the files the agent changed since, when its agent can; else they stay. Clients confirm first.
    */
   "session.rewind": {
-    params: { sessionId: string; turnId: string };
+    params: { sessionId: string; turnId: string; files?: boolean };
     result: Empty;
+  };
+  /** What `session.rewind` with `files` would put back. Nothing is changed. */
+  "session.rewind.preview": {
+    params: { sessionId: string; turnId: string };
+    result: FileRewind;
+  };
+  /** What the session's context holds now: in parts when its agent can tell, else the total. */
+  "session.context": {
+    params: { sessionId: string };
+    result: { context: ContextUsage | null };
+  };
+  /**
+   * The commands a prompt can begin with: a session's, or a new session's of an agent. Sent, a
+   * command is a prompt like any other.
+   */
+  "commands.list": {
+    params: { sessionId: string } | { harness: string; cwd: string };
+    result: { commands: SlashCommand[] };
   };
   "approval.respond": {
     params: {
@@ -195,46 +233,57 @@ export interface Methods {
   };
 
   "models.list": { params: Empty; result: { models: ModelInfo[] } };
-  "skills.list": { params: { cwd: string }; result: { skills: SkillInfo[] } };
+  /** Every agent's modes. A session can be in those of the agent it runs on. */
+  "modes.list": { params: Empty; result: { modes: ModeInfo[] } };
+  "skills.list": { params: { cwd: string } & OfHarness; result: { skills: SkillInfo[] } };
+  /** Turns a skill on or off for every session of the agent. Answers the folder's skills. */
+  "skills.enable": {
+    params: { cwd: string; name: string; enabled: boolean } & OfHarness;
+    result: { skills: SkillInfo[] };
+  };
+  /** The hooks Cycle keeps for an agent. The page asks the owner before it sets any. */
+  "hooks.read": { params: OfHarness; result: HookSettings };
+  "hooks.set": { params: { settings: HookSettings } & OfHarness; result: HookSettings };
 
-  // The connector: the owner's MCP servers and plugins, as the harness keeps them.
-  "mcp.list": { params: Empty; result: { servers: McpServerInfo[] } };
+  // The connector: the owner's MCP servers and plugins, as each agent keeps them. An agent other
+  // than the main one may only read: what it cannot do, it refuses saying so.
+  "mcp.list": { params: OfHarness; result: { servers: McpServerInfo[] } };
   /** Adds a server, or changes the one of that name. */
   "mcp.put": {
-    params: { server: McpServerInput };
+    params: { server: McpServerInput } & OfHarness;
     result: { servers: McpServerInfo[] };
   };
   "mcp.remove": {
-    params: { name: string };
+    params: { name: string } & OfHarness;
     result: { servers: McpServerInfo[] };
   };
   "mcp.enable": {
-    params: { name: string; enabled: boolean };
+    params: { name: string; enabled: boolean } & OfHarness;
     result: { servers: McpServerInfo[] };
   };
   "mcp.enableTool": {
-    params: { name: string; tool: string; enabled: boolean };
+    params: { name: string; tool: string; enabled: boolean } & OfHarness;
     result: { servers: McpServerInfo[] };
   };
   /** Starts a sign-in. The owner finishes it at `url`; `mcp.changed` follows. */
-  "mcp.login": { params: { name: string }; result: { url: string } };
-  "plugins.list": { params: Empty; result: PluginCatalog };
+  "mcp.login": { params: { name: string } & OfHarness; result: { url: string } };
+  "plugins.list": { params: OfHarness; result: PluginCatalog };
   "plugins.read": {
-    params: { marketplace: string; name: string };
+    params: { marketplace: string; name: string } & OfHarness;
     result: PluginDetail;
   };
   "plugins.install": {
-    params: { marketplace: string; name: string };
+    params: { marketplace: string; name: string } & OfHarness;
     result: PluginCatalog;
   };
-  "plugins.uninstall": { params: { id: string }; result: PluginCatalog };
+  "plugins.uninstall": { params: { id: string } & OfHarness; result: PluginCatalog };
   "plugins.enable": {
-    params: { id: string; enabled: boolean };
+    params: { id: string; enabled: boolean } & OfHarness;
     result: PluginCatalog;
   };
   /** `source` is a folder on the daemon's machine or a Git URL. */
-  "marketplace.add": { params: { source: string }; result: PluginCatalog };
-  "marketplace.remove": { params: { name: string }; result: PluginCatalog };
+  "marketplace.add": { params: { source: string } & OfHarness; result: PluginCatalog };
+  "marketplace.remove": { params: { name: string } & OfHarness; result: PluginCatalog };
   "features.read": { params: Empty; result: AgentFeatures };
   "features.set": { params: AgentFeatures; result: AgentFeatures };
 
@@ -247,11 +296,14 @@ export interface Methods {
   /** Runs it now, enabled or not, without moving its occurrences. */
   "schedule.run": { params: { id: string }; result: ScheduleRun };
 
-  "account.read": { params: Empty; result: AccountInfo };
-  /** Starts a ChatGPT sign-in. `account.changed` follows when it ends, either way. */
-  "account.login": { params: Empty; result: AccountLogin };
-  "account.login.cancel": { params: { id: string }; result: Empty };
-  "account.logout": { params: Empty; result: Empty };
+  "account.read": { params: OfHarness; result: AccountInfo };
+  /**
+   * Starts a sign-in, for an agent whose capabilities say `login`. `account.changed` follows when
+   * it ends, either way.
+   */
+  "account.login": { params: OfHarness; result: AccountLogin };
+  "account.login.cancel": { params: { id: string } & OfHarness; result: Empty };
+  "account.logout": { params: OfHarness; result: Empty };
 
   "providers.list": { params: Empty; result: { providers: ModelProvider[] } };
   /** The services a provider can be for. */
@@ -366,10 +418,12 @@ export type DaemonEvent =
   | { type: "sessions.changed"; sessions: SessionInfo[] }
   | { type: "sessions.removed"; sessionIds: string[] }
   | { type: "settings.changed"; settings: Settings }
-  /** `error` says why a sign-in ended without one. */
+  /** `error` says why a sign-in ended without one. The account says whose it is. */
   | { type: "account.changed"; account: AccountInfo; error: string | null }
-  /** The account's rate limits moved, as they do with each turn. Nothing else changed. */
+  /** An account's rate limits moved, as they do with each turn. Nothing else changed. */
   | { type: "limits.changed"; account: AccountInfo }
+  /** The commands a session's prompt can begin with changed. */
+  | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
   | { type: "models.changed"; models: ModelInfo[] }
   | { type: "providers.changed"; providers: ModelProvider[] }
   | { type: "sandboxes.changed"; environments: SandboxEnvironment[] }
@@ -381,8 +435,12 @@ export type DaemonEvent =
   /** Base64 of what a terminal printed, to the clients attached to it. */
   | { type: "terminal.output"; id: string; data: string }
   | { type: "usage.today"; day: DayUsage }
-  | { type: "mcp.changed"; servers: McpServerInfo[] }
-  | { type: "plugins.changed"; catalog: PluginCatalog }
+  | { type: "mcp.changed"; harness: string; servers: McpServerInfo[] }
+  | { type: "plugins.changed"; harness: string; catalog: PluginCatalog }
+  /** The hooks Cycle keeps for an agent, and the switches of the owner's own, as they now are. */
+  | { type: "hooks.changed"; harness: string; settings: HookSettings }
+  /** A skill was turned on or off: a page that shows an agent's skills reads them again. */
+  | { type: "skills.changed"; harness: string }
   | { type: "features.changed"; features: AgentFeatures }
   /** The whole list, whenever a schedule changes, by a client or by a run. */
   | { type: "schedules.changed"; schedules: Schedule[] };
