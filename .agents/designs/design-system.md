@@ -67,6 +67,8 @@ not the most colorful.
   view. The focus starts on Deny.
 - While Settings is open the sidebar is Settings' own: the way back, then its sections, one shown
   at a time. The sidebar always lists what the main area can show.
+- While the sidebar is closed, the title bar starts with what the sidebar's top held: Show
+  sidebar, Search and New session.
 - The title bar is 42 high. It names the open session and its folder; on a page it is empty.
 - The content column is 768 wide. Blocks in a turn are 16 apart, turns 40.
 - A side panel is 460 wide, 320 to 900; a double-click on its edge puts it back. In a window
@@ -121,7 +123,7 @@ starts with what was typed comes before one that holds it; a plugin's skills are
 with nothing typed shows what the folder holds, folders first, and at most eight paths. Hidden
 files show only when the query has a dot. Under the files, `@` lists the owner's other sessions,
 this folder's first, at most four. A picked session reads `@title` in the composer and is a
-mention in the sent message: its title on a faint blue wash, which opens that session.
+mention in the sent message, and a reply's link to a session is drawn the same: its title on a faint blue wash, which opens that session.
 
 ### Disclosure
 
@@ -141,6 +143,8 @@ looks at on the left, its own actions and Close on the right. Rows are 28 high, 
 - **Files** is a tree with a guide under each open folder. The arrow keys move through it: up and
   down between rows, right to open a folder, left to close it, down from the filter into the list.
 - A file's icon is tinted by its kind in both, and nowhere else.
+- **Terminal** has a tab per shell. The middle button closes a tab, closing the last one closes
+  the panel, and its colors follow the appearance.
 
 ## Text that does not fit
 

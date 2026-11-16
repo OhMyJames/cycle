@@ -267,3 +267,9 @@ export function runsByDay(
   }
   return groups;
 }
+
+/** What the chosen days come to: none chosen reads as every day, and seven look the same. */
+export function daysSaid(weekdays: readonly number[]): string {
+  if (weekdays.length === 0 || weekdays.length === 7) return "Every day";
+  return `${weekdays.length} ${weekdays.length === 1 ? "day" : "days"} a week`;
+}

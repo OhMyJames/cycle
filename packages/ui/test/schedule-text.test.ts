@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Schedule, ScheduleTiming, SessionInfo } from "@cycle/protocol";
 import {
+  daysSaid,
   describeTiming,
   draftOf,
   draftProblem,
@@ -128,4 +129,11 @@ test("a once that already ran is turned on again by a time still to come", () =>
   expect(inputOf(draft, ran, now).enabled).toBe(false);
   const later = { ...draft, at: "2030-01-01T09:00" };
   expect(inputOf(later, ran, now).enabled).toBe(true);
+});
+
+test("the chosen days are said, since all of them and none look alike", () => {
+  expect(daysSaid([])).toBe("Every day");
+  expect(daysSaid([0, 1, 2, 3, 4, 5, 6])).toBe("Every day");
+  expect(daysSaid([1])).toBe("1 day a week");
+  expect(daysSaid([1, 3, 5])).toBe("3 days a week");
 });

@@ -164,6 +164,13 @@ export function expandMentions(text: string, picked: ReadonlyMap<string, string>
   );
 }
 
+/** The session a link in a reply points to, when it is one. */
+export function sessionOfLink(href: string): string | null {
+  return href.startsWith(SESSION_LINK) && /^[\w-]+$/.test(href.slice(SESSION_LINK.length))
+    ? href.slice(SESSION_LINK.length)
+    : null;
+}
+
 export type MentionPart = string | SessionRow;
 
 /** A message's text, with each session link apart from the text around it. */

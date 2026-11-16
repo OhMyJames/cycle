@@ -1,6 +1,8 @@
 import { type ReactNode, createContext, memo, useContext, useRef, useState } from "react";
 import { host } from "../client/host.ts";
+import { useApp } from "../context.ts";
 import { highlight } from "../lib/highlight.ts";
+import { sessionOfLink } from "../lib/suggest.ts";
 import {
   type MdToken,
   type ParsedMarkdown,
@@ -98,8 +100,27 @@ function InlineCode({ text }: { text: string }) {
   );
 }
 
+/** A session named in a prompt or a reply: its title, which opens it. */
+export function SessionMention({ id, children }: { id: string; children: ReactNode }) {
+  const app = useApp();
+  return (
+    <button
+      type="button"
+      className="mention"
+      title="Open this session"
+      onClick={() => app.selectSession(id)}
+    >
+      <Icon name="message" size={12} />
+      {children}
+    </button>
+  );
+}
+
 function Link({ href, children }: { href: string; children: ReactNode }) {
   const safe = /^(https?:|mailto:)/i.test(href);
+  // A session the agent names back, as a prompt's mention of it is drawn.
+  const session = sessionOfLink(href);
+  if (session) return <SessionMention id={session}>{children}</SessionMention>;
   return (
     <a
       href={safe ? href : undefined}
