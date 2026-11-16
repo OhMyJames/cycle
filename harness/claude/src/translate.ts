@@ -241,6 +241,8 @@ export function finishTool(
     case "toolCall":
       return { ...item, status, result: failed ? null : said, error: failed ? said : null };
     case "task":
+      // Its own news said how it ended: the call's result does not say otherwise.
+      if (!taskLive(item.status)) return item;
       if (declined) return { ...item, status: "stopped" };
       if (failed) return { ...item, status: "failed", error: said || null };
       // A helper agent in the background answers at once: how it went is its news, later.
@@ -316,21 +318,35 @@ interface Placed<T extends Item = Item> {
   item: T;
 }
 
+/**
+ * What a block of text or reasoning says, as an item known by its message and place, whether it is
+ * read as it comes or from storage. Null for any other block, or one with nothing in it.
+ */
+function saidItem(
+  uuid: string | undefined,
+  index: number,
+  block: WireBlock,
+  parentId: string | null,
+): Item | null {
+  const id = `${uuid}:${index}`;
+  const child = parentId ? { parentId } : {};
+  if (block.type === "text" && block.text) {
+    return { id, ...child, kind: "agentMessage", text: block.text };
+  }
+  if (block.type === "thinking" && block.thinking) {
+    return { id, ...child, kind: "reasoning", text: block.thinking };
+  }
+  return null;
+}
+
 /** A helper agent's own text: it arrives whole, never in pieces. */
 function childItems(
   message: { uuid?: string; message?: WireApiMessage | undefined },
   parentId: string,
 ): Item[] {
-  const out: Item[] = [];
-  blocksOf(message.message?.content).forEach((block, index) => {
-    const id = `${message.uuid}:${index}`;
-    if (block.type === "text" && block.text) {
-      out.push({ id, parentId, kind: "agentMessage", text: block.text });
-    } else if (block.type === "thinking" && block.thinking) {
-      out.push({ id, parentId, kind: "reasoning", text: block.thinking });
-    }
-  });
-  return out;
+  return blocksOf(message.message?.content).flatMap(
+    (block, index) => saidItem(message.uuid, index, block, parentId) ?? [],
+  );
 }
 
 /**
@@ -364,8 +380,6 @@ export class StreamReader {
   private readonly tasks = new Map<string, Placed<TaskItem>>();
   /** Task items by Claude Code's id for the task. */
   private readonly taskItems = new Map<string, string>();
-  /** The turn of every tool call, which a task it starts is shown in. */
-  private readonly calls = new Map<string, string>();
 
   constructor(sessionId: string, cwd: string, sandboxCwd: string | null = null) {
     this.sessionId = sessionId;
@@ -501,7 +515,6 @@ export class StreamReader {
       const item: Item = parentId ? { ...made, parentId } : made;
       const placed: Placed = { turnId, item };
       this.tools.set(block.id, placed);
-      this.calls.set(block.id, turnId);
       if (item.kind === "task") this.tasks.set(item.id, { turnId, item });
       events.push(this.event("item.started", placed));
     }
@@ -541,10 +554,18 @@ export class StreamReader {
     return message.type === "user" ? this.results(message) : [];
   }
 
-  /** A task changed: the item is the latest, and an ended one completes. */
+  /**
+   * A task changed: the item is the latest, and an ended one completes. One that ended and whose
+   * call has its result is forgotten: nothing more comes of it.
+   */
   private put(placed: Placed<TaskItem>, item: TaskItem): SessionEvent[] {
     placed.item = item;
-    return [this.event(taskLive(item.status) ? "item.started" : "item.completed", placed)];
+    const live = taskLive(item.status);
+    if (!live && !this.tools.has(item.id)) {
+      this.tasks.delete(item.id);
+      if (item.taskId) this.taskItems.delete(item.taskId);
+    }
+    return [this.event(live ? "item.started" : "item.completed", placed)];
   }
 
   private placedTask(message: WireMessage): Placed<TaskItem> | undefined {
@@ -632,7 +653,7 @@ export class StreamReader {
     const parent = parentItem ? this.tasks.get(parentItem) : undefined;
     const at =
       parent?.turnId ??
-      (message.tool_use_id ? this.calls.get(message.tool_use_id) : undefined) ??
+      (message.tool_use_id ? this.tools.get(message.tool_use_id)?.turnId : undefined) ??
       turnId;
     if (!at) return [];
     const id = `task:${taskId}`;
@@ -656,8 +677,6 @@ export class StreamReader {
     return [this.event("item.started", placed)];
   }
 }
-
-// A stored session
 
 // A stored session
 
@@ -696,24 +715,46 @@ function imageOf(block: WireBlock): string | null {
 /**
  * The stored messages that begin a turn: a prompt of the owner's, a summary of what came before,
  * or a task's news that came between turns. News that came while a turn ran joined that turn.
+ *
+ * Each is given the id its turn is known by: a prompt's own. A turn the agent began for a task's
+ * news never saw the news while it ran, only its own first message, so that message names it.
  */
-function turnStarts(messages: WireHistoryMessage[]): Set<string> {
-  const starts = new Set<string>();
+function turnStarts(messages: WireHistoryMessage[]): Map<string, string> {
+  const starts = new Map<string, string>();
   let between = true;
+  /** News that began a turn, which is known by the agent's first message after it. */
+  let news: string | null = null;
   for (const message of messages) {
     if (message.parent_tool_use_id) continue;
     if (message.type === "assistant") {
-      between = (record(message.message) as { stop_reason?: unknown }).stop_reason === "end_turn";
+      if (news) starts.set(news, message.uuid);
+      news = null;
+      // A turn that asks for tools goes on; any other end of the agent's (an answer, a refusal, an
+      // error of Claude Code's) ends it.
+      const stop = record(message.message)["stop_reason"];
+      between = typeof stop === "string" && stop !== "tool_use";
       continue;
     }
     if (message.type !== "user") continue;
     const entry = userEntry(apiMessage(message));
-    if (entry === "prompt" || entry === "compaction" || (entry === "notification" && between)) {
-      starts.add(message.uuid);
+    if (entry === "interrupted") between = true;
+    else if (entry === "prompt" || entry === "compaction") {
+      starts.set(message.uuid, message.uuid);
+      news = null;
+      between = false;
+    } else if (entry === "notification" && between) {
+      starts.set(message.uuid, message.uuid);
+      news = message.uuid;
       between = false;
     }
   }
   return starts;
+}
+
+/** The stored message a turn begins at, by the id the turn is known by. */
+function startOf(messages: WireHistoryMessage[], turnId: string): string {
+  for (const [entry, id] of turnStarts(messages)) if (id === turnId) return entry;
+  return turnId;
 }
 
 /** Where a tool call's item is. */
@@ -753,9 +794,7 @@ class HistoryReader {
 
   /** What the agent said and called, or a helper agent of the task `parentId` did, in `turn`. */
   assistant(message: WireHistoryMessage, turn: Turn, parentId: string | null): void {
-    const child = parentId ? { parentId } : {};
     apiMessage(message).forEach((block, index) => {
-      const id = `${message.uuid}:${index}`;
       if (block.type === "tool_use" && block.id) {
         this.tools.set(block.id, { turn, at: turn.items.length });
         const made = toolItem(
@@ -765,12 +804,11 @@ class HistoryReader {
           this.cwd,
           this.sandboxCwd,
         );
-        turn.items.push({ ...made, ...child });
-      } else if (block.type === "text" && block.text) {
-        turn.items.push({ id, ...child, kind: "agentMessage", text: block.text });
-      } else if (block.type === "thinking" && block.thinking) {
-        turn.items.push({ id, ...child, kind: "reasoning", text: block.thinking });
+        turn.items.push(parentId ? { ...made, parentId } : made);
+        return;
       }
+      const said = saidItem(message.uuid, index, block, parentId);
+      if (said) turn.items.push(said);
     });
   }
 
@@ -783,8 +821,11 @@ class HistoryReader {
     }
   }
 
-  /** A task's news: the task it tells of ends, and a turn begins when it came between turns. */
-  notification(message: WireHistoryMessage, begins: boolean): void {
+  /**
+   * A task's news: the task it tells of ends, and when it came between turns, the turn `turnId`
+   * begins.
+   */
+  notification(message: WireHistoryMessage, turnId: string | undefined): void {
     const news = readNotification(textOf(apiMessage(message)));
     if (!news) return;
     const spot = news.toolUseId ? this.tools.get(news.toolUseId) : undefined;
@@ -809,10 +850,11 @@ class HistoryReader {
         }),
       );
     }
-    if (begins) this.open(message.uuid, { kind: "task", taskId: news.taskId });
+    if (turnId) this.open(turnId, { kind: "task", taskId: news.taskId });
   }
 
-  main(message: WireHistoryMessage, begins: boolean): void {
+  /** One message of the session's own. `turnId` names the turn it begins, when it begins one. */
+  main(message: WireHistoryMessage, turnId: string | undefined): void {
     const blocks = apiMessage(message);
     if (message.type === "assistant") {
       this.assistant(message, this.turn ?? this.open(message.uuid), null);
@@ -830,7 +872,7 @@ class HistoryReader {
         this.open(message.uuid).items.push({ id: message.uuid, kind: "compaction" });
         break;
       case "notification":
-        this.notification(message, begins);
+        this.notification(message, turnId);
         break;
       case "prompt":
         this.open(message.uuid).items.push({
@@ -899,7 +941,7 @@ export function toTurns(
       if (run.push(message) === 1) inline.set(message.parent_tool_use_id, run);
       continue;
     }
-    reader.main(message, starts.has(message.uuid));
+    reader.main(message, starts.get(message.uuid));
   }
   let waiting = [...inline.values(), ...helpers];
   while (waiting.length > 0) {
@@ -915,7 +957,8 @@ export function toTurns(
  * just ahead of the turn's prompt. Null when the turn is the first, or unknown.
  */
 export function entryBefore(messages: WireHistoryMessage[], turnId: string): string | null {
-  const at = messages.findIndex((message) => message.uuid === turnId);
+  const start = startOf(messages, turnId);
+  const at = messages.findIndex((message) => message.uuid === start);
   return at > 0 ? (messages[at - 1]?.uuid ?? null) : null;
 }
 
@@ -924,15 +967,15 @@ export function turnPlace(
   messages: WireHistoryMessage[],
   turnId: string,
 ): "first" | "later" | "unknown" {
-  const starts = turnStarts(messages);
-  const [first] = starts;
-  if (first === turnId) return "first";
-  return starts.has(turnId) ? "later" : "unknown";
+  const ids = [...turnStarts(messages).values()];
+  if (ids[0] === turnId) return "first";
+  return ids.includes(turnId) ? "later" : "unknown";
 }
 
 /** The last entry of a turn: the one ahead of the next turn's prompt. Null for the last turn. */
 export function lastEntryOf(messages: WireHistoryMessage[], turnId: string): string | null {
-  const at = messages.findIndex((message) => message.uuid === turnId);
+  const start = startOf(messages, turnId);
+  const at = messages.findIndex((message) => message.uuid === start);
   if (at === -1) return null;
   const starts = turnStarts(messages);
   const next = messages.findIndex((message, index) => index > at && starts.has(message.uuid));

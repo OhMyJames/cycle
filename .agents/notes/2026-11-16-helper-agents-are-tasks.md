@@ -61,12 +61,15 @@ messages came while no turn ran), and any way to stop one task without stopping 
 ## Consequences
 
 - A Claude Code process with a task in the background is not idle: it is not closed after five idle
-  minutes, since that would stop the task. A process that stops (a change of mode or model, an
-  archive, a crash) stops its tasks, and they are shown stopped.
-- A turn the agent began by itself while running is known by an id Cycle makes; read back from storage
-  it is known by the id of the stored news that began it. Going back to, or forking at, such a turn
-  works once the session has been opened again.
+  minutes, since that would stop the task. A prompt with another mode, model or effort is refused
+  while one runs, saying why, rather than starting Claude Code again: what a mode lets run unasked is
+  set as the process starts, so it is not changed in place. An archive or a crash stops its tasks,
+  and they are shown stopped.
+- A turn the agent began by itself is known by its first whole message, the one id it shares with
+  storage: the news that began it never comes on the stream. What streamed before that message waits
+  for it. Stored, the news is where the turn begins, so going back to it cuts before the news.
 - News that came while a turn ran is part of that turn in storage. It is told apart from news that
-  began a turn by the `stop_reason` of the agent's message before it.
+  began a turn by how the turn before it ended: an interruption, or a stop of the agent's that is not
+  a call for tools.
 - If the owner's prompt goes in just as the agent begins a turn by itself, Claude Code runs the agent's
   first: its end is not taken as the end of the owner's turn, but its work shows in the owner's turn.

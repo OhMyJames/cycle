@@ -1,4 +1,4 @@
-import type { Item, TurnOrigin } from "@cycle/protocol";
+import { type Item, type TurnOrigin, taskLive } from "@cycle/protocol";
 import { type ReactNode, memo, useContext, useMemo, useState } from "react";
 import {
   type ActivityItem,
@@ -279,7 +279,8 @@ export const AgentBlock = memo(function AgentBlock({ item }: { item: Of<"agentCa
   );
 });
 
-const TASK_WORDS: Record<Of<"task">["task"], string> = {
+/** What each kind of task is called, in a row and in the list of what runs in the background. */
+export const TASK_WORDS: Record<Of<"task">["task"], string> = {
   agent: "Agent",
   command: "Background command",
   workflow: "Workflow",
@@ -326,7 +327,7 @@ export const TaskBlock = memo(function TaskBlock({
 }) {
   const [open, setOpen] = useState(false);
   const inside = nested.get(item.id) ?? [];
-  const live = item.status === "running" || item.status === "pending" || item.status === "paused";
+  const live = taskLive(item.status);
   const failed = item.status === "failed";
   const said = live ? (item.summary ?? item.description) : item.description;
   const ended = !live && item.summary && item.summary !== item.description ? item.summary : null;

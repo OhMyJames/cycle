@@ -19,6 +19,10 @@ const said = (uuid: string, content: unknown[], parent: string | null = null): W
   message: { content: content as never },
   parent_tool_use_id: parent,
 });
+const stream = (event: Record<string, unknown>): WireMessage => ({
+  type: "stream_event",
+  event: event as never,
+});
 const agentCall = {
   type: "tool_use",
   id: "toolu_1",
@@ -84,10 +88,10 @@ test("a task's news after its turn begins a turn of the agent's own, for that ta
     ["item.completed", turnId],
     ["item.completed", turnId],
     ["tasks.updated", null],
-    ["turn.started", "id3"],
-    ["item.completed", "id3"],
+    ["turn.started", "a2"],
+    ["item.completed", "a2"],
     ["usage.updated", null],
-    ["turn.completed", "id3"],
+    ["turn.completed", "a2"],
   ]);
   expect(events[3]).toMatchObject({ origin: { kind: "task", taskId: "t1" } });
 });
@@ -102,6 +106,36 @@ test("a turn of the agent's own that ends while the owner's prompt waits is not 
   await settle();
   const ends = events.filter((event) => event.type === "turn.completed");
   expect(ends).toMatchObject([{ turnId }]);
+});
+
+test("what the agent streams for a turn of its own waits for the message the turn is known by", async () => {
+  const { query, events } = await backgrounded();
+  query.say(stream({ type: "message_start", message: { id: "m9" } }));
+  query.say(stream({ type: "content_block_start", index: 0, content_block: { type: "text" } }));
+  query.say(
+    stream({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Done" } }),
+  );
+  query.say(said("a9", [{ type: "text", text: "Done" }]));
+  await settle();
+  expect(events.map((event) => [event.type, "turnId" in event ? event.turnId : null])).toEqual([
+    ["turn.started", "a9"],
+    ["item.started", "a9"],
+    ["item.delta", "a9"],
+    ["item.completed", "a9"],
+  ]);
+});
+
+test("a task in the background keeps its process: another mode waits until it is done", async () => {
+  const { harness, session, query, sdk } = await backgrounded();
+  await expect(
+    harness.send(session.id, prompt("next"), { ...options, mode: "fullAccess" }),
+  ).rejects.toThrow("still running in the background");
+  expect(query.closed).toBe(false);
+  query.say(listed([]));
+  await settle();
+  await harness.send(session.id, prompt("next"), { ...options, mode: "fullAccess" });
+  expect(query.closed).toBe(true);
+  expect(sdk.last).not.toBe(query);
 });
 
 test("a process with a task in the background is not idle, and one with none left is", async () => {

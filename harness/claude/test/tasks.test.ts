@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Item, SessionEvent } from "@cycle/protocol";
 import { StreamReader, toTurns } from "../src/index.ts";
 import { readNotification, turnOrigin } from "../src/tasks.ts";
-import { lastEntryOf, turnPlace } from "../src/translate.ts";
+import { entryBefore, lastEntryOf, turnPlace } from "../src/translate.ts";
 import type { WireHistoryMessage, WireMessage } from "../src/wire.ts";
 import { assistant, user } from "./fake-sdk.ts";
 
@@ -272,7 +272,8 @@ test("a stored conversation keeps its tasks, their helpers' work and the turns t
   const turns = toTurns(history, "/project", null, helpers);
   expect(turns.map((turn) => [turn.id, turn.origin ?? null])).toEqual([
     ["p1", null],
-    ["n1", { kind: "task", taskId: "t1" }],
+    // Known by the agent's first message after the news, as it was while it ran.
+    ["a3", { kind: "task", taskId: "t1" }],
   ]);
   expect(nested(turns[0]?.items ?? [])).toEqual([
     "p1",
@@ -292,7 +293,44 @@ test("a stored conversation keeps its tasks, their helpers' work and the turns t
   });
   expect(turns[0]?.items[4]).toMatchObject({ task: "command", status: "stopped" });
   expect(turns[0]?.items[5]).toMatchObject({ kind: "task", status: "completed" });
-  expect(turnPlace(history, "n1")).toBe("later");
+  expect(turnPlace(history, "a3")).toBe("later");
+  // Going back to it cuts before the news that began it.
+  expect(entryBefore(history, "a3")).toBe("a2");
   expect(turnPlace(history, "n2")).toBe("unknown");
   expect(lastEntryOf(history, "p1")).toBe("a2");
+});
+
+test("news after a turn that was stopped or failed begins a turn, as it did while it ran", () => {
+  const stopped: WireHistoryMessage[] = [
+    user("p1", "go"),
+    ended(assistant("a1", [call("toolu_1", "Agent", {})]), "tool_use"),
+    user("i1", [{ type: "text", text: "[Request interrupted by user for tool use]" }]),
+    notice("n1", "t1", "toolu_1", "completed", "done"),
+    ended(assistant("a2", [{ type: "text", text: "the helper is done" }]), "end_turn"),
+    user("p2", "again"),
+    // Claude Code's own error ends a turn, under a stop of its own.
+    ended(assistant("a3", [{ type: "text", text: "API Error" }]), "stop_sequence"),
+    notice("n2", "t2", "toolu_1", "completed", "done"),
+    ended(assistant("a4", [{ type: "text", text: "noted" }]), "end_turn"),
+  ];
+  expect(toTurns(stopped, "/project").map((turn) => [turn.id, turn.status])).toEqual([
+    ["p1", "interrupted"],
+    ["a2", "completed"],
+    ["p2", "completed"],
+    ["a4", "completed"],
+  ]);
+});
+
+test("a task that ended by its news stays ended when its call's result comes after", () => {
+  const reader = new StreamReader("s", "/project");
+  reader.read("t", said("a1", [call("toolu_1", "Agent", { run_in_background: false })]));
+  reader.read("t", system("task_started", { task_id: "t1", tool_use_id: "toolu_1" }));
+  reader.read("t", system("task_updated", { task_id: "t1", patch: { status: "killed" } }));
+  expect(brief(reader.read("t", answered("toolu_1", "partial report")))).toEqual([
+    "item.completed t toolu_1 task stopped",
+  ]);
+  // It ended and its call is answered: nothing more comes of it.
+  const late = system("task_progress", { task_id: "t1", summary: "late" });
+  expect(reader.read(null, late)).toEqual([]);
+  expect(reader.read(null, said("h1", [{ type: "text", text: "late" }], "toolu_1"))).toEqual([]);
 });

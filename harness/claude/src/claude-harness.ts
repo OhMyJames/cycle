@@ -119,6 +119,8 @@ interface Running {
   own: boolean;
   /** The task whose news came since the last turn ended: the agent's next turn is for it. */
   notified: string | null;
+  /** What the agent streamed for a turn of its own before the message that names the turn. */
+  early: WireMessage[];
   /** Prompts sent into the running turn, until it is known whether it took them. */
   steers: Map<string, PromptInput>;
   /** The owner asked it to stop: the turn's end is theirs, not a failure. */
@@ -716,6 +718,13 @@ export class ClaudeHarness implements Agent {
     if (starting) return starting;
     const running = this.live.get(sessionId);
     if (running && (running.spec === spec || running.turn !== null)) return running;
+    // Another mode, model or effort is another process, and the tasks of this one would stop with
+    // it. They are not changed in place: what a mode lets run unasked is set as the process starts.
+    if (running && running.reader.background.length > 0) {
+      throw new Error(
+        "A task is still running in the background here. Stop it or let it finish before changing the mode, model or effort: Claude Code starts again with them, which would stop it.",
+      );
+    }
     if (running) this.stop(running);
     const launch = this.launch(sessionId, known, options, spec, model, effort).finally(() =>
       this.starting.delete(sessionId),
@@ -785,6 +794,7 @@ export class ClaudeHarness implements Agent {
       turn: null,
       own: false,
       notified: null,
+      early: [],
       steers: new Map(),
       stopping: false,
       cancelIdle: null,
@@ -886,10 +896,19 @@ export class ClaudeHarness implements Agent {
     if (running.turn === null) {
       // A task's news that comes between turns is what the agent's next turn of its own is for.
       if (each.subtype === "task_notification") running.notified = each.task_id ?? null;
-      // The agent answers by itself, as it does a task's news: that is a turn of its own.
+      // The agent answers by itself, as it does a task's news: that is a turn of its own. Stored,
+      // it is known by its first whole message, so it waits for that message to begin, and what
+      // streamed before it follows.
       if (agentBegins(each)) {
+        if (each.type !== "assistant") {
+          running.early.push(each);
+          return;
+        }
         const origin = turnOrigin(undefined, running.notified);
-        this.begin(running, this.newId(), undefined, origin);
+        this.begin(running, each.uuid ?? this.newId(), undefined, origin);
+        for (const early of running.early.splice(0)) {
+          for (const event of running.reader.read(running.turn, early)) this.emit(event);
+        }
       }
     }
     for (const event of running.reader.read(running.turn, each)) this.emit(event);
@@ -900,6 +919,8 @@ export class ClaudeHarness implements Agent {
   private finish(running: Running, result: WireMessage): void {
     const { sessionId } = running;
     const turnId = running.turn;
+    // A turn of the agent's that never said a whole message has nothing to show.
+    running.early.length = 0;
     if (turnId === null) return;
     // The agent may have begun a turn for a task's news just as the owner's prompt went in, which
     // then waits behind it: that turn's end is not the prompt's.

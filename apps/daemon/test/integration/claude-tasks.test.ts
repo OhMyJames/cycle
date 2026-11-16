@@ -181,7 +181,19 @@ test("a command in the background ends after its turn, and the agent takes up it
   script = (prompt) => ({ text: ["You said: ", prompt] });
   await client.call("session.send", { sessionId: session.id, text: "thanks" });
   await client.until(() => ended(session.id).length === 3);
-  expect((await state(session.id)).turns.at(-1)?.origin).toBeUndefined();
+  const live = await state(session.id);
+  expect(live.turns.at(-1)?.origin).toBeUndefined();
+
+  // Read back from what Claude Code stored, the turns are the same ones, under the same ids.
+  const reader = new ClaudeHarness({ env: claude.env });
+  const stored = await reader.loadSession(session.id, {});
+  await reader.dispose();
+  const shape = (turns: typeof live.turns) =>
+    turns.map((turn) => [turn.id, turn.origin?.kind ?? "owner", turn.status]);
+  expect(shape(stored.turns)).toEqual(shape(live.turns));
+  // And the agent's turn can be gone back to by the id it had while it ran.
+  await client.call("session.rewind", { sessionId: session.id, turnId: second?.id ?? "" });
+  expect((await state(session.id)).turns.map((turn) => turn.id)).toEqual([first?.id ?? ""]);
 });
 
 test("one task in the background is stopped by itself, and its turn's end does not stop it", async () => {

@@ -87,6 +87,43 @@ test("a turn the agent begins by itself makes the owner's prompt wait for it", a
   expect(events().some((event) => event.type === "queue.updated")).toBe(true);
 });
 
+test("a prompt the agent's own turn got ahead of waits behind it, with whoever asked for it", async () => {
+  const { harness, hub, info, events } = await setup();
+  const send = harness.send;
+  // The agent begins a turn of its own while the schedule's is being asked for, which is refused.
+  harness.send = async (sessionId) => {
+    harness.emit(begun(sessionId, "a1", { kind: "task", taskId: "k" }));
+    throw new Error("A turn is already running in this session.");
+  };
+  const origin = { kind: "schedule", scheduleId: "sch1" } as const;
+  expect(await hub.send(info.id, { text: "nightly", images: [] }, "auto", origin)).toEqual({
+    queued: true,
+  });
+  expect(events().some((event) => event.type === "notice")).toBe(false);
+  harness.send = send;
+  harness.emit(ended(info.id, "a1"));
+  expect(harness.sent).toEqual([{ sessionId: info.id, text: "nightly" }]);
+  harness.emit(begun(info.id, "t2"));
+  const starts = events().flatMap((event) => (event.type === "turn.started" ? [event] : []));
+  expect(starts.map((event) => [event.turnId, event.origin])).toEqual([
+    ["a1", { kind: "task", taskId: "k" }],
+    ["t2", origin],
+  ]);
+});
+
+test("a prompt refused for a turn of the agent's that already ended is asked for again", async () => {
+  const { harness, hub, info } = await setup();
+  const send = harness.send;
+  harness.send = async (sessionId) => {
+    harness.send = send;
+    harness.emit(begun(sessionId, "a1", { kind: "task", taskId: "k" }));
+    harness.emit(ended(sessionId, "a1"));
+    throw new Error("A turn is already running in this session.");
+  };
+  expect(await hub.send(info.id, { text: "next", images: [] }, "auto")).toEqual({ queued: false });
+  expect(harness.sent).toEqual([{ sessionId: info.id, text: "next" }]);
+});
+
 test("one task is stopped by itself, and the session's tasks go when its harness does", async () => {
   const { harness, hub, info } = await setup();
   await hub.stopTask(info.id, "k");

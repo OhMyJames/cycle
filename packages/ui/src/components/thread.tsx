@@ -19,6 +19,7 @@ import {
   OriginLine,
   PlanBlock,
   ReviewBlock,
+  TASK_WORDS,
   TaskBlock,
   TextBlock,
   ThoughtBlock,
@@ -295,13 +296,6 @@ function StatusLine({ turn, since }: { turn: Turn | undefined; since: number }) 
   );
 }
 
-const BACKGROUND_WORDS: Record<BackgroundTask["task"], string> = {
-  agent: "Agent",
-  command: "Command",
-  workflow: "Workflow",
-  other: "Task",
-};
-
 /**
  * What the agent left running, whichever turn began it, each with a way to stop it alone. Its end
  * comes back as the task's news; until then the press waits.
@@ -316,7 +310,7 @@ function BackgroundTasks({ sessionId, tasks }: { sessionId: string; tasks: Backg
         <div key={task.id} className="background-task">
           <BackgroundDot />
           <span className="fade-x" title={task.description}>
-            <span className="action">{BACKGROUND_WORDS[task.task]}</span>{" "}
+            <span className="action">{TASK_WORDS[task.task]}</span>{" "}
             <span className="detail">
               {task.description}
               {task.agent ? ` · ${task.agent}` : ""}
@@ -326,7 +320,7 @@ function BackgroundTasks({ sessionId, tasks }: { sessionId: string; tasks: Backg
           <button
             type="button"
             className="ghost"
-            aria-label={`Stop ${task.description || BACKGROUND_WORDS[task.task]}`}
+            aria-label={`Stop ${task.description || TASK_WORDS[task.task]}`}
             disabled={stopping.includes(task.id)}
             onClick={() => {
               setStopping((list) => [...list, task.id]);
