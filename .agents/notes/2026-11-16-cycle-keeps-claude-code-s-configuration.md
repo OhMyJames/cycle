@@ -1,6 +1,6 @@
 # Agent Note: Cycle keeps Claude Code's configuration and hands it to each process
 
-Status: proposed
+Status: accepted
 Date: 2026-11-16
 Basis: The owner chose that Cycle keeps its own Claude Code configuration and gives it to every
 process, never writing the owner's `~/.claude` (2026-11-16). Read from `@anthropic-ai/claude-agent-sdk`
