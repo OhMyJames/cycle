@@ -32,6 +32,7 @@ import {
 import { cp, mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { type Stamp, folderFiles, ownerFiles } from "./owner-files.ts";
 import {
   type ClaudeConfig,
   enablePlugin,
@@ -136,6 +137,11 @@ export interface ClaudeHarnessOptions {
   /** Where a conversation kept in the owner's home is moved from, once. */
   files?: SessionFiles;
   /**
+   * Says whether the owner's Claude Code files changed, so what was read of them is read again at
+   * once. Without it nothing is seen to change.
+   */
+  stamp?: Stamp;
+  /**
    * Cycle's own configuration of Claude Code, which every process on this machine starts with.
    * Without it, a process has the owner's alone, and the Connector only reads.
    */
@@ -159,11 +165,19 @@ interface Known {
   directories?: string[];
 }
 
+/** The owner's files as read at one time: all of them, and with a folder's own. */
+interface Seen {
+  owner: string;
+  folder: string;
+}
+
 /** One Claude Code process, which holds one session. */
 interface Running {
   sessionId: string;
   /** When it started: what it read of the owner's configuration is as old as this. */
   startedAt: number;
+  /** The owner's files as they were as it started: a change since means it reads an older state. */
+  seen: Seen;
   known: Known;
   query: ClaudeQuery;
   input: Inbox<WireUserMessage>;
@@ -288,13 +302,14 @@ export class ClaudeHarness implements Agent, AgentReads {
   /** Cycle's configuration of Claude Code; null when it keeps none. */
   private readonly configuration: ClaudeConfiguration | null;
   /** The owner's own plugins as last listed, and when. */
-  private ownerPlugins: { at: number; plugins: OwnerPlugin[] } | null = null;
+  private ownerPlugins: { at: number; seen: string; plugins: OwnerPlugin[] } | null = null;
   private readonly sdk: ClaudeSdk;
   private readonly options: ClaudeHarnessOptions;
   private readonly env: Record<string, string>;
   /** The owner's Claude Code home: what a session on this machine reads and writes. */
   private readonly home: string;
   private readonly files: SessionFiles;
+  private readonly stamp: Stamp;
   private readonly schedule: (run: () => void, ms: number) => () => void;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -330,9 +345,9 @@ export class ClaudeHarness implements Agent, AgentReads {
    * The commands a prompt can begin with in each folder, as a process on this machine in it last
    * said: the owner's, and the folder's project's own.
    */
-  private readonly commandsAt = new Map<string, SlashCommand[]>();
+  private readonly commandsAt = new Map<string, { seen: string; commands: SlashCommand[] }>();
   /** The MCP servers as last read, and when. */
-  private mcp: { at: number; servers: McpServerInfo[] } | null = null;
+  private mcp: { at: number; seen: string; servers: McpServerInfo[] } | null = null;
   /**
    * What each session has cost so far, over all its processes. Kept apart from `usage`, which going
    * back clears: what was spent stays spent.
@@ -350,6 +365,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     }
     this.home = claudeHomeOf(this.env);
     this.files = options.files ?? realFiles;
+    this.stamp = options.stamp ?? (async () => "");
     this.schedule =
       options.schedule ??
       ((run, ms) => {
@@ -700,23 +716,36 @@ export class ClaudeHarness implements Agent, AgentReads {
   /**
    * A session's commands, as its process last said, or those of a folder: a project brings commands
    * of its own, so each folder has its own list. A folder no process has run in yet is asked of one
-   * started there for the answer, once.
-   *
-   * shortcut: a folder's list is kept until a process runs there again; upgrade when commands added
-   * in a project with no session running should show at once.
+   * started there for the answer. A list is kept until the owner's files or the folder's own
+   * commands and skills change, and then it is asked again.
    */
   async listCommands(target: { sessionId: string } | { cwd: string }): Promise<SlashCommand[]> {
     let cwd: string;
     if ("sessionId" in target) {
       const running = this.live.get(target.sessionId);
-      if (running) return running.commands;
-      cwd = (await this.find(target.sessionId)).cwd;
+      // A sandbox's commands are its own: nothing on this machine says they changed.
+      if (running?.known.sandbox) return running.commands;
+      if (running) {
+        cwd = running.known.cwd;
+        if (running.seen.folder === (await this.seen(cwd)).folder) return running.commands;
+      } else {
+        cwd = (await this.find(target.sessionId)).cwd;
+      }
     } else {
       cwd = target.cwd;
     }
     const kept = this.commandsAt.get(cwd);
-    if (kept) return kept;
-    return this.probe(async () => this.commandsAt.get(cwd) ?? [], cwd);
+    if (kept && kept.seen === (await this.seen(cwd)).folder) return kept.commands;
+    return this.probe(async () => this.commandsAt.get(cwd)?.commands ?? [], cwd);
+  }
+
+  /** The owner's files as they are now, and with a folder's own when one is given. */
+  private async seen(cwd: string | null): Promise<Seen> {
+    const [owner, folder] = await Promise.all([
+      this.stamp(ownerFiles(this.env, this.home)),
+      cwd === null ? "" : this.stamp(folderFiles(cwd)),
+    ]);
+    return { owner, folder: `${owner}#${folder}` };
   }
 
   /** What a session's context holds, from its last request. Null when it has no process now. */
@@ -742,27 +771,26 @@ export class ClaudeHarness implements Agent, AgentReads {
 
   /**
    * The servers Claude Code reaches, once they have finished connecting. A process on this machine
-   * that runs is asked. With none, the last answer is given while it is a few minutes old; after
-   * that a process is started for the answer, which starts every stdio server of the owner's too,
-   * so it is kept rather than asked again with each look at the page.
+   * that runs is asked, if it started with the owner's files as they are. With none, the last answer
+   * is given while it is a few minutes old and the files are as they were; after that a process is
+   * started for the answer, which starts every stdio server of the owner's too, so it is kept
+   * rather than asked again with each look at the page.
    */
   async listMcpServers(): Promise<McpServerInfo[]> {
     const own = this.options.tools?.name ?? null;
     // A process reads the owner's servers as it starts, and one waiting on an approval can run
-    // for days: only a recent one says what the owner has now.
-    //
-    // shortcut: a server the owner adds in their own files shows within MCP_KEEP_MS, not at once;
-    // upgrade when the harness can watch the owner's Claude Code files.
-    const running = this.here(MCP_KEEP_MS);
+    // for days: only one that started with the files as they are now says what the owner has.
+    const { owner } = await this.seen(null);
+    const running = this.here(owner);
     const read = async (query: ClaudeQuery) => {
       const servers = toMcpServers(await this.connected(query), own);
       // What a process says is as old as its start, so the two five-minute windows are one.
-      this.mcp = { at: running?.startedAt ?? this.now(), servers };
+      this.mcp = { at: running?.startedAt ?? this.now(), seen: owner, servers };
       return servers;
     };
     const listed = running
       ? await read(running.query)
-      : this.mcp && this.now() - this.mcp.at < MCP_KEEP_MS
+      : this.mcp && this.mcp.seen === owner && this.now() - this.mcp.at < MCP_KEEP_MS
         ? this.mcp.servers
         : await this.probe(read);
     return this.configuration ? shownServers(this.configuration.read(), listed) : listed;
@@ -950,7 +978,12 @@ export class ClaudeHarness implements Agent, AgentReads {
    * the catalog adds it back from the configuration.
    */
   private async ownersPlugins(): Promise<OwnerPlugin[]> {
-    if (this.ownerPlugins && this.now() - this.ownerPlugins.at < MCP_KEEP_MS) {
+    const { owner } = await this.seen(null);
+    if (
+      this.ownerPlugins &&
+      this.ownerPlugins.seen === owner &&
+      this.now() - this.ownerPlugins.at < MCP_KEEP_MS
+    ) {
       return this.ownerPlugins.plugins;
     }
     // Asked of a process started for it, which runs no turn: one a session runs in would wait for it.
@@ -965,7 +998,7 @@ export class ClaudeHarness implements Agent, AgentReads {
         name: each.name,
         version: each.version ?? null,
       }));
-    this.ownerPlugins = { at: this.now(), plugins };
+    this.ownerPlugins = { at: this.now(), seen: owner, plugins };
     return plugins;
   }
 
@@ -982,6 +1015,7 @@ export class ClaudeHarness implements Agent, AgentReads {
    */
   private async probe<T>(ask: (query: ClaudeQuery) => Promise<T>, cwd = homedir()): Promise<T> {
     let query: ClaudeQuery | null = null;
+    const seen = await this.seen(cwd);
     try {
       const start = await this.configuration?.forStart();
       query = await withHome(this.home, () =>
@@ -993,7 +1027,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       const init = await query.initializationResult();
       if (this.configuration) await query.setMcpServers(this.serversFor(this.configuration));
       this.offered = toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
-      this.heard(init, cwd);
+      this.heard(init, { cwd, seen: seen.folder });
       return await ask(query);
     } catch (error) {
       throw new Error(`Claude Code could not start: ${message(error)}`, { cause: error });
@@ -1003,9 +1037,9 @@ export class ClaudeHarness implements Agent, AgentReads {
   }
 
   /** A process that runs on this machine, with the owner's own settings and sign-in. */
-  private here(within = Number.POSITIVE_INFINITY): Running | undefined {
+  private here(owner?: string): Running | undefined {
     return [...this.live.values()]
-      .filter((each) => !each.known.sandbox && this.now() - each.startedAt < within)
+      .filter((each) => !each.known.sandbox && (owner === undefined || each.seen.owner === owner))
       .toSorted((a, b) => b.startedAt - a.startedAt)[0];
   }
 
@@ -1015,13 +1049,13 @@ export class ClaudeHarness implements Agent, AgentReads {
    */
   private heard(
     init: Awaited<ReturnType<ClaudeQuery["initializationResult"]>>,
-    /** The folder it runs in on this machine; null for a sandbox's. */
-    cwd: string | null,
+    /** The folder it runs in on this machine, and the files as they were as it started; null for a sandbox's. */
+    at: { cwd: string; seen: string } | null,
   ): SlashCommand[] {
     const commands = toCommands(init.commands ?? []);
-    if (cwd === null) return commands;
+    if (at === null) return commands;
     if (init.account) this.latest.account = init.account;
-    this.commandsAt.set(cwd, commands);
+    this.commandsAt.set(at.cwd, { seen: at.seen, commands });
     return commands;
   }
 
@@ -1236,6 +1270,8 @@ export class ClaudeHarness implements Agent, AgentReads {
     effort: string | undefined,
   ): Promise<Running> {
     const cut = this.cuts.get(sessionId);
+    // Before the process reads anything, so a change after this is one it may not have.
+    const seen = await this.seen(known.sandbox ? null : known.cwd);
     if (cut === CUT_START && known.stored) {
       // Back before its first turn, a conversation begins again under the id it had.
       await this.sdkFor(known).deleteSession(sessionId, { dir: this.cwdOf(known) });
@@ -1285,6 +1321,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     const running: Running = {
       sessionId,
       startedAt: this.now(),
+      seen,
       known,
       input,
       reader: new StreamReader(sessionId, known.cwd, inside),
@@ -1308,7 +1345,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     try {
       running.commands = this.heard(
         await running.query.initializationResult(),
-        sandbox === null ? known.cwd : null,
+        sandbox === null ? { cwd: known.cwd, seen: seen.folder } : null,
       );
       const servers = here ? this.serversFor(configuration) : {};
       if (Object.keys(servers).length > 0) await running.query.setMcpServers(servers);
@@ -1504,7 +1541,12 @@ export class ClaudeHarness implements Agent, AgentReads {
     }
     if (each.type === "system" && each.subtype === "commands_changed" && each.commands) {
       running.commands = toCommands(each.commands);
-      if (!running.known.sandbox) this.commandsAt.set(running.known.cwd, running.commands);
+      if (!running.known.sandbox) {
+        this.commandsAt.set(running.known.cwd, {
+          seen: running.seen.folder,
+          commands: running.commands,
+        });
+      }
       this.emit({
         type: "commands.changed",
         sessionId: running.sessionId,

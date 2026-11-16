@@ -2,7 +2,13 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { type ClaudeConfig, ClaudeHarness, emptyConfig, sbxSandboxes } from "@cycle/harness-claude";
+import {
+  type ClaudeConfig,
+  ClaudeHarness,
+  emptyConfig,
+  fileStamp,
+  sbxSandboxes,
+} from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import { DEFAULT_DAEMON_PORT } from "@cycle/protocol";
 import { newToken } from "./auth.ts";
@@ -96,6 +102,7 @@ const claudeFile = await JsonStore.open<ClaudeConfig>(
 // Claude Code runs beside codex when it is installed and starts; codex is the machine.
 const claude = new ClaudeHarness({
   sandboxes,
+  stamp: fileStamp,
   config: { book: claudeConfigBook(claudeFile), dir: join(home, "claude") },
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
   ...(debug ? { onLog: (line: string) => console.error(`[claude] ${line}`) } : {}),

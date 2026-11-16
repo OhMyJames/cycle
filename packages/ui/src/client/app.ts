@@ -39,6 +39,7 @@ import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from
 import { Connection, type ConnectionStatus } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { Store } from "./store.ts";
+import { draftKey, opening } from "../lib/opening.ts";
 import { plainMentions } from "../lib/suggest.ts";
 import { type Attachments, givenBack, keepAccepted } from "../lib/attach.ts";
 
@@ -516,10 +517,21 @@ export class CycleApp {
     keepLast(draft.harness, sandbox);
     this.upsertSessions([info]);
     this.selectSession(info.id);
-    // The session is made either way: a prompt it would not take waits in its composer.
-    if (!(await this.send(info.id, text, images, "auto", documents))) {
-      this.putInComposer(info.id, plainMentions(text), { images, documents });
+    const result = await opening({
+      send: () => this.send(info.id, text, images, "auto", documents),
+      // Only a session with no turn is dropped; the owner chose this, for one that never started.
+      drop: async () =>
+        (this.conversation(info.id).get().state?.turns.length ?? 0) === 0 &&
+        (await this.deleteSession(info.id, false)),
+    });
+    if (result === "dropped") {
+      // Back to the draft it was sent from, with the prompt in its composer.
+      this.setView({ sessionId: null, draft, page: "thread" });
+      this.putInComposer(draftKey(draft.cwd), plainMentions(text), { images, documents });
+      return false;
     }
+    // A session that could not be deleted stays: a prompt it would not take waits in its composer.
+    if (result === "kept") this.putInComposer(info.id, plainMentions(text), { images, documents });
     return true;
   }
 
@@ -576,9 +588,11 @@ export class CycleApp {
     });
   }
 
-  async deleteSession(sessionId: string, removeWorktree: boolean): Promise<void> {
+  /** Deletes a session for good. True when it is gone. */
+  async deleteSession(sessionId: string, removeWorktree: boolean): Promise<boolean> {
     const done = await this.attempt(this.request("session.delete", { sessionId, removeWorktree }));
     if (done) this.forget([sessionId]);
+    return Boolean(done);
   }
 
   /** Has the agent review code, in a turn of its own. */

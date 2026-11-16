@@ -13,6 +13,7 @@ export {
   readConfig,
 } from "./config.ts";
 export type { ClaudeConfigOptions } from "./configuration.ts";
+export { type Stamp, fileStamp } from "./owner-files.ts";
 export type { PluginCli } from "./plugins.ts";
 export {
   type MadeSandbox,
