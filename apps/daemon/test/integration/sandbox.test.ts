@@ -130,7 +130,7 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
   const session = await client.call("session.create", {
     cwd: project,
     model: SONNET,
-    mode: "auto",
+    mode: "acceptEdits",
     sandbox: "standard",
   });
   expect(session).toMatchObject({ harness: "claude", sandbox: name });
@@ -218,7 +218,7 @@ test("a sandbox is made with what its environment says, and the next folder's st
   const session = await client.call("session.create", {
     cwd: project,
     model: SONNET,
-    mode: "auto",
+    mode: "acceptEdits",
     sandbox: saved.id,
   });
   const name = sandboxName(project, saved.id);

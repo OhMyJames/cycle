@@ -42,15 +42,15 @@ Motion: 100ms for a state, 160ms for a disclosure, 200ms to enter. Nothing bounc
 The interface is gray so that its colors can be read at a glance. Each color means one thing,
 everywhere:
 
-| Color                         | Means                    | Where                                                                                                                                   |
-| ----------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Brand red (`--brand-accent`)  | Alive, now               | A running session, the working loader, today's bar in Usage                                                                             |
-| Blue (`--accent-interactive`) | Goes somewhere, measures | Links, a file a reply names, the context ring and the limit meters while there is room, the selection                                   |
-| Green (`--state-success`)     | Good, added              | A connected server, a signed-in account, added lines, a new file's letter                                                               |
-| Amber (`--state-warning`)     | Needs the owner          | A session that waits, the approval card's edge and wash, Full access, a warning notice, a nearly full context, a modified file's letter |
-| Red (`--state-error`)         | Failed, removed          | A failed tool or server, an error notice, removed lines, a deleted file's letter                                                        |
-| Code red (`--text-code`)      | Code in prose            | Inline code                                                                                                                             |
-| Syntax colors (`--hl-*`)      | Kinds                    | Code blocks, and the tint of a file's icon by its kind in the Files and Changes panels                                                  |
+| Color                         | Means                    | Where                                                                                                                                              |
+| ----------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Brand red (`--brand-accent`)  | Alive, now               | A running session, the working loader, today's bar in Usage                                                                                        |
+| Blue (`--accent-interactive`) | Goes somewhere, measures | Links, a file a reply names, the context ring and the limit meters while there is room, the selection                                              |
+| Green (`--state-success`)     | Good, added              | A connected server, a signed-in account, added lines, a new file's letter                                                                          |
+| Amber (`--state-warning`)     | Needs the owner          | A session that waits, the approval card's edge and wash, a mode that never asks, a warning notice, a nearly full context, a modified file's letter |
+| Red (`--state-error`)         | Failed, removed          | A failed tool or server, an error notice, removed lines, a deleted file's letter                                                                   |
+| Code red (`--text-code`)      | Code in prose            | Inline code                                                                                                                                        |
+| Syntax colors (`--hl-*`)      | Kinds                    | Code blocks, and the tint of a file's icon by its kind in the Files and Changes panels                                                             |
 
 A wash is the color at about 5% on its surface, an edge at about a third; text and icons use it
 in full. Navigation, buttons and the composer stay gray: the primary action is the darkest thing,
@@ -107,7 +107,9 @@ A list never shows a bare "Default" or "Recommended". It names the choice and ma
 ### The composer
 
 Radius 20, padding 12. The controls under the input (model and effort, permissions) are plain words
-with no chevron; their menus open upward. The send button is the only filled control. The line
+with no chevron; their menus open upward. The permissions menu lists the modes of the session's
+agent, each agent its own, by its own names: its default marked, a line on what each lets through,
+and a mode that never asks last, apart, in amber. Settings keeps one such choice for each agent. The send button is the only filled control. The line
 under it says what the keys do now, and changes with the state (send, queue, steer).
 
 ### The composer's lists
@@ -163,6 +165,14 @@ class. The full text is in the `title`.
 - The approval card never takes the focus, so an Enter meant for the composer cannot allow a
   command. `⌘ ↵` allows once and `⌘ .` denies, and the card says so; `⌘ ↵` stays the composer's
   while it holds text to steer with. Allowing for the whole session is a press, never a key.
+- Where the agent takes them, the card offers more, each behind a press: the rules the agent
+  suggests, as checkboxes under "Also allow for the rest of this session", none checked; Edit, which
+  turns the command or the tool's input into a field; and Say why, a line the agent is told on Deny.
+- A plan waiting for approval sits under the plan itself, which the conversation already shows:
+  Approve, then the mode to work in (only modes that ask or keep to a sandbox), or a line of what to
+  change and Keep planning. In the sidebar's Answer popover the card shows the plan too.
+- An MCP server's request is a card of the same kind: its fields as a form, or a page to open and
+  Done when finished there. Only a web address is opened.
 - A status wording stays at least 650ms, so it does not flicker.
 - The scroll-to-bottom button floats above the composer, with the composer's shadow. While it
   shows, the conversation fades out behind it, so it never lies on a line someone is reading.

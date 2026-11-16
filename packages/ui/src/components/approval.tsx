@@ -146,14 +146,19 @@ function KeyHint({ accept, decline }: { accept: string; decline: string }) {
   );
 }
 
-/** A line the agent is told: what to do instead, or what to change. Enter sends it. */
+/**
+ * A line the agent is told: what to do instead, or what to change. Enter sends it. `optional` sends
+ * the action with no line too.
+ */
 function NoteField({
   label,
   action,
+  optional = false,
   onSend,
 }: {
   label: string;
   action: string;
+  optional?: boolean;
   onSend(note: string): void;
 }) {
   const [note, setNote] = useState("");
@@ -162,7 +167,7 @@ function NoteField({
       className="row approval-other"
       onSubmit={(event) => {
         event.preventDefault();
-        if (note.trim()) onSend(note.trim());
+        if (note.trim() || optional) onSend(note.trim());
       }}
     >
       <input
@@ -175,7 +180,7 @@ function NoteField({
           if (event.key === "Enter" && isComposing(event.nativeEvent)) event.preventDefault();
         }}
       />
-      <button type="submit" className="button" disabled={!note.trim()}>
+      <button type="submit" className="button" data-refuses disabled={!optional && !note.trim()}>
         {action}
       </button>
     </form>
@@ -323,9 +328,11 @@ function RequestCard({
             Edit
           </button>
         ) : null}
-        <button type="button" className="button" data-refuses onClick={decline}>
-          Deny
-        </button>
+        {noting ? null : (
+          <button type="button" className="button" data-refuses onClick={decline}>
+            Deny
+          </button>
+        )}
         {notes && !noting ? (
           <button type="button" className="ghost" onClick={() => setNoting(true)}>
             Say why
@@ -351,6 +358,7 @@ function PlanCard({
   sessionId: string;
   approval: Extract<Approval, { kind: "plan" }>;
   waiting: number;
+  /** The card of the conversation in view, which shows the plan just above it. */
   keys: boolean;
   answer(response: ApprovalAnswer): void;
 }) {
@@ -366,17 +374,21 @@ function PlanCard({
   useCardKeys(keys, { accept, decline });
   return (
     <Card title="Approve this plan?" waiting={waiting}>
-      <div className="approval-plan fade-y">
-        {approval.plan ? (
-          <Markdown text={approval.plan} />
-        ) : (
-          <p className="muted">The agent did not say what the plan is.</p>
-        )}
-      </div>
+      {/* In view, the conversation shows the plan just above: it is said once. */}
+      {keys ? null : (
+        <div className="approval-plan fade-y">
+          {approval.plan ? (
+            <Markdown text={approval.plan} />
+          ) : (
+            <p className="muted">The agent did not say what the plan is.</p>
+          )}
+        </div>
+      )}
       <NoteField
-        label="What to change in the plan"
+        label="What to change in the plan (optional)"
         action="Keep planning"
-        onSend={(message) => answer({ decision: "decline", message })}
+        optional
+        onSend={(message) => answer({ decision: "decline", ...(message ? { message } : {}) })}
       />
       <div className="approval-actions">
         <button type="button" className="button primary" onClick={accept}>
@@ -399,9 +411,6 @@ function PlanCard({
             </select>
           </label>
         ) : null}
-        <button type="button" className="button" data-refuses onClick={decline}>
-          Keep planning
-        </button>
         {keys ? <KeyHint accept="approves" decline="keeps planning" /> : null}
       </div>
     </Card>

@@ -152,7 +152,17 @@ const CLAUDE_STEPS: ClaudeReply[] = [
   },
 ];
 
+/** What the scripted Claude proposes when asked to plan, which it asks the owner to approve. */
+const PLAN = `# Add a greeting
+
+1. Write \`src/greet.ts\` with one exported \`greet(name)\`.
+2. Mention it in the README.
+3. Leave the tests alone: there are none yet.`;
+
 const claudeModel = startMockClaude(root, (prompt, results) => {
+  if (/\bplan\b/i.test(prompt) && results === 0) {
+    return { call: { name: "ExitPlanMode", input: { plan: PLAN } } };
+  }
   if (/approv|permission/i.test(prompt) && results === 0) {
     const command = "python3 -c \"open('stamp.txt', 'w').write('now')\"";
     return { call: { name: "Bash", input: { command, description: "Write stamp.txt" } } };
