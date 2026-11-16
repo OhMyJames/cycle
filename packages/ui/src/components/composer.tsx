@@ -31,6 +31,7 @@ import {
 import { canSandbox, harnessesOf } from "../lib/draft.ts";
 import { basename, compactNumber, tildePath } from "../lib/format.ts";
 import { modeNamed, modesOf } from "../lib/modes.ts";
+import { draftKey } from "../lib/opening.ts";
 import { reviewArgument, reviewTarget } from "../lib/review.ts";
 import { sandboxSummary } from "../lib/sandbox-form.ts";
 import {
@@ -421,7 +422,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
   // A session stays with its agent, so only that agent's models are its to choose.
   const harness = info?.harness ?? draft?.harness;
   const pickable = harness ? models.filter((model) => model.harness === harness) : models;
-  const key = sessionId ?? `new:${draft?.cwd ?? ""}`;
+  const key = sessionId ?? draftKey(draft?.cwd ?? "");
   const cwd = info?.cwd ?? draft?.cwd ?? "";
   const capabilities = useStore(
     app.harnesses,

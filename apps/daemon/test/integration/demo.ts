@@ -7,7 +7,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ClaudeConfig, ClaudeHarness, emptyConfig } from "@cycle/harness-claude";
+import { type ClaudeConfig, ClaudeHarness, emptyConfig, fileStamp } from "@cycle/harness-claude";
 import { CodexHarness } from "@cycle/harness-codex";
 import {
   Harnesses,
@@ -258,6 +258,7 @@ const claudeFile = await JsonStore.open<ClaudeConfig>(
 );
 const claude = new ClaudeHarness({
   env: claudeModel.env,
+  stamp: fileStamp,
   config: { book: claudeConfigBook(claudeFile), dir: join(root, "home", "claude") },
   sandboxes: sandboxes.admin,
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
