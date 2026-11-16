@@ -23,6 +23,8 @@ export class FakeQuery implements ClaudeQuery {
   /** Refuses the next change in place, as a process that went away would. */
   refuseMoves = false;
   interrupts = 0;
+  /** The tasks it was asked to stop. */
+  readonly stopped: string[] = [];
   closed = false;
   private readonly sdk: FakeSdk;
   private readonly waiting: (WireMessage | Error | null)[] = [];
@@ -75,6 +77,9 @@ export class FakeQuery implements ClaudeQuery {
   setModel = async (model?: string) => this.moved(`model ${model ?? ""}`);
   applyFlagSettings = async (settings: { effortLevel?: string | null }) =>
     this.moved(`effort ${settings.effortLevel ?? "default"}`);
+  stopTask = async (taskId: string) => {
+    this.stopped.push(taskId);
+  };
   setMcpServers = async (servers: Record<string, unknown>) => {
     this.servers = servers;
   };
@@ -104,6 +109,8 @@ export class FakeSdk implements ClaudeSdk {
   readonly calls: string[] = [];
   stored: WireSessionInfo[] = [];
   messages: Record<string, WireHistoryMessage[]> = {};
+  /** What each stored session's helper agents said, by session and then by agent. */
+  helpers: Record<string, Record<string, WireHistoryMessage[]>> = {};
   /** What each Claude Code home holds, when a test wants two homes to differ. */
   homes: Record<
     string,
@@ -183,6 +190,9 @@ export class FakeSdk implements ClaudeSdk {
   getSessionInfo = async (sessionId: string) =>
     this.at(this.kept.find((info) => info.sessionId === sessionId));
   getSessionMessages = async (sessionId: string) => this.at(this.said[sessionId] ?? []);
+  listSubagents = async (sessionId: string) => Object.keys(this.helpers[sessionId] ?? {});
+  getSubagentMessages = async (sessionId: string, agentId: string) =>
+    this.helpers[sessionId]?.[agentId] ?? [];
   forkSession = async (sessionId: string, options?: { upToMessageId?: string }) => {
     this.calls.push(`fork ${sessionId} ${options?.upToMessageId ?? "all"}`);
     const fork = `${sessionId}-fork`;

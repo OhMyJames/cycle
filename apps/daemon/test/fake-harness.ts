@@ -108,6 +108,9 @@ export class FakeHarness implements Harness {
     this.steered.push(input.text);
   };
   interrupt = async () => {};
+  stopTask = async (sessionId: string, taskId: string) => {
+    this.calls.push(`stop ${sessionId} ${taskId}`);
+  };
   respondApproval = (approvalId: string) => {
     this.calls.push(`approve ${approvalId}`);
   };
@@ -209,6 +212,7 @@ export class FakeHarness implements Harness {
       review: (...args) => this.harness.review(...args),
       steer: (...args) => this.harness.steer(...args),
       interrupt: (...args) => this.harness.interrupt(...args),
+      stopTask: (...args) => this.stopTask(...args),
       respondApproval: (...args) => this.harness.respondApproval(...args),
       configure: (...args) => this.harness.configure(...args),
       listModes: (...args) => this.harness.listModes(...args),

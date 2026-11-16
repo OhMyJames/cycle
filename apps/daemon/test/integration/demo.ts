@@ -159,7 +159,54 @@ const PLAN = `# Add a greeting
 2. Mention it in the README.
 3. Leave the tests alone: there are none yet.`;
 
-const claudeModel = startMockClaude(root, (prompt, results) => {
+/** Whether the latest thing Claude Code sent is a task's news, which the agent answers by itself. */
+function taskNews(body: unknown): boolean {
+  const messages = (body as { messages?: { role: string; content: unknown }[] }).messages ?? [];
+  const last = messages.at(-1);
+  return last?.role === "user" && JSON.stringify(last.content).includes("<task-notification>");
+}
+
+/** A call that starts a helper agent, which waits for it or leaves it in the background. */
+const agent = (background: boolean) => ({
+  name: "Agent",
+  input: {
+    description: background ? "Survey the folder slowly" : "Survey the folder",
+    prompt: "Helper: look through the folder and say what is in it.",
+    subagent_type: "general-purpose",
+    run_in_background: background,
+  },
+});
+
+/**
+ * Helper agents: "delegate" hands work to one and waits; "background" leaves one and a long command
+ * running after the turn, for the list of tasks and its Stop. A helper is asked as a prompt of its own.
+ */
+function helperReply(prompt: string, results: number): ClaudeReply | null {
+  if (prompt.startsWith("Helper:")) {
+    if (results === 0) {
+      return { call: { name: "Bash", input: { command: "sleep 2; ls", description: "List" } } };
+    }
+    if (results === 1)
+      return { call: { name: "Read", input: { file_path: join(project, "README.md") } } };
+    return { text: chunks("The folder holds a README and `src/`. Nothing looks out of place.") };
+  }
+  if (/delegate/i.test(prompt)) {
+    return results === 0 ? { call: agent(false) } : { text: chunks("The helper looked around.") };
+  }
+  if (/background/i.test(prompt)) {
+    const slow = { command: "sleep 120", description: "Wait two minutes", run_in_background: true };
+    if (results === 0) return { call: agent(true) };
+    if (results === 1) return { call: { name: "Bash", input: slow } };
+    return { text: chunks("Both are running in the background. I will say when they are done.") };
+  }
+  return null;
+}
+
+const claudeModel = startMockClaude(root, (prompt, results, body) => {
+  if (taskNews(body))
+    return { text: chunks("A task I started has ended; here is what came of it.") };
+  const helped = helperReply(prompt, results);
+  if (helped) return helped;
   if (/\bplan\b/i.test(prompt) && results === 0) {
     return { call: { name: "ExitPlanMode", input: { plan: PLAN } } };
   }

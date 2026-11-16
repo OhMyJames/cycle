@@ -60,6 +60,8 @@ const word = (block: Block): string => {
       return `activity(${block.items.map((item) => item.id).join(",")})`;
     case "turnEnd":
       return `turnEnd(${block.status})`;
+    case "origin":
+      return `origin(${block.origin.kind})`;
     case "text":
       return block.final ? `text!(${block.item.id})` : `text(${block.item.id})`;
     default:
@@ -267,4 +269,52 @@ test.each([
   ["git status", "git status"],
 ])("the command %p is shown as %p", (wrapped, plain) => {
   expect(plainCommand(wrapped)).toBe(plain);
+});
+
+const task = (id: string): Item => ({
+  id,
+  kind: "task",
+  taskId: id,
+  task: "agent",
+  description: "Look",
+  agent: null,
+  prompt: "look",
+  status: "completed",
+  background: false,
+  usage: null,
+  summary: null,
+  error: null,
+});
+const inside = (item: Item, parentId: string): Item => ({ ...item, parentId });
+
+test("a task is a block of its own, holding what was done inside it, a helper's helper too", () => {
+  const subject = turn([
+    user("u"),
+    task("k"),
+    inside(run("1"), "k"),
+    inside(task("k2"), "k"),
+    inside(say("s2", "deep"), "k2"),
+    inside(say("s1", "found it"), "k"),
+    say("r", "done"),
+  ]);
+  expect(layout(subject)).toEqual(["user(u)", "task(k)", "text!(r)"]);
+  const block = blocksOf(subject, { showThinking: false })[1];
+  if (block?.kind !== "task") throw new Error("expected a task");
+  expect(block.nested.get("k")?.map((item) => item.id)).toEqual(["1", "k2", "s1"]);
+  expect(block.nested.get("k2")?.map((item) => item.id)).toEqual(["s2"]);
+  // A helper's words are never the turn's reply, and work of a task not in the turn stays in view.
+  expect(layout(turn([user("u"), task("k"), inside(say("s", "x"), "k")]))).toEqual([
+    "user(u)",
+    "task(k)",
+  ]);
+  expect(layout(turn([user("u"), inside(run("1"), "gone")]))).toEqual(["user(u)", "single(1)"]);
+});
+
+test("a turn the owner did not begin says who did, first", () => {
+  const origin = { kind: "task" as const, taskId: "k" };
+  expect(layout({ ...turn([say("r", "the task is done")]), origin })).toEqual([
+    "origin(task)",
+    "text!(r)",
+  ]);
+  expect(layout({ ...turn([say("r")]), origin: { kind: "owner" } })).toEqual(["text!(r)"]);
 });

@@ -1290,3 +1290,43 @@ button.code-diff-name:hover {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* A turn the owner did not begin: who did, in one muted line at its start. */
+.turn-origin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* What a helper agent said, inside its task: the reply's text, a step smaller. */
+.task-said {
+  padding-left: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* What the agent left running, each with its own Stop. */
+.background-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.background-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+.background-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 14px;
+  line-height: 20px;
+}

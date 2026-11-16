@@ -57,7 +57,7 @@ test("text arrives in pieces and then whole, as one item", () => {
   expect(events.at(-1)).toMatchObject({ item: { text: "Hello" } });
 });
 
-test("text that never streamed is still said, and a helper agent's is left out", () => {
+test("text that never streamed is still said, and a helper's of no known task is left out", () => {
   const events = read([
     said("a1", [{ type: "text", text: "whole" }]),
     said("a2", [{ type: "text", text: "from a helper" }], { parent_tool_use_id: "toolu_9" }),
@@ -136,9 +136,12 @@ test("each of Claude Code's tools is the item the conversation has for it", () =
     kind: "webSearch",
     query: "bun",
   });
-  expect(toolItem("i", "Agent", { prompt: "look" }, "/p")).toMatchObject({
-    kind: "agentCall",
+  expect(toolItem("i", "Agent", { prompt: "look", description: "Look" }, "/p")).toMatchObject({
+    kind: "task",
+    task: "agent",
+    description: "Look",
     prompt: "look",
+    status: "running",
   });
 });
 
@@ -197,7 +200,7 @@ test("a stored conversation is a turn for each prompt, known by the prompt's id"
   expect(historyModel(history)).toBe("claude-sonnet-5-5");
 });
 
-test("what came before a compaction is one mark, and what a helper said is left out", () => {
+test("what came before a compaction is one mark, and a helper's of no known task is left out", () => {
   const turns = toTurns(
     [
       user("c1", "This session is being continued from a previous conversation that ran out"),

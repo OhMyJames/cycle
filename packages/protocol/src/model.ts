@@ -22,6 +22,40 @@ export interface FileChange {
 
 interface ItemBase {
   id: string;
+  /**
+   * The `task` item this one is part of: what a helper agent did. Absent for the turn's own items.
+   * A view shows it inside its task, and a task that ends ends what it left running.
+   */
+  parentId?: string;
+}
+
+/** What kind of work a task is. */
+export type TaskKind = "agent" | "command" | "workflow" | "other";
+
+/** Where a task is. Unlike an item's, it can outlive its turn: a task in the background goes on. */
+export type TaskStatus = "pending" | "running" | "paused" | "completed" | "failed" | "stopped";
+
+/** Whether a task can still change by itself. */
+export function taskLive(status: TaskStatus): boolean {
+  return status === "pending" || status === "running" || status === "paused";
+}
+
+export interface TaskUsage {
+  tokens: number;
+  toolUses: number;
+  durationMs: number;
+}
+
+/** A task that runs in the background now, which the owner can stop by itself. */
+export interface BackgroundTask {
+  /** The harness's id for it, which `session.stopTask` takes. */
+  id: string;
+  task: TaskKind;
+  description: string;
+  /** A helper agent's kind, as `general-purpose`. */
+  agent: string | null;
+  /** The `task` item that shows it in the conversation, when there is one. */
+  itemId: string | null;
 }
 
 export type Item =
@@ -71,6 +105,7 @@ export type Item =
       status: ItemStatus;
     })
   | (ItemBase & { kind: "webSearch"; query: string })
+  /** A call that reaches codex's helper agents, each a session of its own: spawn, send, wait, close. */
   | (ItemBase & {
       kind: "agentCall";
       /** What was asked of the other agents: spawn, send, wait, close. */
@@ -91,7 +126,31 @@ export type Item =
   | (ItemBase & { kind: "wait"; durationMs: number; status: ItemStatus })
   /** What a hook of the owner's added to the conversation. */
   | (ItemBase & { kind: "hook"; text: string })
-  /** News of a helper agent: it started, was messaged, was stopped or finished. */
+  /**
+   * Work the agent handed off and is told about: a helper agent, a command or a workflow. It may go
+   * on in the background after its turn ends. What a helper agent does names it as `parentId`.
+   */
+  | (ItemBase & {
+      kind: "task";
+      /** The harness's id for it, once it has started. */
+      taskId: string | null;
+      task: TaskKind;
+      description: string;
+      /** A helper agent's kind, as `general-purpose`. */
+      agent: string | null;
+      /** What it was asked to do. */
+      prompt: string | null;
+      status: TaskStatus;
+      background: boolean;
+      usage: TaskUsage | null;
+      /** The latest word of how it goes, or of how it ended. */
+      summary: string | null;
+      error: string | null;
+    })
+  /**
+   * News of one of codex's helper agents, which are sessions of their own rather than tasks inside
+   * this one: it started, was messaged, was stopped or finished.
+   */
   | (ItemBase & {
       kind: "agentActivity";
       activity: "started" | "interacted" | "interrupted" | "completed";
@@ -108,8 +167,22 @@ export type ItemKind = Item["kind"];
 
 export type TurnStatus = "completed" | "interrupted" | "failed";
 
+/** Who began a turn. */
+export type TurnOrigin =
+  | { kind: "owner" }
+  /** A schedule of the owner's ran its prompt. */
+  | { kind: "schedule"; scheduleId: string }
+  /** The agent took up the news of a task of its own that ended. */
+  | { kind: "task"; taskId: string | null }
+  /** Another session sent it something. */
+  | { kind: "peer"; from: string | null }
+  /** The agent began it for a reason the harness does not say. */
+  | { kind: "agent" };
+
 export interface Turn {
   id: string;
+  /** Who began it. Absent: the owner. */
+  origin?: TurnOrigin;
   status: "running" | TurnStatus;
   error: string | null;
   /** Milliseconds since the epoch, when the harness reports it. */
@@ -497,6 +570,8 @@ export type SessionEvent =
       sessionId: string;
       turnId: string;
       startedAt: number | null;
+      /** Absent: the owner. */
+      origin?: TurnOrigin;
     }
   | { type: "item.started"; sessionId: string; turnId: string; item: Item }
   /** Appends text to an item: message, reasoning or plan text, or command output. */
@@ -527,6 +602,8 @@ export type SessionEvent =
       error: string | null;
       durationMs: number | null;
     }
+  /** Every task running in the background now, replacing the list before. It belongs to no turn. */
+  | { type: "tasks.updated"; sessionId: string; tasks: BackgroundTask[] }
   /** The conversation went back to before this turn: it and every later turn are gone. */
   | { type: "turns.rewound"; sessionId: string; turnId: string }
   /** Something the owner should see that belongs to no item. */

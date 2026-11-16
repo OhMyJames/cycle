@@ -178,6 +178,7 @@ test("a schedule's run starts a session marked as its own, and is kept", async (
     model: null,
     effort: null,
     mode: "readOnly",
+    modeHarness: "codex",
     timing: { kind: "daily", time: "03:00", weekdays: null },
   });
   expect(schedule.next).toBeGreaterThan(Date.now());

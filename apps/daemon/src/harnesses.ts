@@ -1,24 +1,26 @@
-import type {
-  Account,
-  Agent,
-  AgentCapabilities,
-  AgentReads,
-  Agents,
-  ApprovalResponse,
-  Connector,
-  ContextUsage,
-  CreateSessionOptions,
-  FileRewind,
-  Harness,
-  HarnessEvent,
-  HarnessInfo,
-  HarnessSession,
-  ModeInfo,
-  ModelInfo,
-  PromptInput,
-  ReviewTarget,
-  SlashCommand,
-  TurnOptions,
+import {
+  type Account,
+  type Agent,
+  type AgentCapabilities,
+  type AgentReads,
+  type Agents,
+  type ApprovalResponse,
+  type Connector,
+  type ContextUsage,
+  type ConfigureOptions,
+  type CreateSessionOptions,
+  type FileRewind,
+  type Harness,
+  type HarnessEvent,
+  type HarnessInfo,
+  type HarnessSession,
+  type ModeInfo,
+  type ModelInfo,
+  type PromptInput,
+  type ReviewTarget,
+  type SlashCommand,
+  type TurnOptions,
+  harnessLabel,
 } from "@cycle/protocol";
 
 /** An agent beside the main one, with what it may read of its own Connector and Account. */
@@ -196,13 +198,19 @@ export class Harnesses implements Agents {
     await (await this.of(sessionId)).interrupt(sessionId);
   }
 
-  async configure(sessionId: string, options: TurnOptions): Promise<void> {
+  async configure(sessionId: string, options: ConfigureOptions): Promise<void> {
     await (await this.of(sessionId)).configure(sessionId, options);
   }
 
   /** Every agent's modes. One that was left out offers none. */
   listModes(): ModeInfo[] {
     return this.agents.flatMap((agent) => agent.listModes());
+  }
+
+  async stopTask(sessionId: string, taskId: string): Promise<void> {
+    const agent = await this.of(sessionId);
+    if (!agent.stopTask) throw new Error(`${harnessLabel(agent.name)} has no tasks to stop alone.`);
+    await agent.stopTask(sessionId, taskId);
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {

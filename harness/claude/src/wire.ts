@@ -150,17 +150,61 @@ export interface WireMessage {
   modelUsage?: Record<string, WireModelUsage>;
   /** A `status` message: the mode the process is in now, which the model may have changed. */
   permissionMode?: string;
-  /** A `permission_denied` message: the call refused without asking. Its reason is `message`. */
-  tool_use_id?: string;
   /** What the process has cost so far, in all. */
   total_cost_usd?: number;
   /** A `rate_limit_event`. */
   rate_limit_info?: WireRateLimitInfo;
   /** A `commands_changed` system message: the whole list. */
   commands?: WireSlashCommand[];
+  /** Who a `result`'s turn was for, when not the owner: as a task's news. */
+  origin?: WireOrigin;
+  // A task's news: `system` messages with a `task_*` subtype.
+  task_id?: string;
+  /**
+   * The tool call that started the task; in a `permission_denied` message, the call refused
+   * without asking, whose reason is `message`.
+   */
+  tool_use_id?: string;
+  description?: string;
+  subagent_type?: string;
+  /** `local_agent`, `local_bash`, `local_workflow`, and more. */
+  task_type?: string;
+  is_backgrounded?: boolean;
+  /** The task whose agent started this one. */
+  parent_task_id?: string;
+  prompt?: string;
+  /** A task to keep out of the conversation. */
+  skip_transcript?: boolean;
+  patch?: { status?: string; description?: string; error?: string; is_backgrounded?: boolean };
+  /** How a task ended: `completed`, `failed` or `stopped`. */
+  status?: string;
+  summary?: string;
+  usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
+  /** `background_tasks_changed`: every one running now. */
+  tasks?: WireBackgroundTask[];
+  // `tool_progress`: how long a tool call has run.
+  elapsed_time_seconds?: number;
 }
 
-/** One stored message of a session, as `getSessionMessages` gives it. */
+export interface WireOrigin {
+  kind: string;
+  from?: string;
+  fromSession?: string;
+}
+
+export interface WireBackgroundTask {
+  task_id: string;
+  task_type: string;
+  subagent_type?: string;
+  description: string;
+  /** Not work of the agent's, as a watcher: not shown as activity. */
+  ambient?: boolean;
+}
+
+/**
+ * One stored message of a session, as `getSessionMessages` gives it, or of a helper agent's
+ * conversation, as `getSubagentMessages` does: those name the tool call that started the agent.
+ */
 export interface WireHistoryMessage {
   type: string;
   uuid: string;
