@@ -230,7 +230,7 @@ const REFUSED = /^Permission to use .+ has been denied/;
  */
 export function toOwner(said: string): string {
   if (!REFUSED.test(said)) return said;
-  if (/don't ask mode/i.test(said)) {
+  if (/don['’]t ask mode/i.test(said)) {
     return "Not run: Don't ask mode refuses what is not already allowed.";
   }
   return said.split(/\s+IMPORTANT:/)[0] ?? said;
@@ -1142,7 +1142,12 @@ export function toModels(raw: WireModelInfo[], sandbox = false): ModelInfo[] {
   const models: ModelInfo[] = [];
   for (const model of raw) {
     const id = model.resolvedModel ?? model.value;
-    if (models.some((known) => known.id === id)) continue;
+    const known = models.find((each) => each.id === id);
+    if (known) {
+      // The default may be listed after the alias it points to: the model is still the default.
+      if (model.value === "default") known.isDefault = true;
+      continue;
+    }
     // "Sonnet 5.5 · Efficient for routine tasks": the name, then what it is for.
     const [name, ...about] = model.description.split(" · ");
     // The default says what it is now, as "Use the default model (currently Opus 5.5)": that is the

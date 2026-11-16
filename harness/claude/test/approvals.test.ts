@@ -292,4 +292,8 @@ test("a refusal is shown to the owner in words of the app's, not Claude Code's a
     "Permission to use Edit has been denied by a rule.",
   );
   expect(toOwner("Exit code 1")).toBe("Exit code 1");
+  // Claude Code may spell the apostrophe another way.
+  expect(toOwner("Permission to use Bash has been denied: don’t ask mode. IMPORTANT: STOP.")).toBe(
+    "Not run: Don't ask mode refuses what is not already allowed.",
+  );
 });

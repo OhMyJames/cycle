@@ -756,7 +756,8 @@ export class ClaudeHarness implements Agent, AgentReads {
     const running = this.here(MCP_KEEP_MS);
     const read = async (query: ClaudeQuery) => {
       const servers = toMcpServers(await this.connected(query), own);
-      this.mcp = { at: this.now(), servers };
+      // What a process says is as old as its start, so the two five-minute windows are one.
+      this.mcp = { at: running?.startedAt ?? this.now(), servers };
       return servers;
     };
     const listed = running

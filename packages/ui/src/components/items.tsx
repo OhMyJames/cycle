@@ -12,6 +12,7 @@ import {
   type ActivityItem,
   activityRow,
   activityStatus,
+  taskResult,
   activitySummary,
   failedCount,
   isActivity,
@@ -19,7 +20,6 @@ import {
   plainCommand,
 } from "../lib/activity.ts";
 import { useApp } from "../context.ts";
-import { taskResult } from "../lib/activity.ts";
 import { parseDiff } from "../lib/diff.ts";
 import { basename, duration } from "../lib/format.ts";
 import { mentionParts, plainMentions } from "../lib/suggest.ts";

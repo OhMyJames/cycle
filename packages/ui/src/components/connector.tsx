@@ -389,7 +389,10 @@ function PluginsTab() {
           spellCheck={false}
           aria-label="Search plugins"
           placeholder="Search plugins"
-          onChange={(event) => setQuery(event.currentTarget.value)}
+          onChange={(event) => {
+            setQuery(event.currentTarget.value);
+            setLimits({});
+          }}
         />
       ) : null}
       {catalog === null ? (
