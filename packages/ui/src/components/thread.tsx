@@ -5,12 +5,13 @@ import { useApp } from "../context.ts";
 import { activityRow, activityStatus, isActivity } from "../lib/activity.ts";
 import { type Block, blocksOf, gapBelow } from "../lib/blocks.ts";
 import { diffStats } from "../lib/diff.ts";
-import { duration, shortTime } from "../lib/format.ts";
+import { duration, relativeTo, shortTime } from "../lib/format.ts";
 import { type LoaderState, MorphLoader } from "../loader/morph-loader.tsx";
 import { ApprovalCard } from "./approval.tsx";
 import { Stats } from "./diff-view.tsx";
 import { BackgroundDot, Icon } from "./icons.tsx";
 import {
+  AskingContext,
   ActivityCard,
   AgentBlock,
   Divider,
@@ -112,6 +113,10 @@ function BlockView({
               ? () =>
                   app
                     .request("session.rewind.preview", { sessionId, turnId: turn.id })
+                    .then((seen) => {
+                      const folder = app.conversation(sessionId).get().state?.info.cwd ?? "";
+                      return { ...seen, files: seen.files.map((path) => relativeTo(path, folder)) };
+                    })
                     .catch((error: unknown) => ({
                       possible: false,
                       error: error instanceof Error ? error.message : String(error),
@@ -542,48 +547,50 @@ export function Thread({ sessionId }: { sessionId: string }) {
   }
   return (
     <OpenFileContext.Provider value={openFile}>
-      <div
-        className="thread-scroll fade-y"
-        data-away={away}
-        ref={scroller}
-        onScroll={(event) => {
-          const node = event.currentTarget;
-          const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < NEAR_BOTTOM;
-          stuck.current = atBottom;
-          if (atBottom === away) setAway(!atBottom);
-          if (node.scrollTop < 600 && first > 0 && grew.current === null) {
-            grew.current = node.scrollHeight;
-            setCount((value) => value + MORE_TURNS);
-          }
-        }}
-      >
-        <div className="thread-content" ref={content}>
-          {first > 0 ? <Divider>{first} earlier turns</Divider> : null}
-          {visible.map((turn, index) => (
-            <TurnView
-              key={turn.id}
-              turn={turn}
-              sessionId={sessionId}
-              showThinking={showThinking}
-              askingId={index === visible.length - 1 ? askingId : undefined}
-            />
-          ))}
-          <Tail state={conversation.state} gap={tailGap} />
+      <AskingContext.Provider value={askingId}>
+        <div
+          className="thread-scroll fade-y"
+          data-away={away}
+          ref={scroller}
+          onScroll={(event) => {
+            const node = event.currentTarget;
+            const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < NEAR_BOTTOM;
+            stuck.current = atBottom;
+            if (atBottom === away) setAway(!atBottom);
+            if (node.scrollTop < 600 && first > 0 && grew.current === null) {
+              grew.current = node.scrollHeight;
+              setCount((value) => value + MORE_TURNS);
+            }
+          }}
+        >
+          <div className="thread-content" ref={content}>
+            {first > 0 ? <Divider>{first} earlier turns</Divider> : null}
+            {visible.map((turn, index) => (
+              <TurnView
+                key={turn.id}
+                turn={turn}
+                sessionId={sessionId}
+                showThinking={showThinking}
+                askingId={index === visible.length - 1 ? askingId : undefined}
+              />
+            ))}
+            <Tail state={conversation.state} gap={tailGap} />
+          </div>
         </div>
-      </div>
-      {away ? (
-        <div className="to-bottom-anchor">
-          <button
-            type="button"
-            className="to-bottom"
-            title="Scroll to bottom"
-            aria-label="Scroll to bottom"
-            onClick={toBottom}
-          >
-            <Icon name="arrow-down" />
-          </button>
-        </div>
-      ) : null}
+        {away ? (
+          <div className="to-bottom-anchor">
+            <button
+              type="button"
+              className="to-bottom"
+              title="Scroll to bottom"
+              aria-label="Scroll to bottom"
+              onClick={toBottom}
+            >
+              <Icon name="arrow-down" />
+            </button>
+          </div>
+        ) : null}
+      </AskingContext.Provider>
     </OpenFileContext.Provider>
   );
 }

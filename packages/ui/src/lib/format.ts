@@ -2,6 +2,12 @@ export function basename(path: string): string {
   return path.split("/").findLast(Boolean) ?? path;
 }
 
+/** A path as the folder it is in names it: unchanged where it is elsewhere. */
+export function relativeTo(path: string, folder: string): string {
+  const base = folder.endsWith("/") ? folder : `${folder}/`;
+  return folder && path.startsWith(base) ? path.slice(base.length) : path;
+}
+
 export function dirname(path: string): string {
   const index = path.lastIndexOf("/");
   return index <= 0 ? "/" : path.slice(0, index);

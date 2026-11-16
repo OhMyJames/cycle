@@ -430,8 +430,13 @@ function UpdateReady() {
  */
 function Footer() {
   const app = useApp();
-  // The main agent's account is the one the footer names.
-  const account = useStore(app.accounts, (all) => all[app.mainHarness()] ?? null);
+  // The main agent's account is the one the footer names, unless another agent is signed in and it
+  // is not: "Not signed in" would then be untrue of the owner.
+  const account = useStore(app.accounts, (all) => {
+    const main = all[app.mainHarness()] ?? null;
+    if (main && main.kind !== null) return main;
+    return Object.values(all).find((each) => each.kind !== null) ?? main;
+  });
   const usage = useStore(app.usage, (value) => value);
   const theme = useStore(app.view, (view) => view.theme);
   const settingsOpen = useStore(app.view, (view) => view.page === "settings");

@@ -248,6 +248,29 @@ test("each model is offered once, under its own id and name", () => {
   ]);
 });
 
+test("the default model is named by what it is now, and the picker marks it", () => {
+  const [model] = toModels([
+    {
+      value: "default",
+      resolvedModel: "claude-opus-5-5",
+      displayName: "Default (recommended)",
+      description: "Use the default model (currently Opus 5.5)",
+    },
+  ]);
+  expect(model).toMatchObject({ id: "claude-opus-5-5", name: "Opus 5.5", isDefault: true });
+  // Listed after the alias it points to, it still makes that model the default.
+  const [alias] = toModels([
+    {
+      value: "opus",
+      resolvedModel: "claude-opus-5-5",
+      displayName: "Opus",
+      description: "Opus 5.5 · Deep",
+    },
+    { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default", description: "" },
+  ]);
+  expect(alias).toMatchObject({ id: "claude-opus-5-5", isDefault: true });
+});
+
 test("every mode is given by name, and only bypassing permissions runs with nothing asked", () => {
   expect(modeOptions("default")).toEqual({ permissionMode: "default" });
   expect(modeOptions("readOnly")).toEqual({ permissionMode: "default" });

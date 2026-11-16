@@ -367,3 +367,17 @@ test("going back drops a turn and the ones after it, and never while one runs", 
   const state = await hub.open(info.id, undefined);
   expect("state" in state && state.state.turns.map((turn) => turn.id)).toEqual(["t1"]);
 });
+
+test("a session is named by its first prompt however the agent announces it", async () => {
+  const { harness, hub, infos } = await setup();
+  const info = await hub.create({ cwd: "/project" });
+  harness.emit(start(info.id, "t1"));
+  // Some agents say a prompt whole, with no start before it.
+  harness.emit({
+    type: "item.completed",
+    sessionId: info.id,
+    turnId: "t1",
+    item: { id: "u1", kind: "userMessage", text: "fix the login", images: [] },
+  });
+  expect(infos.findLast((each) => each.id === info.id)?.preview).toBe("fix the login");
+});

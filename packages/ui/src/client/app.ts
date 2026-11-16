@@ -493,7 +493,7 @@ export class CycleApp {
     const kept = keepAccepted({ images, documents }, this.capabilities(draft.harness).attachments);
     if (kept.dropped.length) {
       this.toast(
-        `${harnessLabel(draft.harness)} cannot read ${kept.dropped.join(", ")}. Remove it to send.`,
+        `${harnessLabel(draft.harness)} cannot read ${kept.dropped.join(", ")}. Remove ${kept.dropped.length > 1 ? "them" : "it"} to send.`,
         "error",
       );
       return false;

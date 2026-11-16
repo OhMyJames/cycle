@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import type { Item, Turn } from "@cycle/protocol";
-import { type ActivityItem, activitySummary, plainCommand } from "../src/lib/activity.ts";
+import {
+  type ActivityItem,
+  activityRow,
+  activitySummary,
+  plainCommand,
+  taskResult,
+} from "../src/lib/activity.ts";
 import { type Block, GAP, blocksOf, gapBelow } from "../src/lib/blocks.ts";
 
 type Status = "running" | "completed" | "failed" | "declined";
@@ -317,4 +323,20 @@ test("a turn the owner did not begin says who did, first", () => {
     "text!(r)",
   ]);
   expect(layout({ ...turn([say("r")]), origin: { kind: "owner" } })).toEqual(["text!(r)"]);
+});
+
+test("a helper agent's last message is not said twice, once in it and once as its result", () => {
+  const ended = { summary: "All fine.", description: "Look" };
+  expect(taskResult(ended, [say("m", " All fine.\n")])).toBeNull();
+  expect(taskResult(ended, [say("m", "Something else")])).toBe("All fine.");
+  expect(taskResult({ summary: "Look", description: "Look" }, [])).toBeNull();
+  expect(taskResult({ summary: null, description: "Look" }, [])).toBeNull();
+});
+
+test("a command that waits for the owner's answer has not begun to run", () => {
+  const item = run("c");
+  const waiting: ActivityItem = { ...item, status: "running" } as ActivityItem;
+  expect(activityRow(waiting).action).toBe("Running");
+  expect(activityRow(waiting, true).action).toBe("Waiting to approve");
+  expect(activityRow(item, true).action).toBe("Ran");
 });

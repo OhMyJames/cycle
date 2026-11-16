@@ -113,7 +113,11 @@ export function activityStatus(item: ActivityItem): ActivityStatus {
 const files = (count: number): string => (count === 1 ? "1 file" : `${count} files`);
 
 /** One row's words: what was done, then to what. */
-export function activityRow(item: ActivityItem): {
+export function activityRow(
+  item: ActivityItem,
+  /** It waits for the owner's answer: it has not begun. */
+  asking = false,
+): {
   kind: ActivityKind;
   icon: IconName;
   action: string;
@@ -121,7 +125,7 @@ export function activityRow(item: ActivityItem): {
 } {
   const kind = activityKind(item);
   const running = activityStatus(item) === "running";
-  const action = ACTIONS[kind][running ? 0 : 1];
+  const action = running && asking ? "Waiting to approve" : ACTIONS[kind][running ? 0 : 1];
   switch (item.kind) {
     case "command": {
       const [first] = item.actions;
@@ -148,7 +152,7 @@ export function activityRow(item: ActivityItem): {
       return {
         kind,
         icon: KIND_ICONS[kind],
-        action: created ? (running ? "Creating" : "Created") : action,
+        action: created && !(running && asking) ? (running ? "Creating" : "Created") : action,
         detail:
           item.changes.length === 1 && first
             ? basename(first.movePath ?? first.path)
@@ -232,4 +236,20 @@ export function loaderStateOf(kind: ActivityKind): "searching" | "executing" {
     kind === "wait"
     ? "searching"
     : "executing";
+}
+
+/**
+ * What an ended task has to say of how it ended, when it says more than its title does. A helper
+ * agent's last message is shown inside it already, so a summary that repeats it is not said twice.
+ */
+export function taskResult(
+  item: { summary: string | null; description: string },
+  inside: readonly Item[],
+): string | null {
+  const { summary } = item;
+  if (!summary || summary === item.description) return null;
+  const echoed = inside.some(
+    (each) => each.kind === "agentMessage" && each.text.trim() === summary.trim(),
+  );
+  return echoed ? null : summary;
 }

@@ -914,7 +914,9 @@ export class SessionHub {
   private after(live: Live, event: SessionEvent): void {
     const info = live.state.info;
     switch (event.type) {
+      // An agent may announce a prompt whole, with no start before it.
       case "item.started":
+      case "item.completed":
         if (event.item.kind === "userMessage" && !info.preview) {
           this.setInfo({ ...info, preview: event.item.text.slice(0, 200) });
         }

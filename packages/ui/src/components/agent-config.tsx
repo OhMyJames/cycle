@@ -180,7 +180,8 @@ export function HooksTab() {
       </div>
       <p className="caption muted">
         A hook runs a command as you when Claude Code reaches a point in a session, in every
-        session, whatever its mode. The `claude` command line does not run the ones kept here.
+        session, whatever its mode. The <code>claude</code> command line does not run the ones kept
+        here.
       </p>
       {editing === "" ? (
         <div className="card">

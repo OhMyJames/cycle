@@ -7,11 +7,13 @@ export function modeEntries(
   modes: readonly ModeInfo[],
   current: SessionMode | null,
   choose: (mode: SessionMode) => void,
+  /** False where the list has a default of its own, which the agent's would be a second of. */
+  markDefault = true,
 ): MenuEntry[] {
   return modes.flatMap((mode, index): MenuEntry[] => [
     ...(mode.dangerous && !modes[index - 1]?.dangerous ? [{ separator: true } as const] : []),
     {
-      label: modeLabel(mode),
+      label: markDefault ? modeLabel(mode) : mode.name,
       sub: mode.description,
       icon: modeIcon(mode),
       warning: mode.dangerous,

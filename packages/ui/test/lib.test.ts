@@ -5,6 +5,7 @@ import {
   dayBucket,
   duration,
   fuzzyScore,
+  relativeTo,
   tailPath,
   tildePath,
 } from "../src/lib/format.ts";
@@ -140,4 +141,12 @@ test("a fuzzy match needs every character in order, and prefers a direct hit", (
   );
   expect(fuzzyScore("Fix the login form", "fxlg")).toBeGreaterThan(0);
   expect(fuzzyScore("Fix the login form", "zzz")).toBe(0);
+});
+
+test("a path is named from the folder it is in, and left alone elsewhere", () => {
+  expect(relativeTo("/p/src/a.ts", "/p")).toBe("src/a.ts");
+  expect(relativeTo("/p/src/a.ts", "/p/")).toBe("src/a.ts");
+  expect(relativeTo("/pp/a.ts", "/p")).toBe("/pp/a.ts");
+  expect(relativeTo("/other/a.ts", "/p")).toBe("/other/a.ts");
+  expect(relativeTo("/p/a.ts", "")).toBe("/p/a.ts");
 });

@@ -138,6 +138,17 @@ export function toolItem(
   });
   switch (name) {
     case "Bash":
+      // A command left in the background is a task from its first word, as a helper agent is: the
+      // call's own result only says it started.
+      if (input["run_in_background"] === true) {
+        const said = text(input["command"]);
+        return newTask(id, {
+          task: "command",
+          description: text(input["description"]) || said,
+          prompt: said,
+          background: true,
+        });
+      }
       return command(text(input["command"]), []);
     case "Read": {
       const path = at(text(input["file_path"]));
@@ -210,6 +221,21 @@ function resultText(block: WireBlock): string {
     .join("\n");
 }
 
+/** What Claude Code tells the model of a call it refused without asking. */
+const REFUSED = /^Permission to use .+ has been denied/;
+
+/**
+ * What the owner reads of a refusal. Claude Code's own words are advice to the model ("You may
+ * attempt…", "STOP and explain to the user…"), which is not the owner's to read.
+ */
+export function toOwner(said: string): string {
+  if (!REFUSED.test(said)) return said;
+  if (/don['’]t ask mode/i.test(said)) {
+    return "Not run: Don't ask mode refuses what is not already allowed.";
+  }
+  return said.split(/\s+IMPORTANT:/)[0] ?? said;
+}
+
 /**
  * A tool call once its result is in. `structured` is the result as data, which
  * only a running session has: a stored one is read from the text alone.
@@ -221,8 +247,11 @@ export function finishTool(
   declined: boolean,
 ): Item {
   const failed = result.is_error === true;
+  const raw = resultText(result);
+  // A call refused without asking says so to the model; stored, that is all there is to know.
+  declined = declined || (failed && REFUSED.test(raw));
   const status: ItemStatus = declined ? "declined" : failed ? "failed" : "completed";
-  const said = resultText(result);
+  const said = toOwner(raw);
   const data = record(structured);
   switch (item.kind) {
     case "command": {
@@ -519,7 +548,7 @@ export class StreamReader {
         if (message.subtype === "permission_denied" && message.tool_use_id) {
           // Refused by a rule, the mode or the classifier, without asking: the result says why.
           this.declined.add(message.tool_use_id);
-          const why = text(record(message)["message"]);
+          const why = toOwner(text(record(message)["message"]) ?? "");
           if (why) this.refused.set(message.tool_use_id, why);
           return [];
         }
@@ -647,6 +676,13 @@ export class StreamReader {
         return this.put(placed, {
           ...item,
           status: taskStatus(patch.status) ?? item.status,
+          // How it was going is no word on how it ended.
+          summary:
+            taskLive(item.status) &&
+            patch.status &&
+            !taskLive(taskStatus(patch.status) ?? item.status)
+              ? null
+              : item.summary,
           description: patch.description ?? item.description,
           error: patch.error ?? item.error,
           background: patch.is_backgrounded ?? item.background,
@@ -1106,15 +1142,25 @@ export function toModels(raw: WireModelInfo[], sandbox = false): ModelInfo[] {
   const models: ModelInfo[] = [];
   for (const model of raw) {
     const id = model.resolvedModel ?? model.value;
-    if (models.some((known) => known.id === id)) continue;
+    const known = models.find((each) => each.id === id);
+    if (known) {
+      // The default may be listed after the alias it points to: the model is still the default.
+      if (model.value === "default") known.isDefault = true;
+      continue;
+    }
     // "Sonnet 5.5 · Efficient for routine tasks": the name, then what it is for.
     const [name, ...about] = model.description.split(" · ");
+    // The default says what it is now, as "Use the default model (currently Opus 5.5)": that is the
+    // model's name, and the picker marks it as the default.
+    const now = [model.description, model.displayName]
+      .map((said) => /\(currently ([^)]+)\)/.exec(said)?.[1])
+      .find(Boolean);
     const efforts = model.supportedEffortLevels ?? [];
     models.push({
       id,
       harness: HARNESS_NAME,
-      name: (about.length ? name : "") || model.displayName,
-      description: about.join(" · ") || model.description,
+      name: now ?? ((about.length ? name : "") || model.displayName),
+      description: now ? "Claude Code's own choice" : about.join(" · ") || model.description,
       efforts: efforts.map((effort) => ({ id: effort, description: "" })),
       defaultEffort: efforts.includes(DEFAULT_EFFORT) ? DEFAULT_EFFORT : (efforts[0] ?? null),
       isDefault: model.value === "default",
@@ -1568,8 +1614,20 @@ export function reviewPrompt(target: ReviewTarget): string {
 
 // What the agent offers and reads
 
+/**
+ * What a prompt may begin with. Claude Code's own plumbing (`/__remote-workflow`) and what it has
+ * removed are not for the owner, and what the folder, the owner or a plugin brings comes first.
+ */
 export function toCommands(raw: WireSlashCommand[]): SlashCommand[] {
-  return raw.map((command) => ({
+  const offered = raw.filter(
+    (command) =>
+      !command.name.startsWith("__") &&
+      !/\(removed\)/i.test(`${command.name} ${command.description}`),
+  );
+  return [
+    ...offered.filter((command) => !command.builtin),
+    ...offered.filter((command) => command.builtin),
+  ].map((command) => ({
     name: command.name,
     description: command.description,
     argumentHint: command.argumentHint,
