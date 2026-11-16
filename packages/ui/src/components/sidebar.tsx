@@ -430,7 +430,8 @@ function UpdateReady() {
  */
 function Footer() {
   const app = useApp();
-  const account = useStore(app.account, (value) => value);
+  // The main agent's account is the one the footer names.
+  const account = useStore(app.accounts, (all) => all[app.mainHarness()] ?? null);
   const usage = useStore(app.usage, (value) => value);
   const theme = useStore(app.view, (view) => view.theme);
   const settingsOpen = useStore(app.view, (view) => view.page === "settings");

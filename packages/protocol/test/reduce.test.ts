@@ -23,6 +23,7 @@ const info: SessionInfo = {
   worktree: null,
   sandbox: null,
   sandboxCwd: null,
+  directories: [],
   createdAt: 0,
   updatedAt: 0,
   archived: false,
@@ -145,9 +146,10 @@ test("coalescing merges runs of deltas and folds to the same state", () => {
 
 test("plan, usage, queue and notices are kept as last told", () => {
   const usage = {
-    total: { total: 3, input: 2, cachedInput: 0, output: 1, reasoning: 0 },
-    last: { total: 3, input: 2, cachedInput: 0, output: 1, reasoning: 0 },
+    total: { total: 3, input: 2, cachedInput: 0, cacheWrite: 0, output: 1, reasoning: 0 },
+    last: { total: 3, input: 2, cachedInput: 0, cacheWrite: 0, output: 1, reasoning: 0 },
     contextWindow: 100,
+    costUsd: null,
   };
   const state = fold([
     { type: "plan.updated", sessionId: "s", plan: { explanation: null, steps: [] } },
@@ -174,7 +176,7 @@ const turn = (turnId: string): SessionEvent[] => [
 ];
 
 test("a rewind drops its turn and every later one, and forgets the context it measured", () => {
-  const count = { total: 3, input: 2, cachedInput: 0, output: 1, reasoning: 0 };
+  const count = { total: 3, input: 2, cachedInput: 0, cacheWrite: 0, output: 1, reasoning: 0 };
   const before = fold([
     ...turn("a"),
     ...turn("b"),
@@ -182,7 +184,7 @@ test("a rewind drops its turn and every later one, and forgets the context it me
     {
       type: "usage.updated",
       sessionId: "s",
-      usage: { total: count, last: count, contextWindow: 9 },
+      usage: { total: count, last: count, contextWindow: 9, costUsd: null },
     },
   ]);
   const after = reduceSession(before, { type: "turns.rewound", sessionId: "s", turnId: "b" });

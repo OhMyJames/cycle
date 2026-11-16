@@ -9,6 +9,7 @@ import {
   diskFile,
   type OpenProviders,
   openProviders,
+  Harnesses,
   startDaemon,
 } from "../../src/index.ts";
 import { type MockModel, type MockReply, startMockModel } from "./mock-model.ts";
@@ -26,10 +27,13 @@ let reply: MockReply = { text: ["Looks fine."] };
 
 const start = () =>
   startDaemon({
-    harness: new CodexHarness({
-      config: model.codexConfig,
-      env: { CODEX_HOME: join(root, "codex") },
-    }),
+    harness: new Harnesses(
+      new CodexHarness({
+        config: model.codexConfig,
+        env: { CODEX_HOME: join(root, "codex") },
+      }),
+      [],
+    ),
     providers: providers.store,
     home: join(root, "home"),
   });

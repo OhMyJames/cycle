@@ -1,36 +1,55 @@
 import type {
+  Account,
   Agent,
+  AgentCapabilities,
+  AgentReads,
+  Agents,
   ApprovalResponse,
+  Connector,
+  ContextUsage,
   CreateSessionOptions,
+  FileRewind,
   Harness,
   HarnessEvent,
+  HarnessInfo,
   HarnessSession,
   ModelInfo,
   PromptInput,
   ReviewTarget,
+  SlashCommand,
   TurnOptions,
 } from "@cycle/protocol";
 
+/** An agent beside the main one, with what it may read of its own Connector and Account. */
+export type OtherAgent = Agent & AgentReads;
+
+/** What an agent cannot do, said so, rather than done by another agent in its place. */
+export class NotSupported extends Error {}
+
+function unsupported(agent: string, what: string): never {
+  throw new NotSupported(`${what} is not supported for ${agent} in Cycle yet.`);
+}
+
 /**
- * Several agents as one harness. The first is the main one: it is also the
- * machine, the connector and the account, and what a session with no model
- * chosen starts on. A session stays with the agent it began on, which a model
- * decides when the session is made.
+ * Several agents as one. The first is the main one: it is also the machine, and what a session
+ * with no model chosen starts on. A session stays with the agent it began on, which a model decides
+ * when the session is made. A Connector and an Account are each agent's own, chosen by its name;
+ * another agent's may only be read, and what it cannot do is refused, never sent to the main one.
  *
  * An agent besides the main one that cannot start, or list, is left out and
  * said so in the log: the daemon runs on without it.
  */
-export class Harnesses implements Harness {
+export class Harnesses implements Agents {
   readonly name: string;
   private readonly main: Harness;
-  private agents: Agent[];
+  private agents: OtherAgent[];
   private readonly onLog: (line: string) => void;
   private readonly sessions = new Map<string, Agent>();
   private readonly models = new Map<string, Agent>();
   private readonly approvals = new Map<string, Agent>();
   private readonly listeners = new Set<(event: HarnessEvent) => void>();
 
-  constructor(main: Harness, others: Agent[], onLog: (line: string) => void = () => {}) {
+  constructor(main: Harness, others: OtherAgent[], onLog: (line: string) => void = () => {}) {
     this.name = main.name;
     this.main = main;
     this.agents = [main, ...others];
@@ -69,10 +88,17 @@ export class Harnesses implements Harness {
     return () => this.listeners.delete(listener);
   }
 
+  harnesses(): HarnessInfo[] {
+    return this.agents.map((agent) => ({ name: agent.name, capabilities: agent.capabilities }));
+  }
+
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
     const agent = options.model ? await this.ofModel(options.model) : this.main;
+    if (options.directories?.length && !agent.capabilities.directories) {
+      return unsupported(agent.name, "Reaching folders beyond the session's own");
+    }
     return this.own(agent, await agent.createSession(options));
   }
 
@@ -123,6 +149,36 @@ export class Harnesses implements Harness {
     return (await this.of(sessionId)).rewindSession(sessionId, turnId);
   }
 
+  async rewindFiles(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind> {
+    const agent = await this.of(sessionId);
+    if (!agent.capabilities.rewindFiles || !agent.rewindFiles) {
+      return unsupported(agent.name, "Putting files back");
+    }
+    return agent.rewindFiles(sessionId, turnId, dryRun);
+  }
+
+  async listCommands(
+    target: { sessionId: string } | { harness: string; cwd: string },
+  ): Promise<SlashCommand[]> {
+    const agent =
+      "sessionId" in target ? await this.of(target.sessionId) : this.named(target.harness);
+    if (!agent.capabilities.commands || !agent.listCommands) {
+      return unsupported(agent.name, "Listing commands");
+    }
+    return agent.listCommands(
+      "sessionId" in target ? { sessionId: target.sessionId } : { cwd: target.cwd },
+    );
+  }
+
+  async readContext(sessionId: string): Promise<ContextUsage | null> {
+    const agent = await this.of(sessionId);
+    return agent.readContext ? agent.readContext(sessionId) : null;
+  }
+
+  async capabilitiesOf(sessionId: string): Promise<AgentCapabilities> {
+    return (await this.of(sessionId)).capabilities;
+  }
+
   async send(sessionId: string, input: PromptInput, options: TurnOptions) {
     return (await this.of(sessionId)).send(sessionId, input, options);
   }
@@ -167,32 +223,49 @@ export class Harnesses implements Harness {
     return lists.flat();
   }
 
+  // Each agent's own
+
+  connector(harness?: string): Connector {
+    const agent = this.named(harness);
+    if (agent === this.main) return this.main;
+    const no = (what: string) => async () => unsupported(agent.name, what);
+    const change = no("Changing the connector");
+    return {
+      listSkills: agent.listSkills?.bind(agent) ?? no("Listing skills"),
+      listMcpServers: agent.listMcpServers?.bind(agent) ?? no("Listing MCP servers"),
+      putMcpServer: change,
+      removeMcpServer: change,
+      enableMcpServer: change,
+      enableMcpTool: change,
+      loginMcpServer: no("Signing in to an MCP server"),
+      listPlugins: no("Listing plugins"),
+      readPlugin: no("Reading a plugin"),
+      installPlugin: change,
+      uninstallPlugin: change,
+      enablePlugin: change,
+      addMarketplace: change,
+      removeMarketplace: change,
+      readFeatures: no("Reading features"),
+      setFeatures: change,
+    };
+  }
+
+  account(harness?: string): Account {
+    const agent = this.named(harness);
+    if (agent === this.main) return this.main;
+    const signIn = async () => unsupported(agent.name, "Signing in");
+    return {
+      readAccount:
+        agent.readAccount?.bind(agent) ??
+        (async () => unsupported(agent.name, "Reading the account")),
+      login: signIn,
+      cancelLogin: signIn,
+      logout: signIn,
+    };
+  }
+
   // The main agent's alone
 
-  listSkills: Harness["listSkills"] = (cwd) => this.main.listSkills(cwd);
-  listMcpServers: Harness["listMcpServers"] = () => this.main.listMcpServers();
-  putMcpServer: Harness["putMcpServer"] = (server) => this.main.putMcpServer(server);
-  removeMcpServer: Harness["removeMcpServer"] = (name) => this.main.removeMcpServer(name);
-  enableMcpServer: Harness["enableMcpServer"] = (name, enabled) =>
-    this.main.enableMcpServer(name, enabled);
-  enableMcpTool: Harness["enableMcpTool"] = (name, tool, enabled) =>
-    this.main.enableMcpTool(name, tool, enabled);
-  loginMcpServer: Harness["loginMcpServer"] = (name) => this.main.loginMcpServer(name);
-  listPlugins: Harness["listPlugins"] = () => this.main.listPlugins();
-  readPlugin: Harness["readPlugin"] = (marketplace, name) =>
-    this.main.readPlugin(marketplace, name);
-  installPlugin: Harness["installPlugin"] = (marketplace, name) =>
-    this.main.installPlugin(marketplace, name);
-  uninstallPlugin: Harness["uninstallPlugin"] = (id) => this.main.uninstallPlugin(id);
-  enablePlugin: Harness["enablePlugin"] = (id, enabled) => this.main.enablePlugin(id, enabled);
-  addMarketplace: Harness["addMarketplace"] = (source) => this.main.addMarketplace(source);
-  removeMarketplace: Harness["removeMarketplace"] = (name) => this.main.removeMarketplace(name);
-  readFeatures: Harness["readFeatures"] = () => this.main.readFeatures();
-  setFeatures: Harness["setFeatures"] = (features) => this.main.setFeatures(features);
-  readAccount: Harness["readAccount"] = () => this.main.readAccount();
-  login: Harness["login"] = () => this.main.login();
-  cancelLogin: Harness["cancelLogin"] = (id) => this.main.cancelLogin(id);
-  logout: Harness["logout"] = () => this.main.logout();
   exec: Harness["exec"] = (argv, options) => this.main.exec(argv, options);
   readDirectory: Harness["readDirectory"] = (path) => this.main.readDirectory(path);
   readFile: Harness["readFile"] = (path) => this.main.readFile(path);
@@ -204,6 +277,14 @@ export class Harnesses implements Harness {
   private own(agent: Agent, session: HarnessSession): HarnessSession {
     this.sessions.set(session.id, agent);
     return session;
+  }
+
+  /** The agent of this name, the main one when none is given. */
+  private named(harness: string | undefined): OtherAgent {
+    if (harness === undefined) return this.main;
+    const found = this.agents.find((agent) => agent.name === harness);
+    if (!found) throw new Error(`No agent named ${harness} is running.`);
+    return found;
   }
 
   /** The agent that keeps a session. One nobody has listed yet is looked for once. */

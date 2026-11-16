@@ -6,6 +6,7 @@ import {
   modePolicy,
   toCatalog,
   toItem,
+  toLimits,
   toMcpServers,
   toTurn,
 } from "../src/index.ts";
@@ -373,4 +374,16 @@ test("a tool is turned off and on by the server's list of tools left out", () =>
   expect(on[0]?.value).toBeNull();
   expect(() => mcpToolEdits("docs", "write", false, undefined)).toThrow("No MCP server");
   expect(() => mcpToolEdits("a.b", "write", false, { command: "x" })).toThrow("name is letters");
+});
+
+test("codex's two windows are a list of limits, named by how long they are", () => {
+  const limits = toLimits({
+    primary: { usedPercent: 40, windowDurationMins: 300, resetsAt: 10 },
+    secondary: { usedPercent: 100, windowDurationMins: 10_080, resetsAt: null },
+  });
+  expect(limits.map((limit) => [limit.id, limit.name, limit.resetsAt, limit.status])).toEqual([
+    ["primary", "5-hour limit", 10_000, "ok"],
+    ["secondary", "Weekly limit", null, "exceeded"],
+  ]);
+  expect(toLimits({ primary: null, secondary: null })).toEqual([]);
 });

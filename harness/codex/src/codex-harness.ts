@@ -1,5 +1,6 @@
 import type {
   AccountInfo,
+  AgentCapabilities,
   AgentFeatures,
   AccountLogin,
   Approval,
@@ -18,7 +19,6 @@ import type {
   PluginCatalog,
   PluginDetail,
   PromptInput,
-  RateLimitWindow,
   ReviewTarget,
   SessionMode,
   SkillInfo,
@@ -48,6 +48,7 @@ import {
   toSession,
   toSkill,
   toTurns,
+  toLimits,
   toUsage,
 } from "./translate.ts";
 import type {
@@ -145,15 +146,6 @@ function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow | null {
-  if (!raw) return null;
-  return {
-    usedPercent: raw.usedPercent,
-    windowMinutes: raw.windowDurationMins,
-    resetsAt: raw.resetsAt === null ? null : raw.resetsAt * 1000,
-  };
-}
-
 /**
  * Drives `codex app-server` over stdio. One process hosts many threads; each
  * Cycle session maps 1:1 onto a codex thread. Sessions on a model of the
@@ -163,6 +155,15 @@ function toWindow(raw: WireRateLimitWindow | null | undefined): RateLimitWindow 
  */
 export class CodexHarness implements Harness {
   readonly name = HARNESS_NAME;
+  readonly capabilities: AgentCapabilities = {
+    attachments: ["image"],
+    rewindFiles: false,
+    commands: false,
+    directories: false,
+    connector: "edit",
+    login: true,
+    features: true,
+  };
   private readonly provider: ExtraProvider | null;
   /** Codex's own models, and the machine: files, commands, terminals, the account. */
   private readonly main: CodexProcess;
@@ -657,10 +658,11 @@ export class CodexHarness implements Harness {
 
   async readAccount(): Promise<AccountInfo> {
     const { account } = await this.request<{ account: Json | null }>("account/read", {});
-    if (!account) return { kind: null, email: null, plan: null, limits: null };
+    const none = { harness: this.name, organization: null, provider: null, source: null };
+    if (!account) return { ...none, kind: null, email: null, plan: null, limits: [] };
     const kind =
       account["type"] === "apiKey" || account["type"] === "chatgpt" ? account["type"] : "other";
-    let limits: AccountInfo["limits"] = null;
+    let limits: AccountInfo["limits"] = [];
     if (kind === "chatgpt") {
       try {
         const { rateLimits } = await this.request<{
@@ -669,15 +671,18 @@ export class CodexHarness implements Harness {
             secondary: WireRateLimitWindow | null;
           };
         }>("account/rateLimits/read", {});
-        limits = {
-          primary: toWindow(rateLimits.primary),
-          secondary: toWindow(rateLimits.secondary),
-        };
+        limits = toLimits(rateLimits);
       } catch {
         // Limits are a courtesy: an account without them still works.
       }
     }
-    return { kind, email: text(account["email"]), plan: text(account["planType"]), limits };
+    return {
+      ...none,
+      kind,
+      email: text(account["email"]),
+      plan: text(account["planType"]),
+      limits,
+    };
   }
 
   async login(): Promise<AccountLogin> {
@@ -1017,7 +1022,7 @@ export class CodexHarness implements Harness {
       }
       case "account/rateLimits/updated":
         // A sparse update: what it leaves out is unknown, not gone, so the whole is read again.
-        if (main) this.emit({ type: "limits.changed" });
+        if (main) this.emit({ type: "limits.changed", harness: this.name });
         break;
       case "mcpServer/oauthLogin/completed":
       case "mcpServer/startupStatus/updated":
@@ -1067,6 +1072,7 @@ export class CodexHarness implements Harness {
         if (main) {
           this.emit({
             type: "account.changed",
+            harness: this.name,
             error: params["success"]
               ? null
               : (text(params["error"]) ?? "The sign-in did not finish."),
@@ -1074,7 +1080,7 @@ export class CodexHarness implements Harness {
         }
         break;
       case "account/updated":
-        if (main) this.emit({ type: "account.changed", error: null });
+        if (main) this.emit({ type: "account.changed", harness: this.name, error: null });
         break;
       case "model/rerouted":
         this.emit({

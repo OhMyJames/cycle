@@ -108,18 +108,22 @@ export function ConfirmDialog({
   action,
   onConfirm,
   onClose,
+  children,
 }: {
   title: string;
   text: string;
   action: string;
   onConfirm(): void;
   onClose(): void;
+  /** More to read or choose before confirming, under the text. */
+  children?: ReactNode;
 }) {
   return (
     <Dialog label={title} onClose={onClose}>
       <div className="dialog-body">
         <h2 className="dialog-title">{title}</h2>
         <p className="dialog-text">{text}</p>
+        {children}
       </div>
       <div className="dialog-actions">
         <button type="button" className="button" autoFocus onClick={onClose}>
