@@ -20,6 +20,7 @@ import {
   shortTime,
   tildePath,
 } from "../lib/format.ts";
+import { whereLabel } from "../lib/remote.ts";
 import { ApprovalCard } from "./approval.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
@@ -402,6 +403,26 @@ const THEMES = [
   { value: "dark", label: "Dark" },
 ] as const;
 
+/** Says where the agents run, whenever the window shows a remote server. */
+function WhereBadge() {
+  const app = useApp();
+  const label = useStore(app.remote, whereLabel);
+  if (label === null) return null;
+  return (
+    <button
+      type="button"
+      className="nav-row update-ready"
+      title="Agents run their commands on that server, not on this computer"
+      onClick={() => app.setView({ page: "settings", settingsSection: "remotes" })}
+    >
+      <span className="nav-icon">
+        <Icon name="globe" />
+      </span>
+      <span className="grow fade-x">{label}</span>
+    </button>
+  );
+}
+
 /** Shown only while a downloaded update waits for the owner, who installs it from About. */
 function UpdateReady() {
   const app = useApp();
@@ -450,6 +471,7 @@ function Footer() {
   return (
     <footer className="sidebar-footer">
       <div className="rule" />
+      <WhereBadge />
       <UpdateReady />
       <div className="footer-row">
         <Menu
@@ -566,6 +588,7 @@ const SETTINGS: { section: SettingsSection; label: string; icon: IconName }[] = 
   { section: "account", label: "Account and usage", icon: "user" },
   { section: "providers", label: "Model providers", icon: "sparkle" },
   { section: "sandboxes", label: "Sandboxes", icon: "file-lock" },
+  { section: "remotes", label: "Remote servers", icon: "globe" },
   { section: "about", label: "About", icon: "info" },
 ];
 
@@ -573,6 +596,8 @@ const SETTINGS: { section: SettingsSection; label: string; icon: IconName }[] = 
 function SettingsSidebar() {
   const app = useApp();
   const section = useStore(app.view, (view) => view.settingsSection);
+  // Remote servers are the desktop app's: a browser has no bridge to them.
+  const hasRemote = useStore(app.remote, (view) => view !== null);
   return (
     <aside className="sidebar" data-inset={host.insetTitleBar()}>
       <div className="sidebar-top">
@@ -599,7 +624,7 @@ function SettingsSidebar() {
       </nav>
       <div className="rule inset" />
       <nav className="sidebar-nav" aria-label="Settings sections">
-        {SETTINGS.map((each) => (
+        {SETTINGS.filter((each) => hasRemote || each.section !== "remotes").map((each) => (
           <button
             key={each.section}
             type="button"

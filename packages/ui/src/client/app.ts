@@ -38,6 +38,7 @@ import {
 import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
 import { Connection, type ConnectionStatus, DaemonError } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
+import { type RemoteView, UNREACHABLE } from "../lib/remote.ts";
 import { Store } from "./store.ts";
 import { draftKey, opening } from "../lib/opening.ts";
 import { plainMentions } from "../lib/suggest.ts";
@@ -81,7 +82,13 @@ export const NO_CAPABILITIES: AgentCapabilities = {
   hooks: false,
 };
 
-export type SettingsSection = "general" | "account" | "providers" | "sandboxes" | "about";
+export type SettingsSection =
+  | "general"
+  | "account"
+  | "providers"
+  | "sandboxes"
+  | "remotes"
+  | "about";
 
 export interface ViewState {
   /** Which part of Settings shows; the sidebar lists them while Settings is open. */
@@ -221,6 +228,8 @@ export class CycleApp {
   readonly toasts = new Store<Toast[]>([]);
   /** The desktop app's own updates. Null in a browser, and in an app that cannot replace itself. */
   readonly update = new Store<UpdateState | null>(null);
+  /** The desktop app's remote servers. Null in a browser, and in an app that has none. */
+  readonly remote = new Store<RemoteView | null>(null);
   readonly view: Store<ViewState>;
 
   private readonly link: Connection;
@@ -281,7 +290,35 @@ export class CycleApp {
 
   start(): void {
     host.watchUpdate((state) => this.update.set(state));
+    this.watchRemote();
     this.link.connect();
+  }
+
+  /**
+   * Reads the remote servers and where the window is: it may have been navigated to a remote
+   * daemon's page, which starts here again. Any call of the bridge may reject.
+   */
+  private watchRemote(): void {
+    const bridge = host.remote();
+    if (!bridge) return;
+    this.remote.set({ servers: [], state: { status: "idle" }, problem: null });
+    try {
+      bridge.onState((state) => this.remote.update((view) => view && { ...view, state }));
+    } catch {
+      // The state is read again below, and by Settings.
+    }
+    void this.refreshRemote();
+  }
+
+  async refreshRemote(): Promise<void> {
+    const bridge = host.remote();
+    if (!bridge) return;
+    try {
+      const [servers, state] = await Promise.all([bridge.list(), bridge.state()]);
+      this.remote.set({ servers, state, problem: null });
+    } catch {
+      this.remote.update((view) => view && { ...view, problem: UNREACHABLE });
+    }
   }
 
   stop(): void {
