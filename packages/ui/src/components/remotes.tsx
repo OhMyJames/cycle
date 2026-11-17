@@ -185,7 +185,8 @@ export function RemotesSection() {
   const [problem, setProblem] = useState<string | null>(null);
   if (!view) return null;
   const edited = view.servers.find((one) => one.id === editing?.id) ?? null;
-  const away = view.state.status !== "idle";
+  // A failed connection leaves the window on this computer, so only a live one is "away".
+  const away = view.state.status === "connected" || view.state.status === "reconnecting";
   const shown = problem ?? view.problem;
   return (
     <>

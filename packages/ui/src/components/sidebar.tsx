@@ -403,7 +403,6 @@ const THEMES = [
   { value: "dark", label: "Dark" },
 ] as const;
 
-/** Shown only while a downloaded update waits for the owner, who installs it from About. */
 /** Says where the agents run, whenever the window shows a remote server. */
 function WhereBadge() {
   const app = useApp();
@@ -424,6 +423,7 @@ function WhereBadge() {
   );
 }
 
+/** Shown only while a downloaded update waits for the owner, who installs it from About. */
 function UpdateReady() {
   const app = useApp();
   const version = useStore(app.update, (update) =>

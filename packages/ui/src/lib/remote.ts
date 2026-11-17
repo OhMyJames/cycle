@@ -84,16 +84,19 @@ export function serverTone(state: RemoteState, id: string): "ok" | "waiting" | "
   return state.status === "failed" ? "error" : "waiting";
 }
 
-/** The footer's words for where agents run commands, or null on this computer. */
+/**
+ * The footer's words for where agents run commands, or null on this computer. A connection being
+ * made, or one that failed, leaves the window on this computer, so it says nothing of them.
+ */
 export function whereLabel(view: RemoteView | null): string | null {
   if (!view || view.state.status === "idle") return null;
   const name = shownServer(view)?.name ?? "a remote server";
   switch (view.state.status) {
     case "connected":
       return `Remote: ${name}`;
-    case "failed":
-      return `Remote: ${name} (not connected)`;
+    case "reconnecting":
+      return `Remote: ${name} (reconnecting)`;
     default:
-      return `Remote: ${name} (connecting)`;
+      return null;
   }
 }

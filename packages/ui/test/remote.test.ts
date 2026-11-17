@@ -35,10 +35,12 @@ test("the window says where it is, and a server only its own state", () => {
   expect(whereLabel(null)).toBeNull();
   expect(whereLabel(view({ status: "idle" }))).toBeNull();
   expect(whereLabel(view({ status: "connected", id: "a" }))).toBe("Remote: Build");
-  expect(whereLabel(view({ status: "failed", id: "a", reason: "x" }))).toBe(
-    "Remote: Build (not connected)",
+  // A failed or pending connection leaves the window on this computer: no badge.
+  expect(whereLabel(view({ status: "failed", id: "a", reason: "x" }))).toBeNull();
+  expect(whereLabel(view({ status: "connecting", id: "a" }))).toBeNull();
+  expect(whereLabel(view({ status: "reconnecting", id: "a", attempt: 1 }))).toBe(
+    "Remote: Build (reconnecting)",
   );
-  expect(whereLabel(view({ status: "connecting", id: "a" }))).toBe("Remote: Build (connecting)");
   const state: RemoteState = { status: "reconnecting", id: "a", attempt: 2 };
   expect(serverStatus(state, "a")).toBe("Connection lost. Trying again (2)…");
   expect(serverStatus(state, "b")).toBe("");
