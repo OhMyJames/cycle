@@ -82,6 +82,7 @@ import {
   toMcpServers,
   toModels,
   toPermission,
+  toPlanLimits,
   toSession,
   toSkills,
   toTurns,
@@ -788,10 +789,31 @@ export class ClaudeHarness implements Agent, AgentReads {
     const running = this.here();
     if (running) {
       this.latest.account = await running.query.accountInfo().catch(() => this.latest.account);
+      await this.readPlanLimits(running.query);
     } else if (!this.latest.account) {
       await this.listModels();
     }
     return toAccount(this.latest.account, [...this.limits.values()]);
+  }
+
+  /**
+   * The plan's windows as they stand now, which a process says without a request: one it has heard
+   * of in a `rate_limit_event` of the same window keeps what that said of it being near or past.
+   * Numbers and times only. Nothing here is news when the call is not there or fails.
+   */
+  private async readPlanLimits(query: ClaudeQuery): Promise<void> {
+    const ask = query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    if (typeof ask !== "function") return;
+    const usage = await ask.call(query, { skipBehaviors: true }).catch(() => null);
+    for (const limit of toPlanLimits(usage)) {
+      const heard = this.limits.get(limit.id);
+      this.limits.set(
+        limit.id,
+        heard && heard.resetsAt === limit.resetsAt
+          ? { ...limit, status: heard.status, overage: heard.overage }
+          : limit,
+      );
+    }
   }
 
   /**

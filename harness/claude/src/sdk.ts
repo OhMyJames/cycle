@@ -24,6 +24,7 @@ import type {
   WireModelInfo,
   WirePermissionMode,
   WireRewindFilesResult,
+  WireUsage,
   WireSlashCommand,
   WirePermissionResult,
   WirePermissionUpdate,
@@ -134,6 +135,12 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   accountInfo(): Promise<WireAccountInfo>;
   supportedCommands(): Promise<WireSlashCommand[]>;
   mcpServerStatus(): Promise<WireMcpServerStatus[]>;
+  // shortcut: the SDK calls this `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`, and
+  // may rename or remove it; it is optional here and a failure is no news; upgrade when it is stable.
+  /** The plan's limits as the account stands now. */
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(options: {
+    skipBehaviors: boolean;
+  }): Promise<WireUsage>;
   /** `summary` answers from the last request's usage, with no request of its own. */
   getContextUsage(options: { detail: "summary" | "full" }): Promise<WireContextUsage>;
   rewindFiles(userMessageId: string, options: { dryRun: boolean }): Promise<WireRewindFilesResult>;

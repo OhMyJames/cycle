@@ -1702,6 +1702,32 @@ export function toLimit(raw: WireRateLimitInfo): LimitWindow {
 }
 
 /**
+ * The plan's limits as `usage` tells them: how much of each window is used and when it resets. It
+ * knows nothing of whether a limit is near, past what 100 says, which a `rate_limit_event` does.
+ */
+export function toPlanLimits(usage: WireUsage | null | undefined): LimitWindow[] {
+  const windows = usage?.rate_limits;
+  if (!windows) return [];
+  const limits: LimitWindow[] = [];
+  for (const [id, known] of Object.entries(LIMIT_NAMES)) {
+    const each = windows[id];
+    if (!each || typeof each.utilization !== "number") continue;
+    const resets = each.resets_at ? Date.parse(each.resets_at) : Number.NaN;
+    const usedPercent = Math.round(each.utilization);
+    limits.push({
+      id,
+      name: known.name,
+      usedPercent,
+      windowMinutes: known.minutes,
+      resetsAt: Number.isNaN(resets) ? null : resets,
+      status: usedPercent >= 100 ? "exceeded" : "ok",
+      overage: false,
+    });
+  }
+  return limits;
+}
+
+/**
  * Who is signed in to Claude Code, and how. Of the credential only where it is read from is kept:
  * the SDK says no more, and none of it is a secret.
  */

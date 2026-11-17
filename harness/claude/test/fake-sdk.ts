@@ -9,6 +9,7 @@ import type {
   WireRewindFilesResult,
   WireSessionInfo,
   WireSlashCommand,
+  WireUsage,
   WireUserMessage,
 } from "../src/wire.ts";
 
@@ -97,6 +98,8 @@ export class FakeQuery implements ClaudeQuery {
       this.flags.push(settings);
     }
   };
+  /** What the plan's limits are said to be, as `usage` tells them. */
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async () => this.sdk.usage;
   reloads = 0;
   reloadPlugins = async () => {
     this.reloads++;
@@ -151,6 +154,7 @@ export class FakeSdk implements ClaudeSdk {
     },
   ];
   failStart: string | null = null;
+  usage: WireUsage = { rate_limits_available: false, rate_limits: null };
   /** The helper agents a process says it can start. */
   agents: { name: string; description: string; model?: string }[] = [];
   commands: WireSlashCommand[] = [

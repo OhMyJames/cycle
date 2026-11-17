@@ -109,6 +109,16 @@ export interface WireAgentInfo {
   model?: string;
 }
 
+/** What `usage` tells of the plan: numbers and times only. */
+export interface WireUsage {
+  rate_limits_available?: boolean;
+  /** Each window by the agent's own name: how much is used, 0 to 100, and when it resets (ISO 8601). */
+  rate_limits?: Record<
+    string,
+    { utilization: number | null; resets_at: string | null } | null | undefined
+  > | null;
+}
+
 export interface WireContextUsage {
   categories: {
     id?: string;
