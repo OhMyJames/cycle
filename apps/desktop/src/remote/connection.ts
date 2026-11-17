@@ -5,6 +5,7 @@ import type { RemoteServer, RemoteState, RemoteTestResult } from "../shared/remo
 import {
   READY_EVERY_MS,
   READY_TRIES,
+  WATCH_EVERY_MS,
   backoffMs,
   notRunning,
   pageUrl,
@@ -40,6 +41,11 @@ export type ConnectionPorts = {
   portFree(port: number): Promise<boolean>;
   /** This machine's own daemon's version, to say when the remote one differs. */
   localVersion(): Promise<string | undefined>;
+  /**
+   * Waits between looks at the server's daemon file while connected. Left out, nothing looks: the
+   * daemon's token changes with each of its starts, and a tunnel does not drop when the daemon does.
+   */
+  pause?(ms: number): Promise<void>;
   /** Shows the page at this address: when connected, and again when a reconnect brings a new token. */
   show(url: string, origin: string): void;
   onState(state: RemoteState): void;
@@ -117,6 +123,27 @@ export function createRemoteConnection(ports: ConnectionPorts) {
     }
   }
 
+  /**
+   * A daemon that starts again has a new token, and the tunnel stays up through it, so the page would
+   * keep the old token for good. Looks at the server's file from time to time, and closes the tunnel
+   * when the token is not the one shown: the reconnect then reads the file and shows the page again.
+   */
+  async function watch(remote: RemoteServer, mine: number, found: Established): Promise<void> {
+    const pause = ports.pause;
+    if (!pause) return;
+    for (;;) {
+      await pause(WATCH_EVERY_MS);
+      if (mine !== generation || tunnel !== found.tunnel) return;
+      const read = await ports.ssh.run(readArgs(remote)).catch(() => undefined);
+      if (mine !== generation || tunnel !== found.tunnel) return;
+      const facts = read?.code === 0 ? parseDaemonFile(read.stdout) : undefined;
+      if (facts && facts.token !== found.token) {
+        found.tunnel.kill();
+        return;
+      }
+    }
+  }
+
   function hold(remote: RemoteServer, mine: number, found: Established): void {
     tunnel = found.tunnel;
     set({
@@ -131,6 +158,7 @@ export function createRemoteConnection(ports: ConnectionPorts) {
     found.tunnel.onExit(() => {
       if (mine === generation) void reconnect(remote, mine);
     });
+    void watch(remote, mine, found);
   }
 
   async function reconnect(remote: RemoteServer, mine: number): Promise<void> {
