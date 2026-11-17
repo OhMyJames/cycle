@@ -6,6 +6,8 @@ import {
   remoteInput,
   serverStatus,
   serverTone,
+  runTest,
+  testLine,
   whereLabel,
   isRemote,
   remoteWarning,
@@ -61,4 +63,20 @@ test("a window on a server is remote, and its version warning shows only while c
   expect(remoteWarning(view({ status: "connected", id: "a" }))).toBeNull();
   expect(remoteWarning(view({ status: "reconnecting", id: "a", attempt: 1 }))).toBeNull();
   expect(remoteWarning(null)).toBeNull();
+});
+
+test("a test result is a line, and a rejected test is a failed one", async () => {
+  expect(testLine({ ok: true, version: "1.0.0" })).toEqual({
+    tone: "ok",
+    text: "Reachable, daemon 1.0.0.",
+  });
+  expect(testLine({ ok: true, connected: true }).text).toBe("Connected now.");
+  expect(testLine({ ok: true, version: "1", warning: "Differs." }).text).toBe(
+    "Reachable, daemon 1. Differs.",
+  );
+  expect(testLine({ ok: false, reason: "No." })).toEqual({ tone: "error", text: "No." });
+  expect(await runTest(() => Promise.reject(new Error("ipc")))).toEqual({
+    ok: false,
+    reason: UNREACHABLE,
+  });
 });

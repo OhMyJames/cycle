@@ -131,7 +131,7 @@ export function activityRow(
       const [first] = item.actions;
       const detail =
         kind === "execute" || !first
-          ? plainCommand(item.command)
+          ? item.description || plainCommand(item.command)
           : item.actions.length > 1
             ? kind === "read"
               ? files(item.actions.length)

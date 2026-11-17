@@ -227,6 +227,11 @@ async function startRemotes(): Promise<void> {
   ipcMain.handle("cycle:remotes-state", (event) =>
     fromPage(event) ? connection.state() : { status: "idle" },
   );
+  ipcMain.handle("cycle:remotes-test", async (event, id: unknown) => {
+    if (!fromPage(event)) return { ok: false, reason: "Not allowed." };
+    const remote = typeof id === "string" ? await store.get(id) : undefined;
+    return remote ? connection.test(remote) : { ok: false, reason: "No such server." };
+  });
   ipcMain.handle("cycle:remotes-connect", async (event, id: unknown) => {
     if (!fromPage(event)) return;
     const remote = typeof id === "string" ? await store.get(id) : undefined;
