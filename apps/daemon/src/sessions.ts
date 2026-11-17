@@ -475,16 +475,17 @@ export class SessionHub {
     const { sessionId } = params;
     let info = this.info(sessionId);
     const { harness } = this.options;
-    if (params.title !== undefined) {
-      const title = params.title.trim();
-      if (title) await harness.renameSession(sessionId, title);
-      info = { ...info, title: title || null };
-    }
+    // First: a tag a conversation cannot take refuses the whole change, before any of it is made.
     if (params.tag !== undefined) {
       const tag = params.tag?.trim().slice(0, MAX_TAG) || null;
       await harness.tagSession(sessionId, tag);
       const { tag: _old, ...rest } = info;
       info = tag ? { ...rest, tag } : rest;
+    }
+    if (params.title !== undefined) {
+      const title = params.title.trim();
+      if (title) await harness.renameSession(sessionId, title);
+      info = { ...info, title: title || null };
     }
     if (params.archived !== undefined && params.archived !== info.archived) {
       if (info.status === "running" || info.status === "waiting") {

@@ -264,7 +264,8 @@ export function setHooks(
     hooksRevision: config.hooksRevision + 1,
     ownerHooks: settings.ownerHooks,
     ownerSettings: settings.ownerSettings,
-    run: checkRun(settings.run),
+    // A page older than this field sends none: what is kept stays.
+    run: settings.run ? checkRun(settings.run) : config.run,
   };
 }
 

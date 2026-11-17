@@ -40,6 +40,13 @@ test("the run settings are kept as numbers and names, and nothing else gets thro
   }
 });
 
+test("hooks sent without run settings, as by an older page, keep what is kept", () => {
+  const kept = { ...emptyConfig(), run: { ...emptyConfig().run, maxTurns: 9 } };
+  const { run: _none, ...older } = settings({});
+  const next = setHooks(kept, older as unknown as ReturnType<typeof settings>, () => "id");
+  expect(next.run.maxTurns).toBe(9);
+});
+
 test("a change of what a process starts with is told by its key", () => {
   const before = startKey(emptyConfig(), []);
   const after = startKey({ ...emptyConfig(), run: { ...emptyConfig().run, maxTurns: 3 } }, []);
