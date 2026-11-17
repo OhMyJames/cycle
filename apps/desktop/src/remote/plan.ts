@@ -6,6 +6,8 @@ import type { RemoteInput, RemoteServer } from "../shared/remote-state";
 /** Where a daemon keeps its files when its CYCLE_HOME is not set. */
 export const DEFAULT_HOME = "~/.cycle-codex";
 export const MAX_BACKOFF_MS = 30_000;
+/** How often a held connection looks at the server's daemon file for a new token. */
+export const WATCH_EVERY_MS = 15_000;
 /** How often, and how far apart, the tunnel is asked for the daemon's health before giving up. */
 export const READY_TRIES = 20;
 export const READY_EVERY_MS = 250;

@@ -88,6 +88,7 @@ export function connectionPorts(options: SystemOptions): ConnectionPorts {
     ssh: sshPorts(options.env),
     fetch: get,
     delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     portFree: localPortFree,
     localVersion: async () => {
       try {
