@@ -119,6 +119,10 @@ export const host = {
   checkForUpdate(): void {
     void window.cycle?.update?.check();
   },
+  /** The bridge to remote servers, null in a browser and in an app without one. */
+  remote(): RemoteBridge | null {
+    return window.cycle?.remote ?? null;
+  },
   installUpdate(): void {
     void window.cycle?.update?.install();
   },

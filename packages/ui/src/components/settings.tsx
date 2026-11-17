@@ -12,6 +12,7 @@ import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
 import { ModeMenu } from "./mode-menu.tsx";
 import { ProvidersSection } from "./providers.tsx";
+import { RemotesSection } from "./remotes.tsx";
 import { SandboxesSection } from "./sandboxes.tsx";
 
 function Limit({ limit }: { limit: LimitWindow }) {
@@ -177,6 +178,7 @@ const TITLES: Record<SettingsSection, string> = {
   account: "Account and usage",
   providers: "Model providers",
   sandboxes: "Sandboxes",
+  remotes: "Remote servers",
   about: "About",
 };
 
@@ -322,6 +324,8 @@ export function SettingsPage() {
         {section === "providers" ? <ProvidersSection /> : null}
 
         {section === "sandboxes" ? <SandboxesSection /> : null}
+
+        {section === "remotes" ? <RemotesSection /> : null}
 
         {section === "about" ? (
           <div className="card">
