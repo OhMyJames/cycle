@@ -10,9 +10,12 @@ export function SkillsTab() {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome ?? null);
   const skills = useStore(app.skills, (value) => value);
+  const subagents = useStore(app.subagents, (value) => value);
+  const lists = app.capabilities(app.shownAgent()).subagents;
   useEffect(() => {
     if (home) void app.loadSkills(home);
-  }, [app, home]);
+    if (home && lists) void app.loadSubagents(home);
+  }, [app, home, lists]);
   return (
     <section aria-label="Skills">
       <div className="section-head">
@@ -54,6 +57,37 @@ export function SkillsTab() {
           ))}
         </div>
       )}
+      {lists && subagents && subagents.length > 0 ? (
+        <>
+          <div className="section-head sub">
+            <h3>Helper agents</h3>
+          </div>
+          <p className="caption muted">
+            What a session can hand work to. Yours, your plugins' and Claude Code's own; a project
+            can add more.
+          </p>
+          <div className="card">
+            {subagents.map((agent) => (
+              <div key={agent.name} className="list-item">
+                <div className="list-row">
+                  <span className="list-main">
+                    <span className="list-lead">
+                      <Icon name="sparkle" />
+                    </span>
+                    <span className="list-text">
+                      <span className="list-name fade-x mono">{agent.name}</span>
+                      <span className="caption muted fade-x">
+                        {agent.description}
+                        {agent.model ? ` · ${agent.model}` : ""}
+                      </span>
+                    </span>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
     </section>
   );
 }

@@ -15,6 +15,7 @@ import type {
   WireElicitation,
   WireElicitationResult,
   WireAccountInfo,
+  WireAgentInfo,
   WireContextUsage,
   WireHistoryMessage,
   WireMcpServerStatus,
@@ -120,6 +121,8 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   initializationResult(): Promise<{
     models?: WireModelInfo[];
     commands?: WireSlashCommand[];
+    /** The helper agents it can start. */
+    agents?: WireAgentInfo[];
     account?: WireAccountInfo;
   }>;
   interrupt(): Promise<unknown>;

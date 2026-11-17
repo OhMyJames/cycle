@@ -29,6 +29,7 @@ import {
   type SessionMode,
   type SessionState,
   type SkillInfo,
+  type SubagentInfo,
   type Settings,
   type SlashCommand,
   type TerminalInfo,
@@ -80,6 +81,7 @@ export const NO_CAPABILITIES: AgentCapabilities = {
   login: false,
   features: false,
   mcpReconnect: false,
+  subagents: false,
   hooks: false,
 };
 
@@ -224,6 +226,8 @@ export class CycleApp {
   readonly connectorAgent = new Store<string | null>(null);
   /** The shown agent's skills, and the hooks Cycle keeps for it, when it has them. */
   readonly skills = new Store<SkillInfo[] | null>(null);
+  /** The helper agents the shown agent can start in a folder; null until read. */
+  readonly subagents = new Store<SubagentInfo[] | null>(null);
   readonly hooks = new Store<HookSettings | null>(null);
   /** Null until read: Settings reads them when it opens. */
   readonly features = new Store<AgentFeatures | null>(null);
@@ -748,6 +752,12 @@ export class CycleApp {
   async loadSkills(cwd: string): Promise<void> {
     const answer = await this.attempt(this.request("skills.list", { cwd, ...this.agent() }));
     if (answer) this.skills.set(answer.skills);
+  }
+
+  /** The helper agents the shown agent can start in a folder. */
+  async loadSubagents(cwd: string): Promise<void> {
+    const answer = await this.attempt(this.request("subagents.list", { cwd, ...this.agent() }));
+    if (answer) this.subagents.set(answer.agents);
   }
 
   async enableSkill(cwd: string, name: string, enabled: boolean): Promise<void> {

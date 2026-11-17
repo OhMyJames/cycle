@@ -9,6 +9,7 @@ import type {
   FileRewind,
   HarnessInfo,
   McpServerInfo,
+  SubagentInfo,
   McpServerInput,
   ModeInfo,
   ModelInfo,
@@ -232,6 +233,8 @@ export interface Connector {
   enableMcpTool(name: string, tool: string, enabled: boolean): Promise<void>;
   /** Starts a sign-in and answers where the owner finishes it. */
   loginMcpServer(name: string): Promise<{ url: string }>;
+  /** The helper agents a session in this folder can start. With the `subagents` capability. */
+  listSubagents?(cwd: string): Promise<SubagentInfo[]>;
   /** Connects a server again, in the process that runs. With the `mcpReconnect` capability. */
   reconnectMcpServer?(name: string): Promise<void>;
   listPlugins(): Promise<PluginCatalog>;

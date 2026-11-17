@@ -8,6 +8,7 @@ import type {
   FileRewind,
   HarnessInfo,
   McpServerInfo,
+  SubagentInfo,
   McpServerInput,
   ModeInfo,
   ModelInfo,
@@ -265,6 +266,8 @@ export interface Methods {
     params: { name: string; tool: string; enabled: boolean } & OfHarness;
     result: { servers: McpServerInfo[] };
   };
+  /** The helper agents a session in a folder can start. */
+  "subagents.list": { params: { cwd: string } & OfHarness; result: { agents: SubagentInfo[] } };
   /** Connects a server again, in the agent's process that runs. */
   "mcp.reconnect": {
     params: { name: string } & OfHarness;

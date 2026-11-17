@@ -262,6 +262,11 @@ export class Harnesses implements Agents {
       removeMcpServer: own("removeMcpServer", change, edits),
       enableMcpServer: own("enableMcpServer", change, edits),
       enableMcpTool: own("enableMcpTool", change, edits),
+      listSubagents: own(
+        "listSubagents",
+        "Listing helper agents",
+        capabilities.subagents,
+      ) as NonNullable<Connector["listSubagents"]>,
       loginMcpServer: own("loginMcpServer", "Signing in to an MCP server"),
       reconnectMcpServer: own(
         "reconnectMcpServer",

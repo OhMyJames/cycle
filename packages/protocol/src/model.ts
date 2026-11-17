@@ -552,6 +552,16 @@ export interface AgentCapabilities {
   hooks: boolean;
   /** A server that failed can be connected again in a process that runs: `mcp.reconnect`. */
   mcpReconnect: boolean;
+  /** It lists the helper agents a session can start: `subagents.list`. */
+  subagents: boolean;
+}
+
+/** A helper agent an agent can start, as it lists them. */
+export interface SubagentInfo {
+  name: string;
+  description: string;
+  /** What it runs on: an alias or an id, or `inherit` for the session's. Null for the default. */
+  model: string | null;
 }
 
 /** An agent the daemon runs, and what it can do. */

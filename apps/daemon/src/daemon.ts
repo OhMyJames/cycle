@@ -523,6 +523,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       mcpChange(name, () => harness.connector(name).enableMcpServer(server, enabled)),
     "mcp.enableTool": ({ name: server, tool, enabled, harness: name }) =>
       mcpChange(name, () => harness.connector(name).enableMcpTool(server, tool, enabled)),
+    "subagents.list": async ({ cwd, harness: name }) => {
+      const list = harness.connector(name).listSubagents;
+      return { agents: list ? await list(cwd) : [] };
+    },
     "mcp.reconnect": ({ name: server, harness: name }) =>
       mcpChange(name, async () => {
         const reconnect = harness.connector(name).reconnectMcpServer;

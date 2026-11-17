@@ -55,6 +55,7 @@ export class FakeQuery implements ClaudeQuery {
     return {
       models: this.sdk.models,
       commands: this.sdk.commandsAt[this.options.cwd] ?? this.sdk.commands,
+      agents: this.sdk.agents,
       account: this.sdk.account,
     };
   };
@@ -150,6 +151,8 @@ export class FakeSdk implements ClaudeSdk {
     },
   ];
   failStart: string | null = null;
+  /** The helper agents a process says it can start. */
+  agents: { name: string; description: string; model?: string }[] = [];
   commands: WireSlashCommand[] = [
     { name: "compact", description: "Compact the conversation", argumentHint: "", builtin: true },
     { name: "deploy", description: "Ship it", argumentHint: "<env>" },

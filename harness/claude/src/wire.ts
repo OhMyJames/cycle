@@ -101,6 +101,14 @@ export interface WireMcpServerStatus {
   tools?: { name: string; description?: string }[];
 }
 
+/** A helper agent Claude Code can start, as it lists them. */
+export interface WireAgentInfo {
+  name: string;
+  description: string;
+  /** An alias or id, or `inherit`; absent for the default. */
+  model?: string;
+}
+
 export interface WireContextUsage {
   categories: {
     id?: string;

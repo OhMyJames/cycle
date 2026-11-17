@@ -23,6 +23,7 @@ import {
   type SessionMode,
   type SkillInfo,
   type SlashCommand,
+  type SubagentInfo,
   type Turn,
   type TurnOptions,
   type TurnOrigin,
@@ -351,6 +352,8 @@ export class ClaudeHarness implements Agent, AgentReads {
    * said: the owner's, and the folder's project's own.
    */
   private readonly commandsAt = new Map<string, { seen: string; commands: SlashCommand[] }>();
+  /** The helper agents a process started in a folder said it can start, as of the files then. */
+  private readonly agentsAt = new Map<string, { seen: string; agents: SubagentInfo[] }>();
   /** The MCP servers as last read, and when. */
   private mcp: { at: number; seen: string; servers: McpServerInfo[] } | null = null;
   /**
@@ -398,6 +401,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       features: false,
       hooks: edits,
       mcpReconnect: true,
+      subagents: true,
     };
   }
 
@@ -745,6 +749,13 @@ export class ClaudeHarness implements Agent, AgentReads {
     return this.probe(async () => this.commandsAt.get(cwd)?.commands ?? [], cwd);
   }
 
+  /** The helper agents a session in a folder can start: the owner's, the project's, a plugin's. */
+  async listSubagents(cwd: string): Promise<SubagentInfo[]> {
+    const kept = this.agentsAt.get(cwd);
+    if (kept && kept.seen === (await this.seen(cwd)).folder) return kept.agents;
+    return this.probe(async () => this.agentsAt.get(cwd)?.agents ?? [], cwd);
+  }
+
   /** The owner's files as they are now, and with a folder's own when one is given. */
   private async seen(cwd: string | null): Promise<Seen> {
     const [owner, folder] = await Promise.all([
@@ -1075,6 +1086,14 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (at === null) return commands;
     if (init.account) this.latest.account = init.account;
     this.commandsAt.set(at.cwd, { seen: at.seen, commands });
+    this.agentsAt.set(at.cwd, {
+      seen: at.seen,
+      agents: (init.agents ?? []).map((agent) => ({
+        name: agent.name,
+        description: agent.description,
+        model: agent.model ?? null,
+      })),
+    });
     return commands;
   }
 
