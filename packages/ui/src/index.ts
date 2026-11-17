@@ -7,6 +7,7 @@ export type {
   RemoteResult,
   RemoteServer,
   RemoteState,
+  RemoteTestResult,
   UpdateBridge,
   UpdateState,
 } from "./client/host.ts";

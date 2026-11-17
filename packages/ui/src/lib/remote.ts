@@ -1,4 +1,4 @@
-import type { RemoteInput, RemoteServer, RemoteState } from "../client/host.ts";
+import type { RemoteInput, RemoteServer, RemoteState, RemoteTestResult } from "../client/host.ts";
 
 /** What the page knows of the desktop app's remote servers. */
 export interface RemoteView {
@@ -99,4 +99,21 @@ export function whereLabel(view: RemoteView | null): string | null {
     default:
       return null;
   }
+}
+
+/** Runs a test of a server, turning a rejection into a failed result with a short reason. */
+export async function runTest(call: () => Promise<RemoteTestResult>): Promise<RemoteTestResult> {
+  try {
+    return await call();
+  } catch {
+    return { ok: false, reason: UNREACHABLE };
+  }
+}
+
+/** The line shown under a server after a test. */
+export function testLine(result: RemoteTestResult): { tone: "ok" | "error"; text: string } {
+  if (!result.ok) return { tone: "error", text: result.reason };
+  if (result.connected) return { tone: "ok", text: "Connected now." };
+  const text = result.version ? `Reachable, daemon ${result.version}.` : "Reachable.";
+  return { tone: "ok", text: result.warning ? `${text} ${result.warning}` : text };
 }

@@ -6,6 +6,8 @@ import {
   remoteInput,
   serverStatus,
   serverTone,
+  runTest,
+  testLine,
   whereLabel,
 } from "../src/lib/remote.ts";
 
@@ -47,4 +49,20 @@ test("the window says where it is, and a server only its own state", () => {
   expect(serverTone(state, "a")).toBe("waiting");
   expect(serverTone({ status: "connected", id: "a" }, "a")).toBe("ok");
   expect(serverTone({ status: "idle" }, "a")).toBeNull();
+});
+
+test("a test result is a line, and a rejected test is a failed one", async () => {
+  expect(testLine({ ok: true, version: "1.0.0" })).toEqual({
+    tone: "ok",
+    text: "Reachable, daemon 1.0.0.",
+  });
+  expect(testLine({ ok: true, connected: true }).text).toBe("Connected now.");
+  expect(testLine({ ok: true, version: "1", warning: "Differs." }).text).toBe(
+    "Reachable, daemon 1. Differs.",
+  );
+  expect(testLine({ ok: false, reason: "No." })).toEqual({ tone: "error", text: "No." });
+  expect(await runTest(() => Promise.reject(new Error("ipc")))).toEqual({
+    ok: false,
+    reason: UNREACHABLE,
+  });
 });

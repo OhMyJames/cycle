@@ -2,12 +2,15 @@ import { expect, test } from "bun:test";
 import { RemoteStore, type TextFile } from "../src/remote/store";
 
 function disk(initial?: string) {
-  const state = { text: initial, writes: 0 };
+  const state = { text: initial, writes: 0, aside: [] as string[] };
   const file: TextFile = {
     read: async () => state.text,
     write: async (text) => {
       state.text = text;
       state.writes++;
+    },
+    keepAside: async () => {
+      state.aside.push(state.text ?? "");
     },
   };
   let n = 0;
@@ -25,7 +28,10 @@ test("servers are added, changed and removed, and kept for the next start", asyn
   });
   await store.remove("id2");
 
-  const again = new RemoteStore({ read: async () => state.text, write: async () => {} }, () => "x");
+  const again = new RemoteStore(
+    { read: async () => state.text, write: async () => {}, keepAside: async () => {} },
+    () => "x",
+  );
   expect(await again.list()).toEqual([{ id: "id1", name: "Box 2", target: "me@box2" }]);
 });
 
@@ -43,6 +49,16 @@ test("a file that is not readable starts an empty list", async () => {
   expect(await store.get("id1")).toBeUndefined();
 });
 
+test("an unreadable file is moved aside once, before the first write over it", async () => {
+  const { state, store } = disk("{broken");
+  await store.add({ name: "A", target: "a" });
+  await store.add({ name: "B", target: "b" });
+  expect(state.aside).toEqual(["{broken"]);
+  const empty = disk("");
+  await empty.store.add({ name: "A", target: "a" });
+  expect(empty.state.aside).toEqual([]);
+});
+
 test("two quick additions both land", async () => {
   const { store } = disk();
   await Promise.all([store.add({ name: "A", target: "a" }), store.add({ name: "B", target: "b" })]);
@@ -53,6 +69,7 @@ test("a write that fails leaves the list as it was", async () => {
   let failing = false;
   const file: TextFile = {
     read: async () => undefined,
+    keepAside: async () => {},
     write: async () => {
       if (failing) throw new Error("disk full");
     },

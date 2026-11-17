@@ -1,7 +1,7 @@
 // The connection to one remote daemon through an ssh tunnel: which steps, in which order, and which
 // state the page is shown. Everything it touches comes in as a port. The token is read from the
 // server at each connect, lives in this module's memory and the page's address, and is never logged.
-import type { RemoteServer, RemoteState } from "../shared/remote-state";
+import type { RemoteServer, RemoteState, RemoteTestResult } from "../shared/remote-state";
 import {
   READY_EVERY_MS,
   READY_TRIES,
@@ -51,12 +51,20 @@ class Failure extends Error {}
 const reasonOf = (error: unknown): string =>
   error instanceof Failure ? error.message : "The connection failed.";
 
-type Established = { tunnel: Tunnel; token: string; url: string; origin: string; warning?: string };
+type Established = {
+  tunnel: Tunnel;
+  token: string;
+  url: string;
+  origin: string;
+  version: string;
+  warning?: string;
+};
 
 export function createRemoteConnection(ports: ConnectionPorts) {
   let state: RemoteState = { status: "idle" };
   let tunnel: Tunnel | undefined;
   let shownToken: string | undefined;
+  let testing = false;
   /** Bumped by every connect and disconnect, so what was started before knows it is over. */
   let generation = 0;
 
@@ -96,6 +104,7 @@ export function createRemoteConnection(ports: ConnectionPorts) {
             token: facts.token,
             url: pageUrl(facts.port, facts.token),
             origin: new URL(pageUrl(facts.port, facts.token)).origin,
+            version: health.version,
             ...(warning ? { warning } : {}),
           };
         }
@@ -156,6 +165,32 @@ export function createRemoteConnection(ports: ConnectionPorts) {
       tunnel = undefined;
       shownToken = undefined;
       if (state.status !== "idle") set({ status: "idle" });
+    },
+
+    /**
+     * Goes through the steps of a connection and closes the tunnel again: the page, the state and
+     * the tunnel the window holds are left as they are. One test at a time, since two would want the
+     * same port.
+     */
+    async test(remote: RemoteServer): Promise<RemoteTestResult> {
+      if (state.status !== "idle" && state.status !== "failed" && state.id === remote.id) {
+        return { ok: true, connected: true };
+      }
+      if (testing) return { ok: false, reason: "Another test is still running." };
+      testing = true;
+      try {
+        const found = await establish(remote);
+        found.tunnel.kill();
+        return {
+          ok: true,
+          version: found.version,
+          ...(found.warning ? { warning: found.warning } : {}),
+        };
+      } catch (error) {
+        return { ok: false, reason: reasonOf(error) };
+      } finally {
+        testing = false;
+      }
     },
 
     async connect(remote: RemoteServer): Promise<void> {

@@ -1,6 +1,6 @@
 // What the remote connection does to the world: ssh as a child process, the loopback port, files.
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import type { ConnectionPorts, Ssh, Tunnel } from "./connection";
@@ -107,6 +107,7 @@ export function remotesFile(home: string): TextFile {
   const file = path.join(home, "remotes.json");
   return {
     read: () => readFile(file, "utf8").catch(() => undefined),
+    keepAside: () => rename(file, `${file}.bad`).catch(() => undefined),
     async write(text) {
       await mkdir(home, { recursive: true, mode: 0o700 });
       await writeFile(file, text, { mode: 0o600 });

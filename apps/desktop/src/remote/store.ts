@@ -6,10 +6,24 @@ import { checkInput, parseRemotes, serializeRemotes } from "./plan";
 export type TextFile = {
   read(): Promise<string | undefined>;
   write(text: string): Promise<void>;
+  /** Moves the file aside, to `<name>.bad`, so a write does not replace what could not be read. Nothing to move is fine. */
+  keepAside(): Promise<void>;
 };
+
+/** Whether the text is no list at all, which is not the same as an empty one. */
+function unreadable(text: string): boolean {
+  if (text.trim() === "") return false;
+  try {
+    return !Array.isArray((JSON.parse(text) as { remotes?: unknown } | null)?.remotes);
+  } catch {
+    return true;
+  }
+}
 
 export class RemoteStore {
   #remotes: RemoteServer[] | undefined;
+  /** The file held something that was no list: it is moved aside before the first write over it. */
+  #aside = false;
   /** One change at a time, so two quick ones do not both start from the same list. */
   #queue: Promise<unknown> = Promise.resolve();
 
@@ -22,8 +36,11 @@ export class RemoteStore {
   }
 
   async #load(): Promise<RemoteServer[]> {
-    // shortcut: a file that cannot be read is an empty list and the next change replaces it; upgrade when owners keep more than names here.
-    this.#remotes ??= parseRemotes((await this.#file.read()) ?? "");
+    if (!this.#remotes) {
+      const text = (await this.#file.read()) ?? "";
+      this.#aside = unreadable(text);
+      this.#remotes = parseRemotes(text);
+    }
     return this.#remotes;
   }
 
@@ -35,7 +52,9 @@ export class RemoteStore {
 
   /** The list in memory changes only once the file has it, so a write that fails leaves both as they were. */
   async #save(next: RemoteServer[]): Promise<void> {
+    if (this.#aside) await this.#file.keepAside();
     await this.#file.write(serializeRemotes(next));
+    this.#aside = false;
     this.#remotes = next;
   }
 
