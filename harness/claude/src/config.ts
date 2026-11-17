@@ -66,7 +66,12 @@ export function emptyConfig(): ClaudeConfig {
   };
 }
 
-export const NO_LIMITS: RunSettings = { fallbackModel: null, maxTurns: null, maxBudgetUsd: null };
+export const NO_LIMITS: RunSettings = {
+  fallbackModel: null,
+  maxTurns: null,
+  maxBudgetUsd: null,
+  promptSuggestions: false,
+};
 
 const SERVER_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -94,7 +99,12 @@ function checkRun(run: RunSettings): RunSettings {
       `The most to spend is a number of dollars above 0 and up to ${MAX_BUDGET}.`,
     );
   }
-  return { fallbackModel, maxTurns, maxBudgetUsd };
+  return {
+    fallbackModel,
+    maxTurns,
+    maxBudgetUsd,
+    promptSuggestions: run.promptSuggestions === true,
+  };
 }
 
 /** The tool's name in Claude Code. */

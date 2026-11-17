@@ -419,6 +419,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     };
   });
   const { info, running } = session;
+  const nextPrompt = useStore(app.nextPrompts, (all) => (sessionId ? all[sessionId] : undefined));
   // A session stays with its agent, so only that agent's models are its to choose.
   const harness = info?.harness ?? draft?.harness;
   const pickable = harness ? models.filter((model) => model.harness === harness) : models;
@@ -826,6 +827,21 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
             ))}
           </div>
         ) : null}
+        {nextPrompt && !text && !running && !archived ? (
+          <button
+            type="button"
+            className="next-prompt"
+            aria-label={`Use the suggestion: ${nextPrompt}`}
+            onClick={() => {
+              change(nextPrompt);
+              field.current?.focus();
+            }}
+          >
+            <span className="muted">Next</span>
+            <span className="fade-x">{nextPrompt}</span>
+            <kbd>Tab</kbd>
+          </button>
+        ) : null}
         <textarea
           ref={field}
           rows={1}
@@ -847,6 +863,11 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
           onBlur={() => setTimeout(() => setSuggestions([]), 120)}
           onKeyDown={(event) => {
             if (isComposing(event)) return;
+            if (event.key === "Tab" && !event.shiftKey && !text && nextPrompt && !running) {
+              event.preventDefault();
+              change(nextPrompt);
+              return;
+            }
             if (suggestions.length) {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();

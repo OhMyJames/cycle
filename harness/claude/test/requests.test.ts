@@ -26,6 +26,7 @@ test("the run settings are kept as numbers and names, and nothing else gets thro
     fallbackModel: "a,b",
     maxTurns: 5,
     maxBudgetUsd: 2.5,
+    promptSuggestions: false,
   });
   expect(keep({ fallbackModel: "" }).fallbackModel).toBeNull();
   for (const run of [

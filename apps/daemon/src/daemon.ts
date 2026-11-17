@@ -233,6 +233,15 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (event.type === "commands.changed") {
       push({ type: "commands.changed", sessionId: event.sessionId, commands: event.commands });
     }
+    // shortcut: a page opened after the suggestion came does not see it; upgrade when owners
+    // reopen sessions often enough to miss it.
+    if (event.type === "suggestion.changed") {
+      push({
+        type: "suggestion.changed",
+        sessionId: event.sessionId,
+        suggestion: event.suggestion,
+      });
+    }
     if (event.type !== "account.changed") return;
     const { error } = event;
     harness

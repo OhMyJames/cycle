@@ -828,6 +828,8 @@ export interface RunSettings {
   maxTurns: number | null;
   /** Most the agent may spend, in USD, from its process's start. It then stops the turn. */
   maxBudgetUsd: number | null;
+  /** The agent says, after a turn, what the owner might send next. */
+  promptSuggestions: boolean;
 }
 
 /** The hooks Cycle keeps for an agent, and how much of the owner's own configuration applies. */

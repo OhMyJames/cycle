@@ -96,6 +96,8 @@ export type HarnessEvent =
   | { type: "limits.changed"; harness: string }
   /** The commands a session's prompt can begin with changed, as skills were found. */
   | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
+  /** What the agent guesses the owner sends next, after a turn; null once it is stale. */
+  | { type: "suggestion.changed"; sessionId: string; suggestion: string | null }
   /** The harness of this name stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; harness: string; message: string };
 

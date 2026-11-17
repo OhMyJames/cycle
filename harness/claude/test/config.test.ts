@@ -66,7 +66,7 @@ test("the flag layer says what is on as plainly as what is off, since a running 
   let config = enableServer(emptyConfig(), "github", false);
   config = {
     ...config,
-    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
     ownerHooks: false,
     plugins: { "a@m": false },
     skillsOff: ["review"],
@@ -78,7 +78,7 @@ test("the flag layer says what is on as plainly as what is off, since a running 
         { id: "", event: "PreToolUse", matcher: "Bash", command: " echo hi ", timeout: 5 },
         { id: "h2", event: "PreToolUse", matcher: "", command: "true", timeout: null },
       ],
-      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
       ownerHooks: false,
       ownerSettings: true,
       revision: 0,
@@ -111,7 +111,7 @@ test("a hook is refused on an event Claude Code has none of, or with no command"
       emptyConfig(),
       {
         hooks: [{ ...hook, ...patch }],
-        run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+        run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
         ownerHooks: true,
         ownerSettings: true,
         revision: 0,
@@ -195,7 +195,7 @@ test("a name the owner turned off, or Cycle's tools have, is not given to a serv
 test("hooks read before another change are refused, not written over it", () => {
   const settings = {
     hooks: [],
-    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
     ownerHooks: false,
     ownerSettings: true,
     revision: 0,
@@ -216,7 +216,7 @@ test("a server or a plugin given back needs a new start: a running process does 
   expect(
     key({
       ...emptyConfig(),
-      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
       ownerHooks: false,
     }),
   ).toBe(key(emptyConfig()));

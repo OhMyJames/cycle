@@ -212,6 +212,8 @@ interface Running {
   costSeen: number | null;
   /** The owner was told this turn that a request is being made again: once is enough. */
   retrying: boolean;
+  /** A suggestion of what to send next is out there, to be taken back when a turn begins. */
+  suggested: boolean;
 }
 
 interface PendingApproval {
@@ -1345,6 +1347,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       commands: [],
       costSeen: null,
       retrying: false,
+      suggested: false,
     };
     try {
       running.commands = this.heard(
@@ -1472,6 +1475,10 @@ export class ClaudeHarness implements Agent, AgentReads {
     running.own = origin === undefined;
     running.notified = null;
     running.stopping = false;
+    if (running.suggested) {
+      running.suggested = false;
+      this.emit({ type: "suggestion.changed", sessionId: running.sessionId, suggestion: null });
+    }
     this.emit({
       type: "turn.started",
       sessionId: running.sessionId,
@@ -1534,6 +1541,15 @@ export class ClaudeHarness implements Agent, AgentReads {
           sessionId: running.sessionId,
           mode: each.permissionMode,
         });
+      }
+      return;
+    }
+    if (each.type === "prompt_suggestion") {
+      // It comes after the turn's result, which is when the owner is looking for what to say.
+      const suggestion = each.suggestion?.trim();
+      if (suggestion && running.turn === null) {
+        running.suggested = true;
+        this.emit({ type: "suggestion.changed", sessionId: running.sessionId, suggestion });
       }
       return;
     }

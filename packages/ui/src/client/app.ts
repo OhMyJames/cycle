@@ -206,6 +206,8 @@ export class CycleApp {
   readonly login = new Store<PendingLogin | null>(null);
   /** The commands each session's prompt can begin with, as its agent last said. */
   readonly commands = new Store<Record<string, SlashCommand[]>>({});
+  /** What each session's agent guesses its owner sends next. */
+  readonly nextPrompts = new Store<Record<string, string>>({});
   readonly providers = new Store<ModelProvider[]>([]);
   /** The owner's sandbox environments, and whether a sandbox can be made on the daemon's machine. */
   readonly sandboxes = new Store<{ available: boolean; environments: SandboxEnvironment[] }>({
@@ -1066,6 +1068,11 @@ export class CycleApp {
         break;
       case "commands.changed":
         this.commands.update((all) => ({ ...all, [event.sessionId]: event.commands }));
+        break;
+      case "suggestion.changed":
+        this.nextPrompts.update(({ [event.sessionId]: _old, ...rest }) =>
+          event.suggestion ? { ...rest, [event.sessionId]: event.suggestion } : rest,
+        );
         break;
       case "models.changed":
         this.models.set(event.models);

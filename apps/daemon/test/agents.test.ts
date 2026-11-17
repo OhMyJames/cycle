@@ -93,7 +93,7 @@ test("another agent that can change its connector does so itself, within what it
   await all.connector("other").putMcpServer({ name: "docs" } as never);
   await all.connector("other").setHooks({
     hooks: [],
-    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
     ownerHooks: true,
     ownerSettings: true,
     revision: 0,

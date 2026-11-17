@@ -424,6 +424,8 @@ export type DaemonEvent =
   | { type: "limits.changed"; account: AccountInfo }
   /** The commands a session's prompt can begin with changed. */
   | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
+  /** What the agent guesses the owner sends next in a session; null once it is stale. */
+  | { type: "suggestion.changed"; sessionId: string; suggestion: string | null }
   | { type: "models.changed"; models: ModelInfo[] }
   | { type: "providers.changed"; providers: ModelProvider[] }
   | { type: "sandboxes.changed"; environments: SandboxEnvironment[] }

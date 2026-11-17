@@ -68,6 +68,8 @@ export interface QueryOptions {
   settingSources: ("user" | "project" | "local")[];
   /** A settings file, the flag layer. Only its path goes on the command line. */
   settings?: string;
+  /** It says, after a turn, what the owner might send next; the stream goes on after the result. */
+  promptSuggestions?: boolean;
   /** Models it falls back to, in order, when the one in use is overloaded. Names only. */
   fallbackModel?: string;
   /** Claude Code stops after this many requests to the model, counted from its start. */

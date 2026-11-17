@@ -152,6 +152,8 @@ export interface WireMessage {
   permissionMode?: string;
   /** What the process has cost so far, in all. */
   total_cost_usd?: number;
+  /** A `prompt_suggestion`: what the owner might send next. */
+  suggestion?: string;
   // `api_retry`: a request failed and is made again.
   attempt?: number;
   max_retries?: number;

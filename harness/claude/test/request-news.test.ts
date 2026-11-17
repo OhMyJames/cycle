@@ -84,6 +84,21 @@ test("a turn that stopped at a limit fails with the limit named", async () => {
   expect(done && "error" in done ? done.error : "").toContain("most it may spend");
 });
 
+const suggestions = (events: HarnessEvent[]) =>
+  events.flatMap((event) => (event.type === "suggestion.changed" ? [event.suggestion] : []));
+
+test("a guess of what to send next comes after a turn, and is taken back when the next begins", async () => {
+  const { harness, session, events, query } = await begun({ promptSuggestions: true });
+  expect(query.options.promptSuggestions).toBe(true);
+  query.say({ type: "prompt_suggestion", suggestion: "ignored: a turn is running" });
+  query.say({ type: "result", subtype: "success", is_error: false });
+  query.say({ type: "prompt_suggestion", suggestion: "  Run the tests  " });
+  await settle();
+  expect(suggestions(events)).toEqual(["Run the tests"]);
+  await harness.send(session.id, { text: "ok", images: [] }, send);
+  expect(suggestions(events)).toEqual(["Run the tests", null]);
+});
+
 test("what the owner set for a process is what it starts with, and nothing when unset", async () => {
   const set = await begun({ fallbackModel: "a,b", maxTurns: 7, maxBudgetUsd: 1.5 });
   expect(set.query.options).toMatchObject({ fallbackModel: "a,b", maxTurns: 7, maxBudgetUsd: 1.5 });

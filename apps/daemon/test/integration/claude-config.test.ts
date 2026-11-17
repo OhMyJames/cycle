@@ -225,7 +225,7 @@ test("a hook kept in Cycle runs beside the owner's, and turning the owner's off 
           timeout: null,
         },
       ],
-      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
       ownerHooks: true,
       ownerSettings: true,
       revision: 0,
@@ -242,7 +242,7 @@ test("a hook kept in Cycle runs beside the owner's, and turning the owner's off 
     ...CLAUDE,
     settings: {
       ...kept,
-      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
       ownerHooks: false,
     },
   });

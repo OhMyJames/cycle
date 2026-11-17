@@ -162,7 +162,7 @@ test("without the owner's own settings, the user layer is not read", async () =>
   const { sdk, harness, config } = setup();
   await harness.setHooks({
     hooks: [],
-    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
     ownerHooks: true,
     ownerSettings: false,
     revision: 0,

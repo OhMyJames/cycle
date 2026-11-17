@@ -81,11 +81,21 @@ function RunFields({ run, onChange }: { run: RunSettings; onChange(run: RunSetti
     const maxTurns = numberOrNull(turns);
     const maxBudgetUsd = numberOrNull(budget);
     if (maxTurns === undefined || maxBudgetUsd === undefined) return;
-    const next = { fallbackModel: fallback.trim() || null, maxTurns, maxBudgetUsd };
+    const next = { ...run, fallbackModel: fallback.trim() || null, maxTurns, maxBudgetUsd };
     if (JSON.stringify(next) !== JSON.stringify(run)) onChange(next);
   };
   return (
     <div className="card">
+      <Setting
+        title="Suggest what to send next"
+        note="After a turn, Claude Code guesses your next message, which shows over the message box. It reuses the turn's prompt cache, so it costs next to nothing. It is left out in plan mode, on a session's first turn, and near your plan's usage limit."
+      >
+        <Switch
+          label="Suggest what to send next"
+          checked={run.promptSuggestions}
+          onChange={(promptSuggestions) => onChange({ ...run, promptSuggestions })}
+        />
+      </Setting>
       <Setting
         title="Fallback models"
         note="Model ids, separated by commas, that Claude Code tries in order when the one in use is overloaded. Empty: none."

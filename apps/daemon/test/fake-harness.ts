@@ -160,7 +160,7 @@ export class FakeHarness implements Harness {
   enableSkill = async () => {};
   readHooks = async () => ({
     hooks: [],
-    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
     ownerHooks: true,
     ownerSettings: true,
     revision: 0,

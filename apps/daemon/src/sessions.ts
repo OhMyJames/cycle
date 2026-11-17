@@ -888,7 +888,8 @@ export class SessionHub {
     if (
       event.type === "mcp.changed" ||
       event.type === "limits.changed" ||
-      event.type === "commands.changed"
+      event.type === "commands.changed" ||
+      event.type === "suggestion.changed"
     )
       return;
     const live = this.live.get(event.sessionId);
