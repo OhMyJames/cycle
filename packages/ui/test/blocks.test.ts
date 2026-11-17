@@ -340,3 +340,11 @@ test("a command that waits for the owner's answer has not begun to run", () => {
   expect(activityRow(waiting, true).action).toBe("Waiting to approve");
   expect(activityRow(item, true).action).toBe("Ran");
 });
+
+test("a command the agent described is a row of that sentence, and one it did not is the command", () => {
+  const item = run("c");
+  expect(activityRow(item).detail).toBe("npm test");
+  expect(activityRow({ ...item, description: "Run the tests" } as ActivityItem).detail).toBe(
+    "Run the tests",
+  );
+});
