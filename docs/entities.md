@@ -1,0 +1,212 @@
+# Entities
+
+The things Cycle's protocol is about, one card each. This is the first of three steps: the entities,
+then the operations on them, then the code. It follows [the glossary](glossary.md) and uses what
+[the comparison](protocol-comparison.md) found in the Claude Agent SDK, `codex app-server` and ACP.
+
+Status: **draft**, with the owner's decisions of 2026-11-17 in it. A card says **Decided** where the
+owner decided it and **Open** where it is not settled. Worktrees are not here: see the last section.
+What operations the entities have, and the events they give, is in [operations](operations.md).
+
+## The cards
+
+Each card answers the same five questions: what it is, who owns it (the **agent** keeps it, or
+**Cycle** does), how it is identified, how it lives, and what it is tied to.
+
+### Conversation
+
+**Session.** One conversation of one agent, in one workspace.
+
+- Owner: both. The agent keeps the conversation and its title, model, effort, times, fork source
+  and tag. Cycle keeps pin, unread, the schedule that started it, and the mode, environment and
+  extra directories chosen. Archive is the agent's where it has one.
+- Identity: the agent's id. Which agent: `Session.agent` (today `harness`).
+- Life: made by the owner or a schedule; loaded into an agent's process and let go of, which is not a
+  state of the session; archived; deleted for good (clients confirm first).
+- Tied to: an Agent, a Workspace, an Environment, its Turns, its Options, a Schedule that started it.
+- **Decided**: one `Session` type. Its fields are grouped by who keeps them, and where both say the
+  same thing (model, effort, sandbox, title, preview) the card says who wins. Today it is two types,
+  `HarnessSession` and `SessionInfo`.
+- **Decided**: the state is `idle | running | requires_action`, as in the SDK
+  (`session_state_changed`) and ACP version 2 (`state_update`). "Stored" becomes a separate flag, "loaded".
+  "Error" goes: it was the last turn's outcome. Today `SessionStatus` has five values and mixes the
+  three. `error` is set in one place, `statusOf` (`sessions.ts:777`); `stored` at `sessions.ts:674` (a
+  session not live), `:496` (archived) and `:763` (let go of from memory). Read them before changing it.
+
+**Turn.** One prompt and everything the agent does until it stops.
+
+- Owner: the agent. Identity: the agent's turn id.
+- Life: `running`, then `completed`, `interrupted` or `failed`, with a reason.
+- Tied to: a Session, its Items, who began it (owner, schedule, task, peer, agent), its diff, time taken.
+- **Decided**: a session state and a turn status are two things.
+- **Open**: the reasons. The SDK has `terminal_reason` (completed, max turns, budget, blocked, aborted…)
+  and ACP has `stopReason` (end turn, max tokens, max turn requests, refusal, cancelled, error). Where
+  Cycle keeps "the limit a turn stopped at" today was not looked at.
+
+**Item.** One thing in a turn.
+
+- Owner: the agent. Identity: the agent's item id; `parentId` puts a helper's work under its task.
+- Life: started, deltas, completed. Status `running`, `completed`, `failed`, `declined`.
+- Kinds today: user message, agent message, reasoning, plan, command, file change, tool call, web
+  search, agent call, image, wait, hook, task, agent activity, review, compaction, other.
+- **Decided**: typed, by what was done, so the page can show each its own way. A kind that is not
+  known is `other`. The SDK is typed by message and by tool; ACP and the SDK's tool calls are generic
+  with a name or a `kind`, so each harness maps its agent into these kinds and the protocol does not
+  carry the agent's own.
+
+**Approval.** The agent asks leave to do something.
+
+- Owner: asked by the agent, answered by the owner. Identity: an approval id.
+- Kinds: command, file change, permissions, tool, plan.
+- Answer: accept, accept for the session, decline, cancel; with rules kept for the session, an edited
+  input, a message on decline, and on a plan the mode to carry it out in.
+- Life: requested, then resolved. While one is open the session `requires_action`.
+- **Decided**: apart from Question. A plan is an approval, since the owner is giving leave.
+
+**Question.** The agent, or an MCP server, asks the owner for something.
+
+- Kinds: a choice (options, free text, a secret), a form (an MCP server's fields), a link (an MCP
+  server's page to finish). The answer is content, not leave.
+- Life and `requires_action`: as an Approval. Today `question` and `elicitation` are kinds of Approval.
+
+**Event.** What the daemon tells a page.
+
+- Owner: Cycle. A session's events are numbered frames (`seq`; the `epoch`, which names a run, is in the session state and in `session.open`'s
+  `after`) that a client
+  that was away can ask for again; the daemon keeps the last 512. Others are the daemon's own
+  (settings, models, providers, terminals, schedules and more).
+- Tied to: a Session, or none. Today `EventFrame`, `DaemonEvent`.
+- **Open**: what an agent tells the daemon (`HarnessEvent`) mixes events of one session with events of
+  the whole agent (MCP changed, account changed, limits changed, exited). [Operations](operations.md)
+  proposes two sets.
+
+### Choice
+
+**Agent.** The program that does the work: codex or Claude Code, as Cycle knows it.
+
+- Owner: Cycle lists them; what each can do is its own. Identity: its name.
+- Life: starts with the daemon, may be left out when it cannot start, may exit.
+- Tied to: its models, modes and efforts (Options), its Account, its extensions, its Sessions.
+- **Decided**: an entity. Today only `HarnessInfo { name, capabilities }`. The adapter that runs it is a
+  harness, and is not in the protocol.
+- **Decided**: it declares what it can do in one place. Today it is said twice: eleven fields
+  (`AgentCapabilities`) and seven optional methods. The shape is in [operations](operations.md).
+
+**Option.** A choice an agent declares and a session makes: model, effort, permission mode.
+
+- Owner: the agent declares; the session holds the choice; Cycle's defaults hold what a new session
+  starts with. Identity: an id and a category.
+- **Decided**: one declared list, as ACP's config option is: an id, a category (`mode`, `model`,
+  `thought_level`), its values, the current one. Today it is three fixed fields (`ModeInfo`,
+  `ModelInfo`, an effort string) written in four option records. The owner agreed the direction;
+  the fields are in [operations](operations.md).
+- **Decided**: a permission mode is the agent's own and the page draws the session's agent's. It says
+  what asks, not where the agent runs.
+
+**Environment.** Where a session's agent runs and what it can reach.
+
+- Owner: Cycle (`sandboxes.json`). Identity: an id. Fields: name, hosts, variables, CPUs, memory, a
+  setup script. A variable's value never goes to a page.
+- Life: made by the owner. Its backend is made on first use and again when what only making sets
+  changes.
+- Backends: the command sandbox of Claude Code on this machine (honors hosts, later folders), and a
+  container made with `sbx` (honors everything).
+- **Decided**: environment and sandbox are one concept, the container a backend of it, and the
+  command sandbox follows the session's environment and not its mode.
+- **Open**: see the end of the glossary.
+
+**Workspace.** The owner's folder that sessions work in. The same thing as a project.
+
+- Owner: Cycle (the projects in `settings.json`). Identity: its path, which is also its `cwd`.
+- **Decided**: workspace and project are one word; `cwd` is a property of it.
+- **Open**: a session an agent lists whose folder was never saved by the owner. Worktrees: below.
+
+### Extensions
+
+All five are an agent's, the same for each session of it unless a card says otherwise. Each has a
+source (the owner's, the project's, a plugin's, Cycle's) and an on or off switch.
+
+**McpServer.** A server that gives the agent tools.
+
+- Owner: the agent's configuration (codex's `config.toml`; for Claude Code, Cycle's `claude.json` over
+  the owner's own). Identity: its name.
+- Life: added, edited, enabled, signed in, removed. Status connected, failed, needs sign-in, pending,
+  disabled. Each tool of it can be off. Its environment values and headers never go to a page.
+- **Open**: its scope. codex and Cycle: one configuration. The SDK: a process. ACP: a session.
+
+**Plugin.** A package from a marketplace. It can provide McpServers, Skills, Hooks and Subagents.
+
+- Life: install, enable, uninstall. A marketplace is a source of them, part of this card.
+
+**Skill.** A named instruction the model can use. Listed for a folder; can be off.
+
+**Hook.** A command run on an event of the agent. Claude Code only. Cycle offers nine of the SDK's
+thirty-three events. The owner's own can all be turned off together, not one at a time.
+
+**Subagent.** The definition of a helper agent: a name, what it is for, a model.
+
+- **Decided**: a Subagent is a definition and a **Task** is one running, which is an Item. The two are
+  not mixed in a name.
+
+### Configuration and account
+
+**AgentSettings.** The knobs Cycle keeps for an agent: the models to fall back to, the most requests,
+the most to spend, whether it guesses what comes next, codex's helper-agent switch, and the owner's
+two switches (read my own settings, run my own hooks).
+
+- Owner: Cycle (`claude.json`). Reaches a session the next time its process starts.
+- **Decided**: apart from hooks. Today `RunSettings` is inside `HookSettings`.
+
+**Account.** The owner's sign-in with whoever serves an agent's models: its kind, email, plan.
+
+- Cycle signs the owner in for codex. Claude Code's sign-in is its own command line's.
+
+**Usage and limits.** Tokens and cost of a turn and a session, what fills the context, the plan's
+limit windows, and tokens for each day (numbers only, in `usage.json`).
+
+### Only Cycle
+
+**Schedule.** A prompt the daemon starts in a new session when it is due: once, every so many minutes,
+or daily on days. Owner: Cycle (`schedules.json`). The latest twenty runs are kept.
+
+**Provider.** A model service the owner keys in. Owner: Cycle (`providers.json`). The key goes to the
+daemon once and is never given back. A provider's model is `<provider id>/<model id>`.
+
+## Settings layers
+
+Four, and a setting lives in one: Cycle's defaults for a new session; the harness configuration;
+the owner's own configuration of an agent, read and never written; the project's own, which the
+agent reads. See the glossary.
+
+## Not here: worktrees
+
+The owner asked for a new design, since both agents have a notion of their own. What was found, so
+the design starts from it:
+
+- **Cycle today.** The daemon makes the worktree before the agent starts, with `git worktree add`
+  (`sessions.ts:254-255`, `git.ts:259`), under `CYCLE_HOME/worktrees`. The agent is given its folder as the
+  session's `cwd`. `WorktreeInfo` is the repository, the base commit and the branch, kept in
+  `sessions.json`. Removing it keeps the branch (`git.ts:267`). A session given a `sandbox` (an environment)
+  cannot have one (`sessions.ts:247`). A setting and a schedule's flag choose it for new sessions.
+- **Claude Code.** The model has tools, `EnterWorktree` (a new name, or the path of one that exists)
+  and `ExitWorktree` (`keep` or `remove`, which deletes the worktree and its branch). So the agent can
+  move its own folder in the middle of a session. There is a `worktree` settings group: directories to
+  link from the main checkout, sparse paths, which ref to branch from (`fresh` or `head`), where they
+  go, and `bgIsolation`, whose default blocks edits in the main checkout of a background session until
+  a worktree is entered. Hooks `WorktreeCreate` and `WorktreeRemove` exist, and `listSessions` takes
+  `includeWorktrees`, on by default.
+- **codex.** Its binary has the names `create_worktree`, `list_worktrees`, `--worktree` and an
+  `is_worktree` in its session start. Whether the app-server offers it, or the model can call it,
+  was not checked.
+
+Questions the design has to answer: who makes one (Cycle, the agent, or either); what a session's
+`cwd` and branch are when the agent enters one in the middle of a turn; where they live; whether
+removing one removes its branch; how sessions of a worktree group under their workspace; and what
+`bgIsolation` does to a session Cycle starts.
+
+## What else this changes
+
+When the entities are agreed, these words in other files follow: "Connector" (a page's name, not the
+protocol's; it is in `CLAUDE.md`, the glossary and the harness map), the `Agent` part of `Harness`
+(to `Sessions`), `Session.harness` (to `agent`), `SessionMode` (to `PermissionMode`), and the sandbox
+fields. No code or other file has been changed.
