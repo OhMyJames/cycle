@@ -32,7 +32,7 @@ WantedBy=default.target
 `systemctl --user daemon-reload && systemctl --user enable --now cycle-daemon`, and
 `loginctl enable-linger $USER` so it runs while you are logged out. `CYCLE_HOME` must be an
 absolute path; it is where `daemon.json`, settings and sessions live on the server. If you use
-another one, give the same path as the server's "Cycle home" in Settings, Remote servers.
+another one, give the same path as the server's "Folder" in Settings, Remote servers.
 
 ## How Cycle connects
 
