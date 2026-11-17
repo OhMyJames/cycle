@@ -397,6 +397,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       login: false,
       features: false,
       hooks: edits,
+      mcpReconnect: true,
     };
   }
 
@@ -830,6 +831,19 @@ export class ClaudeHarness implements Agent, AgentReads {
 
   async removeMcpServer(name: string): Promise<void> {
     await this.change((config) => removeServer(config, name));
+  }
+
+  /**
+   * Connects a server again in the process that runs on this machine, which is the one whose word
+   * the Connector gives. Another session's process, which began with it failed, keeps it failed
+   * until it starts again.
+   */
+  async reconnectMcpServer(name: string): Promise<void> {
+    const running = this.here();
+    if (!running) throw new Error("No Claude Code session is running to connect it in. Start one.");
+    await running.query.reconnectMcpServer(name);
+    // What the Connector last read is no longer so.
+    this.mcp = null;
   }
 
   async enableMcpServer(name: string, enabled: boolean): Promise<void> {

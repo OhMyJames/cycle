@@ -232,6 +232,8 @@ export interface Connector {
   enableMcpTool(name: string, tool: string, enabled: boolean): Promise<void>;
   /** Starts a sign-in and answers where the owner finishes it. */
   loginMcpServer(name: string): Promise<{ url: string }>;
+  /** Connects a server again, in the process that runs. With the `mcpReconnect` capability. */
+  reconnectMcpServer?(name: string): Promise<void>;
   listPlugins(): Promise<PluginCatalog>;
   readPlugin(marketplace: string, name: string): Promise<PluginDetail>;
   installPlugin(marketplace: string, name: string): Promise<void>;

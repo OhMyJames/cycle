@@ -133,6 +133,8 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   /** `summary` answers from the last request's usage, with no request of its own. */
   getContextUsage(options: { detail: "summary" | "full" }): Promise<WireContextUsage>;
   rewindFiles(userMessageId: string, options: { dryRun: boolean }): Promise<WireRewindFilesResult>;
+  /** Connects one of its MCP servers again. Fails if it cannot. */
+  reconnectMcpServer(name: string): Promise<void>;
   /** Sets the MCP servers given to this process alone, over its own pipe. */
   setMcpServers(servers: Record<string, unknown>): Promise<unknown>;
   /**

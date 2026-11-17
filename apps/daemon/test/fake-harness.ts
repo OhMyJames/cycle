@@ -25,6 +25,7 @@ export class FakeHarness implements Harness {
     connector: "edit",
     login: true,
     features: true,
+    mcpReconnect: false,
     hooks: false,
   };
   readonly sent: { sessionId: string; text: string }[] = [];

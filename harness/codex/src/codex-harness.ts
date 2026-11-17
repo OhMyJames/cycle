@@ -167,6 +167,7 @@ export class CodexHarness implements Harness {
     login: true,
     features: true,
     hooks: false,
+    mcpReconnect: false,
   };
   private readonly provider: ExtraProvider | null;
   /** Codex's own models, and the machine: files, commands, terminals, the account. */

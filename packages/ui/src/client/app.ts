@@ -79,6 +79,7 @@ export const NO_CAPABILITIES: AgentCapabilities = {
   connector: "read",
   login: false,
   features: false,
+  mcpReconnect: false,
   hooks: false,
 };
 
@@ -785,6 +786,10 @@ export class CycleApp {
 
   enableMcpServer(name: string, enabled: boolean): Promise<boolean> {
     return this.mcpDid(this.request("mcp.enable", { name, enabled, ...this.agent() }));
+  }
+
+  reconnectMcpServer(name: string): Promise<boolean> {
+    return this.mcpDid(this.request("mcp.reconnect", { name, ...this.agent() }));
   }
 
   enableMcpTool(name: string, tool: string, enabled: boolean): Promise<boolean> {

@@ -550,6 +550,8 @@ export interface AgentCapabilities {
   features: boolean;
   /** Cycle keeps hooks for it, and can turn the owner's own off: `hooks.*`, `skills.enable`. */
   hooks: boolean;
+  /** A server that failed can be connected again in a process that runs: `mcp.reconnect`. */
+  mcpReconnect: boolean;
 }
 
 /** An agent the daemon runs, and what it can do. */

@@ -30,6 +30,7 @@ function setup() {
     connector: "read",
     login: false,
     features: false,
+    mcpReconnect: false,
     hooks: false,
   };
   const all = new Harnesses(main, [other]);

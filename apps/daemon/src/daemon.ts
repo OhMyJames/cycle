@@ -523,6 +523,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       mcpChange(name, () => harness.connector(name).enableMcpServer(server, enabled)),
     "mcp.enableTool": ({ name: server, tool, enabled, harness: name }) =>
       mcpChange(name, () => harness.connector(name).enableMcpTool(server, tool, enabled)),
+    "mcp.reconnect": ({ name: server, harness: name }) =>
+      mcpChange(name, async () => {
+        const reconnect = harness.connector(name).reconnectMcpServer;
+        if (!reconnect)
+          throw new NotSupported(`${name ?? harness.name} cannot reconnect a server.`);
+        await reconnect(server);
+      }),
     "mcp.login": ({ name: server, harness: name }) =>
       harness.connector(name).loginMcpServer(server),
     "plugins.list": ({ harness: name }) => harness.connector(name).listPlugins(),

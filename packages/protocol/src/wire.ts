@@ -265,6 +265,11 @@ export interface Methods {
     params: { name: string; tool: string; enabled: boolean } & OfHarness;
     result: { servers: McpServerInfo[] };
   };
+  /** Connects a server again, in the agent's process that runs. */
+  "mcp.reconnect": {
+    params: { name: string } & OfHarness;
+    result: { servers: McpServerInfo[] };
+  };
   /** Starts a sign-in. The owner finishes it at `url`; `mcp.changed` follows. */
   "mcp.login": { params: { name: string } & OfHarness; result: { url: string } };
   "plugins.list": { params: OfHarness; result: PluginCatalog };

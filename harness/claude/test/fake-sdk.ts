@@ -78,6 +78,11 @@ export class FakeQuery implements ClaudeQuery {
   stopTask = async (taskId: string) => {
     this.stopped.push(taskId);
   };
+  /** The servers it was asked to connect again. */
+  readonly reconnects: string[] = [];
+  reconnectMcpServer = async (name: string) => {
+    this.reconnects.push(name);
+  };
   setMcpServers = async (servers: Record<string, unknown>) => {
     this.servers = servers;
   };
