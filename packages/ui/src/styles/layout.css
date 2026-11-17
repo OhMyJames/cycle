@@ -576,6 +576,8 @@
   border-radius: var(--radius-card);
   background: var(--surface-composer);
   box-shadow: var(--shadow-popover);
+  /* It floats over the title bar's drag region, which would otherwise take its clicks. */
+  -webkit-app-region: no-drag;
 }
 .panel > :not(.resizer):first-of-type {
   border-radius: var(--radius-card) var(--radius-card) 0 0;
