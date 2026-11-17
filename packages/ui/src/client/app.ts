@@ -38,7 +38,7 @@ import {
 import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
 import { Connection, type ConnectionStatus, DaemonError } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
-import { type RemoteView, UNREACHABLE } from "../lib/remote.ts";
+import { type RemoteView, UNREACHABLE, isRemote } from "../lib/remote.ts";
 import { Store } from "./store.ts";
 import { draftKey, opening } from "../lib/opening.ts";
 import { plainMentions } from "../lib/suggest.ts";
@@ -485,9 +485,13 @@ export class CycleApp {
     });
   }
 
-  /** Asks the owner for a folder: the host's chooser, or the page's own where there is none. */
+  /**
+   * Asks the owner for a folder: the host's chooser, or the page's own where there is none. The
+   * host's chooser picks a folder of this computer, so a window on a remote server uses the page's,
+   * which lists the server's folders through its daemon.
+   */
   chooseFolder(): Promise<string | null> {
-    const native = host.pickDirectory();
+    const native = isRemote(this.remote.get()) ? null : host.pickDirectory();
     if (native) return native;
     this.folderChosen?.(null);
     this.setView({ folderPicker: true, palette: false });

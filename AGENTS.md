@@ -204,6 +204,10 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   platform binary inside; `bun run desktop:install` puts it in `/Applications/Cycle Codex.app`. Claude
   Code is not carried: a packaged app uses the owner's own `claude` from their `PATH`. A
   packaged app starts its daemon with the owner's login shell environment, since Finder gives none.
+  The window can instead show a daemon on a server, reached through an ssh tunnel (`apps/desktop/src/remote`,
+  `window.cycle.remote`); then the page uses its own folder chooser on the server's folders, a version
+  difference is warned in the sidebar, and notifications and the app's update stay local. How to run
+  that daemon: [docs/remote-daemon.md](docs/remote-daemon.md).
 - The packaged macOS app updates itself from the GitHub releases of `OhMyJames/cycle`
   (`apps/desktop/src/update`): `plan.ts` and `updater.ts` are the decisions, `system.ts` what they do
   to the network and the disk. The main process looks for a newer release when its page is there,

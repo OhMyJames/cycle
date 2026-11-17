@@ -7,6 +7,8 @@ import {
   serverStatus,
   serverTone,
   whereLabel,
+  isRemote,
+  remoteWarning,
 } from "../src/lib/remote.ts";
 
 const server: RemoteServer = { id: "a", name: "Build", target: "me@build" };
@@ -47,4 +49,16 @@ test("the window says where it is, and a server only its own state", () => {
   expect(serverTone(state, "a")).toBe("waiting");
   expect(serverTone({ status: "connected", id: "a" }, "a")).toBe("ok");
   expect(serverTone({ status: "idle" }, "a")).toBeNull();
+});
+
+test("a window on a server is remote, and its version warning shows only while connected", () => {
+  expect(isRemote(null)).toBe(false);
+  expect(isRemote(view({ status: "idle" }))).toBe(false);
+  expect(isRemote(view({ status: "connecting", id: "a" }))).toBe(false);
+  expect(isRemote(view({ status: "connected", id: "a" }))).toBe(true);
+  expect(isRemote(view({ status: "reconnecting", id: "a", attempt: 1 }))).toBe(true);
+  expect(remoteWarning(view({ status: "connected", id: "a", warning: "Older." }))).toBe("Older.");
+  expect(remoteWarning(view({ status: "connected", id: "a" }))).toBeNull();
+  expect(remoteWarning(view({ status: "reconnecting", id: "a", attempt: 1 }))).toBeNull();
+  expect(remoteWarning(null)).toBeNull();
 });
