@@ -1328,6 +1328,17 @@
   }
 }
 
+/* A server on another version says so in the sidebar, in words that wrap. */
+.where-warning {
+  height: auto;
+  min-height: 28px;
+  padding-block: 4px;
+  align-items: flex-start;
+}
+.where-warning .nav-icon {
+  color: var(--state-warning);
+}
+
 /* An update that waits goes somewhere, so its icon is the link color. */
 .update-ready .nav-icon {
   color: var(--accent-interactive);

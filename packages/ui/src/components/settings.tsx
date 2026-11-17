@@ -7,6 +7,7 @@ import { useApp } from "../context.ts";
 import { accountDetails, accountTitle, limitText } from "../lib/account.ts";
 import { compactNumber, tildePath } from "../lib/format.ts";
 import { modeNamed, modesOf } from "../lib/modes.ts";
+import { isRemote } from "../lib/remote.ts";
 import { updateOffer } from "../lib/update.ts";
 import { Segmented, Setting, Switch } from "./controls.tsx";
 import { Icon } from "./icons.tsx";
@@ -157,10 +158,15 @@ function UsageChart() {
 function AppUpdate() {
   const app = useApp();
   const update = useStore(app.update, (value) => value);
+  const remote = useStore(app.remote, isRemote);
   if (!update) return null;
   const offer = updateOffer(update);
+  // The app is this computer's, whichever server the window shows: say so while one is shown.
+  const note = remote
+    ? `${offer.note} This is the app on this computer, not the server.`
+    : offer.note;
   return (
-    <Setting title={`Version ${update.current}`} note={offer.note}>
+    <Setting title={`Version ${update.current}`} note={note}>
       <button
         type="button"
         className={offer.primary ? "button primary" : "button"}

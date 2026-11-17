@@ -84,6 +84,16 @@ export function serverTone(state: RemoteState, id: string): "ok" | "waiting" | "
   return state.status === "failed" ? "error" : "waiting";
 }
 
+/** Whether the window shows a remote server's page, so paths and commands are that machine's. */
+export function isRemote(view: RemoteView | null): boolean {
+  return !!view && (view.state.status === "connected" || view.state.status === "reconnecting");
+}
+
+/** The app's note that it and the server's daemon differ in version, while the window shows it. */
+export function remoteWarning(view: RemoteView | null): string | null {
+  return view?.state.status === "connected" ? (view.state.warning ?? null) : null;
+}
+
 /**
  * The footer's words for where agents run commands, or null on this computer. A connection being
  * made, or one that failed, leaves the window on this computer, so it says nothing of them.

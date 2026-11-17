@@ -20,7 +20,7 @@ import {
   shortTime,
   tildePath,
 } from "../lib/format.ts";
-import { whereLabel } from "../lib/remote.ts";
+import { remoteWarning, whereLabel } from "../lib/remote.ts";
 import { ApprovalCard } from "./approval.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
@@ -407,19 +407,31 @@ const THEMES = [
 function WhereBadge() {
   const app = useApp();
   const label = useStore(app.remote, whereLabel);
+  const warning = useStore(app.remote, remoteWarning);
   if (label === null) return null;
+  const open = () => app.setView({ page: "settings", settingsSection: "remotes" });
   return (
-    <button
-      type="button"
-      className="nav-row update-ready"
-      title="Agents run their commands on that server, not on this computer"
-      onClick={() => app.setView({ page: "settings", settingsSection: "remotes" })}
-    >
-      <span className="nav-icon">
-        <Icon name="globe" />
-      </span>
-      <span className="grow fade-x">{label}</span>
-    </button>
+    <>
+      <button
+        type="button"
+        className="nav-row update-ready"
+        title="Agents run their commands on that server, not on this computer"
+        onClick={open}
+      >
+        <span className="nav-icon">
+          <Icon name="globe" />
+        </span>
+        <span className="grow fade-x">{label}</span>
+      </button>
+      {warning ? (
+        <button type="button" className="nav-row where-warning" role="status" onClick={open}>
+          <span className="nav-icon">
+            <Icon name="warning" />
+          </span>
+          <span className="grow">{warning}</span>
+        </button>
+      ) : null}
+    </>
   );
 }
 
