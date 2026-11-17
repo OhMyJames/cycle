@@ -89,6 +89,7 @@ export const RULES: Readonly<Record<string, PackageRule>> = {
           "src/package/",
           "src/install/",
           "src/update/",
+          "src/remote/",
           "build.ts",
         ],
         workspace: [],

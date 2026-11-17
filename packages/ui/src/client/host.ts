@@ -27,6 +27,43 @@ export interface UpdateBridge {
   onState(listener: (state: UpdateState) => void): () => void;
 }
 
+/** A server the desktop app reaches through ssh: names and an ssh target only, never a secret. */
+export type RemoteServer = {
+  readonly id: string;
+  readonly name: string;
+  /** `user@host` or an alias of the owner's ssh config. */
+  readonly target: string;
+  /** The server's CYCLE_HOME, when it is not `~/.cycle-codex`. */
+  readonly home?: string;
+};
+
+export type RemoteInput = Omit<RemoteServer, "id">;
+
+export type RemoteResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: string };
+
+/** Where the desktop app is with the remote server it shows. `reason` and `warning` are short texts. */
+export type RemoteState =
+  | { readonly status: "idle" }
+  | { readonly status: "connecting"; readonly id: string }
+  | { readonly status: "connected"; readonly id: string; readonly warning?: string }
+  | { readonly status: "reconnecting"; readonly id: string; readonly attempt: number }
+  | { readonly status: "failed"; readonly id: string; readonly reason: string };
+
+/** Present in the desktop app. The page never receives a token or ssh's own output. */
+export interface RemoteBridge {
+  list(): Promise<readonly RemoteServer[]>;
+  add(input: RemoteInput): Promise<RemoteResult<RemoteServer>>;
+  update(id: string, input: RemoteInput): Promise<RemoteResult<RemoteServer>>;
+  remove(id: string): Promise<void>;
+  /** Shows that server's page, or this machine's own when given null. */
+  connect(id: string | null): Promise<void>;
+  state(): Promise<RemoteState>;
+  /** Calls back on every change. Returns what stops it. */
+  onState(listener: (state: RemoteState) => void): () => void;
+}
+
 export interface HostBridge {
   /** A native folder chooser, or null where there is none. */
   pickDirectory?: () => Promise<string | null>;
@@ -35,6 +72,7 @@ export interface HostBridge {
   /** Whether the window draws its own title bar, so the page leaves room for its buttons. */
   insetTitleBar?: boolean;
   update?: UpdateBridge;
+  remote?: RemoteBridge;
 }
 
 declare global {

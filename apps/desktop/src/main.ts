@@ -27,6 +27,11 @@ import { BUILD_FILE, type BuildInfo, LINUX_ICON, PRELOAD } from "./shared/layout
 import { updatesFolder } from "./update/plan";
 import { systemPorts } from "./update/system";
 import { createUpdater } from "./update/updater";
+import { createRemoteConnection } from "./remote/connection";
+import { connectionPorts, remotesFile } from "./remote/system";
+import { RemoteStore } from "./remote/store";
+import type { RemoteState } from "./shared/remote-state";
+import { randomUUID } from "node:crypto";
 
 /** A packaged app carries its daemon and codex; a repository run uses the repository's. */
 const packaged = existsSync(path.join(app.getAppPath(), BUILD_FILE));
@@ -43,6 +48,11 @@ const FOCUS_UPDATE_CHECK_MS = 5 * 60 * 1000;
 
 let daemonProcess: ChildProcess | null = null;
 let pageOrigin = "";
+/** What the window shows now, which a window made again shows too. */
+let currentUrl = "";
+/** This machine's own daemon's page, which the app returns to. */
+let localUrl = "";
+let stopRemote: (() => void) | undefined;
 
 // Finder gives an app a bare environment. Agents and MCP servers need what a
 // terminal has: the `PATH` and proxy variables of the owner's shell profile.
@@ -165,6 +175,72 @@ function createWindow(pageUrl: string): void {
   void window.loadURL(pageUrl);
 }
 
+/** Shows a page in the window, and lets the bridge answer to that page alone. */
+function load(url: string): void {
+  pageOrigin = new URL(url).origin;
+  currentUrl = url;
+  const window = BrowserWindow.getAllWindows()[0];
+  if (window) void window.loadURL(url);
+}
+
+/**
+ * Remote servers: the list is kept here, beside the owner's other local files, and a server is
+ * reached through an ssh tunnel that this process owns. The page is told a state, never a token.
+ */
+async function startRemotes(): Promise<void> {
+  const loginEnv = await readOwnerEnv();
+  const env = { ...process.env, ...loginEnv };
+  const home = env["CYCLE_HOME"] ?? path.join(os.homedir(), ".cycle-codex");
+  const store = new RemoteStore(remotesFile(home), () => randomUUID());
+  const connection = createRemoteConnection(
+    connectionPorts({
+      env,
+      localOrigin: () => new URL(localUrl).origin,
+      show: (url) => load(url),
+      onState: (state: RemoteState) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send("cycle:remotes-state", state);
+        }
+      },
+    }),
+  );
+  stopRemote = () => connection.disconnect();
+  const backToLocal = (): void => {
+    connection.disconnect();
+    if (currentUrl !== localUrl) load(localUrl);
+  };
+  ipcMain.handle("cycle:remotes-list", (event) => (fromPage(event) ? store.list() : []));
+  ipcMain.handle("cycle:remotes-add", (event, input: unknown) =>
+    fromPage(event) ? store.add(input) : { ok: false, error: "Not allowed." },
+  );
+  ipcMain.handle("cycle:remotes-update", (event, id: unknown, input: unknown) =>
+    fromPage(event) && typeof id === "string"
+      ? store.update(id, input)
+      : { ok: false, error: "Not allowed." },
+  );
+  ipcMain.handle("cycle:remotes-remove", async (event, id: unknown) => {
+    if (!fromPage(event) || typeof id !== "string") return;
+    const state = connection.state();
+    if (state.status !== "idle" && state.id === id) backToLocal();
+    await store.remove(id);
+  });
+  ipcMain.handle("cycle:remotes-state", (event) =>
+    fromPage(event) ? connection.state() : { status: "idle" },
+  );
+  ipcMain.handle("cycle:remotes-connect", async (event, id: unknown) => {
+    if (!fromPage(event)) return;
+    const remote = typeof id === "string" ? await store.get(id) : undefined;
+    if (!remote) {
+      backToLocal();
+      return;
+    }
+    await connection.connect(remote);
+    // A server that cannot be reached leaves the owner on this machine's own page, whose
+    // Settings show why, rather than on a page whose tunnel has just been closed.
+    if (connection.state().status === "failed" && currentUrl !== localUrl) load(localUrl);
+  });
+}
+
 /**
  * The app's own updates: looked for shortly after it starts, then every few hours, and when the
  * owner asks. A found one is downloaded, and installed only when the owner says so in the page,
@@ -220,6 +296,8 @@ async function start(): Promise<void> {
     return;
   }
   pageOrigin = new URL(pageUrl).origin;
+  localUrl = pageUrl;
+  currentUrl = pageUrl;
 
   ipcMain.handle("cycle:pick-directory", async (event) => {
     if (!fromPage(event)) return null;
@@ -250,6 +328,12 @@ async function start(): Promise<void> {
     }
   }
 
+  try {
+    await startRemotes();
+  } catch (error) {
+    console.error(`[cycle] remote servers are off: ${String(error)}`);
+  }
+
   createWindow(pageUrl);
   if (checkForUpdates) {
     // As soon as the page is there, and again whenever the owner comes back to it.
@@ -257,13 +341,13 @@ async function start(): Promise<void> {
     app.on("browser-window-focus", () => checkForUpdates?.());
   }
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(pageUrl);
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(currentUrl);
   });
   // A second launch of the packaged app ends at once and leaves this one in front.
   app.on("second-instance", () => {
     const window = BrowserWindow.getAllWindows()[0];
     if (!window) {
-      createWindow(pageUrl);
+      createWindow(currentUrl);
       return;
     }
     if (window.isMinimized()) window.restore();
@@ -280,4 +364,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("will-quit", () => daemonProcess?.kill());
+app.on("will-quit", () => {
+  stopRemote?.();
+  daemonProcess?.kill();
+});
