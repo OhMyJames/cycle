@@ -33,6 +33,12 @@ export class RemoteStore {
     return next;
   }
 
+  /** The list in memory changes only once the file has it, so a write that fails leaves both as they were. */
+  async #save(next: RemoteServer[]): Promise<void> {
+    await this.#file.write(serializeRemotes(next));
+    this.#remotes = next;
+  }
+
   async list(): Promise<readonly RemoteServer[]> {
     return this.#change((remotes) => [...remotes]);
   }
@@ -42,8 +48,7 @@ export class RemoteStore {
       const checked = checkInput(input);
       if (!checked.ok) return checked;
       const remote: RemoteServer = { id: this.#newId(), ...checked.value };
-      remotes.push(remote);
-      await this.#file.write(serializeRemotes(remotes));
+      await this.#save([...remotes, remote]);
       return { ok: true, value: remote };
     });
   }
@@ -55,8 +60,7 @@ export class RemoteStore {
       const checked = checkInput(input);
       if (!checked.ok) return checked;
       const remote: RemoteServer = { id, ...(checked.value as RemoteInput) };
-      remotes[at] = remote;
-      await this.#file.write(serializeRemotes(remotes));
+      await this.#save(remotes.map((r, i) => (i === at ? remote : r)));
       return { ok: true, value: remote };
     });
   }
@@ -65,8 +69,7 @@ export class RemoteStore {
     return this.#change(async (remotes) => {
       const at = remotes.findIndex((r) => r.id === id);
       if (at === -1) return;
-      remotes.splice(at, 1);
-      await this.#file.write(serializeRemotes(remotes));
+      await this.#save(remotes.filter((_, i) => i !== at));
     });
   }
 

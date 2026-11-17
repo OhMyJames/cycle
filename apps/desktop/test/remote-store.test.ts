@@ -48,3 +48,19 @@ test("two quick additions both land", async () => {
   await Promise.all([store.add({ name: "A", target: "a" }), store.add({ name: "B", target: "b" })]);
   expect((await store.list()).map((r) => r.name)).toEqual(["A", "B"]);
 });
+
+test("a write that fails leaves the list as it was", async () => {
+  let failing = false;
+  const file: TextFile = {
+    read: async () => undefined,
+    write: async () => {
+      if (failing) throw new Error("disk full");
+    },
+  };
+  const store = new RemoteStore(file, () => "id");
+  await store.add({ name: "A", target: "a" });
+  failing = true;
+  await expect(store.add({ name: "B", target: "b" })).rejects.toThrow("disk full");
+  await expect(store.remove("id")).rejects.toThrow("disk full");
+  expect((await store.list()).map((r) => r.name)).toEqual(["A"]);
+});
