@@ -10,6 +10,8 @@ import {
   remoteInput,
   serverStatus,
   serverTone,
+  runTest,
+  testLine,
 } from "../lib/remote.ts";
 import { Icon } from "./icons.tsx";
 
@@ -110,6 +112,8 @@ function ServerRow({
   const app = useApp();
   const state = useStore(app.remote, (view) => view?.state ?? { status: "idle" as const });
   const [removing, setRemoving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [found, setFound] = useState<ReturnType<typeof testLine> | null>(null);
   const tone = serverTone(state, server.id);
   const status = serverStatus(state, server.id);
   const here = state.status !== "idle" && state.id === server.id;
@@ -124,6 +128,14 @@ function ServerRow({
     await app.refreshRemote();
   };
   const bridge = host.remote();
+  const test = async () => {
+    if (!bridge) return;
+    setFound(null);
+    setTesting(true);
+    const result = await runTest(() => bridge.test(server.id));
+    setTesting(false);
+    setFound(testLine(result));
+  };
   return (
     <div className="setting">
       {tone ? <span className={`dot ${tone === "ok" ? "" : tone}`} aria-hidden="true" /> : null}
@@ -134,6 +146,14 @@ function ServerRow({
             ? "Remove it from this list. Nothing changes on the server."
             : [server.target, status].filter(Boolean).join(" · ")}
         </div>
+        {found && !removing ? (
+          <div
+            className={`caption ${found.tone === "error" ? "tone-error" : "muted"}`}
+            role={found.tone === "error" ? "alert" : "status"}
+          >
+            {found.text}
+          </div>
+        ) : null}
       </div>
       {removing ? (
         <>
@@ -157,6 +177,9 @@ function ServerRow({
             onClick={() => void run(() => bridge?.connect(server.id) ?? Promise.resolve())}
           >
             {here && state.status === "failed" ? "Try again" : "Connect"}
+          </button>
+          <button type="button" className="button" disabled={testing} onClick={() => void test()}>
+            {testing ? "Testing…" : "Test"}
           </button>
           <button type="button" className="button" onClick={onEdit}>
             Edit

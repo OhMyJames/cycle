@@ -51,6 +51,16 @@ export type RemoteState =
   | { readonly status: "reconnecting"; readonly id: string; readonly attempt: number }
   | { readonly status: "failed"; readonly id: string; readonly reason: string };
 
+/** What a test of a server found. `connected` is set when the window already holds a live tunnel to it. */
+export type RemoteTestResult =
+  | {
+      readonly ok: true;
+      readonly version?: string;
+      readonly warning?: string;
+      readonly connected?: true;
+    }
+  | { readonly ok: false; readonly reason: string };
+
 /** Present in the desktop app. The page never receives a token or ssh's own output. */
 export interface RemoteBridge {
   list(): Promise<readonly RemoteServer[]>;
@@ -60,6 +70,8 @@ export interface RemoteBridge {
   /** Shows that server's page, or this machine's own when given null. */
   connect(id: string | null): Promise<void>;
   state(): Promise<RemoteState>;
+  /** Goes through the steps of a connection and closes the tunnel, leaving the window as it is. */
+  test(id: string): Promise<RemoteTestResult>;
   /** Calls back on every change. Returns what stops it. */
   onState(listener: (state: RemoteState) => void): () => void;
 }

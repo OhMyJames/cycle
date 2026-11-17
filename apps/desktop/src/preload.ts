@@ -22,6 +22,7 @@ const remote: RemoteBridge = {
   remove: (id) => ipcRenderer.invoke("cycle:remotes-remove", id),
   connect: (id) => ipcRenderer.invoke("cycle:remotes-connect", id),
   state: () => ipcRenderer.invoke("cycle:remotes-state"),
+  test: (id) => ipcRenderer.invoke("cycle:remotes-test", id),
   onState: (listener) => {
     const heard = (_event: IpcRendererEvent, state: RemoteState): void => listener(state);
     ipcRenderer.on("cycle:remotes-state", heard);
