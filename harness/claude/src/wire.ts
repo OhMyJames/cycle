@@ -239,6 +239,8 @@ export interface WireSessionInfo {
   summary: string;
   lastModified: number;
   customTitle?: string;
+  /** The label the owner put on it. */
+  tag?: string;
   firstPrompt?: string;
   gitBranch?: string;
   cwd?: string;

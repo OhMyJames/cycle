@@ -181,6 +181,8 @@ export interface Methods {
       model?: string;
       effort?: string | null;
       mode?: SessionMode;
+      /** A label for the conversation; null takes it off. Only where the agent keeps one. */
+      tag?: string | null;
     };
     result: SessionInfo;
   };

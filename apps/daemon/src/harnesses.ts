@@ -135,6 +135,12 @@ export class Harnesses implements Agents {
     await (await this.of(sessionId)).renameSession(sessionId, title);
   }
 
+  async tagSession(sessionId: string, tag: string | null): Promise<void> {
+    const agent = await this.of(sessionId);
+    if (!agent.capabilities.tags || !agent.tagSession) unsupported(agent.name, "Tagging a session");
+    await agent.tagSession(sessionId, tag);
+  }
+
   async archiveSession(sessionId: string, archived: boolean): Promise<void> {
     await (await this.of(sessionId)).archiveSession(sessionId, archived);
   }

@@ -402,6 +402,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       hooks: edits,
       mcpReconnect: true,
       subagents: true,
+      tags: true,
     };
   }
 
@@ -572,6 +573,13 @@ export class ClaudeHarness implements Agent, AgentReads {
     // One with no turn yet has no place for a name: the client keeps the owner's own.
     if (known.stored)
       await this.sdkFor(known).renameSession(sessionId, title, { dir: this.cwdOf(known) });
+  }
+
+  /** Tags a conversation, or takes the tag off. One with no turn yet has no file to keep it in. */
+  async tagSession(sessionId: string, tag: string | null): Promise<void> {
+    const known = await this.find(sessionId);
+    if (!known.stored) throw new Error("A tag goes on a conversation once it has had a turn.");
+    await this.sdkFor(known).tagSession(sessionId, tag, { dir: this.cwdOf(known) });
   }
 
   async archiveSession(sessionId: string, archived: boolean): Promise<void> {

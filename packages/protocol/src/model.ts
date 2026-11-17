@@ -381,6 +381,8 @@ export interface SessionInfo {
   unread: boolean;
   /** The session this one was forked from. */
   forkedFrom: string | null;
+  /** A label the owner put on it, where the agent keeps one. Absent: none. */
+  tag?: string;
   /** The schedule whose run started it. It stays after the schedule is deleted. */
   scheduleId: string | null;
 }
@@ -554,6 +556,8 @@ export interface AgentCapabilities {
   mcpReconnect: boolean;
   /** It lists the helper agents a session can start: `subagents.list`. */
   subagents: boolean;
+  /** A conversation can carry a tag the owner sets: `session.update`'s `tag`. */
+  tags: boolean;
 }
 
 /** A helper agent an agent can start, as it lists them. */

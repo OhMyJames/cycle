@@ -32,6 +32,7 @@ function setup() {
     features: false,
     mcpReconnect: false,
     subagents: false,
+    tags: false,
     hooks: false,
   };
   const all = new Harnesses(main, [other]);

@@ -225,6 +225,9 @@ export class FakeSdk implements ClaudeSdk {
   renameSession = async (sessionId: string, title: string) => {
     this.calls.push(`rename ${sessionId} ${title}`);
   };
+  tagSession = async (sessionId: string, tag: string | null) => {
+    this.calls.push(`tag ${sessionId} ${tag ?? "none"}`);
+  };
   archiveSession = async (sessionId: string) => {
     this.calls.push(`archive ${sessionId}`);
   };

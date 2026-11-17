@@ -82,6 +82,7 @@ export const NO_CAPABILITIES: AgentCapabilities = {
   features: false,
   mcpReconnect: false,
   subagents: false,
+  tags: false,
   hooks: false,
 };
 

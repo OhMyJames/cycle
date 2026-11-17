@@ -225,6 +225,20 @@
 .session-row-title {
   flex: 1;
 }
+/* The owner's label on a conversation, after its title. */
+.session-tag {
+  flex: none;
+  max-width: 80px;
+  overflow: hidden;
+  padding: 0 6px;
+  border-radius: var(--radius-row);
+  background: var(--surface-control-hover);
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Under the pointer the title makes room for the row's menu, and fades before it. */
 .session-row:is(:hover, :has(:focus-visible), :has([aria-expanded="true"])) .session-row-title {
   mask-image: linear-gradient(to left, transparent 24px, black 48px);

@@ -9,6 +9,7 @@ import {
   listSubagents,
   query,
   renameSession,
+  tagSession,
   unarchiveSession,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -175,6 +176,8 @@ export interface ClaudeSdk {
     options?: InFolder & { upToMessageId?: string },
   ): Promise<{ sessionId: string }>;
   renameSession(sessionId: string, title: string, options?: InFolder): Promise<void>;
+  /** Puts a tag on a stored conversation, or takes it off with null. */
+  tagSession(sessionId: string, tag: string | null, options?: InFolder): Promise<void>;
   archiveSession(sessionId: string, options?: InFolder): Promise<void>;
   unarchiveSession(sessionId: string, options?: InFolder): Promise<void>;
   deleteSession(sessionId: string, options?: InFolder): Promise<void>;
@@ -221,6 +224,8 @@ export function atHome(sdk: ClaudeSdk, home: string): ClaudeSdk {
     forkSession: (sessionId, options) => withHome(home, () => sdk.forkSession(sessionId, options)),
     renameSession: (sessionId, title, options) =>
       withHome(home, () => sdk.renameSession(sessionId, title, options)),
+    tagSession: (sessionId, tag, options) =>
+      withHome(home, () => sdk.tagSession(sessionId, tag, options)),
     archiveSession: (sessionId, options) =>
       withHome(home, () => sdk.archiveSession(sessionId, options)),
     unarchiveSession: (sessionId, options) =>
@@ -242,6 +247,7 @@ export const realSdk: ClaudeSdk = {
     getSubagentMessages(sessionId, agentId, options),
   forkSession: (sessionId, options) => forkSession(sessionId, options),
   renameSession: (sessionId, title, options) => renameSession(sessionId, title, options),
+  tagSession: (sessionId, tag, options) => tagSession(sessionId, tag, options),
   archiveSession: (sessionId, options) => archiveSession(sessionId, options),
   unarchiveSession: (sessionId, options) => unarchiveSession(sessionId, options),
   deleteSession: (sessionId, options) => deleteSession(sessionId, options),

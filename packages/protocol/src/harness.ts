@@ -43,6 +43,8 @@ export interface HarnessSession {
   createdAt: number;
   updatedAt: number;
   forkedFrom: string | null;
+  /** A label the owner put on it, kept by the agent with the conversation. Absent: none. */
+  tag?: string;
 }
 
 export interface TurnOptions {
@@ -164,6 +166,8 @@ export interface Agent {
   /** Copies a session, up to and including `turnId` when given. */
   forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  /** Puts a tag on a conversation, or takes it off with null. With the `tags` capability. */
+  tagSession?(sessionId: string, tag: string | null): Promise<void>;
   archiveSession(sessionId: string, archived: boolean): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
@@ -289,13 +293,17 @@ export interface Harness extends Agent, Connector, Account, Machine {}
  * one's when none is given, and the machine is the main one's.
  */
 export interface Agents
-  extends Omit<Agent, "capabilities" | "rewindFiles" | "listCommands" | "readContext">, Machine {
+  extends
+    Omit<Agent, "capabilities" | "rewindFiles" | "listCommands" | "readContext" | "tagSession">,
+    Machine {
   /** The agents running, the main one first. */
   harnesses(): HarnessInfo[];
   /** An agent's Connector. What it cannot do, it refuses saying so. */
   connector(harness?: string): Connector;
   account(harness?: string): Account;
   rewindFiles(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind>;
+  /** Tags the session, or takes the tag off; refused when its agent keeps no tags. */
+  tagSession(sessionId: string, tag: string | null): Promise<void>;
   /** A session's commands, or those of a new session in a folder, of the agent `harness` names. */
   listCommands(
     target: { sessionId: string } | { harness: string; cwd: string },

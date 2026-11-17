@@ -1151,6 +1151,7 @@ export function toSession(
     createdAt: info.createdAt ?? info.lastModified,
     updatedAt: info.lastModified,
     forkedFrom: extra?.forkedFrom ?? null,
+    ...(info.tag?.trim() ? { tag: info.tag.trim() } : {}),
   };
 }
 
