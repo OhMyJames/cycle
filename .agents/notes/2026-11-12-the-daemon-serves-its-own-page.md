@@ -33,4 +33,6 @@ its Electron app could have. That left the browser unable to be a client without
 - Reading a file is limited to folders a session runs in or the owner's projects. Listing a folder's
   names is not, because the folder chooser needs it.
 - Use from a phone needs a relay that authenticates the owner, as old-cycle's server does. None exists
-  here yet, and widening the bind address is not a substitute.
+  here yet, and widening the bind address is not a substitute. The desktop reaches a daemon on another
+  machine through an ssh tunnel, which leaves all of this unchanged:
+  [remote daemon over ssh](2026-11-17-remote-daemon-over-ssh.md).
