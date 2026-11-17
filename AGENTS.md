@@ -73,7 +73,8 @@ sessions start with, and the owner's projects), `sessions.json` (what only Cycle
 pin, unread, mode, model, worktree, sandbox, the schedule that started it), `providers.json` (the owner's model
 providers and their keys, mode 0600), `provider-models.json` (codex's catalog of
 those providers' models, which says how much each can read; written as the second codex child starts),
-`sandboxes.json` (the owner's sandbox environments, variable values included, and what each sandbox
+`remotes.json` (the desktop's list of remote servers: names and ssh targets only, no secrets;
+[decision note](.agents/notes/2026-11-17-remote-daemon-over-ssh.md)), `sandboxes.json` (the owner's sandbox environments, variable values included, and what each sandbox
 Cycle made was made with, mode 0600), `claude.json` (Cycle's own configuration of Claude Code: its
 MCP servers, environment values included, what it turns off of the owner's own, and its hooks, mode
 0600), `claude/` (what is made from it: the settings files processes start with, and `plugins/`, the
