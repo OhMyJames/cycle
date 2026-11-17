@@ -79,6 +79,8 @@ export type Item =
   | (ItemBase & {
       kind: "command";
       command: string;
+      /** What the agent said the command is for, in a sentence: a row says it, and the command opens. */
+      description?: string;
       cwd: string;
       output: string;
       exitCode: number | null;

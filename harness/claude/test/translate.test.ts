@@ -89,6 +89,18 @@ test("a tool call starts as it is asked for and completes with its result", () =
   });
 });
 
+test("a command's own description is kept beside it, and none is not made up", () => {
+  const input = { command: "ls -la", description: " List the files " };
+  expect(toolItem("i", "Bash", input, "/p")).toMatchObject({
+    command: "ls -la",
+    description: "List the files",
+  });
+  expect(toolItem("i", "Bash", { command: "ls" }, "/p")).not.toHaveProperty("description");
+  expect(toolItem("i", "Bash", { command: "ls", description: "  " }, "/p")).not.toHaveProperty(
+    "description",
+  );
+});
+
 test("a call the owner refused is declined, not failed", () => {
   const reader = new StreamReader("s", "/project");
   read([said("a1", [{ type: "tool_use", id: "toolu_1", name: "Bash", input: {} }])], reader);

@@ -119,10 +119,11 @@ export function toolItem(
   /** The path as this machine knows it: a sandbox names the folder its own way. */
   const at = (path: string): string => toMachinePath(path, { cwd, sandboxCwd });
   const status: ItemStatus = "running";
-  const command = (line: string, actions: CommandAction[]): Item => ({
+  const command = (line: string, actions: CommandAction[], description = ""): Item => ({
     id,
     kind: "command",
     command: line,
+    ...(description ? { description } : {}),
     cwd,
     output: "",
     exitCode: null,
@@ -149,7 +150,7 @@ export function toolItem(
           background: true,
         });
       }
-      return command(text(input["command"]), []);
+      return command(text(input["command"]), [], text(input["description"]).trim());
     case "Read": {
       const path = at(text(input["file_path"]));
       return command(`Read ${path}`, [{ type: "read", path }]);
