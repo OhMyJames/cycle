@@ -173,7 +173,7 @@ export function createRemoteConnection(ports: ConnectionPorts) {
      * same port.
      */
     async test(remote: RemoteServer): Promise<RemoteTestResult> {
-      if (state.status !== "idle" && state.status !== "failed" && state.id === remote.id) {
+      if (state.status === "connected" && state.id === remote.id) {
         return { ok: true, connected: true };
       }
       if (testing) return { ok: false, reason: "Another test is still running." };

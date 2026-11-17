@@ -75,3 +75,12 @@ test("a test of the server the window is connected to leaves its tunnel alone", 
   expect(w.tunnels).toHaveLength(1);
   expect(w.tunnels[0]?.killed).toBe(false);
 });
+
+test("a test while the window is still connecting or reconnecting is a test, not a claim of a link", async () => {
+  const { connection } = world();
+  const pending = connection.connect(remote);
+  expect(connection.state().status).toBe("connecting");
+  const result = await connection.test(remote);
+  expect(result).not.toEqual({ ok: true, connected: true });
+  await pending;
+});
