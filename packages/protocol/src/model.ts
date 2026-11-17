@@ -817,9 +817,24 @@ export interface HookInfo {
   timeout: number | null;
 }
 
+/**
+ * What an agent's process is started with beyond its tools and settings: the agent's own options,
+ * kept for it. A change reaches a session the next time its process starts.
+ */
+export interface RunSettings {
+  /** Models to try, in order and comma-separated, when the one in use is overloaded. */
+  fallbackModel: string | null;
+  /** Most requests to the model one process makes; the agent counts them from the process's start. */
+  maxTurns: number | null;
+  /** Most the agent may spend, in USD, from its process's start. It then stops the turn. */
+  maxBudgetUsd: number | null;
+}
+
 /** The hooks Cycle keeps for an agent, and how much of the owner's own configuration applies. */
 export interface HookSettings {
   hooks: HookInfo[];
+  /** What a process is started with. */
+  run: RunSettings;
   /** The owner's own hooks run. Off, every hook is off, Cycle's too: the agent has one switch. */
   ownerHooks: boolean;
   /** The owner's own configuration of the agent is read: their settings, servers, plugins, skills. */

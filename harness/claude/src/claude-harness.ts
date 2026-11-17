@@ -84,6 +84,7 @@ import {
   toSession,
   toSkills,
   toTurns,
+  resultError,
   toUserMessage,
   turnPlace,
   usedBy,
@@ -209,6 +210,8 @@ interface Running {
   commands: SlashCommand[];
   /** What it said the session had cost at its last result. Null before its first. */
   costSeen: number | null;
+  /** The owner was told this turn that a request is being made again: once is enough. */
+  retrying: boolean;
 }
 
 interface PendingApproval {
@@ -1341,6 +1344,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       query,
       commands: [],
       costSeen: null,
+      retrying: false,
     };
     try {
       running.commands = this.heard(
@@ -1533,6 +1537,13 @@ export class ClaudeHarness implements Agent, AgentReads {
       }
       return;
     }
+    if (each.type === "system") {
+      const news = this.newsOfRequest(running, each);
+      if (news) {
+        if (news.level) this.notice(running.sessionId, news.level, news.text);
+        return;
+      }
+    }
     if (each.type === "rate_limit_event" && each.rate_limit_info) {
       const limit = toLimit(each.rate_limit_info);
       this.limits.set(limit.id, limit);
@@ -1583,6 +1594,48 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (each.subtype === "background_tasks_changed") this.idle(running);
   }
 
+  private notice(sessionId: string, level: "info" | "warning", text: string): void {
+    this.emit({ type: "notice", sessionId, level, message: text });
+  }
+
+  /**
+   * What Claude Code says of the requests it makes to the model: one made again, and a refusal. A
+   * request made again many times is said once a turn, so the owner is not told again at each try.
+   * Null for any other message; `level` is null for news that is taken and not said.
+   */
+  private newsOfRequest(
+    running: Running,
+    each: WireMessage,
+  ): { level: "info" | "warning" | null; text: string } | null {
+    switch (each.subtype) {
+      case "api_retry": {
+        if (running.retrying) return { level: null, text: "" };
+        running.retrying = true;
+        const code = each.error_status ? ` (error ${each.error_status})` : "";
+        const of = each.max_retries ? ` of ${each.max_retries}` : "";
+        return {
+          level: "warning",
+          text: `A request to the model failed${code}. Claude Code is trying again: attempt ${each.attempt ?? 1}${of}.`,
+        };
+      }
+      case "model_refusal_fallback":
+        if (each.direction !== "retry") return { level: null, text: "" };
+        return {
+          level: "warning",
+          text: `${each.original_model ?? "The model"} refused, so the turn was tried on ${each.fallback_model ?? "another model"}.`,
+        };
+      case "model_refusal_no_fallback":
+        return {
+          level: "warning",
+          text:
+            each.content ||
+            `${each.original_model ?? "The model"} refused, and there is no fallback model to try. Set one in Settings, Claude Code.`,
+        };
+      default:
+        return null;
+    }
+  }
+
   /** A turn ended: what it used, how it went, and the turn that follows by itself, if one does. */
   private finish(running: Running, result: WireMessage): void {
     const { sessionId } = running;
@@ -1608,6 +1661,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     const failed = result.is_error === true || result.subtype !== "success";
     const status = running.stopping ? "interrupted" : failed ? "failed" : "completed";
     running.stopping = false;
+    running.retrying = false;
     running.turn = null;
     running.known.stored = true;
     this.emit({
@@ -1615,10 +1669,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       sessionId,
       turnId,
       status,
-      error:
-        status === "failed"
-          ? result.errors?.join("\n") || result.result || "The turn failed."
-          : null,
+      error: status === "failed" ? resultError(result) : null,
       durationMs: result.duration_ms ?? null,
     });
     // A prompt sent into the turn that it ended without taking begins the next one.

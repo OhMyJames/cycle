@@ -238,6 +238,31 @@ export function toOwner(said: string): string {
 }
 
 /**
+ * Why a turn that did not succeed failed, in words for the owner. What Claude Code says of an
+ * error comes first; a limit it stopped at is told by name, since it says nothing.
+ */
+export function resultError(result: {
+  subtype?: string;
+  errors?: string[];
+  result?: string;
+}): string {
+  const said = result.errors?.filter(Boolean).join("\n") || result.result;
+  if (said) return said;
+  switch (result.subtype) {
+    case "error_max_turns":
+      return "Claude Code stopped at its limit of requests to the model. Raise it in Settings, Claude Code.";
+    case "error_max_budget_usd":
+      return "Claude Code stopped at the most it may spend. Raise it in Settings, Claude Code.";
+    case "error_max_structured_output_retries":
+      return "Claude Code could not give its answer in the shape asked for.";
+    case "error_during_execution":
+      return "Claude Code failed while it worked on the turn.";
+    default:
+      return "The turn failed.";
+  }
+}
+
+/**
  * A tool call once its result is in. `structured` is the result as data, which
  * only a running session has: a stored one is read from the text alone.
  */

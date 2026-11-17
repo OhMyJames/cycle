@@ -122,6 +122,9 @@ export class ClaudeConfiguration {
         settingSources: config.ownerSettings ? ["user", "project", "local"] : ["project", "local"],
         settings: await this.writeSettings(JSON.stringify(flagSettings(config, sandbox))),
         ...(tools.length ? { disallowedTools: tools } : {}),
+        ...(config.run.fallbackModel ? { fallbackModel: config.run.fallbackModel } : {}),
+        ...(config.run.maxTurns !== null ? { maxTurns: config.run.maxTurns } : {}),
+        ...(config.run.maxBudgetUsd !== null ? { maxBudgetUsd: config.run.maxBudgetUsd } : {}),
         ...(dirs.length
           ? {
               plugins: dirs.map((path) => ({ type: "local" as const, path })),

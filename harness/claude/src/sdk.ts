@@ -68,6 +68,14 @@ export interface QueryOptions {
   settingSources: ("user" | "project" | "local")[];
   /** A settings file, the flag layer. Only its path goes on the command line. */
   settings?: string;
+  /** Models it falls back to, in order, when the one in use is overloaded. Names only. */
+  fallbackModel?: string;
+  /** Claude Code stops after this many requests to the model, counted from its start. */
+  maxTurns?: number;
+  /** Claude Code stops the turn once this much, in USD, was spent since its start. */
+  maxBudgetUsd?: number;
+  // shortcut: no `taskBudget`, an alpha option sent with a beta header that some models refuse;
+  // upgrade when the SDK takes it out of alpha.
   /** Tools it may not use, by name. Names only: they go on the command line. */
   disallowedTools?: string[];
   /** Plugin folders, handed over its pipe with `pluginDelivery: "initialize"`. */

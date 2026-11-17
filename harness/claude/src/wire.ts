@@ -152,6 +152,18 @@ export interface WireMessage {
   permissionMode?: string;
   /** What the process has cost so far, in all. */
   total_cost_usd?: number;
+  // `api_retry`: a request failed and is made again.
+  attempt?: number;
+  max_retries?: number;
+  retry_delay_ms?: number;
+  error_status?: number | null;
+  /** `model_refusal_*`: what the model's refusal came to, said for the owner. */
+  content?: string;
+  original_model?: string;
+  /** `model_refusal_fallback`: the model the turn was tried on instead. */
+  fallback_model?: string;
+  direction?: string;
+  scope?: string;
   /** A `rate_limit_event`. */
   rate_limit_info?: WireRateLimitInfo;
   /** A `commands_changed` system message: the whole list. */

@@ -8,6 +8,7 @@ import {
   HOOK_EVENTS,
   type HookInfo,
   type HookSettings,
+  type RunSettings,
   type McpServerInfo,
   type McpServerInput,
   type McpTransport,
@@ -38,6 +39,8 @@ export interface ClaudeConfig {
   ownerHooks: boolean;
   /** The owner's own user settings are read. */
   ownerSettings: boolean;
+  /** What a process is started with beyond the above. */
+  run: RunSettings;
 }
 
 /** Where `claude.json` is kept. The daemon holds the file; the harness only asks. */
@@ -59,8 +62,11 @@ export function emptyConfig(): ClaudeConfig {
     hooksRevision: 0,
     ownerHooks: true,
     ownerSettings: true,
+    run: { ...NO_LIMITS },
   };
 }
+
+export const NO_LIMITS: RunSettings = { fallbackModel: null, maxTurns: null, maxBudgetUsd: null };
 
 const SERVER_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -69,6 +75,27 @@ const MAX_HOOKS = 100;
 const MAX_VALUE = 4096;
 const MAX_COMMAND = 4096;
 const MAX_TIMEOUT = 3600;
+const MAX_TURNS = 10_000;
+const MAX_BUDGET = 100_000;
+const MODEL_LIST = /^[\w.:/[\]-]+(,[\w.:/[\]-]+)*$/;
+
+/** Checks what a process is started with: each a number or name the agent takes as it is. */
+function checkRun(run: RunSettings): RunSettings {
+  const { maxTurns, maxBudgetUsd } = run;
+  const fallbackModel = run.fallbackModel?.replace(/\s+/g, "") || null;
+  if (fallbackModel !== null && (fallbackModel.length > 300 || !MODEL_LIST.test(fallbackModel))) {
+    throw new ConfigError("The fallback models are model ids, separated by commas.");
+  }
+  if (maxTurns !== null && (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > MAX_TURNS)) {
+    throw new ConfigError(`The most requests is a whole number from 1 to ${MAX_TURNS}.`);
+  }
+  if (maxBudgetUsd !== null && !(maxBudgetUsd > 0 && maxBudgetUsd <= MAX_BUDGET)) {
+    throw new ConfigError(
+      `The most to spend is a number of dollars above 0 and up to ${MAX_BUDGET}.`,
+    );
+  }
+  return { fallbackModel, maxTurns, maxBudgetUsd };
+}
 
 /** The tool's name in Claude Code. */
 export function toolName(server: string, tool: string): string {
@@ -227,12 +254,14 @@ export function setHooks(
     hooksRevision: config.hooksRevision + 1,
     ownerHooks: settings.ownerHooks,
     ownerSettings: settings.ownerSettings,
+    run: checkRun(settings.run),
   };
 }
 
 export function toHookSettings(config: ClaudeConfig): HookSettings {
   return {
     hooks: config.hooks,
+    run: config.run,
     ownerHooks: config.ownerHooks,
     ownerSettings: config.ownerSettings,
     revision: config.hooksRevision,
@@ -327,6 +356,7 @@ export function startKey(config: ClaudeConfig, pluginDirs: string[]): string {
     config.skillsOff,
     config.hooks,
     config.ownerSettings,
+    config.run,
     config.ownerServersOff.toSorted(),
     config.plugins,
     pluginDirs,

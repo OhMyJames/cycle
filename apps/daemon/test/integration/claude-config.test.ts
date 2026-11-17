@@ -225,6 +225,7 @@ test("a hook kept in Cycle runs beside the owner's, and turning the owner's off 
           timeout: null,
         },
       ],
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
       ownerHooks: true,
       ownerSettings: true,
       revision: 0,
@@ -237,7 +238,14 @@ test("a hook kept in Cycle runs beside the owner's, and turning the owner's off 
   await turn(session.id, "first");
   expect(hooksRun().toSorted()).toEqual(["", "cycle", "owner"]);
 
-  await client.call("hooks.set", { ...CLAUDE, settings: { ...kept, ownerHooks: false } });
+  await client.call("hooks.set", {
+    ...CLAUDE,
+    settings: {
+      ...kept,
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+      ownerHooks: false,
+    },
+  });
   writeFileSync(hookLog, "");
   await turn(session.id, "second");
   expect(hooksRun()).toEqual([""]);

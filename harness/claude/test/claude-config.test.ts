@@ -160,7 +160,13 @@ test("what only a start takes waits for the next prompt, which starts the proces
 
 test("without the owner's own settings, the user layer is not read", async () => {
   const { sdk, harness, config } = setup();
-  await harness.setHooks({ hooks: [], ownerHooks: true, ownerSettings: false, revision: 0 });
+  await harness.setHooks({
+    hooks: [],
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null },
+    ownerHooks: true,
+    ownerSettings: false,
+    revision: 0,
+  });
   expect(config().ownerSettings).toBe(false);
   const session = await harness.createSession({ cwd: "/project", model: auto.model });
   const query = await turn(harness, sdk, session.id);

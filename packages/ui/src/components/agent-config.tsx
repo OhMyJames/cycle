@@ -1,4 +1,4 @@
-import { HOOK_EVENTS, type HookInfo, type HookSettings } from "@cycle/protocol";
+import { HOOK_EVENTS, type HookInfo, type HookSettings, type RunSettings } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
@@ -55,6 +55,80 @@ export function SkillsTab() {
         </div>
       )}
     </section>
+  );
+}
+
+/** Text for a number the owner may leave empty; `undefined` when it is not one. */
+function numberOrNull(text: string): number | null | undefined {
+  if (text.trim() === "") return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+const keys = (event: { key: string; currentTarget: HTMLInputElement }) => {
+  if (event.key === "Enter") event.currentTarget.blur();
+};
+
+/**
+ * What a Claude Code process is started with: models to fall back to, and two limits that Claude
+ * Code itself counts from its process's start, which a session's closes after five idle minutes.
+ */
+function RunFields({ run, onChange }: { run: RunSettings; onChange(run: RunSettings): void }) {
+  const [fallback, setFallback] = useState(run.fallbackModel ?? "");
+  const [turns, setTurns] = useState(run.maxTurns === null ? "" : String(run.maxTurns));
+  const [budget, setBudget] = useState(run.maxBudgetUsd === null ? "" : String(run.maxBudgetUsd));
+  const commit = () => {
+    const maxTurns = numberOrNull(turns);
+    const maxBudgetUsd = numberOrNull(budget);
+    if (maxTurns === undefined || maxBudgetUsd === undefined) return;
+    const next = { fallbackModel: fallback.trim() || null, maxTurns, maxBudgetUsd };
+    if (JSON.stringify(next) !== JSON.stringify(run)) onChange(next);
+  };
+  return (
+    <div className="card">
+      <Setting
+        title="Fallback models"
+        note="Model ids, separated by commas, that Claude Code tries in order when the one in use is overloaded. Empty: none."
+      >
+        <input
+          className="field mono"
+          aria-label="Fallback models"
+          spellCheck={false}
+          value={fallback}
+          onChange={(event) => setFallback(event.currentTarget.value)}
+          onBlur={commit}
+          onKeyDown={keys}
+        />
+      </Setting>
+      <Setting
+        title="Most requests to the model"
+        note="Claude Code stops there. It counts from when its process started, and a session's process closes after five idle minutes. Empty: no limit."
+      >
+        <input
+          className="field mono"
+          aria-label="Most requests to the model"
+          inputMode="numeric"
+          value={turns}
+          onChange={(event) => setTurns(event.currentTarget.value)}
+          onBlur={commit}
+          onKeyDown={keys}
+        />
+      </Setting>
+      <Setting
+        title="Most to spend, in dollars"
+        note="Claude Code stops the turn there, counting from when its process started, as above. An estimate. Empty: no limit."
+      >
+        <input
+          className="field mono"
+          aria-label="Most to spend, in dollars"
+          inputMode="decimal"
+          value={budget}
+          onChange={(event) => setBudget(event.currentTarget.value)}
+          onBlur={commit}
+          onKeyDown={keys}
+        />
+      </Setting>
+    </div>
   );
 }
 
@@ -240,6 +314,10 @@ export function HooksTab() {
           ))}
         </div>
       ) : null}
+      <div className="section-head sub">
+        <h3>How it runs</h3>
+      </div>
+      <RunFields run={settings.run} onChange={(run) => set({ ...settings, run })} />
       <div className="section-head sub">
         <h3>Your own Claude Code configuration</h3>
       </div>
