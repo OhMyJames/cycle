@@ -29,6 +29,7 @@ import {
   type SessionMode,
   type SessionState,
   type SkillInfo,
+  type SubagentInfo,
   type Settings,
   type SlashCommand,
   type TerminalInfo,
@@ -79,6 +80,9 @@ export const NO_CAPABILITIES: AgentCapabilities = {
   connector: "read",
   login: false,
   features: false,
+  mcpReconnect: false,
+  subagents: false,
+  tags: false,
   hooks: false,
 };
 
@@ -206,6 +210,8 @@ export class CycleApp {
   readonly login = new Store<PendingLogin | null>(null);
   /** The commands each session's prompt can begin with, as its agent last said. */
   readonly commands = new Store<Record<string, SlashCommand[]>>({});
+  /** What each session's agent guesses its owner sends next. */
+  readonly nextPrompts = new Store<Record<string, string>>({});
   readonly providers = new Store<ModelProvider[]>([]);
   /** The owner's sandbox environments, and whether a sandbox can be made on the daemon's machine. */
   readonly sandboxes = new Store<{ available: boolean; environments: SandboxEnvironment[] }>({
@@ -221,6 +227,8 @@ export class CycleApp {
   readonly connectorAgent = new Store<string | null>(null);
   /** The shown agent's skills, and the hooks Cycle keeps for it, when it has them. */
   readonly skills = new Store<SkillInfo[] | null>(null);
+  /** The helper agents the shown agent can start in a folder; null until read. */
+  readonly subagents = new Store<SubagentInfo[] | null>(null);
   readonly hooks = new Store<HookSettings | null>(null);
   /** Null until read: Settings reads them when it opens. */
   readonly features = new Store<AgentFeatures | null>(null);
@@ -747,6 +755,12 @@ export class CycleApp {
     if (answer) this.skills.set(answer.skills);
   }
 
+  /** The helper agents the shown agent can start in a folder. */
+  async loadSubagents(cwd: string): Promise<void> {
+    const answer = await this.attempt(this.request("subagents.list", { cwd, ...this.agent() }));
+    if (answer) this.subagents.set(answer.agents);
+  }
+
   async enableSkill(cwd: string, name: string, enabled: boolean): Promise<void> {
     const answer = await this.attempt(
       this.request("skills.enable", { cwd, name, enabled, ...this.agent() }),
@@ -783,6 +797,10 @@ export class CycleApp {
 
   enableMcpServer(name: string, enabled: boolean): Promise<boolean> {
     return this.mcpDid(this.request("mcp.enable", { name, enabled, ...this.agent() }));
+  }
+
+  reconnectMcpServer(name: string): Promise<boolean> {
+    return this.mcpDid(this.request("mcp.reconnect", { name, ...this.agent() }));
   }
 
   enableMcpTool(name: string, tool: string, enabled: boolean): Promise<boolean> {
@@ -1066,6 +1084,11 @@ export class CycleApp {
         break;
       case "commands.changed":
         this.commands.update((all) => ({ ...all, [event.sessionId]: event.commands }));
+        break;
+      case "suggestion.changed":
+        this.nextPrompts.update(({ [event.sessionId]: _old, ...rest }) =>
+          event.suggestion ? { ...rest, [event.sessionId]: event.suggestion } : rest,
+        );
         break;
       case "models.changed":
         this.models.set(event.models);

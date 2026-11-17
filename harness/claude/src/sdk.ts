@@ -9,12 +9,14 @@ import {
   listSubagents,
   query,
   renameSession,
+  tagSession,
   unarchiveSession,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   WireElicitation,
   WireElicitationResult,
   WireAccountInfo,
+  WireAgentInfo,
   WireContextUsage,
   WireHistoryMessage,
   WireMcpServerStatus,
@@ -22,6 +24,7 @@ import type {
   WireModelInfo,
   WirePermissionMode,
   WireRewindFilesResult,
+  WireUsage,
   WireSlashCommand,
   WirePermissionResult,
   WirePermissionUpdate,
@@ -68,6 +71,16 @@ export interface QueryOptions {
   settingSources: ("user" | "project" | "local")[];
   /** A settings file, the flag layer. Only its path goes on the command line. */
   settings?: string;
+  /** It says, after a turn, what the owner might send next; the stream goes on after the result. */
+  promptSuggestions?: boolean;
+  /** Models it falls back to, in order, when the one in use is overloaded. Names only. */
+  fallbackModel?: string;
+  /** Claude Code stops after this many requests to the model, counted from its start. */
+  maxTurns?: number;
+  /** Claude Code stops the turn once this much, in USD, was spent since its start. */
+  maxBudgetUsd?: number;
+  // shortcut: no `taskBudget`, an alpha option sent with a beta header that some models refuse;
+  // upgrade when the SDK takes it out of alpha.
   /** Tools it may not use, by name. Names only: they go on the command line. */
   disallowedTools?: string[];
   /** Plugin folders, handed over its pipe with `pluginDelivery: "initialize"`. */
@@ -110,6 +123,8 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   initializationResult(): Promise<{
     models?: WireModelInfo[];
     commands?: WireSlashCommand[];
+    /** The helper agents it can start. */
+    agents?: WireAgentInfo[];
     account?: WireAccountInfo;
   }>;
   interrupt(): Promise<unknown>;
@@ -120,9 +135,17 @@ export interface ClaudeQuery extends AsyncIterable<WireMessage> {
   accountInfo(): Promise<WireAccountInfo>;
   supportedCommands(): Promise<WireSlashCommand[]>;
   mcpServerStatus(): Promise<WireMcpServerStatus[]>;
+  // shortcut: the SDK calls this `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`, and
+  // may rename or remove it; it is optional here and a failure is no news; upgrade when it is stable.
+  /** The plan's limits as the account stands now. */
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(options: {
+    skipBehaviors: boolean;
+  }): Promise<WireUsage>;
   /** `summary` answers from the last request's usage, with no request of its own. */
   getContextUsage(options: { detail: "summary" | "full" }): Promise<WireContextUsage>;
   rewindFiles(userMessageId: string, options: { dryRun: boolean }): Promise<WireRewindFilesResult>;
+  /** Connects one of its MCP servers again. Fails if it cannot. */
+  reconnectMcpServer(name: string): Promise<void>;
   /** Sets the MCP servers given to this process alone, over its own pipe. */
   setMcpServers(servers: Record<string, unknown>): Promise<unknown>;
   /**
@@ -160,6 +183,8 @@ export interface ClaudeSdk {
     options?: InFolder & { upToMessageId?: string },
   ): Promise<{ sessionId: string }>;
   renameSession(sessionId: string, title: string, options?: InFolder): Promise<void>;
+  /** Puts a tag on a stored conversation, or takes it off with null. */
+  tagSession(sessionId: string, tag: string | null, options?: InFolder): Promise<void>;
   archiveSession(sessionId: string, options?: InFolder): Promise<void>;
   unarchiveSession(sessionId: string, options?: InFolder): Promise<void>;
   deleteSession(sessionId: string, options?: InFolder): Promise<void>;
@@ -206,6 +231,8 @@ export function atHome(sdk: ClaudeSdk, home: string): ClaudeSdk {
     forkSession: (sessionId, options) => withHome(home, () => sdk.forkSession(sessionId, options)),
     renameSession: (sessionId, title, options) =>
       withHome(home, () => sdk.renameSession(sessionId, title, options)),
+    tagSession: (sessionId, tag, options) =>
+      withHome(home, () => sdk.tagSession(sessionId, tag, options)),
     archiveSession: (sessionId, options) =>
       withHome(home, () => sdk.archiveSession(sessionId, options)),
     unarchiveSession: (sessionId, options) =>
@@ -227,6 +254,7 @@ export const realSdk: ClaudeSdk = {
     getSubagentMessages(sessionId, agentId, options),
   forkSession: (sessionId, options) => forkSession(sessionId, options),
   renameSession: (sessionId, title, options) => renameSession(sessionId, title, options),
+  tagSession: (sessionId, tag, options) => tagSession(sessionId, tag, options),
   archiveSession: (sessionId, options) => archiveSession(sessionId, options),
   unarchiveSession: (sessionId, options) => unarchiveSession(sessionId, options),
   deleteSession: (sessionId, options) => deleteSession(sessionId, options),

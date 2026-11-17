@@ -142,6 +142,7 @@ interface Live {
 const DELTA_FLUSH_MS = 16;
 const RING_FRAMES = 512;
 const MAX_LIVE = 32;
+const MAX_TAG = 40;
 
 export class SessionError extends Error {}
 
@@ -474,6 +475,13 @@ export class SessionHub {
     const { sessionId } = params;
     let info = this.info(sessionId);
     const { harness } = this.options;
+    // First: a tag a conversation cannot take refuses the whole change, before any of it is made.
+    if (params.tag !== undefined) {
+      const tag = params.tag?.trim().slice(0, MAX_TAG) || null;
+      await harness.tagSession(sessionId, tag);
+      const { tag: _old, ...rest } = info;
+      info = tag ? { ...rest, tag } : rest;
+    }
     if (params.title !== undefined) {
       const title = params.title.trim();
       if (title) await harness.renameSession(sessionId, title);
@@ -675,6 +683,7 @@ export class SessionHub {
       pinned: meta.pinned ?? false,
       unread: meta.unread ?? false,
       forkedFrom: session.forkedFrom,
+      ...(session.tag ? { tag: session.tag } : {}),
       scheduleId: meta.scheduleId ?? null,
     };
     this.infos.set(info.id, info);
@@ -888,7 +897,8 @@ export class SessionHub {
     if (
       event.type === "mcp.changed" ||
       event.type === "limits.changed" ||
-      event.type === "commands.changed"
+      event.type === "commands.changed" ||
+      event.type === "suggestion.changed"
     )
       return;
     const live = this.live.get(event.sessionId);

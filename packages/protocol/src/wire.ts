@@ -8,6 +8,7 @@ import type {
   FileRewind,
   HarnessInfo,
   McpServerInfo,
+  SubagentInfo,
   McpServerInput,
   ModeInfo,
   ModelInfo,
@@ -180,6 +181,8 @@ export interface Methods {
       model?: string;
       effort?: string | null;
       mode?: SessionMode;
+      /** A label for the conversation; null takes it off. Only where the agent keeps one. */
+      tag?: string | null;
     };
     result: SessionInfo;
   };
@@ -263,6 +266,13 @@ export interface Methods {
   };
   "mcp.enableTool": {
     params: { name: string; tool: string; enabled: boolean } & OfHarness;
+    result: { servers: McpServerInfo[] };
+  };
+  /** The helper agents a session in a folder can start. */
+  "subagents.list": { params: { cwd: string } & OfHarness; result: { agents: SubagentInfo[] } };
+  /** Connects a server again, in the agent's process that runs. */
+  "mcp.reconnect": {
+    params: { name: string } & OfHarness;
     result: { servers: McpServerInfo[] };
   };
   /** Starts a sign-in. The owner finishes it at `url`; `mcp.changed` follows. */
@@ -424,6 +434,8 @@ export type DaemonEvent =
   | { type: "limits.changed"; account: AccountInfo }
   /** The commands a session's prompt can begin with changed. */
   | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
+  /** What the agent guesses the owner sends next in a session; null once it is stale. */
+  | { type: "suggestion.changed"; sessionId: string; suggestion: string | null }
   | { type: "models.changed"; models: ModelInfo[] }
   | { type: "providers.changed"; providers: ModelProvider[] }
   | { type: "sandboxes.changed"; environments: SandboxEnvironment[] }

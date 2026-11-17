@@ -30,6 +30,9 @@ function setup() {
     connector: "read",
     login: false,
     features: false,
+    mcpReconnect: false,
+    subagents: false,
+    tags: false,
     hooks: false,
   };
   const all = new Harnesses(main, [other]);
@@ -91,9 +94,13 @@ test("another agent that can change its connector does so itself, within what it
     changed.push("main");
   };
   await all.connector("other").putMcpServer({ name: "docs" } as never);
-  await all
-    .connector("other")
-    .setHooks({ hooks: [], ownerHooks: true, ownerSettings: true, revision: 0 });
+  await all.connector("other").setHooks({
+    hooks: [],
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
+    ownerHooks: true,
+    ownerSettings: true,
+    revision: 0,
+  });
   expect(changed).toEqual(["other:docs", "other:hooks"]);
   await expect(all.connector("other").setFeatures({ subagents: false })).rejects.toBeInstanceOf(
     NotSupported,

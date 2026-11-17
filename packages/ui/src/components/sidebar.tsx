@@ -240,9 +240,30 @@ const SessionRow = memo(function SessionRow({
 }) {
   const app = useApp();
   const [renaming, setRenaming] = useState(false);
+  const [tagging, setTagging] = useState(false);
   const title = sessionTitle(info);
+  const tags = app.capabilities(info.harness).tags;
+  const tagEntries: MenuEntry[] = !tags
+    ? []
+    : [
+        {
+          label: info.tag ? "Change tag…" : "Add tag…",
+          icon: "star",
+          onSelect: () => setTagging(true),
+        },
+        ...(info.tag
+          ? [
+              {
+                label: "Remove tag",
+                icon: "x" as const,
+                onSelect: () => app.updateSession({ sessionId: info.id, tag: null }),
+              },
+            ]
+          : []),
+      ];
   const entries = (): MenuEntry[] => [
     { label: "Rename", icon: "edit", onSelect: () => setRenaming(true) },
+    ...tagEntries,
     {
       label: info.pinned ? "Unpin" : "Pin",
       icon: "pin",
@@ -273,7 +294,33 @@ const SessionRow = memo(function SessionRow({
       data-active={active}
       aria-current={active ? "true" : undefined}
     >
-      {renaming ? (
+      {tagging ? (
+        <input
+          className="field rename"
+          aria-label="Tag for this conversation"
+          placeholder="Tag"
+          maxLength={40}
+          defaultValue={info.tag ?? ""}
+          autoFocus
+          onFocus={(event) => event.currentTarget.select()}
+          onBlur={(event) => {
+            setTagging(false);
+            const next = event.currentTarget.value.trim();
+            if (next !== (info.tag ?? "")) {
+              app.updateSession({ sessionId: info.id, tag: next || null });
+            }
+          }}
+          onKeyDown={(event) => {
+            if (isComposing(event)) return;
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              event.currentTarget.value = info.tag ?? "";
+              event.currentTarget.blur();
+            }
+          }}
+        />
+      ) : renaming ? (
         <input
           className="field rename"
           aria-label="Rename conversation"
@@ -306,6 +353,7 @@ const SessionRow = memo(function SessionRow({
             <StatusMark info={info} />
           </span>
           <span className="session-row-title fade-x">{title}</span>
+          {info.tag ? <span className="session-tag">{info.tag}</span> : null}
           {info.scheduleId ? (
             <span className="schedule-mark" role="img" aria-label="Started by a schedule">
               <Icon name="automation" size={12} />
@@ -313,8 +361,10 @@ const SessionRow = memo(function SessionRow({
           ) : null}
         </button>
       )}
-      {!renaming && info.status === "waiting" && !active ? <AnswerHere info={info} /> : null}
-      {renaming ? null : (
+      {!renaming && !tagging && info.status === "waiting" && !active ? (
+        <AnswerHere info={info} />
+      ) : null}
+      {renaming || tagging ? null : (
         <span className="row-menu">
           <Menu
             entries={entries}
@@ -541,7 +591,8 @@ function Archived({ onDelete }: { onDelete(info: SessionInfo): void }) {
     if (open && archived === null) void app.loadArchived();
   }, [open, archived, app]);
   const shown = (archived ?? []).filter(
-    (info) => !query || fuzzyScore(`${sessionTitle(info)} ${info.preview}`, query) > 0,
+    (info) =>
+      !query || fuzzyScore(`${sessionTitle(info)} ${info.tag ?? ""} ${info.preview}`, query) > 0,
   );
   return (
     <div className="archived" ref={ref}>
@@ -687,7 +738,9 @@ function SessionSidebar() {
     let list = project && !query ? all.filter((info) => projectOf(info) === project) : all;
     if (query) {
       list = list.filter(
-        (info) => fuzzyScore(`${sessionTitle(info)} ${info.preview} ${info.cwd}`, query) > 0,
+        (info) =>
+          fuzzyScore(`${sessionTitle(info)} ${info.tag ?? ""} ${info.preview} ${info.cwd}`, query) >
+          0,
       );
     }
     return groupSessions(list, Date.now());

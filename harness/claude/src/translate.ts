@@ -238,6 +238,31 @@ export function toOwner(said: string): string {
 }
 
 /**
+ * Why a turn that did not succeed failed, in words for the owner. What Claude Code says of an
+ * error comes first; a limit it stopped at is told by name, since it says nothing.
+ */
+export function resultError(result: {
+  subtype?: string;
+  errors?: string[];
+  result?: string;
+}): string {
+  const said = result.errors?.filter(Boolean).join("\n") || result.result;
+  if (said) return said;
+  switch (result.subtype) {
+    case "error_max_turns":
+      return "Claude Code stopped at its limit of requests to the model. Raise it in Settings, Claude Code.";
+    case "error_max_budget_usd":
+      return "Claude Code stopped at the most it may spend. Raise it in Settings, Claude Code.";
+    case "error_max_structured_output_retries":
+      return "Claude Code could not give its answer in the shape asked for.";
+    case "error_during_execution":
+      return "Claude Code failed while it worked on the turn.";
+    default:
+      return "The turn failed.";
+  }
+}
+
+/**
  * A tool call once its result is in. `structured` is the result as data, which
  * only a running session has: a stored one is read from the text alone.
  */
@@ -1126,6 +1151,7 @@ export function toSession(
     createdAt: info.createdAt ?? info.lastModified,
     updatedAt: info.lastModified,
     forkedFrom: extra?.forkedFrom ?? null,
+    ...(info.tag?.trim() ? { tag: info.tag.trim() } : {}),
   };
 }
 
@@ -1673,6 +1699,32 @@ export function toLimit(raw: WireRateLimitInfo): LimitWindow {
       raw.status === "rejected" ? "exceeded" : raw.status === "allowed_warning" ? "warning" : "ok",
     overage: raw.isUsingOverage === true,
   };
+}
+
+/**
+ * The plan's limits as `usage` tells them: how much of each window is used and when it resets. It
+ * knows nothing of whether a limit is near, past what 100 says, which a `rate_limit_event` does.
+ */
+export function toPlanLimits(usage: WireUsage | null | undefined): LimitWindow[] {
+  const windows = usage?.rate_limits;
+  if (!windows) return [];
+  const limits: LimitWindow[] = [];
+  for (const [id, known] of Object.entries(LIMIT_NAMES)) {
+    const each = windows[id];
+    if (!each || typeof each.utilization !== "number") continue;
+    const resets = each.resets_at ? Date.parse(each.resets_at) : Number.NaN;
+    const usedPercent = Math.round(each.utilization);
+    limits.push({
+      id,
+      name: known.name,
+      usedPercent,
+      windowMinutes: known.minutes,
+      resetsAt: Number.isNaN(resets) ? null : resets,
+      status: usedPercent >= 100 ? "exceeded" : "ok",
+      overage: false,
+    });
+  }
+  return limits;
 }
 
 /**

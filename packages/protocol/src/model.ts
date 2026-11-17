@@ -381,6 +381,8 @@ export interface SessionInfo {
   unread: boolean;
   /** The session this one was forked from. */
   forkedFrom: string | null;
+  /** A label the owner put on it, where the agent keeps one. Absent: none. */
+  tag?: string;
   /** The schedule whose run started it. It stays after the schedule is deleted. */
   scheduleId: string | null;
 }
@@ -550,6 +552,20 @@ export interface AgentCapabilities {
   features: boolean;
   /** Cycle keeps hooks for it, and can turn the owner's own off: `hooks.*`, `skills.enable`. */
   hooks: boolean;
+  /** A server that failed can be connected again in a process that runs: `mcp.reconnect`. */
+  mcpReconnect: boolean;
+  /** It lists the helper agents a session can start: `subagents.list`. */
+  subagents: boolean;
+  /** A conversation can carry a tag the owner sets: `session.update`'s `tag`. */
+  tags: boolean;
+}
+
+/** A helper agent an agent can start, as it lists them. */
+export interface SubagentInfo {
+  name: string;
+  description: string;
+  /** What it runs on: an alias or an id, or `inherit` for the session's. Null for the default. */
+  model: string | null;
 }
 
 /** An agent the daemon runs, and what it can do. */
@@ -817,9 +833,26 @@ export interface HookInfo {
   timeout: number | null;
 }
 
+/**
+ * What an agent's process is started with beyond its tools and settings: the agent's own options,
+ * kept for it. A change reaches a session the next time its process starts.
+ */
+export interface RunSettings {
+  /** Models to try, in order and comma-separated, when the one in use is overloaded. */
+  fallbackModel: string | null;
+  /** Most requests to the model one process makes; the agent counts them from the process's start. */
+  maxTurns: number | null;
+  /** Most the agent may spend, in USD, from its process's start. It then stops the turn. */
+  maxBudgetUsd: number | null;
+  /** The agent says, after a turn, what the owner might send next. */
+  promptSuggestions: boolean;
+}
+
 /** The hooks Cycle keeps for an agent, and how much of the owner's own configuration applies. */
 export interface HookSettings {
   hooks: HookInfo[];
+  /** What a process is started with. */
+  run: RunSettings;
   /** The owner's own hooks run. Off, every hook is off, Cycle's too: the agent has one switch. */
   ownerHooks: boolean;
   /** The owner's own configuration of the agent is read: their settings, servers, plugins, skills. */

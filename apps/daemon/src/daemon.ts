@@ -233,6 +233,15 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     if (event.type === "commands.changed") {
       push({ type: "commands.changed", sessionId: event.sessionId, commands: event.commands });
     }
+    // shortcut: a page opened after the suggestion came does not see it; upgrade when owners
+    // reopen sessions often enough to miss it.
+    if (event.type === "suggestion.changed") {
+      push({
+        type: "suggestion.changed",
+        sessionId: event.sessionId,
+        suggestion: event.suggestion,
+      });
+    }
     if (event.type !== "account.changed") return;
     const { error } = event;
     harness
@@ -514,6 +523,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       mcpChange(name, () => harness.connector(name).enableMcpServer(server, enabled)),
     "mcp.enableTool": ({ name: server, tool, enabled, harness: name }) =>
       mcpChange(name, () => harness.connector(name).enableMcpTool(server, tool, enabled)),
+    "subagents.list": async ({ cwd, harness: name }) => {
+      const list = harness.connector(name).listSubagents;
+      return { agents: list ? await list(cwd) : [] };
+    },
+    "mcp.reconnect": ({ name: server, harness: name }) =>
+      mcpChange(name, async () => {
+        const reconnect = harness.connector(name).reconnectMcpServer;
+        if (!reconnect)
+          throw new NotSupported(`${name ?? harness.name} cannot reconnect a server.`);
+        await reconnect(server);
+      }),
     "mcp.login": ({ name: server, harness: name }) =>
       harness.connector(name).loginMcpServer(server),
     "plugins.list": ({ harness: name }) => harness.connector(name).listPlugins(),

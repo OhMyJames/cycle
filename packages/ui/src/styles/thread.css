@@ -1145,6 +1145,27 @@ button.code-diff-name:hover {
   justify-content: flex-start;
   padding: 0 4px 4px;
 }
+/* What the agent guesses is sent next: a row over the message box that a click or Tab takes. */
+.next-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0 0 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-row);
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+  line-height: var(--text-meta-line);
+  text-align: left;
+}
+.next-prompt:hover {
+  background: var(--surface-control-hover);
+}
+.next-prompt kbd {
+  flex: none;
+  color: var(--text-muted);
+}
 .suggestions {
   left: 0;
   right: 0;

@@ -75,6 +75,15 @@ function ServerRow({
             Sign in
           </button>
         ) : null}
+        {failed && server.enabled && app.capabilities(app.shownAgent()).mcpReconnect ? (
+          <button
+            type="button"
+            className="button"
+            onClick={() => void app.reconnectMcpServer(server.name)}
+          >
+            Reconnect
+          </button>
+        ) : null}
         <Switch
           label={server.enabled ? `Turn ${server.name} off` : `Turn ${server.name} on`}
           checked={server.enabled}

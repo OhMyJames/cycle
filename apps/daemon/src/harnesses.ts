@@ -135,6 +135,12 @@ export class Harnesses implements Agents {
     await (await this.of(sessionId)).renameSession(sessionId, title);
   }
 
+  async tagSession(sessionId: string, tag: string | null): Promise<void> {
+    const agent = await this.of(sessionId);
+    if (!agent.capabilities.tags || !agent.tagSession) unsupported(agent.name, "Tagging a session");
+    await agent.tagSession(sessionId, tag);
+  }
+
   async archiveSession(sessionId: string, archived: boolean): Promise<void> {
     await (await this.of(sessionId)).archiveSession(sessionId, archived);
   }
@@ -262,7 +268,17 @@ export class Harnesses implements Agents {
       removeMcpServer: own("removeMcpServer", change, edits),
       enableMcpServer: own("enableMcpServer", change, edits),
       enableMcpTool: own("enableMcpTool", change, edits),
+      listSubagents: own(
+        "listSubagents",
+        "Listing helper agents",
+        capabilities.subagents,
+      ) as NonNullable<Connector["listSubagents"]>,
       loginMcpServer: own("loginMcpServer", "Signing in to an MCP server"),
+      reconnectMcpServer: own(
+        "reconnectMcpServer",
+        "Reconnecting an MCP server",
+        capabilities.mcpReconnect,
+      ) as NonNullable<Connector["reconnectMcpServer"]>,
       listPlugins: own("listPlugins", "Listing plugins", edits),
       readPlugin: own("readPlugin", "Reading a plugin", edits),
       installPlugin: own("installPlugin", change, edits),

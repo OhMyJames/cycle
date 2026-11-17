@@ -204,7 +204,12 @@ function helperReply(prompt: string, results: number): ClaudeReply | null {
   return null;
 }
 
+let overloaded = 0;
 const claudeModel = startMockClaude(root, (prompt, results, body) => {
+  // Claude Code asks for a guess of what the owner sends next with a prompt of its own.
+  if (prompt.startsWith("[SUGGESTION MODE")) return { text: ["run the tests again"] };
+  // "overloaded" fails the first two requests with 529, which Claude Code tries again.
+  if (/overloaded/i.test(prompt) && overloaded++ < 2) return { status: 529 };
   if (taskNews(body))
     return { text: chunks("A task I started has ended; here is what came of it.") };
   const helped = helperReply(prompt, results);

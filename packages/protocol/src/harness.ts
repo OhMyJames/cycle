@@ -9,6 +9,7 @@ import type {
   FileRewind,
   HarnessInfo,
   McpServerInfo,
+  SubagentInfo,
   McpServerInput,
   ModeInfo,
   ModelInfo,
@@ -42,6 +43,8 @@ export interface HarnessSession {
   createdAt: number;
   updatedAt: number;
   forkedFrom: string | null;
+  /** A label the owner put on it, kept by the agent with the conversation. Absent: none. */
+  tag?: string;
 }
 
 export interface TurnOptions {
@@ -96,6 +99,8 @@ export type HarnessEvent =
   | { type: "limits.changed"; harness: string }
   /** The commands a session's prompt can begin with changed, as skills were found. */
   | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
+  /** What the agent guesses the owner sends next, after a turn; null once it is stale. */
+  | { type: "suggestion.changed"; sessionId: string; suggestion: string | null }
   /** The harness of this name stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; harness: string; message: string };
 
@@ -161,6 +166,8 @@ export interface Agent {
   /** Copies a session, up to and including `turnId` when given. */
   forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  /** Puts a tag on a conversation, or takes it off with null. With the `tags` capability. */
+  tagSession?(sessionId: string, tag: string | null): Promise<void>;
   archiveSession(sessionId: string, archived: boolean): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
@@ -230,6 +237,10 @@ export interface Connector {
   enableMcpTool(name: string, tool: string, enabled: boolean): Promise<void>;
   /** Starts a sign-in and answers where the owner finishes it. */
   loginMcpServer(name: string): Promise<{ url: string }>;
+  /** The helper agents a session in this folder can start. With the `subagents` capability. */
+  listSubagents?(cwd: string): Promise<SubagentInfo[]>;
+  /** Connects a server again, in the process that runs. With the `mcpReconnect` capability. */
+  reconnectMcpServer?(name: string): Promise<void>;
   listPlugins(): Promise<PluginCatalog>;
   readPlugin(marketplace: string, name: string): Promise<PluginDetail>;
   installPlugin(marketplace: string, name: string): Promise<void>;
@@ -282,13 +293,17 @@ export interface Harness extends Agent, Connector, Account, Machine {}
  * one's when none is given, and the machine is the main one's.
  */
 export interface Agents
-  extends Omit<Agent, "capabilities" | "rewindFiles" | "listCommands" | "readContext">, Machine {
+  extends
+    Omit<Agent, "capabilities" | "rewindFiles" | "listCommands" | "readContext" | "tagSession">,
+    Machine {
   /** The agents running, the main one first. */
   harnesses(): HarnessInfo[];
   /** An agent's Connector. What it cannot do, it refuses saying so. */
   connector(harness?: string): Connector;
   account(harness?: string): Account;
   rewindFiles(sessionId: string, turnId: string, dryRun: boolean): Promise<FileRewind>;
+  /** Tags the session, or takes the tag off; refused when its agent keeps no tags. */
+  tagSession(sessionId: string, tag: string | null): Promise<void>;
   /** A session's commands, or those of a new session in a folder, of the agent `harness` names. */
   listCommands(
     target: { sessionId: string } | { harness: string; cwd: string },

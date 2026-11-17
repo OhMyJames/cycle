@@ -23,6 +23,7 @@ import {
   type SessionMode,
   type SkillInfo,
   type SlashCommand,
+  type SubagentInfo,
   type Turn,
   type TurnOptions,
   type TurnOrigin,
@@ -81,9 +82,11 @@ import {
   toMcpServers,
   toModels,
   toPermission,
+  toPlanLimits,
   toSession,
   toSkills,
   toTurns,
+  resultError,
   toUserMessage,
   turnPlace,
   usedBy,
@@ -209,6 +212,10 @@ interface Running {
   commands: SlashCommand[];
   /** What it said the session had cost at its last result. Null before its first. */
   costSeen: number | null;
+  /** The owner was told this turn that a request is being made again: once is enough. */
+  retrying: boolean;
+  /** A suggestion of what to send next is out there, to be taken back when a turn begins. */
+  suggested: boolean;
 }
 
 interface PendingApproval {
@@ -346,6 +353,8 @@ export class ClaudeHarness implements Agent, AgentReads {
    * said: the owner's, and the folder's project's own.
    */
   private readonly commandsAt = new Map<string, { seen: string; commands: SlashCommand[] }>();
+  /** The helper agents a process started in a folder said it can start, as of the files then. */
+  private readonly agentsAt = new Map<string, { seen: string; agents: SubagentInfo[] }>();
   /** The MCP servers as last read, and when. */
   private mcp: { at: number; seen: string; servers: McpServerInfo[] } | null = null;
   /**
@@ -392,6 +401,9 @@ export class ClaudeHarness implements Agent, AgentReads {
       login: false,
       features: false,
       hooks: edits,
+      mcpReconnect: true,
+      subagents: true,
+      tags: true,
     };
   }
 
@@ -562,6 +574,13 @@ export class ClaudeHarness implements Agent, AgentReads {
     // One with no turn yet has no place for a name: the client keeps the owner's own.
     if (known.stored)
       await this.sdkFor(known).renameSession(sessionId, title, { dir: this.cwdOf(known) });
+  }
+
+  /** Tags a conversation, or takes the tag off. One with no turn yet has no file to keep it in. */
+  async tagSession(sessionId: string, tag: string | null): Promise<void> {
+    const known = await this.find(sessionId);
+    if (!known.stored) throw new Error("A tag goes on a conversation once it has had a turn.");
+    await this.sdkFor(known).tagSession(sessionId, tag, { dir: this.cwdOf(known) });
   }
 
   async archiveSession(sessionId: string, archived: boolean): Promise<void> {
@@ -739,6 +758,13 @@ export class ClaudeHarness implements Agent, AgentReads {
     return this.probe(async () => this.commandsAt.get(cwd)?.commands ?? [], cwd);
   }
 
+  /** The helper agents a session in a folder can start: the owner's, the project's, a plugin's. */
+  async listSubagents(cwd: string): Promise<SubagentInfo[]> {
+    const kept = this.agentsAt.get(cwd);
+    if (kept && kept.seen === (await this.seen(cwd)).folder) return kept.agents;
+    return this.probe(async () => this.agentsAt.get(cwd)?.agents ?? [], cwd);
+  }
+
   /** The owner's files as they are now, and with a folder's own when one is given. */
   private async seen(cwd: string | null): Promise<Seen> {
     const [owner, folder] = await Promise.all([
@@ -763,10 +789,31 @@ export class ClaudeHarness implements Agent, AgentReads {
     const running = this.here();
     if (running) {
       this.latest.account = await running.query.accountInfo().catch(() => this.latest.account);
+      await this.readPlanLimits(running.query);
     } else if (!this.latest.account) {
       await this.listModels();
     }
     return toAccount(this.latest.account, [...this.limits.values()]);
+  }
+
+  /**
+   * The plan's windows as they stand now, which a process says without a request: one it has heard
+   * of in a `rate_limit_event` of the same window keeps what that said of it being near or past.
+   * Numbers and times only. Nothing here is news when the call is not there or fails.
+   */
+  private async readPlanLimits(query: ClaudeQuery): Promise<void> {
+    const ask = query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    if (typeof ask !== "function") return;
+    const usage = await ask.call(query, { skipBehaviors: true }).catch(() => null);
+    for (const limit of toPlanLimits(usage)) {
+      const heard = this.limits.get(limit.id);
+      this.limits.set(
+        limit.id,
+        heard && heard.resetsAt === limit.resetsAt
+          ? { ...limit, status: heard.status, overage: heard.overage }
+          : limit,
+      );
+    }
   }
 
   /**
@@ -825,6 +872,19 @@ export class ClaudeHarness implements Agent, AgentReads {
 
   async removeMcpServer(name: string): Promise<void> {
     await this.change((config) => removeServer(config, name));
+  }
+
+  /**
+   * Connects a server again in the process that runs on this machine, which is the one whose word
+   * the Connector gives. Another session's process, which began with it failed, keeps it failed
+   * until it starts again.
+   */
+  async reconnectMcpServer(name: string): Promise<void> {
+    const running = this.here();
+    if (!running) throw new Error("No Claude Code session is running to connect it in. Start one.");
+    await running.query.reconnectMcpServer(name);
+    // What the Connector last read is no longer so.
+    this.mcp = null;
   }
 
   async enableMcpServer(name: string, enabled: boolean): Promise<void> {
@@ -1056,6 +1116,14 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (at === null) return commands;
     if (init.account) this.latest.account = init.account;
     this.commandsAt.set(at.cwd, { seen: at.seen, commands });
+    this.agentsAt.set(at.cwd, {
+      seen: at.seen,
+      agents: (init.agents ?? []).map((agent) => ({
+        name: agent.name,
+        description: agent.description,
+        model: agent.model ?? null,
+      })),
+    });
     return commands;
   }
 
@@ -1341,6 +1409,8 @@ export class ClaudeHarness implements Agent, AgentReads {
       query,
       commands: [],
       costSeen: null,
+      retrying: false,
+      suggested: false,
     };
     try {
       running.commands = this.heard(
@@ -1468,6 +1538,10 @@ export class ClaudeHarness implements Agent, AgentReads {
     running.own = origin === undefined;
     running.notified = null;
     running.stopping = false;
+    if (running.suggested) {
+      running.suggested = false;
+      this.emit({ type: "suggestion.changed", sessionId: running.sessionId, suggestion: null });
+    }
     this.emit({
       type: "turn.started",
       sessionId: running.sessionId,
@@ -1533,6 +1607,22 @@ export class ClaudeHarness implements Agent, AgentReads {
       }
       return;
     }
+    if (each.type === "prompt_suggestion") {
+      // It comes after the turn's result, which is when the owner is looking for what to say.
+      const suggestion = each.suggestion?.trim();
+      if (suggestion && running.turn === null) {
+        running.suggested = true;
+        this.emit({ type: "suggestion.changed", sessionId: running.sessionId, suggestion });
+      }
+      return;
+    }
+    if (each.type === "system") {
+      const news = this.newsOfRequest(running, each);
+      if (news) {
+        if (news.level) this.notice(running.sessionId, news.level, news.text);
+        return;
+      }
+    }
     if (each.type === "rate_limit_event" && each.rate_limit_info) {
       const limit = toLimit(each.rate_limit_info);
       this.limits.set(limit.id, limit);
@@ -1583,6 +1673,48 @@ export class ClaudeHarness implements Agent, AgentReads {
     if (each.subtype === "background_tasks_changed") this.idle(running);
   }
 
+  private notice(sessionId: string, level: "info" | "warning", text: string): void {
+    this.emit({ type: "notice", sessionId, level, message: text });
+  }
+
+  /**
+   * What Claude Code says of the requests it makes to the model: one made again, and a refusal. A
+   * request made again many times is said once a turn, so the owner is not told again at each try.
+   * Null for any other message; `level` is null for news that is taken and not said.
+   */
+  private newsOfRequest(
+    running: Running,
+    each: WireMessage,
+  ): { level: "info" | "warning" | null; text: string } | null {
+    switch (each.subtype) {
+      case "api_retry": {
+        if (running.retrying) return { level: null, text: "" };
+        running.retrying = true;
+        const code = each.error_status ? ` (error ${each.error_status})` : "";
+        const of = each.max_retries ? ` of ${each.max_retries}` : "";
+        return {
+          level: "warning",
+          text: `A request to the model failed${code}. Claude Code is trying again: attempt ${each.attempt ?? 1}${of}.`,
+        };
+      }
+      case "model_refusal_fallback":
+        if (each.direction !== "retry") return { level: null, text: "" };
+        return {
+          level: "warning",
+          text: `${each.original_model ?? "The model"} refused, so the turn was tried on ${each.fallback_model ?? "another model"}.`,
+        };
+      case "model_refusal_no_fallback":
+        return {
+          level: "warning",
+          text:
+            each.content ||
+            `${each.original_model ?? "The model"} refused, and there is no fallback model to try. Set one in Settings, Claude Code.`,
+        };
+      default:
+        return null;
+    }
+  }
+
   /** A turn ended: what it used, how it went, and the turn that follows by itself, if one does. */
   private finish(running: Running, result: WireMessage): void {
     const { sessionId } = running;
@@ -1608,6 +1740,7 @@ export class ClaudeHarness implements Agent, AgentReads {
     const failed = result.is_error === true || result.subtype !== "success";
     const status = running.stopping ? "interrupted" : failed ? "failed" : "completed";
     running.stopping = false;
+    running.retrying = false;
     running.turn = null;
     running.known.stored = true;
     this.emit({
@@ -1615,10 +1748,7 @@ export class ClaudeHarness implements Agent, AgentReads {
       sessionId,
       turnId,
       status,
-      error:
-        status === "failed"
-          ? result.errors?.join("\n") || result.result || "The turn failed."
-          : null,
+      error: status === "failed" ? resultError(result) : null,
       durationMs: result.duration_ms ?? null,
     });
     // A prompt sent into the turn that it ended without taking begins the next one.

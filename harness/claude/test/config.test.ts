@@ -64,7 +64,13 @@ test("removing one of Cycle's servers forgets its tools turned off", () => {
 
 test("the flag layer says what is on as plainly as what is off, since a running one merges it", () => {
   let config = enableServer(emptyConfig(), "github", false);
-  config = { ...config, ownerHooks: false, plugins: { "a@m": false }, skillsOff: ["review"] };
+  config = {
+    ...config,
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
+    ownerHooks: false,
+    plugins: { "a@m": false },
+    skillsOff: ["review"],
+  };
   config = setHooks(
     config,
     {
@@ -72,6 +78,7 @@ test("the flag layer says what is on as plainly as what is off, since a running 
         { id: "", event: "PreToolUse", matcher: "Bash", command: " echo hi ", timeout: 5 },
         { id: "h2", event: "PreToolUse", matcher: "", command: "true", timeout: null },
       ],
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
       ownerHooks: false,
       ownerSettings: true,
       revision: 0,
@@ -102,7 +109,13 @@ test("a hook is refused on an event Claude Code has none of, or with no command"
   const set = (patch: object) =>
     setHooks(
       emptyConfig(),
-      { hooks: [{ ...hook, ...patch }], ownerHooks: true, ownerSettings: true, revision: 0 },
+      {
+        hooks: [{ ...hook, ...patch }],
+        run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
+        ownerHooks: true,
+        ownerSettings: true,
+        revision: 0,
+      },
       () => "id",
     );
   expect(() => set({ event: "Whenever" })).toThrow(ConfigError);
@@ -180,7 +193,13 @@ test("a name the owner turned off, or Cycle's tools have, is not given to a serv
 });
 
 test("hooks read before another change are refused, not written over it", () => {
-  const settings = { hooks: [], ownerHooks: false, ownerSettings: true, revision: 0 };
+  const settings = {
+    hooks: [],
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
+    ownerHooks: false,
+    ownerSettings: true,
+    revision: 0,
+  };
   const once = setHooks(emptyConfig(), settings, () => "id");
   expect(once.hooksRevision).toBe(1);
   expect(() => setHooks(once, settings, () => "id")).toThrow("changed elsewhere");
@@ -194,5 +213,11 @@ test("a server or a plugin given back needs a new start: a running process does 
   expect(key(off)).not.toBe(key(emptyConfig()));
   expect(key(enablePlugin(emptyConfig(), "p@m", false))).not.toBe(key(emptyConfig()));
   // The owner's hooks switch reaches a running process both ways.
-  expect(key({ ...emptyConfig(), ownerHooks: false })).toBe(key(emptyConfig()));
+  expect(
+    key({
+      ...emptyConfig(),
+      run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
+      ownerHooks: false,
+    }),
+  ).toBe(key(emptyConfig()));
 });

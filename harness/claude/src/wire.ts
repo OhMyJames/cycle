@@ -101,6 +101,24 @@ export interface WireMcpServerStatus {
   tools?: { name: string; description?: string }[];
 }
 
+/** A helper agent Claude Code can start, as it lists them. */
+export interface WireAgentInfo {
+  name: string;
+  description: string;
+  /** An alias or id, or `inherit`; absent for the default. */
+  model?: string;
+}
+
+/** What `usage` tells of the plan: numbers and times only. */
+export interface WireUsage {
+  rate_limits_available?: boolean;
+  /** Each window by the agent's own name: how much is used, 0 to 100, and when it resets (ISO 8601). */
+  rate_limits?: Record<
+    string,
+    { utilization: number | null; resets_at: string | null } | null | undefined
+  > | null;
+}
+
 export interface WireContextUsage {
   categories: {
     id?: string;
@@ -152,6 +170,20 @@ export interface WireMessage {
   permissionMode?: string;
   /** What the process has cost so far, in all. */
   total_cost_usd?: number;
+  /** A `prompt_suggestion`: what the owner might send next. */
+  suggestion?: string;
+  // `api_retry`: a request failed and is made again.
+  attempt?: number;
+  max_retries?: number;
+  retry_delay_ms?: number;
+  error_status?: number | null;
+  /** `model_refusal_*`: what the model's refusal came to, said for the owner. */
+  content?: string;
+  original_model?: string;
+  /** `model_refusal_fallback`: the model the turn was tried on instead. */
+  fallback_model?: string;
+  direction?: string;
+  scope?: string;
   /** A `rate_limit_event`. */
   rate_limit_info?: WireRateLimitInfo;
   /** A `commands_changed` system message: the whole list. */
@@ -217,6 +249,8 @@ export interface WireSessionInfo {
   summary: string;
   lastModified: number;
   customTitle?: string;
+  /** The label the owner put on it. */
+  tag?: string;
   firstPrompt?: string;
   gitBranch?: string;
   cwd?: string;

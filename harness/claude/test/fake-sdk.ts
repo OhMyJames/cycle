@@ -9,6 +9,7 @@ import type {
   WireRewindFilesResult,
   WireSessionInfo,
   WireSlashCommand,
+  WireUsage,
   WireUserMessage,
 } from "../src/wire.ts";
 
@@ -55,6 +56,7 @@ export class FakeQuery implements ClaudeQuery {
     return {
       models: this.sdk.models,
       commands: this.sdk.commandsAt[this.options.cwd] ?? this.sdk.commands,
+      agents: this.sdk.agents,
       account: this.sdk.account,
     };
   };
@@ -78,6 +80,11 @@ export class FakeQuery implements ClaudeQuery {
   stopTask = async (taskId: string) => {
     this.stopped.push(taskId);
   };
+  /** The servers it was asked to connect again. */
+  readonly reconnects: string[] = [];
+  reconnectMcpServer = async (name: string) => {
+    this.reconnects.push(name);
+  };
   setMcpServers = async (servers: Record<string, unknown>) => {
     this.servers = servers;
   };
@@ -91,6 +98,8 @@ export class FakeQuery implements ClaudeQuery {
       this.flags.push(settings);
     }
   };
+  /** What the plan's limits are said to be, as `usage` tells them. */
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async () => this.sdk.usage;
   reloads = 0;
   reloadPlugins = async () => {
     this.reloads++;
@@ -145,6 +154,9 @@ export class FakeSdk implements ClaudeSdk {
     },
   ];
   failStart: string | null = null;
+  usage: WireUsage = { rate_limits_available: false, rate_limits: null };
+  /** The helper agents a process says it can start. */
+  agents: { name: string; description: string; model?: string }[] = [];
   commands: WireSlashCommand[] = [
     { name: "compact", description: "Compact the conversation", argumentHint: "", builtin: true },
     { name: "deploy", description: "Ship it", argumentHint: "<env>" },
@@ -216,6 +228,9 @@ export class FakeSdk implements ClaudeSdk {
   };
   renameSession = async (sessionId: string, title: string) => {
     this.calls.push(`rename ${sessionId} ${title}`);
+  };
+  tagSession = async (sessionId: string, tag: string | null) => {
+    this.calls.push(`tag ${sessionId} ${tag ?? "none"}`);
   };
   archiveSession = async (sessionId: string) => {
     this.calls.push(`archive ${sessionId}`);

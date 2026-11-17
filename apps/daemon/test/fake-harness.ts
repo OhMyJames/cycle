@@ -25,6 +25,9 @@ export class FakeHarness implements Harness {
     connector: "edit",
     login: true,
     features: true,
+    mcpReconnect: false,
+    subagents: false,
+    tags: false,
     hooks: false,
   };
   readonly sent: { sessionId: string; text: string }[] = [];
@@ -158,7 +161,13 @@ export class FakeHarness implements Harness {
   readFeatures = async () => ({ subagents: true });
   setFeatures = async () => {};
   enableSkill = async () => {};
-  readHooks = async () => ({ hooks: [], ownerHooks: true, ownerSettings: true, revision: 0 });
+  readHooks = async () => ({
+    hooks: [],
+    run: { fallbackModel: null, maxTurns: null, maxBudgetUsd: null, promptSuggestions: false },
+    ownerHooks: true,
+    ownerSettings: true,
+    revision: 0,
+  });
   setHooks = async () => {};
   readAccount = async () => ({
     harness: this.name,
@@ -208,6 +217,9 @@ export class FakeHarness implements Harness {
       loadSession: (...args) => this.harness.loadSession(...args),
       forkSession: (...args) => this.harness.forkSession(...args),
       renameSession: (...args) => this.harness.renameSession(...args),
+      tagSession: async (sessionId, tag) => {
+        this.calls.push(`tag ${sessionId} ${tag ?? "none"}`);
+      },
       archiveSession: (...args) => this.harness.archiveSession(...args),
       deleteSession: (...args) => this.harness.deleteSession(...args),
       compactSession: (...args) => this.harness.compactSession(...args),
