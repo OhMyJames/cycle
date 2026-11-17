@@ -9,7 +9,9 @@ export type ClaudeReply =
   /** The model answers in text, streamed chunk by chunk. */
   | { text: string[]; delayMs?: number }
   /** The model calls a tool. Claude Code runs it and asks again. */
-  | { call: { name: string; input: Record<string, unknown> } };
+  | { call: { name: string; input: Record<string, unknown> } }
+  /** The API fails with this status, as 529 when it is overloaded; Claude Code tries again. */
+  | { status: number };
 
 export interface MockClaude {
   url: string;
@@ -56,7 +58,11 @@ function progress(body: Body): { prompt: string; results: number } {
 
 type SseEvent = Record<string, unknown> & { type: string };
 
-function eventsFor(index: number, model: string, reply: ClaudeReply): SseEvent[] {
+function eventsFor(
+  index: number,
+  model: string,
+  reply: Exclude<ClaudeReply, { status: number }>,
+): SseEvent[] {
   const usage = { input_tokens: 100, cache_read_input_tokens: 20, cache_creation_input_tokens: 0 };
   const events: SseEvent[] = [
     {
@@ -132,6 +138,13 @@ export function startMockClaude(
         ? reply(prompt, results, body)
         : { text: ["ok"] };
       const model = body.model ?? "mock";
+      if ("status" in answer) {
+        const error = { type: answer.status === 529 ? "overloaded_error" : "api_error" };
+        return Response.json(
+          { type: "error", error: { ...error, message: "The scripted model failed." } },
+          { status: answer.status },
+        );
+      }
       if (!body.stream) {
         return Response.json({
           id: `msg_${index}`,
