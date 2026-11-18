@@ -26,6 +26,7 @@ async function setup() {
   const timers = manualSchedule();
   const frames: EventFrame[] = [];
   const infos: Session[] = [];
+  const gone: string[] = [];
   const settings: Settings = {
     model: null,
     effort: null,
@@ -49,7 +50,7 @@ async function setup() {
     publish: {
       frame: (frame) => frames.push(frame),
       sessions: (list) => infos.push(...list),
-      removed: () => {},
+      removed: (ids) => gone.push(...ids),
       usage: () => {},
     },
   });
@@ -60,7 +61,7 @@ async function setup() {
     expect(fields(told(id))).toEqual(fields(hub.info(id)));
     return fields(hub.info(id));
   };
-  return { harness, hub, timers, infos, told, shown };
+  return { harness, hub, timers, infos, told, shown, gone };
 }
 
 const start = (sessionId: string, turnId: string) =>
@@ -199,6 +200,18 @@ test("archiving an idle session stores it; one opened archived and then unarchiv
   expect(fields(hub.info("old"))).toEqual(RUNNING);
 });
 
+test("an event that leaves its activity and failure as they were still tells that it is loaded", async () => {
+  const { harness, hub, shown } = await setup();
+  harness.stored = [harness.session("old")];
+  await hub.list(true);
+  await hub.open("old", undefined);
+  await hub.update({ sessionId: "old", archived: false });
+  expect(fields(hub.info("old"))).toEqual(STORED);
+  // Only `loaded` differs from here: a note changes neither the activity nor the failure.
+  harness.emit({ type: "notice", sessionId: "old", level: "info", message: "hello" });
+  expect(shown("old")).toEqual(IDLE);
+});
+
 test("a running or waiting session is not archived, and is left as it was", async () => {
   const { harness, hub } = await setup();
   const info = await hub.create({ cwd: "/project" });
@@ -255,4 +268,24 @@ test("a session is working while it is running or waiting, and not when idle, fa
   await hub.update({ sessionId: info.id, archived: true });
   expect(fields(hub.info(info.id))).toEqual(STORED);
   expect(working()).toEqual([false, false]);
+});
+
+test("a running or waiting session is not deleted, and an idle one is", async () => {
+  const { harness, hub, gone } = await setup();
+  const info = await hub.create({ cwd: "/project" });
+  const refused = "Stop the session before deleting it.";
+  await hub.send(info.id, prompt, "auto");
+  await expect(hub.remove(info.id, false)).rejects.toThrow(refused);
+  harness.emit(start(info.id, "t1"));
+  harness.emit(ask(info.id, "command"));
+  await expect(hub.remove(info.id, false)).rejects.toThrow(refused);
+  expect(harness.calls).not.toContain(`delete ${info.id}`);
+  expect(gone).toEqual([]);
+  expect(fields(hub.info(info.id))).toEqual(WAITING);
+  harness.emit(answered(info.id));
+  harness.emit(end(info.id, "t1", "failed"));
+  await hub.remove(info.id, false);
+  expect(harness.calls).toContain(`delete ${info.id}`);
+  expect(gone).toEqual([info.id]);
+  expect(() => hub.info(info.id)).toThrow();
 });

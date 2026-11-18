@@ -8,7 +8,7 @@ import {
   reduceSession,
 } from "../src/index.ts";
 
-const info = { id: "s", harness: "fake", status: "idle" } as Session;
+const info = { id: "s", harness: "fake", activity: "idle" } as Session;
 const fold = (events: SessionEvent[]) => events.reduce(reduceSession, initialSessionState(info));
 
 type Task = Extract<Item, { kind: "task" }>;

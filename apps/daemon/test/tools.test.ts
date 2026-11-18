@@ -11,7 +11,6 @@ const info = (id: string, title: string, updatedAt: number): Session => ({
   model: "m",
   effort: null,
   mode: "auto",
-  status: "idle",
   activity: "idle",
   loaded: true,
   failed: false,

@@ -18,7 +18,6 @@ const info: Session = {
   model: "m",
   effort: null,
   mode: "auto",
-  status: "idle",
   activity: "idle",
   loaded: true,
   failed: false,
