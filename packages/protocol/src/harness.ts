@@ -106,7 +106,7 @@ export type AgentEvent =
   /** The account's rate limits moved, as they do with each turn. */
   | { type: "limits.changed"; harness: string }
   /** The harness of this name stopped: every session it held is gone until a restart. */
-  | { type: "harness.exited"; harness: string; message: string };
+  | { type: "agent.exited"; harness: string; message: string };
 
 /** The one stream a harness reports on: an event is a session's when it carries `sessionId`. */
 export type HarnessEvent = AgentSessionEvent | AgentEvent;

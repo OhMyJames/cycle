@@ -80,7 +80,7 @@ Read these against the glossary. Each one is a place the words are not yet one m
 6. **`HarnessEvent` is two sets on one stream.** `AgentSessionEvent` is what an agent says of a
    session (a `SessionEvent`, and `session.changed`, `mode.changed`, `commands.changed`,
    `suggestion.changed`); `AgentEvent` is what it says of itself (`mcp.changed`, `account.changed`,
-   `limits.changed`, `harness.exited`). The port stays one stream, `onEvent`, and the daemon's
+   `limits.changed`, `agent.exited`). The port stays one stream, `onEvent`, and the daemon's
    `handle` splits on `"sessionId" in event`.
 7. **`Agent` is both the program's name and this interface** (line 151). The glossary names the
    interface `Sessions`.

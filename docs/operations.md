@@ -151,8 +151,8 @@ the page by `session.changed` when it enters or leaves one.
 ## Events
 
 Two sets, which exist as the types `AgentSessionEvent` and `AgentEvent` (their union, `HarnessEvent`,
-is the one stream a harness reports on). The kind names below are still to do: where a name differs
-from today's, the last column gives today's. An agent's event tells what it knows; Cycle adds its own
+is the one stream a harness reports on). Of the kind names below only `agent.exited` is done; the
+others are still to do, and where a name differs from today's, the last column gives today's. An agent's event tells what it knows; Cycle adds its own
 and numbers a session's into frames.
 
 **Of a session** (each carries a session id):
@@ -172,7 +172,8 @@ and numbers a session's into frames.
 
 **Of an agent** (no session id): `options.changed` (the models offered changed), `extensions.changed`
 (a server started, failed, finished a sign-in), `account.changed`, `limits.changed`, `agent.exited`.
-Today these are `mcp.changed`, `account.changed`, `limits.changed` and `harness.exited`.
+Today `agent.exited` is named so, and `mcp.changed` stands for `extensions.changed`; `options.changed`
+has no producer yet.
 
 **Not the agent's:** the daemon derives the session's activity (`SessionActivity`) and tells it.
 

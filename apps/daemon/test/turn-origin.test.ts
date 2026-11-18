@@ -136,7 +136,7 @@ test("one task is stopped by itself, and the session's tasks go when its harness
     sessionId: info.id,
     tasks: [{ id: "k", task: "agent", description: "", agent: null, itemId: null }],
   });
-  harness.emit({ type: "harness.exited", harness: info.harness, message: "gone" });
+  harness.emit({ type: "agent.exited", harness: info.harness, message: "gone" });
   const opened = await hub.open(info.id, undefined);
   expect("state" in opened && opened.state.tasks).toEqual([]);
 });

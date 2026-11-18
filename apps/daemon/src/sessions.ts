@@ -911,7 +911,7 @@ export class SessionHub {
 
   /** What an agent says of itself. The account, the limits and the connector are the daemon's to pass on. */
   private agentEvent(event: AgentEvent): void {
-    if (event.type !== "harness.exited") return;
+    if (event.type !== "agent.exited") return;
     for (const live of this.live.values()) {
       // Another harness's sessions carry on.
       if (live.state.info.harness !== event.harness) continue;

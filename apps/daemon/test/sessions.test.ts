@@ -228,7 +228,7 @@ test("the harness stopping fails the turns it was running", async () => {
   const { harness, hub, status } = await setup();
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
-  harness.emit({ type: "harness.exited", harness: "fake", message: "codex app-server exited" });
+  harness.emit({ type: "agent.exited", harness: "fake", message: "codex app-server exited" });
   expect(status(info.id)).toBe("error");
   const state = await hub.open(info.id, undefined);
   expect("state" in state && state.state.turns[0]?.error).toContain("codex app-server exited");
@@ -332,9 +332,9 @@ test("a harness that stops ends only its own sessions' turns", async () => {
   const info = await hub.create({ cwd: "/project" });
   await hub.send(info.id, { text: "go", images: [] }, "auto");
   harness.emit(start(info.id, "t1"));
-  harness.emit({ type: "harness.exited", harness: "other", message: "other exited" });
+  harness.emit({ type: "agent.exited", harness: "other", message: "other exited" });
   expect(status(info.id)).toBe("running");
-  harness.emit({ type: "harness.exited", harness: "fake", message: "fake exited" });
+  harness.emit({ type: "agent.exited", harness: "fake", message: "fake exited" });
   expect(status(info.id)).toBe("error");
 });
 

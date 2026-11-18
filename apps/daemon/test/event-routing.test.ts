@@ -107,7 +107,7 @@ test("the agent stopping fails its running turn, after emptying its tasks", asyn
   } as const;
   harness.emit({ type: "tasks.updated", sessionId: info.id, tasks: [task] });
   const before = events().length;
-  harness.emit({ type: "harness.exited", harness: "fake", message: "fake exited" });
+  harness.emit({ type: "agent.exited", harness: "fake", message: "fake exited" });
   expect(events().slice(before)).toEqual([
     { type: "tasks.updated", sessionId: info.id, tasks: [] },
     {
@@ -125,12 +125,10 @@ test("the agent stopping with nothing running says nothing, and another agent's 
   const { harness, hub, watch } = await setup();
   const info = await hub.create({ cwd: "/project" });
   expect(
-    watch(() => harness.emit({ type: "harness.exited", harness: "fake", message: "x" })),
+    watch(() => harness.emit({ type: "agent.exited", harness: "fake", message: "x" })),
   ).toMatchObject({ frames: [] });
   harness.emit({ type: "turn.started", sessionId: info.id, turnId: "t1", startedAt: null });
-  const other = watch(() =>
-    harness.emit({ type: "harness.exited", harness: "other", message: "x" }),
-  );
+  const other = watch(() => harness.emit({ type: "agent.exited", harness: "other", message: "x" }));
   expect(other).toEqual(quiet);
 });
 
@@ -235,7 +233,7 @@ const kinds = (
   "mcp.changed": [{ type: "mcp.changed" }, viaNone()],
   "account.changed": [{ type: "account.changed", harness: "fake", error: null }, viaNone()],
   "limits.changed": [{ type: "limits.changed", harness: "fake" }, viaNone()],
-  "harness.exited": [{ type: "harness.exited", harness: "fake", message: "x" }, viaNone()],
+  "agent.exited": [{ type: "agent.exited", harness: "fake", message: "x" }, viaNone()],
 });
 const viaFrame = (type: SessionEvent["type"]): Route => ({ frames: [type], info: false });
 const viaInfo = (): Route => ({ frames: [], info: true });
