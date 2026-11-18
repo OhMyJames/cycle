@@ -57,6 +57,19 @@ test("a session only in the folder has no base or origin of this worktree", asyn
   ]);
 });
 
+test("a session in the folder whose record names another worktree gives this one no base or origin", async () => {
+  const other = { ...stored, path: "/repo/.agents/worktree/other", base: "other-base" };
+  const { harness, hub } = await setup({ sessions: { inside: { worktree: other } } });
+  harness.stored = [harness.session("inside", { cwd: `${FOLDER}/pkg` })];
+  await hub.list(false);
+  expect(hub.worktreeUsers(FOLDER)).toMatchObject([
+    { id: "inside", named: false, base: null, origin: null },
+  ]);
+  expect(hub.worktreeUsers(other.path)).toMatchObject([
+    { id: "inside", named: true, base: "other-base", origin: "owner" },
+  ]);
+});
+
 test("a worktree of the session is the one it names", async () => {
   const { hub } = await setup();
   const info = await hub.create(worktreeAt);
