@@ -1,4 +1,4 @@
-import type { Approval, ApprovalAnswer, FormField, Question } from "@cycle/protocol";
+import type { Approval, ApprovalAnswer, Ask, FormField } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { host } from "../client/host.ts";
@@ -13,7 +13,7 @@ function QuestionCard({
   questions,
   onAnswer,
 }: {
-  questions: Question[];
+  questions: Ask[];
   onAnswer(answers: Record<string, string[]>): void;
 }) {
   const [step, setStep] = useState(0);

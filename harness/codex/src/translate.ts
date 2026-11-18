@@ -1,4 +1,6 @@
 import type {
+  Approval,
+  ApprovalResponse,
   CommandAction,
   AgentSession,
   Item,
@@ -12,6 +14,8 @@ import type {
   PluginInfo,
   ModelInfo,
   PromptInput,
+  Question,
+  QuestionAnswer,
   ReviewTarget,
   PermissionMode,
   SkillInfo,
@@ -19,7 +23,7 @@ import type {
   Turn,
   Usage,
 } from "@cycle/protocol";
-import { type ModeInfo, defineModes } from "@cycle/protocol";
+import { type ModeInfo, defineModes, formFields } from "@cycle/protocol";
 import type {
   WireCommandAction,
   WireConfigEdit,
@@ -804,4 +808,136 @@ export function toReviewTarget(target: ReviewTarget): unknown {
     default:
       throw new Error("Say what to review.");
   }
+}
+
+// What the app-server asks of the owner
+
+export function text(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** What the app-server asks of the owner as leave. Null for a request that is not one. */
+export function toApproval(
+  id: string,
+  method: string,
+  params: Record<string, unknown>,
+): Approval | null {
+  const itemId = text(params["itemId"]) ?? "";
+  const reason = text(params["reason"]);
+  switch (method) {
+    case "item/commandExecution/requestApproval":
+      return {
+        id,
+        kind: "command",
+        itemId,
+        command: text(params["command"]),
+        cwd: text(params["cwd"]),
+        reason,
+      };
+    case "item/fileChange/requestApproval":
+      return { id, kind: "fileChange", itemId, reason };
+    case "item/permissions/requestApproval":
+      return {
+        id,
+        kind: "permissions",
+        itemId,
+        reason,
+        summary: JSON.stringify(params["permissions"] ?? {}, null, 2),
+      };
+    default:
+      return null;
+  }
+}
+
+/** The owner's answer as the app-server takes it, for the request it came with. */
+export function approvalResult(
+  method: string,
+  params: Record<string, unknown>,
+  response: ApprovalResponse,
+): unknown {
+  const decision = "decision" in response ? response.decision : "cancel";
+  if (method === "item/permissions/requestApproval") {
+    const granted = decision === "accept" || decision === "acceptForSession";
+    return {
+      permissions: granted ? (params["permissions"] ?? {}) : {},
+      scope: decision === "acceptForSession" ? "session" : "turn",
+    };
+  }
+  return { decision };
+}
+
+/**
+ * What the app-server asks of the owner as content: a choice, or an MCP server's form or page. Null
+ * for a request that is not one.
+ */
+export function toQuestion(
+  id: string,
+  method: string,
+  params: Record<string, unknown>,
+): Question | null {
+  const itemId = text(params["itemId"]) ?? "";
+  switch (method) {
+    case "item/tool/requestUserInput": {
+      const asks = (params["questions"] ?? []) as {
+        id: string;
+        header: string;
+        question: string;
+        isOther: boolean;
+        isSecret: boolean;
+        options: { label: string; description: string }[] | null;
+      }[];
+      return {
+        id,
+        itemId,
+        kind: "choice",
+        asks: asks.map((ask) => ({
+          id: ask.id,
+          header: ask.header,
+          question: ask.question,
+          options: ask.options ?? [],
+          allowOther: ask.isOther || !ask.options?.length,
+          secret: ask.isSecret,
+        })),
+      };
+    }
+    case "mcpServer/elicitation/request": {
+      // No item exists for it, so the request's own id stands in for one.
+      const server = text(params["serverName"]) ?? "";
+      const message = text(params["message"]) ?? "";
+      const url = params["mode"] === "url" ? text(params["url"]) : null;
+      if (url) return { id, itemId: id, kind: "link", server, message, url };
+      const schema = params["requestedSchema"] ?? null;
+      return {
+        id,
+        itemId: id,
+        kind: "form",
+        server,
+        message,
+        // Only MCP's own form is drawn as fields; OpenAI's are shown as their schema.
+        fields: params["mode"] === "form" ? formFields(schema) : null,
+        schema: schema === null ? null : JSON.stringify(schema, null, 2),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** The owner's answer as the app-server takes it, for the request it came with. */
+export function questionResult(method: string, answer: QuestionAnswer): unknown {
+  if (method === "item/tool/requestUserInput") {
+    const answers = "answers" in answer ? answer.answers : {};
+    return {
+      answers: Object.fromEntries(
+        Object.entries(answers).map(([askId, values]) => [askId, { answers: values }]),
+      ),
+    };
+  }
+  // A form is told the answer was of its own kind: choices are no answer to it.
+  if (!("action" in answer)) return { action: "cancel", content: null, _meta: null };
+  return {
+    action: answer.action,
+    content: answer.action === "accept" ? (answer.content ?? null) : null,
+    _meta: null,
+  };
 }

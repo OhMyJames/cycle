@@ -199,6 +199,20 @@ const kinds = (
     { type: "approval.resolved", sessionId: id, approvalId: "a1" },
     viaFrame("approval.resolved"),
   ],
+  // The page still draws approvals, so each question goes with the approval it also is.
+  "question.requested": [
+    {
+      type: "question.requested",
+      sessionId: id,
+      turnId: "t1",
+      question: { id: "q1", itemId: "i", kind: "choice", asks: [] },
+    },
+    { frames: ["question.requested", "approval.requested"], info: false },
+  ],
+  "question.resolved": [
+    { type: "question.resolved", sessionId: id, questionId: "q1" },
+    { frames: ["question.resolved", "approval.resolved"], info: false },
+  ],
   "queue.updated": [{ type: "queue.updated", sessionId: id, queue: [] }, viaFrame("queue.updated")],
   "turn.completed": [
     {

@@ -4,8 +4,6 @@ import {
   PlanDraft,
   StreamReader,
   toApproval,
-  toElicitation,
-  toElicitationResult,
   toOwner,
   toPermission,
   toTurns,
@@ -57,11 +55,6 @@ test("what Claude Code asks is asked of the owner in the shape of what it is", (
     reason: null,
     rules: [],
   });
-  const asked = { question: "Which?", header: "Pick", options: [{ label: "A", description: "a" }] };
-  expect(toApproval("i", "AskUserQuestion", { questions: [asked] }, hint)).toMatchObject({
-    kind: "question",
-    questions: [{ id: "Which?", header: "Pick", options: [{ label: "A", description: "a" }] }],
-  });
   expect(toApproval("i", "ExitPlanMode", {}, { ...hint, plan: "# Plan" })).toEqual({
     id: "i",
     kind: "plan",
@@ -102,12 +95,6 @@ test("the owner's answer keeps to the session, and never writes their settings",
   expect(toPermission("Bash", input, [], { decision: "cancel" })).toMatchObject({
     behavior: "deny",
     interrupt: true,
-  });
-  expect(
-    toPermission("AskUserQuestion", { questions: [] }, [], { answers: { "Which?": ["A", "B"] } }),
-  ).toEqual({
-    behavior: "allow",
-    updatedInput: { questions: [], answers: { "Which?": "A, B" } },
   });
 });
 
@@ -218,43 +205,6 @@ test("a call refused without asking is declined, with why where the item cannot 
     { type: "item.completed", item: { kind: "fileChange", status: "declined" } },
     { type: "notice", level: "warning", message: "denied in don't ask mode" },
   ]);
-});
-
-test("an MCP server's form is drawn as fields when it can be, and answered as the owner did", () => {
-  const schema = {
-    type: "object",
-    properties: {
-      name: { type: "string", title: "Name" },
-      size: { type: "string", enum: ["s", "m"], description: "How big" },
-      ok: { type: "boolean" },
-    },
-    required: ["name"],
-  };
-  const form = toElicitation("e", { serverName: "docs", message: "Who?", requestedSchema: schema });
-  expect(form).toMatchObject({
-    kind: "elicitation",
-    server: "docs",
-    message: "Who?",
-    url: null,
-    fields: [
-      { name: "name", title: "Name", type: "string", options: null, required: true },
-      { name: "size", title: "size", description: "How big", options: ["s", "m"] },
-      { name: "ok", type: "boolean", required: false },
-    ],
-  });
-  const nested = { properties: { where: { type: "object" } } };
-  expect(
-    toElicitation("e", { serverName: "d", message: "", requestedSchema: nested }),
-  ).toMatchObject({ fields: null, schema: JSON.stringify(nested, null, 2) });
-  expect(
-    toElicitation("e", { serverName: "d", message: "Sign in", mode: "url", url: "https://x" }),
-  ).toMatchObject({ url: "https://x", fields: null, schema: null });
-  expect(toElicitationResult({ decision: "accept", content: { name: "me" } })).toEqual({
-    action: "accept",
-    content: { name: "me" },
-  });
-  expect(toElicitationResult({ decision: "decline" })).toEqual({ action: "decline" });
-  expect(toElicitationResult({ decision: "cancel" })).toEqual({ action: "cancel" });
 });
 
 test("the plan file is followed as edited, `$` and every match alike", () => {

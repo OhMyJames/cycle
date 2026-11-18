@@ -14,7 +14,7 @@ Cycle has two, and this page is about the first.
 
 1. **The agent contract**, between the daemon and an agent's harness (`harness.ts` today). The daemon
    asks; the agent does it and tells what happened. This is what changes when a third agent comes.
-2. **The wire**, between a page and the daemon (`wire.ts` today, seventy-eight methods). It shows the
+2. **The wire**, between a page and the daemon (`wire.ts` today, eighty-one methods). It shows the
    entities to the page and holds what only Cycle has: environments, workspaces, schedules, providers,
    numbered frames. It is not redesigned here; only a naming rule is proposed at the end.
 
@@ -91,7 +91,7 @@ makes `session.list` and `session.delete` optional.
 | `turn.send`                    | starts a turn; answers with its id                     | `send`                                    |
 | `turn.interrupt`               | stops the turn                                         | `interrupt`                               |
 | `approval.respond`             | answers an approval                                    | `respondApproval`                         |
-| `question.answer`              | answers a question                                     | `respondApproval` (a kind of it)          |
+| `question.answer`              | answers a question                                     | `answerQuestion`                          |
 
 ## What an agent may add
 
@@ -172,26 +172,26 @@ the page by `session.changed` when it enters or leaves one.
 ## Events
 
 Two sets, which exist as the types `AgentSessionEvent` and `AgentEvent` (their union, `HarnessEvent`,
-is the one stream a harness reports on). Four kinds below are still to do: `option.changed` (today
-`mode.changed`), `question.requested` and `question.resolved` (today kinds of the approval events),
-and `extensions.changed` (today `mcp.changed`); `options.changed` has no producer yet. The rest
-carry their names, `agent.exited` since this change. An agent's event tells what it knows; Cycle
-adds its own and numbers a session's into frames.
+is the one stream a harness reports on). Two kinds below are still to do: `option.changed` (today
+`mode.changed`) and `extensions.changed` (today `mcp.changed`); `options.changed` has no producer
+yet. The rest carry their names, `agent.exited` and `question.requested` and `question.resolved`
+since their own changes. An agent's event tells what it knows; Cycle adds its own and numbers a
+session's into frames.
 
 **Of a session** (each carries a session id):
 
-| Event                                                            | Says                                                   | Replaces today's             |
-| ---------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------- |
-| `session.changed`                                                | a field of the session the agent keeps, as a patch     | `session.changed`            |
-| `option.changed`                                                 | the agent moved an option itself, as on leaving a plan | `mode.changed`               |
-| `turn.started`, `turn.completed`                                 | a turn began, ended, with its status and reason        | the same                     |
-| `item.started`, `item.delta`, `item.completed`                   | an item, told by its id                                | the same                     |
-| `plan.updated`, `diff.updated`, `tasks.updated`, `usage.updated` | the plan, the diff, the tasks, the tokens              | the same                     |
-| `approval.requested`, `approval.resolved`                        | an approval opened, answered                           | the same                     |
-| `question.requested`, `question.resolved`                        | a question opened, answered                            | kinds of the approval events |
-| `notice`                                                         | a note, a warning or an error                          | the same                     |
-| `turns.rewound`                                                  | turns taken back                                       | the same                     |
-| `commands.changed`, `suggestion.changed`                         | the commands, or what the agent guesses comes next     | the same                     |
+| Event                                                            | Says                                                   | Replaces today's  |
+| ---------------------------------------------------------------- | ------------------------------------------------------ | ----------------- |
+| `session.changed`                                                | a field of the session the agent keeps, as a patch     | `session.changed` |
+| `option.changed`                                                 | the agent moved an option itself, as on leaving a plan | `mode.changed`    |
+| `turn.started`, `turn.completed`                                 | a turn began, ended, with its status and reason        | the same          |
+| `item.started`, `item.delta`, `item.completed`                   | an item, told by its id                                | the same          |
+| `plan.updated`, `diff.updated`, `tasks.updated`, `usage.updated` | the plan, the diff, the tasks, the tokens              | the same          |
+| `approval.requested`, `approval.resolved`                        | an approval opened, answered                           | the same          |
+| `question.requested`, `question.resolved`                        | a question opened, answered                            | the same          |
+| `notice`                                                         | a note, a warning or an error                          | the same          |
+| `turns.rewound`                                                  | turns taken back                                       | the same          |
+| `commands.changed`, `suggestion.changed`                         | the commands, or what the agent guesses comes next     | the same          |
 
 **Of an agent** (no session id): `options.changed` (the models offered changed), `extensions.changed`
 (a server started, failed, finished a sign-in), `account.changed`, `limits.changed`, `agent.exited`.

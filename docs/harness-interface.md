@@ -32,7 +32,7 @@ its place.
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | life     | `start`, `dispose`, `onEvent`                                                                                                                        |
 | sessions | `createSession`, `listSessions`, `loadSession`, `forkSession`, `renameSession`, `archiveSession`, `deleteSession`, `compactSession`, `rewindSession` |
-| a turn   | `send`, `review`, `steer`, `interrupt`, `respondApproval`, `configure`                                                                               |
+| a turn   | `send`, `review`, `steer`, `interrupt`, `respondApproval`, `answerQuestion`, `configure`                                                             |
 | choices  | `listModels`, `listModes`                                                                                                                            |
 | optional | `tagSession`, `stopTask`, `rewindFiles`, `listCommands`, `readContext`                                                                               |
 

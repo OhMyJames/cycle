@@ -337,7 +337,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     onChange: (schedules) => push({ type: "schedules.changed", schedules }),
     modes: () => harness.listModes(),
     // A run starts as the composer would: a new session, then its first prompt.
-    // An approval it asks for waits for the owner, as in any session.
+    // An approval or a question it asks waits for the owner, as in any session.
     async launch(schedule) {
       const mode = scheduleMode(schedule);
       // One id can be two agents' modes, which let through different things: a run starts only on
@@ -513,6 +513,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "commands.list": async (target) => ({ commands: await harness.listCommands(target) }),
     "approval.respond": ({ approvalId, response }) => {
       hub.respondApproval(approvalId, response);
+      return {};
+    },
+    "question.answer": ({ questionId, answer }) => {
+      hub.answerQuestion(questionId, answer);
       return {};
     },
 

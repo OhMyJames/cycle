@@ -147,27 +147,3 @@ test("a plan approved into a mode that needs Claude Code's sandbox asks first un
   await settle();
   expect(events).toEqual([]);
 });
-
-test("an MCP server's request is the owner's to answer, and is called off with its turn", async () => {
-  const { harness, events, session, query } = await begun();
-  const stop = new AbortController();
-  const form = { serverName: "docs", message: "Name?", requestedSchema: { properties: {} } };
-  const first = query.options.onElicitation?.(form, { signal: new AbortController().signal });
-  const second = query.options.onElicitation?.(form, { signal: stop.signal });
-  await settle();
-  const asked = events.flatMap((event) =>
-    event.type === "approval.requested" ? [event.approval] : [],
-  );
-  expect(asked).toMatchObject([
-    { kind: "elicitation", server: "docs", message: "Name?", fields: [] },
-    { kind: "elicitation" },
-  ]);
-  harness.respondApproval(asked[0]?.id ?? "", { decision: "accept", content: { name: "me" } });
-  expect(await first).toEqual({ action: "accept", content: { name: "me" } });
-  stop.abort();
-  expect(await second).toEqual({ action: "cancel" });
-  expect(events.filter((event) => event.type === "approval.resolved")).toEqual([
-    { type: "approval.resolved", sessionId: session.id, approvalId: asked[0]?.id ?? "" },
-    { type: "approval.resolved", sessionId: session.id, approvalId: asked[1]?.id ?? "" },
-  ]);
-});

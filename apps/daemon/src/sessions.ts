@@ -13,6 +13,7 @@ import {
   type Params,
   type PromptInput,
   type QueuedMessage,
+  type QuestionAnswer,
   type ReviewTarget,
   type SessionEvent,
   type Session,
@@ -35,6 +36,7 @@ import {
   sameModelFamily,
 } from "@cycle/protocol";
 import { type Git, defaultBranchName } from "./git.ts";
+import { legacyAnswer, legacyEvents } from "./legacy-asks.ts";
 import type { JsonStore, Delay } from "./store.ts";
 import { type UsageLedger, ZERO_TOKENS, tokenDelta } from "./usage.ts";
 
@@ -469,7 +471,23 @@ export class SessionHub {
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
+    // A question is still sent to the page as an approval too, which may answer it as one.
+    if (this.isQuestion(approvalId)) {
+      this.options.harness.answerQuestion(approvalId, legacyAnswer(response));
+      return;
+    }
     this.options.harness.respondApproval(approvalId, response);
+  }
+
+  answerQuestion(questionId: string, answer: QuestionAnswer): void {
+    this.options.harness.answerQuestion(questionId, answer);
+  }
+
+  /** Whether a session of the daemon's holds this question open. */
+  private isQuestion(id: string): boolean {
+    return [...this.live.values()].some((live) =>
+      live.state.questions.some((question) => question.id === id),
+    );
   }
 
   /** Starts a turn that reviews code. It is not queued: it waits for no turn, and none for it. */
@@ -979,7 +997,9 @@ export class SessionHub {
   /** What a session is doing. One still starting counts as running. */
   private activityOf(live: Live): SessionActivity {
     if (live.starting || activeTurn(live.state)) {
-      return live.state.approvals.length ? "requires_action" : "running";
+      return live.state.approvals.length || live.state.questions.length
+        ? "requires_action"
+        : "running";
     }
     return "idle";
   }
@@ -1096,7 +1116,7 @@ export class SessionHub {
     const live = this.live.get(event.sessionId);
     if (!live) return;
     this.mark(live, event);
-    live.pending.push(this.marked(live, event));
+    live.pending.push(this.marked(live, event), ...legacyEvents(event));
     if (event.type === "item.delta") {
       live.cancelFlush ??= this.options.schedule(() => this.flush(live), DELTA_FLUSH_MS);
     } else {
@@ -1112,6 +1132,18 @@ export class SessionHub {
       if (live.state.info.harness !== event.harness) continue;
       const turn = activeTurn(live.state);
       live.starting = false;
+      // Nobody is left to answer what it asked.
+      if (live.state.questions.length > 0) {
+        for (const question of live.state.questions) {
+          const resolved: SessionEvent = {
+            type: "question.resolved",
+            sessionId: live.state.info.id,
+            questionId: question.id,
+          };
+          live.pending.push(resolved, ...legacyEvents(resolved));
+        }
+        this.flush(live);
+      }
       // Its tasks went with it.
       if (live.state.tasks.length > 0) {
         this.apply(live, { type: "tasks.updated", sessionId: live.state.info.id, tasks: [] });

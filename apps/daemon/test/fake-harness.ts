@@ -11,6 +11,7 @@ import type {
   ModeInfo,
   ModelInfo,
   PromptInput,
+  QuestionAnswer,
   Turn,
   Usage,
 } from "@cycle/protocol";
@@ -138,6 +139,12 @@ export class FakeHarness implements Harness {
   respondApproval = (approvalId: string) => {
     this.calls.push(`approve ${approvalId}`);
   };
+  /** The answers it was given, in order: the call says the id only, since an answer may be a secret. */
+  answers: { questionId: string; answer: QuestionAnswer }[] = [];
+  answerQuestion = (questionId: string, answer: QuestionAnswer) => {
+    this.calls.push(`answer ${questionId}`);
+    this.answers.push({ questionId, answer });
+  };
   /** What it was asked to take in mid-session, as `configure s1 {"mode":"plan"}`. */
   configure: Harness["configure"] = async (sessionId, options) => {
     this.calls.push(`configure ${sessionId} ${JSON.stringify(options)}`);
@@ -251,6 +258,7 @@ export class FakeHarness implements Harness {
       interrupt: (...args) => this.harness.interrupt(...args),
       stopTask: (...args) => this.stopTask(...args),
       respondApproval: (...args) => this.harness.respondApproval(...args),
+      answerQuestion: (...args) => this.harness.answerQuestion(...args),
       configure: (...args) => this.harness.configure(...args),
       listModes: (...args) => this.harness.listModes(...args),
       listModels: (...args) => this.harness.listModels(...args),

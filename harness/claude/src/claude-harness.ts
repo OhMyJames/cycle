@@ -5,6 +5,7 @@ import {
   type AgentDeclaration,
   type AgentReads,
   type ApprovalResponse,
+  type QuestionAnswer,
   type ConfigureOptions,
   type ContextUsage,
   type CreateSessionOptions,
@@ -83,7 +84,7 @@ import {
   reviewPrompt,
   toAccount,
   toApproval,
-  toElicitation,
+  toElicitationQuestion,
   toElicitationResult,
   toCommands,
   toContext,
@@ -92,6 +93,8 @@ import {
   toMcpServers,
   toModels,
   toPermission,
+  toQuestion,
+  toQuestionPermission,
   toPlanLimits,
   toSession,
   toSkills,
@@ -237,10 +240,10 @@ interface Running {
   workingDir: string | null;
 }
 
-interface PendingApproval {
-  sessionId: string;
-  answer(response: ApprovalResponse): void;
-}
+/** What waits for the owner, as leave to act or as content. Each is answered as its kind. */
+type Waiting =
+  | { kind: "approval"; sessionId: string; answer(response: ApprovalResponse): void }
+  | { kind: "question"; sessionId: string; answer(answer: QuestionAnswer): void };
 
 interface AskContext {
   signal: AbortSignal;
@@ -344,7 +347,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
   private readonly known = new Map<string, Known>();
   private readonly live = new Map<string, Running>();
   private readonly starting = new Map<string, Promise<Running>>();
-  private readonly approvals = new Map<string, PendingApproval>();
+  private readonly waiting = new Map<string, Waiting>();
   /** What each session was last asked to run with, for work that brings no options of its own. */
   private readonly asked = new Map<string, TurnOptions>();
   /**
@@ -723,7 +726,18 @@ export class ClaudeHarness implements Sessions, AgentReads {
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
-    this.approvals.get(approvalId)?.answer(response);
+    const pending = this.waiting.get(approvalId);
+    // One that is gone, as when its turn was stopped, is answered too late and left alone.
+    if (!pending) return;
+    if (pending.kind !== "approval") throw new Error(`unknown approval: ${approvalId}`);
+    pending.answer(response);
+  }
+
+  answerQuestion(questionId: string, answer: QuestionAnswer): void {
+    const pending = this.waiting.get(questionId);
+    if (!pending) return;
+    if (pending.kind !== "question") throw new Error(`unknown question: ${questionId}`);
+    pending.answer(answer);
   }
 
   /**
@@ -1868,10 +1882,14 @@ export class ClaudeHarness implements Sessions, AgentReads {
     const { sessionId } = running;
     running.cancelIdle?.();
     if (this.live.get(sessionId) === running) this.live.delete(sessionId);
-    for (const [id, pending] of this.approvals) {
+    for (const [id, pending] of this.waiting) {
       if (pending.sessionId !== sessionId) continue;
-      this.approvals.delete(id);
-      this.emit({ type: "approval.resolved", sessionId, approvalId: id });
+      this.waiting.delete(id);
+      this.emit(
+        pending.kind === "question"
+          ? { type: "question.resolved", sessionId, questionId: id }
+          : { type: "approval.resolved", sessionId, approvalId: id },
+      );
     }
     if (failure && !running.closed) this.options.onLog?.(`claude: ${message(failure)}`);
     // Its tasks went with it.
@@ -1905,19 +1923,37 @@ export class ClaudeHarness implements Sessions, AgentReads {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
     const id = context.toolUseID;
+    // A choice is the owner's content, not leave: it is asked and answered as a question, by the
+    // same rules of settling, stopping and ending.
+    const question = toQuestion(id, tool, input);
     return new Promise((resolve) => {
       const settle = (result: WirePermissionResult) => {
-        if (!this.approvals.delete(id)) return;
+        if (!this.waiting.delete(id)) return;
         context.signal.removeEventListener("abort", stopped);
         if (result.behavior === "deny") {
           running.reader.declined.add(id);
           if (result.interrupt) running.stopping = true;
         }
-        this.emit({ type: "approval.resolved", sessionId, approvalId: id });
+        this.emit(
+          question
+            ? { type: "question.resolved", sessionId, questionId: id }
+            : { type: "approval.resolved", sessionId, approvalId: id },
+        );
         resolve(result);
       };
       const stopped = () => settle({ behavior: "deny", message: "The turn was stopped." });
-      this.approvals.set(id, {
+      context.signal.addEventListener("abort", stopped);
+      if (question) {
+        this.waiting.set(id, {
+          kind: "question",
+          sessionId,
+          answer: (answer) => settle(toQuestionPermission(input, answer)),
+        });
+        this.emit({ type: "question.requested", sessionId, turnId: running.turn, question });
+        return;
+      }
+      this.waiting.set(id, {
+        kind: "approval",
         sessionId,
         answer: (response) =>
           settle(
@@ -1929,7 +1965,6 @@ export class ClaudeHarness implements Sessions, AgentReads {
             ),
           ),
       });
-      context.signal.addEventListener("abort", stopped);
       this.emit({
         type: "approval.requested",
         sessionId,
@@ -1945,7 +1980,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     });
   }
 
-  /** An MCP server asks the owner for something: they answer as they answer an approval. */
+  /** An MCP server asks the owner for something: a form to fill, or a page to finish. */
   private elicit(
     running: Running,
     request: WireElicitation,
@@ -1955,22 +1990,23 @@ export class ClaudeHarness implements Sessions, AgentReads {
     const id = this.newId();
     return new Promise((resolve) => {
       const settle = (result: WireElicitationResult) => {
-        if (!this.approvals.delete(id)) return;
+        if (!this.waiting.delete(id)) return;
         signal.removeEventListener("abort", stopped);
-        this.emit({ type: "approval.resolved", sessionId, approvalId: id });
+        this.emit({ type: "question.resolved", sessionId, questionId: id });
         resolve(result);
       };
       const stopped = () => settle({ action: "cancel" });
-      this.approvals.set(id, {
+      this.waiting.set(id, {
+        kind: "question",
         sessionId,
-        answer: (response) => settle(toElicitationResult(response)),
+        answer: (answer) => settle(toElicitationResult(answer)),
       });
       signal.addEventListener("abort", stopped);
       this.emit({
-        type: "approval.requested",
+        type: "question.requested",
         sessionId,
         turnId: running.turn,
-        approval: toElicitation(id, request),
+        question: toElicitationQuestion(id, request),
       });
     });
   }

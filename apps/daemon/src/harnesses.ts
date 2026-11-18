@@ -6,6 +6,7 @@ import {
   type AgentReads,
   type Agents,
   type ApprovalResponse,
+  type QuestionAnswer,
   type Connector,
   type ContextUsage,
   type ConfigureOptions,
@@ -51,6 +52,7 @@ export class Harnesses implements Agents {
   private readonly sessions = new Map<string, Sessions>();
   private readonly models = new Map<string, Sessions>();
   private readonly approvals = new Map<string, Sessions>();
+  private readonly questions = new Map<string, Sessions>();
   private readonly listeners = new Set<(event: HarnessEvent) => void>();
 
   constructor(main: Harness, others: OtherAgent[], onLog: (line: string) => void = () => {}) {
@@ -62,6 +64,8 @@ export class Harnesses implements Agents {
       agent.onEvent((event) => {
         if (event.type === "approval.requested") this.approvals.set(event.approval.id, agent);
         if (event.type === "approval.resolved") this.approvals.delete(event.approvalId);
+        if (event.type === "question.requested") this.questions.set(event.question.id, agent);
+        if (event.type === "question.resolved") this.questions.delete(event.questionId);
         for (const listener of this.listeners) listener(event);
       });
     }
@@ -230,6 +234,10 @@ export class Harnesses implements Agents {
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
     (this.approvals.get(approvalId) ?? this.main).respondApproval(approvalId, response);
+  }
+
+  answerQuestion(questionId: string, answer: QuestionAnswer): void {
+    (this.questions.get(questionId) ?? this.main).answerQuestion(questionId, answer);
   }
 
   async listModels(): Promise<ModelInfo[]> {

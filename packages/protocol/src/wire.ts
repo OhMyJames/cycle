@@ -22,6 +22,7 @@ import type {
   PluginCatalog,
   PluginDetail,
   PromptDocument,
+  QuestionAnswer,
   ReviewTarget,
   SessionEvent,
   Session,
@@ -232,6 +233,15 @@ export interface Methods {
       sessionId: string;
       approvalId: string;
       response: ApprovalResponse;
+    };
+    result: Empty;
+  };
+  /** Answers a question. An answer is sent once, and no event of a question or an approval gives it back. */
+  "question.answer": {
+    params: {
+      sessionId: string;
+      questionId: string;
+      answer: QuestionAnswer;
     };
     result: Empty;
   };
