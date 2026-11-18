@@ -1,6 +1,29 @@
-import type { WorktreeEntry, WorktreeUser } from "@cycle/protocol";
+import type { Session, WorktreeEntry, WorktreeUser } from "@cycle/protocol";
 import { basename } from "./format.ts";
 import { plainMentions } from "./suggest.ts";
+
+/** The folder a session belongs to in the list: its repository, not its worktree. */
+export function projectOf(info: Session): string {
+  return info.worktree?.repo ?? info.cwd;
+}
+
+/**
+ * The sessions an `@` can mention, those of `folder` first, each group newest first. A session is
+ * of a folder by its project, so `folder` is a project, never a worktree's own path.
+ */
+export function mentionable(
+  sessions: readonly Session[],
+  except: string | null,
+  folder: string,
+): Session[] {
+  return sessions
+    .filter((other) => other.id !== except && !other.archived)
+    .toSorted(
+      (a, b) =>
+        Number(projectOf(b) === folder) - Number(projectOf(a) === folder) ||
+        b.updatedAt - a.updatedAt,
+    );
+}
 
 /** What a session that uses a worktree is called: its title, else the start of its first prompt. */
 export function worktreeUserName(user: WorktreeUser): string {

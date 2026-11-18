@@ -11,13 +11,7 @@ import {
 } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import {
-  type CycleApp,
-  type Draft,
-  NO_CAPABILITIES,
-  projectOf,
-  sessionTitle,
-} from "../client/app.ts";
+import { type CycleApp, type Draft, NO_CAPABILITIES, sessionTitle } from "../client/app.ts";
 import { Store, useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import {
@@ -49,6 +43,7 @@ import {
   sectioned,
   skillRows,
 } from "../lib/suggest.ts";
+import { mentionable } from "../lib/worktrees.ts";
 import { MorphLoader } from "../loader/morph-loader.tsx";
 import { fileIcon } from "../lib/file-icons.ts";
 import { useRowKeys } from "./controls.tsx";
@@ -598,13 +593,9 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
       return;
     }
     // The folder's other sessions first among sessions, each newest first.
-    const others = Object.values(app.sessions.get().byId)
-      .filter((other) => other.id !== sessionId && !other.archived)
-      .toSorted(
-        (a, b) =>
-          Number(projectOf(b) === cwd) - Number(projectOf(a) === cwd) || b.updatedAt - a.updatedAt,
-      )
-      .map((other) => ({ id: other.id, title: mentionTitle(sessionTitle(other)), info: other }));
+    const others = mentionable(Object.values(app.sessions.get().byId), sessionId, cwd).map(
+      (other) => ({ id: other.id, title: mentionTitle(sessionTitle(other)), info: other }),
+    );
     const sessions = matchSessions(others, found.query).map((row): Suggestion => {
       const folder = others.find((other) => other.id === row.id)?.info.cwd ?? "";
       return {

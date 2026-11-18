@@ -51,6 +51,7 @@ import { type RemoteView, UNREACHABLE, isRemote } from "../lib/remote.ts";
 import { Store } from "./store.ts";
 import { draftKey, opening } from "../lib/opening.ts";
 import { plainMentions } from "../lib/suggest.ts";
+import { projectOf } from "../lib/worktrees.ts";
 import { attentionLabel } from "../lib/attention.ts";
 import { type Attachments, givenBack, keepAccepted } from "../lib/attach.ts";
 
@@ -182,10 +183,7 @@ function readPrefs(): Partial<Prefs> {
   }
 }
 
-/** The folder a session belongs to in the list: its repository, not its worktree. */
-export function projectOf(info: Session): string {
-  return info.worktree?.repo ?? info.cwd;
-}
+export { projectOf };
 
 export function sessionTitle(info: Session): string {
   return info.title || plainMentions(info.preview).split("\n")[0]?.slice(0, 80) || "New session";
