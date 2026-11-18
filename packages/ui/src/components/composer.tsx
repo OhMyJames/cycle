@@ -193,7 +193,7 @@ function DraftOptions({ draft }: { draft: Draft }) {
   // A sandbox is offered for the agents that can run in one here.
   const boxable = useStore(app.models, (models) => canSandbox(models, draft.harness));
   const environments = useStore(app.sandboxes, (value) => value.environments);
-  const chosen = boxable ? environments.find((one) => one.id === draft.sandbox) : undefined;
+  const chosen = boxable ? environments.find((one) => one.id === draft.environment) : undefined;
   const boxed = chosen !== undefined;
   // Folders beyond its own, for an agent that can reach them outside a sandbox.
   const reaches = useStore(
@@ -236,14 +236,14 @@ function DraftOptions({ draft }: { draft: Draft }) {
       sub: "On this machine",
       icon: "terminal",
       checked: !boxed,
-      onSelect: () => change({ sandbox: null }),
+      onSelect: () => change({ environment: null }),
     },
     ...environments.map((one): MenuEntry => ({
       label: one.name,
       sub: `Sandbox · ${sandboxSummary(one)}`,
       icon: "file-lock",
       checked: one.id === chosen?.id,
-      onSelect: () => change({ sandbox: one.id }),
+      onSelect: () => change({ environment: one.id }),
     })),
     { separator: true },
     {

@@ -143,7 +143,7 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
     cwd: project,
     model: SONNET,
     mode: "acceptEdits",
-    sandbox: "standard",
+    environment: "standard",
   });
   expect(session).toMatchObject({ harness: "claude", environment: "standard", sandbox: name });
   expect(readFileSync(join(state, "names"), "utf8")).toBe(`${name}\n`);
@@ -194,7 +194,7 @@ test("a second session in the folder shares its sandbox, and one outside a sandb
   const second = await client.call("session.create", {
     cwd: project,
     model: SONNET,
-    sandbox: "standard",
+    environment: "standard",
   });
   await client.call("session.open", { sessionId: second.id });
   await turn(second.id, "another");
@@ -208,7 +208,7 @@ test("a second session in the folder shares its sandbox, and one outside a sandb
   expect(readFileSync(join(state, "execs"), "utf8")).toBe(execs);
 
   // Codex has no sandbox to run in yet, and a worktree's history would be left outside one.
-  expect(client.call("session.create", { cwd: project, sandbox: "standard" })).rejects.toThrow(
+  expect(client.call("session.create", { cwd: project, environment: "standard" })).rejects.toThrow(
     "Codex sessions do not run in a sandbox yet.",
   );
   expect(existsSync(join(state, "names"))).toBe(true);
@@ -234,7 +234,7 @@ test("a sandbox is made with what its environment says, and the next folder's st
     cwd: project,
     model: SONNET,
     mode: "acceptEdits",
-    sandbox: saved.id,
+    environment: saved.id,
   });
   const name = sandboxName(project, saved.id);
   expect(session.sandbox).toBe(name);
@@ -264,14 +264,14 @@ test("a sandbox is made with what its environment says, and the next folder's st
   const next = await client.call("session.create", {
     cwd: other,
     model: SONNET,
-    sandbox: saved.id,
+    environment: saved.id,
   });
   expect(next.sandbox).toBe(sandboxName(other, saved.id));
   expect(existsSync(join(state, next.sandbox ?? "", "home", "tools-installed"))).toBe(true);
   expect(readFileSync(join(state, "execs"), "utf8")).toBe(execs);
 
   expect(
-    client.call("session.create", { cwd: project, model: SONNET, sandbox: "gone" }),
+    client.call("session.create", { cwd: project, model: SONNET, environment: "gone" }),
   ).rejects.toThrow("That sandbox environment is gone.");
 });
 

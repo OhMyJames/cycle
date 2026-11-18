@@ -38,17 +38,34 @@ export function canSandbox(models: Model[], harness: string): boolean {
 export interface LastDraft {
   harness: string | null;
   /** By agent: an environment's id, or null for this machine. */
-  sandbox: Record<string, string | null>;
+  environment: Record<string, string | null>;
+}
+
+/**
+ * Reads what was kept of the owner's last new session: nothing readable gives nothing chosen. A page
+ * of before sessions kept the environment as `sandbox`, and its choice is still read.
+ */
+export function lastDraftFrom(raw: string | null): LastDraft {
+  try {
+    const kept = JSON.parse(raw ?? "{}") as {
+      harness?: string | null;
+      environment?: LastDraft["environment"];
+      sandbox?: LastDraft["environment"];
+    };
+    return { harness: kept.harness ?? null, environment: kept.environment ?? kept.sandbox ?? {} };
+  } catch {
+    return { harness: null, environment: {} };
+  }
 }
 
 /** Where a new session on an agent starts: where the last one on it ran, if that is still there. */
-export function draftSandbox(
+export function draftEnvironment(
   models: Model[],
   environments: { id: string }[],
   harness: string,
   last: LastDraft,
 ): string | null {
-  const used = last.sandbox[harness] ?? null;
+  const used = last.environment[harness] ?? null;
   return used !== null && canSandbox(models, harness) && environments.some((one) => one.id === used)
     ? used
     : null;

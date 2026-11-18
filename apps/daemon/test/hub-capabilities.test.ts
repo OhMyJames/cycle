@@ -123,7 +123,7 @@ test("a session's other folders are kept, given with every turn, and readable", 
   await hub.send("s1", { text: "go", images: [] }, "auto");
   expect(asked).toEqual([["/shared"], ["/shared"]]);
   await expect(
-    hub.create({ cwd: "/project", sandbox: "standard", directories: ["/shared"] }),
+    hub.create({ cwd: "/project", environment: "standard", directories: ["/shared"] }),
   ).rejects.toThrow("A session in a sandbox reaches its own folder only.");
 });
 

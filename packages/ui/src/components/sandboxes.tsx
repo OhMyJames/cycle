@@ -325,7 +325,7 @@ export function SandboxesSection() {
   // Docker's sandboxes may have been installed since the page connected.
   useEffect(() => {
     app.request("sandboxes.list", {}).then(
-      (value) => app.sandboxes.set(value),
+      (value) => app.sandboxes.set({ ...value, loaded: true }),
       () => {},
     );
   }, [app]);
