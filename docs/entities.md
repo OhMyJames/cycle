@@ -137,10 +137,10 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 - Life: made; used by one session or more (a fork shares it); ended by the owner, and its branch stays.
 - Tied to: a Workspace, which has many, and the Sessions that point to it. A session's `cwd` is the
   key of the agent's record and never changes; where the agent works now is the worktree's path when
-  there is one.
+  the agent entered it, else the `cwd`.
 - **Decided and done**: the place, `<workspace>/.agents/worktree/`, and `path` and `origin` on the
-  record (only `owner` is written until the agent can enter one through Cycle). **Proposed**: the
-  rest, all of it in [worktree](worktree.md).
+  record (`agent` when the agent entered it, through Cycle). **Proposed**: the rest, all of it in
+  [worktree](worktree.md).
 
 ### Extensions
 

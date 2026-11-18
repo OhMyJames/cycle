@@ -13,6 +13,7 @@ import {
   type ServerMessage,
   type PermissionMode,
   type Settings,
+  type WorktreePort,
   WS_PATH,
   legacyMode,
   resolveMode,
@@ -66,6 +67,8 @@ export interface DaemonOptions {
   extraOrigins?: string[];
   /** Cycle's own tools for agents, which read the sessions once there is a hub. */
   tools?: { serve(source: SessionSource): void };
+  /** The worktrees Claude Code's agent enters, which the hub makes once there is one. */
+  worktrees?: { serve(source: WorktreePort): void };
 }
 
 export interface Daemon {
@@ -300,6 +303,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       removed: (sessionIds) => push({ type: "sessions.removed", sessionIds }),
       usage: (day) => push({ type: "usage.today", day }),
     },
+  });
+  // Before anything runs: an agent may ask for a worktree with its first turn.
+  options.worktrees?.serve({
+    enter: ({ sessionId, name, helper }) => hub.enterWorktree(sessionId, { name, helper }),
+    leave: ({ sessionId, path, helper }) => hub.leaveWorktree(sessionId, { path, helper }),
   });
   const worktrees = new Worktrees({
     git,

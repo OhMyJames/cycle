@@ -1,4 +1,4 @@
-import type { FileContent, Session } from "@cycle/protocol";
+import { type FileContent, type Session, workingDir } from "@cycle/protocol";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/icons.tsx";
 import { Chevron } from "../components/items.tsx";
@@ -236,7 +236,7 @@ export function FilesPanel({ info }: { info: Session }) {
   const [showHidden, setShowHidden] = useState(false);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<{ path: string; directory: boolean }[]>([]);
-  const root = info.cwd;
+  const root = workingDir(info);
   useEffect(() => {
     if (!query.trim()) {
       setMatches([]);

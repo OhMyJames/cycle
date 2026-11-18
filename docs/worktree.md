@@ -59,7 +59,9 @@ tried were tried (the section "What was tried"); what could not be is at the end
    process, and `ExitWorktree`'s `remove` by `WorktreeRemove`. So both agents get the same place,
    name, base and ending, and Cycle knows each one the moment it exists. The hook is a callback of
    the SDK's `hooks` option, in the daemon's own process: it needs no command and no credential.
-   (Tried: see below.)
+   (**Done**, step 14; tried, see below.) The daemon refuses what it must, in words the agent's model
+   reads (a session in a container, one that already has a worktree, a name git or a folder would
+   misread), and never makes the worktree from the hook's own folder, only the session's.
 2. **Place: `<workspace>/.agents/worktree/<name>`.** (Decided; **done**, step 11, with
    [its note](../.agents/notes/2026-11-18-worktrees-live-in-the-workspace.md).) The name is the
    branch, made safe. The path is made unique, not only the branch: two repositories of one name no
@@ -72,12 +74,19 @@ tried were tried (the section "What was tried"); what could not be is at the end
    commit uses, does not stage a checkout inside the checkout. The formatter, the linter and `bun test` of this repository skip it, so
    it needs no line in their configuration (tried). What does not read `.gitignore` still sees the
    folder: the page's file search and its `@` suggestions leave it out (`Files.search`).
-4. **A session's `cwd` is the key of the agent's record, and never changes.** Where the agent works
-   now is `worktree.path` when there is one, else `cwd`. The files, terminal and changes of the page
-   follow the first. For a worktree made as the session was, the two are the same, as today.
-   **Claude Code remembers the worktree itself**: a process started with `resume` begins in it, from
-   the folder it was given. So Cycle reads where the agent is from the `cwd` of the process's `init`
-   message, each time one starts, and brings `Session.worktree` into line.
+4. **A session's `cwd` is the key of the agent's record, and never changes.** (**Done**, step 14.)
+   Where the agent works now is `worktree.path` when the agent entered the worktree (`origin:
+   "agent"`), else `cwd` (`workingDir`, in `@cycle/protocol`). Not `worktree.path ?? cwd`: for a
+   worktree the owner made of a project that is a subfolder, `path` is the repository's root and
+   `cwd` is the root plus the subfolder, which the panels must keep. The files, terminal and changes
+   of the page follow it. **Claude Code remembers the worktree itself**: a process started with
+   `resume` begins in it, from the folder it was given. So Cycle reads where the agent is from the
+   `cwd` of the process's `init` message (it comes with each prompt, and says where the agent is
+   now), and brings `Session.worktree` into line: the agent is in its worktree, or inside it:
+   nothing; back in its own folder (or below it, but not in a worktree: every one is inside its
+   repository): the record goes, and the folder stays; anywhere else, nothing changes and the owner
+   is told. Paths are compared as the machine resolves them: `init` says a real path, and the
+   session's folder may be a link.
 5. **A worktree is shared by forks and kept by archive.** (**Done**, step 12.) Only the owner removes
    one: with `session.delete { removeWorktree: true }`, and with `worktree.remove` (**done**, step 13, the
    daemon's part). The
@@ -89,9 +98,12 @@ tried were tried (the section "What was tried"); what could not be is at the end
 6. **A worktree made for a session that never started goes with it.** (**Done**, step 12.) One is removed
    when the agent fails to start (`SessionHub.create`), and when the page drops a session that was made
    and never sent to (`client/app.ts`), which asks for it; the branch is kept.
-7. **The branch is kept when a worktree is removed**, as today, and also when the agent asks for
-   `remove`: with a `WorktreeRemove` hook Claude Code removes neither the folder nor the branch, the
-   hook does. Claude Code still tells its model "removed".
+7. **The branch is kept when a worktree is removed**, as today, and so is the folder when the agent
+   asks for `remove`. (**Done**, step 14.) Only the owner removes one (rule 5): the `WorktreeRemove`
+   callback removes nothing, Claude Code removes neither (tried) and tells its model "removed", and
+   the thread says what is true: "Claude Code asked to remove the worktree `<branch>`. Cycle keeps it
+   until you remove it." The agent is back in its own folder, so the session's record goes; the
+   folder waits in Settings, Worktrees. A helper agent's worktree is made and left to the owner.
 8. **A session in a container cannot have one**, unchanged: its history is in the repository's folder,
    which the container would not hold (`sessions.ts:246`).
 9. **Worktrees already under `CYCLE_HOME/worktrees` stay as they are.** (**Done**, step 11.) Their
@@ -112,7 +124,8 @@ tried were tried (the section "What was tried"); what could not be is at the end
   own list. By hand means not directly under `.agents/worktree` or in the older place (so a worktree
   inside another is by hand): listed, never removed. A folder there that git does not list is not a
   worktree and is not listed.
-- **Event:** `session.changed` carries `worktree` when the agent entered or left one. No new item kind
+- **Event:** the harness's `session.changed` carries `workingDir`, where the agent says it works
+  now; the page hears `sessions.changed`, whose `Session.worktree` is the record. No new item kind
   is needed: an `EnterWorktree` is a tool call in the turn as it is today.
 - **For the agent contract:** an agent that can enter a worktree on its own says so by operation id
   (`worktree.enter`), and the harness gives Cycle's creation to it. codex does not declare it.
@@ -124,16 +137,17 @@ tried were tried (the section "What was tried"); what could not be is at the end
 - `git.ts`: the path, its uniqueness, the self-ignoring file, and a lock for each repository
   (**done**, step 11).
 - `sessions.ts`: `Session.worktree` gaining `path` and `origin` (**done**, step 11); the removal
-  checks and the dropped session (**done**, step 12), the entered worktree. `worktrees.ts`: the list and
+  checks and the dropped session (**done**, step 12), the entered worktree (**done**, step 14:
+  `enterWorktree`, `leaveWorktree`, and where the agent says it is). `worktrees.ts`: the list and
   the removal of the owner's worktrees (**done**, step 13).
-- `harness/claude`: the two hooks, which it cannot take today: its `QueryOptions` (`sdk.ts`) has no
-  `hooks`, and only settings-file command hooks are passed (`config.ts:292-318`). The option goes in
-  `QueryOptions` and in the `query()` call of `claude-harness.ts:1365-1386`. It does not read `init`'s
-  `cwd` yet either (the SDK's message has it); that is needed to bring `Session.worktree` into line.
+- `harness/claude`: the two hooks, given to each process on this machine, and `init`'s `cwd` read
+  (**done**, step 14; the port is `WorktreePort`, and `WorktreeDesk` in the daemon serves it). A
+  process in a container gets neither the hooks nor the two built-in tools.
 - `Files`: leave `.agents/worktree` out of search (**done**, step 11). Reading stays allowed: it is
   inside a project, and `CYCLE_HOME/worktrees` stays on the list for the old ones.
 - The page: a list of a workspace's worktrees, with Remove (**done**, step 13: Settings,
-  Worktrees); the dialog that deletes a session names a worktree other sessions use; the sidebar's
+  Worktrees); the files, terminal and changes panels read the folder the agent works in (**done**,
+  step 14); the dialog that deletes a session names a worktree other sessions use; the sidebar's
   mark.
 - `CLAUDE.md`'s Runtime data, which lists `worktrees/` under `CYCLE_HOME` (**done**, step 11). This
   repository's own formatter, linter and tests need nothing.
@@ -184,30 +198,64 @@ holding a badly formatted file and a `debugger`, though both flag the same files
 **codex**: its generated schema has no worktree; `turn/start` has `cwd`, "for this turn and subsequent
 turns".
 
+**With the callbacks answered by Cycle** (step 14; the same Claude Code, scratch repositories, scratch homes):
+
+- **A refusal's words.** A callback that throws, or answers `continue: false` or `decision: "block"`,
+  gives the model only "hook succeeded but returned no worktree path". The one place it reads a
+  callback's words is Claude Code's error for a path that does not exist, so a refusal is a path
+  that begins `/cycle-refused: ` and the words as one line. Nothing is made, and a later good
+  `EnterWorktree` in the same process works.
+- **Where the agent is.** `init` comes with each prompt, not once for a process, and its `cwd` is
+  where the agent is now: after a live enter it says the worktree, after a live `keep` it says the
+  project, on the next prompt. `CwdChanged` does not fire, and the stream carries no change of
+  folder. A process begun again with `resume` from the project starts in the worktree, and after a
+  `keep` in it, in the project. A **fork** of a session that entered one begins in the project. With
+  the worktree's folder gone, `resume` starts in the project with no error.
+- **`remove`.** Without `discard_changes: true` Claude Code refuses itself, before any hook. With it,
+  `WorktreeRemove` is called with the worktree's root; its words do not reach the model ("Exited and
+  removed worktree"); folder and branch stay; the agent is back in the project.
+- **The owner's own hook.** `disableAllHooks: true` does not stop the SDK's callbacks. An owner's own
+  `WorktreeCreate` command hook runs beside Cycle's, and its path wins: Cycle's worktree is made
+  and left unused. The daemon notices that the agent works in a folder it made nothing of, and says so.
+- **Other ways in.** `EnterWorktree { path }` of a worktree that exists calls no hook (and asks for
+  an approval, "permission-root relocation"). By name it asks for none. A helper agent started with
+  `isolation: "worktree"` calls `WorktreeCreate` with the session's id, no `agent_id` and the name
+  `agent-<id>`; no `WorktreeRemove` was seen when it ended. A second `EnterWorktree` is refused by Claude
+  Code itself ("Already in a worktree session"), as is a helper's own.
+- **Around it.** `Write` and `Edit` in the main checkout are not blocked by `bgIsolation`, in `default` and
+  `acceptEdits`. History after entering reads from the project's folder (`getSessionMessages`,
+  `getSessionInfo`, `listSessions`: its `cwd`), and `git status` of the project stays quiet. The
+  page's file search from the project's root finds nothing in the worktree, and from inside it,
+  finds the file.
+
 ## Is it one behavior?
 
 For the owner, yes: a worktree is made, listed, shown, changed and removed one way, wherever it came
 from and whichever agent the session is on. What stays different is in the agents:
 
-| Part                            | codex          | Claude Code                                                                                                                    |
-| ------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| the owner asks for one at start | Cycle makes it | Cycle makes it                                                                                                                 |
-| the agent enters one itself     | cannot         | can: through Cycle's hook, so the same worktree                                                                                |
-| where the agent is on a restart | Cycle's record | its own memory; Cycle reads `init`'s `cwd`                                                                                     |
-| the agent leaves one            | cannot         | `keep` calls nothing, so Cycle sees it in `init` and the tool's result; `remove` needs `discard_changes` and a hook of Cycle's |
-| a worktree of Claude Code's own | none           | made by the CLI under `.claude/worktrees` (six in this checkout); Cycle lists them, does not manage them                       |
+| Part                            | codex          | Claude Code                                                                                                                                           |
+| ------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the owner asks for one at start | Cycle makes it | Cycle makes it                                                                                                                                        |
+| the agent enters one itself     | cannot         | can: through Cycle's hook, so the same worktree                                                                                                       |
+| where the agent is on a restart | Cycle's record | its own memory; Cycle reads `init`'s `cwd`                                                                                                            |
+| the agent leaves one            | cannot         | `keep` calls nothing, so Cycle sees it in `init`, at the next prompt; `remove` needs `discard_changes` and calls Cycle's hook, which keeps the folder |
+| a worktree of Claude Code's own | none           | made by the CLI under `.claude/worktrees` (six in this checkout); Cycle lists them, does not manage them                                              |
 
 Cycle gives the agent no tool of its own to enter one: its tools only read, which is a red line.
 So codex stays without the second row, and the contract says so by declaring it.
 
 ## Not checked
 
-- `ExitWorktree` with `keep`, then a restart: where `init`'s `cwd` is. Taken to be the original folder.
-- A `WorktreeRemove` callback of the SDK's, which was tried only as a command.
-- What Claude Code's `bgIsolation` does to a session Cycle starts. Its default blocks edits in the
-  main checkout of a background session until a worktree is entered.
-- The base: Claude Code starts from `origin/<default branch>` by default, Cycle from `HEAD`. Rule 1
-  makes it Cycle's, and the owner may want the other.
-- The page's file search and its `@` suggestions: read from the code, not tried.
+- The base: Claude Code starts from `origin/<default branch>` by default, Cycle from `HEAD`, which is
+  the base even when it is unpushed (decided by the owner; `worktree.baseRef` is not read).
+- The page's `@` suggestions inside a worktree: they search the project's folder until the composer
+  follows `workingDir` too.
+- Claude Code's `worktree.symlinkDirectories` and `sparsePaths` are not applied: the checkout is
+  Cycle's, as for an owner-made one. A project that is a subfolder gets the worktree's root, not
+  the same subfolder inside it, which the owner-made flow keeps.
+- A `claude` on the owner's `PATH` older than the SDK's may not call the callbacks: it then makes
+  its own worktree under `.claude/worktrees`, which Cycle does not record.
+- A helper agent's worktrees are made through Cycle and left to the owner, so they pile up under
+  `.agents/worktree` until removed in Settings, Worktrees.
 - Moving an existing session into a worktree: codex's `turn/start` `cwd` would allow it, Claude Code's
   process cannot change it. Not designed.

@@ -170,8 +170,10 @@ it), or one a session is working in; idle and archived sessions do not block. It
 uncommitted work, since the client confirmed, and keeps the branch. The check is of the sessions the
 daemon knows; a turn that starts as git removes the folder is not seen.
 
-An agent that can enter a worktree itself (Claude Code) declares `worktree.enter`; Cycle then tells
-the page by `session.changed` when it enters or leaves one.
+An agent that can enter a worktree itself (Claude Code) declares `worktree.enter`; Cycle then makes
+the worktree it enters (**done**, step 14), records it on the session as `origin: "agent"`, and tells
+the page by `sessions.changed` when it enters or leaves one. A session in a container has none: the
+two tools are not given to its agent.
 
 ## Events
 

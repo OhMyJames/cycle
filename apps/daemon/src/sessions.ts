@@ -28,14 +28,17 @@ import {
   LEGACY_MODE_PREFIX,
   activeTurn,
   coalesceEvents,
+  declares,
   harnessLabel,
   initialSessionState,
   legacyMode,
   resolveMode,
   reduceSession,
   sameModelFamily,
+  workingDir,
 } from "@cycle/protocol";
 import { type Git, defaultBranchName } from "./git.ts";
+import { isWithin, placeOf, worktreeNameProblem } from "./worktree-agent.ts";
 import { legacyAnswer, legacyEvents } from "./legacy-asks.ts";
 import type { JsonStore, Delay } from "./store.ts";
 import { type UsageLedger, ZERO_TOKENS, tokenDelta } from "./usage.ts";
@@ -203,8 +206,19 @@ export interface WorktreeUser {
   origin: WorktreeInfo["origin"] | null;
 }
 
+/** Why a session in a sandbox has no worktree, said to its owner and to its agent alike. */
+const SANDBOX_WORKTREE = "A session in a sandbox works in the folder itself, not a worktree.";
+
+/** The most worktrees a session's helpers made that the hub remembers, for the one it may adopt. */
+const MAX_HELPER_WORKTREES = 64;
+
 /** What a session says of its state when the daemon does not hold it. */
 const STORED = { activity: "idle", loaded: false, failed: false } as const;
+
+/** What the owner calls an agent in a sentence: Claude's is Claude Code. */
+function agentName(harness: string): string {
+  return harness === "claude" ? "Claude Code" : harnessLabel(harness);
+}
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -225,6 +239,16 @@ export class SessionHub {
   private readonly unplaced = new Set<string>();
   private queueIds = 0;
   private epochs = 0;
+  /** Sessions an agent is making a worktree for: a second request is refused until the first is answered. */
+  private readonly entering = new Set<string>();
+  /** The places an agent said it works that are not its worktree, said to the owner once each. */
+  private readonly strayed = new Set<string>();
+  /**
+   * The worktrees made for a session's helpers, by the root. A helper is known by its name, which
+   * the session's own agent can give too: when the session's own agent turns out to work in one, it
+   * is the session's worktree after all. In memory: a restart forgets them, and the worktree stays.
+   */
+  private readonly helperMade = new Map<string, Map<string, WorktreeInfo>>();
 
   constructor(options: HubOptions) {
     this.options = options;
@@ -270,7 +294,8 @@ export class SessionHub {
   /** Whether any session is in the middle of a turn in this folder. */
   busyIn(cwd: string): boolean {
     for (const info of this.infos.values()) {
-      if (info.cwd === cwd && info.activity !== "idle") return true;
+      // A session is in the folder its agent works in, which a worktree the agent entered moves.
+      if (workingDir(info) === cwd && info.activity !== "idle") return true;
     }
     return false;
   }
@@ -316,7 +341,7 @@ export class SessionHub {
     const environment = params.environment;
     if (environment && params.worktree) {
       // A worktree's history is in its repository's folder, which its sandbox would not hold.
-      throw new SessionError("A session in a sandbox works in the folder itself, not a worktree.");
+      throw new SessionError(SANDBOX_WORKTREE);
     }
     const directories = [...new Set(params.directories ?? [])].filter((path) => path !== cwd);
     if (directories.length && environment) {
@@ -709,6 +734,157 @@ export class SessionHub {
     });
     this.options.publish.removed([sessionId]);
     if (failure !== null) throw new SessionError(`The session is deleted, but ${failure}`);
+  }
+
+  // The worktrees an agent enters
+
+  /**
+   * Makes the worktree Claude Code's agent asked to enter, through `WorktreePort`, and answers its
+   * root. Every refusal is in words the agent's model reads. The name is the model's: it is checked
+   * here, whatever the harness checked, and the branch is `cycle/<name>`, from the session's own
+   * folder and its `HEAD`, never from the hook's. The record (`origin: "agent"`) is written before
+   * the answer, so the worktree is Cycle's the moment it exists. A helper agent's worktree is made
+   * and left to the owner: it replaces nothing of the session's.
+   */
+  async enterWorktree(
+    sessionId: string,
+    request: { name: string; helper: boolean },
+  ): Promise<{ path: string }> {
+    const { helper } = request;
+    const first = this.infos.get(sessionId);
+    if (!first) throw new SessionError("Cycle does not know this session.");
+    if (first.environment || this.options.meta.value.sessions[sessionId]?.sandbox) {
+      throw new SessionError(SANDBOX_WORKTREE);
+    }
+    const declaration = await this.options.harness.declarationOf(sessionId).catch(() => null);
+    if (!declaration || !declares(declaration, "worktree.enter")) {
+      throw new SessionError("This agent does not enter worktrees through Cycle.");
+    }
+    const problem = worktreeNameProblem(request.name);
+    if (problem) throw new SessionError(problem);
+    // Checked with no wait since the record was read, or two requests would both pass.
+    if (!helper) {
+      if (this.entering.has(sessionId)) {
+        throw new SessionError("A worktree is already being made for this session.");
+      }
+      if (this.infos.get(sessionId)?.worktree) {
+        throw new SessionError("This session already works in a worktree.");
+      }
+      this.entering.add(sessionId);
+    }
+    try {
+      const made = await this.options.git.addWorktree({
+        cwd: first.cwd,
+        branch: `cycle/${request.name}`,
+      });
+      const info = this.infos.get(sessionId);
+      if (!info) {
+        // Deleted while it was made: the folder is the one Cycle just made, for nobody.
+        await this.options.git
+          .removeWorktree(made.worktree.repo, made.worktree.path)
+          .catch(() => {});
+        throw new SessionError("The session was deleted.");
+      }
+      const worktree: WorktreeInfo = { ...made.worktree, origin: "agent" };
+      if (helper) {
+        const mine = this.helperMade.get(sessionId) ?? new Map<string, WorktreeInfo>();
+        if (mine.size >= MAX_HELPER_WORKTREES) mine.delete(mine.keys().next().value as string);
+        this.helperMade.set(sessionId, mine.set(worktree.path, worktree));
+      } else {
+        this.recordWorktree(info, worktree);
+      }
+      return { path: worktree.path };
+    } finally {
+      if (!helper) this.entering.delete(sessionId);
+    }
+  }
+
+  /**
+   * Claude Code's agent asked to remove a worktree. Nothing is removed on an agent's say: the owner
+   * is told what is true, since the agent is told "removed". The agent is back in its own folder
+   * (tried), so the session's record of the worktree it entered goes, and the worktree stays.
+   */
+  async leaveWorktree(
+    sessionId: string,
+    request: { path: string; helper: boolean },
+  ): Promise<void> {
+    const info = this.infos.get(sessionId);
+    if (!info) return;
+    const record = info.worktree;
+    const own = record?.origin === "agent" && record.path === request.path;
+    const name = own ? record.branch : (request.path.split("/").at(-1) ?? request.path);
+    this.notice(
+      sessionId,
+      "info",
+      `${agentName(info.harness)} asked to remove the worktree ${name}. Cycle keeps it until you remove it.`,
+    );
+    if (own && !request.helper) this.dropWorktree(info);
+  }
+
+  /** Writes the record of a worktree its agent entered, and tells the page. */
+  private recordWorktree(info: Session, worktree: WorktreeInfo): void {
+    this.options.meta.update((file) => {
+      (file.sessions[info.id] ??= {}).worktree = worktree;
+    });
+    this.setInfo({ ...info, worktree, branch: worktree.branch });
+  }
+
+  /**
+   * Takes the record of a worktree from a session; the folder stays for the owner.
+   * shortcut: the branch reads null after the agent leaves, until the session is listed again;
+   * upgrade when the hub keeps its agent's AgentSession.
+   */
+  private dropWorktree(info: Session): void {
+    this.options.meta.update((file) => {
+      const meta = file.sessions[info.id];
+      if (meta) delete meta.worktree;
+    });
+    this.setInfo({ ...info, worktree: null, branch: null });
+  }
+
+  /**
+   * Where a session's agent says it works, against the worktree Cycle made for it (`placeOf`). It
+   * brings the record into line (the agent left it, or never began in it: a fork begins in the
+   * project, and a resumed process begins where the agent was) and says when the agent is somewhere
+   * Cycle made nothing of. An agent whose own call was taken for a helper's is found here too.
+   */
+  private async agentMoved(sessionId: string, at: string): Promise<void> {
+    const info = this.infos.get(sessionId);
+    if (!info) return;
+    const record = info.worktree;
+    if (!record) return this.adoptHelperWorktree(info, at);
+    if (record.origin !== "agent" || isWithin(at, record.path)) return;
+    const given = [at, info.cwd, record.path, record.repo];
+    const real = await this.options.git.realpaths(info.cwd, given).catch(() => given);
+    // The agent entered or left on its own since, or the session ended: this report is the older.
+    const now = this.infos.get(sessionId);
+    if (!now?.worktree || now.worktree.path !== record.path) return;
+    const [realAt = at, cwd = info.cwd, path = record.path, repo = record.repo] = real;
+    const place = placeOf(realAt, { path, repo, cwd });
+    if (place === "left") this.dropWorktree(now);
+    const key = `${sessionId}:${realAt}`;
+    if (place === "elsewhere" && !this.strayed.has(key)) {
+      this.strayed.add(key);
+      this.notice(
+        sessionId,
+        "warning",
+        `${agentName(now.harness)} works in ${realAt}, not in the worktree Cycle made for it (${record.branch}). A WorktreeCreate hook of your own may have made another. Cycle's stays until you remove it in Settings, Worktrees.`,
+      );
+    }
+  }
+
+  /**
+   * A session with no worktree whose agent works in one that Cycle made for its helper: the agent
+   * itself named it as a helper's worktree is named, so the call was taken for a helper's. It is
+   * the session's own.
+   */
+  private adoptHelperWorktree(info: Session, at: string): void {
+    const found = [...(this.helperMade.get(info.id)?.values() ?? [])].find((made) =>
+      isWithin(at, made.path),
+    );
+    if (!found) return;
+    this.helperMade.get(info.id)?.delete(found.path);
+    this.recordWorktree(info, found);
   }
 
   /** The user that keeps a worktree from being removed: one working in it first, else one naming it. */
@@ -1109,6 +1285,12 @@ export class SessionHub {
         ...info,
         ...(title !== undefined && !meta?.title ? { title } : {}),
       });
+      const at = event.patch.workingDir;
+      if (at !== undefined) {
+        void this.agentMoved(info.id, at).catch((error: unknown) => {
+          this.options.log(`session ${info.id}: where its agent works: ${message(error)}`);
+        });
+      }
       return;
     }
     // The commands a prompt may begin with, and its next guess, are the daemon's to pass on.

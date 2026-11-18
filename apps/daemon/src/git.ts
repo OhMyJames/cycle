@@ -419,6 +419,28 @@ export class Git {
     });
   }
 
+  /**
+   * The folders as the machine names them, symlinks resolved, in the order given: Claude Code says
+   * where it is by its real path, and a session's folder may be a link to it. A folder that cannot
+   * be resolved (gone, or named with a newline) comes back as given, so a comparison is lexical there.
+   */
+  async realpaths(cwd: string, paths: string[]): Promise<string[]> {
+    if (paths.some((path) => path.includes("\n"))) return paths;
+    const script =
+      'for p; do if [ -d "$p" ]; then (cd -- "$p" && pwd -P) || echo; else echo; fi; done';
+    try {
+      const result = await this.exec(["sh", "-c", script, "sh", ...paths], {
+        cwd,
+        timeoutMs: 5_000,
+      });
+      const lines = result.stdout.split("\n").slice(0, paths.length);
+      if (result.exitCode !== 0 || lines.length !== paths.length) return paths;
+      return lines.map((line, index) => line || (paths[index] as string));
+    } catch {
+      return paths;
+    }
+  }
+
   /** Whether a path exists, asked of the machine the repository is on. */
   async exists(cwd: string, path: string): Promise<boolean> {
     return (await this.exec(["test", "-e", path], { cwd, timeoutMs: 5_000 })).exitCode === 0;

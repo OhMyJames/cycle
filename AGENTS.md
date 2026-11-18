@@ -140,8 +140,10 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   reads stored sessions with the SDK's own calls. A turn is known by its prompt's id, live and stored.
   Claude Code reads the owner's own settings, as its CLI does, and Cycle's over them
   (`config.ts`, `configuration.ts`, `plugins.ts`): a settings file by its path, Cycle's servers
-  through `setMcpServers` and its plugins over the process's pipe, so no value is on a command line.
-  Cycle never writes the owner's Claude Code files, and its CLI does not see what Cycle adds.
+  through `setMcpServers` and its plugins over the process's pipe, so no value is on a command line,
+  and a worktree Claude Code enters is made by the daemon, through `WorktreeCreate` and
+  `WorktreeRemove` callbacks of the SDK's, in the daemon's own process. Cycle never writes the
+  owner's Claude Code files, and its CLI does not see what Cycle adds.
 - A session can run its agent in a Docker sandbox (`sbx`) on this machine: `harness/claude/src/sandbox.ts`.
   A folder's sandbox is made when first asked for, and it sees the folder under a name of its own
   (`/home/agent/workspace/<name>`), so no path of this machine is in it; only Claude Code moves into

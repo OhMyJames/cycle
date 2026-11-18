@@ -1,4 +1,4 @@
-import type { Session, TerminalInfo } from "@cycle/protocol";
+import { type Session, type TerminalInfo, workingDir } from "@cycle/protocol";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/icons.tsx";
 import { PanelHeader } from "../components/panel.tsx";
@@ -110,7 +110,7 @@ export function TerminalPanel({ info }: { info: Session }) {
   const [loaded, setLoaded] = useState(false);
   const starting = useRef(false);
   const sessionId = info.id;
-  const cwd = info.cwd;
+  const cwd = workingDir(info);
 
   const create = () => {
     if (starting.current) return;
