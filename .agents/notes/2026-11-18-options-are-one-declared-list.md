@@ -92,8 +92,9 @@ name, since a stored key is not renamed in the change that renames code.
 
 **The stored format, which the owner reviews.** Every file keeps reading what older daemons wrote; a key is
 never renamed in the same change as the code that renames it: the new key is written, the old ones are read
-and never written again and never deleted (as `sandbox` was for `environment`). **A**, a map of option id to
-value, is proposed.
+and never written again and never deleted (as `sandbox` was for `environment`). So an "After" below is a record
+the new daemon makes; a record that already has old keys keeps them, beside `options`, which wins when both
+are there. **A**, a map of option id to value, is proposed.
 
 `sessions.json`, one session. Before, a session of today and one from before 2026-11-16:
 
@@ -104,19 +105,27 @@ value, is proposed.
 }
 ```
 
-After:
+After, a session the new daemon made (`s2`), and `s1` and `s0` as the new daemon leaves them once the owner
+changed the mode of each to `plan`:
 
 ```json
 {
-  "s1": { "options": { "mode": "acceptEdits", "model": "claude-sonnet-5-5", "effort": null } },
-  "s0": { "mode": "auto" }
+  "s2": { "options": { "mode": "acceptEdits", "model": "claude-sonnet-5-5", "effort": null } },
+  "s1": {
+    "agentMode": "acceptEdits",
+    "model": "claude-sonnet-5-5",
+    "effort": null,
+    "options": { "mode": "plan", "model": "claude-sonnet-5-5", "effort": null }
+  },
+  "s0": { "mode": "auto", "options": { "mode": "plan" } }
 }
 ```
 
 Read: `options.mode` over `agentMode` over the legacy `mode` (still marked `legacy:`); `options.model` over
 `model`; `options.effort` over `effort`, where `null` is a value (the model's own) and absence is "ask the
-agent". `s0` is not rewritten by being read: the next change of it writes `options`, from what was read, and
-leaves `mode` where it is. A key is written only for what the owner chose or the agent moved: `model` and
+agent". A record is not rewritten by being read: the next change of it writes `options`, from what was read and what
+changed, and leaves the old keys where they are (`s1` and `s0` above, whose old `agentMode` and `mode` are now
+stale). A key is written only for what the owner chose or the agent moved: `model` and
 `effort` only when chosen, `mode` always at create, as today. A fork copies `options` as it copies the three
 today, which leaves out an effort of `null` (pinned: the copy then asks the agent).
 
@@ -172,20 +181,32 @@ After:
 { "id": "...", "options": { "model": "gpt-5.5", "mode": "auto" }, "modeHarness": "codex" }
 ```
 
-`model`, `effort`, `mode` and `agentMode` are read when `options` is absent and are not written. A schedule's
+`model`, `effort`, `mode` and `agentMode` are read when `options` is absent and are not written: a schedule
+the new daemon makes has none, and one it changes keeps the old keys it had, stale beside `options`. A schedule's
 `null` means "follow what new sessions start with", which here is an absent key; a schedule cannot say "the
 model's own effort", as it cannot today.
 
-**What a rollback costs.** A daemon from before this change reads no `options`. For a session written or
-changed after it: its mode reads as its agent's default (the key it reads is `agentMode`, absent), and its
-model and effort overrides are not seen, though the agent keeps its own record of both (`meta.model ??
-session.model`). For `settings.json`: the mode chosen for each agent since reads as the last one written in
-`modes`, and `model` and `effort` are untouched, since they stay where they were. For a schedule written or
-changed after it: model, effort and mode read as absent, which is "follow what new sessions start with" and
-the agent's default. Every loss falls to the agent's default or to what the agent kept, and no default is a
-mode that never asks, so a rollback never escalates; it can lose a choice. Sessions and schedules not changed
-since keep their old keys and read as before. Not checked: whether an older page tolerates the absent keys on
-a schedule the wire carries; and two daemons on one `CYCLE_HOME` writing both forms at once.
+**What a rollback costs.** A daemon from before this change reads the old keys and no `options`, so it reads
+what the record held before the new daemon last changed it, or nothing for a record the new daemon made.
+
+- A session the new daemon made, and a schedule: its mode reads as its agent's default, and its model and
+  effort overrides are not seen (the agent keeps its own record of both: `meta.model ?? session.model`). A
+  schedule's model and effort read as absent, which is "follow what new sessions start with".
+- A session or schedule that had old keys and was changed since: it reads **what the old keys last said**,
+  not what the owner chose last. That can be an earlier choice, **including a mode that never asks** if the
+  owner had picked one before and moved off it since. `settings.json` is the same: `modes` is no longer
+  written, so a rolled-back daemon starts new sessions in the mode last written there, which the owner may
+  have chosen and left (the Settings menu offers a mode that never asks today). `model` and `effort` stay
+  where they were and lose nothing.
+- Nothing is lost for a record the new daemon did not change.
+
+So a rollback loses a choice, and can bring an earlier one back, but it does not invent one: no default is a
+mode that never asks. **The owner decides**: keep the old keys stale, as proposed (the rule above, and what
+the plan says of every stored file), or have the new daemon **remove** a record's old keys when it writes
+`options` into it, so that a rollback reads the agent's default and never an earlier choice. The cost of
+removing is that an older daemon then reads less than it could, and the rule above becomes "never written
+again" only. Not checked: whether an older page tolerates the absent keys on a schedule the wire carries;
+and two daemons on one `CYCLE_HOME` writing both forms at once.
 
 **The rules the list keeps**, each pinned by a test before this change (`option-pins.test.ts` in the
 protocol, daemon, codex and Claude packages and the page): a mode is one agent's, so the same id can be two
@@ -231,8 +252,8 @@ model and the mode only, as today.
   `options.list` and `options.changed`, beside the old methods; nothing reads them but a test, and no stored
   file is written differently. The stored format above is written by the next pull request, after the owner
   has read it.
-- A daemon rolled back after the stored change loses the choices described above, never to a mode that never
-  asks.
+- A daemon rolled back after the stored change loses or reverts the choices described above, and may read an
+  earlier choice of a mode that never asks; the owner decides whether old keys are kept stale or removed.
 - `ModelInfo.sandbox` waits for step 10's `environments`; until then the old fields stay and are removed with
   `ModeInfo` and `ModelInfo` in the last pull request. `optionsFromLegacy`, which builds the list from them,
   goes with them.
