@@ -1,3 +1,4 @@
+import { optionsFromLegacy } from "@cycle/protocol";
 import type {
   Sessions,
   AgentCapabilities,
@@ -10,6 +11,7 @@ import type {
   AgentSession,
   ModeInfo,
   ModelInfo,
+  Option,
   PromptInput,
   QuestionAnswer,
   Turn,
@@ -169,6 +171,8 @@ export class FakeHarness implements Harness {
     replaces,
   }));
   listModes = (): ModeInfo[] => this.modes.map((mode) => ({ ...mode, harness: this.name }));
+  options = async (): Promise<Option[]> =>
+    optionsFromLegacy(this.name, this.listModes(), await this.listModels());
   listSkills = async () => [];
   listMcpServers = async () => [];
   putMcpServer = async () => {};
@@ -262,6 +266,7 @@ export class FakeHarness implements Harness {
       configure: (...args) => this.harness.configure(...args),
       listModes: (...args) => this.harness.listModes(...args),
       listModels: (...args) => this.harness.listModels(...args),
+      options: async () => [{ agent: this.name, options: await this.options() }],
       exec: (...args) => this.harness.exec(...args),
       readDirectory: (...args) => this.harness.readDirectory(...args),
       readFile: (...args) => this.harness.readFile(...args),

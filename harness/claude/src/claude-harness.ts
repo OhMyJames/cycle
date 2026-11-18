@@ -20,6 +20,7 @@ import {
   type PluginCatalog,
   type PluginDetail,
   type ModelInfo,
+  type Option,
   type PromptInput,
   type ReviewTarget,
   type PermissionMode,
@@ -31,6 +32,7 @@ import {
   type TurnOrigin,
   type Usage,
   type WorktreePort,
+  optionsFromLegacy,
   toMachinePath,
 } from "@cycle/protocol";
 import { cp, mkdir, rename, rm } from "node:fs/promises";
@@ -334,7 +336,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
   /** The owner's own plugins as last listed, and when. */
   private ownerPlugins: { at: number; seen: string; plugins: OwnerPlugin[] } | null = null;
   private readonly sdk: ClaudeSdk;
-  private readonly options: ClaudeHarnessOptions;
+  private readonly given: ClaudeHarnessOptions;
   private readonly env: Record<string, string>;
   /** The owner's Claude Code home: what a session on this machine reads and writes. */
   private readonly home: string;
@@ -389,7 +391,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
   private readonly limits = new Map<string, LimitWindow>();
 
   constructor(options: ClaudeHarnessOptions = {}) {
-    this.options = options;
+    this.given = options;
     this.sdk = options.sdk ?? realSdk;
     this.env = {};
     for (const [key, value] of Object.entries({ ...process.env, ...options.env })) {
@@ -528,7 +530,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     for (const info of await atHome(this.sdk, this.home).listSessions({ limit: LIST_LIMIT })) {
       take(info, null);
     }
-    for (const each of this.options.sandboxes?.made() ?? []) {
+    for (const each of this.given.sandboxes?.made() ?? []) {
       const list = await atHome(this.sdk, this.homeOf(each.name)).listSessions({
         limit: LIST_LIMIT,
       });
@@ -769,6 +771,10 @@ export class ClaudeHarness implements Sessions, AgentReads {
     return [...CLAUDE_MODES];
   }
 
+  async options(): Promise<Option[]> {
+    return optionsFromLegacy(this.name, this.listModes(), await this.listModels());
+  }
+
   /**
    * Puts the files back as they were when the turn's prompt was sent, from the copies Claude Code
    * kept as the agent changed them. The session's process is started for it if it has none.
@@ -875,7 +881,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
    * rather than asked again with each look at the page.
    */
   async listMcpServers(): Promise<McpServerInfo[]> {
-    const own = this.options.tools?.name ?? null;
+    const own = this.given.tools?.name ?? null;
     // A process reads the owner's servers as it starts, and one waiting on an approval can run
     // for days: only one that started with the files as they are now says what the owner has.
     const { owner } = await this.seen(null);
@@ -917,7 +923,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     const taken = (await this.listMcpServers())
       .filter((each) => each.origin !== "config")
       .map((each) => each.name);
-    if (this.options.tools) taken.push(this.options.tools.name);
+    if (this.given.tools) taken.push(this.given.tools.name);
     await this.change((config) => putServer(config, server, taken));
   }
 
@@ -1058,7 +1064,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
         .setMcpServers(servers)
         .then(() => running.query.applyFlagSettings(flags))
         .catch((error: unknown) => {
-          this.options.onLog?.(`A change did not reach a running Claude Code: ${message(error)}`);
+          this.given.onLog?.(`A change did not reach a running Claude Code: ${message(error)}`);
         });
       if (running.turn === null) idle.push(given);
     }
@@ -1067,7 +1073,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
 
   /** Every server a process on this machine is given over its pipe: Cycle's tools, and its own. */
   private serversFor(configuration: ClaudeConfiguration | null): Record<string, unknown> {
-    const { tools } = this.options;
+    const { tools } = this.given;
     return {
       ...configuration?.servers(),
       // The key goes down the process's own pipe: not its arguments, which any command can list,
@@ -1137,7 +1143,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
       );
       const init = await query.initializationResult();
       if (this.configuration) await query.setMcpServers(this.serversFor(this.configuration));
-      this.offered = toModels(init.models ?? [], this.options.sandboxes?.available() ?? false);
+      this.offered = toModels(init.models ?? [], this.given.sandboxes?.available() ?? false);
       this.heard(init, { cwd, seen: seen.folder });
       return await ask(query);
     } catch (error) {
@@ -1205,13 +1211,13 @@ export class ClaudeHarness implements Sessions, AgentReads {
     | "spawnClaudeCodeProcess"
     | "stderr"
   > {
-    const { onLog } = this.options;
+    const { onLog } = this.given;
     // A sandbox has a Claude Code of its own, which `sbx` starts. The SDK still wants the path to
     // one before it hands the process over; `sbx exec` starts the sandbox's `claude` by name.
     const bin = sandbox ? "claude" : this.bin();
     const spawn = sandbox
       ? (request: Parameters<Sandboxes["start"]>[1]) => this.sandboxes().start(sandbox, request)
-      : this.options.spawn;
+      : this.given.spawn;
     return {
       env: this.env,
       settingSources: ["user", "project", "local"],
@@ -1225,7 +1231,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
 
   /** Where Claude Code is. A name is looked for where the owner's shell would look. */
   private bin(): string | undefined {
-    const named = this.options.bin ?? this.env["CYCLE_CLAUDE_BIN"];
+    const named = this.given.bin ?? this.env["CYCLE_CLAUDE_BIN"];
     if (!named || named.includes("/")) return named || undefined;
     const found = Bun.which(named, { PATH: this.env["PATH"] ?? "" });
     if (!found) throw new Error(`\`${named}\` is not installed, or not on the PATH.`);
@@ -1233,7 +1239,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
   }
 
   private sandboxes(): Sandboxes {
-    const { sandboxes } = this.options;
+    const { sandboxes } = this.given;
     if (!sandboxes?.available()) {
       throw new Error("Docker Sandboxes is not installed: `sbx` is not on the PATH.");
     }
@@ -1253,7 +1259,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
       this.known.set(sessionId, found);
       return found;
     }
-    for (const each of this.options.sandboxes?.made() ?? []) {
+    for (const each of this.given.sandboxes?.made() ?? []) {
       const info = await atHome(this.sdk, this.homeOf(each.name)).getSessionInfo(sessionId);
       if (!info?.cwd) continue;
       const found: Known = { cwd: each.cwd, stored: true, sandbox: each.name };
@@ -1281,7 +1287,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
 
   /** Where a sandbox keeps its conversations, which reads without sbx being there. */
   private homeOf(name: string): string {
-    const sandboxes = this.options.sandboxes;
+    const sandboxes = this.given.sandboxes;
     if (!sandboxes) throw new Error("Sandboxes are not set up here.");
     return sandboxes.home(name);
   }
@@ -1302,7 +1308,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     if (await atHome(this.sdk, home).getSessionInfo(sessionId)) return;
     if (!(await atHome(this.sdk, this.home).getSessionInfo(sessionId))) return;
     // Its conversations are about to be found under the sandbox, so the folder it works in is kept.
-    this.options.sandboxes?.remember(sandbox, known.cwd);
+    this.given.sandboxes?.remember(sandbox, known.cwd);
     const from = join(this.home, "projects", projectFolder(known.cwd), sessionId);
     const to = join(home, "projects", projectFolder(sandboxCwd(known.cwd)), sessionId);
     if (await this.files.move(`${from}.jsonl`, `${to}.jsonl`)) await this.files.move(from, to);
@@ -1422,15 +1428,15 @@ export class ClaudeHarness implements Sessions, AgentReads {
     // What a worktree the agent enters is: Cycle's own, made where the daemon says. A sandbox sees
     // its folder under a name of its own and has no hooks of Cycle's: its agent may not enter one.
     const worktrees =
-      here && this.options.worktrees
+      here && this.given.worktrees
         ? worktreeHooks(
-            this.options.worktrees,
+            this.given.worktrees,
             sessionId,
             {
               entered: (path) => running.reader.moveTo(path),
               left: () => running.reader.moveTo(known.cwd),
             },
-            (line) => this.options.onLog?.(line),
+            (line) => this.given.onLog?.(line),
           )
         : null;
     // The SDK's own reads of a home are the owner's here, whichever home the agent runs in.
@@ -1559,7 +1565,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
       }
       return true;
     } catch (error) {
-      this.options.onLog?.(`claude: ${message(error)}`);
+      this.given.onLog?.(`claude: ${message(error)}`);
       // One in a turn, or with a task in the background, goes on as it is; an idle one is ended, and
       // the next turn starts another.
       if (running.turn !== null || running.reader.background.length > 0) return true;
@@ -1891,7 +1897,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
           : { type: "approval.resolved", sessionId, approvalId: id },
       );
     }
-    if (failure && !running.closed) this.options.onLog?.(`claude: ${message(failure)}`);
+    if (failure && !running.closed) this.given.onLog?.(`claude: ${message(failure)}`);
     // Its tasks went with it.
     for (const event of running.reader.abandon()) this.emit(event);
     const turnId = running.turn;
@@ -1917,7 +1923,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     context: AskContext,
   ): Promise<WirePermissionResult> {
     const { sessionId } = running;
-    const { tools } = this.options;
+    const { tools } = this.given;
     // Cycle's own tools only read, and are the client's to offer.
     if (tools && tool.startsWith(`mcp__${tools.name}__`)) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });

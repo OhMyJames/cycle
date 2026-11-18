@@ -19,6 +19,7 @@ import type {
   McpServerInput,
   ModeInfo,
   ModelInfo,
+  Option,
   PluginCatalog,
   PluginDetail,
   PromptInput,
@@ -31,6 +32,7 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
+import { optionsFromLegacy } from "@cycle/protocol";
 import { rename } from "node:fs/promises";
 import { modelCatalog } from "./catalog.ts";
 import { type CodexConfig, CodexProcess } from "./process.ts";
@@ -543,6 +545,10 @@ export class CodexHarness implements Harness {
 
   listModes(): ModeInfo[] {
     return [...CODEX_MODES];
+  }
+
+  async options(): Promise<Option[]> {
+    return optionsFromLegacy(this.name, this.listModes(), await this.listModels());
   }
 
   // What the agent offers
