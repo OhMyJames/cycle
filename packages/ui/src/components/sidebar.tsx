@@ -1,7 +1,7 @@
-import type { Session } from "@cycle/protocol";
+import type { Session, WorktreeEntry } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   type CycleApp,
   type PageId,
@@ -21,6 +21,7 @@ import {
   tildePath,
 } from "../lib/format.ts";
 import { remoteWarning, whereLabel } from "../lib/remote.ts";
+import { describeSessionDelete } from "../lib/worktrees.ts";
 import { ApprovalCard } from "./approval.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
@@ -406,20 +407,52 @@ function projectEntries(app: CycleApp, projects: string[], current: string | nul
 function DeleteDialog({ info, onClose }: { info: Session; onClose(): void }) {
   const app = useApp();
   const [removeWorktree, setRemoveWorktree] = useState(false);
+  // The worktree as it is now, read as the dialog opens: who else uses it, what is lost with it.
+  const [read, setRead] = useState<WorktreeEntry[] | string | null>(null);
+  const repo = info.worktree?.repo;
+  useEffect(() => {
+    if (!repo) return;
+    let current = true;
+    void app.readWorktrees(repo).then((answer) => {
+      if (current) setRead(answer);
+    });
+    return () => {
+      current = false;
+    };
+  }, [app, repo]);
+  const box = describeSessionDelete(info, read);
+  // Only a box that was offered sends the removal, whatever was ticked before it was read.
+  const removing = box?.state === "offered" && removeWorktree;
+  const noted = Boolean(box?.why) || (box?.lines.length ?? 0) > 0;
+  const explained = useId();
   return (
     <Dialog label="Delete session" onClose={onClose}>
       <div className="dialog-body">
         <h2 className="dialog-title">Delete “{sessionTitle(info)}”?</h2>
         <p className="dialog-text">Its conversation is removed for good. This cannot be undone.</p>
-        {info.worktree ? (
-          <label className="row meta">
-            <input
-              type="checkbox"
-              checked={removeWorktree}
-              onChange={(event) => setRemoveWorktree(event.currentTarget.checked)}
-            />
-            Also remove its worktree folder (the branch {info.worktree.branch} is kept)
-          </label>
+        {box ? (
+          <>
+            <label className="row meta">
+              <input
+                type="checkbox"
+                checked={removing}
+                disabled={box.state !== "offered"}
+                aria-describedby={noted ? explained : undefined}
+                onChange={(event) => setRemoveWorktree(event.currentTarget.checked)}
+              />
+              {box.label}
+            </label>
+            {noted ? (
+              <div id={explained} className="worktree-box-notes">
+                {box.why ? <p className="caption tone-warning">{box.why}</p> : null}
+                {box.lines.map((line) => (
+                  <p key={line} className="caption muted">
+                    {line}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
       <div className="dialog-actions">
@@ -431,7 +464,7 @@ function DeleteDialog({ info, onClose }: { info: Session; onClose(): void }) {
           className="button danger"
           onClick={() => {
             onClose();
-            void app.deleteSession(info.id, removeWorktree);
+            void app.deleteSession(info.id, removing);
           }}
         >
           Delete

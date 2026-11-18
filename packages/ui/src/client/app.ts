@@ -686,24 +686,34 @@ export class CycleApp {
   }
 
   /**
-   * Reads a workspace's worktrees, and gives them back, or what went wrong. A reply for a workspace
-   * the page has since left is not kept.
+   * What a workspace's worktrees are now, or what went wrong, without showing it: the dialog that
+   * deletes a session asks as it opens, and Settings, Worktrees must not be moved to its workspace.
+   */
+  async readWorktrees(workspace: string): Promise<WorktreeEntry[] | string> {
+    try {
+      return (await this.request("worktree.list", { workspace })).worktrees;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /**
+   * Reads a workspace's worktrees into the store Settings shows, and gives them back, or what went
+   * wrong. A reply for a workspace the page has since left is not kept.
    */
   async loadWorktrees(workspace: string): Promise<WorktreeEntry[] | string> {
     // shortcut: the list is read when opened and after each removal; upgrade when worktrees come and go while it is open (step 14's entered ones)
     if (this.worktrees.get().workspace !== workspace) {
       this.worktrees.set({ workspace, worktrees: null, problem: null });
     }
-    let next: { worktrees: WorktreeEntry[] | null; problem: string | null };
-    try {
-      const answer = await this.request("worktree.list", { workspace });
-      next = { worktrees: answer.worktrees, problem: null };
-    } catch (error) {
-      next = { worktrees: null, problem: error instanceof Error ? error.message : String(error) };
-    }
+    const answer = await this.readWorktrees(workspace);
+    const next =
+      typeof answer === "string"
+        ? { worktrees: null, problem: answer }
+        : { worktrees: answer, problem: null };
     if (this.worktrees.get().workspace === workspace)
       this.worktrees.update((value) => ({ ...value, ...next }));
-    return next.worktrees ?? next.problem ?? "";
+    return answer;
   }
 
   /** Removes a worktree the owner confirmed, then reads the list again, whatever came of it. */

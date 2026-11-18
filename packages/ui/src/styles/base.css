@@ -749,6 +749,13 @@ input::placeholder {
   font-size: var(--text-meta);
   line-height: var(--text-meta-line);
 }
+/* What the worktree box of a delete says, under the box and in line with its words. */
+.worktree-box-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 24px;
+}
 /* A command shown whole before it is kept, as a hook's. */
 .dialog-code {
   max-height: 160px;
