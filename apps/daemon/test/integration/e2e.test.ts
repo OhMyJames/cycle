@@ -264,7 +264,7 @@ test("a worktree session starts on its own branch, and archiving hides it", asyn
     worktree: { branch: "feature/x" },
   });
   expect(session.worktree).toMatchObject({ repo: project, branch: "feature/x" });
-  expect(session.cwd).toContain("feature-x");
+  expect(session.cwd).toContain(join(project, ".agents", "worktree", "feature-x"));
   const branches = await client.call("git.branches", { cwd: project });
   expect(branches.local).toContain("feature/x");
 

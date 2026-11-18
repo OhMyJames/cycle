@@ -103,10 +103,7 @@ export interface HubOptions {
   settings(): Settings;
   usage: UsageLedger;
   git: Git;
-  /**
-   * Where older daemons made worktrees: one stored without a `path` was made here. Until new ones
-   * have a place of their own, they are made here too.
-   */
+  /** Where older daemons made worktrees: one stored without a `path` was made here. */
   legacyWorktrees: string;
   schedule: Delay;
   now(): number;
@@ -284,7 +281,6 @@ export class SessionHub {
     if (params.worktree) {
       const made = await git.addWorktree({
         cwd,
-        parent: this.options.legacyWorktrees,
         branch: params.worktree.branch?.trim() || defaultBranchName(now()),
         ...(params.worktree.base ? { base: params.worktree.base } : {}),
       });
