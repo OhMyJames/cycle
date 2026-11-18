@@ -223,6 +223,28 @@ test("a session in a container whose environment is gone is never started outsid
   expect(meta.value.sessions["s1"]).toEqual({ sandbox: "cycle-project-1a" });
 });
 
+test("putting files back, and previewing it, are refused for a container whose environment is gone", async () => {
+  const { harness, hub } = await setup(gone, { environmentOfSandbox: () => null });
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
+  harness.history = [
+    {
+      id: "t0",
+      status: "completed",
+      error: null,
+      startedAt: null,
+      durationMs: null,
+      items: [],
+      diff: null,
+    },
+  ];
+  await hub.list(false);
+  const refusal = "Its sandbox's environment is gone. Choose an environment for the session.";
+  await expect(hub.rewind("s1", "t0", true)).rejects.toThrow(refusal);
+  await expect(hub.previewRewind("s1", "t0")).rejects.toThrow(refusal);
+  // Nothing reached the agent: not the files, and not the conversation either.
+  expect(harness.calls.filter((call) => call.startsWith("rewind"))).toEqual([]);
+});
+
 test("a session whose environment comes back is recovered at its next turn", async () => {
   let environment: string | null = null;
   const { harness, hub } = await setup(gone, { environmentOfSandbox: () => environment });
