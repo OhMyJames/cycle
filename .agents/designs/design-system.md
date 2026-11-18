@@ -139,7 +139,8 @@ looks at on the left, its own actions and Close on the right. Rows are 28 high, 
 
 - **Overview** is facts, a label in the muted color and its value in the primary one. A fact that
   goes somewhere is a control: the folder opens Files, a server opens the Connector. A server has
-  a dot in its status color.
+  a dot in its status color. For a session in a worktree it also says the worktree, who made it
+  and its repository, with a button to Settings, Worktrees.
 - **Changes** lists files as cards. A file's header carries its icon, its counts and its status
   letter, and stays at the top while its diff scrolls. A diff has no git header lines: a later
   part of the file starts under a thin band that names where it is.

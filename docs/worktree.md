@@ -79,7 +79,9 @@ tried were tried (the section "What was tried"); what could not be is at the end
    "agent"`), else `cwd` (`workingDir`, in `@cycle/protocol`). Not `worktree.path ?? cwd`: for a
    worktree the owner made of a project that is a subfolder, `path` is the repository's root and
    `cwd` is the root plus the subfolder, which the panels must keep. The files, terminal and changes
-   of the page follow it. **Claude Code remembers the worktree itself**: a process started with
+   of the page follow it, and so do the overview's "Folder" and the files the composer's `@` lists
+   (**done**, step 15; its commands and skills do not: the agent's record of them is keyed by `cwd`,
+   and a worktree shares the repository's skills). **Claude Code remembers the worktree itself**: a process started with
    `resume` begins in it, from the folder it was given. So Cycle reads where the agent is from the
    `cwd` of the process's `init` message (it comes with each prompt, and says where the agent is
    now), and brings `Session.worktree` into line: the agent is in its worktree, or inside it:
@@ -147,8 +149,11 @@ tried were tried (the section "What was tried"); what could not be is at the end
   inside a project, and `CYCLE_HOME/worktrees` stays on the list for the old ones.
 - The page: a list of a workspace's worktrees, with Remove (**done**, step 13: Settings,
   Worktrees); the files, terminal and changes panels read the folder the agent works in (**done**,
-  step 14); the dialog that deletes a session names a worktree other sessions use; the sidebar's
-  mark.
+  step 14); the dialog that deletes a session names a worktree other sessions use and says what is
+  lost with it, the sidebar's mark, the overview, the composer's `@` and the list's re-read when a
+  session enters a worktree (**done**, step 15). The dialog reads `worktree.list` as it opens and
+  offers the box only where the daemon would let the worktree go: it is stricter in one rare case,
+  a session only inside the folder, which the wire does not say from one that names it.
 - `CLAUDE.md`'s Runtime data, which lists `worktrees/` under `CYCLE_HOME` (**done**, step 11). This
   repository's own formatter, linter and tests need nothing.
 - A decision note, since `sessions.json`'s `worktree` changes shape (**done**, step 11). Old records
@@ -248,8 +253,6 @@ So codex stays without the second row, and the contract says so by declaring it.
 
 - The base: Claude Code starts from `origin/<default branch>` by default, Cycle from `HEAD`, which is
   the base even when it is unpushed (decided by the owner; `worktree.baseRef` is not read).
-- The page's `@` suggestions inside a worktree: they search the project's folder until the composer
-  follows `workingDir` too.
 - Claude Code's `worktree.symlinkDirectories` and `sparsePaths` are not applied: the checkout is
   Cycle's, as for an owner-made one. A project that is a subfolder gets the worktree's root, not
   the same subfolder inside it, which the owner-made flow keeps.
