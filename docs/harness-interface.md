@@ -77,9 +77,11 @@ Read these against the glossary. Each one is a place the words are not yet one m
    flag to its method.
 5. **`HookSettings` is the type of `readHooks` and `setHooks`** (256, 258), and carries the process
    limits too (see the glossary). The name says hooks; the content says more.
-6. **`HarnessEvent` mixes two scopes.** Some events belong to a session (`session.changed`,
-   `mode.changed`, `commands.changed`, `suggestion.changed`); others to the whole harness
-   (`mcp.changed`, `account.changed`, `limits.changed`, `harness.exited`). They share one union.
+6. **`HarnessEvent` is two sets on one stream.** `AgentSessionEvent` is what an agent says of a
+   session (a `SessionEvent`, and `session.changed`, `mode.changed`, `commands.changed`,
+   `suggestion.changed`); `AgentEvent` is what it says of itself (`mcp.changed`, `account.changed`,
+   `limits.changed`, `agent.exited`). The port stays one stream, `onEvent`, and the daemon's
+   `handle` splits on `"sessionId" in event`.
 7. **`Agent` is both the program's name and this interface** (line 151). The glossary names the
    interface `Sessions`.
 8. **The `Machine` is the main agent's alone.** An agent beside it has none: its files, commands and

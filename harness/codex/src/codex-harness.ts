@@ -929,7 +929,7 @@ export class CodexHarness implements Harness {
     if (this.extra) return;
     this.activeTurns.clear();
     this.reviews.clear();
-    this.emit({ type: "harness.exited", harness: this.name, message });
+    this.emit({ type: "agent.exited", harness: this.name, message });
   }
 
   /** Asks the main process, which answers for everything that is not one session's. */

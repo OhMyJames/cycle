@@ -78,9 +78,9 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
   that was away can ask for again; the daemon keeps the last 512. Others are the daemon's own
   (settings, models, providers, terminals, schedules and more).
 - Tied to: a Session, or none. Today `EventFrame`, `DaemonEvent`.
-- **Open**: what an agent tells the daemon (`HarnessEvent`) mixes events of one session with events of
-  the whole agent (MCP changed, account changed, limits changed, exited). [Operations](operations.md)
-  proposes two sets.
+- What an agent tells the daemon (`HarnessEvent`, one stream) is two sets: `AgentSessionEvent`, of
+  one session, and `AgentEvent`, of the whole agent (MCP changed, account changed, limits changed,
+  exited). [Operations](operations.md) lists them.
 
 ### Choice
 

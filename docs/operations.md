@@ -150,8 +150,12 @@ the page by `session.changed` when it enters or leaves one.
 
 ## Events
 
-**Proposed**: two sets, since today's `HarnessEvent` mixes them. An agent's event tells what it knows;
-Cycle adds its own and numbers a session's into frames.
+Two sets, which exist as the types `AgentSessionEvent` and `AgentEvent` (their union, `HarnessEvent`,
+is the one stream a harness reports on). Four kinds below are still to do: `option.changed` (today
+`mode.changed`), `question.requested` and `question.resolved` (today kinds of the approval events),
+and `extensions.changed` (today `mcp.changed`); `options.changed` has no producer yet. The rest
+carry their names, `agent.exited` since this change. An agent's event tells what it knows; Cycle
+adds its own and numbers a session's into frames.
 
 **Of a session** (each carries a session id):
 
@@ -170,7 +174,7 @@ Cycle adds its own and numbers a session's into frames.
 
 **Of an agent** (no session id): `options.changed` (the models offered changed), `extensions.changed`
 (a server started, failed, finished a sign-in), `account.changed`, `limits.changed`, `agent.exited`.
-Today these are `mcp.changed`, `account.changed`, `limits.changed` and `harness.exited`.
+Today `mcp.changed` stands for `extensions.changed`, and `options.changed` has no producer yet.
 
 **Not the agent's:** the daemon derives the session's activity (`SessionActivity`) and tells it.
 
