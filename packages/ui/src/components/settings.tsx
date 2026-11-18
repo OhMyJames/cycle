@@ -15,6 +15,7 @@ import { ModeMenu } from "./mode-menu.tsx";
 import { ProvidersSection } from "./providers.tsx";
 import { RemotesSection } from "./remotes.tsx";
 import { SandboxesSection } from "./sandboxes.tsx";
+import { WorktreesSection } from "./worktrees.tsx";
 
 function Limit({ limit }: { limit: LimitWindow }) {
   const used = limit.usedPercent;
@@ -184,6 +185,7 @@ const TITLES: Record<SettingsSection, string> = {
   account: "Account and usage",
   providers: "Model providers",
   sandboxes: "Sandboxes",
+  worktrees: "Worktrees",
   remotes: "Remote servers",
   about: "About",
 };
@@ -330,6 +332,8 @@ export function SettingsPage() {
         {section === "providers" ? <ProvidersSection /> : null}
 
         {section === "sandboxes" ? <SandboxesSection /> : null}
+
+        {section === "worktrees" ? <WorktreesSection /> : null}
 
         {section === "remotes" ? <RemotesSection /> : null}
 

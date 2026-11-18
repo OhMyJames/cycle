@@ -104,8 +104,8 @@ tried were tried (the section "What was tried"); what could not be is at the end
 | ------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------- |
 | `session.create { worktree }`         | makes one for the session, on a branch if given, from a base if given                       | the same                  |
 | `session.delete { removeWorktree }`   | removes it with the session, under rule 5                                                   | the same, with the checks |
-| `worktree.list { workspace }`         | what `git worktree list` knows, each marked by where it is, with the sessions that use each | daemon done; page to do   |
-| `worktree.remove { workspace, path }` | removes a worktree Cycle made that no running session is in                                 | daemon done; page to do   |
+| `worktree.list { workspace }`         | what `git worktree list` knows, each marked by where it is, with the sessions that use each | the same                  |
+| `worktree.remove { workspace, path }` | removes a worktree Cycle made that no running session is in                                 | the same                  |
 
 - **The result and the rules** of the two new rows are in [operations](operations.md#worktrees):
   `worktree.remove` takes the `workspace` too, since the path is checked against that repository's
@@ -132,8 +132,9 @@ tried were tried (the section "What was tried"); what could not be is at the end
   `cwd` yet either (the SDK's message has it); that is needed to bring `Session.worktree` into line.
 - `Files`: leave `.agents/worktree` out of search (**done**, step 11). Reading stays allowed: it is
   inside a project, and `CYCLE_HOME/worktrees` stays on the list for the old ones.
-- The page: the dialog that deletes a session names a worktree other sessions use; a list of a
-  workspace's worktrees; the sidebar's mark.
+- The page: a list of a workspace's worktrees, with Remove (**done**, step 13: Settings,
+  Worktrees); the dialog that deletes a session names a worktree other sessions use; the sidebar's
+  mark.
 - `CLAUDE.md`'s Runtime data, which lists `worktrees/` under `CYCLE_HOME` (**done**, step 11). This
   repository's own formatter, linter and tests need nothing.
 - A decision note, since `sessions.json`'s `worktree` changes shape (**done**, step 11). Old records

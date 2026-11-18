@@ -651,6 +651,7 @@ const SETTINGS: { section: SettingsSection; label: string; icon: IconName }[] = 
   { section: "account", label: "Account and usage", icon: "user" },
   { section: "providers", label: "Model providers", icon: "sparkle" },
   { section: "sandboxes", label: "Sandboxes", icon: "file-lock" },
+  { section: "worktrees", label: "Worktrees", icon: "git-branch" },
   { section: "remotes", label: "Remote servers", icon: "globe" },
   { section: "about", label: "About", icon: "info" },
 ];
