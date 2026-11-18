@@ -5,7 +5,7 @@ steps; the third is the code. Words are the [glossary](glossary.md)'s. What the 
 in [the comparison](protocol-comparison.md).
 
 Status: **draft**. Three things are decided by the owner (2026-11-17): an agent declares what it can
-do in one place, its options are one declared list, and a session's state and a turn's status are two
+do in one place, its options are one declared list, and a session's activity and a turn's status are two
 things. The rest is **Proposed**, to be argued with, and **Open** where it is not settled.
 
 ## Two contracts
@@ -172,7 +172,7 @@ Cycle adds its own and numbers a session's into frames.
 (a server started, failed, finished a sign-in), `account.changed`, `limits.changed`, `agent.exited`.
 Today these are `mcp.changed`, `account.changed`, `limits.changed` and `harness.exited`.
 
-**Not the agent's:** the daemon derives the session's state and tells it.
+**Not the agent's:** the daemon derives the session's activity (`SessionActivity`) and tells it.
 
 - `running` from a turn's start to its end; `requires_action` while any approval or question is open;
   `idle` otherwise, as `statusOf` does today, which also returns `error` when the last turn failed and counts a session that is starting as running. The SDK and ACP version 2 say it themselves; codex was
