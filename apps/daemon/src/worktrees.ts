@@ -13,11 +13,10 @@ export interface WorktreesOptions {
   legacyWorktrees: string;
 }
 
-/** What git lists: the main checkout, the linked worktrees (not bare), and every record. */
+/** What git lists: the main checkout, and its linked worktrees (not bare). */
 interface Listing {
   main: string;
   linked: ListedWorktree[];
-  all: ListedWorktree[];
 }
 
 /**
@@ -111,7 +110,6 @@ export class Worktrees {
     return {
       main: first.path,
       linked: listed.slice(1).filter((worktree) => !worktree.bare),
-      all: listed,
     };
   }
 
@@ -123,13 +121,13 @@ export class Worktrees {
   }
 
   /** Throws unless `path` may be removed. `root` is what git would remove, when it is known. */
-  private allow({ main, linked, all }: Listing, path: string, root?: string): void {
+  private allow({ main, linked }: Listing, path: string, root?: string): void {
     const worktree = linked.find((one) => one.path === path);
     if (!worktree) throw new GitError("That folder is not a worktree of this repository.");
     if (!this.managed(main, path)) {
       throw new GitError("Cycle removes only the worktrees it made. Remove this one with git.");
     }
-    const inside = all.find((one) => one.path !== path && one.path.startsWith(`${path}/`));
+    const inside = linked.find((one) => one.path !== path && one.path.startsWith(`${path}/`));
     if (inside) {
       throw new GitError(
         `Another worktree is inside this one: ${inside.path}. Remove that one first.`,
