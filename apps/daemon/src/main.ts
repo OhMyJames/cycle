@@ -16,6 +16,7 @@ import { DAEMON_VERSION, startDaemon } from "./daemon.ts";
 import { openProviders } from "./gateway.ts";
 import { Harnesses } from "./harnesses.ts";
 import { TOOLS_KEY_ENV, TOOLS_SERVER, startTools } from "./tools.ts";
+import { WorktreeDesk } from "./worktree-desk.ts";
 import { claudeConfigBook } from "./claude-config.ts";
 import { newSandboxesFile, sandboxBook, type SandboxesFile } from "./sandboxes.ts";
 import { JsonStore, diskFile } from "./store.ts";
@@ -99,9 +100,12 @@ const claudeFile = await JsonStore.open<ClaudeConfig>(
   diskFile(join(home, "claude.json")),
   emptyConfig(),
 );
+// The worktrees Claude Code's agent enters are the daemon's to make: it serves the desk once it has a hub.
+const worktrees = new WorktreeDesk();
 // Claude Code runs beside codex when it is installed and starts; codex is the machine.
 const claude = new ClaudeHarness({
   sandboxes,
+  worktrees,
   stamp: fileStamp,
   config: { book: claudeConfigBook(claudeFile), dir: join(home, "claude") },
   tools: { name: TOOLS_SERVER, url: tools.url, key: tools.key },
@@ -110,6 +114,7 @@ const claude = new ClaudeHarness({
 
 const daemon = await startDaemon({
   tools,
+  worktrees,
   harness: new Harnesses(codex, [claude], (line) => console.error(line)),
   providers: providers.store,
   sandboxes: { store: sandboxFile, admin: sandboxes },

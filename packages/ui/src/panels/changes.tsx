@@ -1,4 +1,4 @@
-import type { GitFile, GitStatus, Session } from "@cycle/protocol";
+import { type GitFile, type GitStatus, type Session, workingDir } from "@cycle/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PatchView, Stats } from "../components/diff-view.tsx";
 import { Icon, Spinner } from "../components/icons.tsx";
@@ -123,7 +123,7 @@ export function ChangesPanel({ info }: { info: Session }) {
   const [uncommitted, setUncommitted] = useState(false);
   const touched = useRef(false);
   const base = info.worktree && !uncommitted ? info.worktree.base : undefined;
-  const cwd = info.cwd;
+  const cwd = workingDir(info);
 
   const refresh = useCallback(() => {
     app.request("git.status", { cwd, ...(base ? { base } : {}) }).then(

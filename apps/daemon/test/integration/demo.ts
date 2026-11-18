@@ -14,6 +14,7 @@ import {
   JsonStore,
   TOOLS_KEY_ENV,
   TOOLS_SERVER,
+  WorktreeDesk,
   claudeConfigBook,
   diskFile,
   openProviders,
@@ -222,6 +223,18 @@ const claudeModel = startMockClaude(root, (prompt, results, body) => {
     return { call: { name: "Bash", input: { command, description: "Write stamp.txt" } } };
   }
   if (/stress/i.test(prompt)) return { text: chunks(STRESS, 48) };
+  // "enter a worktree" enters one and writes a file in it; "leave the worktree" keeps it and goes back.
+  if (/enter a worktree/i.test(prompt)) {
+    const file = join(project, ".agents", "worktree", "cycle-demo", "notes.txt");
+    if (results === 0) return { call: { name: "EnterWorktree", input: { name: "demo" } } };
+    if (results === 1)
+      return { call: { name: "Write", input: { file_path: file, content: "In a worktree.\n" } } };
+    return { text: chunks("I entered a worktree and wrote `notes.txt` there.") };
+  }
+  if (/leave the worktree/i.test(prompt)) {
+    if (results === 0) return { call: { name: "ExitWorktree", input: { action: "keep" } } };
+    return { text: chunks("I left the worktree, which stays on disk.") };
+  }
   // "use mcp docs" calls the echo tool of a server named docs, as one added in the Connector.
   const server = /\buse mcp ([\w-]+)/i.exec(prompt)?.[1];
   if (server) {
@@ -261,7 +274,9 @@ const claudeFile = await JsonStore.open<ClaudeConfig>(
   diskFile(join(root, "home", "claude.json")),
   emptyConfig(),
 );
+const worktrees = new WorktreeDesk();
 const claude = new ClaudeHarness({
+  worktrees,
   env: claudeModel.env,
   stamp: fileStamp,
   config: { book: claudeConfigBook(claudeFile), dir: join(root, "home", "claude") },
@@ -270,6 +285,7 @@ const claude = new ClaudeHarness({
 });
 const daemon = await startDaemon({
   tools,
+  worktrees,
   harness: new Harnesses(harness, [claude], (line) => console.error(line)),
   providers: providers.store,
   sandboxes,
