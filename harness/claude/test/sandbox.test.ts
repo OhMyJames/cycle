@@ -155,12 +155,17 @@ test("a session asked into a sandbox has its agent started there, and nowhere el
   expect((await harness.listModels()).every((model) => model.sandbox)).toBe(true);
   const session = await harness.createSession({
     cwd: "/Users/me/app",
-    sandboxed: "standard",
+    environment: "standard",
     ...options,
   });
   const name = sandboxName("/Users/me/app", "standard");
-  expect(session.sandbox).toBe(name);
-  await harness.send(session.id, { text: "hello", images: [] }, { ...options, sandbox: name });
+  // The container's name is the harness's: the session says only where the agent sees the folder.
+  expect(session.sandboxCwd).toBe("/home/agent/workspace/app");
+  await harness.send(
+    session.id,
+    { text: "hello", images: [] },
+    { ...options, environment: "standard" },
+  );
   await settle();
   const query = sdk.last;
   // The sandbox's own Claude Code, not this machine's: `sbx exec` starts it by name, and the SDK
@@ -190,19 +195,21 @@ test("a session asked into a sandbox has its agent started there, and nowhere el
     "claude",
     "--verbose",
   ]);
-  expect((await harness.loadSession(session.id, {})).session.sandbox).toBe(name);
+  expect((await harness.loadSession(session.id, {})).session.sandboxCwd).toBe(
+    "/home/agent/workspace/app",
+  );
 });
 
-test("a daemon that never made the session is told its sandbox, and one on this machine has none", async () => {
-  const { sdk, harness, asked } = setup(["kept-sandbox"]);
+test("a daemon that never made the session is told its environment, and one on this machine has none", async () => {
+  const { sdk, harness, asked } = setup([sandboxName("/Users/me/app", "standard")]);
   sdk.stored = [{ sessionId: "s1", summary: "", lastModified: 5, cwd: "/Users/me/app" }];
-  await harness.send("s1", { text: "again", images: [] }, { ...options, sandbox: "kept-sandbox" });
+  await harness.send("s1", { text: "again", images: [] }, { ...options, environment: "standard" });
   expect(asked).toEqual([["ls", "-q"]]);
   expect(sdk.last.options.spawnClaudeCodeProcess).toBeDefined();
   expect(sdk.last.options.resume).toBe("s1");
 
   const local = await harness.createSession({ cwd: "/Users/me/app", ...options });
-  expect(local.sandbox).toBeNull();
+  expect(local.sandboxCwd).toBeNull();
   await harness.send(local.id, { text: "here", images: [] }, options);
   expect(sdk.last.options).toMatchObject({
     pathToClaudeCodeExecutable: "/opt/claude",
@@ -224,13 +231,12 @@ test("a sandbox's conversation is read from its own home, as this machine's fold
   const listed = (await harness.listSessions({ archived: false })).find((each) => each.id === "s1");
   expect(listed).toMatchObject({
     cwd: "/Users/me/app",
-    sandbox: name,
     sandboxCwd: "/home/agent/workspace/app",
   });
-  const loaded = await harness.loadSession("s1", { sandbox: name });
+  // Found in the sandbox's own home, which is the truth of where it runs.
+  const loaded = await harness.loadSession("s1", {});
   expect(loaded.session).toMatchObject({
     cwd: "/Users/me/app",
-    sandbox: name,
     sandboxCwd: "/home/agent/workspace/app",
   });
   expect(loaded.turns).toHaveLength(1);
@@ -238,14 +244,14 @@ test("a sandbox's conversation is read from its own home, as this machine's fold
 });
 
 test("a conversation this machine kept is moved into its sandbox's home once", async () => {
-  const { sdk, harness, made, moved } = setup(["kept-sandbox"]);
-  const name = "kept-sandbox";
+  const name = sandboxName("/Users/me/app", "standard");
+  const { sdk, harness, made, moved } = setup([name]);
   const home = `/home/me/.cycle/sandboxes/${name}/claude`;
   // Made before a sandbox kept the folder it works in.
   made[name] = { environment: "standard", version: "v", hosts: [] };
   sdk.stored = [{ sessionId: "s1", summary: "", lastModified: 5, cwd: "/Users/me/app" }];
   sdk.messages = { s1: [user("u1", "before")] };
-  await harness.loadSession("s1", { sandbox: name });
+  await harness.loadSession("s1", { environment: "standard" });
   expect(moved).toEqual([
     [
       "/home/me/.claude/projects/-Users-me-app/s1.jsonl",
@@ -261,7 +267,7 @@ test("without sbx no model offers a sandbox, and a session asked into one is ref
   const { harness, state } = setup();
   state.installed = false;
   expect((await harness.listModels()).some((model) => model.sandbox)).toBe(false);
-  expect(harness.createSession({ cwd: "/Users/me/app", sandboxed: "standard" })).rejects.toThrow(
+  expect(harness.createSession({ cwd: "/Users/me/app", environment: "standard" })).rejects.toThrow(
     "Docker Sandboxes is not installed",
   );
   expect(modeOptions("bypassPermissions", true)).toEqual(modeOptions("bypassPermissions"));

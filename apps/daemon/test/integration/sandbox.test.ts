@@ -145,7 +145,9 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
     mode: "acceptEdits",
     environment: "standard",
   });
-  expect(session).toMatchObject({ harness: "claude", environment: "standard", sandbox: name });
+  expect(session).toMatchObject({ harness: "claude", environment: "standard" });
+  // The container's name is the harness's: the page has none of it.
+  expect(session).not.toHaveProperty("sandbox");
   expect(readFileSync(join(state, "names"), "utf8")).toBe(`${name}\n`);
   await client.call("session.open", { sessionId: session.id });
 
@@ -176,7 +178,7 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
   expect(readdirSync(join(state, name, "home", ".claude", "projects"))).toContain(folder);
   expect(existsSync(join(root, "claude", "projects", projectFolder(project)))).toBe(false);
   const reader = new ClaudeHarness({ env: claude.env, sandboxes: sandboxes.admin });
-  const stored = await reader.loadSession(session.id, { sandbox: name });
+  const stored = await reader.loadSession(session.id, { environment: "standard" });
   await reader.dispose();
   expect(stored.turns.map((each) => each.items.map((item) => item.kind))).toEqual([
     ["userMessage", "agentMessage"],
@@ -185,8 +187,13 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
   const { sessions } = await client.call("session.list", { archived: false });
   expect(sessions.find((info) => info.id === session.id)).toMatchObject({
     environment: "standard",
-    sandbox: name,
   });
+  // Nor is it in the record: that holds the environment alone.
+  const kept = JSON.parse(readFileSync(join(root, "home", "sessions.json"), "utf8")) as {
+    sessions: Record<string, { environment?: string; sandbox?: string }>;
+  };
+  expect(kept.sessions[session.id]).toMatchObject({ environment: "standard" });
+  expect(kept.sessions[session.id]).not.toHaveProperty("sandbox");
 });
 
 test("a second session in the folder shares its sandbox, and one outside a sandbox runs here", async () => {
@@ -202,7 +209,7 @@ test("a second session in the folder shares its sandbox, and one outside a sandb
 
   const execs = readFileSync(join(state, "execs"), "utf8");
   const local = await client.call("session.create", { cwd: project, model: SONNET });
-  expect(local.sandbox).toBeNull();
+  expect(local.environment).toBeNull();
   await client.call("session.open", { sessionId: local.id });
   await turn(local.id, "on this machine");
   expect(readFileSync(join(state, "execs"), "utf8")).toBe(execs);
@@ -237,7 +244,7 @@ test("a sandbox is made with what its environment says, and the next folder's st
     environment: saved.id,
   });
   const name = sandboxName(project, saved.id);
-  expect(session.sandbox).toBe(name);
+  expect(session.environment).toBe(saved.id);
   expect(
     readFileSync(join(state, name, "made"), "utf8")
       .trim()
@@ -261,13 +268,14 @@ test("a sandbox is made with what its environment says, and the next folder's st
   const other = join(root, "other");
   mkdirSync(other);
   const execs = readFileSync(join(state, "execs"), "utf8");
-  const next = await client.call("session.create", {
+  await client.call("session.create", {
     cwd: other,
     model: SONNET,
     environment: saved.id,
   });
-  expect(next.sandbox).toBe(sandboxName(other, saved.id));
-  expect(existsSync(join(state, next.sandbox ?? "", "home", "tools-installed"))).toBe(true);
+  expect(existsSync(join(state, sandboxName(other, saved.id), "home", "tools-installed"))).toBe(
+    true,
+  );
   expect(readFileSync(join(state, "execs"), "utf8")).toBe(execs);
 
   expect(
@@ -289,23 +297,27 @@ test("a sign-in goes to sbx and is not given back", async () => {
 
 test("a daemon started over a file that kept only each container's name finds each session's environment", async () => {
   const listed = async () => (await client.call("session.list", { archived: false })).sessions;
+  const before = await listed();
   const environments = new Map(
-    (await listed()).flatMap((info) =>
-      info.sandbox && info.environment ? [[info.id, info.environment] as const] : [],
-    ),
+    before.flatMap((info) => (info.environment ? [[info.id, info.environment] as const] : [])),
   );
+  const folders = new Map(before.map((info) => [info.id, info.cwd]));
   expect([...environments.values()]).toContain("standard");
   expect([...environments.values()]).toContain("node-projects");
   client.close();
   await daemon.stop();
   // What a daemon of before `environment` left: the names, and no environment.
+  const container = (id: string, environment: string) =>
+    sandboxName(folders.get(id) ?? "", environment);
   const file = join(root, "home", "sessions.json");
   const kept = JSON.parse(readFileSync(file, "utf8")) as {
     sessions: Record<string, { environment?: string; sandbox?: string }>;
   };
-  for (const id of environments.keys()) {
-    expect(kept.sessions[id]?.sandbox).toBeDefined();
-    delete kept.sessions[id]?.environment;
+  for (const [id, environment] of environments) {
+    const record = kept.sessions[id];
+    expect(record?.sandbox).toBeUndefined();
+    if (record) record.sandbox = container(id, environment);
+    delete record?.environment;
   }
   writeFileSync(file, JSON.stringify(kept));
   daemon = await start();

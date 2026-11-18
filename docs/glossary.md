@@ -90,11 +90,13 @@ them is in [operations](operations.md).
     - **Container**: a Docker sandbox made with `sbx`. The whole agent runs in it. It honors every
       field.
   - A field a backend cannot honor is shown as not applying there, never dropped silently.
-  - _Today_ "sandbox" means five things: Claude Code's command sandbox, the container, the
-    environment's id (`session.create.sandbox`), the container's name (`SessionMeta.sandbox`) and
-    whether a model can run in one (`ModelInfo.sandbox`). The command sandbox is also switched on by
-    a mode (`modeOptions`), and the test of whether a session is in a container is made in two places
-    (`claude-harness.ts:1357` and `:1447`).
+  - _Today_ "sandbox" means three things still: Claude Code's command sandbox, the container, and
+    whether a model can run in one (`ModelInfo.sandbox`). A session records the environment's id
+    (`Session.environment`, `session.create.environment`, stored as `environment`), and the
+    container's name is the harness's alone: it derives it from the folder and the id
+    (`sandboxName`), and `sessions.json` keeps the old `sandbox` key only to be read, never
+    written. The command sandbox is also switched on by a mode (`modeOptions`), and the test of
+    whether a session is in a container is made in two places of `claude-harness.ts`.
   - _Target_ the owner chooses an **environment**. The word "sandbox" alone is not used: say the
     environment, the command sandbox or the container.
   - _Target_ the command sandbox follows the session's environment, not its mode.

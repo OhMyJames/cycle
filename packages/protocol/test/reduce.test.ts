@@ -24,7 +24,6 @@ const info: Session = {
   branch: null,
   worktree: null,
   environment: null,
-  sandbox: null,
   sandboxCwd: null,
   directories: [],
   createdAt: 0,
