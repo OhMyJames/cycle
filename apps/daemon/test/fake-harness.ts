@@ -183,14 +183,15 @@ export class FakeHarness implements Harness {
   cancelLogin = async () => {};
   logout = async () => {};
   exec: Harness["exec"] = async (argv) => {
-    const key = argv.slice(4).join(" ");
-    this.calls.push(`git ${key}`);
+    const git = argv[0] === "git";
+    const key = (git ? argv.slice(4) : argv).join(" ");
+    this.calls.push(git ? `git ${key}` : key);
     const result = this.execResults[key] ?? { exitCode: 0, stdout: "" };
     return { stderr: "", ...result };
   };
   readDirectory = async () => [];
   readFile = async () => new Uint8Array();
-  searchFiles = async () => [];
+  searchFiles: Harness["searchFiles"] = async () => [];
   openTerminal: Harness["openTerminal"] = async () => ({ write() {}, resize() {}, kill() {} });
   rewindFiles?: NonNullable<Sessions["rewindFiles"]>;
   listCommands?: NonNullable<Sessions["listCommands"]>;
