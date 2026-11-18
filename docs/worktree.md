@@ -79,7 +79,8 @@ tried were tried (the section "What was tried"); what could not be is at the end
    the folder it was given. So Cycle reads where the agent is from the `cwd` of the process's `init`
    message, each time one starts, and brings `Session.worktree` into line.
 5. **A worktree is shared by forks and kept by archive.** (**Done**, step 12.) Only the owner removes
-   one: with `session.delete { removeWorktree: true }`, and from step 13 with `worktree.remove`. The
+   one: with `session.delete { removeWorktree: true }`, and with `worktree.remove` (**done**, step 13, the
+   daemon's part). The
    daemon refuses, before it changes anything, while another session runs in it (its record names the
    worktree, or its folder is in it) and while another session's record names it, archived or not, fork
    or not. Removal discards uncommitted and untracked files (`--force`; the box in the delete dialog is
@@ -99,13 +100,17 @@ tried were tried (the section "What was tried"); what could not be is at the end
 
 ## Operations and events
 
-| Operation                           | Does                                                                                                 | Today                     |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------- |
-| `session.create { worktree }`       | makes one for the session, on a branch if given, from a base if given                                | the same                  |
-| `session.delete { removeWorktree }` | removes it with the session, under rule 5                                                            | the same, with the checks |
-| `worktree.list { workspace }`       | what is under `.agents/worktree` and what `git worktree list` knows, with the sessions that use each | none                      |
-| `worktree.remove { path }`          | removes a worktree no running session is in                                                          | none                      |
+| Operation                             | Does                                                                                        | Today                     |
+| ------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------- |
+| `session.create { worktree }`         | makes one for the session, on a branch if given, from a base if given                       | the same                  |
+| `session.delete { removeWorktree }`   | removes it with the session, under rule 5                                                   | the same, with the checks |
+| `worktree.list { workspace }`         | what `git worktree list` knows, each marked by where it is, with the sessions that use each | daemon done; page to do   |
+| `worktree.remove { workspace, path }` | removes a worktree Cycle made that no running session is in                                 | daemon done; page to do   |
 
+- **The result and the rules** of the two new rows are in [operations](operations.md#worktrees):
+  `worktree.remove` takes the `workspace` too, since the path is checked against that repository's
+  own list. By hand means not under `.agents/worktree` or the older place: listed, never removed. A
+  folder there that git does not list is not a worktree and is not listed.
 - **Event:** `session.changed` carries `worktree` when the agent entered or left one. No new item kind
   is needed: an `EnterWorktree` is a tool call in the turn as it is today.
 - **For the agent contract:** an agent that can enter a worktree on its own says so by operation id
@@ -118,7 +123,8 @@ tried were tried (the section "What was tried"); what could not be is at the end
 - `git.ts`: the path, its uniqueness, the self-ignoring file, and a lock for each repository
   (**done**, step 11).
 - `sessions.ts`: `Session.worktree` gaining `path` and `origin` (**done**, step 11); the removal
-  checks and the dropped session (**done**, step 12), the entered worktree.
+  checks and the dropped session (**done**, step 12), the entered worktree. `worktrees.ts`: the list and
+  the removal of the owner's worktrees (**done**, step 13).
 - `harness/claude`: the two hooks, which it cannot take today: its `QueryOptions` (`sdk.ts`) has no
   `hooks`, and only settings-file command hooks are passed (`config.ts:292-318`). The option goes in
   `QueryOptions` and in the `query()` call of `claude-harness.ts:1365-1386`. It does not read `init`'s
