@@ -2,7 +2,14 @@ export { type Daemon, type DaemonOptions, DAEMON_VERSION, startDaemon } from "./
 export { Harnesses, NotSupported, type OtherAgent } from "./harnesses.ts";
 export { claudeConfigBook } from "./claude-config.ts";
 export { Git, GitError, parseNameStatus, parseNumstat, parseBranches, branchSlug } from "./git.ts";
-export { SessionHub, type HubOptions, type MetaFile, SessionError, keptMode } from "./sessions.ts";
+export {
+  SessionHub,
+  type HubOptions,
+  type MetaFile,
+  SessionError,
+  type WorktreeUser,
+  keptMode,
+} from "./sessions.ts";
 export { diskFile, JsonStore, type Delay, type TextFile } from "./store.ts";
 export { type OpenProviders, openProviders } from "./gateway.ts";
 export {
