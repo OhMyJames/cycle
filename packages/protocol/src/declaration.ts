@@ -24,6 +24,8 @@ export const OPERATIONS = [
   "session.directories",
   // shortcut: codex's `features.*` switches; upgrade when step 19 separates AgentSettings
   "settings.features",
+  // An agent that enters a worktree on its own says so, and Cycle makes the worktree it enters.
+  "worktree.enter",
 ] as const;
 
 export type OperationId = (typeof OPERATIONS)[number];

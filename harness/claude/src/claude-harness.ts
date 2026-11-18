@@ -29,6 +29,7 @@ import {
   type TurnOptions,
   type TurnOrigin,
   type Usage,
+  type WorktreePort,
   toMachinePath,
 } from "@cycle/protocol";
 import { cp, mkdir, rename, rm } from "node:fs/promises";
@@ -58,6 +59,7 @@ import {
   sandboxName,
 } from "./sandbox.ts";
 import { agentBegins, turnOrigin } from "./tasks.ts";
+import { WORKTREE_TOOLS, worktreeHooks } from "./worktree-hooks.ts";
 import {
   atHome,
   type ClaudeQuery,
@@ -137,6 +139,13 @@ export interface ClaudeHarnessOptions {
   onLog?: (line: string) => void;
   /** An MCP server of the client's own that every session reaches, behind a key. */
   tools?: OwnTools;
+  /**
+   * How a worktree Claude Code's agent enters is made: the daemon's, since Cycle makes every
+   * worktree. Given, each process on this machine is started with callbacks for `WorktreeCreate` and
+   * `WorktreeRemove`, and the agent declares `worktree.enter`. Without it, Claude Code makes its own
+   * in a folder of its own, as it does for a probe or a test.
+   */
+  worktrees?: WorktreePort;
   /**
    * Starts Claude Code somewhere other than this machine: a container, a
    * sandbox, another host. It is given the command and must answer a process
@@ -224,6 +233,8 @@ interface Running {
   retrying: boolean;
   /** A suggestion of what to send next is out there, to be taken back when a turn begins. */
   suggested: boolean;
+  /** The folder the agent last said it was in, as an `init` message gave it: null before the first. */
+  workingDir: string | null;
 }
 
 interface PendingApproval {
@@ -430,6 +441,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
         "task.stop",
         "mcp.reconnect",
         "session.directories",
+        ...(options.worktrees ? (["worktree.enter"] as const) : []),
       ],
       inputs: ["image", "pdf", "text"],
       extensions: edits
@@ -1403,6 +1415,20 @@ export class ClaudeHarness implements Sessions, AgentReads {
     const configuration = here ? this.configuration : null;
     // The mode's command sandbox goes into the settings file, which the SDK takes none beside.
     const start = await configuration?.forStart(commandSandbox);
+    // What a worktree the agent enters is: Cycle's own, made where the daemon says. A sandbox sees
+    // its folder under a name of its own and has no hooks of Cycle's: its agent may not enter one.
+    const worktrees =
+      here && this.options.worktrees
+        ? worktreeHooks(
+            this.options.worktrees,
+            sessionId,
+            {
+              entered: (path) => running.reader.moveTo(path),
+              left: () => running.reader.moveTo(known.cwd),
+            },
+            (line) => this.options.onLog?.(line),
+          )
+        : null;
     // The SDK's own reads of a home are the owner's here, whichever home the agent runs in.
     const query = await withHome(this.home, () =>
       this.sdk.query({
@@ -1412,6 +1438,9 @@ export class ClaudeHarness implements Sessions, AgentReads {
           ...permissions,
           ...(start ? start.options : commandSandbox ? { sandbox: commandSandbox } : {}),
           cwd: this.cwdOf(known),
+          ...(worktrees ? { hooks: worktrees } : {}),
+          // The built-in tools would put a worktree into the folder the sandbox is given.
+          ...(here ? {} : { disallowedTools: [...WORKTREE_TOOLS] }),
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
           // So the files can go back with the conversation.
@@ -1456,6 +1485,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
       costSeen: null,
       retrying: false,
       suggested: false,
+      workingDir: null,
     };
     try {
       running.commands = this.heard(
@@ -1637,6 +1667,20 @@ export class ClaudeHarness implements Sessions, AgentReads {
   }
 
   private handle(running: Running, each: WireMessage): void {
+    if (each.type === "system" && each.subtype === "init" && each.cwd) {
+      // It comes with each prompt and says where the agent is now, which an entered or a left
+      // worktree changes. A sandbox's paths are its own: they say nothing here.
+      if (!running.known.sandbox && each.cwd !== running.workingDir) {
+        running.workingDir = each.cwd;
+        running.reader.moveTo(each.cwd);
+        this.emit({
+          type: "session.changed",
+          sessionId: running.sessionId,
+          patch: { workingDir: each.cwd },
+        });
+      }
+      return;
+    }
     if (each.type === "system" && each.subtype === "status" && each.permissionMode) {
       // The model moved itself, as into plan mode or out of it once its plan was approved.
       if (each.permissionMode !== running.mode) {

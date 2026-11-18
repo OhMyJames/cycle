@@ -168,6 +168,8 @@ export interface WireMessage {
   modelUsage?: Record<string, WireModelUsage>;
   /** A `status` message: the mode the process is in now, which the model may have changed. */
   permissionMode?: string;
+  /** An `init` message, which comes with each prompt: the folder the agent is in as the turn begins. */
+  cwd?: string;
   /** What the process has cost so far, in all. */
   total_cost_usd?: number;
   /** A `prompt_suggestion`: what the owner might send next. */
@@ -306,4 +308,41 @@ export interface WireUserMessage {
   message: { role: "user"; content: WireBlock[] };
   /** `next` joins the turn that is running at its next tool call. */
   priority?: "now" | "next" | "later";
+}
+
+/** What a `WorktreeCreate` hook is given: the agent asks for a worktree by a name. */
+export interface WireWorktreeCreateInput {
+  hook_event_name: "WorktreeCreate";
+  session_id: string;
+  /** The repository's root as Claude Code found it, not the folder the session works in. */
+  cwd: string;
+  name: string;
+  /** Set when a helper agent's own call carries it; a helper's isolated worktree arrives with none. */
+  agent_id?: string;
+}
+
+/** What a `WorktreeRemove` hook is given: the agent asks for a worktree it left to be removed. */
+export interface WireWorktreeRemoveInput {
+  hook_event_name: "WorktreeRemove";
+  session_id: string;
+  cwd: string;
+  /** The worktree's root. */
+  worktree_path: string;
+  agent_id?: string;
+}
+
+/** What Claude Code takes from a worktree hook: the path of the worktree made, or nothing. */
+export type WireWorktreeOutput =
+  | { hookSpecificOutput: { hookEventName: "WorktreeCreate"; worktreePath: string } }
+  | Record<string, never>;
+
+/** One matcher of the SDK's `hooks` option, with the longest its hooks may take. */
+export interface WireHookMatcher<Input, Output> {
+  hooks: ((
+    input: Input,
+    toolUseId: string | undefined,
+    context: { signal: AbortSignal },
+  ) => Promise<Output>)[];
+  /** In seconds, for all the hooks of this matcher. */
+  timeout?: number;
 }

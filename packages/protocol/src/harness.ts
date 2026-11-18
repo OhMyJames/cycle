@@ -46,6 +46,23 @@ export interface AgentSession {
   forkedFrom: string | null;
   /** A label the owner put on it, kept by the agent with the conversation. Absent: none. */
   tag?: string;
+  /**
+   * Where the agent works now, as it says: its own folder, or one it entered since. Absent: `cwd`.
+   * It is never the key of its record, which stays `cwd`.
+   */
+  workingDir?: string;
+}
+
+/**
+ * How a worktree an agent asks for is made and ended: the daemon's, since Cycle makes every
+ * worktree. A harness whose agent can enter one is given it and calls it; both throw an `Error`
+ * whose message the agent's model reads.
+ */
+export interface WorktreePort {
+  /** Makes a worktree of the session's repository and answers its root. */
+  enter(request: { sessionId: string; name: string; helper: boolean }): Promise<{ path: string }>;
+  /** The agent asked to remove one it entered. Cycle removes nothing on an agent's say. */
+  leave(request: { sessionId: string; path: string; helper: boolean }): Promise<void>;
 }
 
 export interface TurnOptions {

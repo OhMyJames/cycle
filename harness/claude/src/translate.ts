@@ -459,7 +459,8 @@ export class StreamReader {
   /** The tasks running in the background, as Claude Code last listed them. */
   background: BackgroundTask[] = [];
   private readonly sessionId: string;
-  private readonly cwd: string;
+  /** The folder a command item shows: where the agent is now, which a worktree changes. */
+  private cwd: string;
   private readonly sandboxCwd: string | null;
   private messageId = "";
   private readonly blocks = new Map<number, Streamed>();
@@ -479,6 +480,11 @@ export class StreamReader {
     this.sessionId = sessionId;
     this.cwd = cwd;
     this.sandboxCwd = sandboxCwd;
+  }
+
+  /** The agent works in another folder now: the commands that follow show it. */
+  moveTo(cwd: string): void {
+    this.cwd = cwd;
   }
 
   /** The plan a request to leave plan mode carries, by the call's id. */

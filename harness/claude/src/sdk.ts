@@ -30,6 +30,10 @@ import type {
   WirePermissionUpdate,
   WireSessionInfo,
   WireUserMessage,
+  WireHookMatcher,
+  WireWorktreeCreateInput,
+  WireWorktreeOutput,
+  WireWorktreeRemoveInput,
 } from "./wire.ts";
 
 /** A process the SDK was given in place of one it starts itself. */
@@ -83,6 +87,11 @@ export interface QueryOptions {
   // upgrade when the SDK takes it out of alpha.
   /** Tools it may not use, by name. Names only: they go on the command line. */
   disallowedTools?: string[];
+  /** Callbacks in this process, which answer where Claude Code would otherwise act on its own. */
+  hooks?: {
+    WorktreeCreate?: WireHookMatcher<WireWorktreeCreateInput, WireWorktreeOutput>[];
+    WorktreeRemove?: WireHookMatcher<WireWorktreeRemoveInput, WireWorktreeOutput>[];
+  };
   /** Plugin folders, handed over its pipe with `pluginDelivery: "initialize"`. */
   plugins?: { type: "local"; path: string }[];
   pluginDelivery?: "initialize";
