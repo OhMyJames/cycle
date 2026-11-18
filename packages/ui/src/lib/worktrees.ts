@@ -44,6 +44,37 @@ export function originNote(origin: WorktreeEntry["origin"]): string | null {
       : null;
 }
 
+/**
+ * The folder the composer's `@` reads files from: where the agent works now (`workingDir`) for a
+ * session, the project for a draft. Not the session's `cwd` alone: a worktree the agent entered is
+ * where its files are, and the folder the session began in is the main checkout.
+ */
+export function searchRoot(
+  info: Pick<Session, "cwd" | "worktree"> | null | undefined,
+  draft: { cwd: string } | null | undefined,
+): string {
+  return info ? workingDir(info) : (draft?.cwd ?? "");
+}
+
+/** The project the composer ranks sessions by: a session's repository, a draft's folder. */
+export function mentionProject(
+  info: Session | null | undefined,
+  draft: { cwd: string } | null | undefined,
+): string {
+  return info ? projectOf(info) : (draft?.cwd ?? "");
+}
+
+/**
+ * Which worktrees the sessions are in, as one string that changes when a session enters, leaves or
+ * changes its worktree and not when anything else about a session does.
+ */
+export function worktreeKey(sessions: readonly Pick<Session, "id" | "worktree">[]): string {
+  return sessions
+    .flatMap((each) => (each.worktree ? [`${each.id}=${each.worktree.path}`] : []))
+    .toSorted()
+    .join("\n");
+}
+
 /** The mark of a row whose session works in a worktree: its name for a screen reader and its tip. */
 export interface RowMark {
   label: string;

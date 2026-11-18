@@ -43,7 +43,7 @@ import {
   sectioned,
   skillRows,
 } from "../lib/suggest.ts";
-import { mentionable } from "../lib/worktrees.ts";
+import { mentionProject, mentionable, searchRoot } from "../lib/worktrees.ts";
 import { MorphLoader } from "../loader/morph-loader.tsx";
 import { fileIcon } from "../lib/file-icons.ts";
 import { useRowKeys } from "./controls.tsx";
@@ -593,9 +593,11 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
       return;
     }
     // The folder's other sessions first among sessions, each newest first.
-    const others = mentionable(Object.values(app.sessions.get().byId), sessionId, cwd).map(
-      (other) => ({ id: other.id, title: mentionTitle(sessionTitle(other)), info: other }),
-    );
+    const others = mentionable(
+      Object.values(app.sessions.get().byId),
+      sessionId,
+      mentionProject(info, draft),
+    ).map((other) => ({ id: other.id, title: mentionTitle(sessionTitle(other)), info: other }));
     const sessions = matchSessions(others, found.query).map((row): Suggestion => {
       const folder = others.find((other) => other.id === row.id)?.info.cwd ?? "";
       return {
@@ -608,7 +610,8 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
       };
     });
     setSuggestions(sessions);
-    if (!cwd) return;
+    const root = searchRoot(info, draft);
+    if (!root) return;
     const show = (rows: PathRow[]) => {
       if (ticket !== lookup.current) return;
       setSuggestions([
@@ -627,14 +630,14 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     };
     // With nothing typed yet, what the folder holds; then what the search finds.
     if (!found.query) {
-      void app.request("files.list", { path: cwd }).then(
+      void app.request("files.list", { path: root }).then(
         ({ entries }) =>
           show(entries.map((entry) => ({ path: entry.name, directory: entry.directory }))),
         () => {},
       );
       return;
     }
-    void app.request("files.search", { root: cwd, query: found.query }).then(
+    void app.request("files.search", { root, query: found.query }).then(
       ({ files }) => show(files),
       () => {},
     );

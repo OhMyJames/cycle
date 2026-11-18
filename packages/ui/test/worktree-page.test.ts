@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mentionable, worktreeFacts, worktreeMark } from "../src/lib/worktrees.ts";
+import {
+  mentionProject,
+  mentionable,
+  searchRoot,
+  worktreeFacts,
+  worktreeKey,
+  worktreeMark,
+} from "../src/lib/worktrees.ts";
 import { WORKTREE, session, worktreeInfo } from "./session-fixture.ts";
 
 test("a row's mark names the branch, and says when the agent entered the worktree", () => {
@@ -77,16 +84,52 @@ test("an @ lists the sessions of a folder first, newest first, and leaves out it
   ]);
 });
 
-test("a worktree session's own folder is not its project, so the ranking asked with it finds no sessions of the repository first", () => {
-  // The fault this pins (`composer.tsx` asked with the session's `cwd`): the repository's sessions
-  // are of project "/repo", a worktree session's `cwd` is its worktree's folder, and they never match.
+test("a worktree session's @ puts its repository's sessions first: it ranks by project, not by its own folder", () => {
   const sessions = [
     session({ id: "elsewhere", cwd: "/other", updatedAt: 9 }),
     session({ id: "sibling", cwd: "/repo", updatedAt: 1 }),
   ];
-  const own = session({ id: "own", cwd: WORKTREE, worktree: worktreeInfo() });
+  const own = session({ id: "own", cwd: WORKTREE, worktree: worktreeInfo({ origin: "agent" }) });
+  const ranked = mentionable(sessions, own.id, mentionProject(own, null));
+  expect(ranked.map((each) => each.id)).toEqual(["sibling", "elsewhere"]);
+  // Asked with the folder, as the composer did, nothing matches: the fault this fixes.
   expect(mentionable(sessions, own.id, own.cwd).map((each) => each.id)).toEqual([
     "elsewhere",
     "sibling",
   ]);
+});
+
+test("a draft ranks by its folder, which is already a project", () => {
+  expect(mentionProject(null, { cwd: "/repo" })).toBe("/repo");
+  expect(mentionProject(undefined, undefined)).toBe("");
+});
+
+test("@ reads files from where the agent works: the entered worktree, else the session's folder, else the draft's", () => {
+  const entered = session({ cwd: "/repo", worktree: worktreeInfo({ origin: "agent" }) });
+  expect(searchRoot(entered, null)).toBe(WORKTREE);
+  // Made as the session was: its folder already is the worktree, or a subfolder inside it.
+  const owned = session({ cwd: `${WORKTREE}/pkg`, worktree: worktreeInfo() });
+  expect(searchRoot(owned, null)).toBe(`${WORKTREE}/pkg`);
+  expect(searchRoot(session({ cwd: "/repo" }), null)).toBe("/repo");
+  expect(searchRoot(null, { cwd: "/draft" })).toBe("/draft");
+  expect(searchRoot(null, null)).toBe("");
+});
+
+test("the list of worktrees is read again when a session enters, leaves or changes its worktree, and not otherwise", () => {
+  const plain = session({ id: "a" });
+  const inside = session({ id: "b", worktree: worktreeInfo() });
+  const before = worktreeKey([plain, inside]);
+  expect(worktreeKey([plain, { ...inside, worktree: worktreeInfo({ origin: "agent" }) }])).toBe(
+    before,
+  );
+  expect(worktreeKey([{ ...plain, worktree: worktreeInfo() }, inside])).not.toBe(before);
+  expect(worktreeKey([plain])).not.toBe(before);
+  expect(worktreeKey([plain, { ...inside, worktree: worktreeInfo({ path: "/x" }) }])).not.toBe(
+    before,
+  );
+  // Nothing else of a session moves it, and the order of the sessions does not.
+  const busy = { ...inside, activity: "running" as const, title: "More", updatedAt: 9 };
+  expect(worktreeKey([plain, busy])).toBe(before);
+  const other = session({ id: "c", worktree: worktreeInfo({ path: "/y" }) });
+  expect(worktreeKey([inside, other])).toBe(worktreeKey([other, inside]));
 });

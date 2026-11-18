@@ -4,7 +4,7 @@ import { projectOf } from "../client/app.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename, tailPath, tildePath } from "../lib/format.ts";
-import { describeRemoval, describeWorktree } from "../lib/worktrees.ts";
+import { describeRemoval, describeWorktree, worktreeKey } from "../lib/worktrees.ts";
 import { Dialog } from "./menu.tsx";
 
 function WorktreeRow({
@@ -94,9 +94,12 @@ export function WorktreesSection() {
   /** Paths being removed: confirmed, and the list not yet read again. */
   const [busy, setBusy] = useState<string[]>([]);
 
+  // A session entering or leaving a worktree while the list is open is read again: the page hears
+  // of it in the sessions, which carry their worktree.
+  const used = useStore(app.sessions, (value) => worktreeKey(Object.values(value.byId)));
   useEffect(() => {
     if (workspace) void app.loadWorktrees(workspace);
-  }, [app, workspace]);
+  }, [app, workspace, used]);
 
   if (workspaces.length === 0) {
     return (

@@ -702,7 +702,7 @@ export class CycleApp {
    * wrong. A reply for a workspace the page has since left is not kept.
    */
   async loadWorktrees(workspace: string): Promise<WorktreeEntry[] | string> {
-    // shortcut: the list is read when opened and after each removal; upgrade when worktrees come and go while it is open (step 14's entered ones)
+    // shortcut: a worktree made by hand is read when the list is opened; upgrade when the daemon pushes worktree changes
     if (this.worktrees.get().workspace !== workspace) {
       this.worktrees.set({ workspace, worktrees: null, problem: null });
     }
