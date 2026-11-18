@@ -19,14 +19,16 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 
 - Owner: both. The agent keeps the conversation and its title, model, effort, times, fork source
   and tag. Cycle keeps pin, unread, the schedule that started it, and the mode, environment, worktree
-  and extra directories chosen. Archive is the agent's where it has one.
+  and extra directories chosen. Archive is the agent's where it has one. The environment is Cycle's
+  alone, stored as `environment` (an id): the agent's record does not say it, and the container's name
+  is the harness's, never on the wire.
 - Identity: the agent's id. Which agent: `Session.agent` (today `harness`).
 - Life: made by the owner or a schedule; loaded into an agent's process and let go of, which is not a
   state of the session; archived; deleted for good (clients confirm first).
 - Tied to: an Agent, a Workspace, a Worktree (optional), an Environment, its Turns, its Options, a
   Schedule that started it.
 - **Decided**: one `Session` type. Its fields are grouped by who keeps them, and where both say the
-  same thing (model, effort, sandbox, title, preview) the card says who wins.
+  same thing (model, effort, title, preview) the card says who wins.
 - **Decided**: the session's activity (`SessionActivity`) is `idle | running | requires_action`, as in
   the SDK (`session_state_changed`) and ACP version 2 (`state_update`). Whether the daemon holds the
   session in memory is a separate flag, `loaded`, and a session that is not loaded is `idle`. The
@@ -110,7 +112,7 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 - Owner: Cycle (`sandboxes.json`). Identity: an id. Fields: name, hosts, variables, CPUs, memory, a
   setup script. A variable's value never goes to a page.
 - Life: made by the owner. Its backend is made on first use and again when what only making sets
-  changes.
+  changes. A session records its id, and keeps it when the environment is removed.
 - Backends: the command sandbox of Claude Code on this machine (honors hosts, later folders), and a
   container made with `sbx` (honors everything).
 - **Decided**: environment and sandbox are one concept, the container a backend of it, and the

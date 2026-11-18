@@ -30,10 +30,11 @@ command sandbox, step 10) would have no container name to carry.
   `sandboxName(folder, environment)`. A name already known to it, found in a sandbox's own home, is the
   truth and wins over a derived one. Told and derived are one for every session this daemon made, since
   the harness names a sandbox from the same folder and id.
-- **The old key is read, never written new, never deleted.** The key `sandbox` (a name) stays readable, as
-  `mode` is next to `agentMode`. Until the page and daemon pass the environment alone, both keys are
-  written; after that `sandbox` is read only to recover the id, and is removed from the code when two
-  releases have shipped. It is never deleted from a file.
+- **The old key is read, never written, never deleted.** The key `sandbox` (a name) stays readable, as
+  `mode` is next to `agentMode`. It is read only to recover the id, and is removed from the code when two
+  releases have shipped. A session made or copied now has `environment` alone, so a daemon rolled back
+  over such a record sees no container: it finds the session through the sandbox's home when the
+  conversation is there. It is never deleted from a file.
 - **Recovering the id from an old record is checked by construction.** The name is not reversible, so the
   daemon tries candidates and keeps the one that makes the stored name for the session's folder: the
   environment the made-book entry names (`made[name].environment`, written for every sandbox Cycle made
@@ -46,10 +47,14 @@ command sandbox, step 10) would have no container name to carry.
   only. A turn on it is refused ("Its sandbox's environment is gone. Choose an environment for the
   session."): the daemon gives its harness neither the name nor an environment, so nothing of its
   conversation is moved and it never starts on this machine, outside the container it was made for.
-  The same holds for a compaction and for putting files back. One exception, in what is moved only:
-  a session opened before the daemon knows its folder (a page that asks for it before it has listed)
-  is given its name as an older daemon did, since the name cannot be tried against a folder yet, so
-  its conversation may be moved into the container's home; its turns are refused all the same.
+  The same holds for a compaction, for putting files back, for a review and for a copy of it: a copy
+  would carry no record of the container, and its next turn would run outside it, so none is made.
+  A session opened before the daemon knows its folder (a page that asks for it before it has listed)
+  cannot have its name tried against a folder yet. It is read with no place, which moves nothing and
+  starts nothing, and once its folder is known the daemon tries again: when an environment makes the
+  name, the session is loaded a second time told that environment, so that its conversation is moved
+  into the container and what the agent is later asked (a compaction) starts there; when none does,
+  it stays as it was and its turns are refused. The daemon never gives a harness a container's name.
 - **What stays.** `sandboxCwd` (the path the agent says, mapped back to a file on this machine) and
   `ModelInfo.sandbox` (what an agent can do, step 17) keep their names. `SandboxEnvironment` and the
   `sandboxes.*` methods are renamed in steps 10 and 22.
@@ -77,7 +82,9 @@ command sandbox, step 10) would have no container name to carry.
 - An old record whose environment was removed before this runs, or whose name is older than environments,
   has none, and its next turn is refused. No wire method yet sets a session's environment, so the owner's
   way on is a new session.
-- A rolled-back daemon reads `sandbox` while it is still written, and after that finds a session through
-  the sandbox's home.
+- A session made after this has no `sandbox` key, so a rolled-back daemon does not know its container;
+  it finds the session through the sandbox's home, as for a record lost.
+- A copy of a session whose container's environment is gone is refused until the owner has a way to
+  choose one for it.
 - `SessionMeta.sandbox` is read for two releases. `ModelInfo.sandbox` and `sandboxCwd` still say
   "sandbox": steps 17 and later.
