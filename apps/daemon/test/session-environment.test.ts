@@ -46,41 +46,32 @@ async function setup(kept: MetaFile["sessions"] = {}, more: Partial<HubOptions> 
   return { harness, hub, meta, logged };
 }
 
-test("a session's sandbox is kept, and given again with every turn", async () => {
-  const { harness, hub, meta } = await setup();
-  const seen: unknown[] = [];
-  harness.createSession = async (options) => {
-    seen.push(options.sandboxed);
-    return harness.session("boxed", { cwd: options.cwd, sandbox: "cycle-project-1" });
-  };
-  harness.send = async (_sessionId, _input, options) => {
-    seen.push(options.sandbox);
-    return { turnId: "t1" };
-  };
-  const info = await hub.create({ cwd: "/project", sandbox: "standard" });
-  expect(info.sandbox).toBe("cycle-project-1");
-  expect(meta.value.sessions["boxed"]?.sandbox).toBe("cycle-project-1");
-  await hub.send(info.id, { text: "go", images: [] }, "auto");
-  expect(seen).toEqual(["standard", "cycle-project-1"]);
-  expect((await hub.fork(info.id, null)).sandbox).toBe("cycle-project-1");
-  expect(hub.create({ cwd: "/project", sandbox: "standard", worktree: {} })).rejects.toThrow(
-    "not a worktree",
-  );
-});
-
-test("a session in a sandbox takes no extra folders, and a copy of it is in the sandbox too", async () => {
+test("a copy of a session in a container is in the container too", async () => {
   const { harness, hub, meta } = await setup();
   harness.createSession = async (options) =>
     harness.session("boxed", { cwd: options.cwd, sandbox: "cycle-project-1" });
-  expect(
-    hub.create({ cwd: "/project", sandbox: "standard", directories: ["/other"] }),
-  ).rejects.toThrow("reaches its own folder only");
-  const info = await hub.create({ cwd: "/project", sandbox: "standard" });
+  const info = await hub.create({ cwd: "/project", environment: "standard" });
   const copy = await hub.fork(info.id, null);
   expect(meta.value.sessions[copy.id]?.sandbox).toBe("cycle-project-1");
 });
 
-test("a session opened by a daemon that started later is given the sandbox it was kept with", async () => {
+test("a session kept with its environment is opened with it, whatever name an older daemon kept", async () => {
+  const { harness, hub } = await setup({
+    s1: { environment: "standard", sandbox: "cycle-project-1" },
+  });
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
+  await hub.list(false);
+  const loaded: unknown[] = [];
+  harness.loadSession = async (sessionId, options) => {
+    loaded.push(options);
+    return { session: harness.session(sessionId, { cwd: "/project" }), turns: [], usage: null };
+  };
+  await hub.open("s1", undefined);
+  expect(loaded).toEqual([expect.objectContaining({ environment: "standard" })]);
+  expect(loaded[0]).not.toHaveProperty("sandbox");
+});
+
+test("an older record opened before its folder is known is still given the name it kept", async () => {
   const { harness, hub } = await setup({ s1: { sandbox: "cycle-project-1" } });
   const loaded: unknown[] = [];
   harness.loadSession = async (sessionId, options) => {
@@ -95,24 +86,26 @@ test("a session opened by a daemon that started later is given the sandbox it wa
   expect(loaded).toEqual(["cycle-project-1"]);
 });
 
-test("a session records the environment chosen, and gives it again with every turn", async () => {
+test("a session records the environment chosen, and the harness is given it, and no name, every time", async () => {
   const { harness, hub, meta } = await setup();
   const created: unknown[] = [];
   const turns: unknown[] = [];
   harness.createSession = async (options) => {
-    created.push(options.sandboxed);
+    created.push(options);
     return harness.session("boxed", { cwd: options.cwd, sandbox: "cycle-project-1" });
   };
   harness.send = async (_sessionId, _input, options) => {
-    turns.push([options.environment, options.sandbox]);
+    turns.push(options);
     return { turnId: "t1" };
   };
   const info = await hub.create({ cwd: "/project", environment: "standard" });
   expect(info).toMatchObject({ environment: "standard", sandbox: "cycle-project-1" });
   expect(meta.value.sessions["boxed"]?.environment).toBe("standard");
   await hub.send(info.id, { text: "go", images: [] }, "auto");
-  expect(created).toEqual(["standard"]);
-  expect(turns).toEqual([["standard", "cycle-project-1"]]);
+  expect(created).toEqual([expect.objectContaining({ environment: "standard" })]);
+  expect(created[0]).not.toHaveProperty("sandboxed");
+  expect(turns).toEqual([expect.objectContaining({ environment: "standard" })]);
+  expect(turns[0]).not.toHaveProperty("sandbox");
   const copy = await hub.fork(info.id, null);
   expect(copy.environment).toBe("standard");
   expect(meta.value.sessions[copy.id]?.environment).toBe("standard");
@@ -151,16 +144,15 @@ test("a record that kept only the container's name has its environment recovered
   await hub.list(false);
   expect(asked).toEqual([["cycle-project-1a", "/project"]]);
   expect(logged).toEqual([]);
-  // The agent is told both, as it was before: a daemon that started later finds the container.
+  // The agent is told the environment alone: it derives the container's name from it.
   const loaded: unknown[] = [];
   harness.loadSession = async (sessionId, options) => {
     loaded.push(options);
     return { session: harness.session(sessionId, { cwd: "/project" }), turns: [], usage: null };
   };
   await hub.open("s1", undefined);
-  expect(loaded).toEqual([
-    expect.objectContaining({ environment: "node", sandbox: "cycle-project-1a" }),
-  ]);
+  expect(loaded).toEqual([expect.objectContaining({ environment: "node" })]);
+  expect(loaded[0]).not.toHaveProperty("sandbox");
 });
 
 test("a record with both keys keeps its environment, and asks nobody", async () => {

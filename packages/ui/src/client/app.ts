@@ -40,7 +40,7 @@ import {
   type LastDraft,
   canSandbox,
   draftModel,
-  draftSandbox,
+  draftEnvironment,
   draftStart,
   lastDraftFrom,
 } from "../lib/draft.ts";
@@ -65,10 +65,10 @@ export interface Draft {
   worktree: boolean;
   branch: string;
   /**
-   * The environment its agent's sandbox is made with, by id, or null to run on this machine. Only
+   * The environment its agent runs in, by id, or null to run on this machine. Only
    * what the chosen agent can do is sent.
    */
-  sandbox: string | null;
+  environment: string | null;
   model: string | null;
   effort: string | null;
   mode: PermissionMode;
@@ -160,12 +160,12 @@ function readLast(): LastDraft {
 }
 
 /** Keeps what a new session chose, so the next one starts the same way. */
-function keepLast(harness: string, sandbox: string | null): void {
+function keepLast(harness: string, environment: string | null): void {
   const last = readLast();
   try {
     localStorage.setItem(
       LAST_KEY,
-      JSON.stringify({ harness, sandbox: { ...last.sandbox, [harness]: sandbox } }),
+      JSON.stringify({ harness, environment: { ...last.environment, [harness]: environment } }),
     );
   } catch {
     // A choice that cannot be kept is made again next time.
@@ -436,7 +436,7 @@ export class CycleApp {
         cwd: folder,
         worktree: settings?.worktree ?? false,
         branch: "",
-        sandbox: draftSandbox(models, this.sandboxes.get().environments, harness, last),
+        environment: draftEnvironment(models, this.sandboxes.get().environments, harness, last),
         model: draftModel(models, harness, settings?.model ?? null),
         effort: settings?.effort ?? null,
         mode: settings?.modes[harness] ?? "",
@@ -484,7 +484,7 @@ export class CycleApp {
         effort: model === usual ? (this.settings.get()?.effort ?? null) : null,
         // Each agent has modes of its own: the session starts in what the owner keeps for it.
         mode: this.settings.get()?.modes[harness] ?? "",
-        sandbox: draftSandbox(
+        environment: draftEnvironment(
           this.models.get(),
           this.sandboxes.get().environments,
           harness,
@@ -532,14 +532,14 @@ export class CycleApp {
     const models = this.models.get();
     // The agent decides: a model of another's, left from before the models were known, gives way.
     const model = draftModel(models, draft.harness, draft.model);
-    const sandbox =
-      draft.sandbox !== null &&
+    const environment =
+      draft.environment !== null &&
       canSandbox(models, draft.harness) &&
-      this.sandboxes.get().environments.some((one) => one.id === draft.sandbox)
-        ? draft.sandbox
+      this.sandboxes.get().environments.some((one) => one.id === draft.environment)
+        ? draft.environment
         : null;
     const directories =
-      !sandbox && this.capabilities(draft.harness).directories ? draft.directories : [];
+      !environment && this.capabilities(draft.harness).directories ? draft.directories : [];
     // The composer keeps to what the agent takes; one that changed since keeps the prompt unsent.
     const kept = keepAccepted({ images, documents }, this.capabilities(draft.harness).attachments);
     if (kept.dropped.length) {
@@ -555,8 +555,8 @@ export class CycleApp {
         ...(draft.mode ? { mode: draft.mode } : {}),
         ...(model ? { model } : {}),
         ...(draft.effort && model === draft.model ? { effort: draft.effort } : {}),
-        ...(sandbox
-          ? { sandbox }
+        ...(environment
+          ? { environment }
           : draft.worktree
             ? { worktree: draft.branch ? { branch: draft.branch } : {} }
             : {}),
@@ -564,7 +564,7 @@ export class CycleApp {
       }),
     );
     if (!info) return false;
-    keepLast(draft.harness, sandbox);
+    keepLast(draft.harness, environment);
     this.upsertSessions([info]);
     this.selectSession(info.id);
     const result = await opening({

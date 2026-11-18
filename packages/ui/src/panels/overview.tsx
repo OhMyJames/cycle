@@ -4,6 +4,7 @@ import { PanelHeader } from "../components/panel.tsx";
 import { PlanSteps } from "../components/plan.tsx";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
+import { environmentLabel } from "../lib/environment.ts";
 import { compactNumber, tailPath, tildePath } from "../lib/format.ts";
 import { modeNamed } from "../lib/modes.ts";
 
@@ -29,6 +30,9 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 export function OverviewPanel({ info }: { info: Session }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
+  const environment = useStore(app.sandboxes, (value) =>
+    environmentLabel(value.environments, info.environment),
+  );
   const mode = useStore(app.modes, (modes) => modeNamed(modes, info.harness, info.mode));
   const { plan, usage, turns, running } = useStore(app.conversation(info.id), (conversation) => ({
     running: conversation.state?.turns.at(-1)?.status === "running",
@@ -67,7 +71,7 @@ export function OverviewPanel({ info }: { info: Session }) {
             </button>
           </Fact>
           {info.branch ? <Fact label="Branch">{info.branch}</Fact> : null}
-          {info.sandbox ? <Fact label="Sandbox">{info.sandbox}</Fact> : null}
+          {environment ? <Fact label="Environment">{environment}</Fact> : null}
           {info.worktree ? (
             <Fact label="Worktree of">{tailPath(tildePath(info.worktree.repo, home))}</Fact>
           ) : null}

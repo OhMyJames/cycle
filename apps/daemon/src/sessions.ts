@@ -299,7 +299,7 @@ export class SessionHub {
     const settings = this.options.settings();
     let cwd = params.cwd;
     let worktree: WorktreeInfo | undefined;
-    const environment = params.environment ?? params.sandbox;
+    const environment = params.environment;
     if (environment && params.worktree) {
       // A worktree's history is in its repository's folder, which its sandbox would not hold.
       throw new SessionError("A session in a sandbox works in the folder itself, not a worktree.");
@@ -333,7 +333,7 @@ export class SessionHub {
         mode,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
-        ...(environment ? { sandboxed: environment } : {}),
+        ...(environment ? { environment } : {}),
         ...(directories.length ? { directories } : {}),
       });
     } catch (error) {
@@ -805,9 +805,11 @@ export class SessionHub {
   }
 
   /**
-   * Where a session's agent is told it runs. A record that names a container no environment makes is
-   * told nothing, so that nothing of its conversation is moved into a container and none starts
-   * anywhere; its turns are refused. Where its folder is not known yet, the name is given as it was.
+   * Where a session's agent is told it runs: its environment, from which the harness names the
+   * container. A record that names a container no environment makes is told nothing, so that
+   * nothing of its conversation is moved into a container and none starts anywhere; its turns are
+   * refused. Where its folder is not known yet, so that an older record's environment cannot be
+   * recovered, the container's name is given as it was.
    */
   private placeOf(
     sessionId: string,
@@ -815,7 +817,7 @@ export class SessionHub {
   ): Pick<TurnOptions, "environment" | "sandbox"> {
     const environment = this.environmentOf(sessionId, cwd);
     const sandbox = this.options.meta.value.sessions[sessionId]?.sandbox;
-    if (environment) return { environment, ...(sandbox ? { sandbox } : {}) };
+    if (environment) return { environment };
     return cwd === undefined && sandbox ? { sandbox } : {};
   }
 
@@ -1004,7 +1006,6 @@ export class SessionHub {
         ...(info.model ? { model: info.model } : {}),
         ...(info.effort ? { effort: info.effort } : {}),
         ...(environment ? { environment } : {}),
-        ...(info.sandbox ? { sandbox: info.sandbox } : {}),
         ...(info.directories.length ? { directories: info.directories } : {}),
       });
       timing.accepted = this.options.now();
