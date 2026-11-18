@@ -3,6 +3,11 @@ import type { FileContent, Machine } from "@cycle/protocol";
 const MAX_TEXT = 1024 * 1024;
 const MAX_IMAGE = 8 * 1024 * 1024;
 const MAX_MATCHES = 60;
+/**
+ * What a search leaves out, by the path relative to its root: git's own folder, and the worktrees
+ * of the repository, which are whole checkouts that ignore themselves for git alone.
+ */
+const HIDDEN = /(^|\/)(\.git|\.agents\/worktree)(\/|$)/;
 
 const IMAGE_TYPES: Record<string, string> = {
   png: "image/png",
@@ -81,6 +86,6 @@ export class Files {
   async search(root: string, query: string): Promise<{ path: string; directory: boolean }[]> {
     if (!query.trim()) return [];
     const matches = await this.harness.searchFiles(normalizePath(root), query);
-    return matches.filter((match) => !/(^|\/)\.git(\/|$)/.test(match.path)).slice(0, MAX_MATCHES);
+    return matches.filter((match) => !HIDDEN.test(match.path)).slice(0, MAX_MATCHES);
   }
 }
