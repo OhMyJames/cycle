@@ -101,9 +101,13 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 - Owner: the agent declares; the session holds the choice; Cycle's defaults hold what a new session
   starts with. Identity: an id and a category.
 - **Decided**: one declared list, as ACP's config option is: an id, a category (`mode`, `model`,
-  `thought_level`), its values, the current one. Today it is three fixed fields (`ModeInfo`,
-  `ModelInfo`, an effort string) written in four option records. The owner agreed the direction;
-  the fields are in [operations](operations.md).
+  `effort`), its values, the current one. The category is `effort` and not ACP's `thought_level`, and a
+  model's efforts are options under its value. The owner agreed the direction; the fields are in
+  [operations](operations.md), and [the note](../.agents/notes/2026-11-18-options-are-one-declared-list.md) fixes them.
+- _Today_ (step 18, first pull request): an agent gives `Option[]` (`Sessions.options()`, the wire's
+  `options.list` and `options.changed`) beside the two lists the daemon and the page still read, `ModeInfo`
+  and `ModelInfo`, and the three fixed fields (mode, model, effort) are still written in four option
+  records. Nothing reads the list yet.
 - **Decided**: a permission mode is the agent's own and the page draws the session's agent's. It says
   what asks, not where the agent runs.
 

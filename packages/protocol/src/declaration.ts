@@ -20,9 +20,10 @@ export const OPERATIONS = [
   "session.commands",
   "task.stop",
   "mcp.reconnect",
-  // shortcut: a parameter of `session.create`, named as an operation; upgrade when step 18 makes options
+  // Not an option: its values are the owner's paths, not a declared list.
   "session.directories",
-  // shortcut: codex's `features.*` switches; upgrade when step 19 separates AgentSettings
+  // shortcut: codex's `features.*` switches are an operation, not an extension kind; upgrade when
+  // AgentSettings becomes its own kind of extension
   "settings.features",
   // An agent that enters a worktree on its own says so, and Cycle makes the worktree it enters.
   "worktree.enter",

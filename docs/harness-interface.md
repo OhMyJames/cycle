@@ -65,7 +65,8 @@ Read these against the glossary. Each one is a place the words are not yet one m
 2. **Session options are written four times.** `TurnOptions` (50), `ConfigureOptions` (61),
    `CreateSessionOptions` (67) and the fields of `HarnessSession` (29) each list some of model,
    effort, mode, sandbox and directories, and not the same ones. A new per-session option has to be
-   added to each that applies.
+   added to each that applies. _Started_ (step 18, first pull request): `Sessions.options()` gives them as
+   one list, beside these fields; they are written once when the last pull request removes them.
 3. **The Connector holds more than the glossary's Connector.** It has skills (231, 254), hooks
    (256, 258), helper agents (241) and features (251-252) beside MCP servers and plugins. By the
    glossary only the first two belong.
