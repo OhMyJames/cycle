@@ -687,8 +687,11 @@ export class CycleApp {
     return Boolean(done);
   }
 
-  /** Reads a workspace's worktrees. A reply for a workspace the page has since left is dropped. */
-  async loadWorktrees(workspace: string): Promise<void> {
+  /**
+   * Reads a workspace's worktrees, and gives them back, or what went wrong. A reply for a workspace
+   * the page has since left is not kept.
+   */
+  async loadWorktrees(workspace: string): Promise<WorktreeEntry[] | string> {
     // shortcut: the list is read when opened and after each removal; upgrade when worktrees come and go while it is open (step 14's entered ones)
     if (this.worktrees.get().workspace !== workspace) {
       this.worktrees.set({ workspace, worktrees: null, problem: null });
@@ -702,6 +705,7 @@ export class CycleApp {
     }
     if (this.worktrees.get().workspace === workspace)
       this.worktrees.update((value) => ({ ...value, ...next }));
+    return next.worktrees ?? next.problem ?? "";
   }
 
   /** Removes a worktree the owner confirmed, then reads the list again, whatever came of it. */

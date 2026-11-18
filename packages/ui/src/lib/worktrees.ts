@@ -60,6 +60,7 @@ export function describeWorktree(entry: WorktreeEntry): WorktreeView {
       ? `Its folder is already gone. This removes git's record of it.${kept}`
       : `The folder is removed.${kept}`,
   ];
+  if (entry.branch === null) lines.push("Commits no branch has are lost with the folder.");
   if (entry.dirty) lines.push("Uncommitted changes in it are lost.");
   else if (entry.dirty === null && !entry.missing) {
     lines.push("Git could not say whether it has uncommitted changes. Any are lost.");
@@ -86,4 +87,40 @@ export function describeWorktree(entry: WorktreeEntry): WorktreeView {
       lines,
     },
   };
+}
+
+/** What the confirmation shows, from a list read as it opened. */
+export interface RemovalAsked {
+  title: string;
+  /** What is lost. Empty when the worktree is not to be removed after all. */
+  lines: string[];
+  /** Why Remove is not offered, or null when it is. */
+  blocked: string | null;
+}
+
+/**
+ * The confirmation of a removal, made from the worktree as it is when the dialog opens, not as the
+ * list showed it earlier: it may have changes now, or a session working in it, or be gone. `read`
+ * is the list just read, or what went wrong reading it. `shown` is the row the owner pressed, which
+ * only names the worktree when it is no longer there.
+ */
+export function describeRemoval(
+  shown: WorktreeEntry,
+  read: WorktreeEntry[] | string,
+): RemovalAsked {
+  const named = `Remove the worktree ${shown.branch ?? basename(shown.path)}?`;
+  if (typeof read === "string") {
+    return { title: named, lines: [], blocked: `Could not read the worktree's state: ${read}` };
+  }
+  const now = read.find((entry) => entry.path === shown.path);
+  if (!now) {
+    return { title: named, lines: [], blocked: "This worktree is not in the list any more." };
+  }
+  const view = describeWorktree(now);
+  const blocked =
+    view.removal.blocked ??
+    (view.removal.offered
+      ? null
+      : "Cycle removes only the worktrees it made. Remove this one with git.");
+  return { title: view.confirmation.title, lines: blocked ? [] : view.confirmation.lines, blocked };
 }

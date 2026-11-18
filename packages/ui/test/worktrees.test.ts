@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { WorktreeEntry, WorktreeUser } from "@cycle/protocol";
-import { describeWorktree, worktreeUserName } from "../src/lib/worktrees.ts";
+import { describeRemoval, describeWorktree, worktreeUserName } from "../src/lib/worktrees.ts";
 
 function user(patch: Partial<WorktreeUser> = {}): WorktreeUser {
   return { id: "s1", title: "Fix login", preview: "", activity: "idle", archived: false, ...patch };
@@ -117,11 +117,56 @@ test("a worktree whose folder is gone says it only removes git's record", () => 
   ]);
 });
 
-test("a detached worktree is named by its folder and keeps no branch", () => {
+test("a detached worktree is named by its folder, keeps no branch, and loses commits no branch has", () => {
   const view = describeWorktree(entry({ branch: null }));
   expect(view.name).toBe("Detached");
   expect(view.confirmation.title).toBe("Remove the worktree fix-login?");
-  expect(view.confirmation.lines).toEqual(["The folder is removed."]);
+  expect(view.confirmation.lines).toEqual([
+    "The folder is removed.",
+    "Commits no branch has are lost with the folder.",
+  ]);
+});
+
+test("a worktree on a branch is named by the branch, not by its folder", () => {
+  const view = describeWorktree(
+    entry({ branch: "feature/login", path: "/repo/.agents/worktree/x" }),
+  );
+  expect(view.confirmation.title).toBe("Remove the worktree feature/login?");
+  expect(describeWorktree(entry()).confirmation.lines.join(" ")).not.toContain("Commits no branch");
+});
+
+test("the confirmation comes from the worktree as it is now, not as the row showed it", () => {
+  const shown = entry({ dirty: false });
+  // It has changes now, and a session working in it.
+  const now = entry({ dirty: true, sessions: [user({ activity: "running" })] });
+  expect(describeRemoval(shown, [shown]).lines).not.toContain(
+    "Uncommitted changes in it are lost.",
+  );
+  expect(describeRemoval(shown, [now]).blocked).toContain("A session is working");
+  // Nothing is said to be lost when nothing will be removed.
+  expect(describeRemoval(shown, [now]).lines).toEqual([]);
+  const changed = describeRemoval(shown, [entry({ dirty: true })]);
+  expect(changed.blocked).toBeNull();
+  expect(changed.lines).toContain("Uncommitted changes in it are lost.");
+});
+
+test("a removal is not offered when the worktree cannot be removed after all, and says why", () => {
+  const shown = entry();
+  const gone = describeRemoval(shown, [entry({ path: "/repo/.agents/worktree/other" })]);
+  expect(gone).toEqual({
+    title: "Remove the worktree fix-login?",
+    lines: [],
+    blocked: "This worktree is not in the list any more.",
+  });
+  expect(describeRemoval(shown, [entry({ locked: true })]).blocked).toContain("locked");
+  expect(describeRemoval(shown, [entry({ managed: false })]).blocked).toBe(
+    "Cycle removes only the worktrees it made. Remove this one with git.",
+  );
+  const failed = describeRemoval(shown, "A worktree needs a git repository.");
+  expect(failed.blocked).toBe(
+    "Could not read the worktree's state: A worktree needs a git repository.",
+  );
+  expect(failed.lines).toEqual([]);
 });
 
 test("a session with no title is named by the start of its prompt", () => {

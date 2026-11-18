@@ -4,16 +4,19 @@ import { projectOf } from "../client/app.ts";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { basename, tailPath, tildePath } from "../lib/format.ts";
-import { describeWorktree } from "../lib/worktrees.ts";
-import { ConfirmDialog } from "./controls.tsx";
+import { describeRemoval, describeWorktree } from "../lib/worktrees.ts";
+import { Dialog } from "./menu.tsx";
 
 function WorktreeRow({
   entry,
   home,
+  busy,
   onRemove,
 }: {
   entry: WorktreeEntry;
   home: string | undefined;
+  /** Being removed: confirmed, and the list not yet read again. */
+  busy: boolean;
   onRemove(): void;
 }) {
   const view = describeWorktree(entry);
@@ -52,11 +55,11 @@ function WorktreeRow({
         <button
           type="button"
           className="button"
-          disabled={view.removal.blocked !== null}
+          disabled={busy || view.removal.blocked !== null}
           aria-label={`Remove the worktree ${view.name}`}
           onClick={onRemove}
         >
-          Remove…
+          {busy ? "Removing…" : "Remove…"}
         </button>
       ) : null}
     </div>
@@ -73,13 +76,23 @@ export function WorktreesSection() {
     return session ? projectOf(session) : view.project;
   });
   const { workspace: shown, worktrees, problem } = useStore(app.worktrees, (value) => value);
+  // A folder just opened has a new session's draft but is in no list yet.
+  const drafting = useStore(app.view, (view) => view.draft?.cwd ?? null);
   const workspaces = useMemo(
-    () => [...new Set([...(inView ? [inView] : []), ...(projects ?? [])])],
-    [inView, projects],
+    () => [
+      ...new Set([
+        ...(inView ? [inView] : []),
+        ...(drafting ? [drafting] : []),
+        ...(projects ?? []),
+      ]),
+    ],
+    [inView, drafting, projects],
   );
   const [chosen, setChosen] = useState<string | null>(null);
   const workspace = chosen ?? workspaces[0] ?? null;
   const [removing, setRemoving] = useState<WorktreeEntry | null>(null);
+  /** Paths being removed: confirmed, and the list not yet read again. */
+  const [busy, setBusy] = useState<string[]>([]);
 
   useEffect(() => {
     if (workspace) void app.loadWorktrees(workspace);
@@ -146,6 +159,7 @@ export function WorktreesSection() {
               key={entry.path}
               entry={entry}
               home={home}
+              busy={busy.includes(entry.path)}
               onRemove={() => setRemoving(entry)}
             />
           ))}
@@ -159,40 +173,89 @@ export function WorktreesSection() {
       {removing && workspace ? (
         <RemoveDialog
           entry={removing}
+          workspace={workspace}
           home={home}
           onClose={() => setRemoving(null)}
-          onConfirm={() => void app.removeWorktree(workspace, removing.path)}
+          onConfirm={() => {
+            // The row stays disabled until the list is read again, so it cannot be confirmed twice.
+            const { path } = removing;
+            setBusy((now) => [...now, path]);
+            void app
+              .removeWorktree(workspace, path)
+              .finally(() => setBusy((now) => now.filter((one) => one !== path)));
+          }}
         />
       ) : null}
     </>
   );
 }
 
+/**
+ * The question before a removal. It reads the list as it opens and says what is true of the
+ * worktree then: what the row showed may be older (changes made since are lost with the folder).
+ */
 function RemoveDialog({
   entry,
+  workspace,
   home,
   onClose,
   onConfirm,
 }: {
   entry: WorktreeEntry;
+  workspace: string;
   home: string | undefined;
   onClose(): void;
   onConfirm(): void;
 }) {
-  const { confirmation } = describeWorktree(entry);
+  const app = useApp();
+  const [read, setRead] = useState<WorktreeEntry[] | string | null>(null);
+  useEffect(() => {
+    let current = true;
+    void app.loadWorktrees(workspace).then((answer) => {
+      if (current) setRead(answer);
+    });
+    return () => {
+      current = false;
+    };
+  }, [app, workspace]);
+  const asked = read === null ? null : describeRemoval(entry, read);
   return (
-    <ConfirmDialog
-      title={confirmation.title}
-      text={tildePath(entry.path, home)}
-      action="Remove"
-      onConfirm={onConfirm}
-      onClose={onClose}
-    >
-      {confirmation.lines.map((line) => (
-        <p key={line} className="dialog-text">
-          {line}
-        </p>
-      ))}
-    </ConfirmDialog>
+    <Dialog label="Remove worktree" onClose={onClose}>
+      <div className="dialog-body">
+        <h2 className="dialog-title">
+          {asked?.title ?? describeWorktree(entry).confirmation.title}
+        </h2>
+        <p className="dialog-text">{tildePath(entry.path, home)}</p>
+        {asked === null ? <p className="dialog-text">Checking what is in it…</p> : null}
+        {asked?.lines.map((line) => (
+          <p key={line} className="dialog-text">
+            {line}
+          </p>
+        ))}
+        {asked?.blocked ? (
+          <p className="dialog-text tone-warning" role="alert">
+            {asked.blocked}
+          </p>
+        ) : null}
+      </div>
+      <div className="dialog-actions">
+        <button type="button" className="button" autoFocus onClick={onClose}>
+          {asked?.blocked ? "Close" : "Cancel"}
+        </button>
+        {asked?.blocked ? null : (
+          <button
+            type="button"
+            className="button danger"
+            disabled={asked === null}
+            onClick={() => {
+              onClose();
+              onConfirm();
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+    </Dialog>
   );
 }
