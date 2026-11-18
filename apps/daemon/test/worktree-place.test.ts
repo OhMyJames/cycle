@@ -40,7 +40,7 @@ test("the folder is made to ignore itself before the first worktree, and never o
   expect(ignore).toBeLessThan(keys.findIndex((key) => key.startsWith("worktree add")));
   const command = keys[ignore] ?? "";
   expect(command).toEndWith(" sh /repo/.agents/worktree");
-  expect(command).toContain('[ -e "$1/.gitignore" ] || printf "*\\n" > "$1/.gitignore"');
+  expect(command).toContain('[ -e "$f" ] || [ -L "$f" ] || printf "*\\n" > "$f"');
   expect(held.runs[ignore]?.cwd).toBe("/repo");
 });
 
@@ -62,14 +62,6 @@ test("a subfolder of the repository starts in the same subfolder of the worktree
   await settle();
   held.releases[0]?.();
   expect((await made).cwd).toBe("/repo/.agents/worktree/x/packages/app");
-});
-
-test("a repository with no checkout of its own is refused, and nothing is run in it", async () => {
-  const held = heldGit({ commons: { "/bare": "/bare.git" }, roots: { "/bare": "/bare" } });
-  await expect(held.git.addWorktree({ cwd: "/bare", branch: "x" })).rejects.toThrow(
-    "A worktree needs a git checkout.",
-  );
-  expect(held.adds()).toEqual([]);
 });
 
 test("removing an old worktree takes the lock of the main checkout its repo belongs to", async () => {

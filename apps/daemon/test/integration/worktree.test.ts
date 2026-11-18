@@ -81,3 +81,22 @@ test("worktrees are made inside the repository, which stays clean, and removed w
   expect(git("branch", "--list", "feature/x")).toContain("feature/x");
   expect(git("status", "--porcelain")).toBe("");
 });
+
+test("a repository with its git dir elsewhere gets worktrees, and a bare one is refused", async () => {
+  const separate = join(root, "separate");
+  Bun.spawnSync(["mkdir", "-p", separate]);
+  const run = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: separate });
+  run("init", "-q", "-b", "main", "--separate-git-dir", join(root, "separate.git"));
+  run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first");
+  const made = await new Git(exec).addWorktree({ cwd: separate, branch: "y" });
+  expect(made.worktree).toMatchObject({
+    repo: separate,
+    path: join(separate, ".agents", "worktree", "y"),
+  });
+
+  const bare = join(root, "bare.git");
+  Bun.spawnSync(["git", "init", "-q", "--bare", bare]);
+  await expect(new Git(exec).addWorktree({ cwd: bare, branch: "z" })).rejects.toThrow(
+    "A worktree needs a git checkout.",
+  );
+});

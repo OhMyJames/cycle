@@ -14,12 +14,23 @@ export interface World {
   branches?: string[];
   /** Paths that exist already, and the ones a worktree was added at. */
   existing?: Set<string>;
+  /** Folders inside a bare repository: no checkout, so no toplevel. */
+  bare?: Set<string>;
+  /** A git older than 2.31, which does not know `--path-format`. */
+  old?: boolean;
 }
 
 /** What one repository says to the commands a worktree is made with. */
 export function answer(key: string, cwd: string, world: World = {}): ExecResult {
-  if (key === "rev-parse --show-toplevel") return ok(`${world.roots?.[cwd] ?? "/repo"}\n`);
+  const bare = world.bare?.has(cwd) ?? false;
+  if (key === "rev-parse --is-bare-repository") return ok(`${bare}\n`);
+  if (key === "rev-parse --show-toplevel") {
+    return bare
+      ? { exitCode: 128, stdout: "", stderr: "fatal: this operation must be run in a work tree\n" }
+      : ok(`${world.roots?.[cwd] ?? "/repo"}\n`);
+  }
   if (key === "rev-parse --path-format=absolute --git-common-dir") {
+    if (world.old) return { exitCode: 129, stdout: "", stderr: "usage: git rev-parse\n" };
     return ok(`${world.commons?.[cwd] ?? "/repo/.git"}\n`);
   }
   if (key === "rev-parse --verify HEAD^{commit}") return ok("abc123\n");

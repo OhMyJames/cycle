@@ -251,6 +251,16 @@ export class Git {
     }
   }
 
+  /** Whether the folder is in a bare repository, which has no checkout to put a worktree in. */
+  private async isBare(cwd: string): Promise<boolean> {
+    try {
+      const result = await this.run(cwd, ["rev-parse", "--is-bare-repository"], 5_000);
+      return result.exitCode === 0 && result.stdout.trim() === "true";
+    } catch {
+      return false;
+    }
+  }
+
   /** Runs `work` after the repository's earlier worktree changes, and lets the next one follow it. */
   private locked<T>(common: string, work: () => Promise<T>): Promise<T> {
     const run = (this.locks.get(common) ?? Promise.resolve()).then(work);
@@ -277,11 +287,19 @@ export class Git {
     base?: string;
   }): Promise<{ cwd: string; worktree: Omit<WorktreeInfo, "origin"> }> {
     const root = await this.root(options.cwd);
-    if (!root) throw new GitError("A worktree needs a git repository.");
+    if (!root) {
+      throw new GitError(
+        (await this.isBare(options.cwd))
+          ? "A worktree needs a git checkout."
+          : "A worktree needs a git repository.",
+      );
+    }
+    // An ordinary repository's common dir is `<main checkout>/.git`. A submodule's or a
+    // `--separate-git-dir` one's is elsewhere, and so is the answer of a git older than 2.31 (it
+    // does not know `--path-format`): the folder's own root is the checkout then.
     const common = await this.commonDir(root);
-    if (!common?.endsWith("/.git")) throw new GitError("A worktree needs a git checkout.");
-    const main = common.slice(0, -"/.git".length);
-    return this.locked(common, async () => {
+    const main = common?.endsWith("/.git") ? common.slice(0, -"/.git".length) : root;
+    return this.locked(common ?? root, async () => {
       const baseRef = options.base ?? "HEAD";
       const base = (await this.out(root, ["rev-parse", "--verify", `${baseRef}^{commit}`])).trim();
       const taken = new Set((await this.branches(root)).local);
@@ -327,8 +345,9 @@ export class Git {
    * the repository's machine, since the daemon reaches the project only through the harness.
    */
   private async ignoreItself(cwd: string, folder: string): Promise<void> {
+    // A dangling symlink named `.gitignore` is a file there too: `printf >` would write through it.
     const script =
-      'mkdir -p "$1" && { [ -e "$1/.gitignore" ] || printf "*\\n" > "$1/.gitignore"; }';
+      'f="$1/.gitignore"; mkdir -p "$1" && { [ -e "$f" ] || [ -L "$f" ] || printf "*\\n" > "$f"; }';
     const result = await this.exec(["sh", "-c", script, "sh", folder], { cwd, timeoutMs: 5_000 });
     if (result.exitCode !== 0) {
       throw new GitError(result.stderr.trim() || "The worktrees' folder could not be made.");
