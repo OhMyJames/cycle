@@ -119,3 +119,11 @@ test("a long conversation keeps its end", () => {
   expect(text.endsWith("END")).toBe(true);
   expect(text.length).toBeLessThan(61_000);
 });
+
+test("what a session is doing is read as its activity, and a failed last turn is said", () => {
+  const first = sessions[0] as Session;
+  const at = (patch: Partial<Session>) => sessionText({ ...first, ...patch }, [], 10);
+  expect(at({})).toContain("Activity: idle\n");
+  expect(at({ activity: "requires_action" })).toContain("Activity: requires_action\n");
+  expect(at({ failed: true })).toContain("Activity: idle (last turn failed)\n");
+});

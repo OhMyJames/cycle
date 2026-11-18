@@ -372,7 +372,7 @@ function Tail({ state, gap }: { state: SessionState; gap: number }) {
   const sessionId = state.info.id;
   const turn = state.turns.at(-1);
   const running = turn?.status === "running";
-  const working = running || state.info.status === "running";
+  const working = running || state.info.activity === "running";
   const [dismissed, setDismissed] = useState<readonly string[]>([]);
   // When the work began. The tail stays mounted, so an approval does not start the count again.
   const [start, setStart] = useState<number | null>(null);

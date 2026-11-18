@@ -77,7 +77,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const empty = useStore(app.conversation(sessionId), (conversation) => {
     const state = conversation.state;
     return state
-      ? state.turns.length === 0 && !activeTurn(state) && state.info.status !== "running"
+      ? state.turns.length === 0 && !activeTurn(state) && state.info.activity !== "running"
       : false;
   });
   if (empty) return <Welcome sessionId={sessionId} />;
@@ -145,7 +145,7 @@ function useShortcuts(app: CycleApp): void {
       );
       let order = groupSessions(all, Date.now()).flatMap((group) => group.sessions);
       if (onlyAttention) {
-        order = order.filter((info) => info.status === "waiting" || info.unread);
+        order = order.filter((info) => info.activity === "requires_action" || info.unread);
       }
       if (!order.length) return;
       const index = order.findIndex((info) => info.id === sessionId);

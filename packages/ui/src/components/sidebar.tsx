@@ -42,8 +42,8 @@ export function groupSessions(sessions: Session[], now: number): Group[] {
     else groups.set(label, [info]);
   };
   for (const info of sorted) {
-    if (info.status === "waiting") add("Needs you", info);
-    else if (info.status === "running") add("Running", info);
+    if (info.activity === "requires_action") add("Needs you", info);
+    else if (info.activity === "running") add("Running", info);
     else if (info.pinned) add("Pinned", info);
     else add(dayBucket(info.updatedAt, now), info);
   }
@@ -56,14 +56,14 @@ export function groupSessions(sessions: Session[], now: number): Group[] {
 
 /** What a row leads with: what its session is doing, or else where it works. */
 function StatusMark({ info }: { info: Session }) {
-  if (info.status === "running") {
+  if (info.activity === "running") {
     return (
       <span className="mark" role="img" aria-label="Running" title="Running">
         <Spinner size={14} className="tone-running" />
       </span>
     );
   }
-  if (info.status === "waiting") {
+  if (info.activity === "requires_action") {
     return (
       <span
         className="mark"
@@ -75,7 +75,7 @@ function StatusMark({ info }: { info: Session }) {
       </span>
     );
   }
-  if (info.status === "error") {
+  if (info.activity === "idle" && info.failed) {
     return (
       <span
         className="mark"
@@ -361,7 +361,7 @@ const SessionRow = memo(function SessionRow({
           ) : null}
         </button>
       )}
-      {!renaming && !tagging && info.status === "waiting" && !active ? (
+      {!renaming && !tagging && info.activity === "requires_action" && !active ? (
         <AnswerHere info={info} />
       ) : null}
       {renaming || tagging ? null : (

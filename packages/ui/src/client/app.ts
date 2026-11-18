@@ -43,6 +43,7 @@ import { type RemoteView, UNREACHABLE, isRemote } from "../lib/remote.ts";
 import { Store } from "./store.ts";
 import { draftKey, opening } from "../lib/opening.ts";
 import { plainMentions } from "../lib/suggest.ts";
+import { attentionLabel } from "../lib/attention.ts";
 import { type Attachments, givenBack, keepAccepted } from "../lib/attach.ts";
 
 export type PanelId = "changes" | "files" | "terminal" | "overview";
@@ -181,12 +182,6 @@ export function projectOf(info: Session): string {
 export function sessionTitle(info: Session): string {
   return info.title || plainMentions(info.preview).split("\n")[0]?.slice(0, 80) || "New session";
 }
-
-const ATTENTION: Partial<Record<Session["status"], string>> = {
-  waiting: "Needs your approval",
-  idle: "Finished",
-  error: "Stopped with an error",
-};
 
 /**
  * Everything the page knows, and everything it can ask the daemon to do.
@@ -1168,11 +1163,10 @@ export class CycleApp {
     const known = this.sessions.get().byId;
     const view = this.view.get();
     for (const info of infos) {
-      const before = known[info.id]?.status;
-      if (!before || before === info.status) continue;
-      const wasWorking = before === "running" || before === "waiting";
-      const label = ATTENTION[info.status];
-      if (!label || (!wasWorking && info.status !== "waiting")) continue;
+      const before = known[info.id];
+      if (!before) continue;
+      const label = attentionLabel(before, info);
+      if (!label) continue;
       if (view.sessionId === info.id && document.hasFocus()) continue;
       host.notify(label, sessionTitle(info));
     }

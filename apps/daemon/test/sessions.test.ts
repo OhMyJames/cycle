@@ -46,8 +46,10 @@ async function setup() {
       usage: (day) => usage.push(day),
     },
   });
-  const status = (id: string) => infos.findLast((info) => info.id === id)?.status;
-  return { harness, hub, timers, frames, infos, usage, viewers, meta, status };
+  const told = (id: string) => infos.findLast((info) => info.id === id);
+  const activity = (id: string) => told(id)?.activity;
+  const failed = (id: string) => told(id)?.failed;
+  return { harness, hub, timers, frames, infos, usage, viewers, meta, activity, failed };
 }
 
 const start = (sessionId: string, turnId: string) =>
@@ -68,11 +70,11 @@ const count = (total: number) => ({
 });
 
 test("streamed text is batched into one frame, numbered without gaps", async () => {
-  const { harness, hub, timers, frames, status } = await setup();
+  const { harness, hub, timers, frames, activity } = await setup();
   const info = await hub.create({ cwd: "/project" });
-  expect(info).toMatchObject({ status: "idle", mode: "auto" });
+  expect(info).toMatchObject({ activity: "idle", loaded: true, mode: "auto" });
   await hub.send(info.id, { text: "go", images: [] }, "auto");
-  expect(status(info.id)).toBe("running");
+  expect(activity(info.id)).toBe("running");
   harness.emit(start(info.id, "t1"));
   harness.emit({
     type: "item.started",
@@ -86,7 +88,7 @@ test("streamed text is batched into one frame, numbered without gaps", async () 
   expect(frames.map((frame) => frame.seq)).toEqual([1, 2, 3]);
   expect(frames[2]?.events).toEqual([delta(info.id, "abc")]);
   harness.emit(end(info.id, "t1"));
-  expect(status(info.id)).toBe("idle");
+  expect(activity(info.id)).toBe("idle");
 });
 
 test("a client that was away gets only the frames it missed, or the whole state", async () => {
@@ -133,7 +135,7 @@ test("a stopped turn sends nothing more, and gives the queue up", async () => {
 });
 
 test("an approval makes a session wait, and nobody watching makes it unread", async () => {
-  const { harness, hub, status, infos, viewers } = await setup();
+  const { harness, hub, activity, infos, viewers } = await setup();
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
   harness.emit({
@@ -142,9 +144,9 @@ test("an approval makes a session wait, and nobody watching makes it unread", as
     turnId: "t1",
     approval: { id: "a1", kind: "fileChange", itemId: "i", reason: null },
   });
-  expect(status(info.id)).toBe("waiting");
+  expect(activity(info.id)).toBe("requires_action");
   harness.emit({ type: "approval.resolved", sessionId: info.id, approvalId: "a1" });
-  expect(status(info.id)).toBe("running");
+  expect(activity(info.id)).toBe("running");
   harness.emit(end(info.id, "t1"));
   expect(infos.findLast((row) => row.id === info.id)).toMatchObject({
     unread: true,
@@ -200,8 +202,8 @@ test("a stored session is loaded once, and a turn its history left running is cl
       diff: null,
     },
   ];
-  expect((await hub.list(false)).map((info) => [info.id, info.status])).toEqual([
-    ["old", "stored"],
+  expect((await hub.list(false)).map((info) => [info.id, info.activity, info.loaded])).toEqual([
+    ["old", "idle", false],
   ]);
   const [first, second] = await Promise.all([
     hub.open("old", undefined),
@@ -210,26 +212,27 @@ test("a stored session is loaded once, and a turn its history left running is cl
   expect(harness.calls.filter((call) => call === "load old").length).toBe(1);
   expect(first).toEqual(second);
   expect("state" in first && first.state.turns[0]?.status).toBe("interrupted");
-  expect((await hub.list(false))[0]?.status).toBe("idle");
+  expect((await hub.list(false))[0]).toMatchObject({ activity: "idle", loaded: true });
 });
 
 test("a prompt that cannot be sent leaves the session idle and says why", async () => {
-  const { harness, hub, status, frames } = await setup();
+  const { harness, hub, activity, frames } = await setup();
   const info = await hub.create({ cwd: "/project" });
   harness.failSend = "no model";
   expect(hub.send(info.id, { text: "go", images: [] }, "auto")).rejects.toThrow("no model");
   await Promise.resolve();
   await Promise.resolve();
-  expect(status(info.id)).toBe("idle");
+  expect(activity(info.id)).toBe("idle");
   expect(frames.at(-1)?.events[0]).toMatchObject({ type: "notice", level: "error" });
 });
 
 test("the harness stopping fails the turns it was running", async () => {
-  const { harness, hub, status } = await setup();
+  const { harness, hub, activity, failed } = await setup();
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
   harness.emit({ type: "agent.exited", harness: "fake", message: "codex app-server exited" });
-  expect(status(info.id)).toBe("error");
+  expect(activity(info.id)).toBe("idle");
+  expect(failed(info.id)).toBe(true);
   const state = await hub.open(info.id, undefined);
   expect("state" in state && state.state.turns[0]?.error).toContain("codex app-server exited");
 });
@@ -328,26 +331,27 @@ test("a session stays with the harness it began on", async () => {
 });
 
 test("a harness that stops ends only its own sessions' turns", async () => {
-  const { harness, hub, status } = await setup();
+  const { harness, hub, activity, failed } = await setup();
   const info = await hub.create({ cwd: "/project" });
   await hub.send(info.id, { text: "go", images: [] }, "auto");
   harness.emit(start(info.id, "t1"));
   harness.emit({ type: "agent.exited", harness: "other", message: "other exited" });
-  expect(status(info.id)).toBe("running");
+  expect(activity(info.id)).toBe("running");
   harness.emit({ type: "agent.exited", harness: "fake", message: "fake exited" });
-  expect(status(info.id)).toBe("error");
+  expect(activity(info.id)).toBe("idle");
+  expect(failed(info.id)).toBe(true);
 });
 
 test("a review starts a turn of its own, and waits for no turn nor makes one wait", async () => {
-  const { harness, hub, status } = await setup();
+  const { harness, hub, activity } = await setup();
   const info = await hub.create({ cwd: "/project" });
   await hub.review(info.id, { kind: "uncommitted" });
   expect(harness.calls).toContain(`review ${info.id} uncommitted`);
-  expect(status(info.id)).toBe("running");
+  expect(activity(info.id)).toBe("running");
   harness.emit(start(info.id, "review-turn"));
   expect(hub.review(info.id, { kind: "uncommitted" })).rejects.toThrow("before a review");
   harness.emit(end(info.id, "review-turn"));
-  expect(status(info.id)).toBe("idle");
+  expect(activity(info.id)).toBe("idle");
 });
 
 test("going back drops a turn and the ones after it, and never while one runs", async () => {

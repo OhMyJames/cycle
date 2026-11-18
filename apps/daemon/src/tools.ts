@@ -33,7 +33,7 @@ const TOOLS = [
   {
     name: "list_sessions",
     description:
-      "Lists the owner's Cycle sessions, newest first: id, title, folder, status and when each last changed. Use it to find a session to read.",
+      "Lists the owner's Cycle sessions, newest first: id, title, folder, activity and when each last changed. Use it to find a session to read.",
     inputSchema: {
       type: "object",
       properties: {
@@ -90,13 +90,17 @@ export function itemText(item: Item): string | null {
   }
 }
 
+function activityText(info: Session): string {
+  return info.failed ? `${info.activity} (last turn failed)` : info.activity;
+}
+
 /** A session's latest turns as text, cut from the start when it is too long. */
 export function sessionText(info: Session, turns: readonly Turn[], count: number): string {
   const shown = turns.slice(-count);
   const head = [
     `# ${titleOf(info)}`,
     `Folder: ${info.cwd}`,
-    `Status: ${info.status}`,
+    `Activity: ${activityText(info)}`,
     shown.length < turns.length ? `Showing the last ${shown.length} of ${turns.length} turns.` : "",
   ].filter(Boolean);
   const body = shown
@@ -127,7 +131,7 @@ async function callTool(
       .slice(0, MAX_LISTED)
       .map(
         (info) =>
-          `- ${titleOf(info)} | id ${info.id} | ${info.cwd} | ${info.status} | changed ${new Date(info.updatedAt).toISOString()}`,
+          `- ${titleOf(info)} | id ${info.id} | ${info.cwd} | ${activityText(info)} | changed ${new Date(info.updatedAt).toISOString()}`,
       )
       .join("\n");
   }

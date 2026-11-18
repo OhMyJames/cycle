@@ -412,7 +412,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     const state = conversation.state;
     return {
       info: state?.info ?? null,
-      running: state ? activeTurn(state) !== null || state.info.status === "running" : false,
+      running: state ? activeTurn(state) !== null || state.info.activity === "running" : false,
       waiting: (state?.approvals.length ?? 0) > 0,
       plan: state?.plan ?? null,
       usage: state?.usage ?? null,
