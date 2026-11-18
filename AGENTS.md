@@ -114,8 +114,8 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
 - `packages/protocol` is the harness-agnostic model (`Item`, `Turn`, `SessionEvent`), the client-daemon
   wire (`Methods`, `EventFrame`, `DaemonEvent`), the `Harness` interface, and `reduceSession`, which the
   daemon and the page both fold events with. It is platform-neutral: no runtime modules.
-- A `Harness` is four parts: `Agent` (sessions, turns, models), `Connector`, `Account` and `Machine`.
-  Codex gives all four and is the main one. Another agent beside it need only be an `Agent`, and
+- A `Harness` is four parts: `Sessions` (sessions, turns, models), `Connector`, `Account` and `Machine`.
+  Codex gives all four and is the main one. Another agent beside it need only give `Sessions`, and
   `Harnesses` (`apps/daemon/src/harnesses.ts`) joins them: a model says which agent a new session
   starts on, the session stays there, and files, commands and terminals are the main agent's. An
   agent that cannot start is left out and the daemon runs without it. Why:
