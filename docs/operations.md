@@ -134,6 +134,20 @@ hooks in its own `claude.json`, turns skills on and off, and only lists its suba
 Only codex gives a Machine today. Files, git and terminals of every session, whatever its agent, are
 the main agent's.
 
+## Worktrees
+
+Cycle makes them for both agents; see [worktree](worktree.md).
+
+| Operation                           | Does                                                                |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| `session.create { worktree }`       | makes one for the session, on a branch and from a base if given     |
+| `session.delete { removeWorktree }` | removes it with the session, unless another uses it or one is in it |
+| `worktree.list { workspace }`       | the worktrees of a workspace and the sessions that use each         |
+| `worktree.remove { path }`          | removes one that no running session is in                           |
+
+An agent that can enter a worktree itself (Claude Code) declares `worktree.enter`; Cycle then tells
+the page by `session.changed` when it enters or leaves one.
+
 ## Events
 
 **Proposed**: two sets, since today's `HarnessEvent` mixes them. An agent's event tells what it knows;
@@ -190,5 +204,5 @@ older page's methods read for a while.
 
 ## Not covered
 
-Worktrees; the wire's method list; stored file formats; error codes; the order of the daemon's
+The wire's method list; stored file formats; error codes; the order of the daemon's
 changes. Nothing here has been run, and no code has been changed.
