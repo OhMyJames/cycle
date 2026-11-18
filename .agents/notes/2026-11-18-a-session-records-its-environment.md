@@ -46,6 +46,10 @@ command sandbox, step 10) would have no container name to carry.
   only. A turn on it is refused ("Its sandbox's environment is gone. Choose an environment for the
   session."): the daemon gives its harness neither the name nor an environment, so nothing of its
   conversation is moved and it never starts on this machine, outside the container it was made for.
+  The same holds for a compaction and for putting files back. One exception, in what is moved only:
+  a session opened before the daemon knows its folder (a page that asks for it before it has listed)
+  is given its name as an older daemon did, since the name cannot be tried against a folder yet, so
+  its conversation may be moved into the container's home; its turns are refused all the same.
 - **What stays.** `sandboxCwd` (the path the agent says, mapped back to a file on this machine) and
   `ModelInfo.sandbox` (what an agent can do, step 17) keep their names. `SandboxEnvironment` and the
   `sandboxes.*` methods are renamed in steps 10 and 22.

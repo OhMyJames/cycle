@@ -206,6 +206,9 @@ test("a session in a container whose environment is gone is never started outsid
     sent.push(sessionId);
     return { turnId: "t1" };
   };
+  harness.compactSession = async () => {
+    sent.push("compact");
+  };
   const refusal = "Its sandbox's environment is gone. Choose an environment for the session.";
   // It opens, to be read, but its agent is told neither a name nor an environment, so nothing of
   // its conversation is moved into a container either.
@@ -213,8 +216,8 @@ test("a session in a container whose environment is gone is never started outsid
   expect(loaded).toHaveLength(1);
   expect(loaded[0]).not.toHaveProperty("sandbox");
   expect(loaded[0]).not.toHaveProperty("environment");
-  expect(hub.send("s1", { text: "go", images: [] }, "auto")).rejects.toThrow(refusal);
-  expect(hub.compact("s1")).rejects.toThrow(refusal);
+  await expect(hub.send("s1", { text: "go", images: [] }, "auto")).rejects.toThrow(refusal);
+  await expect(hub.compact("s1")).rejects.toThrow(refusal);
   expect(sent).toEqual([]);
   // The record is as it was: nothing was chosen for the owner.
   expect(meta.value.sessions["s1"]).toEqual({ sandbox: "cycle-project-1a" });
@@ -225,7 +228,9 @@ test("a session whose environment comes back is recovered at its next turn", asy
   const { harness, hub } = await setup(gone, { environmentOfSandbox: () => environment });
   harness.stored = [harness.session("s1", { cwd: "/project" })];
   await hub.list(false);
-  expect(hub.send("s1", { text: "go", images: [] }, "auto")).rejects.toThrow("environment is gone");
+  await expect(hub.send("s1", { text: "go", images: [] }, "auto")).rejects.toThrow(
+    "environment is gone",
+  );
   environment = "node";
   const told: unknown[] = [];
   harness.send = async (_sessionId, _input, options) => {
