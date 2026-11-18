@@ -1,6 +1,6 @@
 import {
   type Account,
-  type Agent,
+  type Sessions,
   type AgentCapabilities,
   type AgentReads,
   type Agents,
@@ -12,7 +12,7 @@ import {
   type FileRewind,
   type Harness,
   type HarnessEvent,
-  type HarnessInfo,
+  type AgentInfo,
   type HarnessSession,
   type ModeInfo,
   type ModelInfo,
@@ -24,7 +24,7 @@ import {
 } from "@cycle/protocol";
 
 /** An agent beside the main one, with what it may read of its own Connector and Account. */
-export type OtherAgent = Agent & AgentReads;
+export type OtherAgent = Sessions & AgentReads;
 
 /** What an agent cannot do, said so, rather than done by another agent in its place. */
 export class NotSupported extends Error {}
@@ -47,9 +47,9 @@ export class Harnesses implements Agents {
   private readonly main: Harness;
   private agents: OtherAgent[];
   private readonly onLog: (line: string) => void;
-  private readonly sessions = new Map<string, Agent>();
-  private readonly models = new Map<string, Agent>();
-  private readonly approvals = new Map<string, Agent>();
+  private readonly sessions = new Map<string, Sessions>();
+  private readonly models = new Map<string, Sessions>();
+  private readonly approvals = new Map<string, Sessions>();
   private readonly listeners = new Set<(event: HarnessEvent) => void>();
 
   constructor(main: Harness, others: OtherAgent[], onLog: (line: string) => void = () => {}) {
@@ -91,7 +91,7 @@ export class Harnesses implements Agents {
     return () => this.listeners.delete(listener);
   }
 
-  harnesses(): HarnessInfo[] {
+  harnesses(): AgentInfo[] {
     return this.agents.map((agent) => ({ name: agent.name, capabilities: agent.capabilities }));
   }
 
@@ -318,7 +318,7 @@ export class Harnesses implements Agents {
 
   // Inside
 
-  private own(agent: Agent, session: HarnessSession): HarnessSession {
+  private own(agent: Sessions, session: HarnessSession): HarnessSession {
     this.sessions.set(session.id, agent);
     return session;
   }
@@ -332,7 +332,7 @@ export class Harnesses implements Agents {
   }
 
   /** The agent that keeps a session. One nobody has listed yet is looked for once. */
-  private async of(sessionId: string): Promise<Agent> {
+  private async of(sessionId: string): Promise<Sessions> {
     const known = this.sessions.get(sessionId);
     if (known) return known;
     if (this.agents.length > 1) {
@@ -344,7 +344,7 @@ export class Harnesses implements Agents {
     return found;
   }
 
-  private async ofModel(model: string): Promise<Agent> {
+  private async ofModel(model: string): Promise<Sessions> {
     if (!this.models.has(model)) await this.listModels();
     return this.models.get(model) ?? this.main;
   }

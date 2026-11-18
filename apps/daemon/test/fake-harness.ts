@@ -1,5 +1,5 @@
 import type {
-  Agent,
+  Sessions,
   AgentCapabilities,
   Agents,
   ContextUsage,
@@ -192,8 +192,8 @@ export class FakeHarness implements Harness {
   readFile = async () => new Uint8Array();
   searchFiles = async () => [];
   openTerminal: Harness["openTerminal"] = async () => ({ write() {}, resize() {}, kill() {} });
-  rewindFiles?: NonNullable<Agent["rewindFiles"]>;
-  listCommands?: NonNullable<Agent["listCommands"]>;
+  rewindFiles?: NonNullable<Sessions["rewindFiles"]>;
+  listCommands?: NonNullable<Sessions["listCommands"]>;
   /** What putting the files back would do, and does. */
   fileRewind: FileRewind = { possible: true, error: null, files: [], insertions: 0, deletions: 0 };
   context: ContextUsage | null = null;

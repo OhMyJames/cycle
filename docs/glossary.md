@@ -22,10 +22,8 @@ them is in [operations](operations.md).
   this. It is an entity of its own: a name, what it can do, the options it offers.
 - **Harness**: Cycle's adapter for one agent (`harness/codex`, `harness/claude`). It is code only,
   never shown in the interface and not part of the protocol's entities.
-  - _Today_ a harness has four parts, `Agent`, `Connector`, `Account` and `Machine`, and the first is
-    named like the program, so "agent" means both the program and a part of its adapter.
-  - _Target_ the part is called `Sessions`; "agent" means the program only. How the rest is grouped
-    is for [operations](operations.md).
+  - A harness has four parts, `Sessions`, `Connector`, `Account` and `Machine`. "Agent" means the
+    program only. How the rest is grouped is for [operations](operations.md).
 
 ## What a conversation is made of
 
@@ -150,12 +148,11 @@ A setting lives in one layer. Where two layers set the same thing, the agent's o
 | Today                                              | Target                                          |
 | -------------------------------------------------- | ----------------------------------------------- |
 | `HarnessSession` and `SessionInfo`                 | `Session`                                       |
-| `Session.harness`, `HarnessInfo`                   | `Session.agent`, `Agent`                        |
+| `Session.harness`                                  | `Session.agent`                                 |
 | `SessionStatus` (five values)                      | `SessionActivity` (three) and a "loaded" flag   |
 | `Approval` kinds `question` and `elicitation`      | `Question`                                      |
 | `ModeInfo`, `ModelInfo`, an effort string          | `Option`                                        |
 | `AgentCapabilities` and the optional methods       | one declaration                                 |
-| `Harness.agent` (the Sessions part)                | `Harness.sessions`                              |
 | `HarnessEvent` (one union)                         | an event set for a session and one for an agent |
 | sandbox environment, `sandboxes.json`, `sbx`       | environment, with the container as a backend    |
 | `RunSettings` inside `HookSettings`                | `AgentSettings`, apart from hooks               |

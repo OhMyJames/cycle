@@ -6,7 +6,7 @@ import type {
   ApprovalResponse,
   ContextUsage,
   FileRewind,
-  HarnessInfo,
+  AgentInfo,
   McpServerInfo,
   SubagentInfo,
   McpServerInput,
@@ -43,7 +43,7 @@ export interface DaemonInfo {
   /** The main agent's name. */
   harness: string;
   /** Every agent running, the main one first, with what each can do. */
-  harnesses: HarnessInfo[];
+  harnesses: AgentInfo[];
   /** Where the daemon keeps its data. */
   home: string;
   platform: string;
