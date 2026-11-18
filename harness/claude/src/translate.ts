@@ -2,6 +2,7 @@ import { defineModes, endRunning, formFields, taskLive, toMachinePath } from "@c
 import type {
   AccountInfo,
   Approval,
+  Ask,
   ApprovalResponse,
   ApprovalRule,
   BackgroundTask,
@@ -18,6 +19,7 @@ import type {
   ModelInfo,
   PromptInput,
   Question,
+  QuestionAnswer,
   ReviewTarget,
   SessionEvent,
   PermissionMode,
@@ -1330,7 +1332,7 @@ export class PlanDraft {
 
 // Approvals
 
-function toQuestions(input: Record<string, unknown>): Question[] {
+function toAsks(input: Record<string, unknown>): Ask[] {
   const raw = Array.isArray(input["questions"]) ? input["questions"].map(record) : [];
   return raw.map((question) => ({
     // Claude Code takes its answers by the question's own text.
@@ -1378,6 +1380,20 @@ export function toRules(suggestions: WirePermissionUpdate[] | undefined): Approv
   });
 }
 
+/**
+ * What Claude Code asks as a tool call, when it asks for content: the owner's choice. Null for any
+ * other tool. The call's id names both.
+ */
+export function toQuestion(
+  id: string,
+  tool: string,
+  input: Record<string, unknown>,
+): Question | null {
+  return tool === "AskUserQuestion"
+    ? { id, itemId: id, kind: "choice", asks: toAsks(input) }
+    : null;
+}
+
 /** What Claude Code asks before a tool call, as the owner is asked it. The call's id names both. */
 export function toApproval(
   id: string,
@@ -1409,9 +1425,6 @@ export function toApproval(
   }
   if (EDIT_TOOLS.has(tool)) {
     return { id, kind: "fileChange", itemId: id, reason, rules, notes: true };
-  }
-  if (tool === "AskUserQuestion") {
-    return { id, kind: "question", itemId: id, questions: toQuestions(input) };
   }
   if (tool === "ExitPlanMode") {
     return {
@@ -1468,12 +1481,7 @@ export function toPermission(
   suggestions: WirePermissionUpdate[] | undefined,
   response: ApprovalResponse,
 ): WirePermissionResult {
-  if ("answers" in response) {
-    const answers = Object.fromEntries(
-      Object.entries(response.answers).map(([question, chosen]) => [question, chosen.join(", ")]),
-    );
-    return { behavior: "allow", updatedInput: { ...input, answers } };
-  }
+  if ("answers" in response) return toQuestionPermission(input, response);
   const said = response.message?.trim();
   if (tool === "ExitPlanMode" && response.decision !== "cancel") {
     if (response.decision === "decline") {
@@ -1535,36 +1543,60 @@ export function toPermission(
   }
 }
 
+/**
+ * The owner's answer to a choice as Claude Code takes it: the answers, by the text of each ask. Said
+ * to decline or cancel, a choice is refused as any tool is.
+ */
+export function toQuestionPermission(
+  input: Record<string, unknown>,
+  answer: QuestionAnswer,
+): WirePermissionResult {
+  if ("answers" in answer) {
+    const answers = Object.fromEntries(
+      Object.entries(answer.answers).map(([ask, chosen]) => [ask, chosen.join(", ")]),
+    );
+    return { behavior: "allow", updatedInput: { ...input, answers } };
+  }
+  switch (answer.action) {
+    case "accept":
+      return { behavior: "allow", updatedInput: input };
+    case "decline":
+      return {
+        behavior: "deny",
+        message: "The owner declined this. Do not try it another way: ask what to do instead.",
+      };
+    case "cancel":
+      return { behavior: "deny", message: "The owner stopped the turn.", interrupt: true };
+  }
+}
+
 // Elicitation
 
-/** What an MCP server asks of the owner, as an approval. */
-export function toElicitation(id: string, request: WireElicitation): Approval {
-  const url = request.mode === "url" ? (request.url ?? null) : null;
-  const schema = url ? undefined : request.requestedSchema;
+/** What an MCP server asks of the owner: a page to finish, or else a form to fill. */
+export function toElicitationQuestion(id: string, request: WireElicitation): Question {
+  const { serverName: server, message } = request;
+  const url = request.mode === "url" ? request.url : undefined;
+  if (url) return { id, itemId: id, kind: "link", server, message, url };
+  const schema = request.requestedSchema;
   return {
     id,
-    kind: "elicitation",
     itemId: id,
-    server: request.serverName,
-    message: request.message,
-    url,
-    fields: url ? null : formFields(schema),
+    kind: "form",
+    server,
+    message,
+    fields: formFields(schema),
     schema: schema ? JSON.stringify(schema, null, 2) : null,
   };
 }
 
 /** The owner's answer to an MCP server's request. */
-export function toElicitationResult(response: ApprovalResponse): WireElicitationResult {
-  if ("answers" in response) return { action: "decline" };
-  switch (response.decision) {
-    case "accept":
-    case "acceptForSession":
-      return { action: "accept", ...(response.content ? { content: response.content } : {}) };
-    case "decline":
-      return { action: "decline" };
-    case "cancel":
-      return { action: "cancel" };
-  }
+export function toElicitationResult(answer: QuestionAnswer): WireElicitationResult {
+  // Choices are no answer to a form: it is declined.
+  if (!("action" in answer)) return { action: "decline" };
+  return {
+    action: answer.action,
+    ...(answer.action === "accept" && answer.content ? { content: answer.content } : {}),
+  };
 }
 
 // Prompts

@@ -42,10 +42,12 @@ and the page could not say what a session waited for.
   approval's both throw. Claude Code's harness used to ignore an id it did not know, and still does for
   an id it holds no more (a late answer to a stopped turn), but not for one of the other kind.
 - **A secret answer.** A choice may be `secret` (codex's `isSecret`). Its answer travels once, in
-  `question.answer`, and the harness gives it to the agent: no event carries it, `question.resolved`
-  holds an id only, and nothing of an answer goes to the log, to `sessions.json` or to the page's
-  storage. A test pins that the frames of an answered `secret` question hold the question and not the
-  answer.
+  `question.answer`, and the harness gives it to the agent: no question or approval event carries it,
+  `question.resolved` holds an id only, and nothing of an answer goes to the log, to `sessions.json` or
+  to the page's storage. A test pins that the frames of an answered `secret` question hold the question
+  and not the answer. The agent's own items are its report and not the question's: Claude Code copies an
+  answer into its `AskUserQuestion` tool result, which reaches the page as an item, but the asks of
+  Claude Code are never `secret`. Whether codex copies a `secret` answer into an item is not checked.
 - **A shim in the daemon, until the page moves.** Between the pull request that adds this and the one that
   removes the old form, the page still draws `approvals`. The hub, in `apps/daemon/src/legacy-asks.ts`,
   sends each question also as the approval the page knows, and turns an `approval.respond` for a question's

@@ -18,6 +18,7 @@ import type {
   ReviewTarget,
   PluginDetail,
   PromptDocument,
+  QuestionAnswer,
   SessionEvent,
   PermissionMode,
   SkillInfo,
@@ -231,6 +232,8 @@ export interface Sessions {
    */
   stopTask?(sessionId: string, taskId: string): Promise<void>;
   respondApproval(approvalId: string, response: ApprovalResponse): void;
+  /** Answers a question the agent asked. Throws for an id that is not a question it holds. */
+  answerQuestion(questionId: string, answer: QuestionAnswer): void;
   /**
    * Takes the session's changed mode, model or effort in now, while it runs, where the agent can;
    * else it applies from the next turn, which is given them too.

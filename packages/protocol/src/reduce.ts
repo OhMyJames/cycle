@@ -4,6 +4,7 @@ import {
   type Item,
   type ItemStatus,
   type Plan,
+  type Question,
   type QueuedMessage,
   type SessionEvent,
   type Session,
@@ -18,6 +19,7 @@ export interface SessionState {
   info: Session;
   turns: Turn[];
   approvals: Approval[];
+  questions: Question[];
   plan: Plan | null;
   usage: Usage | null;
   queue: QueuedMessage[];
@@ -39,6 +41,7 @@ export function initialSessionState(info: Session, epoch = ""): SessionState {
     info,
     turns: [],
     approvals: [],
+    questions: [],
     plan: null,
     usage: null,
     queue: [],
@@ -203,12 +206,26 @@ export function reduceSession(state: SessionState, event: SessionEvent): Session
         ...state,
         approvals: state.approvals.filter((approval) => approval.id !== event.approvalId),
       };
+    case "question.requested":
+      return {
+        ...state,
+        questions: [
+          ...state.questions.filter((question) => question.id !== event.question.id),
+          event.question,
+        ],
+      };
+    case "question.resolved":
+      return {
+        ...state,
+        questions: state.questions.filter((question) => question.id !== event.questionId),
+      };
     case "queue.updated":
       return { ...state, queue: event.queue };
     case "turn.completed":
       return {
         ...state,
         approvals: [],
+        questions: [],
         turns: withTurn(state.turns, event.turnId, (turn) => ({
           ...turn,
           status: event.status,

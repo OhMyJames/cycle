@@ -432,7 +432,8 @@ export interface Session {
 
 export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
-export interface Question {
+/** One ask of a choice. */
+export interface Ask {
   id: string;
   header: string;
   question: string;
@@ -511,7 +512,7 @@ export type Approval =
       reason: string | null;
       rules: ApprovalRule[];
     }
-  | { id: string; kind: "question"; itemId: string; questions: Question[] }
+  | { id: string; kind: "question"; itemId: string; questions: Ask[] }
   /**
    * The agent finished planning and asks to go on. Approved, it works in the mode the owner picks
    * of `modes`; declined, it plans again, with what the owner said.
@@ -546,6 +547,35 @@ export interface ApprovalAnswer {
   /** On accepting a form: what the owner filled in. */
   content?: Record<string, unknown>;
 }
+
+/**
+ * What the agent, or an MCP server, asks the owner for: not leave to do something but content the
+ * agent needs. A choice is one or more asks, each answered by picking or typing; a form is an MCP
+ * server's fields to fill; a link is its page to finish. A link is an elicitation with an address,
+ * and a form is any other, so a request in `url` mode that has none reads as a form.
+ */
+export type Question = { id: string; itemId: string } & (
+  | { kind: "choice"; asks: Ask[] }
+  | {
+      kind: "form";
+      server: string;
+      message: string;
+      /** The form's fields, or null when it is too involved to draw as fields. */
+      fields: FormField[] | null;
+      /** JSON text of the form's schema, for a form that has no `fields`. */
+      schema: string | null;
+    }
+  | { kind: "link"; server: string; message: string; url: string }
+);
+
+/**
+ * The owner's answer to a question. A choice is answered by each ask's id; a form or a link by what
+ * the MCP specification calls the action, with the content on accepting a form. A client may say
+ * `decline` or `cancel` for a choice too: Claude Code takes it as a refusal, codex as no answers.
+ */
+export type QuestionAnswer =
+  | { answers: Record<string, string[]> }
+  | { action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> };
 
 export type ApprovalResponse =
   | ApprovalAnswer
@@ -658,6 +688,14 @@ export type SessionEvent =
       approval: Approval;
     }
   | { type: "approval.resolved"; sessionId: string; approvalId: string }
+  | {
+      type: "question.requested";
+      sessionId: string;
+      turnId: string | null;
+      question: Question;
+    }
+  /** It carries the id only: an answer, which may be a secret, is in no event of a question. */
+  | { type: "question.resolved"; sessionId: string; questionId: string }
   | { type: "queue.updated"; sessionId: string; queue: QueuedMessage[] }
   | {
       type: "turn.completed";

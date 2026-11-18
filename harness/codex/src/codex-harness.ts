@@ -6,6 +6,7 @@ import type {
   HookSettings,
   AccountLogin,
   ApprovalResponse,
+  QuestionAnswer,
   CreateSessionOptions,
   DirectoryEntry,
   ExecOptions,
@@ -37,6 +38,7 @@ import type { JsonRpcPeer, RpcId } from "./rpc.ts";
 import {
   HARNESS_NAME,
   approvalResult,
+  questionResult,
   checkServerName,
   mcpServerEdits,
   mcpToolEdits,
@@ -52,6 +54,7 @@ import {
   toMcpServers,
   toModel,
   toPluginDetail,
+  toQuestion,
   toReviewTarget,
   toSession,
   toSkill,
@@ -128,7 +131,9 @@ function sameWindows(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, numb
   return a.size === b.size && [...a].every(([id, window]) => b.get(id) === window);
 }
 
-interface PendingApproval {
+/** A request of the app-server that waits for the owner: leave to act, or content. */
+interface Waiting {
+  kind: "approval" | "question";
   rpc: JsonRpcPeer;
   rpcId: RpcId;
   sessionId: string;
@@ -194,7 +199,7 @@ export class CodexHarness implements Harness {
   private readonly ofExtra = new Map<string, boolean>();
   /** The turn codex runs in each session now: what an interrupt or a steer must name. */
   private readonly activeTurns = new Map<string, string>();
-  private readonly approvals = new Map<string, PendingApproval>();
+  private readonly waiting = new Map<string, Waiting>();
   /** The client's own MCP server, which is not the owner's to change. */
   private readonly ownServer: string | null;
   private readonly terminals = new Map<string, OpenTerminal>();
@@ -519,11 +524,19 @@ export class CodexHarness implements Harness {
   }
 
   respondApproval(approvalId: string, response: ApprovalResponse): void {
-    const pending = this.approvals.get(approvalId);
-    if (!pending) throw new Error(`unknown approval: ${approvalId}`);
-    this.approvals.delete(approvalId);
+    const pending = this.waiting.get(approvalId);
+    if (pending?.kind !== "approval") throw new Error(`unknown approval: ${approvalId}`);
+    this.waiting.delete(approvalId);
     pending.rpc.respond(pending.rpcId, approvalResult(pending.method, pending.params, response));
     this.emit({ type: "approval.resolved", sessionId: pending.sessionId, approvalId });
+  }
+
+  answerQuestion(questionId: string, answer: QuestionAnswer): void {
+    const pending = this.waiting.get(questionId);
+    if (pending?.kind !== "question") throw new Error(`unknown question: ${questionId}`);
+    this.waiting.delete(questionId);
+    pending.rpc.respond(pending.rpcId, questionResult(pending.method, answer));
+    this.emit({ type: "question.resolved", sessionId: pending.sessionId, questionId });
   }
 
   /** Codex takes a mode, model and effort with each turn: a change waits for the next. */
@@ -885,7 +898,7 @@ export class CodexHarness implements Harness {
     if (sameWindows(this.extraWindows, windowsOf(this.provider))) return;
     const busy = (sessionId: string) => this.ofExtra.get(sessionId) === true;
     if ([...this.activeTurns.keys()].some(busy)) return;
-    if ([...this.approvals.values()].some(({ sessionId }) => busy(sessionId))) return;
+    if ([...this.waiting.values()].some(({ sessionId }) => busy(sessionId))) return;
     await proc.restart();
   }
 
@@ -912,8 +925,8 @@ export class CodexHarness implements Harness {
   private handleExit(extra: boolean, error: Error | undefined): void {
     const message = `codex app-server exited${error ? `: ${error.message}` : ""}`;
     const mine = (sessionId: string) => (this.ofExtra.get(sessionId) ?? false) === extra;
-    for (const [approvalId, pending] of this.approvals) {
-      if (mine(pending.sessionId)) this.approvals.delete(approvalId);
+    for (const [id, pending] of this.waiting) {
+      if (mine(pending.sessionId)) this.waiting.delete(id);
     }
     // The other process carries on, so only this one's turns are told they ended.
     if (this.extra) {
@@ -1015,8 +1028,8 @@ export class CodexHarness implements Harness {
         const turn = params["turn"] as WireTurn;
         this.activeTurns.delete(sessionId);
         this.reviews.delete(sessionId);
-        for (const [approvalId, pending] of this.approvals) {
-          if (pending.sessionId === sessionId) this.approvals.delete(approvalId);
+        for (const [id, pending] of this.waiting) {
+          if (pending.sessionId === sessionId) this.waiting.delete(id);
         }
         this.emit({
           type: "turn.completed",
@@ -1099,10 +1112,15 @@ export class CodexHarness implements Harness {
         });
         break;
       case "serverRequest/resolved": {
-        const approvalId = `${sessionId}:${String(params["requestId"])}`;
-        if (this.approvals.delete(approvalId)) {
-          this.emit({ type: "approval.resolved", sessionId, approvalId });
-        }
+        const id = `${sessionId}:${String(params["requestId"])}`;
+        const pending = this.waiting.get(id);
+        if (!pending) break;
+        this.waiting.delete(id);
+        this.emit(
+          pending.kind === "question"
+            ? { type: "question.resolved", sessionId, questionId: id }
+            : { type: "approval.resolved", sessionId, approvalId: id },
+        );
         break;
       }
       case "command/exec/outputDelta": {
@@ -1160,8 +1178,10 @@ export class CodexHarness implements Harness {
 
   private handleServerRequest(rpc: JsonRpcPeer, id: RpcId, method: string, params: Json): void {
     const sessionId = text(params["threadId"]);
-    const approval = sessionId ? toApproval(`${sessionId}:${id}`, method, params) : null;
-    if (!sessionId || !approval) {
+    const key = `${sessionId}:${id}`;
+    const approval = sessionId ? toApproval(key, method, params) : null;
+    const question = sessionId && !approval ? toQuestion(key, method, params) : null;
+    if (!sessionId || !(approval ?? question)) {
       if (method === "mcpServer/elicitation/request") {
         // Asked outside any session: declining lets the tool carry on without it.
         rpc.respond(id, { action: "decline", content: null, _meta: null });
@@ -1170,12 +1190,10 @@ export class CodexHarness implements Harness {
       }
       return;
     }
-    this.approvals.set(approval.id, { rpc, rpcId: id, sessionId, method, params });
-    this.emit({
-      type: "approval.requested",
-      sessionId,
-      turnId: text(params["turnId"]),
-      approval,
-    });
+    const kind = approval ? "approval" : "question";
+    this.waiting.set(key, { kind, rpc, rpcId: id, sessionId, method, params });
+    const turnId = text(params["turnId"]);
+    if (approval) this.emit({ type: "approval.requested", sessionId, turnId, approval });
+    else if (question) this.emit({ type: "question.requested", sessionId, turnId, question });
   }
 }
