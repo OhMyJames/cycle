@@ -145,20 +145,19 @@ A setting lives in one layer. Where two layers set the same thing, the agent's o
 
 ## Renames still to do
 
-| Today                                              | Target                                          |
-| -------------------------------------------------- | ----------------------------------------------- |
-| `HarnessSession` and `SessionInfo`                 | `Session`                                       |
-| `Session.harness`                                  | `Session.agent`                                 |
-| `SessionStatus` (five values)                      | `SessionActivity` (three) and a "loaded" flag   |
-| `Approval` kinds `question` and `elicitation`      | `Question`                                      |
-| `ModeInfo`, `ModelInfo`, an effort string          | `Option`                                        |
-| `AgentCapabilities` and the optional methods       | one declaration                                 |
-| `HarnessEvent` (one union)                         | an event set for a session and one for an agent |
-| sandbox environment, `sandboxes.json`, `sbx`       | environment, with the container as a backend    |
-| `RunSettings` inside `HookSettings`                | `AgentSettings`, apart from hooks               |
-| the command sandbox set by a mode                  | set by the environment                          |
-| `DEFAULT_MODE` and `isDefault` saying two defaults | one                                             |
-| "project", "folder", `cwd`                         | workspace                                       |
+| Today                                         | Target                                          |
+| --------------------------------------------- | ----------------------------------------------- |
+| `HarnessSession` and `SessionInfo`            | `Session`                                       |
+| `Session.harness`                             | `Session.agent`                                 |
+| `SessionStatus` (five values)                 | `SessionActivity` (three) and a "loaded" flag   |
+| `Approval` kinds `question` and `elicitation` | `Question`                                      |
+| `ModeInfo`, `ModelInfo`, an effort string     | `Option`                                        |
+| `AgentCapabilities` and the optional methods  | one declaration                                 |
+| `HarnessEvent` (one union)                    | an event set for a session and one for an agent |
+| sandbox environment, `sandboxes.json`, `sbx`  | environment, with the container as a backend    |
+| `RunSettings` inside `HookSettings`           | `AgentSettings`, apart from hooks               |
+| the command sandbox set by a mode             | set by the environment                          |
+| "project", "folder", `cwd`                    | workspace                                       |
 
 Stored files keep reading what older daemons wrote, so a rename of a stored field needs a decision
 note first.

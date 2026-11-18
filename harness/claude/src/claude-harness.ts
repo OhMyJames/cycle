@@ -1290,7 +1290,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     if (options.directories) known.directories = options.directories;
     const model = options.model ?? known.model;
     const effort = options.effort ?? (await this.defaultEffort(model));
-    const mode = options.mode ?? DEFAULT_MODE;
+    const mode = options.mode ?? FALLBACK_MODE;
     const spec = this.specOf(mode, known);
     const starting = this.starting.get(sessionId);
     if (starting) return starting;
@@ -1501,8 +1501,8 @@ export class ClaudeHarness implements Sessions, AgentReads {
     if (tool !== "ExitPlanMode" || "answers" in response) return response;
     if (response.decision !== "accept" && response.decision !== "acceptForSession") return response;
     const chosen =
-      response.mode && AFTER_PLAN.includes(response.mode) ? response.mode : DEFAULT_MODE;
-    const now = this.specOf(chosen, running.known) === running.spec ? chosen : DEFAULT_MODE;
+      response.mode && AFTER_PLAN.includes(response.mode) ? response.mode : FALLBACK_MODE;
+    const now = this.specOf(chosen, running.known) === running.spec ? chosen : FALLBACK_MODE;
     // Known before Claude Code says so, so its word is not taken for the model's own move.
     running.mode = now;
     const { sessionId } = running;
@@ -1900,8 +1900,12 @@ export class ClaudeHarness implements Sessions, AgentReads {
   }
 }
 
-/** The mode a session is in when it was given none: the one that asks first. */
-const DEFAULT_MODE: PermissionMode = "default";
+/**
+ * The mode a process takes when it is given none, and after a plan is approved without one it
+ * can carry out. It is the safest mode, the one that asks first. It is not the mode a new session
+ * starts in: that is the one `CLAUDE_MODES` marks `isDefault`, the owner's usual (`acceptEdits`).
+ */
+const FALLBACK_MODE: PermissionMode = "default";
 
 /** A cut before a conversation's first turn, where there is no entry to end at. */
 const CUT_START = "start";
