@@ -11,6 +11,7 @@ import {
   type Rig,
   SONNET,
   begin,
+  commandCwds,
   enters,
   leaves,
   makeRig,
@@ -91,11 +92,16 @@ test("a process begun again, from the project's folder, starts in the worktree a
   await first.dispose();
   // Claude Code remembers where it was: its store is by the project's folder, and it begins there.
   const second = rig.harness({ worktrees: port });
-  expect(workingDirs(await turn(second, session.id, "where"))).toEqual([folder]);
+  const resumed = await turn(second, session.id, "where");
+  expect(workingDirs(resumed)).toEqual([folder]);
+  // Its command ran, and is shown, in the worktree, with no enter of this process's own.
+  expect(commandCwds(resumed)).toEqual([folder]);
   expect(modelSaw(rig)).toContain(JSON.stringify(folder));
   // Leaving with `keep` calls no hook: the next turn of the same process says it.
   expect(workingDirs(await turn(second, session.id, "leave"))).toEqual([]);
-  expect(workingDirs(await turn(second, session.id, "where"))).toEqual([rig.repo]);
+  const left = await turn(second, session.id, "where");
+  expect(workingDirs(left)).toEqual([rig.repo]);
+  expect(commandCwds(left)).toEqual([rig.repo]);
   await second.dispose();
   const third = rig.harness({ worktrees: port });
   expect(workingDirs(await turn(third, session.id, "where"))).toEqual([rig.repo]);
@@ -116,9 +122,9 @@ test("a refusal is carried to the model as the path that does not exist, and the
   await turn(harness, session.id, "enter");
   const saw = modelSaw(rig);
   // Claude Code carries a hook's words nowhere else (tried: throw, continue, decision, onFailure).
-  expect(saw).toContain(`Path \\"/${why}\\" does not exist`);
+  expect(saw).toContain(`Path \\"/cycle-refused: ${why}\\" does not exist`);
   expect(saw).toContain(
-    `Path \\"/A worktree's name is letters, digits, dots, dashes and slashes, 64 at most.\\" does not exist`,
+    `Path \\"/cycle-refused: A worktree's name is letters, digits, dots, dashes and slashes, 64 at most.\\" does not exist`,
   );
   // A name that is no branch's never reaches the port; the one after the refusals is made.
   expect(calls).toEqual(["enter nope helper=false", "enter fine helper=false"]);
@@ -127,6 +133,36 @@ test("a refusal is carried to the model as the path that does not exist, and the
   expect(listed).toContain(`worktree ${folderOf(rig.repo, "cycle-fine")}`);
   expect(listed).not.toContain("nope");
   expect(saw).toContain(JSON.stringify(folderOf(rig.repo, "cycle-fine")));
+  await harness.dispose();
+});
+
+test("a name git cannot make a branch of is refused with what git said, in one line", async () => {
+  rig = makeRig();
+  const { port, calls } = portOf(rig.sessions);
+  // These pass the name's own rule, and git refuses them as branches: `cycle/x.lock` and the rest.
+  rig.script = scripted({
+    enter: [enters("x.lock"), enters("a/.b"), enters("a."), enters("fine"), runs("pwd")],
+  });
+  const harness = rig.harness({ worktrees: port });
+  const session = await begin(rig, harness, rig.repo);
+  await turn(harness, session.id, "enter");
+  const saw = modelSaw(rig);
+  // Each request carries the whole conversation, so each result comes up again.
+  const refusals = [
+    ...new Set(saw.match(/Path \\"\/cycle-refused: [^"]*\\" does not exist/g) ?? []),
+  ];
+  expect(refusals).toHaveLength(3);
+  for (const refusal of refusals) expect(refusal).toMatch(/not a valid branch name/);
+  expect(refusals.some((refusal) => refusal.includes("cycle/x.lock"))).toBe(true);
+  expect(calls).toEqual([
+    "enter x.lock helper=false",
+    "enter a/.b helper=false",
+    "enter a. helper=false",
+    "enter fine helper=false",
+  ]);
+  const listed = rig.git("worktree", "list", "--porcelain");
+  expect(listed).toContain(`worktree ${folderOf(rig.repo, "cycle-fine")}`);
+  expect(existsSync(join(rig.repo, ".claude", "worktrees"))).toBe(false);
   await harness.dispose();
 });
 

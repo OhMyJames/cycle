@@ -58,7 +58,7 @@ export interface AgentSession {
  * worktree. A harness whose agent can enter one is given it and calls it; both throw an `Error`
  * whose message the agent's model reads.
  */
-export interface WorktreeEntry {
+export interface WorktreePort {
   /** Makes a worktree of the session's repository and answers its root. */
   enter(request: { sessionId: string; name: string; helper: boolean }): Promise<{ path: string }>;
   /** The agent asked to remove one it entered. Cycle removes nothing on an agent's say. */

@@ -11,7 +11,7 @@ import type {
   ExecOptions,
   ExecResult,
   HarnessEvent,
-  WorktreeEntry,
+  WorktreePort,
 } from "@cycle/protocol";
 import { Git } from "../../src/index.ts";
 import { type ClaudeReply, type MockClaude, startMockClaude } from "./mock-claude.ts";
@@ -156,7 +156,7 @@ async function exec(argv: string[], options: ExecOptions): Promise<ExecResult> {
 export function portOf(sessions: Map<string, string>, refuse: Record<string, string> = {}) {
   const git = new Git(exec);
   const calls: string[] = [];
-  const port: WorktreeEntry = {
+  const port: WorktreePort = {
     enter: async ({ sessionId, name, helper }) => {
       calls.push(`enter ${name} helper=${helper}`);
       const why = refuse[name];
@@ -177,6 +177,12 @@ export function portOf(sessions: Map<string, string>, refuse: Record<string, str
 export const workingDirs = (events: HarnessEvent[]): string[] =>
   events.flatMap((event) =>
     event.type === "session.changed" && event.patch.workingDir ? [event.patch.workingDir] : [],
+  );
+
+/** The folder each command of the turn was shown in, in order. */
+export const commandCwds = (events: HarnessEvent[]): string[] =>
+  events.flatMap((event) =>
+    event.type === "item.started" && event.item.kind === "command" ? [event.item.cwd] : [],
   );
 
 /** Every tool result the scripted model was sent, as one text. */

@@ -1,12 +1,5 @@
 import { expect, test } from "bun:test";
-import type {
-  AgentSession,
-  EventFrame,
-  ExecResult,
-  HarnessEvent,
-  Session,
-  Settings,
-} from "@cycle/protocol";
+import type { EventFrame, ExecResult, HarnessEvent, Session, Settings } from "@cycle/protocol";
 import { Git, JsonStore, type MetaFile, SessionHub, UsageLedger } from "../src/index.ts";
 import type { UsageFile } from "../src/index.ts";
 import { FakeHarness, manualSchedule } from "./fake-harness.ts";
@@ -70,11 +63,11 @@ async function setup() {
   return { harness, hub, meta, infos };
 }
 
-/** An agent saying where it works now, in a patch the harness's type does not name yet. */
+/** An agent saying where it works now, as its harness does when Claude Code's `init` says so. */
 const at = (sessionId: string, workingDir: string): HarnessEvent => ({
   type: "session.changed",
   sessionId,
-  patch: Object.assign<Partial<AgentSession>, { workingDir: string }>({}, { workingDir }),
+  patch: { workingDir },
 });
 
 test("an agent saying where it works leaves the session's worktree and folder as they are", async () => {

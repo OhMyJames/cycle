@@ -29,7 +29,7 @@ import {
   type TurnOptions,
   type TurnOrigin,
   type Usage,
-  type WorktreeEntry,
+  type WorktreePort,
   toMachinePath,
 } from "@cycle/protocol";
 import { cp, mkdir, rename, rm } from "node:fs/promises";
@@ -145,7 +145,7 @@ export interface ClaudeHarnessOptions {
    * `WorktreeRemove`, and the agent declares `worktree.enter`. Without it, Claude Code makes its own
    * in a folder of its own, as it does for a probe or a test.
    */
-  worktrees?: WorktreeEntry;
+  worktrees?: WorktreePort;
   /**
    * Starts Claude Code somewhere other than this machine: a container, a
    * sandbox, another host. It is given the command and must answer a process

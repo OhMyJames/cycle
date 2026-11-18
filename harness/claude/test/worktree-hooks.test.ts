@@ -1,81 +1,22 @@
 import { expect, test } from "bun:test";
-import { type HarnessEvent, type WorktreeEntry, declares } from "@cycle/protocol";
+import { type HarnessEvent, declares } from "@cycle/protocol";
 import { ClaudeHarness, sandboxName } from "../src/index.ts";
-import type { QueryOptions } from "../src/index.ts";
-import type { WireMessage } from "../src/wire.ts";
 import { fakeSbx } from "./fake-sbx.ts";
 import { FakeSdk, settle } from "./fake-sdk.ts";
+import {
+  call,
+  create,
+  fakePort,
+  init,
+  options,
+  prompt,
+  refusedWith,
+  remove,
+  setup,
+  signal,
+} from "./worktree-fakes.ts";
 
 // Claude Code asks Cycle for a worktree by a callback in this process, and Cycle answers.
-
-const options = { mode: "default", model: "claude-sonnet-5-5" };
-const prompt = (text: string) => ({ text, images: [] });
-const signal = new AbortController().signal;
-const init = (cwd: string): WireMessage =>
-  Object.assign({ type: "system", subtype: "init" }, { cwd });
-
-/** A port that says what it was asked and answers a worktree, or the failure it is set to. */
-function fakePort() {
-  const calls: string[] = [];
-  const port: WorktreeEntry & { fail: string | null } = {
-    fail: null,
-    enter: async ({ sessionId, name, helper }) => {
-      calls.push(`enter ${sessionId} ${name} helper=${helper}`);
-      if (port.fail) throw new Error(port.fail);
-      return { path: `/repo/.agents/worktree/cycle-${name}` };
-    },
-    leave: async ({ sessionId, path, helper }) => {
-      calls.push(`leave ${sessionId} ${path} helper=${helper}`);
-      if (port.fail) throw new Error(port.fail);
-    },
-  };
-  return { port, calls };
-}
-
-async function setup(worktrees: WorktreeEntry | false = fakePort().port) {
-  const sdk = new FakeSdk();
-  const logged: string[] = [];
-  const harness = new ClaudeHarness({
-    sdk,
-    env: { CLAUDE_CONFIG_DIR: "/home/me/.claude" },
-    schedule: () => () => {},
-    now: () => 1000,
-    newId: () => "id1",
-    onLog: (line) => logged.push(line),
-    ...(worktrees ? { worktrees } : {}),
-  });
-  const events: HarnessEvent[] = [];
-  harness.onEvent((event) => events.push(event));
-  const session = await harness.createSession({ cwd: "/project", model: options.model });
-  await harness.send(session.id, prompt("hello"), options);
-  await settle();
-  const hooks = sdk.last.options.hooks as NonNullable<QueryOptions["hooks"]>;
-  return { sdk, harness, events, logged, hooks, query: sdk.last };
-}
-
-const create = (name: string, extra: { agent_id?: string } = {}) => ({
-  hook_event_name: "WorktreeCreate" as const,
-  session_id: "the-sdks-own-id",
-  cwd: "/repo",
-  name,
-  ...extra,
-});
-const remove = (path: string, extra: { agent_id?: string } = {}) => ({
-  hook_event_name: "WorktreeRemove" as const,
-  session_id: "the-sdks-own-id",
-  cwd: path,
-  worktree_path: path,
-  ...extra,
-});
-/** The model asks for a command in the agent's folder. */
-const call = (id: string) => ({
-  type: "assistant",
-  uuid: `a-${id}`,
-  message: { content: [{ type: "tool_use", id, name: "Bash", input: { command: "ls" } }] },
-});
-const refusedWith = (words: string) => ({
-  hookSpecificOutput: { hookEventName: "WorktreeCreate" as const, worktreePath: `/${words}` },
-});
 
 test("a worktree asked for goes to the port under the session's own id, and its root is the answer", async () => {
   const { port, calls } = fakePort();

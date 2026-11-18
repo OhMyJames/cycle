@@ -1,4 +1,4 @@
-import type { WorktreeEntry } from "@cycle/protocol";
+import type { WorktreePort } from "@cycle/protocol";
 import type { QueryOptions } from "./sdk.ts";
 import type {
   WireWorktreeCreateInput,
@@ -35,15 +35,33 @@ export interface WorktreeMoves {
   left(): void;
 }
 
+/** What every refusal's path begins with, so that no message can plausibly name a folder. */
+const REFUSED = "/cycle-refused: ";
+/** The longest the words of a refusal go: a path is at most 255 to a name, and the model reads it. */
+const WORDS_LIMIT = 200;
+
 /**
  * Claude Code carries no refusal's words from a hook to its model (tried: a throw, `continue:
  * false`, `decision: "block"` and `onFailure: "block"` all end in "returned no worktree path"),
- * except in one place: a path that is not there is named in its error. The refusal is that path, and
- * it starts with a slash so that it is never made of the session's folder.
+ * except in one place: a path that is not there is named in its error. The refusal is that path.
+ * What it is made of is the port's message, which is git's stderr at times, so it is one line (a
+ * path's last line is what resolves), at most `WORDS_LIMIT` long, with no segment of `.` or `..`
+ * (a path is cleaned before it is looked for), and after a prefix no folder has: a message of
+ * `etc` alone was once a folder Claude Code entered.
  */
 function refusal(why: string): WireWorktreeOutput {
-  const words = why.replaceAll("\0", "").trim() || "Cycle could not make a worktree.";
-  return { hookSpecificOutput: { hookEventName: "WorktreeCreate", worktreePath: `/${words}` } };
+  const words = why
+    .replaceAll("\0", " ")
+    .replaceAll(/\s+/g, " ")
+    .trim()
+    .slice(0, WORDS_LIMIT)
+    // After the cut, which may leave a `..` at the end.
+    .replaceAll(/\/(?=\.{1,2}(\/|$))/g, "/ ")
+    .trim();
+  const said = words || "Cycle could not make a worktree.";
+  return {
+    hookSpecificOutput: { hookEventName: "WorktreeCreate", worktreePath: `${REFUSED}${said}` },
+  };
 }
 
 const messageOf = (error: unknown): string =>
@@ -55,7 +73,7 @@ const messageOf = (error: unknown): string =>
  * session the process runs, not what the hook's input says of it.
  */
 export function worktreeHooks(
-  port: WorktreeEntry,
+  port: WorktreePort,
   sessionId: string,
   moves: WorktreeMoves,
   log: (line: string) => void,
