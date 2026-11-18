@@ -12,6 +12,7 @@ export {
   branchSlug,
 } from "./git.ts";
 export { Worktrees, type WorktreesOptions } from "./worktrees.ts";
+export { WorktreeDesk } from "./worktree-desk.ts";
 export {
   SessionHub,
   type HubOptions,
