@@ -88,7 +88,8 @@ then rotated to `daemon.log.1`; it holds a line for each turn that ended, with i
 and times only, never a prompt, an answer or a secret), `updates/` (the app's own update, downloaded and unpacked
 until the owner installs it, `update.log`, what each check and install did, and `install.log`, what
 the last swap said;
-[decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)) and `worktrees/`, and
+[decision note](.agents/notes/2026-11-13-updates-from-github-releases.md)), `worktrees/` (the
+worktrees older daemons made; new ones are in each repository's `.agents/worktree/`) and
 `sandboxes/` (each sandbox's own Claude Code home, which is its conversations).
 Conversations themselves are the agent's that ran them: codex's in `CODEX_HOME`, Claude Code's in its
 own home, a sandbox's in its own home under `CYCLE_HOME/sandboxes/`. Cycle keeps no copy.
@@ -171,6 +172,13 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
 - The daemon reaches the project only through the harness: git, files, search and terminals all run as
   codex `command/exec` and `fs/*` calls, so the daemon follows the agent wherever it runs. Why:
   [decision note](.agents/notes/2026-11-12-the-harness-is-the-machine.md).
+- A session may start in a worktree the daemon makes, whichever agent it is on, at
+  `<main checkout>/.agents/worktree/<branch>` (`Git.addWorktree`): the folder ignores itself with a
+  `.gitignore` of its own, worktree changes lock for each repository, the page's search leaves it
+  out, and the session's record keeps the worktree's `path` and `origin`. A project that is a
+  subfolder of its repository gets the worktree at the repository's root and starts in the same
+  subfolder inside it. Why:
+  [decision note](.agents/notes/2026-11-18-worktrees-live-in-the-workspace.md).
 - `SessionHub` (`apps/daemon/src/sessions.ts`) owns session state. It folds harness events, batches
   streamed text into one frame per 16ms, numbers frames per session, and keeps the last 512 so a client
   that was away asks for what it missed instead of everything. Why:
