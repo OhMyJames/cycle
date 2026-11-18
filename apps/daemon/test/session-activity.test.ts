@@ -158,9 +158,9 @@ test("its agent exiting fails a running turn, and another agent's exit does not"
   const { harness, hub, shown } = await setup();
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
-  harness.emit({ type: "harness.exited", harness: "other", message: "other exited" });
+  harness.emit({ type: "agent.exited", harness: "other", message: "other exited" });
   expect(shown(info.id)).toEqual(RUNNING);
-  harness.emit({ type: "harness.exited", harness: "fake", message: "fake exited" });
+  harness.emit({ type: "agent.exited", harness: "fake", message: "fake exited" });
   expect(shown(info.id)).toEqual(ERROR);
 });
 
