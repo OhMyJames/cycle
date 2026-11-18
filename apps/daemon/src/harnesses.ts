@@ -2,6 +2,7 @@ import {
   type Account,
   type Sessions,
   type AgentCapabilities,
+  type AgentDeclaration,
   type AgentReads,
   type Agents,
   type ApprovalResponse,
@@ -92,7 +93,11 @@ export class Harnesses implements Agents {
   }
 
   harnesses(): AgentInfo[] {
-    return this.agents.map((agent) => ({ name: agent.name, capabilities: agent.capabilities }));
+    return this.agents.map((agent) => ({
+      name: agent.name,
+      capabilities: agent.capabilities,
+      declaration: agent.declaration,
+    }));
   }
 
   // Sessions
@@ -186,6 +191,10 @@ export class Harnesses implements Agents {
 
   async capabilitiesOf(sessionId: string): Promise<AgentCapabilities> {
     return (await this.of(sessionId)).capabilities;
+  }
+
+  async declarationOf(sessionId: string): Promise<AgentDeclaration> {
+    return (await this.of(sessionId)).declaration;
   }
 
   async send(sessionId: string, input: PromptInput, options: TurnOptions) {

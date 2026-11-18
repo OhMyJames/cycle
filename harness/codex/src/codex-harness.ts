@@ -1,6 +1,7 @@
 import type {
   AccountInfo,
   AgentCapabilities,
+  AgentDeclaration,
   AgentFeatures,
   HookSettings,
   AccountLogin,
@@ -170,6 +171,21 @@ export class CodexHarness implements Harness {
     mcpReconnect: false,
     subagents: false,
     tags: false,
+  };
+  readonly declaration: AgentDeclaration = {
+    operations: [
+      "session.fork",
+      "session.rename",
+      "session.archive",
+      "session.compact",
+      "session.rewind",
+      "turn.steer",
+      "turn.review",
+      "settings.features",
+    ],
+    inputs: ["image"],
+    extensions: { mcp: "edit", plugins: "edit", skills: "read" },
+    account: "cycle",
   };
   private readonly provider: ExtraProvider | null;
   /** Codex's own models, and the machine: files, commands, terminals, the account. */
