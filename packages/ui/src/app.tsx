@@ -160,7 +160,9 @@ function useShortcuts(app: CycleApp): void {
         event.key === "Escape" &&
         view.page === "settings" &&
         !view.palette &&
-        !view.folderPicker
+        !view.folderPicker &&
+        // A dialog over Settings takes the Escape: it closes the topmost thing only.
+        !document.querySelector(".scrim")
       ) {
         app.setView({ page: "thread" });
         return;
