@@ -33,6 +33,7 @@ import {
   type Settings,
   type SlashCommand,
   type TerminalInfo,
+  type WorktreeEntry,
   harnessLabel,
   reduceSession,
 } from "@cycle/protocol";
@@ -99,6 +100,7 @@ export type SettingsSection =
   | "account"
   | "providers"
   | "sandboxes"
+  | "worktrees"
   | "remotes"
   | "about";
 
@@ -227,6 +229,15 @@ export class CycleApp {
     environments: [],
     loaded: false,
   });
+  /**
+   * The worktrees of the workspace Settings, Worktrees looks at. `worktrees` is null until read, or
+   * when the daemon could not (`problem` says why: a folder that is no repository, for one).
+   */
+  readonly worktrees = new Store<{
+    workspace: string | null;
+    worktrees: WorktreeEntry[] | null;
+    problem: string | null;
+  }>({ workspace: null, worktrees: null, problem: null });
   readonly usage = new Store<DayUsage | null>(null);
   readonly terminals = new Store<Record<string, TerminalInfo[]>>({});
   /** Null until read: the Connector reads them when it opens, since asking starts the servers. */
@@ -674,6 +685,34 @@ export class CycleApp {
     const done = await this.attempt(this.request("session.delete", { sessionId, removeWorktree }));
     if (done) this.forget([sessionId]);
     return Boolean(done);
+  }
+
+  /**
+   * Reads a workspace's worktrees, and gives them back, or what went wrong. A reply for a workspace
+   * the page has since left is not kept.
+   */
+  async loadWorktrees(workspace: string): Promise<WorktreeEntry[] | string> {
+    // shortcut: the list is read when opened and after each removal; upgrade when worktrees come and go while it is open (step 14's entered ones)
+    if (this.worktrees.get().workspace !== workspace) {
+      this.worktrees.set({ workspace, worktrees: null, problem: null });
+    }
+    let next: { worktrees: WorktreeEntry[] | null; problem: string | null };
+    try {
+      const answer = await this.request("worktree.list", { workspace });
+      next = { worktrees: answer.worktrees, problem: null };
+    } catch (error) {
+      next = { worktrees: null, problem: error instanceof Error ? error.message : String(error) };
+    }
+    if (this.worktrees.get().workspace === workspace)
+      this.worktrees.update((value) => ({ ...value, ...next }));
+    return next.worktrees ?? next.problem ?? "";
+  }
+
+  /** Removes a worktree the owner confirmed, then reads the list again, whatever came of it. */
+  async removeWorktree(workspace: string, path: string): Promise<boolean> {
+    const done = await this.attempt(this.request("worktree.remove", { workspace, path }));
+    await this.loadWorktrees(workspace);
+    return done !== null;
   }
 
   /** Has the agent review code, in a turn of its own. */

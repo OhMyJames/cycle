@@ -704,6 +704,16 @@
   line-height: 20px;
   font-weight: var(--font-weight-medium);
 }
+/* A worktree's row in Settings: its branch and marks on one line, what is known of it under. */
+.worktree-body {
+  min-width: 0;
+}
+.worktree-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
 .limit {
   display: flex;
   flex-direction: column;

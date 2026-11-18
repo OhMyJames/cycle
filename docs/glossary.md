@@ -57,7 +57,8 @@ them is in [operations](operations.md).
 - **Worktree**: a separate checkout of a workspace's repository, on a branch of its own. See
   [worktree](worktree.md).
   - _Today_ the daemon makes it at `<workspace>/.agents/worktree/` (older ones are under
-    `CYCLE_HOME/worktrees/`), and it is the session's `cwd`; its record has `path` and `origin`.
+    `CYCLE_HOME/worktrees/`), and it is the session's `cwd`; its record has `path` and `origin`. The owner lists a
+    workspace's worktrees, and removes the ones Cycle made, in Settings, Worktrees.
   - _Target_ Cycle makes every one, the agent's own entering included. A session's `cwd` stays the folder the agent's record is kept under; where the agent works now is
     the worktree's path when there is one.
 
