@@ -261,7 +261,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     settings: () => settingsView,
     usage,
     git,
-    worktreeParent: join(home, "worktrees"),
+    legacyWorktrees: join(home, "worktrees"),
     schedule: realDelay,
     now: Date.now,
     log: (line) => console.error(`[cycle] ${line}`),

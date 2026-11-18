@@ -17,7 +17,7 @@ export { ProviderError, Providers, type ProvidersFile } from "./providers.ts";
 export { Terminals } from "./terminals.ts";
 export { UsageLedger, type UsageFile, localDate, tokenDelta } from "./usage.ts";
 export { allowedRequest, sameToken } from "./auth.ts";
-export { describeFile, isInside, normalizePath } from "./files.ts";
+export { Files, describeFile, isInside, normalizePath } from "./files.ts";
 export {
   LaunchError,
   Scheduler,

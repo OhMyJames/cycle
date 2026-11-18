@@ -25,7 +25,7 @@ async function setup() {
     settings: () => ({ model: null, effort: null, modes: {}, worktree: false, projects: [] }),
     usage: new UsageLedger(usageFile, () => 0),
     git: new Git((argv, options) => harness.exec(argv, options)),
-    worktreeParent: "/home/worktrees",
+    legacyWorktrees: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
     log: () => {},

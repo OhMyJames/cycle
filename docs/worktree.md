@@ -11,8 +11,10 @@ tried were tried (the section "What was tried"); what could not be is at the end
 ## What was found
 
 - **Cycle today.** The daemon makes the worktree before the agent starts, with `git worktree add`
-  (`sessions.ts:254-255`, `git.ts:259`), under `CYCLE_HOME/worktrees/<repo folder>/<the branch, made safe>`. The agent
-  is given that folder as the session's `cwd`. The record, `{repo, base, branch}`, is only in
+  (`SessionHub.create`, `Git.addWorktree`), at `<repo>/.agents/worktree/<the branch, made safe>`
+  (made unique), where `<repo>` is the main checkout; worktrees older daemons made are under
+  `CYCLE_HOME/worktrees/<repo folder>/<the branch, made safe>` and stay there. The agent is given the
+  folder as the session's `cwd`. The record, `{repo, base, branch, path, origin}`, is only in
   `sessions.json`: neither agent knows of it. Removal is the owner's choice at delete and keeps the
   branch. A fork shares its source's worktree. A session in a container cannot have one.
 - **codex.** Nothing. Its app-server schema, generated from the bundled binary with and without
@@ -58,15 +60,18 @@ tried were tried (the section "What was tried"); what could not be is at the end
    name, base and ending, and Cycle knows each one the moment it exists. The hook is a callback of
    the SDK's `hooks` option, in the daemon's own process: it needs no command and no credential.
    (Tried: see below.)
-2. **Place: `<workspace>/.agents/worktree/<name>`.** (Decided.) The name is the branch, made safe.
-   The path is made unique, not only the branch: today two repositories of one name, or `a/b` and
-   `a-b`, can ask for the same path.
-3. **Hidden from git and from tools.** The first time, Cycle writes `.agents/worktree/.gitignore`
-   holding `*`. The folder then ignores itself and everything in it, with nothing changed outside it
+2. **Place: `<workspace>/.agents/worktree/<name>`.** (Decided; **done**, step 11, with
+   [its note](../.agents/notes/2026-11-18-worktrees-live-in-the-workspace.md).) The name is the
+   branch, made safe. The path is made unique, not only the branch: two repositories of one name no
+   longer meet, and `a/b` and `a-b` get `a-b` and `a-b-2`. For a project that is a subfolder of its
+   repository, the worktree is at the repository's root, and the session starts in the same
+   subfolder inside it.
+3. **Hidden from git and from tools.** (**Done**, step 11.) Cycle writes `.agents/worktree/.gitignore`
+   holding `*` before it makes a worktree, and never over one that is there. The folder then ignores itself and everything in it, with nothing changed outside it
    and no line in the owner's `.gitignore`: `git status` stays quiet, and `git add -A`, which Cycle's
    commit uses, does not stage a checkout inside the checkout. The formatter, the linter and `bun test` of this repository skip it, so
    it needs no line in their configuration (tried). What does not read `.gitignore` still sees the
-   folder: the page's file search and its `@` suggestions must leave it out.
+   folder: the page's file search and its `@` suggestions leave it out (`Files.search`).
 4. **A session's `cwd` is the key of the agent's record, and never changes.** Where the agent works
    now is `worktree.path` when there is one, else `cwd`. The files, terminal and changes of the page
    follow the first. For a worktree made as the session was, the two are the same, as today.
@@ -76,14 +81,15 @@ tried were tried (the section "What was tried"); what could not be is at the end
 5. **A worktree is shared by forks and kept by archive.** It is removed only when the owner says so, and
    not while a session in it runs or another session still uses it.
 6. **A worktree made for a session that never started goes with it.** Today one is removed when the
-   agent fails to start (`sessions.ts:276-281`), but not when the page drops a session that was made
+   agent fails to start (`SessionHub.create`), but not when the page drops a session that was made
    and never sent to (`client/app.ts:573-574`).
 7. **The branch is kept when a worktree is removed**, as today, and also when the agent asks for
    `remove`: with a `WorktreeRemove` hook Claude Code removes neither the folder nor the branch, the
    hook does. Claude Code still tells its model "removed".
 8. **A session in a container cannot have one**, unchanged: its history is in the repository's folder,
    which the container would not hold (`sessions.ts:246`).
-9. **Worktrees already under `CYCLE_HOME/worktrees` stay as they are.** Their record holds the path,
+9. **Worktrees already under `CYCLE_HOME/worktrees` stay as they are.** (**Done**, step 11.) Their
+   record holds the path (read from the session's `cwd` when an older daemon did not write it),
    nothing moves, and the files panel still may read there.
 
 ## Operations and events
@@ -104,22 +110,24 @@ tried were tried (the section "What was tried"); what could not be is at the end
 
 ## What it changes
 
-- `git.ts`: the path, its uniqueness, the self-ignoring file, and a lock for each repository (today one lock serves all repositories, though its comment says each).
-- `sessions.ts`: the removal checks, the dropped session, `Session.worktree` gaining `path` and
-  `origin`, the entered worktree.
+- `git.ts`: the path, its uniqueness, the self-ignoring file, and a lock for each repository
+  (**done**, step 11).
+- `sessions.ts`: `Session.worktree` gaining `path` and `origin` (**done**, step 11); the removal
+  checks, the dropped session, the entered worktree.
 - `harness/claude`: the two hooks, which it cannot take today: its `QueryOptions` (`sdk.ts`) has no
   `hooks`, and only settings-file command hooks are passed (`config.ts:292-318`). The option goes in
   `QueryOptions` and in the `query()` call of `claude-harness.ts:1365-1386`. It does not read `init`'s
   `cwd` yet either (the SDK's message has it); that is needed to bring `Session.worktree` into line.
-- `Files`: leave `.agents/worktree` out of search (`files.ts:84` filters only `.git`). Reading stays
-  allowed: it is inside a project, and `CYCLE_HOME/worktrees` stays on the list for the old ones.
+- `Files`: leave `.agents/worktree` out of search (**done**, step 11). Reading stays allowed: it is
+  inside a project, and `CYCLE_HOME/worktrees` stays on the list for the old ones.
 - The page: the dialog that deletes a session names a worktree other sessions use; a list of a
   workspace's worktrees; the sidebar's mark.
-- `CLAUDE.md`'s Runtime data, which lists `worktrees/` under `CYCLE_HOME`. This repository's own
-  formatter, linter and tests need nothing.
-- A decision note, since `sessions.json`'s `worktree` changes shape. Old records stay readable.
-- Tests: none today covers `removeWorktree`, the cleanup when a session fails to start, a delete that
-  removes it, or a fork's sharing.
+- `CLAUDE.md`'s Runtime data, which lists `worktrees/` under `CYCLE_HOME` (**done**, step 11). This
+  repository's own formatter, linter and tests need nothing.
+- A decision note, since `sessions.json`'s `worktree` changes shape (**done**, step 11). Old records
+  stay readable.
+- Tests: `removeWorktree`, the cleanup when a session fails to start, a delete that removes it and a
+  fork's sharing are covered since step 11 (`worktree-session.test.ts`, `worktree-git.test.ts`).
 
 ## What was tried
 

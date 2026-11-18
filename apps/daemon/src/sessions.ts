@@ -39,6 +39,28 @@ import { type Git, defaultBranchName } from "./git.ts";
 import type { JsonStore, Delay } from "./store.ts";
 import { type UsageLedger, ZERO_TOKENS, tokenDelta } from "./usage.ts";
 
+/**
+ * A worktree as it is stored: a daemon from before a worktree had a place of its own kept `repo`,
+ * `base` and `branch` only. Its `path` and `origin` are read as `wholeWorktree` says.
+ */
+export type StoredWorktree = Omit<WorktreeInfo, "path" | "origin"> &
+  Partial<Pick<WorktreeInfo, "path" | "origin">>;
+
+/**
+ * A stored worktree with every field. Without a `path` it is one of the older kind, at
+ * `<legacy>/<repo folder>/<name>` and made as the session was: the root is the first two folders
+ * of the session's `cwd` under `legacy`, else the `cwd`.
+ */
+function wholeWorktree(stored: StoredWorktree, cwd: string, legacy: string): WorktreeInfo {
+  const prefix = `${legacy}/`;
+  const [repoFolder, name] = cwd.startsWith(prefix) ? cwd.slice(prefix.length).split("/") : [];
+  return {
+    ...stored,
+    path: stored.path ?? (name ? `${legacy}/${repoFolder}/${name}` : cwd),
+    origin: stored.origin ?? "owner",
+  };
+}
+
 /** What the daemon alone keeps about a session, which no harness knows. */
 export interface SessionMeta {
   title?: string;
@@ -54,7 +76,7 @@ export interface SessionMeta {
   agentMode?: PermissionMode;
   model?: string;
   effort?: string | null;
-  worktree?: WorktreeInfo;
+  worktree?: StoredWorktree;
   /** The sandbox its agent runs in, by name. */
   sandbox?: string;
   /** Folders beyond its own its agent may reach. */
@@ -81,8 +103,8 @@ export interface HubOptions {
   settings(): Settings;
   usage: UsageLedger;
   git: Git;
-  /** Where worktrees are made. */
-  worktreeParent: string;
+  /** Where older daemons made worktrees: one stored without a `path` was made here. */
+  legacyWorktrees: string;
   schedule: Delay;
   now(): number;
   /** Takes a line for the daemon's log. Never a prompt or an answer: ids, names and times. */
@@ -259,12 +281,11 @@ export class SessionHub {
     if (params.worktree) {
       const made = await git.addWorktree({
         cwd,
-        parent: this.options.worktreeParent,
         branch: params.worktree.branch?.trim() || defaultBranchName(now()),
         ...(params.worktree.base ? { base: params.worktree.base } : {}),
       });
       cwd = made.cwd;
-      worktree = made.worktree;
+      worktree = { ...made.worktree, origin: "owner" };
     }
     const model = params.model ?? settings.model ?? undefined;
     const effort = params.effort ?? settings.effort ?? undefined;
@@ -286,7 +307,7 @@ export class SessionHub {
       });
     } catch (error) {
       // A session that never started leaves no worktree behind.
-      if (worktree) await git.removeWorktree(worktree.repo, cwd).catch(() => {});
+      if (worktree) await git.removeWorktree(worktree.repo, worktree.path).catch(() => {});
       throw error;
     }
     this.options.meta.update((file) => {
@@ -559,7 +580,7 @@ export class SessionHub {
     }
     await this.options.harness.deleteSession(sessionId);
     if (removeWorktree && info.worktree) {
-      await this.options.git.removeWorktree(info.worktree.repo, info.cwd);
+      await this.options.git.removeWorktree(info.worktree.repo, info.worktree.path);
     }
     this.drop(sessionId);
     this.infos.delete(sessionId);
@@ -682,7 +703,9 @@ export class SessionHub {
       ),
       ...(live ? this.activityFields(live) : STORED),
       branch: meta.worktree?.branch ?? session.branch,
-      worktree: meta.worktree ?? null,
+      worktree: meta.worktree
+        ? wholeWorktree(meta.worktree, session.cwd, this.options.legacyWorktrees)
+        : null,
       sandbox: meta.sandbox ?? session.sandbox,
       sandboxCwd: session.sandboxCwd,
       directories: meta.directories ?? [],

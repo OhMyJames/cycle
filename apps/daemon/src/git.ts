@@ -8,6 +8,8 @@ const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const MAX_FILES = 3000;
 const MAX_PATCH = 1024 * 1024;
 const MAX_COUNTED = 40;
+/** Where a repository's worktrees are, relative to its main checkout. */
+const WORKTREES = ".agents/worktree";
 const GIT = ["git", "--no-optional-locks", "-c", "core.quotepath=false"];
 
 export class GitError extends Error {}
@@ -87,8 +89,8 @@ export function defaultBranchName(now: number): string {
 /** Reads and changes checkouts for sessions. Every command is one `git` run. */
 export class Git {
   private readonly exec: Exec;
-  /** Worktree changes to one repository run one at a time. */
-  private exclusive: Promise<unknown> = Promise.resolve();
+  /** The tail of each repository's worktree changes, by its git common dir. */
+  private readonly locks = new Map<string, Promise<unknown>>();
 
   constructor(exec: Exec) {
     this.exec = exec;
@@ -235,42 +237,120 @@ export class Git {
     return (await this.out(cwd, ["rev-parse", "--short", "HEAD"])).trim();
   }
 
+  /** The repository's git common dir, which every checkout and worktree of it shares. */
+  private async commonDir(cwd: string): Promise<string | null> {
+    try {
+      const result = await this.run(
+        cwd,
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        5_000,
+      );
+      return result.exitCode === 0 ? result.stdout.trim() || null : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Whether the folder is in a bare repository, which has no checkout to put a worktree in. */
+  private async isBare(cwd: string): Promise<boolean> {
+    try {
+      const result = await this.run(cwd, ["rev-parse", "--is-bare-repository"], 5_000);
+      return result.exitCode === 0 && result.stdout.trim() === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  /** Runs `work` after the repository's earlier worktree changes, and lets the next one follow it. */
+  private locked<T>(common: string, work: () => Promise<T>): Promise<T> {
+    const run = (this.locks.get(common) ?? Promise.resolve()).then(work);
+    const tail = run.then(
+      () => {},
+      () => {},
+    );
+    this.locks.set(common, tail);
+    void tail.then(() => {
+      if (this.locks.get(common) === tail) this.locks.delete(common);
+    });
+    return run;
+  }
+
   /**
-   * Makes a worktree of `cwd`'s repository under `parent`, on a new branch
-   * from `base` (HEAD when not given). Answers with the folder a session
-   * should start in: the same place inside the worktree as `cwd` was.
+   * Makes a worktree of `cwd`'s repository at `<main checkout>/.agents/worktree/<name>`, on a new
+   * branch from `base` (HEAD when not given). The main checkout is the repository's own, even when
+   * `cwd` is in another worktree of it. Answers with the folder a session should start in: the
+   * same place inside the worktree as `cwd` was.
    */
-  addWorktree(options: {
+  async addWorktree(options: {
     cwd: string;
-    parent: string;
     branch: string;
     base?: string;
-  }): Promise<{ cwd: string; worktree: WorktreeInfo }> {
-    const work = this.exclusive.then(async () => {
-      const root = await this.root(options.cwd);
-      if (!root) throw new GitError("A worktree needs a git repository.");
+  }): Promise<{ cwd: string; worktree: Omit<WorktreeInfo, "origin"> }> {
+    const root = await this.root(options.cwd);
+    if (!root) {
+      throw new GitError(
+        (await this.isBare(options.cwd))
+          ? "A worktree needs a git checkout."
+          : "A worktree needs a git repository.",
+      );
+    }
+    // An ordinary repository's common dir is `<main checkout>/.git`. A submodule's or a
+    // `--separate-git-dir` one's is elsewhere, and so is the answer of a git older than 2.31 (it
+    // does not know `--path-format`): the folder's own root is the checkout then.
+    const common = await this.commonDir(root);
+    const main = common?.endsWith("/.git") ? common.slice(0, -"/.git".length) : root;
+    return this.locked(common ?? root, async () => {
       const baseRef = options.base ?? "HEAD";
       const base = (await this.out(root, ["rev-parse", "--verify", `${baseRef}^{commit}`])).trim();
       const taken = new Set((await this.branches(root)).local);
       let branch = options.branch;
       for (let suffix = 2; taken.has(branch); suffix++) branch = `${options.branch}-${suffix}`;
-      const name = root.split("/").findLast(Boolean) ?? "repo";
-      const path = `${options.parent}/${name}/${branchSlug(branch)}`;
-      await this.out(root, ["worktree", "add", "--no-track", "-b", branch, path, base], 120_000);
+      const folder = `${main}/${WORKTREES}`;
+      const slug = branchSlug(branch);
+      let name = slug;
+      for (let suffix = 2; await this.exists(main, `${folder}/${name}`); suffix++) {
+        name = `${slug}-${suffix}`;
+      }
+      await this.ignoreItself(main, folder);
+      const path = `${folder}/${name}`;
+      try {
+        await this.out(root, ["worktree", "add", "--no-track", "-b", branch, path, base], 120_000);
+      } catch (error) {
+        // Nothing was at the path before: whatever the failed add left registered goes.
+        await this.run(root, ["worktree", "remove", "--force", path]).catch(() => {});
+        throw error;
+      }
       const inside = options.cwd.startsWith(`${root}/`) ? options.cwd.slice(root.length) : "";
-      return { cwd: `${path}${inside}`, worktree: { repo: root, base, branch } };
+      return { cwd: `${path}${inside}`, worktree: { repo: main, base, branch, path } };
     });
-    this.exclusive = work.catch(() => {});
-    return work;
   }
 
   /** Removes a worktree's folder. Its branch is kept, with whatever it committed. */
-  removeWorktree(repo: string, path: string): Promise<void> {
-    const work = this.exclusive.then(async () => {
+  async removeWorktree(repo: string, path: string): Promise<void> {
+    const common = (await this.commonDir(repo)) ?? repo;
+    await this.locked(common, async () => {
       const root = (await this.root(path)) ?? path;
       await this.out(repo, ["worktree", "remove", "--force", root], 120_000);
     });
-    this.exclusive = work.catch(() => {});
-    return work;
+  }
+
+  /** Whether a path exists, asked of the machine the repository is on. */
+  private async exists(cwd: string, path: string): Promise<boolean> {
+    return (await this.exec(["test", "-e", path], { cwd, timeoutMs: 5_000 })).exitCode === 0;
+  }
+
+  /**
+   * Makes the worktrees' folder, with a `.gitignore` of its own holding `*`, unless one is there: the
+   * folder ignores itself and everything in it, and nothing outside it changes. It is a command on
+   * the repository's machine, since the daemon reaches the project only through the harness.
+   */
+  private async ignoreItself(cwd: string, folder: string): Promise<void> {
+    // A dangling symlink named `.gitignore` is a file there too: `printf >` would write through it.
+    const script =
+      'f="$1/.gitignore"; mkdir -p "$1" && { [ -e "$f" ] || [ -L "$f" ] || printf "*\\n" > "$f"; }';
+    const result = await this.exec(["sh", "-c", script, "sh", folder], { cwd, timeoutMs: 5_000 });
+    if (result.exitCode !== 0) {
+      throw new GitError(result.stderr.trim() || "The worktrees' folder could not be made.");
+    }
   }
 }

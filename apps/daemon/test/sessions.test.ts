@@ -34,7 +34,7 @@ async function setup() {
     settings: () => settings,
     usage: new UsageLedger(usageFile, () => 0),
     git: new Git((argv, options) => harness.exec(argv, options)),
-    worktreeParent: "/home/worktrees",
+    legacyWorktrees: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
     log: () => {},
@@ -259,6 +259,8 @@ test("a worktree session starts in its own checkout and remembers its base", asy
   const { harness, hub } = await setup();
   harness.execResults = {
     "rev-parse --show-toplevel": { exitCode: 0, stdout: "/repo\n" },
+    "rev-parse --path-format=absolute --git-common-dir": { exitCode: 0, stdout: "/repo/.git\n" },
+    "test -e /repo/.agents/worktree/feature-2": { exitCode: 1, stdout: "" },
     "rev-parse --verify HEAD^{commit}": { exitCode: 0, stdout: "abc123\n" },
     "for-each-ref --format=%(refname) --sort=-committerdate refs/heads refs/remotes": {
       exitCode: 0,
@@ -266,10 +268,16 @@ test("a worktree session starts in its own checkout and remembers its base", asy
     },
   };
   const info = await hub.create({ cwd: "/repo/packages/app", worktree: { branch: "feature" } });
-  expect(info.worktree).toEqual({ repo: "/repo", base: "abc123", branch: "feature-2" });
-  expect(info.cwd).toBe("/home/worktrees/repo/feature-2/packages/app");
+  expect(info.worktree).toEqual({
+    repo: "/repo",
+    base: "abc123",
+    branch: "feature-2",
+    path: "/repo/.agents/worktree/feature-2",
+    origin: "owner",
+  });
+  expect(info.cwd).toBe("/repo/.agents/worktree/feature-2/packages/app");
   expect(harness.calls).toContain(
-    "git worktree add --no-track -b feature-2 /home/worktrees/repo/feature-2 abc123",
+    "git worktree add --no-track -b feature-2 /repo/.agents/worktree/feature-2 abc123",
   );
 });
 
