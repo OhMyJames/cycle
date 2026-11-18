@@ -134,7 +134,12 @@ test("both agents' models are offered, and a session runs on the agent its model
   expect(byHarness("claude").some((model) => model.isDefault)).toBe(false);
 
   const session = await start();
-  expect(session).toMatchObject({ harness: "claude", model: SONNET, status: "idle" });
+  expect(session).toMatchObject({
+    harness: "claude",
+    model: SONNET,
+    status: "idle",
+    activity: "idle",
+  });
   const events = await turn(session.id, "hello there");
   expect(items(events).map((item) => [item.kind, "text" in item ? item.text : ""])).toEqual([
     ["userMessage", "hello there"],

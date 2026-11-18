@@ -17,6 +17,7 @@ import {
   type Session,
   type PermissionMode,
   type SessionState,
+  type SessionActivity,
   type SessionStatus,
   type Settings,
   type TokenCount,
@@ -145,6 +146,9 @@ const MAX_LIVE = 32;
 const MAX_TAG = 40;
 
 export class SessionError extends Error {}
+
+/** What a session says of its state when the daemon does not hold it. */
+const STORED = { status: "stored", activity: "idle", loaded: false, failed: false } as const;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -298,6 +302,9 @@ export class SessionHub {
     const info: Session = {
       ...this.remember(session, false),
       status: "idle",
+      activity: "idle",
+      loaded: true,
+      failed: false,
     };
     this.live.set(session.id, this.newLive(initialSessionState(info), false));
     this.setInfo(info);
@@ -493,7 +500,8 @@ export class SessionHub {
       }
       await harness.archiveSession(sessionId, params.archived);
       if (params.archived) this.drop(sessionId);
-      info = { ...info, archived: params.archived, status: "stored" };
+      // Unarchiving a session opened archived leaves it held, yet reads stored until its next event.
+      info = { ...info, archived: params.archived, ...STORED };
     }
     if (params.pinned !== undefined) info = { ...info, pinned: params.pinned };
     if (params.unread !== undefined) info = { ...info, unread: params.unread };
@@ -671,7 +679,7 @@ export class SessionHub {
         session.harness,
         keptMode(meta) ?? this.options.settings().modes[session.harness],
       ),
-      status: live ? this.statusOf(live) : "stored",
+      ...(live ? this.activityFields(live) : STORED),
       branch: meta.worktree?.branch ?? session.branch,
       worktree: meta.worktree ?? null,
       sandbox: meta.sandbox ?? session.sandbox,
@@ -741,7 +749,7 @@ export class SessionHub {
     const live = this.newLive(state, loaded.usage === null);
     live.usageSeen = loaded.usage?.total ?? null;
     this.live.set(sessionId, live);
-    this.setInfo({ ...info, status: this.statusOf(live) });
+    this.setInfo({ ...info, ...this.activityFields(live) });
     this.evict();
     return live;
   }
@@ -750,17 +758,12 @@ export class SessionHub {
   private evict(): void {
     if (this.live.size <= MAX_LIVE) return;
     const idle = [...this.live.entries()]
-      .filter(
-        ([id, live]) =>
-          this.statusOf(live) !== "running" &&
-          this.statusOf(live) !== "waiting" &&
-          this.options.viewers(id) === 0,
-      )
+      .filter(([id, live]) => this.activityOf(live) === "idle" && this.options.viewers(id) === 0)
       .toSorted((a, b) => a[1].usedAt - b[1].usedAt);
     for (const [id] of idle.slice(0, this.live.size - MAX_LIVE)) {
       this.drop(id);
       const info = this.infos.get(id);
-      if (info) this.setInfo({ ...info, status: "stored" });
+      if (info) this.setInfo({ ...info, ...STORED });
     }
   }
 
@@ -770,11 +773,34 @@ export class SessionHub {
     this.live.delete(sessionId);
   }
 
-  private statusOf(live: Live): SessionStatus {
+  /** What a session is doing. One still starting counts as running. */
+  private activityOf(live: Live): SessionActivity {
     if (live.starting || activeTurn(live.state)) {
-      return live.state.approvals.length ? "waiting" : "running";
+      return live.state.approvals.length ? "requires_action" : "running";
     }
-    return live.state.turns.at(-1)?.status === "failed" ? "error" : "idle";
+    return "idle";
+  }
+
+  /** Whether its last turn ended in failure, or its agent exited under it. Not while it works. */
+  private failedOf(live: Live): boolean {
+    return this.activityOf(live) === "idle" && live.state.turns.at(-1)?.status === "failed";
+  }
+
+  private statusOf(live: Live): SessionStatus {
+    const activity = this.activityOf(live);
+    if (activity === "requires_action") return "waiting";
+    if (activity === "running") return "running";
+    return this.failedOf(live) ? "error" : "idle";
+  }
+
+  /** What a session held in memory says of its state. */
+  private activityFields(live: Live): Pick<Session, "status" | "activity" | "loaded" | "failed"> {
+    return {
+      status: this.statusOf(live),
+      activity: this.activityOf(live),
+      loaded: true,
+      failed: this.failedOf(live),
+    };
   }
 
   /** Starts a turn with the session's mode, model and effort, and says why one did not start. */
@@ -1078,8 +1104,15 @@ export class SessionHub {
   }
 
   private syncStatus(live: Live): void {
-    const status = this.statusOf(live);
+    const fields = this.activityFields(live);
     const info = live.state.info;
-    if (info.status !== status) this.setInfo({ ...info, status });
+    if (
+      info.status !== fields.status ||
+      info.activity !== fields.activity ||
+      info.failed !== fields.failed ||
+      info.loaded !== fields.loaded
+    ) {
+      this.setInfo({ ...info, ...fields });
+    }
   }
 }

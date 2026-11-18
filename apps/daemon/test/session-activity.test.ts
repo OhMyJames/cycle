@@ -12,6 +12,15 @@ import { FakeHarness, manualSchedule } from "./fake-harness.ts";
 
 const memory = () => ({ read: async () => null, write: async () => {} });
 
+/** The four fields a session says of its state: status, activity, loaded and failed. */
+const fields = (info: Session | undefined): (string | boolean)[] | undefined =>
+  info && [info.status, info.activity, info.loaded, info.failed];
+const IDLE: (string | boolean)[] = ["idle", "idle", true, false];
+const RUNNING: (string | boolean)[] = ["running", "running", true, false];
+const WAITING: (string | boolean)[] = ["waiting", "requires_action", true, false];
+const ERROR: (string | boolean)[] = ["error", "idle", true, true];
+const STORED: (string | boolean)[] = ["stored", "idle", false, false];
+
 async function setup() {
   const harness = new FakeHarness();
   const timers = manualSchedule();
@@ -48,8 +57,8 @@ async function setup() {
   const told = (id: string) => infos.findLast((info) => info.id === id);
   /** What the session shows now, as `sessions.changed` carries it and as the hub keeps it. */
   const shown = (id: string) => {
-    expect(told(id)?.status).toBe(hub.info(id).status);
-    return hub.info(id).status;
+    expect(fields(told(id))).toEqual(fields(hub.info(id)));
+    return fields(hub.info(id));
   };
   return { harness, hub, timers, infos, told, shown };
 }
@@ -94,27 +103,27 @@ const prompt = { text: "go", images: [] };
 test("a created session is idle, and running from the prompt being sent to the turn's end", async () => {
   const { harness, hub, shown } = await setup();
   const info = await hub.create({ cwd: "/project" });
-  expect(info.status).toBe("idle");
-  expect(shown(info.id)).toBe("idle");
+  expect(fields(info)).toEqual(IDLE);
+  expect(shown(info.id)).toEqual(IDLE);
   await hub.send(info.id, prompt, "auto");
   // Before the agent announces the turn: the session is starting, and counts as running.
-  expect(shown(info.id)).toBe("running");
+  expect(shown(info.id)).toEqual(RUNNING);
   harness.emit(start(info.id, "t1"));
-  expect(shown(info.id)).toBe("running");
+  expect(shown(info.id)).toEqual(RUNNING);
   harness.emit(end(info.id, "t1"));
-  expect(shown(info.id)).toBe("idle");
+  expect(shown(info.id)).toEqual(IDLE);
 });
 
 test("an approval of any kind makes the session wait, and answering it runs it again", async () => {
   const { harness, hub, shown } = await setup();
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
-  expect(shown(info.id)).toBe("running");
+  expect(shown(info.id)).toEqual(RUNNING);
   for (const kind of ["command", "question"] as const) {
     harness.emit(ask(info.id, kind));
-    expect(shown(info.id)).toBe("waiting");
+    expect(shown(info.id)).toEqual(WAITING);
     harness.emit(answered(info.id));
-    expect(shown(info.id)).toBe("running");
+    expect(shown(info.id)).toEqual(RUNNING);
   }
 });
 
@@ -123,16 +132,16 @@ test("a turn that ends, stopped or not, leaves the session idle; a failed one le
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
   harness.emit(end(info.id, "t1", "interrupted"));
-  expect(shown(info.id)).toBe("idle");
+  expect(shown(info.id)).toEqual(IDLE);
   harness.emit(start(info.id, "t2"));
   harness.emit(end(info.id, "t2", "failed"));
-  expect(shown(info.id)).toBe("error");
+  expect(shown(info.id)).toEqual(ERROR);
   // The next turn starting clears it; another ending well leaves it idle.
   await hub.send(info.id, prompt, "auto");
-  expect(shown(info.id)).toBe("running");
+  expect(shown(info.id)).toEqual(RUNNING);
   harness.emit(start(info.id, "t3"));
   harness.emit(end(info.id, "t3"));
-  expect(shown(info.id)).toBe("idle");
+  expect(shown(info.id)).toEqual(IDLE);
 });
 
 test("a prompt the agent refuses leaves the session idle", async () => {
@@ -142,7 +151,7 @@ test("a prompt the agent refuses leaves the session idle", async () => {
   expect(hub.send(info.id, prompt, "auto")).rejects.toThrow("no model");
   await Promise.resolve();
   await Promise.resolve();
-  expect(shown(info.id)).toBe("idle");
+  expect(shown(info.id)).toEqual(IDLE);
 });
 
 test("its agent exiting fails a running turn, and another agent's exit does not", async () => {
@@ -150,46 +159,46 @@ test("its agent exiting fails a running turn, and another agent's exit does not"
   const info = await hub.create({ cwd: "/project" });
   harness.emit(start(info.id, "t1"));
   harness.emit({ type: "harness.exited", harness: "other", message: "other exited" });
-  expect(shown(info.id)).toBe("running");
+  expect(shown(info.id)).toEqual(RUNNING);
   harness.emit({ type: "harness.exited", harness: "fake", message: "fake exited" });
-  expect(shown(info.id)).toBe("error");
+  expect(shown(info.id)).toEqual(ERROR);
 });
 
 test("a session only in the agent's list is stored; opened it is idle, or an error at once", async () => {
   const { harness, hub, told } = await setup();
   harness.stored = [harness.session("old"), harness.session("broken"), harness.session("cut")];
-  expect((await hub.list(false)).map((info) => [info.id, info.status])).toEqual([
-    ["old", "stored"],
-    ["broken", "stored"],
-    ["cut", "stored"],
+  expect((await hub.list(false)).map((info) => [info.id, fields(info)])).toEqual([
+    ["old", STORED],
+    ["broken", STORED],
+    ["cut", STORED],
   ]);
   await hub.open("old", undefined);
-  expect(told("old")?.status).toBe("idle");
+  expect(fields(told("old"))).toEqual(IDLE);
   harness.history = [turn("t0", "completed"), turn("t1", "failed")];
   await hub.open("broken", undefined);
-  expect(told("broken")?.status).toBe("error");
-  expect(hub.info("broken").status).toBe("error");
+  expect(fields(told("broken"))).toEqual(ERROR);
+  expect(fields(hub.info("broken"))).toEqual(ERROR);
   // A turn the history left running was cut off: closed as stopped, so the session is idle.
   harness.history = [turn("t0", "running")];
   await hub.open("cut", undefined);
-  expect(hub.info("cut").status).toBe("idle");
-  expect((await hub.list(false)).map((info) => info.status)).toEqual(["idle", "error", "idle"]);
+  expect(fields(hub.info("cut"))).toEqual(IDLE);
+  expect((await hub.list(false)).map(fields)).toEqual([IDLE, ERROR, IDLE]);
 });
 
 test("archiving an idle session stores it; one opened archived and then unarchived reads stored too", async () => {
   const { harness, hub, told } = await setup();
   const info = await hub.create({ cwd: "/project" });
   const archived = await hub.update({ sessionId: info.id, archived: true });
-  expect(archived.status).toBe("stored");
-  expect(told(info.id)?.status).toBe("stored");
+  expect(fields(archived)).toEqual(STORED);
+  expect(fields(told(info.id))).toEqual(STORED);
   harness.stored = [harness.session("old")];
   await hub.list(true);
   await hub.open("old", undefined);
-  expect(hub.info("old").status).toBe("idle");
+  expect(fields(hub.info("old"))).toEqual(IDLE);
   // The session is held, yet reads stored until its next event: kept as it is.
-  expect((await hub.update({ sessionId: "old", archived: false })).status).toBe("stored");
+  expect(fields(await hub.update({ sessionId: "old", archived: false }))).toEqual(STORED);
   harness.emit(start("old", "t1"));
-  expect(hub.info("old").status).toBe("running");
+  expect(fields(hub.info("old"))).toEqual(RUNNING);
 });
 
 test("past the limit the least recently used idle session is let go, never a busy one", async () => {
@@ -201,15 +210,15 @@ test("past the limit the least recently used idle session is let go, never a bus
   harness.emit(start("o2", "t2"));
   harness.emit(ask("o2", "command", "t2"));
   for (let index = 3; index <= 35; index++) await hub.open(`o${index}`, undefined);
-  expect(told("o1")?.status).toBe("running");
-  expect(told("o2")?.status).toBe("waiting");
+  expect(fields(told("o1"))).toEqual(RUNNING);
+  expect(fields(told("o2"))).toEqual(WAITING);
   // 35 held, 32 allowed: the three oldest idle ones go.
   for (const id of ["o3", "o4", "o5"]) {
-    expect(told(id)?.status).toBe("stored");
-    expect(hub.info(id).status).toBe("stored");
+    expect(fields(told(id))).toEqual(STORED);
+    expect(fields(hub.info(id))).toEqual(STORED);
   }
-  expect(told("o6")?.status).toBe("idle");
-  expect(told("o35")?.status).toBe("idle");
+  expect(fields(told("o6"))).toEqual(IDLE);
+  expect(fields(told("o35"))).toEqual(IDLE);
 });
 
 test("a session is working while it is running or waiting, and not when idle, failed or stored", async () => {
@@ -225,9 +234,9 @@ test("a session is working while it is running or waiting, and not when idle, fa
   expect(hub.busyIn("/elsewhere")).toBe(false);
   harness.emit(answered(info.id));
   harness.emit(end(info.id, "t1", "failed"));
-  expect(hub.info(info.id).status).toBe("error");
+  expect(fields(hub.info(info.id))).toEqual(ERROR);
   expect(working()).toEqual([false, false]);
   await hub.update({ sessionId: info.id, archived: true });
-  expect(hub.info(info.id).status).toBe("stored");
+  expect(fields(hub.info(info.id))).toEqual(STORED);
   expect(working()).toEqual([false, false]);
 });

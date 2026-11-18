@@ -336,6 +336,13 @@ export function resolveMode(
   return found ?? modes.find((mode) => mode.isDefault) ?? modes[0];
 }
 
+/** What a session is doing: the three states a client reads, whether or not it is in memory. */
+export type SessionActivity =
+  | "idle"
+  | "running"
+  /** A turn is blocked on the owner: an approval or a question. */
+  | "requires_action";
+
 export type SessionStatus =
   /** Known to the harness but not loaded into memory. */
   | "stored"
@@ -365,6 +372,12 @@ export interface Session {
   effort: string | null;
   mode: PermissionMode;
   status: SessionStatus;
+  /** What it is doing. It stands beside `status`, which it replaces. */
+  activity: SessionActivity;
+  /** The daemon holds the session in memory. */
+  loaded: boolean;
+  /** Its last turn ended in failure, or its agent exited under it: not working, and so `idle`. */
+  failed: boolean;
   branch: string | null;
   worktree: WorktreeInfo | null;
   /** The sandbox its agent runs in, by name. Null when it runs on this machine. */
