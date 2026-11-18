@@ -82,7 +82,6 @@ export class FakeHarness implements Harness {
       model: "model-a",
       effort: null,
       branch: null,
-      sandbox: null,
       sandboxCwd: null,
       createdAt: 1,
       updatedAt: 1,

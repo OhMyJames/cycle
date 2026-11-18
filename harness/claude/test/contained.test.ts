@@ -55,13 +55,9 @@ async function started(inContainer: boolean) {
   const session = await harness.createSession({
     cwd: "/Users/me/app",
     model,
-    ...(inContainer ? { sandboxed: "standard" } : {}),
+    ...(inContainer ? { environment: "standard" } : {}),
   });
-  const options = {
-    mode: "default",
-    model,
-    ...(session.sandbox ? { sandbox: session.sandbox } : {}),
-  };
+  const options = { mode: "default", model, ...(inContainer ? { environment: "standard" } : {}) };
   await harness.send(session.id, { text: "hello", images: [] }, options);
   // The turn is over, so a process that must start again can be ended now.
   sdk.last.say({ type: "result", subtype: "success", is_error: false });
@@ -71,13 +67,13 @@ async function started(inContainer: boolean) {
 
 test("moving from asking first to accepting edits is in place in a container, and a new start on this machine", async () => {
   const container = await started(true);
-  expect(container.session.sandbox).not.toBeNull();
+  expect(container.session.sandboxCwd).not.toBeNull();
   await container.harness.configure(container.session.id, { mode: "acceptEdits" });
   expect(container.query.moves).toEqual(["mode acceptEdits"]);
   expect(container.query.closed).toBe(false);
 
   const here = await started(false);
-  expect(here.session.sandbox).toBeNull();
+  expect(here.session.sandboxCwd).toBeNull();
   await here.harness.configure(here.session.id, { mode: "acceptEdits" });
   expect(here.query.moves).toEqual([]);
   expect(here.query.closed).toBe(true);

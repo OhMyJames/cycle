@@ -57,10 +57,11 @@ but the file says they come "with the `hooks` capability".
 
 Read these against the glossary. Each one is a place the words are not yet one meaning.
 
-1. **"sandbox" is three fields in one file.** `HarnessSession.sandbox` (line 40) and
-   `TurnOptions.sandbox` (55) are a container's _name_; `CreateSessionOptions.sandboxed` (73) is an
-   environment's _id_; `sandboxCwd` (42) is a path inside one. The glossary has one word,
-   environment.
+1. **"sandbox" was three fields in one file.** _Done_ (step 09): `TurnOptions.environment` is the
+   environment's _id_, the one field that says where a session runs, and the container's _name_
+   (`HarnessSession.sandbox`, `TurnOptions.sandbox`, `CreateSessionOptions.sandboxed`) is gone from
+   the interface: the harness derives it. What is left is `sandboxCwd`, a path inside the container,
+   and `ModelInfo.sandbox`, whether a model can run in one (step 17).
 2. **Session options are written four times.** `TurnOptions` (50), `ConfigureOptions` (61),
    `CreateSessionOptions` (67) and the fields of `HarnessSession` (29) each list some of model,
    effort, mode, sandbox and directories, and not the same ones. A new per-session option has to be

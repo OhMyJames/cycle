@@ -407,11 +407,10 @@ export interface Session {
   worktree: WorktreeInfo | null;
   /**
    * The environment the owner chose for it, by id: where its agent runs. Null when none, and it runs
-   * on this machine. The id stays when the environment is removed. It replaces `sandbox`.
+   * on this machine. The id stays when the environment is removed. The container's name is not here:
+   * only the harness has it.
    */
   environment: string | null;
-  /** The sandbox its agent runs in, by name. Null when it runs on this machine. */
-  sandbox: string | null;
   /** Where that sandbox sees the folder. Null when its paths are this machine's. */
   sandboxCwd: string | null;
   /** Folders beyond `cwd` its agent may reach. */

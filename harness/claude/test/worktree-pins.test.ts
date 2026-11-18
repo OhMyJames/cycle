@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { HarnessEvent } from "@cycle/protocol";
-import { ClaudeHarness, sandboxName } from "../src/index.ts";
+import { ClaudeHarness } from "../src/index.ts";
 import type { WireMessage } from "../src/wire.ts";
 import { fakeSbx } from "./fake-sbx.ts";
 import { FakeSdk, settle } from "./fake-sdk.ts";
@@ -71,11 +71,10 @@ test("a session in a sandbox is started with the built-in worktree tools turned 
   });
   const session = await harness.createSession({
     cwd: "/Users/me/app",
-    sandboxed: "standard",
+    environment: "standard",
     ...options,
   });
-  const name = sandboxName("/Users/me/app", "standard");
-  await harness.send(session.id, prompt("hello"), { ...options, sandbox: name });
+  await harness.send(session.id, prompt("hello"), { ...options, environment: "standard" });
   await settle();
   // Changed with the hooks: without it the built-in tool made its worktree in the mounted folder.
   expect(sdk.last.options.disallowedTools).toEqual(["EnterWorktree", "ExitWorktree"]);
