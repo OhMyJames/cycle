@@ -100,3 +100,44 @@ test("a repository with its git dir elsewhere gets worktrees, and a bare one is 
     "A worktree needs a git checkout.",
   );
 });
+
+test("removing a worktree discards its uncommitted files and keeps its branch with the commit", async () => {
+  const worktrees = new Git(exec);
+  const made = await worktrees.addWorktree({ cwd: repo, branch: "dirty" });
+  const run = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: made.worktree.path });
+  writeFileSync(join(made.worktree.path, "committed.txt"), "c\n");
+  run("add", "-A");
+  run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "work");
+  writeFileSync(join(made.worktree.path, "pkg", "a.txt"), "changed\n");
+  writeFileSync(join(made.worktree.path, "untracked.txt"), "u\n");
+  expect(run("status", "--porcelain").stdout.toString()).toContain("untracked.txt");
+
+  await worktrees.removeWorktree(repo, made.worktree.path);
+  expect(existsSync(made.worktree.path)).toBe(false);
+  expect(git("branch", "--list", "dirty")).toContain("dirty");
+  expect(git("log", "--format=%s", "dirty", "-1")).toBe("work\n");
+  expect(git("status", "--porcelain")).toBe("");
+});
+
+test("a worktree whose folder was deleted by hand is removed without error", async () => {
+  const worktrees = new Git(exec);
+  const made = await worktrees.addWorktree({ cwd: repo, branch: "vanished" });
+  rmSync(made.worktree.path, { recursive: true, force: true });
+  expect(git("worktree", "list", "--porcelain")).toContain(made.worktree.path);
+  await worktrees.removeWorktree(repo, made.worktree.path);
+  expect(git("worktree", "list", "--porcelain")).not.toContain(made.worktree.path);
+});
+
+test("the main checkout is never removed", async () => {
+  await expect(new Git(exec).removeWorktree(repo, repo)).rejects.toThrow();
+  expect(existsSync(join(repo, "pkg", "a.txt"))).toBe(true);
+  expect(existsSync(join(repo, ".git"))).toBe(true);
+});
+
+test("a locked worktree is not removed: the known limit of a single --force", async () => {
+  const worktrees = new Git(exec);
+  const made = await worktrees.addWorktree({ cwd: repo, branch: "locked" });
+  git("worktree", "lock", made.worktree.path);
+  await expect(worktrees.removeWorktree(repo, made.worktree.path)).rejects.toThrow(/locked/);
+  expect(existsSync(made.worktree.path)).toBe(true);
+});
