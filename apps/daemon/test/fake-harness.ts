@@ -1,6 +1,7 @@
 import type {
   Sessions,
   AgentCapabilities,
+  AgentDeclaration,
   Agents,
   ContextUsage,
   FileRewind,
@@ -29,6 +30,26 @@ export class FakeHarness implements Harness {
     subagents: false,
     tags: false,
     hooks: false,
+  };
+  /**
+   * What it declares, as codex's does, with `task.stop` since it has `stopTask`. A test that gives it
+   * an optional method says so here too: `declaration-fake.test.ts` checks the two agree.
+   */
+  declaration: AgentDeclaration = {
+    operations: [
+      "session.fork",
+      "session.rename",
+      "session.archive",
+      "session.compact",
+      "session.rewind",
+      "turn.steer",
+      "turn.review",
+      "task.stop",
+      "settings.features",
+    ],
+    inputs: ["image"],
+    extensions: { mcp: "edit", plugins: "edit", skills: "read" },
+    account: "cycle",
   };
   readonly sent: { sessionId: string; text: string }[] = [];
   readonly steered: string[] = [];
@@ -239,7 +260,9 @@ export class FakeHarness implements Harness {
       readFile: (...args) => this.harness.readFile(...args),
       searchFiles: (...args) => this.harness.searchFiles(...args),
       openTerminal: (...args) => this.harness.openTerminal(...args),
-      harnesses: () => [{ name: this.name, capabilities: this.capabilities }],
+      harnesses: () => [
+        { name: this.name, capabilities: this.capabilities, declaration: this.declaration },
+      ],
       connector: () => this,
       account: () => this,
       rewindFiles: async (sessionId, turnId, dryRun) => {
@@ -249,6 +272,7 @@ export class FakeHarness implements Harness {
       listCommands: async () => [],
       readContext: async () => this.context,
       capabilitiesOf: async () => this.capabilities,
+      declarationOf: async () => this.declaration,
     };
   }
 }

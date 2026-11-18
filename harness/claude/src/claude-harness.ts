@@ -2,6 +2,7 @@ import {
   type AccountInfo,
   type Sessions,
   type AgentCapabilities,
+  type AgentDeclaration,
   type AgentReads,
   type ApprovalResponse,
   type ConfigureOptions,
@@ -313,6 +314,7 @@ const realFiles: SessionFiles = {
 export class ClaudeHarness implements Sessions, AgentReads {
   readonly name = HARNESS_NAME;
   readonly capabilities: AgentCapabilities;
+  readonly declaration: AgentDeclaration;
   /** Cycle's configuration of Claude Code; null when it keeps none. */
   private readonly configuration: ClaudeConfiguration | null;
   /** The owner's own plugins as last listed, and when. */
@@ -411,6 +413,29 @@ export class ClaudeHarness implements Sessions, AgentReads {
       mcpReconnect: true,
       subagents: true,
       tags: true,
+    };
+    this.declaration = {
+      operations: [
+        "session.fork",
+        "session.rename",
+        "session.archive",
+        "session.compact",
+        "session.rewind",
+        "turn.steer",
+        "turn.review",
+        "session.tag",
+        "session.rewindFiles",
+        "session.context",
+        "session.commands",
+        "task.stop",
+        "mcp.reconnect",
+        "session.directories",
+      ],
+      inputs: ["image", "pdf", "text"],
+      extensions: edits
+        ? { mcp: "edit", plugins: "edit", skills: "edit", hooks: "edit", subagents: "read" }
+        : { mcp: "read", skills: "read", subagents: "read" },
+      account: "cli",
     };
   }
 

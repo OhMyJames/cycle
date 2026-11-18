@@ -1,6 +1,7 @@
 # Agent Note: each agent declares what it can do, and has its own Connector and Account
 
 Status: accepted
+Partly replaced by [an agent declares what it can do by operation](2026-11-18-an-agent-declares-what-it-can-do-by-operation.md)
 Date: 2026-11-16
 Basis: Plan for full Claude Agent SDK coverage, session 3 (2026-11-16). Checked against
 `@anthropic-ai/claude-agent-sdk` 0.3.325 (Claude Code 2.1.325), run under Bun against a scripted

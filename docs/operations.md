@@ -41,6 +41,13 @@ All five are **Proposed**. Each is one that some of the sources already follow.
 **Decided**: one place. **Proposed**: this shape. It replaces `AgentCapabilities` (eleven fields), the
 seven optional methods and `listModels` and `listModes`.
 
+_Today_ (step 17, [the note](../.agents/notes/2026-11-18-an-agent-declares-what-it-can-do-by-operation.md)):
+`AgentDeclaration` (`packages/protocol/src/declaration.ts`) exists beside `AgentCapabilities`, which is still
+what the daemon and the page read; `daemon.info` gives both. It has `operations`, `inputs`, `extensions`
+and `account`, without `options` and `environments` (steps 18, 09 and 10) and without `machine` (no reader
+yet). Two ids are provisional: `session.directories`, which is a parameter of `session.create`, and
+`settings.features`, codex's `features.*` switches, which step 19 moves to AgentSettings.
+
 ```
 Agent declares
   name            "codex", "claude"

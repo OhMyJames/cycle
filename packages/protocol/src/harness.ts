@@ -1,3 +1,4 @@
+import type { AgentDeclaration } from "./declaration.ts";
 import type {
   AgentCapabilities,
   AgentFeatures,
@@ -164,6 +165,11 @@ export interface Sessions {
   readonly name: string;
   /** What it can do beyond what every agent does. A method below that is optional, it has when they say. */
   readonly capabilities: AgentCapabilities;
+  /**
+   * The same, by operation: what it does beyond the core, which of the optional methods below it has.
+   * It replaces `capabilities`, which stays until the daemon and the page read this.
+   */
+  readonly declaration: AgentDeclaration;
   start(): Promise<void>;
   dispose(): Promise<void>;
   onEvent(listener: (event: HarnessEvent) => void): () => void;
@@ -306,7 +312,10 @@ export interface Harness extends Sessions, Connector, Account, Machine {}
  */
 export interface Agents
   extends
-    Omit<Sessions, "capabilities" | "rewindFiles" | "listCommands" | "readContext" | "tagSession">,
+    Omit<
+      Sessions,
+      "capabilities" | "declaration" | "rewindFiles" | "listCommands" | "readContext" | "tagSession"
+    >,
     Machine {
   /** The agents running, the main one first. */
   harnesses(): AgentInfo[];
@@ -323,4 +332,6 @@ export interface Agents
   readContext(sessionId: string): Promise<ContextUsage | null>;
   /** The capabilities of the agent that keeps a session. */
   capabilitiesOf(sessionId: string): Promise<AgentCapabilities>;
+  /** The declaration of the agent that keeps a session. */
+  declarationOf(sessionId: string): Promise<AgentDeclaration>;
 }

@@ -480,8 +480,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       return info;
     },
     "session.delete": async ({ sessionId, removeWorktree }) => {
-      await hub.remove(sessionId, removeWorktree ?? false);
-      terminals.closeSession(sessionId);
+      try {
+        await hub.remove(sessionId, removeWorktree ?? false);
+      } finally {
+        // Closed once the session is gone, also when its worktree could not be removed; a refused
+        // delete changed nothing, so its terminals stay.
+        if (!hub.has(sessionId)) terminals.closeSession(sessionId);
+      }
       return {};
     },
     "session.fork": ({ sessionId, turnId }) => hub.fork(sessionId, turnId ?? null),

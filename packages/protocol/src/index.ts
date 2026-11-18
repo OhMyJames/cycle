@@ -1,4 +1,5 @@
 export * from "./model.ts";
+export * from "./declaration.ts";
 export * from "./schedule.ts";
 export * from "./wire.ts";
 export * from "./harness.ts";

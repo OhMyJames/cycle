@@ -3,6 +3,8 @@
  * desktop) speaks only these types, never a specific agent's wire format.
  */
 
+import type { AgentDeclaration } from "./declaration.ts";
+
 export type ItemStatus = "running" | "completed" | "failed" | "declined";
 
 /** What a shell command was for, when the harness can tell. */
@@ -584,6 +586,8 @@ export interface SubagentInfo {
 export interface AgentInfo {
   name: string;
   capabilities: AgentCapabilities;
+  /** The same, as the one declaration that replaces `capabilities`. */
+  declaration: AgentDeclaration;
 }
 
 /** What a code review reads. */

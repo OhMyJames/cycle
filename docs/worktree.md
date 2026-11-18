@@ -78,11 +78,16 @@ tried were tried (the section "What was tried"); what could not be is at the end
    **Claude Code remembers the worktree itself**: a process started with `resume` begins in it, from
    the folder it was given. So Cycle reads where the agent is from the `cwd` of the process's `init`
    message, each time one starts, and brings `Session.worktree` into line.
-5. **A worktree is shared by forks and kept by archive.** It is removed only when the owner says so, and
-   not while a session in it runs or another session still uses it.
-6. **A worktree made for a session that never started goes with it.** Today one is removed when the
-   agent fails to start (`SessionHub.create`), but not when the page drops a session that was made
-   and never sent to (`client/app.ts:573-574`).
+5. **A worktree is shared by forks and kept by archive.** (**Done**, step 12.) Only the owner removes
+   one: with `session.delete { removeWorktree: true }`, and from step 13 with `worktree.remove`. The
+   daemon refuses, before it changes anything, while another session runs in it (its record names the
+   worktree, or its folder is in it) and while another session's record names it, archived or not, fork
+   or not. Removal discards uncommitted and untracked files (`--force`; the box in the delete dialog is
+   the owner's consent) and keeps the branch. A locked worktree is not removed. The one removal the
+   daemon does by itself is of a worktree made for a session that failed to start.
+6. **A worktree made for a session that never started goes with it.** (**Done**, step 12.) One is removed
+   when the agent fails to start (`SessionHub.create`), and when the page drops a session that was made
+   and never sent to (`client/app.ts`), which asks for it; the branch is kept.
 7. **The branch is kept when a worktree is removed**, as today, and also when the agent asks for
    `remove`: with a `WorktreeRemove` hook Claude Code removes neither the folder nor the branch, the
    hook does. Claude Code still tells its model "removed".
@@ -94,12 +99,12 @@ tried were tried (the section "What was tried"); what could not be is at the end
 
 ## Operations and events
 
-| Operation                           | Does                                                                                                 | Today                        |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `session.create { worktree }`       | makes one for the session, on a branch if given, from a base if given                                | the same                     |
-| `session.delete { removeWorktree }` | removes it with the session, under rule 5                                                            | the same, without the checks |
-| `worktree.list { workspace }`       | what is under `.agents/worktree` and what `git worktree list` knows, with the sessions that use each | none                         |
-| `worktree.remove { path }`          | removes a worktree no running session is in                                                          | none                         |
+| Operation                           | Does                                                                                                 | Today                     |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------- |
+| `session.create { worktree }`       | makes one for the session, on a branch if given, from a base if given                                | the same                  |
+| `session.delete { removeWorktree }` | removes it with the session, under rule 5                                                            | the same, with the checks |
+| `worktree.list { workspace }`       | what is under `.agents/worktree` and what `git worktree list` knows, with the sessions that use each | none                      |
+| `worktree.remove { path }`          | removes a worktree no running session is in                                                          | none                      |
 
 - **Event:** `session.changed` carries `worktree` when the agent entered or left one. No new item kind
   is needed: an `EnterWorktree` is a tool call in the turn as it is today.
@@ -113,7 +118,7 @@ tried were tried (the section "What was tried"); what could not be is at the end
 - `git.ts`: the path, its uniqueness, the self-ignoring file, and a lock for each repository
   (**done**, step 11).
 - `sessions.ts`: `Session.worktree` gaining `path` and `origin` (**done**, step 11); the removal
-  checks, the dropped session, the entered worktree.
+  checks and the dropped session (**done**, step 12), the entered worktree.
 - `harness/claude`: the two hooks, which it cannot take today: its `QueryOptions` (`sdk.ts`) has no
   `hooks`, and only settings-file command hooks are passed (`config.ts:292-318`). The option goes in
   `QueryOptions` and in the `query()` call of `claude-harness.ts:1365-1386`. It does not read `init`'s
@@ -127,7 +132,9 @@ tried were tried (the section "What was tried"); what could not be is at the end
 - A decision note, since `sessions.json`'s `worktree` changes shape (**done**, step 11). Old records
   stay readable.
 - Tests: `removeWorktree`, the cleanup when a session fails to start, a delete that removes it and a
-  fork's sharing are covered since step 11 (`worktree-session.test.ts`, `worktree-git.test.ts`).
+  fork's sharing are covered since step 11 (`worktree-session.test.ts`, `worktree-git.test.ts`); the
+  removal rules since step 12 (`worktree-removal.test.ts`, `worktree-users.test.ts`, and with real git
+  `integration/worktree.test.ts`). The page's dropped session has no test: `CycleApp` has no seam.
 
 ## What was tried
 

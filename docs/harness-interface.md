@@ -75,6 +75,9 @@ Read these against the glossary. Each one is a place the words are not yet one m
    `commands`, `subagents`, `mcpReconnect`); `stopTask` and `readContext` have none. The `hooks`
    and `features` flags gate methods the type does not mark optional. Nothing in this file ties a
    flag to its method.
+   _Today_ (step 17): `Sessions.declaration` (`AgentDeclaration`) says the same by operation id, beside
+   `capabilities`, and a test of each harness says a method is there exactly when its id is declared.
+   Nothing reads it yet; the two go to one in the steps that follow.
 5. **`HookSettings` is the type of `readHooks` and `setHooks`** (256, 258), and carries the process
    limits too (see the glossary). The name says hooks; the content says more.
 6. **`HarnessEvent` is two sets on one stream.** `AgentSessionEvent` is what an agent says of a
