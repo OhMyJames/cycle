@@ -114,3 +114,6 @@ dist
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Claude Code's local settings, which it rewrites without formatting them
+.claude/settings.local.json
