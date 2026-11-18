@@ -1,4 +1,6 @@
 import type {
+  Approval,
+  ApprovalResponse,
   CommandAction,
   AgentSession,
   Item,
@@ -19,7 +21,7 @@ import type {
   Turn,
   Usage,
 } from "@cycle/protocol";
-import { type ModeInfo, defineModes } from "@cycle/protocol";
+import { type ModeInfo, defineModes, formFields } from "@cycle/protocol";
 import type {
   WireCommandAction,
   WireConfigEdit,
@@ -805,4 +807,114 @@ export function toReviewTarget(target: ReviewTarget): unknown {
     default:
       throw new Error("Say what to review.");
   }
+}
+
+// What the app-server asks of the owner
+
+export function text(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** What the app-server asks of the owner, as the owner is asked it. Null for a request not known. */
+export function toApproval(
+  id: string,
+  method: string,
+  params: Record<string, unknown>,
+): Approval | null {
+  const itemId = text(params["itemId"]) ?? "";
+  const reason = text(params["reason"]);
+  switch (method) {
+    case "item/commandExecution/requestApproval":
+      return {
+        id,
+        kind: "command",
+        itemId,
+        command: text(params["command"]),
+        cwd: text(params["cwd"]),
+        reason,
+      };
+    case "item/fileChange/requestApproval":
+      return { id, kind: "fileChange", itemId, reason };
+    case "item/permissions/requestApproval":
+      return {
+        id,
+        kind: "permissions",
+        itemId,
+        reason,
+        summary: JSON.stringify(params["permissions"] ?? {}, null, 2),
+      };
+    case "item/tool/requestUserInput": {
+      const questions = (params["questions"] ?? []) as {
+        id: string;
+        header: string;
+        question: string;
+        isOther: boolean;
+        isSecret: boolean;
+        options: { label: string; description: string }[] | null;
+      }[];
+      return {
+        id,
+        kind: "question",
+        itemId,
+        questions: questions.map((question) => ({
+          id: question.id,
+          header: question.header,
+          question: question.question,
+          options: question.options ?? [],
+          allowOther: question.isOther || !question.options?.length,
+          secret: question.isSecret,
+        })),
+      };
+    }
+    case "mcpServer/elicitation/request": {
+      const url = params["mode"] === "url" ? text(params["url"]) : null;
+      const schema = url ? null : (params["requestedSchema"] ?? null);
+      return {
+        id,
+        kind: "elicitation",
+        itemId: id,
+        server: text(params["serverName"]) ?? "",
+        message: text(params["message"]) ?? "",
+        url,
+        // Only MCP's own form is drawn as fields; OpenAI's are shown as their schema.
+        fields: params["mode"] === "form" ? formFields(schema) : null,
+        schema: schema === null ? null : JSON.stringify(schema, null, 2),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** The owner's answer as the app-server takes it, for the request it came with. */
+export function approvalResult(
+  method: string,
+  params: Record<string, unknown>,
+  response: ApprovalResponse,
+): unknown {
+  if (method === "item/tool/requestUserInput") {
+    const answers = "answers" in response ? response.answers : {};
+    return {
+      answers: Object.fromEntries(
+        Object.entries(answers).map(([questionId, values]) => [questionId, { answers: values }]),
+      ),
+    };
+  }
+  const decision = "decision" in response ? response.decision : "cancel";
+  if (method === "mcpServer/elicitation/request") {
+    const accepted = decision === "accept" || decision === "acceptForSession";
+    return {
+      action: accepted ? "accept" : decision,
+      content: accepted && "decision" in response ? (response.content ?? null) : null,
+      _meta: null,
+    };
+  }
+  if (method === "item/permissions/requestApproval") {
+    const granted = decision === "accept" || decision === "acceptForSession";
+    return {
+      permissions: granted ? (params["permissions"] ?? {}) : {},
+      scope: decision === "acceptForSession" ? "session" : "turn",
+    };
+  }
+  return { decision };
 }

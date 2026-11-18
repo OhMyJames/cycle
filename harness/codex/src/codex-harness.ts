@@ -5,7 +5,6 @@ import type {
   AgentFeatures,
   HookSettings,
   AccountLogin,
-  Approval,
   ApprovalResponse,
   CreateSessionOptions,
   DirectoryEntry,
@@ -31,13 +30,13 @@ import type {
   TurnOptions,
   Usage,
 } from "@cycle/protocol";
-import { formFields } from "@cycle/protocol";
 import { rename } from "node:fs/promises";
 import { modelCatalog } from "./catalog.ts";
 import { type CodexConfig, CodexProcess } from "./process.ts";
 import type { JsonRpcPeer, RpcId } from "./rpc.ts";
 import {
   HARNESS_NAME,
+  approvalResult,
   checkServerName,
   mcpServerEdits,
   mcpToolEdits,
@@ -46,6 +45,8 @@ import {
   modePolicy,
   modeReach,
   toInput,
+  text,
+  toApproval,
   toCatalog,
   toItem,
   toMcpServers,
@@ -145,10 +146,6 @@ type Json = Record<string, unknown>;
 const EXEC_OUTPUT_CAP = 8 * 1024 * 1024;
 const LIST_PAGE = 100;
 const LIST_LIMIT = 2000;
-
-function text(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
 
 /**
  * Drives `codex app-server` over stdio. One process hosts many threads; each
@@ -525,7 +522,7 @@ export class CodexHarness implements Harness {
     const pending = this.approvals.get(approvalId);
     if (!pending) throw new Error(`unknown approval: ${approvalId}`);
     this.approvals.delete(approvalId);
-    pending.rpc.respond(pending.rpcId, this.approvalResult(pending, response));
+    pending.rpc.respond(pending.rpcId, approvalResult(pending.method, pending.params, response));
     this.emit({ type: "approval.resolved", sessionId: pending.sessionId, approvalId });
   }
 
@@ -1163,7 +1160,7 @@ export class CodexHarness implements Harness {
 
   private handleServerRequest(rpc: JsonRpcPeer, id: RpcId, method: string, params: Json): void {
     const sessionId = text(params["threadId"]);
-    const approval = sessionId ? this.toApproval(`${sessionId}:${id}`, method, params) : null;
+    const approval = sessionId ? toApproval(`${sessionId}:${id}`, method, params) : null;
     if (!sessionId || !approval) {
       if (method === "mcpServer/elicitation/request") {
         // Asked outside any session: declining lets the tool carry on without it.
@@ -1180,99 +1177,5 @@ export class CodexHarness implements Harness {
       turnId: text(params["turnId"]),
       approval,
     });
-  }
-
-  private toApproval(id: string, method: string, params: Json): Approval | null {
-    const itemId = text(params["itemId"]) ?? "";
-    const reason = text(params["reason"]);
-    switch (method) {
-      case "item/commandExecution/requestApproval":
-        return {
-          id,
-          kind: "command",
-          itemId,
-          command: text(params["command"]),
-          cwd: text(params["cwd"]),
-          reason,
-        };
-      case "item/fileChange/requestApproval":
-        return { id, kind: "fileChange", itemId, reason };
-      case "item/permissions/requestApproval":
-        return {
-          id,
-          kind: "permissions",
-          itemId,
-          reason,
-          summary: JSON.stringify(params["permissions"] ?? {}, null, 2),
-        };
-      case "item/tool/requestUserInput": {
-        const questions = (params["questions"] ?? []) as {
-          id: string;
-          header: string;
-          question: string;
-          isOther: boolean;
-          isSecret: boolean;
-          options: { label: string; description: string }[] | null;
-        }[];
-        return {
-          id,
-          kind: "question",
-          itemId,
-          questions: questions.map((question) => ({
-            id: question.id,
-            header: question.header,
-            question: question.question,
-            options: question.options ?? [],
-            allowOther: question.isOther || !question.options?.length,
-            secret: question.isSecret,
-          })),
-        };
-      }
-      case "mcpServer/elicitation/request": {
-        const url = params["mode"] === "url" ? text(params["url"]) : null;
-        const schema = url ? null : (params["requestedSchema"] ?? null);
-        return {
-          id,
-          kind: "elicitation",
-          itemId: id,
-          server: text(params["serverName"]) ?? "",
-          message: text(params["message"]) ?? "",
-          url,
-          // Only MCP's own form is drawn as fields; OpenAI's are shown as their schema.
-          fields: params["mode"] === "form" ? formFields(schema) : null,
-          schema: schema === null ? null : JSON.stringify(schema, null, 2),
-        };
-      }
-      default:
-        return null;
-    }
-  }
-
-  private approvalResult(pending: PendingApproval, response: ApprovalResponse): unknown {
-    if (pending.method === "item/tool/requestUserInput") {
-      const answers = "answers" in response ? response.answers : {};
-      return {
-        answers: Object.fromEntries(
-          Object.entries(answers).map(([questionId, values]) => [questionId, { answers: values }]),
-        ),
-      };
-    }
-    const decision = "decision" in response ? response.decision : "cancel";
-    if (pending.method === "mcpServer/elicitation/request") {
-      const accepted = decision === "accept" || decision === "acceptForSession";
-      return {
-        action: accepted ? "accept" : decision,
-        content: accepted && "decision" in response ? (response.content ?? null) : null,
-        _meta: null,
-      };
-    }
-    if (pending.method === "item/permissions/requestApproval") {
-      const granted = decision === "accept" || decision === "acceptForSession";
-      return {
-        permissions: granted ? (pending.params["permissions"] ?? {}) : {},
-        scope: decision === "acceptForSession" ? "session" : "turn",
-      };
-    }
-    return { decision };
   }
 }
