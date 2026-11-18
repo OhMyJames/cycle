@@ -564,9 +564,11 @@ export class CycleApp {
     const result = await opening({
       send: () => this.trySend(info.id, text, images, "auto", documents),
       // Only a session with no turn is dropped; the owner chose this, for one that never started.
+      // Its worktree was made for it alone, so it goes too (the branch stays); the daemon refuses
+      // if anything else uses the folder.
       drop: async () =>
         (this.conversation(info.id).get().state?.turns.length ?? 0) === 0 &&
-        (await this.deleteSession(info.id, false)),
+        (await this.deleteSession(info.id, info.worktree !== null)),
     });
     if (result === "dropped") {
       // Back to the draft it was sent from, with the prompt in its composer, unless the owner has
