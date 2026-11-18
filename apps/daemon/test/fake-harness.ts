@@ -101,7 +101,7 @@ export class FakeHarness implements Harness {
       cwd: options.cwd,
     });
   listSessions = async () => this.stored;
-  loadSession = async (sessionId: string) => {
+  loadSession: Harness["loadSession"] = async (sessionId) => {
     this.calls.push(`load ${sessionId}`);
     return { session: this.session(sessionId), turns: this.history, usage: this.loadedUsage };
   };

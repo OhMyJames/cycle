@@ -4,7 +4,15 @@
  * what is said there is read back from this side.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeHarness, projectFolder, sandboxCwd, sandboxName } from "@cycle/harness-claude";
@@ -39,25 +47,9 @@ let client: WireClient;
 let sandboxes: Awaited<ReturnType<typeof openSandboxes>>;
 let script: (prompt: string, results: number) => ClaudeReply;
 
-beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), "cycle-sbx-"));
-  project = join(root, "project");
-  mkdirSync(project);
-  mkdirSync(join(root, "codex"));
-  const sbx = installFakeSbx(root);
-  state = sbx.state;
-
-  script = (prompt) => ({ text: ["You said: ", prompt] });
-  codexModel = startMockModel(() => ({ text: ["Hello", " from codex"] }));
-  claude = startMockClaude(root, (prompt, results) => script(prompt, results));
-  tools = startTools("sandbox-test-tools-key");
-  providers = await openProviders(
-    diskFile(join(root, "home", "providers.json")),
-    "gateway-token",
-    join(root, "home", "provider-models.json"),
-  );
-  sandboxes = await openSandboxes(root, { ...process.env, ...claude.env, ...sbx.env });
-  daemon = await startDaemon({
+/** The daemon over the folders of this test, as it starts again after being stopped. */
+const start = () =>
+  startDaemon({
     tools,
     providers: providers.store,
     sandboxes,
@@ -76,6 +68,26 @@ beforeAll(async () => {
     ),
     home: join(root, "home"),
   });
+
+beforeAll(async () => {
+  root = mkdtempSync(join(tmpdir(), "cycle-sbx-"));
+  project = join(root, "project");
+  mkdirSync(project);
+  mkdirSync(join(root, "codex"));
+  const sbx = installFakeSbx(root);
+  state = sbx.state;
+
+  script = (prompt) => ({ text: ["You said: ", prompt] });
+  codexModel = startMockModel(() => ({ text: ["Hello", " from codex"] }));
+  claude = startMockClaude(root, (prompt, results) => script(prompt, results));
+  tools = startTools("sandbox-test-tools-key");
+  providers = await openProviders(
+    diskFile(join(root, "home", "providers.json")),
+    "gateway-token",
+    join(root, "home", "provider-models.json"),
+  );
+  sandboxes = await openSandboxes(root, { ...process.env, ...claude.env, ...sbx.env });
+  daemon = await start();
   client = connect(daemon.url);
   await client.opened;
 });
@@ -133,7 +145,7 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
     mode: "acceptEdits",
     sandbox: "standard",
   });
-  expect(session).toMatchObject({ harness: "claude", sandbox: name });
+  expect(session).toMatchObject({ harness: "claude", environment: "standard", sandbox: name });
   expect(readFileSync(join(state, "names"), "utf8")).toBe(`${name}\n`);
   await client.call("session.open", { sessionId: session.id });
 
@@ -171,7 +183,10 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
     ["userMessage", "command", "agentMessage"],
   ]);
   const { sessions } = await client.call("session.list", { archived: false });
-  expect(sessions.find((info) => info.id === session.id)).toMatchObject({ sandbox: name });
+  expect(sessions.find((info) => info.id === session.id)).toMatchObject({
+    environment: "standard",
+    sandbox: name,
+  });
 });
 
 test("a second session in the folder shares its sandbox, and one outside a sandbox runs here", async () => {
@@ -270,4 +285,37 @@ test("a sign-in goes to sbx and is not given back", async () => {
   expect(readFileSync(join(state, "secrets"), "utf8")).toBe("anthropic sk-ant-test-123\n");
   expect(readFileSync(join(state, "asked"), "utf8")).not.toContain("sk-ant-test-123");
   expect(readFileSync(join(root, "home", "sandboxes.json"), "utf8")).not.toContain("sk-ant-test");
+});
+
+test("a daemon started over a file that kept only each container's name finds each session's environment", async () => {
+  const listed = async () => (await client.call("session.list", { archived: false })).sessions;
+  const environments = new Map(
+    (await listed()).flatMap((info) =>
+      info.sandbox && info.environment ? [[info.id, info.environment] as const] : [],
+    ),
+  );
+  expect([...environments.values()]).toContain("standard");
+  expect([...environments.values()]).toContain("node-projects");
+  client.close();
+  await daemon.stop();
+  // What a daemon of before `environment` left: the names, and no environment.
+  const file = join(root, "home", "sessions.json");
+  const kept = JSON.parse(readFileSync(file, "utf8")) as {
+    sessions: Record<string, { environment?: string; sandbox?: string }>;
+  };
+  for (const id of environments.keys()) {
+    expect(kept.sessions[id]?.sandbox).toBeDefined();
+    delete kept.sessions[id]?.environment;
+  }
+  writeFileSync(file, JSON.stringify(kept));
+  daemon = await start();
+  client = connect(daemon.url);
+  await client.opened;
+  // The daemon recovered each from the made book, where nothing else says it. A session with no
+  // turn yet is the agent's to list only once it has one.
+  const after = new Map((await listed()).map((info) => [info.id, info.environment]));
+  const recovered = [...environments].filter(([id]) => after.has(id));
+  for (const [id, environment] of recovered) expect(after.get(id)).toBe(environment);
+  expect(recovered.map(([, environment]) => environment)).toContain("standard");
+  expect(recovered.map(([, environment]) => environment)).toContain("node-projects");
 });

@@ -17,6 +17,7 @@ export {
   SandboxEnvironments,
   SandboxError,
   type SandboxesFile,
+  environmentOfSandbox,
   newSandboxesFile,
   sandboxBook,
 } from "./sandboxes.ts";

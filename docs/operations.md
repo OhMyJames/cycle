@@ -83,7 +83,7 @@ makes `session.list` and `session.delete` optional.
 | ------------------------------ | ------------------------------------------------------ | ----------------------------------------- |
 | `agent.start`, `agent.dispose` | brings the agent up, lets it go                        | `start`, `dispose`                        |
 | `agent.declare`                | says what it can do and which options it offers        | `capabilities`, `listModels`, `listModes` |
-| `session.create`               | a session in a workspace, with options                 | `createSession`                           |
+| `session.create`               | a session in a workspace, its options and environment  | `createSession`                           |
 | `session.load`                 | a stored session into memory, with its turns and usage | `loadSession`                             |
 | `session.list`                 | the agent's sessions                                   | `listSessions`                            |
 | `session.delete`               | removes it for good                                    | `deleteSession`                           |

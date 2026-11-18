@@ -1,7 +1,7 @@
 # Agent Note: A local sandbox holds the agent only
 
 Status: accepted
-Date: 2026-11-14, revised 2026-11-15
+Date: 2026-11-14, revised 2026-11-15 and 2026-11-18
 Basis: The owner asked for sessions in Docker sandboxes, local first (2026-11-14). Read from Docker's
 documentation of `sbx` (docs.docker.com/ai/sandboxes and /reference/cli/sbx) on that day, and checked
 against `sbx` 0.53 on this machine on 2026-11-15. The owner then asked that neither the project's path
@@ -21,7 +21,9 @@ A local sandbox mounts the session's folder at a path of the sandbox's own. So o
 - `session.create` takes `sandbox: true`. The harness finds or makes one sandbox for the folder
   (`sbx create --name cycle-<folder>-<hash> claude <empty folder> <folder>:<the sandbox's path> ...`)
   and the session keeps its name, in `sessions.json` (`sandbox`) and on `SessionInfo`. Every turn is
-  given the name again, so a daemon that started later knows where the session runs. The empty
+  given the name again, so a daemon that started later knows where the session runs. (Revised
+  2026-11-18: the session keeps the environment's id; see
+  2026-11-18-a-session-records-its-environment.) The empty
   folder is the workspace `sbx` insists on naming itself, which says nothing of the project; each
   sandbox has one, named by a hash of its own.
 - The sandbox sees the folder at `/home/agent/workspace/<the folder's name>`, so no path of this

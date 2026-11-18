@@ -27,6 +27,8 @@ import {
   SandboxEnvironments,
   SandboxError,
   type SandboxesFile,
+  environmentOfSandbox,
+  sandboxBook,
 } from "./sandboxes.ts";
 import {
   LaunchError,
@@ -255,6 +257,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   });
   const usage = new UsageLedger(usageFile, Date.now);
   const git = new Git((argv, execOptions) => harness.exec(argv, execOptions));
+  const sandboxStore = options.sandboxes?.store;
   const hub = new SessionHub({
     harness,
     meta,
@@ -262,6 +265,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     usage,
     git,
     legacyWorktrees: join(home, "worktrees"),
+    ...(sandboxStore
+      ? {
+          environmentOfSandbox: (name: string, cwd: string) =>
+            environmentOfSandbox(
+              name,
+              cwd,
+              sandboxBook(sandboxStore),
+              sandboxStore.value.environments.map((one) => one.id),
+            ),
+        }
+      : {}),
     schedule: realDelay,
     now: Date.now,
     log: (line) => console.error(`[cycle] ${line}`),
