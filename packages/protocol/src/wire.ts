@@ -135,7 +135,9 @@ export interface Methods {
       mode?: PermissionMode;
       /** Make a worktree for it, on a branch of this name when given. */
       worktree?: { branch?: string; base?: string };
-      /** Run its agent in a sandbox of this environment, by id. Not with a worktree. */
+      /** Run its agent in this environment of the owner's, by id. Not with a worktree. */
+      environment?: string;
+      /** The same, as it was asked before `environment`; `environment` is read first. */
       sandbox?: string;
       /** Folders beyond `cwd` its agent may reach, when the agent can. Not with a sandbox. */
       directories?: string[];

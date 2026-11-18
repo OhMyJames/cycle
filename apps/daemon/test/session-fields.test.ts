@@ -154,6 +154,7 @@ test("with nothing kept by Cycle, the agent's values stand and Cycle's fields ta
     failed: false,
     branch: "agent-branch",
     worktree: null,
+    environment: null,
     sandbox: "agent-sandbox",
     sandboxCwd: "/home/agent/workspace/x",
     directories: [],

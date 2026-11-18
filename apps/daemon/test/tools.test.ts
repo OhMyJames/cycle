@@ -16,6 +16,7 @@ const info = (id: string, title: string, updatedAt: number): Session => ({
   failed: false,
   branch: null,
   worktree: null,
+  environment: null,
   sandbox: null,
   sandboxCwd: null,
   directories: [],

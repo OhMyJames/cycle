@@ -51,6 +51,11 @@ export interface TurnOptions {
   model?: string;
   effort?: string;
   mode?: PermissionMode;
+  /**
+   * The environment the session runs in, by id, from which the harness names the container its agent
+   * runs in. Left out, and with no `sandbox`, it runs on this machine.
+   */
+  environment?: string;
   /** The sandbox the session's agent runs in, by name. Left out, it runs on this machine. */
   sandbox?: string;
   /** Folders beyond the session's own its agent may reach, for an agent whose capabilities say so. */
@@ -68,7 +73,7 @@ export interface CreateSessionOptions extends TurnOptions {
   cwd: string;
   /**
    * Run its agent in a sandbox of this environment of the owner's, by id, which the harness finds
-   * or makes for the folder.
+   * or makes for the folder. `environment` says the same.
    */
   sandboxed?: string;
 }

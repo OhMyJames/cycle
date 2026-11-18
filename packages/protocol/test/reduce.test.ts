@@ -23,6 +23,7 @@ const info: Session = {
   failed: false,
   branch: null,
   worktree: null,
+  environment: null,
   sandbox: null,
   sandboxCwd: null,
   directories: [],

@@ -48,7 +48,14 @@ import {
 } from "./config.ts";
 import { ClaudeConfiguration, type ClaudeConfigOptions } from "./configuration.ts";
 import type { OwnerPlugin } from "./plugins.ts";
-import { type Sandboxes, claudeHomeOf, isContained, projectFolder, sandboxCwd } from "./sandbox.ts";
+import {
+  type Sandboxes,
+  claudeHomeOf,
+  isContained,
+  projectFolder,
+  sandboxCwd,
+  sandboxName,
+} from "./sandbox.ts";
 import { agentBegins, turnOrigin } from "./tasks.ts";
 import {
   atHome,
@@ -424,8 +431,9 @@ export class ClaudeHarness implements Sessions, AgentReads {
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<AgentSession> {
-    const sandbox = options.sandboxed
-      ? await this.sandboxes().ensure(options.cwd, { environment: options.sandboxed })
+    const environment = options.sandboxed ?? options.environment;
+    const sandbox = environment
+      ? await this.sandboxes().ensure(options.cwd, { environment })
       : null;
     const id = this.newId();
     const at = this.now();
@@ -500,7 +508,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
   ): Promise<{ session: AgentSession; turns: Turn[]; usage: Usage | null }> {
     const known = await this.find(sessionId);
     this.asked.set(sessionId, options);
-    if (options.sandbox) known.sandbox = options.sandbox;
+    this.placed(known, options);
     if (options.directories) known.directories = options.directories;
     if (known.sandbox && known.stored) await this.adopt(sessionId, known);
     const at = this.now();
@@ -1212,6 +1220,18 @@ export class ClaudeHarness implements Sessions, AgentReads {
     throw new Error("This session is not in Claude Code's history.");
   }
 
+  /**
+   * Where a session runs, as it is told: the environment it is in, which names its container when no
+   * name is known (one found in a sandbox's own home is the truth), and the name as an older daemon
+   * kept it, which wins when given.
+   */
+  private placed(known: Known, options: TurnOptions): void {
+    if (!known.sandbox && options.environment) {
+      known.sandbox = sandboxName(known.cwd, options.environment);
+    }
+    if (options.sandbox) known.sandbox = options.sandbox;
+  }
+
   /** The SDK as the session's conversation is kept: its sandbox's home, or the owner's. */
   private sdkFor(known: Known): ClaudeSdk {
     const sandbox = known.sandbox;
@@ -1286,7 +1306,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
   private async running(sessionId: string, options: TurnOptions): Promise<Running> {
     const known = await this.find(sessionId);
     // A daemon that started since the session was made is told where it runs.
-    if (options.sandbox) known.sandbox = options.sandbox;
+    this.placed(known, options);
     if (options.directories) known.directories = options.directories;
     const model = options.model ?? known.model;
     const effort = options.effort ?? (await this.defaultEffort(model));

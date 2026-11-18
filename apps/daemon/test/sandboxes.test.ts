@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
+import { sandboxName } from "@cycle/harness-claude";
 import type { SandboxEnvironment, SandboxEnvironmentDraft } from "@cycle/protocol";
 import {
   JsonStore,
   SandboxEnvironments,
   type SandboxesFile,
+  environmentOfSandbox,
   newSandboxesFile,
   sandboxBook,
 } from "../src/index.ts";
@@ -109,4 +111,31 @@ test("what was made of each sandbox is kept with the environments", async () => 
   expect(JSON.parse(written()).made["cycle-app-1"].environment).toBe("standard");
   book.setMade("cycle-app-1", null);
   expect(book.made("cycle-app-1")).toBeNull();
+});
+
+test("the environment a container was made for is the candidate that makes its name", async () => {
+  const { book } = await setup();
+  const name = sandboxName("/Users/me/app", "node");
+  const lookup = (stored: string, cwd = "/Users/me/app", ids = ["standard", "node"]) =>
+    environmentOfSandbox(stored, cwd, book, ids);
+  // The owner's environments are tried when the made book has nothing.
+  expect(lookup(name)).toBe("node");
+  // What the made book says is tried first, and kept when its environment was removed.
+  book.setMade(name, { environment: "gone", version: "v", hosts: [] });
+  expect(lookup(name)).toBe("node");
+  expect(lookup(sandboxName("/Users/me/app", "gone"))).toBeNull();
+  book.setMade(sandboxName("/Users/me/app", "gone"), {
+    environment: "gone",
+    version: "v",
+    hosts: [],
+  });
+  expect(lookup(sandboxName("/Users/me/app", "gone"))).toBe("gone");
+  // A container made again with its environment gone says "": not an id.
+  book.setMade(name, { environment: "", version: "v", hosts: [] });
+  expect(lookup(name)).toBe("node");
+  expect(lookup(name, "/Users/me/app", ["standard"])).toBeNull();
+  // A folder of the same name in another path makes another name.
+  expect(lookup(name, "/Users/other/app")).toBeNull();
+  // A name from before environments was the folder's alone, and no environment makes it.
+  expect(lookup("cycle-app-1a2b3c4d")).toBeNull();
 });

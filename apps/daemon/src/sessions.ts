@@ -76,7 +76,12 @@ export interface SessionMeta {
   model?: string;
   effort?: string | null;
   worktree?: StoredWorktree;
-  /** The sandbox its agent runs in, by name. */
+  /** The environment its agent runs in, by id: the owner's choice. Kept by Cycle alone. */
+  environment?: string;
+  /**
+   * The sandbox its agent runs in, by name: kept by daemons before `environment`. It is read to
+   * recover the environment, and written until the page and the daemon pass the environment alone.
+   */
   sandbox?: string;
   /** Folders beyond its own its agent may reach. */
   directories?: string[];
@@ -104,6 +109,12 @@ export interface HubOptions {
   git: Git;
   /** Where older daemons made worktrees: one stored without a `path` was made here. */
   legacyWorktrees: string;
+  /**
+   * The environment a sandbox's name was made for, from a record of before sessions kept their
+   * environment: the container's name and its folder in, an environment's id out, null when none
+   * makes it. Left out, none is known.
+   */
+  environmentOfSandbox?: (name: string, cwd: string) => string | null;
   schedule: Delay;
   now(): number;
   /** Takes a line for the daemon's log. Never a prompt or an answer: ids, names and times. */
@@ -187,6 +198,8 @@ export class SessionHub {
   private readonly infos = new Map<string, Session>();
   private readonly live = new Map<string, Live>();
   private readonly loading = new Map<string, Promise<Live>>();
+  /** Sessions whose container has no environment that makes its name: said in the log once. */
+  private readonly unplaced = new Set<string>();
   private queueIds = 0;
   private epochs = 0;
 
@@ -268,12 +281,13 @@ export class SessionHub {
     const settings = this.options.settings();
     let cwd = params.cwd;
     let worktree: WorktreeInfo | undefined;
-    if (params.sandbox && params.worktree) {
+    const environment = params.environment ?? params.sandbox;
+    if (environment && params.worktree) {
       // A worktree's history is in its repository's folder, which its sandbox would not hold.
       throw new SessionError("A session in a sandbox works in the folder itself, not a worktree.");
     }
     const directories = [...new Set(params.directories ?? [])].filter((path) => path !== cwd);
-    if (directories.length && params.sandbox) {
+    if (directories.length && environment) {
       // A sandbox holds the session's folder alone.
       throw new SessionError("A session in a sandbox reaches its own folder only.");
     }
@@ -301,7 +315,7 @@ export class SessionHub {
         mode,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
-        ...(params.sandbox ? { sandboxed: params.sandbox } : {}),
+        ...(environment ? { sandboxed: environment } : {}),
         ...(directories.length ? { directories } : {}),
       });
     } catch (error) {
@@ -315,6 +329,7 @@ export class SessionHub {
         ...(params.model ? { model: params.model } : {}),
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
+        ...(environment ? { environment } : {}),
         ...(session.sandbox ? { sandbox: session.sandbox } : {}),
         ...(directories.length ? { directories } : {}),
         ...(scheduleId ? { scheduleId } : {}),
@@ -450,6 +465,7 @@ export class SessionHub {
   async rewind(sessionId: string, turnId: string, files = false): Promise<void> {
     const live = await this.rewindable(sessionId, turnId);
     if (files) {
+      this.requirePlace(this.info(sessionId));
       const done = await this.options.harness.rewindFiles(sessionId, turnId, false);
       if (!done.possible) {
         throw new SessionError(done.error ?? "The files could not be put back.");
@@ -478,6 +494,7 @@ export class SessionHub {
   /** What going back before a turn would do to the files. Nothing is changed. */
   async previewRewind(sessionId: string, turnId: string): Promise<FileRewind> {
     await this.rewindable(sessionId, turnId);
+    this.requirePlace(this.info(sessionId));
     return this.options.harness.rewindFiles(sessionId, turnId, true);
   }
 
@@ -495,6 +512,7 @@ export class SessionHub {
 
   async compact(sessionId: string): Promise<void> {
     await this.ensureLive(sessionId);
+    this.requirePlace(this.info(sessionId));
     await this.options.harness.compactSession(sessionId);
   }
 
@@ -598,6 +616,7 @@ export class SessionHub {
         ...(sourceMeta.model ? { model: sourceMeta.model } : {}),
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
+        ...(source.environment ? { environment: source.environment } : {}),
         ...(source.sandbox ? { sandbox: source.sandbox } : {}),
         ...(source.directories.length ? { directories: source.directories } : {}),
       };
@@ -682,8 +701,65 @@ export class SessionHub {
     if (live) this.apply(live, { type: "notice", sessionId, level, message: text });
   }
 
+  /**
+   * The environment a session was chosen to run in: the one kept, else the one a container's name
+   * recovers, which is then kept so it outlives the environment. Undefined when the record names a
+   * container whose environment is not known, said once in the log, with ids only.
+   */
+  private environmentOf(sessionId: string, cwd: string | undefined): string | undefined {
+    const meta = this.options.meta.value.sessions[sessionId];
+    if (meta?.environment) return meta.environment;
+    if (!meta?.sandbox || cwd === undefined) return undefined;
+    const found = this.options.environmentOfSandbox?.(meta.sandbox, cwd) ?? null;
+    if (found) {
+      this.options.meta.update((file) => {
+        const kept = file.sessions[sessionId];
+        if (kept) kept.environment = found;
+      });
+      return found;
+    }
+    if (!this.unplaced.has(sessionId)) {
+      this.unplaced.add(sessionId);
+      this.options.log(`session ${sessionId} has a sandbox whose environment is unknown`);
+    }
+    return undefined;
+  }
+
+  /**
+   * Where a session's agent is told it runs. A record that names a container no environment makes is
+   * told nothing, so that nothing of its conversation is moved into a container and none starts
+   * anywhere; its turns are refused. Where its folder is not known yet, the name is given as it was.
+   */
+  private placeOf(
+    sessionId: string,
+    cwd: string | undefined,
+  ): Pick<TurnOptions, "environment" | "sandbox"> {
+    const environment = this.environmentOf(sessionId, cwd);
+    const sandbox = this.options.meta.value.sessions[sessionId]?.sandbox;
+    if (environment) return { environment, ...(sandbox ? { sandbox } : {}) };
+    return cwd === undefined && sandbox ? { sandbox } : {};
+  }
+
+  /**
+   * The environment to run a session in, which is refused when its record names a container whose
+   * environment is gone: never outside the container instead.
+   */
+  private requirePlace(info: Session): string | undefined {
+    const environment = this.environmentOf(info.id, info.cwd);
+    if (!environment && this.options.meta.value.sessions[info.id]?.sandbox) {
+      throw new SessionError(
+        "Its sandbox's environment is gone. Choose an environment for the session.",
+      );
+    }
+    // Recovered as the turn starts: the session says so from now on.
+    if (environment && environment !== info.environment) this.setInfo({ ...info, environment });
+    return environment;
+  }
+
   /** Joins what the harness says of a session with what the daemon keeps. */
   private remember(session: AgentSession, archived: boolean): Session {
+    // First: recovering the environment of an older record writes it, and the record is read after.
+    const environment = this.environmentOf(session.id, session.cwd);
     const meta = this.options.meta.value.sessions[session.id] ?? {};
     const known = this.infos.get(session.id);
     const live = this.live.get(session.id);
@@ -704,6 +780,7 @@ export class SessionHub {
       worktree: meta.worktree
         ? wholeWorktree(meta.worktree, session.cwd, this.options.legacyWorktrees)
         : null,
+      environment: environment ?? null,
       sandbox: meta.sandbox ?? session.sandbox,
       sandboxCwd: session.sandboxCwd,
       directories: meta.directories ?? [],
@@ -753,7 +830,7 @@ export class SessionHub {
     const loaded = await this.options.harness.loadSession(sessionId, {
       ...(mode ? { mode } : {}),
       ...(meta.model ? { model: meta.model } : {}),
-      ...(meta.sandbox ? { sandbox: meta.sandbox } : {}),
+      ...this.placeOf(sessionId, known?.cwd),
       ...(meta.directories?.length ? { directories: meta.directories } : {}),
     });
     const existing = this.live.get(sessionId);
@@ -842,10 +919,12 @@ export class SessionHub {
     live.overtaken = false;
     this.syncActivity(live);
     try {
+      const environment = this.requirePlace(info);
       await start({
         mode: info.mode,
         ...(info.model ? { model: info.model } : {}),
         ...(info.effort ? { effort: info.effort } : {}),
+        ...(environment ? { environment } : {}),
         ...(info.sandbox ? { sandbox: info.sandbox } : {}),
         ...(info.directories.length ? { directories: info.directories } : {}),
       });

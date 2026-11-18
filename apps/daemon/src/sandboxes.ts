@@ -1,4 +1,9 @@
-import type { MadeSandbox, SandboxBook, SandboxSpec } from "@cycle/harness-claude";
+import {
+  type MadeSandbox,
+  type SandboxBook,
+  type SandboxSpec,
+  sandboxName,
+} from "@cycle/harness-claude";
 import type { SandboxEnvironment, SandboxEnvironmentDraft, SandboxSecret } from "@cycle/protocol";
 import type { JsonStore } from "./store.ts";
 
@@ -124,6 +129,25 @@ export function sandboxBook(store: JsonStore<SandboxesFile>): SandboxBook {
         else delete file.made[name];
       }),
   };
+}
+
+/**
+ * The environment a container was made for, from the name an older daemon kept for a session. A name
+ * hashes the folder's path and the environment's id and cannot be undone, so each candidate is tried
+ * and the one that makes the name is kept: the environment the made book says the container was made
+ * with, then each of the owner's. Null when none does: the environment was removed with its book entry,
+ * or the name is older than environments (the folder's alone).
+ */
+export function environmentOfSandbox(
+  name: string,
+  cwd: string,
+  book: SandboxBook,
+  ids: string[],
+): string | null {
+  const made = book.made(name)?.environment;
+  // A container made again with its environment gone says "": that is not an id.
+  const candidates = made ? [made, ...ids] : ids;
+  return candidates.find((id) => sandboxName(cwd, id) === name) ?? null;
 }
 
 /**

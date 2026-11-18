@@ -133,7 +133,7 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
     mode: "acceptEdits",
     sandbox: "standard",
   });
-  expect(session).toMatchObject({ harness: "claude", sandbox: name });
+  expect(session).toMatchObject({ harness: "claude", environment: "standard", sandbox: name });
   expect(readFileSync(join(state, "names"), "utf8")).toBe(`${name}\n`);
   await client.call("session.open", { sessionId: session.id });
 
@@ -171,7 +171,10 @@ test("a session's agent runs in the folder's sandbox, and its conversation is ke
     ["userMessage", "command", "agentMessage"],
   ]);
   const { sessions } = await client.call("session.list", { archived: false });
-  expect(sessions.find((info) => info.id === session.id)).toMatchObject({ sandbox: name });
+  expect(sessions.find((info) => info.id === session.id)).toMatchObject({
+    environment: "standard",
+    sandbox: name,
+  });
 });
 
 test("a second session in the folder shares its sandbox, and one outside a sandbox runs here", async () => {
