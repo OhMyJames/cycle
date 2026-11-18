@@ -11,8 +11,8 @@ import {
 import { FakeHarness, manualSchedule } from "./fake-harness.ts";
 
 /**
- * Where a session runs: the container's name the harness answered, which the daemon keeps and gives
- * again with every turn.
+ * Where a session runs: the environment chosen, which the daemon keeps and gives the harness with
+ * every turn, and the container's name an older daemon kept, which is read to recover it.
  */
 
 const memory = () => ({ read: async () => null, write: async () => {} });
@@ -253,4 +253,18 @@ test("a session whose environment comes back is recovered at its next turn", asy
   };
   await hub.send("s1", { text: "go", images: [] }, "auto");
   expect(told).toEqual(["node"]);
+});
+
+test("a request from an older page that asks for a container is refused, never run on this machine", async () => {
+  const { harness, hub, meta } = await setup();
+  const created: unknown[] = [];
+  harness.createSession = async (options) => {
+    created.push(options);
+    return harness.session("boxed", { cwd: options.cwd });
+  };
+  const old = { cwd: "/project", sandbox: "standard" } as never;
+  await expect(hub.create(old)).rejects.toThrow("This page is older than the daemon");
+  // Neither the harness nor the record heard of it.
+  expect(created).toEqual([]);
+  expect(meta.value.sessions).toEqual({});
 });

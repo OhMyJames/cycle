@@ -214,10 +214,18 @@ export class CycleApp {
   /** What each session's agent guesses its owner sends next. */
   readonly nextPrompts = new Store<Record<string, string>>({});
   readonly providers = new Store<ModelProvider[]>([]);
-  /** The owner's sandbox environments, and whether a sandbox can be made on the daemon's machine. */
-  readonly sandboxes = new Store<{ available: boolean; environments: SandboxEnvironment[] }>({
+  /**
+   * The owner's sandbox environments, and whether a sandbox can be made on the daemon's machine.
+   * `loaded` is false until the list has come: an empty list before that says nothing is removed.
+   */
+  readonly sandboxes = new Store<{
+    available: boolean;
+    environments: SandboxEnvironment[];
+    loaded: boolean;
+  }>({
     available: false,
     environments: [],
+    loaded: false,
   });
   readonly usage = new Store<DayUsage | null>(null);
   readonly terminals = new Store<Record<string, TerminalInfo[]>>({});
@@ -938,7 +946,7 @@ export class CycleApp {
         () => {},
       );
       void this.request("sandboxes.list", {}).then(
-        (sandboxes) => this.sandboxes.set(sandboxes),
+        (sandboxes) => this.sandboxes.set({ ...sandboxes, loaded: true }),
         () => {},
       );
       void this.refreshAccount();
@@ -1100,7 +1108,11 @@ export class CycleApp {
         this.providers.set(event.providers);
         break;
       case "sandboxes.changed":
-        this.sandboxes.update((value) => ({ ...value, environments: event.environments }));
+        this.sandboxes.update((value) => ({
+          ...value,
+          environments: event.environments,
+          loaded: true,
+        }));
         break;
       case "terminals.changed":
         this.terminals.update((all) => ({ ...all, [event.sessionId ?? ""]: event.terminals }));

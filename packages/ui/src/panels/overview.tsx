@@ -30,8 +30,9 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 export function OverviewPanel({ info }: { info: Session }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
+  // No row until the owner's environments are known: an unlisted id may only be one not yet listed.
   const environment = useStore(app.sandboxes, (value) =>
-    environmentLabel(value.environments, info.environment),
+    environmentLabel(value.environments, info.environment, value.loaded),
   );
   const mode = useStore(app.modes, (modes) => modeNamed(modes, info.harness, info.mode));
   const { plan, usage, turns, running } = useStore(app.conversation(info.id), (conversation) => ({

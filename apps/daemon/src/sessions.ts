@@ -295,6 +295,10 @@ export class SessionHub {
 
   /** `scheduleId` marks a session a schedule's run starts. */
   async create(params: Params<"session.create">, scheduleId?: string): Promise<Session> {
+    // An older page asks for a container as `sandbox`. It is refused, never started on this machine.
+    if ((params as { sandbox?: unknown }).sandbox !== undefined) {
+      throw new SessionError("This page is older than the daemon. Reload it.");
+    }
     const { harness, git, now } = this.options;
     const settings = this.options.settings();
     let cwd = params.cwd;
