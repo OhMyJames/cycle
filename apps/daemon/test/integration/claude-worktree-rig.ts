@@ -6,7 +6,14 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeHarness, type ClaudeHarnessOptions } from "@cycle/harness-claude";
-import type { AgentSession, HarnessEvent } from "@cycle/protocol";
+import type {
+  AgentSession,
+  ExecOptions,
+  ExecResult,
+  HarnessEvent,
+  WorktreeEntry,
+} from "@cycle/protocol";
+import { Git } from "../../src/index.ts";
 import { type ClaudeReply, type MockClaude, startMockClaude } from "./mock-claude.ts";
 
 export const SONNET = "claude-sonnet-5-5";
@@ -38,6 +45,8 @@ export interface Rig {
   repo: string;
   claude: MockClaude;
   script: Script;
+  /** The folder of each session begun, which the port makes its worktrees from. */
+  sessions: Map<string, string>;
   /** A harness over the scripted model; each is its own Claude Code processes. */
   harness(options?: Partial<ClaudeHarnessOptions>): ClaudeHarness;
   /** Runs git in the repository (or in `cwd`) and answers what it printed. */
@@ -54,6 +63,7 @@ export function makeRig(): Rig {
     root,
     repo,
     script: () => ({ text: ["done"] }),
+    sessions: new Map(),
     claude: startMockClaude(root, (prompt, results) => rig.script(prompt, results)),
     harness: (options = {}) => new ClaudeHarness({ env: rig.claude.env, ...options }),
     git: (...args) => rig.gitIn(repo, ...args),
@@ -78,8 +88,10 @@ export function makeRig(): Rig {
 }
 
 /** A new session in `cwd`. */
-export function begin(harness: ClaudeHarness, cwd: string): Promise<AgentSession> {
-  return harness.createSession({ cwd, model: SONNET, mode: MODE });
+export async function begin(rig: Rig, harness: ClaudeHarness, cwd: string): Promise<AgentSession> {
+  const session = await harness.createSession({ cwd, model: SONNET, mode: MODE });
+  rig.sessions.set(session.id, cwd);
+  return session;
 }
 
 /** Sends a prompt and answers every event of the session until the turn ends. */
@@ -121,3 +133,51 @@ export function toolResults(requests: unknown[]): string[] {
   }
   return out;
 }
+
+/** The daemon's `Git` over real processes, as `worktree.test.ts` makes it. */
+async function exec(argv: string[], options: ExecOptions): Promise<ExecResult> {
+  const child = Bun.spawn(argv, {
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { exitCode: await child.exited, stdout, stderr };
+}
+
+/**
+ * The daemon's side of the port, made of `Git` alone: a worktree of the session's folder on a branch
+ * `cycle/<name>`, as `SessionHub` makes it. What it was asked is in `calls`; a name in `refuse` is
+ * refused with its words.
+ */
+export function portOf(sessions: Map<string, string>, refuse: Record<string, string> = {}) {
+  const git = new Git(exec);
+  const calls: string[] = [];
+  const port: WorktreeEntry = {
+    enter: async ({ sessionId, name, helper }) => {
+      calls.push(`enter ${name} helper=${helper}`);
+      const why = refuse[name];
+      if (why) throw new Error(why);
+      const cwd = sessions.get(sessionId);
+      if (!cwd) throw new Error("That session is not known.");
+      const made = await git.addWorktree({ cwd, branch: `cycle/${name}` });
+      return { path: made.worktree.path };
+    },
+    leave: async ({ path, helper }) => {
+      calls.push(`leave ${path} helper=${helper}`);
+    },
+  };
+  return { port, calls };
+}
+
+/** What a session told of where its agent works, in order. */
+export const workingDirs = (events: HarnessEvent[]): string[] =>
+  events.flatMap((event) =>
+    event.type === "session.changed" && event.patch.workingDir ? [event.patch.workingDir] : [],
+  );
+
+/** Every tool result the scripted model was sent, as one text. */
+export const modelSaw = (rig: Rig): string => toolResults(rig.claude.requests).join("\n");
