@@ -28,12 +28,12 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 - **Decided**: one `Session` type. Its fields are grouped by who keeps them, and where both say the
   same thing (model, effort, sandbox, title, preview) the card says who wins.
 - **Decided**: the session's activity (`SessionActivity`) is `idle | running | requires_action`, as in
-  the SDK (`session_state_changed`) and ACP version 2 (`state_update`). "Stored" becomes a separate
-  flag, "loaded". The name is not `SessionState`: that is taken, by the whole folded session in
-  `reduce.ts`.
-  "Error" goes: it was the last turn's outcome. Today `SessionStatus` has five values and mixes the
-  three. `error` is set in one place, `statusOf` (`sessions.ts:777`); `stored` at `sessions.ts:674` (a
-  session not live), `:496` (archived) and `:763` (let go of from memory). Read them before changing it.
+  the SDK (`session_state_changed`) and ACP version 2 (`state_update`). Whether the daemon holds the
+  session in memory is a separate flag, `loaded`, and a session that is not loaded is `idle`. The
+  name is not `SessionState`: that is taken, by the whole folded session in `reduce.ts`.
+  The last turn's outcome is a flag too, `failed`: true when the session is not working and its last
+  turn ended in failure (or its agent exited under it), false once the next turn starts. It is read
+  from the turn, not from the activity, so a failed session is `idle` with `failed: true`.
 
 **Turn.** One prompt and everything the agent does until it stops.
 

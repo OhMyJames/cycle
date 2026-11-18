@@ -343,15 +343,6 @@ export type SessionActivity =
   /** A turn is blocked on the owner: an approval or a question. */
   | "requires_action";
 
-export type SessionStatus =
-  /** Known to the harness but not loaded into memory. */
-  | "stored"
-  | "idle"
-  | "running"
-  /** A turn is blocked on the owner: an approval or a question. */
-  | "waiting"
-  | "error";
-
 export interface WorktreeInfo {
   /** The repository the worktree was made from. */
   repo: string;
@@ -375,8 +366,7 @@ export interface Session {
   model: string;
   effort: string | null;
   mode: PermissionMode;
-  status: SessionStatus;
-  /** What it is doing. It stands beside `status`, which it replaces. */
+  /** What it is doing. */
   activity: SessionActivity;
   /** The daemon holds the session in memory. */
   loaded: boolean;

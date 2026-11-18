@@ -101,7 +101,6 @@ test("a turn streams to a client, and a late client gets the same state", async 
   const session = await client.call("session.create", { cwd: project, mode: "fullAccess" });
   expect(session).toMatchObject({
     model: "mock-model",
-    status: "idle",
     activity: "idle",
     mode: "fullAccess",
   });
@@ -140,7 +139,6 @@ test("a turn streams to a client, and a late client gets the same state", async 
   const { sessions } = await client.call("session.list", { archived: false });
   expect(sessions.find((row) => row.id === session.id)).toMatchObject({
     preview: "PROMPT:hello",
-    status: "idle",
     activity: "idle",
   });
   const renamed = await client.call("session.update", { sessionId: session.id, title: "Greeting" });

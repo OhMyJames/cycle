@@ -140,8 +140,8 @@ submission to a message when several clients share a session.
 | helper agents        | none                                              | `subagent_update`, `session_message`, state of the child's session                      |
 | extensibility        | custom `_` names for methods                      | open enums: unknown values use `_`; booleans become `{}` markers                        |
 
-Not settled in the sources: how a v2 `state_update` maps onto Cycle's `SessionStatus`
-(`stored|idle|running|waiting|error`), and which parts of the draft will change before it stabilizes.
+Not settled in the sources: how a v2 `state_update` maps onto Cycle's `SessionActivity`
+(`idle|running|requires_action`, with `loaded` and `failed` beside it), and which parts of the draft will change before it stabilizes.
 
 ## Only Cycle
 

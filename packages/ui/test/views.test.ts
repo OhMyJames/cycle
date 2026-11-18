@@ -62,7 +62,6 @@ test("the list puts what needs the owner first, then what runs, then by day", ()
     model: "m",
     effort: null,
     mode: "auto",
-    status: "idle",
     activity: "idle",
     loaded: true,
     failed: false,

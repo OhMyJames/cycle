@@ -19,7 +19,6 @@ import {
   type PermissionMode,
   type SessionState,
   type SessionActivity,
-  type SessionStatus,
   type Settings,
   type TokenCount,
   type TurnOptions,
@@ -171,7 +170,7 @@ const MAX_TAG = 40;
 export class SessionError extends Error {}
 
 /** What a session says of its state when the daemon does not hold it. */
-const STORED = { status: "stored", activity: "idle", loaded: false, failed: false } as const;
+const STORED = { activity: "idle", loaded: false, failed: false } as const;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -323,7 +322,6 @@ export class SessionHub {
     });
     const info: Session = {
       ...this.remember(session, false),
-      status: "idle",
       activity: "idle",
       loaded: true,
       failed: false,
@@ -522,7 +520,7 @@ export class SessionHub {
       }
       await harness.archiveSession(sessionId, params.archived);
       if (params.archived) this.drop(sessionId);
-      // Unarchiving a session opened archived leaves it held, yet reads stored until its next event.
+      // Unarchiving a session opened archived leaves it held, yet reads not loaded until its next event.
       info = { ...info, archived: params.archived, ...STORED };
     }
     if (params.pinned !== undefined) info = { ...info, pinned: params.pinned };
@@ -810,17 +808,9 @@ export class SessionHub {
     return this.activityOf(live) === "idle" && live.state.turns.at(-1)?.status === "failed";
   }
 
-  private statusOf(live: Live): SessionStatus {
-    const activity = this.activityOf(live);
-    if (activity === "requires_action") return "waiting";
-    if (activity === "running") return "running";
-    return this.failedOf(live) ? "error" : "idle";
-  }
-
   /** What a session held in memory says of its state. */
-  private activityFields(live: Live): Pick<Session, "status" | "activity" | "loaded" | "failed"> {
+  private activityFields(live: Live): Pick<Session, "activity" | "loaded" | "failed"> {
     return {
-      status: this.statusOf(live),
       activity: this.activityOf(live),
       loaded: true,
       failed: this.failedOf(live),
@@ -850,7 +840,7 @@ export class SessionHub {
     live.starting = true;
     live.origin = origin ?? null;
     live.overtaken = false;
-    this.syncStatus(live);
+    this.syncActivity(live);
     try {
       await start({
         mode: info.mode,
@@ -870,7 +860,7 @@ export class SessionHub {
         live.overtaken = false;
         if (activeTurn(live.state)) {
           busy();
-          this.syncStatus(live);
+          this.syncActivity(live);
           return;
         }
         return this.startTurn(live, start, origin, busy);
@@ -999,7 +989,7 @@ export class SessionHub {
     if (live.ring.length > RING_FRAMES) live.ring.splice(0, live.ring.length - RING_FRAMES);
     this.options.publish.frame(frame);
     for (const event of events) this.after(live, event);
-    this.syncStatus(live);
+    this.syncActivity(live);
   }
 
   private after(live: Live, event: SessionEvent): void {
@@ -1122,11 +1112,10 @@ export class SessionHub {
     });
   }
 
-  private syncStatus(live: Live): void {
+  private syncActivity(live: Live): void {
     const fields = this.activityFields(live);
     const info = live.state.info;
     if (
-      info.status !== fields.status ||
       info.activity !== fields.activity ||
       info.failed !== fields.failed ||
       info.loaded !== fields.loaded

@@ -178,10 +178,14 @@ Today `mcp.changed` stands for `extensions.changed`, and `options.changed` has n
 
 **Not the agent's:** the daemon derives the session's activity (`SessionActivity`) and tells it.
 
-- `running` from a turn's start to its end; `requires_action` while any approval or question is open;
-  `idle` otherwise, as `statusOf` does today, which also returns `error` when the last turn failed and counts a session that is starting as running. The SDK and ACP version 2 say it themselves; codex was
-  not seen to, so one derivation serves all.
-- "Loaded" is the daemon's knowledge of whether the agent holds the session in memory.
+- `running` from the prompt being sent to the turn's end (the turn's id is not known at first, so a
+  session that is starting counts as running); `requires_action` while any approval or question is
+  open; `idle` otherwise. The SDK and ACP version 2 say it themselves; codex was not seen to, so one
+  derivation serves all.
+- `failed` is true when the session is `idle` and its last turn ended in failure, or its agent exited
+  under it. It is false once the next turn starts.
+- `loaded` is the daemon's knowledge of whether it holds the session in memory. A session that is not
+  loaded is `idle`.
 - The queue (`queue.updated`) is Cycle's. A prompt sent in a turn is queued by the daemon and sent
   when the turn ends, or put into the turn with `turn.steer` where the agent declares it.
 

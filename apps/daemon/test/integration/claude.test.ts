@@ -137,7 +137,6 @@ test("both agents' models are offered, and a session runs on the agent its model
   expect(session).toMatchObject({
     harness: "claude",
     model: SONNET,
-    status: "idle",
     activity: "idle",
   });
   const events = await turn(session.id, "hello there");
