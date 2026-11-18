@@ -357,6 +357,35 @@ export interface WorktreeInfo {
   origin: "owner" | "agent";
 }
 
+/** One worktree of a repository, as the owner sees it: git's own list, and who uses it. */
+export interface WorktreeEntry {
+  /** Its root, as git lists it: the identity `worktree.remove` takes. */
+  path: string;
+  /** Null: a detached HEAD. */
+  branch: string | null;
+  head: string;
+  /** From a session's record of it; null when no session has one. */
+  base: string | null;
+  origin: "owner" | "agent" | null;
+  /** Under `.agents/worktree` or the older place: the ones Cycle removes. */
+  managed: boolean;
+  locked: boolean;
+  /** Registered, and its folder is gone. */
+  missing: boolean;
+  /** Uncommitted or untracked files in it; null when its folder is gone or git could not tell. */
+  dirty: boolean | null;
+  sessions: WorktreeUser[];
+}
+
+/** A session that has a worktree on record or works in it. */
+export interface WorktreeUser {
+  id: string;
+  title: string | null;
+  preview: string;
+  activity: SessionActivity;
+  archived: boolean;
+}
+
 export interface Session {
   id: string;
   harness: string;

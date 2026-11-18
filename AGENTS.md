@@ -24,6 +24,12 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
   Claude Code's real home (`~/.claude`, which `CLAUDE_CONFIG_DIR` moves). Tests make their own under a
   temporary folder. `~/.cycle` belongs to old-cycle: never write there.
 - `session.delete` removes a conversation for good, whichever tool started it. Clients confirm first.
+- `worktree.remove` removes a worktree's folder for good, uncommitted work included. Clients confirm
+  first. The daemon removes only a worktree git lists for that repository directly under
+  `.agents/worktree/` (or `CYCLE_HOME/worktrees/<repository>/`), never the main checkout, one with
+  another worktree inside it, or one a session it knows of is working in. A turn that starts as git
+  removes it, or a session the daemon has not listed since it started and has no stored path for, is
+  not seen.
 - `fullAccess` mode runs with no sandbox and never asks. It is never a default, and nothing turns it on
   for the owner.
 - No token, key or account secret may reach a page's storage beyond the connection token, or a log.
@@ -177,7 +183,9 @@ The allowed dependencies live in `RULES` in `scripts/lib/boundaries.ts`, and the
   `.gitignore` of its own, worktree changes lock for each repository, the page's search leaves it
   out, and the session's record keeps the worktree's `path` and `origin`. A project that is a
   subfolder of its repository gets the worktree at the repository's root and starts in the same
-  subfolder inside it. Why:
+  subfolder inside it. The owner lists a workspace's worktrees with `worktree.list` and removes one with
+  `worktree.remove` (`apps/daemon/src/worktrees.ts`, git's own list read each time); worktrees made by
+  hand, or by an agent's own tool elsewhere, are listed and not removed. Why:
   [decision note](.agents/notes/2026-11-18-worktrees-live-in-the-workspace.md).
 - `SessionHub` (`apps/daemon/src/sessions.ts`) owns session state. It folds harness events, batches
   streamed text into one frame per 16ms, numbers frames per session, and keeps the last 512 so a client

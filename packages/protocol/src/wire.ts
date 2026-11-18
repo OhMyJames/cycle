@@ -29,6 +29,7 @@ import type {
   SkillInfo,
   SlashCommand,
   TokenCount,
+  WorktreeEntry,
 } from "./model.ts";
 import type { SessionState } from "./reduce.ts";
 import type { Schedule, ScheduleInput, ScheduleRun } from "./schedule.ts";
@@ -377,6 +378,22 @@ export interface Methods {
     params: { cwd: string; message: string };
     result: { commit: string };
   };
+
+  /**
+   * The worktrees of a workspace's repository, and the sessions that use each. `workspace` is any
+   * folder of the repository; the answer's is its main checkout. Worktrees made by hand are listed
+   * too, not `managed`.
+   */
+  "worktree.list": {
+    params: { workspace: string };
+    result: { workspace: string; worktrees: WorktreeEntry[] };
+  };
+  /**
+   * Removes a worktree's folder for good, uncommitted work included; its branch is kept. Clients
+   * confirm first. `path` must be one `worktree.list` gives for that `workspace`, and a managed one.
+   * Refused while a session is working in it.
+   */
+  "worktree.remove": { params: { workspace: string; path: string }; result: Empty };
 
   "terminal.list": {
     params: { sessionId: string | null };

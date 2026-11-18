@@ -145,12 +145,26 @@ the main agent's.
 
 Cycle makes them for both agents; see [worktree](worktree.md).
 
-| Operation                           | Does                                                                |
-| ----------------------------------- | ------------------------------------------------------------------- |
-| `session.create { worktree }`       | makes one for the session, on a branch and from a base if given     |
-| `session.delete { removeWorktree }` | removes it with the session, unless another uses it or one is in it |
-| `worktree.list { workspace }`       | the worktrees of a workspace and the sessions that use each         |
-| `worktree.remove { path }`          | removes one that no running session is in                           |
+| Operation                             | Does                                                                |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `session.create { worktree }`         | makes one for the session, on a branch and from a base if given     |
+| `session.delete { removeWorktree }`   | removes it with the session, unless another uses it or one is in it |
+| `worktree.list { workspace }`         | the worktrees of a workspace and the sessions that use each         |
+| `worktree.remove { workspace, path }` | removes one that no running session is in                           |
+
+`worktree.list` answers git's own list for the workspace's repository, read each time: every linked
+worktree, with its branch, whether it is locked or its folder gone, whether it holds uncommitted work,
+and the sessions that use it, archived ones included. `workspace` is any folder of the repository; the
+answer gives its main checkout. `managed` means directly under `.agents/worktree/` (or, of the older
+place, `<repository>/<branch>` under `CYCLE_HOME/worktrees/`): a worktree made by hand, one inside
+another worktree, or one an agent's own tool made under `.claude/worktrees`, is listed and not
+`managed`. `worktree.remove` takes the `workspace` as well, since a worktree whose folder is gone
+cannot say which repository it was of, and its `path` must be one the list gives, character for
+character. It refuses before changing anything: a worktree not `managed`, one with another worktree
+inside it, a locked one, one whose `.git` file is gone (git would then remove the checkout above
+it), or one a session is working in; idle and archived sessions do not block. It discards
+uncommitted work, since the client confirmed, and keeps the branch. The check is of the sessions the
+daemon knows; a turn that starts as git removes the folder is not seen.
 
 An agent that can enter a worktree itself (Claude Code) declares `worktree.enter`; Cycle then tells
 the page by `session.changed` when it enters or leaves one.

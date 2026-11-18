@@ -1,7 +1,17 @@
 export { type Daemon, type DaemonOptions, DAEMON_VERSION, startDaemon } from "./daemon.ts";
 export { Harnesses, NotSupported, type OtherAgent } from "./harnesses.ts";
 export { claudeConfigBook } from "./claude-config.ts";
-export { Git, GitError, parseNameStatus, parseNumstat, parseBranches, branchSlug } from "./git.ts";
+export {
+  Git,
+  GitError,
+  type ListedWorktree,
+  parseNameStatus,
+  parseNumstat,
+  parseBranches,
+  parseWorktrees,
+  branchSlug,
+} from "./git.ts";
+export { Worktrees, type WorktreesOptions } from "./worktrees.ts";
 export {
   SessionHub,
   type HubOptions,
