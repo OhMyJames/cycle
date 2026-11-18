@@ -44,8 +44,12 @@ seven optional methods and `listModels` and `listModes`.
 _Today_ (step 17, [the note](../.agents/notes/2026-11-18-an-agent-declares-what-it-can-do-by-operation.md)):
 `AgentDeclaration` (`packages/protocol/src/declaration.ts`) exists beside `AgentCapabilities`, which is still
 what the daemon and the page read; `daemon.info` gives both. It has `operations`, `inputs`, `extensions`
-and `account`, without `options` and `environments` (steps 18, 09 and 10) and without `machine` (no reader
-yet). Two ids are provisional: `session.directories`, which is a parameter of `session.create`, and
+and `account`, without `environments` (steps 09 and 10) and without `machine` (no reader yet). Options are
+declared as a list too, but **read apart** from it, as the models are today: `Sessions.options()` answers
+`Option[]`, `options.list` gives each agent's, and `options.changed` says one agent's changed
+([the note](../.agents/notes/2026-11-18-options-are-one-declared-list.md); step 18, first pull request).
+Nothing reads them yet, and `listModels` and `listModes` stay until the last pull request. Two ids are
+provisional: `session.directories`, which is a parameter of `session.create`, and
 `settings.features`, codex's `features.*` switches, which step 19 moves to AgentSettings.
 
 ```
@@ -53,7 +57,7 @@ Agent declares
   name            "codex", "claude"
   operations      the ids it does beyond the core, such as "session.fork"
   inputs          what a prompt may carry: image, pdf, text
-  options         Option[]
+  options         Option[]   read apart from the declaration: models change and can fail to be read
   extensions      which of mcp, plugins, skills, hooks, subagents it has, each "edit" or "read"
   account         "in Cycle", "its own command line", or none
   machine         whether it gives files, commands and terminals
@@ -175,9 +179,9 @@ two tools are not given to its agent.
 
 Two sets, which exist as the types `AgentSessionEvent` and `AgentEvent` (their union, `HarnessEvent`,
 is the one stream a harness reports on). Two kinds below are still to do: `option.changed` (today
-`mode.changed`) and `extensions.changed` (today `mcp.changed`); `options.changed` has no producer
-yet. The rest carry their names, `agent.exited` and `question.requested` and `question.resolved`
-since their own changes. An agent's event tells what it knows; Cycle adds its own and numbers a
+`mode.changed`) and `extensions.changed` (today `mcp.changed`); `options.changed` is a wire event the
+daemon sends (step 18), not yet an agent's. The rest carry their names, `agent.exited` and
+`question.requested` and `question.resolved` since their own changes. An agent's event tells what it knows; Cycle adds its own and numbers a
 session's into frames.
 
 **Of a session** (each carries a session id):
@@ -197,7 +201,8 @@ session's into frames.
 
 **Of an agent** (no session id): `options.changed` (the models offered changed), `extensions.changed`
 (a server started, failed, finished a sign-in), `account.changed`, `limits.changed`, `agent.exited`.
-Today `mcp.changed` stands for `extensions.changed`, and `options.changed` has no producer yet.
+Today `mcp.changed` stands for `extensions.changed`, and `options.changed` is produced by the daemon, one
+for each agent, where `models.changed` is.
 
 **Not the agent's:** the daemon derives the session's activity (`SessionActivity`) and tells it.
 

@@ -1,4 +1,5 @@
 import type { AgentDeclaration } from "./declaration.ts";
+import type { Option } from "./option.ts";
 import type {
   AgentCapabilities,
   AgentFeatures,
@@ -234,6 +235,13 @@ export interface Sessions {
   listModels(): Promise<ModelInfo[]>;
   /** The modes a session of this agent can be in. */
   listModes(): ModeInfo[];
+  /**
+   * What a session of this agent chooses, as one list: its models, with their efforts under them,
+   * and its modes. Read apart from the declaration, since the models change and can fail to be read.
+   * shortcut: built from `listModels` and `listModes` beside them; upgrade when they are removed
+   * and an agent declares its options itself.
+   */
+  options(): Promise<Option[]>;
 
   /**
    * Puts the files back as they were before `turnId`, or with `dryRun` says what that would change.
@@ -325,11 +333,22 @@ export interface Agents
   extends
     Omit<
       Sessions,
-      "capabilities" | "declaration" | "rewindFiles" | "listCommands" | "readContext" | "tagSession"
+      | "capabilities"
+      | "declaration"
+      | "rewindFiles"
+      | "listCommands"
+      | "readContext"
+      | "tagSession"
+      | "options"
     >,
     Machine {
   /** The agents running, the main one first. */
   harnesses(): AgentInfo[];
+  /**
+   * Each agent's options, the main one first. The main agent's failure to read them is an error;
+   * another agent's is left out.
+   */
+  options(): Promise<{ agent: string; options: Option[] }[]>;
   /** An agent's Connector. What it cannot do, it refuses saying so. */
   connector(harness?: string): Connector;
   account(harness?: string): Account;

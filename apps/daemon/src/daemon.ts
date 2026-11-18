@@ -189,6 +189,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       (models) => push({ type: "models.changed", models }),
       () => {},
     );
+    harness.options().then(
+      (agents) => {
+        for (const { agent, options: list } of agents) {
+          push({ type: "options.changed", agent, options: list });
+        }
+      },
+      () => {},
+    );
   };
   const providers = new Providers(options.providers, (list: ModelProvider[]) => {
     push({ type: "providers.changed", providers: list });
@@ -529,6 +537,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     },
 
     "models.list": async () => ({ models: await harness.listModels() }),
+    "options.list": async () => ({ agents: await harness.options() }),
     "modes.list": () => ({ modes: harness.listModes() }),
     "skills.list": async ({ cwd, harness: name }) => ({
       skills: await harness.connector(name).listSkills(cwd),

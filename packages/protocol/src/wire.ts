@@ -32,6 +32,7 @@ import type {
   TokenCount,
   WorktreeEntry,
 } from "./model.ts";
+import type { Option } from "./option.ts";
 import type { SessionState } from "./reduce.ts";
 import type { Schedule, ScheduleInput, ScheduleRun } from "./schedule.ts";
 
@@ -247,6 +248,8 @@ export interface Methods {
   };
 
   "models.list": { params: Empty; result: { models: ModelInfo[] } };
+  /** What a session of each agent chooses, as one list for each agent, the main one first. */
+  "options.list": { params: Empty; result: { agents: { agent: string; options: Option[] }[] } };
   /** Every agent's modes. A session can be in those of the agent it runs on. */
   "modes.list": { params: Empty; result: { modes: ModeInfo[] } };
   "skills.list": { params: { cwd: string } & OfHarness; result: { skills: SkillInfo[] } };
@@ -464,6 +467,8 @@ export type DaemonEvent =
   /** What the agent guesses the owner sends next in a session; null once it is stale. */
   | { type: "suggestion.changed"; sessionId: string; suggestion: string | null }
   | { type: "models.changed"; models: ModelInfo[] }
+  /** The options of one agent changed, as its models do with the owner's providers and account. */
+  | { type: "options.changed"; agent: string; options: Option[] }
   | { type: "providers.changed"; providers: ModelProvider[] }
   | { type: "sandboxes.changed"; environments: SandboxEnvironment[] }
   | {

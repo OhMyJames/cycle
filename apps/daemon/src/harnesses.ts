@@ -18,6 +18,7 @@ import {
   type AgentSession,
   type ModeInfo,
   type ModelInfo,
+  type Option,
   type PromptInput,
   type ReviewTarget,
   type SlashCommand,
@@ -238,6 +239,26 @@ export class Harnesses implements Agents {
 
   answerQuestion(questionId: string, answer: QuestionAnswer): void {
     (this.questions.get(questionId) ?? this.main).answerQuestion(questionId, answer);
+  }
+
+  /**
+   * Each agent's options, the main one first. One that fails to say is left out and said in the log,
+   * as for its models; the main agent's failure is the caller's.
+   */
+  async options(): Promise<{ agent: string; options: Option[] }[]> {
+    const lists = await Promise.all(
+      this.agents.map((agent) =>
+        agent.options().then(
+          (options) => ({ agent: agent.name, options }),
+          (error: unknown) => {
+            if (agent === this.main) throw error;
+            this.onLog(`${agent.name} could not list its options: ${message(error)}`);
+            return null;
+          },
+        ),
+      ),
+    );
+    return lists.filter((list) => list !== null);
   }
 
   async listModels(): Promise<ModelInfo[]> {
