@@ -243,6 +243,11 @@
 .session-row:is(:hover, :has(:focus-visible), :has([aria-expanded="true"])) .session-row-title {
   mask-image: linear-gradient(to left, transparent 24px, black 48px);
 }
+/* The marks at a row's end give way to its menu, which is drawn over them. */
+.session-row:is(:hover, :has(:focus-visible), :has([aria-expanded="true"]))
+  :is(.schedule-mark, .worktree-mark) {
+  opacity: 0;
+}
 .session-row .rename {
   flex: 1;
   min-width: 0;
@@ -302,9 +307,6 @@
   flex: none;
   width: 14px;
   height: 14px;
-}
-.mark.place {
-  color: var(--text-muted);
 }
 .dot {
   width: 8px;
@@ -788,8 +790,9 @@
   background: var(--surface-selected);
   color: var(--text-primary);
 }
-/* The mark of a session a schedule started, after its title. */
-.schedule-mark {
+/* The marks after a row's title: a session a schedule started, a session that works in a worktree. */
+.schedule-mark,
+.worktree-mark {
   display: flex;
   flex: none;
   margin-left: 4px;

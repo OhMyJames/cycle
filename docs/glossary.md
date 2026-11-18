@@ -61,7 +61,8 @@ them is in [operations](operations.md).
     the agent entered (Claude Code's `EnterWorktree`, through its `WorktreeCreate` callback) is where
     the agent works while the session's `cwd` stays the folder the agent's record is kept under. The
     record has `path` and `origin`. The owner lists a workspace's worktrees, and removes the ones
-    Cycle made, in Settings, Worktrees.
+    Cycle made, in Settings, Worktrees. A session's row has a mark when it works in one, and the
+    dialog that deletes a session says who else uses its worktree and what removing it loses.
 
 ## What an agent may do
 

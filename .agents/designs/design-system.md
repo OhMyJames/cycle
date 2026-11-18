@@ -60,6 +60,9 @@ not the most colorful.
 
 - The sidebar is 248 wide, 200 to 420 by its edge; a double-click on the edge puts it back. Rows
   are 28 high, 2 apart, with the icon in a 24 column and text from 36.
+- Where a session works is a fact of its row, not a status: a session in a worktree has a branch
+  mark after its title, always, so it shows beside a running, waiting or unread row too. The lead
+  column is for what the session is doing, and its mark has a name a screen reader says.
 - The list of sessions is one Tab stop. Up and down move between its rows, Home and End to its
   ends, right to the buttons at a row's end and left back.
 - A session that waits for the owner has "Answer" on its row, in amber. It opens the approval card
@@ -136,7 +139,8 @@ looks at on the left, its own actions and Close on the right. Rows are 28 high, 
 
 - **Overview** is facts, a label in the muted color and its value in the primary one. A fact that
   goes somewhere is a control: the folder opens Files, a server opens the Connector. A server has
-  a dot in its status color.
+  a dot in its status color. For a session in a worktree it also says the worktree, who made it
+  and its repository, with a button to Settings, Worktrees.
 - **Changes** lists files as cards. A file's header carries its icon, its counts and its status
   letter, and stays at the top while its diff scrolls. A diff has no git header lines: a later
   part of the file starts under a thin band that names where it is.

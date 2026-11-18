@@ -1,6 +1,129 @@
-import type { WorktreeEntry, WorktreeUser } from "@cycle/protocol";
-import { basename } from "./format.ts";
+import { type Session, type WorktreeEntry, type WorktreeUser, workingDir } from "@cycle/protocol";
+import { basename, tailPath, tildePath } from "./format.ts";
 import { plainMentions } from "./suggest.ts";
+
+/** The folder a session belongs to in the list: its repository, not its worktree. */
+export function projectOf(info: Session): string {
+  return info.worktree?.repo ?? info.cwd;
+}
+
+/**
+ * The sessions an `@` can mention, those of `folder` first, each group newest first. A session is
+ * of a folder by its project, so `folder` is a project, never a worktree's own path.
+ */
+export function mentionable(
+  sessions: readonly Session[],
+  except: string | null,
+  folder: string,
+): Session[] {
+  return sessions
+    .filter((other) => other.id !== except && !other.archived)
+    .toSorted(
+      (a, b) =>
+        Number(projectOf(b) === folder) - Number(projectOf(a) === folder) ||
+        b.updatedAt - a.updatedAt,
+    );
+}
+
+/** What removing a worktree loses, in one place for the list's confirmation and the delete dialog. */
+const LOST = {
+  dirty: "Uncommitted changes in it are lost.",
+  unknown: "Git could not say whether it has uncommitted changes. Any are lost.",
+  missing: "Its folder is already gone. This removes git's record of it.",
+  noBranch: "Commits no branch has are lost with the folder.",
+} as const;
+
+const LOCKED = "This worktree is locked. Unlock it with git (git worktree unlock) to remove it.";
+
+/** Who made a worktree, said the same wherever it is shown. */
+export function originNote(origin: WorktreeEntry["origin"]): string | null {
+  return origin === "owner"
+    ? "Made for a session"
+    : origin === "agent"
+      ? "Entered by an agent"
+      : null;
+}
+
+/**
+ * The folder the composer's `@` reads files from: where the agent works now (`workingDir`) for a
+ * session, the project for a draft. Not the session's `cwd` alone: a worktree the agent entered is
+ * where its files are, and the folder the session began in is the main checkout.
+ */
+export function searchRoot(
+  info: Pick<Session, "cwd" | "worktree"> | null | undefined,
+  draft: { cwd: string } | null | undefined,
+): string {
+  return info ? workingDir(info) : (draft?.cwd ?? "");
+}
+
+/** The project the composer ranks sessions by: a session's repository, a draft's folder. */
+export function mentionProject(
+  info: Session | null | undefined,
+  draft: { cwd: string } | null | undefined,
+): string {
+  return info ? projectOf(info) : (draft?.cwd ?? "");
+}
+
+/**
+ * Which worktrees the sessions are in, as one string that changes when a session enters, leaves or
+ * changes its worktree and not when anything else about a session does.
+ */
+export function worktreeKey(sessions: readonly Pick<Session, "id" | "worktree">[]): string {
+  return sessions
+    .flatMap((each) => (each.worktree ? [`${each.id}=${each.worktree.path}`] : []))
+    .toSorted()
+    .join("\n");
+}
+
+/** The mark of a row whose session works in a worktree: its name for a screen reader and its tip. */
+export interface RowMark {
+  label: string;
+  branch: string;
+  byAgent: boolean;
+}
+
+export function worktreeMark(worktree: Session["worktree"]): RowMark | null {
+  if (!worktree) return null;
+  const byAgent = worktree.origin === "agent";
+  return {
+    label: `Worktree ${worktree.branch}${byAgent ? ", entered by the agent" : ""}`,
+    branch: worktree.branch,
+    byAgent,
+  };
+}
+
+/** A path as the overview shows it: shortened, with the whole one for the tip. */
+export interface ShownPath {
+  text: string;
+  full: string;
+}
+
+function showPath(path: string, home: string | undefined): ShownPath {
+  return { text: tailPath(tildePath(path, home)), full: path };
+}
+
+/**
+ * What the overview says of where a session works. "Folder" is where the agent is now, which the
+ * files panel reads too; for a session with a worktree the worktree's own folder and its
+ * repository are said apart, and who made it.
+ */
+export function worktreeFacts(
+  info: Pick<Session, "cwd" | "worktree">,
+  home: string | undefined,
+): {
+  folder: ShownPath;
+  worktree: (ShownPath & { note: string | null }) | null;
+  repository: ShownPath | null;
+} {
+  const { worktree } = info;
+  return {
+    folder: showPath(workingDir(info), home),
+    worktree: worktree
+      ? { ...showPath(worktree.path, home), note: originNote(worktree.origin) }
+      : null,
+    repository: worktree ? showPath(worktree.repo, home) : null,
+  };
+}
 
 /** What a session that uses a worktree is called: its title, else the start of its first prompt. */
 export function worktreeUserName(user: WorktreeUser): string {
@@ -51,20 +174,14 @@ export function describeWorktree(entry: WorktreeEntry): WorktreeView {
   const blocked = working
     ? `A session is working in this worktree: "${worktreeUserName(working)}". Stop it first.`
     : entry.locked
-      ? "This worktree is locked. Unlock it with git (git worktree unlock) to remove it."
+      ? LOCKED
       : null;
 
   const kept = entry.branch ? ` The branch ${entry.branch} is kept.` : "";
-  const lines = [
-    entry.missing
-      ? `Its folder is already gone. This removes git's record of it.${kept}`
-      : `The folder is removed.${kept}`,
-  ];
-  if (entry.branch === null) lines.push("Commits no branch has are lost with the folder.");
-  if (entry.dirty) lines.push("Uncommitted changes in it are lost.");
-  else if (entry.dirty === null && !entry.missing) {
-    lines.push("Git could not say whether it has uncommitted changes. Any are lost.");
-  }
+  const lines = [entry.missing ? `${LOST.missing}${kept}` : `The folder is removed.${kept}`];
+  if (entry.branch === null) lines.push(LOST.noBranch);
+  if (entry.dirty) lines.push(LOST.dirty);
+  else if (entry.dirty === null && !entry.missing) lines.push(LOST.unknown);
   if (users.length) {
     lines.push(
       `Used by: ${users.map((user) => user.label).join(", ")}. Their conversations stay, but their folder is gone.`,
@@ -73,12 +190,7 @@ export function describeWorktree(entry: WorktreeEntry): WorktreeView {
 
   return {
     name: entry.branch ?? "Detached",
-    origin:
-      entry.origin === "owner"
-        ? "Made for a session"
-        : entry.origin === "agent"
-          ? "Entered by an agent"
-          : null,
+    origin: originNote(entry.origin),
     marks,
     users,
     removal: { offered: entry.managed, blocked },
@@ -123,4 +235,58 @@ export function describeRemoval(
       ? null
       : "Cycle removes only the worktrees it made. Remove this one with git.");
   return { title: view.confirmation.title, lines: blocked ? [] : view.confirmation.lines, blocked };
+}
+
+/** The box "Also remove its worktree folder" of the dialog that deletes a session. */
+export interface WorktreeBox {
+  /** Whether the owner can check it. Only an offered box is ever sent as `removeWorktree`. */
+  state: "checking" | "offered" | "refused";
+  label: string;
+  /** What is lost, when it is offered: only what is true of the worktree. */
+  lines: string[];
+  /** Why it is not offered. */
+  why: string | null;
+}
+
+/**
+ * What the dialog that deletes a session offers of its worktree, made from `worktree.list` read as
+ * the dialog opened (null while it is being read; a string when it failed). It never offers what the
+ * daemon would refuse (`SessionHub.remove`): a session working in the worktree, or any other that
+ * uses it, which is stricter than the daemon in one case, a session only inside the folder, whose
+ * wire record does not say whether it names the worktree. The daemon stays the authority: a list
+ * that cannot be read, or has no such worktree, gives the box as it always was.
+ */
+export function describeSessionDelete(
+  info: Pick<Session, "id" | "worktree">,
+  read: WorktreeEntry[] | string | null,
+): WorktreeBox | null {
+  const { worktree } = info;
+  if (!worktree) return null;
+  const label = `Also remove its worktree folder (the branch ${worktree.branch} is kept)`;
+  if (read === null) {
+    return { state: "checking", label: "Checking its worktree…", lines: [], why: null };
+  }
+  const now = typeof read === "string" ? undefined : read.find((one) => one.path === worktree.path);
+  if (!now) return { state: "offered", label, lines: [], why: null };
+  const refused = (why: string): WorktreeBox => ({ state: "refused", label, lines: [], why });
+  const others = now.sessions.filter((user) => user.id !== info.id);
+  const working = others.find((user) => user.activity !== "idle");
+  if (working) {
+    return refused(
+      `A session is working in this worktree: "${worktreeUserName(working)}". Stop it first, or delete without removing the worktree.`,
+    );
+  }
+  const [shared] = others;
+  if (shared) {
+    return refused(
+      `Another session uses this worktree: "${worktreeUserName(shared)}". Delete without removing the worktree, or delete that one first.`,
+    );
+  }
+  if (now.locked) return refused(LOCKED);
+  const lines: string[] = [];
+  if (now.dirty) lines.push(LOST.dirty);
+  else if (now.dirty === null && !now.missing) lines.push(LOST.unknown);
+  if (now.missing) lines.push(LOST.missing);
+  if (now.branch === null) lines.push(LOST.noBranch);
+  return { state: "offered", label, lines, why: null };
 }

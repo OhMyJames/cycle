@@ -749,6 +749,13 @@ input::placeholder {
   font-size: var(--text-meta);
   line-height: var(--text-meta-line);
 }
+/* What the worktree box of a delete says, under the box and in line with its words. */
+.worktree-box-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 24px;
+}
 /* A command shown whole before it is kept, as a hook's. */
 .dialog-code {
   max-height: 160px;
@@ -865,6 +872,13 @@ input[type="checkbox"]:checked::after {
   background: var(--icon-on-action);
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8.4l2.6 2.6L12 5.4'/%3E%3C/svg%3E")
     center / 14px 14px no-repeat;
+}
+/* Disabled reads as off and still reads: its edge and its words go to the disabled color. */
+input[type="checkbox"]:disabled {
+  border-color: var(--text-disabled);
+}
+label:has(> input[type="checkbox"]:disabled) {
+  color: var(--text-disabled);
 }
 input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--border-focus);

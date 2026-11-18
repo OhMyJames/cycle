@@ -463,6 +463,11 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+/* What a fact says of itself, under it and at its right edge. */
+.fact-note {
+  margin-top: -2px;
+  text-align: right;
+}
 .fact-link {
   max-width: 100%;
   overflow: hidden;

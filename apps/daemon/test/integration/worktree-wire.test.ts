@@ -304,3 +304,21 @@ test("a worktree inside another is not managed, and the one holding it is not re
   expect(git("branch", "--list", "inner-sub")).toContain("inner-sub");
   await client.call("session.delete", { sessionId: made.id });
 }, 60_000);
+
+test("a locked worktree asked for with the delete: the conversation goes, the folder stays, and the answer says so", async () => {
+  const made = await client.call("session.create", {
+    cwd: project,
+    mode: "readOnly",
+    worktree: { branch: "feature/locked" },
+  });
+  const path = made.worktree?.path ?? "";
+  git("worktree", "lock", path);
+  await expect(
+    client.call("session.delete", { sessionId: made.id, removeWorktree: true }),
+  ).rejects.toThrow("The session is deleted, but its worktree could not be removed");
+  // A partial failure, not a refusal before anything changed: the page's dialog must say it first.
+  expect(existsSync(path)).toBe(true);
+  expect(await find(path)).toMatchObject({ locked: true, sessions: [] });
+  git("worktree", "unlock", path);
+  await client.call("worktree.remove", { workspace: project, path });
+}, 60_000);

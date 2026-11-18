@@ -51,6 +51,7 @@ import { type RemoteView, UNREACHABLE, isRemote } from "../lib/remote.ts";
 import { Store } from "./store.ts";
 import { draftKey, opening } from "../lib/opening.ts";
 import { plainMentions } from "../lib/suggest.ts";
+import { projectOf } from "../lib/worktrees.ts";
 import { attentionLabel } from "../lib/attention.ts";
 import { type Attachments, givenBack, keepAccepted } from "../lib/attach.ts";
 
@@ -182,10 +183,7 @@ function readPrefs(): Partial<Prefs> {
   }
 }
 
-/** The folder a session belongs to in the list: its repository, not its worktree. */
-export function projectOf(info: Session): string {
-  return info.worktree?.repo ?? info.cwd;
-}
+export { projectOf };
 
 export function sessionTitle(info: Session): string {
   return info.title || plainMentions(info.preview).split("\n")[0]?.slice(0, 80) || "New session";
@@ -688,24 +686,34 @@ export class CycleApp {
   }
 
   /**
-   * Reads a workspace's worktrees, and gives them back, or what went wrong. A reply for a workspace
-   * the page has since left is not kept.
+   * What a workspace's worktrees are now, or what went wrong, without showing it: the dialog that
+   * deletes a session asks as it opens, and Settings, Worktrees must not be moved to its workspace.
+   */
+  async readWorktrees(workspace: string): Promise<WorktreeEntry[] | string> {
+    try {
+      return (await this.request("worktree.list", { workspace })).worktrees;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /**
+   * Reads a workspace's worktrees into the store Settings shows, and gives them back, or what went
+   * wrong. A reply for a workspace the page has since left is not kept.
    */
   async loadWorktrees(workspace: string): Promise<WorktreeEntry[] | string> {
-    // shortcut: the list is read when opened and after each removal; upgrade when worktrees come and go while it is open (step 14's entered ones)
+    // shortcut: a worktree made by hand is read when the list is opened; upgrade when the daemon pushes worktree changes
     if (this.worktrees.get().workspace !== workspace) {
       this.worktrees.set({ workspace, worktrees: null, problem: null });
     }
-    let next: { worktrees: WorktreeEntry[] | null; problem: string | null };
-    try {
-      const answer = await this.request("worktree.list", { workspace });
-      next = { worktrees: answer.worktrees, problem: null };
-    } catch (error) {
-      next = { worktrees: null, problem: error instanceof Error ? error.message : String(error) };
-    }
+    const answer = await this.readWorktrees(workspace);
+    const next =
+      typeof answer === "string"
+        ? { worktrees: null, problem: answer }
+        : { worktrees: answer, problem: null };
     if (this.worktrees.get().workspace === workspace)
       this.worktrees.update((value) => ({ ...value, ...next }));
-    return next.worktrees ?? next.problem ?? "";
+    return answer;
   }
 
   /** Removes a worktree the owner confirmed, then reads the list again, whatever came of it. */

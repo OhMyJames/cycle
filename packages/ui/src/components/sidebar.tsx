@@ -1,7 +1,7 @@
-import type { Session } from "@cycle/protocol";
+import type { Session, WorktreeEntry } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   type CycleApp,
   type PageId,
@@ -21,6 +21,7 @@ import {
   tildePath,
 } from "../lib/format.ts";
 import { remoteWarning, whereLabel } from "../lib/remote.ts";
+import { describeSessionDelete, worktreeMark } from "../lib/worktrees.ts";
 import { ApprovalCard } from "./approval.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
@@ -54,7 +55,7 @@ export function groupSessions(sessions: Session[], now: number): Group[] {
   });
 }
 
-/** What a row leads with: what its session is doing, or else where it works. */
+/** What a row leads with: what its session is doing, if anything. Where it works is at its end. */
 function StatusMark({ info }: { info: Session }) {
   if (info.activity === "running") {
     return (
@@ -91,13 +92,6 @@ function StatusMark({ info }: { info: Session }) {
     return (
       <span className="mark" role="img" aria-label="New activity" title="New activity">
         <span className="dot unread" />
-      </span>
-    );
-  }
-  if (info.worktree) {
-    return (
-      <span className="mark place" title={`Worktree on ${info.worktree.branch}`}>
-        <Icon name="git-branch" size={14} />
       </span>
     );
   }
@@ -242,6 +236,7 @@ const SessionRow = memo(function SessionRow({
   const [renaming, setRenaming] = useState(false);
   const [tagging, setTagging] = useState(false);
   const title = sessionTitle(info);
+  const worktree = worktreeMark(info.worktree);
   const tags = app.capabilities(info.harness).tags;
   const tagEntries: MenuEntry[] = !tags
     ? []
@@ -359,6 +354,16 @@ const SessionRow = memo(function SessionRow({
               <Icon name="automation" size={12} />
             </span>
           ) : null}
+          {worktree ? (
+            <span
+              className="worktree-mark"
+              role="img"
+              aria-label={worktree.label}
+              title={worktree.label}
+            >
+              <Icon name="git-branch" size={12} />
+            </span>
+          ) : null}
         </button>
       )}
       {!renaming && !tagging && info.activity === "requires_action" && !active ? (
@@ -406,20 +411,52 @@ function projectEntries(app: CycleApp, projects: string[], current: string | nul
 function DeleteDialog({ info, onClose }: { info: Session; onClose(): void }) {
   const app = useApp();
   const [removeWorktree, setRemoveWorktree] = useState(false);
+  // The worktree as it is now, read as the dialog opens: who else uses it, what is lost with it.
+  const [read, setRead] = useState<WorktreeEntry[] | string | null>(null);
+  const repo = info.worktree?.repo;
+  useEffect(() => {
+    if (!repo) return;
+    let current = true;
+    void app.readWorktrees(repo).then((answer) => {
+      if (current) setRead(answer);
+    });
+    return () => {
+      current = false;
+    };
+  }, [app, repo]);
+  const box = describeSessionDelete(info, read);
+  // Only a box that was offered sends the removal, whatever was ticked before it was read.
+  const removing = box?.state === "offered" && removeWorktree;
+  const noted = Boolean(box?.why) || (box?.lines.length ?? 0) > 0;
+  const explained = useId();
   return (
     <Dialog label="Delete session" onClose={onClose}>
       <div className="dialog-body">
         <h2 className="dialog-title">Delete “{sessionTitle(info)}”?</h2>
         <p className="dialog-text">Its conversation is removed for good. This cannot be undone.</p>
-        {info.worktree ? (
-          <label className="row meta">
-            <input
-              type="checkbox"
-              checked={removeWorktree}
-              onChange={(event) => setRemoveWorktree(event.currentTarget.checked)}
-            />
-            Also remove its worktree folder (the branch {info.worktree.branch} is kept)
-          </label>
+        {box ? (
+          <>
+            <label className="row meta">
+              <input
+                type="checkbox"
+                checked={removing}
+                disabled={box.state !== "offered"}
+                aria-describedby={noted ? explained : undefined}
+                onChange={(event) => setRemoveWorktree(event.currentTarget.checked)}
+              />
+              {box.label}
+            </label>
+            {noted ? (
+              <div id={explained} className="worktree-box-notes">
+                {box.why ? <p className="caption tone-warning">{box.why}</p> : null}
+                {box.lines.map((line) => (
+                  <p key={line} className="caption secondary">
+                    {line}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
       <div className="dialog-actions">
@@ -431,7 +468,7 @@ function DeleteDialog({ info, onClose }: { info: Session; onClose(): void }) {
           className="button danger"
           onClick={() => {
             onClose();
-            void app.deleteSession(info.id, removeWorktree);
+            void app.deleteSession(info.id, removing);
           }}
         >
           Delete
