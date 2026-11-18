@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexHarness } from "@cycle/harness-codex";
@@ -233,5 +240,67 @@ test("a worktree a session is working in is refused, and once it is idle the rem
   // Idle, it does not block: the owner confirmed with the list's names in front of them.
   await client.call("worktree.remove", { workspace: project, path });
   expect(existsSync(path)).toBe(false);
+  await client.call("session.delete", { sessionId: made.id });
+}, 60_000);
+
+test("a worktree whose .git file is gone is not removed through the checkout above it", async () => {
+  const made = await client.call("session.create", {
+    cwd: project,
+    mode: "readOnly",
+    worktree: { branch: "feature/broken" },
+  });
+  const path = made.worktree?.path ?? "";
+  writeFileSync(join(path, "work.txt"), "uncommitted\n");
+  const link = readFileSync(join(path, ".git"), "utf8");
+  rmSync(join(path, ".git"));
+  // Git takes the folder for part of the main checkout, whose own tracked file must stay too.
+  await expect(client.call("worktree.remove", { workspace: project, path })).rejects.toThrow(
+    "This folder is not the root of its worktree",
+  );
+  expect(existsSync(join(path, "work.txt"))).toBe(true);
+  expect(existsSync(join(project, "hello.txt"))).toBe(true);
+  expect(git("worktree", "list", "--porcelain")).toContain(path);
+
+  // With its link back it is a worktree again, and goes.
+  writeFileSync(join(path, ".git"), link);
+  await client.call("worktree.remove", { workspace: project, path });
+  expect(existsSync(path)).toBe(false);
+  await client.call("session.delete", { sessionId: made.id });
+}, 60_000);
+
+test("a worktree inside another is not managed, and the one holding it is not removed until it is gone", async () => {
+  const made = await client.call("session.create", {
+    cwd: project,
+    mode: "readOnly",
+    worktree: { branch: "feature/outer" },
+  });
+  const outer = made.worktree?.path ?? "";
+  const sub = join(outer, "sub");
+  const entered = join(outer, ".claude", "worktrees", "entered");
+  git("worktree", "add", "-q", "-b", "inner-sub", sub);
+  git("worktree", "add", "-q", "-b", "inner-entered", entered);
+  writeFileSync(join(sub, "subwork.txt"), "uncommitted\n");
+  writeFileSync(join(entered, "enteredwork.txt"), "uncommitted\n");
+  expect((await list()).map((entry) => [entry.path, entry.managed])).toEqual([
+    [outer, true],
+    [byHand, false],
+    [entered, false],
+    [sub, false],
+  ]);
+
+  await expect(client.call("worktree.remove", { workspace: project, path: sub })).rejects.toThrow(
+    BY_HAND,
+  );
+  await expect(client.call("worktree.remove", { workspace: project, path: outer })).rejects.toThrow(
+    "Another worktree is inside this one",
+  );
+  expect(existsSync(join(sub, "subwork.txt"))).toBe(true);
+  expect(existsSync(join(entered, "enteredwork.txt"))).toBe(true);
+
+  git("worktree", "remove", "--force", sub);
+  git("worktree", "remove", "--force", entered);
+  await client.call("worktree.remove", { workspace: project, path: outer });
+  expect(existsSync(outer)).toBe(false);
+  expect(git("branch", "--list", "inner-sub")).toContain("inner-sub");
   await client.call("session.delete", { sessionId: made.id });
 }, 60_000);

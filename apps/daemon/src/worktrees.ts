@@ -13,13 +13,23 @@ export interface WorktreesOptions {
   legacyWorktrees: string;
 }
 
-/** Whether `path` is inside `folder`, by its words: no `.` or `..` can lead out of it. */
-function isInside(folder: string, path: string): boolean {
+/** What git lists: the main checkout, the linked worktrees (not bare), and every record. */
+interface Listing {
+  main: string;
+  linked: ListedWorktree[];
+  all: ListedWorktree[];
+}
+
+/**
+ * Whether `path` is exactly `depth` folders below `folder`, by its words: no `.`, `..` or empty one
+ * can lead out of it, and a folder deeper down (a worktree inside another) is not a match.
+ */
+function isBelow(folder: string, path: string, depth: number): boolean {
   if (!path.startsWith(`${folder}/`)) return false;
-  return path
-    .slice(folder.length + 1)
-    .split("/")
-    .every((part) => part !== "" && part !== "." && part !== "..");
+  const parts = path.slice(folder.length + 1).split("/");
+  return (
+    parts.length === depth && parts.every((part) => part !== "" && part !== "." && part !== "..")
+  );
 }
 
 /**
@@ -27,8 +37,8 @@ function isInside(folder: string, path: string): boolean {
  * the sessions come through ports.
  *
  * Which worktrees there are is git's own list, read again at each call. Cycle removes only the ones
- * under `<main checkout>/.agents/worktree/` or the older place: the rest, made by hand or by an
- * agent's own tool, are listed and left to git.
+ * directly under `<main checkout>/.agents/worktree/` or in the older place: the rest, made by hand
+ * or by an agent's own tool (also one inside a worktree of Cycle's), are listed and left to git.
  */
 export class Worktrees {
   private readonly options: WorktreesOptions;
@@ -78,38 +88,52 @@ export class Worktrees {
 
   /**
    * Removes a worktree's folder, keeping its branch, or refuses before changing anything: `path`
-   * must be, character for character, one that git lists for the repository, and one Cycle made,
-   * not locked, and no session working in it. Uncommitted work goes with it: the caller confirmed.
-   * The rules are asked again inside the repository's lock, right before git runs.
+   * must be, character for character, one that git lists for the repository, and one Cycle made
+   * directly under its folder, with no other worktree inside it, not locked, and no session working
+   * in it. Uncommitted work goes with it: the caller confirmed. The rules are asked again inside the
+   * repository's lock, right before git runs, with the folder git is about to remove, the root of
+   * the checkout `path` is in, which must be `path` itself.
    */
   async remove(workspace: string, path: string): Promise<void> {
-    const { main, linked } = await this.read(workspace);
-    this.allow(main, linked, path);
-    await this.options.git.removeWorktree(main, path, async () => {
-      const again = await this.read(main);
-      this.allow(again.main, again.linked, path);
+    const first = await this.read(workspace);
+    this.allow(first, path);
+    await this.options.git.removeWorktree(first.main, path, async (root) => {
+      this.allow(await this.read(first.main), path, root);
     });
   }
 
-  /** The repository's main checkout and the linked worktrees git lists for it. */
-  private async read(workspace: string): Promise<{ main: string; linked: ListedWorktree[] }> {
+  /** The repository's main checkout and the worktrees git lists for it. */
+  private async read(workspace: string): Promise<Listing> {
     const listed = await this.options.git.worktrees(workspace);
     const first = listed[0];
     if (!first) throw new GitError("A worktree needs a git repository.");
     if (first.bare) throw new GitError("A worktree needs a git checkout.");
-    return { main: first.path, linked: listed.slice(1).filter((worktree) => !worktree.bare) };
+    return {
+      main: first.path,
+      linked: listed.slice(1).filter((worktree) => !worktree.bare),
+      all: listed,
+    };
   }
 
+  /** Made by Cycle: one folder below `.agents/worktree`, or `<repository>/<branch>` of the older place. */
   private managed(main: string, path: string): boolean {
-    return isInside(`${main}/${WORKTREES}`, path) || isInside(this.options.legacyWorktrees, path);
+    return (
+      isBelow(`${main}/${WORKTREES}`, path, 1) || isBelow(this.options.legacyWorktrees, path, 2)
+    );
   }
 
-  /** Throws unless `path` may be removed. */
-  private allow(main: string, linked: ListedWorktree[], path: string): void {
+  /** Throws unless `path` may be removed. `root` is what git would remove, when it is known. */
+  private allow({ main, linked, all }: Listing, path: string, root?: string): void {
     const worktree = linked.find((one) => one.path === path);
     if (!worktree) throw new GitError("That folder is not a worktree of this repository.");
     if (!this.managed(main, path)) {
       throw new GitError("Cycle removes only the worktrees it made. Remove this one with git.");
+    }
+    const inside = all.find((one) => one.path !== path && one.path.startsWith(`${path}/`));
+    if (inside) {
+      throw new GitError(
+        `Another worktree is inside this one: ${inside.path}. Remove that one first.`,
+      );
     }
     const busy = this.options.users(path).find((user) => user.activity !== "idle");
     if (busy) {
@@ -120,6 +144,12 @@ export class Worktrees {
     if (worktree.locked) {
       throw new GitError(
         "This worktree is locked. Unlock it with git (git worktree unlock) to remove it.",
+      );
+    }
+    // A folder whose `.git` link is gone is part of the checkout above it: git would remove that.
+    if (root !== undefined && root !== path) {
+      throw new GitError(
+        "This folder is not the root of its worktree: its .git file is missing or broken. Remove it with git.",
       );
     }
   }

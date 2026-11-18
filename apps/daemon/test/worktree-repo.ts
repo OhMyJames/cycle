@@ -1,5 +1,5 @@
 import type { SessionActivity } from "@cycle/protocol";
-import { Git } from "../src/git.ts";
+import { Git, parseWorktrees } from "../src/git.ts";
 import { Worktrees } from "../src/worktrees.ts";
 import type { WorktreeUser } from "../src/sessions.ts";
 import { keyOf, missing, ok } from "./held-git.ts";
@@ -44,6 +44,8 @@ export interface RepoOptions {
   porcelain: string;
   /** Worktrees whose folder is gone. */
   gone?: string[];
+  /** Worktrees whose `.git` file is gone: git takes them for part of the checkout above. */
+  broken?: string[];
   /** What `git status --porcelain` prints in a folder. */
   status?: Record<string, string>;
   /** The sessions that use a path, now. */
@@ -57,6 +59,13 @@ export function repo(options: RepoOptions) {
   const runs: { key: string; cwd: string }[] = [];
   const releases: (() => void)[] = [];
   let hold = false;
+  /** A checkout's root: its own folder, unless its `.git` is gone and the checkout above is meant. */
+  const toplevel = (cwd: string) => {
+    const paths = parseWorktrees(options.porcelain).map((one) => one.path);
+    if (paths.includes(cwd) && !options.broken?.includes(cwd)) return cwd;
+    const above = paths.filter((path) => cwd.startsWith(`${path}/`) || path === cwd);
+    return above.filter((path) => path !== cwd).toSorted((a, b) => b.length - a.length)[0] ?? cwd;
+  };
   const exec = async (argv: string[], execOptions: { cwd?: string }) => {
     const key = keyOf(argv);
     const cwd = execOptions.cwd ?? "";
@@ -68,8 +77,9 @@ export function repo(options: RepoOptions) {
     }
     if (key.startsWith("test -e ")) return options.gone?.includes(key.slice(8)) ? missing : ok("");
     if (key === "rev-parse --path-format=absolute --git-common-dir") return ok(`${MAIN}/.git\n`);
-    if (key === "rev-parse --show-toplevel")
-      return options.gone?.includes(cwd) ? missing : ok(`${cwd}\n`);
+    if (key === "rev-parse --show-toplevel") {
+      return options.gone?.includes(cwd) ? missing : ok(`${toplevel(cwd)}\n`);
+    }
     if (key.startsWith("worktree remove") && hold) {
       await new Promise<void>((resolve) => releases.push(resolve));
     }

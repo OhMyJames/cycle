@@ -401,14 +401,20 @@ export class Git {
   }
 
   /**
-   * Removes a worktree's folder. Its branch is kept, with whatever it committed. `guard`, when
-   * given, runs inside the repository's lock right before git does, and throws to stop it.
+   * Removes the folder of the checkout `path` is in, which is `path` when it is a worktree's root.
+   * Its branch is kept, with whatever it committed. `guard`, when given, runs inside the
+   * repository's lock right before git does, is told the root git is about to remove, and throws to
+   * stop it.
    */
-  async removeWorktree(repo: string, path: string, guard?: () => Promise<void>): Promise<void> {
+  async removeWorktree(
+    repo: string,
+    path: string,
+    guard?: (root: string) => Promise<void>,
+  ): Promise<void> {
     const common = (await this.commonDir(repo)) ?? repo;
     await this.locked(common, async () => {
       const root = (await this.root(path)) ?? path;
-      await guard?.();
+      await guard?.(root);
       await this.out(repo, ["worktree", "remove", "--force", root], 120_000);
     });
   }

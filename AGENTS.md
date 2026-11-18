@@ -25,8 +25,11 @@ Each of these has cost, or could cost, something that cannot be undone. Stop and
   temporary folder. `~/.cycle` belongs to old-cycle: never write there.
 - `session.delete` removes a conversation for good, whichever tool started it. Clients confirm first.
 - `worktree.remove` removes a worktree's folder for good, uncommitted work included. Clients confirm
-  first. The daemon removes only a worktree git lists for that repository under `.agents/worktree/` or
-  `CYCLE_HOME/worktrees`, never the main checkout, and never one a session is working in.
+  first. The daemon removes only a worktree git lists for that repository directly under
+  `.agents/worktree/` (or `CYCLE_HOME/worktrees/<repository>/`), never the main checkout, one with
+  another worktree inside it, or one a session it knows of is working in. A turn that starts as git
+  removes it, or a session the daemon has not listed since it started and has no stored path for, is
+  not seen.
 - `fullAccess` mode runs with no sandbox and never asks. It is never a default, and nothing turns it on
   for the owner.
 - No token, key or account secret may reach a page's storage beyond the connection token, or a log.

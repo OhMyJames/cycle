@@ -110,10 +110,10 @@ test("a guard runs inside the removal, after the folder is found and before git 
     keys.push(keyOf(argv));
     return keyOf(argv).startsWith("rev-parse --show-toplevel") ? ok("/w\n") : ok("");
   });
-  await git.removeWorktree("/repo", "/w", async () => {
-    keys.push("guard");
+  await git.removeWorktree("/repo", "/w", async (root) => {
+    keys.push(`guard ${root}`);
   });
-  expect(keys.slice(-2)).toEqual(["guard", "worktree remove --force /w"]);
+  expect(keys.slice(-2)).toEqual(["guard /w", "worktree remove --force /w"]);
   keys.length = 0;
   await expect(
     git.removeWorktree("/repo", "/w", async () => {

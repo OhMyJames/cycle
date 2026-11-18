@@ -109,8 +109,9 @@ tried were tried (the section "What was tried"); what could not be is at the end
 
 - **The result and the rules** of the two new rows are in [operations](operations.md#worktrees):
   `worktree.remove` takes the `workspace` too, since the path is checked against that repository's
-  own list. By hand means not under `.agents/worktree` or the older place: listed, never removed. A
-  folder there that git does not list is not a worktree and is not listed.
+  own list. By hand means not directly under `.agents/worktree` or in the older place (so a worktree
+  inside another is by hand): listed, never removed. A folder there that git does not list is not a
+  worktree and is not listed.
 - **Event:** `session.changed` carries `worktree` when the agent entered or left one. No new item kind
   is needed: an `EnterWorktree` is a tool call in the turn as it is today.
 - **For the agent contract:** an agent that can enter a worktree on its own says so by operation id
