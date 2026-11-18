@@ -1,4 +1,4 @@
-import type { SessionInfo } from "@cycle/protocol";
+import type { Session } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -29,14 +29,14 @@ const PAGE = 60;
 
 interface Group {
   label: string;
-  sessions: SessionInfo[];
+  sessions: Session[];
 }
 
 /** The list in the order the owner needs it: what waits on them first. */
-export function groupSessions(sessions: SessionInfo[], now: number): Group[] {
+export function groupSessions(sessions: Session[], now: number): Group[] {
   const sorted = sessions.toSorted((a, b) => b.updatedAt - a.updatedAt);
-  const groups = new Map<string, SessionInfo[]>();
-  const add = (label: string, info: SessionInfo) => {
+  const groups = new Map<string, Session[]>();
+  const add = (label: string, info: Session) => {
     const list = groups.get(label);
     if (list) list.push(info);
     else groups.set(label, [info]);
@@ -55,7 +55,7 @@ export function groupSessions(sessions: SessionInfo[], now: number): Group[] {
 }
 
 /** What a row leads with: what its session is doing, or else where it works. */
-function StatusMark({ info }: { info: SessionInfo }) {
+function StatusMark({ info }: { info: Session }) {
   if (info.status === "running") {
     return (
       <span className="mark" role="img" aria-label="Running" title="Running">
@@ -109,7 +109,7 @@ function StatusMark({ info }: { info: SessionInfo }) {
  * row, so the owner sees the command before allowing it and need not leave what they are reading.
  * The focus starts on Deny: opening it is not yet an answer.
  */
-function AnswerHere({ info }: { info: SessionInfo }) {
+function AnswerHere({ info }: { info: Session }) {
   const app = useApp();
   const [open, setOpen] = useState(false);
   const approvals = useStore(app.conversation(info.id), (value) => value.state?.approvals);
@@ -234,9 +234,9 @@ const SessionRow = memo(function SessionRow({
   active,
   onDelete,
 }: {
-  info: SessionInfo;
+  info: Session;
   active: boolean;
-  onDelete(info: SessionInfo): void;
+  onDelete(info: Session): void;
 }) {
   const app = useApp();
   const [renaming, setRenaming] = useState(false);
@@ -403,7 +403,7 @@ function projectEntries(app: CycleApp, projects: string[], current: string | nul
   ];
 }
 
-function DeleteDialog({ info, onClose }: { info: SessionInfo; onClose(): void }) {
+function DeleteDialog({ info, onClose }: { info: Session; onClose(): void }) {
   const app = useApp();
   const [removeWorktree, setRemoveWorktree] = useState(false);
   return (
@@ -579,7 +579,7 @@ function Footer() {
  * Archived sessions: a nav row with their count, opening a panel over the list with a field to
  * search them and their rows, 32 high.
  */
-function Archived({ onDelete }: { onDelete(info: SessionInfo): void }) {
+function Archived({ onDelete }: { onDelete(info: Session): void }) {
   const app = useApp();
   const archived = useStore(app.archived, (value) => value);
   const [open, setOpen] = useState(false);
@@ -724,7 +724,7 @@ function SessionSidebar() {
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [limit, setLimit] = useState(PAGE);
-  const [deleting, setDeleting] = useState<SessionInfo | null>(null);
+  const [deleting, setDeleting] = useState<Session | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchButton = useRef<HTMLButtonElement>(null);
 

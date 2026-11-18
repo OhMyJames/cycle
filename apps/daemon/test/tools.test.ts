@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import type { Item, SessionInfo, Turn } from "@cycle/protocol";
+import type { Item, Session, Turn } from "@cycle/protocol";
 import { type SessionSource, answerMcp, sessionText } from "../src/index.ts";
 
-const info = (id: string, title: string, updatedAt: number): SessionInfo => ({
+const info = (id: string, title: string, updatedAt: number): Session => ({
   id,
   harness: "codex",
   title,
@@ -35,7 +35,7 @@ const source: SessionSource = {
   turns: async (id) =>
     id === "a"
       ? {
-          info: sessions[0] as SessionInfo,
+          info: sessions[0] as Session,
           turns: [
             turn("t1", [item({ id: "1", kind: "userMessage", text: "first ask" })]),
             turn("t2", [
@@ -111,7 +111,7 @@ test("a long conversation keeps its end", () => {
   const long = turn("t", [
     item({ id: "1", kind: "agentMessage", text: `${"x".repeat(70_000)}END` }),
   ]);
-  const text = sessionText(sessions[0] as SessionInfo, [long], 10);
+  const text = sessionText(sessions[0] as Session, [long], 10);
   expect(text).toContain("[Earlier text left out]");
   expect(text.endsWith("END")).toBe(true);
   expect(text.length).toBeLessThan(61_000);

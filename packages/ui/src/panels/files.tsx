@@ -1,4 +1,4 @@
-import type { FileContent, SessionInfo } from "@cycle/protocol";
+import type { FileContent, Session } from "@cycle/protocol";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/icons.tsx";
 import { Chevron } from "../components/items.tsx";
@@ -230,7 +230,7 @@ function FileView({ path, line, root }: { path: string; line: number | null; roo
 }
 
 /** The project's folder as a tree, and one file at a time. */
-export function FilesPanel({ info }: { info: SessionInfo }) {
+export function FilesPanel({ info }: { info: Session }) {
   const app = useApp();
   const file = useStore(app.view, (view) => view.file);
   const [showHidden, setShowHidden] = useState(false);

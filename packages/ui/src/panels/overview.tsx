@@ -1,4 +1,4 @@
-import type { SessionInfo } from "@cycle/protocol";
+import type { Session } from "@cycle/protocol";
 import { useEffect, useState } from "react";
 import { PanelHeader } from "../components/panel.tsx";
 import { PlanSteps } from "../components/plan.tsx";
@@ -26,7 +26,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 }
 
 /** The session at a glance: where it works, its context, its plan, the agent's tools. */
-export function OverviewPanel({ info }: { info: SessionInfo }) {
+export function OverviewPanel({ info }: { info: Session }) {
   const app = useApp();
   const home = useStore(app.daemon, (daemon) => daemon?.userHome);
   const mode = useStore(app.modes, (modes) => modeNamed(modes, info.harness, info.mode));

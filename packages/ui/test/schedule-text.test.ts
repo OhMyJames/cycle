@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Schedule, ScheduleTiming, SessionInfo } from "@cycle/protocol";
+import type { Schedule, ScheduleTiming, Session } from "@cycle/protocol";
 import {
   daysSaid,
   describeTiming,
@@ -85,7 +85,7 @@ test("an interval keeps its start unless it changed, and a new one starts an int
 });
 
 const session = (id: string, scheduleId: string | null, createdAt: number) =>
-  ({ id, scheduleId, createdAt, title: null, preview: `prompt ${id}` }) as SessionInfo;
+  ({ id, scheduleId, createdAt, title: null, preview: `prompt ${id}` }) as Session;
 
 test("the history is each session a schedule started and each run that started none", () => {
   const kept = schedule({

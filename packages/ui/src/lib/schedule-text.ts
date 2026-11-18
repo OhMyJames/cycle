@@ -2,7 +2,7 @@ import type {
   Schedule,
   ScheduleInput,
   ScheduleTiming,
-  SessionInfo,
+  Session,
   PermissionMode,
 } from "@cycle/protocol";
 
@@ -209,7 +209,7 @@ export interface RunEntry {
  * records it, and each run that started no session.
  */
 export function runEntries(
-  sessions: readonly SessionInfo[],
+  sessions: readonly Session[],
   schedules: readonly Schedule[],
 ): RunEntry[] {
   const byId = new Map(schedules.map((schedule) => [schedule.id, schedule]));

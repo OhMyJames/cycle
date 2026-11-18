@@ -13,7 +13,7 @@ import {
   type Harness,
   type HarnessEvent,
   type AgentInfo,
-  type HarnessSession,
+  type AgentSession,
   type ModeInfo,
   type ModelInfo,
   type PromptInput,
@@ -97,7 +97,7 @@ export class Harnesses implements Agents {
 
   // Sessions
 
-  async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
+  async createSession(options: CreateSessionOptions): Promise<AgentSession> {
     const agent = options.model ? await this.ofModel(options.model) : this.main;
     if (options.directories?.length && !agent.capabilities.directories) {
       return unsupported(agent.name, "Reaching folders beyond the session's own");
@@ -105,7 +105,7 @@ export class Harnesses implements Agents {
     return this.own(agent, await agent.createSession(options));
   }
 
-  async listSessions(filter: { archived: boolean }): Promise<HarnessSession[]> {
+  async listSessions(filter: { archived: boolean }): Promise<AgentSession[]> {
     const lists = await Promise.all(
       this.agents.map((agent) =>
         agent.listSessions(filter).then(
@@ -126,7 +126,7 @@ export class Harnesses implements Agents {
     return agent.loadSession(sessionId, options);
   }
 
-  async forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession> {
+  async forkSession(sessionId: string, turnId: string | null): Promise<AgentSession> {
     const agent = await this.of(sessionId);
     return this.own(agent, await agent.forkSession(sessionId, turnId));
   }
@@ -318,7 +318,7 @@ export class Harnesses implements Agents {
 
   // Inside
 
-  private own(agent: Sessions, session: HarnessSession): HarnessSession {
+  private own(agent: Sessions, session: AgentSession): AgentSession {
     this.sessions.set(session.id, agent);
     return session;
   }

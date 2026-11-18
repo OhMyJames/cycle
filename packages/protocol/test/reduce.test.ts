@@ -2,14 +2,14 @@ import { expect, test } from "bun:test";
 import {
   type Item,
   type SessionEvent,
-  type SessionInfo,
+  type Session,
   activeTurn,
   coalesceEvents,
   initialSessionState,
   reduceSession,
 } from "../src/index.ts";
 
-const info: SessionInfo = {
+const info: Session = {
   id: "s",
   harness: "fake",
   title: null,

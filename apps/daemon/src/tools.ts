@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { Item, SessionInfo, Turn } from "@cycle/protocol";
+import type { Item, Session, Turn } from "@cycle/protocol";
 
 /*
  * Cycle's own tools for agents: an MCP server, `cycle`, that every session's agent can reach. It
@@ -16,9 +16,9 @@ export const SESSION_LINK = "cycle://session/";
 
 /** What the tools read. The hub gives it; tests give a fake. */
 export interface SessionSource {
-  list(): Promise<SessionInfo[]>;
+  list(): Promise<Session[]>;
   /** A session's turns, or null when there is no such session. */
-  turns(sessionId: string): Promise<{ info: SessionInfo; turns: Turn[] } | null>;
+  turns(sessionId: string): Promise<{ info: Session; turns: Turn[] } | null>;
 }
 
 const MAX_LISTED = 50;
@@ -65,7 +65,7 @@ const clip = (text: string, length: number): string => {
   return line.length > length ? `${line.slice(0, length)}…` : line;
 };
 
-const titleOf = (info: SessionInfo): string =>
+const titleOf = (info: Session): string =>
   info.title?.trim() || clip(info.preview, 80) || "Untitled session";
 
 /** One item of a turn as text, or null for what a reader does not need. */
@@ -91,7 +91,7 @@ export function itemText(item: Item): string | null {
 }
 
 /** A session's latest turns as text, cut from the start when it is too long. */
-export function sessionText(info: SessionInfo, turns: readonly Turn[], count: number): string {
+export function sessionText(info: Session, turns: readonly Turn[], count: number): string {
   const shown = turns.slice(-count);
   const head = [
     `# ${titleOf(info)}`,

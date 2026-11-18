@@ -353,7 +353,7 @@ export interface WorktreeInfo {
   branch: string;
 }
 
-export interface SessionInfo {
+export interface Session {
   id: string;
   harness: string;
   /** The owner's name for it, else the harness's, else null. */

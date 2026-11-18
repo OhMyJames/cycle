@@ -1,4 +1,4 @@
-import type { SessionInfo, TerminalInfo } from "@cycle/protocol";
+import type { Session, TerminalInfo } from "@cycle/protocol";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/icons.tsx";
 import { PanelHeader } from "../components/panel.tsx";
@@ -103,7 +103,7 @@ function TerminalView({ id }: { id: string }) {
 }
 
 /** The owner's shells in the session's folder. They keep running when the panel closes. */
-export function TerminalPanel({ info }: { info: SessionInfo }) {
+export function TerminalPanel({ info }: { info: Session }) {
   const app = useApp();
   const terminals = useStore(app.terminals, (all) => all[info.id]);
   const [active, setActive] = useState<string | null>(null);

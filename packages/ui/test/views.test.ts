@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Item, SessionInfo } from "@cycle/protocol";
+import type { Item, Session } from "@cycle/protocol";
 import { triggerAt } from "../src/components/composer.tsx";
 import { groupSessions } from "../src/components/sidebar.tsx";
 import { currentStep } from "../src/components/thread.tsx";
@@ -53,7 +53,7 @@ test.each([
 
 test("the list puts what needs the owner first, then what runs, then by day", () => {
   const now = new Date(2026, 5, 10, 15).getTime();
-  const info = (id: string, patch: Partial<SessionInfo>): SessionInfo => ({
+  const info = (id: string, patch: Partial<Session>): Session => ({
     id,
     harness: "codex",
     title: id,

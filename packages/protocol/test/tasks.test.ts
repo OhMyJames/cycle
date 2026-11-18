@@ -2,13 +2,13 @@ import { expect, test } from "bun:test";
 import {
   type Item,
   type SessionEvent,
-  type SessionInfo,
+  type Session,
   type TurnOrigin,
   initialSessionState,
   reduceSession,
 } from "../src/index.ts";
 
-const info = { id: "s", harness: "fake", status: "idle" } as SessionInfo;
+const info = { id: "s", harness: "fake", status: "idle" } as Session;
 const fold = (events: SessionEvent[]) => events.reduce(reduceSession, initialSessionState(info));
 
 type Task = Extract<Item, { kind: "task" }>;

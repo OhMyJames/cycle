@@ -8,13 +8,13 @@ import {
   type FileRewind,
   type PromptDocument,
   type HarnessEvent,
-  type HarnessSession,
+  type AgentSession,
   type Params,
   type PromptInput,
   type QueuedMessage,
   type ReviewTarget,
   type SessionEvent,
-  type SessionInfo,
+  type Session,
   type PermissionMode,
   type SessionState,
   type SessionStatus,
@@ -89,7 +89,7 @@ export interface HubOptions {
   viewers(sessionId: string): number;
   publish: {
     frame(frame: EventFrame): void;
-    sessions(sessions: SessionInfo[]): void;
+    sessions(sessions: Session[]): void;
     removed(sessionIds: string[]): void;
     usage(day: DayUsage): void;
   };
@@ -158,7 +158,7 @@ function message(error: unknown): string {
  */
 export class SessionHub {
   private readonly options: HubOptions;
-  private readonly infos = new Map<string, SessionInfo>();
+  private readonly infos = new Map<string, Session>();
   private readonly live = new Map<string, Live>();
   private readonly loading = new Map<string, Promise<Live>>();
   private queueIds = 0;
@@ -171,10 +171,10 @@ export class SessionHub {
 
   // Reading
 
-  async list(archived: boolean): Promise<SessionInfo[]> {
+  async list(archived: boolean): Promise<Session[]> {
     const stored = await this.options.harness.listSessions({ archived });
     const listed = new Set<string>();
-    const out: SessionInfo[] = [];
+    const out: Session[] = [];
     for (const session of stored) {
       listed.add(session.id);
       out.push(this.remember(session, archived));
@@ -188,7 +188,7 @@ export class SessionHub {
     return out.toSorted((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  info(sessionId: string): SessionInfo {
+  info(sessionId: string): Session {
     const info = this.infos.get(sessionId);
     if (!info) throw new SessionError(`unknown session: ${sessionId}`);
     return info;
@@ -237,7 +237,7 @@ export class SessionHub {
   // Changing
 
   /** `scheduleId` marks a session a schedule's run starts. */
-  async create(params: Params<"session.create">, scheduleId?: string): Promise<SessionInfo> {
+  async create(params: Params<"session.create">, scheduleId?: string): Promise<Session> {
     const { harness, git, now } = this.options;
     const settings = this.options.settings();
     let cwd = params.cwd;
@@ -269,7 +269,7 @@ export class SessionHub {
       params.mode ?? settings.modes[agent],
       params.mode !== undefined,
     );
-    let session: HarnessSession;
+    let session: AgentSession;
     try {
       session = await harness.createSession({
         cwd,
@@ -295,7 +295,7 @@ export class SessionHub {
         ...(scheduleId ? { scheduleId } : {}),
       };
     });
-    const info: SessionInfo = {
+    const info: Session = {
       ...this.remember(session, false),
       status: "idle",
     };
@@ -471,7 +471,7 @@ export class SessionHub {
     await this.options.harness.compactSession(sessionId);
   }
 
-  async update(params: Params<"session.update">): Promise<SessionInfo> {
+  async update(params: Params<"session.update">): Promise<Session> {
     const { sessionId } = params;
     let info = this.info(sessionId);
     const { harness } = this.options;
@@ -560,7 +560,7 @@ export class SessionHub {
     this.options.publish.removed([sessionId]);
   }
 
-  async fork(sessionId: string, turnId: string | null): Promise<SessionInfo> {
+  async fork(sessionId: string, turnId: string | null): Promise<Session> {
     const source = this.info(sessionId);
     const session = await this.options.harness.forkSession(sessionId, turnId);
     const sourceMeta = this.options.meta.value.sessions[sessionId] ?? {};
@@ -655,11 +655,11 @@ export class SessionHub {
   }
 
   /** Joins what the harness says of a session with what the daemon keeps. */
-  private remember(session: HarnessSession, archived: boolean): SessionInfo {
+  private remember(session: AgentSession, archived: boolean): Session {
     const meta = this.options.meta.value.sessions[session.id] ?? {};
     const known = this.infos.get(session.id);
     const live = this.live.get(session.id);
-    const info: SessionInfo = {
+    const info: Session = {
       id: session.id,
       harness: session.harness,
       title: meta.title || session.title,
@@ -691,7 +691,7 @@ export class SessionHub {
     return info;
   }
 
-  private setInfo(info: SessionInfo): void {
+  private setInfo(info: Session): void {
     this.infos.set(info.id, info);
     const live = this.live.get(info.id);
     if (live) live.state = { ...live.state, info };

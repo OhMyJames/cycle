@@ -1,4 +1,4 @@
-import type { GitFile, GitStatus, SessionInfo } from "@cycle/protocol";
+import type { GitFile, GitStatus, Session } from "@cycle/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PatchView, Stats } from "../components/diff-view.tsx";
 import { Icon, Spinner } from "../components/icons.tsx";
@@ -115,7 +115,7 @@ function CommitBox({ cwd, onDone }: { cwd: string; onDone(): void }) {
 }
 
 /** What the checkout changed: a worktree's whole work, or what is uncommitted. */
-export function ChangesPanel({ info }: { info: SessionInfo }) {
+export function ChangesPanel({ info }: { info: Session }) {
   const app = useApp();
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());

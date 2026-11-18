@@ -1,6 +1,6 @@
 import type {
   CommandAction,
-  HarnessSession,
+  AgentSession,
   Item,
   ItemStatus,
   LimitWindow,
@@ -327,7 +327,7 @@ export const HARNESS_NAME = "codex";
 export function toSession(
   thread: WireThread,
   extra?: { model?: string; effort?: string | null },
-): HarnessSession {
+): AgentSession {
   return {
     id: thread.id,
     harness: HARNESS_NAME,
