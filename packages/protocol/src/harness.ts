@@ -7,7 +7,7 @@ import type {
   ApprovalResponse,
   ContextUsage,
   FileRewind,
-  HarnessInfo,
+  AgentInfo,
   McpServerInfo,
   SubagentInfo,
   McpServerInput,
@@ -144,11 +144,11 @@ export interface TerminalHandle {
 }
 
 /**
- * What every agent backend (`harness/*`) offers: sessions, their turns, and
- * the models they may run on. The daemon runs several at once, and a session
- * stays with the one it began on.
+ * The part of a harness that holds sessions, their turns and the models they
+ * may run on: what every agent backend (`harness/*`) offers. The daemon runs
+ * several at once, and a session stays with the one it began on.
  */
-export interface Agent {
+export interface Sessions {
   readonly name: string;
   /** What it can do beyond what every agent does. A method below that is optional, it has when they say. */
   readonly capabilities: AgentCapabilities;
@@ -282,10 +282,10 @@ export interface Machine {
 
 /**
  * Everything the daemon depends on. One harness gives all of it; another
- * agent beside it need only be an `Agent`, and the daemon joins them into one
+ * agent beside it need only give `Sessions`, and the daemon joins them into one
  * `Harness` (`apps/daemon/src/harnesses.ts`).
  */
-export interface Harness extends Agent, Connector, Account, Machine {}
+export interface Harness extends Sessions, Connector, Account, Machine {}
 
 /**
  * Every agent the daemon runs, as the daemon sees them (`apps/daemon/src/harnesses.ts`). A session
@@ -294,10 +294,10 @@ export interface Harness extends Agent, Connector, Account, Machine {}
  */
 export interface Agents
   extends
-    Omit<Agent, "capabilities" | "rewindFiles" | "listCommands" | "readContext" | "tagSession">,
+    Omit<Sessions, "capabilities" | "rewindFiles" | "listCommands" | "readContext" | "tagSession">,
     Machine {
   /** The agents running, the main one first. */
-  harnesses(): HarnessInfo[];
+  harnesses(): AgentInfo[];
   /** An agent's Connector. What it cannot do, it refuses saying so. */
   connector(harness?: string): Connector;
   account(harness?: string): Account;

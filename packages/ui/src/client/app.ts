@@ -9,7 +9,7 @@ import {
   type DayUsage,
   type Delivery,
   type EventFrame,
-  type HarnessInfo,
+  type AgentInfo,
   type HookSettings,
   type McpServerInfo,
   type McpServerInput,
@@ -203,7 +203,7 @@ export class CycleApp {
   /** Every agent's modes. A session can be in those of the agent it runs on. */
   readonly modes = new Store<ModeInfo[]>([]);
   /** The agents the daemon runs, the main one first, and what each can do. */
-  readonly harnesses = new Store<HarnessInfo[]>([]);
+  readonly harnesses = new Store<AgentInfo[]>([]);
   /** Each agent's account, by the agent's name, once read. */
   readonly accounts = new Store<Record<string, AccountInfo>>({});
   /** A sign-in the owner is finishing in a browser. */

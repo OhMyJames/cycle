@@ -1,6 +1,6 @@
 import {
   type AccountInfo,
-  type Agent,
+  type Sessions,
   type AgentCapabilities,
   type AgentReads,
   type ApprovalResponse,
@@ -303,7 +303,7 @@ const realFiles: SessionFiles = {
  *
  * It is an agent only: files, commands and terminals are the main harness's.
  */
-export class ClaudeHarness implements Agent, AgentReads {
+export class ClaudeHarness implements Sessions, AgentReads {
   readonly name = HARNESS_NAME;
   readonly capabilities: AgentCapabilities;
   /** Cycle's configuration of Claude Code; null when it keeps none. */

@@ -569,7 +569,7 @@ export interface SubagentInfo {
 }
 
 /** An agent the daemon runs, and what it can do. */
-export interface HarnessInfo {
+export interface AgentInfo {
   name: string;
   capabilities: AgentCapabilities;
 }
