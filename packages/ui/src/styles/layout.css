@@ -243,6 +243,11 @@
 .session-row:is(:hover, :has(:focus-visible), :has([aria-expanded="true"])) .session-row-title {
   mask-image: linear-gradient(to left, transparent 24px, black 48px);
 }
+/* The marks at a row's end give way to its menu, which is drawn over them. */
+.session-row:is(:hover, :has(:focus-visible), :has([aria-expanded="true"]))
+  :is(.schedule-mark, .worktree-mark) {
+  opacity: 0;
+}
 .session-row .rename {
   flex: 1;
   min-width: 0;

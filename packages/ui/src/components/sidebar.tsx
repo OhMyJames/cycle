@@ -450,7 +450,7 @@ function DeleteDialog({ info, onClose }: { info: Session; onClose(): void }) {
               <div id={explained} className="worktree-box-notes">
                 {box.why ? <p className="caption tone-warning">{box.why}</p> : null}
                 {box.lines.map((line) => (
-                  <p key={line} className="caption muted">
+                  <p key={line} className="caption secondary">
                     {line}
                   </p>
                 ))}
