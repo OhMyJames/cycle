@@ -1,7 +1,7 @@
 # Agent Note: A sandbox is made with an environment the owner keeps
 
 Status: accepted
-Date: 2026-11-14
+Date: 2026-11-14, revised 2026-11-18
 Basis: the `sbx` CLI reference (docs.docker.com/reference/cli/sbx): `create --cpus --memory --env-file -t
 --pull`, `exec`, `rm --force`, `template save|ls|rm`, `policy allow|rm network --sandbox`,
 `secret set|ls`. Checked against a stand-in for `sbx` and the real Claude Code, not a running `sbx`.
@@ -48,7 +48,9 @@ hash of its path and that id, so a folder has one sandbox for each environment.
   and a snapshot of its result need nothing but `sbx` itself.
 - Secrets for each environment. Rejected: Cycle would have to keep them to give them to each new
   sandbox, and `sbx` already keeps one for all.
-- The version kept in the sandbox's name. Rejected: a session keeps its sandbox by name.
+- The version kept in the sandbox's name. Rejected: a session keeps its sandbox by name. (Revised
+  2026-11-18: the session keeps the environment's id; see
+  2026-11-18-a-session-records-its-environment.)
 
 ## Consequences
 
