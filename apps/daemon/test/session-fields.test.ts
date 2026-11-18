@@ -144,6 +144,9 @@ test("with nothing kept by Cycle, the agent's values stand and Cycle's fields ta
     effort: "low",
     mode: "auto",
     status: "stored",
+    activity: "idle",
+    loaded: false,
+    failed: false,
     branch: "agent-branch",
     worktree: null,
     sandbox: "agent-sandbox",
@@ -226,7 +229,7 @@ test("opening a session joins the same winners as listing it, and is no longer s
   const record = agentRecord(harness);
   const fromList = await listed(record);
   const fromOpen = await opened(record);
-  expect(fromOpen).toEqual({ ...fromList, status: "idle" });
+  expect(fromOpen).toEqual({ ...fromList, status: "idle", loaded: true });
 });
 
 test("opening a session the list did not show joins the same winners", async () => {
