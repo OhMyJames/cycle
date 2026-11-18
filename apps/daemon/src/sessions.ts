@@ -8,6 +8,7 @@ import {
   type FileRewind,
   type PromptDocument,
   type HarnessEvent,
+  type AgentEvent,
   type AgentSession,
   type Params,
   type PromptInput,
@@ -862,31 +863,7 @@ export class SessionHub {
   }
 
   private handle(event: HarnessEvent): void {
-    if (event.type === "harness.exited") {
-      for (const live of this.live.values()) {
-        // Another harness's sessions carry on.
-        if (live.state.info.harness !== event.harness) continue;
-        const turn = activeTurn(live.state);
-        live.starting = false;
-        // Its tasks went with it.
-        if (live.state.tasks.length > 0) {
-          this.apply(live, { type: "tasks.updated", sessionId: live.state.info.id, tasks: [] });
-        }
-        if (turn) {
-          this.apply(live, {
-            type: "turn.completed",
-            sessionId: live.state.info.id,
-            turnId: turn.id,
-            status: "failed",
-            error: `${event.message}. It starts again with your next message.`,
-            durationMs: null,
-          });
-        }
-      }
-      return;
-    }
-    // The account is the daemon's to pass on: no session's state holds it.
-    if (event.type === "account.changed") return;
+    if (!("sessionId" in event)) return this.agentEvent(event);
     if (event.type === "mode.changed") {
       const info = this.infos.get(event.sessionId);
       const mode = this.options.harness
@@ -919,14 +896,8 @@ export class SessionHub {
       });
       return;
     }
-    // The connector's news, and the commands a prompt may begin with, are the daemon's to pass on.
-    if (
-      event.type === "mcp.changed" ||
-      event.type === "limits.changed" ||
-      event.type === "commands.changed" ||
-      event.type === "suggestion.changed"
-    )
-      return;
+    // The commands a prompt may begin with, and its next guess, are the daemon's to pass on.
+    if (event.type === "commands.changed" || event.type === "suggestion.changed") return;
     const live = this.live.get(event.sessionId);
     if (!live) return;
     this.mark(live, event);
@@ -935,6 +906,31 @@ export class SessionHub {
       live.cancelFlush ??= this.options.schedule(() => this.flush(live), DELTA_FLUSH_MS);
     } else {
       this.flush(live);
+    }
+  }
+
+  /** What an agent says of itself. The account, the limits and the connector are the daemon's to pass on. */
+  private agentEvent(event: AgentEvent): void {
+    if (event.type !== "harness.exited") return;
+    for (const live of this.live.values()) {
+      // Another harness's sessions carry on.
+      if (live.state.info.harness !== event.harness) continue;
+      const turn = activeTurn(live.state);
+      live.starting = false;
+      // Its tasks went with it.
+      if (live.state.tasks.length > 0) {
+        this.apply(live, { type: "tasks.updated", sessionId: live.state.info.id, tasks: [] });
+      }
+      if (turn) {
+        this.apply(live, {
+          type: "turn.completed",
+          sessionId: live.state.info.id,
+          turnId: turn.id,
+          status: "failed",
+          error: `${event.message}. It starts again with your next message.`,
+          durationMs: null,
+        });
+      }
     }
   }
 

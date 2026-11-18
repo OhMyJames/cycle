@@ -81,7 +81,8 @@ export interface PromptInput {
   documents?: PromptDocument[];
 }
 
-export type HarnessEvent =
+/** What an agent says of a session: every event a frame carries, and four the daemon routes itself. */
+export type AgentSessionEvent =
   | SessionEvent
   /** What the harness knows of a session changed, such as its title. */
   | {
@@ -91,18 +92,24 @@ export type HarnessEvent =
     }
   /** The agent moved itself to another of its modes, as on leaving its plan. */
   | { type: "mode.changed"; sessionId: string; mode: PermissionMode }
+  /** The commands a session's prompt can begin with changed, as skills were found. */
+  | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
+  /** What the agent guesses the owner sends next, after a turn; null once it is stale. */
+  | { type: "suggestion.changed"; sessionId: string; suggestion: string | null };
+
+/** What an agent says of itself: none of these carries a session id. */
+export type AgentEvent =
   /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
   | { type: "mcp.changed" }
   /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */
   | { type: "account.changed"; harness: string; error: string | null }
   /** The account's rate limits moved, as they do with each turn. */
   | { type: "limits.changed"; harness: string }
-  /** The commands a session's prompt can begin with changed, as skills were found. */
-  | { type: "commands.changed"; sessionId: string; commands: SlashCommand[] }
-  /** What the agent guesses the owner sends next, after a turn; null once it is stale. */
-  | { type: "suggestion.changed"; sessionId: string; suggestion: string | null }
   /** The harness of this name stopped: every session it held is gone until a restart. */
   | { type: "harness.exited"; harness: string; message: string };
+
+/** The one stream a harness reports on: an event is a session's when it carries `sessionId`. */
+export type HarnessEvent = AgentSessionEvent | AgentEvent;
 
 export interface ExecResult {
   exitCode: number;

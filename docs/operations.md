@@ -150,8 +150,10 @@ the page by `session.changed` when it enters or leaves one.
 
 ## Events
 
-**Proposed**: two sets, since today's `HarnessEvent` mixes them. An agent's event tells what it knows;
-Cycle adds its own and numbers a session's into frames.
+Two sets, which exist as the types `AgentSessionEvent` and `AgentEvent` (their union, `HarnessEvent`,
+is the one stream a harness reports on). The kind names below are still to do: where a name differs
+from today's, the last column gives today's. An agent's event tells what it knows; Cycle adds its own
+and numbers a session's into frames.
 
 **Of a session** (each carries a session id):
 
