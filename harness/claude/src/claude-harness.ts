@@ -48,7 +48,7 @@ import {
 } from "./config.ts";
 import { ClaudeConfiguration, type ClaudeConfigOptions } from "./configuration.ts";
 import type { OwnerPlugin } from "./plugins.ts";
-import { type Sandboxes, claudeHomeOf, projectFolder, sandboxCwd } from "./sandbox.ts";
+import { type Sandboxes, claudeHomeOf, isContained, projectFolder, sandboxCwd } from "./sandbox.ts";
 import { agentBegins, turnOrigin } from "./tasks.ts";
 import {
   atHome,
@@ -1354,7 +1354,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
       : null;
     // Cycle's tools and configuration are this machine's: a sandbox has neither.
     const here = sandbox === null;
-    const { sandbox: commandSandbox, ...permissions } = modeOptions(mode, sandbox !== null);
+    const { sandbox: commandSandbox, ...permissions } = modeOptions(mode, isContained(sandbox));
     const configuration = here ? this.configuration : null;
     // The mode's command sandbox goes into the settings file, which the SDK takes none beside.
     const start = await configuration?.forStart(commandSandbox);
@@ -1443,10 +1443,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
 
   /** What only a process's start sets for a mode: what the mode needs, and the folders it reaches. */
   private specOf(mode: PermissionMode, known: Known): string {
-    return JSON.stringify([
-      processSpec(mode, known.sandbox !== undefined),
-      known.directories ?? [],
-    ]);
+    return JSON.stringify([processSpec(mode, isContained(known.sandbox)), known.directories ?? []]);
   }
 
   /**

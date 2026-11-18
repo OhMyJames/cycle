@@ -119,6 +119,15 @@ const MAKE_TIMEOUT_MS = 20 * 60_000;
 /** How long a setup script has. One that waits for an answer waits this long, and has failed. */
 const SETUP_TIMEOUT_MS = 30 * 60_000;
 
+/**
+ * Whether a session's agent runs in a container: it has a sandbox's name. The two ways of saying
+ * "none" are one answer: `undefined` is `Known.sandbox` of a session on this machine, `null` is the
+ * `sandbox` that `launch` holds when it made none. Any name is a container.
+ */
+export function isContained(sandbox: string | null | undefined): boolean {
+  return sandbox !== null && sandbox !== undefined;
+}
+
 /** Claude Code's name for the folder that holds a folder's conversations. */
 export function projectFolder(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
