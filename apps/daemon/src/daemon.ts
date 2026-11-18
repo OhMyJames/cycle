@@ -11,7 +11,7 @@ import {
   type Params,
   type Result,
   type ServerMessage,
-  type SessionMode,
+  type PermissionMode,
   type Settings,
   WS_PATH,
   legacyMode,
@@ -155,10 +155,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
    * What new sessions start in on each agent: the owner's choice for it, else what they chose for
    * every agent before each had modes of its own, else the agent's default.
    */
-  const newModes = (): Record<string, SessionMode> => {
+  const newModes = (): Record<string, PermissionMode> => {
     const { modes, mode } = settings.value;
     const all = harness.listModes();
-    const out: Record<string, SessionMode> = {};
+    const out: Record<string, PermissionMode> = {};
     for (const agent of new Set(all.map((each) => each.harness))) {
       const own = all.filter((each) => each.harness === agent);
       const chosen = resolveMode(own, modes[agent] ?? (mode ? legacyMode(mode) : undefined));

@@ -66,7 +66,7 @@ them is in [operations](operations.md).
   - Each agent declares its own list and a session's mode is one of its agent's. There is no list of
     Cycle's own. The same id can mean two things on two agents (`auto`), so a stored mode is always
     kept with its agent.
-  - _Today_ the type is `SessionMode`. _Target_ `PermissionMode`.
+  - _Today_ the type is `PermissionMode`.
   - A mode says what asks. It does not say where the agent runs or what it can reach: that is the
     environment's.
   - The one mode that never asks (`fullAccess` on codex, `bypassPermissions` on Claude Code) is never a
@@ -152,7 +152,6 @@ A setting lives in one layer. Where two layers set the same thing, the agent's o
 | `HarnessSession` and `SessionInfo`                 | `Session`                                       |
 | `Session.harness`, `HarnessInfo`                   | `Session.agent`, `Agent`                        |
 | `SessionStatus` (five values)                      | `SessionActivity` (three) and a "loaded" flag   |
-| `SessionMode`                                      | `PermissionMode`                                |
 | `Approval` kinds `question` and `elicitation`      | `Question`                                      |
 | `ModeInfo`, `ModelInfo`, an effort string          | `Option`                                        |
 | `AgentCapabilities` and the optional methods       | one declaration                                 |

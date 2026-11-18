@@ -26,7 +26,7 @@ import {
   type Schedule,
   type ScheduleInput,
   type SessionInfo,
-  type SessionMode,
+  type PermissionMode,
   type SessionState,
   type SkillInfo,
   type SubagentInfo,
@@ -63,7 +63,7 @@ export interface Draft {
   sandbox: string | null;
   model: string | null;
   effort: string | null;
-  mode: SessionMode;
+  mode: PermissionMode;
   /** Folders beyond `cwd` its agent may reach, sent only when the agent can and not with a sandbox. */
   directories: string[];
 }

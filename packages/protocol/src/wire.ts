@@ -25,7 +25,7 @@ import type {
   ReviewTarget,
   SessionEvent,
   SessionInfo,
-  SessionMode,
+  PermissionMode,
   SkillInfo,
   SlashCommand,
   TokenCount,
@@ -56,7 +56,7 @@ export interface Settings {
   model: string | null;
   effort: string | null;
   /** The mode a new session starts in, by the name of the agent it runs on. */
-  modes: Record<string, SessionMode>;
+  modes: Record<string, PermissionMode>;
   /** Whether a new session in a repository gets its own worktree. */
   worktree: boolean;
   /** Folders the owner works in, most recent first. */
@@ -132,7 +132,7 @@ export interface Methods {
       cwd: string;
       model?: string;
       effort?: string;
-      mode?: SessionMode;
+      mode?: PermissionMode;
       /** Make a worktree for it, on a branch of this name when given. */
       worktree?: { branch?: string; base?: string };
       /** Run its agent in a sandbox of this environment, by id. Not with a worktree. */
@@ -180,7 +180,7 @@ export interface Methods {
       unread?: boolean;
       model?: string;
       effort?: string | null;
-      mode?: SessionMode;
+      mode?: PermissionMode;
       /** A label for the conversation; null takes it off. Only where the agent keeps one. */
       tag?: string | null;
     };

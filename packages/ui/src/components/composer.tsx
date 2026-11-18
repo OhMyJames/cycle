@@ -3,7 +3,7 @@ import {
   type Plan,
   type PromptDocument,
   type SessionInfo,
-  type SessionMode,
+  type PermissionMode,
   type SlashCommand,
   type Usage,
   activeTurn,
@@ -738,7 +738,7 @@ export function Composer({ sessionId }: { sessionId: string | null }) {
     else if (draft) app.setView({ draft: { ...draft, model, effort } });
     void app.request("settings.set", { model, effort }).catch(() => {});
   };
-  const chooseMode = (mode: SessionMode) => {
+  const chooseMode = (mode: PermissionMode) => {
     if (sessionId) app.updateSession({ sessionId, mode });
     else if (draft) app.setView({ draft: { ...draft, mode } });
   };

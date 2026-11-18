@@ -15,7 +15,7 @@ import {
   type ReviewTarget,
   type SessionEvent,
   type SessionInfo,
-  type SessionMode,
+  type PermissionMode,
   type SessionState,
   type SessionStatus,
   type Settings,
@@ -49,7 +49,7 @@ export interface SessionMeta {
    */
   mode?: string;
   /** The session's mode, one its agent offers. */
-  agentMode?: SessionMode;
+  agentMode?: PermissionMode;
   model?: string;
   effort?: string | null;
   worktree?: WorktreeInfo;
