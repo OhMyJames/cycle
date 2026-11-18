@@ -286,8 +286,7 @@ export class CodexHarness implements Harness {
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<AgentSession> {
-    if (options.sandboxed ?? options.environment)
-      throw new Error("Codex sessions do not run in a sandbox yet.");
+    if (options.environment) throw new Error("Codex sessions do not run in a sandbox yet.");
     const policy = options.mode ? modePolicy(options.mode) : null;
     const proc = this.served(options.model) && this.extra ? this.extra : this.main;
     await proc.peer();

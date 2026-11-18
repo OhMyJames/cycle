@@ -11,7 +11,7 @@ test("a session asked into an environment is refused, by either word", async () 
   await expect(harness.createSession({ cwd: "/p", environment: "standard" })).rejects.toThrow(
     refusal,
   );
-  await expect(harness.createSession({ cwd: "/p", sandboxed: "standard" })).rejects.toThrow(
+  await expect(harness.createSession({ cwd: "/p", environment: "standard" })).rejects.toThrow(
     refusal,
   );
 });

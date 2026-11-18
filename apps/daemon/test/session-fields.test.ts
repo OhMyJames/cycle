@@ -75,7 +75,6 @@ const agentRecord = (harness: FakeHarness, patch: Partial<AgentSession> = {}) =>
     model: "agent-model",
     effort: "low",
     branch: "agent-branch",
-    sandbox: "agent-sandbox",
     sandboxCwd: "/home/agent/workspace/x",
     createdAt: 10,
     updatedAt: 20,
@@ -91,14 +90,14 @@ const cycleMeta: SessionMeta = {
   effort: "high",
   agentMode: "readOnly",
   worktree,
-  sandbox: "meta-sandbox",
+  environment: "meta-environment",
   directories: ["/extra"],
   pinned: true,
   unread: true,
   scheduleId: "sched",
 };
 
-test("with both sides set, Cycle wins title, model, effort, branch and sandbox", async () => {
+test("with both sides set, Cycle wins title, model, effort and branch", async () => {
   const { harness, listed } = await setup({ meta: { s1: cycleMeta } });
   const info = await listed(agentRecord(harness));
   expect(info).toMatchObject({
@@ -106,16 +105,16 @@ test("with both sides set, Cycle wins title, model, effort, branch and sandbox",
     model: "meta-model",
     effort: "high",
     branch: "cycle/meta",
-    sandbox: "meta-sandbox",
   });
 });
 
-test("Cycle alone keeps mode, worktree, directories, pinned, unread and scheduleId", async () => {
+test("Cycle alone keeps mode, worktree, environment, directories, pinned, unread and scheduleId", async () => {
   const { harness, listed } = await setup({ meta: { s1: cycleMeta }, modes: { fake: "plan" } });
   const info = await listed(agentRecord(harness));
   expect(info).toMatchObject({
     mode: "readOnly",
     worktree,
+    environment: "meta-environment",
     directories: ["/extra"],
     pinned: true,
     unread: true,
@@ -155,7 +154,6 @@ test("with nothing kept by Cycle, the agent's values stand and Cycle's fields ta
     branch: "agent-branch",
     worktree: null,
     environment: null,
-    sandbox: "agent-sandbox",
     sandboxCwd: "/home/agent/workspace/x",
     directories: [],
     createdAt: 10,
@@ -248,7 +246,7 @@ test("opening a session the list did not show joins the same winners", async () 
     mode: "readOnly",
     branch: "cycle/meta",
     worktree,
-    sandbox: "meta-sandbox",
+    environment: "meta-environment",
     sandboxCwd: "/home/agent/workspace/x",
     directories: ["/extra"],
     createdAt: 10,

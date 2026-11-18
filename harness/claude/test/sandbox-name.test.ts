@@ -4,8 +4,8 @@ import { fakeSbx } from "./fake-sbx.ts";
 import { FakeSdk, user } from "./fake-sdk.ts";
 
 /**
- * The name of a session's container is told by the daemon and derived from the folder and the
- * environment: for a session this harness made they are one, so a daemon may be told either.
+ * The name of a session's container is the harness's alone: it derives it from the folder and the
+ * environment it is told, and a name found in a sandbox's own home is the truth.
  */
 
 const HOMES = "/home/me/.cycle/sandboxes";
@@ -30,14 +30,16 @@ function setup() {
 }
 
 test("a session made in a sandbox has the name its folder and environment make, and is found by it", async () => {
-  const { sdk, start } = setup();
+  const { sdk, start, asked } = setup();
   const name = sandboxName("/Users/me/App", "node");
   const session = await start().createSession({
     cwd: "/Users/me/App",
-    sandboxed: "node",
+    environment: "node",
     mode: "acceptEdits",
   });
-  expect(session.sandbox).toBe(name);
+  // `sbx` was asked for a sandbox of that name, and the session says only where it sees the folder.
+  expect(asked.flat()).toContain(name);
+  expect(session.sandboxCwd).toBe("/home/agent/workspace/App");
   // What it said is in its sandbox's home, as the conversation of an earlier daemon.
   sdk.homes[`${HOMES}/${name}/claude`] = {
     stored: [
@@ -45,15 +47,16 @@ test("a session made in a sandbox has the name its folder and environment make, 
     ],
     messages: { [session.id]: [user("u1", "hello")] },
   };
-  const later = await start().loadSession(session.id, { sandbox: name });
+  const later = await start().loadSession(session.id, { environment: "node" });
   expect(later.session).toMatchObject({
-    sandbox: name,
     cwd: "/Users/me/App",
     sandboxCwd: "/home/agent/workspace/App",
   });
   expect(later.turns).toHaveLength(1);
   // Without being told, it still finds the session where it was kept, by the same name.
-  expect((await start().loadSession(session.id, {})).session.sandbox).toBe(name);
+  expect((await start().loadSession(session.id, {})).session.sandboxCwd).toBe(
+    "/home/agent/workspace/App",
+  );
 });
 
 test("a session known only from the owner's home is put in its environment's container as it opens", async () => {
@@ -80,7 +83,7 @@ test("a session known only from the owner's home is put in its environment's con
   sdk.messages = { s1: [user("u1", "before")] };
   // Told the environment alone, with no name: the harness makes the name its sandboxes have.
   const loaded = await harness.loadSession("s1", { environment: "node" });
-  expect(loaded.session.sandbox).toBe(name);
+  expect(loaded.session.sandboxCwd).toBe("/home/agent/workspace/app");
   expect(moved.map(([, to]) => to)).toEqual([
     `${HOMES}/${name}/claude/projects/-home-agent-workspace-app/s1.jsonl`,
     `${HOMES}/${name}/claude/projects/-home-agent-workspace-app/s1`,

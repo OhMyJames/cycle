@@ -79,8 +79,10 @@ export interface SessionMeta {
   /** The environment its agent runs in, by id: the owner's choice. Kept by Cycle alone. */
   environment?: string;
   /**
-   * The sandbox its agent runs in, by name: kept by daemons before `environment`. It is read to
-   * recover the environment, and written until the page and the daemon pass the environment alone.
+   * The sandbox its agent runs in, by name: kept by daemons before `environment`. Read only, to
+   * recover the environment, and never written; the code that reads it goes when two releases have
+   * shipped. A record that has it and no `environment` names a container, so its session never
+   * starts outside one.
    */
   sandbox?: string;
   /** Folders beyond its own its agent may reach. */
@@ -358,7 +360,6 @@ export class SessionHub {
         ...(params.effort ? { effort: params.effort } : {}),
         ...(worktree ? { worktree } : {}),
         ...(environment ? { environment } : {}),
-        ...(session.sandbox ? { sandbox: session.sandbox } : {}),
         ...(directories.length ? { directories } : {}),
         ...(scheduleId ? { scheduleId } : {}),
       };
@@ -703,6 +704,9 @@ export class SessionHub {
 
   async fork(sessionId: string, turnId: string | null): Promise<Session> {
     const source = this.info(sessionId);
+    // A copy of a session in a container is made in it. One whose environment is gone could not be
+    // told which, and its copy would carry no record of the container: nothing is made.
+    this.requirePlace(source);
     const session = await this.options.harness.forkSession(sessionId, turnId);
     const sourceMeta = this.options.meta.value.sessions[sessionId] ?? {};
     this.options.meta.update((file) => {
@@ -712,7 +716,6 @@ export class SessionHub {
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
         ...(source.environment ? { environment: source.environment } : {}),
-        ...(source.sandbox ? { sandbox: source.sandbox } : {}),
         ...(source.directories.length ? { directories: source.directories } : {}),
       };
     });
@@ -822,19 +825,14 @@ export class SessionHub {
 
   /**
    * Where a session's agent is told it runs: its environment, from which the harness names the
-   * container. A record that names a container no environment makes is told nothing, so that
-   * nothing of its conversation is moved into a container and none starts anywhere; its turns are
-   * refused. Where its folder is not known yet, so that an older record's environment cannot be
-   * recovered, the container's name is given as it was.
+   * container, and never a name. A record that names a container no environment makes, or whose
+   * folder is not known yet so that its environment cannot be recovered, is told nothing, so that
+   * nothing of its conversation is moved into a container and no agent starts anywhere; its turns
+   * are refused, and `load` asks again once the folder is known.
    */
-  private placeOf(
-    sessionId: string,
-    cwd: string | undefined,
-  ): Pick<TurnOptions, "environment" | "sandbox"> {
+  private placeOf(sessionId: string, cwd: string | undefined): Pick<TurnOptions, "environment"> {
     const environment = this.environmentOf(sessionId, cwd);
-    const sandbox = this.options.meta.value.sessions[sessionId]?.sandbox;
-    if (environment) return { environment };
-    return cwd === undefined && sandbox ? { sandbox } : {};
+    return environment ? { environment } : {};
   }
 
   /**
@@ -878,7 +876,6 @@ export class SessionHub {
         ? wholeWorktree(meta.worktree, session.cwd, this.options.legacyWorktrees)
         : null,
       environment: environment ?? null,
-      sandbox: meta.sandbox ?? session.sandbox,
       sandboxCwd: session.sandboxCwd,
       directories: meta.directories ?? [],
       createdAt: session.createdAt,
@@ -924,12 +921,22 @@ export class SessionHub {
     const mode = agent
       ? this.modeFor(agent, keptMode(meta) ?? this.options.settings().modes[agent])
       : undefined;
-    const loaded = await this.options.harness.loadSession(sessionId, {
+    const asked = {
       ...(mode ? { mode } : {}),
       ...(meta.model ? { model: meta.model } : {}),
-      ...this.placeOf(sessionId, known?.cwd),
       ...(meta.directories?.length ? { directories: meta.directories } : {}),
-    });
+    };
+    const place = this.placeOf(sessionId, known?.cwd);
+    let loaded = await this.options.harness.loadSession(sessionId, { ...asked, ...place });
+    if (!place.environment && !known && meta.sandbox) {
+      // An older record opened before the hub has listed: the folder was not known to try its
+      // container against. It is, now, and the agent is told where it runs, so that what it is
+      // asked later (a compaction, files put back) starts in the container, and the conversation
+      // is moved into it. Where none makes the name, it stays as it was and its turns are refused.
+      const environment = this.environmentOf(sessionId, loaded.session.cwd);
+      if (environment)
+        loaded = await this.options.harness.loadSession(sessionId, { ...asked, environment });
+    }
     const existing = this.live.get(sessionId);
     if (existing) return existing;
     const info = this.remember(loaded.session, known?.archived ?? false);

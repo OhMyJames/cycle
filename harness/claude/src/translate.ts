@@ -1136,7 +1136,6 @@ export function toSession(
   extra?: {
     model?: string;
     forkedFrom?: string;
-    sandbox?: string;
     /** The folder as this machine knows it, when Claude Code stored another path. */
     cwd?: string;
     sandboxCwd?: string | null;
@@ -1152,7 +1151,6 @@ export function toSession(
     effort: null,
     // A commit checked out by itself is no branch.
     branch: info.gitBranch && info.gitBranch !== "HEAD" ? info.gitBranch : null,
-    sandbox: extra?.sandbox ?? null,
     sandboxCwd: extra?.sandboxCwd ?? null,
     createdAt: info.createdAt ?? info.lastModified,
     updatedAt: info.lastModified,
