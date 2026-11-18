@@ -36,7 +36,14 @@ import {
   harnessLabel,
   reduceSession,
 } from "@cycle/protocol";
-import { type LastDraft, canSandbox, draftModel, draftSandbox, draftStart } from "../lib/draft.ts";
+import {
+  type LastDraft,
+  canSandbox,
+  draftModel,
+  draftSandbox,
+  draftStart,
+  lastDraftFrom,
+} from "../lib/draft.ts";
 import { Connection, type ConnectionStatus, DaemonError } from "./connection.ts";
 import { type UpdateState, host } from "./host.ts";
 import { type RemoteView, UNREACHABLE, isRemote } from "../lib/remote.ts";
@@ -146,10 +153,9 @@ const LAST_KEY = "cycle.last-draft";
 
 function readLast(): LastDraft {
   try {
-    const kept = JSON.parse(localStorage.getItem(LAST_KEY) ?? "{}") as Partial<LastDraft>;
-    return { harness: kept.harness ?? null, sandbox: kept.sandbox ?? {} };
+    return lastDraftFrom(localStorage.getItem(LAST_KEY));
   } catch {
-    return { harness: null, sandbox: {} };
+    return lastDraftFrom(null);
   }
 }
 

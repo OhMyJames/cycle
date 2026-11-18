@@ -41,6 +41,16 @@ export interface LastDraft {
   sandbox: Record<string, string | null>;
 }
 
+/** Reads what was kept of the owner's last new session: nothing readable gives nothing chosen. */
+export function lastDraftFrom(raw: string | null): LastDraft {
+  try {
+    const kept = JSON.parse(raw ?? "{}") as Partial<LastDraft>;
+    return { harness: kept.harness ?? null, sandbox: kept.sandbox ?? {} };
+  } catch {
+    return { harness: null, sandbox: {} };
+  }
+}
+
 /** Where a new session on an agent starts: where the last one on it ran, if that is still there. */
 export function draftSandbox(
   models: Model[],

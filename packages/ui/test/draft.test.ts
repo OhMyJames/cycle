@@ -6,6 +6,7 @@ import {
   draftSandbox,
   draftStart,
   harnessesOf,
+  lastDraftFrom,
 } from "../src/lib/draft.ts";
 
 const models = [
@@ -54,4 +55,15 @@ test("a new session starts as the last one did, while what that chose is still t
   expect(draftStart(models.slice(0, 3), "gpt-a", last)).toBe("codex");
   expect(draftStart(models, "claude-opus", { harness: null, sandbox: {} })).toBe("claude");
   expect(draftSandbox(models, environments, "claude", { harness: null, sandbox: {} })).toBeNull();
+});
+
+test("what the owner's last session chose is read back, and nothing unreadable chooses anything", () => {
+  const stored = JSON.stringify({ harness: "claude", sandbox: { claude: "node", codex: null } });
+  expect(lastDraftFrom(stored)).toEqual({
+    harness: "claude",
+    sandbox: { claude: "node", codex: null },
+  });
+  expect(lastDraftFrom("{}")).toEqual({ harness: null, sandbox: {} });
+  expect(lastDraftFrom(null)).toEqual({ harness: null, sandbox: {} });
+  expect(lastDraftFrom("not json")).toEqual({ harness: null, sandbox: {} });
 });
