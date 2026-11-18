@@ -42,6 +42,7 @@ import { JsonStore, diskFile, realDelay } from "./store.ts";
 import { Terminals } from "./terminals.ts";
 import type { SessionSource } from "./tools.ts";
 import { type UsageFile, UsageLedger } from "./usage.ts";
+import { Worktrees } from "./worktrees.ts";
 
 export const DAEMON_VERSION = "0.1.0";
 
@@ -291,6 +292,11 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       removed: (sessionIds) => push({ type: "sessions.removed", sessionIds }),
       usage: (day) => push({ type: "usage.today", day }),
     },
+  });
+  const worktrees = new Worktrees({
+    git,
+    users: (path) => hub.worktreeUsers(path),
+    legacyWorktrees: join(home, "worktrees"),
   });
   const terminals = new Terminals({
     harness,
@@ -666,6 +672,12 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     "git.commit": async ({ cwd, message }) => ({
       commit: await git.commit(cwd, message),
     }),
+
+    "worktree.list": ({ workspace }) => worktrees.list(workspace),
+    "worktree.remove": async ({ workspace, path }) => {
+      await worktrees.remove(workspace, path);
+      return {};
+    },
 
     "terminal.list": ({ sessionId }) => ({
       terminals: terminals.list(sessionId),

@@ -191,6 +191,12 @@ export interface WorktreeUser {
   activity: SessionActivity;
   /** Its stored record names the worktree, which a session only in the folder does not. */
   named: boolean;
+  title: string | null;
+  preview: string;
+  archived: boolean;
+  /** The worktree's record in this session's: set only when it `named` the worktree. */
+  base: string | null;
+  origin: WorktreeInfo["origin"] | null;
 }
 
 /** What a session says of its state when the daemon does not hold it. */
@@ -619,8 +625,9 @@ export class SessionHub {
     for (const id of ids) {
       if (id === except) continue;
       const info = this.infos.get(id);
-      const named =
-        (this.options.meta.value.sessions[id]?.worktree?.path ?? info?.worktree?.path) === path;
+      const stored = this.options.meta.value.sessions[id];
+      const named = (stored?.worktree?.path ?? info?.worktree?.path) === path;
+      const record = named ? (stored?.worktree ?? info?.worktree) : undefined;
       const inside = info !== undefined && (info.cwd === path || info.cwd.startsWith(`${path}/`));
       if (!named && !inside) continue;
       const first = (info?.title || info?.preview || "").replace(/\s+/g, " ").trim();
@@ -629,6 +636,11 @@ export class SessionHub {
         name: first.length > MAX_NAME ? `${first.slice(0, MAX_NAME)}…` : first || id,
         activity: info?.activity ?? "idle",
         named,
+        title: info?.title ?? null,
+        preview: info?.preview ?? "",
+        archived: info?.archived ?? false,
+        base: record?.base ?? null,
+        origin: record ? (record.origin ?? "owner") : null,
       });
     }
     return users;

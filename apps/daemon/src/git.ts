@@ -76,6 +76,55 @@ export function parseBranches(out: string): { local: string[]; remote: string[] 
   return { local, remote };
 }
 
+/** One worktree as `git worktree list --porcelain` tells it. */
+export interface ListedWorktree {
+  path: string;
+  head: string;
+  /** Null: a detached HEAD, or none. */
+  branch: string | null;
+  locked: boolean;
+  bare: boolean;
+  /** The repository's own checkout, which git lists first. */
+  main: boolean;
+}
+
+/**
+ * Parses `git worktree list --porcelain`: records of `worktree <path>`, `HEAD <sha>`,
+ * `branch refs/heads/<name>` or `detached`, `bare`, `locked [reason]` and `prunable [reason]`, one
+ * blank line between them. Not `-z`, which needs git 2.36.
+ * shortcut: a worktree path with a newline is not read; upgrade when git 2.36 can be assumed and -z is used
+ */
+export function parseWorktrees(out: string): ListedWorktree[] {
+  const records: Omit<ListedWorktree, "main">[] = [];
+  let current: Omit<ListedWorktree, "main"> | null = null;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current = {
+        path: line.slice("worktree ".length),
+        head: "",
+        branch: null,
+        locked: false,
+        bare: false,
+      };
+      records.push(current);
+    } else if (!current) {
+      continue;
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length);
+    } else if (line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length);
+      current.branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+    } else if (line === "bare") {
+      current.bare = true;
+    } else if (line === "locked" || line.startsWith("locked ")) {
+      current.locked = true;
+    } else if (line === "") {
+      current = null;
+    }
+  }
+  return records.map((record, index) => ({ ...record, main: index === 0 }));
+}
+
 /** A branch name as a folder name. */
 export function branchSlug(branch: string): string {
   return branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "worktree";
@@ -325,17 +374,47 @@ export class Git {
     });
   }
 
-  /** Removes a worktree's folder. Its branch is kept, with whatever it committed. */
-  async removeWorktree(repo: string, path: string): Promise<void> {
+  /**
+   * The worktrees of `cwd`'s repository as git lists them, its own checkout first. A read: it
+   * takes no lock.
+   */
+  async worktrees(cwd: string): Promise<ListedWorktree[]> {
+    const result = await this.run(cwd, ["worktree", "list", "--porcelain"], 10_000);
+    if (result.exitCode !== 0) {
+      throw new GitError(
+        /not a git repository/i.test(result.stderr)
+          ? "A worktree needs a git repository."
+          : result.stderr.trim() || "git worktree list failed",
+      );
+    }
+    return parseWorktrees(result.stdout);
+  }
+
+  /** Whether a worktree holds uncommitted or untracked files. Null when that cannot be told. */
+  async dirty(path: string): Promise<boolean | null> {
+    try {
+      const result = await this.run(path, ["status", "--porcelain"], 5_000);
+      return result.exitCode === 0 ? result.stdout.trim() !== "" : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Removes a worktree's folder. Its branch is kept, with whatever it committed. `guard`, when
+   * given, runs inside the repository's lock right before git does, and throws to stop it.
+   */
+  async removeWorktree(repo: string, path: string, guard?: () => Promise<void>): Promise<void> {
     const common = (await this.commonDir(repo)) ?? repo;
     await this.locked(common, async () => {
       const root = (await this.root(path)) ?? path;
+      await guard?.();
       await this.out(repo, ["worktree", "remove", "--force", root], 120_000);
     });
   }
 
   /** Whether a path exists, asked of the machine the repository is on. */
-  private async exists(cwd: string, path: string): Promise<boolean> {
+  async exists(cwd: string, path: string): Promise<boolean> {
     return (await this.exec(["test", "-e", path], { cwd, timeoutMs: 5_000 })).exitCode === 0;
   }
 
