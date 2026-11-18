@@ -60,6 +60,9 @@ not the most colorful.
 
 - The sidebar is 248 wide, 200 to 420 by its edge; a double-click on the edge puts it back. Rows
   are 28 high, 2 apart, with the icon in a 24 column and text from 36.
+- Where a session works is a fact of its row, not a status: a session in a worktree has a branch
+  mark after its title, always, so it shows beside a running, waiting or unread row too. The lead
+  column is for what the session is doing, and its mark has a name a screen reader says.
 - The list of sessions is one Tab stop. Up and down move between its rows, Home and End to its
   ends, right to the buttons at a row's end and left back.
 - A session that waits for the owner has "Answer" on its row, in amber. It opens the approval card

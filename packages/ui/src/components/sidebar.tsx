@@ -21,7 +21,7 @@ import {
   tildePath,
 } from "../lib/format.ts";
 import { remoteWarning, whereLabel } from "../lib/remote.ts";
-import { describeSessionDelete } from "../lib/worktrees.ts";
+import { describeSessionDelete, worktreeMark } from "../lib/worktrees.ts";
 import { ApprovalCard } from "./approval.tsx";
 import { Icon, type IconName, Spinner } from "./icons.tsx";
 import { Dialog, Menu, type MenuEntry, useDismiss } from "./menu.tsx";
@@ -55,7 +55,7 @@ export function groupSessions(sessions: Session[], now: number): Group[] {
   });
 }
 
-/** What a row leads with: what its session is doing, or else where it works. */
+/** What a row leads with: what its session is doing, if anything. Where it works is at its end. */
 function StatusMark({ info }: { info: Session }) {
   if (info.activity === "running") {
     return (
@@ -92,13 +92,6 @@ function StatusMark({ info }: { info: Session }) {
     return (
       <span className="mark" role="img" aria-label="New activity" title="New activity">
         <span className="dot unread" />
-      </span>
-    );
-  }
-  if (info.worktree) {
-    return (
-      <span className="mark place" title={`Worktree on ${info.worktree.branch}`}>
-        <Icon name="git-branch" size={14} />
       </span>
     );
   }
@@ -243,6 +236,7 @@ const SessionRow = memo(function SessionRow({
   const [renaming, setRenaming] = useState(false);
   const [tagging, setTagging] = useState(false);
   const title = sessionTitle(info);
+  const worktree = worktreeMark(info.worktree);
   const tags = app.capabilities(info.harness).tags;
   const tagEntries: MenuEntry[] = !tags
     ? []
@@ -358,6 +352,16 @@ const SessionRow = memo(function SessionRow({
           {info.scheduleId ? (
             <span className="schedule-mark" role="img" aria-label="Started by a schedule">
               <Icon name="automation" size={12} />
+            </span>
+          ) : null}
+          {worktree ? (
+            <span
+              className="worktree-mark"
+              role="img"
+              aria-label={worktree.label}
+              title={worktree.label}
+            >
+              <Icon name="git-branch" size={12} />
             </span>
           ) : null}
         </button>

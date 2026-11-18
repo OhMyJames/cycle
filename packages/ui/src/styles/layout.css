@@ -303,9 +303,6 @@
   width: 14px;
   height: 14px;
 }
-.mark.place {
-  color: var(--text-muted);
-}
 .dot {
   width: 8px;
   height: 8px;
@@ -788,8 +785,9 @@
   background: var(--surface-selected);
   color: var(--text-primary);
 }
-/* The mark of a session a schedule started, after its title. */
-.schedule-mark {
+/* The marks after a row's title: a session a schedule started, a session that works in a worktree. */
+.schedule-mark,
+.worktree-mark {
   display: flex;
   flex: none;
   margin-left: 4px;

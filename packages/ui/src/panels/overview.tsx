@@ -5,8 +5,9 @@ import { PlanSteps } from "../components/plan.tsx";
 import { useStore } from "../client/store.ts";
 import { useApp } from "../context.ts";
 import { environmentLabel } from "../lib/environment.ts";
-import { compactNumber, tailPath, tildePath } from "../lib/format.ts";
+import { compactNumber } from "../lib/format.ts";
 import { modeNamed } from "../lib/modes.ts";
+import { worktreeFacts } from "../lib/worktrees.ts";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -34,6 +35,7 @@ export function OverviewPanel({ info }: { info: Session }) {
   const environment = useStore(app.sandboxes, (value) =>
     environmentLabel(value.environments, info.environment, value.loaded),
   );
+  const where = worktreeFacts(info, home);
   const mode = useStore(app.modes, (modes) => modeNamed(modes, info.harness, info.mode));
   const { plan, usage, turns, running } = useStore(app.conversation(info.id), (conversation) => ({
     running: conversation.state?.turns.at(-1)?.status === "running",
@@ -65,16 +67,37 @@ export function OverviewPanel({ info }: { info: Session }) {
             <button
               type="button"
               className="fact-link"
-              title={`${info.cwd}\nShow its files`}
+              title={`${where.folder.full}\nShow its files`}
               onClick={() => app.setView({ panel: "files", file: null })}
             >
-              {tailPath(tildePath(info.cwd, home))}
+              {where.folder.text}
             </button>
           </Fact>
           {info.branch ? <Fact label="Branch">{info.branch}</Fact> : null}
           {environment ? <Fact label="Environment">{environment}</Fact> : null}
-          {info.worktree ? (
-            <Fact label="Worktree of">{tailPath(tildePath(info.worktree.repo, home))}</Fact>
+          {where.worktree ? (
+            <>
+              <Fact label="Worktree">
+                <span title={where.worktree.full}>{where.worktree.text}</span>
+              </Fact>
+              {where.worktree.note ? (
+                <div className="caption muted fact-note">{where.worktree.note}</div>
+              ) : null}
+            </>
+          ) : null}
+          {where.repository ? (
+            <Fact label="Repository">
+              <span title={where.repository.full}>{where.repository.text}</span>
+            </Fact>
+          ) : null}
+          {where.worktree ? (
+            <button
+              type="button"
+              className="button small"
+              onClick={() => app.setView({ page: "settings", settingsSection: "worktrees" })}
+            >
+              Worktrees…
+            </button>
           ) : null}
           <Fact label="Model">
             {info.model}

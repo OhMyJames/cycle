@@ -1,5 +1,5 @@
-import type { Session, WorktreeEntry, WorktreeUser } from "@cycle/protocol";
-import { basename } from "./format.ts";
+import { type Session, type WorktreeEntry, type WorktreeUser, workingDir } from "@cycle/protocol";
+import { basename, tailPath, tildePath } from "./format.ts";
 import { plainMentions } from "./suggest.ts";
 
 /** The folder a session belongs to in the list: its repository, not its worktree. */
@@ -42,6 +42,56 @@ export function originNote(origin: WorktreeEntry["origin"]): string | null {
     : origin === "agent"
       ? "Entered by an agent"
       : null;
+}
+
+/** The mark of a row whose session works in a worktree: its name for a screen reader and its tip. */
+export interface RowMark {
+  label: string;
+  branch: string;
+  byAgent: boolean;
+}
+
+export function worktreeMark(worktree: Session["worktree"]): RowMark | null {
+  if (!worktree) return null;
+  const byAgent = worktree.origin === "agent";
+  return {
+    label: `Worktree ${worktree.branch}${byAgent ? ", entered by the agent" : ""}`,
+    branch: worktree.branch,
+    byAgent,
+  };
+}
+
+/** A path as the overview shows it: shortened, with the whole one for the tip. */
+export interface ShownPath {
+  text: string;
+  full: string;
+}
+
+function showPath(path: string, home: string | undefined): ShownPath {
+  return { text: tailPath(tildePath(path, home)), full: path };
+}
+
+/**
+ * What the overview says of where a session works. "Folder" is where the agent is now, which the
+ * files panel reads too; for a session with a worktree the worktree's own folder and its
+ * repository are said apart, and who made it.
+ */
+export function worktreeFacts(
+  info: Pick<Session, "cwd" | "worktree">,
+  home: string | undefined,
+): {
+  folder: ShownPath;
+  worktree: (ShownPath & { note: string | null }) | null;
+  repository: ShownPath | null;
+} {
+  const { worktree } = info;
+  return {
+    folder: showPath(workingDir(info), home),
+    worktree: worktree
+      ? { ...showPath(worktree.path, home), note: originNote(worktree.origin) }
+      : null,
+    repository: worktree ? showPath(worktree.repo, home) : null,
+  };
 }
 
 /** What a session that uses a worktree is called: its title, else the start of its first prompt. */
