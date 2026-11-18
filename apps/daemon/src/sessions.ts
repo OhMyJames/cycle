@@ -624,28 +624,29 @@ export class SessionHub {
     const worktree = removeWorktree ? info.worktree : null;
     if (worktree) {
       // Nothing is changed unless the folder may go: the conversation stays when this refuses.
-      const users = this.worktreeUsers(worktree.path, sessionId);
-      const busy = users.find((user) => user.activity !== "idle");
-      if (busy) {
+      const block = this.worktreeBlock(worktree.path, sessionId);
+      if (block) {
         throw new SessionError(
-          `A session is working in this worktree: "${busy.name}". Stop it first, or delete without removing the worktree.`,
-        );
-      }
-      const sharer = users.find((user) => user.named);
-      if (sharer) {
-        throw new SessionError(
-          `Another session uses this worktree: "${sharer.name}". Delete without removing the worktree, or delete that one first.`,
+          block.working
+            ? `A session is working in this worktree: "${block.name}". Stop it first, or delete without removing the worktree.`
+            : `Another session uses this worktree: "${block.name}". Delete without removing the worktree, or delete that one first.`,
         );
       }
     }
     await this.options.harness.deleteSession(sessionId);
-    let failure: unknown = null;
+    let failure: string | null = null;
     if (worktree) {
-      await this.options.git
-        .removeWorktree(worktree.repo, worktree.path)
-        .catch((error: unknown) => {
-          failure = error;
-        });
+      // Asked again: a session may have begun to use the folder while the agent deleted this one.
+      const now = this.worktreeBlock(worktree.path, sessionId);
+      if (now) {
+        failure = `its worktree was kept, since another session now uses it: "${now.name}"`;
+      } else {
+        await this.options.git
+          .removeWorktree(worktree.repo, worktree.path)
+          .catch((error: unknown) => {
+            failure = `its worktree could not be removed: ${message(error)}`;
+          });
+      }
     }
     // The conversation is gone either way: the hub keeps no ghost of it.
     this.drop(sessionId);
@@ -654,11 +655,16 @@ export class SessionHub {
       delete file.sessions[sessionId];
     });
     this.options.publish.removed([sessionId]);
-    if (failure !== null) {
-      throw new SessionError(
-        `The session is deleted, but its worktree could not be removed: ${message(failure)}`,
-      );
-    }
+    if (failure !== null) throw new SessionError(`The session is deleted, but ${failure}`);
+  }
+
+  /** The user that keeps a worktree from being removed: one working in it first, else one naming it. */
+  private worktreeBlock(path: string, except: string): { name: string; working: boolean } | null {
+    const users = this.worktreeUsers(path, except);
+    const busy = users.find((user) => user.activity !== "idle");
+    if (busy) return { name: busy.name, working: true };
+    const sharer = users.find((user) => user.named);
+    return sharer ? { name: sharer.name, working: false } : null;
   }
 
   async fork(sessionId: string, turnId: string | null): Promise<Session> {

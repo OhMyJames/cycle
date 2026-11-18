@@ -18,6 +18,12 @@ const ended = (sessionId: string): HarnessEvent => ({
   error: null,
   durationMs: 1,
 });
+const asked = (sessionId: string): HarnessEvent => ({
+  type: "approval.requested",
+  sessionId,
+  turnId: "t1",
+  approval: { id: "a1", kind: "command", itemId: "i", command: "ls", cwd: null, reason: null },
+});
 const prompt = { text: "go", images: [] };
 const uses = (name: string) =>
   `Another session uses this worktree: "${name}". Delete without removing the worktree, or delete that one first.`;
@@ -142,11 +148,80 @@ test("a worktree that cannot be removed after its session is deleted leaves no g
   expect((await hub.list(false)).map((session) => session.id)).toEqual([]);
 });
 
-test("two sharers deleted together with the box never leave a removed folder and a survivor", async () => {
-  const { hub, meta, removals } = await setup();
+test("two sharers deleted together with the box are both refused, and nothing is deleted", async () => {
+  const { harness, hub, meta, removals, gone } = await setup();
   const source = await hub.create(worktreeAt);
   const fork = await hub.fork(source.id, null);
-  await Promise.allSettled([hub.remove(source.id, true), hub.remove(fork.id, true)]);
-  const survivors = Object.values(meta.value.sessions).filter((s) => s.worktree?.path === FOLDER);
-  expect(removals().length === 0 || survivors.length === 0).toBe(true);
+  const results = await Promise.allSettled([
+    hub.remove(source.id, true),
+    hub.remove(fork.id, true),
+  ]);
+  expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+  expect(results.map((result) => String((result as PromiseRejectedResult).reason.message))).toEqual(
+    [uses(fork.id), uses(source.id)],
+  );
+  expect(harness.calls.some((call) => call.startsWith("delete"))).toBe(false);
+  expect(removals()).toEqual([]);
+  expect(gone).toEqual([]);
+  expect(Object.keys(meta.value.sessions).toSorted()).toEqual([source.id, fork.id].toSorted());
+});
+
+test("a session that begins to use the folder while the agent deletes the conversation keeps it", async () => {
+  const { harness, hub, meta, removals, gone } = await setup();
+  const info = await hub.create(worktreeAt);
+  const deleteSession = harness.deleteSession;
+  let fork = "";
+  harness.deleteSession = async (id: string) => {
+    await deleteSession(id);
+    fork = (await hub.fork(id, null)).id;
+  };
+  await expect(hub.remove(info.id, true)).rejects.toThrow(
+    `The session is deleted, but its worktree was kept, since another session now uses it: "${info.id}-fork"`,
+  );
+  expect(removals()).toEqual([]);
+  expect(gone).toEqual([info.id]);
+  expect(() => hub.info(info.id)).toThrow("unknown session");
+  expect(meta.value.sessions[info.id]).toBeUndefined();
+  expect(meta.value.sessions[fork]?.worktree?.path).toBe(FOLDER);
+  expect(hub.info(fork).worktree?.path).toBe(FOLDER);
+});
+
+test("a sharer that waits on an answer blocks removal as one that runs does", async () => {
+  const { harness, hub, removals } = await setup();
+  const source = await hub.create(worktreeAt);
+  const fork = await hub.fork(source.id, null);
+  await hub.send(fork.id, prompt, "auto");
+  harness.emit(started(fork.id));
+  harness.emit(asked(fork.id));
+  expect(hub.info(fork.id).activity).toBe("requires_action");
+  await expect(hub.remove(source.id, true)).rejects.toThrow(working(fork.id));
+  expect(removals()).toEqual([]);
+});
+
+test("a session opened exactly in the worktree's folder blocks removal while it runs", async () => {
+  const { harness, hub, removals } = await setup();
+  const info = await hub.create(worktreeAt);
+  harness.stored = [harness.session("exact", { cwd: FOLDER, title: "Exact" })];
+  await hub.list(false);
+  harness.loadSession = async (id: string) => ({
+    session: harness.stored.find((session) => session.id === id) ?? harness.session(id),
+    turns: [],
+    usage: null,
+  });
+  await hub.send("exact", prompt, "auto");
+  harness.emit(started("exact"));
+  await expect(hub.remove(info.id, true)).rejects.toThrow(working("Exact"));
+  expect(removals()).toEqual([]);
+});
+
+test("a name from a first prompt is one line, and cut at 60 characters", async () => {
+  const { harness, hub } = await setup();
+  const source = await hub.create(worktreeAt);
+  const fork = await hub.fork(source.id, null);
+  harness.stored = [harness.session(fork.id, { preview: "  Fix   the\n\tbuild  now " })];
+  await hub.list(false);
+  await expect(hub.remove(source.id, true)).rejects.toThrow(uses("Fix the build now"));
+  harness.stored = [harness.session(fork.id, { preview: "x".repeat(80) })];
+  await hub.list(false);
+  await expect(hub.remove(source.id, true)).rejects.toThrow(uses(`${"x".repeat(60)}…`));
 });
