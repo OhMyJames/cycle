@@ -34,7 +34,7 @@ async function setup() {
     settings: () => settings,
     usage: new UsageLedger(usageFile, () => 0),
     git: new Git((argv, options) => harness.exec(argv, options)),
-    worktreeParent: "/home/worktrees",
+    legacyWorktrees: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
     log: () => {},
@@ -263,7 +263,13 @@ test("a worktree session starts in its own checkout and remembers its base", asy
     },
   };
   const info = await hub.create({ cwd: "/repo/packages/app", worktree: { branch: "feature" } });
-  expect(info.worktree).toEqual({ repo: "/repo", base: "abc123", branch: "feature-2" });
+  expect(info.worktree).toEqual({
+    repo: "/repo",
+    base: "abc123",
+    branch: "feature-2",
+    path: "/home/worktrees/repo/feature-2",
+    origin: "owner",
+  });
   expect(info.cwd).toBe("/home/worktrees/repo/feature-2/packages/app");
   expect(harness.calls).toContain(
     "git worktree add --no-track -b feature-2 /home/worktrees/repo/feature-2 abc123",

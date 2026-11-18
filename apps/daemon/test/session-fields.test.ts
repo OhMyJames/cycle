@@ -35,7 +35,7 @@ async function setup(
     settings: () => settings,
     usage: new UsageLedger(await JsonStore.open(memory(), { days: {} }, timers.schedule), () => 0),
     git: new Git((argv, execOptions) => harness.exec(argv, execOptions)),
-    worktreeParent: "/home/worktrees",
+    legacyWorktrees: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
     log: () => {},
@@ -58,7 +58,13 @@ async function setup(
   return { harness, hub, meta, listed, opened };
 }
 
-const worktree: WorktreeInfo = { repo: "/repo", base: "abc", branch: "cycle/meta" };
+const worktree: WorktreeInfo = {
+  repo: "/repo",
+  base: "abc",
+  branch: "cycle/meta",
+  path: "/repo/meta",
+  origin: "owner",
+};
 
 /** What the agent keeps of a session, each field set so that a winner can be told from a loser. */
 const agentRecord = (harness: FakeHarness, patch: Partial<AgentSession> = {}) =>

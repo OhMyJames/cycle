@@ -358,6 +358,10 @@ export interface WorktreeInfo {
   /** The commit it started at, which its changes are read against. */
   base: string;
   branch: string;
+  /** The worktree's root: its identity, and what removing it acts on. */
+  path: string;
+  /** Who made it: `owner` as the session was made, `agent` when the agent entered it. */
+  origin: "owner" | "agent";
 }
 
 export interface Session {

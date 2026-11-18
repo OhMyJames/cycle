@@ -44,7 +44,7 @@ async function setup(stored: MetaFile = { sessions: {} }) {
     settings: () => settings,
     usage: new UsageLedger(usageFile, () => 0),
     git,
-    worktreeParent: "/home/worktrees",
+    legacyWorktrees: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
     log: () => {},
@@ -106,4 +106,49 @@ test("a worktree an older daemon recorded still shows on the session, with its b
   expect(info?.worktree).toMatchObject(worktree);
   expect(info?.branch).toBe("feat");
   expect(info?.cwd).toBe(`${folder}/sub`);
+});
+
+test("a worktree without a path or an origin is read as the owner's, at the root its folder shows", async () => {
+  const worktree = { repo: "/repo", base: "abc123", branch: "feat" };
+  const { harness, hub, removals } = await setup({ sessions: { old: { worktree } } });
+  harness.stored = [harness.session("old", { cwd: "/home/worktrees/repo/feat/sub" })];
+  const [info] = await hub.list(false);
+  expect(info?.worktree).toEqual({
+    ...worktree,
+    path: "/home/worktrees/repo/feat",
+    origin: "owner",
+  });
+  await hub.remove("old", true);
+  expect(removals()).toEqual(["git worktree remove --force /home/worktrees/repo/feat"]);
+});
+
+test("a worktree with no path, outside the older place, is rooted at the session's folder", async () => {
+  const worktree = { repo: "/repo", base: "abc123", branch: "feat" };
+  const { harness, hub } = await setup({ sessions: { odd: { worktree } } });
+  harness.stored = [harness.session("odd", { cwd: "/elsewhere/feat" })];
+  const [info] = await hub.list(false);
+  expect(info?.worktree).toMatchObject({ path: "/elsewhere/feat", origin: "owner" });
+});
+
+test("a stored path and origin are kept, and a new worktree stores both", async () => {
+  const stored = {
+    repo: "/repo",
+    base: "b",
+    branch: "x",
+    path: "/repo/.agents/worktree/x",
+    origin: "agent",
+  } as const;
+  const { harness, hub, meta } = await setup({ sessions: { kept: { worktree: stored } } });
+  harness.stored = [harness.session("kept", { cwd: "/repo/.agents/worktree/x" })];
+  const [info] = await hub.list(false);
+  expect(info?.worktree).toEqual(stored);
+  const made = await hub.create(worktreeAt);
+  expect(made.worktree).toMatchObject({ origin: "owner" });
+  expect(meta.value.sessions[made.id]?.worktree).toEqual({
+    repo: "/repo",
+    base: "abc123",
+    branch: "feature-2",
+    path: made.cwd,
+    origin: "owner",
+  });
 });

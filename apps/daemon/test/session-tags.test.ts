@@ -32,7 +32,7 @@ async function setup(stored: MetaFile = { sessions: {} }) {
     settings: () => settings,
     usage: new UsageLedger(usageFile, () => 0),
     git: new Git((argv, options) => harness.exec(argv, options)),
-    worktreeParent: "/home/worktrees",
+    legacyWorktrees: "/home/worktrees",
     schedule: timers.schedule,
     now: () => 1000,
     log: () => {},

@@ -245,7 +245,7 @@ export class Git {
     parent: string;
     branch: string;
     base?: string;
-  }): Promise<{ cwd: string; worktree: WorktreeInfo }> {
+  }): Promise<{ cwd: string; worktree: Omit<WorktreeInfo, "origin"> }> {
     const work = this.exclusive.then(async () => {
       const root = await this.root(options.cwd);
       if (!root) throw new GitError("A worktree needs a git repository.");
@@ -258,7 +258,7 @@ export class Git {
       const path = `${options.parent}/${name}/${branchSlug(branch)}`;
       await this.out(root, ["worktree", "add", "--no-track", "-b", branch, path, base], 120_000);
       const inside = options.cwd.startsWith(`${root}/`) ? options.cwd.slice(root.length) : "";
-      return { cwd: `${path}${inside}`, worktree: { repo: root, base, branch } };
+      return { cwd: `${path}${inside}`, worktree: { repo: root, base, branch, path } };
     });
     this.exclusive = work.catch(() => {});
     return work;
