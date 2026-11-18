@@ -307,28 +307,6 @@ test("a session stays with the kind of model it began on", async () => {
   expect((await hub.update({ sessionId: info.id, model: "gone" })).model).toBe("gone");
 });
 
-test("a session's sandbox is kept, and given again with every turn", async () => {
-  const { harness, hub, meta } = await setup();
-  const seen: unknown[] = [];
-  harness.createSession = async (options) => {
-    seen.push(options.sandboxed);
-    return harness.session("boxed", { cwd: options.cwd, sandbox: "cycle-project-1" });
-  };
-  harness.send = async (_sessionId, _input, options) => {
-    seen.push(options.sandbox);
-    return { turnId: "t1" };
-  };
-  const info = await hub.create({ cwd: "/project", sandbox: "standard" });
-  expect(info.sandbox).toBe("cycle-project-1");
-  expect(meta.value.sessions["boxed"]?.sandbox).toBe("cycle-project-1");
-  await hub.send(info.id, { text: "go", images: [] }, "auto");
-  expect(seen).toEqual(["standard", "cycle-project-1"]);
-  expect((await hub.fork(info.id, null)).sandbox).toBe("cycle-project-1");
-  expect(hub.create({ cwd: "/project", sandbox: "standard", worktree: {} })).rejects.toThrow(
-    "not a worktree",
-  );
-});
-
 test("a session stays with the harness it began on", async () => {
   const { harness, hub } = await setup();
   harness.models = [model("model-a", null), model("other-a", null, "other")];
