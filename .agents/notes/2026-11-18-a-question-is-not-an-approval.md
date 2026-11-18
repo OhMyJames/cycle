@@ -45,9 +45,16 @@ and the page could not say what a session waited for.
   `question.answer`, and the harness gives it to the agent: no question or approval event carries it,
   `question.resolved` holds an id only, and nothing of an answer goes to the log, to `sessions.json` or
   to the page's storage. A test pins that the frames of an answered `secret` question hold the question
-  and not the answer. The agent's own items are its report and not the question's: Claude Code copies an
-  answer into its `AskUserQuestion` tool result, which reaches the page as an item, but the asks of
-  Claude Code are never `secret`. Whether codex copies a `secret` answer into an item is not checked.
+  and not the answer. The agent's own items are its report and not the question's.
+  - Codex: checked against the real codex-cli 0.169.0 with the repo's mock model (a scripted model can set
+    `isSecret: true` through the arguments of `request_user_input`, and codex honors it). The answer
+    appeared in none of Cycle's events and not in `loadSession().turns`, the read `tools.ts` uses. It is
+    in codex's own rollout JSONL and in the model's tool output, which is inherent to the answer reaching
+    the agent; Cycle keeps no copy. The thread item schema has a `functionCallOutput` kind that `toItem`
+    maps to a toolCall `result`, so a future codex could echo the answer into an item.
+  - Claude Code copies an answer into its `AskUserQuestion` tool result, which reaches the page as an
+    item. This is harmless for a flagged secret, since its asks are hard-coded `secret: false`; a person
+    can still type a secret into the free-text "Something else...", unchanged from before.
 - **A shim in the daemon, until the page moves.** Between the pull request that adds this and the one that
   removes the old form, the page still draws `approvals`. The hub, in `apps/daemon/src/legacy-asks.ts`,
   sends each question also as the approval the page knows, and turns an `approval.respond` for a question's
