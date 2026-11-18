@@ -3,7 +3,7 @@ import type {
   ScheduleInput,
   ScheduleTiming,
   SessionInfo,
-  SessionMode,
+  PermissionMode,
 } from "@cycle/protocol";
 
 const LOCALE = "en-US";
@@ -84,7 +84,7 @@ export interface ScheduleDraft {
   /** Null: what new sessions start with when the run starts. */
   model: string | null;
   effort: string | null;
-  mode: SessionMode | null;
+  mode: PermissionMode | null;
   /** The agent `mode` is one of. */
   modeHarness: string | null;
   kind: ScheduleTiming["kind"];

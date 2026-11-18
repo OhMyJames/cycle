@@ -1,4 +1,4 @@
-import type { SessionMode } from "./model.ts";
+import type { PermissionMode } from "./model.ts";
 
 /**
  * When a schedule runs, on the daemon machine's own clock. `once` runs at
@@ -28,7 +28,7 @@ export interface ScheduleInput {
   /** Null: what new sessions start with when the run starts. */
   model: string | null;
   effort: string | null;
-  mode: SessionMode | null;
+  mode: PermissionMode | null;
   /**
    * The agent `mode` is one of. A run that starts on another agent is refused, since one id can
    * mean another thing there. Null for no mode, or one kept from before each agent named its own.

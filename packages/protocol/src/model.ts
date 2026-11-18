@@ -268,7 +268,7 @@ export interface FileRewind {
  * How much an agent may do unasked: the id of one of the modes its harness offers (`ModeInfo`).
  * Each agent names its own, so one id may mean different things on two agents.
  */
-export type SessionMode = string;
+export type PermissionMode = string;
 
 /**
  * Cycle's own modes from before each agent named its own, as stored then: `readOnly` asked before
@@ -281,7 +281,7 @@ export const LEGACY_MODE_PREFIX = "legacy:";
 
 /** One mode an agent offers. */
 export interface ModeInfo {
-  id: SessionMode;
+  id: PermissionMode;
   /** The name of the harness that offers it. */
   harness: string;
   name: string;
@@ -363,7 +363,7 @@ export interface SessionInfo {
   cwd: string;
   model: string;
   effort: string | null;
-  mode: SessionMode;
+  mode: PermissionMode;
   status: SessionStatus;
   branch: string | null;
   worktree: WorktreeInfo | null;
@@ -473,7 +473,7 @@ export type Approval =
    * The agent finished planning and asks to go on. Approved, it works in the mode the owner picks
    * of `modes`; declined, it plans again, with what the owner said.
    */
-  | { id: string; kind: "plan"; itemId: string; plan: string; modes: SessionMode[] }
+  | { id: string; kind: "plan"; itemId: string; plan: string; modes: PermissionMode[] }
   /** An MCP server asks the owner for something: a form to fill, or a page to visit. */
   | {
       id: string;
@@ -499,7 +499,7 @@ export interface ApprovalAnswer {
   /** On decline: what the agent is told, as why or what to do instead. */
   message?: string;
   /** On accepting a plan: the mode to work in. */
-  mode?: SessionMode;
+  mode?: PermissionMode;
   /** On accepting a form: what the owner filled in. */
   content?: Record<string, unknown>;
 }

@@ -20,7 +20,7 @@ import {
   type ModelInfo,
   type PromptInput,
   type ReviewTarget,
-  type SessionMode,
+  type PermissionMode,
   type SkillInfo,
   type SlashCommand,
   type SubagentInfo,
@@ -190,7 +190,7 @@ interface Running {
   /** What of Cycle's configuration only its start takes, as it was then. */
   configKey: string;
   /** The mode, model and effort it is in now, which it can be moved off in place. */
-  mode: SessionMode;
+  mode: PermissionMode;
   model: string | undefined;
   effort: string | undefined;
   /** The turn it runs now, known by the prompt that began it. */
@@ -1332,7 +1332,7 @@ export class ClaudeHarness implements Agent, AgentReads {
   private async launch(
     sessionId: string,
     known: Known,
-    mode: SessionMode,
+    mode: PermissionMode,
     spec: string,
     model: string | undefined,
     effort: string | undefined,
@@ -1442,7 +1442,7 @@ export class ClaudeHarness implements Agent, AgentReads {
   }
 
   /** What only a process's start sets for a mode: what the mode needs, and the folders it reaches. */
-  private specOf(mode: SessionMode, known: Known): string {
+  private specOf(mode: PermissionMode, known: Known): string {
     return JSON.stringify([
       processSpec(mode, known.sandbox !== undefined),
       known.directories ?? [],
@@ -1457,7 +1457,7 @@ export class ClaudeHarness implements Agent, AgentReads {
   private async move(
     running: Running,
     to: {
-      mode?: SessionMode | undefined;
+      mode?: PermissionMode | undefined;
       model?: string | undefined;
       effort?: string | null | undefined;
     },
@@ -1901,7 +1901,7 @@ export class ClaudeHarness implements Agent, AgentReads {
 }
 
 /** The mode a session is in when it was given none: the one that asks first. */
-const DEFAULT_MODE: SessionMode = "default";
+const DEFAULT_MODE: PermissionMode = "default";
 
 /** A cut before a conversation's first turn, where there is no entry to end at. */
 const CUT_START = "start";

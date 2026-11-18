@@ -6,7 +6,7 @@ import {
   type ScheduleRun,
   type ModeInfo,
   type ScheduleTiming,
-  type SessionMode,
+  type PermissionMode,
   LEGACY_MODE_PREFIX,
   harnessLabel,
   legacyMode,
@@ -29,14 +29,14 @@ export class LaunchError extends Error {
  * before each agent named its own modes reads, one of `LegacyMode`, and is no longer written;
  * `agentMode`, when there is one, is the mode since.
  */
-export type StoredSchedule = Omit<Schedule, "next"> & { agentMode?: SessionMode | null };
+export type StoredSchedule = Omit<Schedule, "next"> & { agentMode?: PermissionMode | null };
 
 export interface SchedulesFile {
   schedules: StoredSchedule[];
 }
 
 /** A stored schedule's mode: its own, else one from before, marked to be read as it was meant. */
-export function scheduleMode(schedule: StoredSchedule): SessionMode | null {
+export function scheduleMode(schedule: StoredSchedule): PermissionMode | null {
   if (schedule.agentMode !== undefined) return schedule.agentMode;
   return schedule.mode === null ? null : legacyMode(schedule.mode);
 }

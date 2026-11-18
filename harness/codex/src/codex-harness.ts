@@ -22,7 +22,7 @@ import type {
   PluginDetail,
   PromptInput,
   ReviewTarget,
-  SessionMode,
+  PermissionMode,
   SkillInfo,
   TerminalHandle,
   TerminalOptions,
@@ -193,7 +193,7 @@ export class CodexHarness implements Harness {
   /** The turn each running review was asked as, by session. */
   private readonly reviews = new Map<string, string>();
   /** The mode each thread was last given. Codex keeps it until a turn is started with another. */
-  private readonly modes = new Map<string, SessionMode>();
+  private readonly modes = new Map<string, PermissionMode>();
   /**
    * Threads in codex's plan mode, which they stay in until a turn is given another, and the model
    * each was put there with.

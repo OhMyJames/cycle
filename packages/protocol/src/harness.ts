@@ -18,7 +18,7 @@ import type {
   PluginDetail,
   PromptDocument,
   SessionEvent,
-  SessionMode,
+  PermissionMode,
   SkillInfo,
   SlashCommand,
   Turn,
@@ -50,7 +50,7 @@ export interface HarnessSession {
 export interface TurnOptions {
   model?: string;
   effort?: string;
-  mode?: SessionMode;
+  mode?: PermissionMode;
   /** The sandbox the session's agent runs in, by name. Left out, it runs on this machine. */
   sandbox?: string;
   /** Folders beyond the session's own its agent may reach, for an agent whose capabilities say so. */
@@ -59,7 +59,7 @@ export interface TurnOptions {
 
 /** What a session is moved to while it may run. An effort of null is the model's own default. */
 export interface ConfigureOptions {
-  mode?: SessionMode;
+  mode?: PermissionMode;
   model?: string;
   effort?: string | null;
 }
@@ -90,7 +90,7 @@ export type HarnessEvent =
       patch: Partial<HarnessSession>;
     }
   /** The agent moved itself to another of its modes, as on leaving its plan. */
-  | { type: "mode.changed"; sessionId: string; mode: SessionMode }
+  | { type: "mode.changed"; sessionId: string; mode: PermissionMode }
   /** MCP servers changed outside a request: a sign-in finished, a server started or failed. */
   | { type: "mcp.changed" }
   /** The owner signed in or out, or a sign-in ended. `error` says why it ended without one. */

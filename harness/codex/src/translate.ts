@@ -13,7 +13,7 @@ import type {
   ModelInfo,
   PromptInput,
   ReviewTarget,
-  SessionMode,
+  PermissionMode,
   SkillInfo,
   TokenCount,
   Turn,
@@ -708,7 +708,7 @@ export const CODEX_MODES: readonly ModeInfo[] = defineModes(HARNESS_NAME, [
 ]);
 
 /** How far a mode lets the agent reach, to tell a wider one from a narrower. */
-export function modeReach(mode: SessionMode): number {
+export function modeReach(mode: PermissionMode): number {
   return mode === "fullAccess" ? 2 : mode === "auto" ? 1 : 0;
 }
 
@@ -719,7 +719,7 @@ export function modeReach(mode: SessionMode): number {
  * with, which leaving it takes when the turn names none: a thread is never left planning unsaid.
  */
 export function collaborationMode(
-  mode: SessionMode,
+  mode: PermissionMode,
   planning: string | undefined,
   settings: { model?: string | undefined; effort?: string | undefined },
 ): { collaborationMode: unknown } | Record<string, never> {
@@ -749,7 +749,7 @@ export function collaborationMode(
  * How each mode is put to codex: when it asks, and what it may touch. `plan` reaches as `readOnly`
  * does, and is codex's plan collaboration mode besides. A mode codex does not offer asks first.
  */
-export function modePolicy(mode: SessionMode): {
+export function modePolicy(mode: PermissionMode): {
   approvalPolicy: "on-request" | "never";
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
   sandboxPolicy: WireSandboxPolicy;

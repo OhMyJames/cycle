@@ -20,7 +20,7 @@ import type {
   Question,
   ReviewTarget,
   SessionEvent,
-  SessionMode,
+  PermissionMode,
   SkillInfo,
   SlashCommand,
   TokenCount,
@@ -1240,13 +1240,13 @@ export const CLAUDE_MODES: readonly ModeInfo[] = defineModes(HARNESS_NAME, [
 ]);
 
 /** Claude Code's mode of this id; anything it does not offer is the one that asks first. */
-function wireMode(mode: SessionMode): WirePermissionMode {
+function wireMode(mode: PermissionMode): WirePermissionMode {
   const found = CLAUDE_MODES.find((each) => each.id === mode);
   return (found?.id ?? "default") as WirePermissionMode;
 }
 
 /** The modes a plan, once approved, can be carried out in: none that never asks, nor planning. */
-export const AFTER_PLAN: readonly SessionMode[] = CLAUDE_MODES.filter(
+export const AFTER_PLAN: readonly PermissionMode[] = CLAUDE_MODES.filter(
   (mode) => !mode.dangerous && !mode.plan,
 ).map((mode) => mode.id);
 
@@ -1265,7 +1265,7 @@ export interface ModeOptions {
  * `contained` is a session whose agent already runs in a sandbox of the machine's: Claude Code's
  * own is left off there, so in `acceptEdits` a command asks first.
  */
-export function modeOptions(mode: SessionMode, contained = false): ModeOptions {
+export function modeOptions(mode: PermissionMode, contained = false): ModeOptions {
   const permissionMode = wireMode(mode);
   const sandboxed = contained ? {} : { sandbox: { enabled: true, autoAllowBashIfSandboxed: true } };
   switch (permissionMode) {
@@ -1283,7 +1283,7 @@ export function modeOptions(mode: SessionMode, contained = false): ModeOptions {
  * What only a process's start can set for a mode. Two modes alike in it are one process, which
  * moves between them in place; any other move needs another process.
  */
-export function processSpec(mode: SessionMode, contained = false): string {
+export function processSpec(mode: PermissionMode, contained = false): string {
   const { permissionMode: _, ...rest } = modeOptions(mode, contained);
   return JSON.stringify(rest);
 }
