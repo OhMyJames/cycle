@@ -169,6 +169,19 @@ const MAX_TAG = 40;
 
 export class SessionError extends Error {}
 
+/** A longest name for a session in a message, from its first prompt. */
+const MAX_NAME = 60;
+
+/** A session that names a worktree or is in its folder. */
+export interface WorktreeUser {
+  id: string;
+  /** Its title, else the start of its first prompt, else its id. */
+  name: string;
+  activity: SessionActivity;
+  /** Its stored record names the worktree, which a session only in the folder does not. */
+  named: boolean;
+}
+
 /** What a session says of its state when the daemon does not hold it. */
 const STORED = { activity: "idle", loaded: false, failed: false } as const;
 
@@ -218,6 +231,11 @@ export class SessionHub {
     const info = this.infos.get(sessionId);
     if (!info) throw new SessionError(`unknown session: ${sessionId}`);
     return info;
+  }
+
+  /** Whether the hub holds a session. */
+  has(sessionId: string): boolean {
+    return this.infos.has(sessionId);
   }
 
   /** Whether a session is in the middle of a turn. A session nobody knows is not. */
@@ -571,21 +589,76 @@ export class SessionHub {
     return info;
   }
 
+  /**
+   * The sessions other than `except` that name a worktree or are in its folder. A session names it
+   * when its stored record does, archived or not: that is read from the records, which no listing
+   * limit cuts, and a record from an older daemon takes its path from what the session shows. One is
+   * in it when its `cwd` is the path or inside it.
+   */
+  worktreeUsers(path: string, except?: string): WorktreeUser[] {
+    const ids = new Set([...Object.keys(this.options.meta.value.sessions), ...this.infos.keys()]);
+    const users: WorktreeUser[] = [];
+    for (const id of ids) {
+      if (id === except) continue;
+      const info = this.infos.get(id);
+      const named =
+        (this.options.meta.value.sessions[id]?.worktree?.path ?? info?.worktree?.path) === path;
+      const inside = info !== undefined && (info.cwd === path || info.cwd.startsWith(`${path}/`));
+      if (!named && !inside) continue;
+      const first = (info?.title || info?.preview || "").replace(/\s+/g, " ").trim();
+      users.push({
+        id,
+        name: first.length > MAX_NAME ? `${first.slice(0, MAX_NAME)}…` : first || id,
+        activity: info?.activity ?? "idle",
+        named,
+      });
+    }
+    return users;
+  }
+
   async remove(sessionId: string, removeWorktree: boolean): Promise<void> {
     const info = this.info(sessionId);
     if (info.activity !== "idle") {
       throw new SessionError("Stop the session before deleting it.");
     }
-    await this.options.harness.deleteSession(sessionId);
-    if (removeWorktree && info.worktree) {
-      await this.options.git.removeWorktree(info.worktree.repo, info.worktree.path);
+    const worktree = removeWorktree ? info.worktree : null;
+    if (worktree) {
+      // Nothing is changed unless the folder may go: the conversation stays when this refuses.
+      const users = this.worktreeUsers(worktree.path, sessionId);
+      const busy = users.find((user) => user.activity !== "idle");
+      if (busy) {
+        throw new SessionError(
+          `A session is working in this worktree: "${busy.name}". Stop it first, or delete without removing the worktree.`,
+        );
+      }
+      const sharer = users.find((user) => user.named);
+      if (sharer) {
+        throw new SessionError(
+          `Another session uses this worktree: "${sharer.name}". Delete without removing the worktree, or delete that one first.`,
+        );
+      }
     }
+    await this.options.harness.deleteSession(sessionId);
+    let failure: unknown = null;
+    if (worktree) {
+      await this.options.git
+        .removeWorktree(worktree.repo, worktree.path)
+        .catch((error: unknown) => {
+          failure = error;
+        });
+    }
+    // The conversation is gone either way: the hub keeps no ghost of it.
     this.drop(sessionId);
     this.infos.delete(sessionId);
     this.options.meta.update((file) => {
       delete file.sessions[sessionId];
     });
     this.options.publish.removed([sessionId]);
+    if (failure !== null) {
+      throw new SessionError(
+        `The session is deleted, but its worktree could not be removed: ${message(failure)}`,
+      );
+    }
   }
 
   async fork(sessionId: string, turnId: string | null): Promise<Session> {
