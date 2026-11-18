@@ -76,7 +76,7 @@ change in the real page, and drive it with Playwright when the change is in the 
 Cycle keeps its data in `CYCLE_HOME`, which defaults to `~/.cycle-codex` and must be an absolute path:
 `daemon.json` (where the running daemon is, and its token, mode 0600), `settings.json` (what new
 sessions start with, and the owner's projects), `sessions.json` (what only Cycle knows of each session:
-pin, unread, mode, model, worktree, sandbox, the schedule that started it), `providers.json` (the owner's model
+pin, unread, mode, model, worktree, environment, the schedule that started it), `providers.json` (the owner's model
 providers and their keys, mode 0600), `provider-models.json` (codex's catalog of
 those providers' models, which says how much each can read; written as the second codex child starts),
 `remotes.json` (the desktop's list of remote servers: names and ssh targets only, no secrets;

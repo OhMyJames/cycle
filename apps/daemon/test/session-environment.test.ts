@@ -28,7 +28,11 @@ async function setup(kept: MetaFile["sessions"] = {}, more: Partial<HubOptions> 
     projects: [],
   };
   const logged: string[] = [];
-  const meta = await JsonStore.open<MetaFile>(memory(), { sessions: kept }, timers.schedule);
+  const meta = await JsonStore.open<MetaFile>(
+    memory(),
+    { sessions: structuredClone(kept) },
+    timers.schedule,
+  );
   const hub = new SessionHub({
     harness: harness.asAgents(),
     meta,
@@ -46,15 +50,6 @@ async function setup(kept: MetaFile["sessions"] = {}, more: Partial<HubOptions> 
   return { harness, hub, meta, logged };
 }
 
-test("a copy of a session in a container is in the container too", async () => {
-  const { harness, hub, meta } = await setup();
-  harness.createSession = async (options) =>
-    harness.session("boxed", { cwd: options.cwd, sandbox: "cycle-project-1" });
-  const info = await hub.create({ cwd: "/project", environment: "standard" });
-  const copy = await hub.fork(info.id, null);
-  expect(meta.value.sessions[copy.id]?.sandbox).toBe("cycle-project-1");
-});
-
 test("a session kept with its environment is opened with it, whatever name an older daemon kept", async () => {
   const { harness, hub } = await setup({
     s1: { environment: "standard", sandbox: "cycle-project-1" },
@@ -71,19 +66,44 @@ test("a session kept with its environment is opened with it, whatever name an ol
   expect(loaded[0]).not.toHaveProperty("sandbox");
 });
 
-test("an older record opened before its folder is known is still given the name it kept", async () => {
-  const { harness, hub } = await setup({ s1: { sandbox: "cycle-project-1" } });
+test("an older record opened before its folder is known is told its environment once it is, and never a name", async () => {
+  const { harness, hub, meta } = await setup(
+    { s1: { sandbox: "cycle-project-1a" } },
+    { environmentOfSandbox: () => "node" },
+  );
   const loaded: unknown[] = [];
   harness.loadSession = async (sessionId, options) => {
-    loaded.push(options.sandbox);
-    return {
-      session: harness.session(sessionId, { sandbox: "cycle-project-1" }),
-      turns: [],
-      usage: null,
-    };
+    loaded.push(options);
+    return { session: harness.session(sessionId, { cwd: "/project" }), turns: [], usage: null };
   };
   await hub.open("s1", undefined);
-  expect(loaded).toEqual(["cycle-project-1"]);
+  // Read first with no place, since the folder is not known to try the name against, and then told
+  // where it runs, so that what it is asked later (a compaction, files put back) starts there too.
+  expect(loaded).toHaveLength(2);
+  expect(loaded[0]).not.toHaveProperty("environment");
+  expect(loaded[1]).toMatchObject({ environment: "node" });
+  for (const options of loaded) expect(options).not.toHaveProperty("sandbox");
+  expect(meta.value.sessions["s1"]).toEqual({ sandbox: "cycle-project-1a", environment: "node" });
+});
+
+test("an older record opened before its folder is known, whose environment is gone, is never told a place", async () => {
+  const { harness, hub, meta } = await setup(
+    { s1: { sandbox: "cycle-project-1a" } },
+    { environmentOfSandbox: () => null },
+  );
+  const loaded: unknown[] = [];
+  harness.loadSession = async (sessionId, options) => {
+    loaded.push(options);
+    return { session: harness.session(sessionId, { cwd: "/project" }), turns: [], usage: null };
+  };
+  await hub.open("s1", undefined);
+  expect(loaded).toHaveLength(1);
+  expect(loaded[0]).not.toHaveProperty("environment");
+  expect(loaded[0]).not.toHaveProperty("sandbox");
+  await expect(hub.send("s1", { text: "go", images: [] }, "auto")).rejects.toThrow(
+    "environment is gone",
+  );
+  expect(meta.value.sessions["s1"]).toEqual({ sandbox: "cycle-project-1a" });
 });
 
 test("a session records the environment chosen, and the harness is given it, and no name, every time", async () => {
@@ -92,15 +112,17 @@ test("a session records the environment chosen, and the harness is given it, and
   const turns: unknown[] = [];
   harness.createSession = async (options) => {
     created.push(options);
-    return harness.session("boxed", { cwd: options.cwd, sandbox: "cycle-project-1" });
+    return harness.session("boxed", { cwd: options.cwd });
   };
   harness.send = async (_sessionId, _input, options) => {
     turns.push(options);
     return { turnId: "t1" };
   };
   const info = await hub.create({ cwd: "/project", environment: "standard" });
-  expect(info).toMatchObject({ environment: "standard", sandbox: "cycle-project-1" });
-  expect(meta.value.sessions["boxed"]?.environment).toBe("standard");
+  expect(info.environment).toBe("standard");
+  // The container's name is the harness's: neither the session nor its record has one.
+  expect(info).not.toHaveProperty("sandbox");
+  expect(meta.value.sessions["boxed"]).toEqual({ agentMode: "auto", environment: "standard" });
   await hub.send(info.id, { text: "go", images: [] }, "auto");
   expect(created).toEqual([expect.objectContaining({ environment: "standard" })]);
   expect(created[0]).not.toHaveProperty("sandboxed");
@@ -108,7 +130,7 @@ test("a session records the environment chosen, and the harness is given it, and
   expect(turns[0]).not.toHaveProperty("sandbox");
   const copy = await hub.fork(info.id, null);
   expect(copy.environment).toBe("standard");
-  expect(meta.value.sessions[copy.id]?.environment).toBe("standard");
+  expect(meta.value.sessions[copy.id]).toEqual({ agentMode: "auto", environment: "standard" });
   // The same refusals, whichever word asked.
   expect(hub.create({ cwd: "/project", environment: "standard", worktree: {} })).rejects.toThrow(
     "not a worktree",
@@ -136,9 +158,10 @@ test("a record that kept only the container's name has its environment recovered
       },
     },
   );
-  harness.stored = [harness.session("s1", { cwd: "/project", sandbox: "cycle-project-1a" })];
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
   const info = (await hub.list(false)).find((each) => each.id === "s1");
-  expect(info).toMatchObject({ environment: "node", sandbox: "cycle-project-1a" });
+  expect(info).toMatchObject({ environment: "node" });
+  expect(info).not.toHaveProperty("sandbox");
   expect(meta.value.sessions["s1"]).toEqual({ sandbox: "cycle-project-1a", environment: "node" });
   // Kept once: the environment may be removed, and with it what could say it again.
   await hub.list(false);
@@ -164,7 +187,7 @@ test("a record with both keys keeps its environment, and asks nobody", async () 
       },
     },
   );
-  harness.stored = [harness.session("s1", { cwd: "/project", sandbox: "cycle-project-1a" })];
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
   expect((await hub.list(false))[0]).toMatchObject({ environment: "kept" });
 });
 
@@ -173,12 +196,11 @@ const gone = { s1: { sandbox: "cycle-project-1a" } };
 
 test("a container no environment makes shows none, keeps its name, writes nothing and says so once", async () => {
   const { harness, hub, meta, logged } = await setup(gone, { environmentOfSandbox: () => null });
-  harness.stored = [harness.session("s1", { cwd: "/project", sandbox: "cycle-project-1a" })];
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
   for (let times = 0; times < 2; times++) {
-    expect((await hub.list(false))[0]).toMatchObject({
-      environment: null,
-      sandbox: "cycle-project-1a",
-    });
+    const info = (await hub.list(false))[0];
+    expect(info).toMatchObject({ environment: null });
+    expect(info).not.toHaveProperty("sandbox");
   }
   expect(meta.value.sessions["s1"]).toEqual({ sandbox: "cycle-project-1a" });
   expect(logged).toEqual(["session s1 has a sandbox whose environment is unknown"]);
@@ -267,4 +289,40 @@ test("a request from an older page that asks for a container is refused, never r
   // Neither the harness nor the record heard of it.
   expect(created).toEqual([]);
   expect(meta.value.sessions).toEqual({});
+});
+
+test("a copy of a session in a container whose environment is gone is refused, and nothing is made", async () => {
+  const { harness, hub, meta } = await setup(gone, { environmentOfSandbox: () => null });
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
+  await hub.list(false);
+  const forked: string[] = [];
+  harness.forkSession = async (sessionId) => {
+    forked.push(sessionId);
+    return harness.session("copy");
+  };
+  await expect(hub.fork("s1", null)).rejects.toThrow("environment is gone");
+  // Made, it would carry no record of the container, and its next turn would run outside it.
+  expect(forked).toEqual([]);
+  expect(meta.value.sessions).toEqual({ s1: { sandbox: "cycle-project-1a" } });
+});
+
+test("a copy of a session whose environment is recovered only as it is copied carries it", async () => {
+  let environment: string | null = null;
+  const { harness, hub, meta } = await setup(gone, { environmentOfSandbox: () => environment });
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
+  // Listed while none makes the name: the session shows none.
+  expect((await hub.list(false))[0]).toMatchObject({ environment: null });
+  environment = "node";
+  const copy = await hub.fork("s1", null);
+  expect(copy.environment).toBe("node");
+  expect(meta.value.sessions[copy.id]).toEqual({ agentMode: "auto", environment: "node" });
+});
+
+test("a copy of an older record's session carries its environment, and not the name", async () => {
+  const { harness, hub, meta } = await setup(gone, { environmentOfSandbox: () => "node" });
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
+  await hub.list(false);
+  const copy = await hub.fork("s1", null);
+  expect(copy.environment).toBe("node");
+  expect(meta.value.sessions[copy.id]).toEqual({ agentMode: "auto", environment: "node" });
 });

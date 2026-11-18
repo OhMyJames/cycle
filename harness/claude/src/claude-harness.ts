@@ -468,9 +468,8 @@ export class ClaudeHarness implements Sessions, AgentReads {
   // Sessions
 
   async createSession(options: CreateSessionOptions): Promise<AgentSession> {
-    const environment = options.sandboxed ?? options.environment;
-    const sandbox = environment
-      ? await this.sandboxes().ensure(options.cwd, { environment })
+    const sandbox = options.environment
+      ? await this.sandboxes().ensure(options.cwd, { environment: options.environment })
       : null;
     const id = this.newId();
     const at = this.now();
@@ -491,7 +490,6 @@ export class ClaudeHarness implements Sessions, AgentReads {
       model: options.model ?? "",
       effort: options.effort ?? null,
       branch: null,
-      sandbox,
       sandboxCwd: sandbox ? sandboxCwd(options.cwd) : null,
       createdAt: at,
       updatedAt: at,
@@ -512,7 +510,6 @@ export class ClaudeHarness implements Sessions, AgentReads {
       if (seen.has(info.sessionId)) return;
       seen.add(info.sessionId);
       const cwd = sandbox?.cwd ?? info.cwd;
-      const where = sandbox?.name;
       const known = this.known.get(info.sessionId);
       if (known) known.stored = true;
       else
@@ -521,10 +518,8 @@ export class ClaudeHarness implements Sessions, AgentReads {
           stored: true,
           ...(sandbox ? { sandbox: sandbox.name } : {}),
         });
-      const extra: { model?: string; sandbox?: string } = {};
+      const extra: { model?: string } = {};
       if (known?.model) extra.model = known.model;
-      const named = known?.sandbox ?? where;
-      if (named !== undefined) extra.sandbox = named;
       out.push(toSession(info, { cwd, sandboxCwd: sandbox ? sandboxCwd(cwd) : null, ...extra }));
     };
     for (const info of await atHome(this.sdk, this.home).listSessions({ limit: LIST_LIMIT })) {
@@ -559,7 +554,6 @@ export class ClaudeHarness implements Sessions, AgentReads {
       model: options.model ?? known.model ?? "",
       effort: options.effort ?? null,
       branch: null,
-      sandbox: known.sandbox ?? null,
       sandboxCwd: inside,
       createdAt: at,
       updatedAt: at,
@@ -582,7 +576,6 @@ export class ClaudeHarness implements Sessions, AgentReads {
             cwd: known.cwd,
             sandboxCwd: inside,
             model,
-            ...(known.sandbox ? { sandbox: known.sandbox } : {}),
           })
         : { ...fresh, model },
       turns: toTurns(messages, known.cwd, inside, helpers),
@@ -610,7 +603,6 @@ export class ClaudeHarness implements Sessions, AgentReads {
       cwd: known.cwd,
       sandboxCwd: known.sandbox ? dir.dir : null,
       ...(known.model ? { model: known.model } : {}),
-      ...(known.sandbox ? { sandbox: known.sandbox } : {}),
     });
   }
 
@@ -1259,14 +1251,12 @@ export class ClaudeHarness implements Sessions, AgentReads {
 
   /**
    * Where a session runs, as it is told: the environment it is in, which names its container when no
-   * name is known (one found in a sandbox's own home is the truth), and the name as an older daemon
-   * kept it, which wins when given.
+   * name is known (one found in a sandbox's own home is the truth).
    */
   private placed(known: Known, options: TurnOptions): void {
     if (!known.sandbox && options.environment) {
       known.sandbox = sandboxName(known.cwd, options.environment);
     }
-    if (options.sandbox) known.sandbox = options.sandbox;
   }
 
   /** The SDK as the session's conversation is kept: its sandbox's home, or the owner's. */
