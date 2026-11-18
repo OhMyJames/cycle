@@ -2,7 +2,7 @@
 
 Status: accepted
 Date: 2026-11-18
-Basis: [the glossary](../../docs/glossary.md) (Environment, "sandbox means five things"), [the
+Basis: [the glossary](../../docs/glossary.md) (Environment, "sandbox means five things", the glossary's count before this step; it is three now), [the
 entities](../../docs/entities.md) (the Session and Environment cards), the notes of 2026-11-14
 ([sandbox environments](2026-11-14-sandbox-environments.md) and [a local sandbox holds the agent
 only](2026-11-14-a-local-sandbox-holds-the-agent-only.md)), and the checks of this step:

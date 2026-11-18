@@ -306,6 +306,18 @@ test("a copy of a session in a container whose environment is gone is refused, a
   expect(meta.value.sessions).toEqual({ s1: { sandbox: "cycle-project-1a" } });
 });
 
+test("a copy of a session whose environment is recovered only as it is copied carries it", async () => {
+  let environment: string | null = null;
+  const { harness, hub, meta } = await setup(gone, { environmentOfSandbox: () => environment });
+  harness.stored = [harness.session("s1", { cwd: "/project" })];
+  // Listed while none makes the name: the session shows none.
+  expect((await hub.list(false))[0]).toMatchObject({ environment: null });
+  environment = "node";
+  const copy = await hub.fork("s1", null);
+  expect(copy.environment).toBe("node");
+  expect(meta.value.sessions[copy.id]).toEqual({ agentMode: "auto", environment: "node" });
+});
+
 test("a copy of an older record's session carries its environment, and not the name", async () => {
   const { harness, hub, meta } = await setup(gone, { environmentOfSandbox: () => "node" });
   harness.stored = [harness.session("s1", { cwd: "/project" })];

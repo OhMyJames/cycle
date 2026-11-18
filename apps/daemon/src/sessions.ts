@@ -706,7 +706,7 @@ export class SessionHub {
     const source = this.info(sessionId);
     // A copy of a session in a container is made in it. One whose environment is gone could not be
     // told which, and its copy would carry no record of the container: nothing is made.
-    this.requirePlace(source);
+    const environment = this.requirePlace(source);
     const session = await this.options.harness.forkSession(sessionId, turnId);
     const sourceMeta = this.options.meta.value.sessions[sessionId] ?? {};
     this.options.meta.update((file) => {
@@ -715,7 +715,7 @@ export class SessionHub {
         ...(sourceMeta.model ? { model: sourceMeta.model } : {}),
         ...(sourceMeta.effort ? { effort: sourceMeta.effort } : {}),
         ...(source.worktree ? { worktree: source.worktree } : {}),
-        ...(source.environment ? { environment: source.environment } : {}),
+        ...(environment ? { environment } : {}),
         ...(source.directories.length ? { directories: source.directories } : {}),
       };
     });
