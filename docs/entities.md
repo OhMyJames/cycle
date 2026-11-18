@@ -5,7 +5,7 @@ then the operations on them, then the code. It follows [the glossary](glossary.m
 [the comparison](protocol-comparison.md) found in the Claude Agent SDK, `codex app-server` and ACP.
 
 Status: **draft**, with the owner's decisions of 2026-11-17 in it. A card says **Decided** where the
-owner decided it and **Open** where it is not settled. Worktrees are not here: see the last section.
+owner decided it and **Open** where it is not settled. Worktrees have their own page: [worktree](worktree.md).
 What operations the entities have, and the events they give, is in [operations](operations.md).
 
 ## The cards
@@ -18,12 +18,13 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 **Session.** One conversation of one agent, in one workspace.
 
 - Owner: both. The agent keeps the conversation and its title, model, effort, times, fork source
-  and tag. Cycle keeps pin, unread, the schedule that started it, and the mode, environment and
-  extra directories chosen. Archive is the agent's where it has one.
+  and tag. Cycle keeps pin, unread, the schedule that started it, and the mode, environment, worktree
+  and extra directories chosen. Archive is the agent's where it has one.
 - Identity: the agent's id. Which agent: `Session.agent` (today `harness`).
 - Life: made by the owner or a schedule; loaded into an agent's process and let go of, which is not a
   state of the session; archived; deleted for good (clients confirm first).
-- Tied to: an Agent, a Workspace, an Environment, its Turns, its Options, a Schedule that started it.
+- Tied to: an Agent, a Workspace, a Worktree (optional), an Environment, its Turns, its Options, a
+  Schedule that started it.
 - **Decided**: one `Session` type. Its fields are grouped by who keeps them, and where both say the
   same thing (model, effort, sandbox, title, preview) the card says who wins. Today it is two types,
   `HarnessSession` and `SessionInfo`.
@@ -119,7 +120,19 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 
 - Owner: Cycle (the projects in `settings.json`). Identity: its path, which is also its `cwd`.
 - **Decided**: workspace and project are one word; `cwd` is a property of it.
-- **Open**: a session an agent lists whose folder was never saved by the owner. Worktrees: below.
+- **Open**: a session an agent lists whose folder was never saved by the owner. Worktrees: the next card.
+
+**Worktree.** A separate checkout of a workspace's repository, on a branch of its own.
+
+- Owner: Cycle, whoever asked for it; neither agent keeps it. Identity: its path.
+- Fields: path, workspace, branch, base (the commit it began at), origin (the owner asked for it with
+  the session, or the agent entered it).
+- Life: made; used by one session or more (a fork shares it); ended by the owner, and its branch stays.
+- Tied to: a Workspace, which has many, and the Sessions that point to it. A session's `cwd` is the
+  key of the agent's record and never changes; where the agent works now is the worktree's path when
+  there is one.
+- **Proposed**, with the owner's place decided: `<workspace>/.agents/worktree/`. All of it is in
+  [worktree](worktree.md).
 
 ### Extensions
 
@@ -178,31 +191,11 @@ Four, and a setting lives in one: Cycle's defaults for a new session; the harnes
 the owner's own configuration of an agent, read and never written; the project's own, which the
 agent reads. See the glossary.
 
-## Not here: worktrees
+## Worktrees
 
-The owner asked for a new design, since both agents have a notion of their own. What was found, so
-the design starts from it:
-
-- **Cycle today.** The daemon makes the worktree before the agent starts, with `git worktree add`
-  (`sessions.ts:254-255`, `git.ts:259`), under `CYCLE_HOME/worktrees`. The agent is given its folder as the
-  session's `cwd`. `WorktreeInfo` is the repository, the base commit and the branch, kept in
-  `sessions.json`. Removing it keeps the branch (`git.ts:267`). A session given a `sandbox` (an environment)
-  cannot have one (`sessions.ts:247`). A setting and a schedule's flag choose it for new sessions.
-- **Claude Code.** The model has tools, `EnterWorktree` (a new name, or the path of one that exists)
-  and `ExitWorktree` (`keep` or `remove`, which deletes the worktree and its branch). So the agent can
-  move its own folder in the middle of a session. There is a `worktree` settings group: directories to
-  link from the main checkout, sparse paths, which ref to branch from (`fresh` or `head`), where they
-  go, and `bgIsolation`, whose default blocks edits in the main checkout of a background session until
-  a worktree is entered. Hooks `WorktreeCreate` and `WorktreeRemove` exist, and `listSessions` takes
-  `includeWorktrees`, on by default.
-- **codex.** Its binary has the names `create_worktree`, `list_worktrees`, `--worktree` and an
-  `is_worktree` in its session start. Whether the app-server offers it, or the model can call it,
-  was not checked.
-
-Questions the design has to answer: who makes one (Cycle, the agent, or either); what a session's
-`cwd` and branch are when the agent enters one in the middle of a turn; where they live; whether
-removing one removes its branch; how sessions of a worktree group under their workspace; and what
-`bgIsolation` does to a session Cycle starts.
+The design is in [worktree](worktree.md): who makes one (Cycle, for both agents, and Claude Code's own
+entering goes through Cycle by a hook), where it lives, what a session's folder is when one is used,
+and how it ends.
 
 ## What else this changes
 

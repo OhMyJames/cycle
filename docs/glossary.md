@@ -53,8 +53,12 @@ them is in [operations](operations.md).
   - _Today_ the code says "project" (the list in settings), "folder" and `cwd`. _Target_ workspace.
   - In the container's own words a "workspace" is the folder `sbx` mounts. That stays in the sandbox
     code; it is not this word.
-- **Worktree**: a separate checkout of a workspace's repository. Its design is not settled: see the
-  end of [entities](entities.md).
+- **Worktree**: a separate checkout of a workspace's repository, on a branch of its own. See
+  [worktree](worktree.md).
+  - _Today_ the daemon makes it under `CYCLE_HOME/worktrees/`, and it is the session's `cwd`.
+  - _Target_ Cycle makes every one, at `<workspace>/.agents/worktree/` (the owner decided the place).
+    A session's `cwd` stays the folder the agent's record is kept under; where the agent works now is
+    the worktree's path when there is one.
 
 ## What an agent may do
 
@@ -170,5 +174,6 @@ note first.
 - Whether an environment also names the folders a command sandbox may read and write.
 - How a session without a container chooses an environment: today the choice is an environment or
   none.
-- Worktrees: who makes one, and what a session's `cwd` is when the agent enters one itself.
+- What [worktree](worktree.md) lists as not checked, such as what Claude Code's `bgIsolation` does to a
+  session Cycle starts.
 - Which reasons a turn can stop for.
