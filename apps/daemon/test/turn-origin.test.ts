@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { EventFrame, SessionEvent, SessionInfo, TurnOrigin } from "@cycle/protocol";
+import type { EventFrame, SessionEvent, Session, TurnOrigin } from "@cycle/protocol";
 import {
   Git,
   JsonStore,
@@ -18,7 +18,7 @@ async function setup() {
   const frames: EventFrame[] = [];
   const meta = await JsonStore.open<MetaFile>(memory(), { sessions: {} }, timers.schedule);
   const usageFile = await JsonStore.open<UsageFile>(memory(), { days: {} }, timers.schedule);
-  const infos: SessionInfo[] = [];
+  const infos: Session[] = [];
   const hub = new SessionHub({
     harness: harness.asAgents(),
     meta,

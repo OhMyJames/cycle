@@ -26,8 +26,7 @@ Each card answers the same five questions: what it is, who owns it (the **agent*
 - Tied to: an Agent, a Workspace, a Worktree (optional), an Environment, its Turns, its Options, a
   Schedule that started it.
 - **Decided**: one `Session` type. Its fields are grouped by who keeps them, and where both say the
-  same thing (model, effort, sandbox, title, preview) the card says who wins. Today it is two types,
-  `HarnessSession` and `SessionInfo`.
+  same thing (model, effort, sandbox, title, preview) the card says who wins.
 - **Decided**: the session's activity (`SessionActivity`) is `idle | running | requires_action`, as in
   the SDK (`session_state_changed`) and ACP version 2 (`state_update`). "Stored" becomes a separate
   flag, "loaded". The name is not `SessionState`: that is taken, by the whole folded session in

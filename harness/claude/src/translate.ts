@@ -9,7 +9,7 @@ import type {
   ContextUsage,
   DocumentKind,
   FileRewind,
-  HarnessSession,
+  AgentSession,
   Item,
   ItemStatus,
   ModeInfo,
@@ -1135,7 +1135,7 @@ export function toSession(
     cwd?: string;
     sandboxCwd?: string | null;
   },
-): HarnessSession {
+): AgentSession {
   return {
     id: info.sessionId,
     harness: HARNESS_NAME,

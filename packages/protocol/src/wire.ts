@@ -24,7 +24,7 @@ import type {
   PromptDocument,
   ReviewTarget,
   SessionEvent,
-  SessionInfo,
+  Session,
   PermissionMode,
   SkillInfo,
   SlashCommand,
@@ -125,7 +125,7 @@ export interface Methods {
 
   "session.list": {
     params: { archived: boolean };
-    result: { sessions: SessionInfo[] };
+    result: { sessions: Session[] };
   };
   "session.create": {
     params: {
@@ -140,7 +140,7 @@ export interface Methods {
       /** Folders beyond `cwd` its agent may reach, when the agent can. Not with a sandbox. */
       directories?: string[];
     };
-    result: SessionInfo;
+    result: Session;
   };
   /**
    * Starts following a session. With `after`, the frame the client last
@@ -184,7 +184,7 @@ export interface Methods {
       /** A label for the conversation; null takes it off. Only where the agent keeps one. */
       tag?: string | null;
     };
-    result: SessionInfo;
+    result: Session;
   };
   "session.delete": {
     params: { sessionId: string; removeWorktree?: boolean };
@@ -192,7 +192,7 @@ export interface Methods {
   };
   "session.fork": {
     params: { sessionId: string; turnId?: string };
-    result: SessionInfo;
+    result: Session;
   };
   "session.compact": { params: { sessionId: string }; result: Empty };
   /** Starts a turn that reviews code. Refused while a turn runs. */
@@ -425,7 +425,7 @@ export interface EventFrame {
 
 /** What every client hears, whichever sessions it follows. */
 export type DaemonEvent =
-  | { type: "sessions.changed"; sessions: SessionInfo[] }
+  | { type: "sessions.changed"; sessions: Session[] }
   | { type: "sessions.removed"; sessionIds: string[] }
   | { type: "settings.changed"; settings: Settings }
   /** `error` says why a sign-in ended without one. The account says whose it is. */

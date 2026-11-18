@@ -2,7 +2,7 @@ import {
   type AttachmentKind,
   type Plan,
   type PromptDocument,
-  type SessionInfo,
+  type Session,
   type PermissionMode,
   type SlashCommand,
   type Usage,
@@ -373,7 +373,7 @@ const command = (
   run: () => void,
 ): Suggestion & Named => ({ name, label: `/${name}`, detail, icon, group: "Commands", run });
 
-function slashCommands(app: CycleApp, info: SessionInfo | null): (Suggestion & Named)[] {
+function slashCommands(app: CycleApp, info: Session | null): (Suggestion & Named)[] {
   const list = [command("new", "Start a new session", "compose", () => app.newSession())];
   if (!info) return list;
   const sessionId = info.id;

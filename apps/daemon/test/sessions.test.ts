@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { DayUsage, EventFrame, SessionInfo, Settings } from "@cycle/protocol";
+import type { DayUsage, EventFrame, Session, Settings } from "@cycle/protocol";
 import {
   Git,
   JsonStore,
@@ -16,7 +16,7 @@ async function setup() {
   const harness = new FakeHarness();
   const timers = manualSchedule();
   const frames: EventFrame[] = [];
-  const infos: SessionInfo[] = [];
+  const infos: Session[] = [];
   const usage: DayUsage[] = [];
   const viewers = new Map<string, number>();
   const settings: Settings = {

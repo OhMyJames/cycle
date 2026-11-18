@@ -6,7 +6,7 @@ import type {
   FileRewind,
   Harness,
   HarnessEvent,
-  HarnessSession,
+  AgentSession,
   ModeInfo,
   ModelInfo,
   PromptInput,
@@ -33,7 +33,7 @@ export class FakeHarness implements Harness {
   readonly sent: { sessionId: string; text: string }[] = [];
   readonly steered: string[] = [];
   readonly calls: string[] = [];
-  stored: HarnessSession[] = [];
+  stored: AgentSession[] = [];
   history: Turn[] = [];
   /** What the next loaded session says it used before. */
   loadedUsage: Usage | null = null;
@@ -50,7 +50,7 @@ export class FakeHarness implements Harness {
     this.listener(event);
   }
 
-  session(id: string, patch: Partial<HarnessSession> = {}): HarnessSession {
+  session(id: string, patch: Partial<AgentSession> = {}): AgentSession {
     return {
       id,
       harness: this.name,

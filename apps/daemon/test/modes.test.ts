@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { EventFrame, SessionInfo, Settings } from "@cycle/protocol";
+import type { EventFrame, Session, Settings } from "@cycle/protocol";
 import {
   Git,
   Harnesses,
@@ -20,7 +20,7 @@ async function setup(stored: MetaFile = { sessions: {} }) {
   const harness = new FakeHarness();
   const timers = manualSchedule();
   const frames: EventFrame[] = [];
-  const infos: SessionInfo[] = [];
+  const infos: Session[] = [];
   const settings: Settings = {
     model: null,
     effort: null,

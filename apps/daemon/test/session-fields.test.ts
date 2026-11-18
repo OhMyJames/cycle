@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { HarnessSession, SessionInfo, Settings, WorktreeInfo } from "@cycle/protocol";
+import type { AgentSession, Session, Settings, WorktreeInfo } from "@cycle/protocol";
 import { Git, JsonStore, type MetaFile, SessionHub, UsageLedger } from "../src/index.ts";
 import { FakeHarness, manualSchedule } from "./fake-harness.ts";
 
@@ -43,13 +43,13 @@ async function setup(
     publish: { frame: () => {}, sessions: () => {}, removed: () => {}, usage: () => {} },
   });
   /** Lists the agent's records, and returns the one of the session `s1`. */
-  const listed = async (...records: HarnessSession[]) => {
+  const listed = async (...records: AgentSession[]) => {
     harness.stored = records;
     const list = await hub.list(false);
-    return list.find((info) => info.id === "s1") as SessionInfo;
+    return list.find((info) => info.id === "s1") as Session;
   };
   /** Opens the session `s1` as the agent loads it from a record. */
-  const opened = async (record: HarnessSession) => {
+  const opened = async (record: AgentSession) => {
     harness.loadSession = async () => ({ session: record, turns: [], usage: null });
     const result = await hub.open(record.id, undefined);
     if (!("state" in result)) throw new Error("a first open gives the state");
@@ -61,7 +61,7 @@ async function setup(
 const worktree: WorktreeInfo = { repo: "/repo", base: "abc", branch: "cycle/meta" };
 
 /** What the agent keeps of a session, each field set so that a winner can be told from a loser. */
-const agentRecord = (harness: FakeHarness, patch: Partial<HarnessSession> = {}) =>
+const agentRecord = (harness: FakeHarness, patch: Partial<AgentSession> = {}) =>
   harness.session("s1", {
     title: "agent title",
     preview: "agent preview",

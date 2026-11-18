@@ -13,7 +13,7 @@ import type {
   FileMatch,
   Harness,
   HarnessEvent,
-  HarnessSession,
+  AgentSession,
   McpServerInfo,
   McpServerInput,
   ModeInfo,
@@ -269,7 +269,7 @@ export class CodexHarness implements Harness {
 
   // Sessions
 
-  async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
+  async createSession(options: CreateSessionOptions): Promise<AgentSession> {
     if (options.sandboxed) throw new Error("Codex sessions do not run in a sandbox yet.");
     const policy = options.mode ? modePolicy(options.mode) : null;
     const proc = this.served(options.model) && this.extra ? this.extra : this.main;
@@ -294,7 +294,7 @@ export class CodexHarness implements Harness {
     });
   }
 
-  async listSessions(filter: { archived: boolean }): Promise<HarnessSession[]> {
+  async listSessions(filter: { archived: boolean }): Promise<AgentSession[]> {
     // Codex lists the threads of the provider it runs on, or of the ones it is asked for.
     const lists = await Promise.all([
       this.listThreads(filter.archived, null),
@@ -303,8 +303,8 @@ export class CodexHarness implements Harness {
     return lists.flat().toSorted((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  private async listThreads(archived: boolean, provider: string | null): Promise<HarnessSession[]> {
-    const sessions: HarnessSession[] = [];
+  private async listThreads(archived: boolean, provider: string | null): Promise<AgentSession[]> {
+    const sessions: AgentSession[] = [];
     let cursor: string | null = null;
     do {
       const page: { data: WireThread[]; nextCursor: string | null } = await this.main.request(
@@ -330,7 +330,7 @@ export class CodexHarness implements Harness {
   async loadSession(
     sessionId: string,
     options: TurnOptions,
-  ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }> {
+  ): Promise<{ session: AgentSession; turns: Turn[]; usage: Usage | null }> {
     const proc = await this.processOf(sessionId);
     await proc.peer();
     await this.freshen(proc);
@@ -345,7 +345,7 @@ export class CodexHarness implements Harness {
     };
   }
 
-  async forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession> {
+  async forkSession(sessionId: string, turnId: string | null): Promise<AgentSession> {
     const proc = await this.processOf(sessionId);
     const response = await proc.request<WireThreadResponse>("thread/fork", {
       threadId: sessionId,

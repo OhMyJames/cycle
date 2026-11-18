@@ -6,7 +6,7 @@ import {
   type Plan,
   type QueuedMessage,
   type SessionEvent,
-  type SessionInfo,
+  type Session,
   type Turn,
   type TurnOrigin,
   type Usage,
@@ -15,7 +15,7 @@ import {
 
 /** Materialized view of a session's conversation: the fold of its event stream. */
 export interface SessionState {
-  info: SessionInfo;
+  info: Session;
   turns: Turn[];
   approvals: Approval[];
   plan: Plan | null;
@@ -34,7 +34,7 @@ export interface SessionState {
   epoch: string;
 }
 
-export function initialSessionState(info: SessionInfo, epoch = ""): SessionState {
+export function initialSessionState(info: Session, epoch = ""): SessionState {
   return {
     info,
     turns: [],

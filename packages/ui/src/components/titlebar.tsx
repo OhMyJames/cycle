@@ -1,4 +1,4 @@
-import type { SessionInfo } from "@cycle/protocol";
+import type { Session } from "@cycle/protocol";
 import { isComposing } from "@ui-sdk/core";
 import { useState } from "react";
 import { type PanelId, sessionTitle } from "../client/app.ts";
@@ -16,7 +16,7 @@ const PANELS: { id: PanelId; label: string; icon: IconName; hint: string }[] = [
   { id: "terminal", label: "Terminal", icon: "terminal", hint: "⌃`" },
 ];
 
-export function TitleBar({ info, title }: { info: SessionInfo | null; title: string }) {
+export function TitleBar({ info, title }: { info: Session | null; title: string }) {
   const app = useApp();
   const { sidebar, panel } = useStore(app.view, (view) => ({
     sidebar: view.sidebar,

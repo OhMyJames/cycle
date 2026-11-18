@@ -9,7 +9,7 @@ import {
   type CreateSessionOptions,
   type FileRewind,
   type HarnessEvent,
-  type HarnessSession,
+  type AgentSession,
   type HookSettings,
   type LimitWindow,
   type McpServerInfo,
@@ -423,7 +423,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
 
   // Sessions
 
-  async createSession(options: CreateSessionOptions): Promise<HarnessSession> {
+  async createSession(options: CreateSessionOptions): Promise<AgentSession> {
     const sandbox = options.sandboxed
       ? await this.sandboxes().ensure(options.cwd, { environment: options.sandboxed })
       : null;
@@ -458,8 +458,8 @@ export class ClaudeHarness implements Sessions, AgentReads {
    * What Claude Code keeps here, and what each sandbox keeps in its own home. A sandbox's
    * conversation says the folder as the sandbox knows it, which is put back to this machine's.
    */
-  async listSessions(filter: { archived: boolean }): Promise<HarnessSession[]> {
-    const out: HarnessSession[] = [];
+  async listSessions(filter: { archived: boolean }): Promise<AgentSession[]> {
+    const out: AgentSession[] = [];
     const seen = new Set<string>();
     const take = (info: WireSessionInfo, sandbox: { name: string; cwd: string } | null): void => {
       // One with no folder cannot be continued.
@@ -497,7 +497,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
   async loadSession(
     sessionId: string,
     options: TurnOptions,
-  ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }> {
+  ): Promise<{ session: AgentSession; turns: Turn[]; usage: Usage | null }> {
     const known = await this.find(sessionId);
     this.asked.set(sessionId, options);
     if (options.sandbox) known.sandbox = options.sandbox;
@@ -505,7 +505,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     if (known.sandbox && known.stored) await this.adopt(sessionId, known);
     const at = this.now();
     const inside = known.sandbox ? this.cwdOf(known) : null;
-    const fresh: HarnessSession = {
+    const fresh: AgentSession = {
       id: sessionId,
       harness: this.name,
       title: null,
@@ -545,7 +545,7 @@ export class ClaudeHarness implements Sessions, AgentReads {
     };
   }
 
-  async forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession> {
+  async forkSession(sessionId: string, turnId: string | null): Promise<AgentSession> {
     const known = await this.find(sessionId);
     if (!known.stored) throw new Error("There is nothing in this session to copy yet.");
     const sdk = this.sdkFor(known);

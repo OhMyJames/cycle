@@ -25,7 +25,7 @@ import {
   type ReviewTarget,
   type Schedule,
   type ScheduleInput,
-  type SessionInfo,
+  type Session,
   type PermissionMode,
   type SessionState,
   type SkillInfo,
@@ -127,7 +127,7 @@ export interface Toast {
 }
 
 export interface SessionsState {
-  byId: Record<string, SessionInfo>;
+  byId: Record<string, Session>;
   loaded: boolean;
 }
 
@@ -174,15 +174,15 @@ function readPrefs(): Partial<Prefs> {
 }
 
 /** The folder a session belongs to in the list: its repository, not its worktree. */
-export function projectOf(info: SessionInfo): string {
+export function projectOf(info: Session): string {
   return info.worktree?.repo ?? info.cwd;
 }
 
-export function sessionTitle(info: SessionInfo): string {
+export function sessionTitle(info: Session): string {
   return info.title || plainMentions(info.preview).split("\n")[0]?.slice(0, 80) || "New session";
 }
 
-const ATTENTION: Partial<Record<SessionInfo["status"], string>> = {
+const ATTENTION: Partial<Record<Session["status"], string>> = {
   waiting: "Needs your approval",
   idle: "Finished",
   error: "Stopped with an error",
@@ -197,7 +197,7 @@ export class CycleApp {
   readonly connection = new Store<ConnectionStatus>("connecting");
   readonly daemon = new Store<DaemonInfo | null>(null);
   readonly sessions = new Store<SessionsState>({ byId: {}, loaded: false });
-  readonly archived = new Store<SessionInfo[] | null>(null);
+  readonly archived = new Store<Session[] | null>(null);
   readonly settings = new Store<Settings | null>(null);
   readonly models = new Store<ModelInfo[]>([]);
   /** Every agent's modes. A session can be in those of the agent it runs on. */
@@ -914,7 +914,7 @@ export class CycleApp {
       this.daemon.set(daemon);
       this.harnesses.set(daemon.harnesses);
       this.settings.set(settings);
-      const byId: Record<string, SessionInfo> = {};
+      const byId: Record<string, Session> = {};
       for (const info of list.sessions) byId[info.id] = info;
       this.sessions.set({ byId, loaded: true });
       // Whatever was followed before the connection dropped is caught up.
@@ -1137,7 +1137,7 @@ export class CycleApp {
     }
   }
 
-  private upsertSessions(infos: SessionInfo[]): void {
+  private upsertSessions(infos: Session[]): void {
     this.sessions.update((sessions) => {
       const byId = { ...sessions.byId };
       for (const info of infos) {
@@ -1164,7 +1164,7 @@ export class CycleApp {
   }
 
   /** Tells the owner when a session they are not looking at stops or asks. */
-  private noticeAttention(infos: SessionInfo[]): void {
+  private noticeAttention(infos: Session[]): void {
     const known = this.sessions.get().byId;
     const view = this.view.get();
     for (const info of infos) {

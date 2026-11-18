@@ -26,7 +26,7 @@ import type {
 } from "./model.ts";
 
 /** What a harness knows of a session. The daemon adds what only it keeps. */
-export interface HarnessSession {
+export interface AgentSession {
   id: string;
   /** The name of the harness that keeps it. */
   harness: string;
@@ -87,7 +87,7 @@ export type HarnessEvent =
   | {
       type: "session.changed";
       sessionId: string;
-      patch: Partial<HarnessSession>;
+      patch: Partial<AgentSession>;
     }
   /** The agent moved itself to another of its modes, as on leaving its plan. */
   | { type: "mode.changed"; sessionId: string; mode: PermissionMode }
@@ -156,15 +156,15 @@ export interface Sessions {
   dispose(): Promise<void>;
   onEvent(listener: (event: HarnessEvent) => void): () => void;
 
-  createSession(options: CreateSessionOptions): Promise<HarnessSession>;
-  listSessions(filter: { archived: boolean }): Promise<HarnessSession[]>;
+  createSession(options: CreateSessionOptions): Promise<AgentSession>;
+  listSessions(filter: { archived: boolean }): Promise<AgentSession[]>;
   /** Brings a stored session into memory and returns its conversation. */
   loadSession(
     sessionId: string,
     options: TurnOptions,
-  ): Promise<{ session: HarnessSession; turns: Turn[]; usage: Usage | null }>;
+  ): Promise<{ session: AgentSession; turns: Turn[]; usage: Usage | null }>;
   /** Copies a session, up to and including `turnId` when given. */
-  forkSession(sessionId: string, turnId: string | null): Promise<HarnessSession>;
+  forkSession(sessionId: string, turnId: string | null): Promise<AgentSession>;
   renameSession(sessionId: string, title: string): Promise<void>;
   /** Puts a tag on a conversation, or takes it off with null. With the `tags` capability. */
   tagSession?(sessionId: string, tag: string | null): Promise<void>;

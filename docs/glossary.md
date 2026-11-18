@@ -147,7 +147,6 @@ A setting lives in one layer. Where two layers set the same thing, the agent's o
 
 | Today                                         | Target                                          |
 | --------------------------------------------- | ----------------------------------------------- |
-| `HarnessSession` and `SessionInfo`            | `Session`                                       |
 | `Session.harness`                             | `Session.agent`                                 |
 | `SessionStatus` (five values)                 | `SessionActivity` (three) and a "loaded" flag   |
 | `Approval` kinds `question` and `elicitation` | `Question`                                      |
