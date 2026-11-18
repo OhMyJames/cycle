@@ -201,14 +201,14 @@ export class SessionHub {
 
   /** Whether a session is in the middle of a turn. A session nobody knows is not. */
   working(sessionId: string): boolean {
-    const status = this.infos.get(sessionId)?.status;
-    return status === "running" || status === "waiting";
+    const activity = this.infos.get(sessionId)?.activity;
+    return activity !== undefined && activity !== "idle";
   }
 
   /** Whether any session is in the middle of a turn in this folder. */
   busyIn(cwd: string): boolean {
     for (const info of this.infos.values()) {
-      if (info.cwd === cwd && (info.status === "running" || info.status === "waiting")) return true;
+      if (info.cwd === cwd && info.activity !== "idle") return true;
     }
     return false;
   }
@@ -496,7 +496,7 @@ export class SessionHub {
       info = { ...info, title: title || null };
     }
     if (params.archived !== undefined && params.archived !== info.archived) {
-      if (info.status === "running" || info.status === "waiting") {
+      if (info.activity !== "idle") {
         throw new SessionError("Stop the session before archiving it.");
       }
       await harness.archiveSession(sessionId, params.archived);
@@ -554,7 +554,7 @@ export class SessionHub {
 
   async remove(sessionId: string, removeWorktree: boolean): Promise<void> {
     const info = this.info(sessionId);
-    if (info.status === "running" || info.status === "waiting") {
+    if (info.activity !== "idle") {
       throw new SessionError("Stop the session before deleting it.");
     }
     await this.options.harness.deleteSession(sessionId);

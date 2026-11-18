@@ -86,9 +86,8 @@ test("the list puts what needs the owner first, then what runs, then by day", ()
       info("today-early", { updatedAt: now - 7_200_000 }),
       info("today-late", {}),
       info("pinned", { pinned: true, updatedAt: now - 9 * 86_400_000 }),
-      info("running", { status: "running", activity: "running" }),
+      info("running", { activity: "running" }),
       info("waiting", {
-        status: "waiting",
         activity: "requires_action",
         updatedAt: now - 5 * 86_400_000,
       }),

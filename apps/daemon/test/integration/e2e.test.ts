@@ -178,7 +178,8 @@ test("an approval waits for the owner, and a queued prompt runs after the turn",
   expect(request.approval).toMatchObject({ kind: "command", reason: "needs to write" });
   await client.until(() =>
     client.pushes.some(
-      (push) => push.type === "sessions.changed" && push.sessions[0]?.status === "waiting",
+      (push) =>
+        push.type === "sessions.changed" && push.sessions[0]?.activity === "requires_action",
     ),
   );
 

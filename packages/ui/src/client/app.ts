@@ -1163,9 +1163,9 @@ export class CycleApp {
     const known = this.sessions.get().byId;
     const view = this.view.get();
     for (const info of infos) {
-      const before = known[info.id]?.status;
+      const before = known[info.id];
       if (!before) continue;
-      const label = attentionLabel(before, info.status);
+      const label = attentionLabel(before, info);
       if (!label) continue;
       if (view.sessionId === info.id && document.hasFocus()) continue;
       host.notify(label, sessionTitle(info));

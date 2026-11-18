@@ -1,26 +1,32 @@
 import { expect, test } from "bun:test";
-import type { SessionStatus } from "@cycle/protocol";
+import type { Session } from "@cycle/protocol";
 import { attentionLabel } from "../src/lib/attention.ts";
 
-test.each<[SessionStatus, SessionStatus, string | null]>([
+type Mark = Pick<Session, "activity" | "failed">;
+
+const marks = {
+  idle: { activity: "idle", failed: false },
+  running: { activity: "running", failed: false },
+  asking: { activity: "requires_action", failed: false },
+  failed: { activity: "idle", failed: true },
+} satisfies Record<string, Mark>;
+
+test.each<[keyof typeof marks, keyof typeof marks, string | null]>([
   ["running", "idle", "Finished"],
-  ["waiting", "idle", "Finished"],
-  ["running", "error", "Stopped with an error"],
-  ["waiting", "error", "Stopped with an error"],
-  ["running", "waiting", "Needs your approval"],
-  ["idle", "waiting", "Needs your approval"],
-  ["error", "waiting", "Needs your approval"],
-  ["stored", "waiting", "Needs your approval"],
-  ["stored", "idle", null],
-  ["idle", "stored", null],
-  ["stored", "error", null],
-  ["idle", "error", null],
+  ["asking", "idle", "Finished"],
+  ["running", "failed", "Stopped with an error"],
+  ["asking", "failed", "Stopped with an error"],
+  ["running", "asking", "Needs your approval"],
+  ["idle", "asking", "Needs your approval"],
+  ["failed", "asking", "Needs your approval"],
+  ["idle", "failed", null],
+  ["failed", "idle", null],
   ["idle", "running", null],
-  ["waiting", "running", null],
-  ["error", "running", null],
+  ["asking", "running", null],
+  ["failed", "running", null],
   ["running", "running", null],
-  ["waiting", "waiting", null],
+  ["asking", "asking", null],
   ["idle", "idle", null],
 ])("a session going from %s to %s says %p", (before, after, label) => {
-  expect(attentionLabel(before, after)).toBe(label);
+  expect(attentionLabel(marks[before], marks[after])).toBe(label);
 });

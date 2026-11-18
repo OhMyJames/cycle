@@ -186,7 +186,7 @@ test("Claude Code asks the owner before a command that changes something", async
   expect(asked.approval).toMatchObject({ kind: "command", cwd: project });
   expect(existsSync(join(project, "made.txt"))).toBe(false);
   const { sessions } = await client.call("session.list", { archived: false });
-  expect(sessions.find((info) => info.id === session.id)?.status).toBe("waiting");
+  expect(sessions.find((info) => info.id === session.id)?.activity).toBe("requires_action");
 
   await client.call("approval.respond", {
     sessionId: session.id,
