@@ -1,6 +1,7 @@
 # Agent Note: A session's mode is one its agent offers
 
 Status: accepted
+Partly replaced by [options are one declared list](2026-11-18-options-are-one-declared-list.md)
 Date: 2026-11-16
 Basis: The owner asked for Claude Agent SDK support in full, starting with its permission modes and
 approvals (2026-11-16). Checked against `@anthropic-ai/claude-agent-sdk` 0.3.325 (Claude Code
