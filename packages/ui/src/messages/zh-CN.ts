@@ -276,6 +276,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "compaction.failed": "压缩上下文失败",
   "compaction.cancelled": "压缩上下文已停止",
   "permission.dismiss": "忽略",
+  "permission.waiting": "还有 {count} 个在等",
+  "permission.wholeFile": "写入整个文件：",
   "form.title": "agent 有一个问题",
   "form.answer": "发送回答",
   "form.skip": "跳过问题",

@@ -3887,6 +3887,69 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   overflow-wrap: anywhere;
 }
 
+/* How many more requests wait behind this one: on the title's line, at its end, quiet. */
+[data-slot="permission-waiting"] {
+  margin-left: auto;
+  color: var(--ui-muted-foreground);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-meta);
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
+/* What the agent says the call is for: its sentence, above what it would run. */
+[data-slot="permission-purpose"] {
+  margin: 0;
+  color: var(--ui-muted-foreground);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-slot="permission-change"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+/* The file an edit changes, and by how much: the path cut from the start, so its name stays in view. */
+[data-slot="permission-file"] {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="permission-path"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--ui-font-mono);
+}
+
+/* An edit's change in the card: the same sunken diff a call shows, flush with the card, without the file's line numbers
+   (an edit names text, not where it is). */
+[data-slot="permission"] [data-slot="tool-diff"] {
+  margin: 0;
+  max-height: 16rem;
+}
+
+[data-slot="permission"] [data-slot="tool-diff"] > [data-line] {
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+}
+
+[data-slot="permission"] [data-slot="diff-number"] {
+  display: none;
+}
+
+[data-slot="permission"] [data-slot="diff-sign"] {
+  text-align: center;
+}
+
 [data-slot="permission-actions"] {
   display: flex;
   gap: 0.5rem;

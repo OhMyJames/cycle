@@ -312,6 +312,8 @@ export const enUS = {
   "compaction.failed": "Couldn't compact the context",
   "compaction.cancelled": "Compacting the context stopped",
   "permission.dismiss": "Dismiss",
+  "permission.waiting": { one: "{count} more waiting", other: "{count} more waiting" },
+  "permission.wholeFile": "Writes the whole file:",
   "form.title": "The agent has a question",
   "form.answer": "Send answers",
   "form.skip": "Skip questions",
