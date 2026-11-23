@@ -83,6 +83,11 @@ export class Session {
    * background. In memory only: when the agent process goes, so do they.
    */
   readonly #subagents = new Map<string, boolean>();
+  /**
+   * Every sub-agent the agent has announced (`subagent_update`), ended or not: only those may speak as a child session
+   * (docs/protocol.md §9). In memory only; a new process announces its own.
+   */
+  readonly #children = new Set<string>();
   readonly unknownBackground = new Map<
     string,
     { toolCallId: string | undefined; dismissing?: boolean }
@@ -144,6 +149,7 @@ export class Session {
     const unknownBefore = this.unknownBackground.size;
     const id = update.sessionId;
     if (typeof id !== "string") return false;
+    this.noteChild(id);
     const state = update.state;
     const named = typeof state === "string" ? state : (state as { state?: unknown } | null)?.state;
     const meta = (update._meta as Record<string, unknown> | null | undefined)?.[META.subagent];
@@ -165,9 +171,20 @@ export class Session {
     return before !== this.backgroundCount() || unknownBefore !== this.unknownBackground.size;
   }
 
+  /** `id` was announced as a sub-agent (`subagent_update`). */
+  noteChild(id: string): void {
+    this.#children.add(id);
+  }
+
+  /** Whether `id` is a sub-agent the agent announced: what it says under that id is that sub-agent's. */
+  isChild(id: string): boolean {
+    return this.#children.has(id);
+  }
+
   /** The agent process is gone, and its sub-agents with it. */
   endSubagents(): void {
     this.#subagents.clear();
+    this.#children.clear();
     this.unknownBackground.clear();
   }
 

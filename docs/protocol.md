@@ -103,7 +103,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 | `elicitation/create`         | daemon → 客户端 | 转发,处理方式同 §9                                    |
 | `auth/*`                     | —               | v1 不用。agent 的登录由 agent 所在环境自己完成        |
 
-`session/update` 的变体沿用 ACP v2:`user_message(_chunk)`、`agent_message(_chunk)`、`agent_thought(_chunk)`、`state_update`、`tool_call_update`、`tool_call_content_chunk`、`terminal_update`、`terminal_output_chunk`、`plan_update`、`available_commands_update`、`config_option_update`、`session_info_update`、`usage_update`、`notice`、`compaction_update`、`compaction_summary_chunk`、`replay_complete`、`subagent_update`、`session_message(_chunk)`,以及 Cycle 自己的 `_cycle/queue_update`(§8)。客户端遇到不认识的变体应忽略,不得报错。
+`session/update` 的变体沿用 ACP v2:`user_message(_chunk)`、`agent_message(_chunk)`、`agent_thought(_chunk)`、`state_update`、`tool_call_update`、`tool_call_content_chunk`、`terminal_update`、`terminal_output_chunk`、`plan_update`、`available_commands_update`、`config_option_update`、`session_info_update`、`usage_update`、`notice`、`compaction_update`、`compaction_summary_chunk`、`replay_complete`、`subagent_update`、`session_message(_chunk)`,以及 Cycle 自己的 `_cycle/queue_update`(§8)和 `_cycle/child_update`(子 agent 的对话,§9)。客户端遇到不认识的变体应忽略,不得报错。
 
 v1 的 Claude 适配只需产生其中的子集,见 L3 文档(待写)。
 
@@ -499,6 +499,7 @@ agent 发来的 `session/request_permission` 和 `elicitation/create` 是**需�
 3. 没有客户端附着时,请求保持挂起。新客户端附着时,daemon 在补发之后重新发送所有未解决的请求,并在 `session/resume` 的应答里用 `_meta["cycle/pending"]` 列出它们的 `requestId`。客户端断线前收到过、这里没有列出的请求,在它离线时已被别的客户端答复(或已中止),应关闭对应的对话框。旧 daemon 的应答没有这个字段:客户端不据此关闭任何东西。
 4. 客户端收到 `session/cancel` 之后,按 ACP 的规定,所有未解决的权限请求必须以"已取消"的结果回复。这一步由 daemon 代为完成,不依赖客户端。
 5. agent 进程退出时,未解决的请求在日志中标记为"已中止",并发 `_cycle/request_resolved`。
+6. 子 agent 要的审批(agent 以子 agent 的 `sessionId` 发来,见下面"子 agent")照样是这个 session 的请求,`_meta["cycle/subagentId"]` 是那个子 agent 的 id,客户端据此标出它来自哪个子 agent。没有这个字段的是主 agent 要的。
 
 ### elicitation(决策 0011)
 
@@ -514,7 +515,25 @@ agent 发来的 `session/request_permission` 和 `elicitation/create` 是**需�
 
 ### 子 agent
 
-`subagent_update`(决策 0014)原样转给客户端:`sessionId` 是子的 id(不是可以打开的 session),`title`、`description`、`state`,以及 `_meta["cycle/subagent"]`:`toolCallId`、`background`、`parentId`、`summary`、`lastTool`、`usage`。只是通告:子 agent 的对话不转发,也不能对它发 `session/*` 请求。
+`subagent_update`(决策 0014)原样转给客户端:`sessionId` 是子的 id(不是可以打开的 session),`title`、`description`、`state`,以及 `_meta["cycle/subagent"]`:`toolCallId`、`background`、`parentId`、`summary`、`lastTool`、`usage`。不能对子 agent 发 `session/*` 请求:它没有 `capabilities`,取消只能取消整个 turn。
+
+**子 agent 的对话**(CYCL-134,取代 0014 的"只通告",理由见 [决定笔记](../.agents/notes/2026-11-23-subagent-conversations-are-forwarded.md)):
+
+- L2:agent 先用 `subagent_update` 通告子 agent,之后以子的 id 为 `sessionId` 发 `session/update`(ACP v2 的子 session)。daemon 只认通告过的子 id,没通告过的 `sessionId` 当作父 session 自己的。
+- L1:daemon 把它改写成父 session 的一条更新,照常写日志、带父的 `seq`、转发、回放:
+
+  ```json
+  {
+    "sessionUpdate": "_cycle/child_update",
+    "childId": "task_1",
+    "update": { "sessionUpdate": "tool_call_update", "toolCallId": "toolu_2", "...": "..." }
+  }
+  ```
+
+  `childId` 是 `subagent_update` 的 `sessionId`。`update` 只会是 `agent_message(_chunk)`、`agent_thought(_chunk)`、`tool_call_update`、`tool_call_content_chunk`,别的变体 daemon 丢掉;子 agent 的状态只看 `subagent_update`。`update` 里的工具调用和顶层的一样过滤凭证(§12)、检查 `cycle/toolResult`。客户端把它画在启动这个子 agent 的那次调用下面,不当作主 agent 说的话;不认识这个变体的客户端忽略它(§4)。
+- 子 agent 的更新不改变 session 的状态,不算"值得看的记录"(§6"已读")。
+- 子 agent 又起的子 agent 也这样转发,它的 `subagent_update` 带 `parentId`。
+- Claude 的取法见 docs/adapters/claude.md:文字只来整条消息,不流式;子 agent 结束时,它没结束的调用以 `cancelled` 结束。
 
 ### 后台任务(`_cycle/task_update`,CYCL-87)
 

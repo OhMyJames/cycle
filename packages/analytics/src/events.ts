@@ -179,6 +179,11 @@ export const EVENTS = {
   }),
   tool_copied: o({ part: z.enum(["command", "output"]) }),
   tool_output_expanded: o({}),
+  /**
+   * A sub-agent's card opened by the person. `work`: it had what the sub-agent did to show (its conversation, CYCL-134),
+   * not only the task and the answer. `running`: the sub-agent was still at work.
+   */
+  subagent_opened: o({ work: z.boolean(), running: z.boolean() }),
   plan_opened: o({}),
   /**
    * The composer's context ring opened into its details. `state`: what it had to show, a number measured now, none
@@ -275,6 +280,7 @@ export const UI_EVENTS = [
   "attachment_refused",
   "tool_copied",
   "tool_output_expanded",
+  "subagent_opened",
   "plan_opened",
   "context_details_opened",
   "tool_link_opened",

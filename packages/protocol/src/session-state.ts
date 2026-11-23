@@ -47,3 +47,24 @@ export const GoalUpdateSchema = z.object({
   goal: GoalSchema.nullable(),
 });
 export type GoalUpdate = z.infer<typeof GoalUpdateSchema>;
+
+/** The `sessionUpdate` of a sub-agent's conversation, carried in its parent session (docs/protocol.md §9, CYCL-134). */
+export const CHILD_UPDATE = "_cycle/child_update";
+
+/** What a sub-agent's conversation may hold: what it said, thought and called. Its state is only `subagent_update`'s. */
+export const CHILD_UPDATE_KINDS: ReadonlySet<string> = new Set([
+  "agent_message",
+  "agent_message_chunk",
+  "agent_thought",
+  "agent_thought_chunk",
+  "tool_call_update",
+  "tool_call_content_chunk",
+]);
+
+/** One update of a sub-agent's conversation. `childId` is its `subagent_update`'s `sessionId`. */
+export const ChildUpdateSchema = z.object({
+  sessionUpdate: z.literal(CHILD_UPDATE),
+  childId: z.string(),
+  update: z.looseObject({ sessionUpdate: z.string() }),
+});
+export type ChildUpdate = z.infer<typeof ChildUpdateSchema>;

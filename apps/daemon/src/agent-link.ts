@@ -9,8 +9,11 @@ import {
 import type { AgentDefinition } from "./agents.ts";
 
 export type LinkHandlers = {
-  /** An update the agent sent, with the agent's own session id taken off. */
-  update: (update: SessionUpdate) => void;
+  /**
+   * An update the agent sent, and the session it named: its own, or a sub-agent's it announced (ACP v2 child
+   * sessions, docs/protocol.md §9).
+   */
+  update: (update: SessionUpdate, sessionId: string) => void;
   /** The agent asks the user something. Answers when someone has decided. */
   permission: (params: Record<string, unknown>) => Promise<unknown>;
   /** The agent asks the user for structured input (a form). Answers when someone has, or at once if no one can. */
@@ -43,7 +46,7 @@ export class AgentLink {
     const launched = await definition.launch();
     const app = client({ name: "cycle" })
       .onNotification(methods.client.session.update, ({ params }) => {
-        handlers.update(params.update);
+        handlers.update(params.update, params.sessionId);
       })
       .onRequest(methods.client.session.requestPermission, async ({ params }) => {
         return (await handlers.permission(params as unknown as Record<string, unknown>)) as never;

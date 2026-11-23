@@ -24,6 +24,7 @@ import { PLAN_USAGE_UPDATE, planWindowsOf } from "./plan-usage.ts";
 import { NO_SETUP, type SessionSetup, setupOf } from "./setup.ts";
 import { Subagents } from "./subagents.ts";
 import { BackgroundTasks, goalUpdateOf } from "./tasks.ts";
+import { Transcripts } from "./transcripts.ts";
 import { PlanState, type StopReason, stopReasonOf, TurnTranslator, toolKind } from "./translate.ts";
 import { claudeJsonPath, recordTrust } from "./trust.ts";
 
@@ -249,6 +250,8 @@ type SessionState = {
   started: boolean;
   /** The sub-agents the model has started, as far as clients were told. */
   subagents: Subagents;
+  /** What each sub-agent said and called, told as its own session's updates (CYCL-134). */
+  transcripts: Transcripts;
   /** The background tasks that are not sub-agents (commands, watchers, workflows), as far as clients were told. */
   tasks: BackgroundTasks;
   /** The command list clients were last told, to say it again only when it changes. */
@@ -514,9 +517,13 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
 
   /** Sub-agents that were running when their process went are over, and clients are told. */
   const endSubagents = (session: SessionState) => {
+    // Their calls end before they do: a client is told of a sub-agent's end once there is nothing of it left running.
+    const calls = session.transcripts.endAll();
     const ended = [...session.subagents.endAll(), ...session.tasks.endAll()];
     if (session.client === undefined) return;
     const client = session.client;
+    for (const { childId, updates } of calls)
+      for (const update of updates) void notify(client, childId, update).catch(() => undefined);
     for (const update of ended) void notify(client, session.id, update).catch(() => undefined);
   };
 
@@ -719,6 +726,12 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       const update = session.subagents.update(m);
       if (update !== undefined) {
         scheduleIdle(session);
+        // A sub-agent that ended: what it left running ends first, as its own (docs/protocol.md §9).
+        const sub = update as { sessionId: string; state?: { state?: string } };
+        if (sub.state?.state === "idle")
+          for (const call of session.transcripts.end(sub.sessionId))
+            await notify(client, sub.sessionId, call);
+        else if (sub.state?.state === "running") session.transcripts.resume(sub.sessionId);
         await notify(client, session.id, update);
       }
       const task = session.tasks.update(m);
@@ -980,6 +993,8 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       // A sub-agent's row can say what it is doing, not only that it is busy. The SDK makes a
       // model call for each summary, so it is asked for only when the configuration says to.
       ...(config.progressSummaries === true ? { agentProgressSummaries: true } : {}),
+      // A sub-agent's words, not only its tool calls: clients show its conversation (CYCL-134).
+      forwardSubagentText: true,
       permissionMode: session.mode,
       // The SDK's guard against starting in bypassPermissions by accident. Here the mode is only
       // ever the one a person chose, and without this a switch to it mid-session would be refused
@@ -1006,12 +1021,19 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
           signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
         });
         aborted.catch(() => undefined);
+        // A sub-agent's call is asked for in its own session (ACP v2), so a client can say which one asks. The call is
+        // known by the sub-agent's messages; the SDK's `agentID` only when it is a task that was announced.
+        const asker =
+          session.transcripts.ownerOf(context.toolUseID) ??
+          (context.agentID !== undefined && session.subagents.announced(context.agentID)
+            ? context.agentID
+            : undefined);
         // Raced with the signal: a client that never answers must not hold the turn.
         const outcome = await Promise.race([
           client.request(
             methods.client.session.requestPermission,
             {
-              sessionId: session.id,
+              sessionId: asker ?? session.id,
               title: `Allow ${toolName}?`,
               subject: {
                 type: "tool_call",
@@ -1131,6 +1153,22 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
             session.started = true;
           }
           await aside(client, session, message).catch(() => undefined);
+          // A sub-agent's own talk is its session's, turn or no turn: a background one goes on after the turn ends.
+          // Only once it was announced (ACP announces a child before anything of it); before that it is dropped.
+          const from = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id;
+          if (from) {
+            const child = session.subagents.childOf(from);
+            if (child !== undefined) {
+              const servers = Object.keys(session.setup.mcpServers);
+              for (const update of session.transcripts.feed(child, message, servers)) {
+                const call = update as { toolCallId?: unknown; name?: unknown };
+                if (typeof call.toolCallId === "string" && typeof call.name === "string")
+                  session.tasks.noteCall(call.toolCallId, call.name);
+                await notify(client, child, update).catch(() => undefined);
+              }
+            }
+            continue;
+          }
           let turn = session.turn;
           if ((turn === undefined || turn.done) && speaksAloneOf(message)) {
             // Claude began on its own (a background task finished and woke it): there is no prompt, but
@@ -1324,6 +1362,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
         cwd: params.cwd,
         started: false,
         subagents: new Subagents(),
+        transcripts: new Transcripts(),
         tasks: new BackgroundTasks(),
         commandsKey: undefined,
         configKey: undefined,
@@ -1380,6 +1419,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
           // Whether Claude has this session on disk (see `recordOf`): it is resumed if so, and made if not.
           started,
           subagents: new Subagents(),
+          transcripts: new Transcripts(),
           tasks: new BackgroundTasks(),
           commandsKey: undefined,
           configKey: undefined,

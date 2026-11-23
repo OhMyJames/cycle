@@ -311,6 +311,8 @@ export type PermissionRequest = {
   /** What the agent wants to do, as ACP gives it. Shown, never trusted. */
   subject?: unknown;
   options: PermissionOption[];
+  /** The sub-agent that asks, by its id, when one does (docs/protocol.md §9): its card can say which. */
+  subagentId?: string;
   /**
    * Present when the agent asks for answers, not leave (ACP's `elicitation/create`: a question it put, an MCP server's
    * form). `schema` is the request's `requestedSchema`, a flat JSON Schema object. Answer it with `answerForm`.

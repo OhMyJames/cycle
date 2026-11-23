@@ -14,7 +14,7 @@
  * it arrives in pieces a pattern cannot see across, and it is the person's own words.
  */
 
-import { TASK_UPDATE } from "@cycle/protocol";
+import { CHILD_UPDATE, TASK_UPDATE } from "@cycle/protocol";
 export const REDACTED = "[redacted]";
 
 const MAX_DEPTH = 32;
@@ -132,6 +132,11 @@ const TOOL_UPDATES = new Set(["tool_call", "tool_call_update", TASK_UPDATE]);
 export const redactRecord = (kind: string, data: unknown): unknown => {
   if (!isObject(data)) return data;
   if (kind === "update" && typeof data.sessionUpdate === "string") {
+    // A sub-agent's call is a tool call like any other: filtered the same, inside the record that carries it.
+    if (data.sessionUpdate === CHILD_UPDATE && isObject(data.update)) {
+      const update = redactRecord(kind, data.update);
+      return update === data.update ? data : { ...data, update };
+    }
     return TOOL_UPDATES.has(data.sessionUpdate) ? redactTool(data) : data;
   }
   if (kind === "request" && isObject(data.params))

@@ -137,6 +137,13 @@ const messageOf = (error: unknown): string =>
 /** How a daemon update was asked for, as `daemon_upgraded` reports it: nothing was working, interrupt, or wait. */
 const whenOf = (stop: DaemonStop): "idle" | "now" | "later" => (stop === "ask" ? "idle" : stop);
 
+/** The sub-agent that asks, when one does: the daemon says so in `_meta["cycle/subagentId"]` (docs/protocol.md §9). */
+const subagentOf = (request: Record<string, unknown>): { subagentId?: string } => {
+  const meta = request._meta as Record<string, unknown> | null | undefined;
+  const id = meta?.["cycle/subagentId"];
+  return typeof id === "string" && id !== "" ? { subagentId: id } : {};
+};
+
 const PROBLEMS: readonly ConnectorProblem[] = [
   "invalid_name",
   "reserved_header",
@@ -1052,6 +1059,7 @@ export class ConnectionManager
         subject: request.subject,
         options: (request.options as PermissionRequest["options"]) ?? [],
         ...(form !== undefined ? { form: form.form } : {}),
+        ...subagentOf(request),
       };
       watched.pending.set(key, {
         request: built,

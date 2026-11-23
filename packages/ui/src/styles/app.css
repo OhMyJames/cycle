@@ -3382,6 +3382,17 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   font-weight: 500;
 }
 
+/* What a sub-agent did (CYCL-134): its own words and work, laid out as a turn is, set in by a light rule so it does
+   not read as the main agent's. */
+[data-slot="subagent-work"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 1px solid var(--cycle-border-default);
+}
+
 /* A code review the agent reported (CYCL-138): a card (Surface/Card), a line of how many and how sure, then a row per
    finding. How sure is said in words, on a tag whose edge also differs (solid when confirmed, dashed when only plausible),
    so it is never colour alone. Rows are ghost rows inside the card: 6px in from its 16px corner, 10px rounded. */
@@ -4562,7 +4573,8 @@ button[data-slot="review-file"]:focus-visible {
 }
 
 /* What the agent says the call is for: its sentence, above what it would run. */
-[data-slot="permission-purpose"] {
+[data-slot="permission-purpose"],
+[data-slot="permission-asker"] {
   margin: 0;
   color: var(--ui-muted-foreground);
   font-size: var(--cycle-text-meta);
