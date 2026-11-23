@@ -94,18 +94,27 @@ export class TurnTranslator {
     readonly plan: PlanState = new PlanState(),
     /** The MCP servers this session was given, by the names they were given under: for tools' titles. */
     readonly servers: readonly string[] = [],
+    /**
+     * A sub-agent's conversation, not the main thread's (CYCL-134): it reads only sub-agents' messages, and only whole
+     * ones, since their stream is not forwarded; their usage is their own context's, not the session's.
+     */
+    readonly child: boolean = false,
   ) {}
 
   feed(message: SDKMessage): SessionUpdate[] {
-    // A sub-agent's own talk and tool calls are not the session's: it is only announced, through
-    // `task_*` → `subagent_update` (decision 0014). Shown here they would read as the main agent's,
-    // and a background one's results arrive after the turn, so its calls would never end.
-    if ((message as { parent_tool_use_id?: string | null }).parent_tool_use_id) return [];
+    // A sub-agent's own talk and tool calls are not the main thread's: shown as the turn's they would read as the main
+    // agent's, and a background one's results arrive after the turn, so its calls would never end. A translator of its
+    // own reads them (`Transcripts`), and the session carries them as the sub-agent's (docs/protocol.md §9).
+    const fromChild = Boolean(
+      (message as { parent_tool_use_id?: string | null }).parent_tool_use_id,
+    );
+    if (fromChild !== this.child) return [];
     switch (message.type) {
       case "stream_event":
+        if (this.child) return [];
         return this.#stream(message.event as unknown as { type: string; [key: string]: unknown });
       case "assistant":
-        this.#noteUsage(message);
+        if (!this.child) this.#noteUsage(message);
         return this.#assistant(message.message as unknown as { id: string; content: Block[] });
       case "user":
         return this.#toolResults(
@@ -184,6 +193,12 @@ export class TurnTranslator {
         } else if (name === "TaskCreate" || name === "TaskUpdate") {
           this.#calls.set(String(block.id), { name, input });
         }
+      } else if (this.child && block.type === "text") {
+        // The CLI sends a message block by block, each under the message's id (SDK: `SDKAssistantMessage`): for a
+        // sub-agent, whose stream is not read, each block is a piece of that message, not the whole of it.
+        updates.push(chunk("agent_message_chunk", message.id, String(block.text)));
+      } else if (this.child && block.type === "thinking" && String(block.thinking ?? "") !== "") {
+        updates.push(chunk("agent_thought_chunk", message.id, String(block.thinking)));
       } else if (!streamed && block.type === "text") {
         updates.push({
           sessionUpdate: "agent_message",

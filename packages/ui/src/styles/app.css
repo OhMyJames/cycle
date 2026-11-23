@@ -3328,6 +3328,17 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   font-weight: 500;
 }
 
+/* What a sub-agent did (CYCL-134): its own words and work, laid out as a turn is, set in by a light rule so it does
+   not read as the main agent's. */
+[data-slot="subagent-work"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 1px solid var(--cycle-border-default);
+}
+
 [data-slot="subagent-prompt"] {
   margin: 0;
   padding: 0.5rem 0.75rem;
@@ -4319,7 +4330,8 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
 }
 
 /* What the agent says the call is for: its sentence, above what it would run. */
-[data-slot="permission-purpose"] {
+[data-slot="permission-purpose"],
+[data-slot="permission-asker"] {
   margin: 0;
   color: var(--ui-muted-foreground);
   font-size: var(--cycle-text-meta);

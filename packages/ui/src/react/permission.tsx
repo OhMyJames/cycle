@@ -131,9 +131,20 @@ export type PermissionCardProps = {
   onAnswer: (key: string, optionId: string | "cancelled") => void | Promise<void>;
   /** How many more requests wait behind this one. They are shown one at a time, in the order they came. */
   waiting?: number;
+  /**
+   * A sub-agent asks, not the main agent (docs/protocol.md §9): what it was sent to do, or `""` when that is not known.
+   * Absent when the main agent asks.
+   */
+  asker?: string | undefined;
 };
 
-export function PermissionCard({ request, disabled, onAnswer, waiting = 0 }: PermissionCardProps) {
+export function PermissionCard({
+  request,
+  disabled,
+  onAnswer,
+  waiting = 0,
+  asker,
+}: PermissionCardProps) {
   const { t } = useI18n();
   const card = useRef<HTMLElement>(null);
   const call = callOf(request.subject);
@@ -150,6 +161,14 @@ export function PermissionCard({ request, disabled, onAnswer, waiting = 0 }: Per
           <span data-slot="permission-waiting">{t("permission.waiting", { count: waiting })}</span>
         ) : null}
       </div>
+      {/* Whose the ask is: the agent's words for the sub-agent are shown as text, never trusted. */}
+      {asker !== undefined ? (
+        <p data-slot="permission-asker">
+          {asker !== ""
+            ? t("permission.fromSubagent", { name: asker })
+            : t("permission.fromAnySubagent")}
+        </p>
+      ) : null}
       <ProposalView proposal={proposal} name={name} />
       <div data-slot="permission-actions">
         {request.options.map((option) => {

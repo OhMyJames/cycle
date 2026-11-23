@@ -14,6 +14,9 @@ import {
   agentDefaultsRead,
   agentDefaultsSet,
   agentsList,
+  CHILD_UPDATE,
+  CHILD_UPDATE_KINDS,
+  type ChildUpdate,
   CONNECTORS_CHANGED,
   CYCLE_PROTOCOL_VERSION,
   CycleErrorCode,
@@ -687,7 +690,12 @@ export class Daemon {
     let connected: AgentLink | undefined;
     let endedEarly = false;
     const link = await AgentLink.connect(definition, {
-      update: (update) => this.#onUpdate(session, update),
+      update: (update, sessionId) => {
+        // A sub-agent it announced speaks under its own id (ACP v2): that is the sub-agent's conversation. Any other id
+        // is taken as the session's own, as before the agent named one.
+        if (session.isChild(sessionId)) this.#onChildUpdate(session, sessionId, update);
+        else this.#onUpdate(session, update);
+      },
       permission: (params) => this.#onPermission(session, params),
       elicitation: (params) => this.#onElicitation(session, params),
       closed: () => {
@@ -887,12 +895,35 @@ export class Daemon {
       void conn.notify(PLAN_USAGE_CHANGED, { agent, usage }).catch(() => {});
   }
 
+  /**
+   * What a sub-agent said or called (docs/protocol.md §9, CYCL-134): kept and told as one record of its parent session,
+   * `_cycle/child_update`, so it has the parent's seq and is replayed with it. Only its conversation: what it would say
+   * of a state, a plan or a usage is not the session's, and its state is `subagent_update`'s. It changes nothing of the
+   * session (its state, its list row, what is worth reading).
+   */
+  #onChildUpdate(session: Session, childId: string, update: SessionUpdate): void {
+    if (session.resuming || session.historyError !== undefined || this.#closing) return;
+    const kind = (update as { sessionUpdate?: unknown }).sessionUpdate;
+    if (typeof kind !== "string" || !CHILD_UPDATE_KINDS.has(kind)) return;
+    void this.#write(session, {
+      kind: "update",
+      data: { sessionUpdate: CHILD_UPDATE, childId, update } satisfies ChildUpdate,
+    });
+  }
+
   #onUpdate(session: Session, update: SessionUpdate): void {
     // The account's, not the session's: kept for the agent and told to every client, never written to a history.
     if ((update as { sessionUpdate?: unknown }).sessionUpdate === PLAN_USAGE_UPDATE) {
       this.#notePlanUsage(session.entry.agent, update);
       return;
     }
+    // The daemon's to make from a sub-agent's own updates: an agent does not say it for one.
+    if ((update as { sessionUpdate?: unknown }).sessionUpdate === CHILD_UPDATE) return;
+    // Known as a sub-agent even when its announce is not kept (a resume replays, say): what it says later under its own
+    // id is then dropped as a sub-agent's, never written as the session's own.
+    const announced = update as { sessionUpdate?: unknown; sessionId?: unknown };
+    if (announced.sessionUpdate === "subagent_update" && typeof announced.sessionId === "string")
+      session.noteChild(announced.sessionId);
     // Once the daemon is stopping, the turn's end is on record: what the agent says after it is not.
     if (session.resuming || session.historyError !== undefined || this.#closing) return;
     const state = update as { sessionUpdate: string; state?: string };
@@ -1450,6 +1481,17 @@ export class Daemon {
   }
 
   async #onPermission(session: Session, params: Record<string, unknown>): Promise<unknown> {
+    // Which sub-agent asks, when one does: the agent asks in that sub-agent's session (ACP v2), clients are asked in
+    // the parent's and told whose it is (docs/protocol.md §9). Only the daemon says so: an agent's own word is dropped.
+    const { [META.subagentId]: _said, ...meta } = (params._meta ?? {}) as Record<string, unknown>;
+    const asker =
+      typeof params.sessionId === "string" && session.isChild(params.sessionId)
+        ? params.sessionId
+        : undefined;
+    params = {
+      ...params,
+      _meta: asker !== undefined ? { ...meta, [META.subagentId]: asker } : meta,
+    };
     const outcome = await this.#ask(session, REQUEST_PERMISSION, params, {
       cancelled: { outcome: "cancelled" },
       answer: (response) => (response as { outcome: unknown }).outcome,

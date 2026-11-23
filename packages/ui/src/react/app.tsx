@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { DISPLAY_MODES, displayMode, isDisplayMode } from "../display-mode.ts";
 import { SOURCE_LOCALE } from "../i18n.ts";
 import { resolveLanguage, translatorFor } from "../languages.ts";
-import { contextOf } from "../model/conversation.ts";
+import { type Conversation, contextOf, subagentCallOf } from "../model/conversation.ts";
 import {
   currentWorkspace,
   elsewhere as elsewhereOf,
@@ -67,6 +67,7 @@ import { ENVIRONMENT_STATE } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
+import { toolDescription } from "./tool.tsx";
 import { DaemonBanner, UpdateBanner, UpdateFooter } from "./update.tsx";
 
 /**
@@ -103,6 +104,12 @@ const PANEL_EVENT = {
  * A session's settings: the agent's (model, mode, effort…), which reach it through the daemon and so only while its
  * environment is connected, and how the session is shown here, which is always there.
  */
+/** What the sub-agent that asks was sent to do, as its own card titles it; undefined when that is not known. */
+const askerOf = (conversation: Conversation, subagentId: string): string | undefined => {
+  const call = subagentCallOf(conversation, subagentId);
+  return call !== undefined ? toolDescription(call) : undefined;
+};
+
 function SessionSettings({ connected, onClose }: { connected: boolean; onClose: () => void }) {
   const store = useAppStore();
   const { t } = useI18n();
@@ -1037,6 +1044,11 @@ function AppWindow() {
                       <PermissionCard
                         key={request.key}
                         request={request}
+                        asker={
+                          request.subagentId !== undefined && conversation !== undefined
+                            ? (askerOf(conversation, request.subagentId) ?? "")
+                            : undefined
+                        }
                         disabled={!connected}
                         onAnswer={store.answerPermission}
                         waiting={(view?.permissions.length ?? 1) - 1}

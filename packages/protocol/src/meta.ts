@@ -48,6 +48,8 @@ export const META = {
   hadTurn: "cycle/hadTurn",
   /** In a `subagent_update`: what the adapter says of the task beyond ACP's fields (decision 0014). */
   subagent: "cycle/subagent",
+  /** On a permission request sent to a client: the sub-agent that asked, by its `subagent_update` id (docs/protocol.md §9). Absent when the main agent asked. */
+  subagentId: "cycle/subagentId",
   /** In a finished `tool_call_update`: what the call amounts to in numbers, never contents (docs/protocol.md §9, `ToolResultSchema`). */
   toolResult: "cycle/toolResult",
   /** On a text content item of a tool call: `"stderr"` when it is what a command printed as errors (docs/protocol.md §9). */

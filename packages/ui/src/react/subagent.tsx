@@ -1,9 +1,10 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { useMemo } from "react";
-import { isLive, streamsOf, type ToolItem } from "../model/index.ts";
+import { type ReactNode, useMemo } from "react";
+import { type Conversation, isLive, streamsOf, type ToolItem, textOf } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
+import { useAppStore } from "./store-context.tsx";
 import {
   Copyable,
   clip,
@@ -38,12 +39,31 @@ const answerOf = (tool: ToolItem, out: string): string | undefined => {
 };
 
 /**
+ * What the sub-agent did on the way, as its card shows it: its conversation, less its last message when that is the
+ * answer the card shows below it (a sub-agent's last words are what its call returns). Undefined when it said nothing.
+ */
+export const subagentWorkOf = (tool: ToolItem): Conversation | undefined => {
+  const work = tool.subagent?.conversation;
+  if (work === undefined) return undefined;
+  const answer = answerOf(tool, streamsOf(tool).out);
+  const last = work.items.at(-1);
+  // The result may add a line of its own after the words (Claude's names the agent): the words are what repeat.
+  const said = last?.kind === "agent" ? textOf(last.blocks).trim() : "";
+  const items =
+    answer !== undefined && said !== "" && answer.startsWith(said)
+      ? work.items.slice(0, -1)
+      : work.items;
+  if (items.length === 0) return undefined;
+  return items === work.items ? work : { ...work, items };
+};
+
+/**
  * A sub-agent the agent sent off (Claude's Agent tool), as a card of its own: what it was asked to do, what kind of agent,
  * how it is going (what it uses now, or how many steps and how long it took), and once it is back, the start of its
- * answer, which is what the agent goes on from. Open, it shows the whole task it was given and the whole answer. What it
- * did on the way is not shown: the session is told only how it goes, not its conversation (decision 0014).
+ * answer, which is what the agent goes on from. Open, it shows the whole task it was given, what it did on the way (its
+ * own conversation, `work`, when the daemon told it: CYCL-134) and the whole answer.
  */
-export function SubagentCard({ tool }: { tool: ToolItem }) {
+export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode }) {
   const { t } = useI18n();
   const status = tool.status ?? "pending";
   const subagentFailed = tool.subagent?.state === "failed";
@@ -59,13 +79,20 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
   const streams = useMemo(() => streamsOf(tool), [tool]);
   const answer = answerOf(tool, streams.out);
   const said = subagentFailed ? t("subagent.failed") : statusWord(t, status);
+  const store = useAppStore();
+  // Opened by the person (not by a failure, nor by a jump to it): whether they look at what it did.
+  const opened = (next: boolean) => {
+    if (next && !open)
+      store.track("subagent_opened", { work: work !== undefined, running: working });
+    setOpen(next);
+  };
   return (
     <Collapsible
       data-kind="subagent"
       data-status={failed ? "failed" : status}
       data-item-id={tool.id}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={opened}
     >
       <CollapsibleTrigger>
         <Lead
@@ -99,6 +126,13 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
             <p data-slot="subagent-prompt">{clip(prompt)}</p>
           </section>
         ) : null}
+        {/* Drawn only while open: a long one is many rows, and closed it is out of the way. */}
+        {open && work !== undefined ? (
+          <section data-slot="subagent-part" data-part="work" aria-label={t("subagent.work")}>
+            <h4 data-slot="tool-block-label">{t("subagent.work")}</h4>
+            <div data-slot="subagent-work">{work}</div>
+          </section>
+        ) : null}
         {answer !== undefined ? (
           <section data-slot="subagent-part" aria-label={t("subagent.answer")}>
             <h4 data-slot="tool-block-label">{t("subagent.answer")}</h4>
@@ -120,7 +154,7 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
           <div data-slot="message" data-role="agent" inert aria-hidden="true">
             <Markdown text={answer.slice(0, PREVIEW_CHARS)} />
           </div>
-          <button type="button" data-slot="subagent-more" onClick={() => setOpen(true)}>
+          <button type="button" data-slot="subagent-more" onClick={() => opened(true)}>
             {t("subagent.showAnswer")}
           </button>
         </div>

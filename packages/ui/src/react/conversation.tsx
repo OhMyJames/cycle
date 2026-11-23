@@ -37,7 +37,7 @@ import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-import { SubagentCard } from "./subagent.tsx";
+import { SubagentCard, subagentWorkOf } from "./subagent.tsx";
 import { ThoughtText, useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
 import { ToolCard } from "./tool.tsx";
@@ -271,6 +271,21 @@ function MessageActions({
   );
 }
 
+/**
+ * What a sub-agent said and called (docs/protocol.md §9, CYCL-134), laid out as a turn of the conversation is: its words,
+ * its stretches of work, its own sub-agents' cards. Drawn only while its card is open.
+ */
+function SubagentWork({ conversation, live }: { conversation: Conversation; live: boolean }) {
+  const blocks = useMemo(() => blocksOf(conversation), [conversation]);
+  return (
+    <>
+      {blocks.map((block) => (
+        <BlockView key={block.key} block={block} streaming={false} live={live} />
+      ))}
+    </>
+  );
+}
+
 const BlockView = memo(function BlockView({
   block,
   streaming,
@@ -327,8 +342,18 @@ const BlockView = memo(function BlockView({
       return <ThoughtText item={block.item} live={streaming} />;
     case "work":
       return <WorkBlock tools={block.tools} live={live} />;
-    case "subagent":
-      return <SubagentCard tool={block.tool} />;
+    case "subagent": {
+      const sub = block.tool.subagent;
+      const work = subagentWorkOf(block.tool);
+      // At work while it runs: in the turn that goes, or after it when it was sent to the background.
+      const going = sub?.state === "running" && (live || sub.background);
+      return (
+        <SubagentCard
+          tool={block.tool}
+          work={work !== undefined ? <SubagentWork conversation={work} live={going} /> : undefined}
+        />
+      );
+    }
     case "failed":
       return <ToolCard tool={block.tool} />;
     case "end":

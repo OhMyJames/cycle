@@ -2,7 +2,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { SessionSnapshot } from "../../src/api.ts";
+import type { PermissionRequest, SessionSnapshot } from "../../src/api.ts";
 import { displayMode } from "../../src/display-mode.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
@@ -58,7 +58,12 @@ const open = async (...updates: SessionUpdate[]) => {
       script.emit({ type: "update", environmentId: "local", sessionId: "s1", update, version }),
     );
   };
-  return { user, log, emit, script };
+  /** The agent asks for leave, as the next thing the session says. */
+  const ask = (request: PermissionRequest) => {
+    version += 1;
+    return act(() => script.emit({ type: "permission", request, version }));
+  };
+  return { user, log, emit, ask, script };
 };
 
 test("two tool calls in a row are one card that says what they were, and opens to the rows", async () => {
@@ -1218,6 +1223,155 @@ test("a sub-agent is a card of its own: its task, how it goes, and once back the
   await user.click(within(card).getByRole("button", { name: "Show the whole answer" }));
   await waitFor(() => expect(card.textContent).toContain("Find which test is flaky and why."));
   expect(card.querySelector('[data-slot="subagent-answer"]')).toBeNull();
+});
+
+const child = (update: object) =>
+  u({ sessionUpdate: "_cycle/child_update", childId: "sub-1", update });
+
+test("a sub-agent's card opens to what it did, apart from the main agent's work, and a permission it asks for says which one", async () => {
+  const { user, log, emit, ask, script } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("s1", "Agent", "in_progress", {
+      description: "Find the flaky test",
+      prompt: "Find it.",
+    }),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-1",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "s1" } },
+    }),
+    child({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "c1",
+      content: { type: "text", text: "Looking at the queue tests." },
+    }),
+    child({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "c-read",
+      name: "Read",
+      kind: "read",
+      status: "pending",
+    }),
+    child({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "c-read",
+      status: "completed",
+      rawInput: { file_path: "test/queue.test.ts" },
+    }),
+  );
+  const card = await waitFor(() => {
+    const found = log.querySelector<HTMLElement>('[data-kind="subagent"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  // Closed, nothing of what it did is drawn; none of it is in the main agent's words either.
+  expect(log.textContent).not.toContain("Looking at the queue tests.");
+  expect(card.querySelector('[data-slot="subagent-work"]')).toBeNull();
+  await user.click(within(card).getByRole("button", { name: /Find the flaky test/ }));
+  const work = await waitFor(() => {
+    const found = card.querySelector<HTMLElement>('[data-slot="subagent-work"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  expect(within(card).getByRole("region", { name: "What it did" })).toBeDefined();
+  expect(work.textContent).toContain("Looking at the queue tests.");
+  expect(work.textContent).toContain("queue.test.ts");
+  // What it says next arrives in the open card.
+  await emit(
+    child({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "c2",
+      content: { type: "text", text: "It sleeps instead of waiting." },
+    }),
+  );
+  await waitFor(() => expect(work.textContent).toContain("It sleeps instead of waiting."));
+  expect(
+    script.calls.filter(([name, event]) => name === "track" && event === "subagent_opened"),
+  ).toEqual([["track", "subagent_opened", { work: true, running: true }]]);
+
+  // It asks for leave: the card says that the sub-agent asks, by what it was sent to do.
+  const request = {
+    key: "local:s1:p1",
+    environmentId: "local",
+    sessionId: "s1",
+    title: "Allow Bash?",
+    subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
+  };
+  await ask({ ...request, subagentId: "sub-1" });
+  const card2 = await screen.findByLabelText("Allow Bash?");
+  expect(card2.textContent).toContain("Asked by the sub-agent Find the flaky test");
+});
+
+test("a sub-agent's last words, which are its answer, are shown once: as the answer", async () => {
+  const answer = "queue.test.ts sleeps instead of waiting.";
+  const { user, log } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("s1", "Agent", "in_progress", { description: "Find the flaky test" }),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-1",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "s1" } },
+    }),
+    child({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "c1",
+      content: { type: "text", text: "Looking at the queue tests." },
+    }),
+    child({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "c2",
+      content: { type: "text", text: answer },
+    }),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-1",
+      state: { state: "idle", stopReason: "end_turn" },
+      _meta: { "cycle/subagent": { toolCallId: "s1" } },
+    }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "s1",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: answer } }],
+    }),
+  );
+  const card = await waitFor(() => {
+    const found = log.querySelector<HTMLElement>('[data-kind="subagent"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  await user.click(within(card).getByRole("button", { name: /Find the flaky test/ }));
+  const work = await waitFor(() => {
+    const found = card.querySelector<HTMLElement>('[data-slot="subagent-work"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  expect(work.textContent).toContain("Looking at the queue tests.");
+  expect(work.textContent).not.toContain(answer);
+  expect(within(card).getByRole("region", { name: "Answer" }).textContent).toContain(answer);
+});
+
+test("a permission the main agent asks for says nothing of a sub-agent; one from a sub-agent not known here still says one asks", async () => {
+  const { ask } = await open(you("u1"), state({ state: "running" }));
+  const request = {
+    key: "local:s1:p2",
+    environmentId: "local",
+    sessionId: "s1",
+    title: "Allow Read?",
+    subject: { type: "tool_call", toolCall: { name: "Read", rawInput: { file_path: "a" } } },
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
+  };
+  await ask(request);
+  const main = await screen.findByLabelText("Allow Read?");
+  expect(main.querySelector('[data-slot="permission-asker"]')).toBeNull();
+  await ask({ ...request, key: "local:s1:p3", title: "Allow Grep?", subagentId: "gone" });
+  // One at a time: the first is answered first, the second waits behind it.
+  expect(main.textContent).toContain("1 more");
 });
 
 test("a sub-agent sent to the background shows no answer from its launch; one that failed opens to say so", async () => {

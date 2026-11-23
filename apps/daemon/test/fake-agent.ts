@@ -21,7 +21,8 @@ export type Turn = {
   blocks: unknown[];
   /** Asks the user for a form (`elicitation/create`); the answer is whatever the daemon says. */
   elicit: () => Promise<unknown>;
-  say: (update: object) => Promise<void>;
+  /** Tells the daemon an update; `as` is the session it names, a sub-agent's it announced (ACP v2), or the session's own. */
+  say: (update: object, as?: string) => Promise<void>;
   /** Asks the user for permission; `extra` is added to the request (a `toolCall`, say). */
   ask: (extra?: object) => Promise<unknown>;
   /** Resolves when a cancel has come in. */
@@ -164,9 +165,9 @@ export const fakeAgent = (
         log.prompts.push(text);
         log.blocks.push(params.prompt as unknown[]);
         const messageId = randomUUID();
-        const say = (update: object) =>
+        const say = (update: object, as?: string) =>
           client.notify(methods.client.session.update, {
-            sessionId,
+            sessionId: as ?? sessionId,
             update: update as SessionUpdate,
           });
         const cancelled = new Promise<void>((resolve) => cancelResolvers.push(resolve));
@@ -179,8 +180,8 @@ export const fakeAgent = (
           } as never);
         const ask = (extra: object = {}) =>
           client.request(methods.client.session.requestPermission, {
-            ...extra,
             sessionId,
+            ...extra,
             title: "Allow it?",
             options: [
               { optionId: "allow", name: "Allow", kind: "allow_once" },

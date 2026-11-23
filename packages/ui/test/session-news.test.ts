@@ -32,6 +32,7 @@ test("a sub-agent's news goes onto the call that started it; what an update leav
   );
   const tool = c.items[0] as ToolItem;
   expect(tool.subagent).toEqual({
+    id: "task-1",
     state: "done",
     background: true,
     lastTool: "Read",
@@ -44,6 +45,7 @@ test("a sub-agent's news goes onto the call that started it; what an update leav
     call("a", "Agent", "other", "in_progress"),
   );
   expect((early.items[0] as ToolItem).subagent).toEqual({
+    id: "task-1",
     state: "running",
     background: true,
     usage: { tokens: 5000, toolUses: 7, durationMs: 42000 },
@@ -86,4 +88,88 @@ test("changing the plan is not a row, even while it goes; one that failed is, an
   );
   const [work] = blocksOf(c);
   expect(work?.kind === "work" ? work.tools.map((t) => t.id) : []).toEqual(["r", "e", "u"]);
+});
+
+const child = (childId: string, update: object) => ({
+  sessionUpdate: "_cycle/child_update",
+  childId,
+  update,
+});
+
+test("a sub-agent's conversation goes onto its call, apart from the main agent's, and ends with it", () => {
+  const c = reduce(
+    call("a", "Agent", "other", "in_progress"),
+    news({ state: "running" }, {}),
+    child("task-1", {
+      sessionUpdate: "agent_message_chunk",
+      messageId: "s1",
+      content: { type: "text", text: "Looking" },
+    }),
+    child("task-1", call("r", "Read", "read", "in_progress")),
+    child("task-1", call("r", "Read", "read", "completed")),
+    child("task-1", call("g", "Grep", "search", "in_progress")),
+    // What is not a conversation's, and a sub-agent nobody announced, are not drawn.
+    child("task-1", {
+      sessionUpdate: "plan_update",
+      plan: { type: "items", planId: "p", entries: [] },
+    }),
+    child("task-9", call("z", "Read", "read", "in_progress")),
+  );
+  // The main conversation has only the Agent call: nothing of the sub-agent reads as the main agent's.
+  expect(c.items.map((item) => item.id)).toEqual(["a"]);
+  expect(c.ignored).toBe(2);
+  const sub = (c.items[0] as ToolItem).subagent;
+  expect(sub?.conversation?.items.map((item) => [item.kind, item.id])).toEqual([
+    ["agent", "s1"],
+    ["tool", "r"],
+    ["tool", "g"],
+  ]);
+  // It ended with a call still going: that call did not finish.
+  const over = applyUpdate(
+    c,
+    news({ state: "idle", stopReason: "end_turn" }, {}) as unknown as SessionUpdate,
+  );
+  const items = (over.items[0] as ToolItem).subagent?.conversation?.items as ToolItem[];
+  expect(items.map((item) => (item.kind === "tool" ? item.status : "agent"))).toEqual([
+    "agent",
+    "completed",
+    "cancelled",
+  ]);
+  // The main turn's end leaves a background sub-agent's calls as they are.
+  const background = applyUpdate(c, {
+    sessionUpdate: "state_update",
+    state: "idle",
+    stopReason: "end_turn",
+  } as unknown as SessionUpdate);
+  const still = (background.items[0] as ToolItem).subagent?.conversation?.items[2] as ToolItem;
+  expect(still.status).toBe("in_progress");
+});
+
+test("a sub-agent's own sub-agent is put on the call that started it, in its parent's conversation", () => {
+  const c = reduce(
+    call("a", "Agent", "other", "in_progress"),
+    news({ state: "running" }, {}),
+    child("task-1", call("a2", "Agent", "other", "in_progress")),
+    {
+      sessionUpdate: "subagent_update",
+      sessionId: "task-2",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "a2", parentId: "task-1" } },
+    },
+    child("task-2", call("r2", "Read", "read", "in_progress")),
+  );
+  const inner = (c.items[0] as ToolItem).subagent?.conversation?.items[0] as ToolItem;
+  expect(inner.subagent?.id).toBe("task-2");
+  expect(inner.subagent?.conversation?.items.map((item) => item.id)).toEqual(["r2"]);
+  // Its parent ended and its own end never came: it stopped with it, and nothing of it is left going.
+  const over = applyUpdate(
+    c,
+    news({ state: "idle", stopReason: "cancelled" }, {}) as unknown as SessionUpdate,
+  );
+  const stopped = (over.items[0] as ToolItem).subagent?.conversation?.items[0] as ToolItem;
+  expect(stopped.status).toBe("cancelled");
+  expect(stopped.subagent?.state).toBe("stopped");
+  expect((stopped.subagent?.conversation?.items[0] as ToolItem | undefined)?.status).toBe(
+    "cancelled",
+  );
 });

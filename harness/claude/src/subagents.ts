@@ -56,6 +56,24 @@ export class Subagents {
     }
   >();
 
+  /**
+   * The task each Agent call began, kept after the task ends: a sub-agent's last messages can come after its end is
+   * told, and its messages name the call (`parent_tool_use_id`), not the task (CYCL-134).
+   */
+  readonly #byCall = new Map<string, string>();
+  /** Every task announced to the client. Only those may have a conversation: ACP announces a child before its updates. */
+  readonly #announced = new Set<string>();
+
+  /** The announced sub-agent that the Agent call `toolCallId` started. */
+  childOf(toolCallId: string): string | undefined {
+    return this.#byCall.get(toolCallId);
+  }
+
+  /** Whether `id` is a sub-agent the client was told of. */
+  announced(id: string): boolean {
+    return this.#announced.has(id);
+  }
+
   get hasBackground(): boolean {
     return [...this.#known.values()].some((task) => task.background && !task.unknown);
   }
@@ -97,6 +115,9 @@ export class Subagents {
         background: task.is_backgrounded ?? previous?.background ?? false,
         unknown: false,
       });
+      this.#announced.add(task.task_id);
+      const call = task.tool_use_id ?? previous?.toolCallId;
+      if (call !== undefined) this.#byCall.set(call, task.task_id);
       return this.#make(task, { state: "running" }, task.description);
     }
     if (!known || (known.run && task.run_id && known.run !== task.run_id)) return undefined;

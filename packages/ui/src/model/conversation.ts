@@ -64,8 +64,18 @@ export type ToolItem = InTurn & {
   started?: boolean;
 };
 
-/** A sub-agent, as far as the session is told: announced, its progress, its end. Never its own conversation. */
+/**
+ * A sub-agent, as far as the session is told: announced, its progress, its end, and what it said and called on the way
+ * (`_cycle/child_update`, docs/protocol.md §9, CYCL-134).
+ */
 export type Subagent = {
+  /** Its id (`subagent_update`'s `sessionId`): what its conversation's updates name it by. Absent in older news. */
+  id?: string;
+  /**
+   * What it said and called, as a conversation of its own: one turn, its items in order. Absent until it says
+   * something, and in a history from before a daemon told it.
+   */
+  conversation?: Conversation;
   state: "running" | "done" | "failed" | "stopped" | "unknown" | "dismissed";
   background: boolean;
   /** What it is doing now, in a line the SDK wrote (only with progress summaries on). */
@@ -184,6 +194,8 @@ export type DynamicConfigOption = {
 // The two updates of docs/protocol.md §9 (CYCL-87), read here by hand: the model imports nothing of the daemon's.
 const TASK_UPDATE = "_cycle/task_update";
 const GOAL_UPDATE = "_cycle/goal_update";
+/** A sub-agent's conversation, carried in its parent session (docs/protocol.md §9, CYCL-134). */
+const CHILD_UPDATE = "_cycle/child_update";
 const TASK_KINDS = ["shell", "monitor", "workflow", "mcp", "other"] as const;
 const TASK_STATES = ["running", "completed", "failed", "stopped", "unknown"] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
@@ -545,18 +557,141 @@ const toolUpdate = (c: Conversation, update: Fields, at: number | undefined): Co
 /** How many sub-agents' news may wait for their calls at once. */
 const MAX_WAITING = 16;
 
-const subagentUpdate = (c: Conversation, update: Fields): Conversation => {
+/**
+ * `c` with the conversation of the sub-agent `childId` changed by `change`, wherever its call is: in `c`, waiting for its
+ * call, or in another sub-agent's conversation (one started by a sub-agent). Undefined when no such sub-agent is known.
+ */
+const withChild = (
+  c: Conversation,
+  childId: string,
+  change: (conversation: Conversation) => Conversation,
+  depth = 0,
+): Conversation | undefined => {
+  // Sub-agents start sub-agents only a few deep; a history that says otherwise is not followed for ever.
+  if (depth > MAX_DEPTH) return undefined;
+  for (const item of c.items) {
+    if (item.kind !== "tool" || item.subagent === undefined) continue;
+    const sub = item.subagent;
+    if (sub.id === childId) {
+      const conversation = change(sub.conversation ?? emptyConversation());
+      return { ...c, items: upsert(c.items, { ...item, subagent: { ...sub, conversation } }) };
+    }
+    if (sub.conversation === undefined) continue;
+    const inner = withChild(sub.conversation, childId, change, depth + 1);
+    if (inner !== undefined)
+      return {
+        ...c,
+        items: upsert(c.items, { ...item, subagent: { ...sub, conversation: inner } }),
+      };
+  }
+  for (const [callId, sub] of Object.entries(c.waiting)) {
+    if (sub.id !== childId) continue;
+    const conversation = change(sub.conversation ?? emptyConversation());
+    return { ...c, waiting: { ...c.waiting, [callId]: { ...sub, conversation } } };
+  }
+  return undefined;
+};
+const MAX_DEPTH = 8;
+
+/**
+ * The Agent call that started the sub-agent `childId`, wherever it is (in a sub-agent's conversation, for one a
+ * sub-agent started). Undefined when it is not known here: a permission it asks for still says that a sub-agent asks.
+ */
+export const subagentCallOf = (
+  c: Conversation,
+  childId: string,
+  depth = 0,
+): ToolItem | undefined => {
+  if (depth > MAX_DEPTH) return undefined;
+  for (const item of c.items) {
+    if (item.kind !== "tool" || item.subagent === undefined) continue;
+    if (item.subagent.id === childId) return item;
+    const inner = item.subagent.conversation;
+    const found = inner !== undefined ? subagentCallOf(inner, childId, depth + 1) : undefined;
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
+/** What a sub-agent's conversation may hold (docs/protocol.md §9): anything else in one is not drawn. */
+const CHILD_KINDS: ReadonlySet<string> = new Set([
+  "agent_message",
+  "agent_message_chunk",
+  "agent_thought",
+  "agent_thought_chunk",
+  "tool_call_update",
+  "tool_call_content_chunk",
+]);
+
+/** One update of a sub-agent's conversation, onto that sub-agent. */
+const childUpdate = (
+  c: Conversation,
+  update: Fields,
+  record: { at?: number | undefined } | undefined,
+): Conversation => {
+  const inner = update.update as Fields | null | undefined;
+  if (
+    typeof update.childId !== "string" ||
+    typeof inner !== "object" ||
+    inner === null ||
+    typeof inner.sessionUpdate !== "string" ||
+    !CHILD_KINDS.has(inner.sessionUpdate)
+  )
+    return { ...c, ignored: c.ignored + 1 };
+  const next = withChild(c, update.childId, (conversation) =>
+    applyUpdate(conversation, inner as unknown as SessionUpdate, record),
+  );
+  return next ?? { ...c, ignored: c.ignored + 1 };
+};
+
+/**
+ * A sub-agent that is over has nothing of its own still going: a call it left (a history cut short) did not finish, and
+ * a sub-agent it started and never heard the end of stopped with it.
+ */
+const ended = (conversation: Conversation | undefined, depth = 0): Conversation | undefined => {
+  if (conversation === undefined || depth > MAX_DEPTH) return conversation;
+  return {
+    ...conversation,
+    items: conversation.items.map((item) => {
+      if (item.kind !== "tool") return item;
+      const open = item.status !== undefined && !FINAL.has(item.status);
+      const sub = item.subagent;
+      const running = sub !== undefined && sub.state === "running";
+      if (!open && !running) return item;
+      const conversation = running ? ended(sub.conversation, depth + 1) : undefined;
+      return {
+        ...item,
+        ...(open ? { status: "cancelled" } : {}),
+        ...(running
+          ? {
+              subagent: {
+                ...sub,
+                state: "stopped" as const,
+                ...(conversation !== undefined ? { conversation } : {}),
+              },
+            }
+          : {}),
+      };
+    }),
+  };
+};
+
+const subagentUpdate = (c: Conversation, update: Fields, nested = false): Conversation => {
   const meta = (update._meta as Record<string, unknown> | null | undefined)?.["cycle/subagent"] as
     | Record<string, unknown>
     | undefined;
   const callId = typeof meta?.toolCallId === "string" ? meta.toolCallId : undefined;
-  // A sub-agent started by a sub-agent: its call is in the parent sub-agent's conversation, which is never forwarded.
-  if (callId === undefined || meta === undefined || typeof meta.parentId === "string")
-    return { ...c, ignored: c.ignored + 1 };
+  if (callId === undefined || meta === undefined) return { ...c, ignored: c.ignored + 1 };
+  // A sub-agent started by a sub-agent: its call is in that sub-agent's conversation.
+  if (typeof meta.parentId === "string" && !nested) {
+    const next = withChild(c, meta.parentId, (inner) => subagentUpdate(inner, update, true));
+    return next ?? { ...c, ignored: c.ignored + 1 };
+  }
   const tool = find(c.items, "tool", callId);
   const was = tool?.subagent ??
     c.waiting[callId] ?? { state: "running" as const, background: false };
   const next: Subagent = { ...was };
+  if (typeof update.sessionId === "string") next.id = update.sessionId;
   const state = update.state as { state?: unknown; stopReason?: unknown } | null | undefined;
   if (state?.state === "running") next.state = "running";
   else if (state?.state === "idle") {
@@ -578,6 +713,11 @@ const subagentUpdate = (c: Conversation, update: Fields): Conversation => {
     const n = (key: "tokens" | "toolUses" | "durationMs") =>
       typeof usage[key] === "number" ? (usage[key] as number) : was[key];
     next.usage = { tokens: n("tokens"), toolUses: n("toolUses"), durationMs: n("durationMs") };
+  }
+  // Over, not only out of sight: one whose end is unknown may still be at work.
+  if (next.state !== "running" && next.state !== "unknown" && next.conversation !== undefined) {
+    const over = ended(next.conversation);
+    if (over !== undefined) next.conversation = over;
   }
   if (tool === undefined) {
     // Its call is not known yet (the news came first): kept, and put on the call when it comes. Only a few are kept:
@@ -762,6 +902,8 @@ export const applyUpdate = (
     }
     case "subagent_update":
       return subagentUpdate(c, u);
+    case CHILD_UPDATE:
+      return childUpdate(c, u, record);
     case "compaction_update": {
       const id = typeof u.compactionId === "string" ? u.compactionId : undefined;
       const status = u.status;
