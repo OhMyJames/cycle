@@ -996,6 +996,65 @@ test.skipIf(!enabled)(
 );
 
 test.skipIf(!enabled)(
+  "real ScheduleWakeup: a process that would be let go is kept for the wakeup, which fires (CYCL-145)",
+  async () => {
+    const config = await tempConfigDir();
+    try {
+      await withAdapter(
+        {
+          configDir: config.dir,
+          env: claudeEnv(config.dir),
+          onPermission: () => "allow",
+          // Far shorter than the wakeup: without the cron keeping it, the process goes first and the wakeup with it.
+          adapter: { idleMs: 1_000 },
+        },
+        async ({ agent, updates, idle }) => {
+          const id = "c1450000-aaaa-4bbb-8ccc-dddddddddddd";
+          await agent.request(methods.agent.session.new, {
+            cwd,
+            _meta: { "cycle/sessionId": id },
+          });
+          await setModel(agent as never, id);
+          const done = idle();
+          await agent.request(methods.agent.session.prompt, {
+            sessionId: id,
+            prompt: say(
+              [
+                "Do exactly this, then end your turn: load the ScheduleWakeup tool with ToolSearch, then call it with",
+                'delaySeconds 60, reason "test", prompt "Reply with the single word WOKE", noop false.',
+                "When you are woken, reply with only the word WOKE.",
+              ].join(" "),
+            ),
+          });
+          await done;
+          const asked = (updates as unknown as Record<string, unknown>[]).some(
+            (u) => u.sessionUpdate === "tool_call_update" && u.name === "ScheduleWakeup",
+          );
+          // Without a wakeup there is nothing to keep the process for: this would pass and test nothing.
+          expect(asked).toBe(true);
+          const before = agentText(updates).length;
+          const start = Date.now();
+          // The wakeup fires on the minute after its delay: up to two minutes away, and its turn takes a while.
+          while (!agentText(updates).slice(before).toUpperCase().includes("WOKE")) {
+            if (Date.now() - start > 200_000) break;
+            await Bun.sleep(500);
+          }
+          const woke = agentText(updates).slice(before).toUpperCase().includes("WOKE");
+          const waited = Math.round((Date.now() - start) / 1000);
+          console.log(
+            woke ? `REAL wakeup: woke after ${waited} s` : `REAL wakeup: not woken in ${waited} s`,
+          );
+          expect(woke).toBe(true);
+        },
+      );
+    } finally {
+      await config.dispose();
+    }
+  },
+  300_000,
+);
+
+test.skipIf(!enabled)(
   "real /goal: not delivered to a local process today; checked whole the day it is (CYCL-120, CYCL-121)",
   async () => {
     const config = await tempConfigDir();

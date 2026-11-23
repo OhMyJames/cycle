@@ -177,6 +177,74 @@ test("an idle process is let go, and the next prompt resumes the session", async
   expect(fake.calls[1]?.options).toMatchObject({ resume: ID });
 });
 
+test("a process is kept while a cron the Stop hook told is due within the hour, and let go for one further off (CYCL-145)", async () => {
+  // The cron is in local time, as Claude Code reads it: the minute and hour this far from now.
+  const cronIn = (ms: number) => {
+    const d = new Date(Date.now() + ms);
+    return `${d.getMinutes()} ${d.getHours()} * * *`;
+  };
+  for (const [schedule, kept] of [
+    [cronIn(20 * 60_000), true],
+    [cronIn(3 * 60 * 60_000), false],
+  ] as const) {
+    const fake = fakeQuery(async (call) => {
+      // What the SDK does at the end of the turn, before its result: the Stop hook, with what is set to wake it.
+      const stop = call.options.hooks?.Stop?.[0]?.hooks[0];
+      expect(stop).toBeDefined();
+      expect(
+        await stop?.(
+          {
+            hook_event_name: "Stop",
+            session_crons: [{ id: "c1", schedule, recurring: false, prompt: "check back" }],
+          } as never,
+          undefined,
+          { signal: new AbortController().signal },
+        ),
+      ).toEqual({});
+      return textTurn(ID, "m", "ok");
+    });
+    await connect(
+      fake.run,
+      async ({ agent, waitForIdle }) => {
+        await open(agent);
+        await prompt(agent as never, waitForIdle, "remind me");
+        await settle(150);
+        expect(fake.state.inputClosed).toBe(!kept);
+      },
+      undefined,
+      { idleMs: 40 },
+    );
+  }
+});
+
+test("a wakeup set in a turn that ends without the Stop hook keeps the process too", async () => {
+  const fake = fakeQuery(() => {
+    const turn = textTurn(ID, "m", "ok");
+    // The call's result, as the SDK gives it; then a result, with no hook in between (a stopped turn has none).
+    const wakeup = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+      },
+      parent_tool_use_id: null,
+      tool_use_result: { scheduledFor: Date.now() + 20 * 60_000, clampedDelaySeconds: 1200 },
+    } as unknown as SDKMessage;
+    return [...turn.slice(0, -1), wakeup, ...turn.slice(-1)];
+  });
+  await connect(
+    fake.run,
+    async ({ agent, waitForIdle }) => {
+      await open(agent);
+      await prompt(agent as never, waitForIdle, "check back in 20 minutes");
+      await settle(150);
+      expect(fake.state.inputClosed).toBe(false);
+    },
+    undefined,
+    { idleMs: 40 },
+  );
+});
+
 test("a process in the middle of a turn is not let go for being quiet", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
