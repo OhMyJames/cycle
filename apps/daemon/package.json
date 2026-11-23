@@ -25,6 +25,7 @@
     "test:real:daemon": "bun test ./test/integration/real.integration.ts",
     "build": "bun scripts/build.ts",
     "test:integration": "bun test ./test/integration/full.integration.ts",
-    "test:real:codex": "bun test ./test/integration/real-codex.integration.ts"
+    "test:real:codex": "bun test ./test/integration/real-codex.integration.ts",
+    "test:real:agy": "bun test ./test/integration/real-agy.integration.ts"
   }
 }

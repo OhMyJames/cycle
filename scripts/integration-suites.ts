@@ -35,6 +35,12 @@ export const suites: Suite[] = [
     seconds: 90,
   },
   {
+    name: "agy",
+    cwd: "harness/agy",
+    file: "test/integration/adapter.integration.ts",
+    seconds: 90,
+  },
+  {
     name: "ssh",
     cwd: "apps/daemon",
     file: "test/integration/ssh.integration.ts",

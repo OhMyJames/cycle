@@ -7,7 +7,7 @@ const ALL = suites.map((s) => s.name);
 
 describe("the list of suites", () => {
   test("is what integration.ts runs, in order, and every suite's file exists", () => {
-    expect(ALL).toEqual(["node", "adapter", "codex", "ssh", "backend", "package", "web"]);
+    expect(ALL).toEqual(["node", "adapter", "codex", "agy", "ssh", "backend", "package", "web"]);
     for (const suite of suites)
       expect(() => readFileSync(`${root}${suite.cwd}/${suite.file}`)).not.toThrow();
   });
