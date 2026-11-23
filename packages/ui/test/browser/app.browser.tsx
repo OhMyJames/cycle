@@ -610,7 +610,7 @@ test("an open session keeps its draft offline and can send it after reconnecting
   await write(box, "Keep this");
   await emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
   // Said once, by the line under the title bar: the box does not repeat it.
-  await screen.findByText(/Reconnecting… Your draft is kept/);
+  await screen.findByText(/Reconnecting….*Your draft is kept\./);
   expect(screen.queryByText(/keep editing your draft/)).toBeNull();
   await ready(box);
   await write(box, " draft");

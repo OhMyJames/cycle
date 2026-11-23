@@ -16,10 +16,11 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   "session.away": "{environment} · {state}",
   "notice.connecting": "正在连接 {environment}…",
+  "notice.draftKept": "草稿会保留。",
   "session.awayIncompatible":
     "{environment} 未连接：那里的 Cycle 与本应用的协议不同。它的提示里写了要更新哪一边。",
   "session.awayBecause": "{environment} 未连接：{reason}",
-  "session.awayBanner": "{environment} 未连接。这是它断开时会话的样子。草稿会保留。",
+  "session.awayBanner": "{environment} 未连接。这是它断开时会话的样子。",
   "defaults.reading": "正在读取默认设置…",
   "defaults.unreadable": "读不出这个 agent 已保存的设置，所以没有显示。",
   "newSession.environment": "环境",
@@ -739,8 +740,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "dialog.close": "关闭",
   "dialog.cancel": "取消",
   "banner.dismiss": "忽略",
-  "environment.reconnectingBanner":
-    "连接已断开。正在重新连接…草稿会保留，恢复后会显示你错过的内容。",
+  "environment.reconnectingBanner": "连接已断开。正在重新连接…恢复后会显示你错过的内容。",
   "environment.add": "添加环境",
   "environment.addTitle": "添加环境",
   "environment.addSubmit": "添加",

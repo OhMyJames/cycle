@@ -96,6 +96,10 @@ export function SessionNotices({
   // A daemon that speaks another protocol says so itself, and connecting again would not change it.
   const incompatible = status?.incompatible !== undefined;
   const lines: ReactNode[] = [];
+  // The box under the page says nothing of it: that the draft is kept is said once, here, whatever the reason.
+  // A reason in the system's own words may end without a stop: one goes before the next sentence.
+  const kept = (said: string): string =>
+    `${/[.。…!?！？]$/.test(said) ? said : `${said}.`} ${t("notice.draftKept")}`;
   if (errors && error !== undefined)
     lines.push(
       <NoticeLine
@@ -114,7 +118,7 @@ export function SessionNotices({
         tone="warning"
         busy
         icon={<RefreshIcon />}
-        text={t("environment.reconnectingBanner")}
+        text={kept(t("environment.reconnectingBanner"))}
       />,
     );
   else if (open && state === "connecting" && !incompatible)
@@ -124,7 +128,7 @@ export function SessionNotices({
         tone="warning"
         busy
         icon={<RefreshIcon />}
-        text={t("notice.connecting", { environment: name })}
+        text={kept(t("notice.connecting", { environment: name }))}
       />,
     );
   else if (
@@ -137,13 +141,13 @@ export function SessionNotices({
         key="environment"
         tone="warning"
         icon={<WarningIcon />}
-        text={
+        text={kept(
           incompatible
             ? t("session.awayIncompatible", { environment: name })
             : reason !== undefined
               ? t("session.awayBecause", { environment: name, reason })
-              : t("session.awayBanner", { environment: name })
-        }
+              : t("session.awayBanner", { environment: name }),
+        )}
         action={
           incompatible
             ? undefined

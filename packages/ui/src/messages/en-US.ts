@@ -17,11 +17,13 @@ export const enUS = {
   // Environments that are away, and starting a session on one of several
   "session.away": "{environment} · {state}",
   "notice.connecting": "Connecting to {environment}…",
+  // Ends every line about an environment that is not connected, on a page with a box: the box does not say it
+  "notice.draftKept": "Your draft is kept.",
   "session.awayIncompatible":
     "{environment} is not connected: Cycle there and this app speak different protocols. Its notice says what to update.",
   "session.awayBecause": "{environment} is not connected: {reason}",
   "session.awayBanner":
-    "{environment} is not connected. This is what the session had when it went away. Your draft is kept.",
+    "{environment} is not connected. This is what the session had when it went away.",
   "defaults.reading": "Reading the defaults…",
   "defaults.unreadable":
     "The saved settings of this agent could not be read, so they are not shown.",
@@ -826,7 +828,7 @@ export const enUS = {
   "dialog.cancel": "Cancel",
   "banner.dismiss": "Dismiss",
   "environment.reconnectingBanner":
-    "Connection lost. Reconnecting… Your draft is kept, and what you miss is shown when it is back.",
+    "Connection lost. Reconnecting… what you miss will be shown when it is back.",
   "environment.add": "Add environment",
   "environment.addTitle": "Add an environment",
   "environment.addSubmit": "Add",

@@ -83,7 +83,9 @@ test("an environment that went away says what is shown, and Connect again asks f
   const { user, emit, named } = await mount();
   await emit({ type: "environment-status", environmentId: "local", state: "closed" });
   const [line] = lines();
-  expect(line?.textContent).toMatch(/is not connected/);
+  expect(line?.textContent).toMatch(/is not connected\..*Your draft is kept\./);
+  // Said once: the box under the page does not say it too.
+  expect(screen.queryByText(/keep editing your draft/)).toBeNull();
   underTitleBar(line as HTMLElement);
   await user.click(within(line as HTMLElement).getByRole("button", { name: "Connect again" }));
   expect(named("connect")).toEqual([["connect", "local"]]);
@@ -92,7 +94,7 @@ test("an environment that went away says what is shown, and Connect again asks f
   ]);
   // While it connects the line says so, with nothing to press.
   await emit({ type: "environment-status", environmentId: "local", state: "connecting" });
-  expect(lines()[0]?.textContent).toMatch(/Connecting to/);
+  expect(lines()[0]?.textContent).toMatch(/Connecting to .*Your draft is kept\.$/);
   expect(within(lines()[0] as HTMLElement).queryByRole("button")).toBeNull();
 });
 
@@ -106,6 +108,7 @@ test("a daemon on another protocol is not offered Connect again: connecting woul
   });
   const away = lines().find((l) => /is not connected/.test(l.textContent ?? ""));
   expect(away).toBeDefined();
+  expect(away?.textContent).toMatch(/Your draft is kept\.$/);
   expect(within(away as HTMLElement).queryByRole("button", { name: "Connect again" })).toBeNull();
 });
 
@@ -178,5 +181,7 @@ test("why an environment is not connected is said on its line", async () => {
     state: "closed",
     error: "ssh: connect to host build-1 port 22: Connection refused",
   });
-  expect(lines()[0]?.textContent).toMatch(/is not connected: ssh: connect to host build-1/);
+  expect(lines()[0]?.textContent).toMatch(
+    /is not connected: ssh: connect to host build-1.*Connection refused\. Your draft is kept\./,
+  );
 });

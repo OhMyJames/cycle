@@ -352,6 +352,7 @@ export function BlankConversationView({
           align="start"
           size="inline"
           title={t("blank.connecting", { environment: environmentName })}
+          body={starting ? undefined : t("blank.draftKept")}
         />
       );
     // That the draft stays is said here; the box does not say it again.
@@ -362,7 +363,8 @@ export function BlankConversationView({
           align="start"
           size="inline"
           title={t("blank.notConnected", { environment: environmentName })}
-          body={t("blank.draftKept")}
+          // Only while the box takes words: not while the session is being started.
+          body={starting ? undefined : t("blank.draftKept")}
           reason={status?.error}
           action={{
             label: t("environment.connectAgain"),

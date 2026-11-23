@@ -672,7 +672,6 @@ export function Composer({
               })}
             </ul>
           ) : null}
-          {/* That the draft is kept while the environment is away is said by the line under the title bar. */}
           {showBlocked ? (
             <div data-slot="extension-row" data-kind="hint" role="status">
               {blocked}

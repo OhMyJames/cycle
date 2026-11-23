@@ -128,6 +128,8 @@ test("an environment that drops says so with a way back, and the draft and its i
     error: "connection refused",
   });
   expect(await screen.findByText("Not connected to This computer.")).toBeTruthy();
+  // The draft can still be written: said here, once, and not by the box.
+  expect(screen.getAllByText("You can keep editing your draft.")).toHaveLength(1);
   expect(screen.getAllByText("connection refused").length).toBeGreaterThan(0);
   // The page's own way back, beside what it says (the sidebar has one too).
   const stage = document.querySelector<HTMLElement>('[data-slot="blank-stage"]');
