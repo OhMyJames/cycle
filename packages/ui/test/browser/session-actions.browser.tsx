@@ -46,7 +46,12 @@ test("under the pointer a row offers pin and its menu in place of its time", asy
   expect(getComputedStyle(actionsOf("Second")).opacity).toBe("0");
   await user.hover(option("Second"));
   await waitFor(() => expect(getComputedStyle(actionsOf("Second")).opacity).toBe("1"));
-  expect(getComputedStyle(time).display).toBe("none");
+  // Out of sight, but still part of the row's name: the name does not change under the pointer, so a screen reader
+  // reads the same row and a locator taken before the hover still finds it.
+  expect(time.getBoundingClientRect().width).toBeLessThanOrEqual(1);
+  expect(time.checkVisibility()).toBe(true);
+  expect(option("Second").getAttribute("data-session")).toBe("b");
+  expect(screen.getByRole("option", { name: /Second.*5m/ })).toBe(option("Second"));
   // Neither takes a Tab stop: the arrow keys walk the rows.
   for (const button of actionsOf("Second").querySelectorAll("button"))
     expect(button.tabIndex).toBe(-1);

@@ -2082,10 +2082,16 @@ svg[data-slot="dot"] {
   pointer-events: auto;
 }
 
+/* Out of sight but still read: the row's name stays the same under the pointer (a test's locator, a screen reader). */
 [data-slot="sidebar"]
   [role="option"]:is(:hover, :has([aria-expanded="true"]))
   [data-slot="session-time"] {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 [data-kind="row-action"] {
