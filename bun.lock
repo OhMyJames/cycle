@@ -51,6 +51,14 @@
         "playwright": "1.65.1",
       },
     },
+    "harness/agy": {
+      "name": "@cycle/harness-agy",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agentclientprotocol/sdk": "catalog:",
+        "@cycle/protocol": "workspace:*",
+      },
+    },
     "harness/claude": {
       "name": "@cycle/harness-claude",
       "version": "0.0.0",
@@ -219,6 +227,8 @@
     "@cycle/daemon": ["@cycle/daemon@workspace:apps/daemon"],
 
     "@cycle/desktop": ["@cycle/desktop@workspace:apps/desktop"],
+
+    "@cycle/harness-agy": ["@cycle/harness-agy@workspace:harness/agy"],
 
     "@cycle/harness-claude": ["@cycle/harness-claude@workspace:harness/claude"],
 
