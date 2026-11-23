@@ -233,7 +233,8 @@ const toolResultMeta = (
   return undefined;
 };
 
-const toolTitle = (payload: V1ToolCallPayload): string => {
+/** The title to show, or undefined when this payload says nothing new about it. */
+const toolTitle = (payload: V1ToolCallPayload, start: boolean): string | undefined => {
   if (
     payload.name === "invoke_subagent" &&
     (payload.title === undefined || payload.title === "" || payload.title === "invoke_subagent")
@@ -242,20 +243,30 @@ const toolTitle = (payload: V1ToolCallPayload): string => {
     const role =
       typeof raw?.Role === "string" && raw.Role.trim() !== "" ? raw.Role.trim() : undefined;
     if (role !== undefined) return `Sub-agent: ${role}`;
+    // An update without the role would put the bare tool name back over the readable title.
+    if (!start) return undefined;
   }
-  return payload.title ?? payload.name ?? "Tool";
+  return payload.title ?? (start ? payload.name : undefined);
 };
 
-export const toV2ToolCallUpdate = (payload: V1ToolCallPayload): SessionUpdate => {
+/**
+ * A v1 `tool_call` starts the call, so what it leaves out gets a default. A v1 `tool_call_update` only
+ * carries what changed (ACP v1, like v2's `tool_call_update`): a field it leaves out is left out here
+ * too, so a progress or result update never resets the title, kind or status shown before.
+ */
+export const toV2ToolCallUpdate = (payload: V1ToolCallPayload, start = true): SessionUpdate => {
   const { content, editStats } = translateToolContent(payload.content);
   const meta = toolResultMeta(payload, editStats);
+  const title = toolTitle(payload, start);
   return {
     sessionUpdate: "tool_call_update",
     toolCallId: payload.toolCallId,
     ...(payload.name !== undefined ? { name: payload.name } : {}),
-    title: toolTitle(payload),
-    kind: normalizeKind(payload.kind),
-    status: normalizeStatus(payload.status),
+    ...(title !== undefined ? { title } : start ? { title: "Tool" } : {}),
+    ...(payload.kind !== undefined || start ? { kind: normalizeKind(payload.kind) } : {}),
+    ...(payload.status !== undefined || start
+      ? { status: payload.status === undefined ? "pending" : normalizeStatus(payload.status) }
+      : {}),
     ...(payload.locations !== undefined ? { locations: payload.locations } : {}),
     ...(content !== undefined ? { content } : {}),
     ...(payload.rawInput !== undefined ? { rawInput: payload.rawInput } : {}),
@@ -272,6 +283,7 @@ export const toV2ToolCallUpdate = (payload: V1ToolCallPayload): SessionUpdate =>
 export const translateSimpleUpdate = (
   update: V1SessionUpdate,
   messageId: string,
+  planId: string,
   logUnknown: (kind: string) => void,
 ): SessionUpdate | undefined => {
   switch (update.sessionUpdate) {
@@ -283,14 +295,16 @@ export const translateSimpleUpdate = (
         content: update.content,
       } as SessionUpdate;
     case "tool_call":
-    case "tool_call_update":
       return toV2ToolCallUpdate(update as V1ToolCallPayload);
+    case "tool_call_update":
+      return toV2ToolCallUpdate(update as V1ToolCallPayload, false);
     case "plan":
+      // A v1 plan is the session's whole plan each time: one id for it, so it replaces the one shown.
       return {
         sessionUpdate: "plan_update",
         plan: {
           type: "items",
-          planId: messageId,
+          planId,
           entries: (update as { entries: unknown[] }).entries,
         },
       } as SessionUpdate;

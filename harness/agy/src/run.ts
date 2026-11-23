@@ -14,12 +14,17 @@ const isExecutable = (path: string): boolean => {
   }
 };
 
-const resolveExecutable = (config: AdapterConfig): string | undefined => {
+/** The `agy` to run: the one resolved by the daemon, then its fallbacks, then `PATH` unless one was configured. */
+export const resolveExecutable = (
+  config: AdapterConfig,
+  path: string = process.env.PATH ?? "",
+): string | undefined => {
   if (config.agyExecutable && isExecutable(config.agyExecutable)) return config.agyExecutable;
   for (const candidate of config.fallbackExecutables ?? []) {
     if (isExecutable(candidate)) return candidate;
   }
-  const fromPath = Bun.which("agy", { PATH: process.env.PATH ?? "" });
+  if (config.searchPath === false) return undefined;
+  const fromPath = Bun.which("agy", { PATH: path });
   return fromPath && isExecutable(fromPath) ? fromPath : undefined;
 };
 

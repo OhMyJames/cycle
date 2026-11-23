@@ -147,3 +147,29 @@ describe("AgyPlugins unit tests (CYCL-179)", () => {
     await expect(plugins.refreshSource("src")).rejects.toMatchObject({ reason: "unavailable" });
   });
 });
+
+describe("AgyPlugins arguments", () => {
+  test("a name that agy would read as one of its options is refused before agy runs", async () => {
+    const root = makeTemp("cycle-agy-plug-arg-");
+    let ran = false;
+    const plugins = new AgyPlugins({
+      executable: () => "/usr/bin/agy",
+      env: { HOME: join(root, "home") },
+      cwd: join(root, "cwd"),
+      run: async () => {
+        ran = true;
+        return { code: 0, stdout: "", stderr: "", timedOut: false };
+      },
+    });
+    for (const attempt of [
+      () => plugins.install("--help"),
+      () => plugins.uninstall("-f"),
+      () => plugins.setEnabled(" ", true),
+    ]) {
+      const error = await attempt().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(AgyPluginError);
+      expect((error as AgyPluginError).reason).toBe("not_found");
+    }
+    expect(ran).toBe(false);
+  });
+});

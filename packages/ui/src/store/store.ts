@@ -910,7 +910,7 @@ export class AppStore {
       const msg = messageOf(error);
       if (
         (error as { code?: unknown })?.code === -32000 ||
-        /\b-32000\b|authentication required/i.test(msg)
+        /(^|[^0-9])-32000(?![0-9])|authentication required/i.test(msg)
       ) {
         needsAuth = true;
       } else {

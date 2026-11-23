@@ -289,7 +289,7 @@ export function createAdapter(config: AdapterConfig) {
     }
 
     const msgId = session.turn?.assistantMessageId ?? randomUUID();
-    const translated = translateSimpleUpdate(update, msgId, (kind) => {
+    const translated = translateSimpleUpdate(update, msgId, `${session.id}-plan`, (kind) => {
       process.stderr.write(`[harness/agy] ignored unknown v1 sessionUpdate: ${kind}\n`);
     });
     if (translated) emitUpdate(session, translated);
@@ -314,7 +314,8 @@ export function createAdapter(config: AdapterConfig) {
         turn.idleTimer = undefined;
       }
       try {
-        const tc = toV2ToolCallUpdate(req.toolCall) as Record<string, unknown>;
+        // The call it asks about is already shown: only what the request says about it goes with it.
+        const tc = toV2ToolCallUpdate(req.toolCall, false) as Record<string, unknown>;
         const { sessionUpdate: _u, ...toolCall } = tc;
         const title = req.toolCall.title ?? req.toolCall.name ?? "Permission required";
         const answer = await session.owner

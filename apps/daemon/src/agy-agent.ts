@@ -134,6 +134,7 @@ export const agyHarness: Harness = {
           env,
           agyExecutable: executable() ?? "",
           fallbackExecutables,
+          ...(settings.executable !== undefined ? { searchPath: false } : {}),
           logFile: join(dataDir, "logs", "agy-acp.log"),
           ...(settings.sandbox !== undefined ? { sandbox: settings.sandbox } : {}),
           ...(settings.agent !== undefined ? { agent: settings.agent } : {}),

@@ -197,6 +197,14 @@ const classifyError = (detail: string): AgyPluginFailureReason => {
   return "failed";
 };
 
+/** A plugin name or location the person gave: never one `agy` would read as an option of its own. */
+const pluginArg = (id: string): string => {
+  if (id.trim() === "" || id.startsWith("-")) {
+    throw new AgyPluginError("not_found", "Not a plugin name or location");
+  }
+  return id;
+};
+
 export class AgyPlugins {
   readonly #executable: () => string | undefined;
   readonly #env: Record<string, string>;
@@ -264,15 +272,15 @@ export class AgyPlugins {
   }
 
   async install(id: string): Promise<void> {
-    await this.#exec(["install", id], WRITE_TIMEOUT_MS);
+    await this.#exec(["install", pluginArg(id)], WRITE_TIMEOUT_MS);
   }
 
   async uninstall(id: string): Promise<void> {
-    await this.#exec(["uninstall", id], WRITE_TIMEOUT_MS);
+    await this.#exec(["uninstall", pluginArg(id)], WRITE_TIMEOUT_MS);
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<void> {
-    await this.#exec([enabled ? "enable" : "disable", id], READ_TIMEOUT_MS);
+    await this.#exec([enabled ? "enable" : "disable", pluginArg(id)], READ_TIMEOUT_MS);
   }
 
   async update(_id: string): Promise<{ updated: boolean }> {

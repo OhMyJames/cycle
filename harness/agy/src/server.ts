@@ -9,6 +9,8 @@ export type AdapterConfig = {
   agyExecutable: string;
   /** Fallback absolute paths checked if `agy` is installed after the daemon starts (never inherited). */
   fallbackExecutables?: string[];
+  /** When `false`, `agy` is not looked up on `PATH` (an explicitly configured executable never falls back elsewhere). */
+  searchPath?: boolean;
   /** Optional `--log-file` path passed to `agy acp`. */
   logFile?: string;
   /** Pass `--sandbox` to `agy acp`. */
