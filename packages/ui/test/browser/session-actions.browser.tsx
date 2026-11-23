@@ -39,6 +39,32 @@ const actionsOf = (name: string) =>
 const groupOf = (name: string) =>
   option(name).closest('[data-slot="listbox-group"]')?.getAttribute("data-kind");
 
+test("a row with a mark shows the mark where its time would be", async () => {
+  const script = fakeBridge({ connected: true });
+  script.bridge.sessions = async () => [
+    { ...row("a", "Busy"), state: "running" },
+    row("b", "Quiet"),
+  ];
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  await screen.findAllByRole("option");
+  const busy = option("Busy");
+  expect(busy.querySelector('[data-slot="session-time"]')).toBeNull();
+  const dot = busy.querySelector('[data-slot="session-dot"]') as HTMLElement;
+  expect(dot).not.toBeNull();
+  // At the row's end, after the title.
+  const title = busy.querySelector('[data-slot="session-title"]') as HTMLElement;
+  expect(dot.getBoundingClientRect().left).toBeGreaterThan(title.getBoundingClientRect().right - 1);
+  // Without a mark, the time as before.
+  expect(option("Quiet").querySelector('[data-slot="session-dot"]')).toBeNull();
+  expect(option("Quiet").querySelector('[data-slot="session-time"]')?.textContent).toBe("5m");
+});
+
 test("under the pointer a row offers pin and its menu in place of its time", async () => {
   const { user } = await mount();
   const time = option("Second").querySelector('[data-slot="session-time"]') as HTMLElement;
