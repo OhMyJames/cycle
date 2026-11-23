@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { packageApp } from "../../scripts/package.ts";
 import { evaluate } from "./cdp.ts";
+import { signedIn } from "./signed-in.ts";
 
 const linux = process.platform === "linux";
 const mac = process.platform === "darwin";
@@ -49,6 +50,8 @@ test.skipIf(!ready)(
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${join(root, "electron")}`,
     ];
+    // Signed in already, to a stand-in on this machine: the sign-in page is not what this test is about.
+    const sso = await signedIn(join(root, "electron"));
     const proc = Bun.spawn(
       linux ? ["xvfb-run", "-a", packaged.executable, ...flags] : [packaged.executable, ...flags],
       {
@@ -60,6 +63,7 @@ test.skipIf(!ready)(
           HOME: root,
           CYCLE_HOME: data,
           CYCLE_ANALYTICS: "off",
+          ...sso.env,
           ...(mac ? { CYCLE_TEST_HIDDEN_WINDOW: "1" } : {}),
         },
         stdout: "ignore",
@@ -104,6 +108,7 @@ test.skipIf(!ready)(
       // more the page can do, and has to be added here, where a review sees it.
       expect(page.bridgeKeys).toEqual(
         [
+          "account",
           "ackReturn",
           "addConnector",
           "addPluginSource",
@@ -125,6 +130,7 @@ test.skipIf(!ready)(
           "authorizeConnector",
           "cancel",
           "cancelConnectorAuth",
+          "cancelSignIn",
           "checkForUpdate",
           "chooseDirectory",
           "closeTerminal",
@@ -163,6 +169,8 @@ test.skipIf(!ready)(
           "setPreferences",
           "setSessionConfig",
           "setTrust",
+          "signIn",
+          "signOut",
           "signOutConnector",
           "stopSubagent",
           "terminalInput",
@@ -174,6 +182,15 @@ test.skipIf(!ready)(
           "workspaceStatus",
         ].sort(),
       );
+
+      // Signed in: the page is told who, and never a token; the login renewed with the stand-in at the start.
+      const account = (await evaluate(port, "window.cycle.account()")) as Record<string, unknown>;
+      expect(account).toMatchObject({
+        state: "signed-in",
+        open: true,
+        user: { name: "Ada Lovelace" },
+      });
+      expect(sso.idp.stats.refreshed).toBe(1);
 
       // And the daemon that serves it is the one inside the app.
       const pid = Number((await Bun.file(join(data, "daemon.pid")).text()).trim());
@@ -187,6 +204,7 @@ test.skipIf(!ready)(
     } finally {
       proc.kill();
       await proc.exited;
+      await sso.idp.close();
     }
   },
   120_000,

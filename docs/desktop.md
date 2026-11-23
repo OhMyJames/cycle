@@ -225,6 +225,21 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - **埋点**:`connector_added`(传输、登录方式、密钥个数)、`connector_changed`、`connector_removed`、`connector_authorized`(`ok`/`failed`/`cancelled`)、`connector_signed_out`(主进程发);打开页面是 `panel_opened` 的 `connectors`,换分区是 `connectors_section_shown`(`section` 是固定的词)。不发名字、URL、命令和密钥(`test/manager-connectors.test.ts`)。
 - **没验证**:真实的授权服务器(测试里是假的 daemon 和假的浏览器);安装版真实窗口里的样子(界面测试在无界面的 Chromium 里跑过)。
 
+## Cycle 账号(CYCL-149)
+
+决定见 [2026-11-23-sso-login-desktop-must-sign-in](../.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md)。桌面端必须登录;daemon、CLI、测试和 harness 不登录。
+
+- **登录**(`main/account.ts`,OIDC 在 `packages/oidc`):authentik 的公共客户端 `clawdot-team`,端点从 discovery 读(discovery 的 `issuer` 必须是请求的那个,端点只认 https)。授权码 + PKCE(S256),`state` 常量时间比较,ID token 校验 `iss`、`aud`、`exp`、`nonce`(从 token 端点经 TLS 直接拿到,不验签名,OIDC Core §3.1.3.7)。回调复用 connector 那一个(`connector-auth.ts`):`127.0.0.1` 随机端口、`/callback`、只收一次、最多十分钟、每条路径都关掉;同一时间只有一个登录在等,再点只是等它的结果。
+- **存储**(`main/account-store.ts`):安装版用 Electron 的 `safeStorage` 加密后放在 userData 的 `account.sealed`,密钥在钥匙串里(应用自己的条目,由签名约束)。钥匙串不可用时不落盘,宁可每次启动重新登录。从源码运行放 `account-dev.json`(0600),测试放 `account-test.json`;这两种都不碰钥匙串。从源码运行和安装版是 Electron 眼里的两个应用(名字、userData 都不同),各有一份登录。记的是 issuer、client、`sub`、显示名、email、最后一次 IdP 接受登录的时间和 refresh token;issuer 或 client 对不上就当作没登录。退出或被拒后只留下"是谁",没有 token,用来判断下次是不是换了人。
+- **续期**:串行,同一时刻只有一个,其余等它;新的 refresh token 先写进存储再用。access token 只在内存里,剩不到 2 分钟才续,看的是墙上时钟。续期结果的 `sub` 变了按被拒处理。`invalid_grant` 是"需要重新登录"(`reauth`),网络错误、超时、5xx 是"暂时离线"(`offline`)。一个 5 分钟的定时器只负责"看一眼":离线时重试,超过一天没续就续一次让登录保持滑动。
+- **启动闸门**:没有 refresh token、或最后一次被接受已超过 30 天,就只显示登录页,不连接任何环境、不读会话;主进程在 `dispatch` 里拒绝 manager 的所有方法,页面只拿得到账号、外观、更新这些主进程自己的方法。在宽限期内,启动时向 IdP 确认一次,最多等 5 秒:被拒进登录页,连不上照常打开(离线)。这 5 秒里窗口已经打开,显示"正在启动";页面问 `account` 时主进程等确认结束才回答。登录页显示时,`AppWindow` 根本不挂载,它的快捷键和副作用都不运行。
+- **开着时被拒不踢人**:正在跑的会话、打开的窗口都不动,顶部一行提示"重新登录",点一下走登录流程;下次打开才进登录页。离线时顶部一行说明在线功能暂时不可用。
+- **退出登录**(设置 → General 的 Account,先确认):先跑 `onSignOut` 注册的步骤(给 CYCL-162 清各环境的服务凭证用),然后先在本地忘掉登录、回到登录页,最后才向 revocation 端点吊销 refresh token(失败只记日志):离线时吊销要等满超时,这期间退出应用也不会留着登录。已连上的环境不断开,本地会话、设置、connector 不动。**换账号**:登录得到的 `sub` 和上一个不同,先做一遍退出的清理,再提示"已切换到 …";同一个人重新登录什么都不清,只吊销旧的 refresh token。
+- **页面拿到的**只有 `AccountStatus`(状态、是否打开、是否在等浏览器、显示名和 email、原因和问题的固定词),没有任何 token;日志和报错只写发生了什么,token 和 IdP 的原话都不写(`test/account.test.ts` 把 IdP 见过的每个 token 和日志、状态、报错、埋点逐一比对)。
+- **测试**:`CYCLE_SSO_ISSUER` 把 issuer 换成测试的替身 IdP(`@cycle/oidc/mock-idp`:强制 PKCE、校验回调地址、授权码一次性、refresh token 轮换),只接受本机的 http 地址;它只换"去哪登录",并且让登录存到测试自己的文件。安装版也认它:能设这个环境变量的人本来就能读写这台机器上的本地数据,登录页不是本地数据的安全边界;它挡的是"没有 Clawdot 账号的人用产品",而指向本机替身拿到的 token 对任何真实服务都没用。打包的集成测试先写好一份已登录的记录(`test/integration/signed-in.ts`);更新测试还设 `CYCLE_USER_DATA`,让更新后重新打开的应用仍用测试的目录,而不是用户真实的 userData。
+- **埋点**:`sign_in_shown`、`signed_in`、`sign_in_required`、`offline_grace`、`signed_out`、`account_switched`(主进程发),只有固定的词和布尔,不报是谁。
+- **没验证**:真实的 authentik(refresh token 的实际有效期、吊销);安装版真实窗口里的登录(界面测试在 Chromium 里跑,整个流程在 web 集成测试里对替身 IdP 跑过)。
+
 ## 终端(CYCL-98)
 
 右侧面板里可以开 session 的终端:shell 跑在 daemon 那边,在 session 的文件夹里,本地和 ssh 一样(protocol.md §8"终端",决定笔记 [2026-11-22-terminals-in-the-daemon-over-l1](../.agents/notes/2026-11-22-terminals-in-the-daemon-over-l1.md))。daemon 没有能力 `terminal` 时,界面上没有终端的入口。

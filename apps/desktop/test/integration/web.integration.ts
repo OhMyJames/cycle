@@ -231,3 +231,72 @@ test.skipIf(!built)(
   },
   120_000,
 );
+
+test.skipIf(!built)(
+  "signed out, the app is the sign-in page and starts nothing; signed in, it connects; signed out, it is the page again",
+  async () => {
+    const base = join(root, "sign-in");
+    const data = join(base, "data");
+    const socket = join(base, "d.sock");
+    const app = await startWebApp({
+      root: base,
+      daemon: ["bun", daemonMain],
+      data,
+      socket,
+      env: { PATH: process.env.PATH ?? "", HOME: join(base, "home") },
+      signedOut: true,
+    });
+    const { page, idp } = app;
+    try {
+      const signIn = page.getByRole("button", { name: "Sign in with browser" });
+      await signIn.waitFor({ timeout: 10_000 });
+      // Nothing was connected: no daemon was started for this data directory.
+      expect(existsSync(socket)).toBe(false);
+      expect(await page.getByRole("button", { name: "New session" }).count()).toBe(0);
+      // And main refuses what the app does while nobody is signed in, whatever the page asks.
+      const refused = await page.evaluate(() =>
+        (window as unknown as { cycle: { sessions: (id: string) => Promise<unknown> } }).cycle
+          .sessions("local")
+          .then(
+            () => "answered",
+            (error: Error) => error.message,
+          ),
+      );
+      expect(refused).toContain("sign in");
+
+      // The stand-in's browser goes through the sign-in and back to the callback.
+      await signIn.click();
+      const newSession = page.getByRole("button", { name: "New session" }).first();
+      await until(
+        () => newSession.isEnabled(),
+        (v) => v === true,
+        30_000,
+      );
+      expect(idp.stats.exchanged).toBe(1);
+      expect(existsSync(socket)).toBe(true);
+      // The page was never given a token: nothing of what the provider issued is in it.
+      const html = await page.content();
+      for (const { form } of idp.requests)
+        for (const value of Object.values(form))
+          if (value.length > 20) expect(html).not.toContain(value);
+
+      // Settings → Sign out, confirmed: the sign-in page again, and the provider was told.
+      await page.getByRole("button", { name: /^Settings/ }).click();
+      await page.getByRole("button", { name: "Sign out" }).click();
+      await page.getByRole("alertdialog").getByRole("button", { name: "Sign out" }).click();
+      await page.getByRole("button", { name: "Sign in with browser" }).waitFor({ timeout: 10_000 });
+      expect(idp.stats.revoked).toBe(1);
+      // The daemon and what it has are as they were.
+      expect(existsSync(socket)).toBe(true);
+    } finally {
+      await app.close();
+      const pid = Number((await readFile(join(data, "daemon.pid"), "utf8").catch(() => "")).trim());
+      if (pid > 0) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+      }
+    }
+  },
+  90_000,
+);

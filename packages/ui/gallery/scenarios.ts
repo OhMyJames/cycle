@@ -2,6 +2,7 @@
 // bridge. DESIGN.md says what each is for. Add one when a surface gets a new state.
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import type {
+  AccountStatus,
   AppEvent,
   ConnectorInfo,
   EnvironmentConfig,
@@ -67,6 +68,8 @@ export type Scenario = {
   histories?: Record<string, SessionUpdate[]>;
   /** The first session's right panel is open beside the conversation (CYCL-90): the columns at this window's width. */
   sidePanel?: boolean;
+  /** How the account stands (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md). Without it: signed in. */
+  account?: AccountStatus;
   /** Runs once the page has drawn: open a dialog, press a key, or send an event as the app's main process would. */
   after?: (root: HTMLElement, emit: (event: AppEvent) => void) => Promise<void>;
 };
@@ -1878,6 +1881,47 @@ export const scenarios: Record<string, Scenario> = {
       }),
     ),
     history: conversation,
+  },
+  "sign-in": {
+    title: "Nobody is signed in: the sign-in page",
+    account: { state: "signed-out", open: false, signingIn: false },
+  },
+  "sign-in-waiting": {
+    title: "The sign-in page, waiting for the browser",
+    account: { state: "signed-out", open: false, signingIn: true },
+  },
+  "sign-in-expired": {
+    title: "The sign-in page after 30 days without the sign-in service",
+    account: { state: "signed-out", open: false, signingIn: false, reason: "expired" },
+  },
+  "sign-in-failed": {
+    title: "The sign-in page after a sign-in that could not reach the service",
+    account: { state: "signed-out", open: false, signingIn: false, problem: "unreachable" },
+  },
+  "sign-in-zh": {
+    title: "The sign-in page in Chinese",
+    language: "zh-CN",
+    account: { state: "signed-out", open: false, signingIn: false, reason: "revoked" },
+  },
+  "account-offline": {
+    title: "Offline within the grace: online features wait",
+    sessions: [session("s1")],
+    account: {
+      state: "offline",
+      open: true,
+      signingIn: false,
+      user: { name: "Ada Lovelace", email: "ada@example.com" },
+    },
+  },
+  "account-reauth": {
+    title: "The login was refused while the app was open",
+    sessions: [session("s1")],
+    account: {
+      state: "reauth",
+      open: true,
+      signingIn: false,
+      user: { name: "Ada Lovelace", email: "ada@example.com" },
+    },
   },
   "update-available": {
     title: "An update is available",

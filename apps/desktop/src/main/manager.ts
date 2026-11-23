@@ -271,6 +271,10 @@ export class ConnectionManager
       | "setAnalytics"
       | "preferences"
       | "setPreferences"
+      | "account"
+      | "signIn"
+      | "cancelSignIn"
+      | "signOut"
     >
 {
   readonly #options: ManagerOptions;

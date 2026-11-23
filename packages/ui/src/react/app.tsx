@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@ui-sdk/react/select";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { SessionSummary } from "../api.ts";
+import type { AccountStatus, SessionSummary } from "../api.ts";
 import { DISPLAY_MODES, displayMode, isDisplayMode } from "../display-mode.ts";
 import { SOURCE_LOCALE } from "../i18n.ts";
 import { resolveLanguage, translatorFor } from "../languages.ts";
@@ -34,6 +34,7 @@ import {
 import type { PanelTabId, PanelTabKind } from "../side-panel.ts";
 import { BLANK_KEY, viewKey } from "../store/index.ts";
 import { tabKind, terminalOfTab } from "../terminals.ts";
+import { AccountBanner, SignInPage } from "./account.tsx";
 import { AnalyticsNotice } from "./analytics.tsx";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer, composerInput } from "./composer.tsx";
@@ -76,6 +77,9 @@ import { DaemonBanner, UpdateBanner, UpdateFooter } from "./update.tsx";
  * What is drawn over a page and takes its keys first: a dialog, a menu, the choices of a select. Not every listbox: the
  * sidebar's list of sessions is one too.
  */
+/** What the sign-in page shows when main has not said how the account stands (it could not be asked). */
+const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn: false };
+
 const OVER_THE_PAGE =
   '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot="select-content"]';
 
@@ -226,9 +230,14 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
+  const ready = useAppState((s) => s.ready);
+  const account = useAppState((s) => s.account);
+  // Nobody is signed in: the sign-in page is the whole window. The app's window is not mounted behind it, so none of
+  // its shortcuts or effects runs, and nothing of the environments has been read.
+  const signedOut = ready && (account === undefined || !account.open);
   return (
     <I18nProvider translator={translatorFor(language)}>
-      <AppWindow />
+      {signedOut ? <SignInPage account={account ?? SIGNED_OUT} /> : <AppWindow />}
     </I18nProvider>
   );
 }
@@ -902,6 +911,7 @@ function AppWindow() {
           main={
             <main data-slot="main">
               <UpdateBanner />
+              <AccountBanner />
               <AnalyticsNotice />
               {pageOpen ? null : errorBanner}
               {environmentState === "reconnecting" && environmentIncompatible === undefined ? (

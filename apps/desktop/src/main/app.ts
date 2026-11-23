@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isUiEvent } from "@cycle/analytics/events";
 import { commandChannel, sshChannel, sshCommand } from "@cycle/client";
+import type { OidcClient } from "@cycle/oidc";
 import { resolveLanguage, type Translator, translatorFor, type UpdateState } from "@cycle/ui";
 import {
   API_METHODS,
@@ -25,6 +26,7 @@ import {
   shell,
 } from "electron";
 import { shellQuote } from "../shared/release.ts";
+import { Account, type AccountStore } from "./account.ts";
 import { type AnalyticsControl, offAnalytics } from "./analytics.ts";
 import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
@@ -35,6 +37,11 @@ import { cleanStale, Updater, type UpdaterDeps } from "./updater.ts";
 import { type FrameStore, keepFrame, MIN_SIZE, restoredFrame } from "./window-frame.ts";
 
 export type AppOptions = {
+  /**
+   * Where the person signs in, and where the login is kept (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md). Not optional: the app is
+   * not used without a login.
+   */
+  account: { client: OidcClient; store: AccountStore };
   /** Where the built page is: index.html, renderer.js, app.css. */
   rendererDir: string;
   preloadPath: string;
@@ -181,6 +188,27 @@ export const startApp = async (options: AppOptions) => {
     if (window !== undefined && !window.isDestroyed())
       window.webContents.send(EVENT_CHANNEL, event);
   };
+  // Before anything is connected: until the person is signed in, no environment is, and no session is read.
+  let opened = false;
+  let connectWhenOpen = false;
+  const account = new Account({
+    client: options.account.client,
+    store: options.account.store,
+    // Only a web page (connector-auth.ts checks it before it is handed over).
+    open: (url) => shell.openExternal(url),
+    track: (name, props) => analytics.track(name, props as never),
+    log: (message) => console.warn(`[account] ${message}`),
+    onChange: (status) => {
+      emit({ type: "account", account: status });
+      if (status.open && !opened && connectWhenOpen) void manager.connectAll();
+      opened = status.open;
+    },
+  });
+  // Not waited for here: the window opens at once and says it is starting; the page's first question (`account`) is
+  // answered once the login is confirmed with the provider (at most STARTUP_CHECK_MS).
+  const accountReady = account.start().then((status) => {
+    opened = status.open;
+  });
   let handoff: ReturnType<typeof Promise.withResolvers<void>> | undefined;
   const manager = new ConnectionManager({
     ...(options.update !== undefined ? { appVersion: options.update.current.version } : {}),
@@ -260,6 +288,13 @@ export const startApp = async (options: AppOptions) => {
     },
     preferences: () => preferences.state(),
     setPreferences: (change: unknown) => preferences.set(change),
+    account: async () => {
+      await accountReady;
+      return account.status();
+    },
+    signIn: () => account.signIn(),
+    cancelSignIn: () => account.cancelSignIn(),
+    signOut: () => account.signOut(),
     analytics: () => usage.status(),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
     // Through main, not the page's navigator.clipboard: the page is given no permissions. Text only, of a sane size.
@@ -271,7 +306,7 @@ export const startApp = async (options: AppOptions) => {
   };
 
   // Only our own page may ask main for anything.
-  const call = dispatch(manager, methods);
+  const call = dispatch(manager, methods, () => account.status().open);
   for (const method of API_METHODS) {
     ipcMain.handle(channel(method), (event, ...args: unknown[]) => {
       if (event.senderFrame?.url !== indexUrl) throw new Error("Refused: not from the app's page");
@@ -349,7 +384,11 @@ export const startApp = async (options: AppOptions) => {
   contents.on("will-attach-webview", (event) => event.preventDefault());
   await window.loadURL(indexUrl);
   // Every environment is connected from here, not when the person picks one: what is wrong with one is in its status.
-  void manager.connectAll();
+  // Signed out, that waits for the sign-in.
+  void accountReady.then(() => {
+    connectWhenOpen = true;
+    if (account.status().open) void manager.connectAll();
+  });
   if (options.update !== undefined && options.update.disabled === undefined) {
     await cleanStale(options.update.appPath);
     updater.start();
@@ -360,6 +399,7 @@ export const startApp = async (options: AppOptions) => {
   let flushed = false;
   app.on("before-quit", (event) => {
     updater.stop();
+    account.close();
     void manager.close();
     // Also when it was just turned off: its last word may still be waiting.
     if (flushed || !usage.status().available) return;
@@ -367,5 +407,5 @@ export const startApp = async (options: AppOptions) => {
     event.preventDefault();
     void analytics.shutdown().finally(() => app.quit());
   });
-  return { window, manager, contents, updater };
+  return { window, manager, contents, updater, account };
 };

@@ -8,10 +8,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { commandChannel } from "@cycle/client";
+import { type MockIdp, startMockIdp } from "@cycle/oidc/mock-idp";
 import type { AnalyticsStatus, UpdateState } from "@cycle/ui";
 import { API_METHODS, type AppEvent } from "@cycle/ui/api";
 import { type Browser, chromium, type Page } from "playwright";
 import { serveDir } from "../../../../scripts/serve-dir.ts";
+import { Account } from "../../src/main/account.ts";
+import { fileAccountStore } from "../../src/main/account-store.ts";
 import { dispatch, type Handlers } from "../../src/main/dispatch.ts";
 import { ConnectionManager } from "../../src/main/manager.ts";
 import { memoryPreferencesStore, startPreferences } from "../../src/main/preferences.ts";
@@ -46,6 +49,8 @@ export type WebAppOptions = {
   env: Record<string, string>;
   /** What the folder picker answers. */
   folder?: string;
+  /** Start signed out, at the sign-in page. Default: signed in (to a stand-in provider of the test's own). */
+  signedOut?: boolean;
 };
 
 export type WebApp = {
@@ -53,6 +58,9 @@ export type WebApp = {
   manager: ConnectionManager;
   /** What the page put on the clipboard through the app (`copyText`). */
   copied: string[];
+  /** The login, and the stand-in provider it signs in with: its browser is `idp.browse`, which nothing else opens. */
+  account: Account;
+  idp: MockIdp;
   close: () => Promise<void>;
 };
 
@@ -88,6 +96,34 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
       )
       .catch(() => {});
   };
+  // The login, against a stand-in provider on this machine; signed in already unless the test says otherwise.
+  const idp = await startMockIdp();
+  const accountStore = fileAccountStore(join(options.root, "account.json"));
+  if (options.signedOut !== true)
+    await accountStore.save({
+      issuer: idp.issuer,
+      clientId: idp.clientId,
+      sub: idp.controls.user.sub,
+      name: idp.controls.user.name ?? "",
+      email: idp.controls.user.email ?? "",
+      renewedAt: Date.now(),
+      refreshToken: idp.issueRefreshToken(),
+    });
+  let connectWhenOpen = false;
+  let accountOpen = false;
+  const account = new Account({
+    client: { issuer: idp.issuer, clientId: idp.clientId },
+    store: accountStore,
+    open: async (url) => {
+      void idp.browse(url).catch(() => undefined);
+    },
+    onChange: (status) => {
+      emit({ type: "account", account: status });
+      if (status.open && !accountOpen && connectWhenOpen) void manager.connectAll();
+      accountOpen = status.open;
+    },
+  });
+  accountOpen = (await account.start()).open;
   const manager = new ConnectionManager({
     settings: fileSettings(join(options.root, "settings.json")),
     channelFor: (environment) => async () => {
@@ -128,6 +164,10 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     track: () => undefined,
     analytics: () => NO_ANALYTICS,
     setAnalytics: () => NO_ANALYTICS,
+    account: () => account.status(),
+    signIn: () => account.signIn(),
+    cancelSignIn: () => account.cancelSignIn(),
+    signOut: () => account.signOut(),
     copyText: (text) => {
       if (typeof text !== "string") return false;
       copied.push(text);
@@ -141,18 +181,21 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
     page = await context.newPage();
     // As main.ts routes an IPC call, through the same dispatch.
-    const call = dispatch(manager, own);
+    const call = dispatch(manager, own, () => account.status().open);
     await page.exposeBinding("__cycleCall", (_source, method: string, args: unknown[]) =>
       call(method, args),
     );
     await page.addInitScript({ content: bridgeScript(API_METHODS) });
     await page.goto(`http://127.0.0.1:${server.port}/`);
-    // Every environment is connected from here, as main.ts does once the page is loaded.
-    void manager.connectAll();
+    // Every environment is connected from here, as main.ts does once the page is loaded (once signed in).
+    connectWhenOpen = true;
+    if (account.status().open) void manager.connectAll();
   } catch (error) {
     await browser?.close();
     server.stop(true);
     await manager.close();
+    account.close();
+    await idp.close();
     throw error;
   }
 
@@ -161,10 +204,14 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     page,
     manager,
     copied,
+    account,
+    idp,
     close: async () => {
       await opened.close();
       server.stop(true);
       await manager.close();
+      account.close();
+      await idp.close();
     },
   };
 };

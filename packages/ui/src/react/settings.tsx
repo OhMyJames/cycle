@@ -37,6 +37,7 @@ import {
 import { CODE_THEMES, type CodeThemeId, codeTheme } from "../code-theme.ts";
 import { LANGUAGES, resolveLanguage } from "../languages.ts";
 import { SETTINGS_SECTIONS, type SettingsSection } from "../settings-sections.ts";
+import { AccountGroup } from "./account.tsx";
 import { ConfigForm } from "./config-form.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
@@ -106,7 +107,7 @@ export function SettingsPage(props: SettingsPageProps) {
   );
 }
 
-/** Updates and usage statistics: what the menu at the foot of the sidebar held. */
+/** The account, the language, updates and usage statistics: what belongs to the app as a whole. */
 function GeneralSection() {
   const store = useAppStore();
   const { t } = useI18n();
@@ -128,6 +129,7 @@ function GeneralSection() {
         : updateLine(update, t);
   return (
     <>
+      <AccountGroup />
       <LanguageGroup />
       {update !== undefined ? (
         <PageGroup title={t("settings.updates")}>

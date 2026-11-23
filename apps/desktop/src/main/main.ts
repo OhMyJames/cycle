@@ -5,9 +5,11 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { posthogSink } from "@cycle/analytics/posthog";
-import { app } from "electron";
+import { app, safeStorage } from "electron";
 import { POSTHOG_HOST } from "../shared/posthog.ts";
 import { RELEASE_REPO } from "../shared/release.ts";
+import { ssoClientFor } from "./account.ts";
+import { accountStoreFor } from "./account-store.ts";
 import {
   fileAnalyticsStore,
   optedOutByEnvironment,
@@ -28,6 +30,10 @@ const env = process.env;
 const hidden = env.CYCLE_TEST_HIDDEN_WINDOW === "1";
 if (hidden) stayInBackground();
 const packaged = existsSync(join(here, "..", BUILD_FILE));
+// Only a test sets it: where the app keeps its own data (settings, the login of a test's stand-in provider), also when the
+// app is opened again by the updater, which `--user-data-dir` does not survive. Before anything reads the folder.
+if (env.CYCLE_USER_DATA !== undefined && env.CYCLE_USER_DATA !== "")
+  app.setPath("userData", env.CYCLE_USER_DATA);
 
 const run = (
   program: string,
@@ -83,7 +89,22 @@ const main = async () => {
     },
     onDrop: (name, reason) => console.warn(`[analytics] ${name} not sent: ${reason}`),
   });
+  // The person's own login is sealed with the keychain in the installed app. A run from source, and a test (which names
+  // its stand-in provider), keep theirs in a file of their own and never reach the keychain.
+  const sso = ssoClientFor(env);
+  const userData = app.getPath("userData");
+  const { store: accountStore } = accountStoreFor({
+    packaged,
+    test: sso.test,
+    userData,
+    sealer: {
+      available: () => safeStorage.isEncryptionAvailable(),
+      seal: (text) => safeStorage.encryptString(text),
+      open: (sealed) => safeStorage.decryptString(sealed),
+    },
+  });
   await startApp({
+    account: { client: sso.client, store: accountStore },
     analytics,
     preferences: filePreferencesStore(join(app.getPath("userData"), "preferences.json")),
     // A test's hidden window neither opens where the person's did nor moves it.
