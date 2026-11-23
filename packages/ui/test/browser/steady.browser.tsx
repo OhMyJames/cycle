@@ -7,7 +7,7 @@ afterEach(() => vi.useRealTimers());
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 function Shown({ value, id }: { value: string; id: string }) {
-  return <p>{useSteady(value, id)}</p>;
+  return <p>{useSteady(value, id, (key) => key === "now")[0]}</p>;
 }
 
 test("a new step waits until the one shown has been up a while; a step over at once is never shown", async () => {
@@ -33,4 +33,13 @@ test("a new step waits until the one shown has been up a while; a step over at o
   expect(text()).toBe("Running tests");
   await advance(20);
   expect(text()).toBe("Editing");
+});
+
+test("an urgent step is shown at once, and the one after it does not wait on it", async () => {
+  vi.useFakeTimers();
+  const { container, rerender } = render(<Shown value="Reading" id="a" />);
+  rerender(<Shown value="Waiting for your answer" id="now" />);
+  expect(container.textContent).toBe("Waiting for your answer");
+  rerender(<Shown value="Running" id="b" />);
+  expect(container.textContent).toBe("Running");
 });

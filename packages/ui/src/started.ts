@@ -5,13 +5,18 @@
 
 const started = new Map<string, number>();
 
-/** How many are kept: far more than a turn has going at once; the oldest go first. */
+/** How many are kept: far more than a turn has going at once; the longest unused go first. */
 const KEPT = 200;
 
 /** When `key` was first asked about, in epoch milliseconds. */
 export const startedAt = (key: string, now: number = Date.now()): number => {
   const known = started.get(key);
-  if (known !== undefined) return known;
+  if (known !== undefined) {
+    // Used again, so it is among the latest: one at work for long is not let go for newer ones.
+    started.delete(key);
+    started.set(key, known);
+    return known;
+  }
   started.set(key, now);
   if (started.size > KEPT) {
     const oldest = started.keys().next().value;

@@ -2,10 +2,11 @@
 // Visual layout inspired by Rare UI's Inline AI Status (https://www.rareui.com/components/aistatus);
 // clean-room Cycle implementation using Cycle v2 tokens, iconmcp icons, and compositor-only reduced-motion discipline.
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { Translator } from "../i18n.ts";
 import { useI18n } from "./i18n.tsx";
 import { SearchIcon, ThoughtIcon, WarningIcon } from "./icons.tsx";
+import { useNowSeconds } from "./now.ts";
 
 export type InlineAiStatusKind = "thinking" | "working" | "approval" | "tool";
 
@@ -42,15 +43,9 @@ const secondsSince = (since: number): number =>
  */
 export function Elapsed({ since, slot = "step-elapsed" }: { since: number; slot?: string }) {
   const { t } = useI18n();
-  const [elapsed, setElapsed] = useState(() => secondsSince(since));
-  useEffect(() => {
-    setElapsed(secondsSince(since));
-    const id = setInterval(() => {
-      const next = secondsSince(since);
-      setElapsed((prev) => (prev === next ? prev : next));
-    }, 500);
-    return () => clearInterval(id);
-  }, [since]);
+  // Worked out as it is drawn, from the clock every count shares: a new `since` is never shown with the old count.
+  const now = Math.max(useNowSeconds(), Date.now());
+  const elapsed = Math.max(0, Math.floor((now - since) / 1000));
   if (elapsed < 1) return null;
   return (
     <span data-slot={slot} aria-hidden="true">

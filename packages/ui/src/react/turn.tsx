@@ -18,6 +18,7 @@ import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, ErrorCircleIcon, WarningIcon } from "./icons.tsx";
 import { InlineAiStatus } from "./inline-ai-status.tsx";
+import { useStartScope } from "./start-scope.ts";
 import { useSteady } from "./steady.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import {
@@ -232,13 +233,21 @@ function TurnAgain({ resend }: { resend: Resend }) {
   );
 }
 
-/** What the agent is doing, at the end of the turn that is going, so a hidden thought or a long tool is not a silence. */
-/** What a step is known by: a call by its id, anything else by its kind (and attempt) in the turn it is in. */
-const stepKeyOf = (step: Step, turns: number): string =>
+/**
+ * What a step is known by, in the session: a call by its id; anything else by its kind (and attempt) and where in the
+ * conversation it is, so the agent at work again after a call is a step of its own, counted afresh.
+ */
+const stepKeyOf = (step: Step, conversation: Conversation): string =>
   step.kind === "tool"
     ? `tool:${step.tool.id}`
-    : `${turns}:${step.kind === "retrying" ? `retrying:${step.attempt ?? ""}` : step.kind}`;
+    : `${conversation.turns}:${conversation.items.length}:${
+        step.kind === "retrying" ? `retrying:${step.attempt ?? ""}` : step.kind
+      }`;
 
+/** A question for the person is said at once, and so is the end of the turn: nothing is held over either. */
+const urgent = (key: string): boolean => key === "" || key.endsWith(":approval");
+
+/** What the agent is doing, at the end of the turn that is going, so a hidden thought or a long tool is not a silence. */
 export function StepLine({
   conversation,
   awaitingApproval,
@@ -247,15 +256,13 @@ export function StepLine({
   awaitingApproval: boolean;
 }) {
   const { t } = useI18n();
+  const session = useStartScope();
   const wanted = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
-  // Each attempt is a new state: its own key, so the line says it afresh. A call's is its own, whatever the turn, so
-  // the line and the call's row count its time from the same start.
-  const wantedKey = wanted === undefined ? "" : stepKeyOf(wanted, conversation.turns);
+  const wantedKey = wanted === undefined ? "" : stepKeyOf(wanted, conversation);
+  // When it began, as soon as it does: a step held behind another still counts from then.
+  if (wanted !== undefined) startedAt(`${session}:${wantedKey}`);
   // Held steady, so a run of quick calls does not flicker through their names.
-  const held = useSteady(wanted, wantedKey);
-  // A turn that is over is over at once; a line that held on would say the agent still works. A question for the person
-  // is said at once too: it waits for them.
-  const step = wanted === undefined || wanted.kind === "approval" ? wanted : held;
+  const [step, stepKey] = useSteady(wanted, wantedKey, urgent);
   if (step === undefined) return null;
   const activity = step.kind === "tool" ? activityOf(step.tool) : undefined;
   // A sub-agent at work has its own card that says what it does: the line only says the agent waits for it.
@@ -282,7 +289,7 @@ export function StepLine({
       kind={step.kind === "retrying" ? "working" : step.kind}
       activity={activity}
       label={words}
-      since={startedAt(stepKeyOf(step, conversation.turns))}
+      since={startedAt(`${session}:${stepKey}`)}
       detail={step.kind === "tool" && !subagent ? <StepDetail tool={step.tool} /> : undefined}
     />
   );

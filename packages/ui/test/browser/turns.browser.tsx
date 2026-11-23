@@ -683,7 +683,7 @@ test("a command opens to itself and its output apart from its errors; a long out
 
 test("a call at work shows on its row how long it has been going, from when the page first saw it", async () => {
   // Seen three seconds ago: a row drawn again goes on from there, not from nought.
-  startedAt("tool:slow", Date.now() - 3_000);
+  startedAt("local:s1:tool:slow", Date.now() - 3_000);
   await open(
     you("u1"),
     ...tool("slow", "Bash", "in_progress", { command: "make", description: "Build it" }),

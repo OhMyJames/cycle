@@ -13,3 +13,12 @@ test("only the latest are kept", () => {
   expect(startedAt("many:0", 99_999)).toBe(99_999);
   expect(startedAt("many:249", 99_999)).toBe(249);
 });
+
+test("one still asked about is kept, however many newer ones come", () => {
+  startedAt("long:run", 7);
+  for (let n = 0; n < 250; n++) {
+    startedAt(`newer:${n}`, n);
+    startedAt("long:run", 99_999);
+  }
+  expect(startedAt("long:run", 99_999)).toBe(7);
+});
