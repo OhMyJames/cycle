@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { blocksOf, reduce, reviewOf, reviewTally, type ToolItem } from "../src/model/index.ts";
+import { agentPathInFolder } from "../src/files-view.ts";
+import {
+  blocksOf,
+  isPendingReview,
+  reduce,
+  reviewOf,
+  reviewTally,
+  type ToolItem,
+} from "../src/model/index.ts";
 
 const call = (rawInput: unknown, over: Partial<ToolItem> = {}): ToolItem =>
   ({
@@ -22,7 +30,7 @@ const finding = (over: object = {}) => ({
   ...over,
 });
 
-test("a review's findings are read from the call's input, the surest first and otherwise in the agent's order", () => {
+test("a review's findings are read from the call's input, in the agent's order (the most severe first)", () => {
   const review = reviewOf(
     call({
       level: "high",
@@ -41,12 +49,12 @@ test("a review's findings are read from the call's input, the surest first and o
   );
   expect(review?.level).toBe("high");
   expect(review?.findings.map((f) => f.summary)).toEqual([
+    "none",
+    "plausible",
     "confirmed 1",
     "confirmed 2",
-    "plausible",
-    "none",
   ]);
-  expect(review?.findings[0]).toEqual({
+  expect(review?.findings[2]).toEqual({
     file: "src/a.ts",
     line: 3,
     summary: "confirmed 1",
@@ -107,4 +115,35 @@ test("a review is a block of its own, which cuts the stretch of calls around it"
       b.kind === "work" ? `work(${b.tools.map((t) => t.id).join(",")})` : b.kind,
     ),
   ).toEqual(["user", "work(a)", "review", "work(b,x)"]);
+});
+
+test("a review call on its way shows nothing until its input is a review; ended and not one, it is a call", () => {
+  expect(isPendingReview(call(undefined, { status: "pending" }))).toBe(true);
+  expect(isPendingReview(call({}, { status: "in_progress" }))).toBe(true);
+  expect(isPendingReview(call({ findings: [] }, { status: "in_progress" }))).toBe(false);
+  expect(isPendingReview(call({}, { status: "completed" }))).toBe(false);
+  expect(isPendingReview(call({}, { name: "Bash", status: "pending" }))).toBe(false);
+  const u = (update: object) => update as SessionUpdate;
+  const c = reduce([
+    u({ sessionUpdate: "user_message", messageId: "u", content: [{ type: "text", text: "u" }] }),
+    u({ sessionUpdate: "state_update", state: "running" }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "r",
+      name: "ReportFindings",
+      status: "pending",
+    }),
+  ]);
+  expect(blocksOf(c).map((b) => b.kind)).toEqual(["user"]);
+});
+
+test("a finding's path is in the folder when it is relative, ./-led, absolute or a file URI under it", () => {
+  expect(agentPathInFolder("src/a.ts", "/work")).toBe("src/a.ts");
+  expect(agentPathInFolder("./src/a.ts", "/work/")).toBe("src/a.ts");
+  expect(agentPathInFolder("/work/src/a.ts", "/work")).toBe("src/a.ts");
+  expect(agentPathInFolder("file:///work/src/a.ts", "/work")).toBe("src/a.ts");
+  expect(agentPathInFolder("../up.ts", "/work")).toBeUndefined();
+  expect(agentPathInFolder("/etc/hosts", "/work")).toBeUndefined();
+  expect(agentPathInFolder("C:\\repo\\a.ts", "/work")).toBeUndefined();
+  expect(agentPathInFolder("src\\a.ts", "/work")).toBeUndefined();
 });

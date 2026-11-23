@@ -285,7 +285,7 @@ const review = (rawInput: unknown) => {
   ];
 };
 
-test("a code review the agent reported is a card: the tally, the surest first, a row opens to when it goes wrong, a path opens in Files", async () => {
+test("a code review the agent reported is a card: the tally, the agent's order, a row opens to when it goes wrong, a path opens in Files", async () => {
   const { user, tracked } = await mount({
     updates: review({
       level: "high",
@@ -314,8 +314,8 @@ test("a code review the agent reported is a card: the tally, the surest first, a
   expect(card.textContent).toContain("3 findings · 1 confirmed · 1 plausible");
   const rows = within(card).getAllByRole("listitem");
   expect(rows.map((r) => r.querySelector('[data-slot="review-summary"]')?.textContent)).toEqual([
-    "x is never read",
     "Outside the folder.",
+    "x is never read",
     "Climbs out.",
   ]);
   // The agent's text is text: nothing in it is markup.

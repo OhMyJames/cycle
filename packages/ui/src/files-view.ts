@@ -39,6 +39,17 @@ export const insideFolder = (where: string, cwd: string): string | undefined => 
   return inside;
 };
 
+/**
+ * Where a path an agent wrote is inside the session's folder: relative to the folder (a leading `./` is dropped),
+ * absolute, or a `file:` URI under it. Anything else (one that climbs out, a Windows path, one with a backslash) is
+ * nothing.
+ */
+export const agentPathInFolder = (file: string, cwd: string): string | undefined => {
+  if (file.includes("\\") || /^[a-zA-Z]:/.test(file)) return undefined;
+  if (file.startsWith("/") || file.startsWith("file://")) return insideFolder(file, cwd);
+  return insideFolder(`${cwd.replace(/\/+$/, "")}/${file.replace(/^(\.\/)+/, "")}`, cwd);
+};
+
 /** A path as a list shows it: inside the session's folder, relative to it; elsewhere, as the agent gave it. */
 export const shownPath = (path: string, cwd: string | undefined): string =>
   (cwd !== undefined ? insideFolder(path, cwd) : undefined) ?? path;

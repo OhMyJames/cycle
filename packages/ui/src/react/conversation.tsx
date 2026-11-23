@@ -150,7 +150,8 @@ const linkName = (block: Block): string =>
       ? block.uri
       : block.type;
 
-function Blocks({ blocks, from }: { blocks: Block[]; from: "agent" | "user" }) {
+/** The words of a sent message, with the chips of what they name; its attachments are drawn above it. */
+function Blocks({ blocks }: { blocks: Block[] }) {
   const { t } = useI18n();
   const store = useAppStore();
   const filesRoot = useAppState(filesRootOf);
@@ -180,10 +181,6 @@ function Blocks({ blocks, from }: { blocks: Block[]; from: "agent" | "user" }) {
         .map(({ block, key }) =>
           block.type === "text" ? (
             <span key={key}>{withChips(String(block.text), chips)}</span>
-          ) : block.type === "image" ? (
-            <ImageBlockView key={key} block={block} from={from} />
-          ) : block.type === "resource" ? (
-            <FileChip key={key} block={block} />
           ) : isMention(block, words) ? null : sessionMentionsOf([block])[0] !== undefined ? (
             // A session the words no longer name: still its chip, so what the agent was given is never invisible.
             <SessionChip
@@ -340,7 +337,7 @@ const BlockView = memo(function BlockView({
           {attached.length > 0 ? <Attached blocks={attached} /> : null}
           {said.length > 0 ? (
             <div data-slot="message" data-role="user">
-              <Blocks blocks={said} from="user" />
+              <Blocks blocks={said} />
             </div>
           ) : null}
           <MessageActions

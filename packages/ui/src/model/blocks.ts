@@ -28,7 +28,7 @@ import type {
   UserItem,
 } from "./conversation.ts";
 import { textOf } from "./conversation.ts";
-import { type Review, reviewOf } from "./review.ts";
+import { isPendingReview, type Review, reviewOf } from "./review.ts";
 
 export type Activity = "run" | "read" | "edit" | "search" | "list" | "fetch" | "other";
 
@@ -160,6 +160,8 @@ const laidTurn = (
         // calls, so one an agent marks `think` is not left out with them.
         // A code review is what the agent found, not a step of its work: a card of its own, like what it says.
         const review = reviewOf(item);
+        // One on its way whose input is not yet a review shows nothing, rather than a row that then turns into the card.
+        if (isPendingReview(item)) break;
         if (review !== undefined) {
           stretch = undefined;
           add(`review:${item.id}`, { kind: "review", tool: item, review });

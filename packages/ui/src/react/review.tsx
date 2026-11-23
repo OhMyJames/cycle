@@ -1,5 +1,5 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { insideFolder } from "../files-view.ts";
+import { agentPathInFolder } from "../files-view.ts";
 import { type Finding, type Review, reviewTally, type ToolItem } from "../model/index.ts";
 import { filesRootOf } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
@@ -7,7 +7,8 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 
 /**
  * A code review the agent reported (CYCL-138), on a card of its own: a line that says how many findings there are and
- * how sure the review is of them (or that it found nothing), then one row per finding, the surest first. A row says the
+ * how sure the review is of them (or that it found nothing), then one row per finding, in the agent's order (the most
+ * severe first). A row says the
  * defect in a line and where it is; open, the whole sentence and when it goes wrong. Everything in it is the agent's,
  * drawn as plain text: nothing is parsed as Markdown or HTML, and nothing is loaded.
  */
@@ -52,12 +53,7 @@ function FindingRow({ finding }: { finding: Finding }) {
   const store = useAppStore();
   const filesRoot = useAppState(filesRootOf);
   // A path inside the session's folder can be shown in Files; one outside it, or that climbs out, is only text.
-  const inFiles =
-    filesRoot === undefined
-      ? undefined
-      : finding.file.startsWith("/")
-        ? insideFolder(finding.file, filesRoot)
-        : insideFolder(`${filesRoot.replace(/\/+$/, "")}/${finding.file}`, filesRoot);
+  const inFiles = filesRoot === undefined ? undefined : agentPathInFolder(finding.file, filesRoot);
   const place = placeOf(finding);
   return (
     <li data-slot="review-finding" data-verdict={finding.verdict} data-outcome={finding.outcome}>

@@ -1163,7 +1163,7 @@ export const scenarios: Record<string, Scenario> = {
   },
   review: {
     title:
-      "A code review the agent reported: the surest findings first, a long one cut, one outside the folder, one with no verdict",
+      "A code review the agent reported, in its order: a long one cut, one outside the folder, one with no verdict",
     status: [
       {
         environmentId: "local",

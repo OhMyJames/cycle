@@ -67,15 +67,23 @@ const findingOf = (value: unknown): Finding | undefined => {
   };
 };
 
-/** The surest first; among equals, as the agent ordered them (most severe first, it is told). */
-const RANK: Record<Verdict | "none", number> = { confirmed: 0, plausible: 1, none: 2 };
+/** Parsed once per call: a turn is laid out again on every update in it, and the call does not change. */
+const parsed = new WeakMap<ToolItem, Review | undefined>();
 
 /**
  * The review a call reports, when it is one: Claude's review tool, not failed, with findings that are all in shape.
- * Otherwise nothing, and the call is drawn as a call. An empty list is a review that found nothing.
+ * Otherwise nothing, and the call is drawn as a call. An empty list is a review that found nothing. The findings keep
+ * the agent's order, which is the most severe first (the tool asks for that); how sure each is, is shown on it.
  */
 export const reviewOf = (tool: ToolItem): Review | undefined => {
   if (!REVIEW_TOOLS.has(tool.name ?? "")) return undefined;
+  if (parsed.has(tool)) return parsed.get(tool);
+  const review = read(tool);
+  parsed.set(tool, review);
+  return review;
+};
+
+const read = (tool: ToolItem): Review | undefined => {
   if (tool.status === "failed" || tool.status === "cancelled") return undefined;
   const input = tool.rawInput;
   if (typeof input !== "object" || input === null) return undefined;
@@ -83,18 +91,20 @@ export const reviewOf = (tool: ToolItem): Review | undefined => {
   if (!Array.isArray(findings) || findings.length > MAX_FINDINGS) return undefined;
   const read = findings.map(findingOf);
   if (read.some((f) => f === undefined)) return undefined;
-  const sorted = (read as Finding[])
-    .map((finding, at) => ({ finding, at }))
-    .sort(
-      (a, b) =>
-        RANK[a.finding.verdict ?? "none"] - RANK[b.finding.verdict ?? "none"] || a.at - b.at,
-    )
-    .map(({ finding }) => finding);
   return {
     ...(typeof level === "string" && LEVELS.has(level) ? { level } : {}),
-    findings: sorted,
+    findings: read as Finding[],
   };
 };
+
+/**
+ * A review call still on its way whose input is not yet a review: shown as nothing, not as a row that would then turn
+ * into the card. Once it has ended, a call that is not a review in shape is a call like any other.
+ */
+export const isPendingReview = (tool: ToolItem): boolean =>
+  REVIEW_TOOLS.has(tool.name ?? "") &&
+  !["completed", "failed", "cancelled"].includes(tool.status ?? "pending") &&
+  reviewOf(tool) === undefined;
 
 /** How many findings there are of each verdict, for the card's summary line. */
 export const reviewTally = (

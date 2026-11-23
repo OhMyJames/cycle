@@ -2,7 +2,7 @@
 // that what is typed shows as it will read, and what goes out is what was typed. Enter sends; the rest of the keys that
 // the composer has a use for (the arrows that walk through what was sent, the menus) are asked first.
 
-import { $isListItemNode } from "@lexical/list";
+import { $isListItemNode, $isListNode } from "@lexical/list";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -129,8 +129,9 @@ const caretOf = (editor: LexicalEditor): Caret => {
 const $inListItem = (): boolean => {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
+  // The anchor may be an item, something in one, or the list itself (at an element offset, between its items).
   const node = selection.anchor.getNode();
-  return $isListItemNode(node) || node.getParents().some($isListItemNode);
+  return [node, ...node.getParents()].some((n) => $isListItemNode(n) || $isListNode(n));
 };
 
 function Behaviour({ props }: { props: MarkdownInputProps }) {
