@@ -378,6 +378,14 @@ test("a command that failed with no structured result keeps its text and its exi
     ],
     _meta: { "cycle/toolResult": { run: { exitCode: 2 } } },
   });
+  // Nor is Claude Code's note on the folder shown for a failed command read from its text alone.
+  const [, failedReset] = run(
+    call("f", "Bash", {}),
+    result("f", "Exit code 1\nboom\nShell cwd was reset to /w", undefined, true),
+  );
+  expect(failedReset?.content).toEqual([
+    { type: "content", content: { type: "text", text: "Exit code 1\nboom" } },
+  ]);
   // A failed command whose text says no exit code is left as it came.
   const [, other] = run(call("b", "Bash", {}), result("b", "Permission denied", undefined, true));
   expect(other?._meta).toBeUndefined();
@@ -397,6 +405,61 @@ test("a command's output and errors come apart, and how it ended is said only wh
     },
   ]);
   expect(meta(ran)).toEqual({ run: {} });
+  // Claude Code's note that the folder was reset is its own, not what the command printed.
+  const [, reset] = run(
+    call("r", "Bash", { command: "cd /tmp && ls" }),
+    result("r", "a\nShell cwd was reset to /w", {
+      stdout: "a",
+      stderr: "\nShell cwd was reset to /w",
+      interrupted: false,
+    }),
+  );
+  expect(reset?.content).toEqual([{ type: "content", content: { type: "text", text: "a" } }]);
+  const [, both] = run(
+    call("s", "Bash", { command: "cd /tmp && make" }),
+    result("s", "…", {
+      stdout: "",
+      stderr: "warning: x\nShell cwd was reset to /w",
+      interrupted: false,
+    }),
+  );
+  expect(both?.content).toEqual([
+    { type: "content", content: { type: "text", text: "" } },
+    {
+      type: "content",
+      content: { type: "text", text: "warning: x" },
+      _meta: { "cycle/stream": "stderr" },
+    },
+  ]);
+  // Nothing else printed: the note is gone from what the model was told too, rather than shown as the output.
+  const [, onlyNote] = run(
+    call("q", "Bash", { command: "cd /tmp" }),
+    result("q", "Shell cwd was reset to /w", {
+      stdout: "",
+      stderr: "Shell cwd was reset to /w",
+      interrupted: false,
+    }),
+  );
+  expect(onlyNote?.content).toEqual([{ type: "content", content: { type: "text", text: "" } }]);
+  // After more line breaks, or Windows ones, it goes too; errors without it are left exactly as printed.
+  for (const [stderr, left] of [
+    ["warn\n\nShell cwd was reset to /w\n\n", "warn"],
+    ["warn\r\nShell cwd was reset to /w\r\n", "warn"],
+    ["\n\nTraceback\n  ", "\n\nTraceback\n  "],
+  ]) {
+    const [, said] = run(
+      call("e", "Bash", { command: "x" }),
+      result("e", "…", { stdout: "a", stderr, interrupted: false }),
+    );
+    expect(said?.content).toEqual([
+      { type: "content", content: { type: "text", text: "a" } },
+      {
+        type: "content",
+        content: { type: "text", text: left },
+        _meta: { "cycle/stream": "stderr" },
+      },
+    ]);
+  }
   // Nothing printed: what the model was told instead is shown.
   const [, quiet] = run(
     call("b", "Bash", {}),

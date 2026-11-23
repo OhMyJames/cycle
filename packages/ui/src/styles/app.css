@@ -1325,9 +1325,9 @@ button[data-slot="files-row"]:focus-visible {
   font-size: var(--cycle-text-meta);
 }
 
-/* In a call that read or changed a file: a quiet link to it in the Files tab, at the tool's indent. */
+/* In a call that read or changed a file: a quiet link to it in the Files tab, its text at the tool's indent. */
 [data-slot="tool-files-link"] {
-  margin: 0.25rem 0 0.25rem 1.5rem;
+  margin: 0.25rem 0 0.25rem 1.25rem;
   padding: 0 0.25rem;
   border: 0;
   border-radius: var(--ui-radius);
@@ -3884,6 +3884,12 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   transform: rotate(90deg);
 }
 
+/* What a call opens to is flush with the line's text. Its parts are set in 1.5rem where they are drawn elsewhere too (the
+   Diff tab, a form, a sub-agent's card), so here the panel starts that much before the line instead. */
+[data-kind="tool"] > [data-slot="collapsible-panel"] {
+  margin-inline-start: -1.5rem;
+}
+
 /* The collapsible parts of the conversation are told apart by data-kind: ui-sdk sets data-slot itself on Collapsible and
    replaces ours, so a rule on data-slot="tool" never matched. */
 /* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it at the same 1.5rem step as
@@ -4726,9 +4732,9 @@ button[data-slot="review-file"]:focus-visible {
   font-size: var(--cycle-text-meta);
 }
 
-/* A call's errors: the label always in the danger colour; the text too when the call failed, since then they say why. A
-   call that went well may write warnings and progress there, which are not alarms. */
-[data-slot="tool-block"][data-kind="stderr"] [data-slot="tool-block-label"],
+/* What a call printed as errors: in the danger colour only when the call failed, since then they say why. A call that
+   went well may write warnings and progress there, which are not alarms. */
+[data-slot="tool-block"][data-kind="stderr"][data-failed] [data-slot="tool-block-label"],
 [data-slot="tool-block"][data-kind="stderr"][data-failed] [data-slot="tool-output"] {
   color: var(--ui-destructive);
 }
@@ -5206,10 +5212,10 @@ button[data-slot="review-file"]:focus-visible {
   background: var(--cycle-surface-hover);
 }
 
-/* Under its line in the conversation, in line with the line's text (not in the input box's tray, whose row is also
+/* Under its line in the conversation, flush with the line's text (not in the input box's tray, whose row is also
    `plan`). */
 [data-kind="plan"]:not([data-slot="extension-row"]) [data-slot="plan"] {
-  margin: 0.25rem 0 0.25rem 1.5rem;
+  margin-block: 0.25rem;
 }
 
 /* The plan above the input box while some of it is to do: how far along, and what is being done now. */

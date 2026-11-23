@@ -286,6 +286,22 @@ const grep = (out: Json, text: Content[]): Result | undefined => {
 };
 
 /**
+ * Without the note Claude Code adds to a command's errors, and to the text the model saw, when the command left the
+ * folder it runs in ("Shell cwd was reset to /path"): that is Claude Code's own, said to the model, not what the
+ * command printed. Only the note and the line breaks before it go; text without it is left as it came.
+ */
+const withoutCwdNote = (text: string): string =>
+  text.replace(/(?:^|(?:\r?\n)+)Shell cwd was reset to [^\r\n]*\s*$/, "");
+
+/** The same items where none had the note, so whether it was there is told by identity. */
+const textWithoutCwdNote = (text: Content[]): Content[] =>
+  text.map((c) => {
+    if (c.type !== "content" || c.content.type !== "text") return c;
+    const left = withoutCwdNote(c.content.text);
+    return left === c.content.text ? c : { ...c, content: { ...c.content, text: left } };
+  });
+
+/**
  * A command: what it printed and what it printed as errors, apart (the model sees them together), and how it ended
  * when that was not simply running to the end. A command whose output was an image is left as it came.
  */
@@ -305,14 +321,15 @@ const bash = (out: Json, text: Content[], failed: boolean): Result | undefined =
       : undefined;
   // Nothing printed: the text the model saw may still say something ("No matches found", where a background
   // command's output goes), and that is what is shown.
-  const quiet = out.stdout === "" && out.stderr === "";
+  const stderr = withoutCwdNote(out.stderr);
+  const quiet = out.stdout === "" && stderr === "";
   const content: Content[] = quiet
     ? text
     : [{ type: "content", content: { type: "text", text: out.stdout } }];
-  if (out.stderr !== "") {
+  if (stderr !== "") {
     content.push({
       type: "content",
-      content: { type: "text", text: out.stderr },
+      content: { type: "text", text: stderr },
       _meta: { [STREAM_META]: "stderr" },
     });
   }
@@ -474,9 +491,20 @@ export const resultOf = (
 ): Result | undefined => {
   // A command that failed has no structured result (seen with a real model): its text says the exit code, which is
   // kept as a count; the text stays as it came.
-  if (name === "Bash" && failed && !isObject(structured)) return failedCommand(contentOf(content));
+  // Whatever a command's result is read as, Claude Code's note on the folder is not shown (`withoutCwdNote`).
+  if (name === "Bash") {
+    const said = contentOf(content);
+    const text = textWithoutCwdNote(said);
+    const read =
+      failed && !isObject(structured)
+        ? failedCommand(text)
+        : isObject(structured)
+          ? bash(structured, text, failed)
+          : undefined;
+    // Not read, the text is kept as it came: only without the note, when it had one.
+    return read ?? (text.every((c, i) => c === said[i]) ? undefined : { content: text });
+  }
   if (!isObject(structured)) return undefined;
-  if (name === "Bash") return bash(structured, contentOf(content), failed);
   // A page that came back with an error status: its status is why, and the text says the rest.
   if (name === "WebFetch") return webFetch(structured, contentOf(content));
   if (failed) return undefined;
