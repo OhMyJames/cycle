@@ -3,9 +3,16 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { scanBundle } from "../src/main/delta.ts";
+import { packBundle, scanBundle } from "../src/main/delta.ts";
 import { BUILD_FILE, MAC_BUNDLE } from "../src/main/layout.ts";
-import { archiveName, manifestFor, manifestName } from "../src/shared/release.ts";
+import {
+  archiveName,
+  BLOCK_SIZE,
+  manifestFor,
+  manifestName,
+  packName,
+  packToJson,
+} from "../src/shared/release.ts";
 import { BUILD_DIR } from "./package.ts";
 
 const OUT_DIR = join(BUILD_DIR, "release");
@@ -35,9 +42,16 @@ if (!zipped.success) throw new Error(`Could not archive ${app}.`);
 const sha256 = createHash("sha256").update(readFileSync(archive)).digest("hex");
 // What the bundle holds, file by file: an installed app that has most of it fetches only the rest.
 const tree = await scanBundle(app);
+// And the big files block by block: a signed binary differs from the last release only at its end.
+const packFile = packName(info.version, info.platform, info.arch);
+const pack = join(OUT_DIR, packFile);
+const blocks = await packBundle(app, tree, pack, BLOCK_SIZE);
 const manifest = join(OUT_DIR, manifestName(info.platform, info.arch));
 writeFileSync(
   manifest,
-  `${JSON.stringify(manifestFor(info, { sha256, size: statSync(archive).size }, tree))}\n`,
+  `${JSON.stringify({
+    ...manifestFor(info, { sha256, size: statSync(archive).size }, tree),
+    pack: packToJson({ file: packFile, ...blocks }),
+  })}\n`,
 );
-console.log(JSON.stringify({ archive, manifest }));
+console.log(JSON.stringify({ archive, pack, manifest }));

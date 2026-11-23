@@ -33,13 +33,44 @@ export type ReleaseManifest = {
   readonly tree?: readonly TreeEntry[];
   /** Why `tree` was left out, when the manifest had one that cannot be used (for the log). */
   readonly treeProblem?: string;
+  /** Where the big files' blocks are, for fetching only the blocks of a file that changed. Absent in older releases. */
+  readonly pack?: BlockPack;
+  /** Why `pack` was left out, when the manifest had one that cannot be used (for the log). */
+  readonly packProblem?: string;
 };
+
+/**
+ * One block of a file: `blockSize` bytes of it (the last one may be shorter), deflated on its own (raw deflate) so it
+ * can be fetched and unpacked alone. `offset` and `csize` are where its deflated bytes are in the pack.
+ */
+export type Block = { readonly sha256: string; readonly offset: number; readonly csize: number };
+
+/**
+ * The release's block pack (`<archive name>.blocks`): the files larger than one block, cut into blocks, each deflated
+ * on its own. A signed binary changes at its end (its signature) on every release even when its code does not, so a
+ * whole-file difference fetches all of it; by its blocks, only the few at its end.
+ */
+export type BlockPack = {
+  /** The pack's asset name in the same release. */
+  readonly file: string;
+  /** Of the pack, in bytes. */
+  readonly size: number;
+  readonly blockSize: number;
+  /** By the file's path in the bundle (`tree`), its blocks in order. */
+  readonly files: Readonly<Record<string, readonly Block[]>>;
+};
+
+/** The size of a block: big enough that a few hundred requests at most cover a bundle, small enough to save. */
+export const BLOCK_SIZE = 1 << 20;
 
 export const manifestName = (platform: string, arch: string): string =>
   `latest-${platform}-${arch}.json`;
 
 export const archiveName = (version: string, platform: string, arch: string): string =>
   `${APP_NAME.replaceAll(" ", "-")}-${version}-${platform}-${arch}.zip`;
+
+export const packName = (version: string, platform: string, arch: string): string =>
+  `${APP_NAME.replaceAll(" ", "-")}-${version}-${platform}-${arch}.blocks`;
 
 const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 
@@ -121,6 +152,17 @@ export const manifestFor = (
   sha256: archive.sha256,
   size: archive.size,
   ...(tree !== undefined ? { tree } : {}),
+});
+
+/** In the manifest a block is `[sha256, offset, csize]`: there are a thousand of them. */
+export const packToJson = (pack: BlockPack) => ({
+  ...pack,
+  files: Object.fromEntries(
+    Object.entries(pack.files).map(([path, blocks]) => [
+      path,
+      blocks.map((b) => [b.sha256, b.offset, b.csize]),
+    ]),
+  ),
 });
 
 const HEX = /^[0-9a-f]{64}$/;
@@ -224,9 +266,82 @@ export const parseManifest = (text: string): ReleaseManifest => {
   // A table that cannot be used costs the saving, not the update: the whole archive is still there.
   const table = (value as Record<string, unknown>).tree;
   if (table === undefined) return manifest;
+  let tree: TreeEntry[];
   try {
-    return { ...manifest, tree: parseTree(table) };
+    tree = parseTree(table);
   } catch (error) {
     return { ...manifest, treeProblem: error instanceof Error ? error.message : String(error) };
   }
+  // So is a pack that cannot be used: the changed files are then fetched whole from the archive.
+  const packed = (value as Record<string, unknown>).pack;
+  if (packed === undefined) return { ...manifest, tree };
+  try {
+    return { ...manifest, tree, pack: parsePack(packed, manifest, tree) };
+  } catch (error) {
+    return {
+      ...manifest,
+      tree,
+      packProblem: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+/**
+ * Reads a block pack, and throws unless it is whole: its name is the one this release's pack has, every file it lists
+ * is a file of the table larger than a block, with as many blocks as its size needs, each within the pack and no
+ * bigger than a deflated block can be (so a bad pack cannot make the updater hold more than a few blocks at once).
+ */
+export const parsePack = (
+  value: unknown,
+  release: { version: string; platform: string; arch: string },
+  tree: readonly TreeEntry[],
+): BlockPack => {
+  if (typeof value !== "object" || value === null)
+    throw new Error("the block pack is not an object");
+  const { file, size, blockSize, files } = value as Record<string, unknown>;
+  if (file !== packName(release.version, release.platform, release.arch))
+    throw new Error("the block pack names an unexpected file");
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0)
+    throw new Error("the block pack has no size");
+  if (
+    typeof blockSize !== "number" ||
+    !Number.isSafeInteger(blockSize) ||
+    blockSize < 1 << 16 ||
+    blockSize > 1 << 24
+  )
+    throw new Error("the block pack's block size is not plain");
+  if (typeof files !== "object" || files === null) throw new Error("the block pack lists no files");
+  const sizes = new Map(
+    tree.flatMap((entry) => (entry.kind === "file" ? [[entry.path, entry.size] as const] : [])),
+  );
+  // Deflate can make a block a little larger than it was; never this much.
+  const most = blockSize + (blockSize >> 4) + 1024;
+  const out: Record<string, Block[]> = {};
+  for (const [path, raw] of Object.entries(files as Record<string, unknown>)) {
+    const fileSize = sizes.get(path);
+    if (fileSize === undefined)
+      throw new Error(`the block pack lists ${path}, which is not a file of the table`);
+    if (!Array.isArray(raw) || raw.length !== Math.ceil(fileSize / blockSize) || raw.length < 2)
+      throw new Error(`the block pack gives ${path} another number of blocks than its size needs`);
+    out[path] = raw.map((block: unknown) => {
+      if (!Array.isArray(block) || block.length !== 3)
+        throw new Error(`a block of ${path} is not plain`);
+      const [sha256, offset, csize] = block as unknown[];
+      if (typeof sha256 !== "string" || !HEX.test(sha256))
+        throw new Error(`a block of ${path} has no SHA-256`);
+      if (
+        typeof offset !== "number" ||
+        typeof csize !== "number" ||
+        !Number.isSafeInteger(offset) ||
+        !Number.isSafeInteger(csize) ||
+        offset < 0 ||
+        csize <= 0 ||
+        csize > most ||
+        offset + csize > size
+      )
+        throw new Error(`a block of ${path} is not within the pack`);
+      return { sha256, offset, csize };
+    });
+  }
+  return { file, size, blockSize, files: out };
 };

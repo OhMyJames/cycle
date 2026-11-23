@@ -6,7 +6,10 @@ import {
   isNewer,
   MIN_DAEMON_VERSION,
   manifestFor,
+  packName,
+  packToJson,
   parseManifest,
+  parsePack,
   parseTree,
   parseVersion,
   shellQuote,
@@ -155,4 +158,61 @@ test("a daemon is too old below the least, and not for a development build or a 
 test("a command is one word for the shell, whatever it holds", () => {
   expect(shellQuote("a b")).toBe("'a b'");
   expect(shellQuote("it's")).toBe(`'it'\\''s'`);
+});
+
+const BUILD = { version: "0.1.0", platform: "darwin", arch: "arm64" };
+const PACK_TREE: TreeEntry[] = [
+  { path: "Contents", kind: "dir" },
+  { path: "Contents/big", kind: "file", mode: 0o755, size: (1 << 16) * 2 + 5, sha256: hash },
+  { path: "Contents/small", kind: "file", mode: 0o644, size: 5, sha256: hash },
+];
+const PACK = {
+  file: packName(BUILD.version, BUILD.platform, BUILD.arch),
+  size: 300,
+  blockSize: 1 << 16,
+  files: {
+    "Contents/big": [
+      { sha256: hash, offset: 0, csize: 100 },
+      { sha256: hash, offset: 100, csize: 100 },
+      { sha256: hash, offset: 200, csize: 100 },
+    ],
+  },
+};
+
+test("a block pack the release script wrote is one the updater reads", () => {
+  expect(PACK.file).toBe("Cycle-0.1.0-darwin-arm64.blocks");
+  const text = JSON.stringify({
+    ...manifestFor(BUILD, { sha256: hash, size: 5 }, PACK_TREE),
+    pack: packToJson(PACK),
+  });
+  const read = parseManifest(text);
+  expect(read.pack).toEqual(PACK);
+  expect(read.packProblem).toBeUndefined();
+});
+
+test("a block pack that is not whole is refused, and costs only itself", () => {
+  const json = packToJson(PACK);
+  const bad = (pack: unknown) => () => parsePack(pack, BUILD, PACK_TREE);
+  expect(bad({ ...json, file: "evil.blocks" })).toThrow(/unexpected file/);
+  expect(bad({ ...json, blockSize: 3 })).toThrow(/block size/);
+  expect(bad({ ...json, files: { "Contents/small": [] } })).toThrow(/number of blocks/);
+  expect(bad({ ...json, files: { "Contents/elsewhere": [] } })).toThrow(/not a file of the table/);
+  const big = json.files["Contents/big"] ?? [];
+  expect(bad({ ...json, files: { "Contents/big": big.slice(1) } })).toThrow(/number of blocks/);
+  expect(
+    bad({ ...json, files: { "Contents/big": [...big.slice(0, 2), [hash, 250, 100]] } }),
+  ).toThrow(/within the pack/);
+  expect(
+    bad({ ...json, files: { "Contents/big": [...big.slice(0, 2), ["x", 200, 100]] } }),
+  ).toThrow(/SHA-256/);
+  // The table and the archive are still used.
+  const read = parseManifest(
+    JSON.stringify({
+      ...manifestFor(BUILD, { sha256: hash, size: 5 }, PACK_TREE),
+      pack: { ...json, size: -1 },
+    }),
+  );
+  expect(read.tree).toEqual(PACK_TREE);
+  expect(read.pack).toBeUndefined();
+  expect(read.packProblem).toMatch(/no size/);
 });
