@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { client, methods, ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
@@ -12,6 +12,7 @@ import {
 import { ConfigSchema } from "../../../../apps/daemon/src/config.ts";
 import { Daemon } from "../../../../apps/daemon/src/daemon.ts";
 import { agentsFor } from "../../../../apps/daemon/src/harnesses.ts";
+import { AgyPlugins } from "../../src/plugins.ts";
 
 const agyPath = findAgyExecutable(ConfigSchema.parse({}).agy, process.env);
 const hasAgy = agyPath !== undefined && isAgyVersionSupported(agyPath, process.env);
@@ -129,5 +130,71 @@ describe("harness/agy integration (unauthenticated real agy acp)", () => {
       }
     },
     25_000,
+  );
+
+  test.skipIf(!hasAgy)(
+    "AgyPlugins installs, disables, enables, and uninstalls a local plugin in an isolated HOME (CYCL-179)",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "cycle-agy-plug-integ-"));
+      const home = join(root, "home");
+      const cwd = join(root, "cwd");
+      const plugDir = join(root, "demo-plugin");
+      mkdirSync(join(plugDir, ".antigravity-plugin"), { recursive: true });
+      mkdirSync(join(plugDir, "skills", "greet"), { recursive: true });
+      writeFileSync(
+        join(plugDir, ".antigravity-plugin", "plugin.json"),
+        JSON.stringify({
+          name: "demo-integ",
+          version: "0.1.0",
+          description: "Cycle integration test plugin",
+        }),
+      );
+      writeFileSync(
+        join(plugDir, "mcp_config.json"),
+        JSON.stringify({
+          mcpServers: {
+            echoHttp: { type: "http", url: "http://127.0.0.1:9999/mcp" },
+          },
+        }),
+      );
+      writeFileSync(
+        join(plugDir, "skills", "greet", "SKILL.md"),
+        "---\nname: greet\ndescription: Say hi\n---\nSay hi\n",
+      );
+
+      const plugins = new AgyPlugins({
+        executable: () => agyPath,
+        env: { PATH: process.env.PATH ?? "", HOME: home },
+        cwd,
+      });
+
+      try {
+        expect(await plugins.installed()).toEqual([]);
+        await plugins.install(plugDir);
+        const afterInstall = await plugins.installed();
+        expect(afterInstall).toHaveLength(1);
+        expect(afterInstall[0]).toMatchObject({
+          id: "demo-integ",
+          name: "demo-integ",
+          version: "0.1.0",
+          description: "Cycle integration test plugin",
+          enabled: true,
+          contents: { skills: 1, mcpServers: 1 },
+          servers: [{ name: "echoHttp", agentName: "echoHttp" }],
+        });
+
+        await plugins.setEnabled("demo-integ", false);
+        expect((await plugins.installed())[0]?.enabled).toBe(false);
+
+        await plugins.setEnabled("demo-integ", true);
+        expect((await plugins.installed())[0]?.enabled).toBe(true);
+
+        await plugins.uninstall("demo-integ");
+        expect(await plugins.installed()).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
   );
 });

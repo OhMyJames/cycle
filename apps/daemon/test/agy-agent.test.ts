@@ -569,4 +569,31 @@ describe("agy daemon harness", () => {
       void upstream.stop(true);
     }
   });
+
+  test("daemon advertises agy in cycle/capabilities.plugins (CYCL-179)", async () => {
+    const dataDir = makeTemp("cycle-agy-plug-cap-");
+    const binDir = makeTemp("cycle-agy-plug-bin-");
+    const okBin = makeFakeAgy(binDir, "1.5.15", "agy");
+    const config = ConfigSchema.parse({ agy: { executable: okBin } });
+    const daemon = await Daemon.start({
+      dataDir,
+      agents: agentsFor(config, dataDir, { PATH: binDir }, undefined, [agyHarness]),
+    });
+    const c2s = new TransformStream<Uint8Array, Uint8Array>();
+    const s2c = new TransformStream<Uint8Array, Uint8Array>();
+    const serverConn = daemon.accept(ndJsonStream(s2c.writable, c2s.readable));
+    const clientConn = client().connect(ndJsonStream(c2s.writable, s2c.readable));
+    try {
+      const init = (await clientConn.agent.request(methods.agent.initialize, {
+        protocolVersion: 2,
+        capabilities: {},
+        info: { name: "test", version: "1" },
+      })) as { _meta?: Record<string, { plugins?: string[] }> };
+      expect(init._meta?.["cycle/capabilities"]?.plugins).toContain("agy");
+    } finally {
+      clientConn.close();
+      serverConn.close();
+      await daemon.close();
+    }
+  });
 });

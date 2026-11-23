@@ -1,4 +1,14 @@
 export { createAdapter } from "./agent.ts";
+export {
+  type AgyPlugin,
+  AgyPluginError,
+  type AgyPluginFailureReason,
+  type AgyPluginServer,
+  type AgyPluginSnapshot,
+  AgyPlugins,
+  type AgyPluginsOptions,
+  type RunAgyPluginCommand,
+} from "./plugins.ts";
 export { type AdapterConfig, AgyRpcError, type AgyTransport, buildAgyArgs } from "./server.ts";
 export {
   AGY_CONFIG_SCHEMA,

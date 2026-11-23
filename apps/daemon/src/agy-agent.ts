@@ -4,6 +4,7 @@ import {
   AGY_CONFIG_SCHEMA,
   AGY_MIN_VERSION,
   AGY_PROMPT_CAPABILITIES,
+  AgyPlugins,
   isVersionSupported,
 } from "@cycle/harness-agy";
 import { runAdapter } from "@cycle/harness-agy/run";
@@ -143,6 +144,16 @@ export const agyHarness: Harness = {
         const path = executable();
         return path !== undefined && isAgyVersionSupported(path, inherited, env.HOME);
       },
+      plugins: new AgyPlugins({
+        executable: () => {
+          const path = executable();
+          return path !== undefined && isAgyVersionSupported(path, inherited, env.HOME)
+            ? path
+            : undefined;
+        },
+        env,
+        cwd: join(dataDir, "plugins", "agy"),
+      }),
       ...(log !== undefined ? { log } : {}),
     });
   },
