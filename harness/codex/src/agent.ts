@@ -41,6 +41,8 @@ export function createAdapter(config: AdapterConfig) {
   let additionalDirectories: string[] = [];
   let developerInstructions: string | undefined;
   let mcpConfig: Record<string, unknown> = {};
+  let trusted: boolean | undefined;
+  let codexConfig: Record<string, unknown> = {};
   function notify(update: SessionUpdate) {
     if (session && owner)
       void owner
@@ -217,6 +219,16 @@ export function createAdapter(config: AdapterConfig) {
         throw new RequestError(-32602, "Unsupported MCP transport");
       }),
     );
+    trusted =
+      typeof params._meta?.["cycle/trusted"] === "boolean"
+        ? params._meta["cycle/trusted"]
+        : undefined;
+    codexConfig = {
+      ...(Object.keys(mcpConfig).length > 0 ? { mcp_servers: mcpConfig } : {}),
+      ...(trusted !== undefined
+        ? { projects: { [params.cwd]: { trust_level: trusted ? "trusted" : "untrusted" } } }
+        : {}),
+    };
     const child = new AppServer(
       config,
       event,
@@ -227,7 +239,7 @@ export function createAdapter(config: AdapterConfig) {
     const settings = {
       cwd: params.cwd,
       ...policy(mode),
-      ...(Object.keys(mcpConfig).length > 0 ? { config: { mcp_servers: mcpConfig } } : {}),
+      ...(Object.keys(codexConfig).length > 0 ? { config: codexConfig } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
     };
     type Thread = { thread: { id: string } };
@@ -369,7 +381,7 @@ export function createAdapter(config: AdapterConfig) {
           input,
           ...turnPolicy(mode, additionalDirectories),
           ...(developerInstructions ? { developerInstructions } : {}),
-          ...(Object.keys(mcpConfig).length > 0 ? { config: { mcp_servers: mcpConfig } } : {}),
+          ...(Object.keys(codexConfig).length > 0 ? { config: codexConfig } : {}),
           ...(model !== "default" ? { model } : {}),
           ...(effort !== "default" ? { effort } : {}),
         })
