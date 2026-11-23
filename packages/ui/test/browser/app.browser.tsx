@@ -395,7 +395,7 @@ test("an edit waiting for leave shows the change it would make, line by line, be
   expect(card.textContent).toContain("+2");
 });
 
-test("several requests are answered one at a time, and the keyboard goes on to the next, then back to the box", async () => {
+test("several requests are answered one at a time; the keyboard goes on to the next card, then back to the box", async () => {
   const { user, emit, named } = await mount();
   await openFirstSession(user);
   const box = await screen.findByRole("textbox", { name: "Message" });
@@ -426,10 +426,14 @@ test("several requests are answered one at a time, and the keyboard goes on to t
   });
   const second = await screen.findByLabelText("Allow Write?");
   expect(second.textContent).not.toContain("more waiting");
-  await waitFor(() =>
-    expect(document.activeElement).toBe(within(second).getByRole("button", { name: "Allow" })),
-  );
+  // The card itself takes the focus, not its Allow: a second Enter allows nothing unread.
+  await waitFor(() => expect(document.activeElement).toBe(second));
   await user.keyboard("{Enter}");
+  expect(named("answerPermission")).toHaveLength(1);
+  await user.keyboard("{Tab}");
+  expect(document.activeElement).toBe(within(second).getByRole("button", { name: "Allow" }));
+  await user.keyboard("{Enter}");
+  expect(named("answerPermission")).toHaveLength(2);
   emit({
     type: "permission-closed",
     environmentId: "local",

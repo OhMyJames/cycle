@@ -1039,7 +1039,9 @@ test("what a person does is reported as counts and words, and never as what they
       via: "other",
     },
   ]);
-  expect(named("permission_answered")).toEqual([{ outcome: "allowed", remembered: false }]);
+  expect(named("permission_answered")).toEqual([
+    { outcome: "allowed", remembered: false, queued: 0 },
+  ]);
   expect(named("session_config_changed")).toEqual([{ setting: "mode" }, { setting: "effort" }]);
   expect(named("session_renamed")).toEqual([{ where: "sidebar" }]);
   expect(named("session_archived")).toEqual([{ archived: true }]);

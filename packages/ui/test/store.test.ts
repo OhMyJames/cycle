@@ -229,6 +229,24 @@ test("a permission request appears and closes", async () => {
   expect(store.getState().views[viewKey("local", "s1")]?.permissions).toEqual([]);
 });
 
+test("a request asked again keeps its place in the order they came", async () => {
+  const ask = (key: string, title: string): PermissionRequest => ({
+    key,
+    environmentId: "local",
+    sessionId: "s1",
+    title,
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+  });
+  const { store, emit } = await opened();
+  emit({ type: "permission", request: ask("a", "A"), version: 1 });
+  emit({ type: "permission", request: ask("b", "B"), version: 2 });
+  emit({ type: "permission", request: ask("a", "A again"), version: 3 });
+  expect(store.getState().views[viewKey("local", "s1")]?.permissions.map((p) => p.title)).toEqual([
+    "A again",
+    "B",
+  ]);
+});
+
 test("sends a prompt, ignoring an empty one, and can cancel", async () => {
   const { store, named } = await opened();
   const key = viewKey("local", "s1");

@@ -1,5 +1,5 @@
 import { Button } from "@ui-sdk/react/button";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { type RefObject, useLayoutEffect, useMemo, useRef } from "react";
 import type { PermissionRequest } from "../api.ts";
 import { type Proposal, proposalOf } from "../model/index.ts";
 import { composerInput } from "./composer.tsx";
@@ -17,29 +17,34 @@ const callOf = (subject: unknown): Record<string, unknown> => {
   return isObject(outer.toolCall) ? outer.toolCall : outer;
 };
 
-/** What the agent wants to do, as the request says it. Text only: it is the agent's word. */
-export const describeSubject = (subject: unknown): string => {
-  const call = callOf(subject);
-  const input = isObject(call.rawInput) ? call.rawInput : {};
-  const detail = ["command", "file_path", "path", "url", "pattern"]
-    .map((key) => input[key])
-    .find((value): value is string => typeof value === "string");
-  const name = typeof call.name === "string" ? call.name : "";
-  return [name, detail].filter(Boolean).join(": ");
-};
-
 /** The most characters of an input shown; what is past them is counted. */
 const MAX_INPUT = 4_000;
 
-const inputText = (input: unknown): string => {
+const inputText = (input: unknown): { text: string; hidden: number } => {
   let text: string;
   try {
     text = typeof input === "string" ? input : (JSON.stringify(input, null, 2) ?? "");
   } catch {
     text = String(input);
   }
-  return text.length > MAX_INPUT ? `${text.slice(0, MAX_INPUT)}\n…` : text;
+  return text.length > MAX_INPUT
+    ? { text: text.slice(0, MAX_INPUT), hidden: text.length - MAX_INPUT }
+    : { text, hidden: 0 };
 };
+
+/** What a call was given, as text, and how much of it is not shown when it is long. */
+function InputView({ input }: { input: unknown }) {
+  const { t } = useI18n();
+  const { text, hidden } = inputText(input);
+  return (
+    <>
+      <pre data-slot="permission-detail">{text}</pre>
+      {hidden > 0 ? (
+        <p data-slot="permission-purpose">{t("permission.inputHidden", { count: hidden })}</p>
+      ) : null}
+    </>
+  );
+}
 
 /**
  * What answering allows, shown whole before the answer: the change an edit makes, line by line; the command a shell call
@@ -58,11 +63,12 @@ function ProposalView({ proposal, name }: { proposal: Proposal | undefined; name
         <pre data-slot="permission-detail" data-kind="command">
           {proposal.command}
         </pre>
+        {proposal.rest !== undefined ? <InputView input={proposal.rest} /> : null}
       </>
     );
   }
   if (proposal.kind === "input") {
-    return <pre data-slot="permission-detail">{inputText(proposal.input)}</pre>;
+    return <InputView input={proposal.input} />;
   }
   const label = t("tool.facts.diff", { added: proposal.additions, removed: proposal.deletions });
   return (
@@ -82,18 +88,42 @@ function ProposalView({ proposal, name }: { proposal: Proposal | undefined; name
           <span data-slot="visually-hidden">{label}</span>
         </span>
       </div>
-      {proposal.whole ? <p data-slot="permission-purpose">{t("permission.wholeFile")}</p> : null}
+      {proposal.whole ? (
+        <p data-slot="permission-purpose">
+          {proposal.lines.length > 0 ? t("permission.wholeFile") : t("permission.emptyFile")}
+        </p>
+      ) : null}
+      {proposal.everywhere ? (
+        <p data-slot="permission-purpose">{t("permission.everywhere")}</p>
+      ) : null}
       {proposal.lines.length > 0 ? <DiffView lines={proposal.lines} /> : null}
     </div>
   );
 }
 
 /**
- * Where the keyboard goes between requests. A request is answered from its card, the card goes, and the next request's
- * card comes in the same commit: it takes the focus the last one had. When none comes, the message box does, so the
- * keyboard never falls to the page.
+ * Where the keyboard goes when a request's card leaves with the focus in it (answered, or closed by the agent): to the
+ * card of the next request, a permission or a form, itself and not a button in it, so a second Enter allows nothing the
+ * person has not read; when none is left, to the message box. The keyboard never falls to the page.
  */
-const handoff = { carry: false };
+export function useFocusHandoff(card: RefObject<HTMLElement | null>) {
+  useLayoutEffect(() => {
+    const element = card.current;
+    // Runs while the card is still on the page, so the focus can be seen inside it.
+    return () => {
+      if (element === null || !element.contains(element.ownerDocument.activeElement)) return;
+      const page = element.ownerDocument;
+      // After the commit that took the card away, when the next one, if any, is drawn.
+      queueMicrotask(() => {
+        const next = page.querySelector<HTMLElement>(
+          '[data-slot="permissions"] [data-slot="permission"]',
+        );
+        if (next !== null) next.focus({ preventScroll: true });
+        else composerInput()?.focus({ preventScroll: true });
+      });
+    };
+  }, [card]);
+}
 
 export type PermissionCardProps = {
   request: PermissionRequest;
@@ -108,28 +138,11 @@ export function PermissionCard({ request, disabled, onAnswer, waiting = 0 }: Per
   const card = useRef<HTMLElement>(null);
   const call = callOf(request.subject);
   const proposal = useMemo(() => proposalOf(call), [call]);
-  const name = typeof call.name === "string" ? call.name : describeSubject(request.subject);
-  useLayoutEffect(() => {
-    const element = card.current;
-    if (handoff.carry) {
-      handoff.carry = false;
-      element
-        ?.querySelector<HTMLButtonElement>('[data-slot="permission-actions"] button')
-        ?.focus({ preventScroll: true });
-    }
-    // Runs while the card is still on the page, so the focus can be seen inside it.
-    return () => {
-      if (element === null || !element.contains(element.ownerDocument.activeElement)) return;
-      handoff.carry = true;
-      queueMicrotask(() => {
-        if (!handoff.carry) return;
-        handoff.carry = false;
-        composerInput()?.focus({ preventScroll: true });
-      });
-    };
-  }, []);
+  const name =
+    typeof call.title === "string" ? call.title : typeof call.name === "string" ? call.name : "";
+  useFocusHandoff(card);
   return (
-    <section ref={card} data-slot="permission" aria-label={request.title}>
+    <section ref={card} data-slot="permission" aria-label={request.title} tabIndex={-1}>
       <div data-slot="permission-title">
         <WarningIcon size={16} />
         {request.title}

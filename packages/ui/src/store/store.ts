@@ -1291,8 +1291,14 @@ const applyToView = (view: SessionView, event: AppEvent & { version: number }): 
     };
   }
   if (event.type === "permission") {
-    const others = view.permissions.filter((p) => p.key !== event.request.key);
-    return { ...view, permissions: [...others, event.request], version: event.version };
+    // A request asked again (after a reconnect) keeps its place: they are answered one at a time, in the order they came,
+    // and the one on screen must not change under the person's click.
+    const at = view.permissions.findIndex((p) => p.key === event.request.key);
+    const permissions =
+      at === -1
+        ? [...view.permissions, event.request]
+        : view.permissions.map((p, i) => (i === at ? event.request : p));
+    return { ...view, permissions, version: event.version };
   }
   if (event.type === "permission-closed") {
     return {

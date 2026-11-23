@@ -1,11 +1,12 @@
 import { Button } from "@ui-sdk/react/button";
 import { Field, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { FormAnswer, PermissionRequest } from "../api.ts";
 import { type Option, OptionLabel, optionsOf } from "./config-form.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon } from "./icons.tsx";
+import { useFocusHandoff } from "./permission.tsx";
 
 /** One field of an agent's form, as this card can draw it. A schema is the agent's word: anything else is left out. */
 type Base = { key: string; title: string; question?: string; required: boolean };
@@ -119,6 +120,8 @@ export type FormCardProps = {
   request: PermissionRequest & { form: NonNullable<PermissionRequest["form"]> };
   disabled: boolean;
   onAnswer: (key: string, answer: FormAnswer) => unknown;
+  /** How many more requests wait behind this one. They are shown one at a time, in the order they came. */
+  waiting?: number;
 };
 
 /**
@@ -126,8 +129,10 @@ export type FormCardProps = {
  * and a line for an answer of its own; "Answer" sends what was filled, "Skip" says no answer, dismissing stops the turn
  * as dismissing a permission does.
  */
-export function FormCard({ request, disabled, onAnswer }: FormCardProps) {
+export function FormCard({ request, disabled, onAnswer, waiting = 0 }: FormCardProps) {
   const { t } = useI18n();
+  const card = useRef<HTMLElement>(null);
+  useFocusHandoff(card);
   const fields = fieldsOf(request.form.schema);
   const [values, setValues] = useState<Record<string, Value | undefined>>({});
   const set = (key: string, value: Value | undefined) =>
@@ -145,8 +150,13 @@ export function FormCard({ request, disabled, onAnswer }: FormCardProps) {
   const ready = !disabled && !unanswerable && !missing && !empty;
   const submit = () => onAnswer(request.key, { action: "accept", content });
   return (
-    <section data-slot="permission" data-kind="form" aria-label={title}>
-      <div data-slot="permission-title">{title}</div>
+    <section ref={card} data-slot="permission" data-kind="form" aria-label={title} tabIndex={-1}>
+      <div data-slot="permission-title">
+        {title}
+        {waiting > 0 ? (
+          <span data-slot="permission-waiting">{t("permission.waiting", { count: waiting })}</span>
+        ) : null}
+      </div>
       <form
         data-slot="form"
         onSubmit={(event) => {

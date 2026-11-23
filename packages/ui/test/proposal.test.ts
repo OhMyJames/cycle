@@ -93,10 +93,52 @@ test("any other tool shows what it was given; one with nothing given shows nothi
 });
 
 test("a change too large to compare line by line is still drawn whole, removed then added", () => {
-  const before = Array.from({ length: 2100 }, (_, i) => `old ${i}`).join("\n");
-  const after = Array.from({ length: 2100 }, (_, i) => `new ${i}`).join("\n");
+  const before = Array.from({ length: 1100 }, (_, i) => `old ${i}`).join("\n");
+  const after = Array.from({ length: 1100 }, (_, i) => `new ${i}`).join("\n");
   const lines = lineDiff(before, after);
-  expect(lines.filter((line) => line.kind === "del")).toHaveLength(2100);
-  expect(lines.filter((line) => line.kind === "add")).toHaveLength(2100);
+  expect(lines.filter((line) => line.kind === "del")).toHaveLength(1100);
+  expect(lines.filter((line) => line.kind === "add")).toHaveLength(1100);
   expect(lines[0]?.kind).toBe("del");
+});
+
+test("a command shows what else it was given: it is part of what is allowed", () => {
+  expect(
+    proposalOf({
+      rawInput: { command: "make", description: "Build", dangerouslyDisableSandbox: true },
+    }),
+  ).toEqual({
+    kind: "command",
+    command: "make",
+    description: "Build",
+    rest: { dangerouslyDisableSandbox: true },
+  });
+});
+
+test("an edit that replaces every occurrence says so", () => {
+  expect(
+    proposalOf({
+      rawInput: { file_path: "/a", old_string: "x", new_string: "y", replace_all: true },
+    }),
+  ).toMatchObject({ kind: "edit", everywhere: true });
+  expect(
+    proposalOf({
+      rawInput: {
+        file_path: "/a",
+        edits: [{ old_string: "x", new_string: "y", replace_all: true }],
+      },
+    }),
+  ).toMatchObject({ kind: "edit", everywhere: true });
+});
+
+test("a line break added or taken away at the end is a change, not nothing", () => {
+  expect(shape(lineDiff("x\n", "x"))).toEqual([" x", "-"]);
+  expect(shape(lineDiff("a\n", "a\nb\n"))).toEqual([" a", "+b"]);
+});
+
+test("writing an empty file is a whole file with no lines", () => {
+  expect(proposalOf({ rawInput: { file_path: "/a", content: "" } })).toMatchObject({
+    kind: "edit",
+    whole: true,
+    lines: [],
+  });
 });

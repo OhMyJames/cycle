@@ -312,6 +312,12 @@ export const enUS = {
   "compaction.failed": "Couldn't compact the context",
   "compaction.cancelled": "Compacting the context stopped",
   "permission.dismiss": "Dismiss",
+  "permission.emptyFile": "Writes the file empty.",
+  "permission.everywhere": "Replaces every occurrence in the file, not only this one.",
+  "permission.inputHidden": {
+    one: "{count} more character not shown",
+    other: "{count} more characters not shown",
+  },
   "permission.waiting": { one: "{count} more waiting", other: "{count} more waiting" },
   "permission.wholeFile": "Writes the whole file:",
   "form.title": "The agent has a question",

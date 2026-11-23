@@ -11,11 +11,19 @@ export type Proposal =
       path: string;
       /** A whole file written: what was there is not known, so every line reads as added. */
       whole: boolean;
+      /** Every occurrence of the text is replaced (`replace_all`), not only the one drawn. */
+      everywhere: boolean;
       lines: DiffLine[];
       additions: number;
       deletions: number;
     }
-  | { kind: "command"; command: string; description?: string }
+  | {
+      kind: "command";
+      command: string;
+      description?: string;
+      /** What else the call was given (a timeout, a flag that leaves the sandbox): it is part of what is allowed. */
+      rest?: Record<string, unknown>;
+    }
   | { kind: "input"; input: unknown };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -24,12 +32,13 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 /** Lines of unchanged text kept around a change, as a patch keeps them. */
 const CONTEXT = 3;
 /** Past this many line pairs, the change is not worked out line by line: it is drawn as all removed, then all added. */
-const MAX_CELLS = 4_000_000;
+const MAX_CELLS = 1_000_000;
 
 type Op = { kind: "add" | "del" | "context"; text: string };
 
-const splitLines = (text: string): string[] =>
-  text === "" ? [] : text.replace(/\n$/, "").split("\n");
+/** A text's lines. Its last line break is dropped only when `trim`: otherwise "x\n" and "x" differ by a line, as they do. */
+const splitLines = (text: string, trim: boolean): string[] =>
+  text === "" ? [] : (trim ? text.replace(/\n$/, "") : text).split("\n");
 
 /** The lines of `before` and `after` as removed, added and kept, by their longest common run of lines. */
 const operations = (before: string[], after: string[]): Op[] => {
@@ -91,7 +100,9 @@ const operations = (before: string[], after: string[]): Op[] => {
  * mark. The lines carry no numbers: an edit names text, not where in the file it is.
  */
 export const lineDiff = (before: string, after: string): DiffLine[] => {
-  const ops = operations(splitLines(before), splitLines(after));
+  // A last line break both have, or that a new text has, is not a line of its own.
+  const trim = before === "" || before.endsWith("\n") === after.endsWith("\n");
+  const ops = operations(splitLines(before, trim), splitLines(after, trim));
   const near = new Array<boolean>(ops.length).fill(false);
   ops.forEach((op, at) => {
     if (op.kind === "context") return;
@@ -112,10 +123,16 @@ export const lineDiff = (before: string, after: string): DiffLine[] => {
   return lines;
 };
 
-const edited = (path: string, whole: boolean, lines: DiffLine[]): Proposal => ({
+const edited = (
+  path: string,
+  whole: boolean,
+  everywhere: boolean,
+  lines: DiffLine[],
+): Proposal => ({
   kind: "edit",
   path,
   whole,
+  everywhere,
   lines,
   additions: lines.filter((line) => line.kind === "add").length,
   deletions: lines.filter((line) => line.kind === "del").length,
@@ -131,14 +148,23 @@ export const proposalOf = (call: { rawInput?: unknown }): Proposal | undefined =
   const command = text(input.command);
   if (command !== undefined && command !== "") {
     const description = text(input.description)?.trim();
-    return { kind: "command", command, ...(description ? { description } : {}) };
+    const rest = Object.fromEntries(
+      Object.entries(input).filter(([key]) => key !== "command" && key !== "description"),
+    );
+    return {
+      kind: "command",
+      command,
+      ...(description ? { description } : {}),
+      ...(Object.keys(rest).length > 0 ? { rest } : {}),
+    };
   }
   const path = text(input.file_path);
   if (path !== undefined) {
     const [before, after] = [text(input.old_string), text(input.new_string)];
     if (before !== undefined && after !== undefined)
-      return edited(path, false, lineDiff(before, after));
+      return edited(path, false, input.replace_all === true, lineDiff(before, after));
     if (Array.isArray(input.edits)) {
+      const everywhere = input.edits.some((edit) => isObject(edit) && edit.replace_all === true);
       const parts = input.edits.flatMap((edit) => {
         if (!isObject(edit)) return [];
         const [from, to] = [text(edit.old_string), text(edit.new_string)];
@@ -151,12 +177,13 @@ export const proposalOf = (call: { rawInput?: unknown }): Proposal | undefined =
         return edited(
           path,
           false,
+          everywhere,
           lines.map((line, at) => ({ ...line, id: `${line.kind[0]}${at}` })),
         );
       }
     }
     const content = text(input.content);
-    if (content !== undefined) return edited(path, true, lineDiff("", content));
+    if (content !== undefined) return edited(path, true, false, lineDiff("", content));
   }
   return Object.keys(input).length > 0 ? { kind: "input", input } : undefined;
 };
