@@ -709,7 +709,8 @@ test("a command's output is drawn in its colours and copied without them; its he
   const green = [...output.querySelectorAll("span[style]")].find(
     (s) => s.textContent === "✓ 12 passed",
   );
-  expect((green as HTMLElement).style.color).toBe("var(--cycle-ansi-2)");
+  // The terminal's green, made readable on the output's ground in either theme.
+  expect((green as HTMLElement).style.color).toContain("light-dark(");
   const red = [...output.querySelectorAll("span[style]")].find(
     (s) => s.textContent === "✗ 1 failed",
   );

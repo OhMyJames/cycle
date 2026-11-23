@@ -96,7 +96,7 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
             </div>
           </section>
         ) : null}
-        {streams.err !== "" ? <Copyable kind="stderr" text={streams.err} /> : null}
+        {streams.err !== "" ? <Copyable kind="stderr" text={streams.err} failed={failed} /> : null}
         {/* A call that failed by itself says why in its text, which is no answer: shown as what it is. */}
         {failed && !subagentFailed && streams.out.trim() !== "" ? (
           <Copyable kind="output" text={streams.out} />
