@@ -1,4 +1,6 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk/experimental/v2";
+import { META } from "@cycle/protocol";
+import type { Model } from "./wire.generated.ts";
 export const modes = [
   {
     value: "default",
@@ -28,6 +30,7 @@ export const modes = [
   },
 ] as const;
 export type Mode = (typeof modes)[number]["value"];
+export type Catalog = readonly Model[];
 export function policy(mode: Mode) {
   return {
     approvalPolicy:
@@ -57,7 +60,7 @@ export function turnPolicy(mode: Mode) {
         : { type: "dangerFullAccess" };
   return { ...rest, sandboxPolicy };
 }
-export const options = (mode: Mode) =>
+export const options = (mode: Mode, catalog: Catalog = [], model = "default", effort = "default") =>
   [
     {
       configId: "mode",
@@ -66,13 +69,40 @@ export const options = (mode: Mode) =>
       currentValue: mode,
       options: [...modes],
     },
-    ...["model", "effort"].map((id) => ({
-      configId: id,
-      name: id === "model" ? "Model" : "Effort",
+    {
+      configId: "model",
+      name: "Model",
       type: "select" as const,
-      currentValue: "default",
-      options: [{ value: "default", name: "Default" }],
-    })),
+      currentValue: model,
+      options: [
+        { value: "default", name: "Default", _meta: { [META.open]: true } },
+        ...catalog
+          .filter((item) => !item.hidden)
+          .map((item) => ({
+            value: item.model,
+            name: item.displayName,
+            description: item.description,
+            _meta: {
+              [META.efforts]: item.supportedReasoningEfforts.map((item) => item.reasoningEffort),
+            },
+          })),
+      ],
+    },
+    {
+      configId: "effort",
+      name: "Effort",
+      type: "select" as const,
+      currentValue: effort,
+      options: [
+        { value: "default", name: "Default" },
+        ...(catalog.find((item) => item.model === model)?.supportedReasoningEfforts ?? []).map(
+          (item) => ({
+            value: item.reasoningEffort,
+            name: item.description,
+          }),
+        ),
+      ],
+    },
   ] satisfies SessionConfigOption[];
 export const configSchema = {
   type: "object",
@@ -84,6 +114,9 @@ export const configSchema = {
           type: "string",
           title: opt.name,
           default: "default",
+          ...(opt.configId === "model" || opt.configId === "effort"
+            ? { _meta: { [META.open]: true } }
+            : {}),
           oneOf: opt.options.map(({ value, name, ...rest }) => ({
             const: value,
             title: name,

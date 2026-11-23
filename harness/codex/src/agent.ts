@@ -10,7 +10,7 @@ import {
 import { approval } from "./approval.ts";
 import { itemUpdate } from "./items.ts";
 import { type AdapterConfig, AppServer, CodexRpcError } from "./server.ts";
-import { type Mode, modes, options, policy, turnPolicy } from "./settings.ts";
+import { type Catalog, type Mode, modes, options, policy, turnPolicy } from "./settings.ts";
 import type {
   AgentMessageDeltaNotification,
   ItemCompletedNotification,
@@ -33,6 +33,9 @@ export function createAdapter(config: AdapterConfig) {
     owner: AgentContext | undefined,
     turn: Turn | undefined;
   let mode: Mode = "default";
+  let catalog: Catalog = [];
+  let model = "default";
+  let effort = "default";
   function notify(update: SessionUpdate) {
     if (session && owner)
       void owner
@@ -118,6 +121,13 @@ export function createAdapter(config: AdapterConfig) {
     if (id !== session || !server) throw new RequestError(-32002, "Codex session unavailable");
     return server;
   }
+  const inputOf = (prompt: { type: string; text?: string }[]): UserInput[] =>
+    prompt.map((block) => {
+      if (block.type !== "text" || typeof block.text !== "string")
+        throw new RequestError(-32602, "Only text prompts are supported");
+      return { type: "text", text: block.text, text_elements: [] };
+    });
+  const optionsOf = () => options(mode, catalog, model, effort);
   async function open(
     params: NewSessionRequest | ResumeSessionRequest,
     client: AgentContext,
@@ -126,6 +136,8 @@ export function createAdapter(config: AdapterConfig) {
     if (server) throw new RequestError(-32600, "This adapter already has a session");
     if (resume?.replayFrom) throw new RequestError(-32602, "Cycle owns the conversation replay");
     mode = "default";
+    model = "default";
+    effort = "default";
     const child = new AppServer(
       config,
       event,
@@ -137,6 +149,19 @@ export function createAdapter(config: AdapterConfig) {
     type Thread = { thread: { id: string } };
     try {
       await child.initialize();
+      try {
+        let cursor: string | null = null;
+        do {
+          const page: { data: Catalog[number][]; nextCursor: string | null } = await child.request(
+            "model/list",
+            { cursor, limit: 100 },
+          );
+          catalog = [...catalog, ...page.data];
+          cursor = page.nextCursor;
+        } while (cursor !== null);
+      } catch {
+        catalog = [];
+      }
       let result: Thread;
       if (resume) {
         try {
@@ -165,7 +190,7 @@ export function createAdapter(config: AdapterConfig) {
         });
       return {
         sessionId: session,
-        configOptions: options(mode),
+        configOptions: optionsOf(),
         ...(resume && session !== resume.sessionId
           ? { _meta: { "cycle/agentSessionId": session } }
           : {}),
@@ -191,22 +216,52 @@ export function createAdapter(config: AdapterConfig) {
         const choice = modes.find((m) => m.value === params.value);
         if (!choice) throw new RequestError(-32602, "Unknown permission mode");
         mode = choice.value;
-      } else if (!(["model", "effort"].includes(params.configId) && params.value === "default"))
-        throw new RequestError(-32602, "Unknown Codex setting");
-      const configOptions = options(mode);
+      } else if (params.configId === "model") {
+        if (typeof params.value !== "string")
+          throw new RequestError(-32602, "Expected a string value");
+        if (params.value !== "default" && !catalog.some((item) => item.model === params.value))
+          throw new RequestError(-32602, "Unknown Codex model");
+        model = params.value;
+        if (
+          effort !== "default" &&
+          !catalog
+            .find((item) => item.model === model)
+            ?.supportedReasoningEfforts.some((item) => item.reasoningEffort === effort)
+        )
+          effort = "default";
+      } else if (params.configId === "effort") {
+        if (typeof params.value !== "string")
+          throw new RequestError(-32602, "Expected a string value");
+        if (
+          params.value !== "default" &&
+          !catalog
+            .find((item) => item.model === model)
+            ?.supportedReasoningEfforts.some((item) => item.reasoningEffort === params.value)
+        )
+          throw new RequestError(-32602, "Unknown Codex reasoning effort");
+        effort = params.value;
+      } else throw new RequestError(-32602, "Unknown Codex setting");
+      const configOptions = optionsOf();
       notify({ sessionUpdate: "config_option_update", configOptions });
       return { configOptions };
     })
-    .onRequest(methods.agent.session.prompt, ({ params }) => {
+    .onRequest(methods.agent.session.prompt, async ({ params }) => {
       const child = requireSession(params.sessionId);
       if (child.closed) throw new RequestError(-32600, "Codex app-server has exited");
-      if (turn || params._meta?.["cycle/steer"])
-        throw new RequestError(-32600, "Codex cannot accept an overlapping prompt");
-      const input: UserInput[] = params.prompt.map((block) => {
-        if (block.type !== "text" || typeof block.text !== "string")
-          throw new RequestError(-32602, "Only text prompts are supported");
-        return { type: "text", text: block.text, text_elements: [] };
-      });
+      const input = inputOf(params.prompt);
+      if (params._meta?.["cycle/steer"] === true) {
+        if (!turn?.id) throw new RequestError(-32600, "No Codex turn is running");
+        const messageId = crypto.randomUUID();
+        await child.request("turn/steer", {
+          threadId: session,
+          expectedTurnId: turn.id,
+          clientUserMessageId: messageId,
+          input,
+        });
+        notify({ sessionUpdate: "user_message", messageId, content: params.prompt });
+        return { messageId };
+      }
+      if (turn) throw new RequestError(-32600, "A Codex turn is already running");
       const messageId = crypto.randomUUID();
       const active: Turn = {
         cancelled: false,
@@ -222,6 +277,8 @@ export function createAdapter(config: AdapterConfig) {
           threadId: session,
           input,
           ...turnPolicy(mode),
+          ...(model !== "default" ? { model } : {}),
+          ...(effort !== "default" ? { effort } : {}),
         })
         .then(({ turn: started }) => {
           if (turn !== active) return;

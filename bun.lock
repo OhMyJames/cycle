@@ -65,6 +65,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",
+        "@cycle/protocol": "workspace:*",
         "@openai/codex": "0.171.0",
       },
     },

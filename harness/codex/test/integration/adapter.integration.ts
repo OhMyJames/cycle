@@ -141,6 +141,12 @@ supports_websockets=false
 
       await prompt();
       await waitFor(() => existsSync(join(cwd, "running")));
+      const steered = await agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "finish the current work" }],
+        _meta: { "cycle/steer": true },
+      });
+      expect(steered.messageId).toBeString();
       await agent.notify(methods.agent.session.cancel, { sessionId });
       await waitFor(() => idle().length === 3);
       expect(idle()[2]).toMatchObject({ stopReason: "cancelled" });

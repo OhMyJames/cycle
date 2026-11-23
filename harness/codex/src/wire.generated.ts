@@ -663,3 +663,79 @@ export type PermissionsRequestApprovalParams = {
   reason: string | null;
   permissions: RequestPermissionProfile;
 };
+
+export type InputModality = "text" | "image" | "audio";
+
+export type CyberAccessProgram = "standard" | "daybreakBlue" | "daybreakRed";
+
+export type ModelAccessPrograms = {
+  /**
+   * Accepted explicit selections.
+   */
+  cyber: Array<CyberAccessProgram>;
+};
+
+export type ModelAvailabilityNux = { message: string };
+
+export type ModelServiceTier = { id: string; name: string; description: string };
+
+export type ModelUpgradeInfo = {
+  model: string;
+  upgradeCopy: string | null;
+  modelLink: string | null;
+  migrationMarkdown: string | null;
+  /**
+   * Informational Unix timestamp for this upgrade's scheduled retirement, if known.
+   */
+  retirementAt: number | null;
+};
+
+export type MultiAgentVersion = "disabled" | "v1" | "v2";
+
+export type ReasoningEffortOption = { reasoningEffort: ReasoningEffort; description: string };
+
+export type Model = {
+  id: string;
+  model: string;
+  upgrade: string | null;
+  upgradeInfo: ModelUpgradeInfo | null;
+  availabilityNux: ModelAvailabilityNux | null;
+  displayName: string;
+  description: string;
+  modelSpecialty: string | null;
+  hidden: boolean;
+  supportedReasoningEfforts: Array<ReasoningEffortOption>;
+  defaultReasoningEffort: ReasoningEffort;
+  inputModalities: Array<InputModality>;
+  /**
+   * @deprecated Always false; models no longer support personality selection.
+   */
+  supportsPersonality: boolean;
+  /**
+   * Multi-agent runtime declared by this model, when available.
+   */
+  multiAgentVersion: MultiAgentVersion | null;
+  /**
+   * Deprecated: use `serviceTiers` instead.
+   */
+  additionalSpeedTiers: Array<string>;
+  serviceTiers: Array<ModelServiceTier>;
+  /**
+   * Catalog default service tier id for this model, when one is configured.
+   */
+  defaultServiceTier: string | null;
+  /**
+   * Null when the catalog does not provide access-program metadata.
+   */
+  availableAccessPrograms: ModelAccessPrograms | null;
+  isDefault: boolean;
+};
+
+export type ModelListResponse = {
+  data: Array<Model>;
+  /**
+   * Opaque cursor to pass to the next call to continue after the last item.
+   * If None, there are no more items to return.
+   */
+  nextCursor: string | null;
+};
