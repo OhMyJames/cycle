@@ -68,7 +68,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 
 右侧面板、diff 视图、交互式终端、内置浏览器及 browser use、plugins 和 settings 页如需新增 L1 方法，沿用 `_cycle/*` 命名空间，在各功能工单中定义方法、参数及对应的能力声明。纯客户端交互无需增加 L1 方法。客户端只在 daemon 声明相应能力后调用新方法，旧 daemon 缺少声明时跳过调用。
 
-此处仅预留扩展位置。终端通道由 CYCL-96 决定，browser use 的权限和回传通道由 CYCL-100 决定。上面的握手示例只列已定义的能力。
+此处仅预留扩展位置。终端走 L1 的 `_cycle/terminal/*`，能力为 `terminal`，方法由 CYCL-97 在本文定义（决定笔记 [2026-11-22-terminals-in-the-daemon-over-l1](../.agents/notes/2026-11-22-terminals-in-the-daemon-over-l1.md)）；browser use 的权限和回传通道由 CYCL-100 决定。上面的握手示例只列已定义的能力。
 
 ## 4. ACP v2 方法在 L1 的使用
 

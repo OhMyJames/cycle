@@ -23,4 +23,4 @@ CYCL-96 将比较复用 L1 与另开 SSH 通道，并评估 Bun 或 helper 提�
 
 ## Consequences
 
-CYCL-96 在本笔记中补充 PTY 所在端、环境白名单、断线后是否保留终端及资源上限。结论通过后，CYCL-97 才进入实现。
+CYCL-96 的结论（PTY 所在端、通道、环境白名单、断线后是否保留终端及资源上限）记在 [2026-11-22-terminals-in-the-daemon-over-l1](2026-11-22-terminals-in-the-daemon-over-l1.md)。CYCL-97 按它实现。
