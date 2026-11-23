@@ -30,20 +30,22 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 
 参考 Rare UI 与 Apple 硬件中性灰体系重调，在暗色下避免纯黑 OLED 晕影的同时保持深邃质感，在浅色下以纯白画布配 Apple 标志性冷浅灰 `#F5F5F7` 侧栏。`app.css` 将 ui-sdk 与 Tailwind v4 `@theme inline` 的语义令牌统一映射到它们。
 
-| 令牌                        | 用途                                                          | 浅色      | 深色      |
-| --------------------------- | ------------------------------------------------------------- | --------- | --------- |
-| `--cycle-surface-workspace` | 对话和主区底色                                                | `#ffffff` | `#0a0a0a` |
-| `--cycle-surface-sidebar`   | 侧栏和窗口底色                                                | `#f5f5f7` | `#050505` |
-| `--cycle-surface-raised`    | 浮层与卡片底色（菜单、权限卡、代码/表格卡片、输入框、对话框） | `#ffffff` | `#141414` |
-| `--cycle-surface-message`   | 用户气泡、行内代码与下沉填充块（`--ui-muted`）                | `#f2f2f4` | `#1b1b1c` |
-| `--cycle-surface-hover`     | 行和控件的悬停                                                | `#ececef` | `#222224` |
-| `--cycle-surface-selected`  | 选中和按下（选中的会话行等）                                  | `#e4e4e8` | `#2b2b2e` |
-| `--cycle-border-subtle`     | 列表、卡片内部行与行的轻分隔                                  | `#ededf0` | `#1f1f22` |
-| `--cycle-border-default`    | 卡片、浮层、分隔线（`--ui-border`）                           | `#e2e2e6` | `#2c2c30` |
-| `--cycle-ink`               | 正文、标题                                                    | `#141414` | `#f5f5f7` |
-| `--cycle-ink-secondary`     | 标签、侧栏平时行、图标                                        | `#454549` | `#c7c7cc` |
-| `--cycle-ink-muted`         | 元信息、时间、路径、占位（`--ui-muted-foreground`）           | `#636369` | `#98989f` |
-| `--cycle-ink-disabled`      | 仅用于禁用控件，不承载关键信息                                | `#8a8a92` | `#6e6e75` |
+| 令牌                        | 用途                                                     | 浅色      | 深色      |
+| --------------------------- | -------------------------------------------------------- | --------- | --------- |
+| `--cycle-surface-workspace` | 对话和主区底色                                           | `#ffffff` | `#0a0a0a` |
+| `--cycle-surface-sidebar`   | 侧栏和窗口底色                                           | `#f5f5f7` | `#050505` |
+| `--cycle-surface-raised`    | 浮层与卡片底色（菜单、权限卡、代码卡片、输入框、对话框） | `#ffffff` | `#141414` |
+| `--cycle-surface-message`   | 用户气泡、行内代码、表头色带与下沉填充块（`--ui-muted`） | `#f2f2f4` | `#1b1b1c` |
+| `--cycle-surface-hover`     | 行和控件的悬停                                           | `#ececef` | `#222224` |
+| `--cycle-surface-selected`  | 选中和按下（选中的会话行等）                             | `#e4e4e8` | `#2b2b2e` |
+| `--cycle-border-subtle`     | 列表、卡片内部行与行的轻分隔                             | `#ededf0` | `#1f1f22` |
+| `--cycle-border-default`    | 卡片、浮层、分隔线（`--ui-border`）                      | `#e2e2e6` | `#2c2c30` |
+| `--cycle-ink`               | 正文、标题                                               | `#141414` | `#f5f5f7` |
+| `--cycle-ink-secondary`     | 标签、侧栏平时行、图标                                   | `#454549` | `#c7c7cc` |
+| `--cycle-ink-muted`         | 元信息、时间、路径、占位（`--ui-muted-foreground`）      | `#636369` | `#98989f` |
+| `--cycle-ink-disabled`      | 仅用于禁用控件，不承载关键信息                           | `#8a8a92` | `#6e6e75` |
+| `--cycle-ink-code`          | 回复里的行内代码文字（链接里的代码随链接色）             | `#b4371f` | `#fb8b73` |
+| `--cycle-link`              | 回复里的链接，浅下划线，悬停加深                         | `#1d4ed8` | `#60a5fa` |
 
 对比度底线：
 
@@ -128,7 +130,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 | `Surface/Base`     | `workspace` / `sidebar`               | 无                                                                                                                                                                            | 0                                | 无                        | 主区、侧栏背景                                          |
 | `Surface/Ghost`    | 透明（悬停 `hover`，选中 `selected`） | 无                                                                                                                                                                            | 10px (`--ui-radius`) 或 `pill`   | 无                        | 侧栏行、动作行、工具单行/折叠头、设置芯片               |
 | `Surface/Sunken`   | `surface-message`                     | 用户气泡用 `border-default` + `--cycle-edge-hardware`，内嵌无边                                                                                                               | 6 / 10 / 14px                    | 无                        | 用户消息气泡、工具输入输出、行内代码、按键胶囊          |
-| `Surface/Card`     | `surface-raised`                      | `1px border-default` + `--cycle-edge-hardware`                                                                                                                                | 16px (`--cycle-radius-card`)     | 无                        | 代码块卡片、表格卡片、连接器列表                        |
+| `Surface/Card`     | `surface-raised`                      | `1px border-default` + `--cycle-edge-hardware`                                                                                                                                | 16px (`--cycle-radius-card`)     | 无                        | 代码块卡片、连接器列表                                  |
 | `Surface/Popover`  | `surface-raised`                      | `1px border-default` + `--cycle-edge-hardware`（权限卡顶边 3px `attention`）                                                                                                  | 16px (`--cycle-radius-card`)     | `--cycle-shadow-popover`  | 下拉菜单、`Select` 列表、`PickerMenu`、`PermissionCard` |
 | `Surface/Dialog`   | `surface-raised`                      | `1px border-default` + `--cycle-edge-hardware`                                                                                                                                | 16px (`--cycle-radius-card`)     | `--cycle-shadow-dialog`   | 模态对话框、确认框、`⌘K` 搜索面板                       |
 | `Surface/Composer` | `surface-raised`                      | `1px border-default` + `--cycle-edge-composer`（只有顶部微光，无内描边）；聚焦时边框加深一档（`input-border` 60%），再托起一点阴影 `--cycle-focus-composer`；始终只有一层边框 | 16px (`--cycle-radius-composer`) | `--cycle-shadow-composer` | 主输入框整块                                            |
@@ -215,7 +217,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
   - **命令（Bash / Monitor）**：行上只在没照常跑完时多写一句（`interrupted`、`exited with code 2`、`ran past 2 min, now in the background`、`in the background`）；有退出码含义（`returnCodeInterpretation`）时显示模型看到的原文。展开为三块：命令（不再是输入 JSON）、输出、错误（另一块，标题为红；来自 `_meta["cycle/stream"]: "stderr"`），各带 `Copy`（经 main 的 `copyText`，页面无剪贴板权限，失败不显示 `Copied`）。长输出只显示末 40 行，上方 `Show N earlier lines`；超过 20,000 字时保留末尾。
   - **子 agent 挂在它的 Agent 行上**：只在调用本身未结束时转圈（转到后台的之后不转，只写文字：它的结束可能永远不来），写 `in the background · using Grep`；结束写 `done · 4 steps · 1m 3s`，失败为红字。
   - **压缩上下文是一行**（同 notice）：`Compacting the context…` → `Context compacted`。
-  - **agent 的 Markdown（CYCL-53，决定笔记 [`2026-11-22-conversation-markdown-rules`](.agents/notes/2026-11-22-conversation-markdown-rules.md)）**：标题落在四档字阶（h1/h2 为 `title`，其余为 `body`，均 600）；有序、无序列表的标记都悬在文字外侧，任务列表以勾选框代替圆点；引用不用斜体，左侧 2px 线；表格单元格按词换行、最小 6rem，表头不换行；无语言的代码块不画标题栏，Copy 浮在右上角。代码块不设高度上限：超过 30 行且第一次画出来就完整的块只显示前 12 行，末尾淡出，下方是 `Show all N lines`；在屏幕上流着写出来的块保持完整。流式时一条回复不换树（始终 streaming 模式），半截表格和末尾孤立的标记先不显示；跟随底部时，内容晚到的长高也跟着。外部链接点击后先确认，确认框显示完整地址；相对链接只显示文字。
+  - **agent 的 Markdown（CYCL-53，决定笔记 [`2026-11-22-conversation-markdown-rules`](.agents/notes/2026-11-22-conversation-markdown-rules.md)）**：回复的块之间统一 12px（CYCL-125，对齐 old-cycle），块自身不再带外边距；标题落在四档字阶（h1/h2 为 `title`，其余为 `body`，均 600）；行内代码为 `ui` 字号、`--cycle-ink-code` 色、浅底；链接 `--cycle-link` 加浅下划线；代码块正文为 `ui` 字号，有语言时标题栏下一条轻分隔线；表格不画卡片，表头一条圆角色带（`surface-message`），行间 `border-subtle` 细线，过宽时在自身内横向滚动；分隔线为 `border-subtle`；有序、无序列表的标记都悬在文字外侧，任务列表以勾选框代替圆点；引用不用斜体，左侧 2px 线；表格单元格按词换行、最小 6rem，表头不换行；无语言的代码块不画标题栏，Copy 浮在右上角。代码块不设高度上限：超过 30 行且第一次画出来就完整的块只显示前 12 行，末尾淡出，下方是 `Show all N lines`；在屏幕上流着写出来的块保持完整。流式时一条回复不换树（始终 streaming 模式），半截表格和末尾孤立的标记先不显示；跟随底部时，内容晚到的长高也跟着。外部链接点击后先确认，确认框显示完整地址；相对链接只显示文字。
   - **计划**：见第 3 层 `Plan & PlanStrip`；agent 自己的事务（ACP `kind` 为 `think`：改计划的 TodoWrite、TaskCreate、TaskUpdate，SDK 查可用工具的 ToolSearch）不成行，进行中也不，失败的照常；只读计划的（TaskGet、TaskList）照常成行。提出的计划（输入有 `plan`，如 ExitPlanMode）动词为 `Proposed a plan`，展开为 Markdown 正文；提问（输入有 `questions`）动词为 `Asked`，摘要为问题。均按输入的形状判断，不看工具名。
   - **Web、MCP 与其余工具**：WebFetch 写状态码与大小（`404 · 1.5 kB`，4xx/5xx 为红字）；WebSearch 展开为模型的话加结果列表（标题是强调色链接，只放行 http/https/mailto，由主进程交给系统浏览器打开；后跟淡色站点名；长标题换行）。MCP 工具用 agent 给的 `title`（`server · tool`），页面不解析工具名；页面不认识的工具，摘要取输入里第一行短文字（≤ 120 字、单行）。
   - **工具折叠状态保持**：连续工具调用从 1 个变为 2 个以上时保留用户已手动展开的状态；展开态下的长输入/输出与代理消息支持快捷复制。
