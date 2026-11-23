@@ -16,6 +16,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   "session.away": "{environment} · {state}",
   "notice.connecting": "正在连接 {environment}…",
+  "notice.draftKept": "草稿会保留。",
   "session.awayIncompatible":
     "{environment} 未连接：那里的 Cycle 与本应用的协议不同。它的提示里写了要更新哪一边。",
   "session.awayBecause": "{environment} 未连接：{reason}",
@@ -189,6 +190,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "blank.untrusted": "尚未信任",
   "blank.untrusted.hint": "发出第一条消息时会问你是否信任它。",
   "blank.notConnected": "未连接到 {environment}。",
+  "blank.draftKept": "你可以继续编辑草稿。",
   "blank.connecting": "正在连接 {environment}…",
   "blank.chooseFolder": "选择 agent 工作的文件夹。",
   "blank.noAgent": "{environment} 上没有可用的 agent。",
@@ -225,7 +227,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   // 输入框
   "composer.message": "消息",
-  "composer.offline": "连接已断开。你可以继续编辑草稿。",
   "composer.placeholder.idle": "给 agent 发消息",
   "composer.placeholder.working": "排队一条消息，agent 做完后发出",
   "composer.placeholder.busy": "agent 正在工作。停止它才能现在发消息。",

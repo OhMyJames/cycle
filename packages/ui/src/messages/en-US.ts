@@ -17,6 +17,8 @@ export const enUS = {
   // Environments that are away, and starting a session on one of several
   "session.away": "{environment} · {state}",
   "notice.connecting": "Connecting to {environment}…",
+  // Ends every line about an environment that is not connected, on a page with a box: the box does not say it
+  "notice.draftKept": "Your draft is kept.",
   "session.awayIncompatible":
     "{environment} is not connected: Cycle there and this app speak different protocols. Its notice says what to update.",
   "session.awayBecause": "{environment} is not connected: {reason}",
@@ -209,6 +211,7 @@ export const enUS = {
   "blank.agent": "Agent",
   "blank.chooseFolder": "Choose a folder for the agent to work in.",
   "blank.notConnected": "Not connected to {environment}.",
+  "blank.draftKept": "You can keep editing your draft.",
   "blank.connecting": "Connecting to {environment}…",
   "blank.noAgent": "No agent is available on {environment}.",
   "blank.noAgentHint": "Check that an agent is installed on {environment} and signed in.",
@@ -253,7 +256,6 @@ export const enUS = {
 
   // The box a message is written in
   "composer.message": "Message",
-  "composer.offline": "Connection lost. You can keep editing your draft.",
   "composer.placeholder.idle": "Message the agent",
   "composer.placeholder.working": "Queue a message for when the agent is done",
   "composer.placeholder.busy": "The agent is working. Stop it to send a message now.",

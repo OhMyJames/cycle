@@ -611,15 +611,9 @@ export function Composer({
     };
   }, [attachable]);
 
-  const showOffline = !connected && enabled;
   const showBlocked = blocked !== undefined && blocked !== "" && connected;
   const hasExtensions =
-    plan !== undefined ||
-    queue.length > 0 ||
-    showOffline ||
-    showBlocked ||
-    dropping ||
-    problem !== undefined;
+    plan !== undefined || queue.length > 0 || showBlocked || dropping || problem !== undefined;
 
   const hasChoiceSettings =
     settings !== undefined &&
@@ -677,11 +671,6 @@ export function Composer({
                 );
               })}
             </ul>
-          ) : null}
-          {showOffline ? (
-            <div data-slot="extension-row" data-kind="hint" role="status">
-              {t("composer.offline")}
-            </div>
           ) : null}
           {showBlocked ? (
             <div data-slot="extension-row" data-kind="hint" role="status">
