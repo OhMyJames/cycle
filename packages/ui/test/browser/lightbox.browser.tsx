@@ -114,6 +114,13 @@ test("a press on the scrim closes it; a press on the picture does not", async ()
   await settled(dialog);
   await user.click(image(dialog));
   expect(screen.getByRole("dialog")).toBeTruthy();
+  // Nor one on the zoom pill between its buttons, or on the percentage.
+  const pill = within(dialog).getByRole("group", { name: "Zoom" });
+  pill.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  dialog
+    .querySelector('[data-slot="lightbox-percent"]')
+    ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
   // Well away from the picture and the controls.
   const frame = dialog.querySelector<HTMLElement>('[data-slot="lightbox-frame"]');
   if (frame === null) throw new Error("no frame");

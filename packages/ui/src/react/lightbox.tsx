@@ -137,26 +137,36 @@ export function Lightbox({
 
   const fit = natural === undefined ? 1 : fitScale(natural, room);
   const scale = zoom ?? fit;
+  // Kept in the room as it is now, so that a window made larger leaves no gap at an edge of a zoomed picture.
+  const shift = natural === undefined ? pan : clampPan(pan, natural, scale, room);
+  /**
+   * The scale and shift as they are this moment, ahead of the render: a pinch sends several wheel events a frame, and each
+   * zooms from where the one before left it.
+   */
+  const live = useRef({ scale, pan: shift });
+  live.current = { scale, pan: shift };
 
-  /** Zooms to `next`, keeping the point `at` (from the room's middle) where it is on the screen. */
+  /** Zooms to what `next` makes of the scale now, keeping the point `at` (from the room's middle) where it is on the screen. */
   const zoomTo = useCallback(
-    (next: number, at: Point = { x: 0, y: 0 }) => {
+    (next: (scale: number) => number, at: Point = { x: 0, y: 0 }) => {
       if (natural === undefined) return;
-      const to = clampZoom(next);
-      const ratio = to / scale;
-      setZoom(to);
-      setPan((was) =>
-        clampPan(
-          { x: at.x - (at.x - was.x) * ratio, y: at.y - (at.y - was.y) * ratio },
-          natural,
-          to,
-          room,
-        ),
+      const was = live.current;
+      const to = clampZoom(next(was.scale));
+      const ratio = to / was.scale;
+      const moved = clampPan(
+        { x: at.x - (at.x - was.pan.x) * ratio, y: at.y - (at.y - was.pan.y) * ratio },
+        natural,
+        to,
+        room,
       );
+      live.current = { scale: to, pan: moved };
+      setZoom(to);
+      setPan(moved);
     },
-    [natural, room, scale],
+    [natural, room],
   );
   const reset = () => {
+    live.current = { scale: fit, pan: { x: 0, y: 0 } };
     setZoom(undefined);
     setPan({ x: 0, y: 0 });
   };
@@ -165,8 +175,8 @@ export function Lightbox({
 
   // The wheel: with ctrl or cmd, or a pinch (which comes as a wheel with ctrl), it zooms at the pointer; without, it moves a
   // zoomed picture. Not React's listener: that one is passive, and the page behind must not scroll or zoom.
-  const now = useRef({ natural, scale, room, pannable, zoomTo });
-  now.current = { natural, scale, room, pannable, zoomTo };
+  const now = useRef({ natural, room, pannable, zoomTo });
+  now.current = { natural, room, pannable, zoomTo };
   const unwheel = useRef<(() => void) | undefined>(undefined);
   const content = useCallback((element: HTMLDivElement | null) => {
     unwheel.current?.();
@@ -174,19 +184,25 @@ export function Lightbox({
     if (element === null) return;
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
-      const { natural, scale, room, pannable, zoomTo } = now.current;
+      const { natural, room, pannable, zoomTo } = now.current;
       const box = frame.current?.getBoundingClientRect();
       if (box === undefined || natural === undefined) return;
       if (event.ctrlKey || event.metaKey) {
         const delta = Math.max(-50, Math.min(50, event.deltaY));
-        zoomTo(scale * 2 ** (-delta / 100), {
+        zoomTo((scale) => scale * 2 ** (-delta / 100), {
           x: event.clientX - (box.left + box.width / 2),
           y: event.clientY - (box.top + box.height / 2),
         });
       } else if (pannable) {
-        setPan((was) =>
-          clampPan({ x: was.x - event.deltaX, y: was.y - event.deltaY }, natural, scale, room),
+        const { scale, pan } = live.current;
+        const moved = clampPan(
+          { x: pan.x - event.deltaX, y: pan.y - event.deltaY },
+          natural,
+          scale,
+          room,
         );
+        live.current = { scale, pan: moved };
+        setPan(moved);
       }
     };
     element.addEventListener("wheel", wheel, { passive: false });
@@ -199,10 +215,11 @@ export function Lightbox({
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (isComposing(event.nativeEvent) || event.altKey) return;
+    // With cmd or ctrl the keys are the window's zoom (Electron's menu), not the picture's.
+    if (isComposing(event.nativeEvent) || event.altKey || event.ctrlKey || event.metaKey) return;
     const key = event.key;
-    if (key === "+" || key === "=") zoomTo(scale * ZOOM_STEP);
-    else if (key === "-" || key === "_") zoomTo(scale / ZOOM_STEP);
+    if (key === "+" || key === "=") zoomTo((s) => s * ZOOM_STEP);
+    else if (key === "-" || key === "_") zoomTo((s) => s / ZOOM_STEP);
     else if (key === "0") reset();
     else if (key === "ArrowLeft" && many) step(-1);
     else if (key === "ArrowRight" && many) step(1);
@@ -220,7 +237,7 @@ export function Lightbox({
     drag.current = {
       id: event.pointerId,
       start: { x: event.clientX, y: event.clientY },
-      pan,
+      pan: shift,
       moved: false,
     };
   };
@@ -230,35 +247,49 @@ export function Lightbox({
     const dx = event.clientX - held.start.x;
     const dy = event.clientY - held.start.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) held.moved = true;
-    setPan(clampPan({ x: held.pan.x + dx, y: held.pan.y + dy }, natural, scale, room));
+    const moved = clampPan({ x: held.pan.x + dx, y: held.pan.y + dy }, natural, scale, room);
+    live.current = { scale, pan: moved };
+    setPan(moved);
   };
   const onPointerUp = (event: PointerEvent<HTMLImageElement>) => {
     const held = drag.current;
     if (held === undefined || held.id !== event.pointerId) return;
     drag.current = undefined;
+    // Only for the click that comes right after: a drag that ends with no click (cancelled) leaves nothing behind.
     dragged.current = held.moved;
+    setTimeout(() => {
+      dragged.current = false;
+    }, 0);
   };
 
-  const tell = (what: "copy" | "download", ok: boolean) => {
+  // What Copy and Download came to is told on the picture they were pressed for, not on one stepped to meanwhile.
+  const current = useRef(showing);
+  current.current = showing;
+  const tell = (what: "copy" | "download", ok: boolean, on: number) => {
+    if (current.current !== on) return;
     setSaid({ what, ok });
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setSaid(undefined), SAID_MS);
   };
   const copy = async () => {
     if (store === undefined || image === undefined) return;
-    const png = image.type === "image/png" || image.type === "image/jpeg";
-    const data = png ? image.data : pngOf(picture.current);
-    const done =
-      data !== undefined &&
-      (await store.copyImage(png ? image.type : "image/png", data).catch(() => false));
-    tell("copy", done);
+    const on = showing;
+    // A PNG or a JPEG goes as it is; anything else, or one main would not take as it is (its bytes are not what its type
+    // says), is drawn again as a PNG.
+    const asIs =
+      (image.type === "image/png" || image.type === "image/jpeg") &&
+      (await store.copyImage(image.type, image.data));
+    const redrawn = asIs ? undefined : pngOf(picture.current);
+    const done = asIs || (redrawn !== undefined && (await store.copyImage("image/png", redrawn)));
+    tell("copy", done, on);
     if (done) store.track("image_copied", { from });
   };
   const download = async () => {
     if (store === undefined || image === undefined) return;
+    const on = showing;
     const saved = await store.saveImage(image.name, image.type, image.data);
     if (saved === "cancelled") return;
-    tell("download", saved === "saved");
+    tell("download", saved === "saved", on);
     if (saved === "saved") store.track("image_downloaded", { from });
   };
 
@@ -281,11 +312,12 @@ export function Lightbox({
         initialFocus="content"
         onKeyDown={onKeyDown}
         onClick={(event) => {
-          // A press on the scrim (anything but the picture and the controls) closes, unless it ended a drag.
-          const target = event.target as HTMLElement;
+          // A press on the scrim itself closes, unless it ended a drag; one on the picture or the controls (their gaps and
+          // padding too) does not.
           const was = dragged.current;
           dragged.current = false;
-          if (was || target.closest("img, button") !== null) return;
+          if (was || (event.target !== event.currentTarget && event.target !== frame.current))
+            return;
           onOpenChange(false);
         }}
       >
@@ -324,7 +356,7 @@ export function Lightbox({
                 ? {
                     width: natural.w * scale,
                     height: natural.h * scale,
-                    transform: `translate(${pan.x}px, ${pan.y}px)`,
+                    transform: `translate(${shift.x}px, ${shift.y}px)`,
                   }
                 : undefined
             }
@@ -392,7 +424,7 @@ export function Lightbox({
               type="button"
               data-slot="lightbox-zoom-button"
               aria-disabled={scale <= ZOOM_MIN + 1e-6}
-              onClick={() => zoomTo(scale / ZOOM_STEP)}
+              onClick={() => zoomTo((s) => s / ZOOM_STEP)}
             >
               <MinusIcon />
             </button>
@@ -405,7 +437,7 @@ export function Lightbox({
               type="button"
               data-slot="lightbox-zoom-button"
               aria-disabled={scale >= ZOOM_MAX - 1e-6}
-              onClick={() => zoomTo(scale * ZOOM_STEP)}
+              onClick={() => zoomTo((s) => s * ZOOM_STEP)}
             >
               <PlusIcon />
             </button>

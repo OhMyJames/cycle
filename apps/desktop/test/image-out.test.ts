@@ -15,7 +15,8 @@ test("a picture the page sends is taken only when it is what it says it is", () 
   // Another type, a lie about the type, not base64, empty, or not a string at all.
   expect(imageBytes("image/svg+xml", b64([0x3c, 0x73, 0x76, 0x67]))).toBeUndefined();
   expect(imageBytes("text/html", PNG)).toBeUndefined();
-  expect(imageBytes("image/png", JPEG)).toBeUndefined();
+  // What it is is read from its bytes: a JPEG sent as a PNG is a JPEG.
+  expect(imageBytes("image/png", JPEG)?.type).toBe("image/jpeg");
   expect(imageBytes("image/png", b64([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e]))).toBeUndefined();
   expect(imageBytes("image/png", "not base64!")).toBeUndefined();
   expect(imageBytes("image/png", "")).toBeUndefined();
@@ -44,6 +45,9 @@ test("the save dialog offers the picture's own name, made safe, with its type's 
   // What a name cannot hold, a hidden file's dot, nothing at all.
   expect(imageFileName('a<b>:"c|?*\u0000.png', "image/png")).toBe("abc.png");
   expect(imageFileName(".hidden", "image/png")).toBe("hidden.png");
+  expect(imageFileName(" .env", "image/png")).toBe("env.png");
+  // Only an image extension is replaced: other dots are part of the name.
+  expect(imageFileName("Screenshot at 10.30", "image/png")).toBe("Screenshot at 10.30.png");
   expect(imageFileName("", "image/png")).toBe("image.png");
   expect(imageFileName("   ", "image/jpeg")).toBe("image.jpg");
   expect(imageFileName(undefined, "image/png")).toBe("image.png");
