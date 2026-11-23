@@ -1,5 +1,6 @@
 import {
   type AgentContext,
+  type AvailableCommand,
   agent,
   methods,
   type NewSessionRequest,
@@ -186,6 +187,13 @@ export function createAdapter(config: AdapterConfig) {
           used: usage.tokenUsage.last.totalTokens,
           size: usage.tokenUsage.modelContextWindow,
         } as SessionUpdate);
+    } else if (method === "contextCompacted" || method === "thread/compacted") {
+      const compact = raw as { threadId: string; turnId?: string };
+      send({
+        sessionUpdate: "compaction_update",
+        compactionId: `${compact.threadId}-${compact.turnId ?? "compaction"}`,
+        status: "completed",
+      } as SessionUpdate);
     }
   }
   function interrupt(active: Turn) {
@@ -350,7 +358,7 @@ export function createAdapter(config: AdapterConfig) {
             name: "compact",
             description: "Compact the Codex conversation context.",
           },
-        ] as never,
+        ] satisfies AvailableCommand[],
         ...(resume && session !== resume.sessionId
           ? { _meta: { "cycle/agentSessionId": session } }
           : {}),

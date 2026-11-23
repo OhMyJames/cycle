@@ -91,7 +91,10 @@ export class AppServer {
     if (this.#closed) return Promise.reject(new Error("Codex app-server is closed"));
     const id = ++this.#next;
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => this.close(new Error(`Codex timed out: ${method}`)), 20_000);
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`Codex timed out: ${method}`));
+      }, 20_000);
       this.#pending.set(id, {
         resolve: (value) => {
           clearTimeout(timer);

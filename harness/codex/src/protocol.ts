@@ -14,6 +14,7 @@ export const CODEX_NOTIFICATION_METHODS = [
   "turn/plan/updated",
   "thread/status/changed",
   "contextCompacted",
+  "thread/compacted",
   "skills/changed",
   "thread/name/updated",
   "thread/tokenUsage/updated",
