@@ -181,6 +181,7 @@ cycle claude auth status   # 用同样的环境跑 claude 的其他命令
 - **Claude 进程看到的环境只有三样**:`allowEnv` 里点名的、daemon 自己环境中存在的变量;`CLAUDE_CONFIG_DIR`;`env` 里写明的值。daemon 自己的环境变量不会传下去。端到端测试里给 daemon 设了 `ANTHROPIC_API_KEY`,检查 Claude 一侧的请求里没有它。
 - `configDir` 默认是 `<数据目录>/claude`,一个独立目录,里面没有登录。要用已有登录,把它**有意地**指向那个目录(比如 `~/.claude`);要新登录,用 `CLAUDE_CONFIG_DIR=<目录> claude auth login`。
 - `HOME` 默认不传(回落到 `configDir`),免得 Claude 找到没人打算共享的登录或设置。
+- `progressSummaries`(默认 `true`):让 Claude 给每个在跑的子 agent 生成一行进度摘要(`subagent_update` 的 `summary`)。子 agent 的对话有变化时约每 30 秒一次，每次是一次沿用子 agent 模型和 prompt cache 的模型调用，计入账号用量。设成 `false` 就不生成，工具行上仍有工具数、用量和最后一个工具。理由见决定笔记 [2026-11-23-subagent-progress-summaries-on-by-default](../.agents/notes/2026-11-23-subagent-progress-summaries-on-by-default.md)。
 - `terminal`(可省):`{ "allowEnv": ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"], "maxPerSession": 8, "max": 32, "scrollback": 5000 }`。终端的 shell 看到的环境只有 `allowEnv` 点名的(以 `*` 结尾的按前缀),加上 `TERM=xterm-256color`、`COLORTERM=truecolor`;没有 `HOME` 时用当前用户的家目录。和 Claude 的 `allowEnv` 分开：给终端加变量不会让 agent 看到它。
 - `log`(可省):`{ "level": "info", "maxBytes": 1000000, "files": 3 }`,见下面"日志"。
 - `idle`(可省):`{ "agentMinutes": 10, "exitMinutes": 30 }`,空闲多久结束一个 session 的 agent、空闲多久 daemon 自己退出;`0` 关掉。见上面"空闲回收和空闲退出"。
