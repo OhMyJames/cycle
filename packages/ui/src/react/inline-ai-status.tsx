@@ -67,18 +67,18 @@ export function InlineAiStatus({ kind, label, since, quiet = false }: InlineAiSt
     <div data-slot="step" data-step={kind} data-quiet={quiet || undefined}>
       {/* The time sits outside the live region so 1s ticks never spam screen readers. */}
       <div role="status" aria-live="polite" data-slot="step-live">
+        {/* Kept while quiet, out of the layout (app.css): it asks for no frames then, and morphs on from where it was
+            when the line speaks again, rather than starting afresh. */}
+        <span data-slot="step-icon">
+          <MorphLoader state={LOOK[kind]} />
+        </span>
         {quiet ? (
           <span data-slot="visually-hidden">{label}</span>
         ) : (
-          <>
-            <span data-slot="step-icon">
-              <MorphLoader state={LOOK[kind]} />
-            </span>
-            {/* Drawn anew with each new label, so it comes in on the same beat as the mark did. */}
-            <span key={label} data-slot="step-label">
-              {label}
-            </span>
-          </>
+          // Drawn anew with each new label, so it comes in on the same beat as the mark does.
+          <span key={label} data-slot="step-label">
+            {label}
+          </span>
         )}
       </div>
       {!quiet && kind !== "approval" ? <Elapsed since={since} /> : null}

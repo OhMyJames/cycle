@@ -241,11 +241,25 @@ function TurnAgain({ resend }: { resend: Resend }) {
 }
 
 /**
- * What the line is held steady by: the kind of step, so one call after another is one quiet stretch, not a change each
- * time; a retry by its attempt, since its words count it.
+ * A call whose row says it is at work, with its time (tool.tsx: in progress). One still waiting to start (its input
+ * still streaming, say) has no time on its row yet, so the line speaks for it.
+ */
+const rowAtWork = (step: LineStep): boolean =>
+  step.kind === "tool" && step.tool.status === "in_progress";
+
+/**
+ * What the line is held steady by: a call at work by no more than that, so one call after another is one quiet stretch,
+ * not a change each time (and a screen reader is not told each one); a call waiting by its id; a retry by its attempt,
+ * since its words count it; else the kind of step.
  */
 const stepKeyOf = (step: LineStep): string =>
-  step.kind === "retrying" ? `retrying:${step.attempt ?? ""}` : step.kind;
+  rowAtWork(step)
+    ? "tool"
+    : step.kind === "tool"
+      ? `tool:${step.tool.id}`
+      : step.kind === "retrying"
+        ? `retrying:${step.attempt ?? ""}`
+        : step.kind;
 
 /** A question for the person is said at once, and so is the end of the turn: nothing is held over either. */
 const urgent = (key: string): boolean => key === "" || key === "approval";
@@ -278,8 +292,10 @@ export function StepLine({
   // Held steady, so a run of quick calls does not flicker between the quiet line and words.
   const [step] = useSteady(wanted, wanted === undefined ? "" : stepKeyOf(wanted), urgent);
   if (step === undefined) return null;
-  const label =
-    step.kind === "approval"
+  const quiet = rowAtWork(step);
+  const label = quiet
+    ? t("step.working")
+    : step.kind === "approval"
       ? t("step.approval")
       : step.kind === "thinking"
         ? t("step.thinking")
@@ -302,12 +318,12 @@ export function StepLine({
       }
       label={label}
       since={since}
-      quiet={step.kind === "tool"}
+      quiet={quiet}
     />
   );
 }
 
-/** What a screen reader is told while a call is at work (the eye reads its row). */
+/** What the line says of a call that has not started its work yet. */
 function toolStep(t: Translator["t"], tool: ToolItem): string {
   if (isSubagentCall(tool)) return t("step.subagent");
   const activity = activityOf(tool);

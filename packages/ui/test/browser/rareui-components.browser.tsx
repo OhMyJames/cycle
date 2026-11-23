@@ -57,7 +57,7 @@ describe("InlineAiStatus", () => {
     );
     const step = container.querySelector('[data-slot="step"]') as HTMLElement;
     expect(step.getBoundingClientRect().height).toBe(28);
-    expect(step.querySelector('[data-slot="morph-loader"]')).toBeNull();
+    expect(step.querySelector('[data-slot="morph-loader"]')?.checkVisibility()).toBe(false);
     expect(step.querySelector('[data-slot="step-elapsed"]')).toBeNull();
     expect(within(container).getByRole("status").textContent).toBe("Running a command");
   });

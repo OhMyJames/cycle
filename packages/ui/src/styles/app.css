@@ -3921,6 +3921,11 @@ button[data-slot="review-file"]:focus-visible {
   color: var(--cycle-accent);
 }
 
+/* Out of the layout, so the observer tells the loader it is not seen and it asks for no frames. */
+[data-slot="step"][data-quiet] [data-slot="step-icon"] {
+  display: none;
+}
+
 [data-slot="step"][data-step="approval"] {
   color: var(--cycle-attention);
 }
@@ -3929,15 +3934,32 @@ button[data-slot="review-file"]:focus-visible {
   color: inherit;
 }
 
-:is([data-slot="step-icon"], [data-slot="step-label"]) {
+[data-slot="step-icon"] {
   animation: cycle-step-in var(--cycle-motion-enter) var(--cycle-ease);
 }
 
+/* One line, whatever its length (a retry's count, a long translation): it gives way to the time, and its end fades. */
 [data-slot="step-label"] {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   font-family: var(--cycle-font-display);
   font-weight: 500;
   color: var(--cycle-ink);
+  /* The same beat as the mark, and the end fade every long line has (cycle-fade, above). */
+  animation:
+    cycle-step-in var(--cycle-motion-enter) var(--cycle-ease),
+    cycle-fade linear both;
+  animation-timeline: auto, scroll(self inline);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No fade in; the end fade is not motion, and stays. */
+  [data-slot="step-label"] {
+    animation: cycle-fade linear both !important;
+    animation-timeline: scroll(self inline) !important;
+  }
 }
 
 [data-slot="step"][data-step="approval"] [data-slot="step-label"] {

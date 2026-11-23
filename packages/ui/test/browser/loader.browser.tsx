@@ -85,7 +85,10 @@ test("with reduced motion the step line's words do not fade in either", async ()
     </I18nProvider>,
   );
   const label = container.querySelector('[data-slot="step-label"]') as Element;
-  expect(getComputedStyle(label).animationName).toBe("none");
+  // Only the end fade, which is not motion.
+  expect(getComputedStyle(label).animationName).toBe("cycle-fade");
   await reduceMotion(false);
-  await waitFor(() => expect(getComputedStyle(label).animationName).toBe("cycle-step-in"));
+  await waitFor(() =>
+    expect(getComputedStyle(label).animationName).toBe("cycle-step-in, cycle-fade"),
+  );
 });

@@ -766,6 +766,12 @@ test("a call at work shows on its row how long it has been going, from when the 
   );
 });
 
+/** The loaders that can be seen in `root`: one kept out of the layout while the line is quiet is not. */
+const shownLoaders = (root: Element): number =>
+  [...root.querySelectorAll('[data-slot="morph-loader"]')].filter((loader) =>
+    loader.checkVisibility(),
+  ).length;
+
 /** Seconds, from what a count says ("7s", "1m 5s"). */
 const seconds = (text: string | null | undefined): number => {
   const match = /^(?:(\d+)m)?\s*(?:(\d+)s)?$/.exec(text ?? "");
@@ -781,14 +787,20 @@ test("the line at the end counts the whole turn: a call and an approval do not s
   await waitFor(() => expect(elapsed()).toBeGreaterThanOrEqual(5));
   const before = elapsed();
   expect(step()?.getBoundingClientRect().height).toBe(28);
-  expect(log.querySelectorAll('[data-slot="morph-loader"]')).toHaveLength(1);
+  expect(shownLoaders(log)).toBe(1);
 
   // A call at work: its row says so; the line keeps its height and shows neither a loader nor a time.
   for (const update of tool("a", "Bash", "in_progress", { command: "make" })) await emit(update);
   await waitFor(() => expect(step()?.hasAttribute("data-quiet")).toBe(true));
   expect(step()?.getBoundingClientRect().height).toBe(28);
-  expect(log.querySelector('[data-slot="morph-loader"]')).toBeNull();
+  expect(shownLoaders(log)).toBe(0);
   expect(log.querySelector('[data-slot="step-elapsed"]')).toBeNull();
+  // Out of sight, it asks for no frames.
+  await waitFor(() =>
+    expect(log.querySelector<SVGElement>('[data-slot="morph-loader"] svg')?.dataset.animating).toBe(
+      "false",
+    ),
+  );
 
   // The agent asks: the line waits, without a time.
   await emit(state({ state: "requires_action" }));
@@ -803,6 +815,39 @@ test("the line at the end counts the whole turn: a call and an approval do not s
   await waitFor(() => expect(elapsed()).toBeGreaterThanOrEqual(before));
 });
 
+test("a call that has not started its work (its input still coming) is spoken for by the line", async () => {
+  const { log } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    u({ sessionUpdate: "tool_call_update", toolCallId: "w", name: "Write", status: "pending" }),
+  );
+  const step = log.querySelector<HTMLElement>('[data-slot="step"]');
+  // Its row has no time yet: the line keeps the loader and the turn's time.
+  expect(step?.hasAttribute("data-quiet")).toBe(false);
+  expect(shownLoaders(log)).toBe(1);
+});
+
+test("a long label stays on its one line, inside the column", async () => {
+  const { log } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    u({
+      sessionUpdate: "notice",
+      severity: "info",
+      title: "Retrying",
+      _meta: { "cycle/retry": { attempt: 2, maxRetries: 10, delayMs: 500 } },
+    }),
+  );
+  const step = await waitFor(() => {
+    const found = log.querySelector<HTMLElement>('[data-slot="step"]');
+    expect(found?.textContent).toContain("trying again");
+    return found as HTMLElement;
+  });
+  step.style.width = "120px";
+  expect(step.getBoundingClientRect().height).toBe(28);
+  expect(step.scrollWidth).toBeLessThanOrEqual(step.clientWidth);
+});
+
 test("a run of quick calls keeps the line quiet: no loader flickers in between", async () => {
   const { log, emit } = await open(
     you("u1"),
@@ -814,7 +859,7 @@ test("a run of quick calls keeps the line quiet: no loader flickers in between",
   const height = step?.getBoundingClientRect().height;
   let spoke = false;
   const watch = new MutationObserver(() => {
-    if (log.querySelector('[data-slot="morph-loader"]') !== null) spoke = true;
+    if (shownLoaders(log) > 0) spoke = true;
   });
   watch.observe(log, { subtree: true, childList: true, attributes: true });
   let last = "a";
