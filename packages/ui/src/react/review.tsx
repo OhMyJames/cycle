@@ -81,8 +81,13 @@ function FindingRow({ finding }: { finding: Finding }) {
               aria-label={t("review.open", { file: place })}
               title={place}
               onClick={() => {
-                store.showInFiles(inFiles);
-                store.track("file_shown_from_conversation", { target: "file", from: "review" });
+                // At the finding's line, when it names one (CYCL-136).
+                store.showInFiles(inFiles, { line: finding.line });
+                store.track("file_shown_from_conversation", {
+                  target: "file",
+                  from: "review",
+                  line: finding.line !== undefined,
+                });
               }}
             >
               {place}

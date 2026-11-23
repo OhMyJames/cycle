@@ -3,9 +3,18 @@
 // it is the same for a remote environment. What the agent wrote is shown through the conversation's Markdown, which is
 // already made safe: no HTML, no image or link loaded from elsewhere (.agents/notes/2026-11-22-files-and-diff-sources.md).
 import { Button } from "@ui-sdk/react/button";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  memo,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { FileContent, FileEntry, FileListing } from "../api.ts";
-import type { FilesState } from "../files-view.ts";
+import type { FilesState, LineTarget } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import { viewKey } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
@@ -170,7 +179,13 @@ function SessionFiles({
       {/* The tree stays while a file is shown, only hidden: going back finds it as it was, scrolled where it was. */}
       <Tree where={where} view={view} turnsEnded={turnsEnded} hidden={view.file !== undefined} />
       {view.file !== undefined ? (
-        <Preview key={view.file} where={where} path={view.file} turnsEnded={turnsEnded} />
+        <Preview
+          key={view.file}
+          where={where}
+          path={view.file}
+          lines={view.lines}
+          turnsEnded={turnsEnded}
+        />
       ) : null}
     </div>
   );
@@ -359,10 +374,114 @@ function Row({ entry, open, onOpen }: { entry: FileEntry; open: boolean; onOpen:
   );
 }
 
-function Preview({ where, path, turnsEnded }: { where: Where; path: string; turnsEnded: number }) {
+/** How long lines gone to stay marked, the fade at the end included (the stylesheet's `files-line-mark`). */
+const MARK_MS = 1600;
+
+/** How long to wait for a file's text to be drawn before the lines asked for in it are given up on. */
+const DRAW_MS = 1000;
+
+/** Where lines of a file are drawn, in its shown text's box. */
+type Box = { top: number; left: number; width: number; height: number };
+
+/** The lines of a file shown marked: where, and which request for them (a new one marks them again). */
+type Mark = Box & { serial: number };
+
+const lineCountOf = (text: string): number => text.replace(/\n$/, "").split("\n").length;
+
+/**
+ * Where lines `start` to `end` of a file are drawn in `box`, its shown text: Shiki's lines are an element each; plain
+ * text is one line box a line, since it never wraps. Undefined while they are not drawn yet.
+ */
+const measure = (box: HTMLElement, start: number, end: number): Box | undefined => {
+  const outer = box.getBoundingClientRect();
+  const body = box.querySelector('[data-streamdown="code-block-body"]');
+  if (body !== null) {
+    const code = body.querySelector("pre > code");
+    // What is drawn, not what the text counts: trailing blank lines are not drawn.
+    const drawn = code?.children.length ?? 0;
+    if (start > drawn) return undefined;
+    const first = code?.children[start - 1];
+    const last = code?.children[Math.min(end, drawn) - 1];
+    if (first === undefined || last === undefined) return undefined;
+    const from = first.getBoundingClientRect();
+    const across = body.getBoundingClientRect();
+    return {
+      top: from.top - outer.top,
+      height: last.getBoundingClientRect().bottom - from.top,
+      left: across.left - outer.left,
+      width: across.width,
+    };
+  }
+  const plain = box.querySelector<HTMLElement>('[data-slot="files-plain"]');
+  if (plain === null) return undefined;
+  const style = getComputedStyle(plain);
+  const line = Number.parseFloat(style.lineHeight);
+  if (!(line > 0)) return undefined;
+  const across = plain.getBoundingClientRect();
+  return {
+    top:
+      across.top -
+      outer.top +
+      plain.clientTop +
+      Number.parseFloat(style.paddingTop) +
+      (start - 1) * line,
+    height: (end - start + 1) * line,
+    left: across.left - outer.left,
+    width: across.width,
+  };
+};
+
+/**
+ * What scrolls the file: the panel's body, the first box around it made to scroll. Whether it has anything to scroll
+ * now does not matter: a box further out is never scrolled for the file.
+ */
+const scrollerOf = (from: HTMLElement): HTMLElement | undefined => {
+  for (let at = from.parentElement; at !== null; at = at.parentElement) {
+    const { overflowY } = getComputedStyle(at);
+    if (overflowY === "auto" || overflowY === "scroll") return at;
+  }
+  return undefined;
+};
+
+/**
+ * Scrolls the lines into the middle of what is seen under the file's head, or their first line to just under it when they
+ * are taller than that. At once when motion is reduced.
+ */
+const scrollTo = (box: HTMLElement, lines: Box): void => {
+  const scroller = scrollerOf(box);
+  if (scroller === undefined) return;
+  const seen = scroller.getBoundingClientRect();
+  const head =
+    box.parentElement?.querySelector(':scope > [data-slot="files-head"]')?.getBoundingClientRect()
+      .height ?? 0;
+  const room = seen.height - head;
+  const under = lines.height >= room ? head : head + (room - lines.height) / 2;
+  const top = box.getBoundingClientRect().top + lines.top - seen.top;
+  // Asked when it scrolls, not once: the setting can change while the app is open.
+  const reduced =
+    typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  scroller.scrollTo({
+    top: scroller.scrollTop + top - under,
+    behavior: reduced ? "instant" : "smooth",
+  });
+};
+
+function Preview({
+  where,
+  path,
+  lines,
+  turnsEnded,
+}: {
+  where: Where;
+  path: string;
+  lines: LineTarget | undefined;
+  turnsEnded: number;
+}) {
   const { t, number } = useI18n();
   const store = useAppStore();
   const [content, setContent] = useState<Load<FileContent>>({ state: "loading" });
+  const box = useRef<HTMLDivElement>(null);
+  const [mark, setMark] = useState<Mark>();
   const [more, setMore] = useState<"idle" | "loading" | "failed">("idle");
   const [refreshed, setRefreshed] = useState(0);
   const tracked = useRef(false);
@@ -396,6 +515,60 @@ function Preview({ where, path, turnsEnded }: { where: Where; path: string; turn
       if (reading.current === serial) reading.current += 1;
     };
   }, [store, where.environmentId, where.sessionId, path, round]);
+
+  // Lines asked for (a reply's `app.tsx:12`), once the file is drawn: scrolled to and marked, then let go, so that showing
+  // the file again later does not go there again. Asked for again, the file already shown, they are gone to again.
+  useEffect(() => {
+    if (lines === undefined || content.state !== "ok") return;
+    const shown = content.value;
+    const land = () => store.filesViews.landed(where.key, lines.serial);
+    // Only text drawn as text has lines: a document is drawn as what it reads as, a picture as a picture.
+    if (shown.kind !== "text" || shown.text === "" || MARKDOWN.has(extensionOf(shown.path))) {
+      land();
+      return;
+    }
+    // Past what is read of the file (or past its end): shown from the top, as without a line.
+    const count = lineCountOf(shown.text);
+    if (lines.start > count) {
+      land();
+      return;
+    }
+    const end = Math.min(lines.end, count);
+    let frame = 0;
+    const until = performance.now() + DRAW_MS;
+    let last: (Box & { whole: number }) | undefined;
+    // Gone to once they, and the text around them, stay as they are for a frame: the block takes its full height only once
+    // the browser has drawn it (Streamdown's code blocks are `content-visibility: auto`), and its colours come after.
+    const seek = () => {
+      const drawn = box.current === null ? undefined : measure(box.current, lines.start, end);
+      const at =
+        drawn === undefined ? undefined : { ...drawn, whole: box.current?.offsetHeight ?? 0 };
+      const still =
+        at !== undefined &&
+        last !== undefined &&
+        Math.abs(at.top - last.top) < 0.5 &&
+        Math.abs(at.height - last.height) < 0.5 &&
+        at.whole === last.whole;
+      last = at;
+      if (!still && performance.now() < until) {
+        frame = requestAnimationFrame(seek);
+        return;
+      }
+      if (drawn !== undefined && box.current !== null) {
+        setMark({ ...drawn, serial: lines.serial });
+        scrollTo(box.current, drawn);
+      }
+      land();
+    };
+    frame = requestAnimationFrame(seek);
+    return () => cancelAnimationFrame(frame);
+  }, [content, lines, store, where.key]);
+  // The mark goes after a moment: it shows where the lines are, it is not a selection.
+  useEffect(() => {
+    if (mark === undefined) return;
+    const timer = setTimeout(() => setMark(undefined), MARK_MS);
+    return () => clearTimeout(timer);
+  }, [mark]);
 
   const readMore = () => {
     if (content.state !== "ok" || content.value.kind !== "text" || content.value.next === null)
@@ -459,7 +632,22 @@ function Preview({ where, path, turnsEnded }: { where: Where; path: string; turn
           action={{ label: t("files.retry"), onAction: () => setRefreshed((n) => n + 1) }}
         />
       ) : (
-        <Shown content={content.value} size={sizeOf(content.value.size, number)} />
+        <Shown
+          content={content.value}
+          size={sizeOf(content.value.size, number)}
+          unfold={lines?.serial ?? 0}
+          box={box}
+          mark={
+            mark === undefined ? null : (
+              <div
+                key={mark.serial}
+                data-slot="files-line-mark"
+                aria-hidden="true"
+                style={{ top: mark.top, left: mark.left, width: mark.width, height: mark.height }}
+              />
+            )
+          }
+        />
       )}
       {content.state === "ok" && content.value.kind === "text" && content.value.next !== null ? (
         <div data-slot="files-more">
@@ -478,7 +666,23 @@ function Preview({ where, path, turnsEnded }: { where: Where; path: string; turn
   );
 }
 
-function Shown({ content, size }: { content: FileContent; size: string }) {
+/**
+ * A file as it is shown. Text drawn as text is in `box`, with `mark` over the lines gone to; `unfold` shows its code whole
+ * when it goes up (`Markdown`).
+ */
+function Shown({
+  content,
+  size,
+  unfold,
+  box,
+  mark,
+}: {
+  content: FileContent;
+  size: string;
+  unfold: number;
+  box: RefObject<HTMLDivElement | null>;
+  mark: ReactNode;
+}) {
   const { t } = useI18n();
   if (content.kind === "binary")
     return <StateBlock tone="empty" size="inline" title={t("files.binary")} body={size} />;
@@ -500,10 +704,31 @@ function Shown({ content, size }: { content: FileContent; size: string }) {
       </div>
     );
   const plain = content.text.length >= COLOURED;
-  if (plain) return <pre data-slot="files-plain">{content.text}</pre>;
   return (
-    <div data-slot="files-code">
-      <Markdown text={fenced(content.text, LANGUAGES[extension] ?? extension)} />
+    <div data-slot="files-text" ref={box}>
+      {plain ? (
+        <pre data-slot="files-plain">{content.text}</pre>
+      ) : (
+        <Code text={content.text} language={LANGUAGES[extension] ?? extension} unfold={unfold} />
+      )}
+      {mark}
     </div>
   );
 }
+
+/** A file's text coloured: drawn again only when it or `unfold` changes, not when the mark over it comes or goes. */
+const Code = memo(function Code({
+  text,
+  language,
+  unfold,
+}: {
+  text: string;
+  language: string;
+  unfold: number;
+}) {
+  return (
+    <div data-slot="files-code">
+      <Markdown text={fenced(text, language)} unfold={unfold} />
+    </div>
+  );
+});

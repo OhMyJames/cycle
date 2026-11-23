@@ -169,6 +169,7 @@ function Blocks({ blocks }: { blocks: Block[] }) {
         store.track("file_shown_from_conversation", {
           target: folder ? "folder" : "file",
           from: "mention",
+          line: false,
         });
       },
       t("files.showInFiles"),
@@ -701,10 +702,11 @@ export function ConversationView({
             root: filesRoot,
             open: (file) => {
               const folder = file.folder === true;
-              store.showInFiles(file.path, { folder });
+              store.showInFiles(file.path, { folder, line: file.line, end: file.end });
               store.track("file_shown_from_conversation", {
                 target: folder ? "folder" : "file",
                 from: "message",
+                line: file.line !== undefined,
               });
             },
           },

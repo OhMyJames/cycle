@@ -1,6 +1,6 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { FileContent, FileListing, SessionSnapshot, SessionSummary } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
@@ -22,8 +22,14 @@ const FOLDERS: Record<string, FileListing["entries"]> = {
     { name: "app.bin", kind: "file", size: 4 },
     { name: "away", kind: "other", link: true },
   ],
-  src: [{ name: "main.ts", kind: "file", size: 11 }],
+  src: [
+    { name: "main.ts", kind: "file", size: 11 },
+    { name: "long.ts", kind: "file", size: 4000 },
+  ],
 };
+
+/** Long enough to be shown in part (`code-fold`), and to scroll in the panel. */
+const LONG = `${Array.from({ length: 120 }, (_, i) => `export const line${i + 1} = ${i + 1};`).join("\n")}\n`;
 
 const FILES: Record<string, FileContent> = {
   "README.md": {
@@ -41,6 +47,15 @@ const FILES: Record<string, FileContent> = {
     mtimeMs: 1,
     kind: "text",
     text: "let x = 1;\n",
+    offset: 0,
+    next: null,
+  },
+  "src/long.ts": {
+    path: "src/long.ts",
+    size: LONG.length,
+    mtimeMs: 1,
+    kind: "text",
+    text: LONG,
     offset: 0,
     next: null,
   },
@@ -218,9 +233,9 @@ test("a file the agent read, and a file named with @, are shown in Files from th
   await user.click(await within(log).findByRole("button", { name: "Show in Files" }));
   expect(await within(panel()).findByRole("heading", { name: "Hello" })).toBeDefined();
   expect(tracked()).toEqual([
-    ["file_shown_from_conversation", { target: "file", from: "mention" }],
+    ["file_shown_from_conversation", { target: "file", from: "mention", line: false }],
     ["file_previewed", { kind: "text" }],
-    ["file_shown_from_conversation", { target: "file", from: "tool" }],
+    ["file_shown_from_conversation", { target: "file", from: "tool", line: false }],
     ["file_previewed", { kind: "markdown" }],
   ]);
 });
@@ -265,6 +280,138 @@ test("each session's Files tab is its own: another session shows its own folder,
   await waitFor(() => expect(panel()).not.toBeNull());
   expect(await within(panel()).findByRole("button", { name: "two.txt" })).toBeDefined();
   expect(within(panel()).queryByRole("button", { name: "src" })).toBeNull();
+});
+
+const say = (text: string) =>
+  ({
+    sessionUpdate: "agent_message",
+    messageId: "a1",
+    content: [{ type: "text", text }],
+  }) as SessionUpdate;
+
+/** Line `n` of the file shown (Shiki's lines are an element each). */
+const lineOf = (n: number) =>
+  panel().querySelector('[data-streamdown="code-block-body"] pre > code')?.children[n - 1] as
+    | HTMLElement
+    | undefined;
+/** The mark over the lines gone to. */
+const markOf = () => panel().querySelector<HTMLElement>('[data-slot="files-line-mark"]');
+
+/** Seen in the panel, below the file's sticky head. */
+const seen = (element: HTMLElement | undefined) => {
+  if (element === undefined) return false;
+  const at = element.getBoundingClientRect();
+  const head = panel().querySelector('[data-slot="files"] > [data-slot="files-head"]');
+  const top = head?.getBoundingClientRect().bottom ?? panel().getBoundingClientRect().top;
+  return at.top >= top - 1 && at.bottom <= panel().getBoundingClientRect().bottom + 1;
+};
+
+const scrollerOf = (element: HTMLElement): HTMLElement => {
+  for (let at = element.parentElement; at !== null; at = at.parentElement)
+    if (at.scrollHeight > at.clientHeight && getComputedStyle(at).overflowY !== "visible")
+      return at;
+  throw new Error("Nothing scrolls the file");
+};
+
+const topOf = (element: HTMLElement | null | undefined) =>
+  element?.getBoundingClientRect().top ?? Number.NaN;
+
+/** The window's height, as #root has it in the app: the panel scrolls inside it, not the page. */
+const fitWindow = () => {
+  const root = document.querySelector('[data-slot="app"]')?.parentElement;
+  if (root instanceof HTMLElement) root.style.height = "100%";
+};
+
+test("a file named with lines opens at them, marked for a moment; named again while it is shown, it is gone to again", async () => {
+  const { user, script, tracked } = await mount({
+    updates: [
+      say("See [the end](src/long.ts#L100-L102), `src/long.ts:40` and [main](src/main.ts)."),
+    ],
+  });
+  fitWindow();
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  await user.click(await within(log).findByRole("link", { name: "the end" }));
+  await waitFor(() => expect(panel()).not.toBeNull());
+  // The file is long enough to be shown in part; shown at a line, it is shown whole, and the lines are in view.
+  await waitFor(() => expect(seen(lineOf(100))).toBe(true));
+  expect(seen(lineOf(1))).toBe(false);
+  expect(panel().querySelector('[data-slot="code-fold"][data-folded]')).toBeNull();
+  // The mark covers lines 100 to 102, not more.
+  await waitFor(() => expect(markOf()).not.toBeNull());
+  expect(Math.abs(topOf(markOf()) - topOf(lineOf(100)))).toBeLessThan(1);
+  const bottom =
+    (markOf()?.getBoundingClientRect().bottom ?? 0) -
+    (lineOf(102)?.getBoundingClientRect().bottom ?? 0);
+  expect(Math.abs(bottom)).toBeLessThan(1);
+  expect(markOf()?.getAttribute("aria-hidden")).toBe("true");
+
+  // The file already shown, scrolled away: the keyboard names another line, and the file is not read again.
+  const scroller = scrollerOf(lineOf(1) as HTMLElement);
+  scroller.scrollTo({ top: 0, behavior: "instant" });
+  await waitFor(() => expect(seen(lineOf(100))).toBe(false));
+  const before = markOf();
+  within(log).getByRole("link", { name: "src/long.ts:40" }).focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(seen(lineOf(40))).toBe(true));
+  // Marked again: a new mark, over line 40.
+  await waitFor(() => expect(markOf()).not.toBe(before));
+  expect(Math.abs(topOf(markOf()) - topOf(lineOf(40)))).toBeLessThan(1);
+  // The same lines again, scrolled away: gone to again.
+  scroller.scrollTo({ top: 0, behavior: "instant" });
+  await user.click(within(log).getByRole("link", { name: "the end" }));
+  await waitFor(() => expect(seen(lineOf(100))).toBe(true));
+  expect(script.calls.filter(([n, p]) => n === "readFile" && p === "src/long.ts")).toHaveLength(1);
+  // The mark goes after a moment.
+  await waitFor(() => expect(markOf()).toBeNull(), { timeout: 3000 });
+
+  // Without a line, as before: the file shown from its top, nothing marked.
+  await user.click(within(log).getByRole("link", { name: "main" }));
+  await waitFor(() => expect(panel().textContent).toContain("let x = 1;"));
+  expect(markOf()).toBeNull();
+  expect(tracked().filter(([event]) => event === "file_shown_from_conversation")).toEqual([
+    ["file_shown_from_conversation", { target: "file", from: "message", line: true }],
+    ["file_shown_from_conversation", { target: "file", from: "message", line: true }],
+    ["file_shown_from_conversation", { target: "file", from: "message", line: true }],
+    ["file_shown_from_conversation", { target: "file", from: "message", line: false }],
+  ]);
+});
+
+test("a file already shown from its top, named with a line, scrolls there; with reduced motion, at once", async () => {
+  const reduce = vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes("prefers-reduced-motion"),
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        onchange: null,
+        dispatchEvent: () => false,
+      }) as MediaQueryList,
+  );
+  const scrolls = vi.spyOn(HTMLElement.prototype, "scrollTo");
+  try {
+    const { user } = await mount({ updates: [say("Look at `src/long.ts:90`.")] });
+    fitWindow();
+    // Opened from the tree first: shown from its top, in part, nothing marked.
+    await user.click(await screen.findByRole("button", { name: "Show files" }));
+    const tab = within(panel());
+    await user.click(await tab.findByRole("button", { name: "src" }));
+    await user.click(await tab.findByRole("button", { name: "long.ts" }));
+    await waitFor(() => expect(lineOf(1)).toBeDefined());
+    expect(panel().querySelector('[data-slot="code-fold"][data-folded]')).not.toBeNull();
+    expect(markOf()).toBeNull();
+    const log = await screen.findByRole("log", { name: "Conversation" });
+    await user.click(within(log).getByRole("link", { name: "src/long.ts:90" }));
+    await waitFor(() => expect(seen(lineOf(90))).toBe(true));
+    expect(markOf()).not.toBeNull();
+    expect(scrolls).toHaveBeenCalledWith(expect.objectContaining({ behavior: "instant" }));
+    expect(scrolls).not.toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+  } finally {
+    reduce.mockRestore();
+    scrolls.mockRestore();
+  }
 });
 
 const review = (rawInput: unknown) => {
@@ -329,7 +476,7 @@ test("a code review the agent reported is a card: the tally, the agent's order, 
   await waitFor(() => expect(panel().textContent).toContain("let x = 1;"));
   expect(tracked()[0]).toEqual([
     "file_shown_from_conversation",
-    { target: "file", from: "review" },
+    { target: "file", from: "review", line: true },
   ]);
 });
 

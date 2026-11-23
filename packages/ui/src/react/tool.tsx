@@ -373,7 +373,11 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
             data-slot="tool-files-link"
             onClick={() => {
               store.showInFiles(inFiles);
-              store.track("file_shown_from_conversation", { target: "file", from: "tool" });
+              store.track("file_shown_from_conversation", {
+                target: "file",
+                from: "tool",
+                line: false,
+              });
             }}
           >
             {t("files.showInFiles")}
