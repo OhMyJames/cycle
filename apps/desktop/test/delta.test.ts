@@ -11,7 +11,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleDelta, DeltaDeclined, scanBundle } from "../src/main/delta.ts";
+import { deflateRawSync } from "node:zlib";
+import { assembleDelta, DeltaDeclined, packBundle, scanBundle } from "../src/main/delta.ts";
 import { makeZip, type Spec, writeBundle, type ZipOptions } from "./zip-fixture.ts";
 
 let dir: string;
@@ -231,3 +232,99 @@ test.skipIf(process.getuid?.() === 0)(
     expect(await scanBundle(done.app)).toEqual(made.tree);
   },
 );
+
+// By blocks: the big file is 200 000 bytes, four blocks of 64 KiB (the last one short).
+const BLOCK = 1 << 16;
+const LIB = "Contents/Frameworks/Lib/Versions/A/Lib";
+/** As a binary is on a new release: the same code, a new signature at its end. */
+const RESIGNED: Spec = { ...NEW, [LIB]: `${BIG.slice(0, -100)}${noise(7, 100)}` };
+
+/** The archive and the block pack of the new bundle, each at its own address, answering ranges. */
+const servePacked = async (made: Awaited<ReturnType<typeof prepare>>, damage = false) => {
+  const packPath = join(dir, "new.blocks");
+  const pack = await packBundle(made.fresh, made.tree, packPath, BLOCK);
+  const packBytes = new Uint8Array(await readFile(packPath));
+  if (damage) {
+    // The deflated last block of the big file, as other bytes that unpack fine: a block that lies.
+    const last = pack.files[LIB]?.at(-1);
+    if (last === undefined) throw new Error("no block");
+    const forged = deflateRawSync(Buffer.from(noise(9, 200_000 - 3 * BLOCK)));
+    const bytes = new Uint8Array(packBytes.length - last.csize + forged.length);
+    bytes.set(packBytes.subarray(0, last.offset));
+    bytes.set(forged, last.offset);
+    const files = {
+      ...pack.files,
+      [LIB]: [...(pack.files[LIB] ?? []).slice(0, -1), { ...last, csize: forged.length }],
+    };
+    return withPack(made, { ...pack, size: bytes.length, files }, bytes);
+  }
+  return withPack(made, pack, packBytes);
+};
+
+const withPack = (
+  made: Awaited<ReturnType<typeof prepare>>,
+  pack: Awaited<ReturnType<typeof packBundle>>,
+  bytes: Uint8Array,
+) => {
+  const archive = serve(made.zip);
+  const blocks = serve(bytes);
+  const get: Server["get"] = (url, headers, signal) =>
+    (url.endsWith(".blocks") ? blocks : archive).get(url, headers, signal);
+  const options = {
+    installed: made.installed,
+    into: join(dir, "into"),
+    archiveUrl: "https://example.test/Cycle.zip",
+    archiveSize: made.zip.length,
+    tree: made.tree,
+    pack: { ...pack, file: "Cycle.blocks", url: "https://example.test/Cycle.blocks" },
+    get,
+    onPlan: () => {},
+    onProgress: () => {},
+  };
+  return { archive, blocks, options };
+};
+
+test("a big file that changed only at its end is made from its own blocks and the one block that changed", async () => {
+  const made = await prepare(RESIGNED);
+  const { blocks, options } = await servePacked(made);
+  const done = await assembleDelta(options);
+  expect(await scanBundle(done.app)).toEqual(made.tree);
+  expect(await readFile(join(done.app, LIB), "utf8")).toBe(RESIGNED[LIB] as string);
+  expect(done.byBlocks).toBe(1);
+  expect(done.blocksReused).toBe(3);
+  // One request to the pack, for the last block only.
+  expect(blocks.asked.length).toBe(1);
+  expect(blocks.served()).toBeLessThan(BLOCK);
+});
+
+test("a block from the pack that is not the block its SHA-256 names is refused", async () => {
+  const made = await prepare(RESIGNED);
+  const { options } = await servePacked(made, true);
+  await expect(assembleDelta(options)).rejects.toThrow(/does not match the block pack/);
+});
+
+test("a big file with no block in common with the installed one is fetched whole from the archive", async () => {
+  const made = await prepare({ ...NEW, "Contents/Resources/app/bin/tool": noise(11, 70_000) });
+  const { blocks, options } = await servePacked(made);
+  const done = await assembleDelta(options);
+  expect(await scanBundle(done.app)).toEqual(made.tree);
+  expect(done.byBlocks).toBe(0);
+  expect(blocks.asked.length).toBe(0);
+});
+
+test("an installed file that changed under the copy fails the whole file, not silently", async () => {
+  const made = await prepare(RESIGNED);
+  const { options } = await servePacked(made);
+  // Same blocks as it was hashed, then the installed file is cut short before its blocks are copied: the hash of
+  // the whole file catches what the per-block plan could not.
+  const original = options.get;
+  let cut = false;
+  options.get = async (url, headers, signal) => {
+    if (!cut) {
+      cut = true;
+      await writeFile(join(made.installed, LIB), BIG.slice(0, BLOCK));
+    }
+    return original(url, headers, signal);
+  };
+  await expect(assembleDelta(options)).rejects.toThrow(/does not match the file table/);
+});

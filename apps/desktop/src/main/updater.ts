@@ -65,7 +65,13 @@ export type UpdaterDeps = {
 
 export type Swap = { appPath: string; newApp: string; oldApp: string; staging: string };
 
-type Pending = { version: string; manifest: ReleaseManifest; archiveUrl: string };
+type Pending = {
+  version: string;
+  manifest: ReleaseManifest;
+  archiveUrl: string;
+  /** The block pack's address, where the release has one its manifest lists. */
+  packUrl?: string | undefined;
+};
 type Candidate = { tag: string; version: string; assets: Map<string, string> };
 
 class Limited extends Error {}
@@ -304,7 +310,25 @@ export class Updater {
       throw new Error("The release's manifest is not for this release and platform.");
     const archiveUrl = candidate.assets.get(manifest.file);
     if (archiveUrl === undefined) throw new Error(`The release has no ${manifest.file}.`);
-    return { version: candidate.version, manifest, archiveUrl: this.#allowed(archiveUrl) };
+    // A pack the release does not carry, or carries from elsewhere, costs the saving, not the update.
+    let packUrl: string | undefined;
+    if (manifest.pack !== undefined) {
+      const url = candidate.assets.get(manifest.pack.file);
+      try {
+        if (url === undefined) throw new Error(`The release has no ${manifest.pack.file}.`);
+        packUrl = this.#allowed(url);
+      } catch (error) {
+        this.#d.log?.(
+          `The release's block pack is not usable (${(error as Error).message}); changed files are fetched whole.`,
+        );
+      }
+    }
+    return {
+      version: candidate.version,
+      manifest,
+      archiveUrl: this.#allowed(archiveUrl),
+      packUrl,
+    };
   }
 
   /** Downloads, checks, unpacks, and hands the swap over; the app closes when this is done. */
@@ -361,6 +385,10 @@ export class Updater {
       log(
         `The release's file table is not usable (${manifest.treeProblem}); downloading it whole.`,
       );
+    if (manifest.packProblem !== undefined)
+      log(
+        `The release's block pack is not usable (${manifest.packProblem}); changed files are fetched whole.`,
+      );
     if (manifest.tree !== undefined && this.#d.delta !== false) {
       await fresh();
       try {
@@ -403,6 +431,10 @@ export class Updater {
       archiveUrl: pending.archiveUrl,
       archiveSize: pending.manifest.size,
       tree,
+      pack:
+        pending.manifest.pack !== undefined && pending.packUrl !== undefined
+          ? { ...pending.manifest.pack, url: pending.packUrl }
+          : undefined,
       get: (url, headers, signal) => this.#get(url, headers, signal),
       onPlan: (total) => progress(0, total, true),
       onProgress: (received, total) => progress(received, total, false),
@@ -410,7 +442,7 @@ export class Updater {
     });
     this.#set({ current, kind: "installing", version });
     this.#d.log?.(
-      `Updated by the difference: fetched ${done.fetched} of ${pending.manifest.size} bytes, ${done.changed} files changed, ${done.reused} reused.`,
+      `Updated by the difference: fetched ${done.fetched} of ${pending.manifest.size} bytes, ${done.changed} files changed, ${done.reused} reused; ${done.byBlocks} made by their blocks, ${done.blocksReused} blocks reused.`,
     );
     return done.app;
   }
