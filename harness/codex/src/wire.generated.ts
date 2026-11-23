@@ -739,3 +739,21 @@ export type ModelListResponse = {
    */
   nextCursor: string | null;
 };
+
+export type PlanDeltaNotification = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+};
+
+export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
+
+export type TurnPlanStep = { step: string; status: TurnPlanStepStatus };
+
+export type TurnPlanUpdatedNotification = {
+  threadId: string;
+  turnId: string;
+  explanation: string | null;
+  plan: Array<TurnPlanStep>;
+};

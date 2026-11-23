@@ -12,6 +12,12 @@ Ubuntu 24.04 的沙箱前置依赖见 [OpenAI 的 Linux sandbox prerequisites](h
 
 本阶段验证：macOS ARM64 和 Debian 12 ARM64 的安装布局能执行工作区命令，工作区外的同级目录写入被拒；未向 Codex 提供的宿主环境变量在命令进程中不可见。默认限制的 Debian Docker 容器能启动 CLI，但执行命令时内核拒绝 bwrap 创建 namespace。此时应保留错误和失败状态；应用不会自动扩大权限。
 
+## 第二阶段实现（CYCL-202、203、204）
+
+Codex harness 自己声明 image、embeddedContext、MCP、additionalDirectories 和 systemPrompt 能力。ACP 的 HTTP/stdio MCP server 会转换到 Codex 的 `config.mcp_servers`，MCP header 和环境变量只在 app-server 配置请求中传递。图片转换为 Codex 的 data URL，文本 resource 转为文本输入，暂不接受 PDF blob。附加目录进入 Codex 的 workspace-write writable roots，系统提示的 append 内容进入 developer instructions。
+
+Codex 的 `plan` 是自己的权限配置项。它通过 `collaborationMode: plan` 发给 Codex，Codex 的 plan item 和 `turn/plan/updated` 转为 ACP `plan_update`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
+
 ## 初始调研（CYCL-156）
 
 以下记录针对调研时的版本。

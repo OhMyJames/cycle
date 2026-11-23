@@ -32,6 +32,8 @@ try {
     "ModelListResponse",
     "Model",
     "ReasoningEffortOption",
+    "PlanDeltaNotification",
+    "TurnPlanUpdatedNotification",
   ])
     await collect(join(temp, "schema/v2", `${name}.ts`));
   await writeFile(new URL("../src/wire.generated.ts", import.meta.url), parts.join("\n"));

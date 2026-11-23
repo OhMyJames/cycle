@@ -16,6 +16,7 @@ test("Codex owns its permission mapping and exposes model-dependent effort optio
     "untrusted",
     "read-only",
     "auto-review",
+    "plan",
     "full-access",
   ]);
   const catalog = [

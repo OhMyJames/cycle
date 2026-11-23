@@ -14,7 +14,9 @@ import { type Catalog, type Mode, modes, options, policy, turnPolicy } from "./s
 import type {
   AgentMessageDeltaNotification,
   ItemCompletedNotification,
+  PlanDeltaNotification,
   TurnCompletedNotification,
+  TurnPlanUpdatedNotification,
   UserInput,
 } from "./wire.generated.ts";
 
@@ -36,6 +38,9 @@ export function createAdapter(config: AdapterConfig) {
   let catalog: Catalog = [];
   let model = "default";
   let effort = "default";
+  let additionalDirectories: string[] = [];
+  let developerInstructions: string | undefined;
+  let mcpConfig: Record<string, unknown> = {};
   function notify(update: SessionUpdate) {
     if (session && owner)
       void owner
@@ -92,6 +97,27 @@ export function createAdapter(config: AdapterConfig) {
         else active.tools.delete(item.id);
       }
       if (update) notify(update);
+    } else if (method === "turn/plan/updated") {
+      const plan = raw as TurnPlanUpdatedNotification;
+      notify({
+        sessionUpdate: "plan_update",
+        plan: {
+          type: "items",
+          planId: `${plan.threadId}-${plan.turnId}`,
+          entries: plan.plan.map((item) => ({
+            content: item.step,
+            priority: "medium",
+            status: item.status,
+          })),
+        },
+      } as unknown as SessionUpdate);
+    } else if (method === "item/plan/delta") {
+      const delta = raw as PlanDeltaNotification;
+      notify({
+        sessionUpdate: "agent_message_chunk",
+        messageId: delta.itemId,
+        content: { type: "text", text: delta.delta },
+      } as SessionUpdate);
     } else if (
       [
         "item/agentMessage/delta",
@@ -121,10 +147,25 @@ export function createAdapter(config: AdapterConfig) {
     if (id !== session || !server) throw new RequestError(-32002, "Codex session unavailable");
     return server;
   }
-  const inputOf = (prompt: { type: string; text?: string }[]): UserInput[] =>
-    prompt.map((block) => {
+  const inputOf = (prompt: readonly unknown[]): UserInput[] =>
+    prompt.map((raw) => {
+      const block = (typeof raw === "object" && raw !== null ? raw : {}) as {
+        type?: string;
+        text?: string;
+        mimeType?: string;
+        data?: string;
+        resource?: { text?: string };
+      };
+      if (
+        block.type === "image" &&
+        typeof block.mimeType === "string" &&
+        typeof block.data === "string"
+      )
+        return { type: "image", url: `data:${block.mimeType};base64,${block.data}` };
+      if (block.type === "resource" && typeof block.resource?.text === "string")
+        return { type: "text", text: block.resource.text, text_elements: [] };
       if (block.type !== "text" || typeof block.text !== "string")
-        throw new RequestError(-32602, "Only text prompts are supported");
+        throw new RequestError(-32602, "Codex supports text, images and text resources only");
       return { type: "text", text: block.text, text_elements: [] };
     });
   const optionsOf = () => options(mode, catalog, model, effort);
@@ -138,6 +179,44 @@ export function createAdapter(config: AdapterConfig) {
     mode = "default";
     model = "default";
     effort = "default";
+    additionalDirectories = params.additionalDirectories ?? [];
+    developerInstructions =
+      params.systemPrompt?.mode === "append"
+        ? (params.systemPrompt.content as Array<{ type: string; text?: string }>)
+            .filter((item) => item.type === "text")
+            .map((item) => item.text ?? "")
+            .join("\n")
+        : undefined;
+    mcpConfig = Object.fromEntries(
+      (params.mcpServers ?? []).map((server) => {
+        if (server.type === "http")
+          return [
+            server.name,
+            {
+              url: server.url,
+              http_headers: Object.fromEntries(
+                ((server.headers ?? []) as unknown as { name: string; value: string }[]).map(
+                  (header) => [header.name, header.value],
+                ),
+              ),
+            },
+          ];
+        if (server.type === "stdio")
+          return [
+            server.name,
+            {
+              command: server.command,
+              args: server.args ?? [],
+              env: Object.fromEntries(
+                ((server.env ?? []) as unknown as { name: string; value: string }[]).map(
+                  (entry) => [entry.name, entry.value],
+                ),
+              ),
+            },
+          ];
+        throw new RequestError(-32602, "Unsupported MCP transport");
+      }),
+    );
     const child = new AppServer(
       config,
       event,
@@ -145,7 +224,12 @@ export function createAdapter(config: AdapterConfig) {
       (method, raw) => approval(method, raw, owner, session, turn?.id, turn?.approvals.signal),
     );
     server = child;
-    const settings = { cwd: params.cwd, ...policy(mode) };
+    const settings = {
+      cwd: params.cwd,
+      ...policy(mode),
+      ...(Object.keys(mcpConfig).length > 0 ? { config: { mcp_servers: mcpConfig } } : {}),
+      ...(developerInstructions ? { developerInstructions } : {}),
+    };
     type Thread = { thread: { id: string } };
     try {
       await child.initialize();
@@ -205,7 +289,14 @@ export function createAdapter(config: AdapterConfig) {
     .onRequest(methods.agent.initialize, () => ({
       protocolVersion: 2,
       info: { name: "cycle-codex-adapter", version: "0.0.0" },
-      capabilities: { session: { prompt: {} } },
+      capabilities: {
+        session: {
+          prompt: { image: {}, embeddedContext: {} },
+          mcp: { http: {}, stdio: {} },
+          additionalDirectories: {},
+          systemPrompt: {},
+        },
+      },
     }))
     .onRequest(methods.agent.session.new, ({ params, client }) => open(params, client))
     .onRequest(methods.agent.session.resume, ({ params, client }) => open(params, client, params))
@@ -276,7 +367,9 @@ export function createAdapter(config: AdapterConfig) {
         .request<{ turn: { id: string } }>("turn/start", {
           threadId: session,
           input,
-          ...turnPolicy(mode),
+          ...turnPolicy(mode, additionalDirectories),
+          ...(developerInstructions ? { developerInstructions } : {}),
+          ...(Object.keys(mcpConfig).length > 0 ? { config: { mcp_servers: mcpConfig } } : {}),
           ...(model !== "default" ? { model } : {}),
           ...(effort !== "default" ? { effort } : {}),
         })

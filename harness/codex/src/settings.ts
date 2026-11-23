@@ -23,6 +23,11 @@ export const modes = [
     description: "Let Codex review requests to go beyond the sandbox.",
   },
   {
+    value: "plan",
+    name: "Plan mode",
+    description: "Create a plan and wait before making changes.",
+  },
+  {
     value: "full-access",
     name: "Full access",
     description: "Run without sandbox restrictions or approval prompts.",
@@ -44,13 +49,13 @@ export function policy(mode: Mode) {
           : "workspace-write",
   } as const;
 }
-export function turnPolicy(mode: Mode) {
+export function turnPolicy(mode: Mode, writableRoots: string[] = []) {
   const { sandbox, ...rest } = policy(mode);
   const sandboxPolicy =
     sandbox === "workspace-write"
       ? {
           type: "workspaceWrite",
-          writableRoots: [],
+          writableRoots,
           networkAccess: false,
           excludeTmpdirEnvVar: false,
           excludeSlashTmp: false,
@@ -58,7 +63,11 @@ export function turnPolicy(mode: Mode) {
       : sandbox === "read-only"
         ? { type: "readOnly", networkAccess: false }
         : { type: "dangerFullAccess" };
-  return { ...rest, sandboxPolicy };
+  return {
+    ...rest,
+    sandboxPolicy,
+    ...(mode === "plan" ? { collaborationMode: { mode: "plan" } } : {}),
+  };
 }
 export const options = (mode: Mode, catalog: Catalog = [], model = "default", effort = "default") =>
   [

@@ -6,6 +6,15 @@ export function itemUpdate(
   completed: boolean,
   streamed: boolean,
 ): SessionUpdate | undefined {
+  if (item.type === "plan" && completed)
+    return {
+      sessionUpdate: "plan_update",
+      plan: {
+        type: "items",
+        planId: item.id,
+        entries: [{ content: item.text, priority: "medium", status: "in_progress" }],
+      },
+    } as SessionUpdate;
   if (item.type === "agentMessage" || item.type === "reasoning") {
     if (!completed || streamed) return;
     const text =
