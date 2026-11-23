@@ -12,7 +12,7 @@ import { CycleErrorCode, META } from "@cycle/protocol";
 import { translateMcpServers } from "./mcp.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { toV2ConfigOptions } from "./settings.ts";
-import { toV2ToolCallUpdate, translateSimpleUpdate } from "./translate.ts";
+import { toV2ToolCallUpdate, translateSimpleUpdate, validatePromptBlocks } from "./translate.ts";
 import {
   AGY_MIN_VERSION,
   AGY_PROMPT_CAPABILITIES,
@@ -667,6 +667,7 @@ export function createAdapter(config: AdapterConfig) {
     .onRequest(methods.agent.session.prompt, async ({ params }) => {
       const session = sessions.get(params.sessionId);
       if (!session) throw new RequestError(-32002, `Unknown session: ${params.sessionId}`);
+      validatePromptBlocks(params.prompt);
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });

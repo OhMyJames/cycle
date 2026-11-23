@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { client, methods, type SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { CycleErrorCode, META } from "@cycle/protocol";
+import { CycleErrorCode, META, ToolResultSchema } from "@cycle/protocol";
+import {
+  applyUpdate,
+  emptyConversation,
+  sessionEdits,
+} from "../../../packages/ui/src/model/index.ts";
 import { createAdapter } from "../src/agent.ts";
 import { type AdapterConfig, buildAgyArgs } from "../src/server.ts";
 import { AGY_MIN_VERSION, isVersionSupported } from "../src/v1.ts";
@@ -1316,5 +1321,262 @@ describe("MCP server translation (CYCL-176)", () => {
     } finally {
       adapter.close();
     }
+  });
+});
+
+describe("attachments, tool results, and UI model replay (CYCL-177)", () => {
+  test("rejects binary resource (PDF blob) and audio with -32602, and forwards image, text resource, and resource_link", async () => {
+    const { config, getFake } = baseConfig((method) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-att");
+      if (method === "session/prompt") return { stopReason: "end_turn" };
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+
+        // Binary PDF resource (`blob`) must be rejected with -32602 before calling agy.
+        let pdfErr: unknown;
+        try {
+          await agent.request(methods.agent.session.prompt, {
+            sessionId: "agy-att",
+            prompt: [
+              { type: "text", text: "Read this PDF" },
+              {
+                type: "resource",
+                resource: {
+                  uri: "attachment:///spec.pdf",
+                  mimeType: "application/pdf",
+                  blob: "JVBERi0xLjQ=",
+                },
+              },
+            ],
+          } as never);
+        } catch (error) {
+          pdfErr = error;
+        }
+        expect((pdfErr as { code?: number })?.code).toBe(-32602);
+        expect(getFake().requests.some((r) => r.method === "session/prompt")).toBe(false);
+
+        // Audio block must be rejected with -32602.
+        let audioErr: unknown;
+        try {
+          await agent.request(methods.agent.session.prompt, {
+            sessionId: "agy-att",
+            prompt: [{ type: "audio", data: "AAAA", mimeType: "audio/wav" }],
+          } as never);
+        } catch (error) {
+          audioErr = error;
+        }
+        expect((audioErr as { code?: number })?.code).toBe(-32602);
+        expect(getFake().requests.some((r) => r.method === "session/prompt")).toBe(false);
+
+        // Valid image + text resource + resource_link pass through untouched.
+        const validBlocks = [
+          { type: "text", text: "Inspect these" },
+          { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+          {
+            type: "resource",
+            resource: {
+              uri: "attachment:///notes.txt",
+              mimeType: "text/plain",
+              text: "hello from attachment",
+            },
+          },
+          { type: "resource_link", uri: "file:///tmp/work/a.ts", name: "a.ts" },
+        ];
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-att",
+          prompt: validBlocks,
+        } as never);
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+
+        const promptReq = getFake().requests.find((r) => r.method === "session/prompt")?.params as {
+          prompt: unknown[];
+        };
+        expect(promptReq.prompt).toEqual(validBlocks);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("translates real agy turn (diffs, exit_code, usage, title, commands) so UI conversation model has ignored === 0", async () => {
+    const { config } = baseConfig((method, params, fake) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-ui");
+      if (method === "session/prompt") {
+        const sid = (params as { sessionId: string }).sessionId;
+        return new Promise((resolve) => {
+          queueMicrotask(() => {
+            fake.emitUpdate(sid, {
+              sessionUpdate: "available_commands_update",
+              availableCommands: [
+                { name: "compact", description: "Compact conversation" },
+                { name: "review", description: "Review code" },
+              ],
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "Checking file before editing." },
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call",
+              toolCallId: "read_1",
+              name: "read_file",
+              kind: "read",
+              title: "Read /tmp/work/hello.txt",
+              status: "completed",
+              locations: [{ path: "/tmp/work/hello.txt" }],
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call",
+              toolCallId: "write_1",
+              name: "write_file",
+              kind: "edit",
+              title: "Write /tmp/work/new.txt",
+              status: "completed",
+              locations: [{ path: "/tmp/work/new.txt" }],
+              content: [
+                {
+                  type: "diff",
+                  path: "/tmp/work/new.txt",
+                  oldText: null,
+                  newText: "alpha\nbeta\n",
+                },
+              ],
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call",
+              toolCallId: "edit_1",
+              name: "edit_file",
+              kind: "edit",
+              title: "Edit /tmp/work/hello.txt",
+              status: "completed",
+              locations: [{ path: "/tmp/work/hello.txt" }],
+              content: [
+                {
+                  type: "diff",
+                  path: "/tmp/work/hello.txt",
+                  oldText: "line1\nold\nline3\n",
+                  newText: "line1\nnewA\nnewB\nline3\n",
+                },
+              ],
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call",
+              toolCallId: "run_1",
+              name: "run_command",
+              kind: "execute",
+              title: "cat /tmp/work/hello.txt",
+              status: "completed",
+              rawInput: { CommandLine: "cat /tmp/work/hello.txt" },
+              rawOutput: { output: "line1\r\nnewA\r\nnewB\r\nline3\r\n", exit_code: 0 },
+              content: [
+                {
+                  type: "content",
+                  content: { type: "text", text: "line1\r\nnewA\r\nnewB\r\nline3\r\n" },
+                },
+              ],
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Updated hello.txt and created new.txt." },
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "usage_update",
+              used: 4200,
+              size: 1048576,
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "session_info_update",
+              title: "Edit Hello And New",
+            });
+            resolve({ stopReason: "end_turn" });
+          });
+        });
+      }
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-ui",
+          prompt: [{ type: "text", text: "Edit hello.txt and write new.txt" }],
+        } as never);
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+      });
+    } finally {
+      adapter.close();
+    }
+
+    // Validate every `_meta["cycle/toolResult"]` against Cycle's strict ToolResultSchema.
+    for (const u of updates) {
+      const meta = (u as { _meta?: Record<string, unknown> })._meta;
+      if (meta && META.toolResult in meta) {
+        expect(() => ToolResultSchema.parse(meta[META.toolResult])).not.toThrow();
+      }
+    }
+
+    // Feed all translated updates into Cycle's UI conversation model.
+    let conv = emptyConversation();
+    for (const update of updates) {
+      conv = applyUpdate(conv, update);
+    }
+
+    expect(conv.ignored).toBe(0);
+    expect(updates).toContainEqual({
+      sessionUpdate: "session_info_update",
+      title: "Edit Hello And New",
+    });
+    expect(conv.usage).toEqual({ used: 4200, size: 1048576 });
+    expect(conv.commands.map((c) => c.name)).toEqual(["compact", "review"]);
+
+    const edits = sessionEdits(conv);
+    expect(edits).toHaveLength(1);
+    const files = edits[0]?.edits ?? [];
+    expect(
+      files.map((f) => ({
+        path: f.path,
+        additions: f.additions,
+        deletions: f.deletions,
+        created: f.created,
+      })),
+    ).toEqual([
+      { path: "/tmp/work/new.txt", additions: 2, deletions: 0, created: true },
+      { path: "/tmp/work/hello.txt", additions: 2, deletions: 1, created: false },
+    ]);
+    expect(files[0]?.lines?.length).toBeGreaterThan(0);
+    expect(files[1]?.lines?.length).toBeGreaterThan(0);
   });
 });
