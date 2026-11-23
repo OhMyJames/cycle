@@ -164,6 +164,7 @@ test.skipIf(!ready)(
           "setSessionConfig",
           "setTrust",
           "signOutConnector",
+          "stopSubagent",
           "terminalInput",
           "track",
           "updateConnector",
