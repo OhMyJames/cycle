@@ -190,6 +190,8 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
   return (
     <Streaming.Provider value={streaming}>
       <Streamdown
+        // The root of a reply's blocks, for the stylesheet's one rhythm between them (`[data-markdown]`).
+        data-markdown=""
         mode="streaming"
         isAnimating={streaming}
         parseIncompleteMarkdown={streaming}

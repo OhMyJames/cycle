@@ -2528,12 +2528,12 @@ html[data-platform="darwin"]
 }
 
 /* Markdown from the agent. Streamdown draws a code block as a box holding a box, and a table as a toolbar over a box
-   holding a box. Here each is one hardware-rimmed card (16, the default edge): the language and Copy in a quiet head,
-   the code under it. Its own data-streamdown names are stable; its Tailwind classes are below ours, so these win. */
+   holding a box. Here a code block is one hardware-rimmed card (16, the default edge): the language and Copy in a quiet
+   head over a light rule, the code under it; a table is no card at all (below). Its own data-streamdown names are stable;
+   its Tailwind classes are below ours, so these win. */
 [data-slot="message"] [data-streamdown="code-block"] {
   position: relative;
   gap: 0;
-  margin-block: 0;
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--cycle-border-default);
@@ -2609,7 +2609,6 @@ html[data-platform="darwin"]
 
 [data-slot="message"] [data-streamdown="table-wrapper"] {
   gap: 0;
-  margin-block: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -2669,7 +2668,8 @@ html[data-platform="darwin"]
   border-radius: 4px;
   background: var(--cycle-surface-message);
   color: var(--cycle-ink-code);
-  font-size: var(--cycle-text-ui);
+  /* 13px in a 14px line, and as much smaller in a heading. */
+  font-size: 0.93em;
 }
 
 [data-slot="message"] a [data-streamdown="inline-code"] {
@@ -2690,28 +2690,35 @@ html[data-platform="darwin"]
 }
 
 [data-slot="message"] [data-streamdown="horizontal-rule"] {
-  margin: 0;
   border: 0;
   border-top: 1px solid var(--cycle-border-subtle);
 }
 
 /* One rhythm between a reply's blocks, 12px whatever they are: Streamdown's own spacing (16px, and more again around
-   code, tables, quotes and headings) is replaced. A block takes no margin of its own; the column's gap spaces them. */
-[data-slot="message"] > [data-streamdown-root],
-[data-slot="message"] > div:has(> [data-streamdown]) {
+   code, tables, quotes, headings and diagrams) is replaced. A block takes no margin of its own; the column's gap spaces
+   them. The root is the one `Markdown` marks (`data-markdown`); a block Streamdown wraps for its text direction sits in a
+   `display: contents` box, so its margin is reset there too. */
+[data-markdown] {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
-[data-slot="message"] > div > :is(*, div > *) {
+[data-markdown] > *,
+[data-markdown] > [dir] > *,
+[data-markdown] :is([data-streamdown="code-block"], [data-streamdown="table-wrapper"]) {
   margin-block: 0;
 }
 
+/* Thinking and a sub-agent's preview are quiet: code and links in them keep their words' colour. */
+:is([data-role="thought"], [data-slot="subagent-answer"])
+  :is([data-streamdown="inline-code"], a[href]) {
+  color: inherit;
+}
+
 /* Headings on the four sizes (DESIGN.md §2.1), not Streamdown's 30/24/20: a reply's headings mark its parts, they are not
-   page titles. The first block of a message has no space above it. */
+   page titles. */
 [data-slot="message"] :is(h1, h2, h3, h4, h5, h6)[data-streamdown^="heading"] {
-  margin-block: 0;
   font-size: var(--cycle-text-body);
   font-weight: 600;
   line-height: var(--cycle-leading-body);
@@ -2719,10 +2726,6 @@ html[data-platform="darwin"]
 
 [data-slot="message"] :is([data-streamdown="heading-1"], [data-streamdown="heading-2"]) {
   font-size: var(--cycle-text-title);
-}
-
-[data-slot="message"] [data-streamdown]:first-child {
-  margin-top: 0;
 }
 
 /* Lists: numbers and bullets hang outside the text, the same for both kinds and at every depth, so wrapped lines and
@@ -2757,7 +2760,6 @@ html[data-platform="darwin"]
 }
 
 [data-slot="message"] [data-streamdown="blockquote"] {
-  margin-block: 0;
   padding-inline-start: 0.75rem;
   border-inline-start: 2px solid var(--cycle-border-default);
   color: var(--cycle-ink-secondary);
@@ -2765,7 +2767,7 @@ html[data-platform="darwin"]
 }
 
 /* A table is read across: its words break between words, not anywhere (the message's own rule would squeeze a column to
-   a letter's width). A long path in a cell may break; a table wider than the column scrolls inside its card. */
+   a letter's width). A long path in a cell may break; a table wider than the column scrolls sideways, inside itself. */
 [data-slot="message"] :is([data-streamdown="table-header-cell"], [data-streamdown="table-cell"]) {
   min-width: 6rem;
   overflow-wrap: break-word;
@@ -2790,12 +2792,6 @@ html[data-platform="darwin"]
 
 [data-slot="message"]
   [data-streamdown="code-block"]:has([data-streamdown="code-block-header"][data-language=""])
-  [data-streamdown="code-block-body"] {
-  padding-top: 0.75rem;
-}
-
-[data-slot="message"]
-  [data-streamdown="code-block"]:has([data-streamdown="code-block-header"][data-language=""])
   [data-streamdown="code-block-actions"] {
   position: absolute;
   top: 0.25rem;
@@ -2807,11 +2803,11 @@ html[data-platform="darwin"]
   position: relative;
 }
 
-/* Copy on a code block: in the right of its head (the block's 0.5rem margin, its edge, then 0.25rem down), or over the top
-   corner of a block with no head. Seen while the block is hovered or something in it has the focus. */
+/* Copy on a code block: centred in the right of its 2rem head (its edge, then 0.25rem down), or over the top corner of a
+   block with no head. Seen while the block is hovered or something in it has the focus. */
 [data-slot="code-fold"] > [data-slot="code-copy"] {
   position: absolute;
-  top: calc(0.75rem + 1px);
+  top: calc(0.25rem + 1px);
   right: calc(0.5rem + 1px);
   opacity: 0;
 }
@@ -2855,17 +2851,13 @@ html[data-platform="darwin"]
 /* A ```mermaid fence drawn as a diagram: the code block's card, holding the picture, with "Show source" where a long
    block's "Show all" is. The picture is a data URL (diagram.ts); it opens large like an image. */
 [data-slot="diagram"] {
-  margin: 0.5rem 0 0;
+  margin: 0;
   padding: 0.75rem 0.75rem 2.5rem;
   overflow-x: auto;
   border: 1px solid var(--cycle-border-default);
   border-radius: var(--cycle-radius-card);
   background: var(--cycle-surface-raised);
   box-shadow: var(--cycle-edge-hardware);
-}
-
-[data-slot="code-fold"]:has(> [data-slot="diagram"]) {
-  margin-bottom: 0.5rem;
 }
 
 [data-slot="diagram-open"] {
