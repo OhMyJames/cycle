@@ -43,6 +43,8 @@ export type EnvironmentStatus = {
     folders: boolean;
     /** `_cycle/files/search` also takes a folder: @ works in a blank conversation. */
     filesInFolder?: boolean;
+    /** One sub-agent can be stopped alone (docs/protocol.md §9, CYCL-143). */
+    stopSubagent?: boolean;
     /** Folder trust can be read and set (docs/protocol.md §8 "信任文件夹"). */
     trust?: boolean;
     /** It keeps connectors: MCP servers for every agent (docs/protocol.md §14). */
@@ -560,6 +562,13 @@ export type AppApi = {
     where?: "header" | "sidebar",
   ): Promise<void>;
   dismissBackground(environmentId: string, sessionId: string, taskIds: string[]): Promise<void>;
+  /** Stops one sub-agent (CYCL-143). Only on an environment whose `capabilities.stopSubagent` is true. */
+  stopSubagent(
+    environmentId: string,
+    sessionId: string,
+    childId: string,
+    background: boolean,
+  ): Promise<void>;
   archiveSession(environmentId: string, sessionId: string, archived: boolean): Promise<void>;
   /** Says the session has been seen: its unread mark clears. Does nothing on a daemon that cannot. */
   markRead(environmentId: string, sessionId: string): Promise<void>;
@@ -668,6 +677,7 @@ export const API_METHODS = [
   "setSessionConfig",
   "renameSession",
   "dismissBackground",
+  "stopSubagent",
   "archiveSession",
   "markRead",
   "deleteSession",

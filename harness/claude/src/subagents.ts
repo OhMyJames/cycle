@@ -74,6 +74,11 @@ export class Subagents {
     return this.#announced.has(id);
   }
 
+  /** Whether `id` is a sub-agent that was announced and has not ended: one that can be stopped (CYCL-143). */
+  running(id: string): boolean {
+    return this.#known.has(id);
+  }
+
   get hasBackground(): boolean {
     return [...this.#known.values()].some((task) => task.background && !task.unknown);
   }
@@ -118,7 +123,11 @@ export class Subagents {
       this.#announced.add(task.task_id);
       const call = task.tool_use_id ?? previous?.toolCallId;
       if (call !== undefined) this.#byCall.set(call, task.task_id);
-      return this.#make(task, { state: "running" }, task.description);
+      // It can be stopped alone (ACP v2 `capabilities.cancel`, CYCL-143): the SDK's `stopTask`.
+      return {
+        ...this.#make(task, { state: "running" }, task.description),
+        capabilities: { cancel: {} },
+      } as SessionUpdate;
     }
     if (!known || (known.run && task.run_id && known.run !== task.run_id)) return undefined;
     if (message.subtype === "task_progress") {

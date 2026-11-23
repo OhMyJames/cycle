@@ -1277,6 +1277,15 @@ export class AppStore {
       );
   };
 
+  /** Stops one sub-agent of the open session (CYCL-143). Its end shows on its card as the agent tells it. */
+  stopSubagent = async (childId: string, background: boolean): Promise<void> => {
+    const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.#state;
+    if (environmentId === undefined || sessionId === undefined) return;
+    await this.#attempt(() =>
+      this.#bridge.stopSubagent(environmentId, sessionId, childId, background),
+    );
+  };
+
   archiveSession = async (sessionId: string, archived: boolean): Promise<void> => {
     const environmentId = this.#state.selectedEnvironment;
     if (environmentId === undefined) return;

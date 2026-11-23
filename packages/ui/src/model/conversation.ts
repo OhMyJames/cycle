@@ -71,6 +71,8 @@ export type ToolItem = InTurn & {
 export type Subagent = {
   /** Its id (`subagent_update`'s `sessionId`): what its conversation's updates name it by. Absent in older news. */
   id?: string;
+  /** Its agent said it can be stopped alone (ACP v2 `capabilities.cancel`, CYCL-143). */
+  stoppable?: boolean;
   /**
    * What it said and called, as a conversation of its own: one turn, its items in order. Absent until it says
    * something, and in a history from before a daemon told it.
@@ -692,6 +694,12 @@ const subagentUpdate = (c: Conversation, update: Fields, nested = false): Conver
     c.waiting[callId] ?? { state: "running" as const, background: false };
   const next: Subagent = { ...was };
   if (typeof update.sessionId === "string") next.id = update.sessionId;
+  // ACP v2 patch rules: left out keeps what was said; `null`, or a `cancel` of null, takes it back.
+  if (update.capabilities !== undefined) {
+    const cancel = (update.capabilities as { cancel?: unknown } | null)?.cancel;
+    if (cancel !== undefined && cancel !== null) next.stoppable = true;
+    else if (update.capabilities === null || cancel === null) delete next.stoppable;
+  }
   const state = update.state as { state?: unknown; stopReason?: unknown } | null | undefined;
   if (state?.state === "running") next.state = "running";
   else if (state?.state === "idle") {

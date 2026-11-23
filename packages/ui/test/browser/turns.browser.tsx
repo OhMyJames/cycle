@@ -34,13 +34,20 @@ const tool = (id: string, name: string, status: string, rawInput: object) => [
 ];
 const state = (extra: object) => u({ sessionUpdate: "state_update", ...extra });
 
-const open = async (...updates: SessionUpdate[]) => {
+/** The session `s1`, open, with these updates in it; `stopSubagent`: its daemon can stop one sub-agent alone. */
+const openWith = async (options: { stopSubagent?: boolean }, ...updates: SessionUpdate[]) => {
   const snapshot = (): SessionSnapshot => ({
     conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
     permissions: [],
     version: updates.length,
   });
-  const script = fakeBridge({ connected: true, snapshot });
+  const script = fakeBridge({
+    connected: true,
+    snapshot,
+    ...(options.stopSubagent === true
+      ? { capabilities: { queue: true, files: true, folders: true, stopSubagent: true } }
+      : {}),
+  });
   const store = new AppStore(script.bridge);
   const user = userEvent.setup();
   render(
@@ -65,6 +72,7 @@ const open = async (...updates: SessionUpdate[]) => {
   };
   return { user, log, emit, ask, script };
 };
+const open = (...updates: SessionUpdate[]) => openWith({}, ...updates);
 
 test("two tool calls in a row are one card that says what they were, and opens to the rows", async () => {
   const { user, log } = await open(
@@ -1306,6 +1314,62 @@ test("a sub-agent's card opens to what it did, apart from the main agent's work,
   await ask({ ...request, subagentId: "sub-1" });
   const card2 = await screen.findByLabelText("Allow Bash?");
   expect(card2.textContent).toContain("Asked by the sub-agent Find the flaky test");
+});
+
+test("a sub-agent at work can be stopped alone from its card, by keyboard too, and only where it can be (CYCL-143)", async () => {
+  const running = (id: string, call: string, extra: object = {}) =>
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: id,
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: call, background: id === "sub-bg" } },
+      ...extra,
+    });
+  const updates = [
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("s1", "Agent", "in_progress", { description: "Find the flaky test" }),
+    running("sub-1", "s1", { capabilities: { cancel: {} } }),
+    // Its agent says nothing of stopping it: no button.
+    ...tool("s2", "Agent", "in_progress", { description: "Read the docs" }),
+    running("sub-2", "s2"),
+  ];
+  const { user, log, emit, script } = await openWith({ stopSubagent: true }, ...updates);
+  const stop = await within(log).findByRole("button", {
+    name: "Stop the sub-agent Find the flaky test",
+  });
+  expect(
+    within(log).queryByRole("button", { name: /Stop the sub-agent Read the docs/ }),
+  ).toBeNull();
+  stop.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(script.calls.filter(([name]) => name === "stopSubagent")).toEqual([
+      ["stopSubagent", "local", "s1", "sub-1", false],
+    ]),
+  );
+  // Asked once: it says so, and cannot be asked again, until its end comes.
+  await waitFor(() => expect(stop.textContent).toBe("Stopping…"));
+  expect((stop as HTMLButtonElement).disabled).toBe(true);
+  await emit(
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-1",
+      state: { state: "idle", stopReason: "cancelled" },
+      _meta: { "cycle/subagent": { toolCallId: "s1" } },
+    }),
+  );
+  await waitFor(() =>
+    expect(within(log).queryByRole("button", { name: /Stop the sub-agent/ })).toBeNull(),
+  );
+  const card = log.querySelector('[data-item-id="s1"]') as HTMLElement;
+  expect(card.textContent).toContain("stopped");
+  cleanup();
+
+  // A daemon that cannot stop one alone: no button, whatever the agent says.
+  const older = await openWith({}, ...updates);
+  await within(older.log).findByText("Find the flaky test");
+  expect(within(older.log).queryByRole("button", { name: /Stop the sub-agent/ })).toBeNull();
 });
 
 test("a sub-agent's last words, which are its answer, are shown once: as the answer", async () => {

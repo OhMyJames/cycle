@@ -171,6 +171,7 @@ test("connects, creates a session, and lists it", async () => {
     fs: true,
     diff: true,
     terminal: true,
+    stopSubagent: true,
   });
   expect((await m.agents("local")).map((a) => a.id)).toEqual(["fake"]);
 });
@@ -417,6 +418,7 @@ test("a connection that drops is picked up again, and a request still open is no
     fs: true,
     diff: true,
     terminal: true,
+    stopSubagent: true,
   });
   await until(
     () => of(events, "environment-status").at(-1)?.state === "connected",
@@ -1444,4 +1446,34 @@ test("marking unknown background tasks as ended reports only the count and prese
   expect(first(await m.sessions("local")).unknownBackground).toBeUndefined();
   expect(first(await m.sessions("local")).background).toBe(1);
   expect(reported).toEqual([{ count: 1 }]);
+});
+
+test("stopping one sub-agent is counted when the daemon takes it, with whether it ran in the background and nothing of it", async () => {
+  const { manager, fake } = await setup(
+    fakeAgent({
+      onPrompt: async ({ say }) => {
+        await say({
+          sessionUpdate: "subagent_update",
+          sessionId: "task-private",
+          state: { state: "running" },
+          capabilities: { cancel: {} },
+          _meta: { "cycle/subagent": { toolCallId: "call-private", background: true } },
+        });
+      },
+    }),
+  );
+  const tracked: [string, unknown][] = [];
+  const { m } = await manager("app", undefined, undefined, (name, props) => {
+    if (name === "subagent_stopped") tracked.push([name, props]);
+  });
+  await m.connect("local");
+  const id = await m.createSession("local", { cwd: "/tmp" });
+  await said(m, id);
+  await m.stopSubagent("local", id, "task-private", true);
+  // One that is not there: nothing is stopped, and nothing counted.
+  await m.stopSubagent("local", id, "task-gone", false);
+  expect(tracked).toEqual([["subagent_stopped", { background: true }]]);
+  expect(JSON.stringify(tracked)).not.toContain("private");
+  await until(() => fake.log.childCancels.length > 0, "the agent to be told");
+  expect(fake.log.childCancels).toEqual(["task-private"]);
 });

@@ -1,9 +1,9 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { type Conversation, isLive, streamsOf, type ToolItem, textOf } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { Markdown } from "./markdown.tsx";
-import { useAppStore } from "./store-context.tsx";
+import { useAppState, useAppStore } from "./store-context.tsx";
 import {
   Copyable,
   clip,
@@ -78,6 +78,22 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
   const answer = answerOf(tool, streams.out);
   const said = subagentFailed ? t("subagent.failed") : statusWord(t, status);
   const store = useAppStore();
+  // It can be stopped alone (CYCL-143): its agent said so, it is at work (in the turn or in the background), and the
+  // environment's daemon can pass a stop on. Asked once: the card says it is stopping until its end comes.
+  const sub = tool.subagent;
+  const environmentCan = useAppState((s) =>
+    s.selectedEnvironment !== undefined
+      ? s.status[s.selectedEnvironment]?.capabilities?.stopSubagent === true
+      : false,
+  );
+  const [stopping, setStopping] = useState(false);
+  const canStop =
+    environmentCan && sub?.stoppable === true && sub.state === "running" && sub.id !== undefined;
+  const stop = () => {
+    if (sub?.id === undefined || stopping) return;
+    setStopping(true);
+    void store.stopSubagent(sub.id, sub.background).catch(() => setStopping(false));
+  };
   // Opened by the person (not by a failure, nor by a jump to it): whether they look at what it did.
   const opened = (next: boolean) => {
     if (next && !open)
@@ -144,6 +160,20 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
           </div>
           <button type="button" data-slot="subagent-more" onClick={() => opened(true)}>
             {t("subagent.showAnswer")}
+          </button>
+        </div>
+      ) : null}
+      {/* Stops this sub-agent only; the turn and the rest go on. Out of the trigger, so it is a button of its own. */}
+      {canStop ? (
+        <div data-slot="subagent-actions">
+          <button
+            type="button"
+            data-slot="subagent-more"
+            aria-label={t("subagent.stopNamed", { name: title })}
+            disabled={stopping}
+            onClick={stop}
+          >
+            {stopping ? t("subagent.stopping") : t("subagent.stop")}
           </button>
         </div>
       ) : null}

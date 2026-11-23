@@ -60,6 +60,7 @@ export const fakeBridge = (
       fs?: boolean;
       diff?: boolean;
       terminal?: boolean;
+      stopSubagent?: boolean;
     };
     /** The terminals the daemon has, by session. Changed by what the page asks; a test may change it and emit. */
     terminals?: Map<string, TerminalInfo[]>;
@@ -233,6 +234,7 @@ export const fakeBridge = (
     setSessionConfig: record("setSessionConfig", async () => {}),
     renameSession: record("renameSession", async () => {}),
     dismissBackground: record("dismissBackground", async () => {}),
+    stopSubagent: record("stopSubagent", async () => {}),
     archiveSession: record("archiveSession", async () => {}),
     markRead: record("markRead", async () => {}),
     deleteSession: record("deleteSession", async () => {}),

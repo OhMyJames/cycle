@@ -1510,6 +1510,13 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       return { messageId };
     })
     .onNotification(methods.agent.session.cancel, async ({ params, client }) => {
+      // A sub-agent's session (ACP v2 child, CYCL-143): only that sub-agent stops; the turn and the session go on. Its
+      // end is told as any other, by the SDK's `task_notification` (stopped → cancelled).
+      for (const parent of sessions.values()) {
+        if (!parent.subagents.running(params.sessionId)) continue;
+        await parent.live?.query.stopTask(params.sessionId).catch(() => undefined);
+        return;
+      }
       const session = sessions.get(params.sessionId);
       const turn = session?.turn;
       if (session === undefined || turn === undefined || turn.done) return;
