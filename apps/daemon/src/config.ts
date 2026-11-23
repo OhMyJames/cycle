@@ -16,6 +16,14 @@ export const TERMINAL_DEFAULTS = {
  * override a user's login and bill an API.
  */
 export const ConfigSchema = z.object({
+  codex: z
+    .object({
+      configDir: z.string().startsWith("/").optional(),
+      executable: z.string().startsWith("/").optional(),
+      allowEnv: z.array(z.string()).default(["PATH", "LANG", "LC_ALL", "TERM"]),
+      env: z.record(z.string(), z.string()).default({}),
+    })
+    .prefault({}),
   claude: z
     .object({
       /**

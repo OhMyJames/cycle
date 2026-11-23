@@ -534,3 +534,132 @@ export type AgentMessageDeltaNotification = {
   itemId: string;
   delta: string;
 };
+
+export type CommandExecutionApprovalKind = "command" | "humanCommand" | "writeStdin";
+
+export type ExecPolicyAmendment = Array<string>;
+
+export type NetworkApprovalProtocol = "http" | "https" | "socks5Tcp" | "socks5Udp";
+
+export type NetworkApprovalContext = { host: string; protocol: NetworkApprovalProtocol };
+
+export type NetworkPolicyRuleAction = "allow" | "deny";
+
+export type NetworkPolicyAmendment = { host: string; action: NetworkPolicyRuleAction };
+
+export type CommandExecutionRequestApprovalParams = {
+  /**
+   * Kind of action under review. Defaults to `command` for older servers.
+   */
+  kind: CommandExecutionApprovalKind;
+  threadId: string;
+  turnId: string;
+  itemId: string /**
+   * Unix timestamp (in milliseconds) when this approval request started.
+   */;
+  startedAtMs: number /**
+   * Unique identifier for this specific approval callback.
+   *
+   * For regular shell/unified_exec approvals, this is null.
+   *
+   * For zsh-exec-bridge subcommand approvals, multiple callbacks can belong to
+   * one parent `itemId`, so `approvalId` is a distinct opaque callback id
+   * (a UUID) used to disambiguate routing.
+   * Stdin approvals also use a distinct callback id; inspect `kind` to distinguish them.
+   */;
+  approvalId?: string | null /**
+   * Environment in which the command will run.
+   */;
+  environmentId: string | null /**
+   * Optional explanatory reason (e.g. request for network access).
+   */;
+  reason?: string | null /**
+   * Optional context for a managed-network approval prompt.
+   */;
+  networkApprovalContext?: NetworkApprovalContext | null /**
+   * The command to be executed.
+   */;
+  command?: string | null /**
+   * The command's working directory.
+   */;
+  cwd?: LegacyAppPathString | null /**
+   * Best-effort parsed command actions for friendly display.
+   */;
+  commandActions?: Array<CommandAction> | null /**
+   * Optional proposed execpolicy amendment to allow similar commands without prompting.
+   */;
+  proposedExecpolicyAmendment?: ExecPolicyAmendment | null /**
+   * Optional proposed network policy amendments (allow/deny host) for future requests.
+   */;
+  proposedNetworkPolicyAmendments?: Array<NetworkPolicyAmendment> | null;
+};
+
+export type FileChangeRequestApprovalParams = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  /**
+   * Unix timestamp (in milliseconds) when this approval request started.
+   */
+  startedAtMs: number;
+  /**
+   * Optional explanatory reason (e.g. request for extra write access).
+   */
+  reason?: string | null;
+  /**
+   * [UNSTABLE] When set, the agent is asking the user to allow writes under this root
+   * for the remainder of the session (unclear if this is honored today).
+   */
+  grantRoot?: string | null;
+};
+
+export type FileSystemAccessMode = "read" | "write" | "deny";
+
+export type FileSystemSpecialPath =
+  | { kind: "root" }
+  | { kind: "minimal" }
+  | { kind: "project_roots"; subpath: LegacyAppPathString | null }
+  | { kind: "tmpdir" }
+  | { kind: "slash_tmp" }
+  | { kind: "unknown"; path: string; subpath: LegacyAppPathString | null };
+
+export type FileSystemPath =
+  | { type: "path"; path: LegacyAppPathString }
+  | { type: "glob_pattern"; pattern: string }
+  | { type: "special"; value: FileSystemSpecialPath };
+
+export type FileSystemSandboxEntry = { path: FileSystemPath; access: FileSystemAccessMode };
+
+export type AdditionalFileSystemPermissions = {
+  /**
+   * This will be removed in favor of `entries`.
+   */
+  read: Array<LegacyAppPathString> | null;
+  /**
+   * This will be removed in favor of `entries`.
+   */
+  write: Array<LegacyAppPathString> | null;
+  globScanMaxDepth?: number;
+  entries?: Array<FileSystemSandboxEntry>;
+};
+
+export type AdditionalNetworkPermissions = { enabled: boolean | null };
+
+export type RequestPermissionProfile = {
+  network: AdditionalNetworkPermissions | null;
+  fileSystem: AdditionalFileSystemPermissions | null;
+};
+
+export type PermissionsRequestApprovalParams = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  environmentId: string | null;
+  /**
+   * Unix timestamp (in milliseconds) when this approval request started.
+   */
+  startedAtMs: number;
+  cwd: LegacyAppPathString;
+  reason: string | null;
+  permissions: RequestPermissionProfile;
+};
