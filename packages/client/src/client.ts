@@ -48,7 +48,22 @@ import {
   sessionMarkRead,
   sessionSetTitle,
   sessionUnarchive,
+  TERMINAL_NOTIFICATIONS,
+  type TerminalAttached,
+  TerminalChangedSchema,
+  type TerminalInfo,
+  type TerminalOutput,
+  TerminalOutputSchema,
+  type TerminalReset,
+  TerminalResetSchema,
   type Trust,
+  terminalAttach,
+  terminalClose,
+  terminalCreate,
+  terminalDetach,
+  terminalInput,
+  terminalList,
+  terminalResize,
   trustRead,
   trustSet,
   tsOf,
@@ -139,6 +154,15 @@ export type ClientEvents = {
   defaultsChanged?: (agent: string) => void;
   /** An agent told how much of its account's plan limits is used (docs/protocol.md §8 "套餐用量"). */
   planUsage?: (agent: string, usage: PlanUsage) => void;
+  /**
+   * Output of a terminal this client is attached to (docs/protocol.md §8 "终端"). Not ordered against the answer of an
+   * `attach` or `create`: whoever shows it drops a piece whose `seq` the answer's screen already holds.
+   */
+  terminalOutput?: (output: TerminalOutput) => void;
+  /** Draw the terminal again from `screen`, then take the output after `seq`: this client fell behind. */
+  terminalReset?: (reset: TerminalReset) => void;
+  /** A session's terminals, whole, after one was opened, closed, renamed, resized or ended. */
+  terminalsChanged?: (sessionId: string, terminals: TerminalInfo[]) => void;
   /**
    * A session this client was watching no longer exists on the daemon (another client deleted it
    * while this one was away). It is not watched any more; the others carry on.
@@ -518,6 +542,52 @@ export class CycleClient {
     return (await this.#call(connectorsAuthClear, { id })).connector;
   }
 
+  // ---- terminals (docs/protocol.md §8 "终端") ----
+
+  #canOpenTerminals(): void {
+    if (this.#capabilities.terminal !== true)
+      throw new Error("This daemon is too old to open terminals");
+  }
+
+  /** Opens a shell in the session's folder; this client is attached to it. */
+  async createTerminal(sessionId: string, cols: number, rows: number): Promise<TerminalAttached> {
+    this.#canOpenTerminals();
+    return this.#call(terminalCreate, { sessionId, cols, rows });
+  }
+
+  /** A session's terminals, oldest first. A daemon without terminals has none. */
+  async listTerminals(sessionId: string): Promise<TerminalInfo[]> {
+    if (this.#capabilities.terminal !== true) return [];
+    return (await this.#call(terminalList, { sessionId })).terminals;
+  }
+
+  /**
+   * The terminal's screen now; its output from then on comes as `terminalOutput`. A lost connection lets go of every
+   * terminal: unlike a session, a terminal is not attached again by the client, but by whoever shows it.
+   */
+  async attachTerminal(terminalId: string): Promise<TerminalAttached> {
+    this.#canOpenTerminals();
+    return this.#call(terminalAttach, { terminalId });
+  }
+
+  async detachTerminal(terminalId: string): Promise<void> {
+    await this.#call(terminalDetach, { terminalId });
+  }
+
+  /** Keys and pastes, as they are. */
+  async terminalInput(terminalId: string, data: string): Promise<void> {
+    await this.#call(terminalInput, { terminalId, data });
+  }
+
+  async resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void> {
+    await this.#call(terminalResize, { terminalId, cols, rows });
+  }
+
+  /** Ends the shell and what runs in it. The daemon answers at once; the processes end after. */
+  async closeTerminal(terminalId: string): Promise<void> {
+    await this.#call(terminalClose, { terminalId });
+  }
+
   async cancel(sessionId: string): Promise<void> {
     await this.#api().notify(methods.agent.session.cancel, { sessionId } as never);
   }
@@ -666,6 +736,31 @@ export class CycleClient {
         ({ params }) => {
           const told = PlanUsageChangedSchema.safeParse(params);
           if (told.success) this.#events.planUsage?.(told.data.agent, told.data.usage);
+        },
+      )
+      .onNotification(
+        TERMINAL_NOTIFICATIONS.output,
+        (p: unknown) => p,
+        ({ params }) => {
+          const told = TerminalOutputSchema.safeParse(params);
+          if (told.success) this.#events.terminalOutput?.(told.data);
+        },
+      )
+      .onNotification(
+        TERMINAL_NOTIFICATIONS.reset,
+        (p: unknown) => p,
+        ({ params }) => {
+          const told = TerminalResetSchema.safeParse(params);
+          if (told.success) this.#events.terminalReset?.(told.data);
+        },
+      )
+      .onNotification(
+        TERMINAL_NOTIFICATIONS.changed,
+        (p: unknown) => p,
+        ({ params }) => {
+          const told = TerminalChangedSchema.safeParse(params);
+          if (told.success)
+            this.#events.terminalsChanged?.(told.data.sessionId, told.data.terminals);
         },
       )
       .onNotification(

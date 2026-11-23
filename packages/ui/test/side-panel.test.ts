@@ -101,3 +101,20 @@ test("what storage holds and is not understood is left out, not thrown on", () =
     CLOSED,
   );
 });
+
+test("a terminal's tab is remembered as the one shown, but not kept among the tabs: the daemon lists terminals", () => {
+  const storage = memoryStorage();
+  const panels = new SidePanelStore(storage);
+  panels.show("local:a", "terminal:t1");
+  expect(panels.get("local:a")).toEqual({ open: true, tabs: ["overview"], active: "terminal:t1" });
+  expect(new SidePanelStore(storage).get("local:a").active).toBe("terminal:t1");
+});
+
+test("a stored tab shown that is neither a kind nor a terminal falls back to the first tab", () => {
+  const storage = memoryStorage({
+    "cycle:side-panel": JSON.stringify([
+      ["local:a", { open: true, tabs: ["diff"], active: "browser" }],
+    ]),
+  });
+  expect(new SidePanelStore(storage).get("local:a").active).toBe("diff");
+});

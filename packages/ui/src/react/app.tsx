@@ -29,8 +29,9 @@ import {
   sessionList,
   workspacesOf,
 } from "../sessions.ts";
-import type { PanelTabKind } from "../side-panel.ts";
+import type { PanelTabId, PanelTabKind } from "../side-panel.ts";
 import { BLANK_KEY, viewKey } from "../store/index.ts";
+import { tabKind, terminalOfTab } from "../terminals.ts";
 import { AnalyticsNotice } from "./analytics.tsx";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer, composerInput } from "./composer.tsx";
@@ -48,6 +49,7 @@ import {
   OverviewIcon,
   PanelIcon,
   SidebarIcon,
+  TerminalIcon,
   WarningIcon,
 } from "./icons.tsx";
 import { useDay, useInFront } from "./in-front.ts";
@@ -57,7 +59,7 @@ import { SessionHeading } from "./rename-field.tsx";
 import { SearchDialog } from "./search.tsx";
 import type { Away } from "./session-list.tsx";
 import { SettingsPage, type SettingsSection } from "./settings.tsx";
-import { SidePanel } from "./side-panel.tsx";
+import { FIRST_SIZE, SidePanel, terminalToShow } from "./side-panel.tsx";
 import { MOD, Sidebar, sessionTitle } from "./sidebar.tsx";
 import { SplitLayout } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -347,7 +349,11 @@ function AppWindow() {
   const toggleSidePanel = (via: "click" | "shortcut" | "handle") => {
     if (panelKey === undefined || sidePanel === undefined) return;
     sidePanels.setOpen(panelKey, !sidePanel.open);
-    store.track("side_panel_toggled", { open: !sidePanel.open, via, tab: sidePanel.active });
+    store.track("side_panel_toggled", {
+      open: !sidePanel.open,
+      via,
+      tab: tabKind(sidePanel.active),
+    });
   };
   // A tab's own button in the header: opens the panel on that tab; on it already, closes the panel.
   const toggleTab = (tab: PanelTabKind) => {
@@ -366,6 +372,49 @@ function AppWindow() {
   const overviewShown = sidePanel?.open === true && sidePanel.active === "overview";
   const filesShown = sidePanel?.open === true && sidePanel.active === "files";
   const diffShown = sidePanel?.open === true && sidePanel.active === "diff";
+  // The session's terminals (CYCL-98), once its daemon can open them: the Terminal button shows one, or opens one.
+  const canOpenTerminals = useAppState((s) =>
+    session !== undefined
+      ? s.status[session.environmentId]?.capabilities?.terminal === true
+      : false,
+  );
+  const terminalsConnected = useAppState((s) =>
+    session !== undefined ? s.status[session.environmentId]?.state === "connected" : false,
+  );
+  const sessionTerminals = useAppState((s) =>
+    panelKey !== undefined ? s.terminals[panelKey] : undefined,
+  );
+  const terminalsOf = panelKey !== undefined ? session : undefined;
+  const terminalsEnvironment = terminalsOf?.environmentId;
+  const terminalsSession = terminalsOf?.sessionId;
+  useEffect(() => {
+    if (terminalsEnvironment === undefined || terminalsSession === undefined) return;
+    if (!canOpenTerminals || !terminalsConnected) return;
+    void store.loadTerminals(terminalsEnvironment, terminalsSession);
+  }, [store, terminalsEnvironment, terminalsSession, canOpenTerminals, terminalsConnected]);
+  const terminalShown =
+    sidePanel?.open === true &&
+    terminalOfTab(sidePanel.active) !== undefined &&
+    (sessionTerminals ?? []).some((x) => x.terminalId === terminalOfTab(sidePanel.active));
+  // The header's Terminal button: on a terminal already, it closes the panel; else it shows the terminal shown last,
+  // or the newest; with none, it opens one.
+  const toggleTerminal = () => {
+    if (panelKey === undefined || sidePanel === undefined || session === undefined) return;
+    if (terminalShown) {
+      sidePanels.setOpen(panelKey, false);
+      store.track("side_panel_toggled", { open: false, via: "tab_button", tab: "terminal" });
+      return;
+    }
+    const tab = terminalToShow(sidePanel, sessionTerminals ?? []);
+    if (tab === undefined) {
+      void store.createTerminal(session.environmentId, session.sessionId, FIRST_SIZE, "header");
+      return;
+    }
+    const wasOpen = sidePanel.open;
+    sidePanels.show(panelKey, tab);
+    if (wasOpen) store.track("side_panel_tab_shown", { tab: "terminal" });
+    else store.track("side_panel_toggled", { open: true, via: "tab_button", tab: "terminal" });
+  };
   // Files needs a daemon that reads a session's folder (docs/protocol.md §8): an older one is not offered it.
   const canShowFiles = useAppState((s) =>
     session !== undefined ? s.status[session.environmentId]?.capabilities?.fs === true : false,
@@ -720,10 +769,12 @@ function AppWindow() {
               ? {
                   content: (
                     <SidePanel
+                      environmentId={session?.environmentId ?? ""}
+                      sessionId={session?.sessionId ?? ""}
                       state={sidePanel}
-                      onShow={(tab) => {
+                      onShow={(tab: PanelTabId) => {
                         sidePanels.show(panelKey, tab);
-                        store.track("side_panel_tab_shown", { tab });
+                        store.track("side_panel_tab_shown", { tab: tabKind(tab) });
                       }}
                     />
                   ),
@@ -888,6 +939,22 @@ function AppWindow() {
                         <DiffIcon />
                       </Button>
                     </Tip>
+                    {canOpenTerminals ? (
+                      <Tip
+                        label={t(terminalShown ? "terminal.hide" : "terminal.show")}
+                        side="bottom"
+                      >
+                        <Button
+                          data-variant="ghost"
+                          data-kind="panel-toggle"
+                          data-active={terminalShown || undefined}
+                          disabled={!terminalsConnected && (sessionTerminals ?? []).length === 0}
+                          onClick={toggleTerminal}
+                        >
+                          <TerminalIcon />
+                        </Button>
+                      </Tip>
+                    ) : null}
                     <Tip
                       label={t(sidePanel?.open === true ? "panel.hide" : "panel.show")}
                       shortcut="mod+\\"

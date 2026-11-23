@@ -27,6 +27,7 @@ import type {
   SendVia,
   SessionSnapshot,
   SessionSummary,
+  TerminalAttached,
   UpdateState,
   WorkspacePatch,
   WorkspaceStatus,
@@ -43,6 +44,7 @@ import {
   type Returned,
 } from "../model/index.ts";
 import { SidePanelStore } from "../side-panel.ts";
+import { mergeTerminals, type TerminalTab, terminalCount, terminalTab } from "../terminals.ts";
 
 export const viewKey = (environmentId: string, sessionId: string): string =>
   `${environmentId}:${sessionId}`;
@@ -138,6 +140,11 @@ export type AppState = {
   analytics: AnalyticsStatus | undefined;
   /** How the app looks and reads, as the person chose (main keeps it). Undefined until main has said. */
   preferences: PreferencesState | undefined;
+  /**
+   * Each session's terminals (by `viewKey`), as its daemon last listed them, and those that ended while the connection
+   * was away. Only for a session whose terminals were asked for: a panel that showed none asks nothing.
+   */
+  terminals: Record<string, TerminalTab[]>;
   /** Counts the times a notification was pressed: its session is shown, over whatever page is open. */
   focusRequests: number;
   /** Counts the times something asked for the input box to take the focus (a message put back to send again). */
@@ -170,6 +177,7 @@ const initial = (): AppState => ({
   selectedSession: undefined,
   blank: undefined,
   views: {},
+  terminals: {},
   error: undefined,
   update: undefined,
   analytics: undefined,
@@ -252,6 +260,8 @@ export class AppStore {
    * is counted when it is sent. Forgotten when the box is emptied without sending it.
    */
   readonly #resending = new Map<string, { turn: number; sent: string }>();
+  /** Who draws each terminal (`environmentId:terminalId`): its output and resets go there, and nowhere else. */
+  readonly #terminalScreens = new Map<string, TerminalScreen>();
 
   constructor(
     bridge: CycleBridge,
@@ -343,6 +353,12 @@ export class AppStore {
         this.#set((s) => ({ status: { ...s.status, [event.environmentId]: toStatus(event) } }));
         if (event.state === "connected" && was !== "connected") {
           void this.#loadAgents(event.environmentId);
+          // Terminals may have ended while the connection was away (the daemon stopped): their tabs say so.
+          for (const key of Object.keys(this.#state.terminals)) {
+            const [environmentId, sessionId] = splitKey(key);
+            if (environmentId === event.environmentId && sessionId !== undefined)
+              void this.#listTerminals(environmentId, sessionId, "kept");
+          }
           // Whether its folder is trusted could not be asked before the daemon said it keeps trust.
           if (this.#state.blank?.environmentId === event.environmentId) void this.#readBlankTrust();
         }
@@ -389,6 +405,26 @@ export class AppStore {
         return;
       case "session-gone":
         this.#forgetSession(event.environmentId, event.sessionId);
+        return;
+      case "terminals": {
+        const key = viewKey(event.environmentId, event.sessionId);
+        this.#set((s) => ({
+          terminals: {
+            ...s.terminals,
+            [key]: mergeTerminals(s.terminals[key], event.terminals, "dropped"),
+          },
+        }));
+        return;
+      }
+      case "terminal-output":
+        this.#terminalScreens
+          .get(`${event.environmentId}:${event.terminalId}`)
+          ?.output(event.seq, event.data);
+        return;
+      case "terminal-reset":
+        this.#terminalScreens
+          .get(`${event.environmentId}:${event.terminalId}`)
+          ?.screen(event.seq, event.screen, event.cols, event.rows);
         return;
       case "update": {
         const applied = this.#onSessionEvent(viewKey(event.environmentId, event.sessionId), event);
@@ -941,6 +977,136 @@ export class AppStore {
     path: string,
   ): Promise<WorkspacePatch> => this.#bridge.workspaceFile(environmentId, sessionId, path);
 
+  // ---- terminals (CYCL-98) ----
+
+  /** Asks a session's daemon for its terminals, once the panel needs them; again when the connection comes back. */
+  loadTerminals = (environmentId: string, sessionId: string): Promise<void> =>
+    this.#listTerminals(environmentId, sessionId, "dropped");
+
+  async #listTerminals(
+    environmentId: string,
+    sessionId: string,
+    gone: "kept" | "dropped",
+  ): Promise<void> {
+    if (this.#state.status[environmentId]?.capabilities?.terminal !== true) return;
+    const key = viewKey(environmentId, sessionId);
+    try {
+      const told = await this.#bridge.listTerminals(environmentId, sessionId);
+      this.#set((s) => ({
+        terminals: { ...s.terminals, [key]: mergeTerminals(s.terminals[key], told, gone) },
+      }));
+    } catch {
+      // Not connected, or gone meanwhile: the list stays as it was, and a connection that comes back asks again.
+    }
+  }
+
+  /**
+   * Opens a shell in a session's folder and shows its tab. Why it could not (a limit reached, an archived session) is
+   * shown as any other failure, in the page's words.
+   */
+  createTerminal = async (
+    environmentId: string,
+    sessionId: string,
+    size: { cols: number; rows: number },
+    via: "header" | "tab_strip",
+  ): Promise<TerminalAttached | undefined> => {
+    let made: Awaited<ReturnType<CycleBridge["createTerminal"]>>;
+    try {
+      made = await this.#bridge.createTerminal(environmentId, sessionId, size.cols, size.rows);
+    } catch (error) {
+      made = { problem: "failed", message: messageOf(error) };
+    }
+    if ("problem" in made) {
+      const { problem, message } = made;
+      this.#set({
+        error:
+          problem === "failed" && message !== undefined
+            ? message
+            : { key: `terminal.problem.${problem === "failed" ? "other" : problem}` },
+      });
+      this.track("terminal_open_failed", {
+        reason:
+          problem === "limit" || problem === "archived" || problem === "cwd_missing"
+            ? problem
+            : "other",
+      });
+      return undefined;
+    }
+    const key = viewKey(environmentId, sessionId);
+    this.#set((s) => {
+      const known = s.terminals[key] ?? [];
+      const has = known.some((t) => t.terminalId === made.terminal.terminalId);
+      return { terminals: { ...s.terminals, [key]: has ? known : [...known, made.terminal] } };
+    });
+    this.sidePanels.show(key, terminalTab(made.terminal.terminalId));
+    this.track("terminal_opened", {
+      via,
+      count: terminalCount(this.#state.terminals[key]?.filter((t) => t.ended !== true).length ?? 0),
+    });
+    return made;
+  };
+
+  /**
+   * Closes a terminal: its shell and what runs in it end. One that already ended only loses its tab. Failing to tell the
+   * daemon is shown; the tab goes either way when the daemon no longer has it.
+   */
+  closeTerminal = async (
+    environmentId: string,
+    sessionId: string,
+    terminalId: string,
+  ): Promise<void> => {
+    const key = viewKey(environmentId, sessionId);
+    const was = this.#state.terminals[key]?.find((t) => t.terminalId === terminalId);
+    this.#set((s) => ({
+      terminals: {
+        ...s.terminals,
+        [key]: (s.terminals[key] ?? []).filter((t) => t.terminalId !== terminalId),
+      },
+    }));
+    if (was === undefined) return;
+    this.track("terminal_closed", {
+      state: was.ended === true ? "ended" : was.status,
+      count: terminalCount(this.#state.terminals[key]?.filter((t) => t.ended !== true).length ?? 0),
+    });
+    if (was.ended === true) return;
+    await this.#attempt(() => this.#bridge.closeTerminal(environmentId, terminalId));
+  };
+
+  /**
+   * Draws a terminal: from now on its output and resets go to `screen`, until the function returned is called. Call it
+   * before attaching, so that output that comes before the attach's answer is not lost.
+   */
+  showTerminal = (
+    environmentId: string,
+    terminalId: string,
+    screen: TerminalScreen,
+  ): (() => void) => {
+    const id = `${environmentId}:${terminalId}`;
+    this.#terminalScreens.set(id, screen);
+    return () => {
+      if (this.#terminalScreens.get(id) === screen) this.#terminalScreens.delete(id);
+    };
+  };
+
+  /** The terminal's screen now. Fails as the daemon says (it has gone, the connection is down): the caller shows it. */
+  attachTerminal = (environmentId: string, terminalId: string): Promise<TerminalAttached> =>
+    this.#bridge.attachTerminal(environmentId, terminalId);
+
+  /** Lets go of a terminal no longer drawn. Never fails: one that has gone, or a connection that has, is let go already. */
+  detachTerminal = (environmentId: string, terminalId: string): void => {
+    void this.#bridge.detachTerminal(environmentId, terminalId).catch(() => undefined);
+  };
+
+  terminalInput = (environmentId: string, terminalId: string, data: string): Promise<void> =>
+    this.#bridge.terminalInput(environmentId, terminalId, data);
+
+  resizeTerminal = (
+    environmentId: string,
+    terminalId: string,
+    cols: number,
+    rows: number,
+  ): Promise<void> => this.#bridge.resizeTerminal(environmentId, terminalId, cols, rows);
+
   /** Shows a file (or, `folder`, a folder in the tree) of the open session in its Files tab, opening the panel. */
   showInFiles = (path: string, options: { folder?: boolean } = {}): void => {
     const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.#state;
@@ -1059,8 +1225,10 @@ export class AppStore {
     this.#held.delete(key);
     this.#set((s) => {
       const { [key]: _gone, ...views } = s.views;
+      const { [key]: _closed, ...terminals } = s.terminals;
       return {
         views,
+        terminals,
         selectedSession:
           s.selectedEnvironment === environmentId && s.selectedSession === sessionId
             ? undefined
@@ -1104,8 +1272,12 @@ export class AppStore {
       const views = Object.fromEntries(
         Object.entries(s.views).filter(([, view]) => view.environmentId !== environmentId),
       );
+      const terminals = Object.fromEntries(
+        Object.entries(s.terminals).filter(([key]) => splitKey(key)[0] !== environmentId),
+      );
       const open = s.selectedEnvironment === environmentId;
       return {
+        terminals,
         ...(s.blank?.environmentId === environmentId ? { blank: undefined } : {}),
         sessions,
         agents,
@@ -1266,6 +1438,18 @@ export class AppStore {
     await this.#attempt(() => this.#bridge.installUpdate());
   };
 }
+
+/** Who draws a terminal: its output, and the screen to draw again from when the app fell behind. */
+export type TerminalScreen = {
+  output: (seq: number, data: string) => void;
+  screen: (seq: number, screen: string, cols: number, rows: number) => void;
+};
+
+/** `environmentId:sessionId` back into its two halves. An environment's id has no colon. */
+const splitKey = (key: string): [string, string | undefined] => {
+  const at = key.indexOf(":");
+  return at < 0 ? [key, undefined] : [key.slice(0, at), key.slice(at + 1)];
+};
 
 /** What main threw (it lost its connection, it is too old) as an answer the panel shows like the others. */
 const answered = <T>(

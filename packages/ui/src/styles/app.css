@@ -6,6 +6,7 @@
 @import "tailwindcss";
 @import "@ui-sdk/core/web.css" layer(components);
 @import "streamdown/styles.css";
+@import "@xterm/xterm/css/xterm.css";
 @source "../../node_modules/streamdown/dist/*.js";
 
 /* Streamdown and Rare UI / shadcn-compatible components expect Tailwind semantic tokens
@@ -363,7 +364,7 @@
   [data-slot="command-list"],
   [data-slot="picker"],
   [data-slot="sidebar-scroll"],
-  [data-kind="panel-tabs"] > [data-slot="tabs-list"],
+  [data-slot="panel-tabs-bar"] > [data-slot="tabs-list"],
   [data-slot="composer-extensions"]
 )::-webkit-scrollbar {
   display: none;
@@ -542,6 +543,7 @@ summary:focus-visible {
 :is(
   [data-slot="environment-name"],
   [data-slot="session-title"],
+  [data-slot="panel-tab-label"],
   [data-slot="workspace-name"],
   [data-slot="search-title"],
   [data-slot="update-text"] [data-slot="hint"],
@@ -917,15 +919,131 @@ html[data-platform="darwin"] [data-slot="page-heading"] {
   min-height: 0;
 }
 
-[data-kind="panel-tabs"] > [data-slot="tabs-list"] {
+[data-slot="panel-tabs-bar"] {
   display: flex;
   flex: none;
   align-items: center;
   gap: 0.25rem;
   height: 2.625rem;
   padding: 0 0.5rem;
-  overflow-x: auto;
   border-bottom: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="panel-tabs-bar"] > [data-slot="tabs-list"] {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+}
+
+/* New terminal: after the last tab, the size of the header's buttons. */
+[data-kind="panel-tab-add"] {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+/* A terminal's title is the shell's, and can be anything: it fades out at the end rather than pushing the strip. */
+[data-slot="panel-tab-label"] {
+  display: block;
+  max-width: 10rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"][data-closable] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-right: 0.25rem;
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"][data-quiet] {
+  color: var(--cycle-ink-disabled);
+}
+
+/* The cross on a terminal's tab: there on the tab shown and the one under the pointer, so the strip stays quiet. */
+[data-slot="panel-tab-close"] {
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: var(--cycle-radius-sm);
+  color: var(--cycle-ink-muted);
+  opacity: 0;
+  transition:
+    opacity var(--cycle-motion-state) var(--cycle-ease),
+    background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="tabs-tab"]:is(:hover, [data-selected]) > [data-slot="panel-tab-close"] {
+  opacity: 1;
+}
+
+[data-slot="panel-tab-close"]:hover {
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink);
+}
+
+/* A Terminal tab (CYCL-98): the shell fills the tab, on the panel's own ground, in the code font. A line under it says
+   when the shell has exited or the environment is away. */
+[data-slot="terminal"] {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--cycle-surface-sidebar);
+  color: var(--cycle-ink);
+  caret-color: var(--cycle-ink);
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+  --terminal-selection: color-mix(in srgb, var(--cycle-accent) 28%, transparent);
+}
+
+[data-slot="terminal-screen"] {
+  flex: 1;
+  min-height: 0;
+  padding: 0.5rem 0.25rem 0.25rem 0.75rem;
+}
+
+[data-slot="terminal-screen"][hidden] {
+  display: none;
+}
+
+[data-slot="terminal-screen"] .xterm-viewport {
+  background-color: transparent;
+}
+
+[data-slot="terminal-note"] {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.75rem;
+  color: var(--cycle-ink-muted);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-ui);
+  pointer-events: none;
+}
+
+[data-slot="terminal-bar"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  border-top: 1px solid var(--cycle-border-subtle);
+  color: var(--cycle-ink-secondary);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-ui);
+}
+
+[data-slot="terminal-bar"][data-tone="away"] {
+  color: var(--cycle-attention);
 }
 
 [data-kind="panel-tabs"] [data-slot="tabs-tab"] {

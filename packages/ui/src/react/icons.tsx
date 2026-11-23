@@ -340,3 +340,14 @@ export const DiffIcon = ({ size = 16, ...rest }: IconProps) => (
     </g>
   </Svg>
 );
+
+/** iconmcp's grid: terminal (a window with a prompt) */
+export const TerminalIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
+      <path d="M4.75 6.25 L6.75 8 L4.75 9.75" />
+      <line x1="8.25" y1="10" x2="11.25" y2="10" />
+    </g>
+  </Svg>
+);

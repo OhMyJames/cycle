@@ -170,6 +170,7 @@ test("connects, creates a session, and lists it", async () => {
     sessionMentions: true,
     fs: true,
     diff: true,
+    terminal: true,
   });
   expect((await m.agents("local")).map((a) => a.id)).toEqual(["fake"]);
 });
@@ -415,6 +416,7 @@ test("a connection that drops is picked up again, and a request still open is no
     sessionMentions: true,
     fs: true,
     diff: true,
+    terminal: true,
   });
   await until(
     () => of(events, "environment-status").at(-1)?.state === "connected",
