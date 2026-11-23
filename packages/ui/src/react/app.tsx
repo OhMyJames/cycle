@@ -53,9 +53,9 @@ import {
   PanelIcon,
   SidebarIcon,
   TerminalIcon,
-  WarningIcon,
 } from "./icons.tsx";
 import { useDay, useInFront } from "./in-front.ts";
+import { errorText, SessionNotices } from "./notice-line.tsx";
 import { PermissionCard } from "./permission.tsx";
 import { currentPlan } from "./plan.tsx";
 import { SessionHeading } from "./rename-field.tsx";
@@ -333,8 +333,6 @@ function AppWindow() {
   const connected = environmentState === "connected";
   const environmentError =
     selectedEnvironment !== undefined ? status[selectedEnvironment]?.error : undefined;
-  const environmentIncompatible =
-    selectedEnvironment !== undefined ? status[selectedEnvironment]?.incompatible : undefined;
   const close = () => setPanel("none");
   // Opens a panel, and counts that it was opened (which one, and whether by a key).
   const open = (next: Exclude<Panel, "none">, via: "click" | "shortcut" = "click") => {
@@ -785,12 +783,21 @@ function AppWindow() {
     error !== undefined ? (
       <div data-slot="banner" data-severity="error" role="alert">
         <ErrorCircleIcon />
-        <span>{typeof error === "string" ? error : t(error.key, error.params)}</span>
+        <span>{errorText(error, t)}</span>
         <Button data-variant="ghost" onClick={store.dismissError}>
           {t("banner.dismiss")}
         </Button>
       </div>
     ) : null;
+
+  // Under the title bar of what is shown: what is the matter with it. The pages over it say their errors themselves.
+  const notices = (
+    <SessionNotices
+      environmentId={selectedEnvironment}
+      shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
+      errors={!pageOpen}
+    />
+  );
 
   return (
     <div data-slot="app" ref={appRef}>
@@ -913,29 +920,6 @@ function AppWindow() {
               <UpdateBanner />
               <AccountBanner />
               <AnalyticsNotice />
-              {pageOpen ? null : errorBanner}
-              {environmentState === "reconnecting" && environmentIncompatible === undefined ? (
-                <div data-slot="banner" data-severity="warning" role="status">
-                  <WarningIcon />
-                  <span>{t("environment.reconnectingBanner")}</span>
-                </div>
-              ) : null}
-              {view !== undefined &&
-              environmentState !== undefined &&
-              environmentState !== "connected" &&
-              environmentState !== "reconnecting" ? (
-                <div data-slot="banner" data-severity="warning" role="status">
-                  <WarningIcon />
-                  <span>
-                    {t("session.awayBanner", {
-                      environment:
-                        environments.find((h) => h.id === selectedEnvironment)?.name ??
-                        selectedEnvironment ??
-                        "",
-                    })}
-                  </span>
-                </div>
-              ) : null}
               {(blank !== undefined || session === undefined) &&
               selectedEnvironment !== undefined ? (
                 <DaemonBanner environmentId={selectedEnvironment} />
@@ -943,6 +927,7 @@ function AppWindow() {
               {blank !== undefined ? (
                 <BlankConversationView
                   blank={blank}
+                  notices={notices}
                   environments={connectedEnvironments}
                   recent={blankRecent}
                   connected={connected}
@@ -1069,13 +1054,15 @@ function AppWindow() {
                   </div>
                 </header>
               ) : null}
-              {blank === undefined && session !== undefined ? (
-                <DaemonBanner environmentId={session.environmentId} />
-              ) : null}
               {blank === undefined && session === undefined && sidebarCollapsed ? (
                 <header data-slot="session-header" data-empty-header="">
                   {sidebarToggle}
                 </header>
+              ) : null}
+              {/* Under whichever title bar is drawn; the blank page draws its own, with these under it. */}
+              {blank === undefined ? notices : null}
+              {blank === undefined && session !== undefined ? (
+                <DaemonBanner environmentId={session.environmentId} />
               ) : null}
               {blank !== undefined ? null : view !== undefined ? (
                 <ConversationView

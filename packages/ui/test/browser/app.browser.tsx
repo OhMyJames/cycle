@@ -594,9 +594,11 @@ test("shows what went wrong, and lets it be dismissed", async () => {
 });
 
 test("says so when the connection is lost", async () => {
-  const { emit } = await mount();
+  const { emit, user } = await mount();
+  // Under the open session's title bar; with none open, the empty page says it (notices.browser.tsx).
+  await openFirstSession(user);
   emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
-  const note = await screen.findByText(/Connection lost/);
+  const note = await screen.findByText(/Connection lost\. Reconnecting/);
   expect(note.getAttribute("role") ?? note.parentElement?.getAttribute("role")).toBe("status");
 });
 

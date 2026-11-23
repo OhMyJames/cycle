@@ -312,6 +312,8 @@ export const EVENTS = {
   blank_folder_chosen: o({ via: z.enum(["recent", "browse", "typed"]) }),
   /** "Connect again" was pressed on a blank page whose environment was not connected. */
   blank_connect_pressed: o({}),
+  /** "Connect again" was pressed on the line under an open session's title, its environment not connected. */
+  session_connect_pressed: o({}),
   /** A blank page's first message went: how long the page was open before it, in four words. */
   blank_sent: o({ waited: z.enum(["under_10s", "under_1m", "under_5m", "longer"]) }),
 } as const;
@@ -362,6 +364,7 @@ export const UI_EVENTS = [
   "turn_retried",
   "blank_folder_chosen",
   "blank_connect_pressed",
+  "session_connect_pressed",
   "blank_sent",
 ] as const satisfies readonly EventName[];
 export type UiEventName = (typeof UI_EVENTS)[number];

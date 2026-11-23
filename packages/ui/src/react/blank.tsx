@@ -69,6 +69,7 @@ export function BlankConversationView({
   connected,
   follow,
   sidebarToggle,
+  notices,
   onSent,
 }: {
   blank: BlankConversation;
@@ -80,6 +81,8 @@ export function BlankConversationView({
   connected: boolean;
   follow: number;
   sidebarToggle?: ReactNode;
+  /** What is the matter with this page, under its title bar. */
+  notices?: ReactNode;
   onSent: () => void;
 }) {
   const { t, list } = useI18n();
@@ -414,6 +417,7 @@ export function BlankConversationView({
           <h1>{t("blank.title")}</h1>
         </div>
       </header>
+      {notices}
       {/* One tree before and after the first message is sent, so the box and the choices keep their focus and state when a
           start fails and they come back: only the stage's layout changes (data-starting). */}
       <div data-slot="blank-stage" data-starting={shown !== undefined || undefined}>
