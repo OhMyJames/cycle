@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
 import { pins } from "../../src/pins.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
@@ -44,9 +44,17 @@ test("under the pointer a row offers pin and its menu in place of its time", asy
   const time = option("Second").querySelector('[data-slot="session-time"]') as HTMLElement;
   expect(time.textContent).toBe("5m");
   expect(getComputedStyle(actionsOf("Second")).opacity).toBe("0");
+  // Found by its name with the time, as before the pointer came.
+  const named = page.getByRole("option", { name: /Second.*5m/ });
+  expect(named.elements()).toEqual([option("Second")]);
   await user.hover(option("Second"));
   await waitFor(() => expect(getComputedStyle(actionsOf("Second")).opacity).toBe("1"));
-  expect(getComputedStyle(time).display).toBe("none");
+  // Out of sight, but still part of the row's name: the name does not change under the pointer, so a screen reader
+  // reads the same row and a locator taken before the hover still finds it (it did not: CYCL-209's flaky click).
+  expect(time.getBoundingClientRect().width).toBeLessThanOrEqual(1);
+  expect(named.elements()).toEqual([option("Second")]);
+  await user.click(named);
+  await waitFor(() => expect(option("Second").getAttribute("aria-selected")).toBe("true"));
   // Neither takes a Tab stop: the arrow keys walk the rows.
   for (const button of actionsOf("Second").querySelectorAll("button"))
     expect(button.tabIndex).toBe(-1);

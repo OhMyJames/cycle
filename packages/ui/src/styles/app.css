@@ -1760,7 +1760,12 @@ svg[data-slot="dot"] {
 }
 
 /* Text for a screen reader only. */
-[data-slot="visually-hidden"] {
+/* Also a session row's time, while pin and its menu take its place: out of sight but still part of the row's name, so
+   the name stays the same under the pointer (for a screen reader, and for a test's locator). */
+[data-slot="visually-hidden"],
+[data-slot="sidebar"]
+  [role="option"]:is(:hover, :has([aria-expanded="true"]))
+  [data-slot="session-time"] {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -2080,12 +2085,6 @@ svg[data-slot="dot"] {
   [data-slot="session-actions"] {
   opacity: 1;
   pointer-events: auto;
-}
-
-[data-slot="sidebar"]
-  [role="option"]:is(:hover, :has([aria-expanded="true"]))
-  [data-slot="session-time"] {
-  display: none;
 }
 
 [data-kind="row-action"] {
