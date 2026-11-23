@@ -1958,6 +1958,18 @@ export const scenarios: Record<string, Scenario> = {
       user: { name: "Ada Lovelace", email: "ada@example.com" },
     },
   },
+  "notices-collapsed": {
+    title: "With the sidebar folded away, what concerns the whole app is at the top of the page",
+    sessions: [session("s1", { title: "Fix the remote session" })],
+    history: conversation,
+    update: { current: "0.1.0", kind: "available", version: "0.1.1" },
+    after: async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "b", metaKey: true, ctrlKey: true }),
+      );
+      await new Promise((r) => setTimeout(r, 300));
+    },
+  },
   "update-available": {
     title: "An update is available",
     sessions: [session("s1")],

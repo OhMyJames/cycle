@@ -138,9 +138,11 @@ export function SessionNotices({
         tone="warning"
         icon={<WarningIcon />}
         text={
-          reason !== undefined
-            ? t("session.awayBecause", { environment: name, reason })
-            : t("session.awayBanner", { environment: name })
+          incompatible
+            ? t("session.awayIncompatible", { environment: name })
+            : reason !== undefined
+              ? t("session.awayBecause", { environment: name, reason })
+              : t("session.awayBanner", { environment: name })
         }
         action={
           incompatible

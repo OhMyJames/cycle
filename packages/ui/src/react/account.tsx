@@ -1,13 +1,14 @@
 // The person's Cycle account in the page (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md): the sign-in page that is all there is until
-// they sign in, the notes over the sessions when the login cannot be renewed, and the account's group in Settings. The
+// they sign in, the notice in the sidebar when the login cannot be renewed, and the account's group in Settings. The
 // page is told how the login stands and who it is; never a token.
 import { Button } from "@ui-sdk/react/button";
 import { useState } from "react";
 import type { AccountStatus } from "../api.ts";
 import type { MessageKey } from "../messages/en-US.ts";
+import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
-import { ErrorCircleIcon, WarningIcon } from "./icons.tsx";
+import { CheckIcon, ErrorCircleIcon, RefreshIcon, WarningIcon } from "./icons.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -61,10 +62,10 @@ export function SignInPage({ account }: { account: AccountStatus }) {
 }
 
 /**
- * Over the sessions, while the app is open: the provider cannot be reached (offline, within the grace), it refused the
- * login (sign in again, nothing stops), or someone else has just signed in.
+ * In the sidebar's notices, while the app is open: the provider cannot be reached (offline, within the grace), it
+ * refused the login (sign in again, nothing stops), or someone else has just signed in.
  */
-export function AccountBanner() {
+export function AccountNotice() {
   const store = useAppStore();
   const { t } = useI18n();
   const account = useAppState((s) => s.account);
@@ -72,41 +73,40 @@ export function AccountBanner() {
   if (account === undefined || !account.open) return null;
   if (account.state === "reauth")
     return (
-      <div data-slot="banner" data-severity="warning" role="status" data-kind="account">
-        <WarningIcon />
-        <span>
-          {account.signingIn
+      <AppNotice
+        tone="warning"
+        busy={account.signingIn}
+        icon={account.signingIn ? <RefreshIcon /> : <WarningIcon />}
+        text={
+          account.signingIn
             ? t("account.waiting")
             : account.problem !== undefined
               ? t(noteOf(account) ?? "account.failed")
-              : t("account.reauthBanner")}
-        </span>
-        {account.signingIn ? (
-          <Button data-variant="ghost" onClick={() => void store.cancelSignIn()}>
-            {t("account.stopWaiting")}
-          </Button>
-        ) : (
-          <Button data-variant="outline" onClick={() => void store.signIn()}>
-            {t("account.signInAgain")}
-          </Button>
-        )}
-      </div>
+              : t("account.reauthBanner")
+        }
+        actions={
+          account.signingIn ? (
+            <Button data-variant="ghost" onClick={() => void store.cancelSignIn()}>
+              {t("account.stopWaiting")}
+            </Button>
+          ) : (
+            <Button data-variant="outline" onClick={() => void store.signIn()}>
+              {t("account.signInAgain")}
+            </Button>
+          )
+        }
+      />
     );
   if (account.state === "offline")
-    return (
-      <div data-slot="banner" data-severity="warning" role="status" data-kind="account">
-        <WarningIcon />
-        <span>{t("account.offlineBanner")}</span>
-      </div>
-    );
+    return <AppNotice tone="warning" icon={<WarningIcon />} text={t("account.offlineBanner")} />;
   if (account.switched === true && !seen && account.user !== undefined)
     return (
-      <div data-slot="banner" data-severity="info" role="status" data-kind="account">
-        <span>{t("account.switched", { name: account.user.name || account.user.email })}</span>
-        <Button data-variant="ghost" onClick={store.dismissSwitchNotice}>
-          {t("banner.dismiss")}
-        </Button>
-      </div>
+      <AppNotice
+        tone="info"
+        icon={<CheckIcon />}
+        text={t("account.switched", { name: account.user.name || account.user.email })}
+        onDismiss={store.dismissSwitchNotice}
+      />
     );
   return null;
 }

@@ -2424,9 +2424,161 @@ html[data-platform="darwin"]
   color: var(--cycle-ink);
 }
 
-/* The daemon's banner sits under the title and is one line; the command, when it is shown, wraps below. */
-[data-slot="banner"]:is([data-kind="daemon"], [data-kind="incompatible"]) {
+/* What concerns the whole app (app-notice.tsx): cards at the sidebar's foot, over its footer, a card's material with
+   the icon in its tone; the words wrap to four lines at most, whole in the title, then what can be done, at the end. */
+/* In a short window the cards give way and scroll before the list goes under its minimum or the footer is pushed off. */
+[data-slot="app-notices"] {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+[data-slot="app-notices"] > [data-slot="app-notice"] {
+  flex: none;
+}
+
+/* The list gives some of its floor to a notice: a few rows still show. */
+nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
+  min-height: 6rem;
+}
+
+[data-slot="app-notices"]:empty {
+  display: none;
+}
+
+[data-slot="app-notice"] {
+  --notice-tone: var(--cycle-accent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+  animation: cycle-banner-in var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+[data-slot="app-notice"][data-tone="warning"] {
+  --notice-tone: var(--cycle-attention);
+}
+
+[data-slot="app-notice"][data-tone="error"] {
+  --notice-tone: var(--ui-destructive);
+}
+
+[data-slot="app-notice-head"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+/* The icon on the first line's middle. */
+[data-slot="app-notice-head"] > svg {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin-block: calc((var(--cycle-leading-ui) * 1em - 1rem) / 2);
+  color: var(--notice-tone);
+}
+
+[data-slot="app-notice"][data-busy] [data-slot="app-notice-head"] > svg {
+  animation: cycle-spin 1.2s linear infinite;
+}
+
+[data-slot="app-notice-text"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+[data-slot="app-notice"] [data-kind="notice-dismiss"] {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: -0.25rem -0.25rem 0 0;
+  padding: 0;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="app-notice-actions"] {
+  display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+[data-slot="app-notice-actions"] > [data-slot="button"] {
+  height: 1.75rem;
+  padding-inline: 0.75rem;
+  font-size: var(--cycle-text-meta);
+}
+
+/* With the sidebar put away: flat rows under the title bar, like the session's own lines but on the page's ground;
+   the icon where the title starts, the words, what can be done, the close button last, under the title bar's buttons. */
+[data-slot="app-notices"][data-at="top"] {
+  flex: none;
+  overflow: visible;
+  gap: 0;
+  padding: 0;
+}
+
+[data-slot="app-notices"][data-at="top"] > [data-slot="app-notice"] {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem 0.25rem var(--cycle-gap);
+  border: 0;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--cycle-surface-workspace);
+  -webkit-app-region: no-drag;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-head"] {
+  display: contents;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-head"] > svg {
+  margin-block: 0;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-text"] {
+  flex: 1 1 16rem;
+  -webkit-line-clamp: 2;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-kind="notice-dismiss"] {
+  order: 2;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-actions"] {
+  order: 1;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="command"] {
+  order: 3;
+  flex-basis: 100%;
+  margin-left: 1.5rem;
 }
 
 [data-slot="command"] {
@@ -2437,10 +2589,6 @@ html[data-platform="darwin"]
   font-size: var(--cycle-text-meta);
   overflow-wrap: anywhere;
   user-select: all;
-}
-
-[data-slot="banner"]:is([data-kind="daemon"], [data-kind="incompatible"]) > [data-slot="command"] {
-  flex-basis: 100%;
 }
 
 /* The search palette. ui-sdk's Command is a small bordered box: here it fills the dialog, and the title is for screen readers. */

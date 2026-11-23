@@ -150,6 +150,8 @@ export type AppState = {
   account: AccountStatus | undefined;
   /** The person closed the note that someone else is signed in now. */
   switchNoticeSeen: boolean;
+  /** The update version the person put off ("Later"): not offered again in the notices until a newer one. */
+  updateDeferred?: string;
   environments: EnvironmentConfig[];
   status: Record<string, EnvironmentStatus>;
   sessions: Record<string, SessionSummary[]>;
@@ -411,6 +413,7 @@ export class AppStore {
   };
 
   dismissSwitchNotice = (): void => this.#set({ switchNoticeSeen: true });
+  deferUpdate = (version: string): void => this.#set({ updateDeferred: version });
 
   #onAccount(account: AccountStatus): void {
     const was = this.#state.account;
