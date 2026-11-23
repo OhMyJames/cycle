@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { accountMenu } from "./account-menu.ts";
 
 afterEach(() => {
   cleanup();
@@ -21,7 +22,7 @@ const mount = async () => {
   );
   await act(() => store.start());
   const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
-  await screen.findByText("Cycle 0.1.0");
+  await accountMenu();
   return { store, user, ...script, emit };
 };
 
@@ -62,8 +63,11 @@ test("an update put off stays put off when the sidebar is folded, and the footer
   });
   await user.click(within(cards(nav())[0] as HTMLElement).getByRole("button", { name: "Later" }));
   await waitFor(() => expect(cards(nav())).toEqual([]));
-  const footer = nav().querySelector('[data-slot="sidebar-footer"]') as HTMLElement;
-  expect(footer.textContent).toContain("Version 0.2.0 is available");
+  await user.click(await accountMenu());
+  expect((await screen.findByRole("menuitem", { name: /0\.1\.0$/ })).textContent).toContain(
+    "Version 0.2.0 is available",
+  );
+  await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
   await user.click(await screen.findByRole("button", { name: "Show sidebar" }));
   expect(cards(document.body)).toEqual([]);

@@ -5,6 +5,7 @@ import type { AnalyticsStatus } from "../../src/api.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { openSettings } from "./account-menu.ts";
 
 afterEach(() => {
   cleanup();
@@ -32,7 +33,7 @@ test("the first time, it says what is counted and what is not, and either button
   await waitFor(() => expect(screen.queryByText(/never sends what you write/)).toBeNull());
   expect(calls.filter(([name]) => name === "setAnalytics")).toEqual([["setAnalytics", false]]);
   // Settings offers the way back, so it shows what was answered.
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   const toggle = await screen.findByRole("switch", { name: "Usage statistics" });
   expect(toggle.getAttribute("aria-checked")).toBe("false");
 });
@@ -40,7 +41,7 @@ test("the first time, it says what is counted and what is not, and either button
 test("a person who was told is not told again, and can turn it off and on in Settings", async () => {
   const { user, calls } = await mount({ available: true, enabled: true, noticed: true });
   expect(screen.queryByText(/never sends what you write/)).toBeNull();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   const toggle = await screen.findByRole("switch", { name: "Usage statistics" });
   expect(toggle.getAttribute("aria-checked")).toBe("true");
   await user.click(toggle);
@@ -60,7 +61,7 @@ test("a person who was told is not told again, and can turn it off and on in Set
 test("with nowhere to report to, neither the notice nor the switch is shown", async () => {
   await mount({ available: false, enabled: false, noticed: false });
   expect(screen.queryByText(/never sends what you write/)).toBeNull();
-  await userEvent.setup().click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(userEvent.setup());
   await screen.findByRole("tab", { name: "General" });
   expect(screen.queryByRole("switch", { name: /usage statistics/i })).toBeNull();
 });
@@ -94,7 +95,7 @@ test("toggling the sidebar and opening remote environment panels report only fix
   const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
   await user.keyboard(`{${mod}>}b{/${mod}}`);
   await user.click(await screen.findByRole("button", { name: "Show sidebar" }));
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Environments" }));
   await user.click(await screen.findByRole("button", { name: "Actions for secret-prod-host" }));
   await user.click(await screen.findByRole("menuitem", { name: "Edit" }));

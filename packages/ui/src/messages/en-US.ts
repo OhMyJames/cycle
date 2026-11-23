@@ -1026,6 +1026,7 @@ export const enUS = {
   "account.signInAgain": "Sign in again",
   "account.switched": "Signed in as {name}.",
   "account.group": "Account",
+  "account.menu": "{name}, account and settings",
   "account.signOut": "Sign out",
   "account.signOutTitle": "Sign out of Cycle?",
   "account.signOutDescription":

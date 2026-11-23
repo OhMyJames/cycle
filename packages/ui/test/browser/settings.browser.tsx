@@ -5,6 +5,7 @@ import type { EnvironmentConfig } from "../../src/api.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { accountMenu, openSettings } from "./account-menu.ts";
 
 afterEach(() => {
   cleanup();
@@ -35,8 +36,7 @@ const tracked = (calls: [string, ...unknown[]][]) =>
 
 test("Settings is a page over the sessions: its button opens it, Escape goes back to where the keyboard was", async () => {
   const { user, calls } = await mount();
-  const open = await screen.findByRole("button", { name: /^Settings/ });
-  await user.click(open);
+  await openSettings(user);
   const sections = await screen.findByRole("tablist", { name: "Settings sections" });
   expect(
     within(sections)
@@ -53,13 +53,13 @@ test("Settings is a page over the sessions: its button opens it, Escape goes bac
     expect(screen.queryByRole("tablist", { name: "Settings sections" })).toBeNull(),
   );
   expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Settings/ }));
+  expect(document.activeElement).toBe(await accountMenu());
   expect(tracked(calls)).toEqual([["panel_opened", { panel: "settings", via: "click" }]]);
 });
 
 test("the shortcut opens and closes Settings, the arrows walk its sections, and it comes back on the section it was left on", async () => {
   const { user, calls } = await mount();
-  await screen.findByRole("button", { name: /^Settings/ });
+  await accountMenu();
   await user.keyboard(`{${mod}>},{/${mod}}`);
   await screen.findByRole("tablist", { name: "Settings sections" });
   await user.keyboard("{ArrowDown}");
@@ -85,7 +85,7 @@ test("the environments are listed with how each stands, one that is away can be 
       error: "ssh: connect to host box port 22: Connection refused",
     }),
   );
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Environments" }));
   const page = (await screen.findByRole("heading", { name: "Environments", level: 2 }))
     .parentElement as HTMLElement;
@@ -132,7 +132,7 @@ test("an agent's defaults are read, changed and saved for the environment chosen
   );
   await act(() => store.start());
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Session defaults" }));
   // Two environments are connected: which one's defaults is a choice, and it starts on the one that is open.
   const environment = await screen.findByRole("combobox", { name: "Environment" });
@@ -166,7 +166,7 @@ test("an agent's defaults are read, changed and saved for the environment chosen
 
 test("with no environment connected, the defaults say so and lead to the environments", async () => {
   const { user } = await mount({ connected: false });
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Session defaults" }));
   expect(await screen.findByText("No environment is connected.")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Show environments" }));
@@ -177,7 +177,7 @@ test("an update that is ready can be started from Settings, after the same quest
   const { user, named } = await mount({
     update: { current: "0.1.0", kind: "available", version: "0.2.0" },
   });
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   const page = (await screen.findByRole("heading", { name: "General", level: 2 }))
     .parentElement as HTMLElement;
   expect(within(page).getByText("Cycle 0.1.0")).toBeTruthy();
@@ -191,7 +191,7 @@ test("an update that is ready can be started from Settings, after the same quest
 
 test("starting a new session leaves Settings for it", async () => {
   const { user } = await mount();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await screen.findByRole("tablist", { name: "Settings sections" });
   await user.keyboard(`{${mod}>}n{/${mod}}`);
   await waitFor(() =>
@@ -202,7 +202,7 @@ test("starting a new session leaves Settings for it", async () => {
 
 test("the language is a choice kept by main: the whole interface changes at once, and back", async () => {
   const { user, named } = await mount();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   const language = await screen.findByRole("combobox", { name: "Language" });
   // Following the system says which language that comes to.
   expect(language.textContent).toContain("Match system (English)");
@@ -229,7 +229,7 @@ test("a system in simplified Chinese is followed from the first thing drawn", as
 
 test("the theme is one of three, and choosing one asks main to apply and keep it", async () => {
   const { user, named } = await mount();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Appearance" }));
   const theme = await screen.findByRole("radiogroup", { name: "Theme" });
   expect(
@@ -250,7 +250,7 @@ test("the theme is one of three, and choosing one asks main to apply and keep it
 
 test("the shortcuts are listed with their keys, to look up and not to change", async () => {
   const { user } = await mount();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Keyboard shortcuts" }));
   const page = (await screen.findByRole("heading", { name: "Keyboard shortcuts", level: 2 }))
     .parentElement as HTMLElement;
@@ -266,7 +266,7 @@ test("the shortcuts are listed with their keys, to look up and not to change", a
 test("Settings stays while it is used, also when what was open under it goes away", async () => {
   const { user, store, named } = await mount({ environments: [far] });
   await act(() => store.selectSession("far", "s1"));
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Environments" }));
   await user.click(await screen.findByRole("button", { name: "Actions for Build box" }));
   await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
@@ -283,7 +283,7 @@ test("Settings stays while it is used, also when what was open under it goes awa
 test("a notification's session is shown over Settings, also when it is the one already open", async () => {
   const { user, store, emit } = await mount();
   await act(() => store.selectSession("local", "s1"));
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await screen.findByRole("tablist", { name: "Settings sections" });
   await act(async () => emit({ type: "focus-session", environmentId: "local", sessionId: "s1" }));
   await waitFor(() =>
@@ -293,10 +293,10 @@ test("a notification's session is shown over Settings, also when it is the one a
 
 test("leaving Settings for a new session leaves the keyboard with the new session, not on the button that opened Settings", async () => {
   const { user } = await mount();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await screen.findByRole("tablist", { name: "Settings sections" });
   await user.keyboard(`{${mod}>}n{/${mod}}`);
   await screen.findByRole("textbox", { name: "Message" });
   await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(document.activeElement).not.toBe(screen.getByRole("button", { name: /^Settings/ }));
+  expect(document.activeElement).not.toBe(await accountMenu());
 });

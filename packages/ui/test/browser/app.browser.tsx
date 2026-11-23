@@ -9,6 +9,7 @@ import { App, StoreProvider } from "../../src/react/index.ts";
 import { MOD } from "../../src/react/sidebar.tsx";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
+import { accountMenu, openSettings } from "./account-menu.ts";
 import { chosenFolder, typeFolder } from "./blank.ts";
 import { boxText, press, ready, sleep, write } from "./box.ts";
 
@@ -933,7 +934,7 @@ test("the colours of code can be chosen, and the choice is kept", async () => {
   const { user } = await mount();
   try {
     expect(codeTheme.get()).toBe("github");
-    await user.click(await screen.findByRole("button", { name: /^Settings/ }));
+    await openSettings(user);
     await user.click(await screen.findByRole("tab", { name: "Appearance" }));
     await user.click(await screen.findByRole("combobox", { name: "Code colours" }));
     await user.click(await screen.findByRole("option", { name: "Catppuccin" }));
@@ -1084,7 +1085,7 @@ test("without the agent's word that it takes images, there is nothing to attach 
 
 test("an update that is found is offered, asks before it restarts, and the footer can check on demand", async () => {
   const { user, emit, named } = await mount();
-  expect(await screen.findByText("Cycle 0.1.0")).toBeTruthy();
+  await accountMenu();
   await emit({
     type: "app-update",
     state: { current: "0.1.0", kind: "available", version: "0.2.0" },
@@ -1121,7 +1122,7 @@ test("an update that is found is offered, asks before it restarts, and the foote
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Update and restart" })).toBeNull(),
   );
-  await user.click(screen.getByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   expect(
     (await screen.findByRole("button", { name: "Check for updates" })).hasAttribute("disabled"),
   ).toBe(true);
@@ -1135,9 +1136,16 @@ test("an update that is found is offered, asks before it restarts, and the foote
   expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
 
   await emit({ type: "app-update", state: { current: "0.1.0", kind: "up-to-date", checkedAt: 0 } });
-  await user.click(screen.getByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("button", { name: "Check for updates" }));
   expect(named("checkForUpdate")).toHaveLength(1);
+  await user.keyboard("{Escape}");
+  // The account's menu checks too, and says which version this is at the row's end.
+  await user.click(await accountMenu());
+  const check = await screen.findByRole("menuitem", { name: /^Check for updates/ });
+  expect(check.querySelector('[data-slot="app-version"]')?.textContent).toBe("0.1.0");
+  await user.click(check);
+  expect(named("checkForUpdate")).toHaveLength(2);
 });
 
 test("a daemon too old for the app says so in one line with a button, and updating asks first", async () => {
@@ -1285,8 +1293,14 @@ test("a development run says updates are for the installed app and offers no che
     type: "app-update",
     state: { current: "0.0.0", kind: "disabled", reason: "Updates are for the installed app." },
   });
-  expect(screen.getByText("Updates are for the installed app.")).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: /^Settings/ }));
+  // The account's menu says why, where the check would be, and offers none.
+  await user.click(await accountMenu());
+  const check = await screen.findByRole("menuitem", {
+    name: /^Updates are for the installed app\./,
+  });
+  expect(check.getAttribute("aria-disabled") ?? check.getAttribute("data-disabled")).not.toBeNull();
+  await user.keyboard("{Escape}");
+  await openSettings(user);
   await screen.findByRole("tab", { name: "General" });
   // Said again where the check would be, in place of it.
   expect(screen.getAllByText("Updates are for the installed app.").length).toBeGreaterThan(0);

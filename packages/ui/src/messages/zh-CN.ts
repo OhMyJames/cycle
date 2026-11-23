@@ -923,6 +923,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "account.signInAgain": "重新登录",
   "account.switched": "已切换到 {name}。",
   "account.group": "账号",
+  "account.menu": "{name}，账号与设置",
   "account.signOut": "退出登录",
   "account.signOutTitle": "退出 Cycle 登录？",
   "account.signOutDescription":

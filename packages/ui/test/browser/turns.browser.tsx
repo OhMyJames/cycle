@@ -9,6 +9,7 @@ import { App, StoreProvider } from "../../src/react/index.ts";
 import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { openSettings } from "./account-menu.ts";
 
 /** The session these tests open, by its view key: what its display mode is kept under. */
 const SESSION = "local:s1";
@@ -302,7 +303,7 @@ test("detailed mode, set in Session settings, shows the thinking itself as an it
   await waitFor(() => expect(log.textContent).toContain("a1"));
   expect(log.textContent).not.toContain("weighing");
   // With the session's settings, not in Settings → Appearance.
-  await user.click(screen.getByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Appearance" }));
   expect(screen.queryByRole("switch", { name: /thinking/i })).toBeNull();
   await user.keyboard("{Escape}");
