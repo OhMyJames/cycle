@@ -17,11 +17,6 @@ on:
         description: Sign with the Developer ID and notarize (needs the Apple secrets)
         type: boolean
         default: false
-      runner:
-        description: Where the macOS app is built
-        type: choice
-        options: [github, self-hosted]
-        default: github
 
 concurrency:
   group: release-${{ github.ref }}
@@ -65,20 +60,13 @@ jobs:
 
   macos:
     needs: check
-    # Apple silicon. Only arm64 is shipped. GitHub's macOS arm64 runners can queue for a long time, so
-    # the build can go to the owner's own Mac (self-hosted): chosen by hand with the "runner" input, or
-    # for a tag by the repository variable RELEASE_RUNNER=self-hosted. Only this workflow uses it, and it
-    # only runs for tags and manual runs, which need write access to the repository.
-    runs-on: ${{ (inputs.runner == 'self-hosted' || vars.RELEASE_RUNNER == 'self-hosted') && fromJSON('["self-hosted","macOS","ARM64"]') || 'macos-latest' }}
+    # Apple silicon. Only arm64 is shipped.
+    runs-on: macos-latest
     timeout-minutes: 45
     env:
       BUNDLE: apps/desktop/build/Cycle.app/Contents/Resources/app
       # A tag signs only when the repository variable RELEASE_SIGN is 'true'; by hand, when asked.
       SIGN: ${{ (github.event_name == 'push' && vars.RELEASE_SIGN == 'true') || inputs.sign }}
-      # Set on the repository (a variable, not a secret: only a name) when the Mac that builds already holds
-      # the identity and a notarytool profile in its keychain. Then no Apple secret is needed at all.
-      APPLE_NOTARY_PROFILE: ${{ vars.APPLE_NOTARY_PROFILE }}
-      APPLE_SIGN_IDENTITY: ${{ vars.APPLE_SIGN_IDENTITY }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -107,7 +95,7 @@ jobs:
         run: CYCLE_PACKAGED_APP="$PWD/apps/desktop/build/Cycle.app" bun test ./apps/desktop/test/integration/update.integration.ts
 
       - name: Import the signing certificate
-        if: env.SIGN == 'true' && env.APPLE_NOTARY_PROFILE == ''
+        if: env.SIGN == 'true'
         env:
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -127,30 +115,6 @@ jobs:
           security find-identity -v -p codesigning
           echo "CYCLE_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
-      # A service on the owner's Mac may see the login keychain locked even when the owner has it
-      # unlocked in a terminal. If the repository has KEYCHAIN_PASSWORD (the Mac user's login password),
-      # unlock it here; without it this step does nothing.
-      - name: Unlock the login keychain
-        if: env.SIGN == 'true' && env.APPLE_NOTARY_PROFILE != ''
-        env:
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          if [ -n "$KEYCHAIN_PASSWORD" ]; then
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$HOME/Library/Keychains/login.keychain-db"
-            echo "unlocked"
-          else
-            echo "no KEYCHAIN_PASSWORD set; leaving the keychain as it is"
-          fi
-
-      - name: Where the keychain stands (diagnostic)
-        if: env.SIGN == 'true' && env.APPLE_NOTARY_PROFILE != ''
-        run: |
-          echo "user: $(id -un)  session: $(launchctl managername 2>&1)"
-          echo "search list:"; security list-keychains -d user
-          echo "default: $(security default-keychain -d user)"
-          security show-keychain-info "$HOME/Library/Keychains/login.keychain-db" 2>&1 || true
-          security find-identity -v -p codesigning | sed -E 's/^( *[0-9]+\) )[0-9A-F]{40}/\1<hash>/'
-
       - name: Sign
         if: env.SIGN == 'true'
         env:
@@ -159,10 +123,8 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         run: |
-          if [ -z "$APPLE_NOTARY_PROFILE" ]; then
-            printf '%s' "$APPLE_API_KEY" > "$APPLE_API_KEY_PATH"
-            chmod 600 "$APPLE_API_KEY_PATH"
-          fi
+          printf '%s' "$APPLE_API_KEY" > "$APPLE_API_KEY_PATH"
+          chmod 600 "$APPLE_API_KEY_PATH"
           bun run --cwd apps/desktop sign
           rm -f "$APPLE_API_KEY_PATH"
 

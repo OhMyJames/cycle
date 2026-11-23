@@ -31,7 +31,7 @@ if [ ! -f "$here/cycle" ] || [ "$#" -gt 0 ]; then
   else
     tag=$1
     case "$tag" in v[0-9]*) ;; *) echo "Expected a release tag such as v0.3.1" >&2; exit 1 ;; esac
-    url="https://github.com/OhMyJames/Cycle-V1/releases/download/$tag/$package.tar.gz"
+    url="https://github.com/OhMyJames/cycle/releases/download/$tag/$package.tar.gz"
     curl -fsSLO "$url"
     curl -fsSLO "$url.sha256"
   fi

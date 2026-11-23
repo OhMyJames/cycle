@@ -22,26 +22,13 @@ const required = (name: string): string => {
   return value;
 };
 
-// Two ways to hold the credentials, and neither is passed on the command line:
-//  - on the owner's own Mac (self-hosted runner): the Developer ID identity is in the login keychain,
-//    and the notarization credentials are a notarytool keychain profile (`xcrun notarytool
-//    store-credentials <name> ...`), named in APPLE_NOTARY_PROFILE. No secret leaves that machine.
-//  - on a GitHub-hosted runner: the workflow imports the identity into a temporary keychain, and the
-//    App Store Connect API key is a file at APPLE_API_KEY_PATH, with its id and issuer in the environment.
-const profile = process.env.APPLE_NOTARY_PROFILE?.trim();
-const identity = process.env.APPLE_SIGN_IDENTITY?.trim();
-
 // Inside out, hardened runtime, a secure timestamp, and osx-sign's default entitlements (which let
 // the compiled daemon and Claude, both Bun executables, run under the hardened runtime).
-await sign({ app, platform: "darwin", ...(identity ? { identity } : {}) });
-await notarize(
-  profile
-    ? { appPath: app, keychainProfile: profile }
-    : {
-        appPath: app,
-        appleApiKey: required("APPLE_API_KEY_PATH"),
-        appleApiKeyId: required("APPLE_API_KEY_ID"),
-        appleApiIssuer: required("APPLE_API_ISSUER"),
-      },
-);
-console.log(JSON.stringify({ signed: app, credentials: profile ? "keychain profile" : "api key" }));
+await sign({ app, platform: "darwin" });
+await notarize({
+  appPath: app,
+  appleApiKey: required("APPLE_API_KEY_PATH"),
+  appleApiKeyId: required("APPLE_API_KEY_ID"),
+  appleApiIssuer: required("APPLE_API_ISSUER"),
+});
+console.log(JSON.stringify({ signed: app }));
