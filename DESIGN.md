@@ -70,7 +70,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 
 - **色相清晰分离**：主强调色为 Rare UI 标志性**国际安全橙**（暗色 `#FC4C01`，浅色按 AA 对比度微调为 `#C93B00`，确保在 `#F5F5F7` 侧栏上仍 ≥ 4.5:1）；警示色 `--cycle-attention` 采用**琥珀金黄**（`#8A5A00` / `#F5B82E`），避免与安全橙冲突；成功采用 Apple HIG 翡翠绿，错误在暗色下采用低饱和柔和珊瑚红 `#E87872`（避免纯红在黑底产生色散晕光与视觉压迫）。**不新增色相**。
 - **功能色柔化填充**：出错块（如回合失败 `turn-end`）采用 `8%` 功能色底 + `40%` 功能色描边（`color-mix`），文本选中态 `::selection` 使用 `22%` 强调色柔化底。
-- **克制的中性焦点环**：统一采用中性银灰 `1.5px solid var(--cycle-focus-ring)`（深浅色在所有表面上均 ≥ 4.1:1），避免高亮橙色线框抢走主操作焦点或造成割裂感；输入框将焦点环贴边（`outline-offset: -1px`）并叠柔化外光晕 `--cycle-focus-halo` 消除双层边框空隙；主输入框例外：只加深边框并托起一点阴影（`--cycle-focus-composer`），没有焦点环、光晕或第二层边框；侧栏列表行已选中态保持无边框纯底色胶囊（`--cycle-surface-selected`），未选中行键盘聚焦时使用内贴 `1.5px` `--cycle-focus-ring`。ui-sdk 默认的 `--ui-ring`（浅色下仅 1.29:1）禁止用于焦点指示。
+- **克制的中性焦点环**：统一采用中性银灰 `1.5px solid var(--cycle-focus-ring)`（深浅色在所有表面上均 ≥ 4.1:1），避免高亮橙色线框抢走主操作焦点或造成割裂感；输入框将焦点环贴边（`outline-offset: -1px`）并叠柔化外光晕 `--cycle-focus-halo` 消除双层边框空隙；主输入框例外：只加深边框并托起一点阴影（`--cycle-focus-composer`），没有焦点环、光晕或第二层边框；侧栏列表行已选中态是浮起的卡片（`--cycle-surface-raised` + `--cycle-edge-hardware` + 1px 近阴影），不另画焦点环；未选中行键盘聚焦时使用内贴 `1.5px` `--cycle-focus-ring`。ui-sdk 默认的 `--ui-ring`（浅色下仅 1.29:1）禁止用于焦点指示。
 
 ---
 
@@ -80,7 +80,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 
 直接采用 **Rare UI 同款三套开源字体（SIL OFL-1.1）**，通过 `@fontsource/*` 纯本地 WOFF2 打包并由 `packages/ui/scripts/build-css.ts` 同步输出至样式旁 `fonts/` 目录，**零外网请求**，完全遵守 Electron CSP（`font-src 'self' data:`）：
 
-- **展示与交互触点字体 `--cycle-font-display`（`Open Runde`）**：带圆角的几何无衬线（`400 / 500 / 600 / 700`），通过显式字重区间映射使 `--cycle-weight: 420` 准确命中 Regular；用于按钮、触发器、会话头部标题、弹窗标题、空状态标题、工作区切换器、侧栏分组标签、权限卡标题与空白页引导。标题配紧字距 `--cycle-tracking-display`（`-0.015em`）。
+- **展示与交互触点字体 `--cycle-font-display`（`Open Runde`）**：带圆角的几何无衬线（`400 / 500 / 600 / 700`），通过显式字重区间映射使 `--cycle-weight: 420` 准确命中 Regular；用于按钮、触发器、会话头部标题、弹窗标题、空状态标题、权限卡标题与空白页引导。侧栏（工作区切换器、分组标签、会话行）统一用正文字体，靠字重与颜色分层，不靠换字体。标题配紧字距 `--cycle-tracking-display`（`-0.015em`）。
 - **正文与密集信息字体 `--ui-font-sans`（`Inter Variable`）**：可变无衬线（开启 `cv02, cv03, cv04, cv11` 光学字形特性与抗锯齿渲染），用于对话正文、Markdown、输入框、会话列表与工具说明，保证长时间阅读清晰舒适。
 - **等宽字体 `--ui-font-mono`（`Geist Mono Variable`）**：仅用于代码、命令、路径、diff、id、系统错误原话。
 - **中文 PingFang 字重映射**：PingFang SC 为固定字重档，`420` 会落到 Medium 导致中文全粗。`app.css` 保留 `Cycle PingFang`（4 个 `@font-face` + `local()`）把 Light/Regular/Medium/Semibold 映射到 1–349 / 350–449 / 450–549 / 550+，排在 `PingFang SC` 前面。
@@ -185,18 +185,19 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 ### 4.1 窗口与侧栏导航范式
 
 - **窗口尺寸**：默认 `1200×800`，最小 `720×480`。窗口是一个分栏组（`SplitLayout`）：侧栏、对话区（最小 400px），以及打开时的右侧面板（CYCL-89/90）。
-- **macOS 标题栏**：`titleBarStyle: "hiddenInset"`，红绿灯位于侧栏左上角；侧栏折叠时主区头部自动留出左侧避让（`5.5rem`）且可拖动。
+- **macOS 标题栏**：`titleBarStyle: "hiddenInset"`，红绿灯位于侧栏左上角（`trafficLightPosition` `x: 17`：14px 的关闭按钮中心距左 24px，与侧栏图标列中心对齐）；侧栏折叠时主区头部自动留出左侧避让（`5.5rem`）且可拖动。
 - **侧栏三段结构**（默认 `256px`，可拖动 `200–360px` 并记忆，`⌘B` 或按钮折叠）：
+  - **网格**：侧栏左右内边距 `8px`，行内边距 `8px`。纵向只有两条起始线：前导边 `16px`（图标、状态点、工作区切换器、分组标签），文字线 `40px`（16px 前导列 + 8px 间距；动作行标签、会话标题、`Show N more` / `Show archived`）。分隔线随行内缩，不贯穿全宽：一条在顶段动作与工作区切换器之间，一条在底段之上。分组标签用 `meta` 字号、常规字重、淡色。
   - **顶段（固定）**：`New`（`⌘N`）与 `Search`（`⌘K`）`ghost` 行（可访问名称仍是 New session / Search sessions）、`Connectors` 入口、紧贴列表的 `WorkspaceSwitcher` + 环境 `"…"` 菜单；如有断线/重连环境，在此展示两行状态块（状态点+名称+`Retry` / 最多三行原因）。
-  - **中段（独立滚动，保底 `10rem`）**：当前选中 workspace 的会话列表，分组顺序固定为 **`Needs you` → `Running` → `Today` → `Yesterday` → `Earlier`**（本地日界线，按 `updatedAt` 排序）；每项目默认展示 20 条（有状态标记或当前打开的永远展示），底部附 `Show N more sessions`（切换 workspace/环境时重置）与 `Show archived`。窗口极矮时改为整栏滚动，确保底部不裁切。
-  - **会话行**：左侧状态点（等你、在跑、未读），中间标题（放不下末尾淡出），行尾是会话最后变化的相对时间（`updatedAt`，`session-time.tsx`）：`meta` 字号、淡色、等宽数字，`Intl.RelativeTimeFormat` 按界面语言写（`5m ago` / `5分钟前`，不到一天写小时，一周内写天，再早写日期 `Nov 3` / `11月3日`，跨年带年份）；悬停给完整的本地日期时间（`<time title>`）。全页共用一个每分钟走一次的时钟，只重画时间，不重画列表。旧 daemon 不给 `updatedAt` 时不显示。
+  - **中段（独立滚动，保底 `10rem`）**：当前选中 workspace 的会话列表，分组顺序固定为 **`Pinned` → `Needs you` → `Running` → `Today` → `Yesterday` → `Earlier`**（置顶的会话留在 `Pinned`，不管它在做什么，状态点照常；置顶只存在本机渲染进程的 `localStorage`，按环境+会话，删除会话时一并清掉，`pins.ts`）（本地日界线，按 `updatedAt` 排序）；每项目默认展示 20 条（有状态标记或当前打开的永远展示），底部附 `Show N more sessions`（切换 workspace/环境时重置）与 `Show archived`。窗口极矮时改为整栏滚动，确保底部不裁切。
+  - **会话行**：左侧 16px 前导列放状态点（等你、在跑、未读；没有标记也留出这一列），标题常规字重、`ink-secondary`，等你 / 未读 / 当前打开的标题为 500 字重、`ink`，中间标题（放不下末尾淡出），行尾是会话最后变化的相对时间（`updatedAt`，`session-time.tsx`）：`meta` 字号、淡色、等宽数字，按界面语言写，一列时间不逐行重复 "ago"（`now` / `5m` / `3h` / `1d` / `4d`，中文 `现在` / `5分钟` / `3小时` / `1天` / `4天`；不到一天写小时，一周内写天，再早写日期 `Nov 3` / `11月3日`，跨年带年份）；指针悬停在行上（或它的菜单开着）时，行尾的时间换成两个仅图标的按钮：置顶 / 取消置顶（`PinIcon` / `UnpinIcon`），和 `More actions` 菜单（置顶、重命名、归档/恢复、删除；删除走 `destructive` 确认）。两个按钮不占 Tab 停靠点，方向键仍只在行间走；键盘上同样的操作在会话头部的 `Session actions` 菜单里。全页共用一个每分钟走一次的时钟，只重画时间，不重画列表。旧 daemon 不给 `updatedAt` 时不显示。
   - **底段（固定）**：当前版本号、更新状态、与进入设置页的图标按钮（`Settings`，`⌘,`）。
 - **折叠恢复**：展开时 `SidebarIcon` 开关在侧栏顶行右端（与主区头部同高，Mac 上与红绿灯同行），不放进主区；折叠后它出现在主区头部，确保无需快捷键也能用鼠标打开侧栏。按钮与 `⌘B` 折叠/展开时侧栏宽度以 `--cycle-motion-disclosure` 滑动（拖动、窗口缩放时不动）。
 
 ### 4.2 会话切换与工作区范式
 
 - **一次一个 workspace**：一个 workspace = `(environmentId, cwd)`。Switcher 按环境分组（本机在前，仅一个环境时不显示分组头），远程环境带 `ServerIcon` 与可访问名称；同名目录在不同环境或同环境多级重名时自动补全前缀/环境名区分。
-- **跨区提醒**：Switcher 右侧方块角标显示**其他 workspace** 中最紧急一类的计数（优先级：`needs-you > running > background > unread`），完整分布写入 `aria-label`。
+- **跨区提醒**：Switcher 右侧淡色底方块角标（标记色数字 + 同色 14% 底，不用实心色块抢过工作区名）显示**其他 workspace** 中最紧急一类的计数（优先级：`needs-you > running > background > unread`），完整分布写入 `aria-label`。
 - **断线态**：断线环境的会话列表灰显并附 tooltip 说明原因；已打开过有缓存的会话仍可阅读并编辑草稿（断线横幅提示“重连后恢复”），无法新开未读会话。
 
 ### 4.3 新建空白会话与文件夹信任范式

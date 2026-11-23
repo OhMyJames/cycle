@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { allowedEndpoint } from "@cycle/oidc";
 
 /** Opens a URL in the person's browser. Electron's `shell.openExternal` in the app; a fake in tests. */
 export type OpenBrowser = (url: string) => Promise<void>;
@@ -14,18 +15,8 @@ export type AuthOutcome<T> =
   /** The authorization server answered with an error other than the person's "no". */
   | { kind: "refused" };
 
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
-
 /** Only a web page is opened: https, or http to this machine. Anything else from a daemon is not handed to the system. */
-export const openableAuthorizationUrl = (url: string): boolean => {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === "https:") return true;
-    return parsed.protocol === "http:" && LOOPBACK.has(parsed.hostname);
-  } catch {
-    return false;
-  }
-};
+export const openableAuthorizationUrl = (url: string): boolean => allowedEndpoint(url);
 
 const PAGE = `<!doctype html><meta charset="utf-8"><title>Cycle</title><p>You can close this tab and go back to Cycle.</p>`;
 

@@ -18,10 +18,12 @@ import {
   SelectValue,
 } from "@ui-sdk/react/select";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { AccountStatus, SessionSummary } from "../api.ts";
 import { DISPLAY_MODES, displayMode, isDisplayMode } from "../display-mode.ts";
 import { SOURCE_LOCALE } from "../i18n.ts";
 import { resolveLanguage, translatorFor } from "../languages.ts";
 import { type Conversation, contextOf, subagentCallOf } from "../model/conversation.ts";
+import { pins } from "../pins.ts";
 import {
   currentWorkspace,
   elsewhere as elsewhereOf,
@@ -32,6 +34,7 @@ import {
 import type { PanelTabId, PanelTabKind } from "../side-panel.ts";
 import { BLANK_KEY, viewKey } from "../store/index.ts";
 import { tabKind, terminalOfTab } from "../terminals.ts";
+import { AccountBanner, SignInPage } from "./account.tsx";
 import { AnalyticsNotice } from "./analytics.tsx";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer, composerInput } from "./composer.tsx";
@@ -74,6 +77,9 @@ import { DaemonBanner, UpdateBanner, UpdateFooter } from "./update.tsx";
  * What is drawn over a page and takes its keys first: a dialog, a menu, the choices of a select. Not every listbox: the
  * sidebar's list of sessions is one too.
  */
+/** What the sign-in page shows when main has not said how the account stands (it could not be asked). */
+const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn: false };
+
 const OVER_THE_PAGE =
   '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot="select-content"]';
 
@@ -224,9 +230,14 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
+  const ready = useAppState((s) => s.ready);
+  const account = useAppState((s) => s.account);
+  // Nobody is signed in: the sign-in page is the whole window. The app's window is not mounted behind it, so none of
+  // its shortcuts or effects runs, and nothing of the environments has been read.
+  const signedOut = ready && (account === undefined || !account.open);
   return (
     <I18nProvider translator={translatorFor(language)}>
-      <AppWindow />
+      {signedOut ? <SignInPage account={account ?? SIGNED_OUT} /> : <AppWindow />}
     </I18nProvider>
   );
 }
@@ -245,6 +256,9 @@ function AppWindow() {
   const blank = useAppState((s) => s.blank);
   const error = useAppState((s) => s.error);
   const [panel, setPanel] = useState<Panel>("none");
+  // The session Delete asks about: the open one from its header, or any from its row in the sidebar.
+  const [deleting, setDeleting] = useState<SessionSummary | undefined>(undefined);
+  const pinned = useSyncExternalStore(pins.subscribe, pins.all, pins.all);
   // The open session whose title is being edited in the header, by its key.
   const [renaming, setRenaming] = useState<string | undefined>();
   const [showArchived, setShowArchived] = useState(false);
@@ -326,6 +340,16 @@ function AppWindow() {
   const open = (next: Exclude<Panel, "none">, via: "click" | "shortcut" = "click") => {
     setPanel(next);
     store.track("panel_opened", { panel: PANEL_EVENT[next], via });
+  };
+  // Pins or unpins a session, from a row of the sidebar or the conversation's header, and counts it.
+  const pin = (chosen: SessionSummary, on: boolean, where: "sidebar" | "header") => {
+    pins.set(sessionKey(chosen), on);
+    store.track("session_pinned", { pinned: on, where });
+  };
+  // The one way to the delete confirmation: it always says which session it deletes.
+  const askDelete = (chosen: SessionSummary) => {
+    setDeleting(chosen);
+    open("delete");
   };
   // Settings, from wherever it is asked for: over the sessions, or in place of the Connectors page.
   const openSettings = (via: "click" | "shortcut" = "click", section?: SettingsSection) => {
@@ -564,9 +588,10 @@ function AppWindow() {
         showAll,
         selected: openKey,
         away: awayEnvironments,
+        pinned,
         now: new Date(day),
       }),
-    [current, showAll, openKey, awayEnvironments, day],
+    [current, showAll, openKey, awayEnvironments, pinned, day],
   );
 
   // What is on screen has been seen: the daemon is told, so the mark goes and stays gone (also on another client).
@@ -840,9 +865,31 @@ function AppWindow() {
               selected={openKey}
               away={away}
               showArchived={showArchived}
+              pinned={pinned}
               onSelectSession={(chosen) =>
                 void store.selectSession(chosen.environmentId, chosen.sessionId)
               }
+              onSessionAction={(chosen, action) => {
+                switch (action) {
+                  case "pin":
+                  case "unpin":
+                    pin(chosen, action === "pin", "sidebar");
+                    return;
+                  case "archive":
+                  case "restore":
+                    void store.archiveSession(
+                      chosen.sessionId,
+                      action === "archive",
+                      chosen.environmentId,
+                    );
+                    return;
+                  case "delete":
+                    askDelete(chosen);
+                    return;
+                  default:
+                    action satisfies never;
+                }
+              }}
               onNewSession={() => newSession()}
               onSearch={() => open("search")}
               onConnectors={openConnectors}
@@ -864,6 +911,7 @@ function AppWindow() {
           main={
             <main data-slot="main">
               <UpdateBanner />
+              <AccountBanner />
               <AnalyticsNotice />
               {pageOpen ? null : errorBanner}
               {environmentState === "reconnecting" && environmentIncompatible === undefined ? (
@@ -919,12 +967,14 @@ function AppWindow() {
                     <Menu
                       onAction={(value) => {
                         if (value === "rename") setRenaming(sessionKey(session));
+                        else if (value === "pin" || value === "unpin")
+                          pin(session, value === "pin", "header");
                         else if (value === "dismiss-background")
                           void store.dismissBackground(session);
                         else if (value === "settings") open("settings");
                         else if (value === "archive")
                           void store.archiveSession(session.sessionId, !session.archived);
-                        else if (value === "delete") open("delete");
+                        else if (value === "delete") askDelete(session);
                       }}
                     >
                       <Tip label={t("session.actions")} side="bottom">
@@ -940,6 +990,9 @@ function AppWindow() {
                             })}
                           </MenuItem>
                         ) : null}
+                        <MenuItem value={pinned.has(sessionKey(session)) ? "unpin" : "pin"}>
+                          {t(pinned.has(sessionKey(session)) ? "session.unpin" : "session.pin")}
+                        </MenuItem>
                         <MenuItem value="rename">{t("session.rename")}</MenuItem>
                         <MenuItem value="settings">{t("session.settings")}</MenuItem>
                         <MenuItem value="archive">
@@ -1178,19 +1231,23 @@ function AppWindow() {
           onConfirm={() => store.removeEnvironment(removingEnvironment.id)}
         />
       ) : null}
-      {session !== undefined ? (
-        <>
-          <ConfirmDialog
-            open={panel === "delete"}
-            onOpenChange={(open) => !open && close()}
-            title={t("session.deleteTitle")}
-            description={t("session.deleteDescription")}
-            confirmLabel={t("session.deleteConfirm")}
-            destructive
-            onConfirm={() => store.deleteSession(session.sessionId)}
-          />
-          {panel === "settings" ? <SessionSettings connected={connected} onClose={close} /> : null}
-        </>
+      {deleting !== undefined ? (
+        <ConfirmDialog
+          open={panel === "delete"}
+          onOpenChange={(open) => !open && close()}
+          title={t("session.deleteTitle")}
+          description={t("session.deleteDescription")}
+          confirmLabel={t("session.deleteConfirm")}
+          destructive
+          onConfirm={async () => {
+            const failed = await store.deleteSession(deleting.sessionId, deleting.environmentId);
+            if (failed === undefined) pins.set(sessionKey(deleting), false);
+            return failed;
+          }}
+        />
+      ) : null}
+      {session !== undefined && panel === "settings" ? (
+        <SessionSettings connected={connected} onClose={close} />
       ) : null}
     </div>
   );

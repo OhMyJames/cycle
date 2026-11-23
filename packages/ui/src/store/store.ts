@@ -2,6 +2,7 @@
 // only reads it (useSyncExternalStore) and calls its methods, so it is tested with a fake bridge.
 import type { EventProps, UiEventName } from "@cycle/analytics/events";
 import type {
+  AccountStatus,
   AgentInfo,
   AnalyticsStatus,
   AppEvent,
@@ -142,6 +143,13 @@ export type SessionView = {
 
 export type AppState = {
   ready: boolean;
+  /**
+   * The person's account (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md). Undefined until main has said. While it is not `open`, the
+   * page is the sign-in page, and nothing of the environments is read.
+   */
+  account: AccountStatus | undefined;
+  /** The person closed the note that someone else is signed in now. */
+  switchNoticeSeen: boolean;
   environments: EnvironmentConfig[];
   status: Record<string, EnvironmentStatus>;
   sessions: Record<string, SessionSummary[]>;
@@ -200,6 +208,8 @@ const newerPlanUsage = (
 
 const initial = (): AppState => ({
   ready: false,
+  account: undefined,
+  switchNoticeSeen: false,
   environments: [],
   status: {},
   sessions: {},
@@ -358,23 +368,59 @@ export class AppStore {
       (read) => this.#set({ preferences: read }),
       () => undefined,
     );
+    // The account first: signed out, the sign-in page is all there is, and the environments are read once it is open.
+    const account = await this.#bridge.account().catch(() => undefined);
+    await preferences;
+    this.#set((s) => ({ account: s.account ?? account }));
+    if (this.#state.account?.open === true) await this.#loadEnvironments();
+    this.#set({ ready: true });
+  }
+
+  /** The environments, their status and their sessions as main has them, and the agents of those that are connected. */
+  async #loadEnvironments(): Promise<void> {
     await this.#attempt(async () => {
       const { environments, status, sessions } = await this.#bridge.environments();
-      await preferences;
       this.#set({
-        ready: true,
         environments,
         status: Object.fromEntries(status.map((s) => [s.environmentId, s])),
         // What main has read so far, also from an environment that has since gone away.
         sessions,
-        selectedEnvironment: environments[0]?.id,
+        selectedEnvironment: this.#state.selectedEnvironment ?? environments[0]?.id,
       });
       // Main connects every environment: the agents of those that already are, now; of the others, when each connects.
       await Promise.all(
         status.filter((s) => s.state === "connected").map((s) => this.#loadAgents(s.environmentId)),
       );
     });
-    this.#set({ ready: true });
+  }
+
+  // ---- the account ----
+
+  /** Opens the sign-in page in the browser; the page shows that it waits, and main says how it ended. */
+  signIn = async (): Promise<void> => {
+    await this.#attempt(async () => this.#onAccount(await this.#bridge.signIn()));
+  };
+
+  cancelSignIn = async (): Promise<void> => {
+    await this.#attempt(() => this.#bridge.cancelSignIn());
+  };
+
+  /** After the person confirmed it. */
+  signOut = async (): Promise<void> => {
+    await this.#attempt(() => this.#bridge.signOut());
+  };
+
+  dismissSwitchNotice = (): void => this.#set({ switchNoticeSeen: true });
+
+  #onAccount(account: AccountStatus): void {
+    const was = this.#state.account;
+    this.#set({
+      account,
+      // A new sign-in as someone else is told again.
+      ...(account.switched === true && was?.switched !== true ? { switchNoticeSeen: false } : {}),
+    });
+    // Just opened (signed in from the sign-in page): what was not read while it was closed is read now.
+    if (account.open && was?.open !== true && this.#state.ready) void this.#loadEnvironments();
   }
 
   stop(): void {
@@ -385,6 +431,9 @@ export class AppStore {
 
   #onEvent(event: AppEvent): void {
     switch (event.type) {
+      case "account":
+        this.#onAccount(event.account);
+        return;
       case "environments":
         this.#set({ environments: event.environments });
         return;
@@ -1303,8 +1352,12 @@ export class AppStore {
     );
   };
 
-  archiveSession = async (sessionId: string, archived: boolean): Promise<void> => {
-    const environmentId = this.#state.selectedEnvironment;
+  /** A session of the open one's environment, or of `environmentId`, as a row of the sidebar names its own. */
+  archiveSession = async (
+    sessionId: string,
+    archived: boolean,
+    environmentId = this.#state.selectedEnvironment,
+  ): Promise<void> => {
     if (environmentId === undefined) return;
     await this.#attempt(() => this.#bridge.archiveSession(environmentId, sessionId, archived));
   };
@@ -1321,8 +1374,10 @@ export class AppStore {
     }
   };
 
-  deleteSession = async (sessionId: string): Promise<string | undefined> => {
-    const environmentId = this.#state.selectedEnvironment;
+  deleteSession = async (
+    sessionId: string,
+    environmentId = this.#state.selectedEnvironment,
+  ): Promise<string | undefined> => {
     if (environmentId === undefined) return undefined;
     try {
       await this.#bridge.deleteSession(environmentId, sessionId);

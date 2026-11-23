@@ -526,6 +526,7 @@ export const enUS = {
   // The session list
   "sessions.label": "Sessions",
   "sessions.listLabel": "Session list",
+  "sessions.group.pinned": "Pinned",
   "sessions.group.needsYou": "Needs you",
   "sessions.group.running": "Running",
   "sessions.group.today": "Today",
@@ -839,6 +840,11 @@ export const enUS = {
     "The agent's settings can be changed once its environment is connected.",
   "thought.label": "Thinking",
   "session.settingsDescription": "A change applies to the next thing the agent does.",
+  "session.pin": "Pin",
+  "session.unpin": "Unpin",
+  "session.moreActions": "More actions",
+  "session.pinTip": "Pin session",
+  "session.unpinTip": "Unpin session",
   "session.rename": "Rename",
   "session.archive": "Archive",
   "session.restore": "Restore",
@@ -961,6 +967,32 @@ export const enUS = {
     "Cycle counts which features are used, to improve them. It never sends what you write, your files, or their names. You can turn this off at any time in Settings.",
   "analytics.turnOff": "Turn off",
   "analytics.keepOn": "Keep on",
+  // The Cycle account (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md): the sign-in page, the notes about the login, settings
+  "account.title": "Sign in to Cycle",
+  "account.body": "Cycle uses your Clawdot account. The sign-in opens in your browser.",
+  "account.kept": "Your sessions, settings and connectors on this computer stay as they are.",
+  "account.signIn": "Sign in with browser",
+  "account.waiting": "Waiting for the browser. Finish signing in there.",
+  "account.stopWaiting": "Stop waiting",
+  "account.expired":
+    "Cycle could not reach the sign-in service for more than 30 days. Sign in again to go on.",
+  "account.revoked": "Your sign-in has ended. Sign in again to go on.",
+  "account.failed": "The sign-in did not finish. Try again.",
+  "account.unreachable":
+    "The sign-in service could not be reached. Check the connection and try again.",
+  "account.offlineBanner":
+    "The sign-in service cannot be reached. Online features are unavailable until it can.",
+  "account.reauthBanner":
+    "Your sign-in has ended. Sessions keep running. Sign in again to use online features.",
+  "account.signInAgain": "Sign in again",
+  "account.switched": "Signed in as {name}.",
+  "account.group": "Account",
+  "account.signOut": "Sign out",
+  "account.signOutTitle": "Sign out of Cycle?",
+  "account.signOutDescription":
+    "Cycle shows the sign-in page until you sign in again. Your sessions, settings and connectors on this computer stay.",
+  "account.state.offline": "Offline",
+  "account.state.reauth": "Signed out by the sign-in service",
 } as const satisfies Messages;
 
 export type MessageKey = keyof typeof enUS;

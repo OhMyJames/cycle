@@ -90,6 +90,27 @@ export const MoreIcon = ({ size = 16, ...rest }: IconProps) => (
   </Svg>
 );
 
+/** iconmcp: pushpin */
+export const PinIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <path d="M5.726 2.25 L10.274 2.25 C10.661 2.25 10.873 2.702 10.625 3 L10 3.75 L10 6.96 C10 7.148 10.066 7.329 10.185 7.473 L11.407 8.938 C11.841 9.459 11.47 10.25 10.792 10.25 L5.208 10.25 C4.53 10.25 4.159 9.459 4.593 8.938 L5.815 7.473 C5.934 7.329 6 7.148 6 6.96 L6 3.75 L5.375 3 C5.127 2.702 5.339 2.25 5.726 2.25 Z" />
+      <line x1="8" y1="10.25" x2="8" y2="14.25" />
+    </g>
+  </Svg>
+);
+
+/** iconmcp: pushpin-off */
+export const UnpinIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <path d="M7.025 10.25 L5.208 10.25 C4.53 10.25 4.159 9.459 4.593 8.938 L4.963 8.494 M5.661 2.254 C5.682 2.252 5.704 2.25 5.726 2.25 L10.274 2.25 C10.661 2.25 10.873 2.702 10.625 3 L10 3.75 L10 6.96 C10 7.148 10.066 7.329 10.185 7.473 L10.897 8.327" />
+      <path d="M8 11.225 L8 14.25" />
+      <line x1="2.75" y1="2.75" x2="13.25" y2="13.25" />
+    </g>
+  </Svg>
+);
+
 /** iconmcp: sliders */
 export const SettingsIcon = ({ size = 16, ...rest }: IconProps) => (
   <Svg size={size} {...rest}>

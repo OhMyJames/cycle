@@ -436,8 +436,36 @@ export type PlanWindow = {
 /** How much of an agent's account limits is used, as of `at` (milliseconds since the epoch). */
 export type PlanUsage = { windows: PlanWindow[]; at: number };
 
+/**
+ * The person's Cycle account, as main tells the page (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md). Never a token: who is signed in,
+ * and how the login stands.
+ *
+ * - `signed-out`: nobody, or the login has ended; `open` is false and the page shows the sign-in page.
+ * - `signed-in`: the provider took the login the last time it was asked.
+ * - `offline`: it could not be asked (no network, or it failed); the app is open within the 30 days' grace, and what
+ *   needs the network is unavailable for now.
+ * - `reauth`: the provider refused the login while the app was open. What is running goes on; the person is asked to
+ *   sign in again.
+ */
+export type AccountStatus = {
+  state: "signed-out" | "signed-in" | "offline" | "reauth";
+  /** Whether the app may be used: false shows the sign-in page, and main refuses what the app does. */
+  open: boolean;
+  /** The browser is open on the sign-in page, and main waits for it. */
+  signingIn: boolean;
+  user?: { name: string; email: string };
+  /** Why the sign-in page is shown, when it is not the first time or a sign-out. */
+  reason?: "expired" | "revoked";
+  /** What went wrong with the last sign-in: it failed, or the provider could not be reached. */
+  problem?: "failed" | "unreachable";
+  /** The last sign-in was someone else than the account before. */
+  switched?: boolean;
+};
+
 /** What main tells the renderer. */
 export type AppEvent =
+  /** The account's status changed. */
+  | { type: "account"; account: AccountStatus }
   | { type: "environments"; environments: EnvironmentConfig[] }
   | ({ type: "environment-status" } & EnvironmentStatus)
   | { type: "sessions"; environmentId: string; sessions: SessionSummary[] }
@@ -749,6 +777,15 @@ export type AppApi = {
   /** Changes some of them, keeps them, and applies them (the theme at once, to the whole window). */
   setPreferences(change: Partial<Preferences>): Promise<PreferencesState>;
 
+  /** How the person's account stands. */
+  account(): Promise<AccountStatus>;
+  /** Opens the sign-in page in the browser, and answers once it has come back, been stopped, or failed. */
+  signIn(): Promise<AccountStatus>;
+  /** Stops waiting for the browser. */
+  cancelSignIn(): Promise<void>;
+  /** Ends the login (the page asks the person first). Local sessions, settings and connectors stay. */
+  signOut(): Promise<void>;
+
   /** Reports an event the page alone can see (docs/analytics.md). Never fails and says nothing when it is off. */
   track(event: string, props?: TrackProps): Promise<void>;
   analytics(): Promise<AnalyticsStatus>;
@@ -827,6 +864,10 @@ export const API_METHODS = [
   "upgradeDaemon",
   "preferences",
   "setPreferences",
+  "account",
+  "signIn",
+  "cancelSignIn",
+  "signOut",
   "track",
   "analytics",
   "setAnalytics",

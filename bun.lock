@@ -34,6 +34,7 @@
       "dependencies": {
         "@cycle/analytics": "workspace:*",
         "@cycle/client": "workspace:*",
+        "@cycle/oidc": "workspace:*",
         "@cycle/ui": "workspace:*",
         "electron": "45.3.4",
         "react": "19.3.1",
@@ -86,6 +87,10 @@
       "devDependencies": {
         "@cycle/daemon": "workspace:*",
       },
+    },
+    "packages/oidc": {
+      "name": "@cycle/oidc",
+      "version": "0.0.0",
     },
     "packages/protocol": {
       "name": "@cycle/protocol",
@@ -217,6 +222,8 @@
     "@cycle/harness-claude": ["@cycle/harness-claude@workspace:harness/claude"],
 
     "@cycle/harness-codex": ["@cycle/harness-codex@workspace:harness/codex"],
+
+    "@cycle/oidc": ["@cycle/oidc@workspace:packages/oidc"],
 
     "@cycle/protocol": ["@cycle/protocol@workspace:packages/protocol"],
 

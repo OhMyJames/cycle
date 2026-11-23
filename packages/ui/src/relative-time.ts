@@ -5,7 +5,7 @@ const HOUR = 60 * MINUTE;
 /** Past this many days the date says more than a count of them. */
 const DAYS = 7;
 
-/** `narrow` for a row's few characters ("5m ago"), `long` where there is room ("5 minutes ago"). */
+/** `narrow` for a row's few characters ("5m": a column of them, so no "ago" on each), `long` where there is room ("5 minutes ago"). */
 export type TimeStyle = "narrow" | "long";
 
 const formats = new Map<string, Intl.RelativeTimeFormat>();
@@ -20,6 +20,18 @@ const relativeFormat = (locale: string, style: TimeStyle): Intl.RelativeTimeForm
   return format;
 };
 
+const units = new Map<string, Intl.NumberFormat>();
+/** A count in its narrowest unit, "5m" or "5分钟": how long since, without "ago", which every row would repeat. */
+const narrowUnit = (locale: string, unit: "minute" | "hour" | "day"): Intl.NumberFormat => {
+  const key = `${locale} ${unit}`;
+  let format = units.get(key);
+  if (format === undefined) {
+    format = new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "narrow" });
+    units.set(key, format);
+  }
+  return format;
+};
+
 /** Whole local days from `then` to `now`: 1 for any time yesterday, whatever the hour. */
 const daysBetween = (then: Date, now: Date): number => {
   const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
@@ -27,8 +39,9 @@ const daysBetween = (then: Date, now: Date): number => {
 };
 
 /**
- * `at` (epoch milliseconds) as a short time relative to `now`, in `locale`: "now", "5m ago", "3h ago" (up to a
- * day), "yesterday", "4d ago", then the date ("Mar 4", with the year when it is not this one). zh-CN: 现在, 5分钟前, 3小时前, 昨天, 4天前, 3月4日.
+ * `at` (epoch milliseconds) as a short time relative to `now`, in `locale`. Narrow: "now", "5m", "3h" (up to a day),
+ * "1d" (any time yesterday), "4d", then the date ("Mar 4", with the year when it is not this one); zh-CN: 现在, 5分钟,
+ * 3小时, 1天, 4天, 3月4日. Long says it as a phrase: "5 minutes ago", "yesterday", "4 days ago".
  * A time ahead of `now` (another machine's clock) is "now".
  */
 export const relativeTime = (
@@ -40,12 +53,14 @@ export const relativeTime = (
   const ago = Math.max(0, now - at);
   const relative = relativeFormat(locale, style);
   if (ago < MINUTE) return relative.format(0, "second");
-  if (ago < HOUR) return relative.format(-Math.floor(ago / MINUTE), "minute");
+  const count = (n: number, unit: "minute" | "hour" | "day"): string =>
+    style === "narrow" ? narrowUnit(locale, unit).format(n) : relative.format(-n, unit);
+  if (ago < HOUR) return count(Math.floor(ago / MINUTE), "minute");
   const then = new Date(at);
   const today = new Date(now);
-  if (ago < 24 * HOUR) return relative.format(-Math.floor(ago / HOUR), "hour");
+  if (ago < 24 * HOUR) return count(Math.floor(ago / HOUR), "hour");
   const days = daysBetween(then, today);
-  if (days < DAYS) return relative.format(-Math.max(1, days), "day");
+  if (days < DAYS) return count(Math.max(1, days), "day");
   return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",

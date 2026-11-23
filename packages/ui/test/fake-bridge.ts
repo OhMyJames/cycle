@@ -1,5 +1,6 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import type {
+  AccountStatus,
   AnalyticsStatus,
   AppEvent,
   ConnectionState,
@@ -41,6 +42,14 @@ export const idle = (extra: object = {}) =>
   ({ sessionUpdate: "state_update", state: "idle", ...extra }) as SessionUpdate;
 
 const off: AnalyticsStatus = { available: false, enabled: false, noticed: true };
+
+/** Signed in, as every test but the account's own starts. */
+export const SIGNED_IN: AccountStatus = {
+  state: "signed-in",
+  open: true,
+  signingIn: false,
+  user: { name: "Ada Lovelace", email: "ada@example.com" },
+};
 
 /** A bridge that records what it is asked, answers from a script, and lets a test send events. */
 export const fakeBridge = (
@@ -86,6 +95,9 @@ export const fakeBridge = (
     preferences?: Partial<Preferences> & { systemLanguage?: string };
     /** What the daemon answers a stop of one sub-agent with (CYCL-143). Default: it is being stopped. */
     stopSubagent?: (childId: string) => Promise<boolean>;
+    /** How the account stands. Default: signed in. `signIn` answers with `signInAs` (default: signed in) and says so. */
+    account?: AccountStatus;
+    signInAs?: AccountStatus;
   } = {},
 ) => {
   const preferences = {
@@ -105,6 +117,7 @@ export const fakeBridge = (
   const pluginAt = (id: string): number => plugins.all.findIndex((p) => p.id === id);
   const terminals = options.terminals ?? new Map<string, TerminalInfo[]>();
   let made = 0;
+  let account = options.account ?? SIGNED_IN;
   let listener: ((event: AppEvent) => void) | undefined;
   const record =
     <A extends unknown[], R>(name: string, result: (...args: A) => R) =>
@@ -438,6 +451,17 @@ export const fakeBridge = (
     setPreferences: record("setPreferences", async (change: Partial<Preferences>) => {
       Object.assign(preferences, change);
       return { ...preferences };
+    }),
+    account: record("account", async () => account),
+    signIn: record("signIn", async () => {
+      account = options.signInAs ?? SIGNED_IN;
+      listener?.({ type: "account", account });
+      return account;
+    }),
+    cancelSignIn: record("cancelSignIn", async () => {}),
+    signOut: record("signOut", async () => {
+      account = { state: "signed-out", open: false, signingIn: false };
+      listener?.({ type: "account", account });
     }),
     track: record("track", async () => {}),
     analytics: record("analytics", async () => options.analytics ?? off),

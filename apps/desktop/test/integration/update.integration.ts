@@ -23,6 +23,7 @@ import {
 } from "../../src/shared/release.ts";
 import { setLaunchdEnv } from "../launchd-env.ts";
 import { evaluate } from "./cdp.ts";
+import { signedIn } from "./signed-in.ts";
 import { run, signedTeam, unpackSignedRelease } from "./update-release.ts";
 
 const given = process.env.CYCLE_PACKAGED_APP;
@@ -167,7 +168,17 @@ test.skipIf(!ready)(
     const data = join(root, "data");
     const url = `http://127.0.0.1:${server.port}`;
     const port = 20000 + Math.floor(Math.random() * 20000);
-    const environment = { CYCLE_HOME: data, CYCLE_UPDATE_URL: url, CYCLE_ANALYTICS: "off" };
+    // Signed in to a stand-in, in the test's own folder: the app opened again by the update finds the same login there
+    // (and never the person's own, nor the keychain).
+    const userData = join(root, "electron");
+    const sso = await signedIn(userData);
+    const environment = {
+      CYCLE_HOME: data,
+      CYCLE_UPDATE_URL: url,
+      CYCLE_ANALYTICS: "off",
+      CYCLE_USER_DATA: userData,
+      ...sso.env,
+    };
     const exe = join(installed, "Contents/MacOS/Electron");
     let old: ReturnType<typeof Bun.spawn> | undefined;
     let putBack: (() => void) | undefined;
@@ -175,12 +186,7 @@ test.skipIf(!ready)(
       // What `open` starts does not get this process's environment; launchd's is where it can be set.
       putBack = setLaunchdEnv((args) => run(["/bin/launchctl", ...args]), environment);
       old = Bun.spawn(
-        [
-          exe,
-          "--disable-gpu",
-          `--remote-debugging-port=${port}`,
-          `--user-data-dir=${join(root, "electron")}`,
-        ],
+        [exe, "--disable-gpu", `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`],
         {
           // The packaged app carries the real project key: a test must say that nothing is to be reported.
           env: { PATH: "/usr/bin:/bin", HOME: root, ...environment },
@@ -284,6 +290,7 @@ test.skipIf(!ready)(
     } finally {
       putBack?.();
       server.stop(true);
+      await sso.idp.close();
       old?.kill();
       // Whatever of the app, new or old, runs from the test's own folder, and the daemon it started.
       Bun.spawnSync(["/usr/bin/pkill", "-f", join(root, "apps")]);
