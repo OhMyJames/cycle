@@ -2757,7 +2757,17 @@ html[data-platform="darwin"]
      overflows. Keep the slot always and take it out of the padding on its side: the column's edges are the composer's,
      left and right are equal, and nothing moves sideways when the content grows past the view. */
   scrollbar-gutter: stable;
-  padding-block: 1rem;
+  /* What scrolls past the top and bottom edges fades out (16px at the top, 32px at the bottom) instead of being cut. The
+     mask is the view's, not the content's, so it stays put as the content scrolls; at either end the fade lies in the
+     padding, so the first and last messages are never under it. The scrollbar's ends fade with it. */
+  padding-block: 1rem 4rem;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 1rem,
+    black calc(100% - 2rem),
+    transparent
+  );
   padding-inline: var(--cycle-column-pad) max(0px, calc(var(--cycle-column-pad) - 10px));
   font-size: var(--cycle-text-body);
   line-height: var(--cycle-leading-body);
@@ -4002,10 +4012,12 @@ button[data-slot="review-file"]:focus-visible {
 }
 
 /* Back to bottom: held to the bottom of the view (sticky) while the end is below it, just above the input box. Its holder
-   has no height and gives back the column's gap, so the conversation is laid the same with it or without it. */
+   has no height and gives back the column's gap, so the conversation is laid the same with it or without it. It sits just
+   above the conversation's 32px bottom fade, which would otherwise fade it too: 36px from the view's bottom. The offset
+   counts from inside the conversation's 4rem bottom padding, hence that is taken off. */
 [data-slot="to-end"] {
   position: sticky;
-  bottom: 0.75rem;
+  bottom: calc(2.25rem - 4rem);
   z-index: 1;
   align-self: center;
   height: 0;
