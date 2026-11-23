@@ -909,3 +909,321 @@ describe("configuration options: mode, model, effort (CYCL-174)", () => {
     }
   });
 });
+
+describe("steer, elicitation, and autonomous turn fallback (CYCL-175)", () => {
+  test("steer keeps single turn open across two v1 prompts, rotates assistant messageId, and rejects steer-when-idle and non-steer-when-busy", async () => {
+    const resolvers: Array<(value: unknown) => void> = [];
+    const { config, getFake } = baseConfig((method, params, fake) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-steer");
+      if (method === "session/prompt") {
+        const sid = (params as { sessionId: string }).sessionId;
+        return new Promise((resolve) => {
+          resolvers.push(resolve);
+          if (resolvers.length === 1) {
+            queueMicrotask(() => {
+              fake.emitUpdate(sid, {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "first part" },
+              });
+            });
+          } else if (resolvers.length === 2) {
+            // Mirror real agy 1.5.15 steer behavior: first prompt resolves immediately, second carries the steered answer.
+            queueMicrotask(() => {
+              resolvers[0]?.({ stopReason: "end_turn" });
+              fake.emitUpdate(sid, {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "steered reply" },
+              });
+              resolvers[1]?.({ stopReason: "end_turn" });
+            });
+          }
+        });
+      }
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+
+        // Steer when idle must reject with -32600.
+        let idleSteerErr: unknown;
+        try {
+          await agent.request(methods.agent.session.prompt, {
+            sessionId: "agy-steer",
+            prompt: [{ type: "text", text: "too early" }],
+            _meta: { [META.steer]: true },
+          } as never);
+        } catch (error) {
+          idleSteerErr = error;
+        }
+        expect((idleSteerErr as { code?: number })?.code).toBe(-32600);
+
+        // Start turn 1.
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-steer",
+          prompt: [{ type: "text", text: "start" }],
+        } as never);
+        await waitFor(() => updates.some((u) => u.sessionUpdate === "agent_message_chunk"));
+
+        // Non-steer prompt while busy must reject with -32600.
+        let busyErr: unknown;
+        try {
+          await agent.request(methods.agent.session.prompt, {
+            sessionId: "agy-steer",
+            prompt: [{ type: "text", text: "not a steer" }],
+          } as never);
+        } catch (error) {
+          busyErr = error;
+        }
+        expect((busyErr as { code?: number })?.code).toBe(-32600);
+
+        // Send steer prompt mid-turn.
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-steer",
+          prompt: [{ type: "text", text: "change direction" }],
+          _meta: { [META.steer]: true },
+        } as never);
+
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+
+        const chunks = updates.filter((u) => u.sessionUpdate === "agent_message_chunk") as Array<{
+          messageId: string;
+          content: { text?: string };
+        }>;
+        expect(chunks).toHaveLength(2);
+        expect(chunks[0]?.messageId).not.toBe(chunks[1]?.messageId);
+        expect(chunks[1]?.content.text).toBe("steered reply");
+
+        const runningStates = updates.filter(
+          (u) => u.sessionUpdate === "state_update" && u.state === "running",
+        );
+        const idleStates = updates.filter(
+          (u) => u.sessionUpdate === "state_update" && u.state === "idle",
+        );
+        expect(runningStates).toHaveLength(1);
+        expect(idleStates).toHaveLength(1);
+        expect(getFake().requests.filter((r) => r.method === "session/prompt")).toHaveLength(2);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("elicitation/create forwards forms, strips cycle/noClient to clean cancel, and aborts on session/cancel", async () => {
+    const answers: unknown[] = [];
+    let elicitationCount = 0;
+    const { config, getFake } = baseConfig(
+      (method, params, fake) => {
+        if (method === "initialize") return defaultInitResult("1.5.15");
+        if (method === "session/new") return defaultSessionResponse("agy-elicit");
+        if (method === "session/prompt") {
+          const sid = (params as { sessionId: string }).sessionId;
+          const text = (params as { prompt: Array<{ text?: string }> }).prompt[0]?.text ?? "";
+          if (text === "ask-two") {
+            return (async () => {
+              const first = await fake.askClient("elicitation/create", {
+                sessionId: sid,
+                toolCallId: "ask_1",
+                mode: "form",
+                message: "Pick a color",
+                requestedSchema: { type: "object", properties: { q1: { type: "string" } } },
+              });
+              answers.push(first);
+              const second = await fake.askClient("elicitation/create", {
+                sessionId: sid,
+                toolCallId: "ask_2",
+                mode: "form",
+                message: "No client attached",
+                requestedSchema: { type: "object", properties: { q1: { type: "string" } } },
+              });
+              answers.push(second);
+              return { stopReason: "end_turn" };
+            })();
+          }
+          return new Promise(() => {
+            queueMicrotask(async () => {
+              fake.emitUpdate(sid, {
+                sessionUpdate: "tool_call",
+                toolCallId: "ask_hang",
+                name: "ask_question",
+                status: "pending",
+              });
+              const cancelled = await fake.askClient("elicitation/create", {
+                sessionId: sid,
+                toolCallId: "ask_hang",
+                mode: "form",
+                message: "Will cancel",
+                requestedSchema: { type: "object", properties: {} },
+              });
+              answers.push(cancelled);
+            });
+          });
+        }
+        return {};
+      },
+      { cancelTimeoutMs: 40 },
+    );
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    let thirdAsked = false;
+    const app = client()
+      .onNotification(methods.client.session.update, ({ params }) => {
+        updates.push(params.update);
+      })
+      .onRequest(methods.client.elicitation.create, () => {
+        elicitationCount += 1;
+        if (elicitationCount === 1) {
+          return { action: "accept", content: { q1: "blue" } } as never;
+        }
+        if (elicitationCount === 2) {
+          return { action: "cancel", _meta: { [META.noClient]: true } } as never;
+        }
+        thirdAsked = true;
+        return new Promise(() => {});
+      });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: { elicitation: { form: {} } },
+          info: { name: "test", version: "1" },
+        } as never);
+        const initReq = getFake().requests.find((r) => r.method === "initialize")?.params as {
+          clientCapabilities?: { elicitation?: { form?: Record<string, unknown> } };
+        };
+        expect(initReq.clientCapabilities?.elicitation?.form).toEqual({});
+
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-elicit",
+          prompt: [{ type: "text", text: "ask-two" }],
+        } as never);
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+
+        expect(answers[0]).toEqual({ action: "accept", content: { q1: "blue" } });
+        // Internal _meta["cycle/noClient"] must be stripped before reaching agy.
+        expect(answers[1]).toEqual({ action: "cancel" });
+
+        // Cancel mid-elicitation aborts request and closes dangling ask_question tool.
+        const before = updates.length;
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-elicit",
+          prompt: [{ type: "text", text: "ask-cancel" }],
+        } as never);
+        await waitFor(() => thirdAsked);
+        await agent.notify(methods.agent.session.cancel, { sessionId: "agy-elicit" } as never);
+        await waitFor(() =>
+          updates
+            .slice(before)
+            .some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+        expect(answers[2]).toEqual({ action: "cancel" });
+        expect(
+          updates
+            .slice(before)
+            .some(
+              (u) =>
+                u.sessionUpdate === "tool_call_update" &&
+                u.toolCallId === "ask_hang" &&
+                u.status === "cancelled",
+            ),
+        ).toBe(true);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("autonomous updates arriving while idle synthesize running -> idle without triggering on housekeeping updates", async () => {
+    const { config, getFake } = baseConfig(
+      (method) => {
+        if (method === "initialize") return defaultInitResult("1.5.15");
+        if (method === "session/new") return defaultSessionResponse("agy-auto");
+        return {};
+      },
+      { autonomousIdleMs: 40 },
+    );
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+
+        // Housekeeping updates while idle must NOT start an autonomous turn.
+        getFake().emitUpdate("agy-auto", { sessionUpdate: "usage_update", used: 100, size: 1000 });
+        getFake().emitUpdate("agy-auto", {
+          sessionUpdate: "session_info_update",
+          title: "Background",
+        });
+        await Bun.sleep(60);
+        expect(updates.some((u) => u.sessionUpdate === "state_update")).toBe(false);
+
+        // Meaningful autonomous update starts a running turn, waits for open tool to complete, then idles.
+        getFake().emitUpdate("agy-auto", {
+          sessionUpdate: "tool_call",
+          toolCallId: "bg_1",
+          name: "run_command",
+          status: "in_progress",
+        });
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "running"),
+        );
+        // Must stay running past autonomousIdleMs while bg_1 is still open.
+        await Bun.sleep(70);
+        expect(updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle")).toBe(
+          false,
+        );
+
+        getFake().emitUpdate("agy-auto", {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg_1",
+          name: "run_command",
+          status: "completed",
+        });
+        getFake().emitUpdate("agy-auto", {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Wakeup finished!" },
+        });
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+
+        const states = updates
+          .filter((u) => u.sessionUpdate === "state_update")
+          .map((u) => (u as { state: string }).state);
+        expect(states).toEqual(["running", "idle"]);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+});

@@ -115,6 +115,15 @@ export type V1PermissionRequest = {
   options: V1PermissionOption[];
 };
 
+export type V1ElicitationRequest = {
+  sessionId: string;
+  toolCallId?: string;
+  mode?: string;
+  message?: string;
+  requestedSchema?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 export type V1ToolCallContent =
   | { type: "content"; content: Record<string, unknown> }
   | { type: "diff"; path: string; oldText?: string | null; newText: string }

@@ -23,6 +23,8 @@ export type AdapterConfig = {
   onServerExit?: () => void;
   /** How long `session/cancel` waits for `agy` to settle an in-flight prompt before forcing cancellation. */
   cancelTimeoutMs?: number;
+  /** Quiet window (ms) before closing a synthesized autonomous turn that had no in-flight prompt. */
+  autonomousIdleMs?: number;
 };
 
 export type AgyServerHandlers = {

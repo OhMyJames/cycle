@@ -17,6 +17,7 @@ import {
   AGY_PROMPT_CAPABILITIES,
   isVersionSupported,
   type V1ConfigOption,
+  type V1ElicitationRequest,
   type V1InitializeResult,
   type V1ModelInfo,
   type V1PermissionRequest,
@@ -28,12 +29,23 @@ import {
 
 type ActiveTurn = {
   inFlight: number;
+  autonomous: boolean;
+  activeRequests: number;
   cancelled: boolean;
   cancelTimer?: ReturnType<typeof setTimeout> | undefined;
+  idleTimer?: ReturnType<typeof setTimeout> | undefined;
   assistantMessageId: string;
   openTools: Set<string>;
   approvals: AbortController;
 };
+
+const TURN_ACTIVITY_UPDATES = new Set([
+  "agent_message_chunk",
+  "agent_thought_chunk",
+  "tool_call",
+  "tool_call_update",
+  "plan",
+]);
 
 type SessionState = {
   id: string;
@@ -110,6 +122,7 @@ export function createAdapter(config: AdapterConfig) {
   let clientCanElicit = false;
   const sessions = new Map<string, SessionState>();
   const cancelTimeoutMs = config.cancelTimeoutMs ?? 5_000;
+  const autonomousIdleMs = config.autonomousIdleMs ?? 1_500;
 
   const emitUpdate = (session: SessionState, update: SessionUpdate) => {
     void session.owner
@@ -118,6 +131,40 @@ export function createAdapter(config: AdapterConfig) {
         update,
       } as never)
       .catch(() => undefined);
+  };
+
+  const scheduleAutonomousIdle = (session: SessionState, turn: ActiveTurn) => {
+    if (!turn.autonomous || session.turn !== turn) return;
+    if (turn.idleTimer) {
+      clearTimeout(turn.idleTimer);
+      turn.idleTimer = undefined;
+    }
+    if (turn.openTools.size > 0 || turn.activeRequests > 0) return;
+    turn.idleTimer = setTimeout(() => {
+      if (session.turn !== turn) return;
+      if (turn.openTools.size > 0 || turn.activeRequests > 0) return;
+      finishTurn(session, turn, turn.cancelled ? "cancelled" : "end_turn");
+    }, autonomousIdleMs);
+    turn.idleTimer.unref?.();
+  };
+
+  const ensureAutonomousTurn = (session: SessionState): ActiveTurn => {
+    if (session.turn) return session.turn;
+    const turn: ActiveTurn = {
+      inFlight: 0,
+      autonomous: true,
+      activeRequests: 0,
+      cancelled: false,
+      assistantMessageId: randomUUID(),
+      openTools: new Set(),
+      approvals: new AbortController(),
+    };
+    session.turn = turn;
+    emitUpdate(session, {
+      sessionUpdate: "state_update",
+      state: "running",
+    } as SessionUpdate);
+    return turn;
   };
 
   const closeDanglingTools = (session: SessionState, turn: ActiveTurn) => {
@@ -145,6 +192,10 @@ export function createAdapter(config: AdapterConfig) {
     if (turn.cancelTimer) {
       clearTimeout(turn.cancelTimer);
       turn.cancelTimer = undefined;
+    }
+    if (turn.idleTimer) {
+      clearTimeout(turn.idleTimer);
+      turn.idleTimer = undefined;
     }
     abortPendingRequests(turn);
     closeDanglingTools(session, turn);
@@ -216,6 +267,10 @@ export function createAdapter(config: AdapterConfig) {
       return;
     }
 
+    if (!session.turn && TURN_ACTIVITY_UPDATES.has(update.sessionUpdate)) {
+      ensureAutonomousTurn(session);
+    }
+
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
       const toolId = (update as { toolCallId?: string }).toolCallId;
       const status = (update as { status?: string }).status;
@@ -237,6 +292,9 @@ export function createAdapter(config: AdapterConfig) {
       process.stderr.write(`[harness/agy] ignored unknown v1 sessionUpdate: ${kind}\n`);
     });
     if (translated) emitUpdate(session, translated);
+    if (session.turn?.autonomous && TURN_ACTIVITY_UPDATES.has(update.sessionUpdate)) {
+      scheduleAutonomousIdle(session, session.turn);
+    }
   };
 
   const handleRequest = async (method: string, params: unknown): Promise<unknown> => {
@@ -245,30 +303,92 @@ export function createAdapter(config: AdapterConfig) {
       const session = sessions.get(req.sessionId);
       if (!session) return { outcome: { outcome: "cancelled" } };
 
-      const signal = session.turn?.approvals.signal;
-      if (signal?.aborted) return { outcome: { outcome: "cancelled" } };
+      const turn = ensureAutonomousTurn(session);
+      const signal = turn.approvals.signal;
+      if (signal.aborted) return { outcome: { outcome: "cancelled" } };
 
-      const tc = toV2ToolCallUpdate(req.toolCall) as Record<string, unknown>;
-      const { sessionUpdate: _u, ...toolCall } = tc;
-      const title = req.toolCall.title ?? req.toolCall.name ?? "Permission required";
-      const answer = await session.owner
-        .request(
-          methods.client.session.requestPermission,
-          {
-            sessionId: session.id,
-            title,
-            subject: {
-              type: "tool_call",
-              toolCall,
-            },
-            options: req.options,
-          } as never,
-          signal ? { cancellationSignal: signal, stopWaitingOnCancel: true } : undefined,
-        )
-        .catch(() => undefined);
-      if (signal?.aborted || !answer) return { outcome: { outcome: "cancelled" } };
-      return answer;
+      turn.activeRequests += 1;
+      if (turn.idleTimer) {
+        clearTimeout(turn.idleTimer);
+        turn.idleTimer = undefined;
+      }
+      try {
+        const tc = toV2ToolCallUpdate(req.toolCall) as Record<string, unknown>;
+        const { sessionUpdate: _u, ...toolCall } = tc;
+        const title = req.toolCall.title ?? req.toolCall.name ?? "Permission required";
+        const answer = await session.owner
+          .request(
+            methods.client.session.requestPermission,
+            {
+              sessionId: session.id,
+              title,
+              subject: {
+                type: "tool_call",
+                toolCall,
+              },
+              options: req.options,
+            } as never,
+            { cancellationSignal: signal, stopWaitingOnCancel: true },
+          )
+          .catch(() => undefined);
+        if (signal.aborted || !answer) return { outcome: { outcome: "cancelled" } };
+        return answer;
+      } finally {
+        turn.activeRequests = Math.max(0, turn.activeRequests - 1);
+        if (turn.autonomous) scheduleAutonomousIdle(session, turn);
+      }
     }
+
+    if (method === "elicitation/create") {
+      const req = params as V1ElicitationRequest;
+      const session = sessions.get(req.sessionId);
+      if (!session || !clientCanElicit) return { action: "cancel" };
+
+      const turn = ensureAutonomousTurn(session);
+      const signal = turn.approvals.signal;
+      if (signal.aborted) return { action: "cancel" };
+
+      turn.activeRequests += 1;
+      if (turn.idleTimer) {
+        clearTimeout(turn.idleTimer);
+        turn.idleTimer = undefined;
+      }
+      try {
+        const response = (await session.owner
+          .request(
+            methods.client.elicitation.create,
+            {
+              ...req,
+              sessionId: session.id,
+              mode: req.mode ?? "form",
+            } as never,
+            { cancellationSignal: signal, stopWaitingOnCancel: true },
+          )
+          .catch(() => undefined)) as
+          | {
+              action?: "accept" | "decline" | "cancel";
+              content?: Record<string, unknown> | null;
+              _meta?: Record<string, unknown>;
+            }
+          | undefined;
+        if (signal.aborted || !response || typeof response !== "object") {
+          return { action: "cancel" };
+        }
+        // When no client can answer a form, daemon returns `{ action: "cancel", _meta: { "cycle/noClient": true } }`.
+        // Strip internal `_meta` so agy sees a clean cancel ("User Skipped") and falls back to plain chat.
+        if (response._meta?.[META.noClient] === true) {
+          return { action: "cancel" };
+        }
+        const action = response.action ?? "cancel";
+        return action === "accept" && response.content !== undefined
+          ? { action, content: response.content }
+          : { action };
+      } finally {
+        turn.activeRequests = Math.max(0, turn.activeRequests - 1);
+        if (turn.autonomous) scheduleAutonomousIdle(session, turn);
+      }
+    }
+
     throw new AgyRpcError(-32601, `Unsupported client request from agy: ${method}`);
   };
 
@@ -550,10 +670,27 @@ export function createAdapter(config: AdapterConfig) {
 
       const messageId = randomUUID();
       const blocks = params.prompt;
+      const steer =
+        (params._meta as Record<string, unknown> | null | undefined)?.[META.steer] === true;
       let turn = session.turn;
-      if (!turn) {
+      if (steer) {
+        if (!turn || turn.inFlight === 0) {
+          throw new RequestError(-32600, "No turn is running to steer");
+        }
+        turn.assistantMessageId = randomUUID();
+        emitUpdate(session, {
+          sessionUpdate: "user_message",
+          messageId,
+          content: blocks,
+        } as SessionUpdate);
+      } else {
+        if (turn) {
+          throw new RequestError(-32600, "A turn is already running");
+        }
         turn = {
           inFlight: 0,
+          autonomous: false,
+          activeRequests: 0,
           cancelled: false,
           assistantMessageId: randomUUID(),
           openTools: new Set(),
@@ -568,13 +705,6 @@ export function createAdapter(config: AdapterConfig) {
         emitUpdate(session, {
           sessionUpdate: "state_update",
           state: "running",
-        } as SessionUpdate);
-      } else {
-        turn.assistantMessageId = randomUUID();
-        emitUpdate(session, {
-          sessionUpdate: "user_message",
-          messageId,
-          content: blocks,
         } as SessionUpdate);
       }
 
