@@ -12,14 +12,24 @@ import {
 } from "../ansi.ts";
 import { insideFolder } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
-import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
+import type { Activity, Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import { activityOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
 import { reveal } from "../reveal.ts";
 import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { useI18n } from "./i18n.tsx";
-import { CheckIcon, ChevronRightIcon, CloseIcon, FileIcon } from "./icons.tsx";
+import {
+  AgentIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  FileIcon,
+  GlobeIcon,
+  PencilIcon,
+  SearchIcon,
+  TerminalIcon,
+} from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { Elapsed } from "./inline-ai-status.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
@@ -199,18 +209,42 @@ export const toolVerb = (
   return t(`tool.verb.${activity}.${going ? "live" : "done"}`);
 };
 
+/** What a finished call or stretch was, as a mark: a sub-agent, or one of the activities; else none. */
+export type LeadKind = Activity | "subagent";
+
+const KIND_ICONS: Partial<Record<LeadKind, (props: { size?: number }) => ReactNode>> = {
+  read: FileIcon,
+  edit: PencilIcon,
+  search: SearchIcon,
+  run: TerminalIcon,
+  fetch: GlobeIcon,
+  subagent: AgentIcon,
+};
+
 /**
- * What leads a line, for a call or a stretch of them: the spinner while it goes, a cross when it failed, else a small dot.
- * Not the tool's icon: the words already say what it did ("Ran", "Read"), and a state is what the eye looks for down the
- * left edge. The one place a status becomes a mark.
+ * What leads a line, for a call or a stretch of them: the spinner while it goes, a cross when it failed; once done, what
+ * kind of thing it was (a file read, an edit, a search, a command, a page, a sub-agent), quiet, so a turn's work can be
+ * read down the left edge. Anything else (waiting, never finished, stopped) and a kind without an icon: a small dot
+ * (decision 2026-11-23-finished-calls-lead-with-their-kind).
  */
-export function Lead({ mark }: { mark: "going" | "failed" | "other" }) {
+export function Lead({
+  mark,
+  kind,
+}: {
+  mark: "going" | "failed" | "done" | "other";
+  kind?: LeadKind | undefined;
+}) {
+  const Icon = mark === "done" && kind !== undefined ? KIND_ICONS[kind] : undefined;
   return (
     <span data-slot="tool-lead">
       {mark === "going" ? (
         <span data-slot="spinner" aria-hidden="true" />
       ) : mark === "failed" ? (
         <CloseIcon size={14} data-slot="tool-mark" data-tone="danger" />
+      ) : Icon !== undefined ? (
+        <span data-slot="tool-kind" data-lead-kind={kind} aria-hidden="true">
+          <Icon size={14} />
+        </span>
       ) : (
         <span data-slot="tool-dot" aria-hidden="true" />
       )}
@@ -282,7 +316,11 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
       onOpenChange={setOpen}
     >
       <CollapsibleTrigger>
-        <Lead mark={working ? "going" : failed ? "failed" : "other"} />{" "}
+        <Lead
+          mark={working ? "going" : failed ? "failed" : status === "completed" ? "done" : "other"}
+          // A file removed or moved is no edit, whatever the agent files it under: no pencil for it.
+          kind={tool.toolKind === "delete" || tool.toolKind === "move" ? undefined : activity}
+        />{" "}
         {/* Which tool it was is for a screen reader and the tooltip of the line; the words say what it did. With a
             description, that is the line (what it is for), and what it ran follows it, muted; else the verb in its tense. */}
         <span data-slot="visually-hidden">{toolName(t, tool)}</span>{" "}

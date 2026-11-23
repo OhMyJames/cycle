@@ -3142,6 +3142,19 @@ html[data-platform="darwin"]
   flex: none;
 }
 
+/* A finished call's kind: quiet, so the spinner and the red cross are still what the eye finds first. */
+[data-slot="tool-kind"] {
+  display: grid;
+  place-items: center;
+  color: var(--cycle-ink-disabled);
+}
+
+:is([data-kind="tool"], [data-kind="work"], [data-kind="subagent"])
+  > button:hover
+  [data-slot="tool-kind"] {
+  color: var(--cycle-ink-muted);
+}
+
 /* The verb, or the agent's own sentence for what the call is for. It keeps its room; what it acted on gives way first. */
 [data-slot="tool-verb"] {
   flex: none;
@@ -3164,7 +3177,8 @@ html[data-platform="darwin"]
   font-size: var(--cycle-text-ui);
 }
 
-/* A call that is done: a small dot, so the left edge is a column of states, and a stretch's rule has something to join. */
+/* A call that is waiting, never finished or was stopped, a done one of a kind without an icon, or a stretch of mixed
+   kinds: a small dot, so a stretch's rule has something to join. A done call of a known kind leads with its icon. */
 [data-slot="tool-dot"] {
   width: 5px;
   height: 5px;

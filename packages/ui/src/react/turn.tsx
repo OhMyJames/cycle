@@ -55,6 +55,9 @@ export function WorkBlock({ tools, live }: { tools: readonly ToolItem[]; live: b
 function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }) {
   const { t, list, locale } = useI18n();
   const failed = tools.filter((tool) => tool.status === "failed").length;
+  // A stretch of one kind of call is marked as that kind once done; a mixed one has no single kind, and a dot.
+  const kinds = activityCounts(tools);
+  const oneKind = kinds.length === 1 ? kinds[0]?.activity : undefined;
   const going = live ? tools.findLast(isLive) : undefined;
   const goingDescription = going !== undefined ? toolDescription(going) : undefined;
   const goingDetail =
@@ -70,9 +73,7 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
     setOpen,
   );
   // The pieces are written to follow one another ("ran 2 commands"), and the line begins as a sentence does.
-  const pieces = list(
-    activityCounts(tools).map(({ activity, count }) => t(`work.summary.${activity}`, { count })),
-  );
+  const pieces = list(kinds.map(({ activity, count }) => t(`work.summary.${activity}`, { count })));
   const summary = pieces.charAt(0).toLocaleUpperCase(locale) + pieces.slice(1);
   // What is going on now comes first; a call that never ended (the turn stopped, or did not wait for it) is not "done".
   const mark =
@@ -91,7 +92,18 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       onOpenChange={setOpen}
     >
       <CollapsibleTrigger>
-        <Lead mark={going !== undefined ? "going" : failed > 0 ? "failed" : "other"} />{" "}
+        <Lead
+          mark={
+            going !== undefined
+              ? "going"
+              : failed > 0
+                ? "failed"
+                : mark === "completed"
+                  ? "done"
+                  : "other"
+          }
+          kind={oneKind}
+        />{" "}
         <span data-slot="tool-verb">{summary}</span>{" "}
         {/* While one goes, the line says which, in its tense: that is also what a screen reader is told. */}
         <span
