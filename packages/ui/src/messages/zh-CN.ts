@@ -19,7 +19,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "session.awayIncompatible":
     "{environment} 未连接：那里的 Cycle 与本应用的协议不同。它的提示里写了要更新哪一边。",
   "session.awayBecause": "{environment} 未连接：{reason}",
-  "session.awayBanner": "{environment} 未连接。这是它断开时会话的样子。",
+  "session.awayBanner": "{environment} 未连接。这是它断开时会话的样子。草稿会保留。",
   "defaults.reading": "正在读取默认设置…",
   "defaults.unreadable": "读不出这个 agent 已保存的设置，所以没有显示。",
   "newSession.environment": "环境",
@@ -189,6 +189,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "blank.untrusted": "尚未信任",
   "blank.untrusted.hint": "发出第一条消息时会问你是否信任它。",
   "blank.notConnected": "未连接到 {environment}。",
+  "blank.draftKept": "你可以继续编辑草稿。",
   "blank.connecting": "正在连接 {environment}…",
   "blank.chooseFolder": "选择 agent 工作的文件夹。",
   "blank.noAgent": "{environment} 上没有可用的 agent。",
@@ -225,7 +226,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   // 输入框
   "composer.message": "消息",
-  "composer.offline": "连接已断开。你可以继续编辑草稿。",
   "composer.placeholder.idle": "给 agent 发消息",
   "composer.placeholder.working": "排队一条消息，agent 做完后发出",
   "composer.placeholder.busy": "agent 正在工作。停止它才能现在发消息。",
@@ -739,7 +739,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "dialog.close": "关闭",
   "dialog.cancel": "取消",
   "banner.dismiss": "忽略",
-  "environment.reconnectingBanner": "连接已断开。正在重新连接…恢复后会显示你错过的内容。",
+  "environment.reconnectingBanner":
+    "连接已断开。正在重新连接…草稿会保留，恢复后会显示你错过的内容。",
   "environment.add": "添加环境",
   "environment.addTitle": "添加环境",
   "environment.addSubmit": "添加",

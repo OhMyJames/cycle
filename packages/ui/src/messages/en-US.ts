@@ -21,7 +21,7 @@ export const enUS = {
     "{environment} is not connected: Cycle there and this app speak different protocols. Its notice says what to update.",
   "session.awayBecause": "{environment} is not connected: {reason}",
   "session.awayBanner":
-    "{environment} is not connected. This is what the session had when it went away.",
+    "{environment} is not connected. This is what the session had when it went away. Your draft is kept.",
   "defaults.reading": "Reading the defaults…",
   "defaults.unreadable":
     "The saved settings of this agent could not be read, so they are not shown.",
@@ -209,6 +209,7 @@ export const enUS = {
   "blank.agent": "Agent",
   "blank.chooseFolder": "Choose a folder for the agent to work in.",
   "blank.notConnected": "Not connected to {environment}.",
+  "blank.draftKept": "You can keep editing your draft.",
   "blank.connecting": "Connecting to {environment}…",
   "blank.noAgent": "No agent is available on {environment}.",
   "blank.noAgentHint": "Check that an agent is installed on {environment} and signed in.",
@@ -253,7 +254,6 @@ export const enUS = {
 
   // The box a message is written in
   "composer.message": "Message",
-  "composer.offline": "Connection lost. You can keep editing your draft.",
   "composer.placeholder.idle": "Message the agent",
   "composer.placeholder.working": "Queue a message for when the agent is done",
   "composer.placeholder.busy": "The agent is working. Stop it to send a message now.",
@@ -826,7 +826,7 @@ export const enUS = {
   "dialog.cancel": "Cancel",
   "banner.dismiss": "Dismiss",
   "environment.reconnectingBanner":
-    "Connection lost. Reconnecting… what you miss will be shown when it is back.",
+    "Connection lost. Reconnecting… Your draft is kept, and what you miss is shown when it is back.",
   "environment.add": "Add environment",
   "environment.addTitle": "Add an environment",
   "environment.addSubmit": "Add",
