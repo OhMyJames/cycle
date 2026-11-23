@@ -2241,7 +2241,13 @@ test("a wakeup the model sets is told at once, then by the Stop hook's id, and t
       {
         hook_event_name: "Stop",
         session_crons: [
-          { id: "c9", schedule: "0 13 * * *", recurring: false, prompt: "Check the build" },
+          // Set for its own minute, three hours on: a fixed hour would be within the hour of the clock once a day.
+          {
+            id: "c9",
+            schedule: `${new Date(due).getMinutes()} ${new Date(due).getHours()} * * *`,
+            recurring: false,
+            prompt: "Check the build",
+          },
         ],
       } as never,
       undefined,
@@ -2254,10 +2260,16 @@ test("a wakeup the model sets is told at once, then by the Stop hook's id, and t
     async ({ agent, idle, updates }) => {
       await newSession(agent);
       // Three hours away: the process is let go after each turn, and the list says so.
+      // Waited for, not slept on: on a slow machine the process is let go later than idleMs.
+      const until = async (count: number) => {
+        const start = Date.now();
+        while (schedulesOf(updates).length < count && Date.now() - start < 3_000)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+      };
       await prompt(agent, idle, [{ type: "text", text: "check back later" }]);
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await until(2);
       await prompt(agent, idle, [{ type: "text", text: "anything?" }]);
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await until(5);
       const told = schedulesOf(updates).map((u) => [
         u.jobs.map((j) => [j.id, j.kind, j.toolCallId]),
         u.dormant === true,
