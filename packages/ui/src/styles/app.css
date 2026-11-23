@@ -2795,6 +2795,33 @@ html[data-platform="darwin"]
   color: inherit;
 }
 
+/* Words of a reply that name a file of the session's folder: still code, or a link's words, but underlined in dots, which
+   turn solid under the pointer. A press shows the file in Files. */
+[data-slot="file-link"] {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+[data-slot="file-link"] > [data-streamdown="inline-code"],
+[data-slot="file-link"]:not(:has(> [data-streamdown="inline-code"])) {
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+[data-slot="file-link"]:hover > [data-streamdown="inline-code"],
+[data-slot="file-link"]:not(:has(> [data-streamdown="inline-code"])):hover {
+  text-decoration-style: solid;
+  text-decoration-color: currentColor;
+}
+
 /* A link: blue, underlined lightly, the line darkening under the pointer. Only http, https and mailto become links. */
 [data-slot="message"] a[href] {
   color: var(--cycle-link);
