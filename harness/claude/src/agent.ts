@@ -895,7 +895,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       .request(
         methods.client.elicitation.create,
         { sessionId: session.id, mode: "form", ...form } as never,
-        { signal: all } as never,
+        { cancellationSignal: all, stopWaitingOnCancel: true },
       )
       .then(
         (r) => r as unknown as FormResponse,
@@ -1097,7 +1097,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
                 { optionId: "deny", name: "Deny", kind: "reject_once" },
               ],
             } as never,
-            { signal } as never,
+            { cancellationSignal: signal, stopWaitingOnCancel: true },
           ),
           aborted,
         ]).catch((error) => {

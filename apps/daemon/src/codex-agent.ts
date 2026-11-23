@@ -48,6 +48,7 @@ export const codexHarness: Harness = {
     // The login is kept in `$CODEX_HOME/auth.json`, never the system keychain, which is not per CODEX_HOME.
     args: [...CODEX_FIXED_ARGS],
     login: ["login"],
+    directories: ["CODEX_HOME"],
   },
   definition: ({ config, dataDir, inherited, self, log }) => {
     const settings = config.codex;

@@ -11,5 +11,9 @@
     "@agentclientprotocol/sdk": "catalog:",
     "@cycle/protocol": "workspace:*",
     "@openai/codex": "0.171.0"
+  },
+  "scripts": {
+    "test:integration": "bun test ./test/integration/adapter.integration.ts",
+    "test:real": "bun test ./test/integration/real-model.integration.ts"
   }
 }

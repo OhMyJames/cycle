@@ -9,21 +9,55 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import { approval } from "./approval.ts";
+import {
+  elicitationAnswer,
+  elicitationForm,
+  type Form,
+  type FormAnswer,
+  questionAnswers,
+  questionForm,
+} from "./ask.ts";
 import { itemUpdate } from "./items.ts";
+import { PLAN_USAGE_UPDATE, planWindowsOf } from "./plan-usage.ts";
 import { CODEX_NOTIFICATION_METHODS, CODEX_PROMPT_CAPABILITIES } from "./protocol.ts";
 import { type AdapterConfig, AppServer, CodexRpcError } from "./server.ts";
-import { type Catalog, type Mode, modes, options, policy, turnPolicy } from "./settings.ts";
+import {
+  type Catalog,
+  effortsOf,
+  type Mode,
+  modes,
+  options,
+  policy,
+  turnPolicy,
+} from "./settings.ts";
 import type {
+  AccountRateLimitsUpdatedNotification,
   AgentMessageDeltaNotification,
+  GetAccountRateLimitsResponse,
   ItemCompletedNotification,
+  McpServerElicitationRequestParams,
   PlanDeltaNotification,
+  SkillMetadata,
+  SkillsListResponse,
   ThreadNameUpdatedNotification,
   ThreadTokenUsageUpdatedNotification,
+  ToolRequestUserInputParams,
   TurnCompletedNotification,
   TurnError,
   TurnPlanUpdatedNotification,
   UserInput,
 } from "./wire.generated.ts";
+
+/**
+ * An MCP server's name as Codex takes it: letters, digits, `_` and `-` (a name with anything else is refused and the
+ * server left out). Cycle's names are a person's, "Linear (work)" say.
+ */
+export const serverName = (name: string) => name.replace(/[^A-Za-z0-9_-]+/g, "_") || "mcp";
+
+/** In a form's answer: no client could show it (decision 0011). */
+const NO_CLIENT = "cycle/noClient";
+/** In a `subagent_update`'s `_meta`: what Codex says of the sub-agent beyond ACP's fields (decision 0014). */
+const SUBAGENT_META = "cycle/subagent";
 
 /** A failed turn's message; one Codex failed for want of a login says how to sign in. */
 export function turnErrorMessage(error: TurnError | null | undefined): string | undefined {
@@ -63,12 +97,38 @@ export function createAdapter(config: AdapterConfig) {
   let mcpConfig: Record<string, unknown> = {};
   let trusted: boolean | undefined;
   let codexConfig: Record<string, unknown> = {};
+  /** The client said it can show a form (ACP `capabilities.elicitation.form`): the daemon says so for its clients. */
+  let clientCanElicit = false;
+  let cwd: string | undefined;
+  /** Codex's skills for the session's folder, offered as commands. */
+  let skills: SkillMetadata[] = [];
+  /** The plan usage last told: it is told again only when it changes. */
+  let planUsage = "";
+  /** Told already that the sandbox cannot start here. */
+  let sandboxNoticed = false;
   const children = new Set<string>();
   const childTurns = new Map<string, string>();
   /** Items of sub-agent threads that came as deltas, for when no turn of the parent's is running. */
   const childStreamed = new Set<string>();
   /** Sub-agents' approvals are not a turn's of the parent's: they end with the session. */
   let childApprovals = new AbortController();
+  /** What each sub-agent asks ends with its own turn too (it is stopped, or done): one per sub-agent. */
+  const childAsks = new Map<string, AbortController>();
+  /** Sub-agents told as ended (idle) and not running since: an end is told once. */
+  const childEnded = new Set<string>();
+  const childSignal = (threadId: string) => {
+    let asks = childAsks.get(threadId);
+    if (!asks) {
+      asks = new AbortController();
+      childAsks.set(threadId, asks);
+    }
+    return AbortSignal.any([childApprovals.signal, asks.signal]);
+  };
+  /** A sub-agent's turn is over: what it asked is withdrawn. */
+  const endChildAsks = (threadId: string) => {
+    childAsks.get(threadId)?.abort();
+    childAsks.delete(threadId);
+  };
   const planId = () => `${session ?? "codex"}-plan`;
   function notifyFor(sessionId: string, update: SessionUpdate) {
     if (owner)
@@ -78,12 +138,138 @@ export function createAdapter(config: AdapterConfig) {
     if (session) notifyFor(session, update);
   }
   /** A sub-agent's state, told in the parent's session: the daemon takes a child's state only from there. */
-  function subagent(threadId: string, state: "running" | "idle") {
+  function subagent(
+    threadId: string,
+    state: "running" | "idle",
+    stopReason?: "end_turn" | "cancelled" | "error",
+    announce?: { title?: string | undefined; toolCallId: string; parentId?: string },
+  ) {
+    if (state === "idle") {
+      if (childEnded.has(threadId)) return;
+      childEnded.add(threadId);
+      endChildAsks(threadId);
+    } else childEnded.delete(threadId);
     notify({
       sessionUpdate: "subagent_update",
       sessionId: threadId,
-      state: { sessionUpdate: "state_update", state },
+      state: { state, ...(stopReason ? { stopReason } : {}) },
+      // Stopped alone with `session/cancel` of its own id: an interrupt of its own turn.
+      ...(announce
+        ? {
+            ...(announce.title ? { title: announce.title } : {}),
+            capabilities: { cancel: {} },
+            _meta: {
+              [SUBAGENT_META]: {
+                toolCallId: announce.toolCallId,
+                ...(announce.parentId ? { parentId: announce.parentId } : {}),
+              },
+            },
+          }
+        : {}),
     } as unknown as SessionUpdate);
+  }
+  /** Commands for the session: `/compact`, then each of Codex's enabled skills. */
+  function commands(): AvailableCommand[] {
+    const seen = new Set(["compact"]);
+    const list: AvailableCommand[] = [
+      { type: "command", name: "compact", description: "Compact the Codex conversation context." },
+    ];
+    for (const skill of skills) {
+      if (!skill.enabled || seen.has(skill.name)) continue;
+      seen.add(skill.name);
+      list.push({
+        type: "command",
+        name: skill.name,
+        description:
+          skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description,
+        input: { type: "text", hint: "What to do with it" },
+      } as AvailableCommand);
+    }
+    return list;
+  }
+  /** Each listing in turn: one that answers after a later one began is out of date. */
+  let skillsLoad = 0;
+  /** The listing under way, for a prompt that names a skill before the first has come. */
+  let skillsLoading: Promise<void> | undefined;
+  function loadSkills(reload = false) {
+    if (!server || cwd === undefined) return Promise.resolve();
+    const load = ++skillsLoad;
+    const loading = server
+      .request<SkillsListResponse>("skills/list", { cwds: [cwd], forceReload: reload })
+      .then(
+        (listed) => {
+          if (load === skillsLoad) skills = listed.data.flatMap((entry) => entry.skills);
+        },
+        () => {},
+      );
+    skillsLoading = loading;
+    return loading;
+  }
+  /** The account's usage limits, told when they change. */
+  function tellPlanUsage(snapshot: GetAccountRateLimitsResponse["rateLimits"] | undefined) {
+    const windows = planWindowsOf(snapshot);
+    const key = JSON.stringify(windows);
+    if (windows.length === 0 || key === planUsage) return;
+    planUsage = key;
+    notify({
+      sessionUpdate: PLAN_USAGE_UPDATE,
+      windows,
+      at: Date.now(),
+    } as unknown as SessionUpdate);
+  }
+  /**
+   * Asks the user a form, through the daemon. Ends when someone answers, or when `signal` ends it (the turn is
+   * cancelled, the session closes). A client that did not say it can show a form is not sent one.
+   */
+  async function askForm(form: Form, signal: AbortSignal | undefined): Promise<FormAnswer> {
+    if (!clientCanElicit || !owner || !session || !signal) return "unavailable";
+    if (signal.aborted) return "aborted";
+    const response = await owner
+      .request(
+        methods.client.elicitation.create,
+        { sessionId: session, mode: "form", ...form } as never,
+        { cancellationSignal: signal, stopWaitingOnCancel: true },
+      )
+      .then(
+        (r) =>
+          r as unknown as {
+            action: "accept" | "decline" | "cancel";
+            content?: Record<string, unknown> | null;
+            _meta?: Record<string, unknown>;
+          } | null,
+        () => "failed" as const,
+      );
+    if (signal.aborted) return "aborted";
+    if (response === "failed" || typeof response !== "object" || response === null)
+      return "unavailable";
+    if (response._meta?.[NO_CLIENT] === true) return "unavailable";
+    return { action: response.action, content: response.content };
+  }
+  /** Codex's requests of the client: approvals, its questions, an MCP server's forms. */
+  async function serverRequest(method: string, raw: unknown) {
+    const threadId = (raw as { threadId?: string } | undefined)?.threadId ?? "";
+    const child = children.has(threadId);
+    const signal = child ? childSignal(threadId) : turn?.approvals.signal;
+    const ours = child || (threadId === session && !!turn);
+    if (method === "item/tool/requestUserInput") {
+      const params = raw as ToolRequestUserInputParams;
+      // Nobody to ask: no answers, which the model reads as the user not answering.
+      return questionAnswers(
+        params,
+        ours ? await askForm(questionForm(params), signal) : "unavailable",
+      );
+    }
+    if (method === "mcpServer/elicitation/request") {
+      const params = raw as McpServerElicitationRequestParams;
+      const form = elicitationForm(params);
+      // An MCP server may ask between turns; the session's end ends it then.
+      return elicitationAnswer(
+        form && (child || threadId === session)
+          ? await askForm(form, signal ?? childApprovals.signal)
+          : undefined,
+      );
+    }
+    return approval(method, raw, owner, session, turn?.id, signal, (id) => children.has(id));
   }
   function finish(stopReason: "end_turn" | "error" | "cancelled", message?: string) {
     if (!turn) return;
@@ -113,6 +299,18 @@ export function createAdapter(config: AdapterConfig) {
   }
   function event(method: string, raw: unknown) {
     if (!(CODEX_NOTIFICATION_METHODS as readonly string[]).includes(method)) return;
+    // The account's and the folder's, not a thread's.
+    if (method === "account/rateLimits/updated") {
+      if (session) tellPlanUsage((raw as AccountRateLimitsUpdatedNotification).rateLimits);
+      return;
+    }
+    if (method === "skills/changed") {
+      if (session)
+        void loadSkills(true).then(() =>
+          notify({ sessionUpdate: "available_commands_update", availableCommands: commands() }),
+        );
+      return;
+    }
     if (!raw || typeof raw !== "object" || !("threadId" in raw)) return;
     const threadId = typeof raw.threadId === "string" ? raw.threadId : undefined;
     if (!threadId || (threadId !== session && !children.has(threadId))) return;
@@ -145,6 +343,12 @@ export function createAdapter(config: AdapterConfig) {
     // A turn this adapter did not start itself (a /compact) is known by its id from here on.
     if (method === "turn/started") {
       const started = (raw as { turn?: { id?: unknown } }).turn?.id;
+      // A sub-agent given more to do (`send_input`) runs again.
+      if (child) {
+        if (typeof started === "string") childTurns.set(threadId, started);
+        subagent(threadId, "running");
+        return;
+      }
       if (!child && active && active.id === undefined && typeof started === "string") {
         active.id = started;
         if (active.cancelled) interrupt(active);
@@ -158,7 +362,15 @@ export function createAdapter(config: AdapterConfig) {
       const result = (raw as TurnCompletedNotification).turn;
       if (child) {
         childTurns.delete(threadId);
-        subagent(threadId, "idle");
+        subagent(
+          threadId,
+          "idle",
+          result.status === "interrupted"
+            ? "cancelled"
+            : result.status === "completed"
+              ? "end_turn"
+              : "error",
+        );
         return;
       }
       if (active?.id && result.id !== active.id) return;
@@ -185,12 +397,45 @@ export function createAdapter(config: AdapterConfig) {
         } as SessionUpdate);
         return;
       }
+      // How the pinned Codex tells of a sub-agent with a real model (multi-agent v2): an activity item in the thread
+      // that started it, with the sub-agent's own thread. Its conversation then comes on that thread.
+      if (item.type === "subAgentActivity" && !completedItem) {
+        if (item.kind === "started") {
+          children.add(item.agentThreadId);
+          subagent(item.agentThreadId, "running", undefined, {
+            title: item.agentPath.split("/").filter(Boolean).at(-1),
+            toolCallId: item.id,
+            ...(child ? { parentId: threadId } : {}),
+          });
+        } else if (item.kind === "interrupted" && children.has(item.agentThreadId))
+          subagent(item.agentThreadId, "idle", "cancelled");
+        // Its own turn's end says it first, as a rule; this is for when that came before it was known.
+        else if (item.kind === "completed" && children.has(item.agentThreadId))
+          subagent(item.agentThreadId, "idle", "end_turn");
+      }
       const update = itemUpdate(item, method === "item/completed", streamed.has(item.id), planId());
       if (!child && active && update?.sessionUpdate === "tool_call_update") {
         if (method === "item/started") active.tools.add(item.id);
         else active.tools.delete(item.id);
       }
       if (update) send(update);
+      // On Linux a command runs in bubblewrap, which a container's default profile (or a kernel without unprivileged
+      // user namespaces) does not let start: every command then fails the same way, and Codex does not fall back on
+      // its own (seen in Docker, CYCL-208). Said once, with what to do.
+      if (
+        completedItem &&
+        !sandboxNoticed &&
+        item.type === "commandExecution" &&
+        /bwrap: No permissions to create a new namespace/.test(item.aggregatedOutput ?? "")
+      ) {
+        sandboxNoticed = true;
+        notify({
+          sessionUpdate: "notice",
+          severity: "warning",
+          title:
+            "Codex's sandbox cannot start on this machine, so its commands fail. Run Cycle where unprivileged user namespaces are allowed (in Docker: --security-opt seccomp=unconfined --security-opt apparmor=unconfined), or choose Full access.",
+        } as SessionUpdate);
+      }
       if (item.type === "collabAgentToolCall")
         for (const receiver of item.receiverThreadIds) {
           children.add(receiver);
@@ -288,7 +533,28 @@ export function createAdapter(config: AdapterConfig) {
         );
       return { type: "text", text: block.text, text_elements: [] };
     });
-  const optionsOf = () => options(mode, catalog, model, effort);
+  /**
+   * A prompt that begins `/<skill>` runs that skill, as Codex's own clients do: the skill as an input of its own, and
+   * the text naming it with Codex's `$` (the model reads the mention, the input brings the skill's instructions).
+   */
+  async function withSkill(input: UserInput[]): Promise<UserInput[]> {
+    const first = input[0];
+    if (first?.type !== "text") return input;
+    const match = /^\/([^\s/]+)(?=\s|$)/.exec(first.text);
+    // `/compact` is Cycle's command, whatever skill shares its name.
+    if (!match || match[1] === "compact") return input;
+    if (skills.length === 0) await skillsLoading;
+    const skill = skills.find((s) => s.enabled && s.name === match[1]);
+    if (!skill) return input;
+    return [
+      { type: "skill", name: skill.name, path: skill.path },
+      { ...first, text: `$${first.text.slice(1)}` },
+      ...input.slice(1),
+    ];
+  }
+  const optionsOf = () => options(mode, catalog, model, effort, threadModel);
+  const supports = (forModel: string, value: string) =>
+    effortsOf(catalog, forModel, threadModel).some((item) => item.reasoningEffort === value);
   /** The model and effort a turn runs with, always explicit: Codex keeps a turn's choice for the turns after it. */
   function resolved() {
     const chosenModel = model !== "default" ? model : threadModel;
@@ -334,8 +600,15 @@ export function createAdapter(config: AdapterConfig) {
     model = "default";
     effort = "default";
     sentPlan = false;
+    cwd = params.cwd;
+    skills = [];
+    planUsage = "";
+    sandboxNoticed = false;
     closing = false;
     childApprovals = new AbortController();
+    childAsks.clear();
+    childEnded.clear();
+    skillsLoading = undefined;
     additionalDirectories = params.additionalDirectories ?? [];
     developerInstructions =
       params.systemPrompt?.mode === "append"
@@ -344,11 +617,20 @@ export function createAdapter(config: AdapterConfig) {
             .map((item) => item.text ?? "")
             .join("\n")
         : undefined;
+    // Two names that come out the same are kept apart: one would silently replace the other.
+    const taken = new Set<string>();
+    const serverKey = (name: string) => {
+      const base = serverName(name);
+      let key = base;
+      for (let n = 2; taken.has(key); n++) key = `${base}_${n}`;
+      taken.add(key);
+      return key;
+    };
     mcpConfig = Object.fromEntries(
       (params.mcpServers ?? []).map((server) => {
         if (server.type === "http")
           return [
-            server.name,
+            serverKey(String(server.name)),
             {
               url: server.url,
               http_headers: Object.fromEntries(
@@ -360,7 +642,7 @@ export function createAdapter(config: AdapterConfig) {
           ];
         if (server.type === "stdio")
           return [
-            server.name,
+            serverKey(String(server.name)),
             {
               command: server.command,
               args: server.args ?? [],
@@ -392,18 +674,7 @@ export function createAdapter(config: AdapterConfig) {
         // The session cannot go on without it: the adapter ends too, so the daemon starts a new one and resumes.
         if (session !== undefined && !closing) config.onServerExit?.();
       },
-      (method, raw) =>
-        approval(
-          method,
-          raw,
-          owner,
-          session,
-          turn?.id,
-          children.has((raw as { threadId?: string } | undefined)?.threadId ?? "")
-            ? childApprovals.signal
-            : turn?.approvals.signal,
-          (threadId) => children.has(threadId),
-        ),
+      serverRequest,
     );
     server = child;
     const settings = {
@@ -456,16 +727,20 @@ export function createAdapter(config: AdapterConfig) {
           sessionId: session,
           update: { sessionUpdate: "state_update", state: "idle" },
         });
+      // Codex's skills, as commands once they are listed: the session does not wait on them.
+      void loadSkills().then(() => {
+        if (skills.length > 0 && session === result.thread.id)
+          notify({ sessionUpdate: "available_commands_update", availableCommands: commands() });
+      });
+      // The account's limits as they stand; after that, as each response tells them.
+      void child
+        .request<GetAccountRateLimitsResponse>("account/rateLimits/read", {})
+        .then((limits) => tellPlanUsage(limits.rateLimits))
+        .catch(() => {});
       return {
         sessionId: session,
         configOptions: optionsOf(),
-        availableCommands: [
-          {
-            type: "command",
-            name: "compact",
-            description: "Compact the Codex conversation context.",
-          },
-        ] satisfies AvailableCommand[],
+        availableCommands: commands(),
         ...(resume && session !== resume.sessionId
           ? { _meta: { "cycle/agentSessionId": session } }
           : {}),
@@ -477,18 +752,23 @@ export function createAdapter(config: AdapterConfig) {
     }
   }
   const app = agent({ name: "cycle-codex-adapter" })
-    .onRequest(methods.agent.initialize, () => ({
-      protocolVersion: 2,
-      info: { name: "cycle-codex-adapter", version: "0.0.0" },
-      capabilities: {
-        session: {
-          prompt: CODEX_PROMPT_CAPABILITIES,
-          mcp: { http: {}, stdio: {} },
-          additionalDirectories: {},
-          systemPrompt: {},
+    .onRequest(methods.agent.initialize, ({ params }) => {
+      clientCanElicit =
+        (params as { capabilities?: { elicitation?: { form?: unknown } } }).capabilities
+          ?.elicitation?.form != null;
+      return {
+        protocolVersion: 2,
+        info: { name: "cycle-codex-adapter", version: "0.0.0" },
+        capabilities: {
+          session: {
+            prompt: CODEX_PROMPT_CAPABILITIES,
+            mcp: { http: {}, stdio: {} },
+            additionalDirectories: {},
+            systemPrompt: {},
+          },
         },
-      },
-    }))
+      };
+    })
     .onRequest(methods.agent.session.new, ({ params, client }) => open(params, client))
     .onRequest(methods.agent.session.resume, ({ params, client }) => open(params, client, params))
     .onRequest(methods.agent.session.setConfigOption, ({ params }) => {
@@ -504,22 +784,11 @@ export function createAdapter(config: AdapterConfig) {
         if (params.value !== "default" && !catalog.some((item) => item.model === params.value))
           throw new RequestError(-32602, "Unknown Codex model");
         model = params.value;
-        if (
-          effort !== "default" &&
-          !catalog
-            .find((item) => item.model === model)
-            ?.supportedReasoningEfforts.some((item) => item.reasoningEffort === effort)
-        )
-          effort = "default";
+        if (effort !== "default" && !supports(model, effort)) effort = "default";
       } else if (params.configId === "effort") {
         if (typeof params.value !== "string")
           throw new RequestError(-32602, "Expected a string value");
-        if (
-          params.value !== "default" &&
-          !catalog
-            .find((item) => item.model === model)
-            ?.supportedReasoningEfforts.some((item) => item.reasoningEffort === params.value)
-        )
+        if (params.value !== "default" && !supports(model, params.value))
           throw new RequestError(-32602, "Unknown Codex reasoning effort");
         effort = params.value;
       } else throw new RequestError(-32602, "Unknown Codex setting");
@@ -535,7 +804,7 @@ export function createAdapter(config: AdapterConfig) {
         params.prompt.length === 1 &&
         params.prompt[0]?.type === "text" &&
         (params.prompt[0] as { text?: unknown }).text === "/compact";
-      const input = compact ? [] : inputOf(params.prompt);
+      const input = compact ? [] : await withSkill(inputOf(params.prompt));
       if (params._meta?.["cycle/steer"] === true) {
         if (!turn?.id) throw new RequestError(-32600, "No Codex turn is running");
         const messageId = crypto.randomUUID();
@@ -586,6 +855,7 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onNotification(methods.agent.session.cancel, ({ params }) => {
       if (children.has(params.sessionId)) {
+        endChildAsks(params.sessionId);
         const childTurn = childTurns.get(params.sessionId);
         if (childTurn && server)
           void server

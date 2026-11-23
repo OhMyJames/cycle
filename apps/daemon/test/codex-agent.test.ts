@@ -23,5 +23,7 @@ test("the daemon offers Codex's steering and attachments, and signs in with a fi
   expect(definition.steer).toBe(true);
   expect(definition.promptCapabilities).toEqual({ image: {}, embeddedContext: {} });
   expect(codexHarness.cli?.login).toEqual(["login"]);
+  // A fresh data directory has no CODEX_HOME yet, and Codex will not sign in to one that is not there.
+  expect(codexHarness.cli?.directories).toEqual(["CODEX_HOME"]);
   expect(codexHarness.cli?.args).toEqual(["-c", 'cli_auth_credentials_store="file"']);
 });

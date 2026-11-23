@@ -65,7 +65,22 @@ export function turnPolicy(mode: Mode, writableRoots: string[] = []) {
         : { type: "dangerFullAccess" };
   return { ...rest, sandboxPolicy };
 }
-export const options = (mode: Mode, catalog: Catalog = [], model = "default", effort = "default") =>
+/** What "default" runs: the model the thread was opened with, else the one Codex's catalog marks. */
+export const defaultModelOf = (catalog: Catalog, threadModel?: string) =>
+  catalog.find((item) => item.model === threadModel) ?? catalog.find((item) => item.isDefault);
+/** The efforts of the model a turn runs with: "default" is a model too, with efforts of its own. */
+export const effortsOf = (catalog: Catalog, model: string, threadModel?: string) =>
+  (model === "default"
+    ? defaultModelOf(catalog, threadModel)
+    : catalog.find((item) => item.model === model)
+  )?.supportedReasoningEfforts ?? [];
+export const options = (
+  mode: Mode,
+  catalog: Catalog = [],
+  model = "default",
+  effort = "default",
+  threadModel?: string,
+) =>
   [
     {
       configId: "mode",
@@ -80,7 +95,20 @@ export const options = (mode: Mode, catalog: Catalog = [], model = "default", ef
       type: "select" as const,
       currentValue: model,
       options: [
-        { value: "default", name: "Default", _meta: { [META.open]: true } },
+        {
+          value: "default",
+          name: "Default",
+          _meta: {
+            [META.open]: true,
+            ...(defaultModelOf(catalog, threadModel)
+              ? {
+                  [META.efforts]: effortsOf(catalog, "default", threadModel).map(
+                    (item) => item.reasoningEffort,
+                  ),
+                }
+              : {}),
+          },
+        },
         ...catalog
           .filter((item) => !item.hidden)
           .map((item) => ({
@@ -100,12 +128,10 @@ export const options = (mode: Mode, catalog: Catalog = [], model = "default", ef
       currentValue: effort,
       options: [
         { value: "default", name: "Default" },
-        ...(catalog.find((item) => item.model === model)?.supportedReasoningEfforts ?? []).map(
-          (item) => ({
-            value: item.reasoningEffort,
-            name: item.description,
-          }),
-        ),
+        ...effortsOf(catalog, model, threadModel).map((item) => ({
+          value: item.reasoningEffort,
+          name: item.description,
+        })),
       ],
     },
   ] satisfies SessionConfigOption[];

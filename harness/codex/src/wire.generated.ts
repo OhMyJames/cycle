@@ -780,3 +780,384 @@ export type ThreadTokenUsageUpdatedNotification = {
 };
 
 export type ThreadNameUpdatedNotification = { threadId: string; threadName?: string };
+
+export type ToolRequestUserInputOption = { label: string; description: string };
+
+export type ToolRequestUserInputQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: Array<ToolRequestUserInputOption> | null;
+};
+
+export type ToolRequestUserInputParams = {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  questions: Array<ToolRequestUserInputQuestion>;
+  isBlocking: boolean;
+  /**
+   * @deprecated Use `isBlocking` to decide whether the request should block.
+   */
+  autoResolutionMs: number | null;
+};
+
+export type ToolRequestUserInputAnswer = { answers: Array<string> };
+
+export type ToolRequestUserInputResponse = {
+  answers: { [key in string]?: ToolRequestUserInputAnswer };
+};
+
+export type McpElicitationObjectType = "object";
+
+export type McpElicitationBooleanType = "boolean";
+
+export type McpElicitationBooleanSchema = {
+  type: McpElicitationBooleanType;
+  title?: string;
+  description?: string;
+  default?: boolean;
+};
+
+export type McpElicitationStringType = "string";
+
+export type McpElicitationLegacyTitledEnumSchema = {
+  type: McpElicitationStringType;
+  title?: string;
+  description?: string;
+  enum: Array<string>;
+  enumNames?: Array<string>;
+  default?: string;
+};
+
+export type McpElicitationArrayType = "array";
+
+export type McpElicitationConstOption = { const: string; title: string };
+
+export type McpElicitationTitledEnumItems = { anyOf: Array<McpElicitationConstOption> };
+
+export type McpElicitationTitledMultiSelectEnumSchema = {
+  type: McpElicitationArrayType;
+  title?: string;
+  description?: string;
+  minItems?: bigint;
+  maxItems?: bigint;
+  items: McpElicitationTitledEnumItems;
+  default?: Array<string>;
+};
+
+export type McpElicitationUntitledEnumItems = {
+  type: McpElicitationStringType;
+  enum: Array<string>;
+};
+
+export type McpElicitationUntitledMultiSelectEnumSchema = {
+  type: McpElicitationArrayType;
+  title?: string;
+  description?: string;
+  minItems?: bigint;
+  maxItems?: bigint;
+  items: McpElicitationUntitledEnumItems;
+  default?: Array<string>;
+};
+
+export type McpElicitationMultiSelectEnumSchema =
+  | McpElicitationUntitledMultiSelectEnumSchema
+  | McpElicitationTitledMultiSelectEnumSchema;
+
+export type McpElicitationTitledSingleSelectEnumSchema = {
+  type: McpElicitationStringType;
+  title?: string;
+  description?: string;
+  oneOf: Array<McpElicitationConstOption>;
+  default?: string;
+};
+
+export type McpElicitationUntitledSingleSelectEnumSchema = {
+  type: McpElicitationStringType;
+  title?: string;
+  description?: string;
+  enum: Array<string>;
+  default?: string;
+};
+
+export type McpElicitationSingleSelectEnumSchema =
+  | McpElicitationUntitledSingleSelectEnumSchema
+  | McpElicitationTitledSingleSelectEnumSchema;
+
+export type McpElicitationEnumSchema =
+  | McpElicitationSingleSelectEnumSchema
+  | McpElicitationMultiSelectEnumSchema
+  | McpElicitationLegacyTitledEnumSchema;
+
+export type McpElicitationNumberType = "number" | "integer";
+
+export type McpElicitationNumberSchema = {
+  type: McpElicitationNumberType;
+  title?: string;
+  description?: string;
+  minimum?: number;
+  maximum?: number;
+  default?: number;
+};
+
+export type McpElicitationStringFormat = "email" | "uri" | "date" | "date-time";
+
+export type McpElicitationStringSchema = {
+  type: McpElicitationStringType;
+  title?: string;
+  description?: string;
+  minLength?: number;
+  maxLength?: number;
+  format?: McpElicitationStringFormat;
+  default?: string;
+};
+
+export type McpElicitationPrimitiveSchema =
+  | McpElicitationEnumSchema
+  | McpElicitationStringSchema
+  | McpElicitationNumberSchema
+  | McpElicitationBooleanSchema;
+
+export type McpElicitationSchema = {
+  $schema?: string;
+  type: McpElicitationObjectType;
+  properties: { [key in string]?: McpElicitationPrimitiveSchema };
+  required?: Array<string>;
+};
+
+export type McpServerElicitationRequestParams = {
+  threadId: string;
+  /**
+   * Active Codex turn when this elicitation was observed, if app-server could correlate one.
+   *
+   * This is nullable because MCP models elicitation as a standalone server-to-client request
+   * identified by the MCP server request id. It may be triggered during a turn, but turn
+   * context is app-server correlation rather than part of the protocol identity of the
+   * elicitation itself.
+   */
+  turnId: string | null;
+  serverName: string;
+  /**
+   * Registration scope, not necessarily the server's execution environment.
+   */
+  environmentId: string | null;
+} & (
+  | {
+      mode: "form";
+      _meta: JsonValue | null;
+      message: string;
+      requestedSchema: McpElicitationSchema;
+    }
+  | { mode: "openai/form"; _meta: JsonValue | null; message: string; requestedSchema: JsonValue }
+  | { mode: "openaiForm"; _meta: JsonValue | null; message: string; requestedSchema: JsonValue }
+  | { mode: "url"; _meta: JsonValue | null; message: string; url: string; elicitationId: string }
+);
+
+export type McpServerElicitationAction = "accept" | "decline" | "cancel";
+
+export type McpServerElicitationRequestResponse = {
+  action: McpServerElicitationAction;
+  /**
+   * Structured user input for accepted elicitations, mirroring RMCP `CreateElicitationResult`.
+   *
+   * This is nullable because decline/cancel responses have no content.
+   */
+  content: JsonValue | null;
+  /**
+   * Optional client metadata for form-mode action handling.
+   */
+  _meta: JsonValue | null;
+};
+
+export type PlanType =
+  | "free"
+  | "go"
+  | "plus"
+  | "pro"
+  | "prolite"
+  | "promax"
+  | "team"
+  | "self_serve_business_prolite"
+  | "self_serve_business_usage_based"
+  | "business"
+  | "ent26"
+  | "enterprise_cbp_automation"
+  | "enterprise_cbp_usage_based"
+  | "enterprise"
+  | "edu"
+  | "edu_plus"
+  | "edu_pro"
+  | "sci"
+  | "sci_plus"
+  | "unknown";
+
+export type CreditsSnapshot = { hasCredits: boolean; unlimited: boolean; balance: string | null };
+
+export type RateLimitReachedType =
+  | "rate_limit_reached"
+  | "workspace_owner_credits_depleted"
+  | "workspace_member_credits_depleted"
+  | "workspace_owner_usage_limit_reached"
+  | "workspace_member_usage_limit_reached";
+
+export type RateLimitWindow = {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+};
+
+export type SpendControlLimitSnapshot = {
+  limit: string;
+  used: string;
+  remainingPercent: number;
+  resetsAt: number;
+};
+
+export type RateLimitSnapshot = {
+  limitId: string | null;
+  limitName: string | null;
+  /**
+   * Normal model whose display name and reasoning options describe this quota alias.
+   */
+  normalModelSlug: string | null;
+  primary: RateLimitWindow | null;
+  secondary: RateLimitWindow | null;
+  credits: CreditsSnapshot | null;
+  individualLimit: SpendControlLimitSnapshot | null;
+  /**
+   * Backend-reported spend-control state. `None` is unavailable, not a sparse-update recovery.
+   */
+  spendControlReached: boolean | null;
+  planType: PlanType | null;
+  rateLimitReachedType: RateLimitReachedType | null;
+};
+
+export type AccountRateLimitsUpdatedNotification = { rateLimits: RateLimitSnapshot };
+
+export type RateLimitResetCreditStatus = "available" | "redeeming" | "redeemed" | "unknown";
+
+export type RateLimitResetType = "codexRateLimits" | "unknown";
+
+export type RateLimitResetCredit = {
+  /**
+   * Opaque backend identifier for this reset credit.
+   */
+  id: string;
+  resetType: RateLimitResetType;
+  status: RateLimitResetCreditStatus;
+  /**
+   * Unix timestamp in seconds when the credit was granted.
+   */
+  grantedAt: number;
+  /**
+   * Unix timestamp in seconds when the credit expires, or `null` if it does not expire.
+   */
+  expiresAt: number | null;
+  /**
+   * Backend-provided display title for this credit, or `null` when unavailable.
+   */
+  title: string | null;
+  /**
+   * Backend-provided display description for this credit, or `null` when unavailable.
+   */
+  description: string | null;
+};
+
+export type RateLimitResetCreditsSummary = {
+  availableCount: bigint;
+  /**
+   * Detail rows for available reset credits, when the backend provides them.
+   *
+   * `null` means only `availableCount` is known, while an empty array means details were fetched
+   * and no available credits were returned. The backend may cap this list, so its length can be
+   * less than `availableCount`.
+   */
+  credits: Array<RateLimitResetCredit> | null;
+};
+
+export type GetAccountRateLimitsResponse = {
+  /**
+   * Backend permission for ordinary included usage, validated against the active account.
+   * Null means unavailable; clients must not infer recovery from percentages or reset times.
+   */
+  ordinaryUsageAllowed: boolean | null;
+  /**
+   * Backward-compatible single-bucket view; mirrors the historical payload.
+   */
+  rateLimits: RateLimitSnapshot;
+  /**
+   * Multi-bucket view keyed by metered `limit_id` (for example, `codex`).
+   */
+  rateLimitsByLimitId: { [key in string]?: RateLimitSnapshot } | null;
+  rateLimitResetCredits: RateLimitResetCreditsSummary | null;
+  /**
+   * Account associated with this usage snapshot, when supplied by the backend.
+   */
+  accountId: string | null;
+  /**
+   * Optional backend-owned banner from the same usage read. Its nested keys retain the
+   * backend's snake_case contract; an absent banner leaves the client's existing UI unchanged.
+   */
+  rateLimitUpsell: JsonValue | null;
+};
+
+export type SkillErrorInfo = { path: string; message: string };
+
+export type SkillToolDependency = {
+  type: string;
+  value: string;
+  description?: string;
+  transport?: string;
+  command?: string;
+  url?: string;
+};
+
+export type SkillDependencies = { tools: Array<SkillToolDependency> };
+
+export type SkillInterface = {
+  displayName?: string;
+  shortDescription?: string;
+  iconSmall?: AbsolutePathBuf;
+  iconLarge?: AbsolutePathBuf;
+  /**
+   * Remote small icon URL from the plugin catalog.
+   */
+  iconSmallUrl: string | null;
+  /**
+   * Remote large icon URL from the plugin catalog.
+   */
+  iconLargeUrl: string | null;
+  brandColor?: string;
+  defaultPrompt?: string;
+};
+
+export type SkillScope = "user" | "repo" | "system" | "admin";
+
+export type SkillMetadata = {
+  name: string;
+  description: string;
+  /**
+   * Legacy short_description from SKILL.md. Prefer SKILL.json interface.short_description.
+   */
+  shortDescription?: string;
+  interface?: SkillInterface;
+  dependencies?: SkillDependencies;
+  path: LegacyAppPathString;
+  scope: SkillScope;
+  enabled: boolean;
+  /**
+   * Owning plugin ID, matching `PluginSummary.id`, when known.
+   */
+  pluginId: string | null;
+};
+
+export type SkillsListEntry = {
+  cwd: string;
+  skills: Array<SkillMetadata>;
+  errors: Array<SkillErrorInfo>;
+};
+
+export type SkillsListResponse = { data: Array<SkillsListEntry> };

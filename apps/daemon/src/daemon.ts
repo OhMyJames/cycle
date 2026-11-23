@@ -715,8 +715,8 @@ export class Daemon {
         if (session.isChild(sessionId)) this.#onChildUpdate(session, sessionId, update);
         else this.#onUpdate(session, update);
       },
-      permission: (params) => this.#onPermission(session, params),
-      elicitation: (params) => this.#onElicitation(session, params),
+      permission: (params, signal) => this.#onPermission(session, params, signal),
+      elicitation: (params, signal) => this.#onElicitation(session, params, signal),
       closed: () => {
         if (connected === undefined) endedEarly = true;
         else this.#onAgentClosed(session, connected);
@@ -1468,9 +1468,10 @@ export class Daemon {
     method: string,
     params: Record<string, unknown>,
     how: { cancelled: unknown; answer: (response: unknown) => unknown },
+    signal?: AbortSignal,
   ): Promise<unknown> {
     // A stopping daemon puts nothing more to anyone: the agent is told no, as at a cancel.
-    if (this.#closing) return how.cancelled;
+    if (this.#closing || signal?.aborted) return how.cancelled;
     const requestId = session.nextRequestId();
     // The id is in _meta so a client can match `_cycle/request_resolved` to the dialog it is showing.
     const meta = (params._meta ?? {}) as Record<string, unknown>;
@@ -1508,11 +1509,19 @@ export class Daemon {
       return how.cancelled;
     }
     this.#stateChanged(session, before);
+    // The agent took it back (its turn ended without it, a form it no longer needs): nobody is left asked.
+    const withdraw = () => this.#settle(session, pending, pending.cancelled);
+    if (signal?.aborted) withdraw();
+    else signal?.addEventListener("abort", withdraw, { once: true });
     // A request written while nobody is attached waits here until a client attaches.
-    return outcome;
+    return outcome.finally(() => signal?.removeEventListener("abort", withdraw));
   }
 
-  async #onPermission(session: Session, params: Record<string, unknown>): Promise<unknown> {
+  async #onPermission(
+    session: Session,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     // Which sub-agent asks, when one does: the agent asks in that sub-agent's session (ACP v2), clients are asked in
     // the parent's and told whose it is (docs/protocol.md §9). Only the daemon says so: an agent's own word is dropped.
     const { [META.subagentId]: _said, ...meta } = (params._meta ?? {}) as Record<string, unknown>;
@@ -1524,10 +1533,16 @@ export class Daemon {
       ...params,
       _meta: asker !== undefined ? { ...meta, [META.subagentId]: asker } : meta,
     };
-    const outcome = await this.#ask(session, REQUEST_PERMISSION, params, {
-      cancelled: { outcome: "cancelled" },
-      answer: (response) => (response as { outcome: unknown }).outcome,
-    });
+    const outcome = await this.#ask(
+      session,
+      REQUEST_PERMISSION,
+      params,
+      {
+        cancelled: { outcome: "cancelled" },
+        answer: (response) => (response as { outcome: unknown }).outcome,
+      },
+      signal,
+    );
     return { outcome };
   }
 
@@ -1536,12 +1551,19 @@ export class Daemon {
    * answer one is asked, and if none is attached the agent is told so at once instead of waiting:
    * a question is not worth holding a turn for, and a client without the screen would never answer.
    */
-  async #onElicitation(session: Session, params: Record<string, unknown>): Promise<unknown> {
+  async #onElicitation(
+    session: Session,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     if (!this.#canAskForms(session)) return { action: "cancel", _meta: { [META.noClient]: true } };
-    return this.#ask(session, ELICITATION, params, {
-      cancelled: { action: "cancel" },
-      answer: elicitationAnswer,
-    });
+    return this.#ask(
+      session,
+      ELICITATION,
+      params,
+      { cancelled: { action: "cancel" }, answer: elicitationAnswer },
+      signal,
+    );
   }
 
   /** Asks one client, once. The first answer from any client settles it. */

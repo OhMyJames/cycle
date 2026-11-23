@@ -1700,6 +1700,28 @@ test("a form's answer stays out of the log", async () => {
   expect(disk).not.toContain("form-answer-value");
 });
 
+test("a form the agent takes back is settled, not left waiting on the user", async () => {
+  const withdrawn = new AbortController();
+  const { daemon } = await start(
+    fakeAgent({
+      onPrompt: async ({ elicit }) => {
+        await elicit(withdrawn.signal).catch(() => undefined);
+      },
+    }),
+  );
+  const c = await connectClient(daemon, { onElicitation: () => "never" });
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("go") });
+  await until(() => c.elicitations.length === 1, "the form");
+  withdrawn.abort();
+  await until(() => c.resolved.length === 1, "the form to be settled");
+  const listed = await c.agent.request(methods.agent.session.list, {});
+  expect(((listed.sessions[0]?._meta ?? {}) as Record<string, unknown>)["cycle/state"]).not.toBe(
+    "requires_action",
+  );
+});
+
 test("resuming restores model before effort and ignores intermediate config_option_update notifications", async () => {
   const options = [
     { configId: "model", currentValue: "default" },

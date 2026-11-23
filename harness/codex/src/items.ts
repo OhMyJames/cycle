@@ -35,6 +35,20 @@ export function itemUpdate(
         : "in_progress",
       rawInput: item.prompt ? { prompt: item.prompt, model: item.model } : undefined,
     };
+  // The call that started a sub-agent: what its `subagent_update` points to. Its other activity (given input,
+  // done) is told as the sub-agent's state, not as calls.
+  if (item.type === "subAgentActivity") {
+    if (item.kind !== "started") return;
+    return {
+      sessionUpdate: "tool_call_update",
+      toolCallId: item.id,
+      name: "spawn_agent",
+      title: item.agentPath.split("/").filter(Boolean).at(-1) ?? item.agentPath,
+      kind: "other",
+      status: completed ? "completed" : "in_progress",
+      rawInput: { agentPath: item.agentPath, ...(item.model ? { model: item.model } : {}) },
+    };
+  }
   if (item.type === "agentMessage" || item.type === "reasoning") {
     if (!completed || streamed) return;
     const text =

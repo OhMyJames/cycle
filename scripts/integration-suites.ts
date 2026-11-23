@@ -32,7 +32,7 @@ export const suites: Suite[] = [
     name: "codex",
     cwd: "harness/codex",
     file: "test/integration/adapter.integration.ts",
-    seconds: 60,
+    seconds: 90,
   },
   {
     name: "ssh",

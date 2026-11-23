@@ -14,10 +14,13 @@ export type LinkHandlers = {
    * sessions, docs/protocol.md §9).
    */
   update: (update: SessionUpdate, sessionId: string) => void;
-  /** The agent asks the user something. Answers when someone has decided. */
-  permission: (params: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * The agent asks the user something. Answers when someone has decided. `signal` ends when the agent takes the
+   * request back (`$/cancel_request`): it is then settled as cancelled, not left waiting on the user.
+   */
+  permission: (params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
   /** The agent asks the user for structured input (a form). Answers when someone has, or at once if no one can. */
-  elicitation: (params: Record<string, unknown>) => Promise<unknown>;
+  elicitation: (params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
   /** The connection to the agent ended, however it ended. */
   closed: () => void;
 };
@@ -48,11 +51,17 @@ export class AgentLink {
       .onNotification(methods.client.session.update, ({ params }) => {
         handlers.update(params.update, params.sessionId);
       })
-      .onRequest(methods.client.session.requestPermission, async ({ params }) => {
-        return (await handlers.permission(params as unknown as Record<string, unknown>)) as never;
+      .onRequest(methods.client.session.requestPermission, async ({ params, signal }) => {
+        return (await handlers.permission(
+          params as unknown as Record<string, unknown>,
+          signal,
+        )) as never;
       })
-      .onRequest(methods.client.elicitation.create, async ({ params }) => {
-        return (await handlers.elicitation(params as unknown as Record<string, unknown>)) as never;
+      .onRequest(methods.client.elicitation.create, async ({ params, signal }) => {
+        return (await handlers.elicitation(
+          params as unknown as Record<string, unknown>,
+          signal,
+        )) as never;
       });
     const connection =
       launched.target instanceof AgentApp

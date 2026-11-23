@@ -70,12 +70,15 @@ export async function approval(
             { optionId: "deny", name: "Deny", kind: "reject_once" },
           ],
         },
-        { signal } as never,
+        { cancellationSignal: signal, stopWaitingOnCancel: true },
       )
       .catch(() => undefined);
     if (!signal.aborted && answer?.outcome.outcome === "selected")
       decision = answer.outcome.optionId === "allow" ? "accept" : "decline";
   }
+  // A refusal is `decline` even when the request's (experimental) `availableDecisions` leaves it out, as it does for a
+  // command asking to leave the sandbox: Codex takes it, the command does not run and the turn goes on (seen with a
+  // real model, 0.171.0). `cancel` there would end the whole turn.
   if (permissions) {
     const requested = (p as PermissionsRequestApprovalParams).permissions;
     return {
