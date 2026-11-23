@@ -24,7 +24,10 @@ const required = (name: string): string => {
 
 // Inside out, hardened runtime, a secure timestamp, and osx-sign's default entitlements (which let
 // the compiled daemon and Claude, both Bun executables, run under the hardened runtime).
-await sign({ app, platform: "darwin" });
+// The identity is looked for only in the keychain the workflow made (CYCLE_KEYCHAIN): on the owner's Mac
+// the login keychain holds the same identity too, and may be locked to a background service.
+const keychain = process.env.CYCLE_KEYCHAIN?.trim();
+await sign({ app, platform: "darwin", ...(keychain ? { keychain } : {}) });
 await notarize({
   appPath: app,
   appleApiKey: required("APPLE_API_KEY_PATH"),
