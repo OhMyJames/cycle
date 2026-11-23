@@ -531,6 +531,12 @@ summary:focus-visible {
     animation: cycle-fade linear both !important;
     animation-timeline: scroll(self inline) !important;
   }
+
+  /* A long thought's edge fades the same way, down its height. */
+  [data-slot="thought-scroll"][data-scrolls] {
+    animation: cycle-thought-edges linear both !important;
+    animation-timeline: scroll(self block) !important;
+  }
 }
 
 /* Text too long for its line fades at the end; it never ends in "…" (old-cycle's rule). The fade is a scroll-driven
@@ -3914,46 +3920,55 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   margin: 0;
   padding-inline-start: 0.75rem;
   border-inline-start: 2px solid var(--cycle-border-default);
+  border-radius: 2px;
   overflow-wrap: anywhere;
-  /* At most eight lines tall, scrolled within: a long thought does not bury the reply (CYCL-132). */
   font-size: var(--cycle-text-ui);
   line-height: var(--cycle-leading-ui);
+}
+
+/* At most eight lines tall, scrolled within: a long thought does not bury the reply (CYCL-132). The wheel goes on to the
+   conversation at either end. */
+[data-slot="thought-scroll"] {
   max-height: 8lh;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  outline: none;
 }
 
-/* A thought taller than its box fades at an edge with more beyond it, so it reads as cut there, not ended. */
-[data-kind="thought"][data-scrolls] {
-  --thought-fade-top: #000;
-  --thought-fade-bottom: #000;
-  mask-image: linear-gradient(
-    to bottom,
-    var(--thought-fade-top),
-    #000 0.75lh,
-    #000 calc(100% - 0.75lh),
-    var(--thought-fade-bottom)
-  );
+/* Taller than its box, it fades at an edge with more beyond it, so it reads as cut there, not ended. A scroll-driven
+   animation on its own overflow, as a line that is too long fades (`cycle-fade`): nothing to keep in step by hand. */
+@keyframes cycle-thought-edges {
+  from {
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 0.75lh), transparent);
+  }
+  1%,
+  99% {
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 0.75lh,
+      #000 calc(100% - 0.75lh),
+      transparent
+    );
+  }
+  to {
+    mask-image: linear-gradient(to bottom, transparent, #000 0.75lh);
+  }
 }
 
-[data-kind="thought"][data-more-above] {
-  --thought-fade-top: transparent;
+[data-slot="thought-scroll"][data-scrolls] {
+  animation: cycle-thought-edges linear both;
+  animation-timeline: scroll(self block);
 }
 
-[data-kind="thought"][data-more-below] {
-  --thought-fade-bottom: transparent;
-}
-
-[data-kind="thought"]:focus-visible {
+/* Its ring is the quote's, which no fade covers. */
+[data-kind="thought"]:has(> [data-slot="thought-scroll"]:focus-visible) {
   outline: 2px solid var(--ui-ring);
   outline-offset: 2px;
 }
 
 [data-slot="message"][data-role="thought"] {
   color: var(--cycle-ink-secondary);
-  font-size: var(--cycle-text-ui);
   font-style: italic;
-  line-height: var(--cycle-leading-ui);
 }
 
 [data-slot="message"][data-role="thought"] :is(code, pre) {

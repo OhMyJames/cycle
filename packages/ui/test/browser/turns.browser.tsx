@@ -331,25 +331,29 @@ test("a long thought is at most eight lines tall, scrolls within, and follows wh
     Array.from({ length: count }, (_, n) => `Line ${from + n} of the thought.\n\n`).join("");
   await emit(thoughtChunk(lines(1, 4)));
   const thought = await screen.findByRole("blockquote", { name: "Thinking" });
+  const box = thought.querySelector('[data-slot="thought-scroll"]') as HTMLElement;
   // Short, it is all there, and no stop for the keyboard.
-  expect(thought.scrollHeight).toBeLessThanOrEqual(thought.clientHeight + 1);
-  expect(thought.hasAttribute("tabindex")).toBe(false);
+  expect(box.scrollHeight).toBeLessThanOrEqual(box.clientHeight + 1);
+  expect(box.hasAttribute("tabindex")).toBe(false);
   await emit(thoughtChunk(lines(5, 30)));
-  const lineHeight = Number.parseFloat(getComputedStyle(thought).lineHeight);
-  await waitFor(() => expect(thought.getAttribute("tabindex")).toBe("0"));
-  expect(thought.clientHeight).toBeLessThanOrEqual(Math.ceil(lineHeight * 8) + 1);
+  const lineHeight = Number.parseFloat(getComputedStyle(box).lineHeight);
+  await waitFor(() => expect(box.getAttribute("tabindex")).toBe("0"));
+  expect(box.clientHeight).toBeLessThanOrEqual(Math.ceil(lineHeight * 8) + 1);
   // While written, the newest words are in sight.
-  const atEnd = () => thought.scrollHeight - thought.scrollTop - thought.clientHeight <= 2;
+  const atEnd = () => box.scrollHeight - box.scrollTop - box.clientHeight <= 2;
   await waitFor(() => expect(atEnd()).toBe(true));
-  expect(thought.hasAttribute("data-more-above")).toBe(true);
   // Scrolled back to read, the reader is left there as more comes.
   await act(async () => {
-    thought.scrollTop = 0;
-    thought.dispatchEvent(new Event("scroll"));
+    box.scrollTop = 0;
+    box.dispatchEvent(new Event("scroll"));
   });
   await emit(thoughtChunk(lines(35, 5)));
-  expect(thought.scrollTop).toBe(0);
-  await waitFor(() => expect(thought.hasAttribute("data-more-below")).toBe(true));
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  expect(box.scrollTop).toBe(0);
+  // At its top with more below, the box fades at its foot (a scroll-driven mask, not motion).
+  expect(getComputedStyle(box).maskImage).toContain("linear-gradient");
+  // The quote's rule is drawn whole, outside what scrolls and fades.
+  expect(getComputedStyle(thought).maskImage).toBe("none");
 });
 
 test("a message says when it was sent and a reply when it finished, with the full time on focus; none when not known", async () => {

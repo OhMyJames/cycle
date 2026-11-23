@@ -20,30 +20,25 @@ export const useDisplayMode = (sessionKey: string): DisplayMode =>
 /** Within this of its end, a thought's box counts as at its end: it follows what is written. */
 const AT_END_PX = 8;
 
-/** Whether a box has more to scroll to above what shows, and below it. */
-const edgesOf = (element: HTMLElement): { above: boolean; below: boolean } => ({
-  above: element.scrollTop > 1,
-  below: element.scrollHeight - element.scrollTop - element.clientHeight > 1,
-});
+const fromEnd = (element: HTMLElement): number =>
+  element.scrollHeight - element.scrollTop - element.clientHeight;
 
 export function ThoughtText({ item, live }: { item: ThoughtItem; live: boolean }) {
   const { t } = useI18n();
-  const box = useRef<HTMLQuoteElement>(null);
-  // Whether the reader is at the end of the box, so it follows what is written; one who scrolled back is left there.
-  const atEnd = useRef(true);
-  // Taller than its box: a scroll region, which the keyboard can reach; and which of its edges have more beyond them.
+  const box = useRef<HTMLDivElement>(null);
+  // Whether the reader is at the end of the box, so it follows what is written; one who scrolled back is left there. A
+  // thought read again later (not written on screen) starts at its top.
+  const atEnd = useRef(live);
+  // Taller than its box: a scroll region, which the keyboard can reach.
   const [scrolls, setScrolls] = useState(false);
-  const [more, setMore] = useState<{ above: boolean; below: boolean }>({
-    above: false,
-    below: false,
-  });
   const text = textOf(item.blocks);
+  // Whatever makes it grow (words, code coloured late, the last render once written): it follows, while at its end.
   useEffect(() => {
     const element = box.current;
-    if (element === null) return undefined;
+    if (element === null || typeof ResizeObserver === "undefined") return undefined;
     const measure = () => {
       setScrolls(element.scrollHeight > element.clientHeight + 1);
-      setMore(edgesOf(element));
+      if (atEnd.current) element.scrollTop = element.scrollHeight;
     };
     const observer = new ResizeObserver(measure);
     observer.observe(element);
@@ -51,34 +46,30 @@ export function ThoughtText({ item, live }: { item: ThoughtItem; live: boolean }
     measure();
     return () => observer.disconnect();
   }, []);
-  // While it is written, the newest words stay in sight: each time they grow.
+  // New words, before they are painted: kept in sight at once.
   useLayoutEffect(() => {
     const element = box.current;
-    if (!live || text === "" || element === null || !atEnd.current) return;
+    if (text === "" || element === null || !atEnd.current) return;
     element.scrollTop = element.scrollHeight;
-    setMore(edgesOf(element));
-  }, [text, live]);
+  }, [text]);
   // One with no words (yet, or at all: older sessions, where Claude Code left them out) is not laid (`shownBlocks`).
-  // Named, so a screen reader says where the thinking is and does not run it into the reply.
+  // Named, so a screen reader says where the thinking is and does not run it into the reply. The quote's rule is the
+  // outer box's; the words scroll, and fade at an edge with more beyond it, in the inner one.
   return (
-    <blockquote
-      ref={box}
-      data-kind="thought"
-      data-live={live || undefined}
-      data-scrolls={scrolls || undefined}
-      data-more-above={more.above || undefined}
-      data-more-below={more.below || undefined}
-      aria-label={t("thought.label")}
-      // A box that scrolls is reached by the keyboard, to scroll it.
-      tabIndex={scrolls ? 0 : undefined}
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        atEnd.current =
-          element.scrollHeight - element.scrollTop - element.clientHeight <= AT_END_PX;
-      }}
-    >
-      <div data-slot="message" data-role="thought">
-        <Markdown text={text} streaming={live} />
+    <blockquote data-kind="thought" data-live={live || undefined} aria-label={t("thought.label")}>
+      <div
+        ref={box}
+        data-slot="thought-scroll"
+        data-scrolls={scrolls || undefined}
+        // A box that scrolls is reached by the keyboard, to scroll it.
+        tabIndex={scrolls ? 0 : undefined}
+        onScroll={(event) => {
+          atEnd.current = fromEnd(event.currentTarget) <= AT_END_PX;
+        }}
+      >
+        <div data-slot="message" data-role="thought">
+          <Markdown text={text} streaming={live} />
+        </div>
       </div>
     </blockquote>
   );
