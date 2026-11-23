@@ -3,7 +3,20 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { client, methods, ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
-import { agentsList } from "@cycle/protocol";
+import {
+  AGY_CONFIG_SCHEMA,
+  AGY_PROMPT_CAPABILITIES,
+  AgyRpcError,
+  createAdapter,
+} from "@cycle/harness-agy";
+import { agentsList, CycleErrorCode, META } from "@cycle/protocol";
+import {
+  defaultInitResult,
+  defaultSessionResponse,
+  type FakeRequestHandler,
+  FakeV1Agent,
+} from "../../../harness/agy/test/fake-v1.ts";
+import type { AgentDefinition } from "../src/agents.ts";
 import { agyEnv, agyHarness, findAgyExecutable, isAgyVersionSupported } from "../src/agy-agent.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { Daemon } from "../src/daemon.ts";
@@ -178,5 +191,130 @@ describe("agy daemon harness", () => {
       PATH: "/usr/bin",
       HOME: "/data/agy",
     });
+  });
+
+  test("daemon keeps Cycle sessionId distinct from agy agentSessionId across restart and maps missing hadTurn session to -32013 (CYCL-173)", async () => {
+    const dataDir = makeTemp("cycle-agy-resume-data-");
+    const workDir = makeTemp("cycle-agy-resume-work-");
+    let mode: "normal" | "missing" = "normal";
+    let nextNewId = 1;
+    const seenResumes: string[] = [];
+    const seenPrompts: string[] = [];
+
+    const makeDef = (): AgentDefinition => ({
+      id: "agy",
+      name: "Antigravity",
+      available: () => true,
+      configSchema: AGY_CONFIG_SCHEMA,
+      promptCapabilities: AGY_PROMPT_CAPABILITIES,
+      steer: true,
+      launch: async () => {
+        const handler: FakeRequestHandler = (method, params) => {
+          if (method === "initialize") return defaultInitResult("1.5.15");
+          if (method === "session/new") return defaultSessionResponse(`agy-native-${nextNewId++}`);
+          if (method === "session/resume") {
+            const sid = (params as { sessionId: string }).sessionId;
+            seenResumes.push(sid);
+            if (mode === "missing") {
+              throw new AgyRpcError(-32603, `Failed to read session ${sid}: no such file`);
+            }
+            const res = defaultSessionResponse(sid);
+            const { sessionId: _omit, ...withoutId } = res;
+            return withoutId;
+          }
+          if (method === "session/prompt") {
+            seenPrompts.push((params as { sessionId: string }).sessionId);
+            return { stopReason: "end_turn" };
+          }
+          return {};
+        };
+        const adapter = createAdapter({
+          env: { HOME: join(dataDir, "agy") },
+          agyExecutable: "/fake/agy",
+          connect: (handlers) => new FakeV1Agent(handlers, handler),
+        });
+        return {
+          target: adapter.app,
+          kill: () => adapter.close(),
+        };
+      },
+    });
+
+    const withDaemon = async <T>(
+      fn: (agent: ReturnType<ReturnType<typeof client>["connect"]>["agent"]) => Promise<T>,
+    ) => {
+      const daemon = await Daemon.start({ dataDir, agents: [makeDef()] });
+      const c2s = new TransformStream<Uint8Array, Uint8Array>();
+      const s2c = new TransformStream<Uint8Array, Uint8Array>();
+      const serverConn = daemon.accept(ndJsonStream(s2c.writable, c2s.readable));
+      const clientConn = client().connect(ndJsonStream(c2s.writable, s2c.readable));
+      try {
+        await clientConn.agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        return await fn(clientConn.agent);
+      } finally {
+        clientConn.close();
+        serverConn.close();
+        await daemon.close();
+      }
+    };
+
+    // 1. Create two sessions: sWithTurn (has a turn) and sEmpty (0 turns).
+    const { sWithTurn, sEmpty } = await withDaemon(async (agent) => {
+      const a = (await agent.request(methods.agent.session.new, {
+        cwd: workDir,
+        _meta: { [META.agent]: "agy" },
+      } as never)) as { sessionId: string };
+      expect(a.sessionId).not.toBe("agy-native-1");
+      await agent.request(methods.agent.session.prompt, {
+        sessionId: a.sessionId,
+        prompt: [{ type: "text", text: "turn 1" }],
+      } as never);
+      await Bun.sleep(30);
+
+      const b = (await agent.request(methods.agent.session.new, {
+        cwd: workDir,
+        _meta: { [META.agent]: "agy" },
+      } as never)) as { sessionId: string };
+      return { sWithTurn: a.sessionId, sEmpty: b.sessionId };
+    });
+
+    // 2. Restart daemon: sWithTurn resumes using agy-native-1.
+    await withDaemon(async (agent) => {
+      await agent.request(methods.agent.session.prompt, {
+        sessionId: sWithTurn,
+        prompt: [{ type: "text", text: "turn 2" }],
+      } as never);
+      await Bun.sleep(30);
+    });
+    expect(seenResumes).toEqual(["agy-native-1"]);
+    expect(seenPrompts).toEqual(["agy-native-1", "agy-native-1"]);
+
+    // 3. Restart daemon with missing files:
+    //    - sEmpty (hadTurn=false) falls back to session/new -> agy-native-3 and succeeds.
+    //    - sWithTurn (hadTurn=true) fails with -32013 (ResumeFailed).
+    mode = "missing";
+    await withDaemon(async (agent) => {
+      await agent.request(methods.agent.session.prompt, {
+        sessionId: sEmpty,
+        prompt: [{ type: "text", text: "first turn after missing empty session" }],
+      } as never);
+      await Bun.sleep(30);
+
+      let caught: unknown;
+      try {
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: sWithTurn,
+          prompt: [{ type: "text", text: "turn 3" }],
+        } as never);
+      } catch (error) {
+        caught = error;
+      }
+      expect((caught as { code?: number })?.code).toBe(CycleErrorCode.ResumeFailed);
+    });
+    expect(seenPrompts.at(-1)).toBe("agy-native-3");
   });
 });

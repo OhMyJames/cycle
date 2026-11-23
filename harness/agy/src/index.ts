@@ -1,5 +1,5 @@
 export { createAdapter } from "./agent.ts";
-export { type AdapterConfig, type AgyTransport, buildAgyArgs } from "./server.ts";
+export { type AdapterConfig, AgyRpcError, type AgyTransport, buildAgyArgs } from "./server.ts";
 export {
   AGY_CONFIG_SCHEMA,
   AGY_EFFORT_LEVELS,

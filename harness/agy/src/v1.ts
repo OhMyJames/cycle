@@ -87,6 +87,10 @@ export type V1SessionResponse = {
   _meta?: Record<string, unknown>;
 };
 
+export type V1ResumeResponse = Omit<V1SessionResponse, "sessionId"> & {
+  sessionId?: string;
+};
+
 export type V1PromptResult = {
   stopReason: "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled" | string;
   usage?: {

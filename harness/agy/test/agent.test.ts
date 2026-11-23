@@ -505,3 +505,159 @@ describe("harness/agy core v1-to-v2 bridge", () => {
     }
   });
 });
+
+describe("session resume and id association (CYCL-173)", () => {
+  test("session/resume emits state_update: idle before returning, passes systemPrompt.append, and never replays", async () => {
+    const timeline: string[] = [];
+    const { config, getFake } = baseConfig((method, params) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/resume") {
+        const res = defaultSessionResponse("agy-resumed");
+        const { sessionId: _omit, ...withoutId } = res;
+        // agy's v1 session/resume omits sessionId in the result.
+        return withoutId;
+      }
+      if (method === "session/prompt") {
+        expect((params as { sessionId: string }).sessionId).toBe("agy-resumed");
+        return { stopReason: "end_turn" };
+      }
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+      if (params.update.sessionUpdate === "state_update") {
+        timeline.push(`state:${params.update.state}`);
+      }
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        const resumed = (await agent.request(methods.agent.session.resume, {
+          sessionId: "agy-resumed",
+          cwd: "/tmp/work",
+          additionalDirectories: ["/tmp/extra"],
+          systemPrompt: { mode: "append", content: [{ type: "text", text: "Keep context" }] },
+        } as never)) as { configOptions?: unknown[]; _meta?: Record<string, unknown> };
+        timeline.push("resume:returned");
+
+        expect(timeline[0]).toBe("state:idle");
+        expect(timeline[1]).toBe("resume:returned");
+        expect(resumed._meta).toBeUndefined();
+        expect(Array.isArray(resumed.configOptions)).toBe(true);
+        expect(getFake().requests.some((r) => r.method === "session/load")).toBe(false);
+
+        const resumeReq = getFake().requests.find((r) => r.method === "session/resume")?.params as {
+          sessionId: string;
+          cwd: string;
+          additionalDirectories?: string[];
+          _meta?: { antigravity?: { systemPrompt?: { append?: string } } };
+        };
+        expect(resumeReq.sessionId).toBe("agy-resumed");
+        expect(resumeReq.additionalDirectories).toEqual(["/tmp/extra"]);
+        expect(resumeReq._meta?.antigravity?.systemPrompt?.append).toBe("Keep context");
+
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-resumed",
+          prompt: [{ type: "text", text: "Follow up" }],
+        } as never);
+        await waitFor(
+          () =>
+            updates.filter((u) => u.sessionUpdate === "state_update" && u.state === "idle")
+              .length >= 2,
+        );
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("session/resume falls back to session/new when missing and hadTurn is false, returning cycle/agentSessionId", async () => {
+    const { config, getFake } = baseConfig((method) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/resume") {
+        throw new AgyRpcError(-32603, "Failed to read session agy-old-empty: no such file");
+      }
+      if (method === "session/new") return defaultSessionResponse("agy-fresh-id");
+      if (method === "session/prompt") return { stopReason: "end_turn" };
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const updates: Array<{ sessionId: string; update: SessionUpdate }> = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push({ sessionId: params.sessionId, update: params.update });
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        const resumed = (await agent.request(methods.agent.session.resume, {
+          sessionId: "agy-old-empty",
+          cwd: "/tmp/work",
+        } as never)) as { _meta?: Record<string, unknown> };
+
+        expect(resumed._meta?.[META.agentSessionId]).toBe("agy-fresh-id");
+        expect(updates[0]).toEqual({
+          sessionId: "agy-fresh-id",
+          update: { sessionUpdate: "state_update", state: "idle" },
+        });
+        expect(getFake().requests.map((r) => r.method)).toEqual([
+          "initialize",
+          "session/resume",
+          "session/new",
+        ]);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("session/resume refuses fallback when cycle/hadTurn is true and propagates error", async () => {
+    const { config, getFake } = baseConfig((method) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/resume") {
+        throw new AgyRpcError(-32603, "Failed to read session agy-gone: no such file");
+      }
+      if (method === "session/new") return defaultSessionResponse("should-not-happen");
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const app = client();
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        let caught: unknown;
+        try {
+          await agent.request(methods.agent.session.resume, {
+            sessionId: "agy-gone",
+            cwd: "/tmp/work",
+            _meta: { [META.hadTurn]: true },
+          } as never);
+        } catch (error) {
+          caught = error;
+        }
+        expect((caught as { code?: number })?.code).toBe(-32603);
+        expect(getFake().requests.some((r) => r.method === "session/new")).toBe(false);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+});

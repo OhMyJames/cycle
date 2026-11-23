@@ -8,7 +8,7 @@ import {
   type SessionConfigOption,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
-import { CycleErrorCode } from "@cycle/protocol";
+import { CycleErrorCode, META } from "@cycle/protocol";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { toV2ConfigOptions } from "./settings.ts";
 import { toV2ToolCallUpdate, translateSimpleUpdate } from "./translate.ts";
@@ -21,6 +21,7 @@ import {
   type V1ModelInfo,
   type V1PermissionRequest,
   type V1PromptResult,
+  type V1ResumeResponse,
   type V1SessionResponse,
   type V1UpdateNotification,
 } from "./v1.ts";
@@ -61,6 +62,15 @@ const toRequestError = (error: unknown): RequestError => {
     -32603,
     error instanceof Error ? error.message : "Unexpected agy adapter error",
   );
+};
+
+const isMissingSessionError = (error: unknown): boolean => {
+  if (!(error instanceof AgyRpcError)) return false;
+  if (error.code === -32002) return true;
+  if (error.code === -32603) {
+    return /failed to read session|session not found|not found|no such/i.test(error.message);
+  }
+  return false;
 };
 
 const systemPromptMeta = (
@@ -361,6 +371,75 @@ export function createAdapter(config: AdapterConfig) {
       return {
         sessionId: state.id,
         configOptions,
+      } as never;
+    })
+    .onRequest(methods.agent.session.resume, async ({ params, client }) => {
+      const meta = systemPromptMeta(params.systemPrompt);
+      const hadTurn =
+        (params._meta as Record<string, unknown> | undefined)?.[META.hadTurn] === true;
+      const { conn } = await ensureTransport().catch((error) => {
+        throw toRequestError(error);
+      });
+
+      let response: V1ResumeResponse;
+      let resolvedId = params.sessionId;
+      try {
+        response = await conn.request<V1ResumeResponse>("session/resume", {
+          sessionId: params.sessionId,
+          cwd: params.cwd,
+          mcpServers: params.mcpServers ?? [],
+          ...(params.additionalDirectories?.length
+            ? { additionalDirectories: params.additionalDirectories }
+            : {}),
+          ...(meta !== undefined ? { _meta: meta } : {}),
+        });
+        if (typeof response.sessionId === "string" && response.sessionId.trim() !== "") {
+          resolvedId = response.sessionId;
+        }
+      } catch (error) {
+        if (hadTurn || !isMissingSessionError(error)) {
+          throw toRequestError(error);
+        }
+        try {
+          const created = await conn.request<V1SessionResponse>("session/new", {
+            cwd: params.cwd,
+            mcpServers: params.mcpServers ?? [],
+            ...(params.additionalDirectories?.length
+              ? { additionalDirectories: params.additionalDirectories }
+              : {}),
+            ...(meta !== undefined ? { _meta: meta } : {}),
+          });
+          response = created;
+          resolvedId = created.sessionId;
+        } catch (fallbackError) {
+          throw toRequestError(fallbackError);
+        }
+      }
+
+      const state: SessionState = {
+        id: resolvedId,
+        cwd: params.cwd,
+        owner: client,
+        availableModels: response.models?.availableModels ?? [],
+        v1ConfigOptions: response.configOptions ?? [],
+      };
+      sessions.set(state.id, state);
+
+      // ACP v2: announce current session state before returning from session/resume.
+      await client.notify(methods.client.session.update, {
+        sessionId: state.id,
+        update: { sessionUpdate: "state_update", state: "idle" } as SessionUpdate,
+      });
+
+      const configOptions: SessionConfigOption[] = toV2ConfigOptions(
+        state.v1ConfigOptions,
+        state.availableModels,
+      );
+      return {
+        configOptions,
+        ...(resolvedId !== params.sessionId
+          ? { _meta: { [META.agentSessionId]: resolvedId } }
+          : {}),
       } as never;
     })
     .onRequest(methods.agent.session.prompt, async ({ params }) => {
