@@ -1077,7 +1077,11 @@ export class ConnectionManager
               : undefined;
         // An answer that is none of these (an option of a kind this does not know) is not counted as another.
         if (outcome !== undefined)
-          this.#track("permission_answered", { outcome, remembered: kind.endsWith("_always") });
+          this.#track("permission_answered", {
+            outcome,
+            remembered: kind.endsWith("_always"),
+            queued: watched.pending.size - 1,
+          });
         this.#closePermission(environmentId, sessionId, watched, key);
         return;
       }

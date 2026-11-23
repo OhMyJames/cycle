@@ -1209,6 +1209,39 @@ export const scenarios: Record<string, Scenario> = {
       permission("Allow Bash?", `rm -rf ${LONG_PATH} && find . -name '*.tmp' -delete && echo done`),
     ],
   },
+  "permission-edit": {
+    title: "An edit waits for a decision: the change it would make is shown before it is answered",
+    sessions: [session("s1", { state: "requires_action", title: "Move the port to config" })],
+    history: [you("u1", "Read the port from config."), running()],
+    permissions: [
+      {
+        ...permission("Allow Edit?", ""),
+        subject: {
+          type: "tool_call",
+          toolCall: {
+            name: "Edit",
+            rawInput: {
+              file_path: `${LONG_PATH}/server.ts`,
+              old_string: [
+                'import { serve } from "bun";',
+                "",
+                "const port = 3000;",
+                "serve({ port, fetch: handle });",
+              ].join("\n"),
+              new_string: [
+                'import { serve } from "bun";',
+                'import { config } from "./config.ts";',
+                "",
+                "const port = config.port ?? 3000;",
+                "serve({ port, fetch: handle });",
+              ].join("\n"),
+            },
+          },
+        },
+      },
+      { ...permission("Allow Bash?", "bun test"), key: "local:s1:p2" },
+    ],
+  },
   "permission-queue": {
     title: "Several permissions wait without pushing the composer out of the window",
     sessions: [session("s1", { state: "requires_action", title: "Check the build" })],

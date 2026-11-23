@@ -953,23 +953,27 @@ function AppWindow() {
                 </div>
               )}
               <div data-slot="permissions">
-                {(view?.permissions ?? []).map((request) =>
-                  request.form !== undefined ? (
-                    <FormCard
-                      key={request.key}
-                      request={{ ...request, form: request.form }}
-                      disabled={!connected}
-                      onAnswer={store.answerForm}
-                    />
-                  ) : (
-                    <PermissionCard
-                      key={request.key}
-                      request={request}
-                      disabled={!connected}
-                      onAnswer={store.answerPermission}
-                    />
-                  ),
-                )}
+                {/* One request at a time, in the order they came: the one to answer, and how many wait behind it. */}
+                {(view?.permissions ?? [])
+                  .slice(0, 1)
+                  .map((request) =>
+                    request.form !== undefined ? (
+                      <FormCard
+                        key={request.key}
+                        request={{ ...request, form: request.form }}
+                        disabled={!connected}
+                        onAnswer={store.answerForm}
+                      />
+                    ) : (
+                      <PermissionCard
+                        key={request.key}
+                        request={request}
+                        disabled={!connected}
+                        onAnswer={store.answerPermission}
+                        waiting={(view?.permissions.length ?? 1) - 1}
+                      />
+                    ),
+                  )}
               </div>
               {view !== undefined ? (
                 <Composer

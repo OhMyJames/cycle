@@ -360,6 +360,93 @@ test("a permission request is shown with its options, and the click answers it",
   expect(within(log).queryByText("Waiting for your answer")).toBeNull();
 });
 
+const asking = (key: string, name: string, rawInput: object): PermissionRequest => ({
+  key,
+  environmentId: "local",
+  sessionId: "s1",
+  title: `Allow ${name}?`,
+  subject: { type: "tool_call", toolCall: { toolCallId: key, name, rawInput } },
+  options: [
+    { optionId: "allow", name: "Allow", kind: "allow_once" },
+    { optionId: "deny", name: "Deny", kind: "reject_once" },
+  ],
+});
+
+test("an edit waiting for leave shows the change it would make, line by line, before it is answered", async () => {
+  const { user, emit } = await mount();
+  await openFirstSession(user);
+  await ready(await screen.findByRole("textbox", { name: "Message" }));
+  emit({
+    type: "permission",
+    request: asking("local:s1:p1", "Edit", {
+      file_path: "/work/src/app.ts",
+      old_string: "const port = 3000;",
+      new_string: "const port = 8080;\nconst host = 'localhost';",
+    }),
+    version: 1,
+  });
+  const card = await screen.findByLabelText("Allow Edit?");
+  expect(card.textContent).toContain("/work/src/app.ts");
+  const diff = card.querySelector('[data-slot="tool-diff"]') as HTMLElement;
+  expect([...diff.querySelectorAll('[data-line="del"]')].map((l) => l.textContent)).toEqual([
+    expect.stringContaining("const port = 3000;"),
+  ]);
+  expect([...diff.querySelectorAll('[data-line="add"]')]).toHaveLength(2);
+  expect(card.textContent).toContain("+2");
+});
+
+test("several requests are answered one at a time; the keyboard goes on to the next card, then back to the box", async () => {
+  const { user, emit, named } = await mount();
+  await openFirstSession(user);
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await ready(box);
+  emit({
+    type: "permission",
+    request: asking("local:s1:p1", "Bash", { command: "ls" }),
+    version: 1,
+  });
+  emit({
+    type: "permission",
+    request: asking("local:s1:p2", "Write", { file_path: "/w/a", content: "a" }),
+    version: 2,
+  });
+  const first = await screen.findByLabelText("Allow Bash?");
+  expect(first.textContent).toContain("1 more waiting");
+  expect(screen.queryByLabelText("Allow Write?")).toBeNull();
+  const allow = within(first).getByRole("button", { name: "Allow" });
+  allow.focus();
+  await user.keyboard("{Enter}");
+  expect(named("answerPermission")).toEqual([["answerPermission", "local:s1:p1", "allow"]]);
+  emit({
+    type: "permission-closed",
+    environmentId: "local",
+    sessionId: "s1",
+    key: "local:s1:p1",
+    version: 3,
+  });
+  const second = await screen.findByLabelText("Allow Write?");
+  expect(second.textContent).not.toContain("more waiting");
+  // The card itself takes the focus, not its Allow: a second Enter allows nothing unread.
+  await waitFor(() => expect(document.activeElement).toBe(second));
+  await user.keyboard("{Enter}");
+  expect(named("answerPermission")).toHaveLength(1);
+  await user.keyboard("{Tab}");
+  expect(document.activeElement).toBe(within(second).getByRole("button", { name: "Allow" }));
+  await user.keyboard("{Enter}");
+  expect(named("answerPermission")).toHaveLength(2);
+  emit({
+    type: "permission-closed",
+    environmentId: "local",
+    sessionId: "s1",
+    key: "local:s1:p2",
+    version: 4,
+  });
+  await waitFor(() => expect(screen.queryByLabelText("Allow Write?")).toBeNull());
+  await waitFor(() =>
+    expect(box.contains(document.activeElement) || document.activeElement === box).toBe(true),
+  );
+});
+
 /** What a person presses for a choice: its label, which lies over the input the way the card draws it. */
 const labelOf = (input: HTMLElement): HTMLElement => input.closest("label") ?? input;
 
@@ -467,10 +554,18 @@ test("a form's required field must be filled before it is answered; one the app 
   expect(named("answerForm")).toEqual([
     ["answerForm", "Name it", { action: "accept", content: { name: "cycle" } }],
   ]);
+  // Requests are shown one at a time: the next is drawn once this one is closed.
+  emit({
+    type: "permission-closed",
+    environmentId: "local",
+    sessionId: "s1",
+    key: "Name it",
+    version: 2,
+  });
   emit({
     type: "permission",
     request: form("Odd", { where: { type: "object", title: "Where" } }, ["where"]),
-    version: 2,
+    version: 3,
   });
   const odd = await screen.findByLabelText("Odd");
   expect(odd.textContent).toContain("can't show");

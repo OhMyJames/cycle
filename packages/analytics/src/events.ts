@@ -116,6 +116,8 @@ export const EVENTS = {
   permission_answered: o({
     outcome: z.enum(["allowed", "rejected", "cancelled"]),
     remembered: z.boolean(),
+    /** Other requests of the session waiting behind this one: they are shown one at a time. */
+    queued: count,
   }),
   form_answered: o({ outcome: z.enum(["answered", "declined", "dismissed"]) }),
 
