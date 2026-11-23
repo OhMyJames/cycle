@@ -48,6 +48,13 @@ type SessionState = {
 const toRequestError = (error: unknown): RequestError => {
   if (error instanceof RequestError) return error;
   if (error instanceof AgyRpcError) {
+    if (error.code === -32000) {
+      return new RequestError(
+        -32000,
+        "Authentication required. Run `cycle login agy` on the daemon's machine.",
+        error.data,
+      );
+    }
     return new RequestError(error.code, error.message, error.data);
   }
   return new RequestError(

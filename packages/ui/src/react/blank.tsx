@@ -1,6 +1,7 @@
 // A new session before its first message (docs/protocol.md §6): where it runs and with which agent are chosen here, the
 // first message is written in the box below, and sending it is what makes the session. Until then nothing of it is in
 // the daemon, and so nothing of it is in the sidebar.
+import type { AgentWord } from "@cycle/analytics/events";
 import { Button } from "@ui-sdk/react/button";
 import {
   Dialog,
@@ -40,6 +41,11 @@ import { CheckIcon } from "./icons.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
+
+const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
+
+const agentWord = (id: string): AgentWord =>
+  id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
 /** A folder offered on the blank page: one the environment already has sessions in, newest first. */
 export type RecentFolder = { cwd: string; name: string };
@@ -90,8 +96,11 @@ export function BlankConversationView({
   const status = useAppState((s) => s.status[blank.environmentId]);
   // Read here so that the page draws again when they come: which agent starts depends on them.
   const agents = useAppState((s) => s.agents[blank.environmentId]);
-  const available = useMemo(() => (agents ?? []).filter((a) => a.available), [agents]);
+  const allAgents = useMemo(() => agents ?? [], [agents]);
   const agent = store.blankAgent(blank);
+  const [copiedCommand, setCopiedCommand] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
   // The environment of the blank conversation, connected or not: its name is said when it is away.
   const environment =
     useAppState((s) => s.environments.find((h) => h.id === blank.environmentId)) ??
@@ -119,6 +128,8 @@ export function BlankConversationView({
   const starting = blank.starting !== undefined;
   const noAgent =
     connected && agents !== undefined && agent === undefined && status?.state === "connected";
+  const agentUnavailable =
+    connected && agent !== undefined && !agent.available && status?.state === "connected";
   // The first message, shown as it will be in the session while the session is being made.
   const shown = useMemo(
     () =>
@@ -167,10 +178,10 @@ export function BlankConversationView({
   }, []);
 
   // Why it cannot be sent yet, said above the box (once: the box itself keeps its usual words). Empty while what it starts
-  // with is still being read, or when the page says why above (no agent), which says nothing of its own there.
+  // with is still being read, or when the page says why above (no agent or unavailable), which says nothing of its own there.
   const blocked = starting
     ? t("blank.starting")
-    : noAgent
+    : noAgent || agentUnavailable
       ? ""
       : cwd === ""
         ? t("blank.chooseFolder")
@@ -284,9 +295,12 @@ export function BlankConversationView({
           {t("blank.untrusted")}
         </span>
       ) : null}
-      {available.length > 1 ? (
+      {allAgents.length > 1 ? (
         <Select
-          items={available.map((a) => ({ value: a.id, label: a.name }))}
+          items={allAgents.map((a) => ({
+            value: a.id,
+            label: a.available ? a.name : t("blank.agent.unavailable", { name: a.name }),
+          }))}
           value={agent?.id ?? null}
           onValueChange={(next) => {
             if (typeof next === "string") store.changeBlank({ agent: next });
@@ -296,9 +310,9 @@ export function BlankConversationView({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {available.map((a) => (
+            {allAgents.map((a) => (
               <SelectItem key={a.id} value={a.id}>
-                {a.name}
+                {a.available ? a.name : t("blank.agent.unavailable", { name: a.name })}
               </SelectItem>
             ))}
           </SelectContent>
@@ -333,7 +347,7 @@ export function BlankConversationView({
             })
           : store.changeBlank({ setting: { key, value } })
       }
-      enabled={!starting && !noAgent}
+      enabled={!starting && !noAgent && !agentUnavailable}
       connected={connected}
       activity="idle"
       blocked={blocked}
@@ -396,6 +410,58 @@ export function BlankConversationView({
           action={{
             label: t("blank.retryAgents"),
             onAction: () => void store.reloadAgents(blank.environmentId),
+          }}
+        />
+      );
+    }
+    if (agentUnavailable && agent !== undefined) {
+      return (
+        <StateBlock
+          tone="away"
+          align="start"
+          size="inline"
+          title={t("blank.agentUnavailable", { agent: agent.name, environment: environmentName })}
+          body={
+            agent.id === "agy"
+              ? t("blank.agentUnavailable.agy", { environment: environmentName })
+              : t("blank.agentUnavailable.body", {
+                  agent: agent.name,
+                  environment: environmentName,
+                })
+          }
+          reason={agent.id === "agy" ? AGY_INSTALL_COMMAND : undefined}
+          action={{
+            label: t("blank.retryAgents"),
+            onAction: () => void store.reloadAgents(blank.environmentId),
+          }}
+        />
+      );
+    }
+    if (blank.authRequired !== undefined) {
+      const { agentId, agentName } = blank.authRequired;
+      const command = `cycle login ${agentId}`;
+      return (
+        <StateBlock
+          tone="away"
+          align="start"
+          size="inline"
+          title={t("blank.authRequired", { agent: agentName, environment: environmentName })}
+          body={t("blank.authRequired.body", { environment: environmentName })}
+          reason={command}
+          action={{
+            label: copiedCommand ? t("blank.copied") : t("blank.copyCommand"),
+            onAction: () => {
+              void store.copyText(command).then((done) => {
+                if (!done) return;
+                store.track("agent_setup_command_copied", {
+                  agent: agentWord(agentId),
+                  kind: "login",
+                });
+                setCopiedCommand(true);
+                clearTimeout(copiedTimer.current);
+                copiedTimer.current = setTimeout(() => setCopiedCommand(false), 1500);
+              });
+            },
           }}
         />
       );

@@ -219,6 +219,15 @@ export const enUS = {
   "blank.noAgentHint.several":
     "Check that one of these is installed on {environment} and signed in: {agents}.",
   "blank.retryAgents": "Check again",
+  "blank.agent.unavailable": "{name} (not installed)",
+  "blank.agentUnavailable": "{agent} is not available on {environment}.",
+  "blank.agentUnavailable.body": "Install {agent} on {environment}, then check again.",
+  "blank.agentUnavailable.agy": "Install agy (1.5.10 or newer) on {environment}, then check again.",
+  "blank.authRequired": "{agent} is not signed in on {environment}.",
+  "blank.authRequired.body":
+    "Run this command on {environment} to sign in, then send your message again.",
+  "blank.copyCommand": "Copy command",
+  "blank.copied": "Copied",
   "blank.unreadable":
     "The saved settings of this agent could not be read, so the session cannot start from them.",
   "blank.retry": "Read settings again",

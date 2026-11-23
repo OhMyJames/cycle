@@ -157,4 +157,26 @@ describe("agy daemon harness", () => {
     const ready = await checkList(okBin);
     expect(ready?.available).toBe(true);
   });
+
+  test("agyHarness.cli configures `agy acp --login` with isolated HOME and config executable", () => {
+    const binDir = makeTemp("cycle-agy-cli-");
+    const customBin = makeFakeAgy(binDir, "1.5.15", "agy-custom");
+    const config = ConfigSchema.parse({ agy: { executable: customBin } });
+    expect(agyHarness.cli).toBeDefined();
+    expect(agyHarness.cli?.login).toEqual(["acp", "--login"]);
+    expect(agyHarness.cli?.directories).toEqual(["HOME"]);
+    expect(
+      agyHarness.cli?.executable({ config, dataDir: "/data", inherited: { PATH: "/usr/bin" } }),
+    ).toBe(customBin);
+    expect(
+      agyHarness.cli?.env({
+        config,
+        dataDir: "/data",
+        inherited: { PATH: "/usr/bin", HOME: "/Users/real", GEMINI_API_KEY: "secret" },
+      }),
+    ).toEqual({
+      PATH: "/usr/bin",
+      HOME: "/data/agy",
+    });
+  });
 });

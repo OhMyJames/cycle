@@ -82,7 +82,7 @@ test("login signs in to the agent that is named, and to Claude when none is", as
   expect(unknown.code).toBe(2);
   expect(unknown.argv).toEqual([]);
   expect(unknown.stderr).toContain(
-    "No agent named nosuch to sign in to: this build has claude, codex.",
+    "No agent named nosuch to sign in to: this build has claude, codex, agy.",
   );
   // The agent's name is Cycle's word, not the agent's: it is not handed on.
   expect((await withStubClaude(MAIN, "login", "claude", "--console")).argv).toEqual([

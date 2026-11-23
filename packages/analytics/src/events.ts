@@ -113,6 +113,10 @@ export const EVENTS = {
   // ---- sessions ----
   session_list_loaded: o({ pages: z.number().int().positive() }),
   session_created: o({ agent, environment: environment, configured: z.boolean() }),
+  /** Starting a session failed because the agent is not signed in (-32000). */
+  agent_auth_required: o({ agent, environment: environment }),
+  /** The person copied an install or sign-in command shown for an unavailable or signed-out agent. */
+  agent_setup_command_copied: o({ agent, kind: z.enum(["install", "login"]) }),
   session_opened: o({ agent, environment: environment }),
   /** Never the title. `where`: in the conversation's header or on a row of the sidebar. */
   session_renamed: o({ where: renameWhere }),
@@ -378,6 +382,7 @@ export const UI_EVENTS = [
   "blank_connect_pressed",
   "session_connect_pressed",
   "blank_sent",
+  "agent_setup_command_copied",
 ] as const satisfies readonly EventName[];
 export type UiEventName = (typeof UI_EVENTS)[number];
 

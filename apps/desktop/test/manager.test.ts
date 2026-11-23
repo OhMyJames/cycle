@@ -1007,6 +1007,37 @@ test("a session of one of our agents is reported under that agent's name, not as
   expect(agents("prompt_sent")).toEqual(["codex"]);
 });
 
+test("session/new returning -32000 reports agent_auth_required without leaking error text (CYCL-172)", async () => {
+  const secretPath = "/Users/me/super-secret-token-path";
+  const fake = fakeAgent({
+    onNew: async () => {
+      const error = Object.assign(new Error(`Authentication required at ${secretPath}`), {
+        code: -32000,
+      });
+      throw error;
+    },
+  });
+  fake.definition.id = "agy";
+  const { manager } = await setup(fake);
+  const reported: [string, unknown][] = [];
+  const { m } = await manager("app", undefined, undefined, (name, props) =>
+    reported.push([name, props]),
+  );
+  await m.connect("local");
+  let caught: unknown;
+  try {
+    await m.createSession("local", { cwd: dir, agent: "agy" });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as { code?: number }).code).toBe(-32000);
+  expect(reported.filter(([n]) => n === "agent_auth_required")).toEqual([
+    ["agent_auth_required", { agent: "agy", environment: "local" }],
+  ]);
+  expect(JSON.stringify(reported)).not.toContain(secretPath);
+});
+
 test("what a person does is reported as counts and words, and never as what they wrote", async () => {
   const secret = "my password is hunter2 and the repo is /home/me/secret-project";
   const fake = fakeAgent(

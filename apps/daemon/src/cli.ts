@@ -123,12 +123,13 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
     }
     const typed = (named !== undefined ? forwarded?.slice(1) : forwarded) ?? [];
     const config = await loadConfig(paths.config);
-    const executable = cli.executable();
+    const cliContext = { config, dataDir: paths.dataDir, inherited: process.env };
+    const executable = cli.executable(cliContext);
     if (executable === undefined) {
       console.error(`No ${harness.name} binary: it is meant to sit beside cycle, or be on PATH.`);
       process.exit(1);
     }
-    const env = cli.env({ config, dataDir: paths.dataDir, inherited: process.env });
+    const env = cli.env(cliContext);
     // A fresh data directory has none of the agent's yet: Codex will not sign in to a CODEX_HOME that is not there.
     for (const key of cli.directories ?? [])
       if (env[key]) await mkdir(env[key], { recursive: true, mode: 0o700 });

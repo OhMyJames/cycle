@@ -59,6 +59,9 @@ describe("harness/agy integration (unauthenticated real agy acp)", () => {
           caught = error;
         }
         expect((caught as { code?: number })?.code).toBe(-32000);
+        expect(String((caught as { message?: string })?.message ?? "")).toContain(
+          "cycle login agy",
+        );
       } finally {
         clientConn.close();
         serverConn.close();
@@ -68,5 +71,63 @@ describe("harness/agy integration (unauthenticated real agy acp)", () => {
       }
     },
     30_000,
+  );
+
+  test.skipIf(!hasAgy)(
+    "cycle login agy launches agy acp --login in isolated HOME and prints Google OAuth URL",
+    async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "cycle-agy-login-"));
+      try {
+        const proc = Bun.spawn(
+          [
+            process.execPath,
+            join(import.meta.dir, "../../../../apps/daemon/src/main.ts"),
+            "--data-dir",
+            dataDir,
+            "login",
+            "agy",
+          ],
+          {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: process.env.HOME ?? "",
+              TMPDIR: process.env.TMPDIR ?? tmpdir(),
+            },
+          },
+        );
+        let output = "";
+        const decoder = new TextDecoder();
+        const readStream = async (stream: ReadableStream<Uint8Array>) => {
+          const reader = stream.getReader();
+          try {
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              output += decoder.decode(value, { stream: true });
+              if (output.includes("https://accounts.google.com/")) {
+                proc.kill("SIGTERM");
+                break;
+              }
+            }
+          } finally {
+            reader.releaseLock();
+          }
+        };
+        const timer = setTimeout(() => proc.kill("SIGKILL"), 15_000);
+        try {
+          await Promise.all([readStream(proc.stdout), readStream(proc.stderr)]);
+          await proc.exited;
+        } finally {
+          clearTimeout(timer);
+        }
+        expect(output).toContain("https://accounts.google.com/");
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    },
+    25_000,
   );
 });

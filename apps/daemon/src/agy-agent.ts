@@ -7,7 +7,7 @@ import {
   isVersionSupported,
 } from "@cycle/harness-agy";
 import { runAdapter } from "@cycle/harness-agy/run";
-import type { Config } from "./config.ts";
+import { type Config, ConfigSchema } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
 
@@ -100,6 +100,16 @@ export const agyHarness: Harness = {
   id: "agy",
   name: "Antigravity",
   runAdapter,
+  cli: {
+    executable: (context) =>
+      findAgyExecutable(
+        context?.config.agy ?? ConfigSchema.parse({}).agy,
+        context?.inherited ?? process.env,
+      ),
+    env: ({ config, dataDir, inherited }) => agyEnv(config.agy, dataDir, inherited),
+    login: ["acp", "--login"],
+    directories: ["HOME"],
+  },
   definition: ({ config, dataDir, inherited, self, log }) => {
     const settings = config.agy;
     const env = agyEnv(settings, dataDir, inherited);
