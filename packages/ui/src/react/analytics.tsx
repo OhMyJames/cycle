@@ -1,10 +1,12 @@
 import { Button } from "@ui-sdk/react/button";
+import { AppNotice } from "./app-notice.tsx";
 import { useI18n } from "./i18n.tsx";
+import { ShieldIcon } from "./icons.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /**
- * Said once, at the top of the page, the first time the app runs with somewhere to report to: what is counted, and that
- * it can be turned off. Either button is an answer, and the notice does not come back.
+ * Said once, in the sidebar's notices, the first time the app runs with somewhere to report to: what is counted, and
+ * that it can be turned off. Either button is an answer, and the notice does not come back.
  */
 export function AnalyticsNotice() {
   const store = useAppStore();
@@ -12,14 +14,20 @@ export function AnalyticsNotice() {
   const analytics = useAppState((s) => s.analytics);
   if (analytics === undefined || !analytics.available || analytics.noticed) return null;
   return (
-    <div data-slot="banner" data-severity="info" role="status">
-      <span>{t("analytics.notice")}</span>
-      <Button data-variant="outline" onClick={() => void store.setAnalytics(false)}>
-        {t("analytics.turnOff")}
-      </Button>
-      <Button data-variant="outline" onClick={() => void store.setAnalytics(true)}>
-        {t("analytics.keepOn")}
-      </Button>
-    </div>
+    <AppNotice
+      tone="info"
+      icon={<ShieldIcon />}
+      text={t("analytics.notice")}
+      actions={
+        <>
+          <Button data-variant="ghost" onClick={() => void store.setAnalytics(false)}>
+            {t("analytics.turnOff")}
+          </Button>
+          <Button data-variant="outline" onClick={() => void store.setAnalytics(true)}>
+            {t("analytics.keepOn")}
+          </Button>
+        </>
+      }
+    />
   );
 }

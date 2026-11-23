@@ -48,6 +48,8 @@ export type SidebarProps = {
   onTrust?: (trusted: boolean) => void;
   /** Below the rest: the update footer. */
   children?: ReactNode;
+  /** What concerns the whole app (app-notices.tsx), over the footer. */
+  notices?: ReactNode;
 };
 
 /** How the shortcut modifier is written here: ⌘ on a Mac, Ctrl+ elsewhere. */
@@ -180,6 +182,7 @@ export function Sidebar(props: SidebarProps) {
           {t(props.showArchived ? "sessions.hideArchived" : "sessions.showArchived")}
         </button>
       </div>
+      {props.notices}
       {props.children != null ? <div data-slot="sidebar-footer">{props.children}</div> : null}
     </nav>
   );

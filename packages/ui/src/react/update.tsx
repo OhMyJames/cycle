@@ -2,9 +2,10 @@ import { Button } from "@ui-sdk/react/button";
 import { useState } from "react";
 import type { SessionSummary, UpdateState } from "../api.ts";
 import type { Translator } from "../i18n.ts";
+import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
-import { DownloadIcon, ErrorCircleIcon, SettingsIcon, WarningIcon } from "./icons.tsx";
+import { DownloadIcon, ErrorCircleIcon, RefreshIcon, SettingsIcon, WarningIcon } from "./icons.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 
@@ -38,49 +39,65 @@ export const updateLine = (update: UpdateState, t: Translator["t"]): string => {
   }
 };
 
-/** At the top of the page when there is something to do about the update. */
-export function UpdateBanner() {
+/** In the sidebar's notices when there is something to do about the update, or it is under way. */
+export function UpdateNotice() {
   const store = useAppStore();
   const { t } = useI18n();
   const update = useAppState((s) => s.update);
   const [confirming, setConfirming] = useState(false);
   const [dismissed, setDismissed] = useState<string | undefined>(undefined);
-  if (update === undefined) return null;
+  if (update === undefined || !updateNoticed(update)) return null;
   const busy = update.kind === "downloading" || update.kind === "installing";
-  const failedInstall = update.kind === "error" && update.version !== undefined;
-  if (update.kind !== "available" && !busy && !failedInstall) return null;
-  const version =
-    update.kind === "error" ? update.version : (update as { version: string }).version;
+  const failedInstall = update.kind === "error";
+  const version = versionOf(update);
   if (update.kind === "available" && dismissed === version) return null;
+  let icon = <DownloadIcon />;
+  if (busy) icon = <RefreshIcon />;
+  if (failedInstall) icon = <ErrorCircleIcon />;
   return (
-    <div data-slot="banner" data-severity={failedInstall ? "error" : "info"} role="status">
-      {failedInstall ? <ErrorCircleIcon /> : <DownloadIcon />}
-      <span data-slot="update-line">
-        {failedInstall
-          ? t("update.failed", { version: version ?? "", reason: updateLine(update, t) })
-          : updateLine(update, t)}
-      </span>
-      {update.kind === "available" ? (
-        <Button data-variant="ghost" onClick={() => setDismissed(version)}>
-          {t("update.dismiss")}
-        </Button>
-      ) : null}
-      {!busy ? (
-        <Button data-variant="outline" onClick={() => setConfirming(true)}>
-          {t(failedInstall ? "update.tryAgain" : "update.install")}
-        </Button>
-      ) : null}
+    <>
+      <AppNotice
+        tone={failedInstall ? "error" : "info"}
+        busy={busy}
+        icon={icon}
+        text={
+          failedInstall
+            ? t("update.failed", { version, reason: updateLine(update, t) })
+            : updateLine(update, t)
+        }
+        {...(update.kind === "available"
+          ? { onDismiss: () => setDismissed(version), dismissLabel: t("update.dismiss") }
+          : {})}
+        actions={
+          busy ? null : (
+            <Button data-variant="outline" onClick={() => setConfirming(true)}>
+              {t(failedInstall ? "update.tryAgain" : "update.install")}
+            </Button>
+          )
+        }
+      />
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title={t("update.confirmTitle", { version: version ?? "" })}
+        title={t("update.confirmTitle", { version })}
         description={t("update.confirmDescription")}
         confirmLabel={t("update.install")}
         onConfirm={() => store.installUpdate()}
       />
-    </div>
+    </>
   );
 }
+
+/** The version an update in the notices is about. */
+const versionOf = (update: UpdateState): string =>
+  "version" in update && typeof update.version === "string" ? update.version : "";
+
+/** Whether the update has something to say in the notices: to install, under way, or an install that failed. */
+export const updateNoticed = (update: UpdateState): boolean =>
+  update.kind === "available" ||
+  update.kind === "downloading" ||
+  update.kind === "installing" ||
+  (update.kind === "error" && update.version !== undefined);
 
 /**
  * The sessions an update would interrupt: a turn running or waiting on the person, or background tasks (the same
@@ -94,11 +111,11 @@ export const workingSessions = (
   );
 
 /**
- * An environment whose daemon is too old for this app: one line under the title, with a button that updates it over
- * ssh. When that cannot be done the line says why and the command is there to run by hand. When sessions there are
- * working, the confirmation names them first, and the person chooses to wait for them or to interrupt them.
+ * An environment whose daemon this app cannot use, or that is too old and can be updated over ssh. When that cannot be
+ * done the card says why and the command is there to run by hand. When sessions there are working, the confirmation
+ * names them first, and the person chooses to wait for them or to interrupt them.
  */
-export function DaemonBanner({ environmentId }: { environmentId: string }) {
+export function DaemonNotice({ environmentId }: { environmentId: string }) {
   const store = useAppStore();
   const { t } = useI18n();
   const daemon = useAppState((s) => s.status[environmentId]?.daemon);
@@ -107,74 +124,75 @@ export function DaemonBanner({ environmentId }: { environmentId: string }) {
   const sessions = useAppState((s) => s.sessions[environmentId]);
   const [confirming, setConfirming] = useState(false);
   const upgrade = daemon?.upgrade;
+  const environment = name ?? environmentId;
   if (incompatible !== undefined) {
     // The daemon speaks another protocol: nothing is connected, so there is no version to show, only why and what to do.
-    const environment = name ?? environmentId;
     const said = {
       environment,
       supported: incompatible.supported.join(", "),
       requested: incompatible.requested,
     };
     return (
-      <div data-slot="banner" data-kind="incompatible" data-severity="error" role="alert">
-        <ErrorCircleIcon />
-        <span data-slot="update-line">
-          {t(
-            incompatible.with === "daemon"
-              ? "daemon.protocolOlder"
-              : incompatible.with === "app"
-                ? "daemon.protocolNewer"
-                : "daemon.protocolOther",
-            said,
-          )}
-        </span>
-        {incompatible.command !== undefined ? (
-          <code data-slot="command" title={t("daemon.byHand", { environment })}>
-            {incompatible.command}
-          </code>
-        ) : null}
-      </div>
+      <AppNotice
+        tone="error"
+        icon={<ErrorCircleIcon />}
+        text={t(
+          incompatible.with === "daemon"
+            ? "daemon.protocolOlder"
+            : incompatible.with === "app"
+              ? "daemon.protocolNewer"
+              : "daemon.protocolOther",
+          said,
+        )}
+        command={incompatible.command}
+        commandLabel={t("daemon.byHand", { environment })}
+      />
     );
   }
   if (daemon === undefined || upgrade === undefined) return null;
   const failed = upgrade.error !== undefined;
   const waiting = upgrade.waiting === true && !failed;
-  const environment = name ?? environmentId;
   const working = workingSessions(sessions);
   const named = working.map((s) => s.title || t("daemon.untitled")).join(", ");
   return (
-    <div
-      data-slot="banner"
-      data-kind="daemon"
-      data-severity={failed ? "error" : "warning"}
-      role="status"
-    >
-      {failed ? <ErrorCircleIcon /> : <WarningIcon />}
-      <span data-slot="update-line">
-        {failed
-          ? t("daemon.failed", { environment, error: upgrade.error ?? "" })
-          : waiting
-            ? t("daemon.waiting", { environment, to: upgrade.to })
-            : t("daemon.tooOld", { environment, version: daemon.version })}
-      </span>
-      <Button
-        data-variant="outline"
-        disabled={upgrade.running === true}
-        onClick={() => setConfirming(true)}
-      >
-        {upgrade.running === true
-          ? t("daemon.updating")
-          : failed
-            ? t("daemon.tryAgain")
+    <>
+      <AppNotice
+        tone={failed ? "error" : "warning"}
+        busy={upgrade.running === true}
+        icon={
+          failed ? (
+            <ErrorCircleIcon />
+          ) : upgrade.running === true ? (
+            <RefreshIcon />
+          ) : (
+            <WarningIcon />
+          )
+        }
+        text={
+          failed
+            ? t("daemon.failed", { environment, error: upgrade.error ?? "" })
             : waiting
-              ? t("daemon.updateNow")
-              : t("daemon.update", { to: upgrade.to })}
-      </Button>
-      {failed ? (
-        <code data-slot="command" title={t("daemon.byHand", { environment })}>
-          {upgrade.command}
-        </code>
-      ) : null}
+              ? t("daemon.waiting", { environment, to: upgrade.to })
+              : t("daemon.tooOld", { environment, version: daemon.version })
+        }
+        command={failed ? upgrade.command : undefined}
+        commandLabel={t("daemon.byHand", { environment })}
+        actions={
+          <Button
+            data-variant="outline"
+            disabled={upgrade.running === true}
+            onClick={() => setConfirming(true)}
+          >
+            {upgrade.running === true
+              ? t("daemon.updating")
+              : failed
+                ? t("daemon.tryAgain")
+                : waiting
+                  ? t("daemon.updateNow")
+                  : t("daemon.update", { to: upgrade.to })}
+          </Button>
+        }
+      />
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
@@ -207,7 +225,7 @@ export function DaemonBanner({ environmentId }: { environmentId: string }) {
               onConfirm: () => store.upgradeDaemon(environmentId, waiting ? "now" : undefined),
             })}
       />
-    </div>
+    </>
   );
 }
 
@@ -218,14 +236,8 @@ export function DaemonBanner({ environmentId }: { environmentId: string }) {
 export function UpdateFooter({ onSettings }: { onSettings: () => void }) {
   const { t } = useI18n();
   const update = useAppState((s) => s.update);
-  // What the banner already says is not said twice.
-  const inBanner =
-    update !== undefined &&
-    (update.kind === "available" ||
-      update.kind === "downloading" ||
-      update.kind === "installing" ||
-      (update.kind === "error" && update.version !== undefined));
-  const line = update === undefined || inBanner ? "" : updateLine(update, t);
+  // What the notice above already says is not said twice.
+  const line = update === undefined || updateNoticed(update) ? "" : updateLine(update, t);
   return (
     <div data-slot="update-footer">
       <div data-slot="update-text">

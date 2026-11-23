@@ -34,8 +34,8 @@ import {
 import type { PanelTabId, PanelTabKind } from "../side-panel.ts";
 import { BLANK_KEY, viewKey } from "../store/index.ts";
 import { tabKind, terminalOfTab } from "../terminals.ts";
-import { AccountBanner, SignInPage } from "./account.tsx";
-import { AnalyticsNotice } from "./analytics.tsx";
+import { SignInPage } from "./account.tsx";
+import { AppNotices } from "./app-notices.tsx";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer, composerInput } from "./composer.tsx";
 import { ConfigForm, mergeConfigSchema, OptionLabel, propertiesOf } from "./config-form.tsx";
@@ -71,7 +71,7 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 import { useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
 import { toolDescription } from "./tool.tsx";
-import { DaemonBanner, UpdateBanner, UpdateFooter } from "./update.tsx";
+import { UpdateFooter } from "./update.tsx";
 
 /**
  * What is drawn over a page and takes its keys first: a dialog, a menu, the choices of a select. Not every listbox: the
@@ -333,6 +333,8 @@ function AppWindow() {
   const connected = environmentState === "connected";
   const environmentError =
     selectedEnvironment !== undefined ? status[selectedEnvironment]?.error : undefined;
+  const environmentIncompatible =
+    selectedEnvironment !== undefined && status[selectedEnvironment]?.incompatible !== undefined;
   const close = () => setPanel("none");
   // Opens a panel, and counts that it was opened (which one, and whether by a key).
   const open = (next: Exclude<Panel, "none">, via: "click" | "shortcut" = "click") => {
@@ -792,11 +794,15 @@ function AppWindow() {
 
   // Under the title bar of what is shown: what is the matter with it. The pages over it say their errors themselves.
   const notices = (
-    <SessionNotices
-      environmentId={selectedEnvironment}
-      shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
-      errors={!pageOpen}
-    />
+    <>
+      {/* With the sidebar put away, what concerns the whole app comes first under the title bar. */}
+      {sidebarCollapsed ? <AppNotices at="top" /> : null}
+      <SessionNotices
+        environmentId={selectedEnvironment}
+        shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
+        errors={!pageOpen}
+      />
+    </>
   );
 
   return (
@@ -911,19 +917,13 @@ function AppWindow() {
                     .changeTrust(trustEnvironment, trustCwd, false)
                     .then(() => setTrustRevision((n) => n + 1));
               }}
+              notices={sidebarCollapsed ? null : <AppNotices />}
             >
               <UpdateFooter onSettings={() => openSettings()} />
             </Sidebar>
           }
           main={
             <main data-slot="main">
-              <UpdateBanner />
-              <AccountBanner />
-              <AnalyticsNotice />
-              {(blank !== undefined || session === undefined) &&
-              selectedEnvironment !== undefined ? (
-                <DaemonBanner environmentId={selectedEnvironment} />
-              ) : null}
               {blank !== undefined ? (
                 <BlankConversationView
                   blank={blank}
@@ -1061,9 +1061,6 @@ function AppWindow() {
               ) : null}
               {/* Under whichever title bar is drawn; the blank page draws its own, with these under it. */}
               {blank === undefined ? notices : null}
-              {blank === undefined && session !== undefined ? (
-                <DaemonBanner environmentId={session.environmentId} />
-              ) : null}
               {blank !== undefined ? null : view !== undefined ? (
                 <ConversationView
                   key={viewKey(view.environmentId, view.sessionId)}
@@ -1084,6 +1081,13 @@ function AppWindow() {
                           ? { label: t("empty.startSession"), onAction: () => newSession() }
                           : undefined
                       }
+                    />
+                  ) : environmentIncompatible ? (
+                    // Connecting again would not change it: why, and where it says what to update.
+                    <StateBlock
+                      tone="away"
+                      title={t("environment.notConnected")}
+                      body={t("environment.incompatible")}
                     />
                   ) : environmentState === "connecting" || environmentState === "reconnecting" ? (
                     <StateBlock tone="loading" title={t("environment.connecting")} />

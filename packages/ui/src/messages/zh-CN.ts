@@ -16,6 +16,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   "session.away": "{environment} · {state}",
   "notice.connecting": "正在连接 {environment}…",
+  "session.awayIncompatible":
+    "{environment} 未连接：那里的 Cycle 与本应用的协议不同。侧栏里写了要更新哪一边。",
   "session.awayBecause": "{environment} 未连接：{reason}",
   "session.awayBanner": "{environment} 未连接。这是它断开时会话的样子。",
   "defaults.reading": "正在读取默认设置…",
@@ -166,6 +168,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "empty.startSession": "新建会话",
   "app.starting": "正在启动…",
   "environment.connecting": "正在连接这个环境…",
+  "environment.incompatible": "那里的 Cycle 与本应用的协议不同。侧栏里写了要更新哪一边。",
   "environment.notConnected": "未连接到这个环境。",
   "environment.connectAgain": "重新连接",
 
