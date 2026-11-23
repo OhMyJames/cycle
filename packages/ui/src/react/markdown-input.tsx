@@ -2,6 +2,7 @@
 // that what is typed shows as it will read, and what goes out is what was typed. Enter sends; the rest of the keys that
 // the composer has a use for (the arrows that walk through what was sent, the menus) are asked first.
 
+import { $isListItemNode } from "@lexical/list";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -18,6 +19,7 @@ import {
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
   INSERT_LINE_BREAK_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
   KEY_ARROW_DOWN_COMMAND,
   KEY_ARROW_UP_COMMAND,
   KEY_ENTER_COMMAND,
@@ -123,6 +125,14 @@ const caretOf = (editor: LexicalEditor): Caret => {
   });
 };
 
+/** The caret is in an item of a list. Called in a command's listener, where the editor's state can be read. */
+const $inListItem = (): boolean => {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return false;
+  const node = selection.anchor.getNode();
+  return $isListItemNode(node) || node.getParents().some($isListItemNode);
+};
+
 function Behaviour({ props }: { props: MarkdownInputProps }) {
   const [editor] = useLexicalComposerContext();
   // What the props say now, for the handlers that are made once.
@@ -173,9 +183,12 @@ function Behaviour({ props }: { props: MarkdownInputProps }) {
             return true;
           }
           event.preventDefault();
-          // Not used by the parent: a new line, the one Shift+Enter makes, whichever modifier asked for it.
-          if (!latest.current.onKey("enter", event))
-            editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+          // Not used by the parent: a new line, the one Shift+Enter makes, whichever modifier asked for it. In a list the
+          // new line is the next item, and on an empty item it ends the list (CYCL-142): a line break would keep what
+          // follows in the item above, so "2." could never be typed.
+          if (latest.current.onKey("enter", event)) return true;
+          if ($inListItem()) editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined);
+          else editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
           return true;
         }
         if (isComposing(event)) return false;

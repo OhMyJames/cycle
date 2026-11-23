@@ -266,3 +266,83 @@ test("each session's Files tab is its own: another session shows its own folder,
   expect(await within(panel()).findByRole("button", { name: "two.txt" })).toBeDefined();
   expect(within(panel()).queryByRole("button", { name: "src" })).toBeNull();
 });
+
+const review = (rawInput: unknown) => {
+  const u = (update: object) => update as SessionUpdate;
+  return [
+    u({
+      sessionUpdate: "user_message",
+      messageId: "m1",
+      content: [{ type: "text", text: "review" }],
+    }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "r1",
+      name: "ReportFindings",
+      status: "pending",
+    }),
+    u({ sessionUpdate: "tool_call_update", toolCallId: "r1", status: "completed", rawInput }),
+  ];
+};
+
+test("a code review the agent reported is a card: the tally, the surest first, a row opens to when it goes wrong, a path opens in Files", async () => {
+  const { user, tracked } = await mount({
+    updates: review({
+      level: "high",
+      findings: [
+        {
+          file: "/etc/hosts",
+          summary: "Outside the folder.",
+          failure_scenario: "Never shown in Files.",
+          verdict: "PLAUSIBLE",
+        },
+        {
+          file: "src/main.ts",
+          line: 1,
+          summary: "x is never read, so the assignment is dead and the build warns about it.",
+          short_summary: "x is never read",
+          failure_scenario: "Build with warnings as errors: it fails.",
+          verdict: "CONFIRMED",
+          category: "correctness",
+        },
+        { file: "../up.ts", summary: "Climbs out.", failure_scenario: "<b>loud</b>" },
+      ],
+    }),
+  });
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  const card = await within(log).findByRole("region", { name: "Code review" });
+  expect(card.textContent).toContain("3 findings · 1 confirmed · 1 plausible");
+  const rows = within(card).getAllByRole("listitem");
+  expect(rows.map((r) => r.querySelector('[data-slot="review-summary"]')?.textContent)).toEqual([
+    "x is never read",
+    "Outside the folder.",
+    "Climbs out.",
+  ]);
+  // The agent's text is text: nothing in it is markup.
+  expect(card.querySelector("b")).toBeNull();
+  // Only a path inside the folder is a link.
+  expect(within(card).getAllByRole("button", { name: /^Show .* in Files$/ })).toHaveLength(1);
+  await user.click(within(card).getByRole("button", { name: /x is never read/ }));
+  expect(await within(card).findByText("Build with warnings as errors: it fails.")).toBeDefined();
+  expect(within(card).getByText(/assignment is dead/)).toBeDefined();
+  await user.click(within(card).getByRole("button", { name: "Show src/main.ts:1 in Files" }));
+  await waitFor(() => expect(panel().textContent).toContain("let x = 1;"));
+  expect(tracked()[0]).toEqual([
+    "file_shown_from_conversation",
+    { target: "file", from: "review" },
+  ]);
+});
+
+test("a review that found nothing says so, and a call that is not a review in shape is a call", async () => {
+  await mount({ updates: review({ findings: [] }) });
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  const card = await within(log).findByRole("region", { name: "Code review" });
+  expect(card.textContent).toContain("No issues found");
+  expect(within(card).queryAllByRole("listitem")).toHaveLength(0);
+  cleanup();
+  await mount({ updates: review({ findings: [{ file: "a.ts" }] }) });
+  const again = await screen.findByRole("log", { name: "Conversation" });
+  await within(again).findByText("review");
+  expect(within(again).queryByRole("region", { name: "Code review" })).toBeNull();
+  expect(again.querySelector('[data-kind="tool"]')).not.toBeNull();
+});

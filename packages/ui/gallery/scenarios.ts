@@ -1161,6 +1161,149 @@ export const scenarios: Record<string, Scenario> = {
       idle({ stopReason: "end_turn" }),
     ],
   },
+  review: {
+    title:
+      "A code review the agent reported: the surest findings first, a long one cut, one outside the folder, one with no verdict",
+    status: [
+      {
+        environmentId: "local",
+        state: "connected",
+        capabilities: { queue: true, files: true, folders: true, fs: true },
+      },
+    ],
+    sessions: [session("s1", { title: "Review the composer change" })],
+    history: [
+      you("u1", "/code-review high"),
+      running(),
+      ...tool("r1", "Bash", "completed", {
+        command: "git diff main",
+        description: "Read the diff",
+      }),
+      ...tool("r2", "ReportFindings", "completed", {
+        level: "high",
+        findings: [
+          {
+            file: "packages/ui/src/react/markdown-input.tsx",
+            line: 182,
+            summary:
+              "Shift+Enter in a code block inside a list item makes a new item instead of a line.",
+            short_summary: "Shift+Enter in a listed code block splits the list",
+            failure_scenario:
+              "Type `1. a`, then a fenced code block in the item, then Shift+Enter: the code block is cut and a new item starts.",
+            category: "correctness",
+            verdict: "PLAUSIBLE",
+          },
+          {
+            file: "packages/ui/src/styles/app.css",
+            line: 2598,
+            summary:
+              "The thumbnail grid's width is computed from the column, so in a very narrow side panel each square shrinks below a size anyone can see, and a long run of pictures becomes a wall of slivers that cannot be told apart or aimed at with a pointer; this sentence goes on to show how a long finding is cut on its row and shown whole when the row is opened.",
+            failure_scenario:
+              "Open a session in a 320px panel and send nine pictures: each square is about 70px.",
+            category: "ux",
+            verdict: "CONFIRMED",
+          },
+          {
+            file: "/etc/hosts",
+            summary: "A path outside the folder is shown, but not as a link.",
+            failure_scenario: "The agent names a file it cannot open in Files.",
+          },
+          {
+            file: "packages/ui/src/model/review.ts",
+            line: 88,
+            summary: "Findings are sorted twice.",
+            failure_scenario: "Every redraw of the turn sorts the list again.",
+            category: "efficiency",
+            verdict: "CONFIRMED",
+          },
+        ],
+      }),
+      say("a1", "Two confirmed, one plausible. The narrow-panel grid is the one to fix first."),
+      idle({ stopReason: "end_turn" }),
+    ],
+  },
+  "review-none": {
+    title: "A code review that found nothing says so",
+    sessions: [session("s1", { title: "Review the composer change" })],
+    history: [
+      you("u1", "/code-review"),
+      running(),
+      ...tool("r1", "ReportFindings", "completed", { level: "medium", findings: [] }),
+      say("a1", "Nothing to fix."),
+      idle({ stopReason: "end_turn" }),
+    ],
+  },
+  "review-fixed": {
+    title: "A code review reported again after fixing: what became of each finding",
+    sessions: [session("s1", { title: "Review the composer change" })],
+    history: [
+      you("u1", "/code-review --fix"),
+      running(),
+      ...tool("r1", "ReportFindings", "completed", {
+        findings: [
+          {
+            file: "packages/ui/src/react/review.tsx",
+            line: 40,
+            summary: "The tally counts fixed findings twice.",
+            failure_scenario: "Report three findings, two fixed: the line says five.",
+            verdict: "CONFIRMED",
+            outcome: "fixed",
+          },
+          {
+            file: "packages/ui/src/react/review.tsx",
+            line: 72,
+            summary: "The tag's edge is the only thing that differs between verdicts.",
+            failure_scenario: "In high contrast the words still differ, so nothing to do.",
+            verdict: "PLAUSIBLE",
+            outcome: "no_change_needed",
+          },
+          {
+            file: "packages/ui/src/model/blocks.ts",
+            summary: "A review cuts the stretch of calls around it.",
+            failure_scenario: "Two calls, a review, two calls: two cards around the review.",
+            verdict: "PLAUSIBLE",
+            outcome: "skipped",
+          },
+        ],
+      }),
+      idle({ stopReason: "end_turn" }),
+    ],
+  },
+  "images-many": {
+    title:
+      "A message with eight pictures, one that cannot be shown and a file: thumbnails above the words, then the file",
+    sessions: [session("s1", { title: "Look at the mocks" })],
+    history: [
+      u({
+        sessionUpdate: "user_message",
+        messageId: "u1",
+        content: [
+          { type: "text", text: "Here are the screens.\n1. The composer\n2. The sidebar" },
+          ...Array.from({ length: 8 }, () => ({
+            type: "image",
+            data: SAMPLE_PNG,
+            mimeType: "image/png",
+          })),
+          { type: "image", data: "PHN2Zz48L3N2Zz4=", mimeType: "image/svg+xml" },
+          {
+            type: "resource",
+            resource: {
+              uri: "file:///Users/dev/notes.md",
+              mimeType: "text/markdown",
+              text: "# Notes",
+            },
+          },
+        ],
+      }),
+      u({
+        sessionUpdate: "user_message",
+        messageId: "u2",
+        content: [{ type: "image", data: SAMPLE_PNG, mimeType: "image/png" }],
+      }),
+      say("a1", "Got them. The composer's plus sits closer to its edge than to the text."),
+      idle({ stopReason: "end_turn" }),
+    ],
+  },
   attach: {
     title: "Images attached to a message (two pictures and one the agent cannot take)",
     attach: true,
