@@ -9,7 +9,7 @@ import {
   ResizableHandle,
   ResizablePanel,
 } from "@ui-sdk/react/resizable";
-import { type CSSProperties, type ReactNode, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { useI18n } from "./i18n.tsx";
 
 export const SIDEBAR = { default: 256, min: 200, max: 360 } as const;
@@ -89,17 +89,29 @@ export type SplitPanel = {
   onClose?: () => void;
 };
 
+/** How long a closing panel may take to leave before it is taken out anyway: its fade is 160ms. */
+const LEAVE_MS = 400;
+
+const reducedMotion = () =>
+  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 export function SplitLayout({
   controller,
   sidebar,
   main,
   panel,
+  panelOf,
 }: {
   controller: ResizableController;
   sidebar: ReactNode;
   main: ReactNode;
   /** The right panel, when open. Closed, it is not in the page at all: nothing in it loads. */
   panel?: SplitPanel | undefined;
+  /**
+   * Whose panel it is (the open session's key), open or not. A panel that closes fades out first; one that goes because
+   * another session was opened goes at once, so the last session's panel is not seen over the next one's conversation.
+   */
+  panelOf?: string | undefined;
 }) {
   const { t } = useI18n();
   const groupRef = useRef<HTMLDivElement>(null);
@@ -115,7 +127,37 @@ export function SplitLayout({
   // The changes this component asked for: their commits are not the user's.
   const ours = useRef(0);
   const sidebarWasFolded = useRef(false);
-  const open = panel !== undefined;
+
+  // Closing, the panel stays a moment to fade out (CYCL-213), showing what it showed and out of reach (`inert`); its
+  // column goes when the fade ends. Not with reduced motion, and not when its handle folded it: nothing is left to see.
+  const lastPanel = useRef(panel);
+  if (panel !== undefined) lastPanel.current = panel;
+  const [was, setWas] = useState({ open: panel !== undefined, of: panelOf });
+  const [leaving, setLeaving] = useState(false);
+  if (was.open !== (panel !== undefined) || was.of !== panelOf) {
+    setWas({ open: panel !== undefined, of: panelOf });
+    setLeaving(
+      was.open &&
+        panel === undefined &&
+        was.of === panelOf &&
+        !reducedMotion() &&
+        !controller.isCollapsed("panel"),
+    );
+  }
+  const shown = panel ?? (leaving ? lastPanel.current : undefined);
+  const gone = shown === undefined;
+  useEffect(() => {
+    // Gone: what it showed is not held on to.
+    if (gone) lastPanel.current = undefined;
+  }, [gone]);
+  useEffect(() => {
+    if (!leaving) return;
+    // The fade's end takes it out; this, if no animation ran (the window hidden, the stylesheet's motion off).
+    const fallback = window.setTimeout(() => setLeaving(false), LEAVE_MS);
+    return () => window.clearTimeout(fallback);
+  }, [leaving]);
+  // Whether the panel's column is in the page, fading out too.
+  const open = shown !== undefined;
 
   const started = useRef(false);
 
@@ -192,7 +234,7 @@ export function SplitLayout({
           if (group === null) return;
           if (!collapsed && widthIn(group, "sidebar") > 0)
             want.current.sidebar = widthIn(group, "sidebar");
-          if (open && controller.isCollapsed("panel")) panel.onClose?.();
+          if (panel !== undefined && controller.isCollapsed("panel")) panel.onClose?.();
           else if (open && widthIn(group, "panel") > 0)
             want.current.panel = widthIn(group, "panel");
         }}
@@ -211,7 +253,7 @@ export function SplitLayout({
         <ResizablePanel id="main" minSize={`${MAIN_MIN}px`}>
           {main}
         </ResizablePanel>
-        {open ? (
+        {shown !== undefined ? (
           <>
             <ResizableHandle aria-label={t("layout.resizePanel")} />
             <ResizablePanel
@@ -221,8 +263,20 @@ export function SplitLayout({
               collapsible
               collapsedSize="0px"
             >
-              <aside data-slot="side-panel" aria-label={t("layout.panel")}>
-                {panel.content}
+              <aside
+                data-slot="side-panel"
+                aria-label={t("layout.panel")}
+                data-leaving={leaving || undefined}
+                inert={leaving}
+                onAnimationEnd={(event) => {
+                  if (
+                    event.target === event.currentTarget &&
+                    event.animationName === "cycle-panel-out"
+                  )
+                    setLeaving(false);
+                }}
+              >
+                {shown.content}
               </aside>
             </ResizablePanel>
           </>

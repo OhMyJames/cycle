@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
+import { cdp, userEvent } from "vitest/browser";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
@@ -12,8 +12,22 @@ afterEach(() => {
 
 const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
 
-const mount = async () => {
-  const script = fakeBridge({ connected: true });
+const mount = async (all = false) => {
+  const script = fakeBridge({
+    connected: true,
+    ...(all
+      ? {
+          capabilities: {
+            queue: true,
+            files: true,
+            folders: true,
+            fs: true,
+            diff: true,
+            terminal: true,
+          },
+        }
+      : {}),
+  });
   script.bridge.sessions = async () => [
     { ...summary("s1"), title: "first" },
     { ...summary("s2"), title: "second" },
@@ -97,4 +111,82 @@ test("the Overview's own button opens the panel on the Overview, and closes it f
     ["side_panel_toggled", { open: true, via: "tab_button", tab: "overview" }],
     ["side_panel_toggled", { open: false, via: "tab_button", tab: "overview" }],
   ]);
+});
+
+test("the header's six actions sit close together, one line of 28px buttons even in the narrowest window", async () => {
+  // The narrowest window (720px, apps/desktop MIN_SIZE), as the page sees it.
+  document.body.style.width = "720px";
+  try {
+    const { user } = await mount(true);
+    await user.click(await screen.findByRole("option", { name: /first/ }));
+    // The worst case: the panel open beside the conversation.
+    await user.click(await screen.findByRole("button", { name: "Show panel" }));
+    await waitFor(() => expect(panel()).not.toBeNull());
+    expect(document.querySelector('[data-slot="split"]')?.getBoundingClientRect().width).toBe(720);
+    const row = document.querySelector<HTMLElement>(
+      '[data-slot="session-header"] [data-slot="row"]',
+    );
+    const buttons = [...(row?.querySelectorAll("button") ?? [])].map((x) =>
+      x.getBoundingClientRect(),
+    );
+    expect(buttons).toHaveLength(6);
+    for (const box of buttons) {
+      expect(box.width).toBe(28);
+      expect(box.top).toBe(buttons[0]?.top);
+    }
+    for (let i = 1; i < buttons.length; i++)
+      expect((buttons[i]?.left ?? 0) - (buttons[i - 1]?.right ?? 0)).toBe(4);
+    // All of it inside the conversation's column, none under the panel.
+    const main = document.querySelector('[data-slot="resizable-panel"]#main');
+    expect(buttons.at(-1)?.right).toBeLessThanOrEqual(main?.getBoundingClientRect().right ?? 0);
+  } finally {
+    document.body.style.width = "";
+  }
+});
+
+test("the panel slides in as it opens, and fades out before its column goes as it closes", async () => {
+  const { user } = await mount();
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(panel()).not.toBeNull());
+  const opening = getComputedStyle(panel() as Element);
+  expect(opening.animationName).toBe("cycle-panel-in");
+  expect(opening.animationDuration).toBe("0.16s");
+  // A tab's content fades in as it is shown.
+  const content = document.querySelector('[data-slot="tabs-panel"][data-selected]');
+  expect(getComputedStyle(content as Element).animationName).toBe("cycle-banner-in");
+  await user.click(screen.getByRole("button", { name: "Hide panel" }));
+  // Still there a moment, going, and out of reach.
+  const leaving = panel() as HTMLElement;
+  expect(leaving.hasAttribute("data-leaving")).toBe(true);
+  expect(leaving.inert).toBe(true);
+  expect(getComputedStyle(leaving).animationName).toBe("cycle-panel-out");
+  expect(screen.getByRole("button", { name: "Show panel" })).toBeDefined();
+  await waitFor(() => expect(panel()).toBeNull(), { timeout: 1000 });
+  // Opened again before it has gone, it stays, and is no longer going.
+  await user.click(screen.getByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(panel()).not.toBeNull());
+  await user.click(screen.getByRole("button", { name: "Hide panel" }));
+  await user.click(screen.getByRole("button", { name: "Show panel" }));
+  expect(panel()?.hasAttribute("data-leaving")).toBe(false);
+  expect((panel() as HTMLElement).inert).toBe(false);
+});
+
+test("with reduced motion the panel neither slides nor fades: it is there, and gone, at once", async () => {
+  await cdp().send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+  });
+  try {
+    const { user } = await mount();
+    await user.click(await screen.findByRole("option", { name: /first/ }));
+    await user.click(await screen.findByRole("button", { name: "Show panel" }));
+    await waitFor(() => expect(panel()).not.toBeNull());
+    expect(getComputedStyle(panel() as Element).animationName).toBe("none");
+    const content = document.querySelector('[data-slot="tabs-panel"][data-selected]');
+    expect(getComputedStyle(content as Element).animationName).toBe("none");
+    await user.click(screen.getByRole("button", { name: "Hide panel" }));
+    expect(panel()).toBeNull();
+  } finally {
+    await cdp().send("Emulation.setEmulatedMedia", { features: [] });
+  }
 });
