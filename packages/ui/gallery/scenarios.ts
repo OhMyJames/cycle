@@ -2208,7 +2208,7 @@ export const scenarios: Record<string, Scenario> = {
   },
   "two-agents": {
     title:
-      "Two agents on the environment: each session says which it is of, in the list and in its header",
+      "Several agents on the environment: each session shows its agent's logo, in the list and in its header; a mark takes the time's place",
     secondAgent: true,
     sessions: [
       session("s1", { title: "Fix the remote session", agent: "codex" }),
@@ -2218,6 +2218,8 @@ export const scenarios: Record<string, Scenario> = {
         agent: "codex",
       }),
       session("s4", { title: "Made with an agent that is gone", agent: "old-agent" }),
+      session("s5", { title: "Approve the deploy", agent: "codex", state: "requires_action" }),
+      session("s6", { title: "Plan the release", agent: "agy" }),
     ],
     history: conversation,
   },

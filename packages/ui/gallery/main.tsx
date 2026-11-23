@@ -172,6 +172,7 @@ const bridgeFor = (scenario: Scenario) => {
     script.bridge.agents = async (environmentId) => [
       ...(await first(environmentId)),
       { id: "codex", name: "Codex", available: true, configSchema: {} },
+      { id: "agy", name: "Antigravity", available: true, configSchema: {} },
     ];
   }
   return script;

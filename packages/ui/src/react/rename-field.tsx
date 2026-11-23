@@ -152,6 +152,7 @@ export function SessionHeading({
   }, [editing]);
   return (
     <div data-slot="session-heading">
+      <SessionAgent session={session} />
       {editing ? (
         <RenameField
           initial={title}
@@ -178,7 +179,6 @@ export function SessionHeading({
         </h1>
       )}
       {editing ? null : <RenameProblem problem={problem} />}
-      <SessionAgent session={session} />
       <span data-slot="session-where" title={session.cwd}>
         {session.cwd}
       </span>

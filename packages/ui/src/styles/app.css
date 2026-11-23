@@ -2030,17 +2030,26 @@ svg[data-slot="dot"] {
   color: var(--ui-muted-foreground);
 }
 
-/* The mark's cell is one line of the title (1lh), so the dot sits on the middle of the title's line. */
+/* A row's two small cells are one line of the title (1lh), so what is in them sits on the middle of the title's line.
+   The lead holds the agent's logo; every row keeps its 16px, logo or not, so titles start on one line with the
+   actions' labels. A mark (needs you, running, unread) stands where the time would, at the row's end. */
+[data-slot="session-lead"],
 [data-slot="session-dot"] {
   flex: none;
   display: grid;
   place-items: center;
-  /* Every row keeps the 16px lead column, mark or not, so titles start on one line with the actions' labels. */
-  width: 16px;
   height: 1lh;
 }
 
-/* It takes the row's room and no more, so a long title overflows itself and its end fades. */
+[data-slot="session-lead"] {
+  width: 16px;
+}
+
+[data-slot="session-dot"] {
+  margin-left: auto;
+  min-width: 1rem;
+}
+
 [data-slot="session-title"] {
   flex: 1;
   min-width: 0;
@@ -2056,23 +2065,38 @@ svg[data-slot="dot"] {
   color: var(--cycle-ink);
 }
 
-/* Which agent a session is of, where the environment has more than one (sessions.ts `agentLabel`): quiet, after the
-   title in a row and in the header, and it keeps its width (the title fades, the path shrinks). */
-[data-slot="session-agent"] {
+/* Which agent a session is of, where the environment has more than one (sessions.ts `agentLabel`): its logo, before
+   the title in a row and in the header. A mark without its own colour (OpenAI's) takes the quiet text colour. */
+[data-slot="agent-logo"] {
   flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--cycle-ink-secondary);
+}
+
+[data-slot="agent-logo"] > :is(svg, img) {
+  width: 100%;
+  height: 100%;
+}
+
+/* An agent without a mark: its initial, in a small rounded square. */
+[data-slot="agent-logo"] > [data-kind="initial"] {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-hover);
   font-size: var(--cycle-text-meta);
-  line-height: inherit;
-  white-space: nowrap;
-  color: var(--ui-muted-foreground);
+  font-weight: 600;
+  line-height: 1;
 }
 
-/* The time stays at the row's end with the agent before it. */
-[data-slot="session-agent"] + [data-slot="session-time"] {
-  margin-left: 0;
-}
-
-[role="option"] > [data-slot="session-agent"] {
-  margin-left: auto;
+/* In the header the logo sits on the title's line, beside its baseline-aligned words. */
+[data-slot="session-heading"] > [data-slot="agent-logo"] {
+  align-self: center;
 }
 
 /* When the session last changed, at the row's end: quiet, and it never gives way to the title (the title fades). */
@@ -2110,6 +2134,28 @@ svg[data-slot="dot"] {
 /* An away environment's row has only the pin: room for one. */
 [data-slot="sidebar"] [role="option"][data-away]:hover {
   padding-inline-end: 2rem;
+}
+
+/* At the row's end beside small words, the mark is a size smaller than the dots elsewhere. */
+[data-slot="session-dot"] > [data-slot="dot"] {
+  width: 6px;
+  height: 6px;
+}
+
+[data-slot="session-dot"] > [data-slot="dot"][data-shape="square"] {
+  border-radius: 1.5px;
+}
+
+/* A thinner ring at that size, so it stays a ring and is not read as the solid dot of unread. */
+[data-slot="session-dot"] > [data-slot="dot"][data-shape="ring"] {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+/* The mark gives way to them as the time does; the row's name still says it (its hidden word). */
+[data-slot="sidebar"]
+  [role="option"]:is(:hover, :has([aria-expanded="true"]))
+  [data-slot="session-dot"] {
+  display: none;
 }
 
 [data-slot="sidebar"]

@@ -163,8 +163,9 @@ function Row({
         setEditing(true);
       }}
     >
-      <span data-slot="session-dot">
-        {style !== undefined ? <StatusDot tone={style.tone} shape={style.shape} /> : null}
+      <span data-slot="session-lead">
+        {/* An away row's own title says why it is away: the logo does not cover it with the agent's name. */}
+        <SessionAgent session={session} quiet={away !== undefined} />
       </span>
       {mark !== undefined ? <span data-slot="visually-hidden">{t(MARK_WORD[mark])}. </span> : null}
       {editing ? (
@@ -179,8 +180,14 @@ function Row({
       ) : (
         <>
           <span data-slot="session-title">{shown}</span>
-          <SessionAgent session={session} />
-          <SessionTime at={session.updatedAt} />
+          {/* A mark says more than the time does: it takes the time's place at the row's end. */}
+          {style !== undefined ? (
+            <span data-slot="session-dot">
+              <StatusDot tone={style.tone} shape={style.shape} />
+            </span>
+          ) : (
+            <SessionTime at={session.updatedAt} />
+          )}
         </>
       )}
       {editing ? null : (
