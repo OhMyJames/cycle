@@ -5,14 +5,21 @@ export function itemUpdate(
   item: ThreadItem,
   completed: boolean,
   streamed: boolean,
+  planId?: string,
 ): SessionUpdate | undefined {
   if (item.type === "plan" && completed)
     return {
       sessionUpdate: "plan_update",
       plan: {
         type: "items",
-        planId: item.id,
-        entries: [{ content: item.text, priority: "medium", status: "in_progress" }],
+        planId: planId ?? item.id,
+        entries: [
+          {
+            content: item.text,
+            priority: "medium",
+            status: completed ? "completed" : "in_progress",
+          },
+        ],
       },
     } as SessionUpdate;
   if (item.type === "collabAgentToolCall")

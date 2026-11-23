@@ -10,7 +10,11 @@ export const CODEX_NOTIFICATION_METHODS = [
   "item/reasoning/textDelta",
   "item/reasoning/summaryTextDelta",
   "item/plan/delta",
+  "item/commandExecution/outputDelta",
   "turn/plan/updated",
+  "thread/status/changed",
+  "contextCompacted",
+  "skills/changed",
   "thread/name/updated",
   "thread/tokenUsage/updated",
 ] as const;

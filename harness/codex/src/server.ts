@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
+import { CODEX_VERSION } from "./protocol.ts";
 
 export type AdapterConfig = { env: Record<string, string>; codexExecutable: string };
 type Message = {
@@ -43,7 +44,7 @@ export class AppServer {
     this.#process = spawn(
       config.codexExecutable,
       ["-c", "check_for_update_on_startup=false", "app-server"],
-      { cwd: config.env.HOME, env: config.env, stdio: ["pipe", "pipe", "ignore"] },
+      { cwd: config.env.HOME, env: config.env, stdio: ["pipe", "pipe", "inherit"] },
     );
     const lines = createInterface({ input: this.#process.stdout });
     lines.on("line", (line) => {
@@ -105,10 +106,12 @@ export class AppServer {
     });
   }
   async initialize() {
-    await this.request("initialize", {
+    const result = await this.request<{ userAgent?: string }>("initialize", {
       clientInfo: { name: "cycle", version: "1" },
       capabilities: {},
     });
+    if (typeof result.userAgent !== "string" || !result.userAgent.includes(CODEX_VERSION))
+      throw new Error(`Codex app-server version is not the pinned ${CODEX_VERSION}`);
     this.#send({ method: "initialized" });
   }
   get closed() {
@@ -117,7 +120,10 @@ export class AppServer {
   close(reason = new Error("Codex app-server closed")) {
     if (this.#closed) return;
     this.#closed = true;
-    this.#process.kill("SIGKILL");
+    this.#process.stdin.end();
+    setTimeout(() => {
+      if (!this.#closed) this.#process.kill("SIGKILL");
+    }, 1000);
     for (const call of this.#pending.values()) call.reject(reason);
     this.#pending.clear();
     this.onExit(reason);

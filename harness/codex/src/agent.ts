@@ -46,11 +46,15 @@ export function createAdapter(config: AdapterConfig) {
   let mcpConfig: Record<string, unknown> = {};
   let trusted: boolean | undefined;
   let codexConfig: Record<string, unknown> = {};
+  const children = new Set<string>();
+  const childTurns = new Map<string, string>();
+  const planId = () => `${session ?? "codex"}-plan`;
+  function notifyFor(sessionId: string, update: SessionUpdate) {
+    if (owner)
+      void owner.notify(methods.client.session.update, { sessionId, update }).catch(() => {});
+  }
   function notify(update: SessionUpdate) {
-    if (session && owner)
-      void owner
-        .notify(methods.client.session.update, { sessionId: session, update })
-        .catch(() => {});
+    if (session) notifyFor(session, update);
   }
   function finish(stopReason: "end_turn" | "error" | "cancelled", message?: string) {
     if (!turn) return;
@@ -75,18 +79,29 @@ export function createAdapter(config: AdapterConfig) {
   function event(method: string, raw: unknown) {
     if (!(CODEX_NOTIFICATION_METHODS as readonly string[]).includes(method)) return;
     const active = turn;
-    if (
-      !active ||
-      !raw ||
-      typeof raw !== "object" ||
-      !("threadId" in raw) ||
-      raw.threadId !== session
-    )
-      return;
-    if ("turnId" in raw && active.id && raw.turnId !== active.id) return;
+    if (!active || !raw || typeof raw !== "object" || !("threadId" in raw)) return;
+    const threadId = typeof raw.threadId === "string" ? raw.threadId : undefined;
+    if (!threadId || (threadId !== session && !children.has(threadId))) return;
+    const child = threadId !== session;
+    if (!child && "turnId" in raw && active.id && raw.turnId !== active.id) return;
+    const send = (update: SessionUpdate) => notifyFor(threadId, update);
     if (method === "turn/completed") {
       const result = (raw as TurnCompletedNotification).turn;
       if (active.id && result.id !== active.id) return;
+      if (child) {
+        childTurns.delete(threadId);
+        send({
+          sessionUpdate: "state_update",
+          state: "idle",
+          stopReason:
+            result.status === "interrupted"
+              ? "cancelled"
+              : result.status === "completed"
+                ? "end_turn"
+                : "error",
+        } as SessionUpdate);
+        return;
+      }
       finish(
         result.status === "interrupted"
           ? "cancelled"
@@ -97,14 +112,22 @@ export function createAdapter(config: AdapterConfig) {
       );
     } else if (method === "item/started" || method === "item/completed") {
       const { item } = raw as ItemCompletedNotification;
-      const update = itemUpdate(item, method === "item/completed", active.streamed.has(item.id));
-      if (update?.sessionUpdate === "tool_call_update") {
+      const update = itemUpdate(
+        item,
+        method === "item/completed",
+        active.streamed.has(item.id),
+        planId(),
+      );
+      if (!child && update?.sessionUpdate === "tool_call_update") {
         if (method === "item/started") active.tools.add(item.id);
         else active.tools.delete(item.id);
       }
-      if (update) notify(update);
-      if (item.type === "collabAgentToolCall" && item.receiverThreadIds[0])
-        notify({
+      if (update) send(update);
+      if (item.type === "collabAgentToolCall" && item.receiverThreadIds[0]) {
+        children.add(item.receiverThreadIds[0]);
+        const turnId = (raw as { turnId?: unknown }).turnId;
+        if (typeof turnId === "string") childTurns.set(item.receiverThreadIds[0], turnId);
+        send({
           sessionUpdate: "subagent_update",
           sessionId: item.receiverThreadIds[0],
           state: {
@@ -112,9 +135,10 @@ export function createAdapter(config: AdapterConfig) {
             state: method === "item/completed" ? "idle" : "running",
           },
         } as unknown as SessionUpdate);
+      }
     } else if (method === "turn/plan/updated") {
       const plan = raw as TurnPlanUpdatedNotification;
-      notify({
+      send({
         sessionUpdate: "plan_update",
         plan: {
           type: "items",
@@ -128,7 +152,7 @@ export function createAdapter(config: AdapterConfig) {
       } as unknown as SessionUpdate);
     } else if (method === "item/plan/delta") {
       const delta = raw as PlanDeltaNotification;
-      notify({
+      send({
         sessionUpdate: "agent_message_chunk",
         messageId: delta.itemId,
         content: { type: "text", text: delta.delta },
@@ -142,7 +166,7 @@ export function createAdapter(config: AdapterConfig) {
     ) {
       const { itemId, delta } = raw as AgentMessageDeltaNotification;
       active.streamed.add(itemId);
-      notify({
+      send({
         sessionUpdate:
           method === "item/agentMessage/delta" ? "agent_message_chunk" : "agent_thought_chunk",
         messageId: itemId,
@@ -157,7 +181,7 @@ export function createAdapter(config: AdapterConfig) {
     } else if (method === "thread/tokenUsage/updated") {
       const usage = raw as ThreadTokenUsageUpdatedNotification;
       if (usage.tokenUsage.modelContextWindow !== null)
-        notify({
+        send({
           sessionUpdate: "usage_update",
           used: usage.tokenUsage.last.totalTokens,
           size: usage.tokenUsage.modelContextWindow,
@@ -183,6 +207,8 @@ export function createAdapter(config: AdapterConfig) {
         text?: string;
         mimeType?: string;
         data?: string;
+        name?: string;
+        uri?: string;
         resource?: { text?: string };
       };
       if (
@@ -191,10 +217,14 @@ export function createAdapter(config: AdapterConfig) {
         typeof block.data === "string"
       )
         return { type: "image", url: `data:${block.mimeType};base64,${block.data}` };
-      if (block.type === "resource" && typeof block.resource?.text === "string")
-        return { type: "text", text: block.resource.text, text_elements: [] };
+      if (
+        block.type === "resource_link" &&
+        typeof block.name === "string" &&
+        typeof block.uri === "string"
+      )
+        return { type: "text", text: `${block.name}\n${block.uri}`, text_elements: [] };
       if (block.type !== "text" || typeof block.text !== "string")
-        throw new RequestError(-32602, "Codex supports text, images and text resources only");
+        throw new RequestError(-32602, "Codex supports text, images and resource links only");
       return { type: "text", text: block.text, text_elements: [] };
     });
   const optionsOf = () => options(mode, catalog, model, effort);
@@ -392,6 +422,8 @@ export function createAdapter(config: AdapterConfig) {
         (params.prompt[0] as { text?: unknown }).text === "/compact"
       ) {
         const compactionId = crypto.randomUUID();
+        const messageId = crypto.randomUUID();
+        notify({ sessionUpdate: "user_message", messageId, content: params.prompt });
         notify({
           sessionUpdate: "compaction_update",
           compactionId,
@@ -403,7 +435,7 @@ export function createAdapter(config: AdapterConfig) {
           compactionId,
           status: "completed",
         } as SessionUpdate);
-        return { messageId: crypto.randomUUID() };
+        return { messageId };
       }
       const input = inputOf(params.prompt);
       if (params._meta?.["cycle/steer"] === true) {
@@ -450,6 +482,14 @@ export function createAdapter(config: AdapterConfig) {
       return { messageId };
     })
     .onNotification(methods.agent.session.cancel, ({ params }) => {
+      if (children.has(params.sessionId)) {
+        const childTurn = childTurns.get(params.sessionId);
+        if (childTurn && server)
+          void server
+            .request("turn/interrupt", { threadId: params.sessionId, turnId: childTurn })
+            .catch(() => {});
+        return;
+      }
       if (params.sessionId !== session || !turn || turn.cancelled) return;
       turn.cancelled = true;
       turn.approvals.abort();

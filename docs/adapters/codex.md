@@ -14,9 +14,9 @@ Ubuntu 24.04 的沙箱前置依赖见 [OpenAI 的 Linux sandbox prerequisites](h
 
 ## 第二阶段实现（CYCL-202、203、204）
 
-Codex harness 自己声明 image、embeddedContext、MCP、additionalDirectories 和 systemPrompt 能力。ACP 的 HTTP/stdio MCP server 会转换到 Codex 的 `config.mcp_servers`，MCP header 和环境变量只在 app-server 配置请求中传递。图片转换为 Codex 的 data URL，文本 resource 转为文本输入，暂不接受 PDF blob。附加目录进入 Codex 的 workspace-write writable roots，系统提示的 append 内容进入 developer instructions。
+Codex harness 自己声明 image、MCP、additionalDirectories 和 systemPrompt 能力。ACP 的 HTTP/stdio MCP server 会转换到 Codex 的 `config.mcp_servers`，MCP header 和环境变量只在 app-server 配置请求中传递。图片转换为 Codex 的 data URL，resource_link 转为文本引用。embeddedContext/PDF blob 不声明能力，由 daemon 在发送前拒绝。附加目录进入 Codex 的 workspace-write writable roots，系统提示的 append 内容进入 developer instructions。
 
-Codex 的 `plan` 是自己的权限配置项。它通过 `collaborationMode: plan` 发给 Codex，Codex 的 plan item 和 `turn/plan/updated` 转为 ACP `plan_update`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
+Codex 的 `plan` 是自己的权限配置项。它通过 `collaborationMode: plan` 发给 Codex，Codex 的 plan item 和 `turn/plan/updated` 转为同一个 ACP `plan_update`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
 
 ## 第三阶段实现（CYCL-205、206、207）
 

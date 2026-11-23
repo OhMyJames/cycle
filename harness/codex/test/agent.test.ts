@@ -15,7 +15,7 @@ test("a crashed server fails its open tool and ends the accepted turn exactly on
  const send=m=>console.log(JSON.stringify(m));
  for await(const line of createInterface({input:process.stdin})){
    const {method,id}=JSON.parse(line);
-   if(method==="initialize")send({id,result:{}});
+   if(method==="initialize")send({id,result:{userAgent:"codex-cli 0.171.0"}});
    if(method==="model/list")send({id,result:{data:[],nextCursor:null}});
    if(method==="thread/start")send({id,result:{thread:{id:"s"}}});
    if(method==="turn/start"){
