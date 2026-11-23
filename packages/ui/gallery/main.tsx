@@ -240,9 +240,11 @@ const scenario = async (key: string) => {
   }
   const opened = s.sessions?.[0];
   if (s.draft !== undefined && opened !== undefined) {
-    const key = viewKey(opened.environmentId, opened.sessionId);
-    store.drafts.setText(key, s.draft.text);
-    if (s.draft.attachments !== undefined) store.drafts.setAttachments(key, s.draft.attachments);
+    // A draft is kept in the page's storage: these scenarios' sessions have ids of their own, so it reaches no other.
+    const draftKey = viewKey(opened.environmentId, opened.sessionId);
+    store.drafts.setText(draftKey, s.draft.text);
+    if (s.draft.attachments !== undefined)
+      store.drafts.setAttachments(draftKey, s.draft.attachments);
   }
   await sleep(300);
   await s.after?.(root, script.emit);

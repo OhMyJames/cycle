@@ -2766,7 +2766,7 @@ export const scenarios: Record<string, Scenario> = {
     title: "The composer on many lines: the + and Send stay where one line has them",
     attach: true,
     sessions: [
-      session("s1", {
+      session("s-multiline", {
         title: "Redesign the composer",
         config: { mode: "auto", model: "opus", effort: "high" },
       }),
@@ -2777,7 +2777,7 @@ export const scenarios: Record<string, Scenario> = {
     },
   },
   "composer-attached": {
-    title: "A file attached in the composer, above the words, under the extension tray",
+    title: "A picture attached in the composer, above the words, under the extension tray",
     attach: true,
     status: [
       {
@@ -2787,7 +2787,7 @@ export const scenarios: Record<string, Scenario> = {
       },
     ],
     sessions: [
-      session("s1", {
+      session("s-attached", {
         title: "Redesign the composer",
         state: "running",
         config: { mode: "auto", model: "opus", effort: "high" },
@@ -2804,16 +2804,17 @@ export const scenarios: Record<string, Scenario> = {
       }),
       measured,
     ],
+    // An image: what this agent takes (`attach` declares images only).
     draft: {
-      text: "Here are the notes.",
+      text: "Here is the screen.",
       attachments: [
         {
           id: "a1",
-          name: "notes.md",
-          kind: "text",
-          type: "text/markdown",
-          data: "# Notes\n",
-          bytes: 8,
+          name: "screen.png",
+          kind: "image",
+          type: "image/png",
+          data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          bytes: 70,
         },
       ],
     },

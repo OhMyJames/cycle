@@ -5206,11 +5206,13 @@ button[data-slot="review-file"]:focus-visible {
 
 /* The box's buttons are drawn 28px and take a press 32px across: a clear 2px ring round each one is part of it
    (CYCL-214). The ring is never drawn and stays inside the box's 6px padding. */
-:is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"]) {
+[data-slot="composer-box"]
+  :is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"]) {
   position: relative;
 }
 
-:is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"])::after {
+[data-slot="composer-box"]
+  :is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"])::after {
   content: "";
   position: absolute;
   /* Measured from inside the button's 1px border: 2px beyond its outer edge. */
@@ -5273,7 +5275,12 @@ button[data-slot="review-file"]:focus-visible {
 
 /* A fill one step off the box is not an edge to count on: asked for more contrast, the filled buttons get one. */
 @media (prefers-contrast: more) {
-  :is([data-kind="composer-plus"], [data-kind="queue"]) {
+  [data-slot="composer-box"]
+    :is(
+      [data-slot="button"][data-variant="ghost"][data-kind="composer-plus"],
+      [data-kind="queue"],
+      [data-slot="button"][data-variant="solid"][data-action="send"][data-disabled]
+    ) {
     border-color: var(--cycle-input-border);
   }
 
