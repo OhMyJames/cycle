@@ -771,6 +771,15 @@ export class Daemon {
               ...(session.entry.hadTurn === true ? { [META.hadTurn]: true } : {}),
             },
           } as never);
+          const replacement = (resumed as { _meta?: Record<string, unknown> } | undefined)?._meta?.[
+            META.agentSessionId
+          ];
+          if (replacement !== undefined && replacement !== session.entry.agentSessionId) {
+            if (session.entry.hadTurn || typeof replacement !== "string" || !replacement.trim())
+              throw new Error("Invalid replacement agent session ID");
+            await this.#index.update(session.id, { agentSessionId: replacement });
+            session.entry = { ...session.entry, agentSessionId: replacement };
+          }
         } catch (error) {
           throw new RpcError(
             CycleErrorCode.ResumeFailed,
@@ -877,6 +886,7 @@ export class Daemon {
   async #ensureAgent(session: Session): Promise<AgentLink> {
     // Whatever asks for the agent is about to use it (a prompt, a setting): not idle, so not let go under it.
     session.lastActive = this.#now();
+    if (session.starting !== undefined) return session.starting;
     if (session.link !== undefined) return session.link;
     session.starting ??= this.#startAgent(session, "resume")
       .then(({ link }) => {
@@ -1089,7 +1099,7 @@ export class Daemon {
     if (session.closed || session.historyError || session.returnOwner) return;
     const first = session.returns.entries().next().value;
     const recipient = [...session.attachments].find((a) => a.ready);
-    if (!first || !first[1].durable || !recipient) return;
+    if (!first?.[1].durable || !recipient) return;
     const [returnId, { returned, reason }] = first;
     const { conn } = recipient;
     session.returnOwner = { conn, id: returnId, acknowledging: false };

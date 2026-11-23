@@ -2,11 +2,15 @@ import {
   type AgentContext,
   agent,
   methods,
+  type NewSessionRequest,
   RequestError,
+  type ResumeSessionRequest,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
+import { approval } from "./approval.ts";
 import { itemUpdate } from "./items.ts";
-import { type AdapterConfig, AppServer } from "./server.ts";
+import { type AdapterConfig, AppServer, CodexRpcError } from "./server.ts";
+import { type Mode, modes, options, policy, turnPolicy } from "./settings.ts";
 import type {
   AgentMessageDeltaNotification,
   ItemCompletedNotification,
@@ -18,6 +22,7 @@ type Turn = {
   id?: string;
   cancelled: boolean;
   timer?: ReturnType<typeof setTimeout>;
+  approvals: AbortController;
   streamed: Set<string>;
   tools: Set<string>;
 };
@@ -27,6 +32,7 @@ export function createAdapter(config: AdapterConfig) {
     server: AppServer | undefined,
     owner: AgentContext | undefined,
     turn: Turn | undefined;
+  let mode: Mode = "default";
   function notify(update: SessionUpdate) {
     if (session && owner)
       void owner
@@ -35,6 +41,7 @@ export function createAdapter(config: AdapterConfig) {
   }
   function finish(stopReason: "end_turn" | "error" | "cancelled", message?: string) {
     if (!turn) return;
+    turn.approvals.abort();
     clearTimeout(turn.timer);
     for (const toolCallId of turn.tools)
       notify({
@@ -111,33 +118,84 @@ export function createAdapter(config: AdapterConfig) {
     if (id !== session || !server) throw new RequestError(-32002, "Codex session unavailable");
     return server;
   }
+  async function open(
+    params: NewSessionRequest | ResumeSessionRequest,
+    client: AgentContext,
+    resume?: ResumeSessionRequest,
+  ) {
+    if (server) throw new RequestError(-32600, "This adapter already has a session");
+    if (resume?.replayFrom) throw new RequestError(-32602, "Cycle owns the conversation replay");
+    mode = "default";
+    const child = new AppServer(
+      config,
+      event,
+      (error) => finish(turn?.cancelled ? "cancelled" : "error", error.message),
+      (method, raw) => approval(method, raw, owner, session, turn?.id, turn?.approvals.signal),
+    );
+    server = child;
+    const settings = { cwd: params.cwd, ...policy(mode) };
+    type Thread = { thread: { id: string } };
+    try {
+      await child.initialize();
+      let result: Thread;
+      if (resume) {
+        try {
+          result = await child.request<Thread>("thread/resume", {
+            ...settings,
+            threadId: resume.sessionId,
+            excludeTurns: true,
+          });
+        } catch (error) {
+          if (
+            resume._meta?.["cycle/hadTurn"] === true ||
+            !(error instanceof CodexRpcError) ||
+            error.code !== -32600 ||
+            error.message !== `no rollout found for thread id ${resume.sessionId}`
+          )
+            throw error;
+          result = await child.request<Thread>("thread/start", settings);
+        }
+      } else result = await child.request<Thread>("thread/start", settings);
+      owner = client;
+      session = result.thread.id;
+      if (resume)
+        await client.notify(methods.client.session.update, {
+          sessionId: session,
+          update: { sessionUpdate: "state_update", state: "idle" },
+        });
+      return {
+        sessionId: session,
+        configOptions: options(mode),
+        ...(resume && session !== resume.sessionId
+          ? { _meta: { "cycle/agentSessionId": session } }
+          : {}),
+      };
+    } catch (error) {
+      child.close();
+      server = undefined;
+      throw error;
+    }
+  }
   const app = agent({ name: "cycle-codex-adapter" })
     .onRequest(methods.agent.initialize, () => ({
       protocolVersion: 2,
       info: { name: "cycle-codex-adapter", version: "0.0.0" },
       capabilities: { session: { prompt: {} } },
     }))
-    .onRequest(methods.agent.session.new, async ({ params, client }) => {
-      if (server) throw new RequestError(-32600, "This adapter already has a session");
-      const child = new AppServer(config, event, (error) => {
-        finish(turn?.cancelled ? "cancelled" : "error", error.message);
-      });
-      server = child;
-      try {
-        await child.initialize();
-        const result = await child.request<{ thread: { id: string } }>("thread/start", {
-          cwd: params.cwd,
-          sandbox: "workspace-write",
-          approvalPolicy: "never",
-        });
-        owner = client;
-        session = result.thread.id;
-        return { sessionId: session };
-      } catch (error) {
-        child.close();
-        server = undefined;
-        throw error;
-      }
+    .onRequest(methods.agent.session.new, ({ params, client }) => open(params, client))
+    .onRequest(methods.agent.session.resume, ({ params, client }) => open(params, client, params))
+    .onRequest(methods.agent.session.setConfigOption, ({ params }) => {
+      requireSession(params.sessionId);
+      if (params.type !== "id") throw new RequestError(-32602, "Expected an option ID");
+      if (params.configId === "mode") {
+        const choice = modes.find((m) => m.value === params.value);
+        if (!choice) throw new RequestError(-32602, "Unknown permission mode");
+        mode = choice.value;
+      } else if (!(["model", "effort"].includes(params.configId) && params.value === "default"))
+        throw new RequestError(-32602, "Unknown Codex setting");
+      const configOptions = options(mode);
+      notify({ sessionUpdate: "config_option_update", configOptions });
+      return { configOptions };
     })
     .onRequest(methods.agent.session.prompt, ({ params }) => {
       const child = requireSession(params.sessionId);
@@ -150,12 +208,21 @@ export function createAdapter(config: AdapterConfig) {
         return { type: "text", text: block.text, text_elements: [] };
       });
       const messageId = crypto.randomUUID();
-      const active: Turn = { cancelled: false, streamed: new Set(), tools: new Set() };
+      const active: Turn = {
+        cancelled: false,
+        approvals: new AbortController(),
+        streamed: new Set(),
+        tools: new Set(),
+      };
       turn = active;
       notify({ sessionUpdate: "user_message", messageId, content: params.prompt });
       notify({ sessionUpdate: "state_update", state: "running" });
       void child
-        .request<{ turn: { id: string } }>("turn/start", { threadId: session, input })
+        .request<{ turn: { id: string } }>("turn/start", {
+          threadId: session,
+          input,
+          ...turnPolicy(mode),
+        })
         .then(({ turn: started }) => {
           if (turn !== active) return;
           active.id = started.id;
@@ -169,6 +236,7 @@ export function createAdapter(config: AdapterConfig) {
     .onNotification(methods.agent.session.cancel, ({ params }) => {
       if (params.sessionId !== session || !turn || turn.cancelled) return;
       turn.cancelled = true;
+      turn.approvals.abort();
       turn.timer = setTimeout(
         () => server?.close(new Error("Codex did not acknowledge cancellation")),
         4000,

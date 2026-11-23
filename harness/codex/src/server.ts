@@ -8,8 +8,16 @@ type Message = {
   method?: string;
   params?: unknown;
   result?: unknown;
-  error?: { message: string };
+  error?: { code: number; message: string };
 };
+export class CodexRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 export class AppServer {
   readonly #process;
   #next = 0;
@@ -22,6 +30,7 @@ export class AppServer {
     config: AdapterConfig,
     onEvent: (method: string, params: unknown) => void,
     readonly onExit: (error: Error) => void,
+    onRequest: (method: string, params: unknown) => Promise<unknown>,
   ) {
     if (
       !config.env.HOME ||
@@ -41,17 +50,26 @@ export class AppServer {
       try {
         const msg = JSON.parse(line) as Message;
         if (msg.method) {
-          if (msg.id !== undefined)
-            this.#send({
-              id: msg.id,
-              error: { code: -32601, message: "Unsupported server request" },
-            });
-          else onEvent(msg.method, msg.params);
+          if (msg.id !== undefined) {
+            const id = msg.id;
+            void onRequest(msg.method, msg.params).then(
+              (result) => {
+                if (!this.closed) this.#send({ id, result });
+              },
+              () => {
+                if (!this.closed)
+                  this.#send({
+                    id,
+                    error: { code: -32601, message: "Request unsupported or unavailable" },
+                  });
+              },
+            );
+          } else onEvent(msg.method, msg.params);
         } else if (typeof msg.id === "number") {
           const call = this.#pending.get(msg.id);
           if (!call) return;
           this.#pending.delete(msg.id);
-          if (msg.error) call.reject(new Error(msg.error.message));
+          if (msg.error) call.reject(new CodexRpcError(msg.error.code, msg.error.message));
           else call.resolve(msg.result);
         }
       } catch (error) {

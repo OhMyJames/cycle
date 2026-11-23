@@ -45,6 +45,7 @@ export const META = {
    * has been answered (it ended with `end_turn`), so the agent has a record of it of its own. An agent that finds none says so
    * instead of starting the session over. Absent for a session that has had no such turn.
    */
+  agentSessionId: "cycle/agentSessionId",
   hadTurn: "cycle/hadTurn",
   /** In a `subagent_update`: what the adapter says of the task beyond ACP's fields (decision 0014). */
   subagent: "cycle/subagent",

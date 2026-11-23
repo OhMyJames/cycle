@@ -4,7 +4,7 @@
 
 基线为 2026-11-23 的最新稳定版 **Codex CLI 0.171.0**。构建时由 Bun lockfile 校验官方 npm 平台包，从中取原生 CLI。发行物运行时无需 Node 或 npm。在 daemon 安装目录和桌面包的 `bin` 下均有 `codex`；Linux 还带同版本的 `codex-resources/bwrap`。许可随 `codex-resources/licenses` 一起安装。
 
-内部入口 `cycle adapter codex` 通过 ACP v2 支持 initialize、new、纯文字 prompt、cancel 和 close。一份适配器拥有一个 thread；文字和思考增量、命令、文件变更、搜索和 MCP 工具更新按 item id 关联，回合成功、失败、取消或子进程退出都结束 running 状态。每个 app-server 只接收 `CYCLE_ADAPTER_CONFIG.env` 指定的环境，要求显式提供绝对路径 HOME 和 CODEX_HOME。第一阶段固定 workspace-write、never（沙箱外操作没有审批提权路径）。daemon 的会话列表和登录入口在 CYCL-196/197 接入。
+内部入口 `cycle adapter codex` 通过 ACP v2 支持 initialize、new、纯文字 prompt、cancel 和 close。一份适配器拥有一个 thread；文字和思考增量、命令、文件变更、搜索和 MCP 工具更新按 item id 关联，回合成功、失败、取消或子进程退出都结束 running 状态。每个 app-server 只接收 `CYCLE_ADAPTER_CONFIG.env` 指定的环境，要求显式提供绝对路径 HOME 和 CODEX_HOME。第一阶段固定 workspace-write、never（沙箱外操作没有审批提权路径）。daemon 接入阶段已加入独立 `codex` 配置段、环境白名单、空 rollout 恢复关联和权限模式映射。
 
 升级时核对 npm 的 latest 与 GitHub 正式 release，在 `harness/codex/package.json` 更新精确版本并运行 `bun install`。用 `bun harness/codex/scripts/generate.ts` 重新提取这一版的协议类型，运行 `bun run format`、`bun run check` 和 `bun run test:integration`。在各目标平台从安装目录运行 Codex 集成套件，并复核沙箱、包体积和上游许可。模拟模型只在 loopback 提供 Responses API，真实账户验收留到后续阶段。
 

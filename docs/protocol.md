@@ -153,6 +153,8 @@ daemon 为每个 session 维护一个单调递增的整数序号,从 1 开始,**
 4. 判断方式只看响应:返回的 id 等于建议的 id 就是复用,否则是关联。daemon 不需要事先知道 agent 属于哪一种。
 5. 索引里始终保存 `agentSessionId`,复用时它等于 `sessionId`。daemon 对 agent 说话时一律用 `agentSessionId`。客户端不得假设两者相等。
 
+恢复一个没有已回答回合的会话时，agent 可在 L2 应答的 `_meta["cycle/agentSessionId"]` 返回替代 ID。daemon 验证并持久化映射后才恢复设置或接受新 prompt；L1 ID 不变。已有已回答回合时禁止更换 ID。
+
 采用 id 的好处:agent 自己的 transcript 和 Cycle 的历史用同一个 id,排查问题和以后导入导出都更直接。注意 Claude SDK 的限制:`sessionId` 不能和 `resume` 或 `continue` 同时使用,除非同时 fork。所以只在新建时传,恢复时用 `agentSessionId` 走 resume。
 
 ### 列表
@@ -237,7 +239,7 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 **agent 自己有没有这个 session 的记录。** 创建 session 时 agent 不一定已经有了它的记录(Claude 要到收到第一个 prompt 才写)。daemon 记下 session 里有没有一个被回答过的 turn(以 `end_turn` 结束;出错或被截断的不算,它们可能没到过 agent),并在恢复时把它放进 `session/resume` 的 `_meta["cycle/hadTurn"]`(为 `true` 时才带)。agent 据此决定怎么做:
 
 - 找到自己的记录:恢复它。
-- 没找到,且没有 `cycle/hadTurn`:这个 session 还没有过 turn,agent 把它当新的开始(用同一个 id),第一条消息照常完成。
+- 没找到,且没有 `cycle/hadTurn`:agent 可当新的开始。能复用 ID 时沿用原 ID，否则按 §6 关联新 ID。只有明确的记录不存在才可走此分支，其他恢复错误照常上报。
 - 没找到,但有 `cycle/hadTurn`:记录丢了。agent 以错误回应这个 `session/resume`,daemon 报告为 `-32013`(`resume_failed`:历史仍可读,但不能继续对话,§11),而不是悄悄在同一个名字下开一段新对话。
 - agent 没办法查看自己的记录(Claude 适配器没有给 Claude 的配置目录,或查看失败)时,按有记录处理,与以前一样。
 
