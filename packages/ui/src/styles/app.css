@@ -2582,10 +2582,6 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
 }
 
 [data-slot="command"] {
-  flex-basis: 100%;
-}
-
-[data-slot="command"] {
   display: block;
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--ui-border);

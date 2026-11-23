@@ -18,7 +18,7 @@ export const enUS = {
   "session.away": "{environment} · {state}",
   "notice.connecting": "Connecting to {environment}…",
   "session.awayIncompatible":
-    "{environment} is not connected: Cycle there and this app speak different protocols. The sidebar says what to update.",
+    "{environment} is not connected: Cycle there and this app speak different protocols. Its notice says what to update.",
   "session.awayBecause": "{environment} is not connected: {reason}",
   "session.awayBanner":
     "{environment} is not connected. This is what the session had when it went away.",
@@ -187,7 +187,7 @@ export const enUS = {
   "app.starting": "Starting…",
   "environment.connecting": "Connecting to this environment…",
   "environment.incompatible":
-    "Cycle there and this app speak different protocols. The sidebar says what to update.",
+    "Cycle there and this app speak different protocols. Its notice says what to update.",
   "environment.notConnected": "Not connected to this environment.",
   "environment.connectAgain": "Connect again",
 

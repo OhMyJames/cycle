@@ -49,7 +49,7 @@ export function AppNotice({
           {text}
         </p>
         {onDismiss !== undefined ? (
-          <Tip label={dismissLabel ?? t("banner.dismiss")} side="right">
+          <Tip label={dismissLabel ?? t("banner.dismiss")} side="top">
             <Button data-variant="ghost" data-kind="notice-dismiss" onClick={onDismiss}>
               <CloseIcon />
             </Button>

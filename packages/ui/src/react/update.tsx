@@ -1,6 +1,6 @@
 import { Button } from "@ui-sdk/react/button";
 import { useState } from "react";
-import type { SessionSummary, UpdateState } from "../api.ts";
+import type { EnvironmentStatus, SessionSummary, UpdateState } from "../api.ts";
 import type { Translator } from "../i18n.ts";
 import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
@@ -45,12 +45,11 @@ export function UpdateNotice() {
   const { t } = useI18n();
   const update = useAppState((s) => s.update);
   const [confirming, setConfirming] = useState(false);
-  const [dismissed, setDismissed] = useState<string | undefined>(undefined);
-  if (update === undefined || !updateNoticed(update)) return null;
+  const deferred = useAppState((s) => s.updateDeferred);
+  if (update === undefined || !updateNoticed(update, deferred)) return null;
   const busy = update.kind === "downloading" || update.kind === "installing";
   const failedInstall = update.kind === "error";
   const version = versionOf(update);
-  if (update.kind === "available" && dismissed === version) return null;
   let icon = <DownloadIcon />;
   if (busy) icon = <RefreshIcon />;
   if (failedInstall) icon = <ErrorCircleIcon />;
@@ -66,7 +65,7 @@ export function UpdateNotice() {
             : updateLine(update, t)
         }
         {...(update.kind === "available"
-          ? { onDismiss: () => setDismissed(version), dismissLabel: t("update.dismiss") }
+          ? { onDismiss: () => store.deferUpdate(version), dismissLabel: t("update.dismiss") }
           : {})}
         actions={
           busy ? null : (
@@ -92,9 +91,12 @@ export function UpdateNotice() {
 const versionOf = (update: UpdateState): string =>
   "version" in update && typeof update.version === "string" ? update.version : "";
 
-/** Whether the update has something to say in the notices: to install, under way, or an install that failed. */
-export const updateNoticed = (update: UpdateState): boolean =>
-  update.kind === "available" ||
+/**
+ * Whether the update has something to say in the notices: to install (unless that version was put off), under way, or
+ * an install that failed.
+ */
+export const updateNoticed = (update: UpdateState, deferred: string | undefined): boolean =>
+  (update.kind === "available" && update.version !== deferred) ||
   update.kind === "downloading" ||
   update.kind === "installing" ||
   (update.kind === "error" && update.version !== undefined);
@@ -109,6 +111,11 @@ export const workingSessions = (
   (sessions ?? []).filter(
     (s) => s.state === "running" || s.state === "requires_action" || (s.background ?? 0) > 0,
   );
+
+/** Whether an environment's daemon has something to say in the notices: this app cannot use it, or it can be updated. */
+export const daemonNoticed = (status: EnvironmentStatus | undefined): boolean =>
+  status?.incompatible !== undefined ||
+  (status?.daemon !== undefined && status.daemon.upgrade !== undefined);
 
 /**
  * An environment whose daemon this app cannot use, or that is too old and can be updated over ssh. When that cannot be
@@ -236,8 +243,9 @@ export function DaemonNotice({ environmentId }: { environmentId: string }) {
 export function UpdateFooter({ onSettings }: { onSettings: () => void }) {
   const { t } = useI18n();
   const update = useAppState((s) => s.update);
-  // What the notice above already says is not said twice.
-  const line = update === undefined || updateNoticed(update) ? "" : updateLine(update, t);
+  const deferred = useAppState((s) => s.updateDeferred);
+  // What the notice above already says is not said twice; an update put off is still said here.
+  const line = update === undefined || updateNoticed(update, deferred) ? "" : updateLine(update, t);
   return (
     <div data-slot="update-footer">
       <div data-slot="update-text">

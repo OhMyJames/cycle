@@ -54,6 +54,27 @@ test("what concerns the whole app is a card at the sidebar's foot, over its foot
   await waitFor(() => expect(cards(nav())).toEqual([]));
 });
 
+test("an update put off stays put off when the sidebar is folded, and the footer still says it is there", async () => {
+  const { user, emit } = await mount();
+  await emit({
+    type: "app-update",
+    state: { current: "0.1.0", kind: "available", version: "0.2.0" },
+  });
+  await user.click(within(cards(nav())[0] as HTMLElement).getByRole("button", { name: "Later" }));
+  await waitFor(() => expect(cards(nav())).toEqual([]));
+  const footer = nav().querySelector('[data-slot="sidebar-footer"]') as HTMLElement;
+  expect(footer.textContent).toContain("Version 0.2.0 is available");
+  await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+  await user.click(await screen.findByRole("button", { name: "Show sidebar" }));
+  expect(cards(document.body)).toEqual([]);
+  // A newer one is offered again.
+  await emit({
+    type: "app-update",
+    state: { current: "0.1.0", kind: "available", version: "0.3.0" },
+  });
+  expect(cards(nav())[0]?.textContent).toContain("Version 0.3.0 is available");
+});
+
 test("with the sidebar put away, the notices are rows at the top of the page", async () => {
   const { user, emit } = await mount();
   await emit({
