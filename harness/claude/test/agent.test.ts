@@ -217,6 +217,34 @@ test("a process is kept while a cron the Stop hook told is due within the hour, 
   }
 });
 
+test("a wakeup set in a turn that ends without the Stop hook keeps the process too", async () => {
+  const fake = fakeQuery(() => {
+    const turn = textTurn(ID, "m", "ok");
+    // The call's result, as the SDK gives it; then a result, with no hook in between (a stopped turn has none).
+    const wakeup = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+      },
+      parent_tool_use_id: null,
+      tool_use_result: { scheduledFor: Date.now() + 20 * 60_000, clampedDelaySeconds: 1200 },
+    } as unknown as SDKMessage;
+    return [...turn.slice(0, -1), wakeup, ...turn.slice(-1)];
+  });
+  await connect(
+    fake.run,
+    async ({ agent, waitForIdle }) => {
+      await open(agent);
+      await prompt(agent as never, waitForIdle, "check back in 20 minutes");
+      await settle(150);
+      expect(fake.state.inputClosed).toBe(false);
+    },
+    undefined,
+    { idleMs: 40 },
+  );
+});
+
 test("a process in the middle of a turn is not let go for being quiet", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {

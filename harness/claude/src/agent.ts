@@ -21,7 +21,7 @@ import { answersOf, formOf, type Question, questionsOf } from "./ask.ts";
 import { type SdkContent, toSdkContent } from "./content.ts";
 import { askContext, CONTEXT_META, type ContextBreakdown } from "./context.ts";
 import { PLAN_USAGE_UPDATE, planWindowsOf } from "./plan-usage.ts";
-import { cronsOf, dueWithin, type SessionCron } from "./schedules.ts";
+import { cronsOf, Schedules } from "./schedules.ts";
 import { NO_SETUP, type SessionSetup, setupOf } from "./setup.ts";
 import { Subagents } from "./subagents.ts";
 import { BackgroundTasks, goalUpdateOf } from "./tasks.ts";
@@ -253,10 +253,11 @@ type SessionState = {
   /** The background tasks that are not sub-agents (commands, watchers, workflows), as far as clients were told. */
   tasks: BackgroundTasks;
   /**
-   * What is set to wake the session (CronCreate, ScheduleWakeup, /loop), as the Stop hook last said. Kept when the
-   * process goes: the next one, resumed, sets again the ones not yet due, and says so at the end of its first turn.
+   * What is set to wake the session (CronCreate, ScheduleWakeup, /loop), as the Stop hook last said and calls since then
+   * set. Kept when the process goes: the next one, resumed, sets again the ones not yet due, and says so at the end of
+   * its first turn.
    */
-  crons: SessionCron[] | undefined;
+  schedules: Schedules;
   /** The command list clients were last told, to say it again only when it changes. */
   commandsKey: string | undefined;
   /** The configOptions snapshot clients were last told via `config_option_update`, to avoid duplicate broadcasts. */
@@ -550,7 +551,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
     // gone never fires (CYCL-145). Asked again when the time is up, so the hour counts from then.
     live.idle = setTimeout(
       () =>
-        dueWithin(session.crons, Date.now()) ? scheduleIdle(session) : release(session, false),
+        session.schedules.dueWithin(Date.now()) ? scheduleIdle(session) : release(session, false),
       idleMs,
     );
     live.idle.unref?.();
@@ -993,7 +994,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
             hooks: [
               async (input) => {
                 const crons = cronsOf(input);
-                if (crons !== undefined) session.crons = crons;
+                if (crons !== undefined) session.schedules.told(crons, Date.now());
                 return {};
               },
             ],
@@ -1142,6 +1143,10 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       try {
         for await (const message of query as AsyncIterable<SDKMessage>) {
           if (session.live !== live) continue; // let go: nothing it says matters now
+          // A wakeup or cron it set, in case the turn ends without the Stop hook saying so.
+          if (message.type === "user") {
+            session.schedules.called((message as { tool_use_result?: unknown }).tool_use_result);
+          }
           // A turn that went through means the session is on disk, whenever the process said hello.
           if (
             message.type === "result" &&
@@ -1352,7 +1357,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
         started: false,
         subagents: new Subagents(),
         tasks: new BackgroundTasks(),
-        crons: undefined,
+        schedules: new Schedules(),
         commandsKey: undefined,
         configKey: undefined,
         mode: DEFAULT_PERMISSION_MODE,
@@ -1409,7 +1414,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
           started,
           subagents: new Subagents(),
           tasks: new BackgroundTasks(),
-          crons: undefined,
+          schedules: new Schedules(),
           commandsKey: undefined,
           configKey: undefined,
           // Not the default for new sessions: a session with no mode on record was made before

@@ -12,7 +12,6 @@
 - `mode`、`model` 在进程运行时用 `setPermissionMode`、`setModel` 发给它;发不出去(进程已不在)就释放进程,下一个进程带着新的选项起来。
 - 进程死了(流报错或结束):正在跑的回合以 error 结束,不自动重试;下一个 prompt 重新起一个。
 - **空闲 5 分钟(`idleMs`)释放**:先结束输入让它自己退出,2 秒后仍在就中止。下一个 prompt 付一次启动的钱。
-  - 两种情况不释放。一是有后台工作在跑(后台子 agent、后台命令或 Monitor),否则它们会随进程一起被杀。二是一小时内有定时调用要触发(CronCreate、ScheduleWakeup、/loop,读自每个回合结束时 Stop hook 的 `session_crons`):它们只在进程内存里,进程不在时到点的那次会丢失,resume 后也不补(CYCL-145,[笔记](../../.agents/notes/2026-11-23-keep-the-process-for-crons-due-within-the-hour.md))。
 
 ## 原因
 

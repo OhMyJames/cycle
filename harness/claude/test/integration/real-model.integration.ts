@@ -1030,15 +1030,13 @@ test.skipIf(!enabled)(
           const asked = (updates as unknown as Record<string, unknown>[]).some(
             (u) => u.sessionUpdate === "tool_call_update" && u.name === "ScheduleWakeup",
           );
-          if (!asked) {
-            console.log("REAL wakeup: the model set no wakeup");
-            return;
-          }
+          // Without a wakeup there is nothing to keep the process for: this would pass and test nothing.
+          expect(asked).toBe(true);
           const before = agentText(updates).length;
           const start = Date.now();
-          // The wakeup fires on the minute: up to two minutes away.
+          // The wakeup fires on the minute after its delay: up to two minutes away, and its turn takes a while.
           while (!agentText(updates).slice(before).toUpperCase().includes("WOKE")) {
-            if (Date.now() - start > 150_000) break;
+            if (Date.now() - start > 200_000) break;
             await Bun.sleep(500);
           }
           const woke = agentText(updates).slice(before).toUpperCase().includes("WOKE");
@@ -1053,7 +1051,7 @@ test.skipIf(!enabled)(
       await config.dispose();
     }
   },
-  240_000,
+  300_000,
 );
 
 test.skipIf(!enabled)(
