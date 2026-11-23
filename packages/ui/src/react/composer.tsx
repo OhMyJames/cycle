@@ -785,7 +785,7 @@ export function Composer({
                   disabled={!enabled}
                   onClick={() => picker.current?.click()}
                 >
-                  <PlusIcon size={16} />
+                  <PlusIcon size={14} />
                 </Button>
               </Tip>
               <input
@@ -848,7 +848,7 @@ export function Composer({
                 disabled={!canSend}
                 onClick={() => void send(steers, "button")}
               >
-                <SendIcon size={15} />
+                <SendIcon size={14} />
               </Button>
             </Tip>
           ) : null}
@@ -861,7 +861,7 @@ export function Composer({
                 disabled={!connected}
                 onClick={() => void store.cancel()}
               >
-                <StopIcon size={11} />
+                <StopIcon size={10} />
               </Button>
             </Tip>
           ) : null}
@@ -1005,7 +1005,7 @@ function ContextMeter({
           data-empty={!measured || undefined}
           data-before={before || undefined}
         >
-          <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
             <circle cx="7" cy="7" r={r} data-slot="context-track" />
             <circle
               ref={arcRef}

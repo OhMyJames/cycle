@@ -15,6 +15,7 @@ import type {
   SessionSummary,
   UpdateState,
 } from "../src/api.ts";
+import type { Attachment } from "../src/attachments.ts";
 import { type CodeThemeId, codeTheme } from "../src/code-theme.ts";
 import { displayMode } from "../src/display-mode.ts";
 import { applyUpdate, emptyConversation } from "../src/model/index.ts";
@@ -72,6 +73,8 @@ export type Scenario = {
   account?: AccountStatus;
   /** A message is sent from the open session and refused in these words: the red line under its title bar. */
   fails?: string;
+  /** What the open session's message box holds when it is drawn: words, and files attached to them. */
+  draft?: { text: string; attachments?: Attachment[] };
   /** Runs once the page has drawn: open a dialog, press a key, or send an event as the app's main process would. */
   after?: (root: HTMLElement, emit: (event: AppEvent) => void) => Promise<void>;
 };
@@ -2757,6 +2760,63 @@ export const scenarios: Record<string, Scenario> = {
       }),
     ],
     history: [you("u1", "Refactor the composer into three bands."), running(), measured],
+  },
+  // CYCL-214: on many lines the + and Send keep the corners they have on one line; the text takes its own inset.
+  "composer-multiline": {
+    title: "The composer on many lines: the + and Send stay where one line has them",
+    attach: true,
+    sessions: [
+      session("s1", {
+        title: "Redesign the composer",
+        config: { mode: "auto", model: "opus", effort: "high" },
+      }),
+    ],
+    history: [you("u1", "Refactor the composer into three bands."), measured],
+    draft: {
+      text: "Make the buttons a step smaller.\nKeep the hit areas at 32px.\nCheck both themes.",
+    },
+  },
+  "composer-attached": {
+    title: "A file attached in the composer, above the words, under the extension tray",
+    attach: true,
+    status: [
+      {
+        environmentId: "local",
+        state: "connected",
+        capabilities: { queue: true, files: true, folders: true },
+      },
+    ],
+    sessions: [
+      session("s1", {
+        title: "Redesign the composer",
+        state: "running",
+        config: { mode: "auto", model: "opus", effort: "high" },
+      }),
+    ],
+    history: [
+      you("u1", "Refactor the composer into three bands."),
+      running(),
+      u({
+        sessionUpdate: "_cycle/queue_update",
+        entries: [
+          { queueId: "q1", prompt: [{ type: "text", text: "Then run the browser tests" }] },
+        ],
+      }),
+      measured,
+    ],
+    draft: {
+      text: "Here are the notes.",
+      attachments: [
+        {
+          id: "a1",
+          name: "notes.md",
+          kind: "text",
+          type: "text/markdown",
+          data: "# Notes\n",
+          bytes: 8,
+        },
+      ],
+    },
   },
 };
 

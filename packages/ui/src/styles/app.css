@@ -5086,10 +5086,6 @@ button[data-slot="review-file"]:focus-visible {
   background: color-mix(in srgb, var(--cycle-surface-raised) 55%, var(--cycle-surface-canvas));
 }
 
-[data-slot="composer-extensions"]:has(+ [data-slot="composer-box"][data-multiline]) {
-  margin: 0 1.125rem;
-}
-
 [data-slot="composer-extensions"] > * + * {
   border-top: 1px solid var(--cycle-border-subtle);
 }
@@ -5145,20 +5141,23 @@ button[data-slot="review-file"]:focus-visible {
   }
 }
 
+/* Without a +, the text starts where it does on many lines: 12px of box and 4px of field from the edge. */
 [data-slot="composer-box"][data-no-lead]:not([data-multiline]) {
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas: "field actions";
-  padding-left: 0.875rem;
+  padding-left: 0.75rem;
   column-gap: 0.5rem;
 }
 
+/* On many lines the buttons keep the inset they have on one line (6px from the edge), so promoting the box moves none
+   of them; the text takes its own 10px inside that, and its first line stays about where one line's text sat. */
 [data-slot="composer-box"][data-multiline] {
   grid-template-areas:
     "field field field"
     "lead . actions";
   align-items: end;
   row-gap: 0.5rem;
-  padding: 0.75rem 0.75rem 0.5625rem;
+  padding: 0.625rem 0.375rem 0.375rem;
 }
 
 [data-slot="composer-box"][data-multiline][data-has-attachments] {
@@ -5194,11 +5193,6 @@ button[data-slot="review-file"]:focus-visible {
   align-items: center;
 }
 
-/* On many lines the + sits under the text: its glyph, not its round hover area, lines up with the text's left edge. */
-[data-slot="composer-box"][data-multiline] [data-slot="composer-lead"] {
-  margin-left: -0.375rem;
-}
-
 [data-slot="composer-box"][data-no-lead]:not([data-multiline]) [data-slot="composer-lead"] {
   display: none;
 }
@@ -5210,23 +5204,46 @@ button[data-slot="review-file"]:focus-visible {
   gap: 0.375rem;
 }
 
+/* The box's buttons are drawn 28px and take a press 32px across: a clear 2px ring round each one is part of it
+   (CYCL-214). The ring is never drawn and stays inside the box's 6px padding. */
+:is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"]) {
+  position: relative;
+}
+
+:is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"])::after {
+  content: "";
+  position: absolute;
+  /* Measured from inside the button's 1px border: 2px beyond its outer edge. */
+  inset: calc(-0.125rem - 1px);
+  border-radius: inherit;
+}
+
+/* The +: a 28px circle on the same quiet fill as Queue, so it reads as a button before it is hovered (CYCL-214). */
 [data-slot="button"][data-variant="ghost"][data-kind="composer-plus"] {
-  width: 2rem;
-  height: 2rem;
+  width: 1.75rem;
+  height: 1.75rem;
   padding: 0;
   border-radius: var(--cycle-radius-pill);
-  color: var(--cycle-ink-muted);
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink-secondary);
 }
 
 [data-slot="button"][data-variant="ghost"][data-kind="composer-plus"]:hover:not([data-disabled]) {
+  background: var(--cycle-surface-selected);
   color: var(--cycle-ink);
 }
 
-/* Send and Stop: crisp 32px circles. Empty/disabled Send stays neutral and quiet instead of dimming accent orange
+/* Disabled like an empty Send: the fill stays, the glyph goes quiet, nothing dims to a muddy half. */
+[data-slot="button"][data-variant="ghost"][data-kind="composer-plus"][data-disabled] {
+  opacity: 1;
+  color: var(--cycle-ink-disabled);
+}
+
+/* Send and Stop: 28px circles. Empty/disabled Send stays neutral and quiet instead of dimming accent orange
    into muddy brown; once ready to send it lights up in Cycle safety orange. */
 [data-kind="round"] {
-  width: 2rem;
-  height: 2rem;
+  width: 1.75rem;
+  height: 1.75rem;
   padding: 0;
   border-radius: var(--cycle-radius-pill);
 }
@@ -5241,8 +5258,8 @@ button[data-slot="review-file"]:focus-visible {
 
 /* Queue while the agent works: words, on a quiet pill fill, because it is not the next step the way Send is. */
 [data-kind="queue"] {
-  height: 2rem;
-  padding-inline: 0.875rem;
+  height: 1.75rem;
+  padding-inline: 0.75rem;
   border-color: transparent;
   border-radius: var(--cycle-radius-pill);
   background: var(--cycle-surface-hover);
@@ -5254,15 +5271,26 @@ button[data-slot="review-file"]:focus-visible {
   background: var(--cycle-surface-selected);
 }
 
+/* A fill one step off the box is not an edge to count on: asked for more contrast, the filled buttons get one. */
+@media (prefers-contrast: more) {
+  :is([data-kind="composer-plus"], [data-kind="queue"]) {
+    border-color: var(--cycle-input-border);
+  }
+
+  [data-slot="button"][data-variant="ghost"][data-kind="composer-plus"]:not([data-disabled]) {
+    color: var(--cycle-ink);
+  }
+}
+
 /* Part 3: Utility bar — borderless, compact row beneath the input box. Permission left, model + effort & context ring right. */
 [data-slot="composer-tools"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  min-height: 1.75rem;
-  margin-top: 0.375rem;
-  padding: 0 0.5rem;
+  min-height: 1.5rem;
+  margin-top: 0.25rem;
+  padding: 0 0.375rem;
   min-width: 0;
 }
 
@@ -5280,14 +5308,15 @@ button[data-slot="review-file"]:focus-visible {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 0.3125rem;
-  height: 1.625rem;
+  gap: 0.25rem;
+  height: 1.5rem;
   padding-inline: 0.375rem;
   border: 0;
   border-radius: var(--cycle-radius-pill);
   background: transparent;
   font: inherit;
   font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
   font-variant-numeric: tabular-nums;
   color: var(--cycle-ink-muted);
   cursor: pointer;
@@ -5346,13 +5375,37 @@ button[data-slot="review-file"]:focus-visible {
 [data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"] {
   min-width: 0;
   max-width: 15rem;
-  height: 1.625rem;
-  gap: 0.3125rem;
-  padding-inline: 0.5rem;
+  height: 1.5rem;
+  gap: 0.25rem;
+  padding-inline: 0.375rem;
   border-radius: var(--cycle-radius-pill);
   font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
   font-weight: 500;
   color: var(--cycle-ink-muted);
+}
+
+/* The bar's chips and ring are drawn 24px tall and take a press 32px tall: 4px above (the gap under the box) and below.
+   Not sideways, where the next chip is 4px off. */
+:is(
+  [data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"],
+  [data-kind="context-meter"]
+) {
+  position: relative;
+}
+
+:is(
+  [data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"],
+  [data-kind="context-meter"]
+)::after {
+  content: "";
+  position: absolute;
+  inset: -0.25rem 0;
+}
+
+/* The chip has a 1px (clear) border, and its ring is measured from inside it. */
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"]::after {
+  inset: calc(-0.25rem - 1px) -1px;
 }
 
 [data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"]:is(
@@ -5748,8 +5801,9 @@ button[data-slot="review-file"]:focus-visible {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  margin: 0;
-  padding: 0 0.125rem 0.625rem;
+  /* Inside the box's 6px: the line ends 12px from its edge, the files start with the text, 16px in. */
+  margin: 0 0.375rem;
+  padding: 0 0.25rem 0.625rem;
   border-bottom: 1px solid var(--cycle-border-subtle);
   list-style: none;
 }
@@ -5762,7 +5816,7 @@ button[data-slot="review-file"]:focus-visible {
   max-width: 14rem;
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--cycle-border-default);
-  border-radius: var(--cycle-radius-control);
+  border-radius: var(--cycle-radius-sm);
   background: var(--cycle-surface-message);
   font-size: var(--cycle-text-meta);
 }
@@ -5778,7 +5832,7 @@ button[data-slot="review-file"]:focus-visible {
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: calc(var(--cycle-radius-control) - 1px);
+  border-radius: calc(var(--cycle-radius-sm) - 1px);
   object-fit: cover;
 }
 
@@ -5810,7 +5864,7 @@ button[data-slot="review-file"]:focus-visible {
   margin-block: 0.25rem;
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--cycle-border-default);
-  border-radius: var(--cycle-radius-control);
+  border-radius: var(--cycle-radius-sm);
   font-size: var(--cycle-text-meta);
 }
 
@@ -5862,7 +5916,8 @@ button[data-slot="review-file"]:focus-visible {
   min-height: calc(var(--cycle-leading-body) * 1em);
   max-height: 14rem;
   overflow-y: auto;
-  padding: 0.25rem 0.25rem;
+  /* 2px above and below: the one line stays inside the 28px the buttons beside it take, so they set the row (CYCL-214). */
+  padding: 0.125rem 0.25rem;
   border: 0;
   background: transparent;
   color: var(--ui-foreground);
@@ -5875,11 +5930,11 @@ button[data-slot="review-file"]:focus-visible {
 
 [data-slot="composer-box"][data-multiline] [data-slot="composer-input"] {
   min-height: calc(var(--cycle-leading-body) * 1em * 2);
-  padding: 0 0.25rem;
+  padding: 0 0.625rem;
 }
 
-/* Beside the + on one line, the column gap is the whole space to the text: the glyph sits as far from the text as from
-   the box's edge (CYCL-140). The button's own room round the glyph is counted on both sides, so the field adds none. */
+/* Beside the + on one line, the column gap is the whole space to the text: the + sits as far from the text as from the
+   box's edge (CYCL-140), 6px each side of its circle, so the field adds none. */
 [data-slot="composer-box"]:not([data-multiline], [data-no-lead]) [data-slot="composer-input"] {
   padding-left: 0;
 }
@@ -6054,7 +6109,7 @@ button[data-slot="review-file"]:focus-visible {
 
 [data-slot="composer-placeholder"] {
   position: absolute;
-  top: 0.25rem;
+  top: 0.125rem;
   left: 0.25rem;
   right: 0.25rem;
   overflow: hidden;
@@ -6067,6 +6122,8 @@ button[data-slot="review-file"]:focus-visible {
 
 [data-slot="composer-box"][data-multiline] [data-slot="composer-placeholder"] {
   top: 0;
+  left: 0.625rem;
+  right: 0.625rem;
 }
 
 [data-slot="config-form"] {

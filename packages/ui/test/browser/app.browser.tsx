@@ -1996,6 +1996,108 @@ test("composer uses a single-line box by default, stays one line with several bu
   expect(fill?.style.strokeDashoffset).toBe("0");
 });
 
+test("the composer's buttons are drawn 28px, take a press 32px across, and stay put when the box grows to many lines", async () => {
+  const { user, emit } = await mount({
+    configure: (script) => {
+      const session = { ...summary("s1"), config: { mode: "auto", model: "opus" } };
+      script.bridge.sessions = async () => [session];
+      script.bridge.agents = async () => [
+        {
+          id: "fake",
+          name: "Fake",
+          available: true,
+          promptCapabilities: { image: {} },
+          configSchema: {
+            type: "object",
+            properties: {
+              mode: {
+                type: "string",
+                title: "Permission mode",
+                oneOf: [{ const: "auto", title: "Auto" }],
+              },
+              model: { type: "string", title: "Model", oneOf: [{ const: "opus", title: "Opus" }] },
+            },
+          },
+        },
+      ];
+    },
+  });
+  await openFirstSession(user);
+  const input = await screen.findByRole("textbox", { name: "Message" });
+  await ready(input);
+  emit({
+    type: "update",
+    environmentId: "local",
+    sessionId: "s1",
+    version: 1,
+    update: { sessionUpdate: "usage_update", used: 12_000, size: 200_000 } as never,
+  });
+  const meter = await screen.findByRole("button", { name: /^Context 6% full/ });
+  const box = document.querySelector<HTMLElement>('[data-slot="composer-box"]');
+  const plus = document.querySelector<HTMLElement>('[data-kind="composer-plus"]');
+  const send = document.querySelector<HTMLElement>('[data-action="send"]');
+  if (box === null || plus === null || send === null) throw new Error("no composer");
+  const chip = screen.getByRole("button", { name: "Model: Opus" });
+
+  // One line: 28px circles in a 42px box (6px padding and a 1px border round 28).
+  for (const button of [plus, send]) {
+    const r = button.getBoundingClientRect();
+    expect(r.width).toBeCloseTo(28, 0);
+    expect(r.height).toBeCloseTo(28, 0);
+  }
+  expect(box.getBoundingClientRect().height).toBeCloseTo(42, 0);
+  // The + has a fill of its own before it is hovered, a step off the box's.
+  const fill = getComputedStyle(plus).backgroundColor;
+  expect(fill).not.toBe("rgba(0, 0, 0, 0)");
+  expect(fill).not.toBe(getComputedStyle(box).backgroundColor);
+
+  // A press 2px outside the drawn circle still lands on the button: the hit area is 32px across.
+  const hits = (el: HTMLElement, x: number, y: number) =>
+    document.elementFromPoint(x, y)?.closest("button") === el;
+  for (const button of [plus, send]) {
+    const r = button.getBoundingClientRect();
+    const midY = r.top + r.height / 2;
+    const midX = r.left + r.width / 2;
+    expect(hits(button, r.left - 1.5, midY)).toBe(true);
+    expect(hits(button, r.right + 1.5, midY)).toBe(true);
+    expect(hits(button, midX, r.top - 1.5)).toBe(true);
+    expect(hits(button, midX, r.bottom + 1.5)).toBe(true);
+    expect(hits(button, r.left - 3, midY)).toBe(false);
+  }
+
+  // The bar below: 24px chips at the meta size that take a press 32px tall.
+  for (const item of [chip, meter]) {
+    const r = item.getBoundingClientRect();
+    expect(r.height).toBeCloseTo(24, 0);
+    expect(getComputedStyle(item).fontSize).toBe("12px");
+    const midX = r.left + r.width / 2;
+    expect(hits(item, midX, r.top - 3.5)).toBe(true);
+    expect(hits(item, midX, r.bottom + 3.5)).toBe(true);
+  }
+
+  // Many lines: the + and Send keep their inset from the box's corners, so promoting the box moves neither.
+  const inset = () => {
+    const b = box.getBoundingClientRect();
+    const p = plus.getBoundingClientRect();
+    const s = send.getBoundingClientRect();
+    return { left: p.left - b.left, right: b.right - s.right, bottom: b.bottom - s.bottom };
+  };
+  const one = inset();
+  await write(input, "first line");
+  await press(input, "Enter", { shiftKey: true });
+  await write(input, "second line");
+  await waitFor(() => expect(box.hasAttribute("data-multiline")).toBe(true));
+  const many = inset();
+  expect(many.left).toBeCloseTo(one.left, 0);
+  expect(many.right).toBeCloseTo(one.right, 0);
+  expect(many.bottom).toBeCloseTo(one.bottom, 0);
+  // And the text starts 16px inside the border, as it does on one line when there is no +.
+  const paragraph = input.firstElementChild as HTMLElement;
+  expect(
+    paragraph.getBoundingClientRect().left - box.getBoundingClientRect().left - box.clientLeft,
+  ).toBeCloseTo(16, 0);
+});
+
 test("the context ring opens into what was reported: nothing yet, now's usage part by part, and one from before a compaction", async () => {
   const { user, emit, calls } = await mount({
     configure: (script) => {

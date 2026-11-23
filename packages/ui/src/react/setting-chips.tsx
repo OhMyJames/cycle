@@ -84,9 +84,9 @@ function SettingPickerChip({
   const leadingIcon =
     settingKey === "mode" ? (
       chosen?.danger ? (
-        <ShieldAlertIcon size={13} data-slot="setting-icon" aria-hidden="true" />
+        <ShieldAlertIcon size={12} data-slot="setting-icon" aria-hidden="true" />
       ) : (
-        <ShieldIcon size={13} data-slot="setting-icon" aria-hidden="true" />
+        <ShieldIcon size={12} data-slot="setting-icon" aria-hidden="true" />
       )
     ) : null;
 

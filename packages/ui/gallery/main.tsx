@@ -238,6 +238,12 @@ const scenario = async (key: string) => {
       await store.send();
     }
   }
+  const opened = s.sessions?.[0];
+  if (s.draft !== undefined && opened !== undefined) {
+    const key = viewKey(opened.environmentId, opened.sessionId);
+    store.drafts.setText(key, s.draft.text);
+    if (s.draft.attachments !== undefined) store.drafts.setAttachments(key, s.draft.attachments);
+  }
   await sleep(300);
   await s.after?.(root, script.emit);
   await sleep(400);
