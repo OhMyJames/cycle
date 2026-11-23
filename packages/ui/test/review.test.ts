@@ -147,3 +147,129 @@ test("a finding's path is in the folder when it is relative, ./-led, absolute or
   expect(agentPathInFolder("C:\\repo\\a.ts", "/work")).toBeUndefined();
   expect(agentPathInFolder("src\\a.ts", "/work")).toBeUndefined();
 });
+
+// The code-review skill's result, in the shape every recorded session has it (CYCL-216): the line the skill tool says,
+// `Result:`, the agent's words, and the findings as a bare array in a ```json block. The words here are made up.
+const skillResult = (body: string, before = "") =>
+  `${before}Skill "code-review" completed (forked execution).\n\nResult:\n${body}`;
+const fenced = (findings: unknown) => `\`\`\`json\n${JSON.stringify(findings, null, 2)}\n\`\`\``;
+const skillUpdates = (text: string | undefined, rawInput: object = { skill: "code-review" }) => {
+  const u = (update: object) => update as SessionUpdate;
+  return [
+    u({ sessionUpdate: "user_message", messageId: "u", content: [{ type: "text", text: "u" }] }),
+    u({ sessionUpdate: "state_update", state: "running" }),
+    u({ sessionUpdate: "tool_call_update", toolCallId: "s", name: "Skill", status: "pending" }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "s",
+      name: "Skill",
+      kind: "other",
+      status: "in_progress",
+      rawInput,
+    }),
+    ...(text === undefined
+      ? []
+      : [
+          u({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "s",
+            status: "completed",
+            content: [{ type: "content", content: { type: "text", text } }],
+          }),
+        ]),
+  ];
+};
+const skillCall = (text: string | undefined, rawInput?: object) => {
+  const c = reduce(skillUpdates(text, rawInput));
+  return c.items.find((i) => i.kind === "tool") as ToolItem;
+};
+
+test("the code-review skill's result is a review: the findings from its JSON block, the words around it kept", () => {
+  const tool = skillCall(
+    skillResult(
+      `Reviewed the branch against main; two things stand out.\n\n${fenced([
+        finding({ summary: "First." }),
+        finding({ file: "src/b.ts", line: 40, summary: "Second.", verdict: "CONFIRMED" }),
+      ])}\n\nThe second is the one to fix first.`,
+    ),
+    { skill: "code-review", args: "high origin/main...HEAD" },
+  );
+  const review = reviewOf(tool);
+  expect(review?.level).toBe("high");
+  expect(review?.findings.map((f) => [f.file, f.line, f.summary, f.verdict])).toEqual([
+    ["src/a.ts", 3, "First.", undefined],
+    ["src/b.ts", 40, "Second.", "confirmed"],
+  ]);
+  expect(review?.prose).toBe(
+    "Reviewed the branch against main; two things stand out.\n\nThe second is the one to fix first.",
+  );
+  const blocks = blocksOf(reduce(skillUpdates(skillResult(fenced([finding()])))));
+  expect(blocks.map((b) => b.kind)).toEqual(["user", "review"]);
+});
+
+test("a skill's review with no words, words only after, a tag before its head, or a plugin's skill name", () => {
+  expect(reviewOf(skillCall(skillResult(fenced([finding()]))))?.prose).toBeUndefined();
+  const none = reviewOf(skillCall(skillResult(`I found nothing to report.\n\n${fenced([])}`)));
+  expect(none).toEqual({ findings: [], prose: "I found nothing to report." });
+  const after = reviewOf(skillCall(skillResult(`${fenced([])}\n\nOnly a version bump.`)));
+  expect(after?.prose).toBe("Only a version bump.");
+  const tagged = skillCall(
+    skillResult(
+      fenced([finding()]),
+      "<tools-used-before-summary>Read</tools-used-before-summary>\n",
+    ),
+  );
+  expect(reviewOf(tagged)?.findings).toHaveLength(1);
+  expect(reviewOf(tagged)?.prose).toBeUndefined();
+  for (const skill of ["tools:code-review", "/code-review"])
+    expect(reviewOf(skillCall(skillResult(fenced([])), { skill }))).toEqual({ findings: [] });
+});
+
+test("a skill's result that is not a review in shape is the skill's call, as before", () => {
+  const plain = (text: string, rawInput?: object) => {
+    const tool = skillCall(text, rawInput);
+    expect(reviewOf(tool)).toBeUndefined();
+    expect(isPendingReview(tool)).toBe(false);
+    expect(blocksOf(reduce(skillUpdates(text, rawInput))).map((b) => b.kind)).toEqual([
+      "user",
+      "work",
+    ]);
+  };
+  plain(skillResult("(none)"));
+  plain(skillResult("```json\n[{ broken\n```"));
+  plain(skillResult(fenced({ findings: [finding()] })));
+  plain(skillResult(fenced([finding(), { file: "a.ts" }])));
+  plain(skillResult(fenced(Array.from({ length: 33 }, () => finding()))));
+  plain(skillResult(`${fenced([finding()])}\n\n${fenced([finding()])}`));
+  plain(skillResult(fenced([finding()])), { skill: "code-reviewer" });
+  plain(skillResult(fenced([finding()])), { skill: "run" });
+  plain("Launching skill: code-review");
+});
+
+test("a failed or stopped code-review skill is its call; one on its way shows nothing", () => {
+  const going = skillCall(undefined);
+  expect(isPendingReview(going)).toBe(true);
+  expect(blocksOf(reduce(skillUpdates(undefined))).map((b) => b.kind)).toEqual(["user"]);
+  for (const status of ["failed", "cancelled"]) {
+    const tool = { ...skillCall(skillResult(fenced([finding()]))), status };
+    expect(reviewOf(tool)).toBeUndefined();
+    expect(isPendingReview(tool)).toBe(false);
+  }
+  // Another skill on its way is a call like any other.
+  expect(isPendingReview(skillCall(undefined, { skill: "run" }))).toBe(false);
+});
+
+test("what is odd in a skill's review is cut or left out, as in the tool's", () => {
+  const review = reviewOf(
+    skillCall(
+      skillResult(
+        `${"w".repeat(5000)}\n\n${fenced([finding({ summary: "x".repeat(5000), line: 0 })])}`,
+      ),
+      { skill: "code-review", args: "<b>loud</b> main" },
+    ),
+  );
+  expect(review?.level).toBeUndefined();
+  expect(review?.prose?.length).toBe(4000);
+  expect(review?.findings[0]?.summary.length).toBe(4000);
+  expect(review?.findings[0]?.line).toBeUndefined();
+});

@@ -1421,6 +1421,82 @@ export const scenarios: Record<string, Scenario> = {
       idle({ stopReason: "end_turn" }),
     ],
   },
+  "review-skill": {
+    title:
+      "A code review from the /code-review skill: its result's findings on the card, what it said around them above",
+    status: [
+      {
+        environmentId: "local",
+        state: "connected",
+        capabilities: { queue: true, files: true, folders: true, fs: true },
+      },
+    ],
+    sessions: [session("s1", { title: "Review the composer change" })],
+    history: [
+      you("u1", "/code-review high"),
+      running(),
+      ...done(
+        "r1",
+        "Skill",
+        { skill: "code-review", args: "high origin/main...HEAD" },
+        {
+          content: text(
+            [
+              'Skill "code-review" completed (forked execution).',
+              "",
+              "Result:",
+              "Reviewed `origin/main...HEAD`: the composer's paste path and the thumbnail grid. Two findings.",
+              "",
+              "```json",
+              JSON.stringify(
+                [
+                  {
+                    file: "packages/ui/src/react/markdown-input.tsx",
+                    line: 182,
+                    summary:
+                      "Pasting a picture while a mention is open drops the mention's text instead of keeping it.",
+                    failure_scenario:
+                      "Type `@ma`, then paste an image before picking: the `@ma` is gone from the box.",
+                  },
+                  {
+                    file: "packages/ui/src/styles/app.css",
+                    line: 2598,
+                    summary: "The thumbnail grid has no minimum size in a narrow side panel.",
+                    failure_scenario:
+                      "Open a session in a 320px panel and send nine pictures: each square is about 70px.",
+                  },
+                ],
+                null,
+                2,
+              ),
+              "```",
+            ].join("\n"),
+          ),
+        },
+      ),
+      say("a1", "The paste one is the one to fix first."),
+      idle({ stopReason: "end_turn" }),
+    ],
+  },
+  "review-skill-plain": {
+    title: "A /code-review skill whose result has no findings block is shown as its call",
+    sessions: [session("s1", { title: "Review the release" })],
+    history: [
+      you("u1", "/code-review"),
+      running(),
+      ...done(
+        "r1",
+        "Skill",
+        { skill: "code-review" },
+        {
+          content: text(
+            'Skill "code-review" completed (forked execution).\n\nResult:\n(none)\n\nOnly the version changed.',
+          ),
+        },
+      ),
+      idle({ stopReason: "end_turn" }),
+    ],
+  },
   "images-many": {
     title:
       "A message with eight pictures, one that cannot be shown and a file: thumbnails above the words, then the file",
