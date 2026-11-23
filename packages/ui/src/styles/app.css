@@ -3915,6 +3915,38 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   padding-inline-start: 0.75rem;
   border-inline-start: 2px solid var(--cycle-border-default);
   overflow-wrap: anywhere;
+  /* At most eight lines tall, scrolled within: a long thought does not bury the reply (CYCL-132). */
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+  max-height: 8lh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A thought taller than its box fades at an edge with more beyond it, so it reads as cut there, not ended. */
+[data-kind="thought"][data-scrolls] {
+  --thought-fade-top: #000;
+  --thought-fade-bottom: #000;
+  mask-image: linear-gradient(
+    to bottom,
+    var(--thought-fade-top),
+    #000 0.75lh,
+    #000 calc(100% - 0.75lh),
+    var(--thought-fade-bottom)
+  );
+}
+
+[data-kind="thought"][data-more-above] {
+  --thought-fade-top: transparent;
+}
+
+[data-kind="thought"][data-more-below] {
+  --thought-fade-bottom: transparent;
+}
+
+[data-kind="thought"]:focus-visible {
+  outline: 2px solid var(--ui-ring);
+  outline-offset: 2px;
 }
 
 [data-slot="message"][data-role="thought"] {

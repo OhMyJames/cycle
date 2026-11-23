@@ -323,6 +323,35 @@ test("in detailed mode a thought streams in place; one with no words shows nothi
   expect(thought.hasAttribute("data-live")).toBe(false);
 });
 
+test("a long thought is at most eight lines tall, scrolls within, and follows what is written until scrolled back", async () => {
+  displayMode.set(SESSION, "detailed");
+  const { script } = await open(you("u1"), state({ state: "running" }));
+  const emit = timed(script, 2);
+  const lines = (from: number, count: number) =>
+    Array.from({ length: count }, (_, n) => `Line ${from + n} of the thought.\n\n`).join("");
+  await emit(thoughtChunk(lines(1, 4)));
+  const thought = await screen.findByRole("blockquote", { name: "Thinking" });
+  // Short, it is all there, and no stop for the keyboard.
+  expect(thought.scrollHeight).toBeLessThanOrEqual(thought.clientHeight + 1);
+  expect(thought.hasAttribute("tabindex")).toBe(false);
+  await emit(thoughtChunk(lines(5, 30)));
+  const lineHeight = Number.parseFloat(getComputedStyle(thought).lineHeight);
+  await waitFor(() => expect(thought.getAttribute("tabindex")).toBe("0"));
+  expect(thought.clientHeight).toBeLessThanOrEqual(Math.ceil(lineHeight * 8) + 1);
+  // While written, the newest words are in sight.
+  const atEnd = () => thought.scrollHeight - thought.scrollTop - thought.clientHeight <= 2;
+  await waitFor(() => expect(atEnd()).toBe(true));
+  expect(thought.hasAttribute("data-more-above")).toBe(true);
+  // Scrolled back to read, the reader is left there as more comes.
+  await act(async () => {
+    thought.scrollTop = 0;
+    thought.dispatchEvent(new Event("scroll"));
+  });
+  await emit(thoughtChunk(lines(35, 5)));
+  expect(thought.scrollTop).toBe(0);
+  await waitFor(() => expect(thought.hasAttribute("data-more-below")).toBe(true));
+});
+
 test("a message says when it was sent and a reply when it finished, with the full time on focus; none when not known", async () => {
   const { user, log, script } = await open(you("old"));
   // The history from an older daemon carries no time: nothing is shown for it.
