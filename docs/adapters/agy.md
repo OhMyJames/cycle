@@ -68,13 +68,13 @@
 - 版本下限建议 **1.5.10**:它修了"回合结束后 agent 被后台任务叫醒,消息要到下一个 prompt 才送达"和"取消后子 agent、后台任务还在跑"【文档,发行说明】;1.5.9、1.5.4 修了登录回退、第二次审批挂住、恢复后模式丢失。
 - 代价:Claude 是"装了 Cycle 就能用",agy 是"先装 agy"。远程环境同样(见下)。
 
-### 条款风险(要负责人确认,不是工程问题)
+### 条款风险(已拍板)
 
-条款第 6 条【文档,转述,需对原文】:"This includes, but is not limited to, using the Service in connection with products not provided by us." "Using third party software, tools, or services to access the Service (e.g. using OpenClaw with Antigravity OAuth) is a breach of this Agreement." "Such actions may be grounds for suspension or termination of your Antigravity and/or Gemini CLI accounts."
+决定见 [2026-11-23-agy-terms-distribution-and-telemetry.md](../../.agents/notes/2026-11-23-agy-terms-distribution-and-telemetry.md)(CYCL-169)。
 
-另一面:官方文档专门有一页教"其他编辑器"以子进程启动 `agy acp`,并说登录和设置沿用 CLI 的【文档】<https://antigravity.google/docs/cli/acp/>;论坛答复说未修改的二进制、单用户、不提取或转发 token 是合规的,针对的是拿 OAuth 凭证去调非官方接口和多租户代理。
+条款第 6 条【文档,转述】禁止第三方软件通过提取/转发 OAuth 凭证或非官方方式访问服务;另一面,官方文档专门有一页教"其他编辑器"以子进程启动 `agy acp`,并说登录和设置沿用 CLI 的【文档】<https://antigravity.google/docs/cli/acp/>。
 
-我们的做法落在后一种:启动未修改的官方二进制、说它公开的协议、不碰它的 token。但条款字面很宽,被封的是用户的 Google 账号。**在对外发布 agy 支持之前,负责人应当读一遍原文并决定(CYCL-169)**;Cycle 永远不读、不存、不转发 agy 的凭证,这一条写成适配的红线。
+Cycle 作为本地应用启动未修改的官方二进制、说公开的 `agy acp` 协议、且**永远不读、不存、不转发 agy 的凭证**(适配红线),确认可以接入并随 Cycle 发布;同时确认**不随包分发二进制**(用机器上已安装的 `agy`)、默认不传 `--disable-telemetry`(仅当 `config.json` 中显式配置 `agy.telemetry: false` 时传,测试和探针仍显式关闭)。
 
 ### 登录状态能不能隔离在 Cycle 的数据目录里
 
@@ -177,11 +177,11 @@ agy 有、Cycle 现在不接的:Remote Control、Remote Agents(`--remote-agent`)
 ## 6. 待定和风险(含探针结论)
 
 1. **登录隔离(§2)——已实测解决(macOS)**:隔离 `HOME` 不会漏进宿主登录,且 `agy acp --login` 自动回退到 `$HOME/.gemini/antigravity-cli/antigravity-oauth-token`,跨重启持久化、不同隔离目录互不可见。无界面 Linux 留待首次远程集成测试复核。
-2. **条款第 6 条(§2)——待负责人决定(CYCL-169)**:发布前需负责人读条款原文决定能否发布及是否提示用户。
+2. **条款第 6 条(§2)——已拍板(CYCL-169)**:见 [2026-11-23-agy-terms-distribution-and-telemetry.md](../../.agents/notes/2026-11-23-agy-terms-distribution-and-telemetry.md),作为本地应用走官方 `agy acp` 协议、不碰凭证允许发布,不随包分发二进制。
 3. **真实回合协议细节(§4)——已实测解决**:steer(首请求 6 ms 应答 + 取消干净)、plan 模式(写计划 artifact + 文字确认)、elicitation(标准 `elicitation/create` + `cancel` 回退)、后台任务唤醒(保持原 `session/prompt` 挂起直到唤醒回合完成)、二进制 PDF 被静默丢弃(桥须拒绝)均已明确。
 4. **agy 自己升级**:本机实测当天就从 1.5.12 静默升到 1.5.15。对策是版本下限(1.5.10)、桥里对未知消息宽容、每次都跑的未登录 `initialize` 集成测试。
 5. **恢复时 agent 侧的 id 变了(§3)——已查明**:`apps/daemon/src/daemon.ts` 目前在 `session/resume` 时不更新 `agentSessionId`。虽然实测 0 回合会话重启后可直接 `session/resume` 成功,但为兜底 `.db` 丢失且 `hadTurn` 为假时回退 `session/new`,应在 **CYCL-173** 中让 daemon 在 `session/resume` 返回不同 `sessionId` 时更新索引里的 `agentSessionId`。
-6. **遥测——待负责人决定**:默认是否带 `--disable-telemetry`。这是用户和 Google 之间的设置(保存在账号上),Cycle 替用户关还是不管,要定。
+6. **遥测——已拍板(CYCL-169)**:默认不传 `--disable-telemetry`,仅当用户在 `config.json` 显式设 `agy.telemetry: false` 时传(测试仍显式关闭)。
 7. **`--process-per-session` 的代价——已实测**:front 约 126 MB,每个活跃 worker 约 200 MB,`session/close` 立即回收 worker;按 daemon 现有“一 session 一进程”模式单 session 约 370 MB(与 Claude 350 MB 持平),空闲 10 分钟由 `reclaimIdleAgents` 回收。
 8. **测试**:没有账号时,集成测试到“未登录返回 `-32000`”为止。单元测试用进程内的假 v1 agent。真实模型的测试照 `test:real` 规矩:凭证只给 agy 进程,不进 CI。测试永远不指向真实的 `~/.gemini`(CYCL-180 写入红线清单)。
 
