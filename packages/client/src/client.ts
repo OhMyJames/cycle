@@ -35,9 +35,22 @@ import {
   NOTIFICATIONS,
   type ParamsOf,
   PLAN_USAGE_CHANGED,
+  PLUGINS_CHANGED,
   type PlanUsage,
   PlanUsageChangedSchema,
+  type Plugin,
+  type PluginSource,
+  PluginsChangedSchema,
   planUsageRead,
+  pluginSourcesAdd,
+  pluginSourcesRefresh,
+  pluginSourcesRemove,
+  pluginsAvailable,
+  pluginsInstall,
+  pluginsList,
+  pluginsSetEnabled,
+  pluginsUninstall,
+  pluginsUpdate,
   promptAckReturn,
   promptDequeue,
   type ResultOf,
@@ -150,6 +163,8 @@ export type ClientEvents = {
   listChanged?: () => void;
   /** A connector was added, changed or removed, or its status moved: list them again (docs/protocol.md §14). */
   connectorsChanged?: () => void;
+  /** An agent's plugins or their sources changed: list them again (docs/protocol.md §15). */
+  pluginsChanged?: (agentId: string) => void;
   /** An agent's defaults were changed, here or by another client. */
   defaultsChanged?: (agent: string) => void;
   /** An agent told how much of its account's plan limits is used (docs/protocol.md §8 "套餐用量"). */
@@ -542,6 +557,76 @@ export class CycleClient {
     return (await this.#call(connectorsAuthClear, { id })).connector;
   }
 
+  // ---- plugins (docs/protocol.md §15) ----
+
+  /** The agents of this daemon that have plugins. None for a daemon that does not know of plugins. */
+  get pluginAgents(): string[] {
+    const agents = this.#capabilities.plugins;
+    return Array.isArray(agents) ? agents.filter((a): a is string => typeof a === "string") : [];
+  }
+
+  #plugins(agentId: string): void {
+    if (!this.pluginAgents.includes(agentId))
+      throw new Error("This daemon is too old to keep plugins, or this agent has none");
+  }
+
+  /** An agent's installed plugins, and where its plugins come from. */
+  async listPlugins(agentId: string): Promise<{ sources: PluginSource[]; plugins: Plugin[] }> {
+    this.#plugins(agentId);
+    return this.#call(pluginsList, { agentId });
+  }
+
+  /** What can be installed, a page at a time. */
+  async availablePlugins(params: {
+    agentId: string;
+    sourceId?: string;
+    query?: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<{ plugins: Plugin[]; nextCursor?: string | undefined; total: number }> {
+    this.#plugins(params.agentId);
+    return this.#call(pluginsAvailable, params);
+  }
+
+  /** Installs a plugin, which can run code on the daemon's machine. The caller asks the user first. */
+  async installPlugin(agentId: string, id: string): Promise<Plugin> {
+    this.#plugins(agentId);
+    return (await this.#call(pluginsInstall, { agentId, id, acknowledged: true })).plugin;
+  }
+
+  /** Removes a plugin, and the connectors it brought with their credentials. The caller asks the user first. */
+  async uninstallPlugin(agentId: string, id: string): Promise<void> {
+    this.#plugins(agentId);
+    await this.#call(pluginsUninstall, { agentId, id });
+  }
+
+  async updatePlugin(agentId: string, id: string): Promise<{ plugin: Plugin; updated: boolean }> {
+    this.#plugins(agentId);
+    return this.#call(pluginsUpdate, { agentId, id });
+  }
+
+  async setPluginEnabled(agentId: string, id: string, enabled: boolean): Promise<Plugin> {
+    this.#plugins(agentId);
+    return (await this.#call(pluginsSetEnabled, { agentId, id, enabled })).plugin;
+  }
+
+  /** Adds a place plugins come from. What it lists can be installed and run. The caller asks the user first. */
+  async addPluginSource(agentId: string, location: string): Promise<PluginSource> {
+    this.#plugins(agentId);
+    return (await this.#call(pluginSourcesAdd, { agentId, location, acknowledged: true })).source;
+  }
+
+  async removePluginSource(agentId: string, id: string): Promise<void> {
+    this.#plugins(agentId);
+    await this.#call(pluginSourcesRemove, { agentId, id });
+  }
+
+  /** Fetches a source's list again; every source when none is named. */
+  async refreshPluginSources(agentId: string, id?: string): Promise<void> {
+    this.#plugins(agentId);
+    await this.#call(pluginSourcesRefresh, { agentId, ...(id !== undefined ? { id } : {}) });
+  }
+
   // ---- terminals (docs/protocol.md §8 "终端") ----
 
   #canOpenTerminals(): void {
@@ -767,6 +852,14 @@ export class CycleClient {
         CONNECTORS_CHANGED,
         (p: unknown) => p as object,
         () => this.#events.connectorsChanged?.(),
+      )
+      .onNotification(
+        PLUGINS_CHANGED,
+        (p: unknown) => p,
+        ({ params }) => {
+          const told = PluginsChangedSchema.safeParse(params);
+          if (told.success) this.#events.pluginsChanged?.(told.data.agentId);
+        },
       )
       .onNotification(
         NOTIFICATIONS.sessionListChanged,

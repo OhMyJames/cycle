@@ -1,4 +1,4 @@
-// A page that takes the whole window in place of the sessions (CYCL-78): Settings now, Connectors next (CYCL-57).
+// A page that takes the whole window in place of the sessions (CYCL-78): Settings (settings.tsx) and Connectors (connectors.tsx, CYCL-82).
 // On the left, where the sidebar was, the way back and the page's sections; on the right the section that is chosen.
 // The sections are the SDK's tabs, set upright: the arrows move and select, Home and End, and only the chosen
 // section is in the page. Escape goes back, unless something opened over the page (a dialog, a menu) is what it closes.

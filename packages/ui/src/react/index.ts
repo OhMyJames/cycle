@@ -2,6 +2,7 @@ export * from "./analytics.tsx";
 export * from "./app.tsx";
 export * from "./composer.tsx";
 export * from "./config-form.tsx";
+export * from "./connectors.tsx";
 export * from "./conversation.tsx";
 export * from "./dialogs.tsx";
 export * from "./i18n.tsx";

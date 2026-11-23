@@ -31,7 +31,7 @@ export type SidebarProps = {
   onSelectSession: (session: SessionSummary) => void;
   onNewSession: () => void;
   onSearch: () => void;
-  /** Opens the connectors: the MCP servers a daemon keeps for every agent. */
+  /** Opens the Connectors page: what the daemons keep for every agent. */
   onConnectors?: () => void;
   onConnectEnvironment: (environmentId: string) => void;
   onToggleArchived: () => void;
@@ -81,7 +81,12 @@ export function Sidebar(props: SidebarProps) {
           <kbd>{MOD}K</kbd>
         </Button>
         {props.onConnectors !== undefined ? (
-          <Button data-variant="ghost" data-kind="sidebar-action" onClick={props.onConnectors}>
+          <Button
+            data-variant="ghost"
+            data-kind="sidebar-action"
+            data-page-open="connectors"
+            onClick={props.onConnectors}
+          >
             <PlugIcon />
             {t("connectors.open")}
           </Button>

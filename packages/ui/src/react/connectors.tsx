@@ -1,10 +1,11 @@
+// The Connectors page (CYCL-82): what an environment's daemon keeps for every agent, in one page that takes the window
+// in place of the sessions, as Settings does. Its sections share one choice, made at the top of each: which environment.
 import { Button } from "@ui-sdk/react/button";
 import {
   Dialog,
   DialogBackdrop,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogTitle,
 } from "@ui-sdk/react/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
@@ -24,7 +25,7 @@ import {
 } from "@ui-sdk/react/select";
 import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
 import { Textarea } from "@ui-sdk/react/textarea";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import type {
   ConnectorDraft,
   ConnectorInfo,
@@ -33,109 +34,195 @@ import type {
   EnvironmentConfig,
   EnvironmentStatus,
 } from "../api.ts";
+import { CONNECTORS_SECTIONS, type ConnectorsSection } from "../connectors-sections.ts";
+import { ConnectorValuesDialog } from "./connector-values.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
+import { PageGroup, PageLayout, PageRow, PageRows } from "./page-layout.tsx";
+import { PluginsSection } from "./plugins.tsx";
 import { StateBlock } from "./state-block.tsx";
+import { type Shape, StatusDot, type Tone } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
+
+export { CONNECTORS_SECTIONS, type ConnectorsSection };
 
 type Problem = { problem: ConnectorProblem; message?: string | undefined };
 type Answer = { connector: ConnectorInfo } | Problem | { cancelled: true };
 type Pending = Promise<Answer>;
 type Act = () => Pending;
 
-export type ConnectorsDialogProps = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
-  /** The environment to show first, when it can keep connectors. */
-  environmentId?: string | undefined;
+/** What a daemon says it can do (docs/protocol.md §3): what a section asks of the environment it is shown for. */
+type Capabilities = EnvironmentStatus["capabilities"];
+
+/** What every section of the page is given: the environment chosen at the top, whose daemon can do what it needs. */
+export type ConnectorsSectionProps = {
+  /** Connected, and its daemon declares the section's capability. The section is made again for another one. */
+  environment: EnvironmentConfig;
 };
 
-/** The MCP servers an environment's daemon keeps for every agent (docs/protocol.md §14). */
-export function ConnectorsDialog(props: ConnectorsDialogProps) {
-  const { t } = useI18n();
-  const able = props.environments.filter(
-    (h) =>
-      props.status[h.id]?.state === "connected" &&
-      props.status[h.id]?.capabilities?.connectors === true,
+/**
+ * Each section: what the environment's daemon must be able to do for it, and what it draws once one that can is chosen.
+ * A new section is a word in `CONNECTORS_SECTIONS` (connectors-sections.ts) and an entry here; the rest follows.
+ */
+const SECTIONS: Record<
+  ConnectorsSection,
+  {
+    able: (capabilities: Capabilities) => boolean;
+    content: (props: ConnectorsSectionProps) => ReactNode;
+  }
+> = {
+  // Each agent's own extension packages (CYCL-84): there when at least one agent of the daemon has them.
+  plugins: {
+    able: (capabilities) => (capabilities?.plugins?.length ?? 0) > 0,
+    content: (props) => <PluginsSection {...props} />,
+  },
+  mcp: {
+    able: (capabilities) => capabilities?.connectors === true,
+    content: (props) => <McpSection {...props} />,
+  },
+};
+
+/** The environments the page can manage: connected, and able to do what at least one of its sections needs. */
+export const connectorEnvironments = (
+  environments: EnvironmentConfig[],
+  status: Record<string, EnvironmentStatus>,
+): EnvironmentConfig[] =>
+  environments.filter(
+    (e) =>
+      status[e.id]?.state === "connected" &&
+      CONNECTORS_SECTIONS.some((id) => SECTIONS[id].able(status[e.id]?.capabilities)),
   );
+
+export type ConnectorsPageProps = {
+  section: ConnectorsSection;
+  onSection: (section: ConnectorsSection) => void;
+  onClose: () => void;
+  /** What went wrong, said at the top of the page as it is at the top of the sessions. */
+  banner?: ReactNode;
+  environments: EnvironmentConfig[];
+  status: Record<string, EnvironmentStatus>;
+  /** The environment to show first, when it is one the page can manage: the one that is open. */
+  environmentId?: string | undefined;
+  /** Where the environments are connected and added (Settings), for when none can be managed here. */
+  onShowEnvironments: () => void;
+};
+
+/** What the daemons keep for every agent, one environment at a time (docs/protocol.md §14). */
+export function ConnectorsPage(props: ConnectorsPageProps) {
+  const { t } = useI18n();
+  const able = connectorEnvironments(props.environments, props.status);
+  // One choice for the whole page: another section shows the same environment.
   const [chosen, setChosen] = useState<string | undefined>(undefined);
   const environment =
-    able.find((h) => h.id === chosen) ?? able.find((h) => h.id === props.environmentId) ?? able[0];
-  const [editing, setEditing] = useState<ConnectorInfo | "new" | undefined>(undefined);
-  useEffect(() => {
-    if (props.open) return;
-    setEditing(undefined);
-    setChosen(undefined);
-  }, [props.open]);
+    able.find((e) => e.id === chosen) ?? able.find((e) => e.id === props.environmentId) ?? able[0];
   return (
-    <Dialog open={props.open} onOpenChange={(next) => props.onOpenChange(next)}>
-      <DialogBackdrop />
-      <DialogContent data-kind="connectors">
-        <DialogTitle>
-          {editing === undefined
-            ? t("connectors.title")
-            : editing === "new"
-              ? t("connectors.form.addTitle")
-              : t("connectors.form.editTitle", { name: editing.name })}
-        </DialogTitle>
-        {environment === undefined ? (
-          <>
-            <p data-slot="hint">{t("connectors.none")}</p>
-            <div data-slot="row" data-dialog-footer="">
-              <DialogClose>{t("common.close")}</DialogClose>
-            </div>
-          </>
-        ) : editing !== undefined ? (
-          <ConnectorForm
-            environment={environment}
-            editing={editing === "new" ? undefined : editing}
-            onDone={() => setEditing(undefined)}
-          />
-        ) : (
-          <>
-            <DialogDescription>
-              {t("connectors.lead", { environment: environment.name })}
-            </DialogDescription>
-            {able.length > 1 ? (
-              <Field name="environment">
-                <FieldLabel>{t("connectors.environment")}</FieldLabel>
-                <Select
-                  items={able.map((h) => ({ value: h.id, label: h.name }))}
-                  value={environment.id}
-                  onValueChange={(next) => setChosen((next as string | null) ?? undefined)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {able.map((h) => (
-                      <SelectItem key={h.id} value={h.id}>
-                        {h.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            ) : null}
-            <ConnectorList
-              key={environment.id}
-              environment={environment}
-              onEdit={(connector) => setEditing(connector)}
+    <PageLayout
+      title={t("connectors.title")}
+      sectionsLabel={t("connectors.sections")}
+      backLabel={t("settings.back")}
+      onBack={props.onClose}
+      banner={props.banner}
+      value={props.section}
+      onValueChange={(id) => {
+        if ((CONNECTORS_SECTIONS as readonly string[]).includes(id))
+          props.onSection(id as ConnectorsSection);
+      }}
+      sections={CONNECTORS_SECTIONS.map((id) => ({
+        id,
+        label: t(`connectors.section.${id}`),
+        content:
+          environment === undefined ? (
+            <StateBlock
+              size="inline"
+              align="start"
+              tone="away"
+              title={t("connectors.none")}
+              body={t("connectors.noneBody")}
+              action={{
+                label: t("settings.defaults.showEnvironments"),
+                onAction: props.onShowEnvironments,
+              }}
             />
-            <div data-slot="row" data-dialog-footer="">
-              <DialogClose>{t("common.close")}</DialogClose>
-              <Button data-variant="solid" onClick={() => setEditing("new")}>
-                {t("connectors.add")}
-              </Button>
-            </div>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+          ) : (
+            <>
+              {able.length > 1 ? (
+                <EnvironmentChoice
+                  environments={able}
+                  value={environment.id}
+                  onChange={setChosen}
+                />
+              ) : null}
+              {SECTIONS[id].able(props.status[environment.id]?.capabilities) ? (
+                // Keyed by the environment: another one's section starts from nothing, and reads its own.
+                <SectionOf key={environment.id} id={id} environment={environment} />
+              ) : (
+                <StateBlock
+                  size="inline"
+                  align="start"
+                  tone="away"
+                  title={t("connectors.unsupported", { environment: environment.name })}
+                  body={t(
+                    able.length > 1
+                      ? "connectors.unsupportedBody.choose"
+                      : "connectors.unsupportedBody",
+                  )}
+                />
+              )}
+            </>
+          ),
+      }))}
+    />
+  );
+}
+
+/** A component of its own, so a section's state belongs to the section and its environment (`key`). */
+function SectionOf({ id, environment }: { id: ConnectorsSection } & ConnectorsSectionProps) {
+  return SECTIONS[id].content({ environment });
+}
+
+/** Which environment the page manages, when more than one can be: a row of its own above the section. */
+function EnvironmentChoice({
+  environments,
+  value,
+  onChange,
+}: {
+  environments: EnvironmentConfig[];
+  value: string;
+  onChange: (environmentId: string) => void;
+}) {
+  const { t } = useI18n();
+  const label = useId();
+  return (
+    <PageGroup>
+      <PageRows>
+        <PageRow
+          label={t("connectors.environment")}
+          labelId={label}
+          description={t("connectors.environment.description")}
+        >
+          <Select
+            items={environments.map((e) => ({ value: e.id, label: e.name }))}
+            value={value}
+            onValueChange={(next) => {
+              if (typeof next === "string") onChange(next);
+            }}
+          >
+            <SelectTrigger aria-labelledby={label}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {environments.map((e) => (
+                <SelectItem key={e.id} value={e.id}>
+                  {e.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </PageRow>
+      </PageRows>
+    </PageGroup>
   );
 }
 
@@ -159,14 +246,20 @@ const whereOf = (connector: ConnectorInfo): string => {
   }
 };
 
-function ConnectorList(props: {
-  environment: EnvironmentConfig;
-  onEdit: (connector: ConnectorInfo) => void;
-}) {
+/** How a connector stands, as a mark before its name: never by colour alone, the word is beside it. */
+const STATUS_MARK: Record<ConnectorInfo["status"]["state"], { tone: Tone; shape: Shape }> = {
+  ready: { tone: "success", shape: "solid" },
+  needs_auth: { tone: "attention", shape: "ring" },
+  disabled: { tone: "muted", shape: "ring" },
+  error: { tone: "danger", shape: "cross" },
+};
+
+/** The MCP servers the environment's daemon keeps for every agent: each one's state, its switch, and what can be done with it. */
+function McpSection({ environment }: ConnectorsSectionProps) {
   const { t } = useI18n();
   const store = useAppStore();
-  const problemText = useProblemText(props.environment);
-  const environmentId = props.environment.id;
+  const problemText = useProblemText(environment);
+  const environmentId = environment.id;
   const read = useAppState((s) => s.connectors[environmentId]);
   const list = read?.list;
   /** What went wrong with one connector, shown under its row. */
@@ -175,6 +268,10 @@ function ConnectorList(props: {
   const [waiting, setWaiting] = useState<ConnectorInfo | undefined>(undefined);
   const [signedIn, setSignedIn] = useState<string | undefined>(undefined);
   const [removing, setRemoving] = useState<ConnectorInfo | undefined>(undefined);
+  /** The form, opened over the page: for a new connector, or one that is there. */
+  const [editing, setEditing] = useState<ConnectorInfo | "new" | undefined>(undefined);
+  /** The values a plugin's server leaves to the person, being filled in. */
+  const [values, setValues] = useState<ConnectorInfo | undefined>(undefined);
 
   useEffect(() => {
     void store.loadConnectors(environmentId);
@@ -202,30 +299,34 @@ function ConnectorList(props: {
     if ("connector" in answer) setSignedIn(connector.name);
   };
 
-  const unreadable =
-    read?.error !== undefined ? (
-      <StateBlock
-        size="inline"
-        tone="error"
-        title={t("connectors.unreadable")}
-        reason={read.error}
-        action={{
-          label: t("connectors.retry"),
-          onAction: () => void store.loadConnectors(environmentId),
-        }}
-      />
-    ) : null;
-  if (list === undefined)
-    return (
-      unreadable ?? <StateBlock size="inline" tone="loading" title={t("connectors.loading")} />
-    );
+  const add = (
+    <Button data-variant="outline" onClick={() => setEditing("new")}>
+      {t("connectors.add")}
+    </Button>
+  );
   return (
-    <div data-slot="stack">
-      {unreadable}
+    // With none yet, the way to add one is in what says so, not twice.
+    <PageGroup
+      lead={t("connectors.lead", { environment: environment.name })}
+      action={list !== undefined && list.length > 0 ? add : undefined}
+    >
+      {read?.error !== undefined ? (
+        <StateBlock
+          size="inline"
+          align="start"
+          tone="error"
+          title={t("connectors.unreadable")}
+          reason={read.error}
+          action={{
+            label: t("connectors.retry"),
+            onAction: () => void store.loadConnectors(environmentId),
+          }}
+        />
+      ) : null}
       {waiting !== undefined ? (
         <div data-slot="row" role="status">
           <span data-slot="hint">{t("connectors.waiting", { name: waiting.name })}</span>
-          <Button onClick={() => void store.cancelConnectorAuth()}>
+          <Button data-variant="outline" onClick={() => void store.cancelConnectorAuth()}>
             {t("connectors.stopWaiting")}
           </Button>
         </div>
@@ -234,33 +335,73 @@ function ConnectorList(props: {
           {t("connectors.signedIn", { name: signedIn })}
         </p>
       ) : null}
-      {list.length === 0 ? (
-        <StateBlock size="inline" tone="empty" title={t("connectors.empty")} />
+      {list === undefined ? (
+        read?.error === undefined ? (
+          <StateBlock size="inline" align="start" tone="loading" title={t("connectors.loading")} />
+        ) : null
+      ) : list.length === 0 ? (
+        <StateBlock
+          size="inline"
+          align="start"
+          tone="empty"
+          title={t("connectors.empty")}
+          body={t("connectors.emptyBody")}
+          action={{ label: t("connectors.add"), onAction: () => setEditing("new") }}
+        />
       ) : (
-        <ul data-slot="connector-list">
+        <PageRows>
           {list.map((connector) => {
             const oauth = connector.auth.type === "oauth";
             const problem = problems[connector.id];
+            const where = whereOf(connector);
+            // A plugin's server: it comes, goes and is switched with its plugin (docs/protocol.md §15).
+            const origin = connector.origin;
+            const requires = connector.requires ?? [];
+            const unfilled = requires.some((name) => !connector.secrets.env.includes(name));
             return (
-              <li key={connector.id} data-slot="connector" data-off={!connector.enabled}>
-                <div data-slot="connector-row">
-                  <div data-slot="connector-text">
-                    <span data-slot="connector-name">{connector.name}</span>
-                    <span data-slot="connector-where" title={whereOf(connector)}>
-                      {whereOf(connector)}
+              <PageRow
+                key={connector.id}
+                label={origin?.server ?? connector.name}
+                before={<StatusDot {...STATUS_MARK[connector.status.state]} />}
+                description={
+                  <>
+                    <span data-slot="connector-status">
+                      {unfilled && connector.enabled
+                        ? t("connectors.status.needs_values")
+                        : statusWord(t, connector)}
                     </span>
-                    <span data-slot="connector-status" data-state={connector.status.state}>
-                      {statusWord(t, connector)}
-                    </span>
-                  </div>
-                  {oauth && connector.enabled && connector.status.state === "needs_auth" ? (
-                    <Button
-                      disabled={busy[connector.id] === true}
-                      onClick={() => void signIn(connector)}
-                    >
-                      {t("connectors.signIn")}
-                    </Button>
-                  ) : null}
+                    {origin !== undefined ? (
+                      <span data-slot="connector-status">
+                        {t("connectors.fromPlugin", { plugin: pluginNameOf(origin.pluginId) })}
+                      </span>
+                    ) : null}
+                    <code data-slot="connector-where" title={where}>
+                      {where}
+                    </code>
+                  </>
+                }
+                below={
+                  problem !== undefined ? (
+                    <p data-slot="hint" role="alert">
+                      {problemText(problem)}
+                    </p>
+                  ) : undefined
+                }
+              >
+                {requires.length > 0 && unfilled && connector.enabled ? (
+                  <Button data-variant="outline" onClick={() => setValues(connector)}>
+                    {t("connectors.setValues")}
+                  </Button>
+                ) : oauth && connector.enabled && connector.status.state === "needs_auth" ? (
+                  <Button
+                    data-variant="outline"
+                    disabled={busy[connector.id] === true}
+                    onClick={() => void signIn(connector)}
+                  >
+                    {t("connectors.signIn")}
+                  </Button>
+                ) : null}
+                {origin === undefined ? (
                   <Switch
                     aria-label={t("connectors.use", { name: connector.name })}
                     checked={connector.enabled}
@@ -273,9 +414,14 @@ function ConnectorList(props: {
                   >
                     <SwitchThumb />
                   </Switch>
+                ) : null}
+                {origin !== undefined &&
+                requires.length === 0 &&
+                !(oauth && connector.authorized) ? null : (
                   <Menu
                     onAction={(value) => {
-                      if (value === "edit") props.onEdit(connector);
+                      if (value === "edit") setEditing(connector);
+                      else if (value === "values") setValues(connector);
                       else if (value === "sign-out")
                         void act(connector, () =>
                           store.signOutConnector(environmentId, connector.id),
@@ -288,25 +434,43 @@ function ConnectorList(props: {
                         <MoreIcon />
                       </MenuTrigger>
                     </Tip>
-                    <MenuContent>
-                      <MenuItem value="edit">{t("connectors.edit")}</MenuItem>
+                    <MenuContent align="end">
+                      {origin === undefined ? (
+                        <MenuItem value="edit">{t("connectors.edit")}</MenuItem>
+                      ) : null}
+                      {requires.length > 0 ? (
+                        <MenuItem value="values">{t("connectors.setValues")}</MenuItem>
+                      ) : null}
                       {oauth && connector.authorized ? (
                         <MenuItem value="sign-out">{t("connectors.signOut")}</MenuItem>
                       ) : null}
-                      <MenuItem value="remove">{t("connectors.remove")}</MenuItem>
+                      {origin === undefined ? (
+                        <MenuItem value="remove" data-destructive>
+                          {t("connectors.remove")}
+                        </MenuItem>
+                      ) : null}
                     </MenuContent>
                   </Menu>
-                </div>
-                {problem !== undefined ? (
-                  <p data-slot="hint" role="alert">
-                    {problemText(problem)}
-                  </p>
-                ) : null}
-              </li>
+                )}
+              </PageRow>
             );
           })}
-        </ul>
+        </PageRows>
       )}
+      {editing !== undefined ? (
+        <ConnectorFormDialog
+          environment={environment}
+          editing={editing === "new" ? undefined : editing}
+          onDone={() => setEditing(undefined)}
+        />
+      ) : null}
+      {values !== undefined ? (
+        <ConnectorValuesDialog
+          environment={environment}
+          connector={values}
+          onDone={() => setValues(undefined)}
+        />
+      ) : null}
       {removing !== undefined ? (
         <ConfirmDialog
           open
@@ -323,9 +487,18 @@ function ConnectorList(props: {
           }}
         />
       ) : null}
-    </div>
+    </PageGroup>
   );
 }
+
+/**
+ * A plugin's name out of its id, to say where a connector comes from. The id is the agent's own; this only keeps what is
+ * before a last `@`, which reads well for the ids there are and is still the whole id for any other.
+ */
+const pluginNameOf = (pluginId: string): string => {
+  const at = pluginId.lastIndexOf("@");
+  return at > 0 ? pluginId.slice(0, at) : pluginId;
+};
 
 const statusWord = (
   t: (key: string, params?: Record<string, string>) => string,
@@ -340,7 +513,8 @@ const statusWord = (
 type SecretKind = "headers" | "env";
 type NewSecret = { key: number; name: string; value: string };
 
-function ConnectorForm(props: {
+/** One connector's fields, in a dialog over the page: mounted when it opens, so it starts from what is being edited. */
+function ConnectorFormDialog(props: {
   environment: EnvironmentConfig;
   editing: ConnectorInfo | undefined;
   onDone: () => void;
@@ -428,17 +602,11 @@ function ConnectorForm(props: {
     }
   };
 
-  return (
-    <form
-      data-slot="stack"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-    >
+  const fields = (
+    <>
       <Field name="name">
         <FieldLabel>{t("connectors.form.name")}</FieldLabel>
-        <Input value={name} onChange={(e) => setName(e.currentTarget.value)} />
+        <Input autoFocus value={name} onChange={(e) => setName(e.currentTarget.value)} />
         <FieldDescription>{t("connectors.form.nameHint")}</FieldDescription>
       </Field>
       <Field name="transport">
@@ -587,14 +755,34 @@ function ConnectorForm(props: {
           {problemText(problem)}
         </p>
       ) : null}
-      <div data-slot="row" data-dialog-footer="">
-        <Button type="button" onClick={props.onDone}>
-          {t("connectors.form.back")}
-        </Button>
-        <Button data-variant="solid" type="submit" disabled={!ready || busy}>
-          {t(before === undefined ? "connectors.form.create" : "connectors.form.save")}
-        </Button>
-      </div>
-    </form>
+    </>
+  );
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !busy && props.onDone()}>
+      <DialogBackdrop />
+      <DialogContent data-kind="connector-form">
+        <DialogTitle>
+          {before === undefined
+            ? t("connectors.form.addTitle")
+            : t("connectors.form.editTitle", { name: before.name })}
+        </DialogTitle>
+        <form
+          data-slot="stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          {fields}
+          <div data-slot="row" data-dialog-footer="">
+            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
+            <Button data-variant="solid" type="submit" disabled={!ready || busy}>
+              {t(before === undefined ? "connectors.form.create" : "connectors.form.save")}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

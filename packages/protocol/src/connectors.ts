@@ -56,6 +56,18 @@ export const ConnectorStatusSchema = z.object({
 });
 export type ConnectorStatus = z.infer<typeof ConnectorStatusSchema>;
 
+/**
+ * Where a connector that nobody added comes from: an http server a plugin of one agent brings (§15). The daemon
+ * makes, switches and removes it with the plugin, and gives it to that agent's sessions only.
+ */
+export const ConnectorOriginSchema = z.object({
+  type: z.literal("plugin"),
+  agentId: z.string(),
+  pluginId: z.string(),
+  server: z.string(),
+});
+export type ConnectorOrigin = z.infer<typeof ConnectorOriginSchema>;
+
 export const ConnectorSchema = z.object({
   id: z.string(),
   name: ConnectorNameSchema,
@@ -67,6 +79,10 @@ export const ConnectorSchema = z.object({
   /** OAuth only: whether the daemon holds a token for it. */
   authorized: z.boolean(),
   status: ConnectorStatusSchema,
+  /** Absent for one a person added. */
+  origin: ConnectorOriginSchema.optional(),
+  /** The names it needs a value for (written as `secrets.env`); those in `secrets.env` have one. */
+  requires: z.array(z.string()).optional(),
 });
 export type Connector = z.infer<typeof ConnectorSchema>;
 

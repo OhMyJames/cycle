@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EVENTS } from "@cycle/analytics/events";
-import { LANGUAGE_CHOICES, SETTINGS_SECTIONS, THEME_CHOICES } from "@cycle/ui";
+import { CONNECTORS_SECTIONS, LANGUAGE_CHOICES, SETTINGS_SECTIONS, THEME_CHOICES } from "@cycle/ui";
 import {
   DEFAULT_PREFERENCES,
   filePreferencesStore,
@@ -142,4 +142,5 @@ test("the words the analytics take for a theme, a language and a section are the
   expect(EVENTS.theme_changed.shape.theme.options).toEqual([...THEME_CHOICES]);
   expect(EVENTS.language_changed.shape.language.options).toEqual([...LANGUAGE_CHOICES]);
   expect(EVENTS.settings_section_shown.shape.section.options).toEqual([...SETTINGS_SECTIONS]);
+  expect(EVENTS.connectors_section_shown.shape.section.options).toEqual([...CONNECTORS_SECTIONS]);
 });

@@ -114,6 +114,58 @@ const serverOf = (entry: CatalogEntry): string =>
     entry.auth.type === "oauth" ? (entry.auth.clientId ?? null) : null,
   ]);
 
+/** The names a plugin's headers leave to the person: each `${NAME}` in them. */
+const requiredBy = (headers: Record<string, string>): string[] => {
+  const names = new Set<string>();
+  for (const value of Object.values(headers)) {
+    for (const match of value.matchAll(/\$\{([A-Za-z0-9_-]+)\}/g)) names.add(match[1] as string);
+  }
+  return [...names];
+};
+
+/** A plugin's headers with the person's values in. Undefined while one of them has none. */
+const filled = (
+  headers: Record<string, string>,
+  values: Record<string, string>,
+): Record<string, string> | undefined => {
+  const out: Record<string, string> = {};
+  for (const [name, template] of Object.entries(headers)) {
+    if (RESERVED_HEADERS.has(name.toLowerCase())) continue;
+    let missing = false;
+    out[name] = template.replace(/\$\{([A-Za-z0-9_-]+)\}/g, (_all, key: string) => {
+      const value = values[key];
+      if (value === undefined) missing = true;
+      return value ?? "";
+    });
+    if (missing) return undefined;
+  }
+  return out;
+};
+
+/** A name for a plugin's server among the connectors: nobody types it, an agent never sees it. */
+const slugFor = (pluginId: string, server: string, taken: ReadonlySet<string>): string => {
+  const plugin = pluginId.split("@")[0] ?? pluginId;
+  const base =
+    `${plugin}-${server}`
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 28) || "plugin";
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n += 1) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+};
+
+/** An http server a plugin brings, as the agent's plugin machinery describes it. */
+export type PluginServerSpec = {
+  pluginId: string;
+  /** Whether the plugin is switched on. */
+  enabled: boolean;
+  server: string;
+  agentName: string;
+  url: string;
+  headers: Record<string, string>;
+};
+
 /** A session's connector processes, by connector. */
 type SessionBridges = Map<string, StdioBridge>;
 
@@ -138,6 +190,8 @@ export class ConnectorService {
   /** The last credential change queued for each connector (see #mutate). */
   readonly #locks = new Map<string, Promise<unknown>>();
   readonly #listeners = new Set<() => void>();
+  /** One reconciliation of plugins' connectors at a time. */
+  #syncing: Promise<unknown> = Promise.resolve();
   #gateway: McpGateway | undefined;
 
   constructor(options: ConnectorServiceOptions) {
@@ -215,9 +269,11 @@ export class ConnectorService {
     const credentials = await this.#vault.get(entry.id);
     const authorized = credentials.oauth?.tokens !== undefined;
     const runtime = this.#runtime.get(entry.id);
+    const requires = entry.origin !== undefined ? requiredBy(entry.origin.headers) : [];
+    const unfilled = requires.some((name) => credentials.env[name] === undefined);
     const status: Connector["status"] = !entry.enabled
       ? { state: "disabled" }
-      : entry.auth.type === "oauth" && !authorized
+      : (entry.auth.type === "oauth" && !authorized) || unfilled
         ? { state: "needs_auth" }
         : runtime === undefined
           ? { state: "ready" }
@@ -233,6 +289,17 @@ export class ConnectorService {
       secrets: { headers: Object.keys(credentials.headers), env: Object.keys(credentials.env) },
       authorized,
       status,
+      ...(entry.origin !== undefined
+        ? {
+            origin: {
+              type: "plugin" as const,
+              agentId: entry.origin.agentId,
+              pluginId: entry.origin.pluginId,
+              server: entry.origin.server,
+            },
+          }
+        : {}),
+      ...(requires.length > 0 ? { requires } : {}),
     };
   }
 
@@ -266,6 +333,16 @@ export class ConnectorService {
 
   async update(params: UpdateParams): Promise<Connector> {
     const before = await this.#entry(params.id);
+    if (
+      before.origin !== undefined &&
+      (params.name !== undefined ||
+        params.enabled !== undefined ||
+        params.transport !== undefined ||
+        params.auth !== undefined ||
+        params.secrets?.headers !== undefined)
+    ) {
+      throw invalid("This connector is a plugin's: only its values can be set", "managed");
+    }
     const entry: CatalogEntry = {
       ...before,
       ...(params.name !== undefined ? { name: params.name } : {}),
@@ -302,6 +379,15 @@ export class ConnectorService {
 
   async remove(id: string): Promise<void> {
     const entry = await this.#entry(id);
+    if (entry.origin !== undefined) {
+      throw invalid("This connector is removed with its plugin", "managed");
+    }
+    await this.#drop(entry);
+    this.#changed();
+  }
+
+  async #drop(entry: CatalogEntry): Promise<void> {
+    const id = entry.id;
     this.#broker.forget(id);
     this.#stopBridges(id);
     await this.#broker.revoke(await this.#vault.get(id));
@@ -310,7 +396,153 @@ export class ConnectorService {
     await (this.#locks.get(id) ?? Promise.resolve());
     await this.#vault.remove(entry.id);
     this.#runtime.delete(id);
+  }
+
+  // ---- what plugins bring ----
+
+  /**
+   * Makes the connectors of one agent's plugins what `servers` says (docs/protocol.md §15): a new one for a server
+   * not seen before, the address and headers of one that changed, none for a server that is gone. Returns which
+   * connector stands for which server (`pluginId`, then server name); a server whose address would not be safe for
+   * a token has none and is left to the agent.
+   */
+  async syncPlugins(
+    agentId: string,
+    servers: readonly PluginServerSpec[],
+  ): Promise<Map<string, Map<string, string>>> {
+    const run = this.#syncing.then(() => this.#syncPlugins(agentId, servers));
+    this.#syncing = run.catch(() => undefined);
+    return run;
+  }
+
+  async #syncPlugins(
+    agentId: string,
+    servers: readonly PluginServerSpec[],
+  ): Promise<Map<string, Map<string, string>>> {
+    const all = await this.#catalog.list();
+    const mine = new Map<string, CatalogEntry>();
+    for (const entry of all) {
+      if (entry.origin?.agentId === agentId) {
+        mine.set(JSON.stringify([entry.origin.pluginId, entry.origin.server]), entry);
+      }
+    }
+    const names = new Set(all.map((entry) => entry.name));
+    const made = new Map<string, Map<string, string>>();
+    let changed = false;
+    for (const spec of servers) {
+      if (secureUrl(spec.url) === undefined) continue;
+      const key = JSON.stringify([spec.pluginId, spec.server]);
+      const before = mine.get(key);
+      mine.delete(key);
+      const origin: NonNullable<CatalogEntry["origin"]> = {
+        type: "plugin",
+        agentId,
+        pluginId: spec.pluginId,
+        server: spec.server,
+        agentName: spec.agentName,
+        headers: spec.headers,
+      };
+      let entry: CatalogEntry;
+      if (before === undefined) {
+        const name = slugFor(spec.pluginId, spec.server, names);
+        names.add(name);
+        entry = {
+          id: randomUUID(),
+          name,
+          enabled: spec.enabled,
+          transport: { type: "http", url: spec.url },
+          // Whether it signs in is not known yet: asked below, and learnt from the first 401 otherwise.
+          auth: { type: "none" },
+          createdAt: new Date().toISOString(),
+          origin,
+        };
+        await this.#vault.put(entry.id, { headers: {}, env: {} });
+        await this.#catalog.put(entry);
+        changed = true;
+        if (spec.enabled) void this.#probe(entry.id);
+      } else {
+        const moved = before.transport.type !== "http" || before.transport.url !== spec.url;
+        entry = {
+          ...before,
+          enabled: spec.enabled,
+          transport: { type: "http", url: spec.url },
+          ...(moved ? { auth: { type: "none" as const } } : {}),
+          origin,
+        };
+        if (JSON.stringify(entry) !== JSON.stringify(before)) {
+          if (moved) {
+            // A token belongs to the address it was given at: an update of the plugin that moves it signs it out.
+            this.#broker.forget(entry.id);
+            await this.#broker.revoke(await this.#vault.get(entry.id));
+            await this.#mutate(entry.id, ({ oauth: _gone, ...rest }) => rest);
+            this.#runtime.delete(entry.id);
+          }
+          await this.#catalog.put(entry);
+          changed = true;
+          if (moved && spec.enabled) void this.#probe(entry.id);
+        }
+      }
+      let ofPlugin = made.get(spec.pluginId);
+      if (ofPlugin === undefined) {
+        ofPlugin = new Map();
+        made.set(spec.pluginId, ofPlugin);
+      }
+      ofPlugin.set(spec.server, entry.id);
+    }
+    for (const gone of mine.values()) {
+      await this.#drop(gone);
+      changed = true;
+    }
+    if (changed) this.#changed();
+    return made;
+  }
+
+  /** A plugin's server signs in when it answers 401 to a request with no token: what MCP's authorization says it does. */
+  async #needsSignIn(id: string): Promise<void> {
+    const entry = await this.#catalog.get(id);
+    if (entry?.origin === undefined || entry.auth.type !== "none") return;
+    // A header the plugin itself sets as the credential is the person's key being wrong, not a sign-in.
+    const own = Object.keys(entry.origin.headers).some(
+      (name) => name.toLowerCase() === "authorization",
+    );
+    if (own) return;
+    await this.#catalog.put({ ...entry, auth: { type: "oauth" } });
+    this.#runtime.delete(id);
     this.#changed();
+  }
+
+  /** Asks a plugin's server once, as an agent would begin, whether it wants a sign-in. */
+  async #probe(id: string): Promise<void> {
+    try {
+      const entry = await this.#catalog.get(id);
+      if (entry?.origin === undefined || entry.transport.type !== "http") return;
+      const headers = filled(entry.origin.headers, (await this.#vault.get(id)).env);
+      if (headers === undefined) return;
+      const response = await this.#fetch(entry.transport.url, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "cycle", version: "1" },
+          },
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status === 401) await this.#needsSignIn(id);
+    } catch {
+      // Not reachable now: it is asked again by the first request an agent makes.
+    }
   }
 
   async authStart(
@@ -397,14 +629,23 @@ export class ConnectorService {
   /**
    * The connectors a session's agent is given as it starts: each enabled one as an http server at
    * the gateway, with a key of this session's own. `taken`: names the session already has (its own
-   * `mcpServers`), which keep theirs.
+   * `mcpServers`), which keep theirs. A plugin's server goes to its own agent only, under the name that agent knows
+   * it by, so that it stands in for the one the plugin declares; signed in or not, or the agent would go and sign in
+   * by itself.
    */
   async serversFor(
     sessionId: string,
     cwd: string,
     taken: ReadonlySet<string>,
+    agentId?: string,
   ): Promise<McpServer[]> {
-    const entries = (await this.#catalog.list()).filter((e) => e.enabled && !taken.has(e.name));
+    const nameOf = (e: CatalogEntry): string => e.origin?.agentName ?? e.name;
+    const entries = (await this.#catalog.list()).filter(
+      (e) =>
+        e.enabled &&
+        !taken.has(nameOf(e)) &&
+        (e.origin === undefined || e.origin.agentId === agentId),
+    );
     this.release(sessionId);
     if (entries.length === 0) return [];
     this.#gateway ??= McpGateway.start((session, connector, request) =>
@@ -420,7 +661,7 @@ export class ConnectorService {
       (e) =>
         ({
           type: "http",
-          name: e.name,
+          name: nameOf(e),
           url: gateway.endpoint(e.id),
           headers: [{ name: "Authorization", value: `Bearer ${key}` }],
         }) as McpServer,
@@ -455,13 +696,19 @@ export class ConnectorService {
     if (entry.transport.type === "stdio") return this.#stdio(sessionId, entry, request);
     const url = entry.transport.url;
     const held = await hold(request);
+    const origin = entry.origin;
     const credentialsOf = (c: Credentials): Record<string, string> => ({
+      ...(origin !== undefined ? filled(origin.headers, c.env) : {}),
       ...c.headers,
       ...(c.oauth?.tokens !== undefined
         ? { Authorization: `Bearer ${c.oauth.tokens.accessToken}` }
         : {}),
     });
     let credentials = await this.#vault.get(entry.id);
+    if (origin !== undefined && filled(origin.headers, credentials.env) === undefined) {
+      // Not sent with a hole where the person's key goes.
+      return new Response("Set this connector's values in Cycle", { status: 401 });
+    }
     let response: Response;
     try {
       response = await send(this.#fetch, url, held, credentialsOf(credentials));
@@ -479,6 +726,9 @@ export class ConnectorService {
       if (!held.signal.aborted)
         this.#setRuntime(entry.id, { state: "error", reason: "unreachable" });
       return new Response("The connector could not be reached", { status: 502 });
+    }
+    if (response.status === 401 && origin !== undefined && entry.auth.type === "none") {
+      await this.#needsSignIn(entry.id);
     }
     if (response.status === 401 || response.status === 403) {
       this.#setRuntime(

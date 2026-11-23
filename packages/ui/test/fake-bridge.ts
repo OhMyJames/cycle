@@ -7,6 +7,9 @@ import type {
   CycleBridge,
   EnvironmentConfig,
   PlanUsage,
+  PluginFailure,
+  PluginInfo,
+  PluginSourceInfo,
   Preferences,
   SessionSnapshot,
   SessionSummary,
@@ -56,6 +59,7 @@ export const fakeBridge = (
       filesInFolder?: boolean;
       trust?: boolean;
       connectors?: boolean;
+      plugins?: string[];
       sessionMentions?: boolean;
       fs?: boolean;
       diff?: boolean;
@@ -67,6 +71,11 @@ export const fakeBridge = (
     terminalProblem?: TerminalProblem;
     /** The connectors the daemon keeps. Changed in place by what the page asks. */
     connectors?: ConnectorInfo[];
+    /**
+     * An agent's plugins: what can be installed (the installed ones among them) and where it comes from. Changed in
+     * place by what the page asks. `fail`: what the next change comes to instead of being done.
+     */
+    plugins?: { sources: PluginSourceInfo[]; all: PluginInfo[]; fail?: PluginFailure | undefined };
     /** The agent can take a message into a running turn. */
     steer?: boolean;
     /** More environments than the local one, and how each stands (by id; the local one's is `connected`). */
@@ -84,6 +93,13 @@ export const fakeBridge = (
   };
   const calls: [string, ...unknown[]][] = [];
   const connectors = options.connectors ?? [];
+  const plugins = options.plugins ?? { sources: [], all: [] };
+  /** A change to the plugins: refused as the test said, or done. */
+  const pluginChange = <T>(done: () => T): T | PluginFailure => {
+    if (plugins.fail !== undefined) return plugins.fail;
+    return done();
+  };
+  const pluginAt = (id: string): number => plugins.all.findIndex((p) => p.id === id);
   const terminals = options.terminals ?? new Map<string, TerminalInfo[]>();
   let made = 0;
   let listener: ((event: AppEvent) => void) | undefined;
@@ -297,6 +313,108 @@ export const fakeBridge = (
       connector.status = { state: "needs_auth" };
       return { connector: { ...connector } };
     }),
+    listPlugins: record("listPlugins", async () => ({
+      sources: plugins.sources.map((s) => ({ ...s })),
+      plugins: plugins.all.filter((p) => p.installed).map((p) => ({ ...p })),
+    })),
+    availablePlugins: record(
+      "availablePlugins",
+      async (
+        _environment: string,
+        asked: { sourceId?: string; query?: string; cursor?: string; limit?: number },
+      ) => {
+        const query = asked.query?.toLowerCase() ?? "";
+        const found = plugins.all.filter(
+          (p) =>
+            (asked.sourceId === undefined || p.sourceId === asked.sourceId) &&
+            (query === "" ||
+              p.name.toLowerCase().includes(query) ||
+              (p.description?.toLowerCase().includes(query) ?? false)),
+        );
+        const from = Number(asked.cursor ?? "0");
+        const to = from + (asked.limit ?? 50);
+        return {
+          plugins: found.slice(from, to).map((p) => ({ ...p })),
+          ...(to < found.length ? { nextCursor: String(to) } : {}),
+          total: found.length,
+        };
+      },
+    ),
+    installPlugin: record(
+      "installPlugin",
+      async (_environment: string, _agent: string, id: string) =>
+        pluginChange(() => {
+          const at = pluginAt(id);
+          const before = plugins.all[at];
+          if (before === undefined) return { problem: "not_found" as const };
+          const plugin: PluginInfo = {
+            contents: { skills: 1, commands: 0, agents: 0, hooks: 0, mcpServers: 0 },
+            ...before,
+            installed: true,
+            enabled: true,
+            scope: "user",
+          };
+          plugins.all[at] = plugin;
+          return { plugin: { ...plugin } };
+        }),
+    ),
+    uninstallPlugin: record(
+      "uninstallPlugin",
+      async (_environment: string, _agent: string, id: string) =>
+        pluginChange(() => {
+          const at = pluginAt(id);
+          const before = plugins.all[at];
+          if (before !== undefined) plugins.all[at] = { ...before, installed: false };
+          return { removed: true as const };
+        }),
+    ),
+    updatePlugin: record("updatePlugin", async (_environment: string, _agent: string, id: string) =>
+      pluginChange(() => {
+        const plugin = plugins.all[pluginAt(id)];
+        if (plugin === undefined) return { problem: "not_found" as const };
+        return { plugin: { ...plugin }, updated: false };
+      }),
+    ),
+    setPluginEnabled: record(
+      "setPluginEnabled",
+      async (_environment: string, _agent: string, id: string, enabled: boolean) =>
+        pluginChange(() => {
+          const at = pluginAt(id);
+          const before = plugins.all[at];
+          if (before === undefined) return { problem: "not_found" as const };
+          const plugin = { ...before, enabled };
+          plugins.all[at] = plugin;
+          return { plugin: { ...plugin } };
+        }),
+    ),
+    addPluginSource: record(
+      "addPluginSource",
+      async (_environment: string, agentId: string, location: string) =>
+        pluginChange(() => {
+          const source: PluginSourceInfo = {
+            agentId,
+            id: `source-${plugins.sources.length + 1}`,
+            name: location.split("/").at(-1) ?? location,
+            kind: "git",
+            location,
+            removable: true,
+          };
+          plugins.sources.push(source);
+          return { source: { ...source } };
+        }),
+    ),
+    removePluginSource: record(
+      "removePluginSource",
+      async (_environment: string, _agent: string, id: string) =>
+        pluginChange(() => {
+          const at = plugins.sources.findIndex((s) => s.id === id);
+          if (at >= 0) plugins.sources.splice(at, 1);
+          return { removed: true as const };
+        }),
+    ),
+    refreshPluginSources: record("refreshPluginSources", async () =>
+      pluginChange(() => ({ refreshed: true as const })),
+    ),
     chooseDirectory: record("chooseDirectory", async () => "/chosen"),
     updateState: record(
       "updateState",

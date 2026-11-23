@@ -187,7 +187,7 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 
 应用级的设置在一个**整窗页面**里,不再分散在菜单和对话框中。侧栏底部的按钮或 `⌘,`(非 Mac 为 `Ctrl+,`)打开;页面打开时,侧栏的位置换成"Back to sessions"和分区导航,右边是选中的分区。`Esc`、Back 或再按一次 `⌘,` 回到会话;`⌘N`、`⌘K` 在页面上仍然可用,新建或选中会话就离开页面,系统通知点开的会话也一样。会话那一侧在页面下面保持挂载、只是不显示(`hidden` 加 `inert`),所以回来时对话的位置、展开的工具、没写完的消息都在。
 
-- **框架**(`page-layout.tsx`):`PageLayout`(返回、分区导航、分区内容)、`PageGroup`、`PageRows`、`PageRow`。分区导航是 SDK 的 Tabs 竖排:方向键切换,只挂载当前分区。Connectors 升级为页面(CYCL-57)时复用它。
+- **框架**(`page-layout.tsx`):`PageLayout`(返回、分区导航、分区内容)、`PageGroup`、`PageRows`、`PageRow`。分区导航是 SDK 的 Tabs 竖排:方向键切换,只挂载当前分区。Connectors 页(CYCL-82,见下面的 "Connector")用的是同一套。
 - **General**:界面语言(见下);版本、更新状态、"Check for updates"(开发运行不能更新时不显示按钮,只说明原因)、有新版本或安装失败时的 "Update and restart";统计开关(Usage statistics)。没有上报目标,或用环境变量 `DO_NOT_TRACK` / `CYCLE_ANALYTICS=off` 关掉时,不显示开关,规则与以前的菜单项相同(docs/analytics.md);首次启动的说明仍在会话页顶部,文字改为指向 Settings。
 - **Appearance**:主题(Match system、Light、Dark,见下)、代码配色和示例。
 - **Environments**:每个环境一行:状态(点、词)、名字、远程的 ssh 地址,断开时下面是 ssh 的原话和 "Connect again";远程环境行尾的菜单里是 Edit、Remove(先确认)。"Add environment" 在分区右上。增、改仍是原来的表单对话框,开在设置页上面。
@@ -206,14 +206,24 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 
 ## Connector
 
-侧栏顶部的 **Connectors** 打开一个面板,管理某个环境的 daemon 替所有 agent 保管的 MCP 服务器(protocol.md §14)。只列已连接、并且声明了能力 `connectors` 的环境;一个都没有时就这样说。
+侧栏顶部的 **Connectors** 打开 **Connectors 页**(CYCL-82):和设置页一样的整窗页面(`PageLayout`,`connectors.tsx` 的 `ConnectorsPage`),管理某个环境的 daemon 替所有 agent 保管的东西。原来的对话框已去掉。
 
-- **列表**:每行是名字、去哪里(http 的主机,或 stdio 的命令)、状态(Ready、Needs sign-in、Off,出错时按 `reason` 写成固定的句子)、开关,需要登录的 OAuth 服务器有 Sign in;编辑、退出登录、删除在行尾的菜单里。删除前先确认,因为它的登录和密钥会一起永久删掉。
-- **表单**:名字;远程 URL 或本地命令(参数一行一个、可选的工作目录);远程的可以选 OAuth,并可填 client id(给不支持动态注册的服务器)。密钥是 http 的请求头或 stdio 的环境变量,**只写不读**:页面送出值,之后只看到名字和"已设置",能替换或删除,看不到值。
+- **进出**:和设置页相同。页面打开时会话那一侧保持挂载、不显示(`hidden` 加 `inert`);`Esc` 或 Back 回到会话,焦点回到侧栏的 Connectors 按钮;页面上面开着表单、确认或菜单时 `Esc` 只关它们;`⌘N`、`⌘K` 仍可用,新建或选中会话就离开页面;按 `⌘,` 换到设置页。同一时间只有一个页面。再次进入回到上次的分区。没有自己的快捷键。
+- **分区**:清单在 `connectors-sections.ts` 的 `CONNECTORS_SECTIONS`(这些词也是埋点里的词),每个分区在 `connectors.tsx` 的 `SECTIONS` 里写明它需要 daemon 的哪项能力和画什么。现在有两个:**Plugins**(`plugins`,能力 `plugins` 里至少有一个 agent,protocol.md §15,CYCL-84)和 **MCP servers**(`mcp`,能力 `connectors`,protocol.md §14)。页面默认打开第一个。
+- **环境**:页面一次管理一个环境,这个选择属于整个页面,各分区共用。候选是已连接、并且至少声明了一个分区所需能力的环境;默认是当前打开的会话所在的环境。多于一个时,分区顶部有一行 Environment 选择器;换环境后分区从头读取。一个候选都没有时说明原因,并给去 Settings → Environments 的按钮。选中的环境做不了当前分区的事(daemon 太旧)时就地说明,不发请求。环境断开后它不再是候选。
+- **MCP servers**:一组 `PageRows`,每行是状态点和名字,下面一行是状态词(Ready、Needs sign-in、Off,出错时按 `reason` 写成固定的句子)和去哪里(http 的主机,或 stdio 的命令,等宽,放不下时保留末尾);行尾是开关(立即生效),需要登录的 OAuth 服务器有 Sign in,编辑、退出登录、删除在行尾的菜单里。某一行的操作失败,原因写在那一行下面。删除前先确认(`destructive`,焦点在 Cancel),因为它的登录和密钥会一起永久删掉。"Add connector" 在这一组的右上;一个都没有时它在空状态里。读取中、读不出来(原话加 "Try again";已读到的清单保留)各有状态块。等浏览器登录时列表上方有一行说明和 "Stop waiting"。
+- **Plugins**(`plugins.tsx`):某个环境上某个 agent 的 plugin。daemon 声明了多个有 plugin 的 agent 时,顶部多一行 Agent 选择器。三组:
+  - **Installed**:每行是状态点、名字、一行事实(On/Off、版本、它带了什么:几个 skill、命令、子 agent、hook、MCP 服务)和一行说明(放不下时截断);行尾是开关和菜单(Update、Uninstall)。它带的服务器还要登录或要填值时,在这一行下面逐条写明,并给 Sign in 或 Set values。卸载前确认(`destructive`),它的 MCP 服务的登录会一起删掉。
+  - **Available**:搜索框(停顿 200 毫秒后查询,回车立即查)和来源选择(多于一个来源时才有);每页 30 个,下面写"Showing n of total"和 Show more。已装的标 Installed,没装的有 Install。**安装前一定确认**:对话框写明来自哪个来源,以及 plugin 可以在那台机器上运行代码(hook、命令、MCP 服务)。确认后对话框立即关上,结果写在那一行(取仓库可能要几十秒)。
+  - **Sources**:来源的清单(种类是固定的词,地址等宽、保留末尾);Add source 是表单对话框,写明"来源里列的东西可以被安装并运行";Refresh lists 重新取清单;agent 自带的来源不能移除。
+  - 失败时先是 Cycle 的一句话(按 `PluginProblem` 的词),下面等宽显示 agent 自己的原话。
+- **plugin 带来的 connector**:在 MCP servers 里和用户自己加的排在一起,标"From the … plugin",没有开关、编辑和删除(这些随 plugin 走),可以登录、退出登录、填值。要用户填的值(`requires`)在 `connector-values.tsx` 的对话框里填,只写不读。
+- **表单**:添加和编辑是开在页面上面的表单对话框(DESIGN.md §4.5):回车提交,打开时焦点在名字上,Cancel 在左。字段:名字;远程 URL 或本地命令(参数一行一个、可选的工作目录);远程的可以选 OAuth,并可填 client id(给不支持动态注册的服务器)。密钥是 http 的请求头或 stdio 的环境变量,**只写不读**:页面送出值,之后只看到名字和"已设置",能替换或删除,看不到值。
 - **凭证上线路的方向**:这是 `config.json` 那条"不让凭证上线路"之外唯一有意的例外,而且只有一个方向。页面把用户填的密钥经主进程送给 daemon;daemon 从不回传。OAuth 的授权码不经过页面:主进程在 `127.0.0.1` 的随机端口开回调,把这个地址交给 `auth/start`,用 `shell.openExternal` 打开 daemon 给的地址(只开 https,或指向本机的 http),拿到回调后把 `code`、`state` 交给 `auth/finish`。PKCE 的 verifier 在 daemon,授权码单独拿到没有用。同一时间只有一个登录在等浏览器,新的会取消旧的;最多等十分钟;回调服务器在每条路径上都会关掉(`connector-auth.ts`,`test/connector-auth.test.ts`)。
 - **错误**:daemon 的拒绝(`data.reason`)在主进程变成固定的词(`connectorProblemOf`),页面按词显示整句,并写在出问题的那一行或表单下面。
-- **埋点**:`connector_added`(传输、登录方式、密钥个数)、`connector_changed`、`connector_removed`、`connector_authorized`(`ok`/`failed`/`cancelled`)、`connector_signed_out`,打开面板是 `panel_opened` 的 `connectors`。不发名字、URL、命令和密钥(`test/manager-connectors.test.ts`)。
-- **没验证**:真实的授权服务器(测试里是假的 daemon 和假的浏览器);真实窗口里的样子和深色模式。
+- **plugin 的埋点**(主进程发,`test/manager-plugins.test.ts`):`plugin_installed`、`plugin_removed`、`plugin_toggled`、`plugin_updated`、`plugin_source_added`、`plugin_source_removed`、`plugin_sources_refreshed`,只有 agent 是哪一类、结果的词和个数,不发 plugin 的名字、来源地址和 agent 的原话。
+- **埋点**:`connector_added`(传输、登录方式、密钥个数)、`connector_changed`、`connector_removed`、`connector_authorized`(`ok`/`failed`/`cancelled`)、`connector_signed_out`(主进程发);打开页面是 `panel_opened` 的 `connectors`,换分区是 `connectors_section_shown`(`section` 是固定的词)。不发名字、URL、命令和密钥(`test/manager-connectors.test.ts`)。
+- **没验证**:真实的授权服务器(测试里是假的 daemon 和假的浏览器);安装版真实窗口里的样子(界面测试在无界面的 Chromium 里跑过)。
 
 ## 终端(CYCL-98)
 
@@ -256,6 +266,7 @@ SDK 的几个坑(beta.6,写在这里免得再踩):
 
 ## 还没做
 
+- **plugin**(CYCL-57 之后):项目级范围(现在只装和启停用户级);运行中的会话即时生效(现在是下次启动 agent 时);来源要先运行自己命令的 plugin;plugin 自己的选项(Claude 的 `plugin configure`);环境的 Cycle 不支持 plugin 时页面仍默认打开 Plugins 分区(就地说明太旧)。真实登录只用 Linear 走通过(2026-11-23,经 daemon 和网关,不是在安装版窗口里点的),其他服务器没试。
 - **远端 daemon 的升级**:应用只更新自己和自带的本地 daemon;远端的 daemon 由用户决定何时升。应用带一个 `MIN_DAEMON_VERSION`(`src/shared/release.ts`),**远端 daemon 低于它**才在标题栏下面出现一行提示和一个"Update to x.y.z"按钮;高于或等于它就不提示,即使比应用旧(多数版本只改界面,不动 daemon)。`dev`(从源码运行)和读不出版本的不提示,本地的也不提示。
   - **什么时候抬高它**:应用开始依赖旧 daemon 没有的东西(字段、方法、行为),而且不能像 `capabilities` 开关那样"没有就关掉那个功能"。发版时问一句:这次有没有这种改动。可以关掉的功能用 capabilities,不动它。门禁测试保证它是合法版本号且不晚于应用自己的版本。
   - **按钮做什么**:确认后,应用用该环境同一个 ssh 主机(`BatchMode`,不交互)在远端运行 `daemonUpgradeCommand`(下载本版本的 tarball、校验、`install.sh`、`cycle stop`),`cycle stop` 让连接断开,重连时接上新的 daemon,已打开的会话原样保留。确认框里,如果该机器上有会话在工作,会列出它们,让人选"等它们结束再更新"(远端后台 `cycle stop --wait`)或"立即更新并中断"(`cycle stop --force`);没有在工作的就是普通的 `cycle stop`,它不会中断确认之后才开始工作的会话。见 [daemon.md](daemon.md)"停止和升级"。

@@ -1,5 +1,5 @@
 /**
- * Cycle's own JSON-RPC error codes. They sit in -32010..-32019, clear of the codes ACP v2 uses
+ * Cycle's own JSON-RPC error codes. They sit in -32010..-32029, clear of the codes ACP v2 uses
  * (-32700, -32600..-32603, -32800, -32000, -32002, -32022). A session that does not exist, or is
  * not Cycle's, is ACP's -32002 with its `SessionNotFoundErrorData`; an unsupported protocol
  * version is ACP's -32022.
@@ -18,6 +18,8 @@ export const CycleErrorCode = {
   DaemonStopped: -32018,
   /** A session or the daemon has as many terminals as it may (docs/protocol.md §8 "终端"). */
   TerminalLimit: -32019,
+  /** An agent's own plugin machinery did not do what was asked (docs/protocol.md §15). */
+  PluginFailed: -32020,
 } as const;
 export type CycleErrorCode = (typeof CycleErrorCode)[keyof typeof CycleErrorCode];
 

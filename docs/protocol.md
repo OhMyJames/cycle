@@ -53,6 +53,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "diff": true,
   "trust": true,
   "connectors": true,
+  "plugins": ["claude"],
   "sessionMentions": true,
   "terminal": true
 }
@@ -93,6 +94,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 | `_cycle/trust/set`           | 客户端 → daemon | daemon 处理:记下对一个文件夹的信任决定,见 §8          |
 | `_cycle/plan_usage/read`     | 客户端 → daemon | daemon 处理:各 agent 账号的套餐用量,见 §8 "套餐用量"  |
 | `_cycle/connectors/*`        | 客户端 → daemon | daemon 处理:管理 connector 和授权,见 §14              |
+| `_cycle/plugins/*`           | 客户端 → daemon | daemon 处理:浏览、安装、启停各 agent 的 plugin,见 §15 |
 | `session/cancel`             | 客户端 → daemon | 转发(通知)                                            |
 | `session/close`              | 客户端 → daemon | daemon 处理:停止 agent 进程,保留历史                  |
 | `session/delete`             | 客户端 → daemon | daemon 处理:删除日志和索引,客户端必须先向用户确认     |
@@ -639,7 +641,7 @@ daemon 启动 agent 时只传入显式白名单里的环境变量,不继承自�
 
 - session 不存在,或不属于 Cycle:用 ACP 的 `-32002`,`data` 用 ACP 的 `SessionNotFoundErrorData`。
 - 协议版本不兼容:用 ACP 的 `-32022`。
-- 其余是 Cycle 自己的,取 -32010 到 -32019,避开 ACP 已用的码:
+- 其余是 Cycle 自己的,取 -32010 到 -32029,避开 ACP 已用的码(这个范围里有 `-32022`):
 
 | 码     | 名称                | 含义                                                                    |
 | ------ | ------------------- | ----------------------------------------------------------------------- |
@@ -653,6 +655,7 @@ daemon 启动 agent 时只传入显式白名单里的环境变量,不继承自�
 | -32017 | `connector_failed`  | connector 的授权服务器拒绝、不可达(§14)                                 |
 | -32018 | `daemon_stopped`    | daemon 停止时 turn 还在进行,turn 被打断(§8"daemon 停止时进行中的 turn") |
 | -32019 | `terminal_limit`    | 终端数到了上限(§8"终端")                                                |
+| -32020 | `plugin_failed`     | agent 的 plugin 机制没做成:找不到、取不到、被它拒绝(§15)                |
 
 ACP 以后可能占用这个范围里的码,所以 Cycle 的码在 schema 里集中定义,升级 ACP 时对照检查。
 
@@ -722,6 +725,7 @@ session 索引是另一个文件,记录 sessionId、agent id、agent 侧 session
 - `attentionSeq` 里"值得看"的记录是否还要包括用户取消的 turn(`stopReason: cancelled`)。现在按"都算",因为取消时用户通常在看,客户端会立刻标记已读。
 - `cycle/background` 要不要在 daemon 重启后重建:agent 进程已不在,v1 不重建。
 - connector(§14):loopback 回调的随机端口哪些授权服务器接受(没有在真实服务器上验证);agent 在云端 sandbox 时网关的地址;正在运行的 agent 要不要在 connector 变化后重启。
+- plugin(§15):项目级范围;运行中的 session 即时生效(Claude 有 `reloadPlugins`);来源自己声明要运行命令才能取到的 plugin;agent 给 plugin 服务器起的名字变了时怎么发现。
 
 ## 14. Connector
 
@@ -749,6 +753,8 @@ connector 是 Cycle 自己管理的 MCP 服务器:在 Cycle 里加一次、授�
 - `auth`:`{type: "none"}`,或 `{type: "oauth", clientId?, scopes?}`(只用于 http,否则 `oauth_needs_http`)。按 MCP 的授权规范:protected resource metadata(RFC 9728)、authorization server metadata(RFC 8414)、动态注册(RFC 7591)、PKCE S256、resource 参数(RFC 8707);服务器什么元数据都没有时,退回它所在源的 `/authorize`、`/token`、`/register`。`clientId` 只在服务器不支持动态注册时由用户填(否则 `no_registration`)。
 - `secrets`:用户填的密钥**的名字**。http 的 `headers` 加在每个发往服务器的请求上,stdio 的 `env` 是进程的环境变量。值只能写入,永不读出。`Host`、`Content-Type`、`Accept`、`Mcp-Session-Id` 这类由网关自己管的头不能设(`reserved_header`)。
 - `authorized`:daemon 有没有这个 connector 的 token。
+- `origin`(可缺):`{type: "plugin", agentId, pluginId, server}`,表示它是某个 agent 的 plugin 带来的 http 服务器(§15 "plugin 带的 MCP 服务器"),不是用户加的。这样的 connector 由 daemon 随 plugin 建立、停用和删除:`update` 只能写 `secrets`,改别的字段和 `remove` 都以 `managed` 拒绝;授权的三个方法照常。它只交给 `agentId` 那个 agent 的 session。没有 `origin` 的是用户自己加的。
+- `requires`(可缺):这个 connector 要用户填值的名字(plugin 的请求头里写的 `${NAME}`)。值经 `update` 的 `secrets.env` 写入;`secrets.env` 里列出的是已经有值的。有名字还没值时 `status.state` 是 `needs_auth`。
 - `status.state`:`disabled`(关着)、`needs_auth`(oauth 没有 token,或 token 被拒、刷新也失败)、`error`(附带 `status.reason`:`unreachable`、`auth_failed`、`spawn_failed`、`protocol`)、`ready`。它是 daemon 最近一次知道的情况,不是实时探测;daemon 重启后从 `ready` 或 `needs_auth` 重新开始。
 
 ### 方法(客户端 → daemon)
@@ -785,5 +791,72 @@ connector 是 Cycle 自己管理的 MCP 服务器:在 Cycle 里加一次、授�
 ### 错误
 
 - `id` 或 `flowId` 不存在、已用过、已过期:`-32002`。
-- 参数不合法:`-32602`,`data.reason` 是固定的词:`name_taken`、`insecure_url`、`oauth_needs_http`、`invalid_cwd`、`reserved_header`、`state_mismatch`、`no_registration`;名字格式不对是 schema 校验的 `-32602`。
+- 参数不合法:`-32602`,`data.reason` 是固定的词:`name_taken`、`insecure_url`、`oauth_needs_http`、`invalid_cwd`、`reserved_header`、`state_mismatch`、`no_registration`、`managed`;名字格式不对是 schema 校验的 `-32602`。
 - 授权服务器拒绝或不可达:`-32017`(`connector_failed`),`data.reason` 是 `auth_rejected` 或 `unreachable`,`detail` 只说状态码之类,不含 token。
+
+## 15. Plugin
+
+plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MCP 服务器)。**它归 agent**:格式、来源、安装位置都是那个 agent 的,daemon 让 agent 自己的机制去装,L1 只给出与 agent 无关的字段。理由、实测和取舍见决定笔记 [2026-11-23-plugins-are-the-agents-their-mcp-is-cycles](../.agents/notes/2026-11-23-plugins-are-the-agents-their-mcp-is-cycles.md)。能力 `plugins` 是支持 plugin 的 agent 的 id 列表;没有这个能力或列表为空时,客户端不显示 plugin 的入口。schema 在 `@cycle/protocol` 的 `plugins.ts`。
+
+### 模型
+
+```json
+{
+  "agentId": "claude",
+  "id": "linear@anthropic-plugin-directory",
+  "name": "linear",
+  "description": "Linear issue tracking integration.",
+  "version": "1.0.0",
+  "sourceId": "anthropic-plugin-directory",
+  "installed": true,
+  "enabled": true,
+  "scope": "user",
+  "contents": { "skills": 0, "commands": 0, "agents": 0, "hooks": 0, "mcpServers": 1 },
+  "servers": [{ "name": "linear", "by": "cycle", "connectorId": "3f0c…" }]
+}
+```
+
+- `agentId`:它是哪个 agent 的。`id`:在这个 agent 里唯一,**客户端不解析它**(Claude 的是 `名字@来源`,别的 agent 可以是别的)。
+- `name`、`description?`、`version?`:显示用,原样来自 plugin 或它的来源。
+- `sourceId`:它来自哪个来源(下面的 `PluginSource.id`)。
+- `installed`。只有已安装的才有后面这些:
+  - `enabled`:开着没有。
+  - `scope`:`user`(这台 daemon 上这个 agent 的所有 session)或 `project`。v1 只安装和启停 `user`。
+  - `contents`:它带了什么,各类的个数。`hooks`、`mcpServers` 和 `commands` 是会运行代码的部分。
+  - `servers`:它带的 MCP 服务器。`by: "cycle"` 是经 Cycle 的网关提供的,`connectorId` 是对应的 connector(§14,带 `origin`),登录和填密钥都在那个 connector 上做;`by: "agent"` 是 agent 自己启动的(stdio 等),Cycle 不经手。
+
+来源(`PluginSource`):`{agentId, id, name, kind, location?, removable}`。`kind` 是固定的词:`builtin`(agent 自带的目录,不能移除)、`git`、`directory`、`url`、`other`。`location` 是用户当初给的地址,显示用。
+
+### 方法(客户端 → daemon)
+
+| 方法                             | 参数                                            | 响应                            |
+| -------------------------------- | ----------------------------------------------- | ------------------------------- |
+| `_cycle/plugins/list`            | `{agentId}`                                     | `{sources, plugins}`(已安装的)  |
+| `_cycle/plugins/available`       | `{agentId, sourceId?, query?, cursor?, limit?}` | `{plugins, nextCursor?, total}` |
+| `_cycle/plugins/install`         | `{agentId, id, acknowledged: true}`             | `{plugin}`                      |
+| `_cycle/plugins/uninstall`       | `{agentId, id}`                                 | `{}`                            |
+| `_cycle/plugins/update`          | `{agentId, id}`                                 | `{plugin, updated}`             |
+| `_cycle/plugins/set_enabled`     | `{agentId, id, enabled}`                        | `{plugin}`                      |
+| `_cycle/plugins/sources/add`     | `{agentId, location, acknowledged: true}`       | `{source}`                      |
+| `_cycle/plugins/sources/remove`  | `{agentId, id}`                                 | `{}`                            |
+| `_cycle/plugins/sources/refresh` | `{agentId, id?}`                                | `{}`                            |
+
+- `available` 是可以装的(已装的也在里面,`installed` 为 `true`),按来源、再按名字排。内置目录有几千项,所以分页:`limit` 默认 50、最多 200;`query` 在名字和说明里找,不分大小写;`total` 是符合条件的总数。daemon 会缓存 agent 给的清单,`sources/refresh` 让它重新取(不给 `id` 是全部来源)。
+- **安装要确认**:plugin 可以在 daemon 的机器上运行代码(hook、命令、MCP 服务器)。`install` 和 `sources/add` 必须带 `acknowledged: true`,客户端在用户确认之后才带;没带是 `-32602`、`not_acknowledged`。装完以后 `contents` 说明它实际带了什么。
+- `sources/add` 的 `location` 交给 agent 解释(Claude:`owner/repo`、git 或 https 地址、daemon 机器上的路径)。
+- `uninstall` 同时删掉它带来的 connector 和它们的凭证;客户端必须先向用户确认。
+- 这些操作由 agent 自己的机制执行(Claude:用和 session 相同的白名单环境、在 Cycle 托管的配置目录里运行 `claude plugin …`),可能联网、要几秒到几十秒。同一个 agent 的写操作一次只做一个,后来的排队。
+- 有变化时 daemon 向每个连接发 `_cycle/plugins_changed`,参数 `{agentId}`,客户端重新 `list`。plugin 带来的 connector 变了,另有 `_cycle/connectors_changed`。
+- **生效**:下次启动这个 agent 时(新 session,或恢复一个 session);正在运行的 agent 不变。
+
+### plugin 带的 MCP 服务器
+
+- plugin 已安装并启用时,daemon 为它声明的每个 **http** 服务器建一个带 `origin` 的 connector(§14):地址是 plugin 写的;请求头里不含变量的原样带上,含 `${NAME}` 的把名字列进 `requires`,值由用户填;一开始按不需要登录对待,建立时探一次,探到或之后转发时收到 401,就改成 `auth: {type: "oauth"}`、`needs_auth`。plugin 停用,它们随之停用(凭证保留);卸载,随之删除;更新后地址变了,按 §14 作废旧 token。
+- 启动这个 agent 时,daemon 把它们放进 L2 的 `mcpServers`,**名字用 agent 给这个服务器起的名字**(由 agent 的 plugin 实现给出;Claude 是 `plugin:<plugin 名>:<服务器名>`)。agent 见到同名条目,就用它顶替 plugin 自己声明的那个:请求都经网关,token 不到达 agent,工具名和 plugin 自己写的一致。还没登录的也照样给(网关回 401,agent 看到的是连不上),否则 agent 会绕过网关自己去连、自己去登录。
+- 地址不是 `https`(或指向本机的 `http`)、地址里带变量、或者不是 http 的服务器(stdio、sse),不建 connector,由 agent 自己启动,`by: "agent"`。它们在 agent 的进程里运行,用的是 agent 的环境(§10 "环境变量"的白名单)。
+
+### 错误
+
+- `agentId` 不存在或不支持 plugin、`id` 不存在:`-32002`。
+- 没确认:`-32602`,`data.reason` 是 `not_acknowledged`。
+- agent 的机制没做成:`-32020`(`plugin_failed`),`data.reason` 是固定的词:`not_found`(来源里没有这个 plugin,或来源取不到)、`needs_command`(来源要先运行它声明的命令,v1 不支持)、`unavailable`(agent 的程序不在或起不来)、`timeout`、`failed`(其余);`detail` 是 agent 的原话,供人阅读。

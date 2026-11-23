@@ -1,0 +1,269 @@
+import {
+  CycleErrorCode,
+  PLUGINS_PAGE_DEFAULT,
+  type Plugin,
+  type PluginFailureReason,
+  PluginFailureReasonSchema,
+  type PluginSource,
+} from "@cycle/protocol";
+import type { ConnectorService, PluginServerSpec } from "./connectors/service.ts";
+import { RESOURCE_NOT_FOUND, RpcError } from "./errors.ts";
+
+/**
+ * Plugins (docs/protocol.md §15, note 2026-11-23-plugins-are-the-agents-their-mcp-is-cycles). They are each agent's
+ * own: an agent that has them gives a `PluginProvider`, which is that agent's machinery in words any agent's plugins
+ * can be said in. The daemon keeps no list of its own: it asks, remembers the answer for a while, and makes the
+ * connectors that stand for the http servers plugins bring.
+ */
+
+export type ProviderSource = Omit<PluginSource, "agentId">;
+
+export type ProviderServer = {
+  /** As the plugin names it. */
+  name: string;
+  /** As the agent's sessions name it: what a server given to a session is called to stand in for it. */
+  agentName: string;
+  /** Present when it is a plain http server, which Cycle's gateway can serve in the agent's place. */
+  http?: { url: string; headers: Record<string, string> };
+};
+
+export type ProviderPlugin = Omit<Plugin, "agentId" | "servers"> & { servers?: ProviderServer[] };
+
+export type ProviderSnapshot = {
+  sources: ProviderSource[];
+  installed: ProviderPlugin[];
+  /** What can be installed, the installed ones among them. */
+  available: ProviderPlugin[];
+};
+
+/**
+ * An agent's plugin machinery. A method that fails throws an error with a `reason` (one of protocol.md §15's words)
+ * and, for a person, a `detail`.
+ */
+export interface PluginProvider {
+  snapshot(): Promise<ProviderSnapshot>;
+  install(id: string): Promise<void>;
+  uninstall(id: string): Promise<void>;
+  update(id: string): Promise<{ updated: boolean }>;
+  setEnabled(id: string, enabled: boolean): Promise<void>;
+  /** Returns the id of the source added. */
+  addSource(location: string): Promise<string>;
+  removeSource(id: string): Promise<void>;
+  refreshSource(id?: string): Promise<void>;
+}
+
+/** How long an agent's answer is believed before it is asked again. Every change made here asks again at once. */
+const SNAPSHOT_MS = 60_000;
+
+type View = { sources: PluginSource[]; installed: Plugin[]; available: Plugin[] };
+
+const failure = (error: unknown): RpcError => {
+  if (error instanceof RpcError) return error;
+  const given = (error as { reason?: unknown; detail?: unknown } | null) ?? {};
+  const parsed = PluginFailureReasonSchema.safeParse(given.reason);
+  const reason: PluginFailureReason = parsed.success ? parsed.data : "failed";
+  const detail = typeof given.detail === "string" && given.detail !== "" ? given.detail : undefined;
+  return new RpcError(CycleErrorCode.PluginFailed, "The agent's plugins could not do that", {
+    reason,
+    ...(detail !== undefined ? { detail } : {}),
+  });
+};
+
+export class PluginService {
+  readonly #providers: ReadonlyMap<string, PluginProvider>;
+  readonly #connectors: ConnectorService;
+  readonly #onChanged: (agentId: string) => void;
+  readonly #now: () => number;
+  readonly #views = new Map<string, { at: number; view: Promise<View> }>();
+  /** The last change queued for each agent: its machinery writes its own files, one writer at a time. */
+  readonly #queues = new Map<string, Promise<unknown>>();
+
+  constructor(options: {
+    providers: ReadonlyMap<string, PluginProvider>;
+    connectors: ConnectorService;
+    onChanged: (agentId: string) => void;
+    now?: () => number;
+  }) {
+    this.#providers = options.providers;
+    this.#connectors = options.connectors;
+    this.#onChanged = options.onChanged;
+    this.#now = options.now ?? Date.now;
+  }
+
+  /** The agents that have plugins. */
+  agents(): string[] {
+    return [...this.#providers.keys()];
+  }
+
+  #provider(agentId: string): PluginProvider {
+    const provider = this.#providers.get(agentId);
+    if (provider === undefined) {
+      throw new RpcError(RESOURCE_NOT_FOUND, "This agent has no plugins", { agentId });
+    }
+    return provider;
+  }
+
+  async #load(agentId: string): Promise<View> {
+    let snapshot: ProviderSnapshot;
+    try {
+      snapshot = await this.#provider(agentId).snapshot();
+    } catch (error) {
+      throw failure(error);
+    }
+    // The http servers of what is installed become connectors, switched as their plugin is.
+    const specs: PluginServerSpec[] = [];
+    for (const plugin of snapshot.installed) {
+      for (const server of plugin.servers ?? []) {
+        if (server.http === undefined) continue;
+        specs.push({
+          pluginId: plugin.id,
+          enabled: plugin.enabled === true,
+          server: server.name,
+          agentName: server.agentName,
+          url: server.http.url,
+          headers: server.http.headers,
+        });
+      }
+    }
+    const made = await this.#connectors.syncPlugins(agentId, specs);
+    const view = (plugin: ProviderPlugin): Plugin => {
+      const { servers, ...rest } = plugin;
+      if (servers === undefined) return { ...rest, agentId };
+      return {
+        ...rest,
+        agentId,
+        servers: servers.map((server) => {
+          const connectorId = made.get(plugin.id)?.get(server.name);
+          return connectorId !== undefined
+            ? { name: server.name, by: "cycle" as const, connectorId }
+            : { name: server.name, by: "agent" as const };
+        }),
+      };
+    };
+    const order = new Map(snapshot.sources.map((source, at) => [source.id, at]));
+    const available = snapshot.available.map(view).sort((a, b) => {
+      const bySource = (order.get(a.sourceId) ?? 0) - (order.get(b.sourceId) ?? 0);
+      return bySource !== 0 ? bySource : a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+    });
+    return {
+      sources: snapshot.sources.map((source) => ({ ...source, agentId })),
+      installed: snapshot.installed.map(view).sort((a, b) => a.name.localeCompare(b.name)),
+      available,
+    };
+  }
+
+  #view(agentId: string): Promise<View> {
+    const held = this.#views.get(agentId);
+    if (held !== undefined && this.#now() - held.at < SNAPSHOT_MS) return held.view;
+    const view = this.#load(agentId);
+    const entry = { at: this.#now(), view };
+    this.#views.set(agentId, entry);
+    // An answer that failed is not kept.
+    view.catch(() => {
+      if (this.#views.get(agentId) === entry) this.#views.delete(agentId);
+    });
+    return view;
+  }
+
+  /** One change at a time for an agent; then what it has is asked again and everyone is told. */
+  #change<T>(agentId: string, run: (provider: PluginProvider) => Promise<T>): Promise<T> {
+    const provider = this.#provider(agentId);
+    const previous = this.#queues.get(agentId) ?? Promise.resolve();
+    const result = previous.then(async () => {
+      try {
+        return await run(provider);
+      } catch (error) {
+        throw failure(error);
+      } finally {
+        // Asked again whether it worked or not: a change that failed halfway is seen as it is.
+        this.#views.delete(agentId);
+      }
+    });
+    const settled = result.then(
+      () => this.#view(agentId).catch(() => undefined),
+      () => undefined,
+    );
+    this.#queues.set(agentId, settled);
+    void settled.then(() => {
+      if (this.#queues.get(agentId) === settled) this.#queues.delete(agentId);
+    });
+    void result.then(
+      () => this.#onChanged(agentId),
+      () => undefined,
+    );
+    return result;
+  }
+
+  async #installed(agentId: string, id: string): Promise<Plugin> {
+    const plugin = (await this.#view(agentId)).installed.find((p) => p.id === id);
+    if (plugin === undefined) throw new RpcError(RESOURCE_NOT_FOUND, "No such plugin", { id });
+    return plugin;
+  }
+
+  async list(agentId: string): Promise<{ sources: PluginSource[]; plugins: Plugin[] }> {
+    const view = await this.#view(agentId);
+    return { sources: view.sources, plugins: view.installed };
+  }
+
+  async available(params: {
+    agentId: string;
+    sourceId?: string | undefined;
+    query?: string | undefined;
+    cursor?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<{ plugins: Plugin[]; nextCursor?: string; total: number }> {
+    const view = await this.#view(params.agentId);
+    const query = params.query?.trim().toLowerCase() ?? "";
+    const found = view.available.filter(
+      (plugin) =>
+        (params.sourceId === undefined || plugin.sourceId === params.sourceId) &&
+        (query === "" ||
+          plugin.name.toLowerCase().includes(query) ||
+          (plugin.description?.toLowerCase().includes(query) ?? false)),
+    );
+    const parsed = Number.parseInt(params.cursor ?? "0", 10);
+    const from = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+    const to = from + (params.limit ?? PLUGINS_PAGE_DEFAULT);
+    return {
+      plugins: found.slice(from, to),
+      ...(to < found.length ? { nextCursor: String(to) } : {}),
+      total: found.length,
+    };
+  }
+
+  async install(agentId: string, id: string): Promise<Plugin> {
+    await this.#change(agentId, (provider) => provider.install(id));
+    return this.#installed(agentId, id);
+  }
+
+  async uninstall(agentId: string, id: string): Promise<void> {
+    await this.#change(agentId, (provider) => provider.uninstall(id));
+    // Its connectors go with it: asked again now, not when someone next looks.
+    await this.#view(agentId).catch(() => undefined);
+  }
+
+  async update(agentId: string, id: string): Promise<{ plugin: Plugin; updated: boolean }> {
+    const { updated } = await this.#change(agentId, (provider) => provider.update(id));
+    return { plugin: await this.#installed(agentId, id), updated };
+  }
+
+  async setEnabled(agentId: string, id: string, enabled: boolean): Promise<Plugin> {
+    await this.#change(agentId, (provider) => provider.setEnabled(id, enabled));
+    return this.#installed(agentId, id);
+  }
+
+  async addSource(agentId: string, location: string): Promise<PluginSource> {
+    const id = await this.#change(agentId, (provider) => provider.addSource(location));
+    const source = (await this.#view(agentId)).sources.find((s) => s.id === id);
+    if (source === undefined) throw new RpcError(RESOURCE_NOT_FOUND, "No such source", { id });
+    return source;
+  }
+
+  async removeSource(agentId: string, id: string): Promise<void> {
+    await this.#change(agentId, (provider) => provider.removeSource(id));
+  }
+
+  async refreshSource(agentId: string, id?: string): Promise<void> {
+    await this.#change(agentId, (provider) => provider.refreshSource(id));
+  }
+}

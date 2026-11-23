@@ -38,6 +38,8 @@ export const connectClient = async (
   let listChanged = 0;
   let defaultsChanged = 0;
   let connectorsChanged = 0;
+  /** The agent of every `_cycle/plugins_changed` this client was sent, in order. */
+  const pluginsChanged: string[] = [];
   const app = client({ name: "test-client" })
     .onConnect((connection) => {
       agent = connection.agent;
@@ -78,6 +80,13 @@ export const connectClient = async (
       (p: unknown) => p as object,
       () => {
         connectorsChanged++;
+      },
+    )
+    .onNotification(
+      "_cycle/plugins_changed",
+      (p: unknown) => p as { agentId: string },
+      ({ params }) => {
+        pluginsChanged.push(params.agentId);
       },
     )
     .onNotification(
@@ -141,6 +150,7 @@ export const connectClient = async (
     listChanged: () => listChanged,
     defaultsChanged: () => defaultsChanged,
     connectorsChanged: () => connectorsChanged,
+    pluginsChanged,
     /** Every `_cycle/plan_usage_changed` this client was sent, in order. */
     planUsage,
     terminal,
