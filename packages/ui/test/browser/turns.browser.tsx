@@ -732,12 +732,14 @@ test("a call at work shows on its row how long it has been going, from when the 
     ...tool("slow", "Bash", "in_progress", { command: "make", description: "Build it" }),
   );
   const row = await screen.findByRole("button", { name: /Build it/ });
+  // The agent's sentence has no tense: that it is at work is written out.
+  expect(row.querySelector('[data-slot="tool-status"]')?.textContent).toBe("in progress");
   await waitFor(() =>
     expect(row.querySelector('[data-slot="tool-elapsed"]')?.textContent).toMatch(/^[34]s$/),
   );
 });
 
-test("a finished call leads with what kind it was; one at work, waiting, failed or mixed does not", async () => {
+test("a tool row is text only: no icon, dot, spinner, cross or chevron, whatever its state", async () => {
   const { log } = await open(
     you("u1"),
     say("m1"),
@@ -748,28 +750,36 @@ test("a finished call leads with what kind it was; one at work, waiting, failed 
     ...finished("s1", "Grep", { pattern: "a" }, {}),
     ...finished("s2", "Glob", { pattern: "*.ts" }, {}),
     say("m4"),
-    ...finished("m-1", "Read", { file_path: "b.ts" }, {}),
-    ...finished("m-2", "Bash", { command: "make" }, {}),
+    ...tool("g", "Bash", "in_progress", { command: "make test" }),
     say("m5"),
     ...tool("p", "Bash", "pending", { command: "rm -rf build" }),
   );
-  const lead = (id: string) =>
-    log.querySelector(`[data-item-id="${id}"] [data-slot="tool-lead"]`) as HTMLElement;
-  const leadOfCard = (text: string) =>
-    [...log.querySelectorAll<HTMLElement>('[data-kind="work"] > button')]
-      .find((b) => b.textContent?.includes(text))
-      ?.querySelector('[data-slot="tool-lead"]') as HTMLElement;
-  const kindOf = (el: HTMLElement) =>
-    el.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind");
-  await waitFor(() => expect(kindOf(lead("r"))).toBe("read"));
-  expect(lead("x").querySelector('[data-tone="danger"]')).not.toBeNull();
-  expect(kindOf(lead("x"))).toBeUndefined();
-  // A stretch of one kind is marked as that kind; a mixed one keeps the dot.
-  expect(kindOf(leadOfCard("2 searches"))).toBe("search");
-  expect(kindOf(leadOfCard("ran 1 command"))).toBeUndefined();
-  expect(leadOfCard("ran 1 command").querySelector('[data-slot="tool-dot"]')).not.toBeNull();
-  // Waiting (for an answer, say) is not done: no kind yet.
-  expect(kindOf(lead("p"))).toBeUndefined();
+  await waitFor(() => expect(log.querySelectorAll('[data-kind="tool"]').length).toBeGreaterThan(3));
+  const rows = log.querySelectorAll(':is([data-kind="tool"], [data-kind="work"]) > button');
+  for (const row of rows) {
+    expect(row.querySelector("svg, [data-slot='spinner'], [data-slot='tool-lead']")).toBeNull();
+    // Nor the chevron ui-sdk draws after a trigger without an icon.
+    expect(getComputedStyle(row, "::after").content).toBe("none");
+  }
+  // Open (a failure starts open), what it holds is text too: the end of a command is a word, not a tick or a cross.
+  await waitFor(() =>
+    expect(log.querySelector('[data-item-id="x"] [data-slot="tool-end"]')).not.toBeNull(),
+  );
+  expect(log.querySelector('[data-item-id="x"] [data-slot="collapsible-panel"] svg')).toBeNull();
+  // Failed is said in words, in red; going, in the verb's tense.
+  const failed = log.querySelector('[data-item-id="x"] > button') as HTMLElement;
+  expect(failed.querySelector('[data-slot="tool-status"]')?.textContent).toBe("failed");
+  expect(log.querySelector('[data-item-id="g"] [data-slot="tool-verb"]')?.textContent).toMatch(
+    /^Running/,
+  );
+  // Waiting, there is no tense to say it: the word is written out.
+  expect(
+    log.querySelector('[data-item-id="p"] > button [data-slot="tool-status"]')?.textContent,
+  ).toBe("pending");
+  // In the secondary ink, not the body's.
+  const verb = log.querySelector('[data-item-id="r"] [data-slot="tool-verb"]') as HTMLElement;
+  const body = log.querySelector('[data-slot="message"]') as HTMLElement;
+  expect(getComputedStyle(verb).color).not.toBe(getComputedStyle(body).color);
 });
 
 test("a command that only searches, reads or lists says so; with the agent's sentence, that sentence is the line", async () => {
@@ -785,15 +795,8 @@ test("a command that only searches, reads or lists says so; with the agent's sen
   );
   const row = await screen.findByRole("button", { name: /Searched/ });
   expect(row.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("'useSteady' in src");
-  expect(row.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind")).toBe(
-    "search",
-  );
   const described = screen.getByRole("button", { name: /Look at the config/ });
   expect(described.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("");
-  // Described, it stays a command: in its mark too.
-  expect(described.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind")).toBe(
-    "run",
-  );
   // A stretch of them is counted for what they did.
   expect(log.textContent).toContain("Read 2 files");
 });
@@ -1405,8 +1408,6 @@ test("a sub-agent sent to the background shows no answer from its launch; one th
   });
   const [background, bad] = cards as [HTMLElement, HTMLElement];
   expect(background.querySelector('[data-slot="subagent-answer"]')).toBeNull();
-  // Sent to the background, it is not done though its call is: no "done" mark for it.
-  expect(background.querySelector('[data-slot="tool-kind"]')).toBeNull();
   expect(background.textContent).not.toContain("Async agent launched");
   expect(bad.getAttribute("data-status")).toBe("failed");
   await waitFor(() => expect(bad.textContent).toContain("Fix it."));

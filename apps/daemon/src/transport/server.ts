@@ -25,7 +25,12 @@ export class NotASocketError extends Error {
   }
 }
 
-/** True if a process is accepting connections at `path`. */
+/**
+ * True if a process is accepting connections at `path`. A connection that is reset was taken by a listener: a daemon
+ * that is stopping still holds its socket and hangs up on whoever connects (serve.ts), and Bun sometimes reports that
+ * as a failed connect (ECONNRESET). That daemon is still running. Only no socket file (ENOENT) or no one behind it
+ * (ECONNREFUSED) and the like mean nothing is there.
+ */
 export const isListening = async (path: string): Promise<boolean> => {
   try {
     const socket = await Bun.connect({
@@ -34,8 +39,8 @@ export const isListening = async (path: string): Promise<boolean> => {
     });
     socket.end();
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as { code?: unknown } | null)?.code === "ECONNRESET";
   }
 };
 
@@ -49,6 +54,12 @@ export const isListening = async (path: string): Promise<boolean> => {
 export const listenUnix = async (options: {
   path: string;
   onConnection: (channel: ServerChannel) => void;
+  /**
+   * Done the moment the socket is bound, before anything else runs: only the one that holds the socket does it, and
+   * what it writes is there by the time a connection is taken (serve.ts writes the pid file here). If it throws, the
+   * socket is let go.
+   */
+  onListening?: () => void;
 }): Promise<{ close: () => void }> => {
   const { path } = options;
   const folder = dirname(path);
@@ -96,11 +107,23 @@ export const listenUnix = async (options: {
           },
         },
       });
+    } catch (error) {
+      // Another daemon bound it between the look above and here (two started at once): it is the one that runs.
+      if ((error as { code?: unknown } | null)?.code === "EADDRINUSE")
+        throw new AlreadyRunningError(path);
+      throw error;
     } finally {
       process.umask(before);
     }
   })();
-  await chmod(path, 0o600);
+  try {
+    options.onListening?.();
+    await chmod(path, 0o600);
+  } catch (error) {
+    server.stop(true);
+    await rm(path, { force: true });
+    throw error;
+  }
   return {
     close: () => {
       server.stop(true);

@@ -5,3 +5,4 @@ export * from "./edits.ts";
 export * from "./facts.ts";
 export * from "./proposal.ts";
 export * from "./resend.ts";
+export * from "./review.ts";

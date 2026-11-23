@@ -35,6 +35,7 @@ import { ImageBlockView } from "./image.tsx";
 import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
 import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
+import { ReviewCard } from "./review.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { SubagentCard, subagentWorkOf } from "./subagent.tsx";
@@ -149,7 +150,8 @@ const linkName = (block: Block): string =>
       ? block.uri
       : block.type;
 
-function Blocks({ blocks, from }: { blocks: Block[]; from: "agent" | "user" }) {
+/** The words of a sent message, with the chips of what they name; its attachments are drawn above it. */
+function Blocks({ blocks }: { blocks: Block[] }) {
   const { t } = useI18n();
   const store = useAppStore();
   const filesRoot = useAppState(filesRootOf);
@@ -167,6 +169,7 @@ function Blocks({ blocks, from }: { blocks: Block[]; from: "agent" | "user" }) {
         store.track("file_shown_from_conversation", {
           target: folder ? "folder" : "file",
           from: "mention",
+          line: false,
         });
       },
       t("files.showInFiles"),
@@ -179,14 +182,6 @@ function Blocks({ blocks, from }: { blocks: Block[]; from: "agent" | "user" }) {
         .map(({ block, key }) =>
           block.type === "text" ? (
             <span key={key}>{withChips(String(block.text), chips)}</span>
-          ) : block.type === "image" ? (
-            <ImageBlockView key={key} block={block} from={from} />
-          ) : block.type === "resource" ? (
-            // A file in the message: its name on a chip. What is in it is never drawn (it is the person's, and may be HTML).
-            <span data-slot="file-chip" key={key} title={resourceName(block)}>
-              <AttachIcon size={12} />
-              <span data-slot="attachment-name">{resourceName(block) ?? block.type}</span>
-            </span>
           ) : isMention(block, words) ? null : sessionMentionsOf([block])[0] !== undefined ? (
             // A session the words no longer name: still its chip, so what the agent was given is never invisible.
             <SessionChip
@@ -205,6 +200,47 @@ function Blocks({ blocks, from }: { blocks: Block[]; from: "agent" | "user" }) {
           ),
         )}
     </>
+  );
+}
+
+/** What a person attached to a message, rather than wrote in it: its pictures, and the files it carries whole. */
+const isAttached = (block: Block): boolean => block.type === "image" || block.type === "resource";
+
+/**
+ * What was attached to a sent message, above its words (CYCL-141): the pictures as a grid of thumbnails, three to five
+ * to a row as the column allows, each opening large; then the files, by name. The words are no longer cut by them.
+ */
+function Attached({ blocks }: { blocks: Block[] }) {
+  const { t } = useI18n();
+  // The blocks of a sent message never change: their place is who they are.
+  const keyed = blocks.map((block, index) => ({ block, key: `${block.type}-${index}` }));
+  const images = keyed.filter(({ block }) => block.type === "image");
+  const files = keyed.filter(({ block }) => block.type === "resource");
+  return (
+    <section data-slot="message-attachments" aria-label={t("message.attachments")}>
+      {images.length > 0 ? (
+        <ul data-slot="image-grid">
+          {images.map(({ block, key }) => (
+            <li key={key}>
+              <ImageBlockView block={block} from="user" />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {files.map(({ block, key }) => (
+        <FileChip key={key} block={block} />
+      ))}
+    </section>
+  );
+}
+
+/** A file in a sent message: its name on a chip. What is in it is never drawn (it is the person's, and may be HTML). */
+function FileChip({ block }: { block: Block }) {
+  return (
+    <span data-slot="file-chip" title={resourceName(block)}>
+      <AttachIcon size={12} />
+      <span data-slot="attachment-name">{resourceName(block) ?? block.type}</span>
+    </span>
   );
 }
 
@@ -310,11 +346,16 @@ const BlockView = memo(function BlockView({
   switch (block.kind) {
     case "user": {
       const blocks = block.item.blocks;
+      const attached = blocks.filter(isAttached);
+      const said = blocks.filter((b) => !isAttached(b));
       return (
         <>
-          <div data-slot="message" data-role="user">
-            <Blocks blocks={blocks} from="user" />
-          </div>
+          {attached.length > 0 ? <Attached blocks={attached} /> : null}
+          {said.length > 0 ? (
+            <div data-slot="message" data-role="user">
+              <Blocks blocks={said} />
+            </div>
+          ) : null}
           <MessageActions
             kind="user"
             text={blocks.some(hasWords) ? () => textOf(blocks) : undefined}
@@ -354,6 +395,8 @@ const BlockView = memo(function BlockView({
         />
       );
     }
+    case "review":
+      return <ReviewCard tool={block.tool} review={block.review} />;
     case "failed":
       return <ToolCard tool={block.tool} />;
     case "end":
@@ -684,10 +727,11 @@ export function ConversationView({
             root: filesRoot,
             open: (file) => {
               const folder = file.folder === true;
-              store.showInFiles(file.path, { folder });
+              store.showInFiles(file.path, { folder, line: file.line, end: file.end });
               store.track("file_shown_from_conversation", {
                 target: folder ? "folder" : "file",
                 from: "message",
+                line: file.line !== undefined,
               });
             },
           },

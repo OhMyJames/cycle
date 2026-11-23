@@ -6,10 +6,10 @@
 import { insideFolder } from "./files-view.ts";
 
 /**
- * A file named in a reply: where it is, inside the session's folder, and the line named with it, if any. A link that ends
- * in `/` names a folder.
+ * A file named in a reply: where it is, inside the session's folder, and the line named with it, if any, with the last
+ * line of a range (`a.ts:12-20`, `a.ts#L12-L20`) when one is named past it. A link that ends in `/` names a folder.
  */
-export type FileReference = { path: string; line?: number; folder?: true };
+export type FileReference = { path: string; line?: number; end?: number; folder?: true };
 
 /**
  * A bare name counts as a file only with one of these extensions, since inline code is full of `state.active` and
@@ -22,17 +22,25 @@ const NAME_EXTENSIONS = new Set(
   ).split(" "),
 );
 
-/** `path:12`, `path:12:3`, `path:12-20`, `path#L12` and `path#L12-L20`, as editors and agents write them. */
-const LOCATION = /^(.+?)(?::(\d+)(?:[:-]\d+)?|#L(\d+)(?:-L?\d+)?)$/;
+/**
+ * `path:12`, `path:12:3`, `path:12-20`, `path#L12` and `path#L12-L20`, as editors and agents write them. After `:12`, a
+ * `:3` is a column, not a line, and a range only ends with `-20`.
+ */
+const LOCATION = /^(.+?)(?::(\d+)(?::\d+|-(\d+))?|#L(\d+)(?:-L?(\d+))?)$/;
 
 /** Characters a path in prose never has, but code, commands and globs do. */
 const NOT_A_PATH = /[\s<>"'`|*?(){}[\]$;,=!^\\]/;
 
-const located = (written: string): { path: string; line?: number } => {
+type Located = { path: string; line?: number; end?: number };
+
+const located = (written: string): Located => {
   const match = LOCATION.exec(written);
   if (match?.[1] === undefined) return { path: written };
-  const line = Number(match[2] ?? match[3]);
-  return line >= 1 ? { path: match[1], line } : { path: match[1] };
+  const line = Number(match[2] ?? match[4]);
+  if (!(line >= 1)) return { path: match[1] };
+  // A range that ends where it starts, or before, is the one line.
+  const end = Number(match[3] ?? match[5]);
+  return end > line ? { path: match[1], line, end } : { path: match[1], line };
 };
 
 /**
@@ -52,15 +60,15 @@ const inside = (path: string, root: string): string | undefined => {
 };
 
 const found = (
-  path: string,
-  line: number | undefined,
+  { path, line, end }: Located,
   root: string,
   folder = false,
 ): FileReference | undefined => {
   const at = inside(path, root);
   if (at === undefined) return undefined;
   if (folder) return { path: at, folder: true };
-  return line === undefined ? { path: at } : { path: at, line };
+  if (line === undefined) return { path: at };
+  return end === undefined ? { path: at, line } : { path: at, line, end };
 };
 
 /** `github.com/user/repo.git`, `example.com/index.html`: an address without its scheme, not a folder of the session. */
@@ -72,14 +80,15 @@ export const codeReference = (text: string, root: string): FileReference | undef
   const trimmed = text.trim();
   if (trimmed === "" || trimmed.includes("://") || NOT_A_PATH.test(trimmed)) return undefined;
   if (/^[~@-]/.test(trimmed)) return undefined;
-  const { path, line } = located(trimmed);
+  const where = located(trimmed);
+  const { path } = where;
   if (DOMAIN.test(path)) return undefined;
   const name = path.split("/").at(-1) ?? "";
   // Without an extension, even a whole path could as well be a folder: only a file is opened from inline code.
   const extension = /\.([A-Za-z][\w-]*)$/.exec(name)?.[1];
   if (extension === undefined) return undefined;
   if (!path.includes("/") && !NAME_EXTENSIONS.has(extension.toLowerCase())) return undefined;
-  return found(path, line, root);
+  return found(where, root);
 };
 
 /**
@@ -115,9 +124,9 @@ export const linkReference = (
     return undefined;
   }
   const [beforeQuery = ""] = decoded.split("?");
-  const { path, line } = located(beforeQuery);
-  const [bare = ""] = path.split("#");
-  return bare === "" ? undefined : found(bare, line, root, bare.endsWith("/"));
+  const where = located(beforeQuery);
+  const [bare = ""] = where.path.split("#");
+  return bare === "" ? undefined : found({ ...where, path: bare }, root, bare.endsWith("/"));
 };
 
 /**

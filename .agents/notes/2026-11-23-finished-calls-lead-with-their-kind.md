@@ -1,8 +1,9 @@
 # Agent Note: 完成的工具行，行首用类型图标
 
-Status: accepted
+Status: superseded
 Date: 2026-11-23
 Basis: CYCL-130（CYCL-122 对齐 cycle_v2 的一部分）。负责人 2026-11-23 在两个方案里选了"类型图标"。参照 old-cycle 的做法：运行中、等待、失败显示状态，完成后显示类型图标。
+Superseded by: [工具行只有文字](2026-11-23-tool-rows-are-text-only.md)
 
 ## Problem
 

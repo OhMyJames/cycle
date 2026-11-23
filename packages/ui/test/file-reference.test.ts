@@ -11,7 +11,13 @@ test("inline code that names a file of the folder, relative or absolute, with a 
     path: "packages/ui/src/app.tsx",
     line: 364,
   });
-  expect(codeReference("src/a.ts#L12-L20", ROOT)).toEqual({ path: "src/a.ts", line: 12 });
+  expect(codeReference("src/a.ts#L12-L20", ROOT)).toEqual({ path: "src/a.ts", line: 12, end: 20 });
+  expect(codeReference("src/a.ts:12-20", ROOT)).toEqual({ path: "src/a.ts", line: 12, end: 20 });
+  expect(codeReference("src/a.ts#L12-20", ROOT)).toEqual({ path: "src/a.ts", line: 12, end: 20 });
+  // A column is not the end of a range; a range that does not go past its start is its one line.
+  expect(codeReference("src/a.ts:12:3", ROOT)).toEqual({ path: "src/a.ts", line: 12 });
+  expect(codeReference("src/a.ts:12-12", ROOT)).toEqual({ path: "src/a.ts", line: 12 });
+  expect(codeReference("src/a.ts:12-4", ROOT)).toEqual({ path: "src/a.ts", line: 12 });
   expect(codeReference("/home/dev/cycle/README.md", ROOT)).toEqual({ path: "README.md" });
   expect(codeReference("./docs/../README.md", ROOT)).toEqual({ path: "README.md" });
   expect(codeReference("package.json", ROOT)).toEqual({ path: "package.json" });
@@ -50,6 +56,11 @@ test("a link to a path is one to show; an address, a fragment or a path outside 
   expect(linkReference("cycle-file:/home/dev/cycle/a%20b.md#L3", ROOT)).toEqual({
     path: "a b.md",
     line: 3,
+  });
+  expect(linkReference("cycle-file:src/x.ts#L3-L9", ROOT)).toEqual({
+    path: "src/x.ts",
+    line: 3,
+    end: 9,
   });
   expect(linkReference("file:///home/dev/cycle/x.ts", ROOT)).toEqual({ path: "x.ts" });
   expect(linkReference("cycle-file:file:///home/dev/cycle/x.ts", ROOT)).toEqual({ path: "x.ts" });
