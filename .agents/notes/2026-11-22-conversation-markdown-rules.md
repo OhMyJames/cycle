@@ -47,3 +47,4 @@ agent 的回复用 Streamdown 2.8 加 Shiki 画。高亮、复制、HTML 与链�
 ## Related
 
 - 第 7 条里 Mermaid 的部分已由 [Mermaid 以图片显示](2026-11-22-mermaid-diagrams-as-images.md) 取代(2026-11-22);数学公式仍不做。
+- "不适用"里的逐字淡入后来改为采用，理由不同，见 [流式回复逐字淡入](2026-11-22-streaming-reply-fades-in.md)。
