@@ -1290,6 +1290,19 @@ export class AppStore {
       );
   };
 
+  /**
+   * Stops one sub-agent of the open session (CYCL-143). Its end shows on its card as the agent tells it. True: it is
+   * being stopped; false: there was nothing to stop (it ended, or the agent that ran it is gone); undefined: the ask
+   * failed, and the error is shown.
+   */
+  stopSubagent = async (childId: string, background: boolean): Promise<boolean | undefined> => {
+    const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.#state;
+    if (environmentId === undefined || sessionId === undefined) return undefined;
+    return await this.#attempt(() =>
+      this.#bridge.stopSubagent(environmentId, sessionId, childId, background),
+    );
+  };
+
   archiveSession = async (sessionId: string, archived: boolean): Promise<void> => {
     const environmentId = this.#state.selectedEnvironment;
     if (environmentId === undefined) return;

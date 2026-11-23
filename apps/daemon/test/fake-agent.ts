@@ -65,6 +65,8 @@ export const fakeAgent = (
     steers: [] as string[],
     blocks: [] as unknown[][],
     cancels: 0,
+    /** A cancel in a sub-agent's session (ACP v2 child, CYCL-143): its id. It is not the turn's. */
+    childCancels: [] as string[],
     launches: 0,
     /** Launches asked for, including one still held. */
     launchRequests: 0,
@@ -135,7 +137,11 @@ export const fakeAgent = (
         }
         return { configOptions: nextOptions as never };
       })
-      .onNotification(methods.agent.session.cancel, () => {
+      .onNotification(methods.agent.session.cancel, ({ params }) => {
+        if (params.sessionId.startsWith("task-")) {
+          log.childCancels.push(params.sessionId);
+          return;
+        }
         log.cancels++;
         for (const resolve of cancelResolvers.splice(0)) resolve();
       })

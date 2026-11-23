@@ -88,6 +88,8 @@ export class Session {
    * (docs/protocol.md §9). In memory only; a new process announces its own.
    */
   readonly #children = new Set<string>();
+  /** The sub-agents the agent said can be stopped alone (`capabilities.cancel`, CYCL-143). */
+  readonly #stoppable = new Set<string>();
   readonly unknownBackground = new Map<
     string,
     { toolCallId: string | undefined; dismissing?: boolean }
@@ -150,6 +152,12 @@ export class Session {
     const id = update.sessionId;
     if (typeof id !== "string") return false;
     this.noteChild(id);
+    // ACP v2 patch rules: an omitted `capabilities` keeps what was said, `null` or a `cancel` of null takes it back.
+    if (update.capabilities !== undefined) {
+      const cancel = (update.capabilities as { cancel?: unknown } | null)?.cancel;
+      if (cancel !== undefined && cancel !== null) this.#stoppable.add(id);
+      else if (update.capabilities === null || cancel === null) this.#stoppable.delete(id);
+    }
     const state = update.state;
     const named = typeof state === "string" ? state : (state as { state?: unknown } | null)?.state;
     const meta = (update._meta as Record<string, unknown> | null | undefined)?.[META.subagent];
@@ -181,10 +189,19 @@ export class Session {
     return this.#children.has(id);
   }
 
+  /**
+   * Whether the sub-agent `id` can be stopped alone now (CYCL-143): the agent said it can (`capabilities.cancel`), and
+   * it is running (not ended, and not gone from the agent's list without an end).
+   */
+  canStop(id: string): boolean {
+    return this.#stoppable.has(id) && this.#subagents.has(id);
+  }
+
   /** The agent process is gone, and its sub-agents with it. */
   endSubagents(): void {
     this.#subagents.clear();
     this.#children.clear();
+    this.#stoppable.clear();
     this.unknownBackground.clear();
   }
 

@@ -173,3 +173,19 @@ test("a sub-agent's own sub-agent is put on the call that started it, in its par
     "cancelled",
   );
 });
+
+test("a sub-agent is stoppable once its agent says so, until it takes that back (CYCL-143)", () => {
+  const stoppable = (...updates: object[]) =>
+    (reduce(call("a", "Agent", "other", "in_progress"), ...updates).items[0] as ToolItem).subagent
+      ?.stoppable;
+  const said = { ...news({ state: "running" }, {}), capabilities: { cancel: {} } };
+  expect(stoppable(news({ state: "running" }, {}))).toBeUndefined();
+  expect(stoppable(said)).toBe(true);
+  // Left out: it stays.
+  expect(stoppable(said, news(undefined, { lastTool: "Read" }))).toBe(true);
+  // Taken back, whole or the one capability.
+  expect(stoppable(said, { ...news(undefined, {}), capabilities: null })).toBeUndefined();
+  expect(
+    stoppable(said, { ...news(undefined, {}), capabilities: { cancel: null } }),
+  ).toBeUndefined();
+});

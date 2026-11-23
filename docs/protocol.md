@@ -43,7 +43,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 {
   "replay": ["start", "seq"],
   "agents": ["claude"],
-  "sessionOps": ["archive", "rename", "delete", "markRead"],
+  "sessionOps": ["archive", "rename", "delete", "markRead", "stopSubagent"],
   "queue": true,
   "steer": true,
   "files": true,
@@ -517,7 +517,14 @@ agent 发来的 `session/request_permission` 和 `elicitation/create` 是**需�
 
 ### 子 agent
 
-`subagent_update`(决策 0014)原样转给客户端:`sessionId` 是子的 id(不是可以打开的 session),`title`、`description`、`state`,以及 `_meta["cycle/subagent"]`:`toolCallId`、`background`、`parentId`、`summary`、`lastTool`、`usage`。不能对子 agent 发 `session/*` 请求:它没有 `capabilities`,取消只能取消整个 turn。
+`subagent_update`(决策 0014)原样转给客户端:`sessionId` 是子的 id(不是可以打开的 session),`title`、`description`、`state`,以及 `_meta["cycle/subagent"]`:`toolCallId`、`background`、`parentId`、`summary`、`lastTool`、`usage`。客户端不能对子 agent 发 `session/*` 请求(它不是客户端能打开的 session),但可以单独停下一个(下面"停止一个子 agent")。
+
+**停止一个子 agent**(CYCL-143,理由见[决定笔记](../.agents/notes/2026-11-23-stop-one-subagent.md)):
+
+- L1:`_cycle/session/stop_subagent {sessionId, childId}` → `{stopping}`。`sessionId` 是父 session,`childId` 是 `subagent_update` 的 `sessionId`。只停这一个子 agent,父 session 的 turn 和别的子 agent 照常。`stopping: false` 表示没有可停的:它没在跑(已结束、状态未知),或 agent 没说它能停,或 agent 进程不在。它的结束照常以 `subagent_update`(`idle`、`stopReason: "cancelled"`)到达,daemon 不另写记录。daemon 的 `cycle/capabilities.sessionOps` 有 `stopSubagent` 时才有这个方法;没有的 daemon,客户端不提供停止。
+- 为什么不是 `session/cancel` 加 `_meta`:旧 daemon 不认识这个 `_meta`,会把整个 turn 取消掉;新方法在旧 daemon 上只是"方法不存在"。
+- L2(ACP v2):agent 在 `subagent_update` 里声明 `capabilities.cancel`(补丁规则同 ACP:省略不变,`null` 撤回)。daemon 只对声明了它、还在跑的子 agent,发 `session/cancel {sessionId: <子的 id>}`;这是子 session 的取消,不是父 session 的。
+- 客户端只在子 agent 声明了 `cancel`、`state` 还是 `running`、daemon 支持时提供停止。
 
 **子 agent 的对话**(CYCL-134,取代 0014 的"只通告",理由见 [决定笔记](../.agents/notes/2026-11-23-subagent-conversations-are-forwarded.md)):
 

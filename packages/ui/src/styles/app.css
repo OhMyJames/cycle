@@ -3627,6 +3627,22 @@ button[data-slot="review-file"]:focus-visible {
   color: var(--cycle-ink);
 }
 
+[data-slot="subagent-more"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--cycle-radius-sm);
+}
+
+/* What can be done to a sub-agent at work (CYCL-143): under its row, where its answer will be. */
+[data-slot="subagent-actions"] {
+  margin: 0 0 0.25rem 1.5rem;
+}
+
+[data-slot="subagent-more"][aria-disabled="true"] {
+  color: var(--ui-muted-foreground);
+  cursor: default;
+}
+
 /* The line at the end of a turn that is going: what the agent is doing, so a hidden thought is not a silence. */
 @keyframes cycle-step-breathe {
   0%,
