@@ -37,7 +37,6 @@ import {
 import { CODE_THEMES, type CodeThemeId, codeTheme } from "../code-theme.ts";
 import { LANGUAGES, resolveLanguage } from "../languages.ts";
 import { SETTINGS_SECTIONS, type SettingsSection } from "../settings-sections.ts";
-import { thinking } from "../thinking.ts";
 import { ConfigForm } from "./config-form.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
@@ -258,11 +257,9 @@ function AppearanceSection() {
   const store = useAppStore();
   const { t } = useI18n();
   const current = useSyncExternalStore(codeTheme.subscribe, codeTheme.get, codeTheme.get);
-  const expandThinking = useSyncExternalStore(thinking.subscribe, thinking.get, thinking.get);
   const preferences = useAppState((s) => s.preferences);
   const label = useId();
   const themeLabel = useId();
-  const thinkingLabel = useId();
   return (
     <PageGroup>
       <PageRows>
@@ -289,22 +286,6 @@ function AppearanceSection() {
             </SegmentedControl>
           </PageRow>
         ) : null}
-        <PageRow
-          label={t("thinking.expand")}
-          labelId={thinkingLabel}
-          description={t("settings.thinking.description")}
-        >
-          <Switch
-            aria-labelledby={thinkingLabel}
-            checked={expandThinking}
-            onCheckedChange={(checked) => {
-              thinking.set(checked === true);
-              store.track("thinking_expand_changed", { on: checked === true });
-            }}
-          >
-            <SwitchThumb />
-          </Switch>
-        </PageRow>
         <PageRow
           label={t("codeTheme.label")}
           labelId={label}

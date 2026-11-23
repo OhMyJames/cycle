@@ -8,7 +8,8 @@
 // - The tool calls of one stretch share one block (the view draws a card for two or more, a bare row for one).
 // - In a turn that did not end normally, the failures of its last stretch are pulled out under it, because they may
 //   be why it stopped. Elsewhere the agent dealt with them, and they stay in the card.
-// - A thought is a row of its own, closed, where its stretch's card is: it never cuts a stretch.
+// - A thought is a block of its own, where its stretch's card is: it never cuts a stretch. Shown only in detailed mode
+//   (`shownBlocks`).
 // - A turn that did not end normally says how, last.
 // - A turn begins a new group: the view puts more space before it than between blocks.
 import type {
@@ -23,6 +24,7 @@ import type {
   ToolItem,
   UserItem,
 } from "./conversation.ts";
+import { textOf } from "./conversation.ts";
 
 export type Activity = "run" | "read" | "edit" | "search" | "fetch" | "other";
 
@@ -206,6 +208,32 @@ export const blocksOf = (c: Conversation, cache?: BlockCache): LaidBlock[] => {
   return result;
 };
 
+/**
+ * The blocks a session shows in its display mode: normal leaves the agent's thoughts out, detailed keeps those that have
+ * words (one with none, not yet or not at all, has nothing to show). A turn that began with a thought left out begins at
+ * its next block, so the space between turns stays. Blocks that are kept are the same objects, except one that now begins
+ * its turn.
+ */
+export const shownBlocks = (
+  blocks: readonly LaidBlock[],
+  mode: "normal" | "detailed",
+): LaidBlock[] => {
+  const out: LaidBlock[] = [];
+  let starts = false;
+  for (const block of blocks) {
+    const hidden =
+      block.kind === "thought" && (mode === "normal" || textOf(block.item.blocks).trim() === "");
+    if (hidden) {
+      starts ||= block.startsTurn;
+      continue;
+    }
+    if (starts && block.startsTurn) starts = false;
+    out.push(starts && !block.startsTurn ? { ...block, startsTurn: true } : block);
+    starts = false;
+  }
+  return out;
+};
+
 /** What the agent is doing now, for the line at the end of a turn that is going. */
 export type Step =
   | { kind: "approval" }
@@ -216,8 +244,9 @@ export type Step =
   | { kind: "retrying"; attempt?: number; maxRetries?: number };
 
 /**
- * Nothing when the turn is over, or when the agent's own text or thought is on its way: its row says so (a thought's
- * reads "Thinking…"), which is feedback enough.
+ * Nothing when the turn is over, or when the agent's own text is on its way: it is its own feedback. A thought on its way
+ * says "Thinking…" here, whether its words are shown (detailed mode) or not: they are an aside, not a sign of life, and a
+ * thought that has stopped arriving is still the agent at work until what comes next.
  */
 export const stepOf = (c: Conversation): Step | undefined => {
   if (c.status === "idle") return undefined;
@@ -228,6 +257,7 @@ export const stepOf = (c: Conversation): Step | undefined => {
     case "tool":
       return isLive(last) ? { kind: "tool", tool: last } : { kind: "working" };
     case "thought":
+      return { kind: "thinking" };
     case "agent":
       return undefined;
     case "notice":
@@ -236,15 +266,6 @@ export const stepOf = (c: Conversation): Step | undefined => {
       return { kind: "working" };
   }
 };
-
-/**
- * How long a thought took, in milliseconds: from its first chunk to its last, as the daemon logged them. Undefined when
- * either time is not known (an older daemon).
- */
-export const thoughtMs = (item: ThoughtItem): number | undefined =>
-  item.at !== undefined && item.lastAt !== undefined
-    ? Math.max(0, item.lastAt - item.at)
-    : undefined;
 
 /** How many blocks a long conversation shows at first, and how many more each time the person nears its top. */
 export const PAGE = 60;

@@ -7,9 +7,18 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@ui-sdk/react/dialog";
+import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@ui-sdk/react/menu";
 import { createResizableController } from "@ui-sdk/react/resizable";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@ui-sdk/react/select";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { DISPLAY_MODES, displayMode, isDisplayMode } from "../display-mode.ts";
 import { SOURCE_LOCALE } from "../i18n.ts";
 import { resolveLanguage, translatorFor } from "../languages.ts";
 import { contextOf } from "../model/conversation.ts";
@@ -25,7 +34,7 @@ import { BLANK_KEY, viewKey } from "../store/index.ts";
 import { AnalyticsNotice } from "./analytics.tsx";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer, composerInput } from "./composer.tsx";
-import { ConfigForm, mergeConfigSchema, propertiesOf } from "./config-form.tsx";
+import { ConfigForm, mergeConfigSchema, OptionLabel, propertiesOf } from "./config-form.tsx";
 import { ConnectorsDialog } from "./connectors.tsx";
 import { ConversationView } from "./conversation.tsx";
 import { ConfirmDialog, EnvironmentDialog, type RemoteEnvironment } from "./dialogs.tsx";
@@ -54,6 +63,7 @@ import { SplitLayout } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { ENVIRONMENT_STATE } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
+import { useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
 import { DaemonBanner, UpdateBanner, UpdateFooter } from "./update.tsx";
 
@@ -87,7 +97,11 @@ const PANEL_EVENT = {
   connectors: "connectors",
 } as const;
 
-function SessionSettings({ onClose }: { onClose: () => void }) {
+/**
+ * A session's settings: the agent's (model, mode, effort…), which reach it through the daemon and so only while its
+ * environment is connected, and how the session is shown here, which is always there.
+ */
+function SessionSettings({ connected, onClose }: { connected: boolean; onClose: () => void }) {
   const store = useAppStore();
   const { t } = useI18n();
   const environment = useAppState((s) => s.selectedEnvironment);
@@ -110,30 +124,83 @@ function SessionSettings({ onClose }: { onClose: () => void }) {
       agent === undefined ? undefined : mergeConfigSchema(agent.configSchema, liveConfigOptions),
     [agent, liveConfigOptions],
   );
-  if (session === undefined || schema === undefined) return null;
+  if (session === undefined || environment === undefined) return null;
+  const agentSettings = schema !== undefined && propertiesOf(schema).length > 0;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogBackdrop />
       <DialogContent>
         <DialogTitle>{t("session.settings")}</DialogTitle>
-        <DialogDescription>{t("session.settingsDescription")}</DialogDescription>
-        <ConfigForm
-          schema={schema}
-          value={session.config ?? {}}
-          defaults={false}
-          onChange={(next) => {
-            // One setting at a time: the form hands back the whole set, and only what changed is sent.
-            const before = session.config ?? {};
-            for (const [key, value] of Object.entries(next)) {
-              if (before[key] !== value) void store.setSessionConfig(key, value);
-            }
-          }}
-        />
+        {/* What it says is of the agent's settings: when they are not here, why. */}
+        {!agentSettings ? null : connected ? (
+          <DialogDescription>{t("session.settingsDescription")}</DialogDescription>
+        ) : (
+          <DialogDescription>{t("session.settingsOffline")}</DialogDescription>
+        )}
+        {connected && agentSettings ? (
+          <ConfigForm
+            schema={schema ?? {}}
+            value={session.config ?? {}}
+            defaults={false}
+            onChange={(next) => {
+              // One setting at a time: the form hands back the whole set, and only what changed is sent.
+              const before = session.config ?? {};
+              for (const [key, value] of Object.entries(next)) {
+                if (before[key] !== value) void store.setSessionConfig(key, value);
+              }
+            }}
+          />
+        ) : null}
+        <DisplayModeField sessionKey={viewKey(environment, session.sessionId)} />
         <div data-slot="row" data-dialog-footer="">
           <DialogClose>{t("dialog.close")}</DialogClose>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * A session's display mode, with its agent settings: normal leaves the agent's thinking out of the conversation, detailed
+ * shows it. Kept on this machine and not sent to the agent (display-mode.ts), so it is drawn here, not from the agent's
+ * schema, and applies at once.
+ */
+function DisplayModeField({ sessionKey }: { sessionKey: string }) {
+  const store = useAppStore();
+  const { t } = useI18n();
+  const mode = useDisplayMode(sessionKey);
+  const options = DISPLAY_MODES.map((value) => ({
+    value,
+    label: t(`session.display.${value}`),
+    description: t(`session.display.${value}.description`),
+  }));
+  return (
+    <div data-slot="config-form">
+      <Field name="display">
+        <FieldLabel>{t("session.display")}</FieldLabel>
+        <Select
+          items={options.map((o) => ({ value: o.value, label: o.label }))}
+          value={mode}
+          onValueChange={(next) => {
+            if (!isDisplayMode(next) || next === mode) return;
+            displayMode.set(sessionKey, next);
+            store.track("display_mode_changed", { mode: next });
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((o) => (
+              <SelectItem key={o.value} value={o.value} label={o.label}>
+                <OptionLabel option={o} />
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <FieldDescription>{t("session.display.description")}</FieldDescription>
+      </Field>
+    </div>
   );
 }
 
@@ -778,11 +845,7 @@ function AppWindow() {
                           </MenuItem>
                         ) : null}
                         <MenuItem value="rename">{t("session.rename")}</MenuItem>
-                        {sessionSchema !== undefined && propertiesOf(sessionSchema).length > 0 ? (
-                          <MenuItem value="settings" disabled={!connected}>
-                            {t("session.settings")}
-                          </MenuItem>
-                        ) : null}
+                        <MenuItem value="settings">{t("session.settings")}</MenuItem>
                         <MenuItem value="archive">
                           {t(session.archived ? "session.restore" : "session.archive")}
                         </MenuItem>
@@ -1011,7 +1074,7 @@ function AppWindow() {
             destructive
             onConfirm={() => store.deleteSession(session.sessionId)}
           />
-          {panel === "settings" ? <SessionSettings onClose={close} /> : null}
+          {panel === "settings" ? <SessionSettings connected={connected} onClose={close} /> : null}
         </>
       ) : null}
     </div>
