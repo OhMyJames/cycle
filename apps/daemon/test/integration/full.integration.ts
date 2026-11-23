@@ -91,7 +91,12 @@ test("the backend end to end: ssh, proxy, daemon, adapter, SDK, and a drop that 
     expect(pid).toBeNumber();
 
     const agents = await client.agents();
-    expect(agents.agents).toMatchObject([{ id: "claude", available: true }]);
+    expect(agents.agents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "claude", available: true }),
+        expect.objectContaining({ id: "codex", available: true }),
+      ]),
+    );
 
     const sessionId = await client.newSession({ cwd, config: { mode: "default" } });
     await client.watch(sessionId, cwd);

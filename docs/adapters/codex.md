@@ -18,6 +18,10 @@ Codex harness 自己声明 image、embeddedContext、MCP、additionalDirectories
 
 Codex 的 `plan` 是自己的权限配置项。它通过 `collaborationMode: plan` 发给 Codex，Codex 的 plan item 和 `turn/plan/updated` 转为 ACP `plan_update`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
 
+## 第三阶段实现（CYCL-205、206、207）
+
+Codex 的 `collabAgentToolCall` 会转换为 ACP 工具更新和子 agent 状态，token usage、thread name 和 `/compact` 分别转换为 `usage_update`、`session_info_update`、`compaction_update`，适配器同时公布 `compact` command。桌面端沿用 daemon 的动态 agent 清单，Codex 已纳入 agent analytics 词表和会话、权限、设置事件；这些事件只上报固定 agent 名和行为枚举，不携带模型输出、命令、标题或路径。
+
 ## 初始调研（CYCL-156）
 
 以下记录针对调研时的版本。
