@@ -627,13 +627,16 @@ export type AppApi = {
     where?: "header" | "sidebar",
   ): Promise<void>;
   dismissBackground(environmentId: string, sessionId: string, taskIds: string[]): Promise<void>;
-  /** Stops one sub-agent (CYCL-143). Only on an environment whose `capabilities.stopSubagent` is true. */
+  /**
+   * Stops one sub-agent (CYCL-143). Only on an environment whose `capabilities.stopSubagent` is true. False: there was
+   * nothing to stop (the daemon's `stopping: false`).
+   */
   stopSubagent(
     environmentId: string,
     sessionId: string,
     childId: string,
     background: boolean,
-  ): Promise<void>;
+  ): Promise<boolean>;
   archiveSession(environmentId: string, sessionId: string, archived: boolean): Promise<void>;
   /** Says the session has been seen: its unread mark clears. Does nothing on a daemon that cannot. */
   markRead(environmentId: string, sessionId: string): Promise<void>;

@@ -1037,9 +1037,11 @@ export class ConnectionManager
     sessionId: string,
     childId: string,
     background: boolean,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const stopping = await this.#connection(environmentId).client.stopSubagent(sessionId, childId);
-    if (stopping) this.#track("subagent_stopped", { background });
+    // From the page: only a boolean is told, whatever came.
+    if (stopping) this.#track("subagent_stopped", { background: background === true });
+    return stopping;
   }
 
   async archiveSession(environmentId: string, sessionId: string, archived: boolean): Promise<void> {

@@ -1471,9 +1471,9 @@ test("stopping one sub-agent is counted when the daemon takes it, with whether i
   await m.connect("local");
   const id = await m.createSession("local", { cwd: "/tmp" });
   await said(m, id);
-  await m.stopSubagent("local", id, "task-private", true);
-  // One that is not there: nothing is stopped, and nothing counted.
-  await m.stopSubagent("local", id, "task-gone", false);
+  expect(await m.stopSubagent("local", id, "task-private", true)).toBe(true);
+  // One that is not there: nothing is stopped, nothing counted, and the page is told so.
+  expect(await m.stopSubagent("local", id, "task-gone", false)).toBe(false);
   expect(tracked).toEqual([["subagent_stopped", { background: true }]]);
   expect(JSON.stringify(tracked)).not.toContain("private");
   await until(() => fake.log.childCancels.length > 0, "the agent to be told");

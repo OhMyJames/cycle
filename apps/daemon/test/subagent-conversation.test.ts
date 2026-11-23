@@ -155,7 +155,8 @@ test("one sub-agent is stopped alone, only when its agent said it can be and it 
       { sessionId, childId } as never,
     ) as Promise<{ stopping: boolean }>;
   expect(await stop("task-1")).toEqual({ stopping: true });
-  for (const id of ["task-2", "task-3", "task-4", "task-9"])
+  // Nor the session itself: a cancel in its own id would be the turn's.
+  for (const id of ["task-2", "task-3", "task-4", "task-9", sessionId])
     expect(await stop(id)).toEqual({ stopping: false });
   await until(() => fake.log.childCancels.length > 0, "the agent to be told");
   // Only that sub-agent's session is cancelled: the session's own turn is not.

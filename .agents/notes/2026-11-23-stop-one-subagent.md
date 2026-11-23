@@ -14,7 +14,7 @@ Basis: CYCL-143。负责人 2026-11-23 同意按 L1 新方法的方案做("我�
 - **L2 按 ACP v2 的子 session**:agent 在 `subagent_update` 里声明 `capabilities.cancel`;daemon 发 `session/cancel`,`sessionId` 是子的 id。daemon 只转给声明了 `cancel`、还在跑的子 agent。
 - **结束照常报**:停下的结果是子 agent 自己的 `subagent_update`(`idle`、`cancelled`),daemon 不合成任何记录。没结束的调用由适配以 cancelled 结束(CYCL-134 已有)。
 - **Claude**:`session/cancel` 的 `sessionId` 是一个还在跑的子 agent 时调 `stopTask(taskId)`,不碰 turn,不 `interrupt`。
-- **界面**:子 agent 卡片下面有 "Stop sub-agent" 按钮，只在子 agent 声明了 `cancel`、还在跑、daemon 支持时出现;按下后写 "Stopping…" 并禁用，直到它的结束到达。埋点 `subagent_stopped {background}`,在主进程里 daemon 接受之后发。
+- **界面**:子 agent 卡片下面有 "Stop sub-agent" 按钮，只在子 agent 声明了 `cancel`、还在跑、daemon 支持时出现;按下后写 "Stopping…" 并禁用(`aria-disabled`,焦点留在按钮上),直到它的结束到达;daemon 回 `stopping: false` 时按钮消失，请求失败时显示错误、按钮恢复可按。埋点 `subagent_stopped {background}`,在主进程里 daemon 接受之后发。
 
 ## Alternatives considered
 

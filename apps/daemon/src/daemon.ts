@@ -2273,7 +2273,13 @@ export class Daemon {
       const session = await this.#session(sessionId);
       // Only a sub-agent the agent said can be stopped, that is running, of an agent that is there (docs/protocol.md §9).
       const link = session.link;
-      if (link === undefined || !session.canStop(childId)) return { stopping: false };
+      // Never the session's own id: a cancel in it is the turn's, and a stop must not end the turn.
+      if (
+        link === undefined ||
+        childId === session.entry.agentSessionId ||
+        !session.canStop(childId)
+      )
+        return { stopping: false };
       // ACP v2: a cancel in the child's own session stops that child, not the turn. Its end comes as its subagent_update.
       await link.agent
         .notify(methods.agent.session.cancel, { sessionId: childId } as never)

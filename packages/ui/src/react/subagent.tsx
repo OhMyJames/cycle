@@ -1,5 +1,5 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type Conversation, isLive, streamsOf, type ToolItem, textOf } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { Markdown } from "./markdown.tsx";
@@ -79,21 +79,40 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
   const said = subagentFailed ? t("subagent.failed") : statusWord(t, status);
   const store = useAppStore();
   // It can be stopped alone (CYCL-143): its agent said so, it is at work (in the turn or in the background), and the
-  // environment's daemon can pass a stop on. Asked once: the card says it is stopping until its end comes.
+  // environment's daemon can pass a stop on. Asked once: the card says it is stopping until its end comes. If the
+  // daemon says there is nothing to stop (it ended while this card was behind), the button goes; if the ask fails, the
+  // error is shown and it can be asked again.
   const sub = tool.subagent;
   const environmentCan = useAppState((s) =>
     s.selectedEnvironment !== undefined
       ? s.status[s.selectedEnvironment]?.capabilities?.stopSubagent === true
       : false,
   );
-  const [stopping, setStopping] = useState(false);
+  const [asked, setAsked] = useState<"no" | "stopping" | "nothing">("no");
+  const stopping = asked === "stopping";
   const canStop =
-    environmentCan && sub?.stoppable === true && sub.state === "running" && sub.id !== undefined;
+    environmentCan &&
+    asked !== "nothing" &&
+    sub?.stoppable === true &&
+    sub.state === "running" &&
+    sub.id !== undefined;
+  const card = useRef<HTMLDivElement>(null);
+  const stopFocused = useRef(false);
   const stop = () => {
     if (sub?.id === undefined || stopping) return;
-    setStopping(true);
-    void store.stopSubagent(sub.id, sub.background).catch(() => setStopping(false));
+    setAsked("stopping");
+    void store
+      .stopSubagent(sub.id, sub.background)
+      .then((taken) => setAsked(taken === true ? "stopping" : taken === false ? "nothing" : "no"));
   };
+  // The button goes when its sub-agent ends: focus that was on it stays on the card, not lost to the page.
+  useLayoutEffect(() => {
+    if (canStop || !stopFocused.current) return;
+    stopFocused.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body)
+      card.current?.querySelector<HTMLElement>(":scope > button")?.focus();
+  }, [canStop]);
   // Opened by the person (not by a failure, nor by a jump to it): whether they look at what it did.
   const opened = (next: boolean) => {
     if (next && !open)
@@ -105,6 +124,7 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
       data-kind="subagent"
       data-status={failed ? "failed" : status}
       data-item-id={tool.id}
+      ref={card}
       open={open}
       onOpenChange={opened}
     >
@@ -169,9 +189,18 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
           <button
             type="button"
             data-slot="subagent-more"
-            aria-label={t("subagent.stopNamed", { name: title })}
-            disabled={stopping}
+            aria-label={t(stopping ? "subagent.stoppingNamed" : "subagent.stopNamed", {
+              name: title,
+            })}
+            // Not `disabled`: a disabled button drops the keyboard's focus to the page.
+            aria-disabled={stopping || undefined}
             onClick={stop}
+            onFocus={() => {
+              stopFocused.current = true;
+            }}
+            onBlur={() => {
+              stopFocused.current = false;
+            }}
           >
             {stopping ? t("subagent.stopping") : t("subagent.stop")}
           </button>

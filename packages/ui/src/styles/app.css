@@ -3638,7 +3638,7 @@ button[data-slot="review-file"]:focus-visible {
   margin: 0 0 0.25rem 1.5rem;
 }
 
-[data-slot="subagent-more"]:disabled {
+[data-slot="subagent-more"][aria-disabled="true"] {
   color: var(--ui-muted-foreground);
   cursor: default;
 }

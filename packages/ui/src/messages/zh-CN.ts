@@ -378,6 +378,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "subagent.showAnswer": "查看完整回答",
   "subagent.stop": "停止子 agent",
   "subagent.stopNamed": "停止子 agent {name}",
+  "subagent.stoppingNamed": "正在停止子 agent {name}",
   "subagent.stopping": "正在停止…",
   "subagent.using": "正在用 {tool}",
   "subagent.done": "完成",

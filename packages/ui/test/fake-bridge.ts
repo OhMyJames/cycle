@@ -84,6 +84,8 @@ export const fakeBridge = (
     states?: Record<string, ConnectionState>;
     /** The look and the language chosen, and the system's language. Default: follow the system, which is en-US. */
     preferences?: Partial<Preferences> & { systemLanguage?: string };
+    /** What the daemon answers a stop of one sub-agent with (CYCL-143). Default: it is being stopped. */
+    stopSubagent?: (childId: string) => Promise<boolean>;
   } = {},
 ) => {
   const preferences = {
@@ -250,7 +252,11 @@ export const fakeBridge = (
     setSessionConfig: record("setSessionConfig", async () => {}),
     renameSession: record("renameSession", async () => {}),
     dismissBackground: record("dismissBackground", async () => {}),
-    stopSubagent: record("stopSubagent", async () => {}),
+    stopSubagent: record(
+      "stopSubagent",
+      async (_environmentId: string, _sessionId: string, childId: string, _background: boolean) =>
+        options.stopSubagent?.(childId) ?? true,
+    ),
     archiveSession: record("archiveSession", async () => {}),
     markRead: record("markRead", async () => {}),
     deleteSession: record("deleteSession", async () => {}),
