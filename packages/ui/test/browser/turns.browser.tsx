@@ -788,6 +788,49 @@ test("a command that only searches, reads or lists says so; with the agent's sen
   expect(log.textContent).toContain("Read 2 files");
 });
 
+test("an edit's diff is headed by its file, which opens it in the Diff tab among the session's edits", async () => {
+  const edit = (id: string, path: string) =>
+    finished(
+      id,
+      "Edit",
+      { file_path: path, old_string: "a", new_string: "b" },
+      {
+        content: [
+          {
+            type: "diff",
+            changes: [{ operation: "modify", path }],
+            patch: { format: "git_patch", text: "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-a\n+b\n" },
+          },
+        ],
+        _meta: { "cycle/toolResult": { edit: { additions: 1, deletions: 1 } } },
+      },
+    );
+  const { user, log, script } = await open(
+    you("u1"),
+    ...edit("e1", "/r/src/one.ts"),
+    say("m1"),
+    ...edit("e2", "/r/src/two.ts"),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  const rows = await screen.findAllByRole("button", { name: /Edited/ });
+  await user.click(rows[1] as HTMLElement);
+  const head = log.querySelector('[data-item-id="e2"] [data-slot="tool-diff-head"]') as HTMLElement;
+  expect(head.textContent).toContain("/r/src/two.ts");
+  expect(head.textContent).toContain("+1");
+  await user.click(head);
+  // The panel is on Diff, this session's view, with that edit open and the other closed.
+  const panel = await screen.findByRole("tabpanel");
+  await waitFor(() => {
+    const open = [...panel.querySelectorAll('[data-kind="diff-file"][data-open]')];
+    expect(open.map((row) => row.textContent)).toEqual([expect.stringContaining("two.ts")]);
+  });
+  expect(
+    script.calls.filter(
+      ([name, event]) => name === "track" && event === "diff_shown_from_conversation",
+    ),
+  ).toHaveLength(1);
+});
+
 test("a command's output is drawn in its colours and copied without them; its head says how it ended", async () => {
   const printed = "\x1b[32m✓ 12 passed\x1b[0m\n\x1b[1;31m✗ 1 failed\x1b[0m\x1b[2K";
   const { user, log, script } = await open(

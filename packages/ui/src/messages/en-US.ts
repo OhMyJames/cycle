@@ -123,6 +123,7 @@ export const enUS = {
   "files.binary": "No preview for this kind of file",
   "files.imageTooLarge": "This image is too large to preview",
   "files.emptyFile": "This file is empty",
+  "diff.showInDiff": "Show in Diff",
   "files.showInFiles": "Show in Files",
   "overview.show": "Show overview",
   "overview.hide": "Hide overview",

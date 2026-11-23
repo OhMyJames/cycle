@@ -17,6 +17,7 @@ import {
   activityOf,
   commandLabelOf,
   commandOf,
+  editPathOf,
   isLive,
   streamsOf,
   toolFacts,
@@ -31,6 +32,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CloseIcon,
+  DiffIcon,
   FileIcon,
   FolderIcon,
   GlobeIcon,
@@ -279,6 +281,7 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
       ? insideFolder(where, filesRoot)
       : undefined;
   const scope = useStartScope();
+  const editPath = editPathOf(tool);
   const status = tool.status ?? "pending";
   const failed = status === "failed" || status === "cancelled";
   // The model ends a turn's calls when the turn ends (cancelled), so one that is live is going.
@@ -370,6 +373,19 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
           </ol>
         ) : null}
         {input !== undefined ? <pre data-slot="tool-input">{clip(stringify(input))}</pre> : null}
+        {facts.edit !== undefined && editPath !== undefined && status === "completed" ? (
+          <DiffHead
+            path={
+              (filesRoot !== undefined ? insideFolder(editPath, filesRoot) : undefined) ?? editPath
+            }
+            additions={facts.edit.additions}
+            deletions={facts.edit.deletions}
+            onOpen={() => {
+              store.showInDiff(tool.id);
+              store.track("diff_shown_from_conversation", {});
+            }}
+          />
+        ) : null}
         {diff !== undefined ? <DiffView lines={diff} /> : null}
         {facts.edit !== undefined &&
         diff === undefined &&
@@ -492,6 +508,43 @@ function Facts({ facts }: { facts: ToolFacts }) {
 const MAX_DIFF_LINES = 400;
 
 /** One call's change, line by line: removed and added lines marked, and numbered as in the file. */
+/**
+ * Above a call's change: the file it changed, and how much, as the Diff tab lists it. A press opens it there, among the
+ * session's other edits (CYCL-133).
+ */
+function DiffHead({
+  path,
+  additions,
+  deletions,
+  onOpen,
+}: {
+  path: string;
+  additions: number;
+  deletions: number;
+  onOpen: () => void;
+}) {
+  const { t } = useI18n();
+  const counts = t("tool.facts.diff", { added: additions, removed: deletions });
+  return (
+    <button
+      type="button"
+      data-slot="tool-diff-head"
+      title={`${t("diff.showInDiff")}: ${path}`}
+      onClick={onOpen}
+    >
+      <DiffIcon size={12} aria-hidden="true" />
+      <span data-slot="tool-diff-path">
+        <bdi>{path}</bdi>
+      </span>
+      <span data-slot="diff-counts" aria-hidden="true">
+        {additions > 0 ? <span data-slot="diff-added">+{additions}</span> : null}
+        {deletions > 0 ? <span data-slot="diff-removed">−{deletions}</span> : null}
+      </span>
+      <span data-slot="visually-hidden">{counts}</span>
+    </button>
+  );
+}
+
 export function DiffView({ lines }: { lines: DiffLine[] }) {
   const { t } = useI18n();
   // The first hunk's marker says only that the change starts somewhere: its numbers say where. Between hunks it marks the gap.

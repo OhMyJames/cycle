@@ -43,6 +43,7 @@ import {
   type Resend,
   type Returned,
 } from "../model/index.ts";
+import { revealInDiff } from "../reveal.ts";
 import { SidePanelStore } from "../side-panel.ts";
 import {
   mergeTerminals,
@@ -1162,6 +1163,19 @@ export class AppStore {
     if (options.folder === true) this.filesViews.reveal(key, path);
     else this.filesViews.show(key, path);
     this.sidePanels.show(key, "files");
+  };
+
+  /**
+   * The edit a call made, in the Diff tab (CYCL-133): the panel opens on Diff, in this session's view (the one that has
+   * the call's edits), and the edit opens in its list.
+   */
+  showInDiff = (toolId: string): void => {
+    const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.#state;
+    if (environmentId === undefined || sessionId === undefined) return;
+    const key = viewKey(environmentId, sessionId);
+    this.diffModes.set(key, "session");
+    this.sidePanels.show(key, "diff");
+    revealInDiff.request(key, toolId);
   };
 
   /** The folders in a folder on an environment's machine. Not a banner when it fails: the one who asked says why. */

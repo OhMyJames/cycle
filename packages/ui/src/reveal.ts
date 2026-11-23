@@ -11,28 +11,36 @@ export type RevealRequest = {
   readonly serial: number;
 };
 
-let current: RevealRequest | undefined;
-let serial = 0;
-const listeners = new Set<() => void>();
-
-export const reveal = {
-  /** Brings an item of a session's conversation into view, and marks it for a moment. */
-  request(sessionKey: string, itemId: string): void {
-    serial += 1;
-    current = { sessionKey, itemId, serial };
-    for (const listener of [...listeners]) listener();
-  },
-  /** The request still being answered: the item not yet found. A card that mounts meanwhile reads it here. */
-  get: (): RevealRequest | undefined => current,
-  /** The conversation found the item, or gave up: a card that mounts later must not open for it. */
-  done(serial: number): void {
-    if (current?.serial === serial) current = undefined;
-  },
-  subscribe(listener: () => void): () => void {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
-  },
+/** A channel of such requests: asked by one view, answered once by the one that holds the item. */
+const channel = () => {
+  let current: RevealRequest | undefined;
+  let serial = 0;
+  const listeners = new Set<() => void>();
+  return {
+    /** Brings an item of a session into view, and marks it for a moment. */
+    request(sessionKey: string, itemId: string): void {
+      serial += 1;
+      current = { sessionKey, itemId, serial };
+      for (const listener of [...listeners]) listener();
+    },
+    /** The request still being answered: the item not yet found. A view that mounts meanwhile reads it here. */
+    get: (): RevealRequest | undefined => current,
+    /** The item was found, or the view gave up: one that mounts later must not open for it. */
+    done(serial: number): void {
+      if (current?.serial === serial) current = undefined;
+    },
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
 };
+
+/** The conversation's: one of its items brought into view. */
+export const reveal = channel();
+
+/** The Diff tab's (CYCL-133): the edit a call made, opened in its list. The item is the call's id. */
+export const revealInDiff = channel();
 
 /** Whether a laid block holds the item: the block's own item, or one of the calls of a stretch of work. */
 export const blockHolds = (

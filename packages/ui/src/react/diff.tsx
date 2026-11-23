@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { WorkspaceFile, WorkspacePatch, WorkspaceStatus } from "../api.ts";
 import { insideFolder } from "../files-view.ts";
 import { diffLines, type SessionEdit, sessionEdits, type TurnEdits } from "../model/index.ts";
-import { reveal } from "../reveal.ts";
+import { reveal, revealInDiff } from "../reveal.ts";
 import { filesRootOf, viewKey } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, FolderIcon, RefreshIcon } from "./icons.tsx";
@@ -62,6 +62,8 @@ export function Diff() {
   );
   // Kept by session in the store: the tab is unmounted while another is shown, and each session has its own.
   const [, changed] = useReducer((n: number) => n + 1, 0);
+  // Asked to show a call's edit: the view may have been set to this session's for it.
+  useEffect(() => revealInDiff.subscribe(changed), []);
   const mode = (key !== undefined ? store.diffModes.get(key) : undefined) ?? "session";
   const shown: DiffMode = canWorkspace ? mode : "session";
 
@@ -212,6 +214,25 @@ function EditRow({
   const { t } = useI18n();
   const store = useAppStore();
   const [open, setOpen] = useState(false);
+  const row = useRef<HTMLDivElement>(null);
+  // Asked for from the conversation (the header of the call's diff): opened, and brought into view.
+  useEffect(() => {
+    const check = () => {
+      const asked = revealInDiff.get();
+      if (asked === undefined || asked.sessionKey !== sessionKey || asked.itemId !== edit.toolId)
+        return;
+      revealInDiff.done(asked.serial);
+      setOpen(true);
+      requestAnimationFrame(() => {
+        row.current?.scrollIntoView({ block: "nearest" });
+        row.current
+          ?.querySelector<HTMLElement>('[data-kind="diff-row"]')
+          ?.focus({ preventScroll: true });
+      });
+    };
+    check();
+    return revealInDiff.subscribe(check);
+  }, [sessionKey, edit.toolId]);
   const path = shownPath(edit.path, cwd) ?? t("diff.noPath");
   // Inside the session's folder, and its daemon shows files: the file can be opened there.
   const filesRoot = useAppState(filesRootOf);
@@ -221,6 +242,7 @@ function EditRow({
       : undefined;
   return (
     <Collapsible
+      ref={row}
       data-kind="diff-file"
       open={open}
       onOpenChange={(next) => {
