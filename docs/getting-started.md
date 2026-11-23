@@ -7,13 +7,14 @@ Cycle 由两部分组成:**桌面应用**(macOS,Apple 芯片)和 **daemon**(运�
 从 GitHub 的 Releases 下载 `Cycle-<版本>-darwin-arm64.zip`,解压得到 `Cycle.app`,放进"应用程序"。
 
 - 只有 Apple 芯片(M 系列),没有 Intel 版。
-- **目前的发布还没有 Developer ID 签名和公证**(Release 标成 pre-release)。浏览器下载的包会被 Gatekeeper 拦住,要先去掉隔离标记:
+- 从 0.3.16 起,发布的包有 Developer ID 签名并经过公证,下载后直接打开即可。
+- 0.3.15 及更早的发布只有 ad hoc 签名(Release 标成 pre-release)。浏览器下载的这类包会被 Gatekeeper 拦住,要先去掉隔离标记:
 
   ```bash
   xattr -dr com.apple.quarantine /Applications/Cycle.app
   ```
 
-  签名问题解决后这一步就不需要了。
+  已经装了旧版的,用应用内更新升到 0.3.16 就行,不需要重新下载。
 - 校验:同一个 Release 里有 `latest-darwin-arm64.json`,里面是 zip 的 sha256 和大小。
 
 应用里自带 daemon 和 Claude,所以装完之后"This computer"这个主机就能用,不需要另外装任何东西。
