@@ -3,12 +3,10 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import {
   activityCounts,
   activityOf,
-  applyUpdate,
   type BlockCache,
   blocksOf,
   type Conversation,
   earlierAnchor,
-  emptyConversation,
   type LaidBlock,
   PAGE,
   reduce,
