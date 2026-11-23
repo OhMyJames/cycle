@@ -159,6 +159,10 @@ supports_websockets=false
       await prompt();
       await waitFor(() => idle().length === 2);
       expect(idle()[1]).toMatchObject({ stopReason: "end_turn" });
+      const failed = updates.find(
+        (u) => u.sessionUpdate === "tool_call_update" && "status" in u && u.status === "failed",
+      );
+      if (failed) throw new Error(`Sandbox command failed: ${JSON.stringify(failed)}`);
       expect(await readFile(join(cwd, "marker"), "utf8")).toBe("unset");
       expect(updates).toContainEqual(
         expect.objectContaining({

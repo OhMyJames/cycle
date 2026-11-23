@@ -84,6 +84,7 @@ jobs:
             ~/.cache/ms-playwright
           key: integration-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: integration-${{ runner.os }}-
+      - uses: ./.github/actions/codex-sandbox
       - name: Libraries Electron needs, and xvfb
         run: |
           sudo apt-get update

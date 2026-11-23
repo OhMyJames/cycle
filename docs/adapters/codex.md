@@ -8,6 +8,8 @@
 
 升级时核对 npm 的 latest 与 GitHub 正式 release，在 `harness/codex/package.json` 更新精确版本并运行 `bun install`。用 `bun harness/codex/scripts/generate.ts` 重新提取这一版的协议类型，运行 `bun run format`、`bun run check` 和 `bun run test:integration`。在各目标平台从安装目录运行 Codex 集成套件，并复核沙箱、包体积和上游许可。模拟模型只在 loopback 提供 Responses API，真实账户验收留到后续阶段。
 
+Ubuntu 24.04 的沙箱前置依赖见 [OpenAI 的 Linux sandbox prerequisites](https://learn.chatgpt.com/docs/sandboxing#prerequisites)。系统限制非特权 user namespace 时安装发行版的 bubblewrap 并加载专用 AppArmor profile。CI 使用同样的系统配置。
+
 本阶段验证：macOS ARM64 和 Debian 12 ARM64 的安装布局能执行工作区命令，工作区外的同级目录写入被拒；未向 Codex 提供的宿主环境变量在命令进程中不可见。默认限制的 Debian Docker 容器能启动 CLI，但执行命令时内核拒绝 bwrap 创建 namespace。此时应保留错误和失败状态；应用不会自动扩大权限。
 
 ## 初始调研（CYCL-156）
