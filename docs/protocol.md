@@ -556,7 +556,17 @@ agent 在后台跑的、不是子 agent 的任务:后台命令、Monitor 之类�
 - agent 进程退出时,还在跑的任务各发一条 `stopped`。
 - 只是通告:没有停止或打开一个任务的方法。不影响 `cycle/background` 的计数(§6),它只数子 agent。
 
-Claude 的取法:SDK 的 `task_started`、`task_progress`、`task_updated`、`task_notification` 和 `background_tasks_changed`,`task_type` 不是 `local_agent` 的那些;`ambient`、`skip_transcript` 的(内部的整理任务、自动的监视)不发。`kind` 按 `task_type` 归类,认不出的是 `other`;Monitor 的 `task_type` 和后台命令一样是 `local_bash`,按启动它的工具调用认出 `monitor`,所以同一个任务可能先报 `shell` 再纠正为 `monitor`,客户端以最后带的 `kind` 为准。cron 和 `ScheduleWakeup` 没有这样的生命周期,不发,客户端只能看到它们的工具调用。
+Claude 的取法:SDK 的 `task_started`、`task_progress`、`task_updated`、`task_notification` 和 `background_tasks_changed`,`task_type` 不是 `local_agent` 的那些;`ambient`、`skip_transcript` 的(内部的整理任务、自动的监视)不发。`kind` 按 `task_type` 归类,认不出的是 `other`;Monitor 的 `task_type` 和后台命令一样是 `local_bash`,按启动它的工具调用认出 `monitor`,所以同一个任务可能先报 `shell` 再纠正为 `monitor`,客户端以最后带的 `kind` 为准。cron 和 `ScheduleWakeup` 不是后台任务,见下面"定时调用"。
+
+### 定时调用(`_cycle/schedule_update`,CYCL-146)
+
+agent 设好、到点会叫醒这个会话的调用:cron(Claude 的 CronCreate、`/loop`)和唤醒(ScheduleWakeup)。agent 发 `session/update`,`sessionUpdate: "_cycle/schedule_update"`,每次是整份清单,客户端取最后一条为准;daemon 照常写日志、转发、回放(§12 的凭证过滤按工具调用的规则作用于它,`prompt` 是 agent 写的)。schema 是 `@cycle/protocol` 的 `ScheduleUpdateSchema`:
+
+- `jobs`:每项 `id`、`kind`(`cron`、`wakeup`)、`schedule`(五段 cron 表达式,agent 那台机器的本地时间)、`humanSchedule?`(agent 给的说法)、`recurring`、`durable`(存在项目里、比会话活得久;所知的是最后一次听说的)、`prompt`(触发时要说的话,截短)、`nextFireAt?`(预计的下次时间,毫秒时间戳,是推算,不是承诺)、`toolCallId?`(设它的调用,可以跳回对话)。
+- `dormant`:为 `true` 时 agent 的进程不在了:不是 `durable` 的,只有在到点前会话又被用到才会触发,否则这一次被跳过。
+- 没有这条更新的会话(旧日志、别的 agent)是"不知道",不是"没有";第一次说清单时即使是空的也发。
+
+Claude 的取法:每个 turn 结束时 Stop hook 的 `session_crons` 是进程里全部的(不含 durable 的);两次之间用 CronCreate、CronDelete、CronList、ScheduleWakeup 的结构化结果补上。快照里的唤醒按 prompt 对上设它的调用;没有对上的(比如适配器重启过)当作 `cron`。见 docs/adapters/claude.md。
 
 ### 会话的 goal(`_cycle/goal_update`,CYCL-87)
 

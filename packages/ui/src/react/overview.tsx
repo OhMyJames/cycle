@@ -1,6 +1,6 @@
 // The Overview tab of the right panel (CYCL-88): what the open session is doing besides its turns, read from what the
 // daemon replays, so it is the same after a restart. From where it runs to what it is doing: the environment, the goal
-// (only when one is set), the context window, the todo list, the background. A block with nothing to show
+// (only when one is set), the context window, the todo list, the background, what is scheduled. A block with nothing to show
 // says why in a line; what the agent does not report is said, not made up (.agents/notes/2026-11-22-overview-sources-and-layout.md).
 import { Button } from "@ui-sdk/react/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
@@ -12,6 +12,7 @@ import {
   contextOf,
   type DynamicConfigOption,
   type PlanItem,
+  type ScheduledJob,
   type TaskKind,
   type ToolItem,
 } from "../model/index.ts";
@@ -208,7 +209,7 @@ export function Overview() {
       </div>
     );
 
-  const goTo = (itemId: string, section: "todo" | "background") => {
+  const goTo = (itemId: string, section: "todo" | "background" | "scheduled") => {
     store.track("overview_item_revealed", { section });
     reveal.request(key, itemId);
   };
@@ -222,14 +223,15 @@ export function Overview() {
   const working = running.filter((row) => row.state === "running").length;
   const goal = conversation.goal;
   const away = state !== undefined && state !== "connected";
-  // When the goal was set: the time on the day it was set, with the day on any other; not said when not known.
+  // A time: on its own today, with the day on any other.
+  const timeOf = (at: number) =>
+    new Date(at).toDateString() === new Date().toDateString()
+      ? date(at, { hour: "numeric", minute: "2-digit" })
+      : date(at, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  // When the goal was set; not said when not known.
   const setAt = goal != null && goal.setAt > 0 ? goal.setAt : undefined;
-  const when =
-    setAt === undefined
-      ? undefined
-      : new Date(setAt).toDateString() === new Date().toDateString()
-        ? date(setAt, { hour: "numeric", minute: "2-digit" })
-        : date(setAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const when = setAt === undefined ? undefined : timeOf(setAt);
+  const schedules = conversation.schedules;
   const goalLine =
     goal == null
       ? undefined
@@ -262,6 +264,48 @@ export function Overview() {
             data-slot="overview-row"
             title={t("overview.showInConversation")}
             onClick={() => goTo(toolCallId, "background")}
+          >
+            {label}
+          </button>
+        ) : (
+          <span data-slot="overview-row">{label}</span>
+        )}
+      </li>
+    );
+  };
+
+  const scheduledRow = (job: ScheduledJob) => {
+    // Said as it was said: the agent's words for the schedule when it gave them, else the expression itself.
+    const facts = [
+      t(job.kind === "wakeup" ? "overview.scheduled.wakeup" : "overview.scheduled.cron"),
+      job.kind === "cron" ? (job.humanSchedule ?? job.schedule) : undefined,
+      job.kind === "cron" && !job.recurring ? t("overview.scheduled.once") : undefined,
+      job.nextFireAt !== undefined
+        ? t("overview.scheduled.next", { when: timeOf(job.nextFireAt) })
+        : undefined,
+      job.durable ? t("overview.scheduled.durable") : undefined,
+    ].filter((f): f is string => f !== undefined);
+    const title = job.prompt.split("\n")[0]?.trim() || facts[0];
+    const label = (
+      <>
+        <span data-slot="overview-dot" data-state="scheduled" aria-hidden="true" />
+        <span data-slot="overview-lines">
+          <span data-slot="overview-title" title={job.prompt}>
+            {title}
+          </span>
+          <span data-slot="overview-facts">{facts.join(" · ")}</span>
+        </span>
+      </>
+    );
+    const toolCallId = job.toolCallId;
+    return (
+      <li key={job.id}>
+        {toolCallId !== undefined ? (
+          <button
+            type="button"
+            data-slot="overview-row"
+            title={t("overview.showInConversation")}
+            onClick={() => goTo(toolCallId, "scheduled")}
           >
             {label}
           </button>
@@ -380,7 +424,28 @@ export function Overview() {
             </CollapsiblePanel>
           </Collapsible>
         ) : null}
-        <Quiet>{t("overview.background.untracked")}</Quiet>
+      </Section>
+
+      <Section
+        title={t("overview.scheduled")}
+        aside={
+          schedules !== undefined && schedules.jobs.length > 0 ? (
+            <span data-slot="overview-count">
+              {t("overview.scheduled.count", { count: schedules.jobs.length })}
+            </span>
+          ) : undefined
+        }
+      >
+        {schedules === undefined ? (
+          <Quiet>{t("overview.scheduled.unknown")}</Quiet>
+        ) : schedules.jobs.length === 0 ? (
+          <Quiet>{t("overview.scheduled.empty")}</Quiet>
+        ) : (
+          <>
+            <ul data-slot="overview-list">{schedules.jobs.map(scheduledRow)}</ul>
+            {schedules.dormant ? <Quiet>{t("overview.scheduled.dormant")}</Quiet> : null}
+          </>
+        )}
       </Section>
     </div>
   );

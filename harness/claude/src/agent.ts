@@ -534,12 +534,27 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
     for (const update of ended) void notify(client, session.id, update).catch(() => undefined);
   };
 
+  /** Tells clients what is set to wake the session, when it is not what they were last told (docs/protocol.md §9). */
+  const tellSchedules = (session: SessionState) => {
+    const update = session.schedules.update(Date.now());
+    if (update === undefined || session.client === undefined) return;
+    void notify(session.client, session.id, update as unknown as SessionUpdate).catch(
+      () => undefined,
+    );
+  };
+
+  /** The process is gone: what it held fires only if the session is used again before it is due. */
+  const sleepSchedules = (session: SessionState) => {
+    if (session.schedules.sleeping(true)) tellSchedules(session);
+  };
+
   /** Lets the session's process go: gracefully, or at once. The next prompt starts another. */
   const release = (session: SessionState, hard: boolean) => {
     const live = session.live;
     if (live === undefined) return;
     endCompaction(session);
     endSubagents(session);
+    sleepSchedules(session);
     warm.delete(session);
     session.live = undefined;
     clearTimeout(live.idle);
@@ -961,6 +976,8 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
   /** Starts a process for the session. Its messages go to whatever turn is running. */
   const start = (client: AgentContext, session: SessionState): Live => {
     session.client = client;
+    // A new process sets again what its session had set and is not yet due.
+    if (session.schedules.sleeping(false)) tellSchedules(session);
     // Before the process reads it: whether this folder may run its own configuration's commands.
     if (session.setup.trusted !== undefined) {
       const file = claudeJsonPath(config.env);
@@ -1007,7 +1024,10 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
             hooks: [
               async (input) => {
                 const crons = cronsOf(input);
-                if (crons !== undefined) session.schedules.told(crons, Date.now());
+                if (crons !== undefined) {
+                  session.schedules.told(crons, Date.now());
+                  tellSchedules(session);
+                }
                 return {};
               },
             ],
@@ -1165,9 +1185,30 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       try {
         for await (const message of query as AsyncIterable<SDKMessage>) {
           if (session.live !== live) continue; // let go: nothing it says matters now
-          // A wakeup or cron it set, in case the turn ends without the Stop hook saying so.
-          if (message.type === "user") {
-            session.schedules.called((message as { tool_use_result?: unknown }).tool_use_result);
+          // A wakeup or cron it set or unset: told now, and kept in case the turn ends without the Stop hook.
+          if (message.type === "assistant") {
+            for (const block of message.message.content as { type: string }[]) {
+              if (block.type !== "tool_use") continue;
+              const use = block as unknown as { id: string; name: string; input: unknown };
+              session.schedules.asked(use.id, use.name, use.input);
+            }
+          } else if (message.type === "user") {
+            const blocks = (message.message as { content?: unknown }).content;
+            const answered = Array.isArray(blocks)
+              ? (blocks as { type?: string; tool_use_id?: string }[])
+                  .filter((b) => b.type === "tool_result")
+                  .map((b) => b.tool_use_id)
+              : [];
+            // The structured result is one call's: it goes with a message of one result only.
+            const result =
+              answered.length === 1
+                ? (message as { tool_use_result?: unknown }).tool_use_result
+                : undefined;
+            let scheduling = false;
+            for (const id of answered.length > 0 ? answered : [undefined]) {
+              if (session.schedules.called(id, result)) scheduling = true;
+            }
+            if (scheduling) tellSchedules(session);
           }
           // A turn that went through means the session is on disk, whenever the process said hello.
           if (
@@ -1258,6 +1299,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
         session.live = undefined;
         endCompaction(session);
         endSubagents(session);
+        sleepSchedules(session);
       }
       clearTimeout(live.idle);
       // Only a turn that was running on this process ends with it: an exit that comes late, after

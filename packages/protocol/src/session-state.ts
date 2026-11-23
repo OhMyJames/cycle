@@ -68,3 +68,38 @@ export const ChildUpdateSchema = z.object({
   update: z.looseObject({ sessionUpdate: z.string() }),
 });
 export type ChildUpdate = z.infer<typeof ChildUpdateSchema>;
+
+/** The `sessionUpdate` of what is set to wake the session later (docs/protocol.md §9, CYCL-146). */
+export const SCHEDULE_UPDATE = "_cycle/schedule_update";
+
+/** One thing set to wake the session: a cron (CronCreate, /loop) or a wakeup (ScheduleWakeup). */
+export const ScheduledJobSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["cron", "wakeup"]),
+  /** Its five-field cron expression, in the local time of the machine the agent runs on. */
+  schedule: z.string(),
+  /** The schedule in words, when the agent said it. */
+  humanSchedule: z.string().optional(),
+  /** Fires on every match until deleted or expired; false: once, then it is gone. */
+  recurring: z.boolean(),
+  /** Saved in the project, outliving the session; what is known of it is what was last heard. */
+  durable: z.boolean(),
+  /** What it will say when it fires, cut short. */
+  prompt: z.string(),
+  /** When it is expected to fire next, in milliseconds: worked out, so a guess, not a promise. */
+  nextFireAt: z.number().optional(),
+  /** The call that set it, to go back to. */
+  toolCallId: z.string().optional(),
+});
+export type ScheduledJob = z.infer<typeof ScheduledJobSchema>;
+
+/**
+ * The whole list after each change; the last one is the list. `dormant`: the agent's process is gone, and what is not
+ * durable fires only if the session is used again before it is due.
+ */
+export const ScheduleUpdateSchema = z.object({
+  sessionUpdate: z.literal(SCHEDULE_UPDATE),
+  jobs: z.array(ScheduledJobSchema),
+  dormant: z.boolean().optional(),
+});
+export type ScheduleUpdate = z.infer<typeof ScheduleUpdateSchema>;

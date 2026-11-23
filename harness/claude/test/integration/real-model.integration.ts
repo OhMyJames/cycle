@@ -1045,6 +1045,19 @@ test.skipIf(!enabled)(
             woke ? `REAL wakeup: woke after ${waited} s` : `REAL wakeup: not woken in ${waited} s`,
           );
           expect(woke).toBe(true);
+          // Clients were told it was set, by the call that set it, and that it is gone once it fired (CYCL-146).
+          const lists = (updates as unknown as Record<string, unknown>[]).filter(
+            (u) => u.sessionUpdate === "_cycle/schedule_update",
+          ) as unknown as { jobs: Record<string, unknown>[] }[];
+          for (const l of lists) console.log("REAL schedule:", JSON.stringify(l));
+          const set = lists.find((l) => l.jobs.some((j) => j.kind === "wakeup"));
+          expect(set?.jobs.find((j) => j.kind === "wakeup")).toMatchObject({
+            recurring: false,
+            durable: false,
+            toolCallId: expect.any(String),
+            nextFireAt: expect.any(Number),
+          });
+          expect(lists.at(-1)?.jobs).toEqual([]);
         },
       );
     } finally {

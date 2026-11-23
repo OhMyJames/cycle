@@ -2196,3 +2196,87 @@ test("an ended task a late background list still names is not brought back, and 
     { idleMs: 20 },
   );
 });
+
+// ---- what is set to wake the session (CYCL-146) ----
+
+const schedulesOf = (updates: SessionUpdate[]) =>
+  updates.filter(
+    (u) => (u as { sessionUpdate: string }).sessionUpdate === "_cycle/schedule_update",
+  ) as unknown as { jobs: Record<string, unknown>[]; dormant?: boolean }[];
+
+test("a wakeup the model sets is told at once, then by the Stop hook's id, and the list says when the process is gone", async () => {
+  const due = Date.now() + 3 * 60 * 60_000;
+  const fake = fakeQuery(async (call) => {
+    const turn = textTurn(ID, "m", "ok");
+    if (call.prompt === "check back later")
+      return [
+        {
+          type: "assistant",
+          message: {
+            id: "m0",
+            content: [
+              {
+                type: "tool_use",
+                id: "w1",
+                name: "ScheduleWakeup",
+                input: { delaySeconds: 3600, prompt: "Check the build" },
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+        },
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "w1", content: "ok" }],
+          },
+          parent_tool_use_id: null,
+          tool_use_result: { scheduledFor: due, clampedDelaySeconds: 3600, wasClamped: false },
+        },
+        ...turn,
+      ] as unknown as SDKMessage[];
+    // The next turn ends with the Stop hook: the wakeup is set, under its own id.
+    await call.options.hooks?.Stop?.[0]?.hooks[0]?.(
+      {
+        hook_event_name: "Stop",
+        session_crons: [
+          { id: "c9", schedule: "0 13 * * *", recurring: false, prompt: "Check the build" },
+        ],
+      } as never,
+      undefined,
+      { signal: new AbortController().signal },
+    );
+    return turn;
+  });
+  await connect(
+    fake.run,
+    async ({ agent, idle, updates }) => {
+      await newSession(agent);
+      // Three hours away: the process is let go after each turn, and the list says so.
+      await prompt(agent, idle, [{ type: "text", text: "check back later" }]);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await prompt(agent, idle, [{ type: "text", text: "anything?" }]);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const told = schedulesOf(updates).map((u) => [
+        u.jobs.map((j) => [j.id, j.kind, j.toolCallId]),
+        u.dormant === true,
+      ]);
+      expect(told).toEqual([
+        [[["wakeup:w1", "wakeup", "w1"]], false],
+        [[["wakeup:w1", "wakeup", "w1"]], true],
+        [[["wakeup:w1", "wakeup", "w1"]], false],
+        [[["c9", "wakeup", "w1"]], false],
+        [[["c9", "wakeup", "w1"]], true],
+      ]);
+      expect(schedulesOf(updates)[0]?.jobs[0]).toMatchObject({
+        prompt: "Check the build",
+        nextFireAt: due,
+        recurring: false,
+        durable: false,
+      });
+    },
+    {},
+    { idleMs: 40 },
+  );
+});

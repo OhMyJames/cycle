@@ -183,3 +183,22 @@ test("a background task's title, made from its command, is cleaned like a tool c
   const goal = { sessionUpdate: "_cycle/goal_update", goal: { condition: github } };
   expect(redactRecord("update", goal)).toBe(goal);
 });
+
+test("a scheduled call's prompt, written by the agent, is cleaned like a tool call's (CYCL-146)", () => {
+  const schedule = {
+    sessionUpdate: "_cycle/schedule_update",
+    jobs: [
+      {
+        id: "c1",
+        kind: "cron",
+        schedule: "*/30 * * * *",
+        recurring: true,
+        durable: false,
+        prompt: `Check the deploy with curl -H "Authorization: Bearer abcdefghijklmnop1234"`,
+      },
+    ],
+  };
+  const kept = redactRecord("update", schedule);
+  expect(JSON.stringify(kept)).not.toContain("abcdefghijklmnop1234");
+  expect(kept).toMatchObject({ jobs: [{ id: "c1", schedule: "*/30 * * * *", recurring: true }] });
+});
