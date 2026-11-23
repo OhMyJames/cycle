@@ -333,8 +333,6 @@ function AppWindow() {
   const connected = environmentState === "connected";
   const environmentError =
     selectedEnvironment !== undefined ? status[selectedEnvironment]?.error : undefined;
-  const environmentIncompatible =
-    selectedEnvironment !== undefined ? status[selectedEnvironment]?.incompatible : undefined;
   const close = () => setPanel("none");
   // Opens a panel, and counts that it was opened (which one, and whether by a key).
   const open = (next: Exclude<Panel, "none">, via: "click" | "shortcut" = "click") => {
