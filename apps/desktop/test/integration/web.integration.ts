@@ -282,7 +282,8 @@ test.skipIf(!built)(
           if (value.length > 20) expect(html).not.toContain(value);
 
       // Settings → Sign out, confirmed: the sign-in page again, and the provider was told.
-      await page.getByRole("button", { name: /^Settings/ }).click();
+      await page.getByRole("button", { name: /account and settings$/ }).click();
+      await page.getByRole("menuitem", { name: "Settings" }).click();
       await page.getByRole("button", { name: "Sign out" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Sign out" }).click();
       await page.getByRole("button", { name: "Sign in with browser" }).waitFor({ timeout: 10_000 });
