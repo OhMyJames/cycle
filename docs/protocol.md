@@ -53,7 +53,8 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "diff": true,
   "trust": true,
   "connectors": true,
-  "sessionMentions": true
+  "sessionMentions": true,
+  "terminal": true
 }
 ```
 
@@ -68,7 +69,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 
 右侧面板、diff 视图、交互式终端、内置浏览器及 browser use、plugins 和 settings 页如需新增 L1 方法，沿用 `_cycle/*` 命名空间，在各功能工单中定义方法、参数及对应的能力声明。纯客户端交互无需增加 L1 方法。客户端只在 daemon 声明相应能力后调用新方法，旧 daemon 缺少声明时跳过调用。
 
-此处仅预留扩展位置。终端通道由 CYCL-96 决定，browser use 的权限和回传通道由 CYCL-100 决定。上面的握手示例只列已定义的能力。
+此处仅预留扩展位置。终端已定义，见 §8"终端"；browser use 的权限和回传通道由 CYCL-100 决定。上面的握手示例只列已定义的能力。
 
 ## 4. ACP v2 方法在 L1 的使用
 
@@ -421,6 +422,37 @@ agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机
 
 能力 `diff` 为 `true` 才有这两个方法；旧 daemon 没有：客户端只提供"本会话的编辑"。常量在 `@cycle/protocol` 的 `DIFF_LIMITS`。
 
+### 终端(`_cycle/terminal/*`,CYCL-97)
+
+用户在 session 旁边开的交互式 shell。PTY 在 daemon 里，跑在 session 所在的机器上，经本连接传输，本地和 ssh 一样。理由和取舍见决定笔记 [2026-11-22-terminals-in-the-daemon-over-l1](../.agents/notes/2026-11-22-terminals-in-the-daemon-over-l1.md)。能力 `terminal` 为 `true` 才有这些方法和通知;旧 daemon 没有，客户端不提供终端。
+
+- **只给人用**:agent 看不到终端，也收不到它的输入输出。ACP 的 `terminal/*` 客户端能力仍不支持(§3)。
+- **属于一个 session**:工作目录是 session 的 `cwd`。session 被归档或删除时，它的终端被关掉(应答不等它们的进程结束),归档的 session 不能再开终端;daemon 停止(包括空闲退出)时，所有终端被关掉。终端不算 daemon 在工作,不拖住空闲退出(docs/daemon.md"空闲退出")。
+- **shell 和环境**:daemon 的 `SHELL`(绝对路径且可执行)作为登录 shell(`-l`)启动，否则 `/bin/sh`。环境不继承 daemon 的，只取 daemon 配置 `terminal.allowEnv` 里列出的变量(以 `*` 结尾的项按前缀匹配),再设 `TERM=xterm-256color`、`COLORTERM=truecolor`。配置不经协议修改。
+- **上限**:每个 session 的终端数(含已退出、还没关的)和整个 daemon 的终端数有上限(配置 `terminal.maxPerSession`、`terminal.max`,默认 8 和 32),超过以 `-32019`(`terminal_limit`)拒绝。
+
+**终端的信息** `TerminalInfo`:`{terminalId, sessionId, title, cols, rows, status, exitCode?}`。`status` 是 `running` 或 `exited`;`exitCode` 只在 `exited` 时有，被信号结束时为 `null`。`title` 起初是 shell 的名字，shell 用 OSC 0 或 2 设了标题就换成它。
+
+**方法**(客户端 → daemon):
+
+- `_cycle/terminal/create`,参数 `{sessionId, cols, rows}`,响应同 `attach`。新开一个终端，调用的连接随即附着在它上面。以 `-32602` 拒绝的情况,`data.reason` 分别是:`cwd` 不在了(`cwd_missing`)、shell 起不来(`spawn_failed`)、session 已归档(`archived`)、daemon 正在停止(`daemon_stopping`)。读 session 的索引就够，不加载它的历史。
+- `_cycle/terminal/list`,参数 `{sessionId}`,响应 `{terminals: TerminalInfo[]}`,按创建先后。
+- `_cycle/terminal/attach`,参数 `{terminalId}`,响应 `{terminal, screen, seq}`:`screen` 是重画当前屏幕(含回滚，最多 `terminal.scrollback` 行，默认 5000)的转义序列,`seq` 是它已包含的最后一段输出的序号。之后这个连接收到这个终端的输出。
+- `_cycle/terminal/detach`,参数 `{terminalId}`,响应 `{}`:这个连接不再收它的输出。连接断开等于对它附着的每个终端 `detach`。
+- `_cycle/terminal/input`,参数 `{terminalId, data}`,响应 `{}`:`data` 原样写进 PTY(按键、粘贴),一次最多 64 KiB。已退出的终端以 `-32602` 拒绝,`data.reason` 为 `exited`。
+- `_cycle/terminal/resize`,参数 `{terminalId, cols, rows}`,响应 `{}`。`cols` 2–1000,`rows` 1–500。多个客户端附着时以最近一次为准，客户端在附着和获得焦点时各发一次。
+- `_cycle/terminal/close`,参数 `{terminalId}`,响应 `{}`:终端立即从列表里去掉;它上面的进程在后台结束:这个终端上的每个进程(shell、前台作业、后台作业)收到 `SIGHUP`,忽略它的(如 `nohup`)留下;2 秒后 shell 还在，`SIGKILL` 它的进程组;最后关掉 PTY。shell 自己先退出时，它留下的进程失去这个控制终端(和普通终端里 `cmd & exit` 一样),不再属于这个终端，不会被结束。
+
+`terminalId` 不存在(或所属 session 已不在)时，以上方法都以 `-32002` 拒绝,`data` 为 `{terminalId}`。
+
+**通知**(daemon → 客户端):
+
+- `_cycle/terminal/output`,`{terminalId, seq, data}`:只发给附着的连接。`data` 是 UTF-8 文本(多字节字符不会被切开),`seq` 每段加一。daemon 把短时间内的输出合成一段(约 16 ms 或 64 KiB)。
+- `_cycle/terminal/reset`,`{terminalId, seq, screen, cols, rows}`:某个连接落后太多(还没送出的输出超过 1 MiB)时，daemon 暂停给它发 `output`,等它追上后发一次 `reset`,客户端清屏后写入 `screen`,再接着收 `seq` 之后的 `output`。
+- `_cycle/terminal/changed`,`{sessionId, terminals}`:一个 session 的终端有增减，或标题、尺寸、状态变了。发给所有连接,`terminals` 是这个 session 完整的列表(同 `list`)。
+
+**顺序**:`attach`(和 `create`)的响应与第一段 `output` 之间没有先后保证。客户端对还没拿到响应的 `terminalId` 先缓存 `output`,拿到响应后丢掉 `seq` 不大于响应里 `seq` 的，其余依次写入。`reset` 之后同样丢掉 `seq` 不大于它的。
+
 ### 选文件夹
 
 新建 session 要在 daemon 所在机器的文件系统里选一个 `cwd`;远程环境的文件夹在本机看不到,所以由 daemon 来列。**不依赖 session**(session 还不存在)。
@@ -620,6 +652,7 @@ daemon 启动 agent 时只传入显式白名单里的环境变量,不继承自�
 | -32016 | `not_queued`        | 要撤回的 prompt 不在队列里(已发出或已退回)                              |
 | -32017 | `connector_failed`  | connector 的授权服务器拒绝、不可达(§14)                                 |
 | -32018 | `daemon_stopped`    | daemon 停止时 turn 还在进行,turn 被打断(§8"daemon 停止时进行中的 turn") |
+| -32019 | `terminal_limit`    | 终端数到了上限(§8"终端")                                                |
 
 ACP 以后可能占用这个范围里的码,所以 Cycle 的码在 schema 里集中定义,升级 ACP 时对照检查。
 

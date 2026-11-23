@@ -2,7 +2,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { agentsFor } from "./claude-agent.ts";
 import { type Config, ConfigSchema, loadConfig, type Paths } from "./config.ts";
-import { Daemon } from "./daemon.ts";
+import { Daemon, defaultTerminals } from "./daemon.ts";
 import { errorText, type FileLogger, fileLogger } from "./logger.ts";
 import { listenUnix } from "./transport/server.ts";
 import { VERSION } from "./version.ts";
@@ -51,6 +51,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       agents: agentsFor(config, paths.dataDir, process.env, log),
       version: VERSION,
       log,
+      terminals: defaultTerminals(process.env, config.terminal),
       ...(config.claude.warmStart ? { maxAheadAgents: config.claude.maxWarm } : {}),
       ...(agentIdleMs !== undefined ? { agentIdleMs } : {}),
     });

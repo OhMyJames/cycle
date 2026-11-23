@@ -33,6 +33,8 @@ export const connectClient = async (
   const elicitations: unknown[] = [];
   const resolved: unknown[] = [];
   const planUsage: unknown[] = [];
+  /** Every `_cycle/terminal/*` notification, in order, by its method's last part. */
+  const terminal: { kind: "output" | "reset" | "changed"; params: Record<string, unknown> }[] = [];
   let listChanged = 0;
   let defaultsChanged = 0;
   let connectorsChanged = 0;
@@ -79,6 +81,27 @@ export const connectClient = async (
       },
     )
     .onNotification(
+      "_cycle/terminal/output",
+      (p: unknown) => p as Record<string, unknown>,
+      ({ params }) => {
+        terminal.push({ kind: "output", params });
+      },
+    )
+    .onNotification(
+      "_cycle/terminal/reset",
+      (p: unknown) => p as Record<string, unknown>,
+      ({ params }) => {
+        terminal.push({ kind: "reset", params });
+      },
+    )
+    .onNotification(
+      "_cycle/terminal/changed",
+      (p: unknown) => p as Record<string, unknown>,
+      ({ params }) => {
+        terminal.push({ kind: "changed", params });
+      },
+    )
+    .onNotification(
       "_cycle/session_list_changed",
       (p: unknown) => p as object,
       () => {
@@ -120,6 +143,13 @@ export const connectClient = async (
     connectorsChanged: () => connectorsChanged,
     /** Every `_cycle/plan_usage_changed` this client was sent, in order. */
     planUsage,
+    terminal,
+    /** The output of one terminal this client was sent, joined. */
+    terminalText: (terminalId: string) =>
+      terminal
+        .filter((t) => t.kind === "output" && t.params.terminalId === terminalId)
+        .map((t) => t.params.data as string)
+        .join(""),
     kinds: () => seen.map((s) => s.update.sessionUpdate),
     /** Turns that have ended: an idle that says why, as opposed to a state snapshot. */
     ended: () =>
