@@ -34,7 +34,7 @@ import {
 import type { PanelTabId, PanelTabKind } from "../side-panel.ts";
 import { BLANK_KEY, viewKey } from "../store/index.ts";
 import { tabKind, terminalOfTab } from "../terminals.ts";
-import { SignInPage } from "./account.tsx";
+import { AccountMenu, SignInPage } from "./account.tsx";
 import { AppNotices } from "./app-notices.tsx";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer, composerInput } from "./composer.tsx";
@@ -71,7 +71,6 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 import { useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
 import { toolDescription } from "./tool.tsx";
-import { UpdateFooter } from "./update.tsx";
 
 /**
  * What is drawn over a page and takes its keys first: a dialog, a menu, the choices of a select. Not every listbox: the
@@ -371,7 +370,7 @@ function AppWindow() {
   // for something else (a new session, a found one, a notification's), the keyboard is that thing's.
   const returnFocus = useRef<string | undefined>(undefined);
   const leaveSettings = () => {
-    returnFocus.current = '[data-kind="settings-open"]';
+    returnFocus.current = '[data-slot="menu-trigger"][data-kind="account-menu"]';
     setSettings(undefined);
   };
   const leaveConnectors = () => {
@@ -920,7 +919,7 @@ function AppWindow() {
               }}
               notices={sidebarCollapsed ? null : <AppNotices />}
             >
-              <UpdateFooter onSettings={() => openSettings()} />
+              <AccountMenu onSettings={() => openSettings()} />
             </Sidebar>
           }
           main={

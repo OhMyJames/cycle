@@ -197,7 +197,8 @@ test.skipIf(!built)(
       // The look, chosen in Settings as a person does: the page's own media query says light, then dark. The language,
       // kept outside the page: after a reload the page's words are in it, without a restart.
       const dark = () => page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches);
-      await page.locator('[data-kind="settings-open"]').click();
+      await page.locator('[data-slot="menu-trigger"][data-kind="account-menu"]').click();
+      await page.getByRole("menuitem", { name: "Settings" }).click();
       await page.getByRole("tab", { name: "Appearance" }).click();
       await page.getByRole("radio", { name: "Light" }).click();
       await until(dark, (v) => v === false);
@@ -281,7 +282,8 @@ test.skipIf(!built)(
           if (value.length > 20) expect(html).not.toContain(value);
 
       // Settings → Sign out, confirmed: the sign-in page again, and the provider was told.
-      await page.getByRole("button", { name: /^Settings/ }).click();
+      await page.getByRole("button", { name: /account and settings$/ }).click();
+      await page.getByRole("menuitem", { name: "Settings" }).click();
       await page.getByRole("button", { name: "Sign out" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Sign out" }).click();
       await page.getByRole("button", { name: "Sign in with browser" }).waitFor({ timeout: 10_000 });

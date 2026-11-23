@@ -516,7 +516,11 @@ summary:focus-visible {
     [data-slot="session-title"],
     [data-slot="workspace-name"],
     [data-slot="search-title"],
-    [data-slot="update-text"] [data-slot="hint"],
+    [data-slot="account-name"],
+    [data-slot="account-card-name"],
+    [data-slot="account-card-detail"],
+    [data-slot="update-line"],
+    [data-slot="update-line"],
     [data-slot="setting-value"],
     [data-slot="menu-content"] [data-slot="option-description"],
     [data-slot="queued-text"],
@@ -563,7 +567,9 @@ summary:focus-visible {
   [data-slot="panel-tab-label"],
   [data-slot="workspace-name"],
   [data-slot="search-title"],
-  [data-slot="update-text"] [data-slot="hint"],
+  [data-slot="account-name"],
+  [data-slot="account-card-name"],
+  [data-slot="account-card-detail"],
   [data-slot="setting-value"],
   [data-slot="menu-content"] [data-slot="option-description"],
   [data-slot="queued-text"],
@@ -1612,7 +1618,8 @@ button[data-slot="overview-row"]:focus-visible,
 [data-slot="composer"],
 [data-slot="blank-where"],
 [data-kind="plan-strip"] {
-  --cycle-column-pad: max(var(--cycle-gap), calc((100% - var(--cycle-measure)) / 2));
+  /* At least 24px from either edge, as a page's column is: beside the right panel the view is narrow, and 12 crowds it. */
+  --cycle-column-pad: max(1.5rem, calc((100% - var(--cycle-measure)) / 2));
 }
 
 /* State shapes (status.tsx): a colour and a shape; the word is beside it. */
@@ -2729,27 +2736,93 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   color: var(--ui-muted-foreground);
 }
 
-/* The version and what the update is doing on the left, the app's menu on the right. */
-[data-slot="update-footer"] {
+/* Who is signed in, the whole row wide: it opens the app's menu (Settings, the version and its update, signing out). */
+[data-slot="menu-trigger"][data-kind="account-menu"] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  padding-inline: 0.5rem;
+  color: var(--cycle-ink-secondary);
+  font-weight: var(--cycle-weight);
+}
+
+[data-slot="menu-trigger"][data-kind="account-menu"] > svg {
+  flex: none;
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="menu-trigger"][data-kind="account-menu"] > [data-slot="account-state"] {
+  margin-inline-start: auto;
+  color: var(--cycle-attention);
+}
+
+/* The first letter of who it is: a quiet circle, as a row's own marks are. */
+[data-slot="avatar"] {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-selected);
+  color: var(--cycle-ink-secondary);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* Wide enough for an address under the name; a longer one fades at the end. */
+[data-slot="menu-content"][data-kind="account-menu"] {
+  width: 15rem;
+}
+
+[data-slot="account-card"] {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
 }
 
-[data-slot="update-text"] {
-  flex: 1;
-  min-width: 0;
+[data-slot="account-card"] [data-slot="avatar"] {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: var(--cycle-text-ui);
+}
+
+[data-slot="account-who"] {
   display: flex;
   flex-direction: column;
-  padding-inline: 0.5rem;
-  font-size: var(--cycle-text-meta);
-  line-height: var(--cycle-leading-meta);
+  min-width: 0;
 }
 
-[data-slot="update-text"] [data-slot="hint"] {
-  font-size: inherit;
-  overflow: hidden;
-  white-space: nowrap;
+[data-slot="account-card-name"] {
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 500;
+}
+
+[data-slot="account-card-detail"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+/* The check, and the version at the row's end, right-aligned and quiet. */
+[data-slot="menu-item"][data-kind="update-check"] [data-slot="update-line"] {
+  flex: 1;
+  min-width: 0;
+}
+
+[data-slot="app-version"] {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The session's title bar: one row of 42px, the title and where it runs on one line, actions at the end. No rule under
@@ -2774,7 +2847,6 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
 }
 
 [data-kind="sidebar-toggle"],
-[data-kind="settings-open"],
 [data-kind="session-more"],
 [data-kind="panel-toggle"] {
   flex: none;
@@ -2978,6 +3050,10 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* It scrolls up and down only. What is wider has its own scroller (a code block, a table); a control's padding laid
+     outside the text edge (a message's copy button) may reach into the scrollbar's slot without making the view scroll
+     sideways. */
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--cycle-gap);
@@ -6866,7 +6942,7 @@ button[data-slot="review-file"]:focus-visible {
 /* A blank conversation: the box in the middle of the page, with where its session will run in one line just above it.
    Above that, only when something stands in the way (not connected, no agent), what it is and what to do. */
 [data-slot="blank-stage"] {
-  --cycle-column-pad: max(var(--cycle-gap), calc((100% - var(--cycle-measure)) / 2));
+  --cycle-column-pad: max(1.5rem, calc((100% - var(--cycle-measure)) / 2));
   flex: 1;
   min-height: 0;
   display: flex;

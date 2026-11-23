@@ -2,15 +2,17 @@
 // they sign in, the notice in the sidebar when the login cannot be renewed, and the account's group in Settings. The
 // page is told how the login stands and who it is; never a token.
 import { Button } from "@ui-sdk/react/button";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@ui-sdk/react/menu";
 import { useState } from "react";
 import type { AccountStatus } from "../api.ts";
 import type { MessageKey } from "../messages/en-US.ts";
 import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
-import { CheckIcon, ErrorCircleIcon, RefreshIcon, WarningIcon } from "./icons.tsx";
+import { CheckIcon, ErrorCircleIcon, RefreshIcon, SettingsIcon, WarningIcon } from "./icons.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
+import { updateLine, updateNoticed } from "./update.tsx";
 
 /** Why the page says what it says, before the button: an ended login, or what went wrong the last time. */
 const noteOf = (account: AccountStatus): MessageKey | undefined => {
@@ -148,5 +150,128 @@ export function AccountGroup() {
         onConfirm={() => store.signOut()}
       />
     </PageGroup>
+  );
+}
+
+/** The first letter of who is signed in, in a circle: there is no picture of them to show, and none is made up. */
+function Avatar({ name }: { name: string }) {
+  return (
+    <span data-slot="avatar" aria-hidden="true">
+      {(Array.from(name)[0] ?? "").toUpperCase()}
+    </span>
+  );
+}
+
+/**
+ * The foot of the sidebar: who is signed in, which opens the app's menu. In it: who that is, Settings, which version
+ * this is and what the update is doing, and the way out. One quiet row: these are used rarely and must not take room
+ * from the list.
+ */
+export function AccountMenu({ onSettings }: { onSettings: () => void }) {
+  const store = useAppStore();
+  const { t } = useI18n();
+  const account = useAppState((s) => s.account);
+  const update = useAppState((s) => s.update);
+  const deferred = useAppState((s) => s.updateDeferred);
+  const [confirming, setConfirming] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const user = account?.user;
+  const name = user === undefined ? t("account.group") : user.name || user.email;
+  // The address under the name, when the name is not the address already.
+  const email = user !== undefined && user.name !== "" ? user.email : "";
+  const state =
+    account?.state === "offline"
+      ? t("account.state.offline")
+      : account?.state === "reauth"
+        ? t("account.state.reauth")
+        : "";
+  // What the update is doing, where the check is asked for: an update put off is still said here. What the notice
+  // above already says is not said twice, and "up to date" is what a check would find out.
+  const line =
+    update === undefined || update.kind === "up-to-date" || updateNoticed(update, deferred)
+      ? ""
+      : updateLine(update, t);
+  return (
+    <>
+      <Menu
+        onAction={(value) => {
+          if (value === "settings") onSettings();
+          else if (value === "check") void store.checkForUpdate();
+          else if (value === "install") setInstalling(true);
+          else if (value === "sign-out") setConfirming(true);
+        }}
+      >
+        <MenuTrigger
+          data-variant="ghost"
+          data-kind="account-menu"
+          aria-label={t("account.menu", { name })}
+          title={state !== "" ? `${name} · ${state}` : undefined}
+        >
+          {user !== undefined ? <Avatar name={name} /> : <SettingsIcon />}
+          <span data-slot="account-name">{name}</span>
+          {state !== "" ? <WarningIcon data-slot="account-state" aria-hidden="true" /> : null}
+        </MenuTrigger>
+        <MenuContent side="top" align="start" sideOffset={6} data-kind="account-menu">
+          {user !== undefined ? (
+            <>
+              <div data-slot="account-card">
+                <Avatar name={name} />
+                <span data-slot="account-who">
+                  <span data-slot="account-card-name">{name}</span>
+                  {email !== "" || state !== "" ? (
+                    <span data-slot="account-card-detail">
+                      {[email, state].filter((part) => part !== "").join(" · ")}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+              <MenuSeparator />
+            </>
+          ) : null}
+          <MenuItem value="settings">{t("settings.open")}</MenuItem>
+          {/* One row: the check, or what the update is doing, and which version this is at its end. */}
+          <MenuItem
+            // An update put off is installed from here, after the same question as the notice's; else it checks.
+            value={update?.kind === "available" ? "install" : "check"}
+            data-kind="update-check"
+            disabled={
+              update === undefined ||
+              update.kind === "disabled" ||
+              update.kind === "checking" ||
+              update.kind === "downloading" ||
+              update.kind === "installing"
+            }
+            title={line !== "" ? line : undefined}
+          >
+            <span data-slot="update-line">{line !== "" ? line : t("app.checkForUpdates")}</span>
+            {update !== undefined ? <span data-slot="app-version">{update.current}</span> : null}
+          </MenuItem>
+          {user !== undefined ? (
+            <>
+              <MenuSeparator />
+              <MenuItem value="sign-out">{t("account.signOut")}</MenuItem>
+            </>
+          ) : null}
+        </MenuContent>
+      </Menu>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={t("account.signOutTitle")}
+        description={t("account.signOutDescription")}
+        confirmLabel={t("account.signOut")}
+        onConfirm={() => store.signOut()}
+      />
+      <ConfirmDialog
+        open={installing}
+        onOpenChange={setInstalling}
+        title={t("update.confirmTitle", {
+          version: update?.kind === "available" ? update.version : "",
+        })}
+        description={t("update.confirmDescription")}
+        confirmLabel={t("update.install")}
+        onConfirm={() => store.installUpdate()}
+      />
+    </>
   );
 }

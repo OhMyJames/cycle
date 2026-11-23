@@ -5,6 +5,7 @@ import type { EnvironmentConfig } from "../../src/api.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { openSettings } from "./account-menu.ts";
 import {
   browseFolders,
   chooseEnvironment,
@@ -318,7 +319,7 @@ test("a host that is not connected cannot have a session started on it", async (
 
 test("a remote environment can be edited, and removing one asks for confirmation first", async () => {
   const { user, named } = await mount();
-  await user.click(screen.getByRole("button", { name: /^Settings/ }));
+  await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Environments" }));
   await user.click(await screen.findByRole("button", { name: "Actions for Build box" }));
   await user.click(await screen.findByRole("menuitem", { name: "Edit" }));

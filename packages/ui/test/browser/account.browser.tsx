@@ -6,6 +6,7 @@ import type { AccountStatus } from "../../src/api.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, SIGNED_IN } from "../fake-bridge.ts";
+import { accountMenu, openSettings } from "./account-menu.ts";
 
 afterEach(() => {
   cleanup();
@@ -86,11 +87,11 @@ test("someone else signed in: it is said once, and dismissed", async () => {
 
 test("Settings shows who is signed in, and signing out is asked first and returns to the sign-in page", async () => {
   const { user, named } = await mount();
-  await user.click(await screen.findByRole("button", { name: /^Settings/ }));
-  const group = await screen.findByText("Account");
-  expect(group).toBeTruthy();
-  expect(screen.getByText("Ada Lovelace")).toBeTruthy();
-  expect(screen.getByText("ada@example.com")).toBeTruthy();
+  await openSettings(user);
+  await screen.findByText("Account");
+  const page = document.querySelector('[data-kind="page"]') as HTMLElement;
+  expect(within(page).getByText("Ada Lovelace")).toBeTruthy();
+  expect(within(page).getByText("ada@example.com")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Sign out" }));
   const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText(/stay/)).toBeTruthy();
@@ -103,6 +104,21 @@ test("Settings shows who is signed in, and signing out is asked first and return
   await user.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Sign out" }),
   );
+  expect(named("signOut")).toHaveLength(1);
+  expect(await screen.findByRole("heading", { name: "Sign in to Cycle" })).toBeTruthy();
+});
+
+test("the sidebar's foot is who is signed in: its menu says who, opens Settings, and signs out after asking", async () => {
+  const { user, named } = await mount();
+  const button = await accountMenu();
+  expect(button.textContent).toContain("Ada Lovelace");
+  await user.click(button);
+  const menu = await screen.findByRole("menu");
+  expect(within(menu).getByText("ada@example.com")).toBeTruthy();
+  expect(within(menu).getByRole("menuitem", { name: /^Check for updates/ })).toBeTruthy();
+  await user.click(within(menu).getByRole("menuitem", { name: "Sign out" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Sign out" }));
   expect(named("signOut")).toHaveLength(1);
   expect(await screen.findByRole("heading", { name: "Sign in to Cycle" })).toBeTruthy();
 });

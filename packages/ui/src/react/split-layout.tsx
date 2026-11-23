@@ -193,7 +193,7 @@ export function SplitLayout({
     }
     if (open && !controller.isCollapsed("panel") && widthOf("panel") > 0)
       want.current.panel = widthOf("panel");
-    const fit = () => {
+    const refit = () => {
       const width = group.getBoundingClientRect().width;
       if (width === 0) return;
       const collapsed = controller.isCollapsed("sidebar");
@@ -209,13 +209,27 @@ export function SplitLayout({
         if (ask(() => controller.expand("sidebar"))) foldBy(folded, false);
       }
       sidebarWasFolded.current = controller.isCollapsed("sidebar");
+      // The sidebar is as wide as the user left it, whatever the window: the SDK keeps sizes as shares of the group,
+      // and would widen or narrow it with the window, and with the panel coming or going.
+      if (!sidebarWasFolded.current && Math.abs(widthOf("sidebar") - want.current.sidebar) > 1)
+        ask(() => controller.resize("sidebar", `${want.current.sidebar}px`));
       if (panelOpen && Math.abs(widthOf("panel") - next.panel) > 1)
         ask(() => controller.resize("panel", `${next.panel}px`));
     };
-    const observer = new ResizeObserver(fit);
+    // Fitted again the frame after the window changes: the SDK rescales the columns on its own observer, and what it
+    // made of them is what is put right.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      refit();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(refit);
+    });
     observer.observe(group);
-    fit();
-    return () => observer.disconnect();
+    refit();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
   }, [controller, open]);
 
   return (

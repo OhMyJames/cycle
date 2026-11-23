@@ -5,9 +5,8 @@ import type { Translator } from "../i18n.ts";
 import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
-import { DownloadIcon, ErrorCircleIcon, RefreshIcon, SettingsIcon, WarningIcon } from "./icons.tsx";
+import { DownloadIcon, ErrorCircleIcon, RefreshIcon, WarningIcon } from "./icons.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-import { Tip } from "./tip.tsx";
 
 /** Whole megabytes, and tenths while the whole is small (an update that changed a little). */
 const megabytes = (bytes: number, total: number): string =>
@@ -233,36 +232,5 @@ export function DaemonNotice({ environmentId }: { environmentId: string }) {
             })}
       />
     </>
-  );
-}
-
-/**
- * The foot of the sidebar: which version this is, what the update is doing, and the way into Settings. One quiet row:
- * these are used rarely and must not take room from the list.
- */
-export function UpdateFooter({ onSettings }: { onSettings: () => void }) {
-  const { t } = useI18n();
-  const update = useAppState((s) => s.update);
-  const deferred = useAppState((s) => s.updateDeferred);
-  // What the notice above already says is not said twice; an update put off is still said here.
-  const line = update === undefined || updateNoticed(update, deferred) ? "" : updateLine(update, t);
-  return (
-    <div data-slot="update-footer">
-      <div data-slot="update-text">
-        {update !== undefined ? (
-          <span data-slot="hint">{t("update.current", { version: update.current })}</span>
-        ) : null}
-        {line !== "" ? (
-          <span data-slot="hint" data-update={update?.kind} role="status" title={line}>
-            {line}
-          </span>
-        ) : null}
-      </div>
-      <Tip label={t("settings.open")} shortcut="mod+,">
-        <Button data-variant="ghost" data-kind="settings-open" onClick={onSettings}>
-          <SettingsIcon />
-        </Button>
-      </Tip>
-    </div>
   );
 }
