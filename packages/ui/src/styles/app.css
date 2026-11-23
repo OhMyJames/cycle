@@ -2759,8 +2759,10 @@ html[data-platform="darwin"]
   scrollbar-gutter: stable;
   /* What scrolls past the top and bottom edges fades out (16px at the top, 32px at the bottom) instead of being cut. The
      mask is the view's, not the content's, so it stays put as the content scrolls; at either end the fade lies in the
-     padding, so the first and last messages are never under it. The scrollbar's ends fade with it. */
+     padding, so the first and last messages are never under it. What is scrolled into view (a fold, focus, find) stops
+     clear of the fades. The scrollbar's ends fade with it. */
   padding-block: 1rem 4rem;
+  scroll-padding-block: 1rem 2rem;
   mask-image: linear-gradient(
     to bottom,
     transparent,
@@ -2771,6 +2773,13 @@ html[data-platform="darwin"]
   padding-inline: var(--cycle-column-pad) max(0px, calc(var(--cycle-column-pad) - 10px));
   font-size: var(--cycle-text-body);
   line-height: var(--cycle-leading-body);
+}
+
+/* With nothing in it yet, the empty or loading state stays in the middle of the view. */
+[data-slot="conversation"]:has(> :is([data-slot="loading"], [data-slot="conversation-empty"])):not(
+  :has(> [data-slot="block"])
+) {
+  padding-bottom: 1rem;
 }
 
 [data-slot="message"][data-role="user"] {

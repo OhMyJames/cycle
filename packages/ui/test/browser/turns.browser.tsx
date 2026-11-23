@@ -593,15 +593,15 @@ test("the conversation fades at its top and bottom edges, and at the end the las
   expect((first?.top ?? 0) - view.top).toBeGreaterThanOrEqual(16);
 });
 
-test("an empty session's message is clear of the conversation's edge fades", async () => {
+test("an empty session's message stays in the middle of the view, whatever room is kept under a last message", async () => {
   const { log } = await open();
   const root = log.closest('[data-slot="app"]')?.parentElement;
   if (root instanceof HTMLElement) root.style.height = "100%";
   const empty = await screen.findByText("Nothing here yet. Say something below.");
   const box = empty.getBoundingClientRect();
   const view = log.getBoundingClientRect();
-  expect(box.top - view.top).toBeGreaterThan(16);
-  expect(view.bottom - box.bottom).toBeGreaterThan(32);
+  expect(box.top - view.top).toBeCloseTo(view.bottom - box.bottom, 0);
+  expect(box.top - view.top).toBeGreaterThan(32);
 });
 
 test("a conversation that grows from a few blocks to many draws about a page, not all of it", async () => {
