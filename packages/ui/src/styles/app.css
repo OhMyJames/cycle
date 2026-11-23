@@ -3550,7 +3550,26 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   font-size: var(--cycle-text-meta);
 }
 
-[data-slot="tool-block"][data-kind="stderr"] [data-slot="tool-block-label"] {
+/* A call's errors: the label always in the danger colour; the text too when the call failed, since then they say why. A
+   call that went well may write warnings and progress there, which are not alarms. */
+[data-slot="tool-block"][data-kind="stderr"] [data-slot="tool-block-label"],
+[data-slot="tool-block"][data-kind="stderr"][data-failed] [data-slot="tool-output"] {
+  color: var(--ui-destructive);
+}
+
+/* How a command ended, after what the block is: a tick and "succeeded", or a cross and its exit code. */
+[data-slot="tool-end"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: auto;
+}
+
+[data-slot="tool-end"][data-tone="ok"] {
+  color: var(--cycle-success);
+}
+
+[data-slot="tool-end"][data-tone="danger"] {
   color: var(--ui-destructive);
 }
 
