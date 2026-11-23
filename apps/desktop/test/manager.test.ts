@@ -988,6 +988,25 @@ test("a session says when it last had something happen", async () => {
 
 // ---- what is reported about use (docs/analytics.md): how it is used, never what is said ----
 
+test("a session of one of our agents is reported under that agent's name, not as other (CYCL-155)", async () => {
+  const fake = fakeAgent();
+  fake.definition.id = "codex";
+  const { manager } = await setup(fake);
+  const reported: [string, unknown][] = [];
+  const { m } = await manager("app", undefined, undefined, (name, props) =>
+    reported.push([name, props]),
+  );
+  await m.connect("local");
+  const id = await m.createSession("local", { cwd: dir, agent: "codex" });
+  await m.openSession("local", id);
+  await m.prompt("local", id, [{ type: "text", text: "hi" }]);
+  const agents = (name: string) =>
+    reported.filter(([n]) => n === name).map(([, p]) => (p as { agent?: string }).agent);
+  expect(agents("session_created")).toEqual(["codex"]);
+  expect(agents("session_opened")).toEqual(["codex"]);
+  expect(agents("prompt_sent")).toEqual(["codex"]);
+});
+
 test("what a person does is reported as counts and words, and never as what they wrote", async () => {
   const secret = "my password is hunter2 and the repo is /home/me/secret-project";
   const fake = fakeAgent(

@@ -48,6 +48,8 @@ export type Scenario = {
   language?: "zh-CN";
   /** The agent takes images: the composer shows how to attach them. */
   attach?: boolean;
+  /** The environment has a second agent (Codex): sessions say which agent they are of, and a new one can choose. */
+  secondAgent?: boolean;
   /** The environment has no available agent: the blank view explains why and offers a re-check. */
   noAgents?: boolean;
   /** Folder trust: the daemon keeps it, and this is the decision for every folder (null: nobody has decided). */
@@ -1799,6 +1801,21 @@ export const scenarios: Record<string, Scenario> = {
       if (document.activeElement !== option("one"))
         console.error("session-focus: the row moved and the keyboard focus was lost");
     },
+  },
+  "two-agents": {
+    title:
+      "Two agents on the environment: each session says which it is of, in the list and in its header",
+    secondAgent: true,
+    sessions: [
+      session("s1", { title: "Fix the remote session", agent: "codex" }),
+      session("s2", { title: "Speed up the build", state: "running" }),
+      session("s3", {
+        title: "A title that goes on and on and on, well past the width a row of the sidebar has",
+        agent: "codex",
+      }),
+      session("s4", { title: "Made with an agent that is gone", agent: "old-agent" }),
+    ],
+    history: conversation,
   },
   "many-sessions": {
     title: "800 sessions, long titles, every state",

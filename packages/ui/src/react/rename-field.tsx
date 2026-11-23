@@ -4,6 +4,7 @@ import { Input } from "@ui-sdk/react/input";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { SessionSummary } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
+import { SessionAgent } from "./session-agent.tsx";
 import { useAppStore } from "./store-context.tsx";
 
 /** How long a failed rename says why before it goes quiet; the title is back to what it was at once. */
@@ -177,6 +178,7 @@ export function SessionHeading({
         </h1>
       )}
       {editing ? null : <RenameProblem problem={problem} />}
+      <SessionAgent session={session} />
       <span data-slot="session-where" title={session.cwd}>
         {session.cwd}
       </span>

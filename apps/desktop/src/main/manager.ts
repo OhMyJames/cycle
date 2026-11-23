@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type AgentWord,
   agentOf,
   type EventName,
   type EventProps,
@@ -303,7 +304,7 @@ export class ConnectionManager
   }
 
   /** The agent of a session, as one of the words the dictionary has. */
-  #agentOf(environmentId: string, sessionId: string): "claude" | "other" {
+  #agentOf(environmentId: string, sessionId: string): AgentWord {
     const connection = this.#connections.get(environmentId);
     const row = connection?.sessions.find((s) => s.sessionId === sessionId);
     return agentOf(row?.agent ?? connection?.madeAgent.get(sessionId) ?? "");

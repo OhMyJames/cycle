@@ -205,8 +205,10 @@ export const enUS = {
   "blank.notConnected": "Not connected to {environment}.",
   "blank.connecting": "Connecting to {environment}…",
   "blank.noAgent": "No agent is available on {environment}.",
-  "blank.noAgentHint":
-    "Check that Claude is installed on {environment} and its credentials are configured.",
+  "blank.noAgentHint": "Check that an agent is installed on {environment} and signed in.",
+  "blank.noAgentHint.one": "Check that {agents} is installed on {environment} and signed in.",
+  "blank.noAgentHint.several":
+    "Check that one of these is installed on {environment} and signed in: {agents}.",
   "blank.retryAgents": "Check again",
   "blank.unreadable":
     "The saved settings of this agent could not be read, so the session cannot start from them.",

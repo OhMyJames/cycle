@@ -1126,6 +1126,7 @@ function AppWindow() {
         environments={environments}
         status={status}
         sessions={sessionsByEnvironment}
+        agents={agentsByEnvironment}
         onPick={async (environmentId, sessionId) => {
           // An archived session is not in the list unless archived ones are shown: show them, or the pick would select a hidden row.
           if (

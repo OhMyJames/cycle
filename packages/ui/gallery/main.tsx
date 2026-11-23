@@ -166,6 +166,13 @@ const bridgeFor = (scenario: Scenario) => {
             },
           },
         ];
+  if (scenario.secondAgent) {
+    const first = script.bridge.agents;
+    script.bridge.agents = async (environmentId) => [
+      ...(await first(environmentId)),
+      { id: "codex", name: "Codex", available: true, configSchema: {} },
+    ];
+  }
   return script;
 };
 
