@@ -2694,30 +2694,6 @@ html[data-platform="darwin"]
   border-top: 1px solid var(--cycle-border-subtle);
 }
 
-/* New words fade in a character at a time while a reply is written (markdown.tsx `FADE`): Streamdown's animate plugin
-   wraps them in `span[data-sd-animate]` with the timing in inline variables, and a list's marker fades by its colour.
-   Its own stylesheet would bring much else, so only these are taken. None with reduced motion (the page never asks). */
-@keyframes sd-fadeIn {
-  from {
-    opacity: 0;
-  }
-}
-
-@keyframes sd-markerIn {
-  from {
-    color: transparent;
-  }
-}
-
-[data-markdown] [data-sd-animate] {
-  animation: var(--sd-animation) var(--sd-duration) var(--sd-easing) var(--sd-delay) both;
-}
-
-[data-markdown] [data-sd-animate-marker]::marker {
-  animation: sd-markerIn var(--sd-marker-duration) var(--sd-marker-easing) var(--sd-marker-delay)
-    both;
-}
-
 /* One rhythm between a reply's blocks, 12px whatever they are: Streamdown's own spacing (16px, and more again around
    code, tables, quotes, headings and diagrams) is replaced. A block takes no margin of its own; the column's gap spaces
    them. The root is the one `Markdown` marks (`data-markdown`); a block Streamdown wraps for its text direction sits in a

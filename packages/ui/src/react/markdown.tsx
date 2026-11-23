@@ -6,6 +6,7 @@ import {
   createContext,
   isValidElement,
   useContext,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -204,6 +205,23 @@ const FADE: AnimateOptions = {
   maxBacklogMs: 200,
 };
 
+/** How long the last words of a reply take to fade in at most: the backlog, then one fade. */
+const FADE_TAIL_MS = 400;
+
+/** `on`, and still true for `ms` after it turns false. */
+const useLinger = (on: boolean, ms: number): boolean => {
+  const [lingering, setLingering] = useState(on);
+  useEffect(() => {
+    if (on) {
+      setLingering(true);
+      return;
+    }
+    const timer = setTimeout(() => setLingering(false), ms);
+    return () => clearTimeout(timer);
+  }, [on, ms]);
+  return on || (ms > 0 && lingering);
+};
+
 /** At most this much text when it is first drawn, and a reply is one just begun: a batch is far less. */
 const FIRST_BATCH = 200;
 
@@ -214,14 +232,17 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
   // back to it) shows what it has at once: Streamdown would count all of it as new and fade it all in. Decided once, so
   // the end of the reply changes nothing in how its blocks are drawn.
   const [fresh] = useState(() => streaming && text.length <= FIRST_BATCH);
+  const fading = fresh && !reduced;
+  // The last words fade in after the reply is done: Streamdown animates only while it is told the reply is going.
+  const animating = useLinger(streaming, fading ? FADE_TAIL_MS : 0);
   return (
     <Streaming.Provider value={streaming}>
       <Streamdown
         // The root of a reply's blocks, for the stylesheet's one rhythm between them (`[data-markdown]`).
         data-markdown=""
         mode="streaming"
-        isAnimating={streaming}
-        animated={fresh && !reduced ? FADE : false}
+        isAnimating={animating}
+        animated={fading ? FADE : false}
         parseIncompleteMarkdown={streaming}
         codeBlockMaxHeight="none"
         tableMaxHeight="none"
