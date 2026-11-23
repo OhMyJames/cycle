@@ -2,6 +2,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import { defaultDataDir } from "./data-dir.ts";
 
+/** What a terminal's shell is given from the daemon's environment by default: who and where, never a key. */
+const TERMINAL_ENV = ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"];
+
 /**
  * `<dataDir>/config.json`. Everything an agent may see is written here or named here: the daemon
  * hands an agent nothing it was not told to (AGENTS.md), because its own environment holds keys that
@@ -36,6 +39,21 @@ export const ConfigSchema = z.object({
       maxWarm: 3,
       progressSummaries: true,
     }),
+  /**
+   * Terminals the person opens beside a session (docs/protocol.md §8 "终端"). Their environment is not the daemon's:
+   * only the variables named here are passed (a name ending in `*` is a prefix), then `TERM` and `COLORTERM`.
+   */
+  terminal: z
+    .object({
+      allowEnv: z.array(z.string()).default(TERMINAL_ENV),
+      /** Terminals one session may have, exited ones not yet closed included. */
+      maxPerSession: z.number().int().min(1).max(100).default(8),
+      /** Terminals the daemon may have in all. */
+      max: z.number().int().min(1).max(500).default(32),
+      /** Lines a terminal keeps above its screen, for a client that attaches later. */
+      scrollback: z.number().int().min(0).max(100_000).default(5000),
+    })
+    .default({ allowEnv: TERMINAL_ENV, maxPerSession: 8, max: 32, scrollback: 5000 }),
   /** What is let go when nothing is happening (docs/daemon.md "空闲回收"、"空闲退出"). 0 turns either off. */
   idle: z
     .object({

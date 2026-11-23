@@ -60,8 +60,8 @@ Basis: CYCL-96。负责人 2026-11-22 的回答：终端跟 session 走；v1 只
 ## Consequences
 
 - 没有客户端连着 30 分钟后，终端里的 dev server 或长任务会随 daemon 一起结束。需要跑得更久的，用户自己用 `nohup` 或 tmux。
-- Linux 上还没跑过。CYCL-97 的集成测试要在 daemon-linux 的 CI 上跑过 PTY，才能算完成。
-- 每个终端的内存（shell 加无界面屏幕）还没在 daemon 里实测，上限的默认值要等 CYCL-97 测完再定。
+- Linux：`test/terminal-method.test.ts` 用真实的 `/bin/sh` 和 PTY，在门禁里跑，所以 CI 的 Ubuntu 上每次都会跑（CYCL-97）。
+- 每个终端的内存，CYCL-97 实测（2026-11-22，macOS arm64，10 个终端各输出 3000 行）：daemon 这边每个约 7 MB，shell 进程（zsh 或 bash）每个 2–3 MB。默认上限 32 个，最坏情况约 320 MB，比一个 Claude 进程（约 230 MB）多一些，默认值不改。
 - 在 Bun 里，PTY 的读取没法暂停，所以流量控制只能靠"无界面屏幕持续解析、连接落后就改发快照"，而不是对 shell 施加反压。
 
 ## Related

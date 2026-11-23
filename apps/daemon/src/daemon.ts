@@ -54,6 +54,14 @@ import {
   sessionMarkRead,
   sessionSetTitle,
   sessionUnarchive,
+  TERMINAL_NOTIFICATIONS,
+  terminalAttach,
+  terminalClose,
+  terminalCreate,
+  terminalDetach,
+  terminalInput,
+  terminalList,
+  terminalResize,
   trustRead,
   trustSet,
 } from "@cycle/protocol";
@@ -109,6 +117,13 @@ import {
   mentionsSession,
 } from "./session-mentions.ts";
 import { sessionPage } from "./session-page.ts";
+import {
+  type TerminalSink,
+  Terminals,
+  type TerminalsOptions,
+  terminalEnv,
+  terminalShell,
+} from "./terminals.ts";
 import { checkToolResult } from "./tool-result.ts";
 import { FolderTrust, realFolder, within } from "./trust-file.ts";
 import { type Activity, opensOrEndsTurn, turnLeftOpen } from "./turns.ts";
@@ -139,7 +154,29 @@ export type DaemonOptions = {
   connectors?: ConnectorService;
   /** Where what it does and what goes wrong is told (docs/daemon.md "日志"): events and ids, never content. */
   log?: Logger;
+  /**
+   * The terminals' shell, environment and limits (docs/protocol.md §8 "终端"). Default: the daemon's `SHELL` and the
+   * default allowlist over its environment, with the default limits.
+   */
+  terminals?: Omit<TerminalsOptions, "onChanged" | "log">;
 };
+
+/** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
+export const defaultTerminals = (
+  environment: Record<string, string | undefined>,
+  settings: { allowEnv: string[]; maxPerSession: number; max: number; scrollback: number } = {
+    allowEnv: ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"],
+    maxPerSession: 8,
+    max: 32,
+    scrollback: 5000,
+  },
+): Omit<TerminalsOptions, "onChanged" | "log"> => ({
+  env: terminalEnv(settings.allowEnv, environment),
+  shell: terminalShell(environment.SHELL),
+  maxPerSession: settings.maxPerSession,
+  max: settings.max,
+  scrollback: settings.scrollback,
+});
 
 const SESSION_UPDATE = methods.client.session.update;
 const REQUEST_PERMISSION = methods.client.session.requestPermission;
@@ -254,6 +291,7 @@ export class Daemon {
   readonly #optionsCache: AgentOptionsCache;
   readonly #trust: FolderTrust;
   readonly #connectors: ConnectorService;
+  readonly #terminals: Terminals;
   readonly #maxAhead: number | undefined;
   readonly #agentIdleMs: number | undefined;
   readonly #now: () => number;
@@ -297,6 +335,16 @@ export class Daemon {
     this.#optionsCache = optionsCache;
     this.#trust = trust;
     this.#connectors = connectors;
+    this.#terminals = new Terminals({
+      ...(options.terminals ?? defaultTerminals(process.env)),
+      log: this.#log,
+      onChanged: (sessionId, terminals) => {
+        for (const conn of this.#conns)
+          void conn
+            .notify(TERMINAL_NOTIFICATIONS.changed, { sessionId, terminals })
+            .catch(() => {});
+      },
+    });
     connectors.onChanged(() => {
       for (const conn of this.#conns) {
         void conn.notify(CONNECTORS_CHANGED, {}).catch(() => {});
@@ -449,6 +497,8 @@ export class Daemon {
   async close(): Promise<void> {
     // Stopping the agents is not a reason to hand anything back: what waits stays for the next start.
     this.#closing = true;
+    // Terminals do not outlive the daemon (docs/protocol.md §8 "终端"): their shells are hung up first.
+    await this.#terminals.closeAll();
     for (const session of this.#sessions.values()) {
       // A turn cut short says so in the history before the agent goes (docs/protocol.md §8): it is not left running.
       if (!session.closed && this.#turnInProgress(session)) {
@@ -468,6 +518,7 @@ export class Daemon {
 
   #dropped(conn: ClientConn): void {
     this.#conns.delete(conn);
+    this.#terminals.detachAll(conn.id);
     this.#lastClientAt = this.#now();
     for (const session of this.#sessions.values()) {
       for (const attachment of [...session.attachments]) {
@@ -1724,6 +1775,7 @@ export class Daemon {
             connectors: true,
             planUsage: true,
             sessionMentions: true,
+            terminal: true,
           },
         },
       } as never;
@@ -2051,6 +2103,7 @@ export class Daemon {
       session.closed = true;
       session.link?.kill();
       for (const attachment of session.attachments) attachment.detach();
+      await this.#terminals.closeSession(session.id);
       try {
         // The index first, and the session out of the table at once: from then on nobody can load
         // it again or get hold of it (a list that was being read, a client that was reconnecting),
@@ -2192,6 +2245,42 @@ export class Daemon {
     const trusted = (repository: string) => this.#trust.of(repository).trusted === true;
     cycle(diffStatus, (params) => workspaceStatus(this.#cwdOf(params.sessionId), trusted));
     cycle(diffFile, (params) => workspaceFile(this.#cwdOf(params.sessionId), params.path, trusted));
+    // Terminals (docs/protocol.md §8 "终端"): this connection is where their output goes.
+    const sink = (): TerminalSink => {
+      const conn = me();
+      return { id: conn.id, send: (method, params) => conn.notify(method, params) };
+    };
+    cycle(terminalCreate, async (params) => {
+      const session = await this.#session(params.sessionId);
+      return this.#terminals.create(
+        session.id,
+        this.#cwdOf(session.id),
+        params.cols,
+        params.rows,
+        sink(),
+      );
+    });
+    cycle(terminalList, async (params) => {
+      const session = await this.#session(params.sessionId);
+      return { terminals: this.#terminals.list(session.id) };
+    });
+    cycle(terminalAttach, (params) => this.#terminals.attach(params.terminalId, sink()));
+    cycle(terminalDetach, (params) => {
+      this.#terminals.detach(params.terminalId, me().id);
+      return {};
+    });
+    cycle(terminalInput, (params) => {
+      this.#terminals.input(params.terminalId, params.data);
+      return {};
+    });
+    cycle(terminalResize, (params) => {
+      this.#terminals.resize(params.terminalId, params.cols, params.rows);
+      return {};
+    });
+    cycle(terminalClose, async (params) => {
+      await this.#terminals.close(params.terminalId);
+      return {};
+    });
     cycle(trustRead, async (params) => this.#trust.of(await realFolder(params.path)));
     cycle(trustSet, async (params) => {
       const real = await realFolder(params.path);
@@ -2222,7 +2311,11 @@ export class Daemon {
         if (session.status() === "running" || session.status() === "requires_action")
           throw sessionBusy(session.id);
         return { archived: true };
-      })(params),
+      })(params).then(async (done) => {
+        // An archived session's terminals go with it (docs/protocol.md §8 "终端").
+        await this.#terminals.closeSession(params.sessionId);
+        return done;
+      }),
     );
     cycle(sessionUnarchive, (params) => change(async () => ({ archived: false }))(params));
     cycle(sessionMarkRead, async (params) => {

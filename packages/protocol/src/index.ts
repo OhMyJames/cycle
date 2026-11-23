@@ -10,3 +10,4 @@ export * from "./plan-usage.ts";
 export * from "./prompt.ts";
 export * from "./queue.ts";
 export * from "./session-state.ts";
+export * from "./terminal.ts";

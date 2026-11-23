@@ -41,6 +41,7 @@
 - **`_cycle/files/search`**(协议 §8,`src/files.ts`):只返回路径,只在 session 的 `cwd` 里;符号链接不跟随也不列出,不进 `.git` 和 `node_modules`,点开头的名字只给带点的查询,条目数和时间有上限(超了带 `truncated`)。测试:`test/files.test.ts`(含指向外面的链接)。
 - **`_cycle/fs/list`、`_cycle/fs/read`**(协议 §8"浏览和预览文件",`src/fs.ts`):Files 标签用，只读，路径相对 session 的 `cwd`;每次请求重新取真实路径，指向外面的链接只列不开。一次一层；文本每块 1 MiB(在字符边界切),图片有上限，二进制只给大小。被 git 忽略的条目只在仓库根目录被信任时标(`src/git.ts`:加固参数、白名单环境、`GIT_CEILING_DIRECTORIES`、5 秒超时)。测试:`test/fs.test.ts`、`test/fs-method.test.ts`。
 - **`_cycle/diff/status`、`_cycle/diff/file`**(协议 §8"工作区的改动",`src/diff.ts`):Diff 标签的工作区视图。session 的 `cwd` 之内，工作区对比 `HEAD`(没有提交时对比空树),路径相对 `cwd`,不做改名识别；只在仓库根目录被信任时运行 git(同 `src/git.ts` 的加固，加 `--no-ext-diff --no-textconv`、`GIT_LITERAL_PATHSPECS`、10 秒超时)。最多 1,000 个文件；一个补丁最多 1 MiB,超过就停下 git 并在行尾截断。未跟踪的文件经 `src/fs.ts` 同样的路径检查才读。测试:`test/diff.test.ts`、`test/diff-method.test.ts`;测试里的 git 用 `gitIn`(不读本机的配置、hooks 和身份)。
+- **`_cycle/terminal/*`**(协议 §8"终端",`src/terminals.ts`,决定笔记 `2026-11-22-terminals-in-the-daemon-over-l1`):用户在 session 旁边开的 shell。PTY 是 Bun 自带的(`Bun.spawn({ terminal })`),shell 以登录 shell 在 session 的 `cwd` 里启动，环境只取 `terminal.allowEnv`;每个终端一个 `@xterm/headless` 记屏幕，附着和追赶时给序列化的快照。输出约 16 ms 或 64 KiB 合一段；一个连接没写出的超过 1 MiB 就停发，写完后补一次 `reset`;屏幕没解析完的超过 8 MiB,新的输出不进屏幕(日志 `terminal_screen_behind`)。关闭时先给 shell 的进程组发 `SIGHUP` 并关掉 PTY(前台作业在自己的进程组里，由内核挂断),2 秒后还在就 `SIGKILL`。session 归档、删除和 daemon 停止时关掉它的终端;终端不计入 `activity()`。实测(2026-11-22,macOS arm64,10 个终端各输出 3000 行):daemon 每个终端约 7 MB,shell 每个 2–3 MB。测试:`test/terminals.test.ts`(环境、流量控制、快照)、`test/terminal-method.test.ts`(真实 `/bin/sh`:环境、尺寸、附着、退出、关闭结束前台作业、上限、归档删除和停止)。
 - **`_cycle/agent_defaults/*`**:读写都有实现,存在 `<数据目录>/agent-defaults.json`,新 session 按它开始,session 自己的配置覆盖它(此前这份文档误写成占位)。
 - **`_cycle/connectors/*`**(protocol.md §14):清单在 `<数据目录>/connectors/catalog.json`,密钥和 token 在同目录的 `credentials.json`(目录 0700,文件 0600),两个文件各在一个接口后面(`ConnectorCatalog`、`CredentialVault`),以后可以换成 cloud。任一文件读不了,daemon 拒绝启动,不覆盖它。OAuth 全在 daemon 里做(`connectors/oauth.ts`)。第一个用到 connector 的 agent 启动时,daemon 在 `127.0.0.1` 的随机端口上开 MCP 网关(`connectors/gateway.ts`),agent 只拿到网关地址和本 session 的 key;stdio 的 connector 由 daemon 启动(`connectors/stdio-bridge.ts`),环境变量只有固定白名单和它自己的值。
 
@@ -93,7 +94,7 @@ CYCL-104。目标机器是 2 核 4 GB,长期挂着的 daemon 不能让进程越�
 
 **空闲退出**(`serve` 里同一个定时器):`Daemon.idleSince()` 在下面都成立时给出从何时起空闲：没有任何客户端连着、没有 session 在加载或启动 agent、`activity()` 为空。持续 `idle.exitMinutes`(默认 30 分钟)后，daemon 按收到 `SIGTERM` 的同一条路径停下(日志 `idle_exit`,然后 `daemon_stopping`),退出码 0。
 
-停下的顺序(两种停法一样):先不再接新连接(这之后连上来的立刻被断开，客户端重连);再结束 agent、写完索引和缓存;最后才删 pid 文件、关 socket。socket 一直占着，新的 daemon 在旧的写完之前起不来，两个进程不会同时写一个数据目录。
+停下的顺序(两种停法一样):先不再接新连接(这之后连上来的立刻被断开，客户端重连);再关掉所有终端(协议 §8"终端":终端不拖住空闲退出，里面的进程随 daemon 结束)、结束 agent、写完索引和缓存;最后才删 pid 文件、关 socket。socket 一直占着，新的 daemon 在旧的写完之前起不来，两个进程不会同时写一个数据目录。
 
 - 不丢状态:`activity()` 为空就没有被打断的东西;索引、日志、排队的 prompt 都在磁盘上(排队的照"排队"的规则，等下一次有客户端附着)。
 - 自动拉起：桌面端本地和 ssh 都通过 `cycle proxy` 连接，连接断了就重连;`proxy` 发现没有 daemon 在听就先启动一个。所以有客户端连着时 daemon 不会退出，没有客户端时退出了，下一次连接把它拉起来。
@@ -180,6 +181,7 @@ cycle claude auth status   # 用同样的环境跑 claude 的其他命令
 - **Claude 进程看到的环境只有三样**:`allowEnv` 里点名的、daemon 自己环境中存在的变量;`CLAUDE_CONFIG_DIR`;`env` 里写明的值。daemon 自己的环境变量不会传下去。端到端测试里给 daemon 设了 `ANTHROPIC_API_KEY`,检查 Claude 一侧的请求里没有它。
 - `configDir` 默认是 `<数据目录>/claude`,一个独立目录,里面没有登录。要用已有登录,把它**有意地**指向那个目录(比如 `~/.claude`);要新登录,用 `CLAUDE_CONFIG_DIR=<目录> claude auth login`。
 - `HOME` 默认不传(回落到 `configDir`),免得 Claude 找到没人打算共享的登录或设置。
+- `terminal`(可省):`{ "allowEnv": ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"], "maxPerSession": 8, "max": 32, "scrollback": 5000 }`。终端的 shell 看到的环境只有 `allowEnv` 点名的(以 `*` 结尾的按前缀),加上 `TERM=xterm-256color`、`COLORTERM=truecolor`;没有 `HOME` 时用当前用户的家目录。和 Claude 的 `allowEnv` 分开：给终端加变量不会让 agent 看到它。
 - `log`(可省):`{ "level": "info", "maxBytes": 1000000, "files": 3 }`,见下面"日志"。
 - `idle`(可省):`{ "agentMinutes": 10, "exitMinutes": 30 }`,空闲多久结束一个 session 的 agent、空闲多久 daemon 自己退出;`0` 关掉。见上面"空闲回收和空闲退出"。
 
