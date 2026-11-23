@@ -174,8 +174,12 @@ export const stopDaemon = async (deps: StopDeps): Promise<number> => {
   deps.signal();
   const started = Date.now();
   const within = deps.stopWithinMs ?? 10_000;
-  while ((await deps.isRunning()) && Date.now() - started < within) await Bun.sleep(50);
-  const gone = !(await deps.isRunning());
+  // The answer is the look that ended the wait, not another one after it: two looks can disagree.
+  let gone = !(await deps.isRunning());
+  while (!gone && Date.now() - started < within) {
+    await Bun.sleep(50);
+    gone = !(await deps.isRunning());
+  }
   say(gone ? "stopped" : `did not stop within ${Math.round(within / 1000)}s`);
   return gone ? 0 : 1;
 };
