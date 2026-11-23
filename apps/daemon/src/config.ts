@@ -2,8 +2,13 @@ import { join } from "node:path";
 import { z } from "zod";
 import { defaultDataDir } from "./data-dir.ts";
 
-/** What a terminal's shell is given from the daemon's environment by default: who and where, never a key. */
-const TERMINAL_ENV = ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"];
+/** Terminals' settings when `config.json` names none. The environment is who and where, never a key. */
+export const TERMINAL_DEFAULTS = {
+  allowEnv: ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"],
+  maxPerSession: 8,
+  max: 32,
+  scrollback: 5000,
+};
 
 /**
  * `<dataDir>/config.json`. Everything an agent may see is written here or named here: the daemon
@@ -45,15 +50,15 @@ export const ConfigSchema = z.object({
    */
   terminal: z
     .object({
-      allowEnv: z.array(z.string()).default(TERMINAL_ENV),
+      allowEnv: z.array(z.string()).default(TERMINAL_DEFAULTS.allowEnv),
       /** Terminals one session may have, exited ones not yet closed included. */
-      maxPerSession: z.number().int().min(1).max(100).default(8),
+      maxPerSession: z.number().int().min(1).max(100).default(TERMINAL_DEFAULTS.maxPerSession),
       /** Terminals the daemon may have in all. */
-      max: z.number().int().min(1).max(500).default(32),
+      max: z.number().int().min(1).max(500).default(TERMINAL_DEFAULTS.max),
       /** Lines a terminal keeps above its screen, for a client that attaches later. */
-      scrollback: z.number().int().min(0).max(100_000).default(5000),
+      scrollback: z.number().int().min(0).max(100_000).default(TERMINAL_DEFAULTS.scrollback),
     })
-    .default({ allowEnv: TERMINAL_ENV, maxPerSession: 8, max: 32, scrollback: 5000 }),
+    .default(TERMINAL_DEFAULTS),
   /** What is let go when nothing is happening (docs/daemon.md "空闲回收"、"空闲退出"). 0 turns either off. */
   idle: z
     .object({

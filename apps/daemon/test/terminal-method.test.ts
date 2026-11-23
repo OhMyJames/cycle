@@ -60,6 +60,10 @@ const start = async (limits: { maxPerSession?: number; max?: number } = {}) => {
   return daemon;
 };
 
+/** Whether a process with this command line is running. */
+const running = (command: string) =>
+  Bun.spawnSync(["pgrep", "-f", command]).stdout.toString().trim().length > 0;
+
 const call = <T>(c: Awaited<ReturnType<typeof connectClient>>, method: string, params: object) =>
   c.agent.request(method as never, params as never) as Promise<T>;
 
@@ -162,21 +166,40 @@ test("a shell that exits stays listed with its code until closed; input to it is
   });
 });
 
-test("closing a terminal ends the job in front of its shell", async () => {
+test("closing a terminal ends the job in front of its shell and the jobs behind it", async () => {
   const daemon = await start();
   const c = await connectClient(daemon);
   const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: work });
   const id = (await call<Attached>(c, "_cycle/terminal/create", { sessionId, cols: 80, rows: 24 }))
     .terminal.terminalId;
-  const marker = `${41_000 + Math.floor(Math.random() * 999)}`;
-  await call(c, "_cycle/terminal/input", { terminalId: id, data: `sleep ${marker}\n` });
-  const running = () =>
-    Bun.spawnSync(["pgrep", "-f", `sleep ${marker}`])
-      .stdout.toString()
-      .trim().length > 0;
-  await until(running, "the job to start", 5_000);
+  const marker = 41_000 + Math.floor(Math.random() * 999);
+  const behind = `sleep ${marker}`;
+  const front = `sleep ${marker + 1}`;
+  await call(c, "_cycle/terminal/input", { terminalId: id, data: `${behind} &\n${front}\n` });
+  await until(() => running(behind) && running(front), "both jobs to start", 5_000);
   await call(c, "_cycle/terminal/close", { terminalId: id });
-  await until(() => !running(), "the job to end", 5_000);
+  await until(() => !running(front) && !running(behind), "both jobs to end", 5_000);
+});
+
+test("what a shell prints as it exits reaches the client", async () => {
+  const daemon = await start();
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: work });
+  const id = (await call<Attached>(c, "_cycle/terminal/create", { sessionId, cols: 80, rows: 24 }))
+    .terminal.terminalId;
+  await call(c, "_cycle/terminal/input", {
+    terminalId: id,
+    data: "seq 1 2000 | tail -1; echo last-$((5+5)); exit 4\n",
+  });
+  const exited = () =>
+    c.terminal.some(
+      (t) =>
+        t.kind === "changed" &&
+        (t.params.terminals as Info[]).some((x) => x.terminalId === id && x.exitCode === 4),
+    );
+  await until(exited, "the exit", 5_000);
+  await until(() => c.terminalText(id).includes("last-10"), "the last words", 5_000);
+  expect(c.terminalText(id)).toContain("2000");
 });
 
 test("terminals are limited per session and per daemon, and need the session's folder", async () => {
@@ -226,6 +249,9 @@ test("archiving or deleting a session closes its terminals, and so does the daem
   const last = await create(kept);
 
   await call(c, "_cycle/session/archive", { sessionId: archived });
+  await expect(
+    call(c, "_cycle/terminal/create", { sessionId: archived, cols: 80, rows: 24 }),
+  ).rejects.toMatchObject({ code: -32602, data: { reason: "archived" } });
   expect(
     (await call<{ terminals: Info[] }>(c, "_cycle/terminal/list", { sessionId: archived }))
       .terminals,

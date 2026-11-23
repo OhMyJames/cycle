@@ -25,9 +25,15 @@ export type Pty = {
   readonly pid: number;
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  /** Closes the terminal's end: the kernel hangs up its foreground job. */
+  /**
+   * The processes whose controlling terminal this is: the shell, the job in front and the jobs in the background
+   * (each in a group of its own), and those left behind by a shell that exited. Asked while this end is open, so the
+   * device cannot have gone to another terminal.
+   */
+  processes(): Promise<number[]>;
+  /** Closes this end of the pseudo-terminal. Until then output keeps coming, even after the shell exits. */
   hangup(): void;
-  /** Resolves with the exit code, or null when a signal ended it. */
+  /** Resolves with the shell's exit code, or null when a signal ended it. */
   readonly exited: Promise<number | null>;
 };
 
@@ -74,14 +80,14 @@ export type TerminalsOptions = {
   /** For tests. */
   spawn?: PtySpawn;
   screen?: ScreenFactory;
-  /** How long a closed shell has after SIGHUP before SIGKILL. */
+  /** How long a closed terminal's shell has after SIGHUP before its group is killed. */
   killGraceMs?: number;
   /** Output is gathered for this long, or up to `batchBytes`, into one piece. */
   batchMs?: number;
   batchBytes?: number;
-  /** Past this many bytes not yet written out to a connection, it gets no more output until a `reset`. */
+  /** Past this many bytes of output not yet written out to a connection, it gets no more until a `reset`. */
   behindBytes?: number;
-  /** Past this many bytes the screen has not parsed yet, output is left out of it rather than kept. */
+  /** Past this many bytes the screen has not parsed yet, it is started again empty rather than kept growing. */
   screenBacklogBytes?: number;
 };
 
@@ -116,6 +122,22 @@ export const terminalShell = (shell: string | undefined): string => {
   return "/bin/sh";
 };
 
+/** `ps`, with nothing of the daemon's environment. Its output, or "" when it fails. */
+const ps = async (args: string[]): Promise<string> => {
+  try {
+    const run = Bun.spawn(["ps", ...args], {
+      env: { PATH: "/bin:/usr/bin" },
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const out = await new Response(run.stdout).text();
+    await run.exited;
+    return out;
+  } catch {
+    return "";
+  }
+};
+
 export const bunPtySpawn: PtySpawn = (options) => {
   const proc = Bun.spawn(options.argv, {
     cwd: options.cwd,
@@ -128,6 +150,11 @@ export const bunPtySpawn: PtySpawn = (options) => {
   });
   const terminal = proc.terminal;
   if (terminal === undefined) throw new Error("no pseudo-terminal");
+  // The device's name (`ttys003`, `pts/3`), read from the shell while it is surely alive.
+  const device = ps(["-o", "tty=", "-p", String(proc.pid)]).then((out) => {
+    const name = out.trim();
+    return name === "" || name.startsWith("?") ? undefined : name;
+  });
   return {
     pid: proc.pid,
     write: (data) => {
@@ -136,13 +163,18 @@ export const bunPtySpawn: PtySpawn = (options) => {
     resize: (cols, rows) => {
       if (!terminal.closed) terminal.resize(cols, rows);
     },
+    processes: async () => {
+      const name = await device;
+      if (name === undefined || terminal.closed) return [];
+      return (await ps(["-t", name, "-o", "pid="]))
+        .split("\n")
+        .map((line) => Number(line.trim()))
+        .filter((pid) => Number.isInteger(pid) && pid > 1);
+    },
     hangup: () => {
       if (!terminal.closed) terminal.close();
     },
-    exited: proc.exited.then((code) => {
-      terminal.close();
-      return proc.signalCode !== null ? null : code;
-    }),
+    exited: proc.exited.then((code) => (proc.signalCode !== null ? null : code)),
   };
 };
 
@@ -163,27 +195,35 @@ export const xtermScreen: ScreenFactory = ({ cols, rows, scrollback }) => {
   };
 };
 
+type Piece = { seq: number; data: string; bytes: number };
+
 type Viewer = {
   sink: TerminalSink;
-  /** Bytes sent and not yet written out. */
+  /** Bytes of output sent and not yet written out: what decides it has fallen behind. */
   inflight: number;
+  /** Resets sent and not yet written out. Not counted as falling behind: a screen can be larger than the limit. */
+  resetting: number;
   /** `live`: gets output. `behind`: gets none until it catches up. `syncing`: a reset is being made; output waits. */
   state: "live" | "behind" | "syncing";
-  waiting: { seq: number; data: string }[];
+  waiting: Piece[];
 };
+
+/** A screen and what is written to it and not yet parsed. */
+type ScreenState = { screen: Screen; backlog: number };
 
 type Entry = {
   info: TerminalInfo;
   pty: Pty;
-  screen: Screen;
+  screen: ScreenState;
   decoder: TextDecoder;
   /** The last piece of output made. */
   seq: number;
   batch: string;
+  batchBytes: number;
   timer: ReturnType<typeof setTimeout> | undefined;
-  /** Bytes written to the screen and not yet parsed. */
-  backlog: number;
   viewers: Map<string, Viewer>;
+  /** Closed: no longer listed or reachable, though its processes may still be ending. */
+  gone: boolean;
   closing: Promise<void> | undefined;
 };
 
@@ -194,12 +234,20 @@ let counter = 0;
 const newTerminalId = () =>
   `t_${Date.now().toString(36)}${(++counter).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
+const signal = (pid: number, name: NodeJS.Signals): void => {
+  try {
+    process.kill(pid, name);
+  } catch {}
+};
+
 export class Terminals {
   readonly #options: TerminalsOptions;
   readonly #spawn: PtySpawn;
   readonly #screen: ScreenFactory;
   readonly #log: Logger;
   readonly #terminals = new Map<string, Entry>();
+  /** Set once the daemon stops: no terminal is opened after its last ones are closed. */
+  #stopped = false;
 
   constructor(options: TerminalsOptions) {
     this.#options = options;
@@ -210,7 +258,7 @@ export class Terminals {
 
   list(sessionId: string): TerminalInfo[] {
     return [...this.#terminals.values()]
-      .filter((entry) => entry.info.sessionId === sessionId && entry.closing === undefined)
+      .filter((entry) => entry.info.sessionId === sessionId && !entry.gone)
       .map((entry) => ({ ...entry.info }));
   }
 
@@ -222,14 +270,18 @@ export class Terminals {
     rows: number,
     sink: TerminalSink,
   ): Promise<TerminalAttached> {
-    if (this.list(sessionId).length >= this.#options.maxPerSession)
+    if (this.#stopped)
+      throw new RpcError(INVALID_PARAMS, "The daemon is stopping", {
+        sessionId,
+        reason: "daemon_stopping",
+      });
+    // Terminals still closing hold their processes and screens: they count until they are gone.
+    const ofSession = [...this.#terminals.values()].filter((e) => e.info.sessionId === sessionId);
+    if (ofSession.length >= this.#options.maxPerSession)
       throw new RpcError(
         CycleErrorCode.TerminalLimit,
         "This session has as many terminals as it may",
-        {
-          sessionId,
-          limit: this.#options.maxPerSession,
-        },
+        { sessionId, limit: this.#options.maxPerSession },
       );
     if (this.#terminals.size >= this.#options.max)
       throw new RpcError(
@@ -251,7 +303,6 @@ export class Terminals {
       });
 
     const terminalId = newTerminalId();
-    const screen = this.#screen({ cols, rows, scrollback: this.#options.scrollback });
     // Output can come as soon as the shell starts: it waits for the entry it belongs to.
     let entry: Entry | undefined;
     const early: Uint8Array[] = [];
@@ -266,7 +317,6 @@ export class Terminals {
         onData: (data) => (entry ? this.#onData(entry, data) : early.push(data)),
       });
     } catch (error) {
-      screen.dispose();
       this.#log.warn("terminal_spawn_failed", { session: sessionId });
       throw new RpcError(INVALID_PARAMS, "The shell could not be started", {
         sessionId,
@@ -274,31 +324,29 @@ export class Terminals {
         detail: error instanceof Error ? error.message : String(error),
       });
     }
+    const info: TerminalInfo = {
+      terminalId,
+      sessionId,
+      title: basename(this.#options.shell),
+      cols,
+      rows,
+      status: "running",
+    };
     entry = {
-      info: {
-        terminalId,
-        sessionId,
-        title: basename(this.#options.shell),
-        cols,
-        rows,
-        status: "running",
-      },
+      info,
       pty,
-      screen,
+      screen: this.#newScreen(info),
       decoder: new TextDecoder(),
       seq: 0,
       batch: "",
+      batchBytes: 0,
       timer: undefined,
-      backlog: 0,
       viewers: new Map(),
+      gone: false,
       closing: undefined,
     };
     const created = entry;
     for (const data of early) this.#onData(created, data);
-    screen.onTitle((title) => {
-      created.info.title = title.slice(0, 200);
-      this.#changed(sessionId);
-    });
     this.#terminals.set(terminalId, created);
     this.#log.info("terminal_opened", { session: sessionId, terminal: terminalId });
     void pty.exited.then((code) => this.#onExit(created, code));
@@ -340,11 +388,14 @@ export class Terminals {
     entry.info.cols = cols;
     entry.info.rows = rows;
     if (entry.info.status === "running") entry.pty.resize(cols, rows);
-    entry.screen.resize(cols, rows);
+    entry.screen.screen.resize(cols, rows);
     this.#changed(entry.info.sessionId);
   }
 
-  /** Ends the shell's whole process group and forgets the terminal. */
+  /**
+   * Hangs up every process on the terminal and forgets it: gone from the list at once, its processes ended in the
+   * background of the returned promise.
+   */
   close(terminalId: string): Promise<void> {
     return this.#close(this.#entry(terminalId));
   }
@@ -355,22 +406,40 @@ export class Terminals {
     return Promise.all(entries.map((entry) => this.#close(entry))).then(() => {});
   }
 
-  /** The daemon is stopping. */
+  /** The daemon is stopping: every terminal is closed, and no new one is opened. */
   closeAll(): Promise<void> {
+    this.#stopped = true;
     return Promise.all([...this.#terminals.values()].map((entry) => this.#close(entry))).then(
       () => {},
     );
   }
 
-  /** How many there are, for tests and the log. */
+  /** How many there are, closing ones included. */
   get size(): number {
     return this.#terminals.size;
   }
 
   #entry(terminalId: string): Entry {
     const entry = this.#terminals.get(terminalId);
-    if (entry === undefined || entry.closing !== undefined) throw notFound(terminalId);
+    if (entry === undefined || entry.gone) throw notFound(terminalId);
     return entry;
+  }
+
+  #newScreen(info: TerminalInfo): ScreenState {
+    const screen = this.#screen({
+      cols: info.cols,
+      rows: info.rows,
+      scrollback: this.#options.scrollback,
+    });
+    const state: ScreenState = { screen, backlog: 0 };
+    screen.onTitle((title) => {
+      const entry = this.#terminals.get(info.terminalId);
+      const next = title.slice(0, 200);
+      if (entry?.screen !== state || entry.gone || info.title === next) return;
+      info.title = next;
+      this.#changed(info.sessionId);
+    });
+    return state;
   }
 
   async #attach(entry: Entry, sink: TerminalSink): Promise<TerminalAttached> {
@@ -378,9 +447,8 @@ export class Terminals {
     // carry the same piece; the client drops output whose seq the answer already covers.
     this.#flush(entry);
     const seq = entry.seq;
-    const viewer: Viewer = { sink, inflight: 0, state: "live", waiting: [] };
-    entry.viewers.set(sink.id, viewer);
-    const screen = await entry.screen.snapshot();
+    entry.viewers.set(sink.id, { sink, inflight: 0, resetting: 0, state: "live", waiting: [] });
+    const screen = await entry.screen.screen.snapshot();
     return { terminal: { ...entry.info }, screen, seq };
   }
 
@@ -388,7 +456,8 @@ export class Terminals {
     const text = entry.decoder.decode(data, { stream: true });
     if (text.length === 0) return;
     entry.batch += text;
-    if (entry.batch.length >= (this.#options.batchBytes ?? 64 * 1024)) this.#flush(entry);
+    entry.batchBytes += data.byteLength;
+    if (entry.batchBytes >= (this.#options.batchBytes ?? 64 * 1024)) this.#flush(entry);
     else entry.timer ??= setTimeout(() => this.#flush(entry), this.#options.batchMs ?? 16);
   }
 
@@ -398,26 +467,32 @@ export class Terminals {
       clearTimeout(entry.timer);
       entry.timer = undefined;
     }
-    const data = entry.batch;
-    if (data.length === 0) return;
+    if (entry.batch.length === 0) return;
+    const piece: Piece = { seq: ++entry.seq, data: entry.batch, bytes: entry.batchBytes };
     entry.batch = "";
-    const seq = ++entry.seq;
-    const bytes = Buffer.byteLength(data);
-    if (entry.backlog + bytes <= (this.#options.screenBacklogBytes ?? 8 * 1024 * 1024)) {
-      entry.backlog += bytes;
-      entry.screen.write(data, () => {
-        entry.backlog -= bytes;
-      });
-    } else {
-      // A shell printing faster than the screen parses: left out of the screen rather than held in memory.
-      this.#log.warn("terminal_screen_behind", { terminal: entry.info.terminalId });
+    entry.batchBytes = 0;
+    let state = entry.screen;
+    if (state.backlog + piece.bytes > (this.#options.screenBacklogBytes ?? 8 * 1024 * 1024)) {
+      // A shell printing faster than the screen parses. Dropping a piece would leave the screen in a state the
+      // shell never had (a mode switched, a region never reset); starting it again empty keeps it one it could
+      // have. The old one finishes what it holds first, so a snapshot already asked of it still comes.
+      this.#log.warn("terminal_screen_restarted", { terminal: entry.info.terminalId });
+      const old = state.screen;
+      void old.snapshot().then(() => old.dispose());
+      state = this.#newScreen(entry.info);
+      entry.screen = state;
     }
-    for (const viewer of entry.viewers.values()) this.#deliver(entry, viewer, seq, data);
+    const written = state;
+    written.backlog += piece.bytes;
+    written.screen.write(piece.data, () => {
+      written.backlog -= piece.bytes;
+    });
+    for (const viewer of entry.viewers.values()) this.#deliver(entry, viewer, piece);
   }
 
-  #deliver(entry: Entry, viewer: Viewer, seq: number, data: string): void {
+  #deliver(entry: Entry, viewer: Viewer, piece: Piece): void {
     if (viewer.state === "syncing") {
-      viewer.waiting.push({ seq, data });
+      viewer.waiting.push(piece);
       return;
     }
     if (viewer.state === "behind") return;
@@ -426,92 +501,88 @@ export class Terminals {
       viewer.state = "behind";
       return;
     }
-    this.#send(entry, viewer, TERMINAL_NOTIFICATIONS.output, {
+    viewer.inflight += piece.bytes;
+    this.#send(viewer, TERMINAL_NOTIFICATIONS.output, {
       terminalId: entry.info.terminalId,
-      seq,
-      data,
+      seq: piece.seq,
+      data: piece.data,
+    }).finally(() => {
+      viewer.inflight -= piece.bytes;
+      this.#drained(entry, viewer);
     });
   }
 
-  #send(entry: Entry, viewer: Viewer, method: string, params: { [key: string]: unknown }): void {
-    const bytes =
-      typeof params.data === "string"
-        ? params.data.length
-        : typeof params.screen === "string"
-          ? params.screen.length
-          : 0;
-    viewer.inflight += bytes;
-    void viewer.sink
-      .send(method, params)
-      .catch(() => {})
-      .finally(() => {
-        viewer.inflight -= bytes;
-        if (viewer.state === "behind" && viewer.inflight === 0) void this.#reset(entry, viewer);
-      });
+  #send(viewer: Viewer, method: string, params: object): Promise<void> {
+    return viewer.sink.send(method, params).catch(() => {});
+  }
+
+  #drained(entry: Entry, viewer: Viewer): void {
+    if (viewer.state === "behind" && viewer.inflight === 0 && viewer.resetting === 0)
+      void this.#reset(entry, viewer);
   }
 
   /** Brings a connection that fell behind up to date: the screen now, then what comes after it. */
   async #reset(entry: Entry, viewer: Viewer): Promise<void> {
-    if (entry.viewers.get(viewer.sink.id) !== viewer) return;
+    if (entry.viewers.get(viewer.sink.id) !== viewer || entry.gone) return;
     this.#flush(entry);
     const seq = entry.seq;
     viewer.state = "syncing";
     viewer.waiting = [];
-    const screen = await entry.screen.snapshot();
+    const screen = await entry.screen.screen.snapshot();
     if (entry.viewers.get(viewer.sink.id) !== viewer) return;
-    this.#send(entry, viewer, TERMINAL_NOTIFICATIONS.reset, {
+    viewer.resetting++;
+    void this.#send(viewer, TERMINAL_NOTIFICATIONS.reset, {
       terminalId: entry.info.terminalId,
       seq,
       screen,
       cols: entry.info.cols,
       rows: entry.info.rows,
+    }).finally(() => {
+      viewer.resetting--;
+      this.#drained(entry, viewer);
     });
     viewer.state = "live";
     const waiting = viewer.waiting;
     viewer.waiting = [];
-    for (const piece of waiting) this.#deliver(entry, viewer, piece.seq, piece.data);
+    for (const piece of waiting) this.#deliver(entry, viewer, piece);
   }
 
   #onExit(entry: Entry, code: number | null): void {
-    const tail = entry.decoder.decode();
-    if (tail.length > 0) entry.batch += tail;
+    // The terminal stays open: what the shell printed last may still be on its way.
     this.#flush(entry);
     entry.info.status = "exited";
     entry.info.exitCode = code;
     this.#log.info("terminal_exited", { terminal: entry.info.terminalId });
-    if (entry.closing === undefined) this.#changed(entry.info.sessionId);
+    if (!entry.gone) this.#changed(entry.info.sessionId);
   }
 
   #close(entry: Entry): Promise<void> {
-    entry.closing ??= (async () => {
+    if (entry.closing !== undefined) return entry.closing;
+    // Gone from the list at once; what follows only ends its processes.
+    entry.gone = true;
+    entry.viewers.clear();
+    this.#changed(entry.info.sessionId);
+    entry.closing = (async () => {
       const { terminalId, sessionId } = entry.info;
-      if (entry.info.status === "running") {
-        const group = -entry.pty.pid;
-        const signal = (name: NodeJS.Signals) => {
-          try {
-            process.kill(group, name);
-          } catch {}
-        };
-        // The shell's group, and through the closed terminal the job in front, which runs in a group of its
-        // own (job control). Both are what a closed terminal window does; a shell that outlives them is killed.
-        signal("SIGHUP");
-        entry.pty.hangup();
-        const grace = this.#options.killGraceMs ?? 2000;
-        const ended = await Promise.race([
-          entry.pty.exited.then(() => true),
-          Bun.sleep(grace).then(() => false),
-        ]);
-        if (!ended) {
-          signal("SIGKILL");
-          await Promise.race([entry.pty.exited, Bun.sleep(grace)]);
-        }
+      // What closing a terminal window does: every process on it is hung up (one that ignores it, as under nohup,
+      // is left). A shell still there after the grace is killed with its group. The terminal is closed last: while
+      // it is open its device is not another terminal's, so the processes found on it are this one's.
+      const shell = entry.pty.pid;
+      for (const pid of new Set([shell, ...(await entry.pty.processes())])) signal(pid, "SIGHUP");
+      const grace = this.#options.killGraceMs ?? 2000;
+      const ended = await Promise.race([
+        entry.pty.exited.then(() => true),
+        Bun.sleep(grace).then(() => false),
+      ]);
+      if (!ended) {
+        signal(-shell, "SIGKILL");
+        await Promise.race([entry.pty.exited, Bun.sleep(grace)]);
       }
+      entry.pty.hangup();
       if (entry.timer !== undefined) clearTimeout(entry.timer);
-      entry.viewers.clear();
-      entry.screen.dispose();
+      entry.screen.screen.dispose();
       this.#terminals.delete(terminalId);
       this.#log.info("terminal_closed", { session: sessionId, terminal: terminalId });
-      this.#changed(sessionId);
     })();
     return entry.closing;
   }

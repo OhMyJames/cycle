@@ -68,6 +68,7 @@ import {
 import type { z } from "zod";
 import { AgentLink } from "./agent-link.ts";
 import type { AgentDefinition } from "./agents.ts";
+import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
 import {
   blobsDir,
@@ -164,12 +165,7 @@ export type DaemonOptions = {
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
 export const defaultTerminals = (
   environment: Record<string, string | undefined>,
-  settings: { allowEnv: string[]; maxPerSession: number; max: number; scrollback: number } = {
-    allowEnv: ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"],
-    maxPerSession: 8,
-    max: 32,
-    scrollback: 5000,
-  },
+  settings: typeof TERMINAL_DEFAULTS = TERMINAL_DEFAULTS,
 ): Omit<TerminalsOptions, "onChanged" | "log"> => ({
   env: terminalEnv(settings.allowEnv, environment),
   shell: terminalShell(environment.SHELL),
@@ -497,8 +493,9 @@ export class Daemon {
   async close(): Promise<void> {
     // Stopping the agents is not a reason to hand anything back: what waits stays for the next start.
     this.#closing = true;
-    // Terminals do not outlive the daemon (docs/protocol.md §8 "终端"): their shells are hung up first.
-    await this.#terminals.closeAll();
+    // Terminals do not outlive the daemon (docs/protocol.md §8 "终端"). Their shells are hung up now and given their
+    // grace while the sessions stop, not before.
+    const terminals = this.#terminals.closeAll();
     for (const session of this.#sessions.values()) {
       // A turn cut short says so in the history before the agent goes (docs/protocol.md §8): it is not left running.
       if (!session.closed && this.#turnInProgress(session)) {
@@ -514,6 +511,7 @@ export class Daemon {
     // What the sessions noted as they went (an unread mark, a usage) is written by now, not dropped.
     await this.#index.flush();
     await this.#optionsCache.flush();
+    await terminals;
   }
 
   #dropped(conn: ClientConn): void {
@@ -2103,7 +2101,8 @@ export class Daemon {
       session.closed = true;
       session.link?.kill();
       for (const attachment of session.attachments) attachment.detach();
-      await this.#terminals.closeSession(session.id);
+      // Gone from the list now; their processes end on their own time, not the answer's.
+      void this.#terminals.closeSession(session.id);
       try {
         // The index first, and the session out of the table at once: from then on nobody can load
         // it again or get hold of it (a list that was being read, a client that was reconnecting),
@@ -2250,19 +2249,19 @@ export class Daemon {
       const conn = me();
       return { id: conn.id, send: (method, params) => conn.notify(method, params) };
     };
-    cycle(terminalCreate, async (params) => {
-      const session = await this.#session(params.sessionId);
-      return this.#terminals.create(
-        session.id,
-        this.#cwdOf(session.id),
-        params.cols,
-        params.rows,
-        sink(),
-      );
+    // From the index: a session does not have to be loaded (its history read) to have terminals.
+    cycle(terminalCreate, (params) => {
+      const cwd = this.#cwdOf(params.sessionId);
+      if (this.#index.get(params.sessionId)?.archived === true)
+        throw new RpcError(INVALID_PARAMS, "The session is archived", {
+          sessionId: params.sessionId,
+          reason: "archived",
+        });
+      return this.#terminals.create(params.sessionId, cwd, params.cols, params.rows, sink());
     });
-    cycle(terminalList, async (params) => {
-      const session = await this.#session(params.sessionId);
-      return { terminals: this.#terminals.list(session.id) };
+    cycle(terminalList, (params) => {
+      this.#cwdOf(params.sessionId);
+      return { terminals: this.#terminals.list(params.sessionId) };
     });
     cycle(terminalAttach, (params) => this.#terminals.attach(params.terminalId, sink()));
     cycle(terminalDetach, (params) => {
@@ -2311,9 +2310,10 @@ export class Daemon {
         if (session.status() === "running" || session.status() === "requires_action")
           throw sessionBusy(session.id);
         return { archived: true };
-      })(params).then(async (done) => {
-        // An archived session's terminals go with it (docs/protocol.md §8 "终端").
-        await this.#terminals.closeSession(params.sessionId);
+      })(params).then((done) => {
+        // An archived session's terminals go with it (docs/protocol.md §8 "终端"): off the list now, their
+        // processes ended in the background.
+        void this.#terminals.closeSession(params.sessionId);
         return done;
       }),
     );

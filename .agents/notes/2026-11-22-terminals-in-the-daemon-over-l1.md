@@ -21,7 +21,7 @@ Basis: CYCL-96。负责人 2026-11-22 的回答：终端跟 session 走；v1 只
 - **跟着 session 走**：
   - 一个终端属于一个 session，工作目录是 session 的 `cwd`，打开时这个目录必须存在；
   - session 被归档或删除时，它的终端关掉；
-  - daemon 停止时，所有终端关掉：先给整个进程组发 SIGHUP，等一小段时间还没退出的再发 SIGKILL。
+  - daemon 停止时，所有终端关掉：终端上的每个进程（shell 和前台、后台作业）收到 SIGHUP，shell 过一小段时间还在就 SIGKILL 它的进程组（CYCL-97 的 review 后改成按 tty 找进程，原先只发给 shell 的进程组，后台作业会留下）。
 - **v1 只给人用**：
   - 不开 ACP 的 `terminal/*` 客户端能力，也不给 agent 提供终端的 MCP 工具；
   - agent 看不到终端的存在、输入和输出；
@@ -60,6 +60,7 @@ Basis: CYCL-96。负责人 2026-11-22 的回答：终端跟 session 走；v1 只
 ## Consequences
 
 - 没有客户端连着 30 分钟后，终端里的 dev server 或长任务会随 daemon 一起结束。需要跑得更久的，用户自己用 `nohup` 或 tmux。
+- shell 自己先退出时（比如 `npm run dev & exit`），它留下的进程失去控制终端，按 tty 找不到；macOS 的 `ps` 又给不出会话 id，按会话 id 找还有 pid 被复用、误杀无关进程的风险。所以这些进程不归终端管，和在普通终端里这样做一样。
 - Linux：`test/terminal-method.test.ts` 用真实的 `/bin/sh` 和 PTY，在门禁里跑，所以 CI 的 Ubuntu 上每次都会跑（CYCL-97）。
 - 每个终端的内存，CYCL-97 实测（2026-11-22，macOS arm64，10 个终端各输出 3000 行）：daemon 这边每个约 7 MB，shell 进程（zsh 或 bash）每个 2–3 MB。默认上限 32 个，最坏情况约 320 MB，比一个 Claude 进程（约 230 MB）多一些，默认值不改。
 - 在 Bun 里，PTY 的读取没法暂停，所以流量控制只能靠"无界面屏幕持续解析、连接落后就改发快照"，而不是对 shell 施加反压。

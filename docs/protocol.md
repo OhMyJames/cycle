@@ -427,7 +427,7 @@ agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机
 用户在 session 旁边开的交互式 shell。PTY 在 daemon 里，跑在 session 所在的机器上，经本连接传输，本地和 ssh 一样。理由和取舍见决定笔记 [2026-11-22-terminals-in-the-daemon-over-l1](../.agents/notes/2026-11-22-terminals-in-the-daemon-over-l1.md)。能力 `terminal` 为 `true` 才有这些方法和通知;旧 daemon 没有，客户端不提供终端。
 
 - **只给人用**:agent 看不到终端，也收不到它的输入输出。ACP 的 `terminal/*` 客户端能力仍不支持(§3)。
-- **属于一个 session**:工作目录是 session 的 `cwd`。session 被归档或删除时，它的终端被关掉;daemon 停止(包括空闲退出)时，所有终端被关掉。终端不算 daemon 在工作,不拖住空闲退出(docs/daemon.md"空闲退出")。
+- **属于一个 session**:工作目录是 session 的 `cwd`。session 被归档或删除时，它的终端被关掉(应答不等它们的进程结束),归档的 session 不能再开终端;daemon 停止(包括空闲退出)时，所有终端被关掉。终端不算 daemon 在工作,不拖住空闲退出(docs/daemon.md"空闲退出")。
 - **shell 和环境**:daemon 的 `SHELL`(绝对路径且可执行)作为登录 shell(`-l`)启动，否则 `/bin/sh`。环境不继承 daemon 的，只取 daemon 配置 `terminal.allowEnv` 里列出的变量(以 `*` 结尾的项按前缀匹配),再设 `TERM=xterm-256color`、`COLORTERM=truecolor`。配置不经协议修改。
 - **上限**:每个 session 的终端数(含已退出、还没关的)和整个 daemon 的终端数有上限(配置 `terminal.maxPerSession`、`terminal.max`,默认 8 和 32),超过以 `-32019`(`terminal_limit`)拒绝。
 
@@ -435,13 +435,13 @@ agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机
 
 **方法**(客户端 → daemon):
 
-- `_cycle/terminal/create`,参数 `{sessionId, cols, rows}`,响应同 `attach`。新开一个终端，调用的连接随即附着在它上面。`cwd` 不在了或 shell 起不来，以 `-32602` 拒绝,`data.reason` 是 `cwd_missing` 或 `spawn_failed`。
+- `_cycle/terminal/create`,参数 `{sessionId, cols, rows}`,响应同 `attach`。新开一个终端，调用的连接随即附着在它上面。以 `-32602` 拒绝的情况,`data.reason` 分别是:`cwd` 不在了(`cwd_missing`)、shell 起不来(`spawn_failed`)、session 已归档(`archived`)、daemon 正在停止(`daemon_stopping`)。读 session 的索引就够，不加载它的历史。
 - `_cycle/terminal/list`,参数 `{sessionId}`,响应 `{terminals: TerminalInfo[]}`,按创建先后。
 - `_cycle/terminal/attach`,参数 `{terminalId}`,响应 `{terminal, screen, seq}`:`screen` 是重画当前屏幕(含回滚，最多 `terminal.scrollback` 行，默认 5000)的转义序列,`seq` 是它已包含的最后一段输出的序号。之后这个连接收到这个终端的输出。
 - `_cycle/terminal/detach`,参数 `{terminalId}`,响应 `{}`:这个连接不再收它的输出。连接断开等于对它附着的每个终端 `detach`。
 - `_cycle/terminal/input`,参数 `{terminalId, data}`,响应 `{}`:`data` 原样写进 PTY(按键、粘贴),一次最多 64 KiB。已退出的终端以 `-32602` 拒绝,`data.reason` 为 `exited`。
 - `_cycle/terminal/resize`,参数 `{terminalId, cols, rows}`,响应 `{}`。`cols` 2–1000,`rows` 1–500。多个客户端附着时以最近一次为准，客户端在附着和获得焦点时各发一次。
-- `_cycle/terminal/close`,参数 `{terminalId}`,响应 `{}`:结束 shell 的整个进程组(先 `SIGHUP`,2 秒后还在的 `SIGKILL`),终端从列表里去掉。已退出的终端直接去掉。
+- `_cycle/terminal/close`,参数 `{terminalId}`,响应 `{}`:终端立即从列表里去掉;它上面的进程在后台结束:这个终端上的每个进程(shell、前台作业、后台作业)收到 `SIGHUP`,忽略它的(如 `nohup`)留下;2 秒后 shell 还在，`SIGKILL` 它的进程组;最后关掉 PTY。shell 自己先退出时，它留下的进程失去这个控制终端(和普通终端里 `cmd & exit` 一样),不再属于这个终端，不会被结束。
 
 `terminalId` 不存在(或所属 session 已不在)时，以上方法都以 `-32002` 拒绝,`data` 为 `{terminalId}`。
 

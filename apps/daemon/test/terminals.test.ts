@@ -51,6 +51,7 @@ const fakePty = () => {
     pid: 2 ** 22 + Math.floor(Math.random() * 1000),
     write: (data) => written.push(data),
     resize: () => {},
+    processes: async () => [],
     hangup: () => exit(null),
     exited: new Promise((resolve) => {
       exit = resolve;
@@ -181,4 +182,42 @@ test("the screen's snapshot holds everything written before it", async () => {
   expect(shot).toContain("row 29");
   expect(shot).not.toContain("row 5\r");
   screen.dispose();
+});
+
+test("a reset larger than the limit for falling behind does not put the connection behind again", async () => {
+  const pty = fakePty();
+  const t = terminals(pty.spawn);
+  const c = slowSink("c1");
+  await t.create("s1", "/tmp", 200, 50, c.sink);
+  // Enough on screen that its snapshot alone is past `behindBytes` (1000 here).
+  for (let i = 0; i < 40; i++) {
+    pty.print(`${i}-${"y".repeat(150)}\r\n`);
+    await Bun.sleep(2);
+  }
+  await until(() => c.sent.length > 0, "the first output");
+  c.release();
+  await until(() => c.sent.some((s) => s.method === "_cycle/terminal/reset"), "the reset");
+  const reset = c.sent.find((s) => s.method === "_cycle/terminal/reset");
+  expect(String(reset?.params.screen ?? "").length).toBeGreaterThan(1000);
+  // Output after the reset goes out while the reset itself is still being written.
+  pty.print("small\r\n");
+  await until(
+    () => c.sent.some((s) => String(s.params.data ?? "").includes("small")),
+    "output after a large reset",
+  );
+  c.release();
+  await Bun.sleep(30);
+  expect(c.sent.filter((s) => s.method === "_cycle/terminal/reset").length).toBe(1);
+  c.release();
+  await t.closeAll();
+});
+
+test("a stopped set of terminals opens no new one", async () => {
+  const pty = fakePty();
+  const t = terminals(pty.spawn);
+  await t.closeAll();
+  await expect(t.create("s1", "/tmp", 80, 24, slowSink("c").sink)).rejects.toMatchObject({
+    code: -32602,
+    data: { reason: "daemon_stopping" },
+  });
 });
