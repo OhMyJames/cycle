@@ -173,7 +173,7 @@ export const EVENTS = {
   /** Another tab of the right panel was chosen. */
   side_panel_tab_shown: o({ tab: panelTab }),
   /** The Overview took the conversation to where something began: the todo list, or a background task. */
-  overview_item_revealed: o({ section: z.enum(["todo", "background"]) }),
+  overview_item_revealed: o({ section: z.enum(["todo", "background", "scheduled"]) }),
   /** The Files tab showed a file: what kind of preview it was, never which file. */
   file_previewed: o({ kind: z.enum(["text", "markdown", "image", "binary", "too_large"]) }),
   /** The Diff tab switched between this session's edits and the workspace against HEAD. */

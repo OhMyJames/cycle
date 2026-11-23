@@ -1,10 +1,27 @@
 // What is set to wake a session later: the crons Claude Code holds in the process's memory (CronCreate, ScheduleWakeup,
 // /loop), as its Stop hook tells them at the end of every turn (`session_crons`). They live only as long as the process:
 // one let go before they fire never fires them, and a resumed process does not fire the ones it missed (measured on SDK
-// 0.3.327, CYCL-119). So a process is kept while one of them is due soon (CYCL-145).
+// 0.3.327, CYCL-119). So a process is kept while one of them is due soon (CYCL-145), and clients are told the list
+// (`_cycle/schedule_update`, docs/protocol.md §9, CYCL-146).
 
-/** A cron the Stop hook says is set, as far as this adapter needs it: when it fires. */
-export type SessionCron = { schedule: string; recurring: boolean };
+/** The `sessionUpdate` of the list: `@cycle/protocol`'s `SCHEDULE_UPDATE`; the adapter stays self-contained. */
+export const SCHEDULE_UPDATE = "_cycle/schedule_update";
+
+/** A cron the Stop hook says is set. Its prompt is cut at 1000 characters by Claude Code. */
+export type SessionCron = { id: string; schedule: string; recurring: boolean; prompt: string };
+
+/** One thing set to wake the session, as clients are told it (`ScheduledJobSchema` of `@cycle/protocol`). */
+export type ScheduledJob = {
+  id: string;
+  kind: "cron" | "wakeup";
+  schedule: string;
+  humanSchedule?: string;
+  recurring: boolean;
+  durable: boolean;
+  prompt: string;
+  nextFireAt?: number;
+  toolCallId?: string;
+};
 
 /**
  * How soon a cron must be due for its process to be kept: an hour, the longest a ScheduleWakeup can wait, so every
@@ -33,9 +50,14 @@ export const cronsOf = (input: unknown): SessionCron[] | undefined => {
   const out: SessionCron[] = [];
   for (const c of crons) {
     if (typeof c !== "object" || c === null) continue;
-    const { schedule, recurring } = c as Record<string, unknown>;
-    if (typeof schedule !== "string") continue;
-    out.push({ schedule, recurring: recurring === true });
+    const { id, schedule, recurring, prompt } = c as Record<string, unknown>;
+    if (typeof id !== "string" || typeof schedule !== "string") continue;
+    out.push({
+      id,
+      schedule,
+      recurring: recurring === true,
+      prompt: typeof prompt === "string" ? prompt : "",
+    });
   }
   return out;
 };
@@ -172,32 +194,212 @@ export const fireTimeOf = (result: unknown): number | undefined => {
   return undefined;
 };
 
+/** The calls that set or unset what wakes a session. */
+const SCHEDULE_TOOLS = new Set(["CronCreate", "CronDelete", "CronList", "ScheduleWakeup"]);
+
+/** How much of a prompt clients are told: the start of it is what tells one job from another. */
+const PROMPT_CHARS = 300;
+const clipped = (text: string): string => {
+  const t = text.trim();
+  return t.length > PROMPT_CHARS ? `${t.slice(0, PROMPT_CHARS)}…` : t;
+};
+/** Whether two prompts are the same one, one of them perhaps cut short. */
+const samePrompt = (a: string, b: string): boolean => {
+  const n = Math.min(a.trim().length, b.trim().length, 200);
+  return n > 0 && a.trim().slice(0, n) === b.trim().slice(0, n);
+};
+/** How far ahead a next run is worked out: past a week, it is only said in its schedule. */
+const AHEAD_MS = 8 * 24 * 60 * 60_000;
+
+const text = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+/** A wakeup's time as the one-shot cron Claude Code makes of it: its minute, hour, day and month. */
+const pinned = (at: number): string => {
+  const d = new Date(at);
+  return `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
+};
+
 /**
- * What is set to wake a session, as far as this adapter knows: the Stop hook's last word, which is all of it, and what
- * calls since then set, for a turn that ends without the hook (stopped, or failed).
+ * What is set to wake a session, as far as this adapter knows. The Stop hook's last word is all of what the process
+ * holds; what calls said since is added to it, for a turn that ends without the hook (stopped, or failed), and names
+ * what the hook lists (which call set it, in what words, when it is next). Durable crons are not in the hook's list:
+ * they are what CronCreate and CronList last said of them.
  */
 export class Schedules {
   private crons: SessionCron[] = [];
   private toldAt = 0;
   private since: number[] = [];
+  /** The process's own, as last known. */
+  private session: ScheduledJob[] = [];
+  /** The ones saved in the project, as last heard. */
+  private durable = new Map<string, ScheduledJob>();
+  /** The calls not yet answered: what each was asked, to read its result by. */
+  private calls = new Map<string, { name: string; input: Record<string, unknown> }>();
+  /** What CronCreate said of the crons it made, by their id. */
+  private made = new Map<string, ScheduledJob>();
+  /** The wakeups asked for, to tell the hook's crons that are wakeups. */
+  private wakeups: { prompt: string; toolCallId: string; at: number }[] = [];
+  /** True while the process is gone: what is not durable fires only if the session is used before it is due. */
+  private dormant = false;
+  private toldKey: string | undefined;
+
+  /** A call the model made: kept when it is one of the four, to read its result by. */
+  asked(toolCallId: string, name: string, input: unknown): void {
+    if (!SCHEDULE_TOOLS.has(name)) return;
+    const args = typeof input === "object" && input !== null ? input : {};
+    this.calls.set(toolCallId, { name, input: args as Record<string, unknown> });
+  }
 
   /** The Stop hook's list: everything set, so what calls set before it is in it, or has fired, or was deleted. */
   told(crons: SessionCron[], at: number): void {
     this.crons = crons;
     this.toldAt = at;
     this.since = [];
+    this.session = crons.map((c) => this.named(c));
   }
 
-  /** A finished call's result: kept when it set something, until the Stop hook next speaks. */
-  called(result: unknown): void {
+  /** A cron of the hook's, with what the call that set it said. */
+  private named(c: SessionCron): ScheduledJob {
+    const base = {
+      id: c.id,
+      schedule: c.schedule,
+      recurring: c.recurring,
+      durable: false,
+      prompt: clipped(c.prompt),
+    };
+    const made = this.made.get(c.id);
+    if (made !== undefined) return { ...made, ...base };
+    const wakeup = this.wakeups.findLast((w) => samePrompt(w.prompt, c.prompt));
+    if (wakeup !== undefined && !c.recurring)
+      return { ...base, kind: "wakeup", nextFireAt: wakeup.at, toolCallId: wakeup.toolCallId };
+    return { ...base, kind: "cron" };
+  }
+
+  /**
+   * A finished call's result: what it set or unset, kept until the Stop hook next speaks. True when it was one of the
+   * four, whose result may change the list.
+   */
+  called(toolCallId: string | undefined, result: unknown): boolean {
     const at = fireTimeOf(result);
     if (at !== undefined) this.since.push(at);
+    const call = toolCallId !== undefined ? this.calls.get(toolCallId) : undefined;
+    if (toolCallId === undefined || call === undefined) return false;
+    this.calls.delete(toolCallId);
+    if (typeof result !== "object" || result === null) return true;
+    const r = result as Record<string, unknown>;
+    const input = call.input;
+    if (call.name === "ScheduleWakeup") {
+      if (r.stopped === true) {
+        this.session = this.session.filter((j) => j.kind !== "wakeup");
+        return true;
+      }
+      if (typeof r.scheduledFor !== "number") return true;
+      const prompt = text(input.prompt) ?? "";
+      this.wakeups.push({ prompt, toolCallId, at: r.scheduledFor });
+      // Its id is the hook's to give: until then it goes by its call's.
+      this.session.push({
+        id: `wakeup:${toolCallId}`,
+        kind: "wakeup",
+        schedule: pinned(r.scheduledFor),
+        recurring: false,
+        durable: false,
+        prompt: clipped(prompt),
+        nextFireAt: r.scheduledFor,
+        toolCallId,
+      });
+    } else if (call.name === "CronCreate") {
+      const id = text(r.id);
+      const schedule = text(input.cron);
+      if (id === undefined || schedule === undefined) return true;
+      const human = text(r.humanSchedule);
+      const job: ScheduledJob = {
+        id,
+        kind: "cron",
+        schedule,
+        ...(human !== undefined ? { humanSchedule: human } : {}),
+        recurring: r.recurring === true,
+        durable: r.durable === true,
+        prompt: clipped(text(input.prompt) ?? ""),
+        ...(typeof r.nextFireAt === "number" ? { nextFireAt: r.nextFireAt } : {}),
+        toolCallId,
+      };
+      this.made.set(id, job);
+      if (job.durable) this.durable.set(id, job);
+      else this.session = [...this.session.filter((j) => j.id !== id), job];
+    } else if (call.name === "CronDelete") {
+      const id = text(r.id) ?? text(input.id);
+      if (id === undefined) return true;
+      this.session = this.session.filter((j) => j.id !== id);
+      this.durable.delete(id);
+    } else if (call.name === "CronList" && Array.isArray(r.jobs)) {
+      // All of them, the durable ones too: the fullest word there is, while it lasts.
+      const jobs: ScheduledJob[] = [];
+      for (const raw of r.jobs) {
+        if (typeof raw !== "object" || raw === null) continue;
+        const j = raw as Record<string, unknown>;
+        const id = text(j.id);
+        const schedule = text(j.cron);
+        if (id === undefined || schedule === undefined) continue;
+        const made = this.made.get(id);
+        const human = text(j.humanSchedule);
+        jobs.push({
+          ...(made ?? { kind: "cron" as const }),
+          id,
+          schedule,
+          ...(human !== undefined ? { humanSchedule: human } : {}),
+          recurring: j.recurring === true,
+          durable: j.durable === true,
+          prompt: clipped(text(j.prompt) ?? ""),
+          ...(typeof j.nextFireAt === "number" ? { nextFireAt: j.nextFireAt } : {}),
+        });
+      }
+      this.session = jobs.filter((j) => !j.durable);
+      this.durable = new Map(jobs.filter((j) => j.durable).map((j) => [j.id, j]));
+    }
+    return true;
+  }
+
+  /** The process went (true) or another took its place (false). True when that is news. */
+  sleeping(dormant: boolean): boolean {
+    const was = this.dormant;
+    this.dormant = dormant;
+    return was !== dormant;
+  }
+
+  /** What is set, with when each is next as far as it can be worked out: a time a call gave, or its cron's next minute. */
+  list(now: number): ScheduledJob[] {
+    return [...this.session, ...this.durable.values()].map((job) => {
+      const { nextFireAt: told, ...rest } = job;
+      const next =
+        told !== undefined && told >= now - FIRING_MS
+          ? told
+          : nextFire(job.schedule, now, AHEAD_MS);
+      return typeof next === "number" ? { ...rest, nextFireAt: next } : rest;
+    });
+  }
+
+  /**
+   * The update to tell clients, when the list is not what they were last told; undefined when it is. The first one is
+   * told even when empty: it says this agent tells its list, which is not the same as not knowing.
+   */
+  update(now: number): Record<string, unknown> | undefined {
+    const jobs = this.list(now);
+    const dormant = this.dormant && jobs.some((j) => !j.durable);
+    const update = {
+      sessionUpdate: SCHEDULE_UPDATE,
+      jobs,
+      ...(dormant ? { dormant: true } : {}),
+    };
+    const key = JSON.stringify(update);
+    if (key === this.toldKey) return undefined;
+    this.toldKey = key;
+    return update;
   }
 
   /**
    * Whether anything fires within `withinMs` of `now`, or is firing. A recurring cron counts for `RECURRING_LATE_MS`
-   * after its minute too, since Claude Code may fire it that late; anything else for `FIRING_MS`. One that cannot be read counts while what was told is fresh: kept
-   * rather than missed, but not for as long as the job lives.
+   * after its minute too, since Claude Code may fire it that late; anything else for `FIRING_MS`. One that cannot be
+   * read counts while what was told is fresh: kept rather than missed, but not for as long as the job lives.
    */
   dueWithin(now: number, withinMs: number = KEEP_FOR_MS): boolean {
     if (this.since.some((at) => at >= now - FIRING_MS && at <= now + withinMs)) return true;

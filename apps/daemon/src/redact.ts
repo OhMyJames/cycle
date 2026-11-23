@@ -14,7 +14,7 @@
  * it arrives in pieces a pattern cannot see across, and it is the person's own words.
  */
 
-import { CHILD_UPDATE, TASK_UPDATE } from "@cycle/protocol";
+import { CHILD_UPDATE, SCHEDULE_UPDATE, TASK_UPDATE } from "@cycle/protocol";
 export const REDACTED = "[redacted]";
 
 const MAX_DEPTH = 32;
@@ -126,7 +126,7 @@ export const redactTool = (value: unknown, depth = 0): unknown => {
   return out;
 };
 
-const TOOL_UPDATES = new Set(["tool_call", "tool_call_update", TASK_UPDATE]);
+const TOOL_UPDATES = new Set(["tool_call", "tool_call_update", TASK_UPDATE, SCHEDULE_UPDATE]);
 
 /** The data of a record as it may be kept. A record that has nothing to clean comes back as it is. */
 export const redactRecord = (kind: string, data: unknown): unknown => {

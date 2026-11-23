@@ -196,6 +196,8 @@ export type DynamicConfigOption = {
 // The two updates of docs/protocol.md §9 (CYCL-87), read here by hand: the model imports nothing of the daemon's.
 const TASK_UPDATE = "_cycle/task_update";
 const GOAL_UPDATE = "_cycle/goal_update";
+/** What is set to wake the session later (docs/protocol.md §9, CYCL-146). */
+const SCHEDULE_UPDATE = "_cycle/schedule_update";
 /** A sub-agent's conversation, carried in its parent session (docs/protocol.md §9, CYCL-134). */
 const CHILD_UPDATE = "_cycle/child_update";
 const TASK_KINDS = ["shell", "monitor", "workflow", "mcp", "other"] as const;
@@ -241,6 +243,50 @@ export type BackgroundTask = {
   state: TaskState;
 };
 
+/** Something set to wake the session later: a cron (CronCreate, /loop) or a wakeup (ScheduleWakeup). */
+export type ScheduledJob = {
+  id: string;
+  kind: "cron" | "wakeup";
+  /** A five-field cron expression, in the agent's machine's local time. */
+  schedule: string;
+  humanSchedule: string | undefined;
+  recurring: boolean;
+  /** Saved in the project, outliving the session: what is known is what was last heard. */
+  durable: boolean;
+  prompt: string;
+  /** When it is expected to fire next, worked out by the agent: a guess, not a promise. */
+  nextFireAt: number | undefined;
+  toolCallId: string | undefined;
+};
+
+/** The list as last told, with when it was told and whether the agent's process was gone. */
+export type Schedules = {
+  jobs: ScheduledJob[];
+  /** The agent's process is gone: what is not durable fires only if the session is used again first. */
+  dormant: boolean;
+  /** When this list was told, from its record; undefined when not known. */
+  at: number | undefined;
+};
+
+const jobOf = (value: unknown): ScheduledJob | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const v = value as Record<string, unknown>;
+  const kind = oneOf(["cron", "wakeup"] as const, v.kind);
+  if (typeof v.id !== "string" || typeof v.schedule !== "string" || kind === undefined)
+    return undefined;
+  return {
+    id: v.id,
+    kind,
+    schedule: v.schedule,
+    humanSchedule: textOr(v.humanSchedule),
+    recurring: v.recurring === true,
+    durable: v.durable === true,
+    prompt: typeof v.prompt === "string" ? v.prompt : "",
+    nextFireAt: typeof v.nextFireAt === "number" ? v.nextFireAt : undefined,
+    toolCallId: textOr(v.toolCallId),
+  };
+};
+
 export type Conversation = {
   items: Item[];
   status: Status;
@@ -266,6 +312,8 @@ export type Conversation = {
   tasks: BackgroundTask[];
   /** The goal the user set; `null` when there is none, `undefined` when the agent never said (it may not tell). */
   goal: Goal | null | undefined;
+  /** What is set to wake the session; `undefined` when the agent never said (it may not tell). */
+  schedules: Schedules | undefined;
 };
 
 export const emptyConversation = (): Conversation => ({
@@ -283,6 +331,7 @@ export const emptyConversation = (): Conversation => ({
   waiting: {},
   tasks: [],
   goal: undefined,
+  schedules: undefined,
 });
 
 const PART_KINDS: readonly string[] = ["used", "free", "buffer", "deferred"];
@@ -884,6 +933,14 @@ export const applyUpdate = (
         ...c,
         tasks: at === -1 ? [...c.tasks, task] : c.tasks.with(at, task),
       };
+    }
+    case SCHEDULE_UPDATE: {
+      if (!Array.isArray(u.jobs)) return { ...c, ignored: c.ignored + 1 };
+      const jobs = u.jobs.flatMap((j) => {
+        const job = jobOf(j);
+        return job !== undefined ? [job] : [];
+      });
+      return { ...c, schedules: { jobs, dormant: u.dormant === true, at: when } };
     }
     case GOAL_UPDATE: {
       if (u.goal === null) return { ...c, goal: null };

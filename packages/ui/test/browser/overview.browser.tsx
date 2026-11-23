@@ -107,7 +107,8 @@ test("the Overview shows the goal, the todo list, the background, and the sessio
   expect(overview.getByRole("button", { name: /Run the dev server/ })).toBeDefined();
   expect(panel.textContent).toContain("1 running");
   expect(panel.textContent).toContain("1 ended");
-  expect(panel.textContent).toContain("Scheduled calls (cron, wakeups) are not tracked yet");
+  // This history is from before the agent told its scheduled calls: not known, not "none".
+  expect(panel.textContent).toContain("Not reported for this session");
   expect(panel.textContent).toContain("Opus");
   // A setting left to the agent is said to be the default, not guessed at.
   expect(panel.textContent).toContain("Default");
@@ -134,6 +135,85 @@ test("a session from before these updates says what it has not got, block by blo
   expect(panel.textContent).toContain("No todo list in this session yet");
   expect(panel.textContent).toContain("Nothing running in the background");
   expect(panel.textContent).toContain("No usage reported yet");
+  expect(panel.textContent).toContain("Not reported for this session");
+});
+
+const scheduled = (jobs: object[], dormant?: boolean) =>
+  u({ sessionUpdate: "_cycle/schedule_update", jobs, ...(dormant ? { dormant } : {}) });
+
+test("what is scheduled is listed in the agent's words, goes back to the call that set it, and says when it will not fire", async () => {
+  const wakeupCall = u({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "call-w",
+    title: "ScheduleWakeup",
+    kind: "other",
+    status: "completed",
+    rawInput: { delaySeconds: 1200, prompt: "Check the build again" },
+    _meta: { "cycle/tool": "ScheduleWakeup" },
+  });
+  const jobs = [
+    {
+      id: "c9",
+      kind: "wakeup",
+      schedule: "20 3 * * *",
+      recurring: false,
+      durable: false,
+      prompt: "Check the build again\nand say what changed",
+      nextFireAt: Date.now() + 20 * 60_000,
+      toolCallId: "call-w",
+    },
+    {
+      id: "d1",
+      kind: "cron",
+      schedule: "0 9 * * 1-5",
+      recurring: true,
+      durable: true,
+      prompt: "Morning summary",
+    },
+  ];
+  const { panel, user, script } = await mount(
+    history(
+      u({
+        sessionUpdate: "user_message",
+        messageId: "u1",
+        content: [{ type: "text", text: "Go" }],
+      }),
+      wakeupCall,
+      scheduled(jobs),
+      text("I will look again in 20 minutes", "a1"),
+      idle({ stopReason: "end_turn" }),
+      scheduled(jobs, true),
+    ),
+  );
+  const overview = within(panel);
+  expect(overview.getByRole("heading", { name: "Scheduled" })).toBeDefined();
+  expect(panel.textContent).toContain("2 set");
+  // The first line of what it will say is its title; how and when are under it.
+  const wakeup = overview.getByRole("button", { name: /Check the build again/ });
+  expect(wakeup.textContent).not.toContain("and say what changed");
+  expect(wakeup.textContent).toContain("Wakeup");
+  expect(wakeup.textContent).toContain("next about");
+  // Without the agent's words for its schedule, the expression; saved in the project, as last heard.
+  expect(panel.textContent).toContain("Cron · 0 9 * * 1-5 · saved in the project, as last heard");
+  expect(overview.queryByRole("button", { name: /Morning summary/ })).toBeNull();
+  expect(panel.textContent).toContain("A scheduled call due before the next message is skipped.");
+  await user.click(wakeup);
+  await waitFor(() =>
+    expect(document.querySelector('[data-item-id="call-w"][data-revealed]')).not.toBeNull(),
+  );
+  const events = script.calls
+    .filter(([name, event]) => name === "track" && event === "overview_item_revealed")
+    .map(([, , props]) => props);
+  expect(events).toEqual([{ section: "scheduled" }]);
+});
+
+test("an agent that tells its list and has nothing scheduled says so", async () => {
+  const { panel } = await mount(
+    history(text("Hello", "a1"), idle({ stopReason: "end_turn" }), scheduled([], true)),
+  );
+  expect(panel.textContent).toContain("Nothing scheduled");
+  // Asleep with nothing to miss: nothing to warn of.
+  expect(panel.textContent).not.toContain("is skipped");
 });
 
 test("a task started by a call inside a closed card of several calls opens the card to show it", async () => {

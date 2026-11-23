@@ -617,3 +617,69 @@ test("a history from before these updates replays with no tasks and a goal nobod
   expect(c.tasks).toEqual([]);
   expect(c.goal).toBeUndefined();
 });
+
+// ---- what is set to wake the session (CYCL-146) ----
+
+test("the scheduled calls are the last list told, with when it was told; unknown until one is", () => {
+  const schedule = (fields: object) => u({ sessionUpdate: "_cycle/schedule_update", ...fields });
+  expect(emptyConversation().schedules).toBeUndefined();
+  let c = applyUpdate(
+    emptyConversation(),
+    schedule({
+      jobs: [
+        {
+          id: "c1",
+          kind: "cron",
+          schedule: "*/30 * * * *",
+          humanSchedule: "Every 30 minutes",
+          recurring: true,
+          durable: false,
+          prompt: "Check the deploy",
+          nextFireAt: 1_000,
+          toolCallId: "t1",
+        },
+        {
+          id: "w",
+          kind: "wakeup",
+          schedule: "50 2 * * *",
+          recurring: false,
+          durable: false,
+          prompt: "Go on",
+        },
+        { id: "bad", kind: "alarm", schedule: "* * * * *" },
+      ],
+    }),
+    { at: 500 },
+  );
+  expect(c.schedules).toEqual({
+    jobs: [
+      {
+        id: "c1",
+        kind: "cron",
+        schedule: "*/30 * * * *",
+        humanSchedule: "Every 30 minutes",
+        recurring: true,
+        durable: false,
+        prompt: "Check the deploy",
+        nextFireAt: 1_000,
+        toolCallId: "t1",
+      },
+      {
+        id: "w",
+        kind: "wakeup",
+        schedule: "50 2 * * *",
+        humanSchedule: undefined,
+        recurring: false,
+        durable: false,
+        prompt: "Go on",
+        nextFireAt: undefined,
+        toolCallId: undefined,
+      },
+    ],
+    dormant: false,
+    at: 500,
+  });
+  c = applyUpdate(c, schedule({ jobs: [], dormant: true }));
+  expect(c.schedules).toEqual({ jobs: [], dormant: true, at: undefined });
+  expect(applyUpdate(c, schedule({ jobs: "none" })).ignored).toBe(c.ignored + 1);
+});
