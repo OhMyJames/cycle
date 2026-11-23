@@ -232,9 +232,6 @@ export function Overview() {
   const setAt = goal != null && goal.setAt > 0 ? goal.setAt : undefined;
   const when = setAt === undefined ? undefined : timeOf(setAt);
   const schedules = conversation.schedules;
-  // Asleep only matters for what lives in the process; a durable one is the project's.
-  const dormant =
-    schedules?.dormant === true && schedules.jobs.some((job: ScheduledJob) => !job.durable);
   const goalLine =
     goal == null
       ? undefined
@@ -446,7 +443,7 @@ export function Overview() {
         ) : (
           <>
             <ul data-slot="overview-list">{schedules.jobs.map(scheduledRow)}</ul>
-            {dormant ? <Quiet>{t("overview.scheduled.dormant")}</Quiet> : null}
+            {schedules.dormant ? <Quiet>{t("overview.scheduled.dormant")}</Quiet> : null}
           </>
         )}
       </Section>

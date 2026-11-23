@@ -48,12 +48,13 @@ export const cronsOf = (input: unknown): SessionCron[] | undefined => {
   const crons = (input as { session_crons?: unknown }).session_crons;
   if (!Array.isArray(crons)) return undefined;
   const out: SessionCron[] = [];
-  for (const c of crons) {
+  for (const [at, c] of crons.entries()) {
     if (typeof c !== "object" || c === null) continue;
     const { id, schedule, recurring, prompt } = c as Record<string, unknown>;
-    if (typeof id !== "string" || typeof schedule !== "string") continue;
+    if (typeof schedule !== "string") continue;
+    // Without an id it still fires, and still keeps its process: it goes by its place in the list.
     out.push({
-      id,
+      id: typeof id === "string" ? id : `cron:${at}`,
       schedule,
       recurring: recurring === true,
       prompt: typeof prompt === "string" ? prompt : "",
@@ -219,6 +220,13 @@ const pinned = (at: number): string => {
   return `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
 };
 
+/** Whether a one-shot cron is set for the minute and hour of `at`, as Claude Code writes a wakeup. */
+const sameMinute = (schedule: string, at: number): boolean => {
+  const [m, h] = schedule.trim().split(/\s+/);
+  const d = new Date(at);
+  return Number(m) === d.getMinutes() && Number(h) === d.getHours();
+};
+
 /**
  * What is set to wake a session, as far as this adapter knows. The Stop hook's last word is all of what the process
  * holds; what calls said since is added to it, for a turn that ends without the hook (stopped, or failed), and names
@@ -255,11 +263,23 @@ export class Schedules {
     this.crons = crons;
     this.toldAt = at;
     this.since = [];
-    this.session = crons.map((c) => this.named(c));
+    const claimed = new Set<string>();
+    this.session = crons.map((c) => this.named(c, claimed));
+    // What the list no longer has is gone: nothing more to name it by.
+    const ids = new Set(crons.map((c) => c.id));
+    for (const id of this.made.keys())
+      if (!ids.has(id) && !this.durable.has(id)) this.made.delete(id);
+    this.wakeups = this.wakeups.filter((w) => claimed.has(w.toolCallId));
   }
 
-  /** A cron of the hook's, with what the call that set it said. */
-  private named(c: SessionCron): ScheduledJob {
+  /**
+   * A cron of the hook's, with what the call that set it said. A wakeup is the call that asked for its minute and its
+   * words, each call naming one; `claimed` keeps the calls already named.
+   */
+  private named(
+    c: { id: string; schedule: string; recurring: boolean; prompt: string },
+    claimed: Set<string>,
+  ): ScheduledJob {
     const base = {
       id: c.id,
       schedule: c.schedule,
@@ -269,10 +289,15 @@ export class Schedules {
     };
     const made = this.made.get(c.id);
     if (made !== undefined) return { ...made, ...base };
-    const wakeup = this.wakeups.findLast((w) => samePrompt(w.prompt, c.prompt));
-    if (wakeup !== undefined && !c.recurring)
-      return { ...base, kind: "wakeup", nextFireAt: wakeup.at, toolCallId: wakeup.toolCallId };
-    return { ...base, kind: "cron" };
+    const free = (w: { toolCallId: string; prompt: string }) =>
+      !claimed.has(w.toolCallId) && samePrompt(w.prompt, c.prompt);
+    const wakeup = c.recurring
+      ? undefined
+      : (this.wakeups.findLast((w) => free(w) && sameMinute(c.schedule, w.at)) ??
+        this.wakeups.findLast(free));
+    if (wakeup === undefined) return { ...base, kind: "cron" };
+    claimed.add(wakeup.toolCallId);
+    return { ...base, kind: "wakeup", nextFireAt: wakeup.at, toolCallId: wakeup.toolCallId };
   }
 
   /**
@@ -317,7 +342,8 @@ export class Schedules {
         kind: "cron",
         schedule,
         ...(human !== undefined ? { humanSchedule: human } : {}),
-        recurring: r.recurring === true,
+        // Claude Code's default is recurring, when neither the result nor the call says.
+        recurring: typeof r.recurring === "boolean" ? r.recurring : input.recurring !== false,
         durable: r.durable === true,
         prompt: clipped(text(input.prompt) ?? ""),
         ...(typeof r.nextFireAt === "number" ? { nextFireAt: r.nextFireAt } : {}),
@@ -334,22 +360,20 @@ export class Schedules {
     } else if (call.name === "CronList" && Array.isArray(r.jobs)) {
       // All of them, the durable ones too: the fullest word there is, while it lasts.
       const jobs: ScheduledJob[] = [];
+      const claimed = new Set<string>();
       for (const raw of r.jobs) {
         if (typeof raw !== "object" || raw === null) continue;
         const j = raw as Record<string, unknown>;
         const id = text(j.id);
         const schedule = text(j.cron);
         if (id === undefined || schedule === undefined) continue;
-        const made = this.made.get(id);
         const human = text(j.humanSchedule);
+        const recurring = j.recurring === true;
+        const prompt = text(j.prompt) ?? "";
         jobs.push({
-          ...(made ?? { kind: "cron" as const }),
-          id,
-          schedule,
+          ...this.named({ id, schedule, recurring, prompt }, claimed),
           ...(human !== undefined ? { humanSchedule: human } : {}),
-          recurring: j.recurring === true,
           durable: j.durable === true,
-          prompt: clipped(text(j.prompt) ?? ""),
           ...(typeof j.nextFireAt === "number" ? { nextFireAt: j.nextFireAt } : {}),
         });
       }
@@ -359,10 +383,19 @@ export class Schedules {
     return true;
   }
 
-  /** The process went (true) or another took its place (false). True when that is news. */
-  sleeping(dormant: boolean): boolean {
+  /**
+   * The process went (true) or another took its place (false). True when that is news. A call it never answered is
+   * not answered now. Waking, the one-shots whose time went by while it slept are gone: Claude Code does not fire them
+   * late, and does not set them again.
+   */
+  sleeping(dormant: boolean, now: number = Date.now()): boolean {
     const was = this.dormant;
     this.dormant = dormant;
+    if (dormant) this.calls.clear();
+    else if (was)
+      this.session = this.session.filter(
+        (j) => j.recurring || j.nextFireAt === undefined || j.nextFireAt >= now - FIRING_MS,
+      );
     return was !== dormant;
   }
 
@@ -370,9 +403,12 @@ export class Schedules {
   list(now: number): ScheduledJob[] {
     return [...this.session, ...this.durable.values()].map((job) => {
       const { nextFireAt: told, ...rest } = job;
-      const next =
-        told !== undefined && told >= now - FIRING_MS
-          ? told
+      // A one-shot's time, once gone, is not next year's: it fired, or it will not.
+      const fresh = told !== undefined && told >= now - FIRING_MS;
+      const next = fresh
+        ? told
+        : told !== undefined && !job.recurring
+          ? undefined
           : nextFire(job.schedule, now, AHEAD_MS);
       return typeof next === "number" ? { ...rest, nextFireAt: next } : rest;
     });

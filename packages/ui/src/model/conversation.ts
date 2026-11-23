@@ -259,13 +259,14 @@ export type ScheduledJob = {
   toolCallId: string | undefined;
 };
 
-/** The list as last told, with when it was told and whether the agent's process was gone. */
+/** The list as last told, and whether the agent's process was gone. */
 export type Schedules = {
   jobs: ScheduledJob[];
-  /** The agent's process is gone: what is not durable fires only if the session is used again first. */
+  /**
+   * The agent's process is gone and something not durable is set: it fires only if the session is used again first.
+   * The agent says so only when something would be missed.
+   */
   dormant: boolean;
-  /** When this list was told, from its record; undefined when not known. */
-  at: number | undefined;
 };
 
 const jobOf = (value: unknown): ScheduledJob | undefined => {
@@ -940,7 +941,7 @@ export const applyUpdate = (
         const job = jobOf(j);
         return job !== undefined ? [job] : [];
       });
-      return { ...c, schedules: { jobs, dormant: u.dormant === true, at: when } };
+      return { ...c, schedules: { jobs, dormant: u.dormant === true } };
     }
     case GOAL_UPDATE: {
       if (u.goal === null) return { ...c, goal: null };

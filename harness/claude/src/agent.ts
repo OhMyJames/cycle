@@ -1195,14 +1195,19 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
           } else if (message.type === "user") {
             const blocks = (message.message as { content?: unknown }).content;
             const answered = Array.isArray(blocks)
-              ? (blocks as { type?: string; tool_use_id?: string }[]).find(
-                  (b) => b.type === "tool_result",
-                )?.tool_use_id
-              : undefined;
-            const scheduling = session.schedules.called(
-              answered,
-              (message as { tool_use_result?: unknown }).tool_use_result,
-            );
+              ? (blocks as { type?: string; tool_use_id?: string }[])
+                  .filter((b) => b.type === "tool_result")
+                  .map((b) => b.tool_use_id)
+              : [];
+            // The structured result is one call's: it goes with a message of one result only.
+            const result =
+              answered.length === 1
+                ? (message as { tool_use_result?: unknown }).tool_use_result
+                : undefined;
+            let scheduling = false;
+            for (const id of answered.length > 0 ? answered : [undefined]) {
+              if (session.schedules.called(id, result)) scheduling = true;
+            }
             if (scheduling) tellSchedules(session);
           }
           // A turn that went through means the session is on disk, whenever the process said hello.

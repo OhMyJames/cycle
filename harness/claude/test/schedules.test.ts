@@ -278,3 +278,52 @@ test("a long prompt is cut short", () => {
   s.told([{ id: "c", schedule: "0 9 * * *", recurring: true, prompt: "x".repeat(1_000) }], 0);
   expect(s.list(0)[0]?.prompt).toHaveLength(301);
 });
+
+test("review: a one-shot's time once gone is not made into another, and is dropped on waking", () => {
+  const now = at(2026, 11, 23, 10, 0);
+  const s = new Schedules();
+  s.asked("w", "ScheduleWakeup", { prompt: "Look again" });
+  s.called("w", { scheduledFor: now + 70 * 60_000, clampedDelaySeconds: 3600 });
+  s.told([{ id: "c", schedule: "10 11 * * *", recurring: false, prompt: "Look again" }], now);
+  const later = now + 3 * 60 * 60_000;
+  expect(s.list(later)[0]?.nextFireAt).toBeUndefined();
+  s.sleeping(true, later);
+  s.sleeping(false, later);
+  expect(s.list(later)).toEqual([]);
+});
+
+test("review: a CronCreate result that does not say whether it recurs takes the call's word, recurring by default", () => {
+  const s = new Schedules();
+  s.asked("a", "CronCreate", { cron: "*/30 * * * *", prompt: "Poll" });
+  s.called("a", { id: "x", humanSchedule: "Every 30 minutes" });
+  s.asked("b", "CronCreate", { cron: "0 9 * * *", prompt: "Once", recurring: false });
+  s.called("b", { id: "y", humanSchedule: "At 9 AM" });
+  expect(s.list(0).map((j) => [j.id, j.recurring])).toEqual([
+    ["x", true],
+    ["y", false],
+  ]);
+});
+
+test("review: CronList knows a wakeup, a hook cron without an id still keeps its process, same words go by their minute", () => {
+  const now = at(2026, 11, 23, 10, 0);
+  const s = new Schedules();
+  s.asked("w1", "ScheduleWakeup", { prompt: "Check" });
+  s.called("w1", { scheduledFor: at(2026, 11, 23, 10, 10), clampedDelaySeconds: 600 });
+  s.asked("w2", "ScheduleWakeup", { prompt: "Check" });
+  s.called("w2", { scheduledFor: at(2026, 11, 23, 10, 50), clampedDelaySeconds: 3000 });
+  s.asked("l", "CronList", {});
+  s.called("l", {
+    jobs: [
+      { id: "a", cron: "10 10 * * *", prompt: "Check", durable: false },
+      { id: "b", cron: "50 10 * * *", prompt: "Check", durable: false },
+    ],
+  });
+  expect(s.list(now).map((j) => [j.id, j.kind, j.toolCallId, j.nextFireAt])).toEqual([
+    ["a", "wakeup", "w1", at(2026, 11, 23, 10, 10)],
+    ["b", "wakeup", "w2", at(2026, 11, 23, 10, 50)],
+  ]);
+  const crons = cronsOf({ session_crons: [{ schedule: "20 10 * * *", recurring: false }] });
+  expect(crons).toEqual([{ id: "cron:0", schedule: "20 10 * * *", recurring: false, prompt: "" }]);
+  s.told(crons ?? [], now);
+  expect(s.dueWithin(now)).toBe(true);
+});

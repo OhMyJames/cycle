@@ -677,9 +677,8 @@ test("the scheduled calls are the last list told, with when it was told; unknown
       },
     ],
     dormant: false,
-    at: 500,
   });
   c = applyUpdate(c, schedule({ jobs: [], dormant: true }));
-  expect(c.schedules).toEqual({ jobs: [], dormant: true, at: undefined });
+  expect(c.schedules).toEqual({ jobs: [], dormant: true });
   expect(applyUpdate(c, schedule({ jobs: "none" })).ignored).toBe(c.ignored + 1);
 });
