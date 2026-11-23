@@ -40,13 +40,14 @@ test("a row says how long ago its session changed, and the whole time on hover",
     { ...older, title: "Older daemon" },
   ]);
   const time = timeOf("Recent");
-  expect(time?.textContent).toBe("5m ago");
+  expect(time?.textContent).toBe("5m");
   expect(time?.getAttribute("dateTime")).toBe(at.toISOString());
   expect(time?.getAttribute("title")).toContain(String(at.getFullYear()));
   expect(timeOf("Older daemon")).toBeNull();
-  // It sits after the title, at the row's end, apart from the status dot at its start.
+  // It sits after the title, at the row's end (where the row's actions take its place under the pointer), apart from
+  // the status dot at its start.
   const row = screen.getByRole("option", { name: /Recent/ });
-  expect(row.lastElementChild).toBe(time);
+  expect(row.querySelector('[data-slot="session-actions"]')?.previousElementSibling).toBe(time);
   const title = row.querySelector('[data-slot="session-title"]') as HTMLElement;
   expect(time?.getBoundingClientRect().left).toBeGreaterThanOrEqual(
     title.getBoundingClientRect().right,
@@ -59,7 +60,7 @@ test("the times move on with the clock", async () => {
   await mount([{ ...summary("a"), title: "Ticking", updatedAt: new Date().toISOString() }]);
   expect(timeOf("Ticking")?.textContent).toBe("now");
   await act(() => vi.advanceTimersByTimeAsync(3 * MINUTE));
-  expect(timeOf("Ticking")?.textContent).toBe("3m ago");
+  expect(timeOf("Ticking")?.textContent).toBe("3m");
 });
 
 test("in Chinese it reads as Chinese does", async () => {
@@ -73,5 +74,5 @@ test("in Chinese it reads as Chinese does", async () => {
     ],
     "zh-CN",
   );
-  expect(timeOf("近的")?.textContent).toBe("3小时前");
+  expect(timeOf("近的")?.textContent).toBe("3小时");
 });

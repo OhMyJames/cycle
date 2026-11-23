@@ -24,7 +24,7 @@ export const urgent = (counts: Counts): { mark: Mark; count: number } | undefine
 export type SessionGroup = {
   /** Unique among the groups, and the same from one call to the next. */
   key: string;
-  kind: "needs-you" | "running" | "today" | "yesterday" | "earlier";
+  kind: "pinned" | "needs-you" | "running" | "today" | "yesterday" | "earlier";
   /** What is shown. */
   sessions: SessionSummary[];
 };
@@ -269,20 +269,27 @@ export type SessionListOptions = {
   selected?: string | undefined;
   /** Environments that are not connected: their sessions are the last list read, and wait for no one. */
   away?: ReadonlySet<string> | undefined;
+  /** The sessions the person pinned, by `sessionKey` (pins.ts). */
+  pinned?: ReadonlySet<string> | undefined;
   now: Date;
 };
 
 /**
- * One workspace's sessions: what waits on the person, what is working (and what has a sub-agent working), then the
+ * One workspace's sessions: what the person pinned, which stays where they put it whatever it is doing (its mark still
+ * says that), then what waits on the person, what is working (and what has a sub-agent working), then the
  * rest by the day they last had something happen. Only the older ones are limited: a session with something to say, and
  * the open one, are always shown.
  */
 export const sessionList = (
   sessions: readonly SessionSummary[],
-  { showAll, selected, away, now }: SessionListOptions,
+  { showAll, selected, away, pinned, now }: SessionListOptions,
 ): SessionList => {
-  const sorted = sessions.toSorted(newest);
   const groups: SessionGroup[] = [];
+  const top: SessionSummary[] = [];
+  const sorted: SessionSummary[] = [];
+  for (const s of sessions.toSorted(newest))
+    (pinned?.has(sessionKey(s)) === true ? top : sorted).push(s);
+  if (top.length > 0) groups.push({ key: "pinned", kind: "pinned", sessions: top });
   const needs = sorted.filter((s) => markOf(s, away) === "needs-you");
   const busy = sorted.filter((s) => {
     const mark = markOf(s, away);

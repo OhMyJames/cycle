@@ -1771,6 +1771,50 @@ export const scenarios: Record<string, Scenario> = {
     ],
     history: [you("u1", "Where were we?"), say("a1", "Here.")],
   },
+  "session-times": {
+    title:
+      "Each row ends with when its session last changed; a long title fades before the time, which never gives way",
+    sessions: [
+      session("ask", {
+        title: "Approve the deploy",
+        state: "requires_action",
+        lastSeq: 90,
+        updatedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+      }),
+      session("run", {
+        title: "Port the tests",
+        state: "running",
+        lastSeq: 80,
+        updatedAt: new Date(Date.now() - 30_000).toISOString(),
+      }),
+      session("t1", {
+        title: "Make the sidebar's rows line up with the traffic lights and the actions above",
+        lastSeq: 70,
+        updatedAt: new Date(Date.now() - 25 * 60_000).toISOString(),
+      }),
+      session("t2", {
+        title: "Fix the flaky daemon test",
+        lastSeq: 60,
+        updatedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+      }),
+      session("y1", {
+        title: "Write the guide",
+        lastSeq: 50,
+        updatedAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+      }),
+      session("e1", {
+        title: "Index the logs",
+        lastSeq: 40,
+        updatedAt: new Date(Date.now() - 4 * 86_400_000).toISOString(),
+      }),
+      session("e2", {
+        title: "Tidy the docs",
+        lastSeq: 30,
+        updatedAt: "2026-09-03T10:00:00.000Z",
+      }),
+    ],
+    history: [you("u1", "Where were we?"), say("a1", "Here.")],
+  },
   "session-focus": {
     title: "A row that starts working moves to the Working group and keeps the keyboard focus",
     sessions: [

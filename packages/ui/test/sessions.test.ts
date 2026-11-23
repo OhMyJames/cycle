@@ -7,6 +7,7 @@ import {
   markOf,
   newest,
   PER_WORKSPACE,
+  sessionKey,
   sessionList,
   workspacesOf,
 } from "../src/sessions.ts";
@@ -185,6 +186,19 @@ test("what waits on the person comes first, then what is running, then the days"
   expect(list.groups.map((g) => g.kind)).toEqual(["needs-you", "running", "today", "earlier"]);
   // A session with a background sub-agent is running, as far as the list is concerned.
   expect(ids(list)).toEqual(["ask", "run", "sub", "new", "old"]);
+});
+
+test("what is pinned comes first and stays there, whatever it is doing; it does not use up the page", () => {
+  const rows = [
+    row("ask", { state: "requires_action", updatedAt: at(1) }),
+    row("pin-old", { updatedAt: at(2) }),
+    row("pin-run", { state: "running", updatedAt: at(18, 9) }),
+    row("new", { updatedAt: at(18, 10) }),
+  ];
+  const pinned = new Set([sessionKey(rows[1]!), sessionKey(rows[2]!)]);
+  const list = sessionList(rows, { ...options, pinned });
+  expect(list.groups.map((g) => g.kind)).toEqual(["pinned", "needs-you", "today"]);
+  expect(ids(list)).toEqual(["pin-run", "pin-old", "ask", "new"]);
 });
 
 test("the days are the local clock's: today, yesterday, earlier; and a session with no time is earlier", () => {

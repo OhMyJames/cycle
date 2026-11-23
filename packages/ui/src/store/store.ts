@@ -1303,8 +1303,12 @@ export class AppStore {
     );
   };
 
-  archiveSession = async (sessionId: string, archived: boolean): Promise<void> => {
-    const environmentId = this.#state.selectedEnvironment;
+  /** A session of the open one's environment, or of `environmentId`, as a row of the sidebar names its own. */
+  archiveSession = async (
+    sessionId: string,
+    archived: boolean,
+    environmentId = this.#state.selectedEnvironment,
+  ): Promise<void> => {
     if (environmentId === undefined) return;
     await this.#attempt(() => this.#bridge.archiveSession(environmentId, sessionId, archived));
   };
@@ -1321,8 +1325,10 @@ export class AppStore {
     }
   };
 
-  deleteSession = async (sessionId: string): Promise<string | undefined> => {
-    const environmentId = this.#state.selectedEnvironment;
+  deleteSession = async (
+    sessionId: string,
+    environmentId = this.#state.selectedEnvironment,
+  ): Promise<string | undefined> => {
     if (environmentId === undefined) return undefined;
     try {
       await this.#bridge.deleteSession(environmentId, sessionId);
