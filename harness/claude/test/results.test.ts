@@ -397,6 +397,32 @@ test("a command's output and errors come apart, and how it ended is said only wh
     },
   ]);
   expect(meta(ran)).toEqual({ run: {} });
+  // Claude Code's note that the folder was reset is its own, not what the command printed.
+  const [, reset] = run(
+    call("r", "Bash", { command: "cd /tmp && ls" }),
+    result("r", "a\nShell cwd was reset to /w", {
+      stdout: "a",
+      stderr: "\nShell cwd was reset to /w",
+      interrupted: false,
+    }),
+  );
+  expect(reset?.content).toEqual([{ type: "content", content: { type: "text", text: "a" } }]);
+  const [, both] = run(
+    call("s", "Bash", { command: "cd /tmp && make" }),
+    result("s", "…", {
+      stdout: "",
+      stderr: "warning: x\nShell cwd was reset to /w",
+      interrupted: false,
+    }),
+  );
+  expect(both?.content).toEqual([
+    { type: "content", content: { type: "text", text: "" } },
+    {
+      type: "content",
+      content: { type: "text", text: "warning: x" },
+      _meta: { "cycle/stream": "stderr" },
+    },
+  ]);
   // Nothing printed: what the model was told instead is shown.
   const [, quiet] = run(
     call("b", "Bash", {}),

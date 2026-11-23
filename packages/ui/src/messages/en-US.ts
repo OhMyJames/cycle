@@ -474,7 +474,7 @@ export const enUS = {
   "subagent.lessTask": "Show less of the task",
   "tool.block.command": "Command",
   "tool.block.output": "Output",
-  "tool.block.stderr": "Errors",
+  "tool.block.stderr": "Stderr",
   "tool.copy": "Copy",
   "tool.earlierCharacters": {
     one: "{count} earlier character not shown",
@@ -484,7 +484,7 @@ export const enUS = {
   "tool.copied": "Copied",
   "tool.copy.command": "Copy the command",
   "tool.copy.output": "Copy the output",
-  "tool.copy.stderr": "Copy the errors",
+  "tool.copy.stderr": "Copy stderr",
   "tool.more": { one: "Show {count} earlier line", other: "Show {count} earlier lines" },
   "tool.diff.add": "added",
   "tool.diff.del": "removed",

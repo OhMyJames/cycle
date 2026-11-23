@@ -286,6 +286,13 @@ const grep = (out: Json, text: Content[]): Result | undefined => {
 };
 
 /**
+ * What a command printed as errors, without the note Claude Code adds after it when the command left the folder it
+ * runs in ("Shell cwd was reset to /path"): that is Claude Code's own, said to the model, not what the command printed.
+ */
+const ownErrors = (stderr: string): string =>
+  stderr.replace(/(?:^|\n)Shell cwd was reset to [^\n]*\n?$/, "").replace(/^\n+|\s+$/g, "");
+
+/**
  * A command: what it printed and what it printed as errors, apart (the model sees them together), and how it ended
  * when that was not simply running to the end. A command whose output was an image is left as it came.
  */
@@ -305,14 +312,15 @@ const bash = (out: Json, text: Content[], failed: boolean): Result | undefined =
       : undefined;
   // Nothing printed: the text the model saw may still say something ("No matches found", where a background
   // command's output goes), and that is what is shown.
-  const quiet = out.stdout === "" && out.stderr === "";
+  const stderr = ownErrors(out.stderr);
+  const quiet = out.stdout === "" && stderr === "";
   const content: Content[] = quiet
     ? text
     : [{ type: "content", content: { type: "text", text: out.stdout } }];
-  if (out.stderr !== "") {
+  if (stderr !== "") {
     content.push({
       type: "content",
-      content: { type: "text", text: out.stderr },
+      content: { type: "text", text: stderr },
       _meta: { [STREAM_META]: "stderr" },
     });
   }
