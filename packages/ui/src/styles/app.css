@@ -528,6 +528,9 @@ summary:focus-visible {
     [data-slot="tool-summary"],
     [data-slot="tool-diff-path"],
     [data-slot="plan-now"],
+    [data-slot="subagent-title"],
+    [data-slot="subagent-tag"],
+    [data-slot="subagent-glimpse"],
     [data-slot="blank-folder-name"],
     [data-slot="blank-recent-name"],
     [data-slot="notice-text"],
@@ -572,6 +575,9 @@ summary:focus-visible {
   [data-slot="tool-summary"],
   [data-slot="tool-diff-path"],
   [data-slot="plan-now"],
+  [data-slot="subagent-title"],
+  [data-slot="subagent-tag"],
+  [data-slot="subagent-glimpse"],
   [data-slot="blank-folder-name"],
   [data-slot="blank-recent-name"],
   [data-slot="notice-text"],
@@ -3764,7 +3770,7 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   line-height: var(--cycle-leading-ui);
 }
 
-:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"], [data-kind="subagent"]) > button {
+:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"]) > button {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -3780,13 +3786,11 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
 }
 
 /* ui-sdk draws a chevron after a collapsible trigger that has no icon of its own: a tool row has none, ever. */
-:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"], [data-kind="subagent"])
-  > button::after {
+:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"]) > button::after {
   content: none;
 }
 
-:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"], [data-kind="subagent"])
-  > button:hover {
+:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"]) > button:hover {
   background: var(--cycle-surface-hover);
   color: var(--cycle-ink);
 }
@@ -3854,10 +3858,7 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   color: var(--ui-muted-foreground);
 }
 
-:is([data-kind="tool"], [data-kind="work"], [data-kind="subagent"]):is(
-    [data-status="failed"],
-    [data-status="cancelled"]
-  )
+:is([data-kind="tool"], [data-kind="work"]):is([data-status="failed"], [data-status="cancelled"])
   > button
   :is([data-slot="tool-verb"], [data-slot="tool-status"]) {
   color: var(--ui-destructive);
@@ -3977,24 +3978,220 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   background: var(--cycle-border-subtle);
 }
 
-/* A sub-agent: a line like a call's, with what kind of agent it is muted after its task. Back, the start of its answer
-   hangs under the line at the rows' indent, faded out after a few lines; open, the whole task and the whole answer. */
-[data-slot="subagent-type"] {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ui-muted-foreground);
-  font-family: var(--ui-font-mono);
-  font-size: var(--cycle-text-meta);
+/* A sub-agent (CYCL-217): a colleague's card, on Surface/Card as a code review is, so it reads as work of its own and not
+   as one more call. Its head is a ghost row 6px in from the card's 16px corner (10px rounded): a mark for how it stands
+   (the loader while at work, a tick, a stop square, a circle with a bar), what it was sent to do, its kind of agent on a
+   tag, then in quiet figures how it stands, how long and how many steps, and while it is at work a Stop button on the
+   right, outside the row. Under the head, at the title's start: closed, one line or the start of its answer; open, its
+   parts, each under a hairline. How it stands is said in words and by the mark's shape, never by colour alone. */
+[data-kind="subagent"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.25rem;
+  padding: 0.375rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
 }
 
+[data-kind="subagent"] > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+[data-kind="subagent"] > button {
+  display: flex;
+  grid-column: 1;
+  grid-row: 1;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--ui-radius);
+  color: var(--cycle-ink);
+  text-align: left;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-kind="subagent"] > button::after {
+  content: none;
+}
+
+[data-kind="subagent"] > button:hover {
+  background: var(--cycle-surface-hover);
+}
+
+/* The whole card opens: its chevron is always seen, as a fold's is. */
+[data-kind="subagent"] > button > [data-slot="tool-chevron"] {
+  opacity: 1;
+}
+
+/* The mark takes an icon's 16px; the loader in it draws at 24px into the row's padding (loader/index.ts). */
+[data-slot="subagent-mark"] {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="subagent-mark"][data-state="running"] {
+  color: var(--cycle-accent);
+}
+
+[data-slot="subagent-mark"][data-state="done"] {
+  color: var(--cycle-success);
+}
+
+[data-slot="subagent-mark"][data-state="failed"] {
+  color: var(--ui-destructive);
+}
+
+/* At work while the conversation's one loader is elsewhere: a ring that stands still. */
+[data-slot="subagent-still"] {
+  box-sizing: border-box;
+  width: 0.625rem;
+  height: 0.625rem;
+  border: 1.5px solid currentColor;
+  border-radius: var(--cycle-radius-pill);
+}
+
+/* What it was sent to do: the line's lead, and the first to give way; its end fades (cycle-fade, above). */
+[data-slot="subagent-title"] {
+  flex: 0 1 auto;
+  min-width: 3rem;
+  font-weight: 500;
+}
+
+[data-slot="subagent-tag"] {
+  /* Gives way long before the title does: what it was sent to do is what the card is read by. */
+  flex: 0 1000 auto;
+  min-width: 2rem;
+  max-width: 12rem;
+  padding: 0 0.375rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-sm);
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+/* Sent to the background: its tag's edge is dashed, as a ring is hollow for a session at work in the background. */
+[data-slot="subagent-tag"][data-background] {
+  flex: none;
+  border-style: dashed;
+}
+
+[data-slot="subagent-meta"] {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 0.25rem;
+  margin-inline-start: auto;
+  color: var(--ui-muted-foreground);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+[data-slot="subagent-meta"] > * + *::before {
+  content: "·" / "";
+  margin-inline-end: 0.25rem;
+}
+
+[data-slot="subagent-status"] {
+  color: var(--cycle-ink-secondary);
+}
+
+[data-kind="subagent"][data-status="failed"] [data-slot="subagent-status"] {
+  color: var(--ui-destructive);
+}
+
+/* Stop, beside the head, for this sub-agent only: a button that looks like one, never the row it sits on. */
+[data-slot="subagent-actions"] {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  align-items: center;
+  padding-inline-end: 0.125rem;
+}
+
+[data-slot="subagent-actions"] > button {
+  gap: 0.25rem;
+}
+
+[data-slot="subagent-actions"] > button[aria-disabled="true"] {
+  color: var(--ui-muted-foreground);
+  cursor: default;
+}
+
+/* Closed: what it does now, or why it failed, in one line under the title. */
+[data-slot="subagent-glimpse"] {
+  margin: 0;
+  padding: 0 0.5rem 0.25rem 2rem;
+  color: var(--cycle-ink-secondary);
+}
+
+[data-slot="subagent-glimpse"][data-tone="danger"] {
+  color: var(--ui-destructive);
+}
+
+/* Closed and back: the start of its answer, three lines of the body faded at the bottom: a preview, not the answer. */
+[data-slot="subagent-answer"] {
+  padding: 0 0.5rem 0.25rem 2rem;
+}
+
+[data-slot="subagent-answer"] > [data-slot="message"] {
+  max-height: calc(3em * var(--cycle-leading-body));
+  overflow: hidden;
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-body);
+  line-height: var(--cycle-leading-body);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+
+[data-slot="subagent-more"] {
+  align-self: flex-start;
+  margin-top: 0.125rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-meta);
+  cursor: pointer;
+}
+
+[data-slot="subagent-more"]:hover {
+  color: var(--cycle-ink);
+  text-decoration: underline;
+}
+
+[data-slot="subagent-more"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--cycle-radius-sm);
+}
+
+/* Open: its parts in order, task, what it did, result, each under a hairline, at the title's start. Each is named by a
+   heading in the row's size and ink, so the parts read before what is in them. */
 [data-kind="subagent"] > [data-slot="collapsible-panel"] {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin: 0.25rem 0 0.25rem 1.5rem;
+  margin-top: 0.25rem;
+  color: inherit;
+}
+
+[data-kind="subagent"] > [data-slot="collapsible-panel"] > * {
+  margin-inline: 2rem 0.5rem;
+}
+
+[data-kind="subagent"] > [data-slot="collapsible-panel"] > :not([data-slot="subagent-part"]) {
+  margin-block-end: 0.5rem;
 }
 
 [data-slot="subagent-part"] {
@@ -4002,24 +4199,89 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   flex-direction: column;
   gap: 0.25rem;
   min-width: 0;
+  padding-block: 0.5rem;
+  border-top: 1px solid var(--cycle-border-subtle);
 }
 
-[data-slot="subagent-part"] > [data-slot="tool-block-label"] {
+[data-slot="subagent-label"] {
   margin: 0;
-  color: var(--ui-muted-foreground);
-  font-size: var(--cycle-text-meta);
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
   font-weight: 500;
 }
 
-/* What a sub-agent did (CYCL-134): its own words and work, laid out as a turn is, set in by a light rule so it does
-   not read as the main agent's. */
+/* The task: three lines, the rest on request; all of it, past a long screen's worth, scrolls in its place. */
+[data-slot="subagent-prompt"] {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--cycle-ink-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+[data-slot="subagent-prompt"][data-whole] {
+  display: block;
+  max-height: 20rem;
+  overflow: auto;
+}
+
+/* What it did (CYCL-134), as a compact timeline: its stretches of work folded to a line each and its own words a size
+   under the reply's, down a hairline with a dot for each. */
 [data-slot="subagent-work"] {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.25rem;
   min-width: 0;
-  padding-inline-start: 0.75rem;
-  border-inline-start: 1px solid var(--cycle-border-default);
+  padding-inline-start: 1rem;
+}
+
+[data-slot="subagent-work"]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0.125rem;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 1px;
+  background: var(--cycle-border-default);
+}
+
+[data-slot="subagent-work"] > :is([data-slot="message"], [data-kind="tool"], [data-kind="work"]) {
+  position: relative;
+}
+
+[data-slot="subagent-work"]
+  > :is([data-slot="message"], [data-kind="tool"], [data-kind="work"])::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -1rem;
+  top: 0.875rem;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--ui-muted-foreground);
+}
+
+[data-slot="subagent-work"] > [data-slot="message"]::before {
+  top: 0.4375rem;
+}
+
+[data-slot="subagent-work"] > [data-slot="message"][data-role="agent"] {
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+/* The result: the reply it is, in the body's size and ink. */
+[data-slot="subagent-part"][data-part="answer"] > [data-slot="message"] {
+  font-size: var(--cycle-text-body);
+  line-height: var(--cycle-leading-body);
 }
 
 /* A code review the agent reported (CYCL-138): a card (Surface/Card), a line of how many and how sure, then a row per
@@ -4224,61 +4486,6 @@ button[data-slot="review-file"]:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
-}
-
-[data-slot="subagent-prompt"] {
-  margin: 0;
-  padding: 0.5rem 0.75rem;
-  max-height: 12rem;
-  overflow: auto;
-  border-radius: var(--ui-radius);
-  background: var(--ui-muted);
-  color: var(--cycle-ink-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-[data-slot="subagent-answer"] {
-  margin: 0.125rem 0 0.25rem 1.5rem;
-  min-width: 0;
-}
-
-/* Three lines of the body, faded at the bottom: a preview, not the answer. */
-[data-slot="subagent-answer"] > [data-slot="message"] {
-  max-height: calc(3em * var(--cycle-leading-body));
-  overflow: hidden;
-  color: var(--cycle-ink-secondary);
-  mask-image: linear-gradient(to bottom, #000 55%, transparent);
-}
-
-[data-slot="subagent-more"] {
-  margin-top: 0.125rem;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ui-muted-foreground);
-  font-size: var(--cycle-text-meta);
-  cursor: pointer;
-}
-
-[data-slot="subagent-more"]:hover {
-  color: var(--cycle-ink);
-}
-
-[data-slot="subagent-more"]:focus-visible {
-  outline: 1.5px solid var(--cycle-focus-ring);
-  outline-offset: 2px;
-  border-radius: var(--cycle-radius-sm);
-}
-
-/* What can be done to a sub-agent at work (CYCL-143): under its row, where its answer will be. */
-[data-slot="subagent-actions"] {
-  margin: 0 0 0.25rem 1.5rem;
-}
-
-[data-slot="subagent-more"][aria-disabled="true"] {
-  color: var(--ui-muted-foreground);
-  cursor: default;
 }
 
 /* The line at the end of a turn that is going: what the agent is doing, so a hidden thought is not a silence. It is

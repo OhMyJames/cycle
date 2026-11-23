@@ -42,6 +42,7 @@ import {
   MessageIcon,
 } from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
+import { LoaderClaims, LoaderClaimsProvider } from "./loader-claim.ts";
 import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
 import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
@@ -513,6 +514,8 @@ export function ConversationView({
   const cache = useRef<BlockCache>(new Map());
   // In normal mode (Session settings → Display mode) the agent's thinking is left out; detailed shows it.
   const mode = useDisplayMode(sessionKey);
+  // Who draws the one loader of this conversation: the status line, or a sub-agent at work (CYCL-217).
+  const [claims] = useState(() => new LoaderClaims());
   const laidOut = useMemo(() => blocksOf(conversation, cache.current), [conversation]);
   // A turn that ended normally is read by its answer: the work before it folds into one line.
   const folds = useRef<FoldCache>(new Map());
@@ -824,69 +827,71 @@ export function ConversationView({
   );
   return (
     <FileLinksContext.Provider value={fileLinks}>
-      <div
-        data-slot="conversation"
-        ref={ref}
-        onScroll={onScroll}
-        role="log"
-        tabIndex={-1}
-        aria-label={t("conversation.label")}
-        aria-busy={loading}
-      >
-        {loading ? (
-          <div data-slot="loading">
-            <StateBlock tone="loading" title={t("conversation.loading")} />
-          </div>
-        ) : null}
-        {!loading && conversation.items.length === 0 ? (
-          <div data-slot="conversation-empty">
-            <StateBlock tone="empty" title={t("conversation.empty")} />
-          </div>
-        ) : null}
-        {start > 0 ? (
-          <button type="button" data-slot="earlier" onClick={showEarlier}>
-            {t("conversation.earlier")}
-          </button>
-        ) : null}
-        {blocks.slice(start).map((block, at) => (
-          <div key={block.key} data-slot="block" data-turn-start={block.startsTurn || undefined}>
-            <BlockView
-              block={block}
-              streaming={
-                working &&
-                block.turn === conversation.turns &&
-                (block.kind === "thought" ? block.item === lastItem : start + at === lastAgent)
-              }
-              live={working && block.turn === conversation.turns}
-              resend={block.kind === "end" && resend?.turn === block.turn ? resend : undefined}
-              replyOf={
-                replyEnds.has(block.key) && !(working && block.turn === conversation.turns)
-                  ? replyOf
-                  : undefined
-              }
-              ended={block.turn < conversation.turns}
-            />
-          </div>
-        ))}
-        {!loading ? (
-          <StepLine conversation={conversation} awaitingApproval={awaitingApproval} />
-        ) : null}
-        {/* Held to the bottom of the view while the end is below it, and taking no room, so it moves nothing it floats over. */}
-        <div data-slot="to-end">
-          {away && !loading ? (
-            <Tip label={fresh ? t("conversation.toEndFresh") : t("conversation.toEnd")}>
-              <button
-                type="button"
-                data-slot="to-end-button"
-                data-fresh={fresh || undefined}
-                onClick={toEnd}
-              >
-                <ArrowDownIcon size={16} />
-              </button>
-            </Tip>
+      <LoaderClaimsProvider value={claims}>
+        <div
+          data-slot="conversation"
+          ref={ref}
+          onScroll={onScroll}
+          role="log"
+          tabIndex={-1}
+          aria-label={t("conversation.label")}
+          aria-busy={loading}
+        >
+          {loading ? (
+            <div data-slot="loading">
+              <StateBlock tone="loading" title={t("conversation.loading")} />
+            </div>
           ) : null}
+          {!loading && conversation.items.length === 0 ? (
+            <div data-slot="conversation-empty">
+              <StateBlock tone="empty" title={t("conversation.empty")} />
+            </div>
+          ) : null}
+          {start > 0 ? (
+            <button type="button" data-slot="earlier" onClick={showEarlier}>
+              {t("conversation.earlier")}
+            </button>
+          ) : null}
+          {blocks.slice(start).map((block, at) => (
+            <div key={block.key} data-slot="block" data-turn-start={block.startsTurn || undefined}>
+              <BlockView
+                block={block}
+                streaming={
+                  working &&
+                  block.turn === conversation.turns &&
+                  (block.kind === "thought" ? block.item === lastItem : start + at === lastAgent)
+                }
+                live={working && block.turn === conversation.turns}
+                resend={block.kind === "end" && resend?.turn === block.turn ? resend : undefined}
+                replyOf={
+                  replyEnds.has(block.key) && !(working && block.turn === conversation.turns)
+                    ? replyOf
+                    : undefined
+                }
+                ended={block.turn < conversation.turns}
+              />
+            </div>
+          ))}
+          {!loading ? (
+            <StepLine conversation={conversation} awaitingApproval={awaitingApproval} />
+          ) : null}
+          {/* Held to the bottom of the view while the end is below it, and taking no room, so it moves nothing it floats over. */}
+          <div data-slot="to-end">
+            {away && !loading ? (
+              <Tip label={fresh ? t("conversation.toEndFresh") : t("conversation.toEnd")}>
+                <button
+                  type="button"
+                  data-slot="to-end-button"
+                  data-fresh={fresh || undefined}
+                  onClick={toEnd}
+                >
+                  <ArrowDownIcon size={16} />
+                </button>
+              </Tip>
+            ) : null}
+          </div>
         </div>
-      </div>
+      </LoaderClaimsProvider>
     </FileLinksContext.Provider>
   );
 }

@@ -1264,7 +1264,8 @@ test("the plan is followed above the input box and is one line in the conversati
   // In the conversation: one line.
   expect(log.querySelector('[data-kind="plan"]')?.textContent).toContain("1 of 3 done");
   const agent = screen.getByRole("button", { name: /Survey the tests/ });
-  expect(agent.textContent).toContain("in the background · using Grep");
+  expect(agent.textContent).toContain("Background");
+  expect(agent.closest('[data-kind="subagent"]')?.textContent).toContain("Using Grep");
   // The description is the line once, not again as the summary.
   expect(agent.textContent?.split("Survey the tests").length).toBe(2);
   expect(log.textContent).toContain("Context compacted");
@@ -1461,7 +1462,7 @@ test("a sub-agent is a card of its own: its task, how it goes, and once back the
   });
   expect(card.textContent).toContain("Find the flaky test");
   expect(card.textContent).toContain("Explore");
-  expect(card.textContent).toContain("using Grep");
+  expect(card.textContent).toContain("Using Grep");
   expect(card.querySelector('[data-slot="subagent-answer"]')).toBeNull();
   await emit(
     u({
@@ -1542,8 +1543,14 @@ test("a sub-agent's card opens to what it did, apart from the main agent's work,
     expect(found).not.toBeNull();
     return found as HTMLElement;
   });
-  // Closed, nothing of what it did is drawn; none of it is in the main agent's words either.
-  expect(log.textContent).not.toContain("Looking at the queue tests.");
+  // Closed, nothing of what it did is drawn: at most the last thing it said, as what it does now, on its card's line.
+  // None of it is in the main agent's words.
+  expect(card.querySelector('[data-slot="subagent-glimpse"]')?.textContent).toBe(
+    "Looking at the queue tests.",
+  );
+  expect(log.textContent?.replace(card.textContent ?? "", "")).not.toContain(
+    "Looking at the queue tests.",
+  );
   expect(card.querySelector('[data-slot="subagent-work"]')).toBeNull();
   await user.click(within(card).getByRole("button", { name: /Find the flaky test/ }));
   const work = await waitFor(() => {
@@ -1630,7 +1637,7 @@ test("a sub-agent at work can be stopped alone from its card, by keyboard too, a
     expect(within(log).queryByRole("button", { name: /Stop sub-agent/ })).toBeNull(),
   );
   const card = log.querySelector('[data-item-id="s1"]') as HTMLElement;
-  expect(card.textContent).toContain("stopped");
+  expect(card.textContent).toContain("Stopped");
   // The button went with its sub-agent: the keyboard is on the card, not lost to the page.
   expect(document.activeElement).toBe(card.querySelector(":scope > button"));
   cleanup();
@@ -1668,7 +1675,7 @@ test("a sub-agent at work can be stopped alone from its card, by keyboard too, a
   });
   await failing.user.click(again);
   await screen.findByText(/connection lost/);
-  await waitFor(() => expect(again.textContent).toBe("Stop sub-agent"));
+  await waitFor(() => expect(again.textContent).toBe("Stop"));
   expect(again.getAttribute("aria-disabled")).toBeNull();
   fail = false;
   await failing.user.click(again);
@@ -1724,7 +1731,7 @@ test("a sub-agent's last words, which are its answer, are shown once: as the ans
   });
   expect(work.textContent).toContain("Looking at the queue tests.");
   expect(work.textContent).not.toContain(answer);
-  expect(within(card).getByRole("region", { name: "Answer" }).textContent).toContain(answer);
+  expect(within(card).getByRole("region", { name: "Result" }).textContent).toContain(answer);
 });
 
 test("a permission the main agent asks for says nothing of a sub-agent; one from a sub-agent not known here still says one asks", async () => {
@@ -1745,7 +1752,7 @@ test("a permission the main agent asks for says nothing of a sub-agent; one from
   expect(main.textContent).toContain("1 more");
 });
 
-test("a sub-agent sent to the background shows no answer from its launch; one that failed opens to say so", async () => {
+test("a sub-agent sent to the background shows no answer from its launch; one that failed says so on its closed card", async () => {
   const { log } = await open(
     you("u1"),
     ...tool("bg", "Agent", "completed", { description: "Watch the logs", prompt: "Watch." }),
@@ -1778,7 +1785,10 @@ test("a sub-agent sent to the background shows no answer from its launch; one th
   expect(background.querySelector('[data-slot="subagent-answer"]')).toBeNull();
   expect(background.textContent).not.toContain("Async agent launched");
   expect(bad.getAttribute("data-status")).toBe("failed");
-  await waitFor(() => expect(bad.textContent).toContain("Fix it."));
+  // Closed, as every card starts: its head says it failed, in a word and a mark, and nothing of it is open.
+  expect(bad.querySelector(":scope > button")?.getAttribute("aria-expanded")).toBe("false");
+  expect(bad.textContent).toContain("Failed");
+  expect(bad.textContent).not.toContain("Fix it.");
 });
 
 test("a turn that ended normally shows its answer with its work folded above it; one that stopped stays open", async () => {
