@@ -5,7 +5,7 @@ import type { EnvironmentConfig, EnvironmentStatus, SessionSummary } from "../ap
 import type { Elsewhere, SessionList, Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon, PlugIcon, PlusIcon, SearchIcon } from "./icons.tsx";
-import { type Away, SessionListView } from "./session-list.tsx";
+import { type Away, type RowAction, SessionListView } from "./session-list.tsx";
 import { ENVIRONMENT_STATE, StatusDot } from "./status.tsx";
 import { Tip } from "./tip.tsx";
 import { WorkspaceSwitcher } from "./workspace-switcher.tsx";
@@ -28,7 +28,11 @@ export type SidebarProps = {
   /** The environments that are not connected, whose sessions are shown greyed. */
   away: ReadonlyMap<string, Away>;
   showArchived: boolean;
+  /** The pinned sessions, by `sessionKey` (pins.ts). */
+  pinned: ReadonlySet<string>;
   onSelectSession: (session: SessionSummary) => void;
+  /** What a row's own controls ask: pin, archive, delete. */
+  onSessionAction: (session: SessionSummary, action: RowAction) => void;
   onNewSession: () => void;
   onSearch: () => void;
   /** Opens the Connectors page: what the daemons keep for every agent. */
@@ -158,8 +162,10 @@ export function Sidebar(props: SidebarProps) {
             list={props.list}
             selected={props.selected}
             away={props.away}
+            pinned={props.pinned}
             onSelect={props.onSelectSession}
             onShowAll={props.onShowAll}
+            onAction={props.onSessionAction}
           />
         ) : (
           <p data-slot="hint">

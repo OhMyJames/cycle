@@ -104,6 +104,8 @@ export const EVENTS = {
   /** One sub-agent was stopped alone from its card (CYCL-143). `background`: it ran in the background. */
   subagent_stopped: o({ background: z.boolean() }),
   session_archived: o({ archived: z.boolean() }),
+  /** A session was pinned to the top of the sidebar's list, or unpinned: from a row of the sidebar, or the header. */
+  session_pinned: o({ pinned: z.boolean(), where: z.enum(["sidebar", "header"]) }),
   /** After the person confirmed it (AGENTS.md: a delete is confirmed by the client first). */
   session_deleted: o({}),
   session_config_changed: o({ setting: z.enum(["mode", "model", "effort", "other"]) }),
@@ -337,6 +339,7 @@ export const UI_EVENTS = [
   "diagram_opened",
   "diagram_source_shown",
   "display_mode_changed",
+  "session_pinned",
   "turn_resend_opened",
   "turn_resent",
   "turn_retried",
