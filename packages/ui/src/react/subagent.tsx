@@ -2,12 +2,10 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react
 import { useMemo } from "react";
 import { isLive, streamsOf, type ToolItem } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
-import { ChevronRightIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
 import {
   Copyable,
   clip,
-  Lead,
   SubagentFacts,
   statusWord,
   toolDescription,
@@ -68,29 +66,19 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
       onOpenChange={setOpen}
     >
       <CollapsibleTrigger>
-        <Lead
-          mark={
-            working
-              ? "going"
-              : failed
-                ? "failed"
-                : status === "completed" && (tool.subagent?.state ?? "done") === "done"
-                  ? "done"
-                  : "other"
-          }
-          kind="subagent"
-        />{" "}
         <span data-slot="visually-hidden">{t("subagent.label")}</span>{" "}
         <span data-slot="tool-verb" data-prose title={title}>
           {title}
         </span>{" "}
         {kind !== undefined ? <span data-slot="subagent-type">{kind}</span> : null}{" "}
         {tool.subagent !== undefined ? <SubagentFacts subagent={tool.subagent} /> : null}{" "}
-        {/* The facts already say a sub-agent failed; the word is for a call that failed by itself, and a screen reader. */}
-        <span data-slot={failed && !subagentFailed ? "tool-status" : "visually-hidden"}>
+        {/* The facts already say a sub-agent failed; the word is for a call that failed by itself, for one at work (no
+            mark says so), and a screen reader. */}
+        <span
+          data-slot={(failed && !subagentFailed) || working ? "tool-status" : "visually-hidden"}
+        >
           {said}
-        </span>{" "}
-        <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
+        </span>
       </CollapsibleTrigger>
       <CollapsiblePanel>
         {prompt !== undefined ? (

@@ -6,7 +6,8 @@
 //
 // - What the user and the agent say, a plan and a notice are blocks of their own. They cut a turn into stretches.
 // - The tool calls of one stretch share one block (the view draws a card for two or more, a bare row for one).
-// - A call that starts a sub-agent is a block of its own, like a message: it cuts the stretch.
+// - A call that starts a sub-agent is a block of its own, like a message: it cuts the stretch. So is a code review the
+//   agent reported (CYCL-138).
 // - In a turn that did not end normally, the failures of its last stretch are pulled out under it, because they may
 //   be why it stopped. Elsewhere the agent dealt with them, and they stay in the card.
 // - A thought is a block of its own, where its stretch's card is: it never cuts a stretch. Shown only in detailed mode
@@ -27,6 +28,7 @@ import type {
   UserItem,
 } from "./conversation.ts";
 import { textOf } from "./conversation.ts";
+import { isPendingReview, type Review, reviewOf } from "./review.ts";
 
 export type Activity = "run" | "read" | "edit" | "search" | "list" | "fetch" | "other";
 
@@ -122,6 +124,8 @@ export type LaidBlock = { key: string; turn: number; startsTurn: boolean } & (
   | { kind: "work"; tools: readonly ToolItem[] }
   /** A call that started a sub-agent (Claude's Agent tool): its own card. */
   | { kind: "subagent"; tool: ToolItem }
+  /** A code review the agent reported (Claude's ReportFindings tool): its findings, on a card of their own. */
+  | { kind: "review"; tool: ToolItem; review: Review }
   /** A failure pulled out from under the card of a turn that stopped. */
   | { kind: "failed"; tool: ToolItem }
   /** How a turn that did not end normally ended. */
@@ -154,6 +158,15 @@ const laidTurn = (
         // call, from its start (so nothing shows and then goes). One that failed is shown; none cuts a stretch.
         // A sub-agent is work of its own, with its own answer: a card of its own, which cuts the stretch. Before the plan's
         // calls, so one an agent marks `think` is not left out with them.
+        // A code review is what the agent found, not a step of its work: a card of its own, like what it says.
+        const review = reviewOf(item);
+        // One on its way whose input is not yet a review shows nothing, rather than a row that then turns into the card.
+        if (isPendingReview(item)) break;
+        if (review !== undefined) {
+          stretch = undefined;
+          add(`review:${item.id}`, { kind: "review", tool: item, review });
+          break;
+        }
         if (isSubagentCall(item)) {
           stretch = undefined;
           add(`subagent:${item.id}`, { kind: "subagent", tool: item });

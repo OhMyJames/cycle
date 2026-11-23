@@ -130,6 +130,38 @@ test("Enter is asked of the parent, with or without a modifier; one it does not 
   expect(seen.keys).toEqual(["enter", "enter"]);
 });
 
+test("in a list, a new line is the next item, and one on an empty item ends the list", async () => {
+  mount("1. first");
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  const shiftEnter = () =>
+    act(() => {
+      editorOf(box).update(() => $getRoot().selectEnd(), { discrete: true });
+      editorOf(box).dispatchCommand(
+        KEY_ENTER_COMMAND,
+        new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, cancelable: true }),
+      );
+    });
+  shiftEnter();
+  insert(box, "second");
+  await waitFor(() => expect(box.querySelectorAll("ol > li")).toHaveLength(2));
+  expect(markdownOf(editorOf(box))).toBe("1. first\n2. second");
+  shiftEnter();
+  shiftEnter();
+  insert(box, "after");
+  await waitFor(() => expect(box.querySelectorAll("ol > li")).toHaveLength(2));
+  expect(box.querySelector(":scope > p")?.textContent).toBe("after");
+});
+
+test("a list shows its numbers and its bullets", async () => {
+  mount("1. first\n2. second\n\n- dot");
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  const ol = box.querySelector("ol");
+  const ul = box.querySelector("ul");
+  if (ol === null || ul === null) throw new Error("no lists");
+  expect(getComputedStyle(ol).listStyleType).toBe("decimal");
+  expect(getComputedStyle(ul).listStyleType).toBe("disc");
+});
+
 test("a key the parent uses is not also the editor's", async () => {
   const { seen } = mount("");
   const box = await screen.findByRole("textbox", { name: "Message" });
