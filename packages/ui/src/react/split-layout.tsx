@@ -193,7 +193,7 @@ export function SplitLayout({
     }
     if (open && !controller.isCollapsed("panel") && widthOf("panel") > 0)
       want.current.panel = widthOf("panel");
-    const fit = () => {
+    const refit = () => {
       const width = group.getBoundingClientRect().width;
       if (width === 0) return;
       const collapsed = controller.isCollapsed("sidebar");
@@ -220,12 +220,12 @@ export function SplitLayout({
     // made of them is what is put right.
     let frame = 0;
     const observer = new ResizeObserver(() => {
-      fit();
+      refit();
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(fit);
+      frame = requestAnimationFrame(refit);
     });
     observer.observe(group);
-    fit();
+    refit();
     return () => {
       observer.disconnect();
       cancelAnimationFrame(frame);
