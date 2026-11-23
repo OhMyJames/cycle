@@ -111,6 +111,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "files.binary": "这种文件没有预览",
   "files.imageTooLarge": "图片太大，不能预览",
   "files.emptyFile": "这个文件是空的",
+  "diff.showInDiff": "在 Diff 中查看",
   "files.showInFiles": "在文件中显示",
   "overview.show": "显示概览",
   "overview.hide": "隐藏概览",

@@ -147,6 +147,8 @@ export const EVENTS = {
   diff_view_changed: o({ view: z.enum(["session", "workspace"]) }),
   /** A file in the Diff tab was opened to its changes, in that view. */
   diff_file_opened: o({ view: z.enum(["session", "workspace"]) }),
+  /** A call's change, from the head of its diff in the conversation, opened in the Diff tab (CYCL-133). */
+  diff_shown_from_conversation: o({}),
   /** The Diff tab took the conversation to the call that made an edit. */
   diff_edit_revealed: o({}),
   /**
@@ -257,6 +259,7 @@ export const UI_EVENTS = [
   "diff_view_changed",
   "diff_file_opened",
   "diff_edit_revealed",
+  "diff_shown_from_conversation",
   "terminal_opened",
   "terminal_closed",
   "terminal_open_failed",

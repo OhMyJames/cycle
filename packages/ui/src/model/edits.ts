@@ -32,7 +32,7 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The file an edit changed: the path its `diff` names, else the first place the call gave. */
-const pathOf = (tool: ToolItem): string | undefined => {
+export const editPathOf = (tool: ToolItem): string | undefined => {
   const diff = tool.content.find((block) => block.type === "diff");
   const changes = diff !== undefined && Array.isArray(diff.changes) ? diff.changes : [];
   for (const change of changes)
@@ -76,7 +76,7 @@ export const sessionEdits = (conversation: Conversation): TurnEdits[] => {
     };
     turn.edits.push({
       toolId: item.id,
-      path: pathOf(item),
+      path: editPathOf(item),
       created: edit.created,
       additions: edit.additions,
       deletions: edit.deletions,

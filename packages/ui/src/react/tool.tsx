@@ -10,13 +10,14 @@ import {
   parseAnsi,
   plainText,
 } from "../ansi.ts";
-import { insideFolder } from "../files-view.ts";
+import { insideFolder, shownPath } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import type { Activity, Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import {
   activityOf,
   commandLabelOf,
   commandOf,
+  editPathOf,
   isLive,
   streamsOf,
   toolFacts,
@@ -31,6 +32,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CloseIcon,
+  DiffIcon,
   FileIcon,
   FolderIcon,
   GlobeIcon,
@@ -296,6 +298,15 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   const summary = toolSummary(tool);
   const description = toolDescription(tool);
   const facts = toolFacts(tool);
+  // The file an edit changed, named as the Diff tab names it (from the session's folder).
+  const editPath = facts.edit !== undefined ? editPathOf(tool) : undefined;
+  const cwd = useAppState((state) =>
+    state.selectedEnvironment !== undefined
+      ? state.sessions[state.selectedEnvironment]?.find(
+          (x) => x.sessionId === state.selectedSession,
+        )?.cwd
+      : undefined,
+  );
   // An edit's diff says what its input said (old and new strings, a whole file), and says it better.
   const diff = facts.edit?.lines;
   const input =
@@ -370,6 +381,25 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
           </ol>
         ) : null}
         {input !== undefined ? <pre data-slot="tool-input">{clip(stringify(input))}</pre> : null}
+        {facts.edit !== undefined && editPath !== undefined && status === "completed" ? (
+          <DiffHead
+            path={shownPath(editPath, cwd)}
+            additions={facts.edit.additions}
+            deletions={facts.edit.deletions}
+            status={
+              facts.edit.staged
+                ? t("tool.facts.staged")
+                : facts.edit.created
+                  ? t("diff.status.created")
+                  : undefined
+            }
+            // Joined to what is under it: the change, or the note that it is too large to draw.
+            joined={diff !== undefined || facts.edit.additions + facts.edit.deletions > 0}
+            onOpen={() => {
+              if (store.showInDiff(tool.id)) store.track("diff_shown_from_conversation", {});
+            }}
+          />
+        ) : null}
         {diff !== undefined ? <DiffView lines={diff} /> : null}
         {facts.edit !== undefined &&
         diff === undefined &&
@@ -490,6 +520,73 @@ function Facts({ facts }: { facts: ToolFacts }) {
 
 /** The most lines of one diff drawn; the rest are counted. */
 const MAX_DIFF_LINES = 400;
+
+/** How much an edit changed, in green and red signs, and in words for a screen reader. Shared with the Diff tab. */
+export function Counts({
+  additions,
+  deletions,
+}: {
+  additions: number | undefined;
+  deletions: number | undefined;
+}) {
+  const { t } = useI18n();
+  if (additions === undefined || deletions === undefined) return null;
+  return (
+    <span
+      data-slot="diff-counts"
+      title={t("tool.facts.diff", { added: additions, removed: deletions })}
+    >
+      <span data-slot="diff-added" aria-hidden="true">
+        +{additions}
+      </span>
+      <span data-slot="diff-removed" aria-hidden="true">
+        −{deletions}
+      </span>
+      <span data-slot="visually-hidden">
+        {t("tool.facts.diff", { added: additions, removed: deletions })}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Above a call's change: the file it changed, and how much, as the Diff tab lists it. A press opens it there, among the
+ * session's other edits (CYCL-133). Its name says so, not only its tooltip.
+ */
+function DiffHead({
+  path,
+  additions,
+  deletions,
+  status,
+  joined,
+  onOpen,
+}: {
+  path: string;
+  additions: number;
+  deletions: number;
+  status: string | undefined;
+  joined: boolean;
+  onOpen: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      data-slot="tool-diff-head"
+      data-joined={joined || undefined}
+      title={`${t("diff.showInDiff")}: ${path}`}
+      onClick={onOpen}
+    >
+      <DiffIcon size={12} aria-hidden="true" />
+      <span data-slot="visually-hidden">{t("diff.showInDiff")}: </span>
+      <span data-slot="tool-diff-path">
+        <bdi>{path}</bdi>
+      </span>
+      {status !== undefined ? <span data-slot="diff-status">{status}</span> : null}
+      <Counts additions={additions} deletions={deletions} />
+    </button>
+  );
+}
 
 /** One call's change, line by line: removed and added lines marked, and numbered as in the file. */
 export function DiffView({ lines }: { lines: DiffLine[] }) {
