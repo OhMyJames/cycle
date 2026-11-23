@@ -31,7 +31,7 @@ test("packaged but missing a part: an error that names it, not a quiet fall back
   const noClaude = has("/App/Resources/app/build.json", "/App/Resources/app/bin/cycle");
   expect(() =>
     daemonCommand({ ...base, here: "/App/Resources/app/dist", env: {}, exists: noClaude }),
-  ).toThrow(/Claude binary/);
+  ).toThrow(/missing an agent's binary: .*bin\/claude/);
 });
 
 test("in development: the named binary, then the built one, then the source with bun", () => {

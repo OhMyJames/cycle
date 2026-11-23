@@ -323,8 +323,7 @@ test("with a limit on agents started ahead of a prompt, a new session lets go of
   const fake = fakeAgent();
   const daemon = await Daemon.start({
     dataDir: dir,
-    agents: [fake.definition],
-    maxAheadAgents: 2,
+    agents: [{ ...fake.definition, maxAhead: 2 }],
   });
   open.push(daemon);
   const c = await connectClient(daemon);

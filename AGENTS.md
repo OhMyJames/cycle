@@ -23,7 +23,7 @@ cycle-v1 是 ADE(agentic development environment),是 cycle 的重写。这是�
 - daemon 自己保存会话历史(JSONL),不依赖 agent 重放。只管理 Cycle 自己创建的 session。
 - session 事件日志用 JSONL,放在存储接口后面。
 - L1 事件由 L2 的 ACP 更新映射而来,不原样透传,使客户端不受 ACP 变化和具体 agent 的影响。
-- agent 是可替换的接口;v1 只实现 Claude。
+- agent 是可替换的接口。现在只实现了 Claude;Codex、agy、pi 在接入中(CYCL-152、153、154)。daemon 核心之外按名字认 agent 的地方都从 `apps/daemon/src/harnesses.ts` 的清单读，不要再写死某一个 agent;加一个 agent 的步骤见 [docs/daemon.md](docs/daemon.md) 的"加一个 agent"。
 - 协议和传输分离。远程连接走 SSH 隧道,协议本身不依赖具体传输。
 - v1 桌面端规划包括右侧面板、diff 视图、交互式终端、内置浏览器及 browser use、plugins 和 settings 页。后续设计沿用三份决定笔记：[右侧面板（CYCL-89）](.agents/notes/2026-11-19-right-panel-scope.md)、[终端（CYCL-96）](.agents/notes/2026-11-19-desktop-terminal-scope.md)、[browser use（CYCL-100）](.agents/notes/2026-11-19-browser-use-scope.md)。
 - git worktree、多 provider 和独立 Web 端仍在 v1 范围外。

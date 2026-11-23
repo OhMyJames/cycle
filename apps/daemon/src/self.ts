@@ -9,8 +9,9 @@ export const compiled = (): boolean => Bun.main.startsWith("/$bunfs");
 export const selfCommand = (): string[] => [process.execPath, ...(compiled() ? [] : [MAIN])];
 
 /**
- * The Claude Code binary the SDK drives. In the executable it cannot find its own platform package,
- * so the binary is shipped beside it (see scripts/build-daemon.ts). From source the SDK finds it.
+ * An agent's own binary, by the name it is shipped under. In the executable it is beside it (scripts/build.ts puts it
+ * there: a compiled program cannot find a package's platform binary). From source there is none: the harness finds
+ * its own.
  */
-export const claudeExecutable = (): string | undefined =>
-  compiled() ? join(dirname(process.execPath), "claude") : undefined;
+export const shippedExecutable = (name: string): string | undefined =>
+  compiled() ? join(dirname(process.execPath), name) : undefined;

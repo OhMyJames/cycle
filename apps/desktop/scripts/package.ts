@@ -2,7 +2,7 @@
 // copy of Electron with its default app replaced by a folder, `app`, which is where Electron looks
 // when there is no asar.
 //
-//   Cycle.app/Contents/Resources/app/{package.json, build.json, dist/, bin/cycle, bin/claude}
+//   Cycle.app/Contents/Resources/app/{package.json, build.json, dist/, bin/cycle, bin/<each agent's binary>}
 //
 // On macOS the copy is a bundle with its Info.plist changed and an ad hoc signature, so that it runs
 // at all on Apple silicon; a release then signs it with a Developer ID and notarizes it (sign.ts).
@@ -18,12 +18,12 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
+  AGENT_BINS,
   APP_NAME,
   BUILD_FILE,
   BUNDLE_ID,
-  CLAUDE_BIN,
   DAEMON_BIN,
   DIST_DIR,
   MAC_BUNDLE,
@@ -87,7 +87,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   const version = String(json(join(DESKTOP, "package.json")).version);
   const electron = electronDist();
 
-  // The main process, preload and page; and the daemon with Claude beside it, for this platform.
+  // The main process, preload and page; and the daemon with the agents' binaries beside it, for this platform.
   run([process.execPath, "scripts/build.ts"], DESKTOP);
   run([process.execPath, "scripts/build.ts", "--no-tarball"], join(ROOT, "apps/daemon"));
   const daemonDir = join(ROOT, "apps/daemon/dist", `cycle-${platform}-${arch}`);
@@ -98,9 +98,11 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   mkdirSync(join(staging, dirname(DAEMON_BIN)), { recursive: true });
   cpSync(join(DESKTOP, "dist"), join(staging, DIST_DIR), { recursive: true });
   cpSync(join(daemonDir, "cycle"), join(staging, DAEMON_BIN));
-  cpSync(join(daemonDir, "claude"), join(staging, CLAUDE_BIN));
   chmodSync(join(staging, DAEMON_BIN), 0o755);
-  chmodSync(join(staging, CLAUDE_BIN), 0o755);
+  for (const bin of AGENT_BINS) {
+    cpSync(join(daemonDir, basename(bin)), join(staging, bin));
+    chmodSync(join(staging, bin), 0o755);
+  }
   // Electron takes the app's name, and so the folder for its own data, from here.
   writeFileSync(
     join(staging, "package.json"),

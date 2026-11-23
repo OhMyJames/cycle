@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the daemon from this folder (the one in the tarball) for the current user:
 #
-#   <prefix>/share/cycle/{cycle,claude}   the program and the Claude it drives
+#   <prefix>/share/cycle/{cycle,claude}   the program and the agents' binaries it drives
 #   <prefix>/bin/cycle                           a one-line launcher that runs it
 #
 # <prefix> is $CYCLE_PREFIX, or ~/.local. Nothing needs root, and nothing is started: the daemon
@@ -48,6 +48,7 @@ prefix=${CYCLE_PREFIX:-$HOME/.local}
 dest=$prefix/share/cycle
 mkdir -p "$dest" "$prefix/bin"
 
+# The daemon, and each agent's binary the build ships beside it (a test holds this list to src/harnesses.ts).
 for file in cycle claude; do
   [ -f "$here/$file" ] || { echo "$here/$file is missing: run this from the unpacked tarball" >&2; exit 1; }
   # Copy beside, then rename over: replacing a file a running daemon is executing would fail otherwise.
@@ -56,7 +57,7 @@ for file in cycle claude; do
   mv -f "$dest/.$file.new" "$dest/$file"
 done
 
-# A launcher, not a symlink: the daemon finds its Claude beside its own real path.
+# A launcher, not a symlink: the daemon finds its agents' binaries beside its own real path.
 cat > "$prefix/bin/cycle.new" <<EOF
 #!/bin/sh
 exec "$dest/cycle" "\$@"
