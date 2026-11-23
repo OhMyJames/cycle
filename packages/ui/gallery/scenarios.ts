@@ -916,7 +916,27 @@ export const scenarios: Record<string, Scenario> = {
       u({
         sessionUpdate: "agent_thought",
         messageId: "t1",
-        content: [{ type: "text", text: "The log is read whole on every resume; that may be it." }],
+        content: [
+          {
+            type: "text",
+            text: [
+              "The log is read whole on every resume; that may be it.",
+              "",
+              "Resume calls `readAll`, which parses every line of the JSONL before it can find the last turn. A session",
+              "with a long history has tens of thousands of lines, so that is seconds of parsing for one number.",
+              "",
+              "There is an index file next to the log. If it is kept up to date, resume could seek to the last",
+              "turn's offset and read from there. I should check whether anything writes it, and whether it is",
+              "read anywhere at all.",
+              "",
+              "If it is stale, the cheaper fix may be to read the log backwards until the last `turn_end`.",
+              "",
+              "Reading backwards needs care with a line cut in half at the end of the file, which a crash can leave.",
+              "",
+              "Either way, the test for resume should use a log of realistic size, or this will come back.",
+            ].join("\n"),
+          },
+        ],
       }),
       ...tool("a1", "Read", "completed", { file_path: "packages/daemon/src/log/jsonl.ts" }),
       ...tool("a2", "Grep", "completed", { pattern: "readAll" }),
