@@ -13,6 +13,7 @@
 //   (`shownBlocks`).
 // - A turn that did not end normally says how, last.
 // - A turn begins a new group: the view puts more space before it than between blocks.
+import { type CommandLabel, commandLabel } from "./command-label.ts";
 import type {
   AgentItem,
   CompactionItem,
@@ -27,7 +28,7 @@ import type {
 } from "./conversation.ts";
 import { textOf } from "./conversation.ts";
 
-export type Activity = "run" | "read" | "edit" | "search" | "fetch" | "other";
+export type Activity = "run" | "read" | "edit" | "search" | "list" | "fetch" | "other";
 
 const BY_NAME: Record<string, Activity> = {
   Bash: "run",
@@ -53,8 +54,24 @@ const BY_KIND: Record<string, Activity> = {
 };
 
 /** What a tool call does, by its name (Claude's own) and else by the kind ACP gives it. */
-export const activityOf = (tool: ToolItem): Activity =>
-  BY_NAME[tool.name ?? ""] ?? BY_KIND[tool.toolKind ?? ""] ?? "other";
+/** What a command call plainly does, from its command (`rg` searches, `cat` reads, `ls` lists), when it can be told. */
+export const commandLabelOf = (tool: ToolItem): CommandLabel | undefined => {
+  const input = tool.rawInput;
+  const command =
+    typeof input === "object" && input !== null
+      ? (input as Record<string, unknown>).command
+      : undefined;
+  return typeof command === "string" ? commandLabel(command) : undefined;
+};
+
+/**
+ * What a call did, by its tool's name or kind; a command that only searches, reads or lists is counted as that, so a
+ * stretch of them says "searched" or "read", not "ran".
+ */
+export const activityOf = (tool: ToolItem): Activity => {
+  const activity = BY_NAME[tool.name ?? ""] ?? BY_KIND[tool.toolKind ?? ""] ?? "other";
+  return activity === "run" ? (commandLabelOf(tool)?.kind ?? "run") : activity;
+};
 
 /** How many calls of each activity, in the order each first appeared. For a card's summary. */
 export const activityCounts = (

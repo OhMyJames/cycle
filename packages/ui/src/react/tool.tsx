@@ -13,7 +13,7 @@ import {
 import { insideFolder } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import type { Activity, Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
-import { activityOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
+import { activityOf, commandLabelOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
 import { reveal } from "../reveal.ts";
 import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
@@ -25,6 +25,7 @@ import {
   ChevronRightIcon,
   CloseIcon,
   FileIcon,
+  FolderIcon,
   GlobeIcon,
   PencilIcon,
   SearchIcon,
@@ -85,6 +86,10 @@ export const clip = (text: string): string =>
 
 /** What a call acted on: its command, path, pattern, address or query. Shown, never run. */
 export const toolSummary = (tool: ToolItem): string => {
+  // A command that only searches, reads or lists, with no sentence of the agent's for it: what it searched or read,
+  // after its verb ("Searched 'foo' in src"); with one, the command itself, after the sentence.
+  const label = toolDescription(tool) === undefined ? commandLabelOf(tool) : undefined;
+  if (label !== undefined) return label.detail;
   const key = summaryKey(tool);
   if (key !== undefined) return String((tool.rawInput as Record<string, unknown>)[key]);
   return questionsOf(tool)[0] ?? firstShortText(tool) ?? "";
@@ -217,6 +222,7 @@ const KIND_ICONS: Partial<Record<LeadKind, (props: { size?: number }) => ReactNo
   edit: PencilIcon,
   search: SearchIcon,
   run: TerminalIcon,
+  list: FolderIcon,
   fetch: GlobeIcon,
   subagent: AgentIcon,
 };
