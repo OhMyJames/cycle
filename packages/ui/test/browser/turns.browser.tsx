@@ -680,6 +680,57 @@ test("a command opens to itself and its output apart from its errors; a long out
   ]);
 });
 
+test("a command's output is drawn in its colours and copied without them; its head says how it ended", async () => {
+  const printed = "\x1b[32m✓ 12 passed\x1b[0m\n\x1b[1;31m✗ 1 failed\x1b[0m\x1b[2K";
+  const { user, log, script } = await open(
+    you("u1"),
+    ...finished(
+      "t",
+      "Bash",
+      { command: "bun test", description: "Run the tests" },
+      {
+        content: [{ type: "content", content: { type: "text", text: printed } }],
+        _meta: { "cycle/toolResult": { run: {} } },
+      },
+    ),
+    ...tool("f", "Bash", "in_progress", { command: "make", description: "Build it" }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "f",
+      status: "failed",
+      content: [{ type: "content", content: { type: "text", text: "Exit code 2\nno rule" } }],
+      _meta: { "cycle/toolResult": { run: { exitCode: 2 } } },
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /Run the tests/ }));
+  const output = log.querySelector('[data-kind="output"] [data-slot="tool-output"]') as HTMLElement;
+  expect(output.textContent).toBe("✓ 12 passed\n✗ 1 failed");
+  const green = [...output.querySelectorAll("span[style]")].find(
+    (s) => s.textContent === "✓ 12 passed",
+  );
+  expect((green as HTMLElement).style.color).toBe("var(--cycle-ansi-2)");
+  const red = [...output.querySelectorAll("span[style]")].find(
+    (s) => s.textContent === "✗ 1 failed",
+  );
+  expect((red as HTMLElement).style.fontWeight).toBe("600");
+  const ok = log.querySelector('[data-item-id="t"] [data-slot="tool-end"]');
+  expect(ok?.getAttribute("data-tone")).toBe("ok");
+  expect(ok?.textContent).toBe("Succeeded");
+  await user.click(
+    within(log.querySelector('[data-item-id="t"]') as HTMLElement).getByRole("button", {
+      name: "Copy the output",
+    }),
+  );
+  expect(script.calls.filter(([name]) => name === "copyText")).toEqual([
+    ["copyText", "✓ 12 passed\n✗ 1 failed"],
+  ]);
+  // A failed command opens by itself, and says its code.
+  const failed = log.querySelector('[data-item-id="f"] [data-slot="tool-end"]');
+  expect(failed?.getAttribute("data-tone")).toBe("danger");
+  expect(failed?.textContent).toBe("exited with code 2");
+});
+
 test("a message and a finished turn's reply copy from under them, by keyboard too, and only which kind is counted", async () => {
   const said = (id: string, text: string) =>
     u({ sessionUpdate: "agent_message", messageId: id, content: [{ type: "text", text }] });

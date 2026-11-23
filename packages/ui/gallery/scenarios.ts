@@ -525,7 +525,8 @@ export const scenarios: Record<string, Scenario> = {
                 type: "text",
                 text: Array.from(
                   { length: 60 },
-                  (_, n) => `[${n + 1}/60] step ${n + 1} ${n % 7 === 0 ? "(slow)" : ""}`,
+                  (_, n) =>
+                    `\x1b[2m[${n + 1}/60]\x1b[0m step ${n + 1} ${n % 7 === 0 ? "\x1b[33m(slow)\x1b[0m" : "\x1b[32mok\x1b[0m"}`,
                 ).join("\n"),
               },
             },

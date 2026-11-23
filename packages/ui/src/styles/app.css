@@ -210,6 +210,23 @@
   --cycle-accent: light-dark(#c93b00, #fc4c01);
   /* A link in a reply, and code named inline in one: told apart from the words around them by colour alone. */
   --cycle-link: light-dark(#1d4ed8, #60a5fa);
+  /* The 16 colours a command names (`ESC[31m`), readable on the sunken output in either theme. */
+  --cycle-ansi-0: light-dark(#1f2328, #9198a1);
+  --cycle-ansi-1: light-dark(#c4343b, #f47067);
+  --cycle-ansi-2: light-dark(#1a7f37, #57ab5a);
+  --cycle-ansi-3: light-dark(#9a6700, #c69026);
+  --cycle-ansi-4: light-dark(#0969da, #539bf5);
+  --cycle-ansi-5: light-dark(#8250df, #b083f0);
+  --cycle-ansi-6: light-dark(#1b7c83, #39c5cf);
+  --cycle-ansi-7: light-dark(#6e7781, #c9d1d9);
+  --cycle-ansi-8: light-dark(#57606a, #636e7b);
+  --cycle-ansi-9: light-dark(#d1242f, #ff938a);
+  --cycle-ansi-10: light-dark(#2da44e, #6bc46d);
+  --cycle-ansi-11: light-dark(#bf8700, #daaa3f);
+  --cycle-ansi-12: light-dark(#218bff, #6cb6ff);
+  --cycle-ansi-13: light-dark(#a475f9, #dcbdfb);
+  --cycle-ansi-14: light-dark(#3192aa, #56d4dd);
+  --cycle-ansi-15: light-dark(#8c959f, #f0f6fc);
   --cycle-ink-code: light-dark(#b4371f, #fb8b73);
   --cycle-accent-foreground: #ffffff;
   --cycle-attention: light-dark(#8a5a00, #f5b82e);
@@ -3550,7 +3567,24 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   font-size: var(--cycle-text-meta);
 }
 
-[data-slot="tool-block"][data-kind="stderr"] [data-slot="tool-block-label"] {
+[data-slot="tool-block"][data-kind="stderr"]
+  :is([data-slot="tool-block-label"], [data-slot="tool-output"]) {
+  color: var(--ui-destructive);
+}
+
+/* How a command ended, after what the block is: a tick and "succeeded", or a cross and its exit code. */
+[data-slot="tool-end"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: auto;
+}
+
+[data-slot="tool-end"][data-tone="ok"] {
+  color: var(--cycle-ansi-2);
+}
+
+[data-slot="tool-end"][data-tone="danger"] {
   color: var(--ui-destructive);
 }
 

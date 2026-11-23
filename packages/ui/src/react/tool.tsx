@@ -1,5 +1,13 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type AnsiColor,
+  type AnsiRun,
+  type AnsiStyle,
+  ansiLines,
+  parseAnsi,
+  stripAnsi,
+} from "../ansi.ts";
 import { insideFolder } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
@@ -8,7 +16,7 @@ import { reveal } from "../reveal.ts";
 import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { useI18n } from "./i18n.tsx";
-import { ChevronRightIcon, CloseIcon, FileIcon } from "./icons.tsx";
+import { CheckIcon, ChevronRightIcon, CloseIcon, FileIcon } from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -287,7 +295,13 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
         <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        {command !== undefined ? <Copyable kind="command" text={command} /> : null}
+        {command !== undefined ? (
+          <Copyable
+            kind="command"
+            text={command}
+            ended={going ? undefined : endOf(status, facts)}
+          />
+        ) : null}
         {plan !== undefined ? (
           <div data-slot="tool-plan">
             <Markdown text={plan} />
@@ -474,43 +488,150 @@ export const durationOf = (
   return new Intl.ListFormat(locale, { style: "narrow", type: "unit" }).format(parts);
 };
 
-/** An output too long to draw keeps its end, where a command says how it went; what is left out is counted. */
-const clipStart = (t: (key: string, params?: Record<string, number>) => string, text: string) =>
-  text.length > MAX_SHOWN
-    ? [
-        t("tool.earlierCharacters", { count: text.length - MAX_SHOWN }),
-        text.slice(-MAX_SHOWN),
-      ].join("\n")
-    : text;
+/** How a command ended, on its block's head: it ran through, or it failed, and with which code when it said one. */
+export type CommandEnd = { ok: true } | { ok: false; code?: number };
+
+/**
+ * How a command ended, once it has: through, when it completed and nothing said otherwise; failed, with its code when the
+ * agent gave one. A command cut short, sent to the background or timed out says so on its line, and has no end here.
+ */
+export const endOf = (status: string, facts: ToolFacts): CommandEnd | undefined => {
+  const run = facts.run;
+  if (run?.exitCode !== undefined && run.exitCode !== 0) return { ok: false, code: run.exitCode };
+  if (status === "failed") return { ok: false };
+  if (status !== "completed" || run === undefined) return undefined;
+  if (run.interrupted || run.background || run.timedOutMs !== undefined) return undefined;
+  return { ok: true };
+};
 
 /** How many lines of a long output are shown before it is opened whole: its end, where a command says how it went. */
 const TAIL_LINES = 40;
 
 /**
- * A command, an output or an output's errors: sunken, with a button to copy all of it. A long output shows its last
- * lines, and says how many more there are; one click shows the rest.
+ * An output too long to draw keeps its end, where a command says how it went: the lines from the last one back, for as
+ * many characters as are drawn; how many earlier ones are left out is said.
  */
-export function Copyable({ kind, text }: { kind: "command" | "output" | "stderr"; text: string }) {
+const clipLines = (lines: AnsiRun[][], max: number): { lines: AnsiRun[][]; dropped: number } => {
+  const total = lines.reduce(
+    (sum, line) => sum + line.reduce((n, run) => n + run.text.length, 0) + 1,
+    -1,
+  );
+  if (total <= max) return { lines, dropped: 0 };
+  const dropped = total - max;
+  const kept = lines.map((line) => [...line]);
+  let left = dropped;
+  while (left > 0 && kept.length > 0) {
+    const line = kept[0] as AnsiRun[];
+    const run = line[0];
+    if (run === undefined) {
+      kept.shift();
+      left -= 1;
+      continue;
+    }
+    if (run.text.length <= left) {
+      line.shift();
+      left -= run.text.length;
+    } else {
+      line[0] = { text: run.text.slice(left), style: run.style };
+      left = 0;
+    }
+  }
+  return { lines: kept, dropped };
+};
+
+/** A colour a command asked for: one of the 16 from the theme (`--cycle-ansi-N`), or the one it gave. */
+const colorOf = (color: AnsiColor): string =>
+  "named" in color ? `var(--cycle-ansi-${color.named})` : color.rgb;
+
+const styleOf = (style: AnsiStyle): CSSProperties | undefined => {
+  if (Object.keys(style).length === 0) return undefined;
+  return {
+    ...(style.fg !== undefined ? { color: colorOf(style.fg) } : {}),
+    ...(style.bg !== undefined ? { backgroundColor: colorOf(style.bg) } : {}),
+    ...(style.bold ? { fontWeight: 600 } : {}),
+    ...(style.dim ? { opacity: 0.65 } : {}),
+    ...(style.italic ? { fontStyle: "italic" } : {}),
+    ...(style.underline ? { textDecoration: "underline" } : {}),
+  };
+};
+
+/** Lines of what a command printed, in the colours it printed them in. A run is known by where it starts in the text. */
+function AnsiText({ lines }: { lines: AnsiRun[][] }) {
+  const nodes: ReactNode[] = [];
+  let offset = 0;
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      nodes.push("\n");
+      offset += 1;
+    }
+    for (const run of line) {
+      const style = styleOf(run.style);
+      nodes.push(
+        style === undefined ? (
+          run.text
+        ) : (
+          <span key={offset} style={style}>
+            {run.text}
+          </span>
+        ),
+      );
+      offset += run.text.length;
+    }
+  });
+  return nodes;
+}
+
+/**
+ * A command, an output or an output's errors: sunken, with a button to copy all of it. A long output shows its last
+ * lines, and says how many more there are; one click shows the rest. An output is drawn in the colours the command
+ * printed it in, and copied without them. A command's head says how it ended, once it has.
+ */
+export function Copyable({
+  kind,
+  text,
+  ended,
+}: {
+  kind: "command" | "output" | "stderr";
+  text: string;
+  ended?: CommandEnd | undefined;
+}) {
   const { t } = useI18n();
   const store = useAppStore();
   const [whole, setWhole] = useState(false);
   // What the button says after a press: copied, or why not.
   const [copied, setCopied] = useState<"done" | "failed" | undefined>(undefined);
-  const lines = kind === "command" ? [] : text.split("\n");
+  const lines = useMemo(() => (kind === "command" ? [] : ansiLines(parseAnsi(text))), [kind, text]);
   const hidden = whole ? 0 : Math.max(0, lines.length - TAIL_LINES);
-  const shown = hidden > 0 ? lines.slice(hidden).join("\n") : text;
+  const shown = useMemo(() => {
+    const tail = hidden > 0 ? lines.slice(hidden) : lines;
+    return whole ? { lines: tail, dropped: 0 } : clipLines(tail, MAX_SHOWN);
+  }, [lines, hidden, whole]);
   const label = t(`tool.copy.${kind}`);
   return (
     <div data-slot="tool-block" data-kind={kind}>
       <div data-slot="tool-block-head">
         <span data-slot="tool-block-label">{t(`tool.block.${kind}`)}</span>
+        {ended !== undefined ? (
+          <span data-slot="tool-end" data-tone={ended.ok ? "ok" : "danger"}>
+            {ended.ok ? (
+              <CheckIcon size={12} aria-hidden="true" />
+            ) : (
+              <CloseIcon size={12} aria-hidden="true" />
+            )}
+            {ended.ok
+              ? t("tool.end.ok")
+              : ended.code !== undefined
+                ? t("tool.facts.exitCode", { code: ended.code })
+                : t("tool.end.failed")}
+          </span>
+        ) : null}
         <button
           type="button"
           data-slot="tool-copy"
           aria-label={label}
           title={label}
           onClick={() => {
-            void store.copyText(text).then((done) => {
+            void store.copyText(kind === "command" ? text : stripAnsi(text)).then((done) => {
               setCopied(done ? "done" : "failed");
               if (done)
                 store.track("tool_copied", { part: kind === "command" ? "command" : "output" });
@@ -537,9 +658,14 @@ export function Copyable({ kind, text }: { kind: "command" | "output" | "stderr"
           {t("tool.more", { count: hidden })}
         </button>
       ) : null}
-      <pre data-slot={kind === "command" ? "tool-command" : "tool-output"}>
-        {kind === "command" ? clip(shown) : whole ? shown : clipStart(t, shown)}
-      </pre>
+      {kind === "command" ? (
+        <pre data-slot="tool-command">{clip(text)}</pre>
+      ) : (
+        <pre data-slot="tool-output">
+          {shown.dropped > 0 ? `${t("tool.earlierCharacters", { count: shown.dropped })}\n` : null}
+          <AnsiText lines={shown.lines} />
+        </pre>
+      )}
     </div>
   );
 }

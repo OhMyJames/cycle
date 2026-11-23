@@ -30,22 +30,23 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 
 参考 Rare UI 与 Apple 硬件中性灰体系重调，在暗色下避免纯黑 OLED 晕影的同时保持深邃质感，在浅色下以纯白画布配 Apple 标志性冷浅灰 `#F5F5F7` 侧栏。`app.css` 将 ui-sdk 与 Tailwind v4 `@theme inline` 的语义令牌统一映射到它们。
 
-| 令牌                        | 用途                                                     | 浅色      | 深色      |
-| --------------------------- | -------------------------------------------------------- | --------- | --------- |
-| `--cycle-surface-workspace` | 对话和主区底色                                           | `#ffffff` | `#0a0a0a` |
-| `--cycle-surface-sidebar`   | 侧栏和窗口底色                                           | `#f5f5f7` | `#050505` |
-| `--cycle-surface-raised`    | 浮层与卡片底色（菜单、权限卡、代码卡片、输入框、对话框） | `#ffffff` | `#141414` |
-| `--cycle-surface-message`   | 用户气泡、行内代码、表头色带与下沉填充块（`--ui-muted`） | `#f2f2f4` | `#1b1b1c` |
-| `--cycle-surface-hover`     | 行和控件的悬停                                           | `#ececef` | `#222224` |
-| `--cycle-surface-selected`  | 选中和按下（选中的会话行等）                             | `#e4e4e8` | `#2b2b2e` |
-| `--cycle-border-subtle`     | 列表、卡片内部行与行的轻分隔                             | `#ededf0` | `#1f1f22` |
-| `--cycle-border-default`    | 卡片、浮层、分隔线（`--ui-border`）                      | `#e2e2e6` | `#2c2c30` |
-| `--cycle-ink`               | 正文、标题                                               | `#141414` | `#f5f5f7` |
-| `--cycle-ink-secondary`     | 标签、侧栏平时行、图标                                   | `#454549` | `#c7c7cc` |
-| `--cycle-ink-muted`         | 元信息、时间、路径、占位（`--ui-muted-foreground`）      | `#636369` | `#98989f` |
-| `--cycle-ink-disabled`      | 仅用于禁用控件，不承载关键信息                           | `#8a8a92` | `#6e6e75` |
-| `--cycle-ink-code`          | 回复里的行内代码文字（链接里的代码随链接色）             | `#b4371f` | `#fb8b73` |
-| `--cycle-link`              | 回复里的链接，浅下划线，悬停加深                         | `#1d4ed8` | `#60a5fa` |
+| 令牌                          | 用途                                                                       | 浅色         | 深色         |
+| ----------------------------- | -------------------------------------------------------------------------- | ------------ | ------------ |
+| `--cycle-surface-workspace`   | 对话和主区底色                                                             | `#ffffff`    | `#0a0a0a`    |
+| `--cycle-surface-sidebar`     | 侧栏和窗口底色                                                             | `#f5f5f7`    | `#050505`    |
+| `--cycle-surface-raised`      | 浮层与卡片底色（菜单、权限卡、代码卡片、输入框、对话框）                   | `#ffffff`    | `#141414`    |
+| `--cycle-surface-message`     | 用户气泡、行内代码、表头色带与下沉填充块（`--ui-muted`）                   | `#f2f2f4`    | `#1b1b1c`    |
+| `--cycle-surface-hover`       | 行和控件的悬停                                                             | `#ececef`    | `#222224`    |
+| `--cycle-surface-selected`    | 选中和按下（选中的会话行等）                                               | `#e4e4e8`    | `#2b2b2e`    |
+| `--cycle-border-subtle`       | 列表、卡片内部行与行的轻分隔                                               | `#ededf0`    | `#1f1f22`    |
+| `--cycle-border-default`      | 卡片、浮层、分隔线（`--ui-border`）                                        | `#e2e2e6`    | `#2c2c30`    |
+| `--cycle-ink`                 | 正文、标题                                                                 | `#141414`    | `#f5f5f7`    |
+| `--cycle-ink-secondary`       | 标签、侧栏平时行、图标                                                     | `#454549`    | `#c7c7cc`    |
+| `--cycle-ink-muted`           | 元信息、时间、路径、占位（`--ui-muted-foreground`）                        | `#636369`    | `#98989f`    |
+| `--cycle-ink-disabled`        | 仅用于禁用控件，不承载关键信息                                             | `#8a8a92`    | `#6e6e75`    |
+| `--cycle-ink-code`            | 回复里的行内代码文字（链接里的代码随链接色）                               | `#b4371f`    | `#fb8b73`    |
+| `--cycle-link`                | 回复里的链接，浅下划线，悬停加深                                           | `#1d4ed8`    | `#60a5fa`    |
+| ANSI 16 色(`cycle-ansi` 0–15) | 命令输出里 ANSI 点名的 16 色（31 红、32 绿……），两套主题下都在下沉底上可读 | 见 `app.css` | 见 `app.css` |
 
 对比度底线：
 

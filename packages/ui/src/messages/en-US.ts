@@ -381,6 +381,8 @@ export const enUS = {
   "tool.facts.interrupted": "interrupted",
   "tool.facts.fetched": "{status} · {size}",
   "tool.facts.status": "{status}",
+  "tool.end.ok": "Succeeded",
+  "tool.end.failed": "Failed",
   "tool.facts.exitCode": "exited with code {code}",
   "tool.facts.timedOut": "ran past {duration}, now in the background",
   "tool.facts.background": "in the background",

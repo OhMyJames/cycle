@@ -342,6 +342,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "tool.facts.interrupted": "被中断",
   "tool.facts.fetched": "{status} · {size}",
   "tool.facts.status": "{status}",
+  "tool.end.ok": "成功",
+  "tool.end.failed": "失败",
   "tool.facts.exitCode": "退出码 {code}",
   "tool.facts.timedOut": "运行超过 {duration}，已转到后台",
   "tool.facts.background": "在后台",
