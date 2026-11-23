@@ -3163,20 +3163,17 @@ html[data-platform="darwin"]
   color: var(--cycle-ink-muted);
 }
 
-/* The verb, or the agent's own sentence for what the call is for. It keeps its room; what it acted on gives way first. */
+/* The verb, or the agent's own sentence for what the call is for. The verb keeps its room; what it acted on gives way
+   first. */
 [data-slot="tool-verb"] {
   flex: none;
   white-space: nowrap;
 }
 
-/* A description can be long: it gives way, but leaves what it ran some room (the summary keeps at least 6rem). */
+/* A description can be long: it is the whole line, and gives way to what follows it (facts, status). */
 [data-slot="tool-verb"][data-prose] {
   flex: 0 1 auto;
   min-width: 0;
-}
-
-[data-slot="tool-verb"][data-prose] ~ [data-slot="tool-summary"]:not(:empty) {
-  min-width: 6rem;
 }
 
 /* The agent's own sentence for what a call is for is prose, not a command: the body's font, in the slot's muted colour. */
@@ -3192,6 +3189,11 @@ html[data-platform="darwin"]
   height: 5px;
   border-radius: 50%;
   background: var(--cycle-ink-disabled);
+}
+
+/* Empty (a row with the agent's sentence) it only pushes the end of the line right, without a gap of its own. */
+[data-slot="tool-summary"]:empty {
+  margin-inline-start: -0.5rem;
 }
 
 [data-slot="tool-summary"] {
