@@ -12,7 +12,7 @@ import {
 } from "../ansi.ts";
 import { insideFolder, shownPath } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
-import type { Activity, Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
+import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import {
   activityOf,
   commandLabelOf,
@@ -245,10 +245,13 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   const plan = planOf(tool);
   const questions = questionsOf(tool);
   const subagent = tool.subagent;
-  // The mark spins only while the call goes. A sub-agent that runs on in the background says so in words: its end may
-  // never come (the agent's process went with the daemon), and a mark that spins for good would say it is working.
+  // The clock runs only while the call goes. A sub-agent that runs on in the background says so in words: its end may
+  // never come (the agent's process went with the daemon), and a clock that runs for good would say it is working.
   const working = going && status === "in_progress";
   const description = toolDescription(tool);
+  // No mark says a call is going (CYCL-139): words do. The verb's tense says so ("Running"), but not the agent's
+  // sentence, and not a call still waiting ("pending"): then the state is written out.
+  const stateShown = failed || (going && (description !== undefined || status !== "in_progress"));
   // With the agent's sentence, the line is that sentence alone (CYCL-137): what it acted on is in the panel, and, as its
   // first line, in the tooltip and the row's name, so a screen reader still hears what ran.
   const acted = toolSummary(tool);
@@ -312,9 +315,9 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
         {working ? (
           <Elapsed since={startedAt(`${scope}:tool:${tool.id}`)} slot="tool-elapsed" />
         ) : null}{" "}
-        <span data-slot={failed ? "tool-status" : "visually-hidden"}>
+        <span data-slot={stateShown ? "tool-status" : "visually-hidden"}>
           {statusWord(t, status)}
-        </span>{" "}
+        </span>
       </CollapsibleTrigger>
       <CollapsiblePanel>
         {command !== undefined ? (

@@ -727,6 +727,8 @@ test("a call at work shows on its row how long it has been going, from when the 
     ...tool("slow", "Bash", "in_progress", { command: "make", description: "Build it" }),
   );
   const row = await screen.findByRole("button", { name: /Build it/ });
+  // The agent's sentence has no tense: that it is at work is written out.
+  expect(row.querySelector('[data-slot="tool-status"]')?.textContent).toBe("in progress");
   await waitFor(() =>
     expect(row.querySelector('[data-slot="tool-elapsed"]')?.textContent).toMatch(/^[34]s$/),
   );
@@ -765,6 +767,10 @@ test("a tool row is text only: no icon, dot, spinner, cross or chevron, whatever
   expect(log.querySelector('[data-item-id="g"] [data-slot="tool-verb"]')?.textContent).toMatch(
     /^Running/,
   );
+  // Waiting, there is no tense to say it: the word is written out.
+  expect(
+    log.querySelector('[data-item-id="p"] > button [data-slot="tool-status"]')?.textContent,
+  ).toBe("pending");
   // In the secondary ink, not the body's.
   const verb = log.querySelector('[data-item-id="r"] [data-slot="tool-verb"]') as HTMLElement;
   const body = log.querySelector('[data-slot="message"]') as HTMLElement;

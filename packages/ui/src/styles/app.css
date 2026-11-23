@@ -1272,9 +1272,6 @@ button[data-slot="files-row"]:focus-visible {
 
 /* In a call that read or changed a file: a quiet link to it in the Files tab, at the tool's indent. */
 [data-slot="tool-files-link"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0 0.25rem;
   border: 0;
@@ -3240,21 +3237,21 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
 
 /* The collapsible parts of the conversation are told apart by data-kind: ui-sdk sets data-slot itself on Collapsible and
    replaces ours, so a rule on data-slot="tool" never matched. */
-/* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it, indented past a thin
-   line, so the stretch reads as one. */
+/* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it at the same 1.5rem step as
+   anything a row opens to, past a thin line, so the stretch reads as one. */
 [data-kind="work"] > [data-slot="collapsible-panel"] {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
   margin-top: 0.125rem;
-  padding-inline-start: 1rem;
+  padding-inline-start: 1.5rem;
 }
 
 [data-kind="work"] > [data-slot="collapsible-panel"]::before {
   content: "";
   position: absolute;
-  inset-inline-start: 0.25rem;
+  inset-inline-start: 0.5rem;
   top: 0.25rem;
   bottom: 0.25rem;
   width: 1px;
@@ -3550,11 +3547,8 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   color: var(--ui-destructive);
 }
 
-/* How a command ended, after what the block is: a tick and "succeeded", or a cross and its exit code. */
+/* How a command ended, after what the block is, in words: "Succeeded", or its exit code. */
 [data-slot="tool-end"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   margin-right: auto;
 }
 
@@ -3642,10 +3636,6 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
 [data-slot="tool-diff-head"]:hover [data-slot="tool-diff-path"] {
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-[data-slot="tool-diff-head"] > svg {
-  flex: none;
 }
 
 /* Too long for the line, it fades at its end (`cycle-fade`, with the other names above). */

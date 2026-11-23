@@ -2,7 +2,6 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react
 import { useMemo } from "react";
 import { isLive, streamsOf, type ToolItem } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
-import { ChevronRightIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
 import {
   Copyable,
@@ -73,8 +72,11 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
         </span>{" "}
         {kind !== undefined ? <span data-slot="subagent-type">{kind}</span> : null}{" "}
         {tool.subagent !== undefined ? <SubagentFacts subagent={tool.subagent} /> : null}{" "}
-        {/* The facts already say a sub-agent failed; the word is for a call that failed by itself, and a screen reader. */}
-        <span data-slot={failed && !subagentFailed ? "tool-status" : "visually-hidden"}>
+        {/* The facts already say a sub-agent failed; the word is for a call that failed by itself, for one at work (no
+            mark says so), and a screen reader. */}
+        <span
+          data-slot={(failed && !subagentFailed) || working ? "tool-status" : "visually-hidden"}
+        >
           {said}
         </span>
       </CollapsibleTrigger>
