@@ -1,3 +1,4 @@
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
 import {
   memo,
   type ReactNode,
@@ -19,6 +20,8 @@ import {
   blocksOf,
   type Conversation,
   earlierAnchor,
+  type FoldCache,
+  foldedBlocks,
   type LaidBlock,
   type Resend,
   resendOf,
@@ -26,11 +29,18 @@ import {
   textOf,
   windowStart,
 } from "../model/index.ts";
-import { blockHolds, reveal } from "../reveal.ts";
+import { blockHolds, heldIds, reveal } from "../reveal.ts";
 import { filesRootOf } from "../store/index.ts";
 import { CopyButton } from "./copy-button.tsx";
 import { useI18n } from "./i18n.tsx";
-import { ArrowDownIcon, AttachIcon, FileIcon, FolderIcon, MessageIcon } from "./icons.tsx";
+import {
+  ArrowDownIcon,
+  AttachIcon,
+  ChevronRightIcon,
+  FileIcon,
+  FolderIcon,
+  MessageIcon,
+} from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
 import { MessageTime } from "./message-time.tsx";
@@ -41,7 +51,7 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 import { SubagentCard, subagentWorkOf } from "./subagent.tsx";
 import { ThoughtText, useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
-import { ToolCard } from "./tool.tsx";
+import { durationOf, ToolCard, useRevealOpen } from "./tool.tsx";
 import { EndBlock, Notice, StepLine, WorkBlock } from "./turn.tsx";
 
 export { toolSummary } from "./tool.tsx";
@@ -322,6 +332,43 @@ function SubagentWork({ conversation, live }: { conversation: Conversation; live
   );
 }
 
+/**
+ * The work of a turn that ended normally, before its answer: one line that says how long it took, open on request. It
+ * opens by itself when something in it is asked to be shown (from the Overview). What it holds is drawn only while open.
+ */
+function FoldBlock({ block }: { block: Extract<LaidBlock, { kind: "fold" }> }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const store = useAppStore();
+  const [open, setOpen] = useState(false);
+  // Opened for an item asked to be shown is not the person opening it: only their own press is told.
+  useRevealOpen(heldIds(block), setOpen);
+  const toggle = (next: boolean) => {
+    if (next) store.track("turn_work_opened", {});
+    setOpen(next);
+  };
+  return (
+    <Collapsible data-kind="fold" open={open} onOpenChange={toggle}>
+      <CollapsibleTrigger>
+        <span data-slot="fold-label">
+          {block.ms !== undefined
+            ? t("turn.worked", { duration: durationOf(i18n, block.ms) })
+            : t("turn.workedPlain")}
+        </span>
+        <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        {block.blocks.map((inner) => (
+          <div key={inner.key} data-slot="block">
+            <BlockView block={inner} streaming={false} live={false} ended />
+          </div>
+        ))}
+        <div data-slot="fold-rule">{t("turn.result")}</div>
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
 const BlockView = memo(function BlockView({
   block,
   streaming,
@@ -412,6 +459,8 @@ const BlockView = memo(function BlockView({
       );
     case "notice":
       return <Notice severity={block.item.severity} title={block.item.title} />;
+    case "fold":
+      return <FoldBlock block={block} />;
   }
 });
 
@@ -463,7 +512,12 @@ export function ConversationView({
   // In normal mode (Session settings → Display mode) the agent's thinking is left out; detailed shows it.
   const mode = useDisplayMode(sessionKey);
   const laidOut = useMemo(() => blocksOf(conversation, cache.current), [conversation]);
-  const blocks = useMemo(() => shownBlocks(laidOut, mode), [laidOut, mode]);
+  // A turn that ended normally is read by its answer: the work before it folds into one line.
+  const folds = useRef<FoldCache>(new Map());
+  const blocks = useMemo(
+    () => foldedBlocks(shownBlocks(laidOut, mode), conversation.stops, folds.current),
+    [laidOut, mode, conversation.stops],
+  );
   // The last turn, when it failed: its end offers to send its message again.
   const resend = useMemo(() => resendOf(conversation), [conversation]);
 
@@ -473,6 +527,14 @@ export function ConversationView({
   const ref = useRef<HTMLDivElement>(null);
   const anchor = useRef<string | undefined>(saved?.anchor);
   const [, redraw] = useReducer((n: number) => n + 1, 0);
+  // A turn the reader was reading in folds when it ends: their place is now the fold that holds it, not gone.
+  if (anchor.current !== undefined && !blocks.some((block) => block.key === anchor.current)) {
+    const held = anchor.current;
+    const fold = blocks.find(
+      (block) => block.kind === "fold" && block.blocks.some((inner) => inner.key === held),
+    );
+    if (fold !== undefined) anchor.current = fold.key;
+  }
   const start = windowStart(blocks, anchor.current);
   // An anchor whose block is gone (a turn was laid again): back to the last page.
   if (anchor.current !== undefined && blocks[start]?.key !== anchor.current)
@@ -707,6 +769,7 @@ export function ConversationView({
   const replyOf = useCallback(
     (turn: number) =>
       laid.current.blocks
+        .flatMap((block) => (block.kind === "fold" ? block.blocks : [block]))
         .flatMap((block) =>
           block.kind === "agent" && block.turn === turn ? [textOf(block.item.blocks)] : [],
         )

@@ -14,6 +14,8 @@
 //   (`shownBlocks`).
 // - A turn that did not end normally says how, last.
 // - A turn begins a new group: the view puts more space before it than between blocks.
+// - A turn that ended normally is read by its answer: the work before its last reply folds into one block
+//   (`foldedBlocks`), opened on request. A turn that ended any other way stays open: how it got there is what to read.
 import { type CommandLabel, commandLabel } from "./command-label.ts";
 import type {
   AgentItem,
@@ -130,6 +132,11 @@ export type LaidBlock = { key: string; turn: number; startsTurn: boolean } & (
   | { kind: "failed"; tool: ToolItem }
   /** How a turn that did not end normally ended. */
   | { kind: "end"; stop: StopReason }
+  /**
+   * The work of a turn that ended normally, before its last reply: one line, opened on request. `ms` is how long it
+   * worked before it answered, when both ends are known.
+   */
+  | { kind: "fold"; blocks: readonly LaidBlock[]; ms?: number }
 );
 
 /** What a block's kind is, apart from the fields every block has. */
@@ -292,6 +299,106 @@ export const shownBlocks = (
     if (starts && block.startsTurn) starts = false;
     out.push(starts && !block.startsTurn ? { ...block, startsTurn: true } : block);
     starts = false;
+  }
+  return out;
+};
+
+/** When a block began, when its item says: a stretch of work by its first call. */
+const startOf = (block: LaidBlock): number | undefined =>
+  "item" in block
+    ? block.item.at
+    : "tools" in block
+      ? block.tools[0]?.at
+      : "tool" in block
+        ? block.tool.at
+        : undefined;
+
+const folded = (turn: readonly LaidBlock[]): LaidBlock[] => {
+  const reply = turn.findLastIndex(
+    (block) => block.kind === "agent" && textOf(block.item.blocks).trim() !== "",
+  );
+  if (reply === -1) return [...turn];
+  const out: LaidBlock[] = [];
+  let run: LaidBlock[] = [];
+  let folds = 0;
+  const close = (next: LaidBlock | undefined) => {
+    const first = run[0];
+    if (first === undefined) return;
+    const from = out.at(-1);
+    const began = from !== undefined ? startOf(from) : undefined;
+    const answered = next !== undefined ? startOf(next) : undefined;
+    // Under a second says nothing ("0 sec"): the line then says only that it worked.
+    const ms =
+      began !== undefined && answered !== undefined && answered - began >= 1000
+        ? answered - began
+        : undefined;
+    out.push({
+      // By its turn and place in it, not by its first block: that is a thought in detailed mode and not in normal, and a
+      // fold must stay the same block (open, and the anchor of the reader's place) when the mode changes.
+      key: `fold:${first.turn}:${folds++}`,
+      turn: first.turn,
+      startsTurn: first.startsTurn,
+      kind: "fold",
+      blocks: run.map((block) => (block.startsTurn ? { ...block, startsTurn: false } : block)),
+      ...(ms !== undefined ? { ms } : {}),
+    });
+    run = [];
+  };
+  turn.forEach((block, at) => {
+    // What the person said stays, a message put into the turn while it went included; and so does all after the reply.
+    // So does a sub-agent still at work (sent to the background): its card is the one sign that something still runs.
+    const running = block.kind === "subagent" && block.tool.subagent?.state === "running";
+    if (at >= reply || block.kind === "user" || running) {
+      close(block);
+      out.push(block);
+    } else run.push(block);
+  });
+  return out;
+};
+
+/** What folding a turn depended on: the same shown blocks and the same end give back the same blocks. */
+export type FoldCache = Map<
+  number,
+  { from: readonly LaidBlock[]; stop: StopReason | undefined; blocks: LaidBlock[] }
+>;
+
+/**
+ * The shown blocks with each turn that ended normally (`end_turn`) read by its answer: the runs of blocks before its last
+ * reply that has words become one `fold` block each (what the person said is never folded, so a message put into the
+ * turn while it went splits the work in two). A turn still going, one that ended any other way, and one with no reply
+ * are left as they are. With a `cache`, a turn that has not changed gives back the very blocks it gave before.
+ */
+export const foldedBlocks = (
+  blocks: readonly LaidBlock[],
+  stops: readonly StopReason[],
+  cache?: FoldCache,
+): LaidBlock[] => {
+  const out: LaidBlock[] = [];
+  let at = 0;
+  while (at < blocks.length) {
+    const turn = blocks[at]?.turn ?? 0;
+    let end = at;
+    while (end < blocks.length && blocks[end]?.turn === turn) end += 1;
+    const from = blocks.slice(at, end);
+    at = end;
+    const stop = stops[turn];
+    if (stop?.stopReason !== "end_turn") {
+      out.push(...from);
+      continue;
+    }
+    const cached = cache?.get(turn);
+    if (
+      cached !== undefined &&
+      cached.stop === stop &&
+      cached.from.length === from.length &&
+      cached.from.every((block, i) => block === from[i])
+    ) {
+      out.push(...cached.blocks);
+      continue;
+    }
+    const laid = folded(from);
+    cache?.set(turn, { from, stop, blocks: laid });
+    out.push(...laid);
   }
   return out;
 };

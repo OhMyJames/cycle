@@ -78,6 +78,12 @@ const openWith = async (
 };
 const open = (...updates: SessionUpdate[]) => openWith({}, ...updates);
 
+/** A turn that ended normally folds its work above its answer: opens each fold, so its rows can be read. */
+const openWork = async (user: ReturnType<typeof userEvent.setup>) => {
+  for (const fold of await screen.findAllByRole("button", { name: /^Worked/ }))
+    await user.click(fold);
+};
+
 test("two tool calls in a row are one card that says what they were, and opens to the rows", async () => {
   const { user, log } = await open(
     you("u1"),
@@ -307,6 +313,9 @@ test("detailed mode, set in Session settings, shows the thinking itself as an it
   await user.click(await screen.findByRole("option", { name: /^Detailed/ }));
   await waitFor(() => expect(choice.textContent).toContain("Detailed"));
   expect(displayMode.get(SESSION)).toBe("detailed");
+  // The turn is over, so its thinking is in the work folded above the answer.
+  await user.keyboard("{Escape}");
+  await openWork(user);
   // Shown at once, not behind a row to open; markdown through the same path as a reply: the bold is bold.
   const thought = await waitFor(() => {
     const found = log.querySelector('blockquote[data-kind="thought"]');
@@ -653,6 +662,7 @@ test("a new file is Created; a read says its lines; a search what it found; a pi
     ),
     state({ state: "idle", stopReason: "end_turn" }),
   );
+  await openWork(user);
   const created = await screen.findByRole("button", { name: /Created README/ });
   await user.click(created);
   expect(log.textContent).toContain("The change is too large to show here.");
@@ -837,6 +847,7 @@ test("an edit's diff is headed by its file, which opens it in the Diff tab among
     ...edit("e2", "/r/src/two.ts"),
     state({ state: "idle", stopReason: "end_turn" }),
   );
+  await openWork(user);
   const rows = await screen.findAllByRole("button", { name: /Edited/ });
   await user.click(rows[1] as HTMLElement);
   const head = log.querySelector('[data-item-id="e2"] [data-slot="tool-diff-head"]') as HTMLElement;
@@ -1068,6 +1079,7 @@ test("an MCP tool reads by its title and the first short line of its input; a se
     ),
     state({ state: "idle", stopReason: "end_turn" }),
   );
+  await openWork(user);
   const mcp = await screen.findByRole("button", { name: /linear · create_issue/ });
   // The first short line of its input, not the first field: "CYCL" is short too, and comes first.
   expect(mcp.textContent).toContain("CYCL");
@@ -1077,6 +1089,9 @@ test("an MCP tool reads by its title and the first short line of its input; a se
   await user.click(search);
   const link = within(log).getByRole("link", { name: "Test runner" });
   expect(link.getAttribute("href")).toBe("https://bun.sh/docs/cli/test");
+  // What the page told, apart from opening the folded work to reach the links.
+  const links = () =>
+    script.calls.filter(([name, event]) => name === "track" && event !== "turn_work_opened");
   const opened: unknown[][] = [];
   const windowOpen = window.open;
   window.open = ((...args: unknown[]) => {
@@ -1089,16 +1104,14 @@ test("an MCP tool reads by its title and the first short line of its input; a se
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog.textContent).toContain("https://bun.sh/docs/cli/test");
     expect(opened).toEqual([]);
-    expect(script.calls.filter(([name]) => name === "track")).toEqual([]);
+    expect(links()).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: "Open link" }));
     expect(opened).toEqual([["https://bun.sh/docs/cli/test", "_blank", "noopener,noreferrer"]]);
   } finally {
     window.open = windowOpen;
   }
   // That a link was opened, never which.
-  expect(script.calls.filter(([name]) => name === "track")).toEqual([
-    ["track", "tool_link_opened", {}],
-  ]);
+  expect(links()).toEqual([["track", "tool_link_opened", {}]]);
   expect(link.parentElement?.textContent).toContain("bun.sh");
   // An address that is not a web one is text, never a link.
   expect(within(log).queryByRole("link", { name: "Trap" })).toBeNull();
@@ -1518,4 +1531,38 @@ test("a sub-agent sent to the background shows no answer from its launch; one th
   expect(background.textContent).not.toContain("Async agent launched");
   expect(bad.getAttribute("data-status")).toBe("failed");
   await waitFor(() => expect(bad.textContent).toContain("Fix it."));
+});
+
+test("a turn that ended normally shows its answer with its work folded above it; one that stopped stays open", async () => {
+  const { user, log, script } = await open(
+    you("u1"),
+    say("first look"),
+    ...tool("a", "Bash", "completed", { command: "make" }),
+    say("the answer"),
+    state({ state: "idle", stopReason: "end_turn" }),
+    you("u2"),
+    ...tool("b", "Bash", "completed", { command: "make check" }),
+    say("halfway"),
+    state({ state: "idle", stopReason: "cancelled" }),
+  );
+  const fold = await screen.findByRole("button", { name: /^Worked/ });
+  expect(fold.getAttribute("aria-expanded")).toBe("false");
+  expect(log.textContent).toContain("the answer");
+  expect(log.textContent).not.toContain("first look");
+  // The turn that was stopped is read as it went: nothing of it is folded.
+  expect(screen.getAllByRole("button", { name: /^Worked/ })).toHaveLength(1);
+  expect(log.textContent).toContain("make check");
+  expect(log.textContent).toContain("halfway");
+  await user.click(fold);
+  expect(fold.getAttribute("aria-expanded")).toBe("true");
+  // Told that it was opened, never what it holds.
+  expect(
+    script.calls.filter(([name, event]) => name === "track" && event === "turn_work_opened"),
+  ).toEqual([["track", "turn_work_opened", {}]]);
+  await waitFor(() => expect(log.textContent).toContain("first look"));
+  expect(log.textContent).toContain("make");
+  // Keyboard: the same line closes it.
+  fold.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(fold.getAttribute("aria-expanded")).toBe("false"));
 });

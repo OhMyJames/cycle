@@ -3347,6 +3347,77 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   background: var(--cycle-border-default);
 }
 
+/* The work of a turn that ended normally, folded above its answer (Codex's "Worked for"): a quiet line in the secondary
+   ink with its chevron always seen, so it reads as something that opens. Open, the turn's blocks follow it flush, as
+   they were while the turn went: not set off like a quote. */
+[data-kind="fold"] {
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-kind="fold"] > button {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: fit-content;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.5rem;
+  margin-inline: -0.5rem;
+  border-radius: var(--ui-radius);
+  color: var(--cycle-ink-secondary);
+  text-align: left;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-kind="fold"] > button::after {
+  content: none;
+}
+
+[data-kind="fold"] > button:hover {
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink);
+}
+
+[data-kind="fold"] > button > [data-slot="tool-chevron"] {
+  opacity: 1;
+}
+
+/* Open, it reads as the turn did while it went: the conversation's own ink, size and gap (ui-sdk mutes a panel's text
+   by default), a gap under the line that opened it, and a rule before the answer, so the work ends where the answer
+   begins. */
+[data-kind="fold"] > [data-slot="collapsible-panel"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cycle-gap);
+  margin-top: var(--cycle-gap);
+  color: inherit;
+  font-size: var(--cycle-text-body);
+  line-height: var(--cycle-leading-body);
+}
+
+[data-kind="fold"]:has(> [data-slot="collapsible-panel"]) {
+  margin-bottom: calc(1rem - var(--cycle-gap));
+}
+
+/* Where the work ends and the answer begins: a hairline in the quietest border, broken by a small "Result". */
+[data-slot="fold-rule"] {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+  color: var(--ui-muted-foreground);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-slot="fold-rule"]::before,
+[data-slot="fold-rule"]::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--cycle-border-subtle);
+}
+
 /* A sub-agent: a line like a call's, with what kind of agent it is muted after its task. Back, the start of its answer
    hangs under the line at the rows' indent, faded out after a few lines; open, the whole task and the whole answer. */
 [data-slot="subagent-type"] {

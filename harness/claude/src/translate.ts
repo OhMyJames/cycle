@@ -416,6 +416,30 @@ export const stopReasonOf = (result: SDKMessage): StopReason => {
     };
   }
   if (result.subtype === "success") {
+    // "success" with is_error is a turn that ended on an API error (auth, rate limit, retries used up): `result` holds
+    // the error's text, not a reply.
+    const failed = result as {
+      is_error?: boolean;
+      result?: string;
+      api_error_status?: number | null;
+    };
+    if (failed.is_error === true) {
+      const text = typeof failed.result === "string" ? failed.result.trim() : "";
+      const status =
+        typeof failed.api_error_status === "number" ? failed.api_error_status : undefined;
+      // Claude Code also says the error's text as an assistant message, which the turn shows: with a status, the end
+      // says only that, so the text is not read twice; without one, its first line, cut whole characters at a time.
+      const line = [...(text.split("\n")[0] ?? "")];
+      const message =
+        status !== undefined
+          ? `API error ${status}`
+          : line.length > 0
+            ? line.length > 300
+              ? `${line.slice(0, 300).join("")}…`
+              : line.join("")
+            : "The model request failed";
+      return { stopReason: "error", error: { code: -32603, message } };
+    }
     const reason = (result as { stop_reason?: string | null }).stop_reason;
     if (reason === "max_tokens") return { stopReason: "max_tokens" };
     if (reason === "refusal") return { stopReason: "refusal" };

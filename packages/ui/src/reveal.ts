@@ -43,16 +43,28 @@ export const reveal = channel();
 /** The Diff tab's (CYCL-133): the edit a call made, opened in its list. The item is the call's id. */
 export const revealInDiff = channel();
 
-/** Whether a laid block holds the item: the block's own item, or one of the calls of a stretch of work. */
-export const blockHolds = (
-  block: {
-    kind: string;
-    item?: { id: string };
-    tools?: readonly { id: string }[];
-    tool?: { id: string };
-  },
-  itemId: string,
-): boolean =>
+type Held = {
+  kind: string;
+  item?: { id: string };
+  tools?: readonly { id: string }[];
+  tool?: { id: string };
+  blocks?: readonly Held[];
+};
+
+/**
+ * Whether a laid block holds the item: the block's own item, one of the calls of a stretch of work, or, for the folded
+ * work of a turn, any block in it.
+ */
+export const blockHolds = (block: Held, itemId: string): boolean =>
   block.item?.id === itemId ||
   block.tool?.id === itemId ||
-  (block.tools?.some((tool) => tool.id === itemId) ?? false);
+  (block.tools?.some((tool) => tool.id === itemId) ?? false) ||
+  (block.blocks?.some((inner) => blockHolds(inner, itemId)) ?? false);
+
+/** The ids of every item a laid block holds, folded work included: what it opens for when one is asked to be shown. */
+export const heldIds = (block: Held): string[] => [
+  ...(block.item !== undefined ? [block.item.id] : []),
+  ...(block.tool !== undefined ? [block.tool.id] : []),
+  ...(block.tools?.map((tool) => tool.id) ?? []),
+  ...(block.blocks?.flatMap(heldIds) ?? []),
+];
