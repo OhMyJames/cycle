@@ -1580,3 +1580,99 @@ describe("attachments, tool results, and UI model replay (CYCL-177)", () => {
     expect(files[1]?.lines?.length).toBeGreaterThan(0);
   });
 });
+
+describe("sub-agent and background activity display (CYCL-178)", () => {
+  test("displays invoke_subagent and schedule as plain tool calls in UI model with ignored === 0 and no fabricated subagent updates", async () => {
+    const { config } = baseConfig((method, params, fake) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-sub");
+      if (method === "session/prompt") {
+        const sid = (params as { sessionId: string }).sessionId;
+        return new Promise((resolve) => {
+          queueMicrotask(() => {
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call",
+              toolCallId: "sub_1",
+              name: "invoke_subagent",
+              kind: "other",
+              title: "invoke_subagent",
+              status: "in_progress",
+              rawInput: { TypeName: "research", Role: "Codebase Researcher", Prompt: "Find docs" },
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "sub_1",
+              name: "invoke_subagent",
+              kind: "other",
+              title: "invoke_subagent",
+              status: "completed",
+              rawInput: { TypeName: "research", Role: "Codebase Researcher", Prompt: "Find docs" },
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call",
+              toolCallId: "sched_1",
+              name: "schedule",
+              kind: "other",
+              title: "Schedule 2s wakeup",
+              status: "in_progress",
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "sched_1",
+              name: "schedule",
+              kind: "other",
+              title: "Schedule 2s wakeup",
+              status: "completed",
+            });
+            fake.emitUpdate(sid, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Sub-agent and timer both finished." },
+            });
+            resolve({ stopReason: "end_turn" });
+          });
+        });
+      }
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-sub",
+          prompt: [{ type: "text", text: "Run a sub-agent and a timer" }],
+        } as never);
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+      });
+    } finally {
+      adapter.close();
+    }
+
+    // Must not fabricate subagent_update or child updates that agy ACP v1 never provides.
+    expect(updates.some((u) => u.sessionUpdate === "subagent_update")).toBe(false);
+
+    let conv = emptyConversation();
+    for (const update of updates) {
+      conv = applyUpdate(conv, update);
+    }
+    expect(conv.ignored).toBe(0);
+    const tools = conv.items.filter((item) => item.kind === "tool");
+    expect(tools.map((t) => ({ id: t.id, title: t.title, status: t.status }))).toEqual([
+      { id: "sub_1", title: "Sub-agent: Codebase Researcher", status: "completed" },
+      { id: "sched_1", title: "Schedule 2s wakeup", status: "completed" },
+    ]);
+  });
+});

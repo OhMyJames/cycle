@@ -233,6 +233,19 @@ const toolResultMeta = (
   return undefined;
 };
 
+const toolTitle = (payload: V1ToolCallPayload): string => {
+  if (
+    payload.name === "invoke_subagent" &&
+    (payload.title === undefined || payload.title === "" || payload.title === "invoke_subagent")
+  ) {
+    const raw = payload.rawInput as { Role?: unknown; TypeName?: unknown } | undefined;
+    const role =
+      typeof raw?.Role === "string" && raw.Role.trim() !== "" ? raw.Role.trim() : undefined;
+    if (role !== undefined) return `Sub-agent: ${role}`;
+  }
+  return payload.title ?? payload.name ?? "Tool";
+};
+
 export const toV2ToolCallUpdate = (payload: V1ToolCallPayload): SessionUpdate => {
   const { content, editStats } = translateToolContent(payload.content);
   const meta = toolResultMeta(payload, editStats);
@@ -240,7 +253,7 @@ export const toV2ToolCallUpdate = (payload: V1ToolCallPayload): SessionUpdate =>
     sessionUpdate: "tool_call_update",
     toolCallId: payload.toolCallId,
     ...(payload.name !== undefined ? { name: payload.name } : {}),
-    title: payload.title ?? payload.name ?? "Tool",
+    title: toolTitle(payload),
     kind: normalizeKind(payload.kind),
     status: normalizeStatus(payload.status),
     ...(payload.locations !== undefined ? { locations: payload.locations } : {}),
