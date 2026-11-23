@@ -817,6 +817,8 @@ test("an edit's diff is headed by its file, which opens it in the Diff tab among
   const head = log.querySelector('[data-item-id="e2"] [data-slot="tool-diff-head"]') as HTMLElement;
   expect(head.textContent).toContain("/r/src/two.ts");
   expect(head.textContent).toContain("+1");
+  // Its name says what it does, not only its tooltip.
+  expect(head.textContent).toContain("Show in Diff");
   await user.click(head);
   // The panel is on Diff, this session's view, with that edit open and the other closed.
   const panel = await screen.findByRole("tabpanel");

@@ -39,6 +39,10 @@ export const insideFolder = (where: string, cwd: string): string | undefined => 
   return inside;
 };
 
+/** A path as a list shows it: inside the session's folder, relative to it; elsewhere, as the agent gave it. */
+export const shownPath = (path: string, cwd: string | undefined): string =>
+  (cwd !== undefined ? insideFolder(path, cwd) : undefined) ?? path;
+
 export class FilesViews {
   readonly #states = new Map<string, FilesState>();
   readonly #listeners = new Set<() => void>();

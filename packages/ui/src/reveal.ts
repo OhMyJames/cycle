@@ -18,10 +18,11 @@ const channel = () => {
   const listeners = new Set<() => void>();
   return {
     /** Brings an item of a session into view, and marks it for a moment. */
-    request(sessionKey: string, itemId: string): void {
+    request(sessionKey: string, itemId: string): number {
       serial += 1;
       current = { sessionKey, itemId, serial };
       for (const listener of [...listeners]) listener();
+      return serial;
     },
     /** The request still being answered: the item not yet found. A view that mounts meanwhile reads it here. */
     get: (): RevealRequest | undefined => current,

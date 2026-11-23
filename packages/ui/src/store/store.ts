@@ -61,6 +61,25 @@ export const viewKey = (environmentId: string, sessionId: string): string =>
  * conversation names must be inside to be shown there (CYCL-92). Undefined otherwise. For `useAppState`, so that a link
  * appears once the daemon has said what it can do.
  */
+/** How long the Diff tab has to answer a request to show an edit before it lapses. */
+const REVEAL_IN_DIFF_MS = 3_000;
+
+/** Which view of its Diff tab each session shows (this session's edits, or the workspace), and who to tell of a change. */
+export class DiffModes {
+  readonly #modes = new Map<string, "session" | "workspace">();
+  readonly #listeners = new Set<() => void>();
+  get = (key: string): "session" | "workspace" | undefined => this.#modes.get(key);
+  set = (key: string, mode: "session" | "workspace"): void => {
+    if (this.#modes.get(key) === mode) return;
+    this.#modes.set(key, mode);
+    for (const listener of [...this.#listeners]) listener();
+  };
+  subscribe = (listener: () => void): (() => void) => {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  };
+}
+
 export const filesRootOf = (state: AppState): string | undefined => {
   const { selectedEnvironment: environmentId, selectedSession: sessionId } = state;
   if (environmentId === undefined || sessionId === undefined) return undefined;
@@ -260,7 +279,7 @@ export class AppStore {
   /** Where each session's Files tab is: open folders, and the file shown (CYCL-92). */
   readonly filesViews = new FilesViews();
   /** Which view each session's Diff tab shows: kept while the window is open, so a tab looked away from finds it again. */
-  readonly diffModes = new Map<string, "session" | "workspace">();
+  readonly diffModes = new DiffModes();
   readonly #acks = new WeakSet<Returned>();
   /**
    * Sessions whose box holds a message put back to send again, with what the box then held: whether it went as it was
@@ -1169,13 +1188,17 @@ export class AppStore {
    * The edit a call made, in the Diff tab (CYCL-133): the panel opens on Diff, in this session's view (the one that has
    * the call's edits), and the edit opens in its list.
    */
-  showInDiff = (toolId: string): void => {
+  showInDiff = (toolId: string): boolean => {
     const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.#state;
-    if (environmentId === undefined || sessionId === undefined) return;
+    if (environmentId === undefined || sessionId === undefined) return false;
     const key = viewKey(environmentId, sessionId);
     this.diffModes.set(key, "session");
     this.sidePanels.show(key, "diff");
-    revealInDiff.request(key, toolId);
+    const serial = revealInDiff.request(key, toolId);
+    // Not answered soon (the list still loading, the person gone to another session): given up, so the row does not
+    // open by itself, and take the focus, when the tab is opened later.
+    setTimeout(() => revealInDiff.done(serial), REVEAL_IN_DIFF_MS);
+    return true;
   };
 
   /** The folders in a folder on an environment's machine. Not a banner when it fails: the one who asked says why. */
