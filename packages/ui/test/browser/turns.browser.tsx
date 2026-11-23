@@ -351,7 +351,7 @@ test("a long thought is at most eight lines tall, scrolls within, and follows wh
   await new Promise((resolve) => requestAnimationFrame(resolve));
   expect(box.scrollTop).toBe(0);
   // At its top with more below, the box fades at its foot (a scroll-driven mask, not motion).
-  expect(getComputedStyle(box).maskImage).toContain("linear-gradient");
+  await waitFor(() => expect(getComputedStyle(box).maskImage).toContain("linear-gradient"));
   // The quote's rule is drawn whole, outside what scrolls and fades.
   expect(getComputedStyle(thought).maskImage).toBe("none");
 });
