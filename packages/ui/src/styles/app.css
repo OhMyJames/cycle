@@ -270,6 +270,8 @@
     0 22px 54px -12px light-dark(rgb(0 0 0 / 15%), rgb(0 0 0 / 78%)),
     0 4px 14px -2px light-dark(rgb(0 0 0 / 6%), rgb(0 0 0 / 55%));
   --cycle-scrim: light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 55%));
+  /* Behind a picture opened large: dark in both themes, so the picture's own colours read true and nothing shows through. */
+  --cycle-scrim-lightbox: rgb(0 0 0 / 92%);
 
   /* Text too long for its line fades out at the end instead of ending in "…" (old-cycle's rule): the box is full width and
      the last 1.5rem of it fade, so a short line, which never reaches there, is not touched. */
@@ -1786,6 +1788,7 @@ svg[data-slot="dot"] {
 /* Also a session row's time, while pin and its menu take its place: out of sight but still part of the row's name, so
    the name stays the same under the pointer (for a screen reader, and for a test's locator). */
 [data-slot="visually-hidden"],
+[data-palette="lightbox"] > [data-slot="dialog-title"],
 [data-slot="sidebar"]
   [role="option"]:is(:hover, :has([aria-expanded="true"]))
   [data-slot="session-time"] {
@@ -3539,6 +3542,191 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   max-height: calc(100vh - 12rem);
   margin-inline: auto;
   object-fit: contain;
+}
+
+/* A picture of the conversation opened large (CYCL-212, lightbox.tsx). The whole window, title bar too, on a scrim that is
+   dark in either theme, as a lightbox is. The content is the whole window and has no surface: the picture sits on the
+   scrim with nothing around it. What is drawn on it is drawn dark (color-scheme), whatever the theme. It is no drag
+   region on a Mac (the rule for every backdrop and content above), and the controls keep to the right: the traffic
+   lights are top left. */
+[data-slot="dialog-backdrop"][data-palette="lightbox"] {
+  background: var(--cycle-scrim-lightbox);
+  transition: opacity var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+[data-slot="dialog-backdrop"][data-palette="lightbox"]:is(
+  [data-starting-style],
+  [data-ending-style]
+) {
+  opacity: 0;
+}
+
+[data-slot="dialog-content"][data-palette="lightbox"] {
+  color-scheme: dark;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--cycle-ink);
+  user-select: none;
+}
+
+/* It fades in and the picture grows a little into place; nothing moves sideways. */
+[data-slot="dialog-content"][data-palette="lightbox"]:is(
+  [data-starting-style],
+  [data-ending-style]
+) {
+  transform: none;
+}
+
+[data-slot="lightbox-frame"] {
+  /* The room the picture fits to: clear of the buttons above and at the sides, and of the zoom below. */
+  position: absolute;
+  inset: 3.5rem 3.5rem 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+[data-palette="lightbox"]:is([data-starting-style], [data-ending-style])
+  [data-slot="lightbox-frame"] {
+  transform: scale(0.96);
+}
+
+[data-slot="lightbox-image"] {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  max-height: 100%;
+  box-shadow: var(--cycle-shadow-dialog);
+  opacity: 0;
+}
+
+/* Measured: its size is the zoom's, and it may be larger than the room (it is dragged or scrolled then). */
+[data-slot="lightbox-image"][data-shown] {
+  max-width: none;
+  max-height: none;
+  opacity: 1;
+}
+
+[data-slot="lightbox-image"][data-pannable] {
+  cursor: grab;
+}
+
+[data-slot="lightbox-image"][data-pannable]:active {
+  cursor: grabbing;
+}
+
+[data-slot="lightbox-actions"] {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+[data-slot="lightbox-button"] {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware), var(--cycle-shadow-popover);
+  color: var(--cycle-ink-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--cycle-motion-state) var(--cycle-ease),
+    color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="lightbox-button"]:hover {
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink);
+}
+
+[data-slot="lightbox-button"][data-said="failed"] {
+  color: var(--ui-destructive);
+}
+
+/* Previous and next, at the middle of each side. */
+[data-slot="lightbox-button"][data-side] {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+[data-slot="lightbox-button"][data-side="previous"] {
+  left: 0.75rem;
+}
+
+[data-slot="lightbox-button"][data-side="next"] {
+  right: 0.75rem;
+}
+
+/* − 100% +, a pill at the bottom middle. */
+[data-slot="lightbox-zoom"] {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0.25rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware), var(--cycle-shadow-popover);
+  transform: translateX(-50%);
+}
+
+[data-slot="lightbox-zoom-button"] {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cycle-radius-pill);
+  background: transparent;
+  color: var(--cycle-ink-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--cycle-motion-state) var(--cycle-ease),
+    color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="lightbox-zoom-button"]:hover:not([aria-disabled="true"]) {
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink);
+}
+
+[data-slot="lightbox-zoom-button"][aria-disabled="true"] {
+  color: var(--cycle-ink-disabled);
+  cursor: default;
+}
+
+[data-slot="lightbox-percent"] {
+  min-width: 3rem;
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cycle-leading-ui);
+  text-align: center;
 }
 
 [data-slot="blocked-image"],

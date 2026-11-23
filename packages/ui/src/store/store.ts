@@ -20,6 +20,7 @@ import type {
   FolderListing,
   FolderTrust,
   FormAnswer,
+  ImageSaved,
   PermissionRequest,
   PlanUsage,
   PluginFailure,
@@ -1687,6 +1688,20 @@ export class AppStore {
     this.#bridge.copyText(text).then(
       (done) => done,
       () => false,
+    );
+
+  /** Puts a picture on the clipboard, through main (a PNG or JPEG, as base64). Whether it did. */
+  copyImage = (type: string, data: string): Promise<boolean> =>
+    this.#bridge.copyImage(type, data).then(
+      (done) => done,
+      () => false,
+    );
+
+  /** Saves a picture where the person picks, through main's save dialog. What came of it: never an error. */
+  saveImage = (name: string, type: string, data: string): Promise<ImageSaved> =>
+    this.#bridge.saveImage(name, type, data).then(
+      (saved) => saved,
+      (): ImageSaved => "failed",
     );
 
   /** Reports what only the page can see (a panel opened, a theme chosen). Never waits and never fails. */

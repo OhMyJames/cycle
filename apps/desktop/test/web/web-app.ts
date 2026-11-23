@@ -173,6 +173,9 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
       copied.push(text);
       return true;
     },
+    // No clipboard or save dialog in a browser run: a picture is neither copied nor saved.
+    copyImage: () => false,
+    saveImage: () => "cancelled",
   };
 
   let browser: Browser | undefined;

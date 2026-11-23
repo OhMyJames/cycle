@@ -1301,6 +1301,32 @@ export const scenarios: Record<string, Scenario> = {
       ],
     ),
   ),
+  "image-open-set": {
+    title:
+      "A picture you sent opened large (CYCL-212): the whole window on a dark scrim, Copy, Download and Close at the top right, the zoom at the bottom, steps to the other picture of the message",
+    sessions: [session("s1", { title: "Look at the mock" })],
+    history: [
+      u({
+        sessionUpdate: "user_message",
+        messageId: "u1",
+        content: [
+          { type: "text", text: "Does this match the design?" },
+          { type: "image", data: SAMPLE_PNG, mimeType: "image/png", uri: "file:///mock.png" },
+          { type: "image", data: SAMPLE_PNG, mimeType: "image/png", uri: "file:///design.png" },
+        ],
+      }),
+      idle({ stopReason: "end_turn" }),
+    ],
+    after: async (root) => {
+      const thumbnail = root.querySelector<HTMLElement>('[data-slot="image"]');
+      thumbnail?.click();
+      await until(
+        () => document.querySelector('[data-slot="lightbox-image"][data-shown]') !== null,
+        "the picture to be shown large",
+      );
+      await frames(12);
+    },
+  },
   images: {
     title:
       "Images in a conversation: one you sent, one the agent sent between two paragraphs, one that cannot be shown",

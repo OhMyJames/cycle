@@ -276,6 +276,8 @@ export const fakeBridge = (
     answerPermission: record("answerPermission", async () => {}),
     answerForm: record("answerForm", async () => {}),
     copyText: record("copyText", async () => true),
+    copyImage: record("copyImage", async () => true),
+    saveImage: record("saveImage", async () => "saved" as const),
     agents: record("agents", async () => [
       {
         id: "fake",

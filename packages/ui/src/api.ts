@@ -759,6 +759,16 @@ export type AppApi = {
   chooseDirectory(): Promise<string | undefined>;
   /** Puts text on the clipboard (a command, an output); false when it did not (too large). The page has no clipboard of its own. */
   copyText(text: string): Promise<boolean>;
+  /**
+   * Puts a picture on the clipboard: a PNG or JPEG the page already has, as base64 (the page turns any other kind into a
+   * PNG first). False when it did not: not one of those, or too large.
+   */
+  copyImage(type: string, data: string): Promise<boolean>;
+  /**
+   * Saves a picture the page already has (base64 of one of the image types it shows) to a file the person picks in the
+   * system's save dialog, offered under `name`. Main writes only where they chose.
+   */
+  saveImage(name: string, type: string, data: string): Promise<ImageSaved>;
 
   updateState(): Promise<UpdateState>;
   /** Asks now, and answers with what it found (or why it could not). */
@@ -792,6 +802,9 @@ export type AppApi = {
   /** The person's answer about usage statistics. It also means they have been told. */
   setAnalytics(enabled: boolean): Promise<AnalyticsStatus>;
 };
+
+/** What came of saving a picture: written, the person closed the dialog, or it could not be (not a picture, a disk error). */
+export type ImageSaved = "saved" | "cancelled" | "failed";
 
 /** Subscribes to events. Returns the function that stops it. */
 export type AppEvents = (listener: (event: AppEvent) => void) => () => void;
@@ -858,6 +871,8 @@ export const API_METHODS = [
   "refreshPluginSources",
   "chooseDirectory",
   "copyText",
+  "copyImage",
+  "saveImage",
   "updateState",
   "checkForUpdate",
   "installUpdate",

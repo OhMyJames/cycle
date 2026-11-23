@@ -225,6 +225,7 @@ function Attached({ blocks }: { blocks: Block[] }) {
   // The blocks of a sent message never change: their place is who they are.
   const keyed = blocks.map((block, index) => ({ block, key: `${block.type}-${index}` }));
   const images = keyed.filter(({ block }) => block.type === "image");
+  const set = images.map(({ block }) => block);
   const files = keyed.filter(({ block }) => block.type === "resource");
   return (
     <section data-slot="message-attachments" aria-label={t("message.attachments")}>
@@ -232,7 +233,7 @@ function Attached({ blocks }: { blocks: Block[] }) {
         <ul data-slot="image-grid">
           {images.map(({ block, key }) => (
             <li key={key}>
-              <ImageBlockView block={block} from="user" />
+              <ImageBlockView block={block} from="user" set={set} />
             </li>
           ))}
         </ul>
@@ -265,11 +266,12 @@ function AgentBlocks({ blocks, streaming }: { blocks: Block[]; streaming: boolea
       else parts.push({ key: `text-${index}`, text: textOf([block]) });
     }
   }
+  const set = blocks.filter((block) => block.type === "image");
   return (
     <>
       {parts.map((part, at) =>
         part.image !== undefined ? (
-          <ImageBlockView key={part.key} block={part.image} from="agent" />
+          <ImageBlockView key={part.key} block={part.image} from="agent" set={set} />
         ) : (
           <Markdown
             key={part.key}

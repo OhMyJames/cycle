@@ -269,6 +269,13 @@ export const EVENTS = {
   code_block_expanded: o({}),
   /** A diagram drawn from a ```mermaid fence in a reply was opened large. */
   diagram_opened: o({}),
+  /**
+   * A picture in the conversation, opened large, was put on the clipboard (CYCL-212). `from`: the agent sent it or the
+   * person did. Never the picture, its name or its size.
+   */
+  image_copied: o({ from: z.enum(["agent", "user"]) }),
+  /** A picture opened large was saved to a file the person picked (CYCL-212). Never the picture, its name or where. */
+  image_downloaded: o({ from: z.enum(["agent", "user"]) }),
   /** A drawn diagram's source was shown instead of the picture. */
   diagram_source_shown: o({}),
   /** A session's display mode was changed in Session settings: `detailed` shows the agent's thinking, `normal` does not. */
@@ -357,6 +364,8 @@ export const UI_EVENTS = [
   "code_block_expanded",
   "diagram_opened",
   "diagram_source_shown",
+  "image_copied",
+  "image_downloaded",
   "display_mode_changed",
   "session_pinned",
   "turn_resend_opened",
