@@ -105,7 +105,7 @@ test("a tool row says what it did with a verb in its tense, and only a failure s
   );
 });
 
-test("a call with a description reads as it; what it ran follows, and a mention is not drawn twice", async () => {
+test("a call with a description reads as it alone, what it ran only in its tooltip; a mention is not drawn twice", async () => {
   const { log } = await open(
     u({
       sessionUpdate: "user_message",
@@ -125,7 +125,11 @@ test("a call with a description reads as it; what it ran follows, and a mention 
   );
   const row = await screen.findByRole("button", { name: /Run the tests/ });
   expect(row.querySelector('[data-slot="tool-verb"]')?.textContent).toBe("Run the tests");
-  expect(row.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("bun test");
+  expect(row.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("");
+  expect(row.textContent).not.toContain("bun test");
+  expect(row.querySelector('[data-slot="tool-verb"]')?.getAttribute("title")).toBe(
+    "Bash: Run the tests\nbun test",
+  );
   expect(log.textContent).not.toContain("resource_link");
   expect(log.textContent).toContain("@src/a.ts");
 });
@@ -762,7 +766,7 @@ test("a finished call leads with what kind it was; one at work, waiting, failed 
   expect(kindOf(lead("p"))).toBeUndefined();
 });
 
-test("a command that only searches, reads or lists says so; with the agent's sentence, it is as it was", async () => {
+test("a command that only searches, reads or lists says so; with the agent's sentence, that sentence is the line", async () => {
   const { log } = await open(
     you("u1"),
     say("m1"),
@@ -779,7 +783,7 @@ test("a command that only searches, reads or lists says so; with the agent's sen
     "search",
   );
   const described = screen.getByRole("button", { name: /Look at the config/ });
-  expect(described.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("cat a.ts");
+  expect(described.textContent).not.toContain("cat a.ts");
   // Described, it stays a command: in its mark too.
   expect(described.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind")).toBe(
     "run",
