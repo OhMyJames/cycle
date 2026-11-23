@@ -55,6 +55,9 @@ export function WorkBlock({ tools, live }: { tools: readonly ToolItem[]; live: b
 function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }) {
   const { t, list, locale } = useI18n();
   const failed = tools.filter((tool) => tool.status === "failed").length;
+  // A stretch of one kind of call is marked as that kind once done; a mixed one has no single kind, and a dot.
+  const kinds = activityCounts(tools);
+  const oneKind = kinds.length === 1 ? kinds[0]?.activity : undefined;
   const going = live ? tools.findLast(isLive) : undefined;
   const goingDescription = going !== undefined ? toolDescription(going) : undefined;
   const goingDetail =
@@ -91,7 +94,10 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       onOpenChange={setOpen}
     >
       <CollapsibleTrigger>
-        <Lead mark={going !== undefined ? "going" : failed > 0 ? "failed" : "other"} />{" "}
+        <Lead
+          mark={going !== undefined ? "going" : failed > 0 ? "failed" : "other"}
+          kind={oneKind}
+        />{" "}
         <span data-slot="tool-verb">{summary}</span>{" "}
         {/* While one goes, the line says which, in its tense: that is also what a screen reader is told. */}
         <span

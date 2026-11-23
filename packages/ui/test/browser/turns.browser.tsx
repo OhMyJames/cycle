@@ -694,6 +694,28 @@ test("a call at work shows on its row how long it has been going, from when the 
   );
 });
 
+test("a finished call leads with what kind it was; one at work or failed with its state", async () => {
+  const { log } = await open(
+    you("u1"),
+    say("m1"),
+    ...finished("r", "Read", { file_path: "a.ts" }, {}),
+    say("m2"),
+    ...tool("x", "Bash", "failed", { command: "make" }),
+    say("m3"),
+    ...tool("g", "Bash", "in_progress", { command: "make" }),
+  );
+  const lead = (id: string) =>
+    log.querySelector(`[data-item-id="${id}"] [data-slot="tool-lead"]`) as HTMLElement;
+  await waitFor(() =>
+    expect(lead("r").querySelector('[data-slot="tool-kind"]')?.getAttribute("data-activity")).toBe(
+      "read",
+    ),
+  );
+  expect(lead("x").querySelector('[data-slot="tool-kind"]')).toBeNull();
+  expect(lead("x").querySelector('[data-tone="danger"]')).not.toBeNull();
+  expect(lead("g").querySelector('[data-slot="spinner"]')).not.toBeNull();
+});
+
 test("a command's output is drawn in its colours and copied without them; its head says how it ended", async () => {
   const printed = "\x1b[32m✓ 12 passed\x1b[0m\n\x1b[1;31m✗ 1 failed\x1b[0m\x1b[2K";
   const { user, log, script } = await open(

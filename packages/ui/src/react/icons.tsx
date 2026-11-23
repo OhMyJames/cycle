@@ -351,3 +351,37 @@ export const TerminalIcon = ({ size = 16, ...rest }: IconProps) => (
     </g>
   </Svg>
 );
+
+/** iconmcp: pencil */
+export const PencilIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <path d="M10.75 2.75 L13.25 5.25 L5.75 12.75 L2.75 13.25 L3.25 10.25 Z" />
+      <path d="M9.25 4.25 L11.75 6.75" />
+    </g>
+  </Svg>
+);
+
+/** iconmcp: globe */
+export const GlobeIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <circle cx="8" cy="8" r="5.75" />
+      <path d="M2.25 8 H13.75" />
+      <path d="M8 2.25 C9.6 3.9 10.4 5.9 10.4 8 C10.4 10.1 9.6 12.1 8 13.75 C6.4 12.1 5.6 10.1 5.6 8 C5.6 5.9 6.4 3.9 8 2.25 Z" />
+    </g>
+  </Svg>
+);
+
+/** iconmcp's grid: agent (a small bot: a head with two eyes and an antenna) */
+export const AgentIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <rect x="2.75" y="5.25" width="10.5" height="8" rx="2" />
+      <path d="M8 5.25 V2.75" />
+      <circle cx="8" cy="2.25" r="0.5" />
+      <path d="M6 9 V9.5" />
+      <path d="M10 9 V9.5" />
+    </g>
+  </Svg>
+);
