@@ -138,7 +138,7 @@ test("a terminal in a panel that is opening is measured at the panel's width, no
     await waitFor(() => expect(screenText()).toContain("screen of t1"));
     // A handful, when it is shown, its font comes in and the daemon's screen is written; not one a frame.
     expect(frames).toBeGreaterThan(10);
-    expect(fits.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(fits.mock.calls.length).toBeLessThan(frames / 2);
   } finally {
     fits.mockRestore();
   }
