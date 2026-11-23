@@ -34,3 +34,11 @@ test("Claude's settings list every mode and effort level the adapter takes, and 
   // The model is any name Claude knows, not only the ones offered.
   expect((model as { _meta?: Record<string, unknown> })._meta?.[META.open]).toBe(true);
 });
+
+test("sub-agents' progress summaries are on unless the configuration turns them off (CYCL-49)", () => {
+  expect(ConfigSchema.parse({}).claude.progressSummaries).toBe(true);
+  expect(ConfigSchema.parse({ claude: {} }).claude.progressSummaries).toBe(true);
+  expect(
+    ConfigSchema.parse({ claude: { progressSummaries: false } }).claude.progressSummaries,
+  ).toBe(false);
+});
