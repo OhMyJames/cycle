@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,10 +17,12 @@ import {
 import {
   app,
   BrowserWindow,
+  ClipboardItem,
   clipboard,
   dialog,
   ipcMain,
   Notification,
+  nativeImage,
   nativeTheme,
   screen,
   session,
@@ -30,6 +33,7 @@ import { Account, type AccountStore } from "./account.ts";
 import { type AnalyticsControl, offAnalytics } from "./analytics.ts";
 import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
+import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
 import { fileSettings } from "./settings.ts";
@@ -302,6 +306,48 @@ export const startApp = async (options: AppOptions) => {
       if (typeof text !== "string" || text.length > MAX_COPY) return false;
       clipboard.writeText(text);
       return true;
+    },
+    // A picture the page shows (CYCL-212), checked to be one before it goes anywhere (image-out.ts).
+    // The clipboard takes a PNG: a JPEG is made one here, from what was checked to be a JPEG.
+    copyImage: async (type: unknown, data: unknown) => {
+      const image = imageBytes(type, data);
+      if (image === undefined || !isClipboardType(image.type)) return false;
+      let png = image.bytes;
+      if (image.type === "image/jpeg") {
+        const picture = nativeImage.createFromBuffer(Buffer.from(image.bytes));
+        if (picture.isEmpty()) return false;
+        png = new Uint8Array(picture.toPNG());
+      }
+      try {
+        await clipboard.write([
+          new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) }),
+        ]);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    // Written only to the file the person picked in the system's dialog: the page names no path.
+    saveImage: async (name: unknown, type: unknown, data: unknown) => {
+      const image = imageBytes(type, data);
+      if (image === undefined) return "failed";
+      const ext = extensionOf(image.type);
+      const options = {
+        defaultPath: join(app.getPath("downloads"), imageFileName(name, image.type)),
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      };
+      const chosen =
+        window !== undefined && !window.isDestroyed()
+          ? await dialog.showSaveDialog(window, options)
+          : await dialog.showSaveDialog(options);
+      if (chosen.canceled || chosen.filePath === undefined || chosen.filePath === "")
+        return "cancelled";
+      try {
+        await writeFile(chosen.filePath, image.bytes);
+        return "saved";
+      } catch {
+        return "failed";
+      }
     },
   };
 

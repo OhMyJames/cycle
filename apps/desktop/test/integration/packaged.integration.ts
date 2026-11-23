@@ -136,6 +136,8 @@ test.skipIf(!ready)(
           "closeTerminal",
           "connect",
           "copyText",
+          "copyImage",
+          "saveImage",
           "createSession",
           "createTerminal",
           "deleteSession",

@@ -79,6 +79,15 @@ export const PlusIcon = ({ size = 16, ...rest }: IconProps) => (
   </Svg>
 );
 
+/** iconmcp: minus */
+export const MinusIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <line x1="2.75" y1="8" x2="13.25" y2="8" />
+    </g>
+  </Svg>
+);
+
 /** iconmcp: more-horizontal */
 export const MoreIcon = ({ size = 16, ...rest }: IconProps) => (
   <Svg size={size} {...rest}>

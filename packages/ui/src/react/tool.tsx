@@ -387,7 +387,12 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
         {streams.err !== "" ? <Copyable kind="stderr" text={streams.err} failed={failed} /> : null}
         {facts.links.length > 0 ? <LinkList links={facts.links} /> : null}
         {facts.images.map((image) => (
-          <ImageBlockView key={image.key} block={image.block} from="agent" />
+          <ImageBlockView
+            key={image.key}
+            block={image.block}
+            from="agent"
+            set={facts.images.map((each) => each.block)}
+          />
         ))}
       </CollapsiblePanel>
     </Collapsible>

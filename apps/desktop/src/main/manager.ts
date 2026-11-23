@@ -263,6 +263,8 @@ export class ConnectionManager
       AppApi,
       | "chooseDirectory"
       | "copyText"
+      | "copyImage"
+      | "saveImage"
       | "updateState"
       | "checkForUpdate"
       | "installUpdate"
