@@ -661,3 +661,251 @@ describe("session resume and id association (CYCL-173)", () => {
     }
   });
 });
+
+describe("configuration options: mode, model, effort (CYCL-174)", () => {
+  test("setConfigOption maps mode/model/effort, handles mode fallback, and resets unsupported effort on model switch", async () => {
+    let currentModel = "gemini-4-neon";
+    let currentThought = "high";
+    let currentMode = "default";
+
+    const buildV1Config = () => {
+      const base = defaultSessionResponse("agy-cfg");
+      const opts = (base.configOptions ?? [])
+        .filter(
+          (o) => !(currentModel === "gemini-pro-orchestrator-neon" && o.id === "thought_level"),
+        )
+        .map((o) => {
+          if (o.id === "model") return { ...o, currentValue: currentModel };
+          if (o.id === "mode") return { ...o, currentValue: currentMode };
+          if (o.id === "thought_level") {
+            const options =
+              currentModel === "gemini-4-carbon"
+                ? (o.options ?? []).filter((c) => c.value !== "xhigh")
+                : (o.options ?? []);
+            return { ...o, currentValue: currentThought, options };
+          }
+          return o;
+        });
+      return opts;
+    };
+
+    const { config, getFake } = baseConfig((method, params, fake) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-cfg");
+      if (method === "session/set_config_option") {
+        const p = params as { sessionId: string; configId: string; value: string };
+        if (p.configId === "mode") {
+          // Simulate agy falling back `auto` -> `default` when not allowed.
+          currentMode = p.value === "auto" ? "default" : p.value;
+        } else if (p.configId === "model") {
+          currentModel = p.value;
+          currentThought = "high";
+        } else if (p.configId === "thought_level") {
+          if (currentModel === "gemini-4-carbon" && p.value === "xhigh") {
+            throw new AgyRpcError(-32602, "Unsupported thought_level xhigh");
+          }
+          currentThought = p.value;
+        }
+        return { configOptions: buildV1Config() };
+      }
+      if (method === "session/prompt") {
+        fake.emitUpdate("agy-cfg", { sessionUpdate: "current_mode_update", currentModeId: "plan" });
+        return { stopReason: "end_turn" };
+      }
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        const created = (await agent.request(methods.agent.session.new, {
+          cwd: "/tmp/work",
+        } as never)) as {
+          sessionId: string;
+          configOptions: Array<{
+            configId: string;
+            currentValue: string;
+            options: Array<{ value: string; _meta?: Record<string, unknown> }>;
+          }>;
+        };
+
+        // Initial model & effort report "default" and expose per-model META.efforts without `max`.
+        const modelOpt = created.configOptions.find((o) => o.configId === "model");
+        const effortOpt = created.configOptions.find((o) => o.configId === "effort");
+        expect(modelOpt?.currentValue).toBe("default");
+        expect(effortOpt?.currentValue).toBe("default");
+        expect(effortOpt?.options.map((o) => o.value)).toEqual([
+          "default",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+        ]);
+        expect(
+          modelOpt?.options.find((o) => o.value === "gemini-4-neon")?._meta?.[META.efforts],
+        ).toEqual(["low", "medium", "high", "xhigh"]);
+        expect(
+          modelOpt?.options.find((o) => o.value === "gemini-4-carbon")?._meta?.[META.efforts],
+        ).toEqual(["low", "medium", "high"]);
+        expect(
+          modelOpt?.options.find((o) => o.value === "gemini-pro-orchestrator-neon")?._meta?.[
+            META.efforts
+          ],
+        ).toEqual([]);
+
+        // Mode fallback: requesting `auto` when agy falls back returns actual `default`.
+        const afterAuto = (await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "mode",
+          type: "id",
+          value: "auto",
+        } as never)) as { configOptions: Array<{ configId: string; currentValue: string }> };
+        expect(afterAuto.configOptions.find((o) => o.configId === "mode")?.currentValue).toBe(
+          "default",
+        );
+
+        // Set plan mode + explicit xhigh effort.
+        const afterPlan = (await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "mode",
+          type: "id",
+          value: "plan",
+        } as never)) as { configOptions: Array<{ configId: string; currentValue: string }> };
+        expect(afterPlan.configOptions.find((o) => o.configId === "mode")?.currentValue).toBe(
+          "plan",
+        );
+
+        const afterXhigh = (await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "effort",
+          type: "id",
+          value: "xhigh",
+        } as never)) as { configOptions: Array<{ configId: string; currentValue: string }> };
+        expect(afterXhigh.configOptions.find((o) => o.configId === "effort")?.currentValue).toBe(
+          "xhigh",
+        );
+
+        // Switching to gemini-4-carbon (no xhigh) resets effort to default.
+        const afterCarbon = (await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "model",
+          type: "id",
+          value: "gemini-4-carbon",
+        } as never)) as {
+          configOptions: Array<{
+            configId: string;
+            currentValue: string;
+            options: Array<{ value: string }>;
+          }>;
+        };
+        expect(afterCarbon.configOptions.find((o) => o.configId === "model")?.currentValue).toBe(
+          "gemini-4-carbon",
+        );
+        expect(afterCarbon.configOptions.find((o) => o.configId === "effort")?.currentValue).toBe(
+          "default",
+        );
+        expect(
+          afterCarbon.configOptions
+            .find((o) => o.configId === "effort")
+            ?.options.map((o) => o.value),
+        ).toEqual(["default", "low", "medium", "high"]);
+
+        // Switching to Orchestrator removes effort options and rejects explicit effort with -32602.
+        const afterOrch = (await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "model",
+          type: "id",
+          value: "gemini-pro-orchestrator-neon",
+        } as never)) as {
+          configOptions: Array<{
+            configId: string;
+            currentValue: string;
+            options: Array<{ value: string }>;
+          }>;
+        };
+        expect(
+          afterOrch.configOptions.find((o) => o.configId === "effort")?.options.map((o) => o.value),
+        ).toEqual(["default"]);
+
+        let effortErr: unknown;
+        try {
+          await agent.request(methods.agent.session.setConfigOption, {
+            sessionId: "agy-cfg",
+            configId: "effort",
+            type: "id",
+            value: "high",
+          } as never);
+        } catch (error) {
+          effortErr = error;
+        }
+        expect((effortErr as { code?: number })?.code).toBe(-32602);
+
+        // Setting model back to "default" calls v1 model with initial defaultModel and reports "default".
+        const backDefault = (await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "model",
+          type: "id",
+          value: "default",
+        } as never)) as { configOptions: Array<{ configId: string; currentValue: string }> };
+        expect(backDefault.configOptions.find((o) => o.configId === "model")?.currentValue).toBe(
+          "default",
+        );
+        expect(
+          getFake()
+            .requests.filter((r) => r.method === "session/set_config_option")
+            .at(-1)?.params,
+        ).toEqual({
+          sessionId: "agy-cfg",
+          configId: "model",
+          value: "gemini-4-neon",
+        });
+
+        // Unknown configId rejected with -32602.
+        let unknownErr: unknown;
+        try {
+          await agent.request(methods.agent.session.setConfigOption, {
+            sessionId: "agy-cfg",
+            configId: "nonexistent",
+            type: "id",
+            value: "foo",
+          } as never);
+        } catch (error) {
+          unknownErr = error;
+        }
+        expect((unknownErr as { code?: number })?.code).toBe(-32602);
+
+        // Unsolicited current_mode_update from agy translates into v2 config_option_update.
+        const beforeCount = updates.length;
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-cfg",
+          prompt: [{ type: "text", text: "trigger mode update" }],
+        } as never);
+        await waitFor(() =>
+          updates
+            .slice(beforeCount)
+            .some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+        const modeNotif = updates
+          .slice(beforeCount)
+          .find((u) => u.sessionUpdate === "config_option_update") as
+          | { configOptions?: Array<{ configId: string; currentValue: string }> }
+          | undefined;
+        expect(modeNotif?.configOptions?.find((o) => o.configId === "mode")?.currentValue).toBe(
+          "plan",
+        );
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+});

@@ -317,4 +317,130 @@ describe("agy daemon harness", () => {
     });
     expect(seenPrompts.at(-1)).toBe("agy-native-3");
   });
+
+  test("daemon caches agy model choices with efforts and reapplies mode/model/effort on restart (CYCL-174)", async () => {
+    const dataDir = makeTemp("cycle-agy-cfg-data-");
+    const workDir = makeTemp("cycle-agy-cfg-work-");
+    const appliedSets: Array<{ configId: string; value: string }> = [];
+
+    const makeDef = (): AgentDefinition => ({
+      id: "agy",
+      name: "Antigravity",
+      available: () => true,
+      configSchema: AGY_CONFIG_SCHEMA,
+      promptCapabilities: AGY_PROMPT_CAPABILITIES,
+      steer: true,
+      launch: async () => {
+        let model = "gemini-4-neon";
+        let mode = "default";
+        let thought = "high";
+        const currentV1 = () =>
+          (defaultSessionResponse("agy-cfg-1").configOptions ?? []).map((o) => {
+            if (o.id === "model") return { ...o, currentValue: model };
+            if (o.id === "mode") return { ...o, currentValue: mode };
+            if (o.id === "thought_level") return { ...o, currentValue: thought };
+            return o;
+          });
+        const handler: FakeRequestHandler = (method, params) => {
+          if (method === "initialize") return defaultInitResult("1.5.15");
+          if (method === "session/new") return defaultSessionResponse("agy-cfg-1");
+          if (method === "session/resume") {
+            // agy resets mode/model/thought_level to defaults on restart.
+            model = "gemini-4-neon";
+            mode = "default";
+            thought = "high";
+            const { sessionId: _omit, ...rest } = defaultSessionResponse("agy-cfg-1");
+            return rest;
+          }
+          if (method === "session/set_config_option") {
+            const p = params as { configId: string; value: string };
+            appliedSets.push({ configId: p.configId, value: p.value });
+            if (p.configId === "model") model = p.value;
+            if (p.configId === "mode") mode = p.value;
+            if (p.configId === "thought_level") thought = p.value;
+            return { configOptions: currentV1() };
+          }
+          if (method === "session/prompt") return { stopReason: "end_turn" };
+          return {};
+        };
+        const adapter = createAdapter({
+          env: { HOME: join(dataDir, "agy") },
+          agyExecutable: "/fake/agy",
+          connect: (handlers) => new FakeV1Agent(handlers, handler),
+        });
+        return { target: adapter.app, kill: () => adapter.close() };
+      },
+    });
+
+    const withDaemon = async <T>(
+      fn: (agent: ReturnType<ReturnType<typeof client>["connect"]>["agent"]) => Promise<T>,
+    ) => {
+      const daemon = await Daemon.start({ dataDir, agents: [makeDef()] });
+      const c2s = new TransformStream<Uint8Array, Uint8Array>();
+      const s2c = new TransformStream<Uint8Array, Uint8Array>();
+      const serverConn = daemon.accept(ndJsonStream(s2c.writable, c2s.readable));
+      const clientConn = client().connect(ndJsonStream(c2s.writable, s2c.readable));
+      try {
+        await clientConn.agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        return await fn(clientConn.agent);
+      } finally {
+        clientConn.close();
+        serverConn.close();
+        await daemon.close();
+      }
+    };
+
+    const sessionId = await withDaemon(async (agent) => {
+      const created = (await agent.request(methods.agent.session.new, {
+        cwd: workDir,
+        _meta: {
+          [META.agent]: "agy",
+          [META.config]: { mode: "plan", model: "gemini-4-carbon", effort: "medium" },
+        },
+      } as never)) as { sessionId: string };
+      // Check that `_cycle/agents/list` picked up live models + META.efforts into the cache.
+      const listed = (await agent.request(agentsList.name as never, {} as never)) as {
+        agents: Array<{
+          id: string;
+          configSchema: {
+            properties: {
+              model: {
+                oneOf: Array<{ const: string; _meta?: Record<string, unknown> }>;
+              };
+            };
+          };
+        }>;
+      };
+      const agy = listed.agents.find((a) => a.id === "agy");
+      const neon = agy?.configSchema.properties.model.oneOf.find(
+        (c) => c.const === "gemini-4-neon",
+      );
+      expect(neon?._meta?.[META.efforts]).toEqual(["low", "medium", "high", "xhigh"]);
+      await agent.request(methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: "text", text: "turn 1" }],
+      } as never);
+      await Bun.sleep(30);
+      return created.sessionId;
+    });
+
+    appliedSets.length = 0;
+
+    // Restart daemon and send another prompt: saved mode/model/effort must be re-applied!
+    await withDaemon(async (agent) => {
+      await agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "turn 2" }],
+      } as never);
+      await Bun.sleep(30);
+    });
+
+    expect(appliedSets).toContainEqual({ configId: "mode", value: "plan" });
+    expect(appliedSets).toContainEqual({ configId: "model", value: "gemini-4-carbon" });
+    expect(appliedSets).toContainEqual({ configId: "thought_level", value: "medium" });
+  });
 });

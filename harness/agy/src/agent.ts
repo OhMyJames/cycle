@@ -43,8 +43,21 @@ type SessionState = {
   availableModels: V1ModelInfo[];
   v1ConfigOptions: V1ConfigOption[];
   lastCommandsJson?: string | undefined;
+  defaultModel?: string | undefined;
+  defaultEffort?: string | undefined;
+  requestedModel?: string | undefined;
   requestedEffort?: string | undefined;
 };
+
+const currentOption = (opts: readonly V1ConfigOption[], id: string): V1ConfigOption | undefined =>
+  opts.find((o) => o.id === id || o.category === id);
+
+const sessionConfigOptions = (session: SessionState): SessionConfigOption[] =>
+  toV2ConfigOptions(session.v1ConfigOptions, session.availableModels, {
+    defaultModel: session.defaultModel,
+    requestedModel: session.requestedModel,
+    requestedEffort: session.requestedEffort,
+  });
 
 const toRequestError = (error: unknown): RequestError => {
   if (error instanceof RequestError) return error;
@@ -174,14 +187,17 @@ export function createAdapter(config: AdapterConfig) {
 
     if (update.sessionUpdate === "config_option_update") {
       session.v1ConfigOptions = update.configOptions as V1ConfigOption[];
-      const v2Opts = toV2ConfigOptions(
-        session.v1ConfigOptions,
-        session.availableModels,
-        session.requestedEffort,
-      );
+      const thought = currentOption(session.v1ConfigOptions, "thought_level");
+      if (
+        session.requestedEffort !== undefined &&
+        session.requestedEffort !== "default" &&
+        !(thought?.options ?? []).some((o) => o.value === session.requestedEffort)
+      ) {
+        session.requestedEffort = "default";
+      }
       emitUpdate(session, {
         sessionUpdate: "config_option_update",
-        configOptions: v2Opts,
+        configOptions: sessionConfigOptions(session),
       } as SessionUpdate);
       return;
     }
@@ -194,11 +210,7 @@ export function createAdapter(config: AdapterConfig) {
         );
         emitUpdate(session, {
           sessionUpdate: "config_option_update",
-          configOptions: toV2ConfigOptions(
-            session.v1ConfigOptions,
-            session.availableModels,
-            session.requestedEffort,
-          ),
+          configOptions: sessionConfigOptions(session),
         } as SessionUpdate);
       }
       return;
@@ -356,18 +368,18 @@ export function createAdapter(config: AdapterConfig) {
         throw toRequestError(error);
       }
 
+      const v1Opts = created.configOptions ?? [];
       const state: SessionState = {
         id: created.sessionId,
         cwd: params.cwd,
         owner: client,
         availableModels: created.models?.availableModels ?? [],
-        v1ConfigOptions: created.configOptions ?? [],
+        v1ConfigOptions: v1Opts,
+        defaultModel: currentOption(v1Opts, "model")?.currentValue,
+        defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
       };
       sessions.set(state.id, state);
-      const configOptions: SessionConfigOption[] = toV2ConfigOptions(
-        state.v1ConfigOptions,
-        state.availableModels,
-      );
+      const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
       return {
         sessionId: state.id,
         configOptions,
@@ -416,12 +428,15 @@ export function createAdapter(config: AdapterConfig) {
         }
       }
 
+      const v1Opts = response.configOptions ?? [];
       const state: SessionState = {
         id: resolvedId,
         cwd: params.cwd,
         owner: client,
         availableModels: response.models?.availableModels ?? [],
-        v1ConfigOptions: response.configOptions ?? [],
+        v1ConfigOptions: v1Opts,
+        defaultModel: currentOption(v1Opts, "model")?.currentValue,
+        defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
       };
       sessions.set(state.id, state);
 
@@ -431,16 +446,100 @@ export function createAdapter(config: AdapterConfig) {
         update: { sessionUpdate: "state_update", state: "idle" } as SessionUpdate,
       });
 
-      const configOptions: SessionConfigOption[] = toV2ConfigOptions(
-        state.v1ConfigOptions,
-        state.availableModels,
-      );
+      const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
       return {
         configOptions,
         ...(resolvedId !== params.sessionId
           ? { _meta: { [META.agentSessionId]: resolvedId } }
           : {}),
       } as never;
+    })
+    .onRequest(methods.agent.session.setConfigOption, async ({ params }) => {
+      const session = sessions.get(params.sessionId);
+      if (!session) throw new RequestError(-32002, `Unknown session: ${params.sessionId}`);
+      if (params.type !== "id" || typeof params.value !== "string") {
+        throw new RequestError(-32602, "Expected a string option ID");
+      }
+      const { conn } = await ensureTransport().catch((error) => {
+        throw toRequestError(error);
+      });
+
+      const applyV1 = async (configId: string, value: string) => {
+        try {
+          const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
+            "session/set_config_option",
+            {
+              sessionId: session.id,
+              configId,
+              value,
+            },
+          );
+          if (Array.isArray(res?.configOptions)) {
+            session.v1ConfigOptions = res.configOptions;
+          }
+        } catch (error) {
+          throw toRequestError(error);
+        }
+      };
+
+      if (params.configId === "mode") {
+        await applyV1("mode", params.value);
+      } else if (params.configId === "model") {
+        if (params.value === "default") {
+          session.requestedModel = "default";
+          const currentModel = currentOption(session.v1ConfigOptions, "model")?.currentValue;
+          if (session.defaultModel !== undefined && currentModel !== session.defaultModel) {
+            await applyV1("model", session.defaultModel);
+          }
+        } else {
+          await applyV1("model", params.value);
+          session.requestedModel = params.value;
+        }
+        // Keep requested effort only if the newly selected model supports it; otherwise reset to default.
+        const thought = currentOption(session.v1ConfigOptions, "thought_level");
+        const supportedEfforts = (thought?.options ?? []).map((o) => o.value);
+        if (session.requestedEffort !== undefined && session.requestedEffort !== "default") {
+          if (!supportedEfforts.includes(session.requestedEffort)) {
+            session.requestedEffort = "default";
+          } else if (thought?.currentValue !== session.requestedEffort) {
+            try {
+              await applyV1("thought_level", session.requestedEffort);
+            } catch {
+              session.requestedEffort = "default";
+            }
+          }
+        }
+      } else if (params.configId === "effort") {
+        const thought = currentOption(session.v1ConfigOptions, "thought_level");
+        if (params.value === "default") {
+          session.requestedEffort = "default";
+          if (
+            thought !== undefined &&
+            session.defaultEffort !== undefined &&
+            thought.currentValue !== session.defaultEffort &&
+            (thought.options ?? []).some((o) => o.value === session.defaultEffort)
+          ) {
+            await applyV1("thought_level", session.defaultEffort).catch(() => undefined);
+          }
+        } else {
+          if (!thought || (thought.options ?? []).length === 0) {
+            throw new RequestError(-32602, "Current model does not support effort levels");
+          }
+          await applyV1("thought_level", params.value);
+          session.requestedEffort = params.value;
+        }
+      } else if (currentOption(session.v1ConfigOptions, params.configId) !== undefined) {
+        await applyV1(params.configId, params.value);
+      } else {
+        throw new RequestError(-32602, `Unknown agy setting: ${params.configId}`);
+      }
+
+      const configOptions = sessionConfigOptions(session);
+      emitUpdate(session, {
+        sessionUpdate: "config_option_update",
+        configOptions,
+      } as SessionUpdate);
+      return { configOptions } as never;
     })
     .onRequest(methods.agent.session.prompt, async ({ params }) => {
       const session = sessions.get(params.sessionId);

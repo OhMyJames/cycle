@@ -90,11 +90,17 @@ export const modelEffortsFromCatalog = (
   return result;
 };
 
+export type ConfigSelectionState = {
+  defaultModel?: string | undefined;
+  requestedModel?: string | undefined;
+  requestedEffort?: string | undefined;
+};
+
 /** Translate agy ACP v1 `configOptions` (where effort is `thought_level`) into Cycle ACP v2 `SessionConfigOption[]`. */
 export const toV2ConfigOptions = (
   v1Options: readonly V1ConfigOption[] | undefined,
   availableModels: readonly V1ModelInfo[] = [],
-  requestedEffort?: string,
+  selection?: ConfigSelectionState,
 ): SessionConfigOption[] => {
   const opts = v1Options ?? [];
   const modelOpt = opts.find((o) => o.id === "model" || o.category === "model");
@@ -103,10 +109,11 @@ export const toV2ConfigOptions = (
 
   const baseModels = (modelOpt?.options ?? []).map((o) => o.value);
   const effortsByModel = modelEffortsFromCatalog(baseModels, availableModels);
-  if (modelOpt && thoughtOpt?.options) {
+  if (modelOpt) {
+    // Live `thought_level` options (or absence thereof) are authoritative for the currently active model.
     effortsByModel.set(
       modelOpt.currentValue,
-      thoughtOpt.options.map((o) => o.value),
+      (thoughtOpt?.options ?? []).map((o) => o.value),
     );
   }
 
@@ -128,12 +135,16 @@ export const toV2ConfigOptions = (
   }
 
   if (modelOpt) {
-    const defaultEfforts = effortsByModel.get(modelOpt.currentValue);
+    const defaultModel = selection?.defaultModel ?? modelOpt.currentValue;
+    const defaultEfforts = effortsByModel.get(defaultModel);
+    const isDefaultModelSelected =
+      (selection?.requestedModel === undefined || selection.requestedModel === "default") &&
+      modelOpt.currentValue === defaultModel;
     out.push({
       configId: "model",
       name: "Model",
       type: "select",
-      currentValue: modelOpt.currentValue,
+      currentValue: isDefaultModelSelected ? "default" : modelOpt.currentValue,
       options: [
         {
           value: "default",
@@ -160,7 +171,7 @@ export const toV2ConfigOptions = (
   const currentEffortValue =
     currentEfforts.length === 0
       ? "default"
-      : requestedEffort === "default"
+      : selection?.requestedEffort === undefined || selection.requestedEffort === "default"
         ? "default"
         : (thoughtOpt?.currentValue ?? "default");
   out.push({
