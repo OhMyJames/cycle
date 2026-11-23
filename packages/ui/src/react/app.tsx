@@ -795,6 +795,7 @@ function AppWindow() {
     <SessionNotices
       environmentId={selectedEnvironment}
       shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
+      errors={!pageOpen}
     />
   );
 

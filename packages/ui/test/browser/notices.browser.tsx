@@ -164,4 +164,19 @@ test("a daemon on another protocol is not said to be connecting: that would not 
     incompatible: { with: "daemon", supported: ["0.2"], requested: "1.0" },
   });
   expect(lines().some((l) => /Connecting to/.test(l.textContent ?? ""))).toBe(false);
+  // Still said to be away, with nothing to press.
+  const away = lines().find((l) => /is not connected/.test(l.textContent ?? ""));
+  expect(away).toBeDefined();
+  expect(within(away as HTMLElement).queryByRole("button")).toBeNull();
+});
+
+test("why an environment is not connected is said on its line", async () => {
+  const { emit } = await mount();
+  await emit({
+    type: "environment-status",
+    environmentId: "local",
+    state: "closed",
+    error: "ssh: connect to host build-1 port 22: Connection refused",
+  });
+  expect(lines()[0]?.textContent).toMatch(/is not connected: ssh: connect to host build-1/);
 });

@@ -16,6 +16,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   "session.away": "{environment} · {state}",
   "notice.connecting": "正在连接 {environment}…",
+  "session.awayBecause": "{environment} 未连接：{reason}",
   "session.awayBanner": "{environment} 未连接。这是它断开时会话的样子。",
   "defaults.reading": "正在读取默认设置…",
   "defaults.unreadable": "读不出这个 agent 已保存的设置，所以没有显示。",

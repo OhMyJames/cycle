@@ -69,6 +69,7 @@ export const errorText = (
 export function SessionNotices({
   environmentId,
   shows,
+  errors = true,
 }: {
   /** The environment of what the page shows. */
   environmentId: string | undefined;
@@ -77,6 +78,8 @@ export function SessionNotices({
    * nothing open, the page itself says how the environment's connection stands, and the line does not say it again.
    */
   shows: "session" | "blank" | "nothing";
+  /** Whether what failed is said here; not while a page over the app says it itself. */
+  errors?: boolean;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -87,11 +90,13 @@ export function SessionNotices({
   const name = useAppState(
     (s) => s.environments.find((e) => e.id === environmentId)?.name ?? environmentId ?? "",
   );
-  const state = status?.state;
+  // An environment with no status yet is not connected, as the sidebar has it.
+  const state = status?.state ?? "closed";
+  const reason = status?.error;
   // A daemon that speaks another protocol says so itself, and connecting again would not change it.
   const incompatible = status?.incompatible !== undefined;
   const lines: ReactNode[] = [];
-  if (error !== undefined)
+  if (errors && error !== undefined)
     lines.push(
       <NoticeLine
         key="error"
@@ -122,13 +127,21 @@ export function SessionNotices({
         text={t("notice.connecting", { environment: name })}
       />,
     );
-  else if (open && state === "closed" && environmentId !== undefined)
+  else if (
+    open &&
+    environmentId !== undefined &&
+    (state === "closed" || (incompatible && state !== "connected"))
+  )
     lines.push(
       <NoticeLine
         key="environment"
         tone="warning"
         icon={<WarningIcon />}
-        text={t("session.awayBanner", { environment: name })}
+        text={
+          reason !== undefined
+            ? t("session.awayBecause", { environment: name, reason })
+            : t("session.awayBanner", { environment: name })
+        }
         action={
           incompatible
             ? undefined

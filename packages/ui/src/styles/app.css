@@ -529,6 +529,7 @@ summary:focus-visible {
     [data-slot="plan-now"],
     [data-slot="blank-folder-name"],
     [data-slot="blank-recent-name"],
+    [data-slot="notice-text"],
     [data-kind="session-title"]
   ) {
     animation: cycle-fade linear both !important;
@@ -573,6 +574,7 @@ summary:focus-visible {
   [data-slot="plan-now"],
   [data-slot="blank-folder-name"],
   [data-slot="blank-recent-name"],
+  [data-slot="notice-text"],
   [data-kind="session-title"]
 ) {
   overflow: hidden;
@@ -2398,7 +2400,6 @@ html[data-platform="darwin"]
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  mask-image: var(--cycle-fade-end);
   user-select: text;
 }
 
