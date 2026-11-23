@@ -1,8 +1,9 @@
 # Agent Note: Claude 的 config.json 在界面里只显示状态,修改留在 daemon 所在的机器上
 
-Status: accepted
+Status: superseded
 Date: 2026-11-22
 Basis: CYCL-80(研究项:"不上线路的前提下,怎么在界面里配置 Claude 的 config.json";"评估:只在 daemon 本机设置、只显示状态不显示值、或经本地文件的引导";"产物为决定,不排远程编辑实现")。依据的是 2026-11-22 读到的代码:`apps/daemon/src/config.ts`(格式和读取)、`apps/daemon/src/claude-agent.ts` 的 `claudeEnv`、`apps/daemon/src/main.ts` 的 `login` 和 `claude` 子命令,以及 `docs/daemon.md`"配置"。负责人 2026-11-22 在对话里看过结论后答复"接受"。没有做任何实现或实测。
+Superseded by: [Settings 中以 Harness 分组承载多 agent 订阅账号登录、用量与热生效运行时配置](2026-11-23-harness-settings-account-login-and-runtime-config.md)
 
 ## Problem
 
