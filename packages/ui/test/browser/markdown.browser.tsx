@@ -234,3 +234,22 @@ test("a finished reply is drawn as written: an unclosed mark is not completed", 
   expect(c.querySelector('[data-streamdown="strong"]')).toBeNull();
   expect(c.textContent).toContain("**note");
 });
+
+test("a reply's blocks are 12px apart whatever they are, paragraphs and code alike, and take no margin of their own", async () => {
+  const c = render(
+    <div data-slot="message" data-role="agent">
+      <Markdown text={"First.\n\nSecond.\n\n```\nplain\n```\n\nThird."} />
+    </div>,
+  ).container;
+  const root = c.querySelector<HTMLElement>("[data-markdown]");
+  expect(root).not.toBeNull();
+  expect(getComputedStyle(root as HTMLElement).rowGap).toBe("12px");
+  await waitFor(() => expect(c.textContent).toContain("plain"));
+  const [first, second, third] = [...c.querySelectorAll("p")];
+  for (const block of [first, second, third, ...(root?.children ?? [])])
+    expect(getComputedStyle(block as Element).marginBlockStart).toBe("0px");
+  const gap =
+    (second as HTMLElement).getBoundingClientRect().top -
+    (first as HTMLElement).getBoundingClientRect().bottom;
+  expect(gap).toBe(12);
+});
