@@ -3414,7 +3414,9 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   font-size: var(--cycle-text-meta);
 }
 
-[data-slot="step-elapsed"] {
+/* How long a call has been at work, on its row as on the step line: quiet, in figures that do not jitter. */
+[data-slot="step-elapsed"],
+[data-slot="tool-elapsed"] {
   flex: none;
   font-family: var(--ui-font-mono);
   font-size: var(--cycle-text-meta);

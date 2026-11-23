@@ -2,10 +2,11 @@
 // Visual layout inspired by Rare UI's Inline AI Status (https://www.rareui.com/components/aistatus);
 // clean-room Cycle implementation using Cycle v2 tokens, iconmcp icons, and compositor-only reduced-motion discipline.
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { Translator } from "../i18n.ts";
 import { useI18n } from "./i18n.tsx";
 import { SearchIcon, ThoughtIcon, WarningIcon } from "./icons.tsx";
+import { useNowSeconds } from "./now.ts";
 
 export type InlineAiStatusKind = "thinking" | "working" | "approval" | "tool";
 
@@ -15,8 +16,8 @@ export type InlineAiStatusProps = {
   activity?: string | undefined;
   /** Localized status text. */
   label: string;
-  /** Stable key for the current step/tool so the elapsed counter resets cleanly on change. */
-  stepKey: string;
+  /** When the current step started (epoch ms, `startedAt`): the elapsed counter counts from it. */
+  since: number;
   /** Optional live tool detail rendered beside the status label. */
   detail?: ReactNode;
   className?: string;
@@ -33,20 +34,21 @@ export const formatElapsed = (seconds: number, t: Translator["t"]): string => {
     : t("step.elapsedMinutesSeconds", { minutes, seconds: remainder });
 };
 
-function ElapsedTimer() {
+const secondsSince = (since: number): number =>
+  Math.max(0, Math.floor((Date.now() - since) / 1000));
+
+/**
+ * How long something has been at work, from `since` (epoch ms, `startedAt`): so a line drawn again goes on counting.
+ * Nothing for the first second, so quick steps stay quiet. Not for a screen reader: it would hear every tick.
+ */
+export function Elapsed({ since, slot = "step-elapsed" }: { since: number; slot?: string }) {
   const { t } = useI18n();
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const started = performance.now();
-    const id = setInterval(() => {
-      const next = Math.max(0, Math.floor((performance.now() - started) / 1000));
-      setElapsed((prev) => (prev === next ? prev : next));
-    }, 500);
-    return () => clearInterval(id);
-  }, []);
+  // Worked out as it is drawn, from the clock every count shares: a new `since` is never shown with the old count.
+  const now = Math.max(useNowSeconds(), Date.now());
+  const elapsed = Math.max(0, Math.floor((now - since) / 1000));
   if (elapsed < 1) return null;
   return (
-    <span data-slot="step-elapsed" aria-hidden="true">
+    <span data-slot={slot} aria-hidden="true">
       {formatElapsed(elapsed, t)}
     </span>
   );
@@ -75,7 +77,7 @@ export function InlineAiStatus({
   kind,
   activity,
   label,
-  stepKey,
+  since,
   detail,
   className,
 }: InlineAiStatusProps) {
@@ -114,7 +116,7 @@ export function InlineAiStatus({
         </motion.span>
         {detail}
       </div>
-      {trackTime ? <ElapsedTimer key={stepKey} /> : null}
+      {trackTime ? <Elapsed since={since} /> : null}
     </div>
   );
 }

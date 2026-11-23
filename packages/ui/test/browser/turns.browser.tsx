@@ -6,6 +6,7 @@ import type { SessionSnapshot } from "../../src/api.ts";
 import { displayMode } from "../../src/display-mode.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
+import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 
@@ -678,6 +679,19 @@ test("a command opens to itself and its output apart from its errors; a long out
     ["track", "tool_output_expanded", {}],
     ["track", "tool_copied", { part: "output" }],
   ]);
+});
+
+test("a call at work shows on its row how long it has been going, from when the page first saw it", async () => {
+  // Seen three seconds ago: a row drawn again goes on from there, not from nought.
+  startedAt("local:s1:tool:slow", Date.now() - 3_000);
+  await open(
+    you("u1"),
+    ...tool("slow", "Bash", "in_progress", { command: "make", description: "Build it" }),
+  );
+  const row = await screen.findByRole("button", { name: /Build it/ });
+  await waitFor(() =>
+    expect(row.querySelector('[data-slot="tool-elapsed"]')?.textContent).toMatch(/^[34]s$/),
+  );
 });
 
 test("a command's output is drawn in its colours and copied without them; its head says how it ended", async () => {

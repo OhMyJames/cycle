@@ -15,12 +15,15 @@ import type { Translator } from "../i18n.ts";
 import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import { activityOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
 import { reveal } from "../reveal.ts";
+import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ChevronRightIcon, CloseIcon, FileIcon } from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
+import { Elapsed } from "./inline-ai-status.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
+import { useStartScope } from "./start-scope.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /** Opens a card when the Overview asks to show one of these items, and when it mounts while that is still asked. */
@@ -236,6 +239,7 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
     filesRoot !== undefined
       ? insideFolder(where, filesRoot)
       : undefined;
+  const scope = useStartScope();
   const status = tool.status ?? "pending";
   const failed = status === "failed" || status === "cancelled";
   // The model ends a turn's calls when the turn ends (cancelled), so one that is live is going.
@@ -293,6 +297,10 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
           {summary}
         </span>{" "}
         {subagent !== undefined ? <SubagentFacts subagent={subagent} /> : <Facts facts={facts} />}{" "}
+        {/* How long it has been at work, counted from when the page first saw it: the row drawn again goes on. */}
+        {working ? (
+          <Elapsed since={startedAt(`${scope}:tool:${tool.id}`)} slot="tool-elapsed" />
+        ) : null}{" "}
         <span data-slot={failed ? "tool-status" : "visually-hidden"}>{statusWord(t, status)}</span>{" "}
         <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
       </CollapsibleTrigger>

@@ -27,7 +27,7 @@ describe("InlineAiStatus", () => {
       <InlineAiStatus
         kind="thinking"
         label="Thinking…"
-        stepKey="1:thinking"
+        since={Date.now()}
         detail={<span data-slot="step-detail">checking daemon</span>}
       />,
     );
@@ -42,7 +42,7 @@ describe("InlineAiStatus", () => {
 
   test("does not pulse or track elapsed time on approval state", () => {
     const { container } = wrap(
-      <InlineAiStatus kind="approval" label="Waiting for your answer" stepKey="1:approval" />,
+      <InlineAiStatus kind="approval" label="Waiting for your answer" since={Date.now()} />,
     );
     const step = container.querySelector('[data-slot="step"]');
     expect(step?.getAttribute("data-step")).toBe("approval");
@@ -52,43 +52,35 @@ describe("InlineAiStatus", () => {
     expect(container.querySelector('[data-slot="step-elapsed"]')).toBeNull();
   });
 
-  test("shows elapsed timer outside the live region after 1s and resets when stepKey changes", async () => {
-    const realNow = performance.now.bind(performance);
-    let offsetMs = 0;
-    performance.now = () => realNow() + offsetMs;
-    try {
-      const { container, rerender } = wrap(
-        <InlineAiStatus kind="working" label="Working…" stepKey="1:working" />,
-      );
-      // Hidden during the first second.
-      expect(container.querySelector('[data-slot="step-elapsed"]')).toBeNull();
+  test("shows elapsed time outside the live region after 1s, counted from when the step started", async () => {
+    const { container, rerender } = wrap(
+      <InlineAiStatus kind="working" label="Working…" since={Date.now()} />,
+    );
+    // Hidden during the first second.
+    expect(container.querySelector('[data-slot="step-elapsed"]')).toBeNull();
 
-      // Advance monotonic clock past 2 seconds and let the 500ms interval tick.
-      offsetMs = 2200;
-      await waitFor(
-        () => {
-          const elapsed = container.querySelector('[data-slot="step-elapsed"]');
-          expect(elapsed?.textContent).toBe("2s");
-        },
-        { timeout: 2000 },
-      );
+    // A step that started earlier (a line drawn again) goes on from where it was.
+    rerender(
+      <I18nProvider translator={translator}>
+        <InlineAiStatus kind="working" label="Working…" since={Date.now() - 2200} />
+      </I18nProvider>,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-slot="step-elapsed"]')?.textContent).toBe("2s"),
+    );
 
-      // ElapsedTimer must stay outside role="status" so ticks do not spam screen readers.
-      const status = within(container).getByRole("status");
-      const elapsed = container.querySelector('[data-slot="step-elapsed"]');
-      expect(elapsed).not.toBeNull();
-      expect(status.contains(elapsed)).toBe(false);
+    // The ticks stay outside role="status", so they do not spam screen readers.
+    const status = within(container).getByRole("status");
+    const elapsed = container.querySelector('[data-slot="step-elapsed"]');
+    expect(status.contains(elapsed)).toBe(false);
 
-      // Changing stepKey resets the elapsed counter back below 1s.
-      rerender(
-        <I18nProvider translator={translator}>
-          <InlineAiStatus kind="working" label="Working…" stepKey="2:working" />
-        </I18nProvider>,
-      );
-      expect(container.querySelector('[data-slot="step-elapsed"]')).toBeNull();
-    } finally {
-      performance.now = realNow;
-    }
+    // A new step counts from its own start.
+    rerender(
+      <I18nProvider translator={translator}>
+        <InlineAiStatus kind="working" label="Working…" since={Date.now()} />
+      </I18nProvider>,
+    );
+    expect(container.querySelector('[data-slot="step-elapsed"]')).toBeNull();
   });
 });
 

@@ -8,14 +8,18 @@ import {
   isLive,
   isSubagentCall,
   type Resend,
+  type Step,
   type StopReason,
   stepOf,
   type ToolItem,
 } from "../model/index.ts";
+import { startedAt } from "../started.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, ErrorCircleIcon, WarningIcon } from "./icons.tsx";
 import { InlineAiStatus } from "./inline-ai-status.tsx";
+import { useStartScope } from "./start-scope.ts";
+import { useSteady } from "./steady.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import {
   Lead,
@@ -229,6 +233,20 @@ function TurnAgain({ resend }: { resend: Resend }) {
   );
 }
 
+/**
+ * What a step is known by, in the session: a call by its id; anything else by its kind (and attempt) and where in the
+ * conversation it is, so the agent at work again after a call is a step of its own, counted afresh.
+ */
+const stepKeyOf = (step: Step, conversation: Conversation): string =>
+  step.kind === "tool"
+    ? `tool:${step.tool.id}`
+    : `${conversation.turns}:${conversation.items.length}:${
+        step.kind === "retrying" ? `retrying:${step.attempt ?? ""}` : step.kind
+      }`;
+
+/** A question for the person is said at once, and so is the end of the turn: nothing is held over either. */
+const urgent = (key: string): boolean => key === "" || key.endsWith(":approval");
+
 /** What the agent is doing, at the end of the turn that is going, so a hidden thought or a long tool is not a silence. */
 export function StepLine({
   conversation,
@@ -238,7 +256,13 @@ export function StepLine({
   awaitingApproval: boolean;
 }) {
   const { t } = useI18n();
-  const step = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
+  const session = useStartScope();
+  const wanted = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
+  const wantedKey = wanted === undefined ? "" : stepKeyOf(wanted, conversation);
+  // When it began, as soon as it does: a step held behind another still counts from then.
+  if (wanted !== undefined) startedAt(`${session}:${wantedKey}`);
+  // Held steady, so a run of quick calls does not flicker through their names.
+  const [step, stepKey] = useSteady(wanted, wantedKey, urgent);
   if (step === undefined) return null;
   const activity = step.kind === "tool" ? activityOf(step.tool) : undefined;
   // A sub-agent at work has its own card that says what it does: the line only says the agent waits for it.
@@ -259,21 +283,13 @@ export function StepLine({
               : activity === "other"
                 ? t("step.other", { name: toolName(t, step.tool) })
                 : t(`step.${activity}`);
-  // Each attempt is a new state: its own key, so the line says it afresh.
-  const stepKey = `${conversation.turns}:${
-    step.kind === "tool"
-      ? `tool:${step.tool.id}`
-      : step.kind === "retrying"
-        ? `retrying:${step.attempt ?? ""}`
-        : step.kind
-  }`;
   return (
     <InlineAiStatus
       // Trying again is the agent at work, said in other words: nothing here for the person to do.
       kind={step.kind === "retrying" ? "working" : step.kind}
       activity={activity}
       label={words}
-      stepKey={stepKey}
+      since={startedAt(`${session}:${stepKey}`)}
       detail={step.kind === "tool" && !subagent ? <StepDetail tool={step.tool} /> : undefined}
     />
   );
