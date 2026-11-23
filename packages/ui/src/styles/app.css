@@ -2791,12 +2791,39 @@ html[data-platform="darwin"]
   font-size: 0.93em;
 }
 
-[data-slot="message"] a [data-streamdown="inline-code"] {
+[data-slot="message"] a:not([data-slot="file-link"]) [data-streamdown="inline-code"] {
   color: inherit;
 }
 
+/* Words of a reply that name a file of the session's folder: still code, or a link's words, but underlined in dots, which
+   turn solid under the pointer. A press shows the file in Files. */
+[data-slot="file-link"] {
+  color: inherit;
+  text-decoration: none;
+  border-radius: 2px;
+}
+
+[data-slot="file-link"]:focus-visible {
+  outline: 2px solid var(--ui-ring);
+  outline-offset: 1px;
+}
+
+[data-slot="file-link"] > [data-streamdown="inline-code"],
+[data-slot="file-link"]:not(:has(> [data-streamdown="inline-code"])) {
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+[data-slot="file-link"]:hover > [data-streamdown="inline-code"],
+[data-slot="file-link"]:not(:has(> [data-streamdown="inline-code"])):hover {
+  text-decoration-style: solid;
+  text-decoration-color: currentColor;
+}
+
 /* A link: blue, underlined lightly, the line darkening under the pointer. Only http, https and mailto become links. */
-[data-slot="message"] a[href] {
+[data-slot="message"] a[href]:not([data-slot="file-link"]) {
   color: var(--cycle-link);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
@@ -2804,7 +2831,7 @@ html[data-platform="darwin"]
   overflow-wrap: anywhere;
 }
 
-[data-slot="message"] a[href]:hover {
+[data-slot="message"] a[href]:not([data-slot="file-link"]):hover {
   text-decoration-color: currentColor;
 }
 

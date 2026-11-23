@@ -32,7 +32,7 @@ import { CopyButton } from "./copy-button.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ArrowDownIcon, AttachIcon, FileIcon, FolderIcon, MessageIcon } from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
-import { Markdown } from "./markdown.tsx";
+import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
 import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -649,69 +649,90 @@ export function ConversationView({
 
   // The thought still arriving: the last thing the turn that is going has said.
   const lastItem = conversation.items.at(-1);
+  // A file a reply names, in the session's folder, opens in the Files tab.
+  const filesRoot = useAppState(filesRootOf);
+  const fileLinks = useMemo<FileLinks | undefined>(
+    () =>
+      filesRoot === undefined
+        ? undefined
+        : {
+            root: filesRoot,
+            open: (file) => {
+              const folder = file.folder === true;
+              store.showInFiles(file.path, { folder });
+              store.track("file_shown_from_conversation", {
+                target: folder ? "folder" : "file",
+                from: "message",
+              });
+            },
+          },
+    [filesRoot, store],
+  );
   return (
-    <div
-      data-slot="conversation"
-      ref={ref}
-      onScroll={onScroll}
-      role="log"
-      tabIndex={-1}
-      aria-label={t("conversation.label")}
-      aria-busy={loading}
-    >
-      {loading ? (
-        <div data-slot="loading">
-          <StateBlock tone="loading" title={t("conversation.loading")} />
-        </div>
-      ) : null}
-      {!loading && conversation.items.length === 0 ? (
-        <div data-slot="conversation-empty">
-          <StateBlock tone="empty" title={t("conversation.empty")} />
-        </div>
-      ) : null}
-      {start > 0 ? (
-        <button type="button" data-slot="earlier" onClick={showEarlier}>
-          {t("conversation.earlier")}
-        </button>
-      ) : null}
-      {blocks.slice(start).map((block, at) => (
-        <div key={block.key} data-slot="block" data-turn-start={block.startsTurn || undefined}>
-          <BlockView
-            block={block}
-            streaming={
-              working &&
-              block.turn === conversation.turns &&
-              (block.kind === "thought" ? block.item === lastItem : start + at === lastAgent)
-            }
-            live={working && block.turn === conversation.turns}
-            resend={block.kind === "end" && resend?.turn === block.turn ? resend : undefined}
-            replyOf={
-              replyEnds.has(block.key) && !(working && block.turn === conversation.turns)
-                ? replyOf
-                : undefined
-            }
-            ended={block.turn < conversation.turns}
-          />
-        </div>
-      ))}
-      {!loading ? (
-        <StepLine conversation={conversation} awaitingApproval={awaitingApproval} />
-      ) : null}
-      {/* Held to the bottom of the view while the end is below it, and taking no room, so it moves nothing it floats over. */}
-      <div data-slot="to-end">
-        {away && !loading ? (
-          <Tip label={fresh ? t("conversation.toEndFresh") : t("conversation.toEnd")}>
-            <button
-              type="button"
-              data-slot="to-end-button"
-              data-fresh={fresh || undefined}
-              onClick={toEnd}
-            >
-              <ArrowDownIcon size={16} />
-            </button>
-          </Tip>
+    <FileLinksContext.Provider value={fileLinks}>
+      <div
+        data-slot="conversation"
+        ref={ref}
+        onScroll={onScroll}
+        role="log"
+        tabIndex={-1}
+        aria-label={t("conversation.label")}
+        aria-busy={loading}
+      >
+        {loading ? (
+          <div data-slot="loading">
+            <StateBlock tone="loading" title={t("conversation.loading")} />
+          </div>
         ) : null}
+        {!loading && conversation.items.length === 0 ? (
+          <div data-slot="conversation-empty">
+            <StateBlock tone="empty" title={t("conversation.empty")} />
+          </div>
+        ) : null}
+        {start > 0 ? (
+          <button type="button" data-slot="earlier" onClick={showEarlier}>
+            {t("conversation.earlier")}
+          </button>
+        ) : null}
+        {blocks.slice(start).map((block, at) => (
+          <div key={block.key} data-slot="block" data-turn-start={block.startsTurn || undefined}>
+            <BlockView
+              block={block}
+              streaming={
+                working &&
+                block.turn === conversation.turns &&
+                (block.kind === "thought" ? block.item === lastItem : start + at === lastAgent)
+              }
+              live={working && block.turn === conversation.turns}
+              resend={block.kind === "end" && resend?.turn === block.turn ? resend : undefined}
+              replyOf={
+                replyEnds.has(block.key) && !(working && block.turn === conversation.turns)
+                  ? replyOf
+                  : undefined
+              }
+              ended={block.turn < conversation.turns}
+            />
+          </div>
+        ))}
+        {!loading ? (
+          <StepLine conversation={conversation} awaitingApproval={awaitingApproval} />
+        ) : null}
+        {/* Held to the bottom of the view while the end is below it, and taking no room, so it moves nothing it floats over. */}
+        <div data-slot="to-end">
+          {away && !loading ? (
+            <Tip label={fresh ? t("conversation.toEndFresh") : t("conversation.toEnd")}>
+              <button
+                type="button"
+                data-slot="to-end-button"
+                data-fresh={fresh || undefined}
+                onClick={toEnd}
+              >
+                <ArrowDownIcon size={16} />
+              </button>
+            </Tip>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </FileLinksContext.Provider>
   );
 }

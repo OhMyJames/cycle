@@ -15,10 +15,19 @@ import {
 import {
   type AnimateOptions,
   defaultRehypePlugins,
+  defaultRemarkPlugins,
   Streamdown,
   useIsCodeFenceIncomplete,
 } from "streamdown";
 import { type CodeThemeId, codeTheme, themesOf } from "../code-theme.ts";
+import {
+  codeReference,
+  FILE_LINK_SCHEME,
+  type FileReference,
+  isPathLink,
+  linkReference,
+  pathLinkUrl,
+} from "../file-reference.ts";
 import { mendStreaming } from "../markdown-mend.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { CopyButton } from "./copy-button.tsx";
@@ -45,15 +54,104 @@ export const isSafeLink = (href: string | undefined): boolean => {
   }
 };
 
+/**
+ * What lets a reply open the files it names in the Files tab: the session's folder, which a relative path is read from
+ * and outside which nothing is opened, and how to open one. Given by the conversation; without it (a document previewed
+ * in Files, a test) a path stays text.
+ */
+export type FileLinks = { root: string; open: (file: FileReference) => void };
+export const FileLinksContext = createContext<FileLinks | undefined>(undefined);
+
+/** The words are a link's already: code in them is not a link of its own. */
+const InLink = createContext(false);
+
+/** A press that ended a drag selecting these words is not a request to open them; text selected elsewhere does not count. */
+const selectingIn = (element: Element): boolean => {
+  const selection = window.getSelection();
+  return selection !== null && !selection.isCollapsed && selection.containsNode(element, true);
+};
+
+/**
+ * Words of a reply that name a file of the session's folder: a press shows it in Files. A link, not a `<button>`, whose
+ * words cannot be selected: a path can still be copied out of a reply. It cannot be dragged, so a drag selects it.
+ */
+function FileLink({ file, children }: { file: FileReference; children: ReactNode }) {
+  const { t } = useI18n();
+  const links = useContext(FileLinksContext);
+  return (
+    <InLink.Provider value={true}>
+      <a
+        href={`${FILE_LINK_SCHEME}${encodeURI(file.path)}`}
+        draggable={false}
+        data-slot="file-link"
+        title={`${t("files.showInFiles")}: ${file.path}`}
+        onClick={(event) => {
+          event.preventDefault();
+          // A key press is never a selection's end.
+          if (event.detail === 0 || !selectingIn(event.currentTarget)) links?.open(file);
+        }}
+      >
+        {children}
+      </a>
+    </InLink.Provider>
+  );
+}
+
+/** The words of a hast node, however the fade-in split them into spans. */
+const nodeText = (node: unknown): string => {
+  if (typeof node !== "object" || node === null) return "";
+  if ("value" in node && typeof node.value === "string") return node.value;
+  return "children" in node && Array.isArray(node.children)
+    ? node.children.map(nodeText).join("")
+    : "";
+};
+
+/**
+ * Inline code. One that names a file of the session's folder opens it in Files, once the reply is written: while it is,
+ * `src/app.t` would be a link to a file that is not there, and the code would be drawn again at every letter.
+ */
+function InlineCode({
+  node,
+  className,
+  children,
+  ...rest
+}: ComponentProps<"code"> & { node?: unknown }) {
+  const links = useContext(FileLinksContext);
+  const inLink = useContext(InLink);
+  const streaming = useContext(Streaming);
+  // Streamdown's own classes, which the Files preview's markdown is drawn with.
+  const classes = ["rounded bg-muted px-1.5 py-0.5 font-mono text-sm", className]
+    .filter(Boolean)
+    .join(" ");
+  const code = (
+    <code {...rest} className={classes} data-streamdown="inline-code">
+      {children}
+    </code>
+  );
+  const file =
+    links !== undefined && !inLink && !streaming
+      ? codeReference(nodeText(node), links.root)
+      : undefined;
+  return file !== undefined ? <FileLink file={file}>{code}</FileLink> : code;
+}
+
 function SafeLink({ href, children }: { href?: string | undefined; children?: ReactNode }) {
   const store = useOptionalAppStore();
+  const links = useContext(FileLinksContext);
+  const streaming = useContext(Streaming);
+  // A path in the session's folder (relative, absolute or `file:`) opens in Files, once the reply is written; any other
+  // one is its words.
+  const file = links !== undefined && !streaming ? linkReference(href, links.root) : undefined;
+  if (file !== undefined) return <FileLink file={file}>{children}</FileLink>;
   if (href === undefined || !isSafeLink(href))
     return <span data-slot="unsafe-link">{children}</span>;
   // That a link in a message was opened, never which.
   return (
-    <AgentLink href={href} onOpened={() => store?.track("message_link_opened", {})}>
-      {children}
-    </AgentLink>
+    <InLink.Provider value={true}>
+      <AgentLink href={href} onOpened={() => store?.track("message_link_opened", {})}>
+        {children}
+      </AgentLink>
+    </InLink.Provider>
   );
 }
 
@@ -147,19 +245,57 @@ function CodeFold({ children }: { children?: ReactNode }) {
   );
 }
 
+type HastNode = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
 /**
- * Streamdown's own HTML steps, in their order, with one change: a link it will not make (a relative path, which is what an
- * agent writes for a file) is its words, not its words and " [blocked]". It is still never a link; opening a file from a
- * message is the Files panel's (CYCL-92).
+ * A link to a path (what an agent writes for a file) is given a scheme of its own before Streamdown's link check, which
+ * cannot resolve a relative address and would drop it. `SafeLink` opens it in Files when it is in the session's folder,
+ * and shows its words otherwise; it never reaches the page as an address.
  */
-const rehypePlugins = Object.entries(defaultRehypePlugins).map(([name, plugin]) => {
-  if (name !== "harden" || !Array.isArray(plugin)) return plugin;
+const markPathLinks = () => (tree: HastNode) => {
+  const visit = (node: HastNode) => {
+    const href = node.properties?.href;
+    if (node.tagName === "a" && typeof href === "string" && isPathLink(href) && node.properties)
+      node.properties.href = `${FILE_LINK_SCHEME}${href}`;
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+};
+
+/**
+ * Streamdown's own HTML steps, in their order, with two changes: links to paths are marked first (`markPathLinks`), and a
+ * link it will not make is its words, not its words and " [blocked]".
+ */
+const rehypePlugins = Object.entries(defaultRehypePlugins).flatMap(([name, plugin]) => {
+  if (name !== "harden" || !Array.isArray(plugin)) return [plugin];
   const [harden, options] = plugin as [unknown, Record<string, unknown>];
-  return [harden, { ...options, linkBlockPolicy: "text-only" }];
+  return [markPathLinks, [harden, { ...options, linkBlockPolicy: "text-only" }]];
 }) as ComponentProps<typeof Streamdown>["rehypePlugins"];
+
+type MdastNode = { type?: string; url?: string; children?: MdastNode[] };
+
+/** A link's address made one the checks keep, when it is a path (`pathLinkUrl`), as the markdown is read. */
+const pathLinkUrls = () => (tree: MdastNode) => {
+  const visit = (node: MdastNode) => {
+    if ((node.type === "link" || node.type === "definition") && typeof node.url === "string")
+      node.url = pathLinkUrl(node.url);
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+};
+
+const remarkPlugins = [...Object.values(defaultRemarkPlugins), pathLinkUrls] as ComponentProps<
+  typeof Streamdown
+>["remarkPlugins"];
 
 const components: ComponentProps<typeof Streamdown>["components"] = {
   a: SafeLink as never,
+  inlineCode: InlineCode as never,
   img: BlockedImage as never,
   pre: CodeFold as never,
 };
@@ -248,6 +384,7 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
         tableMaxHeight="none"
         skipHtml
         rehypePlugins={rehypePlugins}
+        remarkPlugins={remarkPlugins}
         components={components}
         plugins={{ code: pluginFor(theme) }}
         controls={CONTROLS}

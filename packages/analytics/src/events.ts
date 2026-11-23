@@ -169,7 +169,7 @@ export const EVENTS = {
   /** A file or folder named in the conversation was shown in the Files tab: what it was and where it was named. */
   file_shown_from_conversation: o({
     target: z.enum(["file", "folder"]),
-    from: z.enum(["tool", "mention"]),
+    from: z.enum(["tool", "mention", "message"]),
   }),
   tool_copied: o({ part: z.enum(["command", "output"]) }),
   tool_output_expanded: o({}),
