@@ -443,4 +443,130 @@ describe("agy daemon harness", () => {
     expect(appliedSets).toContainEqual({ configId: "model", value: "gemini-4-carbon" });
     expect(appliedSets).toContainEqual({ configId: "thought_level", value: "medium" });
   });
+
+  test("daemon passes HTTP connectors to agy through the MCP gateway, handles server/discover, and hides real secrets (CYCL-176)", async () => {
+    const dataDir = makeTemp("cycle-agy-mcp-data-");
+    const workDir = makeTemp("cycle-agy-mcp-work-");
+    const upstreamSeen: Array<{ method: string; secret: string | null; auth: string | null }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (req) => {
+        const body = (await req.json()) as { id: number; method: string };
+        upstreamSeen.push({
+          method: body.method,
+          secret: req.headers.get("x-upstream-secret"),
+          auth: req.headers.get("authorization"),
+        });
+        if (body.method === "server/discover") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            error: { code: -32601, message: "Method not found" },
+          });
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [{ name: "ping" }] },
+        });
+      },
+    });
+
+    let agySeenServers: Array<{
+      type?: string;
+      name: string;
+      url?: string;
+      headers?: Array<{ name: string; value: string }>;
+    }> = [];
+
+    const def: AgentDefinition = {
+      id: "agy",
+      name: "Antigravity",
+      available: () => true,
+      configSchema: AGY_CONFIG_SCHEMA,
+      promptCapabilities: AGY_PROMPT_CAPABILITIES,
+      steer: true,
+      launch: async () => {
+        const handler: FakeRequestHandler = (method, params) => {
+          if (method === "initialize") return defaultInitResult("1.5.15");
+          if (method === "session/new") {
+            agySeenServers = (params as { mcpServers?: typeof agySeenServers }).mcpServers ?? [];
+            return defaultSessionResponse("agy-mcp-1");
+          }
+          return {};
+        };
+        const adapter = createAdapter({
+          env: { HOME: join(dataDir, "agy") },
+          agyExecutable: "/fake/agy",
+          connect: (handlers) => new FakeV1Agent(handlers, handler),
+        });
+        return { target: adapter.app, kill: () => adapter.close() };
+      },
+    };
+
+    const daemon = await Daemon.start({ dataDir, agents: [def] });
+    const c2s = new TransformStream<Uint8Array, Uint8Array>();
+    const s2c = new TransformStream<Uint8Array, Uint8Array>();
+    const serverConn = daemon.accept(ndJsonStream(s2c.writable, c2s.readable));
+    const clientConn = client().connect(ndJsonStream(c2s.writable, s2c.readable));
+    try {
+      await clientConn.agent.request(methods.agent.initialize, {
+        protocolVersion: 2,
+        capabilities: {},
+        info: { name: "test", version: "1" },
+      });
+      await clientConn.agent.request(
+        "_cycle/connectors/add" as never,
+        {
+          name: "demo",
+          transport: { type: "http", url: `http://127.0.0.1:${upstream.port}/mcp` },
+          auth: { type: "none" },
+          secrets: { headers: { "X-Upstream-Secret": "super-secret-value" } },
+        } as never,
+      );
+
+      await clientConn.agent.request(methods.agent.session.new, {
+        cwd: workDir,
+        _meta: { [META.agent]: "agy" },
+      } as never);
+
+      expect(agySeenServers).toHaveLength(1);
+      const gw = agySeenServers[0];
+      expect(gw?.type).toBe("http");
+      expect(gw?.url).toContain("http://127.0.0.1:");
+      // Agent never sees the real upstream secret.
+      expect(JSON.stringify(gw)).not.toContain("super-secret-value");
+
+      const callGateway = async (id: number, method: string) => {
+        const res = await fetch(gw?.url as string, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            ...Object.fromEntries((gw?.headers ?? []).map((h) => [h.name, h.value])),
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id, method }),
+        });
+        expect(res.status).toBe(200);
+        return (await res.json()) as Record<string, unknown>;
+      };
+
+      // Simulate agy's server/discover probe followed by tools/list through Cycle's gateway.
+      const discover = await callGateway(1, "server/discover");
+      expect((discover.error as { code?: number })?.code).toBe(-32601);
+      const tools = await callGateway(2, "tools/list");
+      expect((tools.result as { tools?: unknown[] })?.tools).toEqual([{ name: "ping" }]);
+
+      expect(upstreamSeen).toEqual([
+        { method: "server/discover", secret: "super-secret-value", auth: null },
+        { method: "tools/list", secret: "super-secret-value", auth: null },
+      ]);
+    } finally {
+      clientConn.close();
+      serverConn.close();
+      await daemon.close();
+      void upstream.stop(true);
+    }
+  });
 });

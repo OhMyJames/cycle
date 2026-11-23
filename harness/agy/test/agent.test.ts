@@ -1227,3 +1227,94 @@ describe("steer, elicitation, and autonomous turn fallback (CYCL-175)", () => {
     }
   });
 });
+
+describe("MCP server translation (CYCL-176)", () => {
+  test("forwards http and stdio MCP servers on session/new and session/resume, and rejects sse with -32602", async () => {
+    const { config, getFake } = baseConfig((method) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-mcp");
+      if (method === "session/resume") {
+        const { sessionId: _omit, ...rest } = defaultSessionResponse("agy-mcp");
+        return rest;
+      }
+      return {};
+    });
+
+    const adapter = createAdapter(config);
+    const app = client();
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        const init = await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        expect(init.capabilities?.session?.mcp?.http).toEqual({});
+        expect(init.capabilities?.session?.mcp?.stdio).toEqual({});
+
+        // SSE must be rejected with -32602 without silently dropping or calling agy.
+        let sseErr: unknown;
+        try {
+          await agent.request(methods.agent.session.new, {
+            cwd: "/tmp/work",
+            mcpServers: [{ type: "sse", name: "legacy", url: "http://127.0.0.1:9999/sse" }],
+          } as never);
+        } catch (error) {
+          sseErr = error;
+        }
+        expect((sseErr as { code?: number })?.code).toBe(-32602);
+        expect(getFake().requests.some((r) => r.method === "session/new")).toBe(false);
+
+        const servers = [
+          {
+            type: "http",
+            name: "gateway-tool",
+            url: "http://127.0.0.1:4321/mcp/c1",
+            headers: [{ name: "Authorization", value: "Bearer gw-session-key" }],
+          },
+          {
+            type: "stdio",
+            name: "local-stdio",
+            command: "/usr/bin/env",
+            args: ["node", "server.js"],
+            env: [{ name: "FOO", value: "bar" }],
+          },
+        ];
+
+        await agent.request(methods.agent.session.new, {
+          cwd: "/tmp/work",
+          mcpServers: servers,
+        } as never);
+        const newReq = getFake().requests.find((r) => r.method === "session/new")?.params as {
+          mcpServers: unknown[];
+        };
+        expect(newReq.mcpServers).toEqual([
+          {
+            type: "http",
+            name: "gateway-tool",
+            url: "http://127.0.0.1:4321/mcp/c1",
+            headers: [{ name: "Authorization", value: "Bearer gw-session-key" }],
+          },
+          {
+            name: "local-stdio",
+            command: "/usr/bin/env",
+            args: ["node", "server.js"],
+            env: [{ name: "FOO", value: "bar" }],
+          },
+        ]);
+
+        await agent.request(methods.agent.session.resume, {
+          sessionId: "agy-mcp",
+          cwd: "/tmp/work",
+          mcpServers: servers,
+        } as never);
+        const resumeReq = getFake().requests.find((r) => r.method === "session/resume")?.params as {
+          mcpServers: unknown[];
+        };
+        expect(resumeReq.mcpServers).toEqual(newReq.mcpServers);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+});

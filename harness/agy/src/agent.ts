@@ -9,6 +9,7 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleErrorCode, META } from "@cycle/protocol";
+import { translateMcpServers } from "./mcp.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { toV2ConfigOptions } from "./settings.ts";
 import { toV2ToolCallUpdate, translateSimpleUpdate } from "./translate.ts";
@@ -471,6 +472,7 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.new, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
+      const mcpServers = translateMcpServers(params.mcpServers);
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
@@ -478,7 +480,7 @@ export function createAdapter(config: AdapterConfig) {
       try {
         created = await conn.request<V1SessionResponse>("session/new", {
           cwd: params.cwd,
-          mcpServers: params.mcpServers ?? [],
+          mcpServers,
           ...(params.additionalDirectories?.length
             ? { additionalDirectories: params.additionalDirectories }
             : {}),
@@ -507,6 +509,7 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.resume, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
+      const mcpServers = translateMcpServers(params.mcpServers);
       const hadTurn =
         (params._meta as Record<string, unknown> | undefined)?.[META.hadTurn] === true;
       const { conn } = await ensureTransport().catch((error) => {
@@ -519,7 +522,7 @@ export function createAdapter(config: AdapterConfig) {
         response = await conn.request<V1ResumeResponse>("session/resume", {
           sessionId: params.sessionId,
           cwd: params.cwd,
-          mcpServers: params.mcpServers ?? [],
+          mcpServers,
           ...(params.additionalDirectories?.length
             ? { additionalDirectories: params.additionalDirectories }
             : {}),
@@ -535,7 +538,7 @@ export function createAdapter(config: AdapterConfig) {
         try {
           const created = await conn.request<V1SessionResponse>("session/new", {
             cwd: params.cwd,
-            mcpServers: params.mcpServers ?? [],
+            mcpServers,
             ...(params.additionalDirectories?.length
               ? { additionalDirectories: params.additionalDirectories }
               : {}),
