@@ -201,7 +201,7 @@
 
   /* Ink: four pure neutral steps. Muted holds >= 4.5:1 on every surface above, selected included. */
   --cycle-ink: light-dark(#141414, #f5f5f7);
-  --cycle-ink-secondary: light-dark(#454549, #c7c7cc);
+  --cycle-ink-secondary: light-dark(#505055, #a8a8ae);
   --cycle-ink-muted: light-dark(#636369, #98989f);
   --cycle-ink-disabled: light-dark(#8a8a92, #6e6e75);
 
@@ -1272,9 +1272,6 @@ button[data-slot="files-row"]:focus-visible {
 
 /* In a call that read or changed a file: a quiet link to it in the Files tab, at the tool's indent. */
 [data-slot="tool-files-link"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0 0.25rem;
   border: 0;
@@ -1959,12 +1956,13 @@ svg[data-slot="dot"] {
   text-decoration: underline;
 }
 
+/* The mark's cell is one line of the title (1lh), so the dot sits on the middle of the title's line. */
 [data-slot="session-dot"] {
   flex: none;
   display: grid;
   place-items: center;
   width: 8px;
-  height: 1.3em;
+  height: 1lh;
 }
 
 [data-slot="session-title"] {
@@ -3108,8 +3106,9 @@ html[data-platform="darwin"]
   color: var(--ui-muted-foreground);
 }
 
-/* A tool call is a quiet line, not a box (old-cycle's rows): a lead (its icon, or the spinner, or a cross), the verb in
-   its tense, then on what, muted. The chevron shows on hover, on focus and while open. A failure is red and says so. */
+/* A tool call is a quiet line of text, not a box, and has no icon at all (CYCL-139): the verb in its tense (or the
+   agent's sentence), then on what, muted, in the secondary ink so it sits behind the replies. Whether it goes, failed
+   or opens is said in words and by the row's hover, never by a mark. A failure is red and says so. */
 [data-kind="tool"],
 [data-kind="work"],
 [data-kind="subagent"] {
@@ -3132,35 +3131,16 @@ html[data-platform="darwin"]
   transition: background-color var(--cycle-motion-state) var(--cycle-ease);
 }
 
+/* ui-sdk draws a chevron after a collapsible trigger that has no icon of its own: a tool row has none, ever. */
+:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"], [data-kind="subagent"])
+  > button::after {
+  content: none;
+}
+
 :is([data-kind="tool"], [data-kind="work"], [data-kind="plan"], [data-kind="subagent"])
   > button:hover {
   background: var(--cycle-surface-hover);
   color: var(--cycle-ink);
-}
-
-[data-slot="tool-lead"] {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 1rem;
-  height: 1rem;
-}
-
-[data-slot="tool-mark"] {
-  flex: none;
-}
-
-/* A finished call's kind: quiet, so the spinner and the red cross are still what the eye finds first. */
-[data-slot="tool-kind"] {
-  display: grid;
-  place-items: center;
-  color: var(--cycle-ink-disabled);
-}
-
-:is([data-kind="tool"], [data-kind="work"], [data-kind="subagent"])
-  > button:hover
-  [data-slot="tool-kind"] {
-  color: var(--cycle-ink-muted);
 }
 
 /* The verb, or the agent's own sentence for what the call is for. The verb keeps its room; what it acted on gives way
@@ -3180,15 +3160,6 @@ html[data-platform="darwin"]
 :is([data-slot="tool-summary"], [data-slot="step-detail"])[data-prose] {
   font-family: inherit;
   font-size: var(--cycle-text-ui);
-}
-
-/* A call that is waiting, never finished or was stopped, a done one of a kind without an icon, or a stretch of mixed
-   kinds: a small dot, so a stretch's rule has something to join. A done call of a known kind leads with its icon. */
-[data-slot="tool-dot"] {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--cycle-ink-disabled);
 }
 
 /* Empty (a row with the agent's sentence) it only pushes the end of the line right, without a gap of its own. */
@@ -3266,32 +3237,25 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
 
 /* The collapsible parts of the conversation are told apart by data-kind: ui-sdk sets data-slot itself on Collapsible and
    replaces ours, so a rule on data-slot="tool" never matched. */
-/* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it, their leads joined by a
-   thin line so the stretch reads as one. */
+/* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it at the same 1.5rem step as
+   anything a row opens to, past a thin line, so the stretch reads as one. */
 [data-kind="work"] > [data-slot="collapsible-panel"] {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
   margin-top: 0.125rem;
+  padding-inline-start: 1.5rem;
 }
 
 [data-kind="work"] > [data-slot="collapsible-panel"]::before {
   content: "";
   position: absolute;
-  inset-inline-start: calc(0.5rem - 0.5px);
+  inset-inline-start: 0.5rem;
   top: 0.25rem;
   bottom: 0.25rem;
   width: 1px;
   background: var(--cycle-border-default);
-}
-
-[data-kind="work"] [data-kind="tool"] {
-  position: relative;
-}
-
-[data-kind="work"] [data-kind="tool"] > button [data-slot="tool-lead"] {
-  background: var(--ui-background);
 }
 
 /* A sub-agent: a line like a call's, with what kind of agent it is muted after its task. Back, the start of its answer
@@ -3583,11 +3547,8 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   color: var(--ui-destructive);
 }
 
-/* How a command ended, after what the block is: a tick and "succeeded", or a cross and its exit code. */
+/* How a command ended, after what the block is, in words: "Succeeded", or its exit code. */
 [data-slot="tool-end"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   margin-right: auto;
 }
 
@@ -3675,10 +3636,6 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
 [data-slot="tool-diff-head"]:hover [data-slot="tool-diff-path"] {
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-[data-slot="tool-diff-head"] > svg {
-  flex: none;
 }
 
 /* Too long for the line, it fades at its end (`cycle-fade`, with the other names above). */

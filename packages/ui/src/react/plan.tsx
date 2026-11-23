@@ -163,13 +163,11 @@ export function PlanBlock({ item }: { item: PlanItem }) {
   return (
     <Collapsible data-kind="plan" data-item-id={item.id}>
       <CollapsibleTrigger>
-        {/* Laid out as a tool's line, so the eye runs down one edge: an empty place where a call's state would be. */}
-        <span data-slot="tool-lead" aria-hidden="true" />
+        {/* Laid out as a tool's line, text only, so the eye runs down one edge. */}
         <span data-slot="tool-verb">{t("plan.label")}</span>{" "}
         <span data-slot="tool-facts">
           {t("plan.progress", { done, count: item.entries.length })}
-        </span>{" "}
-        <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
+        </span>
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <PlanList entries={item.entries} />
