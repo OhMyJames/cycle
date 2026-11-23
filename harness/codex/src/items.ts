@@ -15,6 +15,19 @@ export function itemUpdate(
         entries: [{ content: item.text, priority: "medium", status: "in_progress" }],
       },
     } as SessionUpdate;
+  if (item.type === "collabAgentToolCall")
+    return {
+      sessionUpdate: "tool_call_update",
+      toolCallId: item.id,
+      name: item.tool,
+      kind: "other",
+      status: completed
+        ? item.status === "failed" || item.status === "interrupted"
+          ? "failed"
+          : "completed"
+        : "in_progress",
+      rawInput: item.prompt ? { prompt: item.prompt, model: item.model } : undefined,
+    };
   if (item.type === "agentMessage" || item.type === "reasoning") {
     if (!completed || streamed) return;
     const text =

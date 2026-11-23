@@ -15,6 +15,8 @@ import type {
   AgentMessageDeltaNotification,
   ItemCompletedNotification,
   PlanDeltaNotification,
+  ThreadNameUpdatedNotification,
+  ThreadTokenUsageUpdatedNotification,
   TurnCompletedNotification,
   TurnPlanUpdatedNotification,
   UserInput,
@@ -99,6 +101,15 @@ export function createAdapter(config: AdapterConfig) {
         else active.tools.delete(item.id);
       }
       if (update) notify(update);
+      if (item.type === "collabAgentToolCall" && item.receiverThreadIds[0])
+        notify({
+          sessionUpdate: "subagent_update",
+          sessionId: item.receiverThreadIds[0],
+          state: {
+            sessionUpdate: "state_update",
+            state: method === "item/completed" ? "idle" : "running",
+          },
+        } as unknown as SessionUpdate);
     } else if (method === "turn/plan/updated") {
       const plan = raw as TurnPlanUpdatedNotification;
       notify({
@@ -135,6 +146,20 @@ export function createAdapter(config: AdapterConfig) {
         messageId: itemId,
         content: { type: "text", text: delta },
       } as SessionUpdate);
+    } else if (method === "thread/name/updated") {
+      const name = raw as ThreadNameUpdatedNotification;
+      notify({
+        sessionUpdate: "session_info_update",
+        title: name.threadName ?? null,
+      } as SessionUpdate);
+    } else if (method === "thread/tokenUsage/updated") {
+      const usage = raw as ThreadTokenUsageUpdatedNotification;
+      if (usage.tokenUsage.modelContextWindow !== null)
+        notify({
+          sessionUpdate: "usage_update",
+          used: usage.tokenUsage.last.totalTokens,
+          size: usage.tokenUsage.modelContextWindow,
+        } as SessionUpdate);
     }
   }
   function interrupt(active: Turn) {
@@ -287,6 +312,13 @@ export function createAdapter(config: AdapterConfig) {
       return {
         sessionId: session,
         configOptions: optionsOf(),
+        availableCommands: [
+          {
+            type: "command",
+            name: "compact",
+            description: "Compact the Codex conversation context.",
+          },
+        ] as never,
         ...(resume && session !== resume.sessionId
           ? { _meta: { "cycle/agentSessionId": session } }
           : {}),
@@ -351,6 +383,26 @@ export function createAdapter(config: AdapterConfig) {
     .onRequest(methods.agent.session.prompt, async ({ params }) => {
       const child = requireSession(params.sessionId);
       if (child.closed) throw new RequestError(-32600, "Codex app-server has exited");
+      if (
+        params._meta?.["cycle/steer"] !== true &&
+        params.prompt.length === 1 &&
+        params.prompt[0]?.type === "text" &&
+        (params.prompt[0] as { text?: unknown }).text === "/compact"
+      ) {
+        const compactionId = crypto.randomUUID();
+        notify({
+          sessionUpdate: "compaction_update",
+          compactionId,
+          status: "in_progress",
+        } as SessionUpdate);
+        await child.request("thread/compact/start", { threadId: session });
+        notify({
+          sessionUpdate: "compaction_update",
+          compactionId,
+          status: "completed",
+        } as SessionUpdate);
+        return { messageId: crypto.randomUUID() };
+      }
       const input = inputOf(params.prompt);
       if (params._meta?.["cycle/steer"] === true) {
         if (!turn?.id) throw new RequestError(-32600, "No Codex turn is running");
