@@ -19,8 +19,11 @@ export type Turn = {
   prompt: string;
   /** The blocks of the prompt, as the agent got them. */
   blocks: unknown[];
-  /** Asks the user for a form (`elicitation/create`); the answer is whatever the daemon says. */
-  elicit: () => Promise<unknown>;
+  /**
+   * Asks the user for a form (`elicitation/create`); the answer is whatever the daemon says. Aborting `signal` takes
+   * the request back (`$/cancel_request`).
+   */
+  elicit: (signal?: AbortSignal) => Promise<unknown>;
   /** Tells the daemon an update; `as` is the session it names, a sub-agent's it announced (ACP v2), or the session's own. */
   say: (update: object, as?: string) => Promise<void>;
   /** Asks the user for permission; `extra` is added to the request (a `toolCall`, say). */
@@ -177,13 +180,17 @@ export const fakeAgent = (
             update: update as SessionUpdate,
           });
         const cancelled = new Promise<void>((resolve) => cancelResolvers.push(resolve));
-        const elicit = () =>
-          client.request(methods.client.elicitation.create, {
-            sessionId,
-            mode: "form",
-            message: "Which one?",
-            requestedSchema: { type: "object", properties: { pick: { type: "string" } } },
-          } as never);
+        const elicit = (signal?: AbortSignal) =>
+          client.request(
+            methods.client.elicitation.create,
+            {
+              sessionId,
+              mode: "form",
+              message: "Which one?",
+              requestedSchema: { type: "object", properties: { pick: { type: "string" } } },
+            } as never,
+            signal ? { cancellationSignal: signal, stopWaitingOnCancel: true } : undefined,
+          );
         const ask = (extra: object = {}) =>
           client.request(methods.client.session.requestPermission, {
             sessionId,

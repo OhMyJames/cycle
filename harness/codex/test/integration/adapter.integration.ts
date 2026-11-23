@@ -186,3 +186,188 @@ supports_websockets=false
     await rm(dir, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("an MCP gateway is reached with this launch's key, a resumed session with the next one, and the key is not kept", async () => {
+  const dir = await mkdtemp(join(homedir(), ".cycle-test-codex-mcp-"));
+  const cwd = join(dir, "project"),
+    home = join(dir, "home");
+  await mkdir(cwd);
+  await mkdir(home);
+  // A gateway that speaks MCP's streamable HTTP with plain JSON answers, and notes each request's key.
+  const keys: string[] = [];
+  const gateway = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (req) => {
+      if (req.method !== "POST") return new Response(null, { status: 405 });
+      keys.push(req.headers.get("authorization") ?? "");
+      const msg = (await req.json()) as { id?: number; method: string; params?: any };
+      if (msg.id === undefined) return new Response(null, { status: 202 });
+      const result =
+        msg.method === "initialize"
+          ? {
+              protocolVersion: msg.params?.protocolVersion ?? "2025-06-18",
+              capabilities: { tools: {} },
+              serverInfo: { name: "gateway", version: "1" },
+            }
+          : msg.method === "tools/list"
+            ? {
+                tools: [
+                  {
+                    name: "lookup",
+                    description: "Look something up",
+                    inputSchema: { type: "object", properties: {} },
+                    annotations: { readOnlyHint: true },
+                  },
+                ],
+              }
+            : msg.method === "tools/call"
+              ? { content: [{ type: "text", text: "found it" }] }
+              : {};
+      return Response.json({ jsonrpc: "2.0", id: msg.id, result });
+    },
+  });
+  // The model calls the gateway's tool once per prompt, then answers.
+  let callTool = false;
+  const mock = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (req) => {
+      if (!new URL(req.url).pathname.endsWith("/responses"))
+        return new Response(null, { status: 404 });
+      const body = (await req.json()) as {
+        tools?: { name?: string; type?: string; tools?: any[] }[];
+      };
+      if (!callTool) return response(false, "");
+      callTool = false;
+      const flat = (body.tools ?? []).flatMap((t) =>
+        t.type === "namespace" ? (t.tools ?? []).map((n) => ({ ...n, ns: t.name })) : [t],
+      ) as { name?: string; ns?: string }[];
+      const tool = flat.find((t) => t.name?.includes("lookup"));
+      if (!tool?.name) throw new Error(`No gateway tool offered: ${JSON.stringify(body.tools)}`);
+      return response(true, "", { name: tool.name, namespace: tool.ns, args: {} });
+    },
+  });
+  await writeFile(
+    join(home, "config.toml"),
+    `model="gpt-5.4"
+model_provider="mock"
+[model_providers.mock]
+name="mock"
+base_url="http://127.0.0.1:${mock.port}/v1"
+wire_api="responses"
+supports_websockets=false
+`,
+  );
+  const executable = process.env.CYCLE_DAEMON_BIN;
+  const entry = new URL("../../../../apps/daemon/src/main.ts", import.meta.url).pathname;
+  const launch = () =>
+    Bun.spawn([...(executable ? [executable] : [process.execPath, entry]), "adapter", "codex"], {
+      cwd,
+      env: {
+        PATH: "/usr/bin:/bin",
+        CYCLE_ADAPTER_CONFIG: JSON.stringify({
+          env: { HOME: home, CODEX_HOME: home, PATH: "/usr/bin:/bin" },
+        }),
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+  const gatewayServer = (key: string) => [
+    {
+      type: "http" as const,
+      // Cycle's names are a person's; Codex's must be plain.
+      name: "Cycle gateway",
+      url: `http://127.0.0.1:${gateway.port}/mcp`,
+      headers: [{ name: "Authorization", value: `Bearer ${key}` }],
+    },
+  ];
+  async function run(
+    open: (agent: any) => Promise<string>,
+    check: (updates: SessionUpdate[]) => void,
+  ) {
+    const proc = launch();
+    const updates: SessionUpdate[] = [];
+    const input = new WritableStream<Uint8Array>({
+      write(chunk) {
+        proc.stdin.write(chunk);
+        proc.stdin.flush();
+      },
+      close() {
+        proc.stdin.end();
+      },
+    });
+    const acp = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+    try {
+      await acp.connectWith(ndJsonStream(input, proc.stdout), async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          info: { name: "test", version: "1" },
+        });
+        const sessionId = await open(agent);
+        callTool = true;
+        await agent.request(methods.agent.session.prompt, {
+          sessionId,
+          prompt: [{ type: "text", text: "look it up" }],
+        });
+        for (let i = 0; i < 400; i++) {
+          if (updates.some((u) => "state" in u && u.state === "idle" && "stopReason" in u)) break;
+          await Bun.sleep(25);
+        }
+        check(updates);
+      });
+    } finally {
+      proc.stdin.end();
+      await Promise.race([proc.exited, Bun.sleep(1500)]);
+      proc.kill();
+      await proc.exited;
+    }
+    return updates;
+  }
+  const called = (updates: SessionUpdate[]) => {
+    expect(updates).toContainEqual(
+      expect.objectContaining({ sessionUpdate: "state_update", stopReason: "end_turn" }),
+    );
+    expect(updates).toContainEqual(
+      expect.objectContaining({
+        sessionUpdate: "tool_call_update",
+        status: "completed",
+        name: expect.stringContaining("lookup"),
+      }),
+    );
+  };
+  try {
+    let sessionId = "";
+    await run(async (agent) => {
+      const opened = await agent.request(methods.agent.session.new, {
+        cwd,
+        mcpServers: gatewayServer("key-first"),
+      });
+      sessionId = opened.sessionId;
+      return sessionId;
+    }, called);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(new Set(keys)).toEqual(new Set(["Bearer key-first"]));
+    keys.length = 0;
+    // The next launch has a key of its own: the resumed thread reaches the gateway with it, never the old one.
+    await run(async (agent) => {
+      await agent.request(methods.agent.session.resume, {
+        sessionId,
+        cwd,
+        mcpServers: gatewayServer("key-second"),
+        _meta: { "cycle/hadTurn": true },
+      });
+      return sessionId;
+    }, called);
+    expect(new Set(keys)).toEqual(new Set(["Bearer key-second"]));
+    const kept = Bun.spawnSync(["/usr/bin/grep", "-rl", "key-first\\|key-second", home]);
+    expect(kept.stdout.toString()).toBe("");
+  } finally {
+    gateway.stop(true);
+    mock.stop(true);
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 60_000);

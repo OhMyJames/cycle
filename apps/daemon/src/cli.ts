@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseCli } from "./args.ts";
 import { defaultDataDir, loadConfig, pathsFor } from "./config.ts";
@@ -127,10 +128,14 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
       console.error(`No ${harness.name} binary: it is meant to sit beside cycle, or be on PATH.`);
       process.exit(1);
     }
+    const env = cli.env({ config, dataDir: paths.dataDir, inherited: process.env });
+    // A fresh data directory has none of the agent's yet: Codex will not sign in to a CODEX_HOME that is not there.
+    for (const key of cli.directories ?? [])
+      if (env[key]) await mkdir(env[key], { recursive: true, mode: 0o700 });
     const child = Bun.spawn(
       [executable, ...(cli.args ?? []), ...(command === "login" ? cli.login : []), ...typed],
       {
-        env: cli.env({ config, dataDir: paths.dataDir, inherited: process.env }),
+        env,
         stdin: "inherit",
         stdout: "inherit",
         stderr: "inherit",

@@ -156,7 +156,7 @@ test("every turn names its model and effort, plan mode is entered and left, and 
  for await(const line of createInterface({input:process.stdin})){
    const msg=JSON.parse(line);
    const {method,id,params}=msg;
-   if(method===undefined){appendFileSync(${JSON.stringify(answers)}, JSON.stringify(msg.result)+"\\n");continue;}
+   if(method===undefined){appendFileSync(${JSON.stringify(answers)}, JSON.stringify(msg.result)+"\\n");send({method:"turn/completed",params:{threadId:"kid",turn:{id:"k1",status:"completed",error:null}}});continue;}
    if(method==="initialize")send({id,result:{userAgent:"codex-cli 0.171.0"}});
    if(method==="model/list")send({id,result:{data:${JSON.stringify(catalog)},nextCursor:null}});
    if(method==="thread/start")send({id,result:{thread:{id:"s"},model:"base",reasoningEffort:"medium"}});
@@ -169,7 +169,6 @@ test("every turn names its model and effort, plan mode is entered and left, and 
        send({method:"item/completed",params:{threadId:"s",turnId:t,item:{type:"collabAgentToolCall",id:"c",tool:"spawnAgent",status:"completed",senderThreadId:"s",receiverThreadIds:["kid"],prompt:null,model:null,reasoningEffort:null,agentsStates:{kid:{status:"running",message:null}}}}});
        send({id:"ask",method:"item/commandExecution/requestApproval",params:{threadId:"kid",turnId:"k1",itemId:"x",command:"ls",reason:null}});
        send({method:"turn/completed",params:{threadId:"s",turn:{id:t,status:"completed",error:null}}});
-       send({method:"turn/completed",params:{threadId:"kid",turn:{id:"k1",status:"completed",error:null}}});
      } else send({method:"turn/completed",params:{threadId:"s",turn:{id:t,status:"completed",error:null}}});
    }
  }

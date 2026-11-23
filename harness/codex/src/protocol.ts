@@ -26,4 +26,5 @@ export const CODEX_NOTIFICATION_METHODS = [
   "skills/changed",
   "thread/name/updated",
   "thread/tokenUsage/updated",
+  "account/rateLimits/updated",
 ] as const;

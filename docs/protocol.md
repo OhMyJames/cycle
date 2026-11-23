@@ -514,6 +514,7 @@ agent 发来的 `session/request_permission` 和 `elicitation/create` 是**需�
 - **没有这样的客户端附着时立即回答**(最后一个有能力的客户端断开时,正在等的表单同样如此回答) `{action: "cancel", _meta: {"cycle/noClient": true}}`,不挂起。agent 据此回退:MCP 的 elicitation 当作拒绝,`AskUserQuestion` 走权限请求。
 - **表单里填的内容不进日志,也不发给别的客户端**(可能是密码或令牌):agent 拿到完整的回答,日志的 `response` 记录和 `_cycle/request_resolved` 只有 `action`。客户端的回答只取 `action`(`accept`、`decline`、`cancel`)和 `accept` 时的 `content`;别的字段(包括客户端自己加的 `_meta`)丢掉,不是回答的当作 `cancel`。客户端处理不了表单(回了错误)时,和没有客户端一样回 `cycle/noClient`。
 - `session/cancel`、agent 退出:未解决的 elicitation 以 `{action: "cancel"}` 结束,并发 `_cycle/request_resolved`。
+- agent 自己收回一个请求(JSON-RPC 的 `$/cancel_request`,比如它的回合已经结束、子 agent 被停了):权限请求和 elicitation 一样以取消结束,并发 `_cycle/request_resolved`,不再挂着等人回答。
 - URL 模式 v1 不支持,daemon 不声明。
 - **`AskUserQuestion` 的表单**:每个问题一个选择字段(`q0`,`q1`…:单选 `oneOf`、多选 `array`)和一个可选的自由输入字段(`q0_other`…,最多 2000 字符)。都没有 `required`:一个字段表达不了"二选一"。自由输入非空时,单选以它为答案,多选把它加在所选标签之后;全部为空等于没回答,工具得到"The user did not answer"。
 

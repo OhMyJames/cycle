@@ -40,5 +40,10 @@ export type Harness = {
     args?: string[];
     /** The arguments that sign in. */
     login: string[];
+    /**
+     * Variables of `env` naming a directory the agent needs and does not make itself: made (private) before it runs.
+     * Absent: none.
+     */
+    directories?: string[];
   };
 };

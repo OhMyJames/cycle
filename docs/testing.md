@@ -104,6 +104,17 @@ CYCLE_REAL_MODEL_TOKEN=<oauth token> bun run --cwd apps/daemon test:real:daemon 
 - 还有两个只在构建之后才有意义的:`apps/daemon` 下 `test:real`(只用构建出的可执行文件、空环境)和 `apps/desktop` 下 `test:real`(真实窗口加真实模型加构建出的 daemon)。先在根目录 `bun run build`。
 - 四个套件加起来约一分钟,花几个很短的回合。**不在 CI 里**:CI 不应该持有账号的 token。
 
+Codex 的两份用一个 Codex 登录文件(`auth.json`),不用 token:
+
+```bash
+CYCLE_CODEX_AUTH=<auth.json 的路径> bun run --cwd harness/codex test:real          # 适配器层,6 项,约 2 分钟
+CYCLE_CODEX_AUTH=<auth.json 的路径> bun run --cwd apps/daemon test:real:codex      # 经过 daemon,中间重启它
+```
+
+- 每条测试把这个文件拷进自己的临时 `CODEX_HOME`(daemon 那份拷进临时数据目录的 `codex/`),只有 Codex 进程读它,给的那份不被写。测试不指向真实的 `~/.codex`。
+- ChatGPT 登录的 token 由持有它的 Codex 刷新,刷新会换掉 refresh token:给一份此刻没有别的 Codex 在用的登录,比如 `cycle login codex` 之后的 `<数据目录>/codex/auth.json`。从 `~/.codex` 拷一份临时用可以,只要两边不会同时刷新。
+- 用账号的默认模型、`low` 档(`CYCLE_REAL_MODEL` 可换模型)。结果记在 [adapters/codex.md](adapters/codex.md)。
+
 ## CI
 
 `.github/workflows/ci.yml`:

@@ -1,11 +1,17 @@
-export function response(call: boolean, cmd: string) {
+/** A model's answer: text, or a call of `exec_command` with `cmd`, or of another tool (`tool`, an MCP server's). */
+export function response(
+  call: boolean,
+  cmd: string,
+  tool?: { name: string; namespace?: string | undefined; args: unknown },
+) {
   const item = call
     ? {
         type: "function_call",
         id: "fc_1",
-        name: "exec_command",
-        arguments: JSON.stringify({ cmd, yield_time_ms: 10000 }),
-        call_id: "call_1",
+        name: tool?.name ?? "exec_command",
+        ...(tool?.namespace ? { namespace: tool.namespace } : {}),
+        arguments: JSON.stringify(tool ? tool.args : { cmd, yield_time_ms: 10000 }),
+        call_id: `call_${crypto.randomUUID()}`,
       }
     : {
         type: "message",
