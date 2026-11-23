@@ -1,17 +1,17 @@
 import { Button } from "@ui-sdk/react/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import {
   activityCounts,
   activityOf,
   type Conversation,
   isLive,
+  isSubagentCall,
   type Resend,
   type StopReason,
   stepOf,
   type ToolItem,
 } from "../model/index.ts";
-import { reveal } from "../reveal.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, ErrorCircleIcon, WarningIcon } from "./icons.tsx";
@@ -25,6 +25,7 @@ import {
   toolSummary,
   toolVerb,
   useOpenOnFailure,
+  useRevealOpen,
 } from "./tool.tsx";
 
 /** A notice from the daemon or the agent, in the conversation. */
@@ -58,16 +59,12 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       : "";
   const goingTip = goingDetail || undefined;
   const [open, setOpen] = useOpenOnFailure(failed > 0);
-  // Asked to show one of its calls (from the Overview): the card opens to it.
-  // Also when it mounts while a request is still being answered: the request may be what moved the window to it.
-  useEffect(() => {
-    const check = () => {
-      const asked = reveal.get();
-      if (asked !== undefined && tools.some((tool) => tool.id === asked.itemId)) setOpen(true);
-    };
-    check();
-    return reveal.subscribe(check);
-  }, [tools, setOpen]);
+  // Asked to show one of its calls (from the Overview): the card opens to it; also when it mounts while that is still
+  // asked, since the request may be what moved the window to it.
+  useRevealOpen(
+    tools.map((tool) => tool.id),
+    setOpen,
+  );
   // The pieces are written to follow one another ("ran 2 commands"), and the line begins as a sentence does.
   const pieces = list(
     activityCounts(tools).map(({ activity, count }) => t(`work.summary.${activity}`, { count })),
@@ -244,6 +241,8 @@ export function StepLine({
   const step = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
   if (step === undefined) return null;
   const activity = step.kind === "tool" ? activityOf(step.tool) : undefined;
+  // A sub-agent at work has its own card that says what it does: the line only says the agent waits for it.
+  const subagent = step.kind === "tool" && isSubagentCall(step.tool);
   const words =
     step.kind === "approval"
       ? t("step.approval")
@@ -255,9 +254,11 @@ export function StepLine({
             ? step.attempt !== undefined && step.maxRetries !== undefined
               ? t("step.retryingCount", { attempt: step.attempt, max: step.maxRetries })
               : t("step.retrying")
-            : activity === "other"
-              ? t("step.other", { name: toolName(t, step.tool) })
-              : t(`step.${activity}`);
+            : subagent
+              ? t("step.subagent")
+              : activity === "other"
+                ? t("step.other", { name: toolName(t, step.tool) })
+                : t(`step.${activity}`);
   // Each attempt is a new state: its own key, so the line says it afresh.
   const stepKey = `${conversation.turns}:${
     step.kind === "tool"
@@ -273,7 +274,7 @@ export function StepLine({
       activity={activity}
       label={words}
       stepKey={stepKey}
-      detail={step.kind === "tool" ? <StepDetail tool={step.tool} /> : undefined}
+      detail={step.kind === "tool" && !subagent ? <StepDetail tool={step.tool} /> : undefined}
     />
   );
 }

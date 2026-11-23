@@ -1209,6 +1209,51 @@ export const scenarios: Record<string, Scenario> = {
       permission("Allow Bash?", `rm -rf ${LONG_PATH} && find . -name '*.tmp' -delete && echo done`),
     ],
   },
+  subagents: {
+    title: "Sub-agents as cards of their own: one at work, one back with the start of its answer",
+    sessions: [session("s1", { state: "running", title: "Find the flaky test" })],
+    history: [
+      you("u1", "Find out why CI is flaky and check the cache settings."),
+      running(),
+      say("m1", "I'll send two sub-agents: one for the flaky test, one for the cache."),
+      ...done(
+        "a1",
+        "Agent",
+        {
+          description: "Find the flaky test",
+          subagent_type: "Explore",
+          prompt: "Find which test in apps/daemon fails now and then, and why.",
+        },
+        {
+          content: text(
+            "**`queue.test.ts` › hands back in order** is flaky. It sleeps 50 ms instead of waiting for the queue to drain, so on a slow runner the second item is not there yet.\n\nFix: await `queue.idle()` before the assertion. Nothing else in the suite sleeps.",
+          ),
+        },
+      ),
+      u({
+        sessionUpdate: "subagent_update",
+        sessionId: "task-1",
+        state: { state: "idle", stopReason: "end_turn" },
+        _meta: {
+          "cycle/subagent": {
+            toolCallId: "a1",
+            usage: { tokens: 18200, toolUses: 9, durationMs: 41000 },
+          },
+        },
+      }),
+      ...tool("a2", "Agent", "in_progress", {
+        description: "Check the cache settings",
+        subagent_type: "general-purpose",
+        prompt: "Check whether CI caches node_modules between runs.",
+      }),
+      u({
+        sessionUpdate: "subagent_update",
+        sessionId: "task-2",
+        state: { state: "running" },
+        _meta: { "cycle/subagent": { toolCallId: "a2", background: false, lastTool: "Read" } },
+      }),
+    ],
+  },
   "permission-edit": {
     title: "An edit waits for a decision: the change it would make is shown before it is answered",
     sessions: [session("s1", { state: "requires_action", title: "Move the port to config" })],

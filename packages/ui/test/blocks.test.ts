@@ -48,6 +48,25 @@ test("the tool calls of one stretch share a block, and a message cuts the stretc
   expect(shape(c)).toEqual(["user", "work(a,b)", "agent", "work(c)"]);
 });
 
+test("a sub-agent is a card of its own and cuts the stretch, by its tool's name or by its own updates", () => {
+  const c = reduce([
+    you("u"),
+    tool("a", "Bash"),
+    tool("s", "Agent", "in_progress"),
+    tool("b", "Read"),
+    tool("x", "mcp__review"),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "x" } },
+    }),
+    tool("c", "Bash"),
+    idle("end_turn"),
+  ]);
+  expect(shape(c)).toEqual(["user", "work(a)", "subagent", "work(b)", "subagent", "work(c)"]);
+});
+
 test("a thought is a row of its own, and never cuts a stretch", () => {
   const c = reduce([you("u"), tool("a", "Bash"), think("t"), tool("b", "Bash"), idle("end_turn")]);
   expect(shape(c)).toEqual(["user", "work(a,b)", "thought"]);
