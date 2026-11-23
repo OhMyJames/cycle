@@ -76,6 +76,9 @@ export const subagentStateOf = (tool: ToolItem): SubagentState => {
   return "done";
 };
 
+/** Added to a background sub-agent's rank: after any in the turn, whenever they started. */
+const BACKGROUND_RANK = 1e15;
+
 /** Tools that look things up, by the name a sub-agent's news gives its last one when no call of its is known. */
 const LOOKUPS: ReadonlySet<string> = new Set([
   "Read",
@@ -215,27 +218,49 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
   const prompt = inputText(tool, "prompt");
   const streams = useMemo(() => streamsOf(tool), [tool]);
   const answer = answerOf(tool, streams.out);
+  const sub = tool.subagent;
+  const background = sub?.background === true;
   const scope = useStartScope();
   // Asked only while it runs: the starts kept are few, and a finished card says how long it took from its news.
   const since = running ? startedAt(`${scope}:tool:${tool.id}`) : 0;
-  const loader = useLoaderClaim(`subagent:${tool.id}`, running, since);
+  // A sub-agent in the background comes after those in the turn: its end may never come, and it must not keep the
+  // loader from them for good.
+  const loader = useLoaderClaim(
+    `subagent:${tool.id}`,
+    running,
+    background ? since + BACKGROUND_RANK : since,
+  );
+  // What the head and the closed line say of its own conversation: read again only when its news changes, not with
+  // each update of its call.
+  const steps = useMemo(() => stepsOf(sub), [sub]);
+  const now = useMemo(
+    () => (running && sub !== undefined ? nowOf(t, sub) : undefined),
+    [running, sub, t],
+  );
+  const look = useMemo(() => subagentLoaderState(sub), [sub]);
+  // Why it failed: what its call said on its error stream, or the text of a call that failed by itself (one whose
+  // sub-agent failed but whose call completed returned an answer, which is not a reason).
+  const reason =
+    state === "failed"
+      ? firstLine(streams.err || (tool.status === "failed" ? streams.out : ""))
+      : undefined;
   const store = useAppStore();
   // It can be stopped alone (CYCL-143): its agent said so, it is at work (in the turn or in the background), and the
   // environment's daemon can pass a stop on. Asked once: the card says it is stopping until its end comes. If the
   // daemon says there is nothing to stop (it ended while this card was behind), the button goes; if the ask fails, the
   // error is shown and it can be asked again.
-  const sub = tool.subagent;
   const environmentCan = useAppState((s) =>
     s.selectedEnvironment !== undefined
       ? s.status[s.selectedEnvironment]?.capabilities?.stopSubagent === true
       : false,
   );
   const [asked, setAsked] = useState<"no" | "stopping" | "nothing">("no");
-  const stopping = asked === "stopping" && sub?.state === "running";
+  const stopping = asked === "stopping" && running;
   const canStop =
     environmentCan &&
     asked !== "nothing" &&
     sub?.stoppable === true &&
+    running &&
     sub.state === "running" &&
     sub.id !== undefined;
   const card = useRef<HTMLDivElement>(null);
@@ -268,9 +293,6 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
         ? t("subagent.unknown")
         : t(`subagent.state.${state}`);
   const took = !running && sub?.usage !== undefined && sub.usage.durationMs > 0;
-  const steps = stepsOf(sub);
-  const now = running && sub !== undefined ? nowOf(t, sub) : undefined;
-  const reason = state === "failed" ? firstLine(streams.err || streams.out) : undefined;
   return (
     <Collapsible
       data-kind="subagent"
@@ -282,7 +304,7 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
       onOpenChange={opened}
     >
       <CollapsibleTrigger>
-        <StateMark state={state} loader={loader} look={subagentLoaderState(sub)} />
+        <StateMark state={state} loader={loader} look={look} />
         <span data-slot="visually-hidden">{t("subagent.label")}</span>{" "}
         <span data-slot="subagent-title" title={title}>
           {title}
@@ -299,7 +321,7 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
         ) : null}{" "}
         <span data-slot="subagent-meta">
           <span data-slot="subagent-status">{word}</span>{" "}
-          {running ? (
+          {running && !background ? (
             <Elapsed since={since} slot="subagent-elapsed" />
           ) : took ? (
             <span>{durationOf(i18n, sub.usage?.durationMs ?? 0)}</span>
@@ -354,7 +376,8 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
         </div>
       ) : null}
       <CollapsiblePanel>
-        {prompt !== undefined ? <Task prompt={prompt} /> : null}
+        {/* Keyed by the task: one that changes (still streaming in) is measured afresh. */}
+        {prompt !== undefined ? <Task key={prompt} prompt={prompt} /> : null}
         {/* Drawn only while open: a long one is many rows, and closed it is out of the way. */}
         {open && work !== undefined ? (
           <section data-slot="subagent-part" data-part="work" aria-label={t("subagent.work")}>
