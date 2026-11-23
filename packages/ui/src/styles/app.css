@@ -6263,3 +6263,83 @@ button[data-slot="review-file"]:focus-visible {
   text-decoration: line-through;
   color: var(--ui-muted-foreground);
 }
+
+/* The sign-in page (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md): the whole window until someone is signed in. One card in the
+   middle of the window's own colour, as quiet as the rest: a title, a line of what happens, one action. */
+[data-slot="sign-in"] {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  background: var(--cycle-surface-sidebar);
+}
+
+[data-slot="sign-in"] > [data-slot="titlebar"] {
+  -webkit-app-region: drag;
+  height: 2.5rem;
+}
+
+[data-slot="sign-in-card"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  place-self: center;
+  width: min(26rem, calc(100% - 2rem));
+  margin-bottom: 2.5rem;
+  padding: 1.5rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+}
+
+[data-slot="sign-in-title"] {
+  margin: 0;
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-title);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-title);
+}
+
+[data-slot="sign-in-body"],
+[data-slot="sign-in-kept"] {
+  margin: 0;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="sign-in-kept"] {
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="sign-in-note"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="sign-in-note"] > svg {
+  flex: none;
+  margin-top: 0.125rem;
+  color: var(--cycle-attention);
+}
+
+[data-slot="sign-in-note"][data-tone="error"] > svg {
+  color: var(--ui-destructive);
+}
+
+[data-slot="sign-in-waiting"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-ui);
+}

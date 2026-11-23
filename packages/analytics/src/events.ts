@@ -78,6 +78,23 @@ export const EVENTS = {
   /** The person chose the interface's language: one of those the app has, or the system's. */
   language_changed: o({ language: z.enum(["system", "en-US", "zh-CN"]) }),
 
+  // ---- the account (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md): never who, only how it went ----
+  /**
+   * The sign-in page was shown: nobody had signed in here (`new`), after a sign-out, after 30 days without reaching
+   * the provider (`expired`), or the provider refused the login at the start (`revoked`).
+   */
+  sign_in_shown: o({ reason: z.enum(["new", "signed_out", "expired", "revoked"]) }),
+  /** A sign-in in the browser ended: signed in, failed, or given up (stopped, timed out, or the person said no). */
+  signed_in: o({ result: z.enum(["ok", "failed", "cancelled"]) }),
+  /** The provider refused the login while the app was open (revoked or expired), or a renewal named someone else. */
+  sign_in_required: o({ reason: z.enum(["revoked", "changed_account"]) }),
+  /** The provider could not be reached: the app goes on within the 30 days' grace. Once each time it starts to. */
+  offline_grace: o({}),
+  /** After the person confirmed it. `revoked`: the provider was told (false: it could not be reached; only logged). */
+  signed_out: o({ revoked: z.boolean() }),
+  /** Someone signed in where an account had been before: whether it was someone else. */
+  account_switched: o({ switched: z.boolean() }),
+
   // ---- environments ----
   environment_saved: o({ transport: z.enum(["ssh"]) }),
   environment_removed: o({ kind: environment }),

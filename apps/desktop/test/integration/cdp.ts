@@ -28,7 +28,7 @@ export const evaluate = async (port: number, expression: string): Promise<unknow
         JSON.stringify({
           id: 1,
           method: "Runtime.evaluate",
-          params: { expression, returnByValue: true },
+          params: { expression, returnByValue: true, awaitPromise: true },
         }),
       );
     });

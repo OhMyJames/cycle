@@ -148,7 +148,7 @@ const isBuiltin = (name: string) => BUILTINS.some((m) => name === m || name.star
 // Packages that run in the daemon or the main process: the page has no business with them.
 // The analytics package may be reached for its dictionary (`@cycle/analytics/events`, for types), not for PostHog.
 const BACKEND =
-  /^@cycle\/(?:daemon|client|protocol|desktop)(?:\/|$)|^@cycle\/harness-|^@cycle\/analytics(?:$|\/posthog)/;
+  /^@cycle\/(?:daemon|client|protocol|desktop|oidc)(?:\/|$)|^@cycle\/harness-|^@cycle\/analytics(?:$|\/posthog)/;
 
 const isRelative = (name: string) => name.startsWith(".");
 
