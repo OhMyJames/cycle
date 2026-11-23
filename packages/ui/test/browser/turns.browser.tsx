@@ -510,6 +510,48 @@ test("scrolled up, a button takes the reader back to the end, says when somethin
   ]);
 });
 
+/** Where the conversation's text runs, against the input box below it: left and right edges, in pixels. */
+const edges = (log: HTMLElement) => {
+  const block = log.querySelector('[data-slot="block"]')?.getBoundingClientRect();
+  const box = document.querySelector('[data-slot="composer-box"]')?.getBoundingClientRect();
+  if (block === undefined || box === undefined) throw new Error("no block or no input box");
+  const view = log.getBoundingClientRect();
+  return {
+    block: [block.left, block.right],
+    box: [box.left, box.right],
+    margins: [block.left - view.left, view.right - block.right],
+  };
+};
+
+test("the conversation's text lines up with the input box, short or scrolling, with equal room left and right", async () => {
+  const { log, emit, ask } = await open(...turnsOf(1));
+  await waitFor(() => expect(log.textContent).toContain("answer 0"));
+  // The window's height, as #root has it in the app: the conversation scrolls inside it.
+  const root = log.closest('[data-slot="app"]')?.parentElement;
+  if (root instanceof HTMLElement) root.style.height = "100%";
+  // Too short to scroll: the scrollbar's slot is kept all the same, so nothing moves once it does scroll.
+  await waitFor(() => expect(log.scrollHeight).toBeLessThanOrEqual(log.clientHeight));
+  expect(log.offsetWidth - log.clientWidth).toBe(10);
+  const short = edges(log);
+  expect(short.block[0]).toBeCloseTo(short.box[0] ?? 0, 0);
+  expect(short.block[1]).toBeCloseTo(short.box[1] ?? 0, 0);
+  expect(short.margins[0]).toBeCloseTo(short.margins[1] ?? 0, 0);
+  for (const update of turnsOf(20, 1)) await emit(update);
+  await waitFor(() => expect(log.scrollHeight).toBeGreaterThan(log.clientHeight + 200));
+  expect(edges(log)).toEqual(short);
+  // A permission card above the box has the same edges.
+  await ask({
+    key: "local:s1:p1",
+    environmentId: "local",
+    sessionId: "s1",
+    title: "Allow Read?",
+    subject: { type: "tool_call", toolCall: { name: "Read", rawInput: { file_path: "a" } } },
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
+  });
+  const card = (await screen.findByLabelText("Allow Read?")).getBoundingClientRect();
+  expect([card.left, card.right]).toEqual(short.box);
+});
+
 test("a conversation that grows from a few blocks to many draws about a page, not all of it", async () => {
   const { log, emit } = await open(...turnsOf(1));
   expect(drawn(log)).toBe(2);
