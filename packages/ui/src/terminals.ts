@@ -2,7 +2,7 @@
 // drawn in. A terminal is the daemon's (docs/protocol.md §8 "终端"): its shell runs there and outlives this page; the
 // page only draws it. Plain TypeScript, no React and no DOM, so the rules are tested without a page.
 import type { TerminalInfo } from "./api.ts";
-import { PANEL_TABS, type PanelTabId, type PanelTabKind } from "./side-panel.ts";
+import { isTab, type PanelTabId, type PanelTabKind } from "./side-panel.ts";
 
 /** The id of a Terminal tab: the terminal's own, after `terminal:`. */
 export const terminalTab = (terminalId: string): PanelTabId => `terminal:${terminalId}`;
@@ -10,9 +10,6 @@ export const terminalTab = (terminalId: string): PanelTabId => `terminal:${termi
 /** The terminal a tab shows, or undefined for a tab that is not a terminal. */
 export const terminalOfTab = (tab: string): string | undefined =>
   tab.startsWith("terminal:") ? tab.slice("terminal:".length) : undefined;
-
-export const isFixedTab = (tab: string): tab is PanelTabKind =>
-  (PANEL_TABS as readonly string[]).includes(tab);
 
 /**
  * A terminal as the panel has it: the daemon's, or one that was there before the connection went and is not there
@@ -60,7 +57,7 @@ export const terminalCount = (n: number): "none" | "one" | "few" | "many" =>
 
 /** The kind of a tab, as analytics name it. */
 export const tabKind = (tab: PanelTabId): PanelTabKind | "terminal" =>
-  isFixedTab(tab) ? tab : "terminal";
+  isTab(tab) ? tab : "terminal";
 
 /** UTF-16 units per `input`: at most three bytes each in UTF-8 (a pair is two units for four), so well under 64 KiB. */
 const INPUT_PIECE = 16 * 1024;

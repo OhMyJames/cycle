@@ -1001,7 +1001,8 @@ html[data-platform="darwin"] [data-slot="page-heading"] {
   caret-color: var(--cycle-ink);
   font-family: var(--ui-font-mono);
   font-size: var(--cycle-text-meta);
-  --terminal-selection: color-mix(in srgb, var(--cycle-accent) 28%, transparent);
+  /* Not drawn (no outline style): the accent, computed, for the terminal's selection (terminal.tsx). */
+  outline-color: var(--cycle-accent);
 }
 
 [data-slot="terminal-screen"] {

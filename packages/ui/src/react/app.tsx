@@ -398,21 +398,23 @@ function AppWindow() {
     (sessionTerminals ?? []).some((x) => x.terminalId === terminalOfTab(sidePanel.active));
   // The header's Terminal button: on a terminal already, it closes the panel; else it shows the terminal shown last,
   // or the newest; with none, it opens one.
-  const toggleTerminal = () => {
+  const toggleTerminal = async () => {
     if (panelKey === undefined || sidePanel === undefined || session === undefined) return;
     if (terminalShown) {
       sidePanels.setOpen(panelKey, false);
       store.track("side_panel_toggled", { open: false, via: "tab_button", tab: "terminal" });
       return;
     }
-    const tab = terminalToShow(sidePanel, sessionTerminals ?? []);
+    // Pressed before the list came: it is read first, so a terminal already there is shown, not another one opened.
+    await store.loadTerminals(session.environmentId, session.sessionId);
+    const panel = sidePanels.get(panelKey);
+    const tab = terminalToShow(panel, store.getState().terminals[panelKey] ?? []);
     if (tab === undefined) {
       void store.createTerminal(session.environmentId, session.sessionId, FIRST_SIZE, "header");
       return;
     }
-    const wasOpen = sidePanel.open;
     sidePanels.show(panelKey, tab);
-    if (wasOpen) store.track("side_panel_tab_shown", { tab: "terminal" });
+    if (panel.open) store.track("side_panel_tab_shown", { tab: "terminal" });
     else store.track("side_panel_toggled", { open: true, via: "tab_button", tab: "terminal" });
   };
   // Files needs a daemon that reads a session's folder (docs/protocol.md §8): an older one is not offered it.
@@ -949,7 +951,7 @@ function AppWindow() {
                           data-kind="panel-toggle"
                           data-active={terminalShown || undefined}
                           disabled={!terminalsConnected && (sessionTerminals ?? []).length === 0}
-                          onClick={toggleTerminal}
+                          onClick={() => void toggleTerminal()}
                         >
                           <TerminalIcon />
                         </Button>

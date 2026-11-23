@@ -6,7 +6,7 @@ import { Button } from "@ui-sdk/react/button";
 import type { MessageKey } from "../messages/en-US.ts";
 import type { PanelTabId, PanelTabKind, SidePanelState } from "../side-panel.ts";
 import { viewKey } from "../store/store.ts";
-import { neighbourOf, type TerminalTab, terminalOfTab, terminalTab } from "../terminals.ts";
+import { type TerminalTab, terminalOfTab, terminalTab } from "../terminals.ts";
 import { Diff } from "./diff.tsx";
 import { Files } from "./files.tsx";
 import { useI18n } from "./i18n.tsx";
@@ -62,14 +62,6 @@ export function SidePanel({
   const ids: PanelTabId[] = [...state.tabs, ...terminals.map((x) => terminalTab(x.terminalId))];
   // A terminal shown last that is no longer there (closed in another window): the last tab instead.
   const active = ids.includes(state.active) ? state.active : (ids.at(-1) ?? "overview");
-  const close = (terminal: TerminalTab) => {
-    const tab = terminalTab(terminal.terminalId);
-    if (tab === active) {
-      const next = neighbourOf(ids, tab);
-      if (next !== undefined) store.sidePanels.show(key, next);
-    }
-    void store.closeTerminal(environmentId, sessionId, terminal.terminalId);
-  };
   return (
     <PanelTabs
       label={t("panel.tabs")}
@@ -84,7 +76,7 @@ export function SidePanel({
           id: terminalTab(terminal.terminalId),
           label: terminal.title,
           quiet: terminal.status === "exited" || terminal.ended === true,
-          onClose: () => close(terminal),
+          onClose: () => void store.closeTerminal(environmentId, sessionId, terminal.terminalId),
           content: (
             <TerminalView
               key={terminal.terminalId}

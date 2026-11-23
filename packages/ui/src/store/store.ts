@@ -44,7 +44,13 @@ import {
   type Returned,
 } from "../model/index.ts";
 import { SidePanelStore } from "../side-panel.ts";
-import { mergeTerminals, type TerminalTab, terminalCount, terminalTab } from "../terminals.ts";
+import {
+  mergeTerminals,
+  neighbourOf,
+  type TerminalTab,
+  terminalCount,
+  terminalTab,
+} from "../terminals.ts";
 
 export const viewKey = (environmentId: string, sessionId: string): string =>
   `${environmentId}:${sessionId}`;
@@ -262,6 +268,11 @@ export class AppStore {
   readonly #resending = new Map<string, { turn: number; sent: string }>();
   /** Who draws each terminal (`environmentId:terminalId`): its output and resets go there, and nowhere else. */
   readonly #terminalScreens = new Map<string, TerminalScreen>();
+  /**
+   * Environments whose terminals are being listed again after a reconnect: until that answer, a terminal missing from
+   * what the daemon tells ended while the connection was away, and keeps its tab saying so.
+   */
+  readonly #relisting = new Map<string, number>();
 
   constructor(
     bridge: CycleBridge,
@@ -354,11 +365,7 @@ export class AppStore {
         if (event.state === "connected" && was !== "connected") {
           void this.#loadAgents(event.environmentId);
           // Terminals may have ended while the connection was away (the daemon stopped): their tabs say so.
-          for (const key of Object.keys(this.#state.terminals)) {
-            const [environmentId, sessionId] = splitKey(key);
-            if (environmentId === event.environmentId && sessionId !== undefined)
-              void this.#listTerminals(environmentId, sessionId, "kept");
-          }
+          void this.#relistTerminals(event.environmentId);
           // Whether its folder is trusted could not be asked before the daemon said it keeps trust.
           if (this.#state.blank?.environmentId === event.environmentId) void this.#readBlankTrust();
         }
@@ -408,10 +415,11 @@ export class AppStore {
         return;
       case "terminals": {
         const key = viewKey(event.environmentId, event.sessionId);
+        const gone = this.#relisting.has(event.environmentId) ? "kept" : "dropped";
         this.#set((s) => ({
           terminals: {
             ...s.terminals,
-            [key]: mergeTerminals(s.terminals[key], event.terminals, "dropped"),
+            [key]: mergeTerminals(s.terminals[key], event.terminals, gone),
           },
         }));
         return;
@@ -979,9 +987,29 @@ export class AppStore {
 
   // ---- terminals (CYCL-98) ----
 
-  /** Asks a session's daemon for its terminals, once the panel needs them; again when the connection comes back. */
-  loadTerminals = (environmentId: string, sessionId: string): Promise<void> =>
-    this.#listTerminals(environmentId, sessionId, "dropped");
+  /**
+   * Asks a session's daemon for its terminals, the first time the page needs them. After that the daemon tells every
+   * change, and a connection that comes back asks again (`#relistTerminals`).
+   */
+  loadTerminals = async (environmentId: string, sessionId: string): Promise<void> => {
+    if (this.#state.terminals[viewKey(environmentId, sessionId)] !== undefined) return;
+    await this.#listTerminals(environmentId, sessionId, "dropped");
+  };
+
+  async #relistTerminals(environmentId: string): Promise<void> {
+    const prefix = `${environmentId}:`;
+    const sessions = Object.keys(this.#state.terminals)
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length));
+    if (sessions.length === 0) return;
+    const round = (this.#relisting.get(environmentId) ?? 0) + 1;
+    this.#relisting.set(environmentId, round);
+    try {
+      await Promise.all(sessions.map((s) => this.#listTerminals(environmentId, s, "kept")));
+    } finally {
+      if (this.#relisting.get(environmentId) === round) this.#relisting.delete(environmentId);
+    }
+  }
 
   async #listTerminals(
     environmentId: string,
@@ -1033,6 +1061,9 @@ export class AppStore {
       return undefined;
     }
     const key = viewKey(environmentId, sessionId);
+    // Opening attached this connection to it; its tab attaches when it is drawn, and a tab never drawn (the person went
+    // elsewhere first) must not keep its output coming. Sent before the tab's own attach, so the daemon sees them in order.
+    this.detachTerminal(environmentId, made.terminal.terminalId);
     this.#set((s) => {
       const known = s.terminals[key] ?? [];
       const has = known.some((t) => t.terminalId === made.terminal.terminalId);
@@ -1047,8 +1078,9 @@ export class AppStore {
   };
 
   /**
-   * Closes a terminal: its shell and what runs in it end. One that already ended only loses its tab. Failing to tell the
-   * daemon is shown; the tab goes either way when the daemon no longer has it.
+   * Closes a terminal: its shell and what runs in it end. One that already ended only loses its tab. Its tab goes at
+   * once, and the panel shows the tab before it if it was the one shown. If the daemon could not be told, that is shown,
+   * and the list is read again: a shell still running gets its tab back.
    */
   closeTerminal = async (
     environmentId: string,
@@ -1056,7 +1088,17 @@ export class AppStore {
     terminalId: string,
   ): Promise<void> => {
     const key = viewKey(environmentId, sessionId);
-    const was = this.#state.terminals[key]?.find((t) => t.terminalId === terminalId);
+    const known = this.#state.terminals[key] ?? [];
+    const was = known.find((t) => t.terminalId === terminalId);
+    const panel = this.sidePanels.get(key);
+    const tab = terminalTab(terminalId);
+    if (panel.active === tab) {
+      const next = neighbourOf(
+        [...panel.tabs, ...known.map((t) => terminalTab(t.terminalId))],
+        tab,
+      );
+      if (next !== undefined) this.sidePanels.show(key, next);
+    }
     this.#set((s) => ({
       terminals: {
         ...s.terminals,
@@ -1069,7 +1111,12 @@ export class AppStore {
       count: terminalCount(this.#state.terminals[key]?.filter((t) => t.ended !== true).length ?? 0),
     });
     if (was.ended === true) return;
-    await this.#attempt(() => this.#bridge.closeTerminal(environmentId, terminalId));
+    try {
+      await this.#bridge.closeTerminal(environmentId, terminalId);
+    } catch (error) {
+      this.#set({ error: messageOf(error) });
+      await this.#listTerminals(environmentId, sessionId, "dropped");
+    }
   };
 
   /**
@@ -1273,7 +1320,7 @@ export class AppStore {
         Object.entries(s.views).filter(([, view]) => view.environmentId !== environmentId),
       );
       const terminals = Object.fromEntries(
-        Object.entries(s.terminals).filter(([key]) => splitKey(key)[0] !== environmentId),
+        Object.entries(s.terminals).filter(([key]) => !key.startsWith(`${environmentId}:`)),
       );
       const open = s.selectedEnvironment === environmentId;
       return {
@@ -1443,12 +1490,6 @@ export class AppStore {
 export type TerminalScreen = {
   output: (seq: number, data: string) => void;
   screen: (seq: number, screen: string, cols: number, rows: number) => void;
-};
-
-/** `environmentId:sessionId` back into its two halves. An environment's id has no colon. */
-const splitKey = (key: string): [string, string | undefined] => {
-  const at = key.indexOf(":");
-  return at < 0 ? [key, undefined] : [key.slice(0, at), key.slice(at + 1)];
 };
 
 /** What main threw (it lost its connection, it is too old) as an answer the panel shows like the others. */

@@ -132,7 +132,7 @@ test("New terminal opens another; closing a tab ends its shell and shows the one
 
 test("a shell that exited says so, takes no keys, and its tab can be closed from there", async () => {
   const terminals = new Map([["s1", [running("a")]]]);
-  const { user, script } = await mount({ terminals });
+  const { user, script, store } = await mount({ terminals });
   await user.click(await screen.findByRole("button", { name: "Show terminal" }));
   await waitFor(() => expect(screenText()).toContain("screen of a"));
   act(() =>
@@ -147,6 +147,8 @@ test("a shell that exited says so, takes no keys, and its tab can be closed from
   await user.click(screen.getByRole("button", { name: "Close terminal" }));
   await waitFor(() => expect(screen.queryByRole("tab", { name: "zsh" })).toBeNull());
   expect(screen.getByRole("tab", { name: "Overview", selected: true })).toBeDefined();
+  // The panel remembers the tab it went to, not the terminal that is gone.
+  expect(store.sidePanels.get("local:s1").active).toBe("overview");
 });
 
 test("a terminal that could not be opened says why, in the page's words", async () => {
@@ -185,4 +187,121 @@ test("terminals that went while the connection was away stay as tabs that say th
   await user.click(screen.getByRole("button", { name: "Close tab" }));
   await waitFor(() => expect(screen.queryByRole("tab", { name: "zsh" })).toBeNull());
   expect(script.named("closeTerminal")).toEqual([]);
+});
+
+test("in the light theme a program's red is GitHub Light's, on the panel's own ground", async () => {
+  const { user, script } = await mount({ terminals: new Map([["s1", [running("a")]]]) });
+  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await waitFor(() => expect(screenText()).toContain("screen of a"));
+  act(() =>
+    script.emit({
+      type: "terminal-output",
+      environmentId: "local",
+      terminalId: "a",
+      seq: 4,
+      data: "\x1b[31mRED\x1b[0m",
+    }),
+  );
+  await waitFor(() => expect(screenText()).toContain("RED"));
+  const red = [...document.querySelectorAll(".xterm-rows span")].find(
+    (el) => el.textContent === "RED",
+  );
+  expect(red).toBeDefined();
+  expect(getComputedStyle(red as Element).color).toBe("rgb(207, 34, 46)");
+});
+
+test("opening a terminal lets go of the attachment it came with before its tab attaches", async () => {
+  const { user, script } = await mount();
+  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await waitFor(() => expect(script.named("attachTerminal").length).toBe(1));
+  const order = script.calls
+    .map(([name]) => name)
+    .filter((name) => ["createTerminal", "detachTerminal", "attachTerminal"].includes(name));
+  expect(order).toEqual(["createTerminal", "detachTerminal", "attachTerminal"]);
+});
+
+test("pressed before the list has come, the Terminal button shows the terminal there instead of opening one", async () => {
+  const terminals = new Map([["s1", [running("a", { title: "build" })]]]);
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, terminal: true },
+    terminals,
+  });
+  script.bridge.sessions = async () => [{ ...summary("s1"), title: "first" }];
+  const list = script.bridge.listTerminals;
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  script.bridge.listTerminals = async (...args) => {
+    await held;
+    return list(...args);
+  };
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  release();
+  await screen.findByRole("tab", { name: "build", selected: true });
+  expect(script.named("createTerminal")).toEqual([]);
+});
+
+test("a close the daemon did not take gives the tab back, and says why", async () => {
+  const terminals = new Map([["s1", [running("a", { title: "build" })]]]);
+  const { user, script } = await mount({ terminals });
+  script.bridge.closeTerminal = async () => {
+    throw new Error("Not connected to the daemon");
+  };
+  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await user.click(await screen.findByRole("tab", { name: "build", selected: true }));
+  await user.keyboard("{Delete}");
+  expect(await screen.findByText("Not connected to the daemon")).toBeDefined();
+  expect(await screen.findByRole("tab", { name: "build" })).toBeDefined();
+});
+
+test("after a reconnect, news of another terminal that comes before the list does not lose the ones that ended", async () => {
+  const terminals = new Map([["s1", [running("a")]]]);
+  const { user, script } = await mount({ terminals });
+  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await screen.findByRole("tab", { name: "zsh", selected: true });
+  act(() =>
+    script.emit({ type: "environment-status", environmentId: "local", state: "reconnecting" }),
+  );
+  const list = script.bridge.listTerminals;
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  script.bridge.listTerminals = async (...args) => {
+    await held;
+    return list(...args);
+  };
+  terminals.set("s1", [running("b", { title: "other" })]);
+  act(() =>
+    script.emit({
+      type: "environment-status",
+      environmentId: "local",
+      state: "connected",
+      capabilities: { queue: true, files: true, folders: true, terminal: true },
+    }),
+  );
+  act(() =>
+    script.emit({
+      type: "terminals",
+      environmentId: "local",
+      sessionId: "s1",
+      terminals: [running("b", { title: "other" })],
+    }),
+  );
+  release();
+  expect(
+    await screen.findByText("This terminal ended when the environment's daemon stopped."),
+  ).toBeDefined();
+  expect(screen.getByRole("tab", { name: "other" })).toBeDefined();
 });

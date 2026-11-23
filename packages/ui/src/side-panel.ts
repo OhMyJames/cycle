@@ -31,7 +31,8 @@ export const REMEMBERED = 200;
 
 const KEY = "cycle:side-panel";
 
-const isTab = (value: unknown): value is PanelTabKind =>
+/** One of the kinds the panel keeps (not a terminal). */
+export const isTab = (value: unknown): value is PanelTabKind =>
   typeof value === "string" && (PANEL_TABS as readonly string[]).includes(value);
 
 const isTerminalTab = (value: unknown): value is `terminal:${string}` =>
