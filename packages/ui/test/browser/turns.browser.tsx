@@ -1009,3 +1009,39 @@ test("a sub-agent is a card of its own: its task, how it goes, and once back the
   await waitFor(() => expect(card.textContent).toContain("Find which test is flaky and why."));
   expect(card.querySelector('[data-slot="subagent-answer"]')).toBeNull();
 });
+
+test("a sub-agent sent to the background shows no answer from its launch; one that failed opens to say so", async () => {
+  const { log } = await open(
+    you("u1"),
+    ...tool("bg", "Agent", "completed", { description: "Watch the logs", prompt: "Watch." }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "bg",
+      content: [{ type: "content", content: { type: "text", text: "Async agent launched" } }],
+    }),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-bg",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "bg", background: true, lastTool: "Read" } },
+    }),
+    ...tool("bad", "Agent", "completed", { description: "Fix the build", prompt: "Fix it." }),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-bad",
+      state: { state: "idle", stopReason: "error" },
+      _meta: { "cycle/subagent": { toolCallId: "bad" } },
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  const cards = await waitFor(() => {
+    const found = log.querySelectorAll<HTMLElement>('[data-kind="subagent"]');
+    expect(found).toHaveLength(2);
+    return [...found];
+  });
+  const [background, bad] = cards as [HTMLElement, HTMLElement];
+  expect(background.querySelector('[data-slot="subagent-answer"]')).toBeNull();
+  expect(background.textContent).not.toContain("Async agent launched");
+  expect(bad.getAttribute("data-status")).toBe("failed");
+  await waitFor(() => expect(bad.textContent).toContain("Fix it."));
+});

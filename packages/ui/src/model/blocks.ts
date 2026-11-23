@@ -120,13 +120,14 @@ const laidTurn = (
       case "tool": {
         // The agent changing its plan (ACP's `think`: TodoWrite, TaskCreate, TaskUpdate): the plan says it, not a row per
         // call, from its start (so nothing shows and then goes). One that failed is shown; none cuts a stretch.
-        if (item.toolKind === "think" && item.status !== "failed") break;
-        // A sub-agent is work of its own, with its own answer: a card of its own, which cuts the stretch.
+        // A sub-agent is work of its own, with its own answer: a card of its own, which cuts the stretch. Before the plan's
+        // calls, so one an agent marks `think` is not left out with them.
         if (isSubagentCall(item)) {
           stretch = undefined;
           add(`subagent:${item.id}`, { kind: "subagent", tool: item });
           break;
         }
+        if (item.toolKind === "think" && item.status !== "failed") break;
         if (stretch === undefined) {
           stretch = { key: `work:${item.id}`, tools: [] };
           add(stretch.key, { kind: "work", tools: stretch.tools });

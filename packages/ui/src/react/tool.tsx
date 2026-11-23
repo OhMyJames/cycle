@@ -4,6 +4,7 @@ import { insideFolder } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import { activityOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
+import { reveal } from "../reveal.ts";
 import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { useI18n } from "./i18n.tsx";
@@ -11,6 +12,20 @@ import { ChevronRightIcon, CloseIcon, FileIcon } from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
+
+/** Opens a card when the Overview asks to show one of these items, and when it mounts while that is still asked. */
+export function useRevealOpen(ids: readonly string[], setOpen: (open: boolean) => void) {
+  const key = ids.join("\n");
+  useEffect(() => {
+    const held = new Set(key.split("\n"));
+    const check = () => {
+      const asked = reveal.get();
+      if (asked !== undefined && held.has(asked.itemId)) setOpen(true);
+    };
+    check();
+    return reveal.subscribe(check);
+  }, [key, setOpen]);
+}
 
 /**
  * Whether a card or row is open: it starts open when it holds a failure (that is what the person came to read), opens by
@@ -40,7 +55,7 @@ export const statusWord = (t: (key: string) => string, status: string): string =
 
 const MAX_SHOWN = 20_000;
 
-const clip = (text: string): string =>
+export const clip = (text: string): string =>
   text.length > MAX_SHOWN
     ? `${text.slice(0, MAX_SHOWN)}\n… (${text.length - MAX_SHOWN} more characters not shown)`
     : text;

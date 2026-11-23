@@ -1,6 +1,6 @@
 import { Button } from "@ui-sdk/react/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import {
   activityCounts,
   activityOf,
@@ -12,7 +12,6 @@ import {
   stepOf,
   type ToolItem,
 } from "../model/index.ts";
-import { reveal } from "../reveal.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, ErrorCircleIcon, WarningIcon } from "./icons.tsx";
@@ -26,6 +25,7 @@ import {
   toolSummary,
   toolVerb,
   useOpenOnFailure,
+  useRevealOpen,
 } from "./tool.tsx";
 
 /** A notice from the daemon or the agent, in the conversation. */
@@ -59,16 +59,12 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       : "";
   const goingTip = goingDetail || undefined;
   const [open, setOpen] = useOpenOnFailure(failed > 0);
-  // Asked to show one of its calls (from the Overview): the card opens to it.
-  // Also when it mounts while a request is still being answered: the request may be what moved the window to it.
-  useEffect(() => {
-    const check = () => {
-      const asked = reveal.get();
-      if (asked !== undefined && tools.some((tool) => tool.id === asked.itemId)) setOpen(true);
-    };
-    check();
-    return reveal.subscribe(check);
-  }, [tools, setOpen]);
+  // Asked to show one of its calls (from the Overview): the card opens to it; also when it mounts while that is still
+  // asked, since the request may be what moved the window to it.
+  useRevealOpen(
+    tools.map((tool) => tool.id),
+    setOpen,
+  );
   // The pieces are written to follow one another ("ran 2 commands"), and the line begins as a sentence does.
   const pieces = list(
     activityCounts(tools).map(({ activity, count }) => t(`work.summary.${activity}`, { count })),

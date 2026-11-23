@@ -1,11 +1,20 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { useEffect } from "react";
+import { useMemo } from "react";
 import { isLive, streamsOf, type ToolItem } from "../model/index.ts";
-import { reveal } from "../reveal.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
-import { Copyable, Lead, SubagentFacts, statusWord, toolName, useOpenOnFailure } from "./tool.tsx";
+import {
+  Copyable,
+  clip,
+  Lead,
+  SubagentFacts,
+  statusWord,
+  toolDescription,
+  toolName,
+  useOpenOnFailure,
+  useRevealOpen,
+} from "./tool.tsx";
 
 const inputText = (tool: ToolItem, key: string): string | undefined => {
   const input = tool.rawInput;
@@ -14,10 +23,18 @@ const inputText = (tool: ToolItem, key: string): string | undefined => {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 };
 
-/** What the sub-agent came back with: the text of its call's result. */
-const answerOf = (tool: ToolItem): string | undefined => {
-  const out = tool.content.length > 0 ? streamsOf(tool).out : tool.rawOutput;
-  return typeof out === "string" && out.trim() !== "" ? out.trim() : undefined;
+/** As much of an answer as the preview parses: far more than three lines' worth, far less than a long report. */
+const PREVIEW_CHARS = 1_500;
+
+/**
+ * What the sub-agent came back with: the text of its call's result, once the call completed. Not while it goes, not from
+ * a call that failed or was stopped (its text is an error, or part of one), and not for a sub-agent sent to the
+ * background, whose call completes at once with only a line that says it was launched.
+ */
+const answerOf = (tool: ToolItem, out: string): string | undefined => {
+  if (tool.status !== "completed" || tool.subagent?.background === true) return undefined;
+  const text = tool.content.length > 0 ? out : tool.rawOutput;
+  return typeof text === "string" && text.trim() !== "" ? text.trim() : undefined;
 };
 
 /**
@@ -29,23 +46,19 @@ const answerOf = (tool: ToolItem): string | undefined => {
 export function SubagentCard({ tool }: { tool: ToolItem }) {
   const { t } = useI18n();
   const status = tool.status ?? "pending";
-  const failed = status === "failed" || status === "cancelled" || tool.subagent?.state === "failed";
+  const subagentFailed = tool.subagent?.state === "failed";
+  const failed = status === "failed" || status === "cancelled" || subagentFailed;
   const going = isLive(tool);
   const working = going && (tool.subagent?.state ?? "running") === "running";
-  const [open, setOpen] = useOpenOnFailure(status === "failed");
-  // Asked to show it (from the Overview): it opens.
-  useEffect(() => {
-    const check = () => {
-      if (reveal.get()?.itemId === tool.id) setOpen(true);
-    };
-    check();
-    return reveal.subscribe(check);
-  }, [tool.id, setOpen]);
-  const title = inputText(tool, "description") ?? toolName(t, tool);
+  // A failure is what the person came to read: the card opens to it.
+  const [open, setOpen] = useOpenOnFailure(status === "failed" || subagentFailed);
+  useRevealOpen([tool.id], setOpen);
+  const title = toolDescription(tool) ?? toolName(t, tool);
   const kind = inputText(tool, "subagent_type");
   const prompt = inputText(tool, "prompt");
-  const answer = going ? undefined : answerOf(tool);
-  const errors = streamsOf(tool).err;
+  const streams = useMemo(() => streamsOf(tool), [tool]);
+  const answer = answerOf(tool, streams.out);
+  const said = subagentFailed ? t("subagent.failed") : statusWord(t, status);
   return (
     <Collapsible
       data-kind="subagent"
@@ -62,31 +75,39 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
         </span>{" "}
         {kind !== undefined ? <span data-slot="subagent-type">{kind}</span> : null}{" "}
         {tool.subagent !== undefined ? <SubagentFacts subagent={tool.subagent} /> : null}{" "}
-        <span data-slot={failed ? "tool-status" : "visually-hidden"}>{statusWord(t, status)}</span>{" "}
+        {/* The facts already say a sub-agent failed; the word is for a call that failed by itself, and a screen reader. */}
+        <span data-slot={failed && !subagentFailed ? "tool-status" : "visually-hidden"}>
+          {said}
+        </span>{" "}
         <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
       </CollapsibleTrigger>
       <CollapsiblePanel>
         {prompt !== undefined ? (
           <section data-slot="subagent-part" aria-label={t("subagent.prompt")}>
             <h4 data-slot="tool-block-label">{t("subagent.prompt")}</h4>
-            <p data-slot="subagent-prompt">{prompt}</p>
+            <p data-slot="subagent-prompt">{clip(prompt)}</p>
           </section>
         ) : null}
         {answer !== undefined ? (
           <section data-slot="subagent-part" aria-label={t("subagent.answer")}>
             <h4 data-slot="tool-block-label">{t("subagent.answer")}</h4>
             <div data-slot="message" data-role="agent">
-              <Markdown text={answer} />
+              <Markdown text={clip(answer)} />
             </div>
           </section>
         ) : null}
-        {errors !== "" ? <Copyable kind="stderr" text={errors} /> : null}
+        {streams.err !== "" ? <Copyable kind="stderr" text={streams.err} /> : null}
+        {/* A call that failed by itself says why in its text, which is no answer: shown as what it is. */}
+        {failed && !subagentFailed && streams.out.trim() !== "" ? (
+          <Copyable kind="output" text={streams.out} />
+        ) : null}
       </CollapsiblePanel>
-      {/* Closed, the start of its answer: what the agent goes on from, without opening the card. */}
+      {/* Closed, the start of its answer: what the agent goes on from, without opening the card. Only a glimpse, so it
+          is out of the keyboard's and a screen reader's way; the button opens the whole of it. */}
       {!open && answer !== undefined ? (
         <div data-slot="subagent-answer">
-          <div data-slot="message" data-role="agent">
-            <Markdown text={answer} />
+          <div data-slot="message" data-role="agent" inert aria-hidden="true">
+            <Markdown text={answer.slice(0, PREVIEW_CHARS)} />
           </div>
           <button type="button" data-slot="subagent-more" onClick={() => setOpen(true)}>
             {t("subagent.showAnswer")}
