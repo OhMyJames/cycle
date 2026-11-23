@@ -6,6 +6,11 @@
 #  run by hand            builds the same and uploads them as workflow artifacts, nothing published.
 #                         With "sign" off (the default) the app is only ad hoc signed, which needs no
 #                         secrets: this is how the macOS job is iterated on.
+#
+# The macOS app is built on GitHub's macos-latest, or on the owner's Mac (a self-hosted runner, labels
+# self-hosted/macOS/ARM64) when GitHub's queue is too long: for a tag when the repository variable
+# RELEASE_RUNNER is 'self-hosted', by hand when the "runner" input says so. Either way it signs the same
+# way, from the Apple secrets into a temporary keychain, so nothing depends on that Mac's own keychain.
 name: release
 
 on:
@@ -17,6 +22,11 @@ on:
         description: Sign with the Developer ID and notarize (needs the Apple secrets)
         type: boolean
         default: false
+      runner:
+        description: Where the macOS app is built
+        type: choice
+        options: [github, self-hosted]
+        default: github
 
 concurrency:
   group: release-${{ github.ref }}
@@ -60,8 +70,9 @@ jobs:
 
   macos:
     needs: check
-    # Apple silicon. Only arm64 is shipped.
-    runs-on: macos-latest
+    # Apple silicon. Only arm64 is shipped. The owner's Mac is used only by this workflow, which runs only
+    # for tags and by hand, both of which need write access to the repository.
+    runs-on: ${{ ((github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted') || (github.event_name == 'push' && vars.RELEASE_RUNNER == 'self-hosted')) && fromJSON('["self-hosted","macOS","ARM64"]') || 'macos-latest' }}
     timeout-minutes: 45
     env:
       BUNDLE: apps/desktop/build/Cycle.app/Contents/Resources/app
@@ -113,6 +124,8 @@ jobs:
           rm "$RUNNER_TEMP/cycle.p12"
           EXISTING=$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' | tr '\n' ' ')
           security list-keychains -d user -s "$KEYCHAIN" $EXISTING
+          # Put back as it was afterwards: on the owner's Mac the search list is that user's own.
+          echo "CYCLE_KEYCHAINS_BEFORE=$EXISTING" >> "$GITHUB_ENV"
           security find-identity -v -p codesigning
           echo "CYCLE_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
@@ -152,7 +165,7 @@ jobs:
         if: always() && env.SIGN == 'true'
         run: |
           if [ -n "$CYCLE_KEYCHAIN" ]; then
-            security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db" || true
+            security list-keychains -d user -s ${CYCLE_KEYCHAINS_BEFORE:-"$HOME/Library/Keychains/login.keychain-db"} || true
             security delete-keychain "$CYCLE_KEYCHAIN" || true
           fi
 

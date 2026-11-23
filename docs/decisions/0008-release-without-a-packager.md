@@ -12,6 +12,7 @@
 - **Linux daemon**:单独的发布产物 `cycle-linux-x64.tar.gz` 加 `.sha256`,装在远端机器上(见 docs/daemon.md)。目前只有 x64。
 - **发布**:推 `v<version>` 标签才发布;标签必须等于 `apps/desktop/package.json` 的版本。手动运行只上传 artifact,不发布;`sign` 选项默认关,此时只做 ad hoc 签名,不需要任何密钥,第一次在 macOS runner 上就这样跑。
 - **密钥**:六个 Actions secret,名字和旧项目一致(`APPLE_CERTIFICATE_P12`、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_API_KEY`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER`、`APPLE_TEAM_ID`)。GitHub secret 写入后读不回来,所以要在持有原件的机器上用 `scripts/set-apple-secrets.sh` 写进新仓库;值不进仓库、不进 shell 历史。
+- **在负责人自己的 Mac 上打包**(GitHub 的 macOS arm64 机器排队太久):Mac mini 作为自托管 runner 注册在本仓库,标签 `self-hosted, macOS, ARM64`,只有 release 工作流用它。打 tag 时看仓库变量 `RELEASE_RUNNER`(`self-hosted` 就用它),手动运行看 `runner` 选项。签名和 GitHub 的机器一样:从 secret 导入临时钥匙串,只在这个钥匙串里找证书,结束时删掉它并把钥匙串搜索列表恢复原样。不用那台 Mac 登录钥匙串里的证书:后台服务看到的登录钥匙串可能是锁着的,旧仓库这样签名失败过。仓库是公开的,所以外部贡献者的 PR 一律要负责人批准才跑工作流,免得别人的工作流跑到这台 Mac 上。
 
 ## 还没有
 
