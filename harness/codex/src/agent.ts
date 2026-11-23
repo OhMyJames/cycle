@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/sdk/experimental/v2";
 import { approval } from "./approval.ts";
 import { itemUpdate } from "./items.ts";
+import { CODEX_NOTIFICATION_METHODS } from "./protocol.ts";
 import { type AdapterConfig, AppServer, CodexRpcError } from "./server.ts";
 import { type Catalog, type Mode, modes, options, policy, turnPolicy } from "./settings.ts";
 import type {
@@ -72,6 +73,7 @@ export function createAdapter(config: AdapterConfig) {
     } as SessionUpdate);
   }
   function event(method: string, raw: unknown) {
+    if (!(CODEX_NOTIFICATION_METHODS as readonly string[]).includes(method)) return;
     const active = turn;
     if (
       !active ||

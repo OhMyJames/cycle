@@ -22,13 +22,15 @@ Codex 的 `plan` 是自己的权限配置项。它通过 `collaborationMode: pla
 
 Codex 的 `collabAgentToolCall` 会转换为 ACP 工具更新和子 agent 状态，token usage、thread name 和 `/compact` 分别转换为 `usage_update`、`session_info_update`、`compaction_update`，适配器同时公布 `compact` command。桌面端沿用 daemon 的动态 agent 清单，Codex 已纳入 agent analytics 词表和会话、权限、设置事件；这些事件只上报固定 agent 名和行为枚举，不携带模型输出、命令、标题或路径。
 
+本机真实账号回归已覆盖跨 daemon 重启、真实 compaction 和真实 usage update，均通过。真实模型在本次提示下没有产生 `subagent_update`，只产生普通回答、工具和 usage 事件，因此 205 的事件转换已覆盖，真实 subagent 触发仍记录为未观察到，不能把这次回归当作真实 subagent 行为证据。
+
 ## 初始调研（CYCL-156）
 
 以下记录针对调研时的版本。
 
 Codex 指 OpenAI 的 coding agent 命令行(<https://github.com/openai/codex>,Rust,Apache-2.0)。结论一句话:**自己写 `harness/codex`,对 daemon 说 ACP v2,对下驱动随 Cycle 分发、固定版本的 `codex app-server`(stdio 上的 JSON-RPC);登录隔离在 `CODEX_HOME=<数据目录>/codex`。**
 
-验证所用版本:本机 `codex-cli 0.166.0`(2026-10-29 的独立安装包,aarch64-apple-darwin)。调研当天的最新稳定版是 0.171.0(2026-11-20,<https://github.com/openai/codex/releases>),比本机新 5 个小版本:**下面"实测"的都是 0.166.0 的行为,开工时要在固定下来的那个版本上重跑一遍**。
+早期调研实测使用过 `codex-cli 0.166.0`。当前实现和生成类型固定在 **Codex CLI/app-server 0.171.0**，通知消费有显式 allowlist，升级必须同时更新依赖、生成类型、allowlist 和回归测试。
 
 ## 证据的三种标记
 
@@ -240,7 +242,7 @@ CYCL-155 的"每个 agent 一个顶层键":
 
 工程上的风险:
 
-- **协议跟着版本变**,而且我们要用的一部分在 `experimentalApi` 后面。对策:固定版本,类型用那个版本的 `generate-ts` 产物,升级 Codex 是一次有测试把关的改动(集成测试用模拟模型把核心路径各跑一遍,像 Claude 的 `adapter.integration.ts`)。本机 0.166.0 到最新 0.171.0 之间变了什么没比。
+- **协议跟着版本变**,而且我们要用的一部分在 `experimentalApi` 后面。当前基线是 0.171.0，类型来自该版本的 `generate-ts`，适配器只消费 `harness/codex/src/protocol.ts` 列出的通知。升级 Codex 是一次有测试把关的改动，必须重新生成类型、核对通知 allowlist，并跑完整回归。
 - **Linux 沙箱**在远端和容器里能不能用(§2)。不能用时退到哪一档、怎么告诉用户,要先看到实际报错再定。
 - **自动升级**关不关得掉(§2)。
 - **没用真实模型跑过**:流式增量的粒度、思考的内容、真实的工具序列、子 agent、标题、限额事件,都只到类型为止。
