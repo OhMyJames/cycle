@@ -192,7 +192,7 @@ pi 支持的 provider 有三十多个([实测] `pi --help` 的环境变量表;[�
 - **MCP 清单的交付通路**是推断出来的设计,不成立的话退路是:每个 session 进程一个临时文件(0600,extension 读完就删),或者改用 SDK。
 - **Anthropic 订阅登录的条款问题**(§2),需要负责人决定界面上怎么对待。
 - **附件**:只有图片。文本和 PDF 附件要么协议加一层区分,要么 pi 不提供。
-- **AGENTS.md 写着"多 provider 在 v1 范围外"、"v1 只实现 Claude"**:接 pi 等于同时引入第二个 agent 和多 provider,这两句要随 CYCL-154 改,并记一条决定笔记。
+- **AGENTS.md 的范围声明**:调研时它写着"多 provider 在 v1 范围外"、"v1 只实现 Claude"。这两句已随 CYCL-155 改掉(2026-11-23):多个 agent 和它们各自的模型 provider 在范围内。
 
 ## 建议的子任务(epic CYCL-154)
 
@@ -212,6 +212,6 @@ pi 支持的 provider 有三十多个([实测] `pi --help` 的环境变量表;[�
 | 10  | 图片、提及、项目信任、系统提示、附加目录                         | `promptCapabilities.image`;`resource_link` 变文字;`cycle/trusted` → `--approve`/`--no-approve`;`systemPrompt` 的 `append`;`additionalDirectories` 写进提示                                                                                                                                                         | 模拟 API 下:图片、追加的提示、附加目录都出现在发给模型的请求里;不受信任时 `.pi/` 下的 extension 没有加载,受信任时加载了                                                                        | 2                  |
 | 11  | 用量、压缩、重试、命令、对话框                                   | `usage_update`(`get_session_stats`);`compaction_update`;`notice` 加 `cycle/retry`;`available_commands_update`(`get_commands`)和适配自己的 `/compact`;第三方 extension 的对话框 → elicitation;`session_info_changed` → 标题                                                                                         | 各有单元测试;真实模型下 `/compact` 发出开始和完成,turn 结束后界面头部有用量和费用                                                                                                              | 2                  |
 | 12  | 埋点和界面:认得 pi                                               | `agentOf` 加 `pi`(固定的词);新建 session 时选 agent 的入口、设置页里 pi 的默认配置;pi 没有的东西(计划模式、子 agent、套餐用量、plugin)界面上不出现而不是坏掉;`docs/analytics.md` 的字典                                                                                                                            | 事件带 `agent: "pi"` 且不带任何配置值和模型名;界面测试:选 pi 建 session,模式菜单是 pi 的三项                                                                                                   | **依赖 155**;3     |
-| 13  | 文档和决定笔记                                                   | 本文从"调研"改成"适配说明"(照 claude.md 的结构:已做、未做、验证结果);AGENTS.md 里"v1 只实现 Claude"、"多 provider 在范围外"两句;决定笔记:为什么是 RPC 加自己的 extension、为什么默认 `ask`、为什么带一份而不用机器上的                                                                                             | 文档和代码一致;被否掉的两条路(第三方 pi-acp、SDK 进程内)各有一句为什么                                                                                                                         | 随各项             |
+| 13  | 文档和决定笔记                                                   | 本文从"调研"改成"适配说明"(照 claude.md 的结构:已做、未做、验证结果);决定笔记:为什么是 RPC 加自己的 extension、为什么默认 `ask`、为什么带一份而不用机器上的                                                                                                                                                        | 文档和代码一致;被否掉的两条路(第三方 pi-acp、SDK 进程内)各有一句为什么                                                                                                                         | 随各项             |
 
 以后再看、不在这一批的:pi 的 package 作为 plugin(§15)、桌面端的多 provider 登录界面、codemode 调用怎么画、只读模式、文本附件(要先改协议)、项目 `mcp.json` 里要 OAuth 的服务器的登录入口、把 session 的标题写回 pi(`set_session_name`)。
