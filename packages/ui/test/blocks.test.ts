@@ -3,10 +3,13 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import {
   activityCounts,
   activityOf,
+  applyUpdate,
   type BlockCache,
   blocksOf,
   type Conversation,
   earlierAnchor,
+  type FoldCache,
+  foldedBlocks,
   type LaidBlock,
   PAGE,
   reduce,
@@ -291,4 +294,80 @@ test("an anchor that is gone falls back to the last page, and earlier moves it u
   expect(windowStart(blocks, "nobody")).toBe(PAGE);
   expect(earlierAnchor(blocks, PAGE)).toBe(blocks[0]?.key);
   expect(earlierAnchor(blocks, 10)).toBe(blocks[0]?.key);
+});
+
+const folds = (c: Conversation) =>
+  foldedBlocks(blocksOf(c), c.stops).map((b) =>
+    b.kind === "fold"
+      ? `fold(${b.blocks.map((inner) => (inner.kind === "work" ? "work" : inner.kind)).join(",")})`
+      : b.kind,
+  );
+
+test("a turn that ended normally folds the work before its last reply, and keeps what was said", () => {
+  const c = reduce([
+    you("u"),
+    say("first"),
+    tool("a", "Bash"),
+    think("t"),
+    tool("b", "Read"),
+    say("answer"),
+    idle("end_turn"),
+  ]);
+  expect(folds(c)).toEqual(["user", "fold(agent,work,thought)", "agent"]);
+  const fold = foldedBlocks(blocksOf(c), c.stops)[1];
+  // It begins after the turn's first block, so it does not take the space a turn begins with.
+  expect(fold?.startsTurn).toBe(false);
+});
+
+test("a turn still going, one that did not end normally, and one with no reply are not folded", () => {
+  const going = reduce([you("u"), tool("a", "Bash"), say("m"), running]);
+  expect(folds(going)).toEqual(["user", "work", "agent"]);
+  const stopped = reduce([you("u"), tool("a", "Bash"), say("m"), idle("cancelled")]);
+  expect(folds(stopped)).toEqual(["user", "work", "agent", "end"]);
+  const silent = reduce([you("u"), tool("a", "Bash"), idle("end_turn")]);
+  expect(folds(silent)).toEqual(["user", "work"]);
+});
+
+test("a turn with only its reply has nothing to fold, and what follows the reply stays", () => {
+  expect(folds(reduce([you("u"), say("m"), idle("end_turn")]))).toEqual(["user", "agent"]);
+  expect(
+    folds(reduce([you("u"), tool("a", "Bash"), say("m"), tool("b", "Bash"), idle("end_turn")])),
+  ).toEqual(["user", "fold(work)", "agent", "work"]);
+});
+
+test("a message put into the turn while it went is not folded: it splits the work", () => {
+  const c = reduce([
+    you("u"),
+    tool("a", "Bash"),
+    you("more"),
+    tool("b", "Read"),
+    say("m"),
+    idle("end_turn"),
+  ]);
+  expect(folds(c)).toEqual(["user", "fold(work)", "user", "fold(work)", "agent"]);
+});
+
+test("a fold says how long the turn worked before its answer, when both times are known", () => {
+  const timed: [SessionUpdate, number | undefined][] = [
+    [you("u"), 1_000],
+    [tool("a", "Bash"), 2_000],
+    [say("m"), 49_000],
+    [idle("end_turn"), undefined],
+  ];
+  const c = timed.reduce((c, [update, at]) => applyUpdate(c, update, { at }), reduce([]));
+  const fold = foldedBlocks(blocksOf(c), c.stops).find((b) => b.kind === "fold");
+  expect(fold).toMatchObject({ kind: "fold", ms: 48_000 });
+  const untimed = reduce([you("u"), tool("a", "Bash"), say("m"), idle("end_turn")]);
+  expect(
+    foldedBlocks(blocksOf(untimed), untimed.stops).find((b) => b.kind === "fold"),
+  ).not.toHaveProperty("ms");
+});
+
+test("a folded turn that has not changed gives back the very same blocks", () => {
+  const cache: FoldCache = new Map();
+  const first = reduce([you("u"), tool("a", "Bash"), say("m"), idle("end_turn"), you("v")]);
+  const laid = blocksOf(first);
+  const before = foldedBlocks(laid, first.stops, cache);
+  const after = foldedBlocks(laid, first.stops, cache);
+  expect(after[1]).toBe(before[1] as LaidBlock);
 });
