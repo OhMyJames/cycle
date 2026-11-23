@@ -181,3 +181,59 @@ test("a file in a sent message is a chip with its name; what is in it is never d
   expect(log.querySelector("b")).toBeNull();
   expect(log.querySelector('img[src="x"]')).toBeNull();
 });
+
+test("a sent message's pictures and files sit above its words, the pictures as a grid of thumbnails that open large", async () => {
+  const png = (await import("../../gallery/sample-image.ts")).SAMPLE_PNG;
+  const { user } = await open(both, {
+    sessionUpdate: "user_message",
+    messageId: "m1",
+    content: [
+      { type: "text", text: "before " },
+      ...Array.from({ length: 7 }, () => ({ type: "image", data: png, mimeType: "image/png" })),
+      { type: "text", text: "after" },
+      { type: "image", data: "PHN2Zz48L3N2Zz4=", mimeType: "image/svg+xml" },
+      {
+        type: "resource",
+        resource: { uri: "attachment:///notes.md", mimeType: "text/markdown", text: "# n" },
+      },
+    ],
+  } as SessionUpdate);
+  const log = screen.getByRole("log", { name: "Conversation" });
+  const attached = await within(log).findByRole("region", { name: "Attachments" });
+  const words = log.querySelector('[data-slot="message"][data-role="user"]');
+  if (words === null) throw new Error("no message");
+  // The words are whole, with nothing between them, and come after what was attached.
+  expect(words.textContent).toBe("before after");
+  expect(attached.compareDocumentPosition(words) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const cells = attached.querySelectorAll('[data-slot="image-grid"] > li');
+  expect(cells).toHaveLength(8);
+  expect(within(attached).getByText("An image that cannot be shown (image/svg+xml)")).toBeTruthy();
+  expect(within(attached).getByText("notes.md")).toBeTruthy();
+  // Equal squares, five to a row at this width, right-aligned to the message.
+  const boxes = [...cells].map((cell) => cell.getBoundingClientRect());
+  const first = boxes[0];
+  if (first === undefined) throw new Error("no cell");
+  expect(first.width).toBeCloseTo(first.height, 0);
+  expect(boxes.filter((b) => Math.abs(b.top - first.top) < 1).length).toBeGreaterThanOrEqual(3);
+  expect(boxes.filter((b) => Math.abs(b.top - first.top) < 1).length).toBeLessThanOrEqual(5);
+  expect(Math.abs((boxes.at(-1)?.right ?? 0) - words.getBoundingClientRect().right)).toBeLessThan(
+    1,
+  );
+  // A thumbnail opens large.
+  await user.click(
+    within(attached).getAllByRole("button", { name: /Open image/ })[0] as HTMLElement,
+  );
+  expect(await screen.findByRole("dialog")).toBeTruthy();
+});
+
+test("a message of only a picture has no empty bubble", async () => {
+  const png = (await import("../../gallery/sample-image.ts")).SAMPLE_PNG;
+  await open(both, {
+    sessionUpdate: "user_message",
+    messageId: "m1",
+    content: [{ type: "image", data: png, mimeType: "image/png" }],
+  } as SessionUpdate);
+  const log = screen.getByRole("log", { name: "Conversation" });
+  await within(log).findByRole("region", { name: "Attachments" });
+  expect(log.querySelector('[data-slot="message"][data-role="user"]')).toBeNull();
+});
