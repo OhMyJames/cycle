@@ -3163,7 +3163,8 @@ html[data-platform="darwin"]
   color: var(--cycle-ink-muted);
 }
 
-/* The verb, or the agent's own sentence for what the call is for. It keeps its room; what it acted on gives way first. */
+/* The verb, or the agent's own sentence for what the call is for. The verb keeps its room; what it acted on gives way
+   first. */
 [data-slot="tool-verb"] {
   flex: none;
   white-space: nowrap;
@@ -3188,6 +3189,11 @@ html[data-platform="darwin"]
   height: 5px;
   border-radius: 50%;
   background: var(--cycle-ink-disabled);
+}
+
+/* Empty (a row with the agent's sentence) it only pushes the end of the line right, without a gap of its own. */
+[data-slot="tool-summary"]:empty {
+  margin-inline-start: -0.5rem;
 }
 
 [data-slot="tool-summary"] {

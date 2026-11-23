@@ -96,7 +96,8 @@ export const clip = (text: string): string =>
 /** What a call acted on: its command, path, pattern, address or query. Shown, never run. */
 export const toolSummary = (tool: ToolItem): string => {
   // A command that only searches, reads or lists, with no sentence of the agent's for it: what it searched or read,
-  // after its verb ("Searched 'foo' in src"); with one, the command itself, after the sentence.
+  // after its verb ("Searched 'foo' in src"); else the command itself. A row with the agent's sentence does not show it
+  // on the line (only in its tooltip, and to a screen reader).
   const label = commandLabelOf(tool);
   if (label !== undefined) return label.detail;
   const key = summaryKey(tool);
@@ -121,6 +122,15 @@ const firstShortText = (tool: ToolItem): string | undefined => {
   }
   return undefined;
 };
+
+/** The first line of `text`, cut to what a tooltip or a spoken name can carry. */
+const hint = (text: string): string => {
+  const line = text.trim().split("\n")[0] ?? "";
+  const cut = line.length > HINT_CHARS || text.trim().includes("\n");
+  return cut ? `${line.slice(0, HINT_CHARS).trimEnd()}…` : line;
+};
+
+const HINT_CHARS = 200;
 
 /** The longest input text that is still a line's summary. */
 const SHORT_TEXT = 120;
@@ -296,9 +306,11 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   // never come (the agent's process went with the daemon), and a mark that spins for good would say it is working.
   const working = going && status === "in_progress";
   const description = toolDescription(tool);
-  // With the agent's sentence, the line is that sentence alone: what it ran is in the panel, and in the tooltip.
+  // With the agent's sentence, the line is that sentence alone (CYCL-137): what it acted on is in the panel, and, as its
+  // first line, in the tooltip and the row's name, so a screen reader still hears what ran.
   const acted = toolSummary(tool);
   const summary = description === undefined ? acted : "";
+  const actedLine = hint(acted);
   const facts = toolFacts(tool);
   // The file an edit changed, named as the Diff tab names it (from the session's folder).
   const editPath = facts.edit !== undefined ? editPathOf(tool) : undefined;
@@ -323,7 +335,7 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   // The tooltip names the tool, holds the whole sentence when the line cuts it, and what the call acted on.
   const tip =
     description !== undefined
-      ? [[toolName(t, tool), description].join(": "), acted].filter(Boolean).join("\n")
+      ? [[toolName(t, tool), description].join(": "), actedLine].filter(Boolean).join("\n")
       : toolName(t, tool);
   const summaryTip = summary || undefined;
   return (
@@ -347,6 +359,9 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
         <span data-slot="tool-verb" data-prose={description !== undefined || undefined} title={tip}>
           {description ?? toolVerb(t, tool, going, facts)}
         </span>{" "}
+        {description !== undefined && actedLine !== "" ? (
+          <span data-slot="visually-hidden">{actedLine}</span>
+        ) : null}{" "}
         <span
           data-slot="tool-summary"
           data-prose={questions.length > 0 || undefined}
