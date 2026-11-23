@@ -291,14 +291,14 @@ test("a tool call shows what it is doing and how it went", async () => {
           sessionUpdate: "tool_call_update",
           toolCallId: "t1",
           status: "completed",
-          rawInput: { command: "ls -la" },
+          rawInput: { command: "make -j4" },
         }),
       ),
   });
   await openFirstSession(user);
   const log = await screen.findByRole("log", { name: "Conversation" });
   await waitFor(() => expect(log.textContent).toContain("Bash"));
-  expect(log.textContent).toContain("ls -la");
+  expect(log.textContent).toContain("make -j4");
   expect(log.textContent).toContain("completed");
 });
 

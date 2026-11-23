@@ -13,6 +13,7 @@
 //   (`shownBlocks`).
 // - A turn that did not end normally says how, last.
 // - A turn begins a new group: the view puts more space before it than between blocks.
+import { type CommandLabel, commandLabel } from "./command-label.ts";
 import type {
   AgentItem,
   CompactionItem,
@@ -27,7 +28,7 @@ import type {
 } from "./conversation.ts";
 import { textOf } from "./conversation.ts";
 
-export type Activity = "run" | "read" | "edit" | "search" | "fetch" | "other";
+export type Activity = "run" | "read" | "edit" | "search" | "list" | "fetch" | "other";
 
 const BY_NAME: Record<string, Activity> = {
   Bash: "run",
@@ -52,18 +53,49 @@ const BY_KIND: Record<string, Activity> = {
   fetch: "fetch",
 };
 
+/** The command a call ran, when its input has one. */
+export const commandOf = (tool: ToolItem): string | undefined => {
+  const input = tool.rawInput;
+  if (typeof input !== "object" || input === null) return undefined;
+  const command = (input as Record<string, unknown>).command;
+  return typeof command === "string" && command !== "" ? command : undefined;
+};
+
 /** What a tool call does, by its name (Claude's own) and else by the kind ACP gives it. */
-export const activityOf = (tool: ToolItem): Activity =>
+const kindOf = (tool: ToolItem): Activity =>
   BY_NAME[tool.name ?? ""] ?? BY_KIND[tool.toolKind ?? ""] ?? "other";
 
-/** How many calls of each activity, in the order each first appeared. For a card's summary. */
+/**
+ * What a command call plainly does, from its command (`rg` searches, `cat` reads, `ls` lists), when it can be told.
+ * Only for a call that runs a command (another tool's `command` field may be anything), and one the agent gave no
+ * description of.
+ */
+export const commandLabelOf = (tool: ToolItem): CommandLabel | undefined => {
+  if (kindOf(tool) !== "run") return undefined;
+  // The agent said what it is for: the row says that, and the call stays a command, in its count and its mark too.
+  const description = (tool.rawInput as Record<string, unknown> | undefined)?.description;
+  if (typeof description === "string" && description.trim() !== "") return undefined;
+  const command = commandOf(tool);
+  return command === undefined ? undefined : commandLabel(command);
+};
+
+/**
+ * What a call did; a command that only searches, reads or lists is counted as that, so a stretch of them says
+ * "searched" or "read", not "ran".
+ */
+export const activityOf = (tool: ToolItem): Activity => commandLabelOf(tool)?.kind ?? kindOf(tool);
+
+/** How much of each activity (calls, or a command's files or searches), in the order each first appeared. For a card's summary. */
 export const activityCounts = (
   tools: readonly ToolItem[],
 ): { activity: Activity; count: number }[] => {
   const counts = new Map<Activity, number>();
   for (const tool of tools) {
-    const activity = activityOf(tool);
-    counts.set(activity, (counts.get(activity) ?? 0) + 1);
+    // A command that read three files read three, as three reads would have.
+    const label = commandLabelOf(tool);
+    const activity = label?.kind ?? kindOf(tool);
+    const count = label?.count ?? 1;
+    counts.set(activity, (counts.get(activity) ?? 0) + count);
   }
   return [...counts].map(([activity, count]) => ({ activity, count }));
 };

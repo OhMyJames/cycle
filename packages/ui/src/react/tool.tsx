@@ -13,7 +13,14 @@ import {
 import { insideFolder } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import type { Activity, Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
-import { activityOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
+import {
+  activityOf,
+  commandLabelOf,
+  commandOf,
+  isLive,
+  streamsOf,
+  toolFacts,
+} from "../model/index.ts";
 import { reveal } from "../reveal.ts";
 import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
@@ -25,6 +32,7 @@ import {
   ChevronRightIcon,
   CloseIcon,
   FileIcon,
+  FolderIcon,
   GlobeIcon,
   PencilIcon,
   SearchIcon,
@@ -85,6 +93,10 @@ export const clip = (text: string): string =>
 
 /** What a call acted on: its command, path, pattern, address or query. Shown, never run. */
 export const toolSummary = (tool: ToolItem): string => {
+  // A command that only searches, reads or lists, with no sentence of the agent's for it: what it searched or read,
+  // after its verb ("Searched 'foo' in src"); with one, the command itself, after the sentence.
+  const label = commandLabelOf(tool);
+  if (label !== undefined) return label.detail;
   const key = summaryKey(tool);
   if (key !== undefined) return String((tool.rawInput as Record<string, unknown>)[key]);
   return questionsOf(tool)[0] ?? firstShortText(tool) ?? "";
@@ -137,14 +149,6 @@ const SUMMARY_KEYS = ["command", "file_path", "notebook_path", "path", "pattern"
 const summaryKey = (tool: ToolItem): string | undefined => {
   const input = (tool.rawInput ?? {}) as Record<string, unknown>;
   return SUMMARY_KEYS.find((key) => typeof input[key] === "string");
-};
-
-/** The command a call ran, when its input has one: shown as a command, to read and copy, not as a field of JSON. */
-const commandOf = (tool: ToolItem): string | undefined => {
-  const input = tool.rawInput;
-  if (typeof input !== "object" || input === null) return undefined;
-  const command = (input as Record<string, unknown>).command;
-  return typeof command === "string" && command !== "" ? command : undefined;
 };
 
 /** Fields of a command's input the panel or the line already says: the command, what it is for, where it runs. */
@@ -217,6 +221,7 @@ const KIND_ICONS: Partial<Record<LeadKind, (props: { size?: number }) => ReactNo
   edit: PencilIcon,
   search: SearchIcon,
   run: TerminalIcon,
+  list: FolderIcon,
   fetch: GlobeIcon,
   subagent: AgentIcon,
 };

@@ -64,7 +64,7 @@ const open = async (...updates: SessionUpdate[]) => {
 test("two tool calls in a row are one card that says what they were, and opens to the rows", async () => {
   const { user, log } = await open(
     you("u1"),
-    ...tool("a", "Bash", "completed", { command: "ls" }),
+    ...tool("a", "Bash", "completed", { command: "make" }),
     ...tool("b", "Read", "completed", { file_path: "a.ts" }),
     state({ state: "idle", stopReason: "end_turn" }),
   );
@@ -80,10 +80,10 @@ test("two tool calls in a row are one card that says what they were, and opens t
 test("a single tool call is a row of its own, not a card", async () => {
   const { log } = await open(
     you("u1"),
-    ...tool("a", "Bash", "completed", { command: "ls -la" }),
+    ...tool("a", "Bash", "completed", { command: "make -j4" }),
     state({ state: "idle", stopReason: "end_turn" }),
   );
-  await waitFor(() => expect(log.textContent).toContain("ls -la"));
+  await waitFor(() => expect(log.textContent).toContain("make -j4"));
   expect(log.textContent).not.toContain("Ran 1 command");
 });
 
@@ -473,7 +473,7 @@ test("a card with a call the turn left is not finished, not done", async () => {
   await open(
     you("u1"),
     state({ state: "running" }),
-    ...tool("a", "Bash", "completed", { command: "ls" }),
+    ...tool("a", "Bash", "completed", { command: "make lint" }),
     ...tool("b", "Bash", "in_progress", { command: "make" }),
     state({ state: "idle", stopReason: "end_turn" }),
   );
@@ -706,7 +706,7 @@ test("a finished call leads with what kind it was; one at work, waiting, failed 
     ...finished("s2", "Glob", { pattern: "*.ts" }, {}),
     say("m4"),
     ...finished("m-1", "Read", { file_path: "b.ts" }, {}),
-    ...finished("m-2", "Bash", { command: "ls" }, {}),
+    ...finished("m-2", "Bash", { command: "make" }, {}),
     say("m5"),
     ...tool("p", "Bash", "pending", { command: "rm -rf build" }),
   );
@@ -727,6 +727,32 @@ test("a finished call leads with what kind it was; one at work, waiting, failed 
   expect(leadOfCard("ran 1 command").querySelector('[data-slot="tool-dot"]')).not.toBeNull();
   // Waiting (for an answer, say) is not done: no kind yet.
   expect(kindOf(lead("p"))).toBeUndefined();
+});
+
+test("a command that only searches, reads or lists says so; with the agent's sentence, it is as it was", async () => {
+  const { log } = await open(
+    you("u1"),
+    say("m1"),
+    ...finished("q", "Bash", { command: "rg useSteady src | head -5" }, {}),
+    say("m2"),
+    ...finished("d", "Bash", { command: "cat a.ts", description: "Look at the config" }, {}),
+    say("m3"),
+    ...finished("c1", "Bash", { command: "cat a.ts" }, {}),
+    ...finished("c2", "Bash", { command: "head -n 5 b.ts" }, {}),
+  );
+  const row = await screen.findByRole("button", { name: /Searched/ });
+  expect(row.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("'useSteady' in src");
+  expect(row.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind")).toBe(
+    "search",
+  );
+  const described = screen.getByRole("button", { name: /Look at the config/ });
+  expect(described.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("cat a.ts");
+  // Described, it stays a command: in its mark too.
+  expect(described.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind")).toBe(
+    "run",
+  );
+  // A stretch of them is counted for what they did.
+  expect(log.textContent).toContain("Read 2 files");
 });
 
 test("a command's output is drawn in its colours and copied without them; its head says how it ended", async () => {
