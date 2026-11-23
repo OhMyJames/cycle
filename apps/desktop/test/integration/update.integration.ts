@@ -197,7 +197,8 @@ test.skipIf(!ready)(
       const line = await until("the update to be offered", 60_000, () =>
         evaluate(
           port,
-          "document.querySelector('[data-slot=\"update-line\"]')?.textContent ?? null",
+          // The update is one of the app's notices over the sidebar's foot (the account's and analytics' may be there too).
+          `[...document.querySelectorAll('[data-slot="app-notice-text"]')].map((e) => e.textContent).find((t) => t.includes(${JSON.stringify(newer)})) ?? null`,
         ).then((text) => (typeof text === "string" && text.includes(newer) ? text : undefined)),
       );
       expect(line).toBe(`Version ${newer} is available`);
@@ -214,7 +215,7 @@ test.skipIf(!ready)(
         await until("the signing team rejection", 120_000, async () => {
           const line = await evaluate(
             port,
-            'document.querySelector(\'[data-slot="banner"][data-severity="error"] [data-slot="update-line"]\')?.textContent',
+            'document.querySelector(\'[data-slot="app-notice"][data-tone="error"] [data-slot="app-notice-text"]\')?.textContent',
           );
           return typeof line === "string" && line.includes("not signed by the same team")
             ? true
