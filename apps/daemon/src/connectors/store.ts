@@ -30,6 +30,8 @@ export const CatalogEntrySchema = z.object({
       type: z.literal("plugin"),
       agentId: z.string(),
       pluginId: z.string(),
+      /** The plugin's name as its agent gives it, to say whose the server is. */
+      pluginName: z.string().optional(),
       server: z.string(),
       agentName: z.string(),
       /** Request headers as the plugin wrote them. A `${NAME}` is filled from the vault's `env` as a request goes out. */

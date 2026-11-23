@@ -24,6 +24,7 @@ import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type {
   ConnectorInfo,
+  ConnectorProblem,
   EnvironmentConfig,
   PluginFailure,
   PluginInfo,
@@ -205,6 +206,12 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
   const [said, setSaid] = useState<string | undefined>(undefined);
   const [removing, setRemoving] = useState<PluginInfo | undefined>(undefined);
   const [values, setValues] = useState<ConnectorInfo | undefined>(undefined);
+  /** The server whose sign-in the browser has, by its connector: it is waited for, and the wait can be given up. */
+  const [waiting, setWaiting] = useState<string | undefined>(undefined);
+  /** Why a server's sign-in did not happen, by its connector. */
+  const [refusals, setRefusals] = useState<
+    Record<string, { problem: ConnectorProblem; message?: string | undefined }>
+  >({});
 
   const act = async <T extends object>(
     plugin: PluginInfo,
@@ -223,12 +230,14 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
     }
   };
 
-  const signIn = async (plugin: PluginInfo, connector: ConnectorInfo) => {
-    setBusy((b) => ({ ...b, [plugin.id]: true }));
+  const signIn = async (connector: ConnectorInfo) => {
+    setWaiting(connector.id);
+    setRefusals(({ [connector.id]: _gone, ...rest }) => rest);
     try {
-      await store.authorizeConnector(environmentId, connector.id);
+      const answer = await store.authorizeConnector(environmentId, connector.id);
+      if ("problem" in answer) setRefusals((r) => ({ ...r, [connector.id]: answer }));
     } finally {
-      setBusy(({ [plugin.id]: _gone, ...rest }) => rest);
+      setWaiting((w) => (w === connector.id ? undefined : w));
     }
   };
 
@@ -304,31 +313,64 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
                 below={
                   failure !== undefined || wants.length > 0 ? (
                     <>
-                      {wants.map((want) => (
-                        <div key={want.connector.id} data-slot="row" data-plugin-want="">
-                          <span data-slot="hint">
-                            {t(
-                              want.kind === "values"
-                                ? "plugins.server.values"
-                                : "plugins.server.signIn",
-                              { server: want.server },
-                            )}
-                          </span>
-                          <Button
-                            data-variant="outline"
-                            disabled={busy[plugin.id] === true}
-                            onClick={() =>
-                              want.kind === "values"
-                                ? setValues(want.connector)
-                                : void signIn(plugin, want.connector)
-                            }
+                      {wants.map((want) => {
+                        const refusal = refusals[want.connector.id];
+                        return waiting === want.connector.id ? (
+                          <div
+                            key={want.connector.id}
+                            data-slot="row"
+                            data-plugin-want=""
+                            role="status"
                           >
-                            {t(
-                              want.kind === "values" ? "connectors.setValues" : "connectors.signIn",
-                            )}
-                          </Button>
-                        </div>
-                      ))}
+                            <span data-slot="hint">
+                              {t("connectors.waiting", { name: want.server })}
+                            </span>
+                            <Button
+                              data-variant="outline"
+                              onClick={() => void store.cancelConnectorAuth()}
+                            >
+                              {t("connectors.stopWaiting")}
+                            </Button>
+                          </div>
+                        ) : (
+                          <div key={want.connector.id} data-slot="stack" data-plugin-want-of="">
+                            <div data-slot="row" data-plugin-want="">
+                              <span data-slot="hint">
+                                {t(
+                                  want.kind === "values"
+                                    ? "plugins.server.values"
+                                    : "plugins.server.signIn",
+                                  { server: want.server },
+                                )}
+                              </span>
+                              <Button
+                                data-variant="outline"
+                                // One sign-in has the browser at a time.
+                                disabled={busy[plugin.id] === true || waiting !== undefined}
+                                onClick={() =>
+                                  want.kind === "values"
+                                    ? setValues(want.connector)
+                                    : void signIn(want.connector)
+                                }
+                              >
+                                {t(
+                                  want.kind === "values"
+                                    ? "connectors.setValues"
+                                    : "connectors.signIn",
+                                )}
+                              </Button>
+                            </div>
+                            {refusal !== undefined ? (
+                              <p data-slot="hint" role="alert">
+                                {t(`connectors.problem.${refusal.problem}`, {
+                                  environment: environment.name,
+                                  reason: refusal.message ?? "",
+                                })}
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                       {failure !== undefined ? <Failure failure={failure} words={words} /> : null}
                     </>
                   ) : undefined

@@ -729,6 +729,8 @@ export class Daemon {
       const own = ((mode === "new" ? create?.mcpServers : undefined) ??
         session.entry.mcpServers ??
         []) as McpServer[];
+      // What its plugins bring is made current first: a plugin can have changed without anyone having looked.
+      if (link.mcpHttp) await this.#plugins.beforeAgentStarts(session.entry.agent);
       const connectors = link.mcpHttp
         ? await this.#connectors.serversFor(
             session.id,

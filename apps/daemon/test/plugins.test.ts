@@ -59,6 +59,7 @@ const fakeProvider = (directory: ProviderPlugin[]) => {
       installed: [...installed.values()],
       available: directory.map((plugin) => installed.get(plugin.id) ?? plugin),
     }),
+    installed: async () => [...installed.values()],
     install: async (id) => {
       act(`install ${id}`);
       const plugin = directory.find((p) => p.id === id);
@@ -353,6 +354,11 @@ test("a plugin's http server is a connector of Cycle's: given to the agent under
   expect((await asAgent(server)).status).toBe(401);
   expect(upstream.seen).toEqual([]);
 
+  // A key the server refuses is a wrong key, not a server to sign in to.
+  await call(c, "_cycle/connectors/update", { id, secrets: { env: { TRACKER_TOKEN: "wrong" } } });
+  expect((await asAgent(server)).status).toBe(401);
+  expect((await list())[0]).toMatchObject({ auth: { type: "none" }, status: { state: "error" } });
+
   await call(c, "_cycle/connectors/update", {
     id,
     secrets: { env: { TRACKER_TOKEN: "secret-1" } },
@@ -368,6 +374,29 @@ test("a plugin's http server is a connector of Cycle's: given to the agent under
 
   // Another agent's sessions are not given it.
   expect(await connectors.serversFor("elsewhere", dir, new Set(), "other")).toEqual([]);
+
+  // An update of the plugin that moves its server: the key typed for the old address is asked for again, not sent on.
+  const elsewhere = serve("nothing");
+  const mine = plugins.installed.get("tracker@builtin") as ProviderPlugin;
+  plugins.installed.set("tracker@builtin", {
+    ...mine,
+    servers: [
+      {
+        name: "api",
+        agentName: "plugin:tracker:api",
+        http: { url: elsewhere.url, headers: { "X-Key": "Bearer ${TRACKER_TOKEN}" } },
+      },
+    ],
+  });
+  await call(c, "_cycle/plugins/update", { agentId: "fake", id: "tracker@builtin" });
+  expect((await list())[0]).toMatchObject({
+    id,
+    transport: { url: elsewhere.url },
+    secrets: { env: [] },
+    status: { state: "needs_auth" },
+  });
+  expect((await asAgent(server)).status).toBe(401);
+  expect(elsewhere.seen).toEqual([]);
 
   // Switched off with its plugin, and gone with it, values and all.
   await call(c, "_cycle/plugins/set_enabled", {
@@ -431,4 +460,46 @@ test("a plugin's server at an address that is not safe for a token is left to th
   expect(plugin.servers).toEqual([{ name: "lan", by: "agent" }]);
   await c.agent.request(methods.agent.session.new, { cwd: dir } as never);
   expect(fake.log.news[0]?.mcpServers ?? []).toEqual([]);
+});
+
+test("before an agent starts, its plugins' connectors are made what is installed now, though nobody has looked", async () => {
+  const upstream = serve("nothing");
+  const { c, fake, plugins } = await start([]);
+  // Installed without Cycle being asked to (the agent updating itself, a change made outside), and listed twice.
+  const outside: ProviderPlugin = {
+    ...plain("docs", "Documents"),
+    installed: true,
+    enabled: true,
+    servers: [
+      { name: "docs", agentName: "plugin:docs:docs", http: { url: upstream.url, headers: {} } },
+    ],
+  };
+  plugins.installed.set("docs@builtin", outside);
+  plugins.provider.installed = async () => [outside, outside];
+
+  await c.agent.request(methods.agent.session.new, { cwd: dir } as never);
+  const given = (fake.log.news[0]?.mcpServers ?? []) as Given[];
+  expect(given.map((s) => s.name)).toEqual(["plugin:docs:docs"]);
+  expect((await asAgent(given[0] as Given)).status).toBe(200);
+  // One connector for one server, however often it is named.
+  const { connectors } = await call<{ connectors: Connector[] }>(c, "_cycle/connectors/list", {});
+  expect(connectors).toHaveLength(1);
+});
+
+test("an agent's plugins that cannot be asked do not keep it from starting", async () => {
+  const { c, fake, plugins } = await start([]);
+  plugins.provider.installed = async () => {
+    throw new Error("no");
+  };
+  await c.agent.request(methods.agent.session.new, { cwd: dir } as never);
+  expect(fake.log.news).toHaveLength(1);
+});
+
+test("a change that fails is told too: it may have been done halfway", async () => {
+  const { c, plugins } = await start([plain("alpha", "Writes notes")]);
+  plugins.control.fail = { reason: "timeout", detail: "" };
+  await errorOf(
+    call(c, "_cycle/plugins/install", { agentId: "fake", id: "alpha@builtin", acknowledged: true }),
+  );
+  await until(() => c.pluginsChanged.length === 1, "the failed change to be told");
 });

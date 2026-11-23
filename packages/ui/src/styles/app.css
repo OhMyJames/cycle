@@ -5992,7 +5992,12 @@ button[data-slot="review-file"]:focus-visible {
 }
 
 /* What one of a plugin's servers still wants, and the button that gives it: one line under the row. */
-[data-slot="page-row"] > [data-plugin-want] {
+[data-slot="page-row"] > [data-plugin-want-of] > [role="alert"] {
+  margin: 0;
+  color: var(--ui-destructive);
+}
+
+[data-slot="page-row"] [data-plugin-want] {
   justify-content: space-between;
   flex-wrap: nowrap;
 }

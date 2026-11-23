@@ -264,7 +264,16 @@ export type ConnectorInfo = {
    * Set when nobody added it: it is an http server a plugin of that agent brings (docs/protocol.md §15). It comes and
    * goes with the plugin; only its values and its sign-in are the person's to change.
    */
-  origin?: { type: "plugin"; agentId: string; pluginId: string; server: string } | undefined;
+  origin?:
+    | {
+        type: "plugin";
+        agentId: string;
+        pluginId: string;
+        /** The plugin's name, to show. Absent from an older daemon: the id is shown whole. */
+        pluginName?: string | undefined;
+        server: string;
+      }
+    | undefined;
   /** The names it needs a value for (written as `secrets.env`); those in `secrets.env` have one. */
   requires?: string[] | undefined;
 };

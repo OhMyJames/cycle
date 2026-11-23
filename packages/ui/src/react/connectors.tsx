@@ -372,7 +372,9 @@ function McpSection({ environment }: ConnectorsSectionProps) {
                     </span>
                     {origin !== undefined ? (
                       <span data-slot="connector-status">
-                        {t("connectors.fromPlugin", { plugin: pluginNameOf(origin.pluginId) })}
+                        {t("connectors.fromPlugin", {
+                          plugin: origin.pluginName ?? origin.pluginId,
+                        })}
                       </span>
                     ) : null}
                     <code data-slot="connector-where" title={where}>
@@ -490,15 +492,6 @@ function McpSection({ environment }: ConnectorsSectionProps) {
     </PageGroup>
   );
 }
-
-/**
- * A plugin's name out of its id, to say where a connector comes from. The id is the agent's own; this only keeps what is
- * before a last `@`, which reads well for the ids there are and is still the whole id for any other.
- */
-const pluginNameOf = (pluginId: string): string => {
-  const at = pluginId.lastIndexOf("@");
-  return at > 0 ? pluginId.slice(0, at) : pluginId;
-};
 
 const statusWord = (
   t: (key: string, params?: Record<string, string>) => string,

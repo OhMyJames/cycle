@@ -206,7 +206,11 @@ const serversOf = (pluginName: string, declared: unknown): ClaudePluginServer[] 
     if (url === undefined || url.includes("${")) return server;
     const headers: Record<string, string> = {};
     for (const [header, value] of Object.entries(isObject(config.headers) ? config.headers : {})) {
-      if (typeof value === "string") headers[header] = value;
+      if (typeof value !== "string") continue;
+      // Only a plain `${NAME}` is something another can fill in. Any other form Claude expands (a default, a
+      // plugin's own option) would be sent as it is written: such a server stays Claude's.
+      if (value.replace(/\$\{[A-Za-z0-9_]+\}/g, "").includes("${")) return server;
+      headers[header] = value;
     }
     return { ...server, http: { url, headers } };
   });
@@ -229,6 +233,8 @@ const installedOf = (raw: unknown): ClaudePlugin | undefined => {
   if (!isObject(raw)) return undefined;
   const id = text(raw.id);
   if (id === undefined) return undefined;
+  // Only the person's own: what a folder installs for itself is not managed here (every change below is `--scope user`).
+  if (raw.scope !== undefined && raw.scope !== "user") return undefined;
   const { name, sourceId } = splitId(id);
   const servers = serversOf(name, raw.mcpServers);
   const root = text(raw.readFromFolder) ?? text(raw.installPath);
@@ -241,7 +247,7 @@ const installedOf = (raw: unknown): ClaudePlugin | undefined => {
     installed: true,
     ...(description !== undefined ? { description } : {}),
     enabled: raw.enabled === true,
-    scope: raw.scope === "project" || raw.scope === "local" ? "project" : "user",
+    scope: "user",
     ...(version !== undefined ? { version } : {}),
     contents: contentsOf(root, servers.length),
     servers,
@@ -289,6 +295,11 @@ const reasonOf = (failureCode: unknown): ClaudePluginFailureReason => {
   }
   if (code.includes("command")) return "needs_command";
   return "failed";
+};
+
+/** A plugin's id is never one Claude's command line would read as an option. */
+const named = (id: string): void => {
+  if (id.startsWith("-")) throw new ClaudePluginError("not_found", "");
 };
 
 /** Everything Claude knows of its plugins at one moment. */
@@ -380,7 +391,9 @@ export class ClaudePlugins {
       isObject(listing) && Array.isArray(listing.installed) ? listing.installed : [];
     for (const raw of rawInstalled) {
       const plugin = installedOf(raw);
-      if (plugin !== undefined) installed.push(plugin);
+      // Once each: an id is what everything else here is told apart by.
+      if (plugin !== undefined && !installed.some((p) => p.id === plugin.id))
+        installed.push(plugin);
     }
     const byId = new Map(installed.map((plugin) => [plugin.id, plugin]));
     const available: ClaudePlugin[] = [];
@@ -420,16 +433,32 @@ export class ClaudePlugins {
     return { sources, installed, available };
   }
 
+  /** What is installed, and nothing of what could be: no source is asked, so it answers at once and offline. */
+  async installed(): Promise<ClaudePlugin[]> {
+    const listing = await this.#read(["list"]);
+    if (!Array.isArray(listing)) throw new ClaudePluginError("failed", "");
+    const installed: ClaudePlugin[] = [];
+    for (const raw of listing) {
+      const plugin = installedOf(raw);
+      if (plugin !== undefined && !installed.some((p) => p.id === plugin.id))
+        installed.push(plugin);
+    }
+    return installed;
+  }
+
   async install(id: string): Promise<void> {
+    named(id);
     // No `-y`: a source that wants its own command run to fetch a plugin is refused, not agreed to for the person.
     await this.#write(["install", id, "--scope", "user"]);
   }
 
   async uninstall(id: string): Promise<void> {
+    named(id);
     await this.#write(["uninstall", id, "--scope", "user"]);
   }
 
   async update(id: string): Promise<{ updated: boolean }> {
+    named(id);
     const result = await this.#write(["update", id, "--scope", "user"]);
     return {
       updated: result.updateOutcome !== "up_to_date" && result.oldVersion !== result.newVersion,
@@ -437,6 +466,7 @@ export class ClaudePlugins {
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<void> {
+    named(id);
     await this.#write([enabled ? "enable" : "disable", id, "--scope", "user"]);
   }
 

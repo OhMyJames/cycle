@@ -54,7 +54,13 @@ const trackerServer: ConnectorInfo = {
   secrets: { headers: [], env: [] },
   authorized: false,
   status: { state: "needs_auth" },
-  origin: { type: "plugin", agentId: "claude", pluginId: "tracker@directory", server: "api" },
+  origin: {
+    type: "plugin",
+    agentId: "claude",
+    pluginId: "tracker@directory",
+    pluginName: "tracker",
+    server: "api",
+  },
 };
 
 const mount = async (
@@ -345,4 +351,34 @@ test("an environment whose Cycle knows no plugins says so on that section, and s
   expect(named("listPlugins")).toHaveLength(0);
   await user.click(screen.getByRole("tab", { name: "MCP servers" }));
   expect(await screen.findByText("No connectors yet.")).toBeTruthy();
+});
+
+test("a sign-in from a plugin's row is waited for and can be given up; one the server refuses says why", async () => {
+  const { user, page, bridge } = await mount({
+    all: [{ ...tracker }],
+    connectors: [{ ...trackerServer }],
+  });
+  const installed = group(page, "Installed");
+  let answer: (value: { cancelled: true } | { problem: "auth_rejected" }) => void = () => {};
+  bridge.authorizeConnector = () =>
+    new Promise((resolve) => {
+      answer = resolve;
+    });
+  bridge.cancelConnectorAuth = async () => {
+    answer({ cancelled: true });
+  };
+  await user.click(await within(installed).findByRole("button", { name: "Sign in" }));
+  expect(
+    await within(installed).findByText("Finish signing in to api in your browser."),
+  ).toBeTruthy();
+  await user.click(within(installed).getByRole("button", { name: "Stop waiting" }));
+  expect(await within(installed).findByRole("button", { name: "Sign in" })).toBeTruthy();
+  expect(within(installed).queryByRole("alert")).toBeNull();
+
+  await user.click(within(installed).getByRole("button", { name: "Sign in" }));
+  await within(installed).findByRole("button", { name: "Stop waiting" });
+  answer({ problem: "auth_rejected" });
+  const refused = await within(installed).findByRole("alert");
+  expect(refused.textContent).not.toBe("");
+  expect(within(installed).getByRole("button", { name: "Sign in" })).toBeTruthy();
 });

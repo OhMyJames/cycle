@@ -753,7 +753,7 @@ connector 是 Cycle 自己管理的 MCP 服务器:在 Cycle 里加一次、授�
 - `auth`:`{type: "none"}`,或 `{type: "oauth", clientId?, scopes?}`(只用于 http,否则 `oauth_needs_http`)。按 MCP 的授权规范:protected resource metadata(RFC 9728)、authorization server metadata(RFC 8414)、动态注册(RFC 7591)、PKCE S256、resource 参数(RFC 8707);服务器什么元数据都没有时,退回它所在源的 `/authorize`、`/token`、`/register`。`clientId` 只在服务器不支持动态注册时由用户填(否则 `no_registration`)。
 - `secrets`:用户填的密钥**的名字**。http 的 `headers` 加在每个发往服务器的请求上,stdio 的 `env` 是进程的环境变量。值只能写入,永不读出。`Host`、`Content-Type`、`Accept`、`Mcp-Session-Id` 这类由网关自己管的头不能设(`reserved_header`)。
 - `authorized`:daemon 有没有这个 connector 的 token。
-- `origin`(可缺):`{type: "plugin", agentId, pluginId, server}`,表示它是某个 agent 的 plugin 带来的 http 服务器(§15 "plugin 带的 MCP 服务器"),不是用户加的。这样的 connector 由 daemon 随 plugin 建立、停用和删除:`update` 只能写 `secrets`,改别的字段和 `remove` 都以 `managed` 拒绝;授权的三个方法照常。它只交给 `agentId` 那个 agent 的 session。没有 `origin` 的是用户自己加的。
+- `origin`(可缺):`{type: "plugin", agentId, pluginId, pluginName?, server}`(`pluginName` 是显示用的名字,`pluginId` 客户端不拆),表示它是某个 agent 的 plugin 带来的 http 服务器(§15 "plugin 带的 MCP 服务器"),不是用户加的。这样的 connector 由 daemon 随 plugin 建立、停用和删除:`update` 只能写 `secrets`,改别的字段和 `remove` 都以 `managed` 拒绝;授权的三个方法照常。它只交给 `agentId` 那个 agent 的 session。没有 `origin` 的是用户自己加的。
 - `requires`(可缺):这个 connector 要用户填值的名字(plugin 的请求头里写的 `${NAME}`)。值经 `update` 的 `secrets.env` 写入;`secrets.env` 里列出的是已经有值的。有名字还没值时 `status.state` 是 `needs_auth`。
 - `status.state`:`disabled`(关着)、`needs_auth`(oauth 没有 token,或 token 被拒、刷新也失败)、`error`(附带 `status.reason`:`unreachable`、`auth_failed`、`spawn_failed`、`protocol`)、`ready`。它是 daemon 最近一次知道的情况,不是实时探测;daemon 重启后从 `ready` 或 `needs_auth` 重新开始。
 
@@ -846,12 +846,12 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - `sources/add` 的 `location` 交给 agent 解释(Claude:`owner/repo`、git 或 https 地址、daemon 机器上的路径)。
 - `uninstall` 同时删掉它带来的 connector 和它们的凭证;客户端必须先向用户确认。
 - 这些操作由 agent 自己的机制执行(Claude:用和 session 相同的白名单环境、在 Cycle 托管的配置目录里运行 `claude plugin …`),可能联网、要几秒到几十秒。同一个 agent 的写操作一次只做一个,后来的排队。
-- 有变化时 daemon 向每个连接发 `_cycle/plugins_changed`,参数 `{agentId}`,客户端重新 `list`。plugin 带来的 connector 变了,另有 `_cycle/connectors_changed`。
+- 有变化时 daemon 向每个连接发 `_cycle/plugins_changed`,参数 `{agentId}`,客户端重新 `list`。失败的改动之后也发(它可能做了一半)。plugin 带来的 connector 变了,另有 `_cycle/connectors_changed`。
 - **生效**:下次启动这个 agent 时(新 session,或恢复一个 session);正在运行的 agent 不变。
 
 ### plugin 带的 MCP 服务器
 
-- plugin 已安装并启用时,daemon 为它声明的每个 **http** 服务器建一个带 `origin` 的 connector(§14):地址是 plugin 写的;请求头里不含变量的原样带上,含 `${NAME}` 的把名字列进 `requires`,值由用户填;一开始按不需要登录对待,建立时探一次,探到或之后转发时收到 401,就改成 `auth: {type: "oauth"}`、`needs_auth`。plugin 停用,它们随之停用(凭证保留);卸载,随之删除;更新后地址变了,按 §14 作废旧 token。
+- plugin 已安装并启用时,daemon 为它声明的每个 **http** 服务器建一个带 `origin` 的 connector(§14):地址是 plugin 写的;请求头里不含变量的原样带上,含 `${NAME}` 的把名字列进 `requires`,值由用户填;一开始按不需要登录对待,建立时探一次,探到或之后转发时收到 401,就改成 `auth: {type: "oauth"}`、`needs_auth`(plugin 自己带凭证的不改:请求头里有 `Authorization` 或有要用户填的值时,401 说明那个值不对)。请求头里除 `${NAME}` 以外的变量写法(默认值、plugin 自己的选项)daemon 代不了,这样的服务器留给 agent。plugin 停用,它们随之停用(凭证保留);卸载,随之删除;更新后地址变了,按 §14 作废旧 token,用户填过的值也一并清掉、重新问(不把给旧地址的密钥发到新地址)。daemon 在每次启动这个 agent 之前,先向 agent 问一次已装的 plugin(只问已装的,不问来源;一分钟内问过就不再问,最多等 3 秒),把这些 connector 对齐,因为 plugin 可能在没人看的时候变了。只管用户级安装的 plugin。
 - 启动这个 agent 时,daemon 把它们放进 L2 的 `mcpServers`,**名字用 agent 给这个服务器起的名字**(由 agent 的 plugin 实现给出;Claude 是 `plugin:<plugin 名>:<服务器名>`)。agent 见到同名条目,就用它顶替 plugin 自己声明的那个:请求都经网关,token 不到达 agent,工具名和 plugin 自己写的一致。还没登录的也照样给(网关回 401,agent 看到的是连不上),否则 agent 会绕过网关自己去连、自己去登录。
 - 地址不是 `https`(或指向本机的 `http`)、地址里带变量、或者不是 http 的服务器(stdio、sse),不建 connector,由 agent 自己启动,`by: "agent"`。它们在 agent 的进程里运行,用的是 agent 的环境(§10 "环境变量"的白名单)。
 

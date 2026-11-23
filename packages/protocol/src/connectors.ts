@@ -64,6 +64,8 @@ export const ConnectorOriginSchema = z.object({
   type: z.literal("plugin"),
   agentId: z.string(),
   pluginId: z.string(),
+  /** The plugin's name, to show: the id is the agent's own and is not taken apart. Absent from an older daemon. */
+  pluginName: z.string().optional(),
   server: z.string(),
 });
 export type ConnectorOrigin = z.infer<typeof ConnectorOriginSchema>;

@@ -42,6 +42,8 @@ export type ProviderSnapshot = {
  */
 export interface PluginProvider {
   snapshot(): Promise<ProviderSnapshot>;
+  /** What is installed only, without asking any source: quick enough to ask as an agent starts. */
+  installed(): Promise<ProviderPlugin[]>;
   install(id: string): Promise<void>;
   uninstall(id: string): Promise<void>;
   update(id: string): Promise<{ updated: boolean }>;
@@ -75,6 +77,8 @@ export class PluginService {
   readonly #onChanged: (agentId: string) => void;
   readonly #now: () => number;
   readonly #views = new Map<string, { at: number; view: Promise<View> }>();
+  /** When each agent's connectors were last made what is installed, apart from a view being read. */
+  readonly #syncedAt = new Map<string, number>();
   /** The last change queued for each agent: its machinery writes its own files, one writer at a time. */
   readonly #queues = new Map<string, Promise<unknown>>();
 
@@ -103,20 +107,15 @@ export class PluginService {
     return provider;
   }
 
-  async #load(agentId: string): Promise<View> {
-    let snapshot: ProviderSnapshot;
-    try {
-      snapshot = await this.#provider(agentId).snapshot();
-    } catch (error) {
-      throw failure(error);
-    }
-    // The http servers of what is installed become connectors, switched as their plugin is.
+  /** The http servers of what is installed become connectors, switched as their plugin is. */
+  #sync(agentId: string, installed: readonly ProviderPlugin[]) {
     const specs: PluginServerSpec[] = [];
-    for (const plugin of snapshot.installed) {
+    for (const plugin of installed) {
       for (const server of plugin.servers ?? []) {
         if (server.http === undefined) continue;
         specs.push({
           pluginId: plugin.id,
+          pluginName: plugin.name,
           enabled: plugin.enabled === true,
           server: server.name,
           agentName: server.agentName,
@@ -125,7 +124,47 @@ export class PluginService {
         });
       }
     }
-    const made = await this.#connectors.syncPlugins(agentId, specs);
+    return this.#connectors.syncPlugins(agentId, specs);
+  }
+
+  /**
+   * Before an agent starts: its plugins' connectors are made what is installed now, since a plugin can change without
+   * anyone having looked (the agent updating one itself, a change made outside Cycle). Not asked again when the answer
+   * is fresh; never in the way of the agent starting (it gives up after `withinMs`, and a failure is not one of the
+   * session's).
+   */
+  async beforeAgentStarts(agentId: string, withinMs = 3_000): Promise<void> {
+    const provider = this.#providers.get(agentId);
+    if (provider === undefined) return;
+    const held = this.#views.get(agentId);
+    const fresh = Math.max(
+      held?.at ?? Number.NEGATIVE_INFINITY,
+      this.#syncedAt.get(agentId) ?? Number.NEGATIVE_INFINITY,
+    );
+    if (this.#now() - fresh < SNAPSHOT_MS) return;
+    const run = (async () => {
+      const installed = await provider.installed();
+      await this.#sync(agentId, installed);
+      this.#syncedAt.set(agentId, this.#now());
+    })().catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      run,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, withinMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
+  async #load(agentId: string): Promise<View> {
+    let snapshot: ProviderSnapshot;
+    try {
+      snapshot = await this.#provider(agentId).snapshot();
+    } catch (error) {
+      throw failure(error);
+    }
+    const made = await this.#sync(agentId, snapshot.installed);
     const view = (plugin: ProviderPlugin): Plugin => {
       const { servers, ...rest } = plugin;
       if (servers === undefined) return { ...rest, agentId };
@@ -179,18 +218,15 @@ export class PluginService {
         this.#views.delete(agentId);
       }
     });
-    const settled = result.then(
-      () => this.#view(agentId).catch(() => undefined),
-      () => undefined,
-    );
+    const again = () => this.#view(agentId).catch(() => undefined);
+    const settled = result.then(again, again);
     this.#queues.set(agentId, settled);
     void settled.then(() => {
       if (this.#queues.get(agentId) === settled) this.#queues.delete(agentId);
     });
-    void result.then(
-      () => this.#onChanged(agentId),
-      () => undefined,
-    );
+    // Told once what it has was asked again, whether the change worked or not: one that failed halfway (a timeout
+    // after the agent had already written it) is seen as it is, and its connectors are there.
+    void settled.then(() => this.#onChanged(agentId));
     return result;
   }
 

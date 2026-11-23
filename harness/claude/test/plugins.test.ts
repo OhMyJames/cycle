@@ -72,8 +72,16 @@ test("what Claude lists becomes sources, installed plugins with what they bring,
                 },
                 rooted: { type: "http", url: "${CLAUDE_PLUGIN_ROOT}/x" },
                 local: { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/server.js"] },
+                defaulted: {
+                  type: "http",
+                  url: "https://x.example/mcp",
+                  headers: { "X-Key": "${KEY:-none}" },
+                },
               },
             },
+            // The same one again, and one a folder installed for itself: neither is another plugin here.
+            { id: "demo@local-market", scope: "user", enabled: true, installPath: root },
+            { id: "theirs@local-market", version: "1.0.0", scope: "project", enabled: true },
           ],
           available: [
             {
@@ -127,7 +135,7 @@ test("what Claude lists becomes sources, installed plugins with what they bring,
         enabled: true,
         scope: "user",
         version: "1.0.0",
-        contents: { skills: 1, commands: 1, agents: 0, hooks: 2, mcpServers: 3 },
+        contents: { skills: 1, commands: 1, agents: 0, hooks: 2, mcpServers: 4 },
         servers: [
           // A plain http server: one that can be served in Claude's place, under the name a session knows it by.
           {
@@ -141,6 +149,8 @@ test("what Claude lists becomes sources, installed plugins with what they bring,
           // An address only Claude can work out, and a process: Claude's own to start.
           { name: "rooted", agentName: "plugin:demo:rooted" },
           { name: "local", agentName: "plugin:demo:local" },
+          // A header with a form of variable only Claude expands: Claude's too.
+          { name: "defaulted", agentName: "plugin:demo:defaulted" },
         ],
       },
     ]);
@@ -201,6 +211,21 @@ test("each change is Claude's own command for the person's own scope, never agre
     "plugin marketplace update --json",
     "plugin marketplace update --json -- team",
   ]);
+  // What is installed can be asked alone, without a source being asked.
+  const quick = scripted({
+    "plugin list --json": {
+      stdout: JSON.stringify([{ id: "demo@local-market", scope: "user", enabled: false }]),
+    },
+  });
+  expect(await make(quick.run).installed()).toMatchObject([
+    { id: "demo@local-market", installed: true, enabled: false },
+  ]);
+
+  // An id that would be read as an option is no plugin: nothing is run.
+  await expect(plugins.install("--scope=project")).rejects.toMatchObject({ reason: "not_found" });
+  await expect(plugins.setEnabled("-y", true)).rejects.toMatchObject({ reason: "not_found" });
+  expect(calls).toHaveLength(said.length);
+
   // A source that wants its own command run is not said yes to here.
   for (const line of said) expect(line).not.toMatch(/(^| )(-y|--yes|--accept-command)( |$)/);
 });

@@ -57,6 +57,7 @@ const provider = () => {
       installed: [...installed.values()],
       available: DIRECTORY.map((p) => installed.get(p.id) ?? p),
     }),
+    installed: async () => [...installed.values()],
     install: async (id) => {
       act();
       const plugin = DIRECTORY.find((p) => p.id === id);

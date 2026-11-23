@@ -473,7 +473,13 @@ const PLUGIN_SERVERS: ConnectorInfo[] = [
     transport: { type: "http", url: "https://mcp.linear.app/mcp" },
     auth: { type: "oauth" },
     status: { state: "needs_auth" },
-    origin: { type: "plugin", agentId: "claude", pluginId: "linear@directory", server: "linear" },
+    origin: {
+      type: "plugin",
+      agentId: "claude",
+      pluginId: "linear@directory",
+      pluginName: "linear",
+      server: "linear",
+    },
   }),
 ];
 

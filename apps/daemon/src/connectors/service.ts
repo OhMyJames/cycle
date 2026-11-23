@@ -143,8 +143,7 @@ const filled = (
 };
 
 /** A name for a plugin's server among the connectors: nobody types it, an agent never sees it. */
-const slugFor = (pluginId: string, server: string, taken: ReadonlySet<string>): string => {
-  const plugin = pluginId.split("@")[0] ?? pluginId;
+const slugFor = (plugin: string, server: string, taken: ReadonlySet<string>): string => {
   const base =
     `${plugin}-${server}`
       .toLowerCase()
@@ -157,7 +156,10 @@ const slugFor = (pluginId: string, server: string, taken: ReadonlySet<string>): 
 
 /** An http server a plugin brings, as the agent's plugin machinery describes it. */
 export type PluginServerSpec = {
+  /** The agent's own id for the plugin: kept whole, never taken apart. */
   pluginId: string;
+  /** Its name, as the agent gives it. */
+  pluginName: string;
   /** Whether the plugin is switched on. */
   enabled: boolean;
   server: string;
@@ -295,6 +297,7 @@ export class ConnectorService {
               type: "plugin" as const,
               agentId: entry.origin.agentId,
               pluginId: entry.origin.pluginId,
+              pluginName: entry.origin.pluginName ?? entry.origin.pluginId,
               server: entry.origin.server,
             },
           }
@@ -368,7 +371,8 @@ export class ConnectorService {
       return rest;
     });
     await this.#catalog.put(entry);
-    if (!sameServer) this.#runtime.delete(entry.id);
+    // Another server, or other keys: what was last known of it (a refusal of the old key) is no longer said.
+    if (!sameServer || params.secrets !== undefined) this.#runtime.delete(entry.id);
     // A process started with the old command, values or switch does not go on with them.
     if (!sameServer || params.secrets?.env !== undefined || !entry.enabled) {
       this.#stopBridges(entry.id);
@@ -429,22 +433,27 @@ export class ConnectorService {
     const names = new Set(all.map((entry) => entry.name));
     const made = new Map<string, Map<string, string>>();
     let changed = false;
+    const seen = new Set<string>();
     for (const spec of servers) {
       if (secureUrl(spec.url) === undefined) continue;
       const key = JSON.stringify([spec.pluginId, spec.server]);
+      // A server named twice is one server: a second connector would be made for it again and again.
+      if (seen.has(key)) continue;
+      seen.add(key);
       const before = mine.get(key);
       mine.delete(key);
       const origin: NonNullable<CatalogEntry["origin"]> = {
         type: "plugin",
         agentId,
         pluginId: spec.pluginId,
+        pluginName: spec.pluginName,
         server: spec.server,
         agentName: spec.agentName,
         headers: spec.headers,
       };
       let entry: CatalogEntry;
       if (before === undefined) {
-        const name = slugFor(spec.pluginId, spec.server, names);
+        const name = slugFor(spec.pluginName, spec.server, names);
         names.add(name);
         entry = {
           id: randomUUID(),
@@ -471,10 +480,11 @@ export class ConnectorService {
         };
         if (JSON.stringify(entry) !== JSON.stringify(before)) {
           if (moved) {
-            // A token belongs to the address it was given at: an update of the plugin that moves it signs it out.
+            // What the person gave belongs to the address they gave it for: an update of the plugin that moves its
+            // server signs it out, and the keys they typed are asked for again rather than sent to the new address.
             this.#broker.forget(entry.id);
             await this.#broker.revoke(await this.#vault.get(entry.id));
-            await this.#mutate(entry.id, ({ oauth: _gone, ...rest }) => rest);
+            await this.#mutate(entry.id, () => ({ headers: {}, env: {} }));
             this.#runtime.delete(entry.id);
           }
           await this.#catalog.put(entry);
@@ -501,10 +511,11 @@ export class ConnectorService {
   async #needsSignIn(id: string): Promise<void> {
     const entry = await this.#catalog.get(id);
     if (entry?.origin === undefined || entry.auth.type !== "none") return;
-    // A header the plugin itself sets as the credential is the person's key being wrong, not a sign-in.
-    const own = Object.keys(entry.origin.headers).some(
-      (name) => name.toLowerCase() === "authorization",
-    );
+    // A plugin that carries a credential of its own (an `Authorization` header, or a key the person types into any
+    // header) is refused because that is wrong, not because it wants a sign-in.
+    const own =
+      requiredBy(entry.origin.headers).length > 0 ||
+      Object.keys(entry.origin.headers).some((name) => name.toLowerCase() === "authorization");
     if (own) return;
     await this.#catalog.put({ ...entry, auth: { type: "oauth" } });
     this.#runtime.delete(id);
