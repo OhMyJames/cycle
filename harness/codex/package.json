@@ -1,0 +1,15 @@
+{
+  "name": "@cycle/harness-codex",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./run": "./src/run.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "catalog:",
+    "@cycle/protocol": "workspace:*",
+    "@openai/codex": "0.171.0"
+  }
+}

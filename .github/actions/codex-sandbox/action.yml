@@ -1,0 +1,14 @@
+name: Prepare the Codex sandbox on Ubuntu
+description: Install the distro bubblewrap and its scoped user-namespace profile on the test runner.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends bubblewrap apparmor-profiles
+        profile=bwrap-userns-restrict
+        if [[ ! -f /etc/apparmor.d/$profile ]]; then
+          sudo install -m 644 "/usr/share/apparmor/extra-profiles/$profile" "/etc/apparmor.d/$profile"
+        fi
+        sudo apparmor_parser -r "/etc/apparmor.d/$profile"

@@ -36,6 +36,8 @@ export type Harness = {
     /** The binary to run: the shipped one, else the machine's. */
     executable: () => string | undefined;
     env: (context: Omit<HarnessContext, "self" | "log">) => Record<string, string>;
+    /** Put before every command it is given (its own options that must always hold). Absent: none. */
+    args?: string[];
     /** The arguments that sign in. */
     login: string[];
   };

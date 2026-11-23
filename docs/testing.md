@@ -18,7 +18,7 @@
 
 2026-11-21 从 happy-dom 换过来时,真实浏览器发现了 happy-dom 掩盖的几件事,都是测试写得不对,不是应用的错:ui-sdk 的快捷键提示在挂载后才换成本平台的按键;对话框关闭有退出动画,要等它离开;双击一个第一下就禁用的按钮只能真的双击;选项的输入框被 label 盖着,人点的是 label。
 
-集成测试会启动真实进程(Claude、daemon、Electron、无界面的 Chromium),所以不在门禁里。6 个套件**串行**,每个有自己的时限:
+集成测试会启动真实进程(Claude、daemon、Electron、无界面的 Chromium),所以不在门禁里。7 个套件**串行**,每个有自己的时限:
 
 **桌面测试不抢焦点。** 用户的流程(连接、建会话、打字和粘贴、聊天、权限、重载)在 `web` 套件里跑:构建出的页面在无界面的 Chromium 里,后面是真的 `ConnectionManager` 和 daemon(`apps/desktop/test/web/web-app.ts`),任何系统上都不开窗口。Electron 只剩打包测试,它证明的是只有 Electron 能证明的事:打包后的应用找到自带的 daemon,页面被锁住(CSP、没有 Node、桥接只有约定的方法)。Linux 上它在 xvfb 里跑;macOS 上窗口不显示,应用设成 `prohibited` 激活策略(不进 Dock、不能到前台)。打包后的应用读环境变量 `CYCLE_TEST_HIDDEN_WINDOW=1`,只有 macOS 上的测试会设它(Linux 的 xvfb 里没有谁的焦点可抢,窗口照常显示)。隐藏时应用也不发系统通知,页面不被后台节流。在开发机上跑 `bun run test:integration` 时,前台的应用一直是你自己的(2026-11-21 在 macOS 上按 0.1 秒采样验证过)。
 
@@ -26,6 +26,7 @@
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | node    | 客户端和传输在真正的 Node(Electron 自带的)下能用                                                                                                                                                         | 60 秒  |
 | adapter | 真实 SDK 上:不带 replayFrom 恢复后上下文完整;权限的允许和拒绝真的决定工具是否运行;模型输出到一半时取消                                                                                                   | 90 秒  |
+| codex   | 固定版 app-server 与本地模拟 Responses API 通过 ACP stdio 对话、执行受限命令、取消回合；设置 CYCLE_DAEMON_BIN 可测安装包                                                                                 | 60 秒  |
 | ssh     | **真实的 ssh**:一个私有的 sshd(非特权、回环端口、测试自己生成的主机密钥和用户密钥,不读不改 `~/.ssh`)加系统的 `ssh` 客户端;一个回合,断开,新连接拿到历史。设了 `CYCLE_DAEMON_BIN` 就用构建出的可执行文件跑 | 60 秒  |
 | backend | `proxy` 自动启动 daemon、daemon 脱离、断线后新客户端拿到历史并继续、daemon 的环境变量不会到 Claude                                                                                                       | 120 秒 |
 | package | 打包后的应用在干净的环境里(没有 bun、node、仓库)找到自带的 daemon 和 Claude,启动 daemon,窗口显示已连接;页面被锁住(CSP、没有 Node、桥接只有约定的方法)                                                    | 90 秒  |
@@ -65,7 +66,7 @@ mac-mini 上用同一 Developer ID 团队 `AGKXLGRXJ7` 对发布提交 0.3.6、0
 
 ## 每次全跑
 
-六个套件每次都全跑,不按改动挑选,也不记录历史耗时:全跑一遍约 35 秒,挑选省下的比维护挑选规则的代价小。理由和被否掉的做法见 [决定笔记](../.agents/notes/2026-11-21-integration-runs-every-suite.md)。`bun run test:integration web` 只跑名字里有 web 的。
+七个套件每次都全跑,不按改动挑选,也不记录历史耗时:全跑一遍约 35 秒,挑选省下的比维护挑选规则的代价小。理由和被否掉的做法见 [决定笔记](../.agents/notes/2026-11-21-integration-runs-every-suite.md)。`bun run test:integration web` 只跑名字里有 web 的。
 
 ## 固定等待
 
@@ -108,7 +109,7 @@ CYCLE_REAL_MODEL_TOKEN=<oauth token> bun run --cwd apps/daemon test:real:daemon 
 `.github/workflows/ci.yml`:
 
 - `check`:每次 push 和 PR。`bun install --frozen-lockfile --ignore-scripts`,然后 `bun run check`。同一个分支的新提交会取消上一次还在跑的。10 分钟上限。
-- `integration`:每次 push 到 main、每个 PR 和手动触发,全部六个套件。装 xvfb 和 Electron 需要的库,下载 Electron 二进制(bun 不跑它的 postinstall),`bun run test:integration --strict --summary`,结果表写进步骤摘要。20 分钟上限。不需要任何密钥:模型是模拟的。
+- `integration`:每次 push 到 main、每个 PR 和手动触发,全部七个套件。装 xvfb 和 Electron 需要的库,下载 Electron 二进制(bun 不跑它的 postinstall),`bun run test:integration --strict --summary`,结果表写进步骤摘要。20 分钟上限。不需要任何密钥:模型是模拟的。
 
 PR 上两个作业并行:`check` 约 35 秒,`integration` 连安装约 55 秒,其中测试本身约 35 秒(大头是 Claude 适配器套件)。
 

@@ -29,6 +29,7 @@ jobs:
           /usr/bin/time -f "$PACKAGE build: %e s, peak RSS %M KiB" -o "$RUNNER_TEMP/metrics" bun run --cwd apps/daemon build
           cat "$RUNNER_TEMP/metrics" | tee -a "$GITHUB_STEP_SUMMARY"
           du -sb "apps/daemon/dist/$PACKAGE" "apps/daemon/dist/$PACKAGE.tar.gz" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: ./.github/actions/codex-sandbox
       - name: Install and exercise the release binaries
         working-directory: apps/daemon/dist
         run: |
@@ -39,6 +40,7 @@ jobs:
           D="$RUNNER_TEMP/install/share/cycle"
           test "$(env -i PATH=/usr/bin:/bin "$D/cycle" version)" = "$(jq -r .version ../../desktop/package.json)"
           env -i PATH=/usr/bin:/bin "$D/claude" --version
+          CYCLE_DAEMON_BIN="$D/cycle" bun test ../../../harness/codex/test/integration/adapter.integration.ts
           CYCLE_DAEMON_BIN="$D/cycle" bun run --cwd .. test:integration
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'

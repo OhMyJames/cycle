@@ -1,7 +1,7 @@
 // The integration suites, and what a suite's result means. No process is started here: the runner
 // (integration.ts) uses it, and the tests call it directly.
 //
-// Every suite runs every time. All six together take about 35 s on CI, so choosing among them by what a change
+// Every suite runs every time. The original six together took about 35 s on CI, so choosing among them by what a change
 // touched would save less than it costs to keep the rules that choose right (see docs/testing.md).
 
 export type Suite = {
@@ -27,6 +27,12 @@ export const suites: Suite[] = [
     cwd: "harness/claude",
     file: "test/integration/adapter.integration.ts",
     seconds: 90,
+  },
+  {
+    name: "codex",
+    cwd: "harness/codex",
+    file: "test/integration/adapter.integration.ts",
+    seconds: 60,
   },
   {
     name: "ssh",

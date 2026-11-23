@@ -3,16 +3,22 @@
 // Claude adapter, which runs the real Agent SDK against a mock of the Anthropic API.
 // Run with `bun run test:integration` in apps/daemon. The pre-commit gate does not run it.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import { methods, type SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleClient, sshChannel } from "@cycle/client";
+import { META } from "@cycle/protocol";
 import {
   startMock,
   textReply,
 } from "../../../../harness/claude/test/integration/mock-anthropic.ts";
+import { response } from "../../../../harness/codex/test/integration/mock-responses.ts";
+import { ConfigSchema } from "../../src/config.ts";
+import { agentsFor } from "../../src/harnesses.ts";
+import { Daemon } from "../../src/index.ts";
 import { isListening } from "../../src/transport/server.ts";
+import { connectClient, until as waitUntil } from "../client.ts";
 import { fakeSsh } from "../fake-ssh.ts";
 
 // CYCLE_DAEMON_BIN: run the built single-file executable instead of the source (see `bun run build`).
@@ -85,7 +91,12 @@ test("the backend end to end: ssh, proxy, daemon, adapter, SDK, and a drop that 
     expect(pid).toBeNumber();
 
     const agents = await client.agents();
-    expect(agents.agents).toMatchObject([{ id: "claude", available: true }]);
+    expect(agents.agents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "claude", available: true }),
+        expect.objectContaining({ id: "codex", available: true }),
+      ]),
+    );
 
     const sessionId = await client.newSession({ cwd, config: { mode: "default" } });
     await client.watch(sessionId, cwd);
@@ -272,3 +283,104 @@ test("a connector added in Cycle reaches the real Claude through the daemon's ga
     mcp.stop();
   }
 }, 60_000);
+
+test("Codex permissions, empty-thread reassociation and missing answered history through the daemon", async () => {
+  const dataDir = join(root, "codex-data"),
+    cwd = join(root, "codex-project"),
+    home = join(dataDir, "codex");
+  await mkdir(cwd);
+  await mkdir(home, { recursive: true });
+  let command: string | undefined;
+  const mock = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      if (!new URL(req.url).pathname.endsWith("/responses"))
+        return new Response(null, { status: 404 });
+      await req.text();
+      const cmd = command;
+      command = undefined;
+      return response(cmd !== undefined, cmd ?? "");
+    },
+  });
+  await Bun.write(
+    join(home, "config.toml"),
+    `model="gpt-5.4"
+model_provider="mock"
+[model_providers.mock]
+name="mock"
+base_url="http://127.0.0.1:${mock.port}/v1"
+wire_api="responses"
+supports_websockets=false
+`,
+  );
+  const start = () =>
+    Daemon.start({
+      dataDir,
+      agents: agentsFor(
+        ConfigSchema.parse({}),
+        dataDir,
+        { PATH: process.env.PATH, OPENAI_API_KEY: "host-secret" },
+        undefined,
+        undefined,
+        DAEMON,
+      ),
+    });
+  let daemon = await start();
+  try {
+    let c = await connectClient(daemon);
+    const list = (await c.agent.request("_cycle/agents/list", {})) as {
+      agents: { id: string; available: boolean }[];
+    };
+    expect(list.agents).toContainEqual(expect.objectContaining({ id: "codex", available: true }));
+    const { sessionId } = await c.agent.request(methods.agent.session.new, {
+      cwd,
+      _meta: { [META.agent]: "codex", [META.config]: { mode: "untrusted" } },
+    });
+    const entry = async () =>
+      (await Bun.file(join(dataDir, "index.json")).json()).sessions[sessionId];
+    const original = (await entry()).agentSessionId;
+    await daemon.close();
+    // Force the missing-rollout case, including on versions that persist an empty thread.
+    await rm(join(home, "sessions"), { recursive: true, force: true });
+    daemon = await start();
+    let answer: "allow" | "deny" = "deny";
+    c = await connectClient(daemon, { onPermission: () => answer });
+    await c.agent.request(methods.agent.session.resume, { sessionId, cwd });
+    const prompt = async (text: string) => {
+      const count = c.ended();
+      await c.agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text }],
+      });
+      await waitUntil(() => c.ended() > count, "Codex prompt", 10_000);
+    };
+    command = "touch denied-by-cycle";
+    await prompt("Try the first command.");
+    expect(c.permissions.length).toBeGreaterThan(0);
+    expect(await Bun.file(join(cwd, "denied-by-cycle")).exists()).toBe(false);
+    const replacement = (await entry()).agentSessionId;
+    expect(replacement).not.toBe(original);
+    answer = "allow";
+    command = "if env | grep -q ^OPENAI_API_KEY=; then exit 1; fi; touch allowed-by-cycle";
+    await prompt("Try the second command.");
+    expect(c.permissions.length).toBeGreaterThan(1);
+    expect(await Bun.file(join(cwd, "allowed-by-cycle")).exists()).toBe(true);
+    expect((await entry()).hadTurn).toBe(true);
+    await daemon.close();
+    await rm(join(home, "sessions"), { recursive: true, force: true });
+    daemon = await start();
+    c = await connectClient(daemon);
+    await c.agent.request(methods.agent.session.resume, { sessionId, cwd });
+    await expect(
+      c.agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "continue" }],
+      }),
+    ).rejects.toMatchObject({ code: -32013 });
+    expect((await entry()).agentSessionId).toBe(replacement);
+  } finally {
+    await daemon.close();
+    mock.stop(true);
+  }
+}, 30_000);

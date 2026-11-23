@@ -1,10 +1,38 @@
 # Codex 适配(调研)
 
-状态:调研结论,还没有代码。调研日期 2026-11-23(CYCL-156,属于 epic CYCL-152)。
+## 第一阶段实现（CYCL-194、195）
+
+基线为 2026-11-23 的最新稳定版 **Codex CLI 0.171.0**。构建时由 Bun lockfile 校验官方 npm 平台包，从中取原生 CLI。发行物运行时无需 Node 或 npm。在 daemon 安装目录和桌面包的 `bin` 下均有 `codex`；Linux 还带同版本的 `codex-resources/bwrap`。许可随 `codex-resources/licenses` 一起安装。
+
+内部入口 `cycle adapter codex` 通过 ACP v2 支持 initialize、new、纯文字 prompt、cancel 和 close。一份适配器拥有一个 thread；文字和思考增量、命令、文件变更、搜索和 MCP 工具更新按 item id 关联，回合成功、失败、取消或子进程退出都结束 running 状态。每个 app-server 只接收 `CYCLE_ADAPTER_CONFIG.env` 指定的环境，要求显式提供绝对路径 HOME 和 CODEX_HOME。第一阶段固定 workspace-write、never；daemon 接入阶段改为权限模式映射（`harness/codex/src/settings.ts`），并加入独立 `codex` 配置段、环境白名单、空 rollout 恢复关联和权限模式映射。模型目录来自 Codex 自己的 `model/list`，思考强度来自所选模型的 `supportedReasoningEfforts`，运行中插入通过 `turn/steer`，这些值和行为都由 Codex harness 自己提供。
+
+升级时核对 npm 的 latest 与 GitHub 正式 release，在 `harness/codex/package.json` 更新精确版本并运行 `bun install`。用 `bun harness/codex/scripts/generate.ts` 重新提取这一版的协议类型，运行 `bun run format`、`bun run check` 和 `bun run test:integration`。在各目标平台从安装目录运行 Codex 集成套件，并复核沙箱、包体积和上游许可。模拟模型只在 loopback 提供 Responses API，真实账户验收留到后续阶段。
+
+Ubuntu 24.04 的沙箱前置依赖见 [OpenAI 的 Linux sandbox prerequisites](https://learn.chatgpt.com/docs/sandboxing#prerequisites)。系统限制非特权 user namespace 时安装发行版的 bubblewrap 并加载专用 AppArmor profile。CI 使用同样的系统配置。
+
+本阶段验证：macOS ARM64 和 Debian 12 ARM64 的安装布局能执行工作区命令，工作区外的同级目录写入被拒；未向 Codex 提供的宿主环境变量在命令进程中不可见。默认限制的 Debian Docker 容器能启动 CLI，但执行命令时内核拒绝 bwrap 创建 namespace。此时应保留错误和失败状态；应用不会自动扩大权限。
+
+## 第二阶段实现（CYCL-202、203、204）
+
+Codex harness 自己声明 image、MCP、additionalDirectories 和 systemPrompt 能力。ACP 的 HTTP/stdio MCP server 会转换到 Codex 的 `config.mcp_servers`，MCP header 和环境变量只在 app-server 配置请求中传递。图片转换为 Codex 的 data URL，resource_link 转为文本引用，嵌入的文本 resource 以“URI + 正文”转为文本输入。适配器和 daemon 的 Codex 定义都声明 image 和 embeddedContext；PDF blob 在回合开始前由适配器拒绝，不会进入 Codex。运行中插入由 daemon 的 `steer: true` 走到适配器的 `turn/steer`。附加目录进入 Codex 的 workspace-write writable roots，系统提示的 append 内容进入 developer instructions。
+
+Codex 的 `plan` 是自己的权限配置项。它以 `turn/start.collaborationMode: {mode: "plan", settings: {model, reasoning_effort, developer_instructions: null}}` 发给 Codex；这个字段在 0.171.0 里属于实验 API，适配器在 `initialize` 时声明 `experimentalApi: true`，缺 `settings` 或没声明时 Codex 会拒绝整个回合（2026-11-23 用固定版二进制和模拟模型实测）。切回其他模式后，下一回合发一次 `mode: "default"`，因为 Codex 会把一个回合的设置沿用到之后的回合。Codex 的 plan item 和 `turn/plan/updated` 转为同一个 ACP `plan_update`，步骤状态 `inProgress` 转为 ACP 的 `in_progress`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
+
+同样的原因，每个回合都显式带 `model` 和 `effort`：选回 Default 时发 thread 打开时的模型和思考强度（换了模型就用该模型的 `defaultReasoningEffort`），而不是什么都不发。
+
+## 第三阶段实现（CYCL-205、206、207）
+
+Codex 的 `collabAgentToolCall` 会转换为 ACP 工具更新和子 agent 状态：每个 `receiverThreadIds` 的状态取 `agentsStates` 里那一项（`spawnAgent` 调用结束时子 agent 往往还在跑），子线程自己的 `turn/completed` 在父 session 里报为子 agent 的 `idle`；取消一个子 agent 用它自己线程的 turn id。子线程的审批以子线程 id 为 `sessionId` 发出，daemon 在父 session 里展示并标上 `cycle/subagentId`。token usage 和 thread name 不受回合限制，随时转换为 `usage_update`、`session_info_update`。`/compact` 调 `thread/compact/start`，它立刻返回，Codex 再以一个自己的回合执行压缩（`turn/started`、`contextCompaction` item、`turn/completed`，实测）；适配器把它当作一个回合，`contextCompaction` item 的开始和结束转为 `compaction_update`，回合结束时还没结束的压缩报 `failed`。适配器同时公布 `compact` command。app-server 意外退出时适配器也退出，daemon 结束当前回合，下一条 prompt 起新进程并恢复。桌面端沿用 daemon 的动态 agent 清单，Codex 已纳入 agent analytics 词表和会话、权限、设置事件；这些事件只上报固定 agent 名和行为枚举，不携带模型输出、命令、标题或路径。
+
+本机真实账号回归已覆盖跨 daemon 重启、真实 compaction 和真实 usage update，均通过。真实模型在本次提示下没有产生 `subagent_update`，只产生普通回答、工具和 usage 事件，因此 205 的事件转换已覆盖，真实 subagent 触发仍记录为未观察到，不能把这次回归当作真实 subagent 行为证据。
+
+## 初始调研（CYCL-156）
+
+以下记录针对调研时的版本。
 
 Codex 指 OpenAI 的 coding agent 命令行(<https://github.com/openai/codex>,Rust,Apache-2.0)。结论一句话:**自己写 `harness/codex`,对 daemon 说 ACP v2,对下驱动随 Cycle 分发、固定版本的 `codex app-server`(stdio 上的 JSON-RPC);登录隔离在 `CODEX_HOME=<数据目录>/codex`。**
 
-验证所用版本:本机 `codex-cli 0.166.0`(2026-10-29 的独立安装包,aarch64-apple-darwin)。调研当天的最新稳定版是 0.171.0(2026-11-20,<https://github.com/openai/codex/releases>),比本机新 5 个小版本:**下面"实测"的都是 0.166.0 的行为,开工时要在固定下来的那个版本上重跑一遍**。
+早期调研实测使用过 `codex-cli 0.166.0`。当前实现和生成类型固定在 **Codex CLI/app-server 0.171.0**，通知消费有显式 allowlist，升级必须同时更新依赖、生成类型、allowlist 和回归测试。
 
 ## 证据的三种标记
 
@@ -216,7 +244,7 @@ CYCL-155 的"每个 agent 一个顶层键":
 
 工程上的风险:
 
-- **协议跟着版本变**,而且我们要用的一部分在 `experimentalApi` 后面。对策:固定版本,类型用那个版本的 `generate-ts` 产物,升级 Codex 是一次有测试把关的改动(集成测试用模拟模型把核心路径各跑一遍,像 Claude 的 `adapter.integration.ts`)。本机 0.166.0 到最新 0.171.0 之间变了什么没比。
+- **协议跟着版本变**,而且我们要用的一部分在 `experimentalApi` 后面。当前基线是 0.171.0，类型来自该版本的 `generate-ts`，适配器只消费 `harness/codex/src/protocol.ts` 列出的通知。升级 Codex 是一次有测试把关的改动，必须重新生成类型、核对通知 allowlist，并跑完整回归。
 - **Linux 沙箱**在远端和容器里能不能用(§2)。不能用时退到哪一档、怎么告诉用户,要先看到实际报错再定。
 - **自动升级**关不关得掉(§2)。
 - **没用真实模型跑过**:流式增量的粒度、思考的内容、真实的工具序列、子 agent、标题、限额事件,都只到类型为止。

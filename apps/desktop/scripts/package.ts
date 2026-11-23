@@ -103,6 +103,9 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
     cpSync(join(daemonDir, basename(bin)), join(staging, bin));
     chmodSync(join(staging, bin), 0o755);
   }
+  cpSync(join(daemonDir, "codex-resources"), join(staging, "bin/codex-resources"), {
+    recursive: true,
+  });
   // Electron takes the app's name, and so the folder for its own data, from here.
   writeFileSync(
     join(staging, "package.json"),

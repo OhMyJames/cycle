@@ -49,7 +49,14 @@ dest=$prefix/share/cycle
 mkdir -p "$dest" "$prefix/bin"
 
 # The daemon, and each agent's binary the build ships beside it (a test holds this list to src/harnesses.ts).
-for file in cycle claude; do
+mkdir -p "$dest/codex-resources/licenses"
+cp "$here/codex-resources/licenses/"* "$dest/codex-resources/licenses/"
+if [ "$platform" = Linux ]; then
+  cp "$here/codex-resources/bwrap" "$dest/codex-resources/.bwrap.new"
+  chmod 755 "$dest/codex-resources/.bwrap.new"
+  mv -f "$dest/codex-resources/.bwrap.new" "$dest/codex-resources/bwrap"
+fi
+for file in cycle claude codex; do
   [ -f "$here/$file" ] || { echo "$here/$file is missing: run this from the unpacked tarball" >&2; exit 1; }
   # Copy beside, then rename over: replacing a file a running daemon is executing would fail otherwise.
   cp "$here/$file" "$dest/.$file.new"
