@@ -4,10 +4,11 @@
 // It is not a *.test.ts, so the pre-commit gate does not run it: each run starts Claude processes.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
+import { ClaudePlugins } from "../../src/plugins.ts";
 import { tempConfigDir, withAdapter } from "./adapter-process.ts";
 import {
   heldTextReply,
@@ -863,3 +864,162 @@ test("a real Claude background Agent outlives its parent turn and reports its en
     await config.dispose();
   }
 }, 45_000);
+
+// Plugins (docs/protocol.md §15, CYCL-83): Claude's own command line in a configuration directory of the test's, and
+// a session that is given a server under the plugin's name for it. No model is asked anything.
+test("a plugin is added from a source, installed, loaded by a session with its http server stood in for, and removed", async () => {
+  const mock = startMock(() => textReply("ok"));
+  const config = await tempConfigDir();
+  const market = await mkdtemp(join(tmpdir(), "cycle-v1-claude-market-"));
+  const hits = { plugin: 0, given: 0 };
+  // What the plugin declares: never to be reached once something stands in for it.
+  const declared = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => {
+      hits.plugin += 1;
+      return new Response("no", { status: 401 });
+    },
+  });
+  // What the session is given in its place (in Cycle: the daemon's gateway).
+  const given = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      hits.given += 1;
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const message = (await request.json()) as {
+        id?: number;
+        method: string;
+        params?: { protocolVersion?: string };
+      };
+      if (message.id === undefined) return new Response(null, { status: 202 });
+      const result =
+        message.method === "initialize"
+          ? {
+              protocolVersion: message.params?.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "given", version: "1" },
+            }
+          : { tools: [] };
+      return Response.json({ jsonrpc: "2.0", id: message.id, result });
+    },
+  });
+  try {
+    const plugin = join(market, "plugins", "demo");
+    await mkdir(join(market, ".claude-plugin"), { recursive: true });
+    await mkdir(join(plugin, ".claude-plugin"), { recursive: true });
+    await mkdir(join(plugin, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(market, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({
+        name: "local-market",
+        owner: { name: "Test" },
+        plugins: [
+          { name: "demo", source: "./plugins/demo", description: "Demo plugin", version: "1.0.0" },
+        ],
+      }),
+    );
+    await writeFile(
+      join(plugin, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "demo", description: "Demo plugin", version: "1.0.0" }),
+    );
+    await writeFile(
+      join(plugin, "skills", "hello", "SKILL.md"),
+      "---\nname: hello\ndescription: Say hello\n---\nSay hello.\n",
+    );
+    await writeFile(
+      join(plugin, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: { remote: { type: "http", url: `http://127.0.0.1:${declared.port}/mcp` } },
+      }),
+    );
+
+    const plugins = new ClaudePlugins({
+      env: { PATH: process.env.PATH ?? "", HOME: config.dir, CLAUDE_CONFIG_DIR: config.dir },
+      cwd: join(config.dir, "no-project"),
+    });
+    expect(await plugins.addSource(market)).toBe("local-market");
+    const before = await plugins.snapshot();
+    expect(before.sources).toContainEqual({
+      id: "local-market",
+      name: "local-market",
+      kind: "directory",
+      removable: true,
+      location: market,
+    });
+    expect(before.installed).toEqual([]);
+    expect(before.available.find((p) => p.id === "demo@local-market")).toMatchObject({
+      name: "demo",
+      description: "Demo plugin",
+      installed: false,
+    });
+
+    await plugins.install("demo@local-market");
+    const [installed] = (await plugins.snapshot()).installed;
+    expect(installed).toMatchObject({
+      id: "demo@local-market",
+      enabled: true,
+      scope: "user",
+      contents: { skills: 1, commands: 0, agents: 0, hooks: 0, mcpServers: 1 },
+      servers: [
+        {
+          name: "remote",
+          agentName: "plugin:demo:remote",
+          http: { url: `http://127.0.0.1:${declared.port}/mcp`, headers: {} },
+        },
+      ],
+    });
+    const agentName = installed?.servers?.[0]?.agentName ?? "";
+
+    // A session loads the plugin by itself; the server it is given under the plugin's name is the one it reaches.
+    await withAdapter(
+      { mockUrl: mock.url, configDir: config.dir, adapter: { warmStart: true } },
+      async ({ agent, updates }) => {
+        await agent.request(methods.agent.session.new, {
+          cwd,
+          mcpServers: [
+            {
+              type: "http",
+              name: agentName,
+              url: `http://127.0.0.1:${given.port}/mcp`,
+              headers: [],
+            },
+          ],
+          _meta: { "cycle/sessionId": "9e304152-3333-4444-8555-b66677788899" },
+        } as never);
+        const started = Date.now();
+        const commands = () =>
+          updates.flatMap((u) =>
+            u.sessionUpdate === "available_commands_update"
+              ? (u as { availableCommands: { name: string }[] }).availableCommands.map(
+                  (c) => c.name,
+                )
+              : [],
+          );
+        while (hits.given === 0 || !commands().includes("demo:hello")) {
+          if (Date.now() - started > 30_000)
+            throw new Error(`timed out: given=${hits.given} commands=${commands().join(",")}`);
+          await Bun.sleep(50);
+        }
+      },
+    );
+    expect(hits.plugin).toBe(0);
+
+    await plugins.setEnabled("demo@local-market", false);
+    expect((await plugins.snapshot()).installed[0]?.enabled).toBe(false);
+    expect(await plugins.update("demo@local-market")).toEqual({ updated: false });
+    await plugins.uninstall("demo@local-market");
+    expect((await plugins.snapshot()).installed).toEqual([]);
+    await plugins.removeSource("local-market");
+    await expect(plugins.install("demo@local-market")).rejects.toMatchObject({
+      reason: "not_found",
+    });
+  } finally {
+    declared.stop(true);
+    given.stop(true);
+    mock.stop();
+    await config.dispose();
+    await rm(market, { recursive: true, force: true });
+  }
+}, 80_000);

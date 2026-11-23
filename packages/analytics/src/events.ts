@@ -25,12 +25,26 @@ const panel = z.enum([
 ]);
 /** The sections of the settings page (CYCL-78): fixed words, as `SETTINGS_SECTIONS` of @cycle/ui lists them. */
 const settingsSection = z.enum(["general", "appearance", "environments", "defaults", "shortcuts"]);
+/** The sections of the Connectors page (CYCL-82): fixed words, as `CONNECTORS_SECTIONS` of @cycle/ui lists them. */
+const connectorsSection = z.enum(["plugins", "mcp"]);
 /** The kinds of tab in the right panel (CYCL-90): a fixed word, never a tab's title or what it shows. */
 const panelTab = z.enum(["overview", "files", "diff", "terminal", "browser"]);
 /** How many terminals a session has, in four words: 0, 1, 2 to 3, 4 or more. Never which, nor what runs in them. */
 const terminalCount = z.enum(["none", "one", "few", "many"]);
 const connectorTransport = z.enum(["http", "stdio"]);
 const connectorAuth = z.enum(["none", "oauth"]);
+/** How something asked of an agent's plugins ended: done, or the fixed word for why not. Never what the agent said. */
+const pluginResult = z.enum([
+  "ok",
+  "not_found",
+  "needs_command",
+  "unavailable",
+  "timeout",
+  "unsupported",
+  "failed",
+]);
+/** Where a source of plugins is: a fixed word, never its address. */
+const pluginSourceKind = z.enum(["builtin", "git", "directory", "url", "other"]);
 
 const o = z.strictObject;
 
@@ -99,6 +113,21 @@ export const EVENTS = {
   connector_authorized: o({ result: z.enum(["ok", "failed", "cancelled"]) }),
   connector_signed_out: o({}),
 
+  // ---- plugins (each agent's own extension packages) ----
+  /** After the person agreed to it. Never the plugin's name or where it comes from: whose it is, how it ended, and how many MCP servers it brought. */
+  plugin_installed: o({ agent, result: pluginResult, servers: count }),
+  /** After the person confirmed it. */
+  plugin_removed: o({ agent, result: pluginResult }),
+  /** Switched on or off. */
+  plugin_toggled: o({ agent, enabled: z.boolean(), result: pluginResult }),
+  /** Asked for its latest version. `updated`: there was a newer one. */
+  plugin_updated: o({ agent, result: pluginResult, updated: z.boolean() }),
+  /** A place plugins come from was added, after the person agreed to it. */
+  plugin_source_added: o({ agent, result: pluginResult, kind: pluginSourceKind }),
+  plugin_source_removed: o({ agent, result: pluginResult }),
+  /** The lists of what can be installed were fetched again. */
+  plugin_sources_refreshed: o({ agent, result: pluginResult }),
+
   // ---- the conversation ----
   prompt_sent: o({
     agent,
@@ -130,6 +159,8 @@ export const EVENTS = {
   sidebar_toggled: o({ open: z.boolean(), via: z.enum(["click", "shortcut"]) }),
   /** Another section of the settings page was chosen (opening the page is `panel_opened` with `settings`). */
   settings_section_shown: o({ section: settingsSection }),
+  /** Another section of the Connectors page was shown. Opening the page is `panel_opened` with `connectors`. */
+  connectors_section_shown: o({ section: connectorsSection }),
   /**
    * The right panel opened or closed (CYCL-90). `via`: its button, ⌘\, its handle (folded by a key, a double-click
    * or a drag), or a tab's own button in the header (Overview). `tab`: the kind of tab it shows, or showed when it closed.
@@ -263,6 +294,7 @@ export const UI_EVENTS = [
   "panel_opened",
   "sidebar_toggled",
   "settings_section_shown",
+  "connectors_section_shown",
   "side_panel_toggled",
   "side_panel_tab_shown",
   "overview_item_revealed",

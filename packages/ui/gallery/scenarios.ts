@@ -3,10 +3,13 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import type {
   AppEvent,
+  ConnectorInfo,
   EnvironmentConfig,
   EnvironmentStatus,
   PermissionRequest,
   PlanUsage,
+  PluginInfo,
+  PluginSourceInfo,
   SessionSnapshot,
   SessionSummary,
   UpdateState,
@@ -35,6 +38,10 @@ export type Scenario = {
   history?: SessionUpdate[];
   permissions?: PermissionRequest[];
   update?: UpdateState;
+  /** What the daemons keep as connectors (the Connectors page); the environments' `status` must say they can. */
+  connectors?: ConnectorInfo[];
+  /** An agent's plugins: what can be installed (the installed ones among them), and where it comes from. */
+  plugins?: { sources: PluginSourceInfo[]; all: PluginInfo[] };
   /** Usage statistics have somewhere to report to, and are on: Settings shows their switch. */
   analytics?: boolean;
   /** The language the person chose for the interface. Without it: the system's, which here is en-US. */
@@ -337,6 +344,144 @@ const openSettings = async (root: HTMLElement, section?: string) => {
   }
   await new Promise((r) => setTimeout(r, 250));
 };
+
+/** The Connectors page, opened as the sidebar's row does. */
+const openConnectors = async (root: HTMLElement, section: "plugins" | "mcp" = "mcp") => {
+  await until(
+    () => root.querySelector('[data-page-open="connectors"]') !== null,
+    "the Connectors row",
+  );
+  root.querySelector<HTMLElement>('[data-page-open="connectors"]')?.click();
+  await until(() => root.querySelector('[data-kind="page"]') !== null, "the Connectors page");
+  // The page opens on Plugins, its first section; the second is a tab away.
+  if (section === "mcp") root.querySelectorAll<HTMLElement>('[data-slot="tabs-tab"]')[1]?.click();
+  await new Promise((r) => setTimeout(r, 400));
+};
+/** An environment whose daemon keeps connectors. */
+const KEEPS = (environmentId: string): EnvironmentStatus => ({
+  ...UP(environmentId),
+  capabilities: { queue: true, files: true, folders: true, connectors: true },
+});
+const connector = (id: string, name: string, over: Partial<ConnectorInfo> = {}): ConnectorInfo => ({
+  id,
+  name,
+  enabled: true,
+  transport: { type: "http", url: `https://mcp.${name}.example/mcp` },
+  auth: { type: "none" },
+  secrets: { headers: [], env: [] },
+  authorized: false,
+  status: { state: "ready" },
+  ...over,
+});
+const CONNECTORS: ConnectorInfo[] = [
+  connector("c1", "linear", { secrets: { headers: ["Authorization"], env: [] } }),
+  connector("c2", "notion", { auth: { type: "oauth" }, status: { state: "needs_auth" } }),
+  connector("c3", "a-connector-with-the-longest-name", {
+    transport: {
+      type: "stdio",
+      command: "/Users/me/.local/share/tools/node_modules/.bin/some-mcp-server",
+      args: ["--root", "/Users/me/work/a/very/long/path/to/a/repository", "--read-only"],
+    },
+    status: { state: "error", reason: "spawn_failed" },
+  }),
+  connector("c4", "sentry", { enabled: false, status: { state: "disabled" } }),
+];
+
+/** An environment whose daemon keeps connectors, and whose Claude has plugins. */
+const EXTENDS = (environmentId: string): EnvironmentStatus => ({
+  ...UP(environmentId),
+  capabilities: { queue: true, files: true, folders: true, connectors: true, plugins: ["claude"] },
+});
+const PLUGIN_SOURCES: PluginSourceInfo[] = [
+  {
+    agentId: "claude",
+    id: "directory",
+    name: "anthropic-plugin-directory",
+    kind: "builtin",
+    removable: false,
+  },
+  {
+    agentId: "claude",
+    id: "team",
+    name: "team-plugins",
+    kind: "git",
+    location: "acme/team-plugins",
+    removable: true,
+  },
+  {
+    agentId: "claude",
+    id: "local",
+    name: "a-source-with-a-long-name-kept-in-a-folder",
+    kind: "directory",
+    location: "/Users/me/work/a/very/long/path/to/a/repository/of/plugins/kept/locally",
+    removable: true,
+  },
+];
+const plugin = (name: string, description: string, over: Partial<PluginInfo> = {}): PluginInfo => ({
+  agentId: "claude",
+  id: `${name}@directory`,
+  name,
+  description,
+  sourceId: "directory",
+  installed: false,
+  ...over,
+});
+const PLUGINS: PluginInfo[] = [
+  plugin(
+    "linear",
+    "Linear issue tracking integration. Create issues, manage projects, update statuses.",
+    {
+      installed: true,
+      enabled: true,
+      scope: "user",
+      contents: { skills: 0, commands: 0, agents: 0, hooks: 0, mcpServers: 1 },
+      servers: [{ name: "linear", by: "cycle", connectorId: "p1" }],
+    },
+  ),
+  plugin(
+    "superpowers",
+    "Core skills library: TDD, debugging, collaboration patterns, and proven techniques, described at a length that does not fit on one line of this page however wide it is made",
+    {
+      installed: true,
+      enabled: true,
+      scope: "user",
+      version: "7.0.2",
+      contents: { skills: 14, commands: 3, agents: 1, hooks: 2, mcpServers: 0 },
+    },
+  ),
+  plugin("reviewer", "Reviews a change before it is committed", {
+    id: "reviewer@team",
+    sourceId: "team",
+    installed: true,
+    enabled: false,
+    scope: "user",
+    version: "0.4.0",
+    contents: { skills: 1, commands: 2, agents: 2, hooks: 0, mcpServers: 0 },
+  }),
+  plugin(
+    "figma",
+    "Figma design platform integration. Access design files and translate designs into code.",
+  ),
+  plugin("frontend-design", "Frontend design skill for UI/UX implementation"),
+  plugin("github", "Official GitHub MCP server for repository management."),
+  ...Array.from({ length: 60 }, (_, i) =>
+    plugin(`plugin-${String(i + 1).padStart(2, "0")}`, "One of the many a directory lists"),
+  ),
+];
+const PLUGIN_SERVERS: ConnectorInfo[] = [
+  connector("p1", "linear-linear", {
+    transport: { type: "http", url: "https://mcp.linear.app/mcp" },
+    auth: { type: "oauth" },
+    status: { state: "needs_auth" },
+    origin: {
+      type: "plugin",
+      agentId: "claude",
+      pluginId: "linear@directory",
+      pluginName: "linear",
+      server: "linear",
+    },
+  }),
+];
 
 /** An item of a remote environment's menu in Settings, opened as a click would. */
 const environmentAction = async (root: HTMLElement, name: string, item: string) => {
@@ -2067,6 +2212,87 @@ export const scenarios: Record<string, Scenario> = {
       await openSettings(root, "Environments");
       await click(root, "Add environment");
     },
+  },
+  "connectors-page": {
+    title: "Connectors, MCP servers: two environments keep them; ready, needs sign-in, failed, off",
+    environments: [LOCAL, BUILD],
+    status: [KEEPS("local"), KEEPS("build")],
+    sessions: [session("s1", { title: "Fix the remote session" })],
+    connectors: CONNECTORS,
+    after: (root) => openConnectors(root),
+  },
+  "connectors-empty": {
+    title: "Connectors, MCP servers: none yet",
+    status: [KEEPS("local")],
+    sessions: [],
+    after: (root) => openConnectors(root),
+  },
+  "connectors-none": {
+    title: "Connectors: no connected environment can keep them",
+    sessions: [],
+    after: (root) => openConnectors(root),
+  },
+  "connectors-form": {
+    title: "Add a connector, over the Connectors page",
+    status: [KEEPS("local")],
+    sessions: [],
+    connectors: CONNECTORS.slice(0, 1),
+    after: async (root) => {
+      await openConnectors(root);
+      await click(root, "Add connector");
+    },
+  },
+  "plugins-page": {
+    title:
+      "Connectors, Plugins: one wants a sign-in, one has a long description, one is off; many can be installed",
+    status: [EXTENDS("local")],
+    sessions: [session("s1", { title: "Fix the remote session" })],
+    plugins: { sources: PLUGIN_SOURCES, all: PLUGINS },
+    connectors: PLUGIN_SERVERS,
+    after: (root) => openConnectors(root, "plugins"),
+  },
+  "plugins-empty": {
+    title: "Connectors, Plugins: none installed, and a source that lists none",
+    status: [EXTENDS("local")],
+    sessions: [],
+    plugins: { sources: PLUGIN_SOURCES.slice(0, 1), all: [] },
+    after: (root) => openConnectors(root, "plugins"),
+  },
+  "plugins-install": {
+    title: "Installing a plugin asks first, and says what a plugin can do",
+    status: [EXTENDS("local")],
+    sessions: [],
+    plugins: { sources: PLUGIN_SOURCES, all: PLUGINS },
+    after: async (root) => {
+      await openConnectors(root, "plugins");
+      await clickByLabel(root, "Install figma");
+      await new Promise((r) => setTimeout(r, 250));
+    },
+  },
+  "plugins-zh": {
+    title: "Connectors, Plugins, in Chinese",
+    status: [EXTENDS("local")],
+    sessions: [],
+    plugins: { sources: PLUGIN_SOURCES, all: PLUGINS },
+    connectors: PLUGIN_SERVERS,
+    language: "zh-CN",
+    after: (root) => openConnectors(root, "plugins"),
+  },
+  "connectors-plugin-server": {
+    title: "Connectors, MCP servers: one a plugin brings, among the person's own",
+    status: [EXTENDS("local")],
+    sessions: [],
+    plugins: { sources: PLUGIN_SOURCES, all: PLUGINS },
+    connectors: [...CONNECTORS.slice(0, 2), ...PLUGIN_SERVERS],
+    after: (root) => openConnectors(root, "mcp"),
+  },
+  "connectors-zh": {
+    title: "Connectors, in Chinese",
+    status: [KEEPS("local")],
+    sessions: [],
+    connectors: CONNECTORS,
+    language: "zh-CN",
+    after: (root) => openConnectors(root),
   },
   "settings-general": {
     title: "Settings, General: an update is ready, usage statistics are on",

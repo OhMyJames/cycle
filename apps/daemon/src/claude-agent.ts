@@ -5,6 +5,7 @@ import {
   CLAUDE_MODELS,
   CLAUDE_PERMISSION_MODES,
   CLAUDE_PROMPT_CAPABILITIES,
+  ClaudePlugins,
   DEFAULT_EFFORT_LEVEL,
   DEFAULT_PERMISSION_MODE,
 } from "@cycle/harness-claude";
@@ -88,6 +89,12 @@ export const agentsFor = (
     // In the executable, the Claude binary shipped beside it must be there: say so now, not on the first prompt.
     available: () => claudeExecutable() === undefined || existsSync(claudeExecutable() as string),
     command: [...selfCommand(), "adapter", "claude"],
+    // Claude's own command line, with what a Claude session gets and nothing more, in a folder that is no project.
+    plugins: new ClaudePlugins({
+      executable: claudeExecutable(),
+      env: { PATH: inherited.PATH ?? "", ...claudeEnv(config.claude, dataDir, inherited) },
+      cwd: join(dataDir, "plugins", "claude"),
+    }),
     ...(log !== undefined ? { log } : {}),
     env: {
       PATH: inherited.PATH ?? "",

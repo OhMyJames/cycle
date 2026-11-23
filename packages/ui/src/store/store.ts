@@ -21,6 +21,9 @@ import type {
   FormAnswer,
   PermissionRequest,
   PlanUsage,
+  PluginFailure,
+  PluginInfo,
+  PluginSourceInfo,
   Preferences,
   PreferencesState,
   PromptBlock,
@@ -146,10 +149,15 @@ export type AppState = {
   /** Counts changes to an agent's defaults, so a form that shows them knows to read them again. */
   defaultsRevision: Record<string, number>;
   /**
-   * Each environment's connectors as last read, or why they could not be. Only for an environment the panel has asked
+   * Each environment's connectors as last read, or why they could not be. Only for an environment the page has asked
    * about; a change there (here or elsewhere) reads them again.
    */
   connectors: Record<string, { list?: ConnectorInfo[]; error?: string }>;
+  /**
+   * Each agent's plugins on each environment as last read (by `pluginsKey`), or why they could not be. Only for what
+   * the page has asked for.
+   */
+  plugins: Record<string, { sources?: PluginSourceInfo[]; list?: PluginInfo[]; error?: string }>;
   /** Each environment's plan usage, by agent: the latest its daemon heard (docs/protocol.md §8 "套餐用量"). */
   planUsage: Record<string, Record<string, PlanUsage>>;
   selectedEnvironment: string | undefined;
@@ -198,6 +206,7 @@ const initial = (): AppState => ({
   agents: {},
   defaultsRevision: {},
   connectors: {},
+  plugins: {},
   planUsage: {},
   selectedEnvironment: undefined,
   selectedSession: undefined,
@@ -422,6 +431,10 @@ export class AppStore {
       case "connectors":
         if (this.#state.connectors[event.environmentId] !== undefined)
           void this.loadConnectors(event.environmentId);
+        return;
+      case "plugins":
+        if (this.#state.plugins[pluginsKey(event.environmentId, event.agentId)] !== undefined)
+          void this.loadPlugins(event.environmentId, event.agentId);
         return;
       case "app-update":
         this.#set({ update: event.state });
@@ -1416,7 +1429,7 @@ export class AppStore {
       return true;
     })) === true;
 
-  // ---- connectors: the panel shows what went wrong itself, next to what it was about ----
+  // ---- connectors: the page shows what went wrong itself, next to what it was about ----
 
   /** Reads the environment's connectors into the state; why it could not is kept there too. */
   loadConnectors = async (environmentId: string): Promise<void> => {
@@ -1496,6 +1509,97 @@ export class AppStore {
   signOutConnector = (environmentId: string, id: string): Promise<ConnectorAnswer> =>
     this.#connectorAnswer(environmentId, this.#bridge.signOutConnector(environmentId, id));
 
+  // ---- plugins (docs/protocol.md §15): as connectors, the page says what went wrong beside what it was about ----
+
+  /** Reads an agent's installed plugins and their sources into the state; why it could not is kept there too. */
+  loadPlugins = async (environmentId: string, agentId: string): Promise<void> => {
+    const key = pluginsKey(environmentId, agentId);
+    try {
+      const { sources, plugins } = await this.#bridge.listPlugins(environmentId, agentId);
+      this.#set((s) => ({ plugins: { ...s.plugins, [key]: { sources, list: plugins } } }));
+    } catch (error) {
+      this.#set((s) => ({
+        plugins: { ...s.plugins, [key]: { ...s.plugins[key], error: messageOf(error) } },
+      }));
+    }
+  };
+
+  /** What can be installed, a page at a time. Not kept: whoever asks shows it. */
+  availablePlugins = (
+    environmentId: string,
+    query: { agentId: string; sourceId?: string; query?: string; cursor?: string; limit?: number },
+  ): Promise<{ plugins: PluginInfo[]; nextCursor?: string | undefined; total: number }> =>
+    this.#bridge.availablePlugins(environmentId, query);
+
+  /** After a change: what is installed, and the connectors plugins bring, are read again without waiting to be told. */
+  async #pluginAnswer<T extends object>(
+    environmentId: string,
+    agentId: string,
+    answer: Promise<T>,
+  ): Promise<T | PluginFailure> {
+    const result = await answer.catch(
+      (error: unknown): PluginFailure => ({ problem: "failed", message: messageOf(error) }),
+    );
+    if (!("problem" in result)) {
+      await this.loadPlugins(environmentId, agentId);
+      if (this.#state.connectors[environmentId] !== undefined)
+        await this.loadConnectors(environmentId);
+    }
+    return result;
+  }
+
+  /** The page has asked the person first: a plugin can run code on the environment's machine. */
+  installPlugin = (environmentId: string, agentId: string, id: string) =>
+    this.#pluginAnswer(
+      environmentId,
+      agentId,
+      this.#bridge.installPlugin(environmentId, agentId, id),
+    );
+
+  /** The page has asked the person first. */
+  uninstallPlugin = (environmentId: string, agentId: string, id: string) =>
+    this.#pluginAnswer(
+      environmentId,
+      agentId,
+      this.#bridge.uninstallPlugin(environmentId, agentId, id),
+    );
+
+  updatePlugin = (environmentId: string, agentId: string, id: string) =>
+    this.#pluginAnswer(
+      environmentId,
+      agentId,
+      this.#bridge.updatePlugin(environmentId, agentId, id),
+    );
+
+  setPluginEnabled = (environmentId: string, agentId: string, id: string, enabled: boolean) =>
+    this.#pluginAnswer(
+      environmentId,
+      agentId,
+      this.#bridge.setPluginEnabled(environmentId, agentId, id, enabled),
+    );
+
+  /** The page has asked the person first. */
+  addPluginSource = (environmentId: string, agentId: string, location: string) =>
+    this.#pluginAnswer(
+      environmentId,
+      agentId,
+      this.#bridge.addPluginSource(environmentId, agentId, location),
+    );
+
+  removePluginSource = (environmentId: string, agentId: string, id: string) =>
+    this.#pluginAnswer(
+      environmentId,
+      agentId,
+      this.#bridge.removePluginSource(environmentId, agentId, id),
+    );
+
+  refreshPluginSources = (environmentId: string, agentId: string) =>
+    this.#pluginAnswer(
+      environmentId,
+      agentId,
+      this.#bridge.refreshPluginSources(environmentId, agentId),
+    );
+
   chooseDirectory = (): Promise<string | undefined> => this.#bridge.chooseDirectory();
 
   checkForUpdate = async (): Promise<void> => {
@@ -1546,6 +1650,10 @@ export type TerminalScreen = {
 };
 
 /** What main threw (it lost its connection, it is too old) as an answer the panel shows like the others. */
+/** Where an agent's plugins on an environment are kept in the state. */
+export const pluginsKey = (environmentId: string, agentId: string): string =>
+  `${environmentId}\n${agentId}`;
+
 const answered = <T>(
   answer: Promise<T>,
 ): Promise<T | { problem: ConnectorProblem; message?: string }> =>

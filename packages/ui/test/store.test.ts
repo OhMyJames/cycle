@@ -614,7 +614,7 @@ test("what the page counts goes to main as it is, and a failing report is not th
   expect(other.getState().error).toBeUndefined();
 });
 
-test("connectors: a change elsewhere is read again only where the panel has asked, and a failed read keeps what was read", async () => {
+test("connectors: a change elsewhere is read again only where the page has asked, and a failed read keeps what was read", async () => {
   const script = fakeBridge({ connected: true });
   const store = new AppStore(script.bridge, new DraftStore(undefined));
   await store.start();

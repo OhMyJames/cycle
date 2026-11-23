@@ -39,10 +39,20 @@ import {
   NOTIFICATIONS,
   PLAN_USAGE_CHANGED,
   PLAN_USAGE_UPDATE,
+  PLUGINS_CHANGED,
   type PlanUsage,
   PlanUsageSchema,
   type PlanWindow,
   planUsageRead,
+  pluginSourcesAdd,
+  pluginSourcesRefresh,
+  pluginSourcesRemove,
+  pluginsAvailable,
+  pluginsInstall,
+  pluginsList,
+  pluginsSetEnabled,
+  pluginsUninstall,
+  pluginsUpdate,
   promptAckReturn,
   promptDequeue,
   QUEUE_LIMIT,
@@ -106,6 +116,7 @@ import { attach } from "./log/replay.ts";
 import type { LogRecord, LogStore, NewRecord } from "./log/types.ts";
 import { errorText, type Logger, silentLogger } from "./logger.ts";
 import { AgentOptionsCache, choicesFromConfigOptions } from "./options-cache.ts";
+import { type PluginProvider, PluginService } from "./plugins.ts";
 import { redactParams, redactRecord } from "./redact.ts";
 import {
   type Attachment,
@@ -291,6 +302,7 @@ export class Daemon {
   readonly #optionsCache: AgentOptionsCache;
   readonly #trust: FolderTrust;
   readonly #connectors: ConnectorService;
+  readonly #plugins: PluginService;
   readonly #terminals: Terminals;
   readonly #maxAhead: number | undefined;
   readonly #agentIdleMs: number | undefined;
@@ -343,6 +355,20 @@ export class Daemon {
           void conn
             .notify(TERMINAL_NOTIFICATIONS.changed, { sessionId, terminals })
             .catch(() => {});
+      },
+    });
+    const providers = new Map<string, PluginProvider>();
+    for (const agent of options.agents) {
+      if (agent.plugins !== undefined) providers.set(agent.id, agent.plugins);
+    }
+    this.#plugins = new PluginService({
+      providers,
+      connectors,
+      now: this.#now,
+      onChanged: (agentId) => {
+        for (const conn of this.#conns) {
+          void conn.notify(PLUGINS_CHANGED, { agentId }).catch(() => {});
+        }
       },
     });
     connectors.onChanged(() => {
@@ -712,11 +738,14 @@ export class Daemon {
       const own = ((mode === "new" ? create?.mcpServers : undefined) ??
         session.entry.mcpServers ??
         []) as McpServer[];
+      // What its plugins bring is made current first: a plugin can have changed without anyone having looked.
+      if (link.mcpHttp) await this.#plugins.beforeAgentStarts(session.entry.agent);
       const connectors = link.mcpHttp
         ? await this.#connectors.serversFor(
             session.id,
             session.entry.cwd,
             new Set(own.map((server) => (server as { name: string }).name)),
+            session.entry.agent,
           )
         : [];
       const mcpServers = [...own, ...connectors];
@@ -1814,6 +1843,7 @@ export class Daemon {
             diff: true,
             trust: true,
             connectors: true,
+            plugins: this.#plugins.agents(),
             planUsage: true,
             sessionMentions: true,
             terminal: true,
@@ -2341,6 +2371,31 @@ export class Daemon {
       const trust = await this.#trust.set(real, params.trusted);
       await this.#applyTrust(real);
       return trust;
+    });
+    // Plugins (docs/protocol.md §15): each agent's own, done by that agent's machinery.
+    cycle(pluginsList, (params) => this.#plugins.list(params.agentId));
+    cycle(pluginsAvailable, (params) => this.#plugins.available(params));
+    cycle(pluginsInstall, async (params) => ({
+      plugin: await this.#plugins.install(params.agentId, params.id),
+    }));
+    cycle(pluginsUninstall, async (params) => {
+      await this.#plugins.uninstall(params.agentId, params.id);
+      return {};
+    });
+    cycle(pluginsUpdate, (params) => this.#plugins.update(params.agentId, params.id));
+    cycle(pluginsSetEnabled, async (params) => ({
+      plugin: await this.#plugins.setEnabled(params.agentId, params.id, params.enabled),
+    }));
+    cycle(pluginSourcesAdd, async (params) => ({
+      source: await this.#plugins.addSource(params.agentId, params.location),
+    }));
+    cycle(pluginSourcesRemove, async (params) => {
+      await this.#plugins.removeSource(params.agentId, params.id);
+      return {};
+    });
+    cycle(pluginSourcesRefresh, async (params) => {
+      await this.#plugins.refreshSource(params.agentId, params.id);
+      return {};
     });
     cycle(connectorsList, async () => ({ connectors: await this.#connectors.list() }));
     cycle(connectorsAdd, async (params) => ({ connector: await this.#connectors.add(params) }));

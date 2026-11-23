@@ -518,7 +518,6 @@ summary:focus-visible {
     [data-slot="attachment-name"],
     [data-slot="picker-description"],
     [data-slot="composer-placeholder"],
-    [data-slot="connector-name"],
     [data-slot="page-row-label"],
     [data-slot="tool-verb"],
     [data-slot="tool-summary"],
@@ -563,7 +562,6 @@ summary:focus-visible {
   [data-slot="attachment-name"],
   [data-slot="picker-description"],
   [data-slot="composer-placeholder"],
-  [data-slot="connector-name"],
   [data-slot="page-row-label"],
   [data-slot="tool-verb"],
   [data-slot="tool-summary"],
@@ -642,7 +640,7 @@ body {
   display: none;
 }
 
-/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings, later Connectors. Where the sidebar was, on
+/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings and Connectors. Where the sidebar was, on
    its surface, the way back and the page's sections; beside it the section, in the conversation's column. */
 [data-slot="page"],
 [data-kind="page"] {
@@ -794,7 +792,7 @@ html[data-platform="darwin"] [data-slot="page-heading"] {
   color: var(--ui-muted-foreground);
 }
 
-/* A group's rows: one card, a rule between rows (Surface/Card, as the connectors' list). */
+/* A group's rows: one card, a rule between rows (Surface/Card). */
 [data-slot="page-rows"] {
   border: 1px solid var(--cycle-border-default);
   border-radius: var(--cycle-radius-card);
@@ -846,8 +844,9 @@ html[data-platform="darwin"] [data-slot="page-heading"] {
   user-select: text;
 }
 
-/* Where a remote environment is: the end of an address says the most, so it is the start that is cut. */
-[data-slot="environment-where"] {
+/* Where a remote environment is, or a connector (a host, a command): the end says the most, so it is the start that is cut. */
+[data-slot="environment-where"],
+[data-slot="connector-where"] {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -6014,83 +6013,65 @@ button[data-slot="review-file"]:focus-visible {
   grid-row: 1 / span 2;
 }
 
-/* Connectors: the MCP servers a daemon keeps for every agent. One bordered list, a row each; the form replaces it. */
-[data-kind="connectors"] {
+/* A connector's form, over the Connectors page: wider than a question, and it scrolls when its secrets are many. */
+[data-kind="connector-form"],
+[data-kind="connector-values"],
+[data-kind="plugin-source-form"] {
   width: min(36rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
   overflow-y: auto;
 }
 
-[data-slot="connector-list"] {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--cycle-border-default);
-  border-radius: var(--cycle-radius-card);
-  background: var(--cycle-surface-raised);
-  box-shadow: var(--cycle-edge-hardware);
-}
-
-[data-slot="connector"] {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.5rem var(--cycle-gap);
-}
-
-[data-slot="connector"] + [data-slot="connector"] {
-  border-top: 1px solid var(--cycle-border-default);
-}
-
-[data-slot="connector-row"] {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-[data-slot="connector-text"] {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+/* A plugin's row (CYCL-84): what it is in one line that is cut at its end, its facts before it. */
+[data-slot="plugin-facts"] {
+  /* Its own line too, and one that wraps: in a narrow window the facts are more than a line. */
+  flex-basis: 100%;
   min-width: 0;
 }
 
-:is([data-slot="connector-name"], [data-slot="connector-where"]) {
+[data-slot="plugin-description"] {
+  /* Always a line of its own: the facts before it differ in length from row to row. */
+  flex-basis: 100%;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
-}
-
-[data-slot="connector-name"] {
-  font-weight: 500;
-}
-
-[data-slot="connector-where"] {
-  overflow: hidden;
-  white-space: nowrap;
-  direction: rtl;
-  unicode-bidi: plaintext;
-  text-align: left;
   text-overflow: ellipsis;
-  font-family: var(--ui-font-mono);
-  font-size: var(--cycle-text-meta);
-  color: var(--ui-muted-foreground);
 }
 
-[data-slot="connector-status"] {
-  font-size: var(--cycle-text-meta);
-  color: var(--ui-muted-foreground);
-}
-
-[data-slot="connector-status"]:is([data-state="error"], [data-state="needs_auth"]) {
+/* What one of a plugin's servers still wants, and the button that gives it: one line under the row. */
+[data-slot="page-row"] > [data-plugin-want-of] > [role="alert"] {
+  margin: 0;
   color: var(--ui-destructive);
 }
 
-[data-slot="connector"][data-off="true"] [data-slot="connector-text"] {
-  opacity: 0.6;
+[data-slot="page-row"] [data-plugin-want] {
+  justify-content: space-between;
+  flex-wrap: nowrap;
 }
 
-[data-slot="connector"] > [role="alert"],
-[data-kind="connectors"] form > [role="alert"] {
+/* The search and the source above what can be installed: the search takes the room. */
+[data-plugin-filters] {
+  flex-wrap: nowrap;
+}
+
+[data-plugin-filters] > [data-slot="input"] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* How many are shown, and the way to more, under the list. */
+[data-plugin-more] {
+  justify-content: space-between;
+}
+
+/* What went wrong with one connector, under its row or under its form. */
+[data-slot="page-row"] > [role="alert"],
+[data-slot="page-group"] > [role="alert"],
+[data-kind="connector-form"] form > [role="alert"],
+[data-kind="connector-values"] form > [role="alert"],
+[data-kind="plugin-source-form"] form > [role="alert"] {
+  margin: 0;
   color: var(--ui-destructive);
 }
 
