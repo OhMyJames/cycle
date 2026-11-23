@@ -53,34 +53,44 @@ const BY_KIND: Record<string, Activity> = {
   fetch: "fetch",
 };
 
-/** What a tool call does, by its name (Claude's own) and else by the kind ACP gives it. */
-/** What a command call plainly does, from its command (`rg` searches, `cat` reads, `ls` lists), when it can be told. */
-export const commandLabelOf = (tool: ToolItem): CommandLabel | undefined => {
+/** The command a call ran, when its input has one. */
+export const commandOf = (tool: ToolItem): string | undefined => {
   const input = tool.rawInput;
-  const command =
-    typeof input === "object" && input !== null
-      ? (input as Record<string, unknown>).command
-      : undefined;
-  return typeof command === "string" ? commandLabel(command) : undefined;
+  if (typeof input !== "object" || input === null) return undefined;
+  const command = (input as Record<string, unknown>).command;
+  return typeof command === "string" && command !== "" ? command : undefined;
+};
+
+/** What a tool call does, by its name (Claude's own) and else by the kind ACP gives it. */
+const kindOf = (tool: ToolItem): Activity =>
+  BY_NAME[tool.name ?? ""] ?? BY_KIND[tool.toolKind ?? ""] ?? "other";
+
+/**
+ * What a command call plainly does, from its command (`rg` searches, `cat` reads, `ls` lists), when it can be told.
+ * Only for a call that runs a command: another tool's `command` field may be anything.
+ */
+export const commandLabelOf = (tool: ToolItem): CommandLabel | undefined => {
+  if (kindOf(tool) !== "run") return undefined;
+  const command = commandOf(tool);
+  return command === undefined ? undefined : commandLabel(command);
 };
 
 /**
- * What a call did, by its tool's name or kind; a command that only searches, reads or lists is counted as that, so a
- * stretch of them says "searched" or "read", not "ran".
+ * What a call did; a command that only searches, reads or lists is counted as that, so a stretch of them says
+ * "searched" or "read", not "ran".
  */
-export const activityOf = (tool: ToolItem): Activity => {
-  const activity = BY_NAME[tool.name ?? ""] ?? BY_KIND[tool.toolKind ?? ""] ?? "other";
-  return activity === "run" ? (commandLabelOf(tool)?.kind ?? "run") : activity;
-};
+export const activityOf = (tool: ToolItem): Activity => commandLabelOf(tool)?.kind ?? kindOf(tool);
 
-/** How many calls of each activity, in the order each first appeared. For a card's summary. */
+/** How much of each activity (calls, or a command's files or searches), in the order each first appeared. For a card's summary. */
 export const activityCounts = (
   tools: readonly ToolItem[],
 ): { activity: Activity; count: number }[] => {
   const counts = new Map<Activity, number>();
   for (const tool of tools) {
     const activity = activityOf(tool);
-    counts.set(activity, (counts.get(activity) ?? 0) + 1);
+    // A command that read three files read three, as three reads would have.
+    const count = commandLabelOf(tool)?.count ?? 1;
+    counts.set(activity, (counts.get(activity) ?? 0) + count);
   }
   return [...counts].map(([activity, count]) => ({ activity, count }));
 };

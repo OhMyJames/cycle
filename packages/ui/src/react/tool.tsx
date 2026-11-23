@@ -13,7 +13,14 @@ import {
 import { insideFolder } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import type { Activity, Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
-import { activityOf, commandLabelOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
+import {
+  activityOf,
+  commandLabelOf,
+  commandOf,
+  isLive,
+  streamsOf,
+  toolFacts,
+} from "../model/index.ts";
 import { reveal } from "../reveal.ts";
 import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
@@ -142,14 +149,6 @@ const SUMMARY_KEYS = ["command", "file_path", "notebook_path", "path", "pattern"
 const summaryKey = (tool: ToolItem): string | undefined => {
   const input = (tool.rawInput ?? {}) as Record<string, unknown>;
   return SUMMARY_KEYS.find((key) => typeof input[key] === "string");
-};
-
-/** The command a call ran, when its input has one: shown as a command, to read and copy, not as a field of JSON. */
-const commandOf = (tool: ToolItem): string | undefined => {
-  const input = tool.rawInput;
-  if (typeof input !== "object" || input === null) return undefined;
-  const command = (input as Record<string, unknown>).command;
-  return typeof command === "string" && command !== "" ? command : undefined;
 };
 
 /** Fields of a command's input the panel or the line already says: the command, what it is for, where it runs. */

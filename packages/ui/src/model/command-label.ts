@@ -1,83 +1,112 @@
 // What a shell command plainly does, read from the command, for a row the agent gave no description: `rg foo src` is a
 // search for 'foo' in src, `cat a.ts` reads a.ts, `ls src` lists src. Only a command every part of which searches, reads
-// or lists, all the same way, and writes nothing, is named; any other is quoted as it is. The rules are old-cycle's
-// (`acp/command-label.ts`): substitution, a write to a file, `sed` without `-n` or with `-i`, and a `find` that acts are
-// never read as harmless; `cd`, `echo` and the like say nothing; `head`, `wc` and the like after a pipe only trim.
+// or lists, all the same way, and that writes and runs nothing else, is named; any other is quoted as it is. When in
+// doubt it is quoted: a reassuring verb over a command that writes would hide the one thing to see. The rules are
+// old-cycle's (`acp/command-label.ts`): substitution, a write to a file, `sed` that is not a plain print, and a `find`
+// that acts are never read as harmless; `echo` and the like say nothing; `head`, `wc` and the like after a pipe only
+// trim.
 
-export type CommandLabel = { kind: "search" | "read" | "list"; detail: string };
+/** What a command did, the words for what it acted on, and how many things it acted on (files read, searches). */
+export type CommandLabel = { kind: "search" | "read" | "list"; detail: string; count: number };
 
-/** A word of the command, and whether it was quoted: a quoted `|` or `>` is a word, not an operator. */
-type Word = { text: string; quoted: boolean };
 /** One program and its words, and what joined it to the one before (`|`, `&&`, `;`, or nothing for the first). */
 type Part = { words: string[]; after: string };
 
 const SEPARATORS = ["&&", "||", "|", ";", "&", "\n"];
 
-/** Command substitution or process substitution: a command inside the command, which is not read. */
-const NESTED = /\$\(|`|<\(|>\(/;
+/** Command or process substitution, or a here-document: a command inside the command, or text that is not read. */
+const NESTED = /\$\(|`|<\(|>\(|<</;
 
-/** The command's parts, and whether it writes to a file. Nothing when it cannot be read safely. */
+/** The command's parts, and whether it writes to a file. Nothing when it cannot be read. */
 const partsOf = (command: string): { parts: Part[]; writes: boolean } | undefined => {
   const parts: Part[] = [{ words: [], after: "" }];
   let writes = false;
-  let word: Word | undefined;
-  /** A redirection whose target is the next word. */
+  let text = "";
+  let has = false;
+  /** A redirection waiting for its target: the next word. */
   let redirect: string | undefined;
   const end = () => {
-    if (word === undefined) return;
-    const { text, quoted } = word;
-    word = undefined;
+    if (!has) return;
+    const word = text;
+    text = "";
+    has = false;
     if (redirect !== undefined) {
-      if (redirect !== "<" && text !== "/dev/null") writes = true;
+      if (redirect !== "<" && word !== "/dev/null") writes = true;
       redirect = undefined;
-      return;
-    }
-    const at = quoted ? null : /^(\d*|&)(>>?|<)(&?)(.*)$/.exec(text);
-    if (at !== null) {
-      const [, , operator = "", dup = "", target = ""] = at;
-      // `2>&1` sends one stream to another: nothing written.
-      if (dup !== "") return;
-      if (target === "") redirect = operator;
-      else if (operator !== "<" && target !== "/dev/null") writes = true;
-      return;
-    }
-    parts.at(-1)?.words.push(text);
-  };
-  const add = (text: string, quoted = false) => {
-    word = { text: (word?.text ?? "") + text, quoted: (word?.quoted ?? false) || quoted };
+    } else parts.at(-1)?.words.push(word);
   };
   for (let i = 0; i < command.length; i++) {
     const char = command[i] as string;
+    // A line continued: the two characters are nothing.
+    if (char === "\\" && command[i + 1] === "\n") {
+      i++;
+      continue;
+    }
+    // A comment, to the end of its line.
+    if (char === "#" && !has) {
+      const line = command.indexOf("\n", i);
+      if (line === -1) break;
+      i = line - 1;
+      continue;
+    }
     const separator = SEPARATORS.find((s) => command.startsWith(s, i));
-    // `&` in `2>&1` or `&>` is a redirection's.
-    const redirection =
-      separator === "&" && /[<>]/.test(`${command[i - 1] ?? ""}${command[i + 1] ?? ""}`);
-    if (separator !== undefined && !redirection) {
+    // `&` in `2>&1` or `&>` belongs to a redirection; `|` in `>|` too.
+    const inRedirection =
+      (separator === "&" && /[<>]/.test(`${command[i - 1] ?? ""}${command[i + 1] ?? ""}`)) ||
+      (separator === "|" && command[i - 1] === ">");
+    if (separator !== undefined && !inRedirection) {
       end();
+      // A redirection with no target is not a command to read.
+      if (redirect !== undefined) return undefined;
       parts.push({ words: [], after: separator });
       i += separator.length - 1;
+    } else if (char === ">" || char === "<") {
+      // The stream it is of (`2>`, `&>`) is part of it, not a word.
+      if (has && /^(\d+|&)$/.test(text)) {
+        text = "";
+        has = false;
+      } else end();
+      let operator = char;
+      if (char === ">" && command[i + 1] === ">") {
+        operator = ">>";
+        i++;
+      } else if (char === ">" && command[i + 1] === "|") i++;
+      if (command[i + 1] === "&") {
+        i++;
+        // `>&2`, `2>&1`, `>&-`: one stream sent to another, or closed. Nothing written.
+        const stream = /^(\d+|-)/.exec(command.slice(i + 1));
+        if (stream !== null) {
+          i += stream[0].length;
+          continue;
+        }
+        // `>&file` writes the file.
+      }
+      redirect = operator;
     } else if (char === " " || char === "\t") end();
     else if (char === "'") {
       const close = command.indexOf("'", i + 1);
       if (close === -1) return undefined;
-      add(command.slice(i + 1, close), true);
+      text += command.slice(i + 1, close);
+      has = true;
       i = close;
     } else if (char === '"') {
-      let text = "";
       let j = i + 1;
       for (; j < command.length && command[j] !== '"'; j++)
         text += command[j] === "\\" ? (command[++j] ?? "") : command[j];
       if (j >= command.length) return undefined;
-      add(text, true);
+      has = true;
       i = j;
-    } else if (char === "\\") add(command[++i] ?? "");
-    else add(char);
+    } else if (char === "\\") {
+      text += command[++i] ?? "";
+      has = true;
+    } else {
+      text += char;
+      has = true;
+    }
   }
   end();
-  return {
-    parts: parts.filter((part) => part.words.length > 0),
-    writes: writes || redirect !== undefined,
-  };
+  if (redirect !== undefined) return undefined;
+  return { parts: parts.filter((part) => part.words.length > 0), writes };
 };
 
 const name = (path: string): string => path.split("/").filter(Boolean).at(-1) ?? path;
@@ -90,9 +119,9 @@ const some = (items: string[]): string => {
     : unique.join(", ");
 };
 
-/** Flags whose value is the next word, so it is no path or pattern. */
-const TAKES_VALUE: Record<string, string[]> = {
-  search: [
+/** Each program's flags whose value is the next word, so it is no path or pattern. */
+const TAKES_VALUE: Record<string, readonly string[]> = {
+  rg: [
     "-g",
     "--glob",
     "-t",
@@ -111,18 +140,49 @@ const TAKES_VALUE: Record<string, string[]> = {
     "--threads",
     "--sort",
     "--sortr",
+    "-r",
+    "--replace",
+    "-E",
+    "--encoding",
+    "--iglob",
+    "--max-depth",
+    "-d",
+    "--max-filesize",
+    "--colors",
+    "--color",
+    "--context-separator",
+    "--field-match-separator",
+    "--path-separator",
+    "--type-add",
+    "--ignore-file",
+    "--engine",
+  ],
+  grep: [
+    "-m",
+    "--max-count",
+    "-A",
+    "-B",
+    "-C",
     "--include",
     "--exclude",
     "--exclude-dir",
+    "-d",
+    "--directories",
+    "-D",
+    "--devices",
+    "--label",
+    "--color",
+    "--colour",
   ],
-  read: ["-n", "-c"],
-  list: ["-L", "-I", "-P"],
+  head: ["-n", "-c"],
+  tail: ["-n", "-c"],
+  tree: ["-L", "-I", "-P", "--filelimit", "--charset", "--sort"],
 };
 
 /** The words that are not flags (nor flags' values), and the patterns given with `-e`. */
 const operands = (
-  args: string[],
-  takesValue: string[],
+  args: readonly string[],
+  takesValue: readonly string[] = [],
 ): { plain: string[]; patterns: string[] } => {
   const plain: string[] = [];
   const patterns: string[] = [];
@@ -133,19 +193,28 @@ const operands = (
       break;
     }
     if (arg === "-e" || arg === "--regexp") patterns.push(args[++i] ?? "");
-    else if (arg.startsWith("--regexp=")) patterns.push(arg.slice(9));
+    else if (arg.startsWith("--regexp=")) patterns.push(arg.slice("--regexp=".length));
     else if (takesValue.includes(arg)) i++;
     else if (arg === "-" || !arg.startsWith("-")) plain.push(arg);
   }
   return { plain, patterns };
 };
 
+/** A flag given, alone or with its value joined (`-o`, `-ofile`, `--output`, `--output=file`). */
+const given = (args: readonly string[], short: string | undefined, long: string): boolean =>
+  args.some(
+    (a) =>
+      a === long ||
+      a.startsWith(`${long}=`) ||
+      (short !== undefined && (a === short || (a.startsWith(short) && !a.startsWith("--")))),
+  );
+
 const SEARCHES = new Set(["rg", "grep", "egrep", "fgrep", "ag", "ack"]);
 const READS = new Set(["cat", "head", "tail", "sed", "nl", "less", "bat"]);
 const LISTS = new Set(["ls", "tree", "find"]);
 /** Say nothing of what the command does, wherever they are. */
-const QUIET = new Set(["cd", "echo", "printf", "true", ":", "pwd"]);
-/** After a pipe, only trim what they are handed. */
+const QUIET = new Set(["echo", "printf", "true", ":", "pwd"]);
+/** After a pipe, only trim what they are handed: unless told to write (`sort -o`, `uniq in out`). */
 const TRIMS = new Set(["head", "tail", "sort", "uniq", "wc", "cut", "nl", "cat", "tr", "less"]);
 /** A `find` with one of these deletes, runs or writes. */
 const FIND_ACTS = new Set([
@@ -159,44 +228,74 @@ const FIND_ACTS = new Set([
   "-fprintf",
   "-fls",
 ]);
+/** `find`'s own options, before its paths. */
+const FIND_FIRST = /^-([HLP]|D|O\d*)$/;
+/** A `sed -n` script that only prints lines: `p`, `5p`, `1,40p`, `$p`, `/re/p` is not one (it could hide `w`). */
+const PRINT_ONLY = /^\s*(?:(?:\d+|\$)\s*(?:,\s*(?:\d+|\$)\s*)?)?p\s*$/;
 
-const labelOf = (words: string[]): CommandLabel | undefined => {
+/** A part after a pipe that only trims what it is handed. */
+const trims = (words: readonly string[]): boolean => {
+  const [program = "", ...args] = words;
+  const tool = name(program);
+  if (!TRIMS.has(tool)) return false;
+  if (tool === "sort" && given(args, "-o", "--output")) return false;
+  if (tool === "uniq" && operands(args).plain.length > 1) return false;
+  return true;
+};
+
+const labelOf = (words: readonly string[]): CommandLabel | undefined => {
   const [program = "", ...args] = words;
   const tool = name(program);
   if (SEARCHES.has(tool)) {
-    const { plain, patterns } = operands(args, TAKES_VALUE.search ?? []);
+    // Patterns from a file are not said; `--pre` runs a program on every file.
+    if (given(args, "-f", "--file") || given(args, undefined, "--pre")) return undefined;
+    const { plain, patterns } = operands(args, TAKES_VALUE[tool === "rg" ? "rg" : "grep"]);
     const pattern = patterns[0] ?? plain.shift();
     if (pattern === undefined) return undefined;
-    return {
-      kind: "search",
-      detail: plain.length > 0 ? `'${pattern}' in ${some(plain)}` : `'${pattern}'`,
-    };
+    const detail = plain.length > 0 ? `'${pattern}' in ${some(plain)}` : `'${pattern}'`;
+    return { kind: "search", detail, count: 1 };
   }
   if (READS.has(tool)) {
-    // Only `sed -n` prints without changing anything; `-i` edits even then.
-    if (
-      tool === "sed" &&
-      (!args.includes("-n") || args.some((a) => /^(--in-place|-[^-]*i)/.test(a)))
-    )
-      return undefined;
-    const { plain } = operands(
-      args,
-      tool === "head" || tool === "tail" ? (TAKES_VALUE.read ?? []) : [],
-    );
-    // `sed` takes its script first, unless `-e` gave it.
-    const files = tool === "sed" && !args.includes("-e") ? plain.slice(1) : plain;
-    return files.length === 0 ? undefined : { kind: "read", detail: some(files.map(name)) };
+    let files: string[];
+    if (tool === "sed") {
+      // Only a plain print, with `-n`, changes nothing: `-i` edits, `w` writes, `e` runs, a script file is not read.
+      if (
+        !args.includes("-n") ||
+        args.some(
+          (a) => /^-[^-]*[if]/.test(a) || a.startsWith("--in-place") || a.startsWith("--file"),
+        )
+      )
+        return undefined;
+      const { plain, patterns } = operands(args.filter((a) => a !== "-n"));
+      const scripts = patterns.length > 0 ? patterns : plain.slice(0, 1);
+      if (
+        scripts.length === 0 ||
+        !scripts.every((s) => s.split(";").every((c) => PRINT_ONLY.test(c)))
+      )
+        return undefined;
+      files = patterns.length > 0 ? plain : plain.slice(1);
+    } else files = operands(args, TAKES_VALUE[tool]).plain;
+    return files.length === 0
+      ? undefined
+      : { kind: "read", detail: some(files.map(name)), count: new Set(files).size };
   }
   if (LISTS.has(tool)) {
+    let paths: string[];
     if (tool === "find") {
       if (args.some((a) => FIND_ACTS.has(a))) return undefined;
+      const options = args.findIndex((a) => !FIND_FIRST.test(a));
+      const rest = options === -1 ? [] : args.slice(options);
       // Its paths come before its first test.
-      const first = args.findIndex((a) => /^[-(!]/.test(a));
-      const paths = first === -1 ? args : args.slice(0, first);
-      return { kind: "list", detail: paths.length > 0 ? some(paths) : "." };
+      const first = rest.findIndex((a) => /^[-(!]/.test(a));
+      paths = first === -1 ? rest : rest.slice(0, first);
+    } else {
+      // `tree -o` writes what it lists to a file.
+      if (tool === "tree" && given(args, "-o", "--output")) return undefined;
+      paths = operands(args, TAKES_VALUE[tool]).plain;
     }
-    const { plain } = operands(args, tool === "tree" ? (TAKES_VALUE.list ?? []) : []);
-    return { kind: "list", detail: plain.length > 0 ? some(plain) : "." };
+    return paths.length > 0
+      ? { kind: "list", detail: some(paths), count: new Set(paths).size }
+      : { kind: "list", detail: ".", count: 1 };
   }
   return undefined;
 };
@@ -208,16 +307,24 @@ const read = (command: string): CommandLabel | undefined => {
   const labels: CommandLabel[] = [];
   for (const { words, after } of parsed.parts) {
     const tool = name(words[0] ?? "");
-    if (QUIET.has(tool) || (after === "|" && TRIMS.has(tool))) continue;
+    // `cd` somewhere: what follows is read from there, which the label would not say.
+    if (tool === "cd") {
+      if (words.length > 1) return undefined;
+      continue;
+    }
+    if (QUIET.has(tool) || (after === "|" && trims(words))) continue;
     const label = labelOf(words);
     if (label === undefined) return undefined;
     labels.push(label);
   }
   const [first] = labels;
   if (first === undefined || labels.some((label) => label.kind !== first.kind)) return undefined;
-  return labels.length === 1
-    ? first
-    : { kind: first.kind, detail: labels.map((l) => l.detail).join(", ") };
+  if (labels.length === 1) return first;
+  return {
+    kind: first.kind,
+    detail: labels.map((label) => label.detail).join(", "),
+    count: labels.reduce((sum, label) => sum + label.count, 0),
+  };
 };
 
 /** Rows ask on every render: each command is read once. */
