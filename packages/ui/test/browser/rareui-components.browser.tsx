@@ -22,34 +22,44 @@ describe("InlineAiStatus", () => {
     expect(formatElapsed(75, translator.t)).toBe("1m 15s");
   });
 
-  test("renders thinking state with status role, live pulse, and optional detail", () => {
+  test("renders thinking state with status role and the morph loader; the words do not breathe", () => {
     const { container } = wrap(
-      <InlineAiStatus
-        kind="thinking"
-        label="Thinking…"
-        since={Date.now()}
-        detail={<span data-slot="step-detail">checking daemon</span>}
-      />,
+      <InlineAiStatus kind="thinking" label="Thinking…" since={Date.now()} />,
     );
     const step = container.querySelector('[data-slot="step"]');
     expect(step?.getAttribute("data-step")).toBe("thinking");
     const status = within(container).getByRole("status");
     const label = status.querySelector('[data-slot="step-label"]');
     expect(label?.textContent).toBe("Thinking…");
-    expect(label?.hasAttribute("data-live")).toBe(true);
-    expect(within(status).getByText("checking daemon")).toBeTruthy();
+    // The brand's loader, not a spinner or a pulsing icon.
+    expect(status.querySelector('[data-slot="morph-loader"]')?.getAttribute("data-state")).toBe(
+      "thinking",
+    );
+    expect(status.querySelector('[data-slot="spinner"], [data-slot="step-pulse"]')).toBeNull();
+    expect(getComputedStyle(label as Element).animationIterationCount).not.toBe("infinite");
   });
 
-  test("does not pulse or track elapsed time on approval state", () => {
+  test("approval waits in its own colour, with the slow loader and no time", () => {
     const { container } = wrap(
-      <InlineAiStatus kind="approval" label="Waiting for your answer" since={Date.now()} />,
+      <InlineAiStatus kind="approval" label="Waiting for your answer" since={Date.now() - 5000} />,
     );
     const step = container.querySelector('[data-slot="step"]');
     expect(step?.getAttribute("data-step")).toBe("approval");
-    const status = within(container).getByRole("status");
-    const label = status.querySelector('[data-slot="step-label"]');
-    expect(label?.hasAttribute("data-live")).toBe(false);
+    expect(container.querySelector('[data-slot="morph-loader"]')?.getAttribute("data-state")).toBe(
+      "waiting",
+    );
     expect(container.querySelector('[data-slot="step-elapsed"]')).toBeNull();
+  });
+
+  test("quiet, it keeps its height and shows nothing, but a screen reader still hears it", () => {
+    const { container } = wrap(
+      <InlineAiStatus kind="working" label="Running a command" since={Date.now() - 5000} quiet />,
+    );
+    const step = container.querySelector('[data-slot="step"]') as HTMLElement;
+    expect(step.getBoundingClientRect().height).toBe(28);
+    expect(step.querySelector('[data-slot="morph-loader"]')?.checkVisibility()).toBe(false);
+    expect(step.querySelector('[data-slot="step-elapsed"]')).toBeNull();
+    expect(within(container).getByRole("status").textContent).toBe("Running a command");
   });
 
   test("shows elapsed time outside the live region after 1s, counted from when the step started", async () => {

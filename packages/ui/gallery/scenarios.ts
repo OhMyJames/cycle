@@ -604,6 +604,22 @@ export const scenarios: Record<string, Scenario> = {
       }),
     ],
   },
+  stepLine: {
+    title:
+      "The line at the end of a turn that is going, after its calls: the brand's loader, the words, the whole turn's time",
+    sessions: [session("s1", { title: "Ship the fix", state: "running" })],
+    history: [
+      you("u1", "Run the tests and fix what fails."),
+      running(),
+      ...tool("d1", "Bash", "completed", { command: "bun test packages/daemon" }),
+      ...tool("d2", "Read", "completed", { file_path: "packages/daemon/src/daemon.ts" }),
+      u({
+        sessionUpdate: "agent_thought",
+        messageId: "t1",
+        content: [{ type: "text", text: "The working directory is never checked." }],
+      }),
+    ],
+  },
   plan: {
     title:
       "The plan above the input box, opened: what is open first, what is done ticked, struck and below",

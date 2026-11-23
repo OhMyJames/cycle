@@ -1,6 +1,7 @@
 import { Button } from "@ui-sdk/react/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
 import { useId, useState } from "react";
+import type { Translator } from "../i18n.ts";
 import {
   activityCounts,
   activityOf,
@@ -17,7 +18,7 @@ import { startedAt } from "../started.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, WarningIcon } from "./icons.tsx";
-import { InlineAiStatus } from "./inline-ai-status.tsx";
+import { Elapsed, InlineAiStatus } from "./inline-ai-status.tsx";
 import { useStartScope } from "./start-scope.ts";
 import { useSteady } from "./steady.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -63,6 +64,7 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       ? (goingDescription ?? `${toolVerb(t, going, true)} ${toolSummary(going)}`)
       : "";
   const goingTip = goingDetail || undefined;
+  const scope = useStartScope();
   const [open, setOpen] = useOpenOnFailure(failed > 0);
   // Asked to show one of its calls (from the Overview): the card opens to it; also when it mounts while that is still
   // asked, since the request may be what moved the window to it.
@@ -102,6 +104,10 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
         {/* No mark says the stretch is going: its detail does, by the tense of its verb; a description has none, so the word is written. */}
         {going !== undefined && goingDescription !== undefined ? (
           <span data-slot="tool-status">{statusWord(t, going.status ?? "pending")}</span>
+        ) : null}{" "}
+        {/* Closed, the line stands for the call's row: it says how long the call has been at work, as the row would. */}
+        {going?.status === "in_progress" && !open ? (
+          <Elapsed since={startedAt(`${scope}:tool:${going.id}`)} slot="tool-elapsed" />
         ) : null}{" "}
         {failed > 0 ? (
           <span data-slot="tool-status" data-tone="danger">
@@ -235,20 +241,39 @@ function TurnAgain({ resend }: { resend: Resend }) {
 }
 
 /**
- * What a step is known by, in the session: a call by its id; anything else by its kind (and attempt) and where in the
- * conversation it is, so the agent at work again after a call is a step of its own, counted afresh.
+ * A call whose row says it is at work, with its time (tool.tsx: in progress). One still waiting to start (its input
+ * still streaming, say) has no time on its row yet, so the line speaks for it.
  */
-const stepKeyOf = (step: Step, conversation: Conversation): string =>
-  step.kind === "tool"
-    ? `tool:${step.tool.id}`
-    : `${conversation.turns}:${conversation.items.length}:${
-        step.kind === "retrying" ? `retrying:${step.attempt ?? ""}` : step.kind
-      }`;
+const rowAtWork = (step: LineStep): boolean =>
+  step.kind === "tool" && step.tool.status === "in_progress";
+
+/**
+ * What the line is held steady by: a call at work by no more than that, so one call after another is one quiet stretch,
+ * not a change each time (and a screen reader is not told each one); a call waiting by its id; a retry by its attempt,
+ * since its words count it; else the kind of step.
+ */
+const stepKeyOf = (step: LineStep): string =>
+  rowAtWork(step)
+    ? "tool"
+    : step.kind === "tool"
+      ? `tool:${step.tool.id}`
+      : step.kind === "retrying"
+        ? `retrying:${step.attempt ?? ""}`
+        : step.kind;
 
 /** A question for the person is said at once, and so is the end of the turn: nothing is held over either. */
-const urgent = (key: string): boolean => key === "" || key.endsWith(":approval");
+const urgent = (key: string): boolean => key === "" || key === "approval";
 
-/** What the agent is doing, at the end of the turn that is going, so a hidden thought or a long tool is not a silence. */
+/** What the line can be showing: a step, or the agent writing its reply. */
+type LineStep = Step | { kind: "replying" };
+
+/**
+ * What the agent is doing, at the end of the turn that is going, so a hidden thought or a long wait is not a silence
+ * (Cycle v2's StatusBar). It is there for the whole turn, on a line of fixed height, so nothing moves as steps change.
+ * While a call is at work its row says so, with its own time: the line is quiet, so the conversation has one loader and
+ * one clock. Its own time is the turn's, from when the page first saw the turn: an approval, a call or a remount does not
+ * start it again.
+ */
 export function StepLine({
   conversation,
   awaitingApproval,
@@ -258,52 +283,51 @@ export function StepLine({
 }) {
   const { t } = useI18n();
   const session = useStartScope();
-  const wanted = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
-  const wantedKey = wanted === undefined ? "" : stepKeyOf(wanted, conversation);
-  // When it began, as soon as it does: a step held behind another still counts from then.
-  if (wanted !== undefined) startedAt(`${session}:${wantedKey}`);
-  // Held steady, so a run of quick calls does not flicker through their names.
-  const [step, stepKey] = useSteady(wanted, wantedKey, urgent);
+  const going = conversation.status !== "idle";
+  const wanted: LineStep | undefined = awaitingApproval
+    ? { kind: "approval" }
+    : (stepOf(conversation) ?? (going ? { kind: "replying" } : undefined));
+  // Asked as the turn begins, and on every draw after: it is the turn's, under the session's scope.
+  const since = going ? startedAt(`${session}:turn:${conversation.turns}`) : 0;
+  // Held steady, so a run of quick calls does not flicker between the quiet line and words.
+  const [step] = useSteady(wanted, wanted === undefined ? "" : stepKeyOf(wanted), urgent);
   if (step === undefined) return null;
-  const activity = step.kind === "tool" ? activityOf(step.tool) : undefined;
-  // A sub-agent at work has its own card that says what it does: the line only says the agent waits for it.
-  const subagent = step.kind === "tool" && isSubagentCall(step.tool);
-  const words =
-    step.kind === "approval"
+  const quiet = rowAtWork(step);
+  const label = quiet
+    ? t("step.working")
+    : step.kind === "approval"
       ? t("step.approval")
       : step.kind === "thinking"
         ? t("step.thinking")
-        : step.kind === "working"
-          ? t("step.working")
+        : step.kind === "replying"
+          ? t("step.replying")
           : step.kind === "retrying"
             ? step.attempt !== undefined && step.maxRetries !== undefined
               ? t("step.retryingCount", { attempt: step.attempt, max: step.maxRetries })
               : t("step.retrying")
-            : subagent
-              ? t("step.subagent")
-              : activity === "other"
-                ? t("step.other", { name: toolName(t, step.tool) })
-                : t(`step.${activity}`);
+            : step.kind === "tool"
+              ? toolStep(t, step.tool)
+              : t("step.working");
   return (
     <InlineAiStatus
-      // Trying again is the agent at work, said in other words: nothing here for the person to do.
-      kind={step.kind === "retrying" ? "working" : step.kind}
-      activity={activity}
-      label={words}
-      since={startedAt(`${session}:${stepKey}`)}
-      detail={step.kind === "tool" && !subagent ? <StepDetail tool={step.tool} /> : undefined}
+      // Trying again, or a call at work, is the agent at work, said in other words: nothing here for the person to do.
+      kind={
+        step.kind === "approval" || step.kind === "thinking" || step.kind === "replying"
+          ? step.kind
+          : "working"
+      }
+      label={label}
+      since={since}
+      quiet={quiet}
     />
   );
 }
 
-/** What the step line says of the call that is going: the agent's sentence for it, or what it acts on. */
-function StepDetail({ tool }: { tool: ToolItem }) {
-  const description = toolDescription(tool);
-  const text = description ?? toolSummary(tool);
-  const tip = text || undefined;
-  return (
-    <span data-slot="step-detail" data-prose={description !== undefined || undefined} title={tip}>
-      {text}
-    </span>
-  );
+/** What the line says of a call that has not started its work yet. */
+function toolStep(t: Translator["t"], tool: ToolItem): string {
+  if (isSubagentCall(tool)) return t("step.subagent");
+  const activity = activityOf(tool);
+  return activity === "other"
+    ? t("step.other", { name: toolName(t, tool) })
+    : t(`step.${activity}`);
 }

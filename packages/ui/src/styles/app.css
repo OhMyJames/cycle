@@ -524,7 +524,6 @@ summary:focus-visible {
     [data-slot="page-row-label"],
     [data-slot="tool-verb"],
     [data-slot="tool-summary"],
-    [data-slot="step-detail"],
     [data-slot="tool-diff-path"],
     [data-slot="plan-now"],
     [data-slot="blank-folder-name"],
@@ -569,7 +568,6 @@ summary:focus-visible {
   [data-slot="page-row-label"],
   [data-slot="tool-verb"],
   [data-slot="tool-summary"],
-  [data-slot="step-detail"],
   [data-slot="tool-diff-path"],
   [data-slot="plan-now"],
   [data-slot="blank-folder-name"],
@@ -3619,7 +3617,7 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
 }
 
 /* The agent's own sentence for what a call is for is prose, not a command: the body's font, in the slot's muted colour. */
-:is([data-slot="tool-summary"], [data-slot="step-detail"])[data-prose] {
+[data-slot="tool-summary"][data-prose] {
   font-family: inherit;
   font-size: var(--cycle-text-ui);
 }
@@ -4095,14 +4093,12 @@ button[data-slot="review-file"]:focus-visible {
   cursor: default;
 }
 
-/* The line at the end of a turn that is going: what the agent is doing, so a hidden thought is not a silence. */
-@keyframes cycle-step-breathe {
-  0%,
-  100% {
-    opacity: 0.65;
-  }
-  50% {
-    opacity: 1;
+/* The line at the end of a turn that is going: what the agent is doing, so a hidden thought is not a silence. It is
+   always one line high, whatever it shows or does not (quiet while a call's row says it is at work), so nothing moves as
+   steps come and go. What comes into it fades in on one beat, the mark and the words alike; what leaves goes at once. */
+@keyframes cycle-step-in {
+  from {
+    opacity: 0;
   }
 }
 
@@ -4110,7 +4106,7 @@ button[data-slot="review-file"]:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-height: 1.75rem;
+  height: 1.75rem;
   font-size: var(--cycle-text-ui);
   color: var(--ui-muted-foreground);
 }
@@ -4123,50 +4119,79 @@ button[data-slot="review-file"]:focus-visible {
   gap: 0.5rem;
 }
 
-[data-slot="step"][data-step="approval"] {
-  color: var(--cycle-attention);
-}
-
 [data-slot="step-icon"] {
-  position: relative;
   flex: none;
   display: grid;
   place-items: center;
   width: 1rem;
   height: 1rem;
+  color: var(--cycle-accent);
 }
 
-[data-slot="step-icon-inner"] {
-  grid-area: 1 / 1;
-  display: grid;
-  place-items: center;
+/* Out of the layout, so the observer tells the loader it is not seen and it asks for no frames. */
+[data-slot="step"][data-quiet] [data-slot="step-icon"] {
+  display: none;
 }
 
-[data-slot="step-pulse"] {
-  animation: cycle-pulse 1.8s ease-in-out infinite;
+[data-slot="step"][data-step="approval"] {
+  color: var(--cycle-attention);
 }
 
+[data-slot="step"][data-step="approval"] [data-slot="step-icon"] {
+  color: inherit;
+}
+
+[data-slot="step-icon"] {
+  animation: cycle-step-in var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+/* One line, whatever its length (a retry's count, a long translation): it gives way to the time, and its end fades. */
 [data-slot="step-label"] {
-  flex: none;
-  font-family: var(--cycle-font-display);
-  font-weight: 500;
-}
-
-[data-slot="step-label"][data-live] {
-  color: var(--cycle-ink);
-  animation: cycle-step-breathe 2.2s ease-in-out infinite;
-}
-
-[data-slot="step-detail"] {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-family: var(--ui-font-mono);
-  font-size: var(--cycle-text-meta);
+  font-family: var(--cycle-font-display);
+  font-weight: 500;
+  color: var(--cycle-ink);
+  /* The same beat as the mark, and the end fade every long line has (cycle-fade, above). */
+  animation:
+    cycle-step-in var(--cycle-motion-enter) var(--cycle-ease),
+    cycle-fade linear both;
+  animation-timeline: auto, scroll(self inline);
 }
 
-/* How long a call has been at work, on its row as on the step line: quiet, in figures that do not jitter. */
+@media (prefers-reduced-motion: reduce) {
+  /* No fade in; the end fade is not motion, and stays. */
+  [data-slot="step-label"] {
+    animation: cycle-fade linear both !important;
+    animation-timeline: scroll(self inline) !important;
+  }
+}
+
+[data-slot="step"][data-step="approval"] [data-slot="step-label"] {
+  color: inherit;
+}
+
+/* The brand's loader (react/loader): 16px in the line, drawn at 24px and spilling over its box, in the text's colour. */
+[data-slot="morph-loader"] {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+}
+
+[data-slot="morph-loader"] > svg {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  max-width: none;
+  overflow: visible;
+}
+
+/* How long a call has been at work on its row, and the turn on the step line: quiet, in figures that do not jitter. */
 [data-slot="step-elapsed"],
 [data-slot="tool-elapsed"] {
   flex: none;

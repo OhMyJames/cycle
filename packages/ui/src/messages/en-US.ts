@@ -507,6 +507,7 @@ export const enUS = {
   "step.approval": "Waiting for your answer",
   "step.thinking": "Thinking…",
   "step.working": "Working…",
+  "step.replying": "Writing…",
   // The agent's request to the model failed and it is trying again by itself: nothing for the person to do
   "step.retrying": "The request failed, trying again…",
   "step.retryingCount": "The request failed, trying again ({attempt} of {max})…",

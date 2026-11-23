@@ -277,7 +277,7 @@ const thoughtChunk = (text: string) =>
 const answerChunk = (text: string) =>
   u({ sessionUpdate: "agent_message_chunk", messageId: "a1", content: { type: "text", text } });
 
-test("in normal mode a thought is not shown: the line at the end says Thinking… while it goes", async () => {
+test("in normal mode a thought is not shown: the line at the end says Thinking… while it goes, then Writing…", async () => {
   const { log, script } = await open(you("u1"), state({ state: "running" }));
   const emit = timed(script, 2);
   await emit(thoughtChunk("weighing **the options**"));
@@ -287,6 +287,8 @@ test("in normal mode a thought is not shown: the line at the end says Thinking�
   await emit(answerChunk("answer"));
   await waitFor(() => expect(log.textContent).toContain("answer"));
   expect(log.textContent).not.toContain("weighing");
+  // Held a moment, so a short thought does not flicker, then the line says the reply is on its way.
+  await waitFor(() => expect(log.textContent).toContain("Writing…"));
   expect(log.textContent).not.toContain("Thinking…");
 });
 
@@ -622,11 +624,12 @@ test("a tool call left going in a turn that has ended is not shown running; in a
   );
   const row = await screen.findByRole("button", { name: /Bash/ });
   expect(row.textContent).toContain("in progress");
-  expect(log.querySelector('[data-slot="spinner"]')).not.toBeNull();
+  // The row says it is at work: the line at the end is quiet.
+  expect(log.querySelector('[data-slot="step"]')?.hasAttribute("data-quiet")).toBe(true);
   // An older session: the turn ended and the call never said it had.
   await emit(state({ state: "idle", stopReason: "end_turn" }));
   await waitFor(() => expect(row.textContent).toContain("cancelled"));
-  expect(log.querySelector('[data-slot="spinner"]')).toBeNull();
+  expect(log.querySelector('[data-slot="step"]')).toBeNull();
 });
 
 test("a card with a call the turn left is not finished, not done", async () => {
@@ -855,6 +858,155 @@ test("a call at work shows on its row how long it has been going, from when the 
   await waitFor(() =>
     expect(row.querySelector('[data-slot="tool-elapsed"]')?.textContent).toMatch(/^[34]s$/),
   );
+});
+
+/** The loaders that can be seen in `root`: one kept out of the layout while the line is quiet is not. */
+const shownLoaders = (root: Element): number =>
+  [...root.querySelectorAll('[data-slot="morph-loader"]')].filter((loader) =>
+    loader.checkVisibility(),
+  ).length;
+
+/** Seconds, from what a count says ("7s", "1m 5s"). */
+const seconds = (text: string | null | undefined): number => {
+  const match = /^(?:(\d+)m)?\s*(?:(\d+)s)?$/.exec(text ?? "");
+  return match === null ? Number.NaN : Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0);
+};
+
+test("the line at the end counts the whole turn: a call and an approval do not start it again", async () => {
+  // The turn was first seen five seconds ago (or earlier, by another test of this session's first turn).
+  startedAt("local:s1:turn:0", Date.now() - 5_000);
+  const { log, emit } = await open(you("u1"), state({ state: "running" }), think("t1", "hm"));
+  const step = () => log.querySelector<HTMLElement>('[data-slot="step"]');
+  const elapsed = () => seconds(step()?.querySelector('[data-slot="step-elapsed"]')?.textContent);
+  await waitFor(() => expect(elapsed()).toBeGreaterThanOrEqual(5));
+  const before = elapsed();
+  expect(step()?.getBoundingClientRect().height).toBe(28);
+  expect(shownLoaders(log)).toBe(1);
+
+  // A call at work: its row says so; the line keeps its height and shows neither a loader nor a time.
+  for (const update of tool("a", "Bash", "in_progress", { command: "make" })) await emit(update);
+  await waitFor(() => expect(step()?.hasAttribute("data-quiet")).toBe(true));
+  expect(step()?.getBoundingClientRect().height).toBe(28);
+  expect(shownLoaders(log)).toBe(0);
+  expect(log.querySelector('[data-slot="step-elapsed"]')).toBeNull();
+  // Out of sight, it asks for no frames.
+  await waitFor(() =>
+    expect(log.querySelector<SVGElement>('[data-slot="morph-loader"] svg')?.dataset.animating).toBe(
+      "false",
+    ),
+  );
+
+  // The agent asks: the line waits, without a time.
+  await emit(state({ state: "requires_action" }));
+  await waitFor(() => expect(step()?.getAttribute("data-step")).toBe("approval"));
+  expect(step()?.getBoundingClientRect().height).toBe(28);
+  expect(log.querySelector('[data-slot="step-elapsed"]')).toBeNull();
+
+  // Answered, the call done: the count goes on from the turn's start, not from nought.
+  await emit(state({ state: "running" }));
+  await emit(u({ sessionUpdate: "tool_call_update", toolCallId: "a", status: "completed" }));
+  await waitFor(() => expect(step()?.getAttribute("data-step")).toBe("working"));
+  await waitFor(() => expect(elapsed()).toBeGreaterThanOrEqual(before));
+});
+
+test("a call that has not started its work (its input still coming) is spoken for by the line", async () => {
+  const { log } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    u({ sessionUpdate: "tool_call_update", toolCallId: "w", name: "Write", status: "pending" }),
+  );
+  const step = log.querySelector<HTMLElement>('[data-slot="step"]');
+  // Its row has no time yet: the line keeps the loader and the turn's time.
+  expect(step?.hasAttribute("data-quiet")).toBe(false);
+  expect(shownLoaders(log)).toBe(1);
+});
+
+test("a long label stays on its one line, inside the column", async () => {
+  const { log } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    u({
+      sessionUpdate: "notice",
+      severity: "info",
+      title: "Retrying",
+      _meta: { "cycle/retry": { attempt: 2, maxRetries: 10, delayMs: 500 } },
+    }),
+  );
+  const step = await waitFor(() => {
+    const found = log.querySelector<HTMLElement>('[data-slot="step"]');
+    expect(found?.textContent).toContain("trying again");
+    return found as HTMLElement;
+  });
+  step.style.width = "120px";
+  expect(step.getBoundingClientRect().height).toBe(28);
+  expect(step.scrollWidth).toBeLessThanOrEqual(step.clientWidth);
+});
+
+test("a run of quick calls keeps the line quiet: no loader flickers in between", async () => {
+  const { log, emit } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("a", "Bash", "in_progress", { command: "make" }),
+  );
+  const step = log.querySelector<HTMLElement>('[data-slot="step"]');
+  expect(step?.hasAttribute("data-quiet")).toBe(true);
+  const height = step?.getBoundingClientRect().height;
+  let spoke = false;
+  const watch = new MutationObserver(() => {
+    if (shownLoaders(log) > 0) spoke = true;
+  });
+  watch.observe(log, { subtree: true, childList: true, attributes: true });
+  let last = "a";
+  for (const id of ["b", "c", "d", "e"]) {
+    // Between one call's end and the next one's start, the agent is at work for a moment.
+    await emit(u({ sessionUpdate: "tool_call_update", toolCallId: last, status: "completed" }));
+    for (const update of tool(id, "Read", "in_progress", { file_path: `${id}.ts` })) {
+      await emit(update);
+    }
+    last = id;
+  }
+  // Longer than a step is held: a change waiting would have shown by now.
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  watch.disconnect();
+  expect(spoke).toBe(false);
+  expect(log.querySelector('[data-slot="step"]')?.getBoundingClientRect().height).toBe(height);
+});
+
+test("while the agent writes its reply the line stays, saying so: nothing below the reply jumps", async () => {
+  const { log, script } = await open(you("u1"), state({ state: "running" }));
+  const emit = timed(script, 2);
+  await emit(answerChunk("the start of it"));
+  await waitFor(() => expect(log.textContent).toContain("the start of it"));
+  await waitFor(() =>
+    expect(log.querySelector('[data-slot="step"]')?.getAttribute("data-step")).toBe("replying"),
+  );
+  expect(log.querySelector('[data-slot="morph-loader"]')?.getAttribute("data-state")).toBe(
+    "responding",
+  );
+  await emit(state({ state: "idle", stopReason: "end_turn" }));
+  await waitFor(() => expect(log.querySelector('[data-slot="step"]')).toBeNull());
+});
+
+test("a card of calls, closed, says on its line how long the call that is going has been at work", async () => {
+  startedAt("local:s1:tool:card-b", Date.now() - 3_000);
+  const { log } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("card-a", "Bash", "completed", { command: "make" }),
+    ...tool("card-b", "Bash", "in_progress", { command: "make check" }),
+  );
+  const card = await waitFor(() => {
+    const found = log.querySelector('[data-kind="work"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  await waitFor(() =>
+    expect(
+      seconds(card.querySelector('[data-slot="tool-elapsed"]')?.textContent),
+    ).toBeGreaterThanOrEqual(3),
+  );
+  // One clock for the call: the line at the end shows none.
+  expect(log.querySelector('[data-slot="step-elapsed"]')).toBeNull();
 });
 
 test("a tool row is text only: no icon, dot, spinner, cross or chevron, whatever its state", async () => {
