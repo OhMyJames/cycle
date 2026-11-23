@@ -5,8 +5,10 @@ import { createInterface } from "node:readline";
 export type AdapterConfig = {
   /** Explicit environment given to `agy`; nothing is inherited from the adapter process. */
   env: Record<string, string>;
-  /** Absolute path to the `agy` executable. */
+  /** Absolute path to the `agy` executable (if resolved at startup). */
   agyExecutable: string;
+  /** Fallback absolute paths checked if `agy` is installed after the daemon starts (never inherited). */
+  fallbackExecutables?: string[];
   /** Optional `--log-file` path passed to `agy acp`. */
   logFile?: string;
   /** Pass `--sandbox` to `agy acp`. */

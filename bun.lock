@@ -20,6 +20,7 @@
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",
         "@cycle/client": "workspace:*",
+        "@cycle/harness-agy": "workspace:*",
         "@cycle/harness-claude": "workspace:*",
         "@cycle/harness-codex": "workspace:*",
         "@cycle/protocol": "workspace:*",

@@ -1,16 +1,39 @@
+import { accessSync, constants } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
 import { createAdapter } from "./agent.ts";
 import type { AdapterConfig } from "./server.ts";
+
+const isExecutable = (path: string): boolean => {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const resolveExecutable = (config: AdapterConfig): string | undefined => {
+  if (config.agyExecutable && isExecutable(config.agyExecutable)) return config.agyExecutable;
+  for (const candidate of config.fallbackExecutables ?? []) {
+    if (isExecutable(candidate)) return candidate;
+  }
+  const fromPath = Bun.which("agy", { PATH: process.env.PATH ?? "" });
+  return fromPath && isExecutable(fromPath) ? fromPath : undefined;
+};
 
 export async function runAdapter() {
   const config = JSON.parse(process.env.CYCLE_ADAPTER_CONFIG ?? "null") as AdapterConfig | null;
   if (!config?.env) throw new Error("CYCLE_ADAPTER_CONFIG must contain an explicit environment");
   if (!config.env.HOME) throw new Error("HOME is required for agy");
-  if (!config.agyExecutable) throw new Error("agyExecutable is required");
+  const agyExecutable = resolveExecutable(config);
+  if (!agyExecutable) throw new Error("agy binary not found");
   await mkdir(config.env.HOME, { recursive: true, mode: 0o700 });
+  if (config.logFile) await mkdir(dirname(config.logFile), { recursive: true, mode: 0o700 });
   const adapter = createAdapter({
     ...config,
+    agyExecutable,
     onServerExit: () => setTimeout(() => process.exit(1), 200),
   });
   try {
