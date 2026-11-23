@@ -112,16 +112,34 @@ if (command === "serve") {
   process.stdout.write(tailLines(text, Number.isInteger(lines) && lines > 0 ? lines : 100));
   process.exit(0);
 } else if (command === "stop") {
-  const pid = Number(
-    (
-      await Bun.file(join(paths.dataDir, "daemon.pid"))
-        .text()
-        .catch(() => "")
-    ).trim(),
-  );
-  if (!(await isListening(paths.socket)) || !Number.isInteger(pid) || pid <= 0) {
+  const pidFile = join(paths.dataDir, "daemon.pid");
+  const readPid = async () =>
+    Number(
+      (
+        await Bun.file(pidFile)
+          .text()
+          .catch(() => "")
+      ).trim(),
+    );
+  const known = (pid: number) => Number.isInteger(pid) && pid > 0;
+  if (!(await isListening(paths.socket))) {
     console.log("not running");
     process.exit(0);
+  }
+  // The socket first, then its pid: a daemon writes it the moment it has bound (serve.ts), so one found listening has
+  // it, or has it a moment later. A stopping one has already removed it.
+  let pid = await readPid();
+  for (const at = Date.now(); !known(pid) && Date.now() - at < 1_000; pid = await readPid())
+    await Bun.sleep(50);
+  if (!known(pid)) {
+    if (!(await isListening(paths.socket))) {
+      console.log("not running");
+      process.exit(0);
+    }
+    console.log(
+      `A daemon is listening on ${paths.socket}, but ${pidFile} has no pid: it may be stopping.`,
+    );
+    process.exit(1);
   }
   process.exit(
     await stopDaemon({

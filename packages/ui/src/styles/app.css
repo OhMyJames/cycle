@@ -1242,6 +1242,26 @@ button[data-slot="files-row"]:focus-visible {
   white-space: pre;
 }
 
+/* A file's text, and over it the lines a reply named (`app.tsx:12`), marked for a moment once gone to: the selection's
+   tint, lighter, fading out at the end. With reduced motion it does not fade: it is gone at once (files.tsx MARK_MS). */
+[data-slot="files-text"] {
+  position: relative;
+}
+
+[data-slot="files-line-mark"] {
+  position: absolute;
+  border-radius: var(--cycle-radius-sm);
+  background: color-mix(in oklab, var(--cycle-accent) 14%, transparent);
+  pointer-events: none;
+  animation: cycle-fade-out var(--cycle-motion-enter) var(--cycle-ease) 1.4s forwards;
+}
+
+@keyframes cycle-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
 [data-slot="files-markdown"] {
   padding: 0 0.25rem;
   overflow-wrap: anywhere;

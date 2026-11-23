@@ -8,6 +8,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -172,6 +173,9 @@ export const FOLD_OVER = 30;
 /** The reply this block is in is still being written. */
 const Streaming = createContext(false);
 
+/** Each time this goes up, every code block is shown whole: a file in Files is shown at a line (`Markdown`'s `unfold`). */
+const Unfold = createContext(0);
+
 const textOf = (code: ReactElement): string => {
   const text = (code.props as { children?: unknown }).children;
   return typeof text === "string" ? text : Array.isArray(text) ? text.join("") : "";
@@ -198,12 +202,19 @@ function CodeFold({ children }: { children?: ReactNode }) {
   const store = useOptionalAppStore();
   const incomplete = useIsCodeFenceIncomplete();
   const streaming = useContext(Streaming);
+  const unfold = useContext(Unfold);
   const id = useId();
   const button = useRef<HTMLButtonElement>(null);
   const code = isValidElement(children) ? children : null;
   const lines = code === null ? 0 : lineCount(code);
   // Not while the reply is written, even when the block came whole in one batch or was drawn again (a session reopened).
-  const [folded, setFolded] = useState(() => !streaming && !incomplete && lines > FOLD_OVER);
+  const [folded, setFolded] = useState(
+    () => unfold === 0 && !streaming && !incomplete && lines > FOLD_OVER,
+  );
+  // Before the block is drawn, so that a line asked for is measured where it is in the whole block.
+  useLayoutEffect(() => {
+    if (unfold > 0) setFolded(false);
+  }, [unfold]);
   const block = code === null ? children : cloneElement(code, { "data-block": "true" } as never);
   const diagram = code !== null && isMermaid(code);
   // A diagram's source is shown whole when asked for: it is what the person wants to read or copy.
@@ -361,7 +372,19 @@ const useLinger = (on: boolean, ms: number): boolean => {
 /** At most this much text when it is first drawn, and a reply is one just begun: a batch is far less. */
 const FIRST_BATCH = 200;
 
-export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+/**
+ * `unfold`: when it goes up, a long code block shown in part is shown whole (a file in Files shown at a line past its
+ * first ones). Zero, the default, leaves the blocks as they are.
+ */
+export function Markdown({
+  text,
+  streaming = false,
+  unfold = 0,
+}: {
+  text: string;
+  streaming?: boolean;
+  unfold?: number;
+}) {
   const theme = useSyncExternalStore(codeTheme.subscribe, codeTheme.get, codeTheme.get);
   const reduced = Boolean(useReducedMotion());
   // Only a reply seen from its start fades in. One drawn again mid-way (the session opened again, the window scrolled
@@ -373,26 +396,28 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
   const animating = useLinger(streaming, fading ? FADE_TAIL_MS : 0);
   return (
     <Streaming.Provider value={streaming}>
-      <Streamdown
-        // The root of a reply's blocks, for the stylesheet's one rhythm between them (`[data-markdown]`).
-        data-markdown=""
-        mode="streaming"
-        isAnimating={animating}
-        animated={fading ? FADE : false}
-        parseIncompleteMarkdown={streaming}
-        codeBlockMaxHeight="none"
-        tableMaxHeight="none"
-        skipHtml
-        rehypePlugins={rehypePlugins}
-        remarkPlugins={remarkPlugins}
-        components={components}
-        plugins={{ code: pluginFor(theme) }}
-        controls={CONTROLS}
-        lineNumbers={false}
-        shikiTheme={[...themesOf(theme)] as never}
-      >
-        {streaming ? mendStreaming(text) : text}
-      </Streamdown>
+      <Unfold.Provider value={unfold}>
+        <Streamdown
+          // The root of a reply's blocks, for the stylesheet's one rhythm between them (`[data-markdown]`).
+          data-markdown=""
+          mode="streaming"
+          isAnimating={animating}
+          animated={fading ? FADE : false}
+          parseIncompleteMarkdown={streaming}
+          codeBlockMaxHeight="none"
+          tableMaxHeight="none"
+          skipHtml
+          rehypePlugins={rehypePlugins}
+          remarkPlugins={remarkPlugins}
+          components={components}
+          plugins={{ code: pluginFor(theme) }}
+          controls={CONTROLS}
+          lineNumbers={false}
+          shikiTheme={[...themesOf(theme)] as never}
+        >
+          {streaming ? mendStreaming(text) : text}
+        </Streamdown>
+      </Unfold.Provider>
     </Streaming.Provider>
   );
 }

@@ -1,4 +1,5 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { agentsFor } from "./claude-agent.ts";
 import { type Config, ConfigSchema, loadConfig, type Paths } from "./config.ts";
@@ -45,6 +46,9 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   // next daemon.
   let refusing = false;
   let server: Awaited<ReturnType<typeof listenUnix>>;
+  // Written the moment the socket is bound, by the daemon that bound it and no other: one that loses a start to another
+  // never touches it. `cycle stop` gives it a moment (main.ts).
+  const pidFile = join(paths.dataDir, "daemon.pid");
   try {
     daemon = await Daemon.start({
       dataDir: paths.dataDir,
@@ -58,6 +62,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
     let clients = 0;
     server = await listenUnix({
       path: paths.socket,
+      onListening: () => writeFileSync(pidFile, `${process.pid}\n`),
       onConnection: ({ stream, close }) => {
         if (refusing) {
           close();
@@ -73,8 +78,6 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
     log.close();
     throw error;
   }
-  const pidFile = join(paths.dataDir, "daemon.pid");
-  await writeFile(pidFile, `${process.pid}\n`);
   log.info("listening", { socket: paths.socket });
   let closing: Promise<void> | undefined;
   // One stop, whoever asks for it (a signal, the idle exit): a second caller waits for the first.

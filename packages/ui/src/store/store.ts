@@ -1187,13 +1187,20 @@ export class AppStore {
     rows: number,
   ): Promise<void> => this.#bridge.resizeTerminal(environmentId, terminalId, cols, rows);
 
-  /** Shows a file (or, `folder`, a folder in the tree) of the open session in its Files tab, opening the panel. */
-  showInFiles = (path: string, options: { folder?: boolean } = {}): void => {
+  /**
+   * Shows a file (or, `folder`, a folder in the tree) of the open session in its Files tab, opening the panel. With
+   * `line`, the file is shown at that line (to `end`, for a range), the file already shown too.
+   */
+  showInFiles = (
+    path: string,
+    options: { folder?: boolean; line?: number | undefined; end?: number | undefined } = {},
+  ): void => {
     const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.#state;
     if (environmentId === undefined || sessionId === undefined) return;
     const key = viewKey(environmentId, sessionId);
+    const { line, end } = options;
     if (options.folder === true) this.filesViews.reveal(key, path);
-    else this.filesViews.show(key, path);
+    else this.filesViews.show(key, path, line === undefined ? undefined : { line, end });
     this.sidePanels.show(key, "files");
   };
 

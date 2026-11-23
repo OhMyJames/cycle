@@ -7,7 +7,15 @@ export type FilesState = {
   readonly expanded: ReadonlySet<string>;
   /** The file shown in place of the tree; undefined: the tree is shown. */
   readonly file: string | undefined;
+  /**
+   * Lines of the file to go to once it is shown, then let go (`landed`): a request, not where the file is. Each has its
+   * own `serial`, so naming the same lines again goes to them again.
+   */
+  readonly lines?: LineTarget;
 };
+
+/** Lines of a file, from `start` to `end` (the same for one line), counted from 1. */
+export type LineTarget = { readonly start: number; readonly end: number; readonly serial: number };
 
 const START: FilesState = { expanded: new Set(), file: undefined };
 
@@ -56,6 +64,7 @@ export const shownPath = (path: string, cwd: string | undefined): string =>
 
 export class FilesViews {
   readonly #states = new Map<string, FilesState>();
+  #serial = 0;
   readonly #listeners = new Set<() => void>();
 
   subscribe = (listener: () => void): (() => void) => {
@@ -79,11 +88,27 @@ export class FilesViews {
     this.#put(key, { ...old, expanded });
   }
 
-  /** Shows a file; the folders it is in are opened, so that going back finds it in the tree. */
-  show(key: string, file: string): void {
+  /**
+   * Shows a file; the folders it is in are opened, so that going back finds it in the tree. With `lines`, the file is
+   * shown at them (`line`, to `end` when it is past it), the file already shown too.
+   */
+  show(key: string, file: string, lines?: { line: number; end?: number | undefined }): void {
     const old = this.get(key);
     const expanded = new Set([...old.expanded, ...foldersOf(file)]);
-    this.#put(key, { expanded, file });
+    if (lines === undefined) {
+      this.#put(key, { expanded, file });
+      return;
+    }
+    this.#serial += 1;
+    const end = Math.max(lines.line, lines.end ?? lines.line);
+    this.#put(key, { expanded, file, lines: { start: lines.line, end, serial: this.#serial } });
+  }
+
+  /** The lines asked for were gone to (or cannot be, in what the file is shown as): not again when it is shown again. */
+  landed(key: string, serial: number): void {
+    const old = this.get(key);
+    if (old.lines?.serial !== serial) return;
+    this.#put(key, { expanded: old.expanded, file: old.file });
   }
 
   /** Shows a folder in the tree: it and the folders it is in are opened. */
@@ -98,7 +123,7 @@ export class FilesViews {
   /** Back from a file to the tree. */
   back(key: string): void {
     const old = this.get(key);
-    if (old.file !== undefined) this.#put(key, { ...old, file: undefined });
+    if (old.file !== undefined) this.#put(key, { expanded: old.expanded, file: undefined });
   }
 
   forget(key: string): void {

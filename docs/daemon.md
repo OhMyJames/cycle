@@ -132,7 +132,8 @@ bun apps/daemon/src/main.ts proxy  [--data-dir <dir>] [--socket <path>]   # stdi
 - 数据目录默认 `$CYCLE_HOME` 或 `~/.cycle`(桌面应用从源码运行时给它的是 `~/.cycle-dev`,见 [desktop.md](desktop.md));socket 默认 `<数据目录>/daemon.sock`。
 - `proxy` 启动的 daemon 是脱离的(`detached`),不随 ssh 连接结束,所以连接断了 session 照常运行。
 - 同一个 socket 上只能有一个 daemon(`serve` 发现已有进程在监听就以退出码 3 退出);进程异常退出留下的 socket 文件会被清掉。
-- daemon 在数据目录里写 `daemon.pid`。
+- daemon 在数据目录里写 `daemon.pid`:绑定 socket 的那一刻写,只由绑定成功的那个写;两个同时启动时,没抢到 socket 的那个以退出码 3 退出,不碰 pid 文件。`cycle stop` 先看 socket 再读 pid,读不到时等它一会儿(1 秒)。
+- "在运行"指 socket 上有进程在接连接。正在停止的 daemon 仍占着 socket,对新连接直接挂断(Bun 有时报为 `ECONNRESET`),这仍算在运行;只有没有 socket 文件或没人接(`ECONNREFUSED`)才算停了。`cycle stop` 以结束等待的那一次查看为准，不再另看一次。
 - socket 权限 0600,所在目录 0700。这就是 v1 的全部访问控制(决策 0004)。
 
 ## 构建成一个可以拷走的目录
