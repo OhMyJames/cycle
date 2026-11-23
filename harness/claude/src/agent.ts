@@ -21,6 +21,7 @@ import { answersOf, formOf, type Question, questionsOf } from "./ask.ts";
 import { type SdkContent, toSdkContent } from "./content.ts";
 import { askContext, CONTEXT_META, type ContextBreakdown } from "./context.ts";
 import { PLAN_USAGE_UPDATE, planWindowsOf } from "./plan-usage.ts";
+import { cronsOf, Schedules } from "./schedules.ts";
 import { NO_SETUP, type SessionSetup, setupOf } from "./setup.ts";
 import { Subagents } from "./subagents.ts";
 import { BackgroundTasks, goalUpdateOf } from "./tasks.ts";
@@ -254,6 +255,12 @@ type SessionState = {
   transcripts: Transcripts;
   /** The background tasks that are not sub-agents (commands, watchers, workflows), as far as clients were told. */
   tasks: BackgroundTasks;
+  /**
+   * What is set to wake the session (CronCreate, ScheduleWakeup, /loop), as the Stop hook last said and calls since then
+   * set. Kept when the process goes: the next one, resumed, sets again the ones not yet due, and says so at the end of
+   * its first turn.
+   */
+  schedules: Schedules;
   /** The command list clients were last told, to say it again only when it changes. */
   commandsKey: string | undefined;
   /** The configOptions snapshot clients were last told via `config_option_update`, to avoid duplicate broadcasts. */
@@ -547,7 +554,13 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
     clearTimeout(live.idle);
     // Background work keeps the process: a sub-agent, or a command or watcher it runs (killed with it otherwise).
     if (session.subagents.hasBackground || session.tasks.hasRunning) return;
-    live.idle = setTimeout(() => release(session, false), idleMs);
+    // So does a cron or wakeup due within the hour: it lives in the process, and one missed while the process is
+    // gone never fires (CYCL-145). Asked again when the time is up, so the hour counts from then.
+    live.idle = setTimeout(
+      () =>
+        session.schedules.dueWithin(Date.now()) ? scheduleIdle(session) : release(session, false),
+      idleMs,
+    );
     live.idle.unref?.();
   };
 
@@ -986,6 +999,21 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       onElicitation: (request, { signal }) => elicit(client, session, request, signal),
       abortController: abort,
       includePartialMessages: true,
+      // Only read: at the end of every turn Claude says here what is set to wake the session, which is not said
+      // anywhere else. The hook decides nothing, so the turn ends as it would without it.
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              async (input) => {
+                const crons = cronsOf(input);
+                if (crons !== undefined) session.schedules.told(crons, Date.now());
+                return {};
+              },
+            ],
+          },
+        ],
+      },
       // Claude Code leaves thinking's text out ("omitted") unless asked: every thought would reach the
       // conversation empty. The setting asks for the API's summaries and leaves the kind of thinking
       // (adaptive, a budget, none) to the model, as `thinking: { display }` would not.
@@ -1137,6 +1165,10 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       try {
         for await (const message of query as AsyncIterable<SDKMessage>) {
           if (session.live !== live) continue; // let go: nothing it says matters now
+          // A wakeup or cron it set, in case the turn ends without the Stop hook saying so.
+          if (message.type === "user") {
+            session.schedules.called((message as { tool_use_result?: unknown }).tool_use_result);
+          }
           // A turn that went through means the session is on disk, whenever the process said hello.
           if (
             message.type === "result" &&
@@ -1364,6 +1396,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
         subagents: new Subagents(),
         transcripts: new Transcripts(),
         tasks: new BackgroundTasks(),
+        schedules: new Schedules(),
         commandsKey: undefined,
         configKey: undefined,
         mode: DEFAULT_PERMISSION_MODE,
@@ -1421,6 +1454,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
           subagents: new Subagents(),
           transcripts: new Transcripts(),
           tasks: new BackgroundTasks(),
+          schedules: new Schedules(),
           commandsKey: undefined,
           configKey: undefined,
           // Not the default for new sessions: a session with no mode on record was made before
@@ -1510,6 +1544,14 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       return { messageId };
     })
     .onNotification(methods.agent.session.cancel, async ({ params, client }) => {
+      // A sub-agent's session (ACP v2 child, CYCL-143): only that sub-agent stops; the turn and the session go on. Its
+      // end is told as any other, by the SDK's `task_notification` (stopped → cancelled). A session's own id is always
+      // its turn's cancel, even if a task were named the same: that one is not looked for among the sub-agents.
+      for (const parent of sessions.has(params.sessionId) ? [] : sessions.values()) {
+        if (!parent.subagents.running(params.sessionId)) continue;
+        await parent.live?.query.stopTask(params.sessionId).catch(() => undefined);
+        return;
+      }
       const session = sessions.get(params.sessionId);
       const turn = session?.turn;
       if (session === undefined || turn === undefined || turn.done) return;

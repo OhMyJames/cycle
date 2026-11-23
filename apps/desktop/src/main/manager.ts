@@ -479,6 +479,7 @@ export class ConnectionManager
                     fs: connection.client.capabilities.fs === true,
                     diff: connection.client.capabilities.diff === true,
                     terminal: connection.client.capabilities.terminal === true,
+                    stopSubagent: connection.client.canStopSubagent,
                   },
                 }
               : state === "reconnecting" && connection.status.capabilities !== undefined
@@ -1028,6 +1029,19 @@ export class ConnectionManager
       taskIds,
     );
     if (count > 0) this.#track("background_dismissed", { count });
+  }
+
+  /** Stops one sub-agent of a session (CYCL-143); whether it was running in the background is all that is told. */
+  async stopSubagent(
+    environmentId: string,
+    sessionId: string,
+    childId: string,
+    background: boolean,
+  ): Promise<boolean> {
+    const stopping = await this.#connection(environmentId).client.stopSubagent(sessionId, childId);
+    // From the page: only a boolean is told, whatever came.
+    if (stopping) this.#track("subagent_stopped", { background: background === true });
+    return stopping;
   }
 
   async archiveSession(environmentId: string, sessionId: string, archived: boolean): Promise<void> {

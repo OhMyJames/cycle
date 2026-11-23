@@ -116,3 +116,50 @@ test("a sub-agent's conversation is kept in its parent's history, and a permissi
   expect(replayed.map((s) => s.update)).toEqual(children as never);
   expect(replayed.every((s) => typeof s.seq === "number")).toBe(true);
 });
+
+const sub = (id: string, extra: object) => ({
+  sessionUpdate: "subagent_update",
+  sessionId: id,
+  _meta: { "cycle/subagent": { toolCallId: `call-${id}` } },
+  ...extra,
+});
+
+test("one sub-agent is stopped alone, only when its agent said it can be and it is at work (CYCL-143)", async () => {
+  const fake = fakeAgent({
+    onPrompt: async ({ say }) => {
+      await say(sub("task-1", { state: { state: "running" }, capabilities: { cancel: {} } }));
+      // Says nothing of being stoppable: it is not.
+      await say(sub("task-2", { state: { state: "running" } }));
+      // Said it could, then ended.
+      await say(sub("task-3", { state: { state: "running" }, capabilities: { cancel: {} } }));
+      await say(sub("task-3", { state: { state: "idle", stopReason: "end_turn" } }));
+      // Said it could, then took it back.
+      await say(sub("task-4", { state: { state: "running" }, capabilities: { cancel: {} } }));
+      await say(sub("task-4", { capabilities: null }));
+    },
+  });
+  const daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
+  open.push(daemon);
+  const c = await connectClient(daemon);
+  const ops = (c.init as { _meta?: Record<string, { sessionOps?: string[] }> })._meta?.[
+    "cycle/capabilities"
+  ]?.sessionOps;
+  expect(ops).toContain("stopSubagent");
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("go") });
+  await until(() => c.ended() >= 1, "the turn to end");
+  const stop = (childId: string) =>
+    c.agent.request(
+      "_cycle/session/stop_subagent" as never,
+      { sessionId, childId } as never,
+    ) as Promise<{ stopping: boolean }>;
+  expect(await stop("task-1")).toEqual({ stopping: true });
+  // Nor the session itself: a cancel in its own id would be the turn's.
+  for (const id of ["task-2", "task-3", "task-4", "task-9", sessionId])
+    expect(await stop(id)).toEqual({ stopping: false });
+  await until(() => fake.log.childCancels.length > 0, "the agent to be told");
+  // Only that sub-agent's session is cancelled: the session's own turn is not.
+  expect(fake.log.childCancels).toEqual(["task-1"]);
+  expect(fake.log.cancels).toBe(0);
+});

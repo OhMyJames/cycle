@@ -92,6 +92,8 @@ export const EVENTS = {
   session_renamed: o({ where: renameWhere }),
   queue_return_restored: o({}),
   background_dismissed: o({ count: z.number().int().positive() }),
+  /** One sub-agent was stopped alone from its card (CYCL-143). `background`: it ran in the background. */
+  subagent_stopped: o({ background: z.boolean() }),
   session_archived: o({ archived: z.boolean() }),
   /** After the person confirmed it (AGENTS.md: a delete is confirmed by the client first). */
   session_deleted: o({}),

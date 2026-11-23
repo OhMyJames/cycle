@@ -15,7 +15,7 @@ Basis: CYCL-134(负责人 2026-11-23 让做这个 epic)。来源是 CYCL-122 对
 - **只转发对话**:`update` 只允许 `agent_message(_chunk)`、`agent_thought(_chunk)`、`tool_call_update`、`tool_call_content_chunk`,其余(状态、计划、用量、命令等)daemon 丢掉。子 agent 的状态仍然只看 `subagent_update`。
 - **存在父会话的 JSONL 里**:每条 `_cycle/child_update` 是父日志里的一条 `update` 记录，有父的 `seq`。回放、断线重连、附件拆分(决策 0013)、凭证过滤(§12,对 `update` 里的工具调用照样做)都沿用父 session 的那一套。不为子 agent 开单独的日志，也不在索引里登记它。
 - **Claude 的取法**:打开 SDK 的 `forwardSubagentText`(否则只有工具调用，没有文字)。带 `parent_tool_use_id` 的 `assistant` 和 `user` 消息，按启动它的 Agent 调用找到子的 id,用子 agent 自己的翻译器翻译。审批用 `canUseTool` 的 `toolUseID` 找到调用所在的子 agent,找不到时再用 `agentID`。子 agent 结束(或进程退出)时，它还没结束的调用以 cancelled 结束。后台子 agent 在主 turn 结束后说的话照样转发，不要求有 turn。
-- **不能单独取消**:这一轮不声明 ACP 的 `capabilities.cancel`,客户端只能取消整个 turn(和以前一样)。SDK 有 `stopTask(taskId)`,以后要做时在适配里接上，并在 `subagent_update` 里声明 `cancel`。
+- **不能单独取消**:这一轮不声明 ACP 的 `capabilities.cancel`,客户端只能取消整个 turn(和以前一样)。SDK 有 `stopTask(taskId)`,以后要做时在适配里接上，并在 `subagent_update` 里声明 `cancel`。 这一条已由[停止一个子 agent 的笔记](2026-11-23-stop-one-subagent.md)(CYCL-143)取代。
 - **体积**:没有为子 agent 另设上限。子 agent 的文字只转发整条消息，不转发流式的增量(`stream_event`),所以一条回复是一条记录，不是几十条。工具结果的上限和主 agent 一样(比如补丁不超过 `MAX_PATCH`)。一个子 agent 做的事，和主 agent 自己做一样大。
 
 ## Alternatives considered

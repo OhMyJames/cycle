@@ -60,6 +60,7 @@ import {
   sessionDismissBackground,
   sessionMarkRead,
   sessionSetTitle,
+  sessionStopSubagent,
   sessionUnarchive,
   TERMINAL_NOTIFICATIONS,
   type TerminalAttached,
@@ -698,6 +699,21 @@ export class CycleClient {
     const ops = this.#capabilities.sessionOps;
     if (!Array.isArray(ops) || !ops.includes("markRead")) return;
     await this.#call(sessionMarkRead, { sessionId, seq });
+  }
+
+  /** The daemon says it can stop one sub-agent alone (`sessionOps` has `stopSubagent`, docs/protocol.md §9). */
+  get canStopSubagent(): boolean {
+    const ops = this.#capabilities.sessionOps;
+    return Array.isArray(ops) && ops.includes("stopSubagent");
+  }
+
+  /**
+   * Stops one sub-agent of a session (CYCL-143). False when there was nothing to stop (it ended, or its agent cannot),
+   * and from a daemon that does not say it can, which is not asked.
+   */
+  async stopSubagent(sessionId: string, childId: string): Promise<boolean> {
+    if (!this.canStopSubagent) return false;
+    return (await this.#call(sessionStopSubagent, { sessionId, childId })).stopping;
   }
 
   async dismissBackground(sessionId: string, taskIds: string[]): Promise<number> {

@@ -60,6 +60,8 @@ export const fakeQuery = (turns: (call: Call) => SDKMessage[] | Promise<SDKMessa
     /** Make `initializationResult()` reject so fallback queries (`supportedCommands`/`supportedModels`) are exercised. */
     failInitializationResult: false,
     interrupts: 0,
+    /** The task ids `stopTask` was called with, in order. */
+    stopped: [] as string[],
     /** How long `setPermissionMode` takes, as a process that is busy takes. */
     setterDelayMs: 0,
     permissionModes: [] as string[],
@@ -203,6 +205,9 @@ export const fakeQuery = (turns: (call: Call) => SDKMessage[] | Promise<SDKMessa
       }
     })();
     return Object.assign(iterator, {
+      stopTask: async (taskId: string) => {
+        state.stopped.push(taskId);
+      },
       interrupt: async () => {
         state.interrupts++;
         if (!state.ignoreInterrupt) interrupt();

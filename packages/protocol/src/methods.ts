@@ -46,6 +46,17 @@ export const sessionDismissBackground = cycleMethod(
   z.object({ dismissed: z.number().int().nonnegative() }),
 );
 
+/**
+ * Stops one sub-agent of a session, and nothing else (docs/protocol.md §9, CYCL-143). `stopping` is false when there was
+ * nothing to stop: it is not running (any more), or its agent did not say it can be stopped. Its end comes as its
+ * `subagent_update`, as any other.
+ */
+export const sessionStopSubagent = cycleMethod(
+  "_cycle/session/stop_subagent",
+  z.object({ sessionId: SessionId, childId: z.string().min(1) }),
+  z.object({ stopping: z.boolean() }),
+);
+
 export const sessionArchive = cycleMethod(
   "_cycle/session/archive",
   z.object({ sessionId: SessionId }),

@@ -15,6 +15,8 @@ const connect = async (
   run: ReturnType<typeof fakeQuery>["run"],
   body: (api: {
     prompt: (text: string) => Promise<void>;
+    /** Tells the adapter something, as the daemon would. */
+    tell: (method: string, params: unknown) => Promise<void>;
     seen: Seen[];
     asked: Record<string, unknown>[];
   }) => Promise<void>,
@@ -44,6 +46,7 @@ const connect = async (
       _meta: { "cycle/sessionId": ID },
     } as never);
     await body({
+      tell: (method, params) => agent.notify(method as never, params as never),
       seen,
       asked,
       prompt: async (text) => {
@@ -239,5 +242,28 @@ test("a sub-agent's permission is asked in its session: by the call it made, or 
     await prompt("one");
     await prompt("two");
     expect(asked.map((p) => p.sessionId)).toEqual(["t1", "t1", ID, ID]);
+  });
+});
+
+test("a sub-agent says it can be stopped, and a cancel in its session stops it alone (CYCL-143)", async () => {
+  const fake = fakeQuery(() => [...started, ...textTurn(ID, "m", "ok")]);
+  await connect(fake.run, async ({ prompt, seen, tell }) => {
+    await prompt("go");
+    const announced = seen.find((s) => s.update.sessionUpdate === "subagent_update")?.update;
+    expect(announced?.capabilities).toEqual({ cancel: {} });
+    // The turn is over and the sub-agent still at work in the background: a cancel in its session stops it.
+    const before = seen.length;
+    await tell(methods.agent.session.cancel, { sessionId: "t1" });
+    for (let i = 0; i < 100 && fake.state.stopped.length === 0; i++) await Bun.sleep(5);
+    expect(fake.state.stopped).toEqual(["t1"]);
+    // Only it: the session's turn is not cancelled, nor the process interrupted.
+    expect(fake.state.interrupts).toBe(0);
+    expect(seen.slice(before).some((s) => s.sessionId === ID)).toBe(false);
+    // Once it has ended, there is nothing to stop.
+    fake.state.say([system("task_notification", { task_id: "t1", status: "stopped" })]);
+    for (let i = 0; i < 100 && seen.length === before; i++) await Bun.sleep(5);
+    await tell(methods.agent.session.cancel, { sessionId: "t1" });
+    await Bun.sleep(20);
+    expect(fake.state.stopped).toEqual(["t1"]);
   });
 });
