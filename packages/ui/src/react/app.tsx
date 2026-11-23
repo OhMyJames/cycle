@@ -36,7 +36,7 @@ import { AnalyticsNotice } from "./analytics.tsx";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer, composerInput } from "./composer.tsx";
 import { ConfigForm, mergeConfigSchema, OptionLabel, propertiesOf } from "./config-form.tsx";
-import { ConnectorsDialog } from "./connectors.tsx";
+import { CONNECTORS_SECTIONS, ConnectorsPage, type ConnectorsSection } from "./connectors.tsx";
 import { ConversationView } from "./conversation.tsx";
 import { ConfirmDialog, EnvironmentDialog, type RemoteEnvironment } from "./dialogs.tsx";
 import { FormCard } from "./form.tsx";
@@ -85,8 +85,7 @@ type Panel =
   | "delete"
   | "settings"
   | "search"
-  | "trust"
-  | "connectors";
+  | "trust";
 
 /** The word each panel has in the dictionary of events (@cycle/analytics). */
 const PANEL_EVENT = {
@@ -97,7 +96,6 @@ const PANEL_EVENT = {
   settings: "session_settings",
   delete: "delete",
   trust: "trust",
-  connectors: "connectors",
 } as const;
 
 /**
@@ -271,6 +269,9 @@ function AppWindow() {
   // The settings page, when it is what the window shows (CYCL-78): the sessions stay as they are under it.
   const [settings, setSettings] = useState<SettingsSection | undefined>(undefined);
   const lastSection = useRef<SettingsSection>("general");
+  // The Connectors page (CYCL-82), the same way: one page at a time takes the window.
+  const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
+  const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
   const [targetEnvironment, setTargetEnvironment] = useState<string | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const appRef = useRef<HTMLDivElement>(null);
@@ -326,23 +327,44 @@ function AppWindow() {
     setPanel(next);
     store.track("panel_opened", { panel: PANEL_EVENT[next], via });
   };
-  const openSettings = (via: "click" | "shortcut" = "click") => {
+  // Settings, from wherever it is asked for: over the sessions, or in place of the Connectors page.
+  const openSettings = (via: "click" | "shortcut" = "click", section?: SettingsSection) => {
+    if (section !== undefined) lastSection.current = section;
+    setConnectors(undefined);
     setSettings(lastSection.current);
     store.track("panel_opened", { panel: "settings", via });
   };
-  const closeSettings = () => setSettings(undefined);
+  const openConnectors = () => {
+    setConnectors(lastConnectorsSection.current);
+    store.track("panel_opened", { panel: "connectors", via: "click" });
+  };
+  // Whichever page is over the sessions is left: they are what is asked for.
+  const closePage = () => {
+    setSettings(undefined);
+    setConnectors(undefined);
+  };
   // Left by the person (Escape, Back, the shortcut): the keyboard goes back to the button that opened the page. Left
   // for something else (a new session, a found one, a notification's), the keyboard is that thing's.
-  const returnFocus = useRef(false);
+  const returnFocus = useRef<string | undefined>(undefined);
   const leaveSettings = () => {
-    returnFocus.current = true;
+    returnFocus.current = '[data-kind="settings-open"]';
     setSettings(undefined);
+  };
+  const leaveConnectors = () => {
+    returnFocus.current = '[data-page-open="connectors"]';
+    setConnectors(undefined);
   };
   const showSection = (section: SettingsSection) => {
     if (section === settings) return;
     lastSection.current = section;
     setSettings(section);
     store.track("settings_section_shown", { section });
+  };
+  const showConnectorsSection = (section: ConnectorsSection) => {
+    if (section === connectors) return;
+    lastConnectorsSection.current = section;
+    setConnectors(section);
+    store.track("connectors_section_shown", { section });
   };
   const [layout] = useState(createResizableController);
   // The right panel is the open session's (CYCL-90): a blank conversation or no session has none.
@@ -490,7 +512,7 @@ function AppWindow() {
    * shown, else on the environment that is open, else on the first that is connected.
    */
   const newSession = (via: "click" | "shortcut" = "click") => {
-    closeSettings();
+    closePage();
     // One is open already: it stays as it is, with what was chosen and written on it.
     if (blank !== undefined) return store.openBlank({ environmentId: blank.environmentId });
     const environmentId =
@@ -649,8 +671,9 @@ function AppWindow() {
       if (document.querySelector(OVER_THE_PAGE) !== null) return;
       run(() => (settings === undefined ? openSettings("shortcut") : leaveSettings()));
     }
-    // The settings page is over the sessions: only what leaves it (a search, a new session) is taken.
-    else if (settings !== undefined && key !== "k" && key !== "n") return;
+    // A page is over the sessions: only what leaves it (a search, a new session) is taken.
+    else if ((settings !== undefined || connectors !== undefined) && key !== "k" && key !== "n")
+      return;
     else if (key === "k") run(() => open("search", "shortcut"));
     else if (key === "n" && connectedEnvironments.length > 0) run(() => newSession("shortcut"));
     else if (key === "b") run(() => toggleSidebar("shortcut"));
@@ -700,14 +723,15 @@ function AppWindow() {
   const [shownRequests, setShownRequests] = useState(focusRequests);
   if (shownRequests !== focusRequests) {
     setShownRequests(focusRequests);
-    if (settings !== undefined) setSettings(undefined);
+    if (settings !== undefined || connectors !== undefined) closePage();
   }
-  const settingsOpen = settings !== undefined;
+  const pageOpen = settings !== undefined || connectors !== undefined;
   useEffect(() => {
-    if (settingsOpen || !returnFocus.current) return;
-    returnFocus.current = false;
-    appRef.current?.querySelector<HTMLElement>('[data-kind="settings-open"]')?.focus();
-  }, [settingsOpen]);
+    const opener = returnFocus.current;
+    if (pageOpen || opener === undefined) return;
+    returnFocus.current = undefined;
+    appRef.current?.querySelector<HTMLElement>(opener)?.focus();
+  }, [pageOpen]);
 
   if (!ready)
     return (
@@ -769,8 +793,20 @@ function AppWindow() {
           }}
         />
       ) : null}
-      {/* Under the settings page the sessions are kept as they are, not drawn again: what was open and half-written is there on the way back. */}
-      <div data-slot="app-body" hidden={settingsOpen} inert={settingsOpen}>
+      {connectors !== undefined ? (
+        <ConnectorsPage
+          section={connectors}
+          onSection={showConnectorsSection}
+          onClose={leaveConnectors}
+          banner={errorBanner}
+          environments={environments}
+          status={status}
+          environmentId={selectedEnvironment}
+          onShowEnvironments={() => openSettings("click", "environments")}
+        />
+      ) : null}
+      {/* Under a page the sessions are kept as they are, not drawn again: what was open and half-written is there on the way back. */}
+      <div data-slot="app-body" hidden={pageOpen} inert={pageOpen}>
         <SplitLayout
           controller={layout}
           panel={
@@ -809,7 +845,7 @@ function AppWindow() {
               }
               onNewSession={() => newSession()}
               onSearch={() => open("search")}
-              onConnectors={() => open("connectors")}
+              onConnectors={openConnectors}
               onConnectEnvironment={(id) => void store.connectEnvironment(id)}
               onToggleArchived={() => setShowArchived((v) => !v)}
               onShowAll={() => setShowAll(true)}
@@ -829,7 +865,7 @@ function AppWindow() {
             <main data-slot="main">
               <UpdateBanner />
               <AnalyticsNotice />
-              {settingsOpen ? null : errorBanner}
+              {pageOpen ? null : errorBanner}
               {environmentState === "reconnecting" && environmentIncompatible === undefined ? (
                 <div data-slot="banner" data-severity="warning" role="status">
                   <WarningIcon />
@@ -1098,7 +1134,7 @@ function AppWindow() {
             setShowArchived(true);
           // What was found is shown with its workspace, also when it is the session that is open.
           setChosen(undefined);
-          closeSettings();
+          closePage();
           await store.selectSession(environmentId, sessionId);
         }}
         onNewSession={() => {
@@ -1123,13 +1159,6 @@ function AppWindow() {
           }
         />
       ) : null}
-      <ConnectorsDialog
-        open={panel === "connectors"}
-        onOpenChange={(open) => !open && close()}
-        environments={environments}
-        status={status}
-        environmentId={selectedEnvironment}
-      />
       <EnvironmentDialog
         open={panel === "add-environment" || panel === "edit-environment"}
         onOpenChange={(open) => !open && close()}

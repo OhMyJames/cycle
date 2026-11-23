@@ -23,6 +23,8 @@ const bridgeFor = (scenario: Scenario) => {
     ...(scenario.update ? { update: scenario.update } : {}),
     ...(scenario.analytics ? { analytics: { available: true, enabled: true, noticed: true } } : {}),
     ...(scenario.language ? { preferences: { language: scenario.language } } : {}),
+    ...(scenario.connectors ? { connectors: scenario.connectors } : {}),
+    ...(scenario.plugins ? { plugins: scenario.plugins } : {}),
   });
   const environments = scenario.environments ?? [LOCAL];
   const status =

@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { ConnectorInfo } from "../../src/api.ts";
+import type { ConnectorInfo, EnvironmentConfig } from "../../src/api.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
@@ -19,7 +19,20 @@ const notion: ConnectorInfo = {
   status: { state: "needs_auth" },
 };
 
-const mount = async (options: { connectors?: ConnectorInfo[]; capable?: boolean } = {}) => {
+const far: EnvironmentConfig = {
+  id: "far",
+  name: "Build box",
+  kind: "remote",
+  transport: { type: "ssh", host: "me@box" },
+};
+
+const mount = async (
+  options: {
+    connectors?: ConnectorInfo[];
+    capable?: boolean;
+    environments?: EnvironmentConfig[];
+  } = {},
+) => {
   const script = fakeBridge({
     connected: true,
     capabilities: {
@@ -29,6 +42,7 @@ const mount = async (options: { connectors?: ConnectorInfo[]; capable?: boolean 
       connectors: options.capable !== false,
     },
     connectors: options.connectors ?? [],
+    ...(options.environments !== undefined ? { environments: options.environments } : {}),
   });
   const store = new AppStore(script.bridge);
   const user = userEvent.setup();
@@ -39,29 +53,153 @@ const mount = async (options: { connectors?: ConnectorInfo[]; capable?: boolean 
   );
   await act(() => store.start());
   await user.click(await screen.findByRole("button", { name: "Connectors" }));
-  const dialog = await screen.findByRole("dialog", { name: "Connectors" });
-  return { user, dialog, store, ...script };
+  // The page opens on its first section, Plugins (plugins.browser.tsx): these are about the second.
+  await user.click(await screen.findByRole("tab", { name: "MCP servers" }));
+  // The section that is shown: everything of the page that is not its navigation.
+  const page = (await screen.findByRole("heading", { name: "MCP servers", level: 2 }))
+    .parentElement as HTMLElement;
+  return { user, page, store, ...script };
 };
+/** What the page reported, without the change of section `mount` itself makes. */
+const tracked = (calls: [string, ...unknown[]][]) =>
+  calls
+    .filter(([name, event]) => name === "track" && event !== "connectors_section_shown")
+    .map(([, event, props]) => [event, props]);
 
-test("opening it is counted, and an environment without connectors says so", async () => {
-  const { dialog, named } = await mount();
-  expect(named("track")).toContainEqual([
-    "track",
-    "panel_opened",
-    { panel: "connectors", via: "click" },
-  ]);
-  expect(await within(dialog).findByText(/No connectors yet/)).toBeTruthy();
+test("Connectors is a page over the sessions: its button opens it, Escape goes back to where the keyboard was", async () => {
+  const { user, page, calls } = await mount();
+  const sections = screen.getByRole("tablist", { name: "Connectors sections" });
+  expect(
+    within(sections)
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent),
+  ).toEqual(["Plugins", "MCP servers"]);
+  // The keyboard is on the sections, and the sessions under the page are not reachable.
+  expect(document.activeElement).toBe(within(sections).getByRole("tab", { name: "MCP servers" }));
+  expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  // One environment can keep connectors: there is nothing to choose.
+  expect(within(page).queryByRole("combobox", { name: "Environment" })).toBeNull();
+  // With none yet, the page says so and offers the way to add one, once.
+  expect(await within(page).findByText("No connectors yet.")).toBeTruthy();
+  expect(within(page).getAllByRole("button", { name: "Add connector" })).toHaveLength(1);
+
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("tablist")).toBeNull());
+  expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Connectors" }));
+  expect(tracked(calls)).toEqual([["panel_opened", { panel: "connectors", via: "click" }]]);
 });
 
-test("a daemon that cannot keep connectors is said, not asked", async () => {
-  const { dialog, named } = await mount({ capable: false });
-  expect(within(dialog).getByText(/No connected environment can keep connectors/)).toBeTruthy();
+test("Escape closes what is open over the page first, and the settings shortcut goes from the page to Settings", async () => {
+  const { user, page } = await mount();
+  await user.click(await within(page).findByRole("button", { name: "Add connector" }));
+  const form = await screen.findByRole("dialog", { name: "Add a connector" });
+  // A form dialog opens on its first field.
+  expect(document.activeElement).toBe(within(form).getByRole("textbox", { name: "Name" }));
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("tablist", { name: "Connectors sections" })).toBeTruthy();
+
+  const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
+  await user.keyboard(`{${mod}>},{/${mod}}`);
+  expect(await screen.findByRole("tablist", { name: "Settings sections" })).toBeTruthy();
+  expect(screen.queryByRole("tablist", { name: "Connectors sections" })).toBeNull();
+});
+
+test("no environment that can keep connectors is said, not asked, with the way to the environments", async () => {
+  const { user, page, named, calls } = await mount({ capable: false });
+  expect(
+    within(page).getByText("No connected environment can keep connectors or plugins."),
+  ).toBeTruthy();
+  expect(within(page).queryByRole("button", { name: "Add connector" })).toBeNull();
   expect(named("listConnectors")).toHaveLength(0);
+  await user.click(within(page).getByRole("button", { name: "Show environments" }));
+  expect(await screen.findByRole("heading", { name: "Environments", level: 2 })).toBeTruthy();
+  expect(screen.queryByRole("tablist", { name: "Connectors sections" })).toBeNull();
+  expect(tracked(calls)).toEqual([
+    ["panel_opened", { panel: "connectors", via: "click" }],
+    ["panel_opened", { panel: "settings", via: "click" }],
+  ]);
+});
+
+test("with several environments the page says whose connectors it shows, and another can be chosen", async () => {
+  const { user, page, named } = await mount({ environments: [far], connectors: [{ ...notion }] });
+  // It starts on the environment that is open.
+  const environment = await within(page).findByRole("combobox", { name: "Environment" });
+  expect(environment.textContent).toContain("This computer");
+  await waitFor(() => expect(named("listConnectors")).toEqual([["listConnectors", "local"]]));
+  await user.click(environment);
+  await user.click(await screen.findByRole("option", { name: "Build box" }));
+  await waitFor(() => expect(named("listConnectors").at(-1)).toEqual(["listConnectors", "far"]));
+  expect(await within(page).findByText(/every agent on Build box can use/)).toBeTruthy();
+});
+
+test("an environment that goes away is no longer the one the page manages", async () => {
+  const { page, emit } = await mount({ connectors: [{ ...notion }] });
+  expect(await within(page).findByText("notion")).toBeTruthy();
+  await act(async () =>
+    emit({ type: "environment-status", environmentId: "local", state: "reconnecting" }),
+  );
+  expect(
+    await within(page).findByText("No connected environment can keep connectors or plugins."),
+  ).toBeTruthy();
+  expect(within(page).queryByText("notion")).toBeNull();
+});
+
+test("a list that cannot be read says why, in the system's words, and can be asked for again", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, connectors: true },
+    connectors: [{ ...notion }],
+  });
+  const listed = script.bridge.listConnectors;
+  script.bridge.listConnectors = async () => {
+    throw new Error("Error invoking remote method 'cycle:listConnectors': Error: Not connected");
+  };
+  const store = new AppStore(script.bridge);
+  const user = userEvent.setup();
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  await user.click(await screen.findByRole("button", { name: "Connectors" }));
+  await user.click(await screen.findByRole("tab", { name: "MCP servers" }));
+  const failed = await screen.findByRole("alert");
+  expect(within(failed).getByText("The connectors could not be read.")).toBeTruthy();
+  expect(within(failed).getByText("Not connected")).toBeTruthy();
+  script.bridge.listConnectors = listed;
+  await user.click(within(failed).getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("notion")).toBeTruthy();
+  expect(screen.queryByText("The connectors could not be read.")).toBeNull();
+});
+
+test("a connector that does not work says how, and a change the daemon refuses is said under its row", async () => {
+  const broken: ConnectorInfo = {
+    ...notion,
+    auth: { type: "none" },
+    status: { state: "error", reason: "unreachable" },
+  };
+  const { user, page, bridge, calls } = await mount({ connectors: [broken] });
+  expect(await within(page).findByText("Cannot be reached")).toBeTruthy();
+  expect(within(page).getByText("mcp.notion.example")).toBeTruthy();
+  bridge.updateConnector = async () => ({ problem: "failed", message: "disk is full" });
+  await user.click(within(page).getByRole("switch", { name: "Use notion in sessions" }));
+  expect(await within(page).findByRole("alert")).toHaveProperty(
+    "textContent",
+    "It could not be done: disk is full",
+  );
+  // What is counted is that the page was opened: no name, no address, none of the daemon's words.
+  const events = JSON.stringify(tracked(calls));
+  expect(events).not.toContain("notion");
+  expect(events).not.toContain("disk");
 });
 
 test("adds an HTTP connector with a header; the value is sent, and only its name is shown after", async () => {
-  const { user, dialog, named } = await mount();
-  await user.click(within(dialog).getByRole("button", { name: "Add connector" }));
+  const { user, page, named } = await mount();
+  await user.click(await within(page).findByRole("button", { name: "Add connector" }));
   const form = await screen.findByRole("dialog", { name: "Add a connector" });
   await user.type(within(form).getByRole("textbox", { name: "Name" }), "linear");
   await user.type(within(form).getByRole("textbox", { name: "URL" }), "https://mcp.linear.app/mcp");
@@ -80,31 +218,32 @@ test("adds an HTTP connector with a header; the value is sent, and only its name
       secrets: { headers: { Authorization: "Bearer sk-1" } },
     },
   ]);
-  const list = await screen.findByRole("dialog", { name: "Connectors" });
-  expect(await within(list).findByText("linear")).toBeTruthy();
-  expect(within(list).getByText("mcp.linear.app")).toBeTruthy();
-  expect(list.textContent).not.toContain("sk-1");
+  // The form closes over the page, which shows what was added.
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(await within(page).findByText("linear")).toBeTruthy();
+  expect(within(page).getByText("mcp.linear.app")).toBeTruthy();
+  expect(page.textContent).not.toContain("sk-1");
 });
 
 test("a connector that needs signing in offers it, and says when it is done", async () => {
-  const { user, dialog, named } = await mount({ connectors: [{ ...notion }] });
-  expect(await within(dialog).findByText("Needs sign-in")).toBeTruthy();
-  await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
+  const { user, page, named } = await mount({ connectors: [{ ...notion }] });
+  expect(await within(page).findByText("Needs sign-in")).toBeTruthy();
+  await user.click(within(page).getByRole("button", { name: "Sign in" }));
   await waitFor(() => expect(named("authorizeConnector")).toHaveLength(1));
-  expect(await within(dialog).findByText("Signed in to notion.")).toBeTruthy();
-  expect(within(dialog).getByText("Ready")).toBeTruthy();
-  expect(within(dialog).queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(await within(page).findByText("Signed in to notion.")).toBeTruthy();
+  expect(within(page).getByText("Ready")).toBeTruthy();
+  expect(within(page).queryByRole("button", { name: "Sign in" })).toBeNull();
 });
 
 test("a token the server no longer takes still offers signing in again", async () => {
-  const { dialog } = await mount({ connectors: [{ ...notion, authorized: true }] });
-  expect(await within(dialog).findByText("Needs sign-in")).toBeTruthy();
-  expect(within(dialog).getByRole("button", { name: "Sign in" })).toBeTruthy();
+  const { page } = await mount({ connectors: [{ ...notion, authorized: true }] });
+  expect(await within(page).findByText("Needs sign-in")).toBeTruthy();
+  expect(within(page).getByRole("button", { name: "Sign in" })).toBeTruthy();
 });
 
 test("turning one off goes to the daemon at once", async () => {
-  const { user, dialog, named } = await mount({ connectors: [{ ...notion }] });
-  await user.click(await within(dialog).findByRole("switch", { name: "Use notion in sessions" }));
+  const { user, page, named } = await mount({ connectors: [{ ...notion }] });
+  await user.click(await within(page).findByRole("switch", { name: "Use notion in sessions" }));
   await waitFor(() =>
     expect(named("updateConnector")).toEqual([
       ["updateConnector", "local", "c1", { enabled: false }],
@@ -113,20 +252,20 @@ test("turning one off goes to the daemon at once", async () => {
 });
 
 test("removing asks first, and only then removes", async () => {
-  const { user, dialog, named } = await mount({ connectors: [{ ...notion }] });
-  await user.click(await within(dialog).findByRole("button", { name: "Actions for notion" }));
+  const { user, page, named } = await mount({ connectors: [{ ...notion }] });
+  await user.click(await within(page).findByRole("button", { name: "Actions for notion" }));
   await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
   const confirm = await screen.findByRole("alertdialog", { name: "Remove notion?" });
   expect(named("removeConnector")).toHaveLength(0);
   await user.click(within(confirm).getByRole("button", { name: "Remove connector" }));
   await waitFor(() => expect(named("removeConnector")).toHaveLength(1));
-  expect(await within(dialog).findByText(/No connectors yet/)).toBeTruthy();
+  expect(await within(page).findByText(/No connectors yet/)).toBeTruthy();
 });
 
 test("what the daemon refuses is said next to the form, in words", async () => {
-  const { user, dialog, bridge } = await mount();
+  const { user, page, bridge } = await mount();
   bridge.addConnector = async () => ({ problem: "insecure_url" });
-  await user.click(within(dialog).getByRole("button", { name: "Add connector" }));
+  await user.click(await within(page).findByRole("button", { name: "Add connector" }));
   const form = await screen.findByRole("dialog", { name: "Add a connector" });
   await user.type(within(form).getByRole("textbox", { name: "Name" }), "plain");
   await user.type(within(form).getByRole("textbox", { name: "URL" }), "http://x.example/mcp");
@@ -145,8 +284,8 @@ test("an edit shows a kept secret by name only, and removing it sends null", asy
     status: { state: "ready" },
     secrets: { headers: ["Authorization"], env: [] },
   };
-  const { user, dialog, named } = await mount({ connectors: [kept] });
-  await user.click(await within(dialog).findByRole("button", { name: "Actions for notion" }));
+  const { user, page, named } = await mount({ connectors: [kept] });
+  await user.click(await within(page).findByRole("button", { name: "Actions for notion" }));
   await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
   const form = await screen.findByRole("dialog", { name: "Edit notion" });
   expect(within(form).getByText("Authorization is set")).toBeTruthy();

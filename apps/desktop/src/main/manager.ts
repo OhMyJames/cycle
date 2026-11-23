@@ -40,6 +40,10 @@ import {
   type NewSession,
   type PermissionRequest,
   type PlanUsage,
+  type PluginFailure,
+  type PluginInfo,
+  type PluginProblem,
+  type PluginSourceInfo,
   type PromptBlock,
   type SessionSnapshot,
   type SessionSummary,
@@ -152,6 +156,7 @@ const PROBLEMS: readonly ConnectorProblem[] = [
   "insecure_url",
   "state_mismatch",
   "no_registration",
+  "managed",
   "auth_rejected",
   "unreachable",
 ];
@@ -189,6 +194,32 @@ export const connectorProblemOf = (
   if (code === -32602) return { problem: "invalid" };
   if (messageOf(error).includes("too old to keep connectors")) return { problem: "unsupported" };
   return { problem: "failed", message: messageOf(error) };
+};
+
+const PLUGIN_REASONS: readonly PluginProblem[] = [
+  "not_found",
+  "needs_command",
+  "unavailable",
+  "timeout",
+];
+
+/**
+ * Why an agent's plugin machinery did not do it, as a word the page has a sentence for (docs/protocol.md §15).
+ * `message` is what that machinery said: for the person, never for analytics.
+ */
+export const pluginProblemOf = (error: unknown): PluginFailure => {
+  const { code, data } = (error ?? {}) as {
+    code?: unknown;
+    data?: { reason?: unknown; detail?: unknown };
+  };
+  const reason = data?.reason;
+  const detail = typeof data?.detail === "string" && data.detail !== "" ? data.detail : undefined;
+  const said = detail !== undefined ? { message: detail } : {};
+  if (typeof reason === "string" && (PLUGIN_REASONS as readonly string[]).includes(reason))
+    return { problem: reason as PluginProblem, ...said };
+  if (code === -32002) return { problem: "not_found" };
+  if (messageOf(error).includes("too old to keep plugins")) return { problem: "unsupported" };
+  return { problem: "failed", message: detail ?? messageOf(error) };
 };
 
 const sessionSummary = (environmentId: string, row: SessionRow): SessionSummary => {
@@ -405,6 +436,8 @@ export class ConnectionManager
         defaultsChanged: (agent) =>
           this.#options.emit({ type: "agent-defaults", environmentId, agent }),
         connectorsChanged: () => this.#options.emit({ type: "connectors", environmentId }),
+        pluginsChanged: (agentId) =>
+          this.#options.emit({ type: "plugins", environmentId, agentId }),
         planUsage: (agent, usage) =>
           this.#options.emit({ type: "plan-usage", environmentId, agent, usage }),
         terminalsChanged: (sessionId, terminals) =>
@@ -441,6 +474,7 @@ export class ConnectionManager
                     filesInFolder: connection.client.capabilities.filesInFolder === true,
                     trust: connection.client.capabilities.trust === true,
                     connectors: connection.client.capabilities.connectors === true,
+                    plugins: connection.client.pluginAgents,
                     sessionMentions: connection.client.capabilities.sessionMentions === true,
                     fs: connection.client.capabilities.fs === true,
                     diff: connection.client.capabilities.diff === true,
@@ -1348,6 +1382,151 @@ export class ConnectionManager
       return { connector };
     } catch (error) {
       return connectorProblemOf(error);
+    }
+  }
+
+  // ---- plugins (docs/protocol.md §15) ----
+
+  listPlugins(
+    environmentId: string,
+    agentId: string,
+  ): Promise<{ sources: PluginSourceInfo[]; plugins: PluginInfo[] }> {
+    return this.#connection(environmentId).client.listPlugins(agentId);
+  }
+
+  availablePlugins(
+    environmentId: string,
+    query: { agentId: string; sourceId?: string; query?: string; cursor?: string; limit?: number },
+  ): Promise<{ plugins: PluginInfo[]; nextCursor?: string | undefined; total: number }> {
+    return this.#connection(environmentId).client.availablePlugins(query);
+  }
+
+  /** The page asked the person first: a plugin can run code on that machine. */
+  async installPlugin(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ plugin: PluginInfo } | PluginFailure> {
+    const agent = agentOf(agentId);
+    try {
+      const plugin = await this.#connection(environmentId).client.installPlugin(agentId, id);
+      this.#track("plugin_installed", {
+        agent,
+        result: "ok",
+        servers: plugin.servers?.length ?? 0,
+      });
+      return { plugin };
+    } catch (error) {
+      const failure = pluginProblemOf(error);
+      this.#track("plugin_installed", { agent, result: failure.problem, servers: 0 });
+      return failure;
+    }
+  }
+
+  async uninstallPlugin(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ removed: true } | PluginFailure> {
+    const agent = agentOf(agentId);
+    try {
+      await this.#connection(environmentId).client.uninstallPlugin(agentId, id);
+      this.#track("plugin_removed", { agent, result: "ok" });
+      return { removed: true };
+    } catch (error) {
+      const failure = pluginProblemOf(error);
+      this.#track("plugin_removed", { agent, result: failure.problem });
+      return failure;
+    }
+  }
+
+  async updatePlugin(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ plugin: PluginInfo; updated: boolean } | PluginFailure> {
+    const agent = agentOf(agentId);
+    try {
+      const answer = await this.#connection(environmentId).client.updatePlugin(agentId, id);
+      this.#track("plugin_updated", { agent, result: "ok", updated: answer.updated });
+      return answer;
+    } catch (error) {
+      const failure = pluginProblemOf(error);
+      this.#track("plugin_updated", { agent, result: failure.problem, updated: false });
+      return failure;
+    }
+  }
+
+  async setPluginEnabled(
+    environmentId: string,
+    agentId: string,
+    id: string,
+    enabled: boolean,
+  ): Promise<{ plugin: PluginInfo } | PluginFailure> {
+    const agent = agentOf(agentId);
+    const on = enabled === true;
+    try {
+      const plugin = await this.#connection(environmentId).client.setPluginEnabled(agentId, id, on);
+      this.#track("plugin_toggled", { agent, enabled: on, result: "ok" });
+      return { plugin };
+    } catch (error) {
+      const failure = pluginProblemOf(error);
+      this.#track("plugin_toggled", { agent, enabled: on, result: failure.problem });
+      return failure;
+    }
+  }
+
+  /** The page asked the person first: what a source lists can be installed and run. */
+  async addPluginSource(
+    environmentId: string,
+    agentId: string,
+    location: string,
+  ): Promise<{ source: PluginSourceInfo } | PluginFailure> {
+    const agent = agentOf(agentId);
+    try {
+      const source = await this.#connection(environmentId).client.addPluginSource(
+        agentId,
+        location,
+      );
+      this.#track("plugin_source_added", { agent, result: "ok", kind: source.kind });
+      return { source };
+    } catch (error) {
+      const failure = pluginProblemOf(error);
+      this.#track("plugin_source_added", { agent, result: failure.problem, kind: "other" });
+      return failure;
+    }
+  }
+
+  async removePluginSource(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ removed: true } | PluginFailure> {
+    const agent = agentOf(agentId);
+    try {
+      await this.#connection(environmentId).client.removePluginSource(agentId, id);
+      this.#track("plugin_source_removed", { agent, result: "ok" });
+      return { removed: true };
+    } catch (error) {
+      const failure = pluginProblemOf(error);
+      this.#track("plugin_source_removed", { agent, result: failure.problem });
+      return failure;
+    }
+  }
+
+  async refreshPluginSources(
+    environmentId: string,
+    agentId: string,
+  ): Promise<{ refreshed: true } | PluginFailure> {
+    const agent = agentOf(agentId);
+    try {
+      await this.#connection(environmentId).client.refreshPluginSources(agentId);
+      this.#track("plugin_sources_refreshed", { agent, result: "ok" });
+      return { refreshed: true };
+    } catch (error) {
+      const failure = pluginProblemOf(error);
+      this.#track("plugin_sources_refreshed", { agent, result: failure.problem });
+      return failure;
     }
   }
 

@@ -1,5 +1,6 @@
 import type { AgentApp, Stream } from "@agentclientprotocol/sdk/experimental/v2";
 import type { PromptCapabilities } from "@cycle/protocol";
+import type { PluginProvider } from "./plugins.ts";
 
 /** Where an agent is reached: a stream to a process, or an app in this process (tests). */
 export type AgentTarget = { target: Stream | AgentApp; kill?: () => void };
@@ -19,5 +20,7 @@ export type AgentDefinition = {
   /** It takes a prompt into the turn that is running (`_meta["cycle/steer"]`, docs/protocol.md §8). */
   steer?: boolean;
   available?: () => boolean | Promise<boolean>;
+  /** Its plugins, when it has them (docs/protocol.md §15). */
+  plugins?: PluginProvider;
   launch: () => Promise<AgentTarget>;
 };

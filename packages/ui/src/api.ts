@@ -47,6 +47,8 @@ export type EnvironmentStatus = {
     trust?: boolean;
     /** It keeps connectors: MCP servers for every agent (docs/protocol.md §14). */
     connectors?: boolean;
+    /** The agents of it that have plugins (docs/protocol.md §15). None, or absent: no plugins there. */
+    plugins?: string[];
     /** An @ may name another of its sessions, which it gives the agent as a record (docs/protocol.md §8). */
     sessionMentions?: boolean;
     /** The session's folder can be listed and its files read, for the Files tab (docs/protocol.md §8). */
@@ -258,6 +260,22 @@ export type ConnectorInfo = {
     state: "ready" | "needs_auth" | "disabled" | "error";
     reason?: "unreachable" | "auth_failed" | "spawn_failed" | "protocol" | undefined;
   };
+  /**
+   * Set when nobody added it: it is an http server a plugin of that agent brings (docs/protocol.md §15). It comes and
+   * goes with the plugin; only its values and its sign-in are the person's to change.
+   */
+  origin?:
+    | {
+        type: "plugin";
+        agentId: string;
+        pluginId: string;
+        /** The plugin's name, to show. Absent from an older daemon: the id is shown whole. */
+        pluginName?: string | undefined;
+        server: string;
+      }
+    | undefined;
+  /** The names it needs a value for (written as `secrets.env`); those in `secrets.env` have one. */
+  requires?: string[] | undefined;
 };
 
 /** Secrets to write: a value sets it, null removes it, a name not given keeps its value. */
@@ -285,6 +303,7 @@ export type ConnectorProblem =
   | "insecure_url"
   | "state_mismatch"
   | "no_registration"
+  | "managed"
   | "auth_rejected"
   | "unreachable"
   | "not_found"
@@ -296,6 +315,50 @@ export type ConnectorProblem =
 export type ConnectorAnswer =
   | { connector: ConnectorInfo }
   | { problem: ConnectorProblem; message?: string };
+
+/** Where an agent's plugins come from (Claude: a marketplace). `kind` is a fixed word the page has its own for. */
+export type PluginSourceInfo = {
+  agentId: string;
+  id: string;
+  name: string;
+  kind: "builtin" | "git" | "directory" | "url" | "other";
+  location?: string | undefined;
+  removable: boolean;
+};
+
+/**
+ * A plugin of one agent (docs/protocol.md §15). `id` is the agent's own and is never taken apart. What follows
+ * `installed` is only of an installed one.
+ */
+export type PluginInfo = {
+  agentId: string;
+  id: string;
+  name: string;
+  description?: string | undefined;
+  version?: string | undefined;
+  sourceId: string;
+  installed: boolean;
+  enabled?: boolean | undefined;
+  scope?: "user" | "project" | undefined;
+  /** What it brings, by how many. Hooks, commands and MCP servers are what runs code. */
+  contents?:
+    | { skills: number; commands: number; agents: number; hooks: number; mcpServers: number }
+    | undefined;
+  /** Its MCP servers: `cycle` is one Cycle serves as the connector named, `agent` one the agent starts itself. */
+  servers?: { name: string; by: "cycle" | "agent"; connectorId?: string | undefined }[] | undefined;
+};
+
+/** Why an agent's plugin machinery did not do it: a fixed word the page has a sentence for. */
+export type PluginProblem =
+  | "not_found"
+  | "needs_command"
+  | "unavailable"
+  | "timeout"
+  | "unsupported"
+  | "failed";
+
+/** `message`: what the agent's machinery said, for the person to read. */
+export type PluginFailure = { problem: PluginProblem; message?: string };
 
 /** Lists the folders of one environment's folder (the environment is already chosen). */
 export type ListFolders = (path?: string, hidden?: boolean) => Promise<FolderListing>;
@@ -399,6 +462,8 @@ export type AppEvent =
   | { type: "plan-usage"; environmentId: string; agent: string; usage: PlanUsage }
   /** The environment's connectors changed, here or elsewhere: read them again. */
   | { type: "connectors"; environmentId: string }
+  /** An agent's plugins on that environment changed, here or elsewhere: read them again. */
+  | { type: "plugins"; environmentId: string; agentId: string }
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */
   | { type: "session-gone"; environmentId: string; sessionId: string }
   | { type: "app-update"; state: UpdateState }
@@ -600,6 +665,55 @@ export type AppApi = {
   cancelConnectorAuth(): Promise<void>;
   /** Forgets the connector's token. */
   signOutConnector(environmentId: string, id: string): Promise<ConnectorAnswer>;
+  /** An agent's installed plugins and where its plugins come from. Fails when it cannot be asked. */
+  listPlugins(
+    environmentId: string,
+    agentId: string,
+  ): Promise<{ sources: PluginSourceInfo[]; plugins: PluginInfo[] }>;
+  /** What can be installed, a page at a time (`cursor` is the answer's `nextCursor`). */
+  availablePlugins(
+    environmentId: string,
+    query: { agentId: string; sourceId?: string; query?: string; cursor?: string; limit?: number },
+  ): Promise<{ plugins: PluginInfo[]; nextCursor?: string | undefined; total: number }>;
+  /** Installs a plugin, which can run code on the environment's machine. The page asks the person first. */
+  installPlugin(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ plugin: PluginInfo } | PluginFailure>;
+  /** Removes a plugin and what it brought, sign-ins included. The page asks the person first. */
+  uninstallPlugin(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ removed: true } | PluginFailure>;
+  updatePlugin(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ plugin: PluginInfo; updated: boolean } | PluginFailure>;
+  setPluginEnabled(
+    environmentId: string,
+    agentId: string,
+    id: string,
+    enabled: boolean,
+  ): Promise<{ plugin: PluginInfo } | PluginFailure>;
+  /** Adds a place plugins come from. The page asks the person first. */
+  addPluginSource(
+    environmentId: string,
+    agentId: string,
+    location: string,
+  ): Promise<{ source: PluginSourceInfo } | PluginFailure>;
+  removePluginSource(
+    environmentId: string,
+    agentId: string,
+    id: string,
+  ): Promise<{ removed: true } | PluginFailure>;
+  /** Fetches every source's list again. */
+  refreshPluginSources(
+    environmentId: string,
+    agentId: string,
+  ): Promise<{ refreshed: true } | PluginFailure>;
 
   /** A directory chosen by the user, or undefined if they cancelled. */
   chooseDirectory(): Promise<string | undefined>;
@@ -683,6 +797,15 @@ export const API_METHODS = [
   "authorizeConnector",
   "cancelConnectorAuth",
   "signOutConnector",
+  "listPlugins",
+  "availablePlugins",
+  "installPlugin",
+  "uninstallPlugin",
+  "updatePlugin",
+  "setPluginEnabled",
+  "addPluginSource",
+  "removePluginSource",
+  "refreshPluginSources",
   "chooseDirectory",
   "copyText",
   "updateState",

@@ -21,6 +21,23 @@ export const CatalogEntrySchema = z.object({
   transport: ConnectorTransportSchema,
   auth: ConnectorAuthSchema,
   createdAt: z.string(),
+  /**
+   * Set for an http server a plugin of one agent brings (docs/protocol.md §15): made and removed with the plugin,
+   * given to that agent's sessions only, under the name the agent knows the plugin's server by.
+   */
+  origin: z
+    .object({
+      type: z.literal("plugin"),
+      agentId: z.string(),
+      pluginId: z.string(),
+      /** The plugin's name as its agent gives it, to say whose the server is. */
+      pluginName: z.string().optional(),
+      server: z.string(),
+      agentName: z.string(),
+      /** Request headers as the plugin wrote them. A `${NAME}` is filled from the vault's `env` as a request goes out. */
+      headers: z.record(z.string(), z.string()),
+    })
+    .optional(),
 });
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 
