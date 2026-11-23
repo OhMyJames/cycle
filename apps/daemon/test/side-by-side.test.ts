@@ -76,7 +76,8 @@ test("a daemon for the installed app and one for a checkout run side by side, ea
   // Stopping the one for the checkout leaves the installed app's where it was.
   expect(await cycle(home, dev, "stop").exited).toBe(0);
   await until("the checkout's daemon to stop", async () => (await status(home, dev)) === 1);
+  // Its socket goes a moment before its process does (serve.ts closes it, then the process exits).
+  await until("the checkout's daemon to exit", () => !alive(pids[1] as number));
   expect(await status(home, stable)).toBe(0);
   expect(alive(pids[0] as number)).toBe(true);
-  expect(alive(pids[1] as number)).toBe(false);
 }, 30_000);

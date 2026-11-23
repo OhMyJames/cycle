@@ -12,7 +12,7 @@ import {
 } from "../ansi.ts";
 import { insideFolder, shownPath } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
-import type { Activity, Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
+import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import {
   activityOf,
   commandLabelOf,
@@ -27,19 +27,6 @@ import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { useI18n } from "./i18n.tsx";
-import {
-  AgentIcon,
-  CheckIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  DiffIcon,
-  FileIcon,
-  FolderIcon,
-  GlobeIcon,
-  PencilIcon,
-  SearchIcon,
-  TerminalIcon,
-} from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { Elapsed } from "./inline-ai-status.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
@@ -225,50 +212,6 @@ export const toolVerb = (
   return t(`tool.verb.${activity}.${going ? "live" : "done"}`);
 };
 
-/** What a finished call or stretch was, as a mark: a sub-agent, or one of the activities; else none. */
-export type LeadKind = Activity | "subagent";
-
-const KIND_ICONS: Partial<Record<LeadKind, (props: { size?: number }) => ReactNode>> = {
-  read: FileIcon,
-  edit: PencilIcon,
-  search: SearchIcon,
-  run: TerminalIcon,
-  list: FolderIcon,
-  fetch: GlobeIcon,
-  subagent: AgentIcon,
-};
-
-/**
- * What leads a line, for a call or a stretch of them: the spinner while it goes, a cross when it failed; once done, what
- * kind of thing it was (a file read, an edit, a search, a command, a page, a sub-agent), quiet, so a turn's work can be
- * read down the left edge. Anything else (waiting, never finished, stopped) and a kind without an icon: a small dot
- * (decision 2026-11-23-finished-calls-lead-with-their-kind).
- */
-export function Lead({
-  mark,
-  kind,
-}: {
-  mark: "going" | "failed" | "done" | "other";
-  kind?: LeadKind | undefined;
-}) {
-  const Icon = mark === "done" && kind !== undefined ? KIND_ICONS[kind] : undefined;
-  return (
-    <span data-slot="tool-lead">
-      {mark === "going" ? (
-        <span data-slot="spinner" aria-hidden="true" />
-      ) : mark === "failed" ? (
-        <CloseIcon size={14} data-slot="tool-mark" data-tone="danger" />
-      ) : Icon !== undefined ? (
-        <span data-slot="tool-kind" data-lead-kind={kind} aria-hidden="true">
-          <Icon size={14} />
-        </span>
-      ) : (
-        <span data-slot="tool-dot" aria-hidden="true" />
-      )}
-    </span>
-  );
-}
-
 /**
  * One call, as one quiet line: what it did and on what. The verb's tense says whether it is going; a failure says so in
  * a word as well as in red. It opens to what it was given and what came back.
@@ -302,10 +245,13 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   const plan = planOf(tool);
   const questions = questionsOf(tool);
   const subagent = tool.subagent;
-  // The mark spins only while the call goes. A sub-agent that runs on in the background says so in words: its end may
-  // never come (the agent's process went with the daemon), and a mark that spins for good would say it is working.
+  // The clock runs only while the call goes. A sub-agent that runs on in the background says so in words: its end may
+  // never come (the agent's process went with the daemon), and a clock that runs for good would say it is working.
   const working = going && status === "in_progress";
   const description = toolDescription(tool);
+  // No mark says a call is going (CYCL-139): words do. The verb's tense says so ("Running"), but not the agent's
+  // sentence, and not a call still waiting ("pending"): then the state is written out.
+  const stateShown = failed || (going && (description !== undefined || status !== "in_progress"));
   // With the agent's sentence, the line is that sentence alone (CYCL-137): what it acted on is in the panel, and, as its
   // first line, in the tooltip and the row's name, so a screen reader still hears what ran.
   const acted = toolSummary(tool);
@@ -348,11 +294,6 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
       onOpenChange={setOpen}
     >
       <CollapsibleTrigger>
-        <Lead
-          mark={working ? "going" : failed ? "failed" : status === "completed" ? "done" : "other"}
-          // A file removed or moved is no edit, whatever the agent files it under: no pencil for it.
-          kind={tool.toolKind === "delete" || tool.toolKind === "move" ? undefined : activity}
-        />{" "}
         {/* Which tool it was is for a screen reader and the tooltip of the line; the words say what it did. With a
             description, that is the whole line (what it is for); else the verb in its tense, then what it acted on. */}
         <span data-slot="visually-hidden">{toolName(t, tool)}</span>{" "}
@@ -374,8 +315,9 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
         {working ? (
           <Elapsed since={startedAt(`${scope}:tool:${tool.id}`)} slot="tool-elapsed" />
         ) : null}{" "}
-        <span data-slot={failed ? "tool-status" : "visually-hidden"}>{statusWord(t, status)}</span>{" "}
-        <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
+        <span data-slot={stateShown ? "tool-status" : "visually-hidden"}>
+          {statusWord(t, status)}
+        </span>
       </CollapsibleTrigger>
       <CollapsiblePanel>
         {command !== undefined ? (
@@ -438,7 +380,6 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
               });
             }}
           >
-            <FileIcon size={12} />
             {t("files.showInFiles")}
           </button>
         ) : null}
@@ -600,7 +541,6 @@ function DiffHead({
       title={`${t("diff.showInDiff")}: ${path}`}
       onClick={onOpen}
     >
-      <DiffIcon size={12} aria-hidden="true" />
       <span data-slot="visually-hidden">{t("diff.showInDiff")}: </span>
       <span data-slot="tool-diff-path">
         <bdi>{path}</bdi>
@@ -792,11 +732,6 @@ export function Copyable({
         <span data-slot="tool-block-label">{t(`tool.block.${kind}`)}</span>
         {ended !== undefined ? (
           <span data-slot="tool-end" data-tone={ended.ok ? "ok" : "danger"}>
-            {ended.ok ? (
-              <CheckIcon size={12} aria-hidden="true" />
-            ) : (
-              <CloseIcon size={12} aria-hidden="true" />
-            )}
             {ended.ok
               ? t("tool.end.ok")
               : ended.code !== undefined

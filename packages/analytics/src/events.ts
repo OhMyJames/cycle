@@ -174,7 +174,7 @@ export const EVENTS = {
    */
   file_shown_from_conversation: o({
     target: z.enum(["file", "folder"]),
-    from: z.enum(["tool", "mention", "message"]),
+    from: z.enum(["tool", "mention", "message", "review"]),
     line: z.boolean(),
   }),
   tool_copied: o({ part: z.enum(["command", "output"]) }),

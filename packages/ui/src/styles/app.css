@@ -201,7 +201,7 @@
 
   /* Ink: four pure neutral steps. Muted holds >= 4.5:1 on every surface above, selected included. */
   --cycle-ink: light-dark(#141414, #f5f5f7);
-  --cycle-ink-secondary: light-dark(#454549, #c7c7cc);
+  --cycle-ink-secondary: light-dark(#505055, #a8a8ae);
   --cycle-ink-muted: light-dark(#636369, #98989f);
   --cycle-ink-disabled: light-dark(#8a8a92, #6e6e75);
 
@@ -1292,9 +1292,6 @@ button[data-slot="files-row"]:focus-visible {
 
 /* In a call that read or changed a file: a quiet link to it in the Files tab, at the tool's indent. */
 [data-slot="tool-files-link"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0 0.25rem;
   border: 0;
@@ -1979,12 +1976,13 @@ svg[data-slot="dot"] {
   text-decoration: underline;
 }
 
+/* The mark's cell is one line of the title (1lh), so the dot sits on the middle of the title's line. */
 [data-slot="session-dot"] {
   flex: none;
   display: grid;
   place-items: center;
   width: 8px;
-  height: 1.3em;
+  height: 1lh;
 }
 
 [data-slot="session-title"] {
@@ -2603,6 +2601,76 @@ html[data-platform="darwin"]
   overflow-wrap: anywhere;
 }
 
+/* What was attached to a sent message, above its words and on the same side (CYCL-141). The pictures are a grid of equal
+   squares: five to a row where the column is wide, never fewer than three where it is narrow, and as many as there are
+   when there are fewer. A square is a fifth of the row, or 6rem when a fifth is smaller, but never more than a third. */
+[data-slot="message-attachments"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  align-self: flex-end;
+  width: min(75%, 36rem);
+  margin-bottom: 0.5rem;
+}
+
+[data-slot="image-grid"] {
+  --thumb: max(calc((100% - 4 * 0.5rem) / 5), min(6rem, calc((100% - 2 * 0.5rem) / 3)));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-slot="image-grid"] > li {
+  flex: none;
+  width: var(--thumb);
+  aspect-ratio: 1;
+}
+
+[data-slot="image-grid"] [data-slot="image"] {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border-color: var(--cycle-border-default);
+  border-radius: var(--cycle-radius-sm);
+  box-shadow: var(--cycle-edge-hardware);
+}
+
+[data-slot="image-grid"] [data-slot="image"] img {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: cover;
+}
+
+/* A picture that cannot be shown keeps its square, and says why in it. */
+[data-slot="image-grid"] [data-slot="block-note"] {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 0.5rem;
+  border: 1px dashed var(--cycle-border-default);
+  border-radius: var(--cycle-radius-sm);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  text-align: center;
+  overflow: hidden;
+}
+
+[data-slot="message-attachments"] [data-slot="file-chip"] {
+  margin-block: 0;
+}
+
+[data-slot="message-attachments"] + [data-slot="message"][data-role="user"] {
+  margin-top: 0;
+}
+
 [data-slot="message"][data-role="agent"] {
   position: relative;
   max-width: 100%;
@@ -3128,8 +3196,9 @@ html[data-platform="darwin"]
   color: var(--ui-muted-foreground);
 }
 
-/* A tool call is a quiet line, not a box (old-cycle's rows): a lead (its icon, or the spinner, or a cross), the verb in
-   its tense, then on what, muted. The chevron shows on hover, on focus and while open. A failure is red and says so. */
+/* A tool call is a quiet line of text, not a box, and has no icon at all (CYCL-139): the verb in its tense (or the
+   agent's sentence), then on what, muted, in the secondary ink so it sits behind the replies. Whether it goes, failed
+   or opens is said in words and by the row's hover, never by a mark. A failure is red and says so. */
 [data-kind="tool"],
 [data-kind="work"],
 [data-kind="subagent"] {
@@ -3152,35 +3221,16 @@ html[data-platform="darwin"]
   transition: background-color var(--cycle-motion-state) var(--cycle-ease);
 }
 
+/* ui-sdk draws a chevron after a collapsible trigger that has no icon of its own: a tool row has none, ever. */
+:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"], [data-kind="subagent"])
+  > button::after {
+  content: none;
+}
+
 :is([data-kind="tool"], [data-kind="work"], [data-kind="plan"], [data-kind="subagent"])
   > button:hover {
   background: var(--cycle-surface-hover);
   color: var(--cycle-ink);
-}
-
-[data-slot="tool-lead"] {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 1rem;
-  height: 1rem;
-}
-
-[data-slot="tool-mark"] {
-  flex: none;
-}
-
-/* A finished call's kind: quiet, so the spinner and the red cross are still what the eye finds first. */
-[data-slot="tool-kind"] {
-  display: grid;
-  place-items: center;
-  color: var(--cycle-ink-disabled);
-}
-
-:is([data-kind="tool"], [data-kind="work"], [data-kind="subagent"])
-  > button:hover
-  [data-slot="tool-kind"] {
-  color: var(--cycle-ink-muted);
 }
 
 /* The verb, or the agent's own sentence for what the call is for. The verb keeps its room; what it acted on gives way
@@ -3200,15 +3250,6 @@ html[data-platform="darwin"]
 :is([data-slot="tool-summary"], [data-slot="step-detail"])[data-prose] {
   font-family: inherit;
   font-size: var(--cycle-text-ui);
-}
-
-/* A call that is waiting, never finished or was stopped, a done one of a kind without an icon, or a stretch of mixed
-   kinds: a small dot, so a stretch's rule has something to join. A done call of a known kind leads with its icon. */
-[data-slot="tool-dot"] {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--cycle-ink-disabled);
 }
 
 /* Empty (a row with the agent's sentence) it only pushes the end of the line right, without a gap of its own. */
@@ -3286,32 +3327,25 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
 
 /* The collapsible parts of the conversation are told apart by data-kind: ui-sdk sets data-slot itself on Collapsible and
    replaces ours, so a rule on data-slot="tool" never matched. */
-/* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it, their leads joined by a
-   thin line so the stretch reads as one. */
+/* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it at the same 1.5rem step as
+   anything a row opens to, past a thin line, so the stretch reads as one. */
 [data-kind="work"] > [data-slot="collapsible-panel"] {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
   margin-top: 0.125rem;
+  padding-inline-start: 1.5rem;
 }
 
 [data-kind="work"] > [data-slot="collapsible-panel"]::before {
   content: "";
   position: absolute;
-  inset-inline-start: calc(0.5rem - 0.5px);
+  inset-inline-start: 0.5rem;
   top: 0.25rem;
   bottom: 0.25rem;
   width: 1px;
   background: var(--cycle-border-default);
-}
-
-[data-kind="work"] [data-kind="tool"] {
-  position: relative;
-}
-
-[data-kind="work"] [data-kind="tool"] > button [data-slot="tool-lead"] {
-  background: var(--ui-background);
 }
 
 /* A sub-agent: a line like a call's, with what kind of agent it is muted after its task. Back, the start of its answer
@@ -3346,6 +3380,202 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   color: var(--ui-muted-foreground);
   font-size: var(--cycle-text-meta);
   font-weight: 500;
+}
+
+/* A code review the agent reported (CYCL-138): a card (Surface/Card), a line of how many and how sure, then a row per
+   finding. How sure is said in words, on a tag whose edge also differs (solid when confirmed, dashed when only plausible),
+   so it is never colour alone. Rows are ghost rows inside the card: 6px in from its 16px corner, 10px rounded. */
+[data-kind="review"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.375rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="review-head"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  padding: 0.25rem 0.5rem;
+}
+
+[data-slot="review-title"] {
+  margin: 0;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+}
+
+[data-slot="review-tally"] {
+  color: var(--cycle-ink-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="review-findings"] {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-slot="review-finding"] + [data-slot="review-finding"] {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="review-finding"] > [data-kind="review-finding"] {
+  display: flex;
+  flex-direction: column;
+  padding-block: 0.25rem;
+}
+
+[data-kind="review-finding"] > button {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-width: 0;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--ui-radius);
+  color: var(--cycle-ink);
+  text-align: left;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-kind="review-finding"] > button::after {
+  content: none;
+}
+
+[data-kind="review-finding"] > button:hover {
+  background: var(--cycle-surface-hover);
+}
+
+/* A finding is a sentence: it wraps, up to two lines, and the whole of it is in the open row. */
+[data-slot="review-summary"] {
+  display: -webkit-box;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+[data-kind="review-finding"] > button[aria-expanded="true"] [data-slot="review-summary"] {
+  display: block;
+}
+
+[data-slot="review-tag"] {
+  flex: none;
+  padding: 0 0.375rem;
+  border: 1px solid var(--cycle-input-border);
+  border-radius: var(--cycle-radius-sm);
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  font-weight: 500;
+}
+
+[data-slot="review-tag"][data-verdict="plausible"],
+[data-slot="review-tag"]:is([data-outcome="skipped"], [data-outcome="no_change_needed"]) {
+  border-style: dashed;
+  color: var(--cycle-ink-secondary);
+}
+
+[data-slot="review-tag"][data-outcome="fixed"] {
+  border-color: currentColor;
+  color: var(--cycle-success);
+}
+
+/* A finding that was dealt with reads quieter than one still open. */
+[data-slot="review-finding"]:is([data-outcome="fixed"], [data-outcome="no_change_needed"])
+  [data-slot="review-summary"] {
+  color: var(--cycle-ink-secondary);
+}
+
+/* Where it is: the path, its tail kept when it must be cut (the file name is what is looked for), and its kind. */
+[data-slot="review-place"] {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0 0.5rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-slot="review-file"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: var(--ui-font-mono);
+  font-size: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  unicode-bidi: plaintext;
+}
+
+button[data-slot="review-file"] {
+  border-radius: var(--cycle-radius-sm);
+  cursor: pointer;
+}
+
+button[data-slot="review-file"]:hover {
+  color: var(--cycle-ink);
+  text-decoration: underline;
+}
+
+button[data-slot="review-file"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: 2px;
+}
+
+[data-slot="review-category"] {
+  flex: none;
+}
+
+[data-kind="review-finding"] > [data-slot="collapsible-panel"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.375rem 0.5rem 0.25rem;
+}
+
+[data-slot="review-part"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+[data-slot="review-part"] > [data-slot="tool-block-label"] {
+  margin: 0;
+  color: var(--ui-muted-foreground);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+}
+
+[data-slot="review-part"] > p {
+  margin: 0;
+  color: var(--cycle-ink-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 [data-slot="subagent-prompt"] {
@@ -3603,11 +3833,8 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   color: var(--ui-destructive);
 }
 
-/* How a command ended, after what the block is: a tick and "succeeded", or a cross and its exit code. */
+/* How a command ended, after what the block is, in words: "Succeeded", or its exit code. */
 [data-slot="tool-end"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
   margin-right: auto;
 }
 
@@ -3695,10 +3922,6 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
 [data-slot="tool-diff-head"]:hover [data-slot="tool-diff-path"] {
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-[data-slot="tool-diff-head"] > svg {
-  flex: none;
 }
 
 /* Too long for the line, it fades at its end (`cycle-fade`, with the other names above). */
@@ -4699,6 +4922,11 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   align-items: center;
 }
 
+/* On many lines the + sits under the text: its glyph, not its round hover area, lines up with the text's left edge. */
+[data-slot="composer-box"][data-multiline] [data-slot="composer-lead"] {
+  margin-left: -0.375rem;
+}
+
 [data-slot="composer-box"][data-no-lead]:not([data-multiline]) [data-slot="composer-lead"] {
   display: none;
 }
@@ -5378,6 +5606,17 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   padding: 0 0.25rem;
 }
 
+/* Beside the + on one line, the column gap is the whole space to the text: the glyph sits as far from the text as from
+   the box's edge (CYCL-140). The button's own room round the glyph is counted on both sides, so the field adds none. */
+[data-slot="composer-box"]:not([data-multiline], [data-no-lead]) [data-slot="composer-input"] {
+  padding-left: 0;
+}
+
+[data-slot="composer-box"]:not([data-multiline], [data-no-lead])
+  [data-slot="composer-placeholder"] {
+  left: 0;
+}
+
 [data-slot="composer-input"]:focus-visible {
   outline: none;
 }
@@ -5400,9 +5639,32 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   font-weight: 600;
 }
 
+/* Lists show their numbers and bullets as a reply's do (CYCL-142): the reset takes them away, and without them a list is
+   only an indent. An item that holds nothing but a nested list is Lexical's wrapper for it, and has no marker of its own. */
 [data-slot="composer-input"] ul,
 [data-slot="composer-input"] ol {
+  list-style-position: outside;
   padding-left: 1.5rem;
+}
+
+[data-slot="composer-input"] ol {
+  list-style-type: decimal;
+}
+
+[data-slot="composer-input"] ul {
+  list-style-type: disc;
+}
+
+[data-slot="composer-input"] li {
+  padding-left: 0.25rem;
+}
+
+[data-slot="composer-input"] li::marker {
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="composer-input"] li:has(> :is(ol, ul):only-child) {
+  list-style-type: none;
 }
 
 [data-slot="composer-input"] blockquote {

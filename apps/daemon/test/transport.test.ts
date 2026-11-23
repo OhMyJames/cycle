@@ -112,6 +112,37 @@ test("refuses to start where something is already listening", async () => {
   );
 });
 
+test("of two started at once, only the one that binds runs onListening; the other is refused", async () => {
+  const path = join(dir, "d.sock");
+  const said: string[] = [];
+  const start = (who: string) =>
+    listenUnix({ path, onListening: () => said.push(who), onConnection: () => {} });
+  const results = await Promise.allSettled([start("a"), start("b")]);
+  const bound = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  for (const server of bound) stops.push(server.close);
+  const refused = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+  expect(bound).toHaveLength(1);
+  expect(refused).toHaveLength(1);
+  expect(refused[0]).toBeInstanceOf(AlreadyRunningError);
+  expect(said).toHaveLength(1);
+  expect(await isListening(path)).toBe(true);
+});
+
+test("a socket whose onListening fails is let go", async () => {
+  const path = join(dir, "d.sock");
+  await expect(
+    listenUnix({
+      path,
+      onListening: () => {
+        throw new Error("no room for the pid");
+      },
+      onConnection: () => {},
+    }),
+  ).rejects.toThrow("no room for the pid");
+  expect(existsSync(path)).toBe(false);
+  expect(await isListening(path)).toBe(false);
+});
+
 /** A socket file as a process that was killed leaves it: there, and nobody behind it. */
 const staleSocket = async (path: string): Promise<void> => {
   const child = Bun.spawn(

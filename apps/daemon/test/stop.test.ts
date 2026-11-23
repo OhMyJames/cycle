@@ -183,3 +183,15 @@ test("a daemon that cannot be asked is not stopped without --force", async () =>
   expect(d.said[0]).toContain("no answer");
   expect(d.signals()).toBe(0);
 });
+
+test("the look that ends the wait is the answer: a later one that disagrees does not undo the stop", async () => {
+  // There, gone, there again: once a look has found it gone, no second look is taken that could say otherwise.
+  const looks = [true, false, true];
+  const d = deps(join(dir, "nothing.sock"), async () => {}, {
+    isRunning: async () => looks.shift() ?? true,
+    working: async () => [],
+  });
+  expect(await stopDaemon(d)).toBe(0);
+  expect(d.said.at(-1)).toBe("stopped");
+  expect(looks).toEqual([true]);
+});
