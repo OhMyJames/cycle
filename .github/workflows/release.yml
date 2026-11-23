@@ -175,5 +175,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         # Without RELEASE_SIGN the app is only ad hoc signed: a browser download is refused by Gatekeeper
-        # until its quarantine mark is removed, so such a release is marked a pre-release.
-        run: gh release create "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --generate-notes ${{ vars.RELEASE_SIGN == 'true' && '' || '--prerelease' }}
+        # until its quarantine mark is removed, so such a release is marked a pre-release. (Written as
+        # `!= 'true' && '--prerelease' || ''`: in `a && '' || b` the empty string is false, so b always wins.)
+        run: gh release create "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --generate-notes ${{ vars.RELEASE_SIGN != 'true' && '--prerelease' || '' }}
