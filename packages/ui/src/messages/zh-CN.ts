@@ -382,7 +382,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "work.summary.read": "读取了 {count} 个文件",
   "work.summary.edit": "做了 {count} 处编辑",
   "work.summary.search": "搜索了 {count} 次",
-  "work.summary.list": "列出了 {count} 个目录",
+  "work.summary.list": "列出了 {count} 处",
   "work.summary.fetch": "获取了 {count} 个页面",
   "work.summary.other": "用了 {count} 个其他工具",
   "work.failed": "{count} 个失败",

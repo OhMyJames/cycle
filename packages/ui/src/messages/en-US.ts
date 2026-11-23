@@ -427,7 +427,7 @@ export const enUS = {
   "work.summary.read": { one: "read {count} file", other: "read {count} files" },
   "work.summary.edit": { one: "made {count} edit", other: "made {count} edits" },
   "work.summary.search": { one: "ran {count} search", other: "ran {count} searches" },
-  "work.summary.list": { one: "listed {count} folder", other: "listed {count} folders" },
+  "work.summary.list": { one: "listed {count} place", other: "listed {count} places" },
   "work.summary.fetch": { one: "fetched {count} page", other: "fetched {count} pages" },
   "work.summary.other": { one: "used {count} other tool", other: "used {count} other tools" },
   "work.failed": { one: "{count} failed", other: "{count} failed" },

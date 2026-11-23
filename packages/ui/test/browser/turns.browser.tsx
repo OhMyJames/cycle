@@ -747,6 +747,10 @@ test("a command that only searches, reads or lists says so; with the agent's sen
   );
   const described = screen.getByRole("button", { name: /Look at the config/ });
   expect(described.querySelector('[data-slot="tool-summary"]')?.textContent).toBe("cat a.ts");
+  // Described, it stays a command: in its mark too.
+  expect(described.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind")).toBe(
+    "run",
+  );
   // A stretch of them is counted for what they did.
   expect(log.textContent).toContain("Read 2 files");
 });

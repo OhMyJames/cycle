@@ -95,7 +95,7 @@ export const clip = (text: string): string =>
 export const toolSummary = (tool: ToolItem): string => {
   // A command that only searches, reads or lists, with no sentence of the agent's for it: what it searched or read,
   // after its verb ("Searched 'foo' in src"); with one, the command itself, after the sentence.
-  const label = toolDescription(tool) === undefined ? commandLabelOf(tool) : undefined;
+  const label = commandLabelOf(tool);
   if (label !== undefined) return label.detail;
   const key = summaryKey(tool);
   if (key !== undefined) return String((tool.rawInput as Record<string, unknown>)[key]);

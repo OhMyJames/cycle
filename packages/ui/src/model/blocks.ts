@@ -67,10 +67,14 @@ const kindOf = (tool: ToolItem): Activity =>
 
 /**
  * What a command call plainly does, from its command (`rg` searches, `cat` reads, `ls` lists), when it can be told.
- * Only for a call that runs a command: another tool's `command` field may be anything.
+ * Only for a call that runs a command (another tool's `command` field may be anything), and one the agent gave no
+ * description of.
  */
 export const commandLabelOf = (tool: ToolItem): CommandLabel | undefined => {
   if (kindOf(tool) !== "run") return undefined;
+  // The agent said what it is for: the row says that, and the call stays a command, in its count and its mark too.
+  const description = (tool.rawInput as Record<string, unknown> | undefined)?.description;
+  if (typeof description === "string" && description.trim() !== "") return undefined;
   const command = commandOf(tool);
   return command === undefined ? undefined : commandLabel(command);
 };
@@ -87,9 +91,10 @@ export const activityCounts = (
 ): { activity: Activity; count: number }[] => {
   const counts = new Map<Activity, number>();
   for (const tool of tools) {
-    const activity = activityOf(tool);
     // A command that read three files read three, as three reads would have.
-    const count = commandLabelOf(tool)?.count ?? 1;
+    const label = commandLabelOf(tool);
+    const activity = label?.kind ?? kindOf(tool);
+    const count = label?.count ?? 1;
     counts.set(activity, (counts.get(activity) ?? 0) + count);
   }
   return [...counts].map(([activity, count]) => ({ activity, count }));

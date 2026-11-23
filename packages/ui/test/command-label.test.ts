@@ -93,6 +93,17 @@ test("anything that could change something, or is not plain, is quoted as it is"
     // Somewhere else, which the label would not say.
     "cd packages/other && ls",
     "cd /etc && cat passwd",
+    // Bundled short flags that write or read patterns from a file.
+    "rg foo | sort -uo out.txt",
+    "tree -ao out.txt src",
+    "grep -rf pats.txt src",
+    // less saves and runs things.
+    "rg foo | less -o out.txt",
+    "less '+!touch x' a.ts",
+    // The project's own program, whatever it is called.
+    "./ls",
+    "scripts/cat x",
+    "/tmp/x/rg foo",
   ])
     expect(commandLabel(command)).toBeUndefined();
   // A quoted operator is a word, not a write.
@@ -129,4 +140,16 @@ test("continued lines, comments, each program's own flags, and find's own option
     detail: "a.ts",
     count: 1,
   });
+});
+
+test("rg --files lists; a flag's value is no path; parts put together say each thing once", () => {
+  expect(commandLabel("rg --files src")).toEqual({ kind: "list", detail: "src", count: 1 });
+  expect(commandLabel("ls -I node_modules src")).toEqual({ kind: "list", detail: "src", count: 1 });
+  expect(commandLabel("find -D tree src")).toEqual({ kind: "list", detail: "src", count: 1 });
+  expect(commandLabel("cat a b c d; cat e f g h")).toEqual({
+    kind: "read",
+    detail: "a, b, c +5",
+    count: 8,
+  });
+  expect(commandLabel("cat a.ts; cat a.ts")).toEqual({ kind: "read", detail: "a.ts", count: 1 });
 });
