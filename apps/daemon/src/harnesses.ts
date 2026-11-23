@@ -20,8 +20,6 @@ export const agentsFor = (
   harnesses: readonly Harness[] = HARNESSES,
   self: string[] = selfCommand(),
 ): AgentDefinition[] =>
-  harnesses.flatMap(({ definition }) =>
-    definition
-      ? [definition({ config, dataDir, inherited, self, ...(log !== undefined ? { log } : {}) })]
-      : [],
+  harnesses.map((harness) =>
+    harness.definition({ config, dataDir, inherited, self, ...(log !== undefined ? { log } : {}) }),
   );

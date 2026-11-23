@@ -45,8 +45,12 @@ export const META = {
    * has been answered (it ended with `end_turn`), so the agent has a record of it of its own. An agent that finds none says so
    * instead of starting the session over. Absent for a session that has had no such turn.
    */
-  agentSessionId: "cycle/agentSessionId",
   hadTurn: "cycle/hadTurn",
+  /**
+   * In an agent's answer to `session/resume`: the agent's new id for a session that had no answered turn and of which it
+   * found no record (docs/protocol.md §6). The daemon stores it as `agentSessionId`; never allowed once `hadTurn` is set.
+   */
+  agentSessionId: "cycle/agentSessionId",
   /** In a `subagent_update`: what the adapter says of the task beyond ACP's fields (decision 0014). */
   subagent: "cycle/subagent",
   /** On a permission request sent to a client: the sub-agent that asked, by its `subagent_update` id (docs/protocol.md §9). Absent when the main agent asked. */

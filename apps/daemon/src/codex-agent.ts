@@ -1,37 +1,74 @@
 import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
-import { configSchema, nativeBinary } from "@cycle/harness-codex";
+import {
+  CODEX_FIXED_ARGS,
+  CODEX_PROMPT_CAPABILITIES,
+  configSchema,
+  nativeBinary,
+} from "@cycle/harness-codex";
 import { runAdapter } from "@cycle/harness-codex/run";
+import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
 import { shippedExecutable } from "./self.ts";
+
+/** What the Codex process is allowed to see, and nothing else: the allowlist, what config.json names, its own home. */
+export const codexEnv = (
+  config: Config["codex"],
+  dataDir: string,
+  inherited: Record<string, string | undefined>,
+): Record<string, string> => {
+  const env: Record<string, string> = {};
+  for (const key of config.allowEnv) if (inherited[key] !== undefined) env[key] = inherited[key];
+  Object.assign(env, config.env);
+  env.CODEX_HOME = config.configDir ?? join(dataDir, "codex");
+  // HOME is not passed on: it would let Codex find a login (~/.codex) nobody chose to share.
+  env.HOME ??= env.CODEX_HOME;
+  return env;
+};
+
+/** The source checkout's locked native package; absent in the compiled daemon, where the shipped one is used. */
+const sourceBinary = () => {
+  try {
+    return nativeBinary();
+  } catch {
+    return undefined;
+  }
+};
 
 export const codexHarness: Harness = {
   id: "codex",
   name: "Codex",
   binary: "codex",
   runAdapter: () => runAdapter(shippedExecutable("codex")),
+  cli: {
+    executable: () =>
+      shippedExecutable("codex") ?? sourceBinary() ?? Bun.which("codex") ?? undefined,
+    env: ({ config, dataDir, inherited }) => codexEnv(config.codex, dataDir, inherited),
+    // The login is kept in `$CODEX_HOME/auth.json`, never the system keychain, which is not per CODEX_HOME.
+    args: [...CODEX_FIXED_ARGS],
+    login: ["login"],
+  },
   definition: ({ config, dataDir, inherited, self, log }) => {
     const settings = config.codex;
-    const env: Record<string, string> = {};
-    for (const key of settings.allowEnv)
-      if (inherited[key] !== undefined) env[key] = inherited[key];
-    Object.assign(env, settings.env);
-    env.CODEX_HOME = settings.configDir ?? join(dataDir, "codex");
-    env.HOME ??= env.CODEX_HOME;
-    const executable = () => settings.executable ?? shippedExecutable("codex") ?? nativeBinary();
+    const env = codexEnv(settings, dataDir, inherited);
+    const executable = () => settings.executable ?? shippedExecutable("codex") ?? sourceBinary();
     return processAgent({
       id: "codex",
       name: "Codex",
       configSchema,
+      promptCapabilities: CODEX_PROMPT_CAPABILITIES,
+      steer: true,
       command: [...self, "adapter", "codex"],
       env: {
         PATH: inherited.PATH ?? "",
         CYCLE_ADAPTER_CONFIG: JSON.stringify({ env, codexExecutable: settings.executable }),
       },
       available: () => {
+        const path = executable();
+        if (path === undefined) return false;
         try {
-          accessSync(executable(), constants.X_OK);
+          accessSync(path, constants.X_OK);
           return true;
         } catch {
           return false;

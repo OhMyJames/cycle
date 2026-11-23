@@ -78,10 +78,12 @@ test("login signs in to the agent that is named, and to Claude when none is", as
     "--console",
   ]);
   // One this build does not have is refused, not handed to Claude's sign-in as an argument.
-  const unknown = await withStubClaude(MAIN, "login", "codex");
+  const unknown = await withStubClaude(MAIN, "login", "nosuch");
   expect(unknown.code).toBe(2);
   expect(unknown.argv).toEqual([]);
-  expect(unknown.stderr).toContain("No agent named codex to sign in to: this build has claude.");
+  expect(unknown.stderr).toContain(
+    "No agent named nosuch to sign in to: this build has claude, codex.",
+  );
   // The agent's name is Cycle's word, not the agent's: it is not handed on.
   expect((await withStubClaude(MAIN, "login", "claude", "--console")).argv).toEqual([
     "auth",

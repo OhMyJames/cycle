@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
-import { CODEX_VERSION } from "./protocol.ts";
+import { CODEX_FIXED_ARGS, CODEX_VERSION } from "./protocol.ts";
 
 export type AdapterConfig = { env: Record<string, string>; codexExecutable: string };
 type Message = {
@@ -43,7 +43,7 @@ export class AppServer {
       throw new Error("Codex needs an explicit home, config directory and executable");
     this.#process = spawn(
       config.codexExecutable,
-      ["-c", "check_for_update_on_startup=false", "app-server"],
+      [...CODEX_FIXED_ARGS, "-c", "check_for_update_on_startup=false", "app-server"],
       { cwd: config.env.HOME, env: config.env, stdio: ["pipe", "pipe", "inherit"] },
     );
     const lines = createInterface({ input: this.#process.stdout });
@@ -124,9 +124,12 @@ export class AppServer {
     if (this.#closed) return;
     this.#closed = true;
     this.#process.stdin.end();
-    setTimeout(() => {
-      if (!this.#closed) this.#process.kill("SIGKILL");
-    }, 1000);
+    // Ending stdin asks it to stop; one that is still there a second later is made to.
+    const child = this.#process;
+    if (child.exitCode === null && child.signalCode === null)
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }, 1000).unref();
     for (const call of this.#pending.values()) call.reject(reason);
     this.#pending.clear();
     this.onExit(reason);

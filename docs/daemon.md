@@ -175,6 +175,8 @@ cycle claude auth status   # cycle <agent id> <参数>:用同样的环境跑那�
 
 **登录**:命令按 agent 走(`cycle login <agent id>`、`cycle <agent id> <参数>`),每个 agent 的登录各自隔离在数据目录里。现在只有 Claude:`login` 和 `claude` 用的环境和目录,正是 daemon 给它启动的 Claude 的那份(`config.json` 里的 `configDir`,默认 `<数据目录>/claude`;`HOME` 回落到它),所以登录落在 Claude 以后会去找的地方,不会碰 `~/.claude`。全新的数据目录里 `claude auth status` 报 `loggedIn: false`(已验证)。**登录流程本身没有验证过**:它要在浏览器里完成 OAuth,我没法替你做。验证过的做法是把 OAuth token 或 API key 写进 `config.json` 的 `claude.env`。构建目录里缺 `claude` 时,`agents/list` 里 Claude 是 `available: false`,不是等到第一个 prompt 才失败。
 
+**Codex 的登录**:`cycle login codex`(跑 `codex login`,可加 `--device-auth` 或 `--with-api-key`)和 `cycle codex <参数>`(如 `cycle codex login status`)用的是 daemon 给 Codex 的同一份环境:`CODEX_HOME` 是 `config.json` 里 `codex.configDir`,默认 `<数据目录>/codex`,`HOME` 回落到它,所以不读也不写 `~/.codex`。每条 Codex 命令和 app-server 都带 `-c cli_auth_credentials_store="file"`,登录只落在 `$CODEX_HOME/auth.json`,不进系统钥匙串。本机就在本机跑;远端在那台机器上跑(`ssh <host> cycle login codex --device-auth`,设备码登录要先在 ChatGPT 的安全设置里打开)。回合因没登录失败时,错误里写明要跑 `cycle login codex`。**用真实账号走登录流程还没有验证过。**
+
 **装到远端机器**:解开 tarball,把目录放到 `$PATH` 上(或在桌面端 "Add environment" 里把命令写成绝对路径,如 `/opt/cycle/cycle proxy`)。`<os>-<arch>` 要和那台机器一致:在哪个平台构建就产出哪个平台的;跨平台要在对应平台构建。凭证写进那台机器上的 `<数据目录>/config.json`(见下)。
 
 ## 加一个 agent

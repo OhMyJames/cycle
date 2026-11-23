@@ -4,7 +4,7 @@
 
 基线为 2026-11-23 的最新稳定版 **Codex CLI 0.171.0**。构建时由 Bun lockfile 校验官方 npm 平台包，从中取原生 CLI。发行物运行时无需 Node 或 npm。在 daemon 安装目录和桌面包的 `bin` 下均有 `codex`；Linux 还带同版本的 `codex-resources/bwrap`。许可随 `codex-resources/licenses` 一起安装。
 
-内部入口 `cycle adapter codex` 通过 ACP v2 支持 initialize、new、纯文字 prompt、cancel 和 close。一份适配器拥有一个 thread；文字和思考增量、命令、文件变更、搜索和 MCP 工具更新按 item id 关联，回合成功、失败、取消或子进程退出都结束 running 状态。每个 app-server 只接收 `CYCLE_ADAPTER_CONFIG.env` 指定的环境，要求显式提供绝对路径 HOME 和 CODEX_HOME。第一阶段固定 workspace-write、never（沙箱外操作没有审批提权路径）。daemon 接入阶段已加入独立 `codex` 配置段、环境白名单、空 rollout 恢复关联和权限模式映射。模型目录来自 Codex 自己的 `model/list`，思考强度来自所选模型的 `supportedReasoningEfforts`，运行中插入通过 `turn/steer`，这些值和行为都由 Codex harness 自己提供。
+内部入口 `cycle adapter codex` 通过 ACP v2 支持 initialize、new、纯文字 prompt、cancel 和 close。一份适配器拥有一个 thread；文字和思考增量、命令、文件变更、搜索和 MCP 工具更新按 item id 关联，回合成功、失败、取消或子进程退出都结束 running 状态。每个 app-server 只接收 `CYCLE_ADAPTER_CONFIG.env` 指定的环境，要求显式提供绝对路径 HOME 和 CODEX_HOME。第一阶段固定 workspace-write、never；daemon 接入阶段改为权限模式映射（`harness/codex/src/settings.ts`），并加入独立 `codex` 配置段、环境白名单、空 rollout 恢复关联和权限模式映射。模型目录来自 Codex 自己的 `model/list`，思考强度来自所选模型的 `supportedReasoningEfforts`，运行中插入通过 `turn/steer`，这些值和行为都由 Codex harness 自己提供。
 
 升级时核对 npm 的 latest 与 GitHub 正式 release，在 `harness/codex/package.json` 更新精确版本并运行 `bun install`。用 `bun harness/codex/scripts/generate.ts` 重新提取这一版的协议类型，运行 `bun run format`、`bun run check` 和 `bun run test:integration`。在各目标平台从安装目录运行 Codex 集成套件，并复核沙箱、包体积和上游许可。模拟模型只在 loopback 提供 Responses API，真实账户验收留到后续阶段。
 
@@ -14,7 +14,7 @@ Ubuntu 24.04 的沙箱前置依赖见 [OpenAI 的 Linux sandbox prerequisites](h
 
 ## 第二阶段实现（CYCL-202、203、204）
 
-Codex harness 自己声明 image、MCP、additionalDirectories 和 systemPrompt 能力。ACP 的 HTTP/stdio MCP server 会转换到 Codex 的 `config.mcp_servers`，MCP header 和环境变量只在 app-server 配置请求中传递。图片转换为 Codex 的 data URL，resource_link 转为文本引用。embeddedContext/PDF blob 不声明能力，由 daemon 在发送前拒绝。附加目录进入 Codex 的 workspace-write writable roots，系统提示的 append 内容进入 developer instructions。
+Codex harness 自己声明 image、MCP、additionalDirectories 和 systemPrompt 能力。ACP 的 HTTP/stdio MCP server 会转换到 Codex 的 `config.mcp_servers`，MCP header 和环境变量只在 app-server 配置请求中传递。图片转换为 Codex 的 data URL，resource_link 转为文本引用，嵌入的文本 resource 以“URI + 正文”转为文本输入。适配器和 daemon 的 Codex 定义都声明 image 和 embeddedContext；PDF blob 在回合开始前由适配器拒绝，不会进入 Codex。运行中插入由 daemon 的 `steer: true` 走到适配器的 `turn/steer`。附加目录进入 Codex 的 workspace-write writable roots，系统提示的 append 内容进入 developer instructions。
 
 Codex 的 `plan` 是自己的权限配置项。它通过 `collaborationMode: plan` 发给 Codex，Codex 的 plan item 和 `turn/plan/updated` 转为同一个 ACP `plan_update`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
 

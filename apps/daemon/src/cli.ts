@@ -127,12 +127,15 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
       console.error(`No ${harness.name} binary: it is meant to sit beside cycle, or be on PATH.`);
       process.exit(1);
     }
-    const child = Bun.spawn([executable, ...(command === "login" ? cli.login : []), ...typed], {
-      env: cli.env({ config, dataDir: paths.dataDir, inherited: process.env }),
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+    const child = Bun.spawn(
+      [executable, ...(cli.args ?? []), ...(command === "login" ? cli.login : []), ...typed],
+      {
+        env: cli.env({ config, dataDir: paths.dataDir, inherited: process.env }),
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      },
+    );
     process.exit(await child.exited);
   } else if (command === "status") {
     const up = await isListening(paths.socket);

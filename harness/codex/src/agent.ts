@@ -10,7 +10,7 @@ import {
 } from "@agentclientprotocol/sdk/experimental/v2";
 import { approval } from "./approval.ts";
 import { itemUpdate } from "./items.ts";
-import { CODEX_NOTIFICATION_METHODS } from "./protocol.ts";
+import { CODEX_NOTIFICATION_METHODS, CODEX_PROMPT_CAPABILITIES } from "./protocol.ts";
 import { type AdapterConfig, AppServer, CodexRpcError } from "./server.ts";
 import { type Catalog, type Mode, modes, options, policy, turnPolicy } from "./settings.ts";
 import type {
@@ -20,10 +20,17 @@ import type {
   ThreadNameUpdatedNotification,
   ThreadTokenUsageUpdatedNotification,
   TurnCompletedNotification,
+  TurnError,
   TurnPlanUpdatedNotification,
   UserInput,
 } from "./wire.generated.ts";
 
+/** A failed turn's message; one Codex failed for want of a login says how to sign in. */
+export function turnErrorMessage(error: TurnError | null | undefined): string | undefined {
+  if (error?.codexErrorInfo === "unauthorized")
+    return "Codex is not signed in. Run `cycle login codex` on the daemon's machine.";
+  return error?.message;
+}
 type Turn = {
   id?: string;
   cancelled: boolean;
@@ -49,6 +56,8 @@ export function createAdapter(config: AdapterConfig) {
   let codexConfig: Record<string, unknown> = {};
   const children = new Set<string>();
   const childTurns = new Map<string, string>();
+  /** Items of sub-agent threads that came as deltas, for when no turn of the parent's is running. */
+  const childStreamed = new Set<string>();
   const planId = () => `${session ?? "codex"}-plan`;
   function notifyFor(sessionId: string, update: SessionUpdate) {
     if (owner)
@@ -79,16 +88,37 @@ export function createAdapter(config: AdapterConfig) {
   }
   function event(method: string, raw: unknown) {
     if (!(CODEX_NOTIFICATION_METHODS as readonly string[]).includes(method)) return;
-    const active = turn;
-    if (!active || !raw || typeof raw !== "object" || !("threadId" in raw)) return;
+    if (!raw || typeof raw !== "object" || !("threadId" in raw)) return;
     const threadId = typeof raw.threadId === "string" ? raw.threadId : undefined;
     if (!threadId || (threadId !== session && !children.has(threadId))) return;
     const child = threadId !== session;
-    if (!child && "turnId" in raw && active.id && raw.turnId !== active.id) return;
     const send = (update: SessionUpdate) => notifyFor(threadId, update);
+    // The session's title and context use are the thread's, not a turn's: they are told whenever they come.
+    if (method === "thread/name/updated") {
+      if (!child)
+        notify({
+          sessionUpdate: "session_info_update",
+          title: (raw as ThreadNameUpdatedNotification).threadName ?? null,
+        } as SessionUpdate);
+      return;
+    }
+    if (method === "thread/tokenUsage/updated") {
+      const usage = raw as ThreadTokenUsageUpdatedNotification;
+      if (usage.tokenUsage.modelContextWindow !== null)
+        send({
+          sessionUpdate: "usage_update",
+          used: usage.tokenUsage.last.totalTokens,
+          size: usage.tokenUsage.modelContextWindow,
+        } as SessionUpdate);
+      return;
+    }
+    // A sub-agent's thread runs on its own turns, and may outlive the parent's: it is not held to one.
+    const active = turn;
+    if (!child && !active) return;
+    if (!child && active && "turnId" in raw && active.id && raw.turnId !== active.id) return;
+    const streamed = active?.streamed ?? childStreamed;
     if (method === "turn/completed") {
       const result = (raw as TurnCompletedNotification).turn;
-      if (active.id && result.id !== active.id) return;
       if (child) {
         childTurns.delete(threadId);
         send({
@@ -103,23 +133,19 @@ export function createAdapter(config: AdapterConfig) {
         } as SessionUpdate);
         return;
       }
+      if (active?.id && result.id !== active.id) return;
       finish(
         result.status === "interrupted"
           ? "cancelled"
           : result.status === "completed"
             ? "end_turn"
             : "error",
-        result.error?.message,
+        turnErrorMessage(result.error),
       );
     } else if (method === "item/started" || method === "item/completed") {
       const { item } = raw as ItemCompletedNotification;
-      const update = itemUpdate(
-        item,
-        method === "item/completed",
-        active.streamed.has(item.id),
-        planId(),
-      );
-      if (!child && update?.sessionUpdate === "tool_call_update") {
+      const update = itemUpdate(item, method === "item/completed", streamed.has(item.id), planId());
+      if (!child && active && update?.sessionUpdate === "tool_call_update") {
         if (method === "item/started") active.tools.add(item.id);
         else active.tools.delete(item.id);
       }
@@ -166,27 +192,13 @@ export function createAdapter(config: AdapterConfig) {
       ].includes(method)
     ) {
       const { itemId, delta } = raw as AgentMessageDeltaNotification;
-      active.streamed.add(itemId);
+      streamed.add(itemId);
       send({
         sessionUpdate:
           method === "item/agentMessage/delta" ? "agent_message_chunk" : "agent_thought_chunk",
         messageId: itemId,
         content: { type: "text", text: delta },
       } as SessionUpdate);
-    } else if (method === "thread/name/updated") {
-      const name = raw as ThreadNameUpdatedNotification;
-      notify({
-        sessionUpdate: "session_info_update",
-        title: name.threadName ?? null,
-      } as SessionUpdate);
-    } else if (method === "thread/tokenUsage/updated") {
-      const usage = raw as ThreadTokenUsageUpdatedNotification;
-      if (usage.tokenUsage.modelContextWindow !== null)
-        send({
-          sessionUpdate: "usage_update",
-          used: usage.tokenUsage.last.totalTokens,
-          size: usage.tokenUsage.modelContextWindow,
-        } as SessionUpdate);
     } else if (method === "contextCompacted" || method === "thread/compacted") {
       const compact = raw as { threadId: string; turnId?: string };
       send({
@@ -217,7 +229,7 @@ export function createAdapter(config: AdapterConfig) {
         data?: string;
         name?: string;
         uri?: string;
-        resource?: { text?: string };
+        resource?: { uri?: string; text?: string };
       };
       if (
         block.type === "image" &&
@@ -231,8 +243,17 @@ export function createAdapter(config: AdapterConfig) {
         typeof block.uri === "string"
       )
         return { type: "text", text: `${block.name}\n${block.uri}`, text_elements: [] };
+      if (block.type === "resource" && typeof block.resource?.text === "string")
+        return {
+          type: "text",
+          text: `${block.resource.uri ?? "resource"}\n${block.resource.text}`,
+          text_elements: [],
+        };
       if (block.type !== "text" || typeof block.text !== "string")
-        throw new RequestError(-32602, "Codex supports text, images and resource links only");
+        throw new RequestError(
+          -32602,
+          "Codex takes text, images, embedded text and resource links only",
+        );
       return { type: "text", text: block.text, text_elements: [] };
     });
   const optionsOf = () => options(mode, catalog, model, effort);
@@ -375,7 +396,7 @@ export function createAdapter(config: AdapterConfig) {
       info: { name: "cycle-codex-adapter", version: "0.0.0" },
       capabilities: {
         session: {
-          prompt: { image: {}, embeddedContext: {} },
+          prompt: CODEX_PROMPT_CAPABILITIES,
           mcp: { http: {}, stdio: {} },
           additionalDirectories: {},
           systemPrompt: {},
