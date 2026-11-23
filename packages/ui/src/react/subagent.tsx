@@ -68,7 +68,18 @@ export function SubagentCard({ tool }: { tool: ToolItem }) {
       onOpenChange={setOpen}
     >
       <CollapsibleTrigger>
-        <Lead mark={working ? "going" : failed ? "failed" : "other"} kind="subagent" />{" "}
+        <Lead
+          mark={
+            working
+              ? "going"
+              : failed
+                ? "failed"
+                : status === "completed" && (tool.subagent?.state ?? "done") === "done"
+                  ? "done"
+                  : "other"
+          }
+          kind="subagent"
+        />{" "}
         <span data-slot="visually-hidden">{t("subagent.label")}</span>{" "}
         <span data-slot="tool-verb" data-prose title={title}>
           {title}

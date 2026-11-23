@@ -694,7 +694,7 @@ test("a call at work shows on its row how long it has been going, from when the 
   );
 });
 
-test("a finished call leads with what kind it was; one at work or failed with its state", async () => {
+test("a finished call leads with what kind it was; one at work, waiting, failed or mixed does not", async () => {
   const { log } = await open(
     you("u1"),
     say("m1"),
@@ -702,18 +702,31 @@ test("a finished call leads with what kind it was; one at work or failed with it
     say("m2"),
     ...tool("x", "Bash", "failed", { command: "make" }),
     say("m3"),
-    ...tool("g", "Bash", "in_progress", { command: "make" }),
+    ...finished("s1", "Grep", { pattern: "a" }, {}),
+    ...finished("s2", "Glob", { pattern: "*.ts" }, {}),
+    say("m4"),
+    ...finished("m-1", "Read", { file_path: "b.ts" }, {}),
+    ...finished("m-2", "Bash", { command: "ls" }, {}),
+    say("m5"),
+    ...tool("p", "Bash", "pending", { command: "rm -rf build" }),
   );
   const lead = (id: string) =>
     log.querySelector(`[data-item-id="${id}"] [data-slot="tool-lead"]`) as HTMLElement;
-  await waitFor(() =>
-    expect(lead("r").querySelector('[data-slot="tool-kind"]')?.getAttribute("data-activity")).toBe(
-      "read",
-    ),
-  );
-  expect(lead("x").querySelector('[data-slot="tool-kind"]')).toBeNull();
+  const leadOfCard = (text: string) =>
+    [...log.querySelectorAll<HTMLElement>('[data-kind="work"] > button')]
+      .find((b) => b.textContent?.includes(text))
+      ?.querySelector('[data-slot="tool-lead"]') as HTMLElement;
+  const kindOf = (el: HTMLElement) =>
+    el.querySelector('[data-slot="tool-kind"]')?.getAttribute("data-lead-kind");
+  await waitFor(() => expect(kindOf(lead("r"))).toBe("read"));
   expect(lead("x").querySelector('[data-tone="danger"]')).not.toBeNull();
-  expect(lead("g").querySelector('[data-slot="spinner"]')).not.toBeNull();
+  expect(kindOf(lead("x"))).toBeUndefined();
+  // A stretch of one kind is marked as that kind; a mixed one keeps the dot.
+  expect(kindOf(leadOfCard("2 searches"))).toBe("search");
+  expect(kindOf(leadOfCard("ran 1 command"))).toBeUndefined();
+  expect(leadOfCard("ran 1 command").querySelector('[data-slot="tool-dot"]')).not.toBeNull();
+  // Waiting (for an answer, say) is not done: no kind yet.
+  expect(kindOf(lead("p"))).toBeUndefined();
 });
 
 test("a command's output is drawn in its colours and copied without them; its head says how it ended", async () => {
@@ -1129,6 +1142,8 @@ test("a sub-agent sent to the background shows no answer from its launch; one th
   });
   const [background, bad] = cards as [HTMLElement, HTMLElement];
   expect(background.querySelector('[data-slot="subagent-answer"]')).toBeNull();
+  // Sent to the background, it is not done though its call is: no "done" mark for it.
+  expect(background.querySelector('[data-slot="tool-kind"]')).toBeNull();
   expect(background.textContent).not.toContain("Async agent launched");
   expect(bad.getAttribute("data-status")).toBe("failed");
   await waitFor(() => expect(bad.textContent).toContain("Fix it."));

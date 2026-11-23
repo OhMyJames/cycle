@@ -224,16 +224,17 @@ const KIND_ICONS: Partial<Record<LeadKind, (props: { size?: number }) => ReactNo
 /**
  * What leads a line, for a call or a stretch of them: the spinner while it goes, a cross when it failed; once done, what
  * kind of thing it was (a file read, an edit, a search, a command, a page, a sub-agent), quiet, so a turn's work can be
- * read down the left edge; a small dot for any other kind (decision 2026-11-23-finished-calls-lead-with-their-kind).
+ * read down the left edge. Anything else (waiting, never finished, stopped) and a kind without an icon: a small dot
+ * (decision 2026-11-23-finished-calls-lead-with-their-kind).
  */
 export function Lead({
   mark,
   kind,
 }: {
-  mark: "going" | "failed" | "other";
+  mark: "going" | "failed" | "done" | "other";
   kind?: LeadKind | undefined;
 }) {
-  const Icon = kind !== undefined ? KIND_ICONS[kind] : undefined;
+  const Icon = mark === "done" && kind !== undefined ? KIND_ICONS[kind] : undefined;
   return (
     <span data-slot="tool-lead">
       {mark === "going" ? (
@@ -241,7 +242,7 @@ export function Lead({
       ) : mark === "failed" ? (
         <CloseIcon size={14} data-slot="tool-mark" data-tone="danger" />
       ) : Icon !== undefined ? (
-        <span data-slot="tool-kind" data-activity={kind} aria-hidden="true">
+        <span data-slot="tool-kind" data-lead-kind={kind} aria-hidden="true">
           <Icon size={14} />
         </span>
       ) : (
@@ -315,7 +316,11 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
       onOpenChange={setOpen}
     >
       <CollapsibleTrigger>
-        <Lead mark={working ? "going" : failed ? "failed" : "other"} kind={activity} />{" "}
+        <Lead
+          mark={working ? "going" : failed ? "failed" : status === "completed" ? "done" : "other"}
+          // A file removed or moved is no edit, whatever the agent files it under: no pencil for it.
+          kind={tool.toolKind === "delete" || tool.toolKind === "move" ? undefined : activity}
+        />{" "}
         {/* Which tool it was is for a screen reader and the tooltip of the line; the words say what it did. With a
             description, that is the line (what it is for), and what it ran follows it, muted; else the verb in its tense. */}
         <span data-slot="visually-hidden">{toolName(t, tool)}</span>{" "}

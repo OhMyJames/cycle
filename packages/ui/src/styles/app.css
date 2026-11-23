@@ -3177,7 +3177,8 @@ html[data-platform="darwin"]
   font-size: var(--cycle-text-ui);
 }
 
-/* A call that is done: a small dot, so the left edge is a column of states, and a stretch's rule has something to join. */
+/* A call that is waiting, never finished or was stopped, a done one of a kind without an icon, or a stretch of mixed
+   kinds: a small dot, so a stretch's rule has something to join. A done call of a known kind leads with its icon. */
 [data-slot="tool-dot"] {
   width: 5px;
   height: 5px;
