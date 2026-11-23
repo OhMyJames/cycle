@@ -1,16 +1,19 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
+import { useContext, useMemo } from "react";
 import { agentPathInFolder } from "../files-view.ts";
 import { type Finding, type Review, reviewTally, type ToolItem } from "../model/index.ts";
 import { filesRootOf } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
+import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /**
  * A code review the agent reported (CYCL-138), on a card of its own: a line that says how many findings there are and
  * how sure the review is of them (or that it found nothing), then one row per finding, in the agent's order (the most
  * severe first). A row says the
- * defect in a line and where it is; open, the whole sentence and when it goes wrong. Everything in it is the agent's,
- * drawn as plain text: nothing is parsed as Markdown or HTML, and nothing is loaded.
+ * defect in a line and where it is; open, the whole sentence and when it goes wrong. Everything in it is the agent's:
+ * the findings are drawn as plain text, nothing in them parsed as Markdown or HTML. What the agent said around them (a
+ * skill's result, CYCL-216) goes under the head, through the same Markdown as a reply (no HTML, no images loaded).
  */
 export function ReviewCard({ tool, review }: { tool: ToolItem; review: Review }) {
   const { t } = useI18n();
@@ -30,6 +33,7 @@ export function ReviewCard({ tool, review }: { tool: ToolItem; review: Review })
         <h3 data-slot="review-title">{t("review.title")}</h3>
         <span data-slot="review-tally">{parts.join(" · ")}</span>
       </header>
+      {review.prose !== undefined ? <ReviewProse text={review.prose} /> : null}
       {review.findings.length > 0 ? (
         <ol data-slot="review-findings" aria-label={t("review.findings")}>
           {review.findings
@@ -41,6 +45,39 @@ export function ReviewCard({ tool, review }: { tool: ToolItem; review: Review })
         </ol>
       ) : null}
     </section>
+  );
+}
+
+/** What the agent said around its findings. A file named in it opens as from a reply's, and is counted as the review's. */
+function ReviewProse({ text }: { text: string }) {
+  const store = useAppStore();
+  const links = useContext(FileLinksContext);
+  const reviewLinks = useMemo<FileLinks | undefined>(
+    () =>
+      links === undefined
+        ? undefined
+        : {
+            root: links.root,
+            open: (file) => {
+              const folder = file.folder === true;
+              store.showInFiles(file.path, { folder, line: file.line, end: file.end });
+              store.track("file_shown_from_conversation", {
+                target: folder ? "folder" : "file",
+                from: "review",
+                line: file.line !== undefined,
+              });
+            },
+          },
+    [links, store],
+  );
+  return (
+    <div data-slot="review-prose">
+      <div data-slot="message" data-role="agent">
+        <FileLinksContext.Provider value={reviewLinks}>
+          <Markdown text={text} />
+        </FileLinksContext.Provider>
+      </div>
+    </div>
   );
 }
 

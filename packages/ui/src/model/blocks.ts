@@ -126,7 +126,7 @@ export type LaidBlock = { key: string; turn: number; startsTurn: boolean } & (
   | { kind: "work"; tools: readonly ToolItem[] }
   /** A call that started a sub-agent (Claude's Agent tool): its own card. */
   | { kind: "subagent"; tool: ToolItem }
-  /** A code review the agent reported (Claude's ReportFindings tool): its findings, on a card of their own. */
+  /** A code review the agent reported (ReportFindings, or the code-review skill): its findings, on a card of their own. */
   | { kind: "review"; tool: ToolItem; review: Review }
   /** A failure pulled out from under the card of a turn that stopped. */
   | { kind: "failed"; tool: ToolItem }

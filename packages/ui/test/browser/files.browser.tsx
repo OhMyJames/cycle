@@ -493,3 +493,116 @@ test("a review that found nothing says so, and a call that is not a review in sh
   expect(within(again).queryByRole("region", { name: "Code review" })).toBeNull();
   expect(again.querySelector('[data-kind="tool"]')).not.toBeNull();
 });
+
+/**
+ * The code-review skill, as a session records it (CYCL-216): the Skill call with its input, then its result, whose
+ * findings are a bare array in a ```json block after the skill tool's own line. The words are made up.
+ */
+const skillReview = (result: string | undefined) => {
+  const u = (update: object) => update as SessionUpdate;
+  return [
+    u({
+      sessionUpdate: "user_message",
+      messageId: "m1",
+      content: [{ type: "text", text: "review" }],
+    }),
+    u({ sessionUpdate: "tool_call_update", toolCallId: "s1", name: "Skill", status: "pending" }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "s1",
+      name: "Skill",
+      kind: "other",
+      status: "in_progress",
+      rawInput: { skill: "code-review", args: "high main...HEAD" },
+    }),
+    ...(result === undefined
+      ? []
+      : [
+          u({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "s1",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: {
+                  type: "text",
+                  text: `Skill "code-review" completed (forked execution).\n\nResult:\n${result}`,
+                },
+              },
+            ],
+          }),
+        ]),
+  ];
+};
+
+test("the code-review skill's result is a card, its words above; a finding's line opens the file there", async () => {
+  const findings = [
+    {
+      file: "src/long.ts",
+      line: 90,
+      summary: "line90 is exported but never read.",
+      failure_scenario: "Tree-shaking keeps it anyway.",
+    },
+    { file: "src/main.ts", summary: "x is never read.", failure_scenario: "<b>loud</b>" },
+  ];
+  const { user, tracked } = await mount({
+    updates: skillReview(
+      `Reviewed **two files** on the branch; see \`src/long.ts:40\`.\n\n\`\`\`json\n${JSON.stringify(findings, null, 2)}\n\`\`\``,
+    ),
+  });
+  fitWindow();
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  const card = await within(log).findByRole("region", { name: "Code review" });
+  expect(card.textContent).toContain("2 findings");
+  // What the skill said, as a reply says it; none of the skill tool's own line, nor the JSON.
+  const prose = card.querySelector('[data-slot="review-prose"]') as HTMLElement;
+  expect(prose.querySelector('[data-streamdown="strong"]')?.textContent).toBe("two files");
+  expect(card.textContent).not.toContain("forked execution");
+  expect(card.textContent).not.toContain("failure_scenario");
+  expect(card.querySelector("b")).toBeNull();
+  // Not drawn as the call as well.
+  expect(log.querySelector('[data-kind="tool"]')).toBeNull();
+
+  await user.click(within(card).getByRole("button", { name: "Show src/long.ts:90 in Files" }));
+  await waitFor(() => expect(seen(lineOf(90))).toBe(true));
+  await waitFor(() => expect(markOf()).not.toBeNull());
+  expect(Math.abs(topOf(markOf()) - topOf(lineOf(90)))).toBeLessThan(1);
+  // No line: the file from its top, nothing marked.
+  await user.click(within(card).getByRole("button", { name: "Show src/main.ts in Files" }));
+  await waitFor(() => expect(panel().textContent).toContain("let x = 1;"));
+  expect(markOf()).toBeNull();
+  // A file the words name opens there too, counted as the review's.
+  await user.click(within(prose).getByRole("link", { name: "src/long.ts:40" }));
+  await waitFor(() => expect(seen(lineOf(40))).toBe(true));
+  expect(tracked().filter(([event]) => event === "file_shown_from_conversation")).toEqual([
+    ["file_shown_from_conversation", { target: "file", from: "review", line: true }],
+    ["file_shown_from_conversation", { target: "file", from: "review", line: false }],
+    ["file_shown_from_conversation", { target: "file", from: "review", line: true }],
+  ]);
+});
+
+test("the code-review skill shows nothing while it runs; a result with no findings block is its call", async () => {
+  await mount({ updates: skillReview(undefined) });
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  await within(log).findByText("review");
+  expect(log.querySelector('[data-kind="tool"]')).toBeNull();
+  expect(within(log).queryByRole("region", { name: "Code review" })).toBeNull();
+  cleanup();
+
+  await mount({ updates: skillReview("I found nothing to report.\n\n```json\n[]\n```") });
+  const none = await screen.findByRole("log", { name: "Conversation" });
+  const card = await within(none).findByRole("region", { name: "Code review" });
+  expect(card.textContent).toContain("No issues found");
+  expect(card.textContent).toContain("I found nothing to report.");
+  cleanup();
+
+  for (const result of ["(none)\n\nOnly the version changed.", "```json\n[{ broken\n```"]) {
+    await mount({ updates: skillReview(result) });
+    const again = await screen.findByRole("log", { name: "Conversation" });
+    await within(again).findByText("review");
+    await waitFor(() => expect(again.querySelector('[data-kind="tool"]')).not.toBeNull());
+    expect(within(again).queryByRole("region", { name: "Code review" })).toBeNull();
+    cleanup();
+  }
+});

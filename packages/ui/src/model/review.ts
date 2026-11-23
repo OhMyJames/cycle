@@ -1,12 +1,20 @@
-// A code review's findings, as the agent reported them (CYCL-138).
+// A code review's findings, as the agent reported them (CYCL-138, CYCL-216).
 //
-// Claude reports a review with its `ReportFindings` tool: the findings arrive as the call's input, typed (the Agent SDK's
-// `ReportFindingsInput`), not as text in a reply. So they are read from there. The input comes from the agent and is not
-// trusted: every field is checked, and a call whose input is not a review in that shape is drawn as any other call.
+// They come one of two ways. Claude's `ReportFindings` tool takes them as the call's input, typed (the Agent SDK's
+// `ReportFindingsInput`). But `/code-review` in a session runs as a forked skill, and its findings come back as what the
+// `Skill` call returned: `Skill "code-review" completed (forked execution).`, `Result:`, a sentence or two, and the
+// findings as a bare JSON array in a ```json block, in the same fields (so in every recorded session, CYCL-216). Both are
+// read the same way. Either comes from the agent and is not trusted: every field is checked, and a call that is not a
+// review in that shape is drawn as any other call.
 import type { ToolItem } from "./conversation.ts";
+import { streamsOf } from "./facts.ts";
 
 /** Claude's tool that reports a code review. */
 export const REVIEW_TOOLS: ReadonlySet<string> = new Set(["ReportFindings"]);
+
+/** The tool that runs a skill, and the skill that reviews: a plugin's is named `plugin:code-review`. */
+const SKILL_TOOL = "Skill";
+const REVIEW_SKILL = /^\/?(?:[\w.-]+:)?code-review$/;
 
 /** How sure the review is of a finding: checked by a second pass, likely, or not said (no second pass ran). */
 export type Verdict = "confirmed" | "plausible";
@@ -30,12 +38,19 @@ export type Finding = {
   outcome?: Outcome;
 };
 
-export type Review = { level?: string; findings: Finding[] };
+export type Review = {
+  level?: string;
+  findings: Finding[];
+  /** What the agent said around the findings (a skill's result), as Markdown: what it looked at, why nothing was found. */
+  prose?: string;
+};
 
 /** As many as the tool allows; more would be an agent sending something else. */
 const MAX_FINDINGS = 32;
 /** A field longer than this is cut: the card is for reading, the whole of it is in the call. */
 const MAX_CHARS = 4_000;
+/** A skill's result longer than this is not read as a review: 32 findings with every field full fit well inside it. */
+const MAX_RESULT = 1_000_000;
 const LEVELS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
 const OUTCOMES: ReadonlySet<string> = new Set(["fixed", "skipped", "no_change_needed"]);
 
@@ -67,44 +82,114 @@ const findingOf = (value: unknown): Finding | undefined => {
   };
 };
 
+/** A call that may report a review: Claude's review tool, or the code-review skill. */
+const isReviewCall = (tool: ToolItem): boolean => {
+  if (REVIEW_TOOLS.has(tool.name ?? "")) return true;
+  if (tool.name !== SKILL_TOOL) return false;
+  const input = tool.rawInput;
+  const skill =
+    typeof input === "object" && input !== null ? (input as { skill?: unknown }).skill : undefined;
+  return typeof skill === "string" && REVIEW_SKILL.test(skill.trim());
+};
+
 /** Parsed once per call: a turn is laid out again on every update in it, and the call does not change. */
 const parsed = new WeakMap<ToolItem, Review | undefined>();
 
 /**
- * The review a call reports, when it is one: Claude's review tool, not failed, with findings that are all in shape.
- * Otherwise nothing, and the call is drawn as a call. An empty list is a review that found nothing. The findings keep
- * the agent's order, which is the most severe first (the tool asks for that); how sure each is, is shown on it.
+ * The review a call reports, when it is one: not failed, with findings that are all in shape. Otherwise nothing, and
+ * the call is drawn as a call. An empty list is a review that found nothing. The findings keep the agent's order, which
+ * is the most severe first (the tool asks for that); how sure each is, is shown on it.
  */
 export const reviewOf = (tool: ToolItem): Review | undefined => {
-  if (!REVIEW_TOOLS.has(tool.name ?? "")) return undefined;
+  if (!isReviewCall(tool)) return undefined;
   if (parsed.has(tool)) return parsed.get(tool);
-  const review = read(tool);
+  const review = tool.name === SKILL_TOOL ? fromSkill(tool) : fromInput(tool);
   parsed.set(tool, review);
   return review;
 };
 
-const read = (tool: ToolItem): Review | undefined => {
+const findingsOf = (findings: unknown): Finding[] | undefined => {
+  if (!Array.isArray(findings) || findings.length > MAX_FINDINGS) return undefined;
+  const read = findings.map(findingOf);
+  return read.some((f) => f === undefined) ? undefined : (read as Finding[]);
+};
+
+const levelOf = (level: unknown): { level?: string } =>
+  typeof level === "string" && LEVELS.has(level) ? { level } : {};
+
+const fromInput = (tool: ToolItem): Review | undefined => {
   if (tool.status === "failed" || tool.status === "cancelled") return undefined;
   const input = tool.rawInput;
   if (typeof input !== "object" || input === null) return undefined;
   const { findings, level } = input as Record<string, unknown>;
-  if (!Array.isArray(findings) || findings.length > MAX_FINDINGS) return undefined;
-  const read = findings.map(findingOf);
-  if (read.some((f) => f === undefined)) return undefined;
-  return {
-    ...(typeof level === "string" && LEVELS.has(level) ? { level } : {}),
-    findings: read as Finding[],
-  };
+  const read = findingsOf(findings);
+  return read === undefined ? undefined : { ...levelOf(level), findings: read };
 };
 
 /**
+ * What the skill tool says before a forked skill's result: the line that it completed, then `Result:`. Whatever is
+ * before that line (a `<tools-used-before-summary>` tag, in some) goes with it.
+ */
+const SKILL_HEAD = /^[\s\S]*?completed \(forked execution\)\.[ \t]*\n\s*Result:[ \t]*\n/;
+/** A ```json block, on lines of its own. */
+const JSON_BLOCK = /^```json[ \t]*\n([\s\S]*?)\n?```[ \t]*$/gim;
+
+/** The findings a ```json block holds, when it is a list of them all in shape. */
+const blockFindings = (block: string): Finding[] | undefined => {
+  try {
+    return findingsOf(JSON.parse(block));
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * A finished code-review skill whose result holds one ```json block of findings. The words around the block are kept,
+ * as the review's prose (another ```json block in them, a snippet the agent quotes, stays in them); anything else (no
+ * block of findings, two, a finding out of shape) is no review.
+ */
+const fromSkill = (tool: ToolItem): Review | undefined => {
+  // Only a finished one: its result is whole only then, and one still going is not shown at all (`isPendingReview`).
+  if (tool.status !== "completed") return undefined;
+  const result = streamsOf(tool).out;
+  if (result.length > MAX_RESULT) return undefined;
+  const body = result.replace(/\r\n?/g, "\n").replace(SKILL_HEAD, "");
+  const blocks = [...body.matchAll(JSON_BLOCK)]
+    .map((match) => ({ match, findings: blockFindings(match[1] ?? "") }))
+    .filter((b) => b.findings !== undefined);
+  const [only] = blocks;
+  if (blocks.length !== 1 || only?.findings === undefined) return undefined;
+  const { match: block, findings: read } = only;
+  const around = `${body.slice(0, block.index)}\n\n${body.slice(block.index + block[0].length)}`;
+  const prose = text(around.replace(/\n{3,}/g, "\n\n"));
+  // The level the skill was asked for, when its arguments start with one (`high origin/main...HEAD`).
+  const args = (tool.rawInput as { args?: unknown }).args;
+  const level = typeof args === "string" ? args.trim().split(/\s+/)[0] : undefined;
+  return { ...levelOf(level), findings: read, ...(prose !== undefined ? { prose } : {}) };
+};
+
+/**
+ * A skill call still on its way that is, or may yet be, the code-review skill: its first update names only the tool,
+ * and which skill comes with the next. Only a status that says it is going counts: a call with none is never closed by
+ * the end of its turn, and is shown. One with a sub-agent of its own is shown too, as that sub-agent's card.
+ */
+const isPendingReviewSkill = (tool: ToolItem): boolean =>
+  tool.name === SKILL_TOOL &&
+  tool.subagent === undefined &&
+  ["pending", "in_progress", "paused"].includes(tool.status ?? "") &&
+  (tool.rawInput === undefined || tool.rawInput === null || isReviewCall(tool));
+
+/**
  * A review call still on its way whose input is not yet a review: shown as nothing, not as a row that would then turn
- * into the card. Once it has ended, a call that is not a review in shape is a call like any other.
+ * into the card; the step line says what is going meanwhile. Once it has ended, a call that is not a review in shape is
+ * a call like any other.
  */
 export const isPendingReview = (tool: ToolItem): boolean =>
-  REVIEW_TOOLS.has(tool.name ?? "") &&
-  !["completed", "failed", "cancelled"].includes(tool.status ?? "pending") &&
-  reviewOf(tool) === undefined;
+  tool.name === SKILL_TOOL
+    ? isPendingReviewSkill(tool)
+    : isReviewCall(tool) &&
+      !["completed", "failed", "cancelled"].includes(tool.status ?? "pending") &&
+      reviewOf(tool) === undefined;
 
 /** How many findings there are of each verdict, for the card's summary line. */
 export const reviewTally = (

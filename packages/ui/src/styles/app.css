@@ -3826,6 +3826,14 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   font-variant-numeric: tabular-nums;
 }
 
+/* What the agent said around its findings (a skill's result, CYCL-216): under the head, quieter than a reply. */
+[data-slot="review-prose"] {
+  min-width: 0;
+  padding: 0 0.5rem 0.25rem;
+  color: var(--cycle-ink-secondary);
+  user-select: text;
+}
+
 [data-slot="review-findings"] {
   display: flex;
   flex-direction: column;
