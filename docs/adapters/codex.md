@@ -16,11 +16,13 @@ Ubuntu 24.04 的沙箱前置依赖见 [OpenAI 的 Linux sandbox prerequisites](h
 
 Codex harness 自己声明 image、MCP、additionalDirectories 和 systemPrompt 能力。ACP 的 HTTP/stdio MCP server 会转换到 Codex 的 `config.mcp_servers`，MCP header 和环境变量只在 app-server 配置请求中传递。图片转换为 Codex 的 data URL，resource_link 转为文本引用，嵌入的文本 resource 以“URI + 正文”转为文本输入。适配器和 daemon 的 Codex 定义都声明 image 和 embeddedContext；PDF blob 在回合开始前由适配器拒绝，不会进入 Codex。运行中插入由 daemon 的 `steer: true` 走到适配器的 `turn/steer`。附加目录进入 Codex 的 workspace-write writable roots，系统提示的 append 内容进入 developer instructions。
 
-Codex 的 `plan` 是自己的权限配置项。它通过 `collaborationMode: plan` 发给 Codex，Codex 的 plan item 和 `turn/plan/updated` 转为同一个 ACP `plan_update`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
+Codex 的 `plan` 是自己的权限配置项。它以 `turn/start.collaborationMode: {mode: "plan", settings: {model, reasoning_effort, developer_instructions: null}}` 发给 Codex；这个字段在 0.171.0 里属于实验 API，适配器在 `initialize` 时声明 `experimentalApi: true`，缺 `settings` 或没声明时 Codex 会拒绝整个回合（2026-11-23 用固定版二进制和模拟模型实测）。切回其他模式后，下一回合发一次 `mode: "default"`，因为 Codex 会把一个回合的设置沿用到之后的回合。Codex 的 plan item 和 `turn/plan/updated` 转为同一个 ACP `plan_update`，步骤状态 `inProgress` 转为 ACP 的 `in_progress`。退出 Plan 仍由客户端切回其他模式，适配器不模拟 Claude 的 ExitPlanMode。
+
+同样的原因，每个回合都显式带 `model` 和 `effort`：选回 Default 时发 thread 打开时的模型和思考强度（换了模型就用该模型的 `defaultReasoningEffort`），而不是什么都不发。
 
 ## 第三阶段实现（CYCL-205、206、207）
 
-Codex 的 `collabAgentToolCall` 会转换为 ACP 工具更新和子 agent 状态，token usage、thread name 和 `/compact` 分别转换为 `usage_update`、`session_info_update`、`compaction_update`，适配器同时公布 `compact` command。桌面端沿用 daemon 的动态 agent 清单，Codex 已纳入 agent analytics 词表和会话、权限、设置事件；这些事件只上报固定 agent 名和行为枚举，不携带模型输出、命令、标题或路径。
+Codex 的 `collabAgentToolCall` 会转换为 ACP 工具更新和子 agent 状态：每个 `receiverThreadIds` 的状态取 `agentsStates` 里那一项（`spawnAgent` 调用结束时子 agent 往往还在跑），子线程自己的 `turn/completed` 在父 session 里报为子 agent 的 `idle`；取消一个子 agent 用它自己线程的 turn id。子线程的审批以子线程 id 为 `sessionId` 发出，daemon 在父 session 里展示并标上 `cycle/subagentId`。token usage 和 thread name 不受回合限制，随时转换为 `usage_update`、`session_info_update`。`/compact` 调 `thread/compact/start`，它立刻返回，Codex 再以一个自己的回合执行压缩（`turn/started`、`contextCompaction` item、`turn/completed`，实测）；适配器把它当作一个回合，`contextCompaction` item 的开始和结束转为 `compaction_update`，回合结束时还没结束的压缩报 `failed`。适配器同时公布 `compact` command。app-server 意外退出时适配器也退出，daemon 结束当前回合，下一条 prompt 起新进程并恢复。桌面端沿用 daemon 的动态 agent 清单，Codex 已纳入 agent analytics 词表和会话、权限、设置事件；这些事件只上报固定 agent 名和行为枚举，不携带模型输出、命令、标题或路径。
 
 本机真实账号回归已覆盖跨 daemon 重启、真实 compaction 和真实 usage update，均通过。真实模型在本次提示下没有产生 `subagent_update`，只产生普通回答、工具和 usage 事件，因此 205 的事件转换已覆盖，真实 subagent 触发仍记录为未观察到，不能把这次回归当作真实 subagent 行为证据。
 

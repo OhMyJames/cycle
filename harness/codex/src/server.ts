@@ -3,7 +3,12 @@ import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import { CODEX_FIXED_ARGS, CODEX_VERSION } from "./protocol.ts";
 
-export type AdapterConfig = { env: Record<string, string>; codexExecutable: string };
+export type AdapterConfig = {
+  env: Record<string, string>;
+  codexExecutable: string;
+  /** The app-server ended while its session was open: nothing more can be done with this adapter. */
+  onServerExit?: () => void;
+};
 type Message = {
   id?: number | string;
   method?: string;
@@ -110,8 +115,9 @@ export class AppServer {
   }
   async initialize() {
     const result = await this.request<{ userAgent?: string }>("initialize", {
-      clientInfo: { name: "cycle", version: "1" },
-      capabilities: {},
+      clientInfo: { name: "cycle", title: null, version: "1" },
+      // `turn/start.collaborationMode` (Codex's plan mode) is experimental in the pinned version.
+      capabilities: { experimentalApi: true, requestAttestation: false },
     });
     if (typeof result.userAgent !== "string" || !result.userAgent.includes(CODEX_VERSION))
       throw new Error(`Codex app-server version is not the pinned ${CODEX_VERSION}`);

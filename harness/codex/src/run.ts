@@ -12,6 +12,9 @@ export async function runAdapter(shipped?: string) {
   const adapter = createAdapter({
     ...config,
     codexExecutable: config.codexExecutable ?? shipped ?? nativeBinary(),
+    // The daemon sees the adapter exit, ends the turn, and the next prompt starts and resumes a new one. A moment
+    // first, for the turn's end to be written out.
+    onServerExit: () => setTimeout(() => process.exit(1), 200),
   });
   try {
     await adapter.app.connect(

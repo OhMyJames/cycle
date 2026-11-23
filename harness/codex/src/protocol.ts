@@ -12,6 +12,7 @@ export const CODEX_PROMPT_CAPABILITIES = { image: {}, embeddedContext: {} } as c
 
 /** Notifications this adapter consumes from that pinned app-server protocol. Unknown notifications are ignored. */
 export const CODEX_NOTIFICATION_METHODS = [
+  "turn/started",
   "turn/completed",
   "item/started",
   "item/completed",
@@ -22,8 +23,6 @@ export const CODEX_NOTIFICATION_METHODS = [
   "item/commandExecution/outputDelta",
   "turn/plan/updated",
   "thread/status/changed",
-  "contextCompacted",
-  "thread/compacted",
   "skills/changed",
   "thread/name/updated",
   "thread/tokenUsage/updated",

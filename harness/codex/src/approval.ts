@@ -12,6 +12,7 @@ export async function approval(
   session: string | undefined,
   turnId: string | undefined,
   signal: AbortSignal | undefined,
+  isChild: (threadId: string) => boolean = () => false,
 ) {
   const p = raw as
     | CommandExecutionRequestApprovalParams
@@ -22,13 +23,14 @@ export async function approval(
   if (!permissions && !files && method !== "item/commandExecution/requestApproval")
     throw new Error("Unsupported server request");
   let decision: "accept" | "decline" | "cancel" = "cancel";
+  // A sub-agent asks in its own thread, and on its own turns: the daemon shows it in the parent's session (ACP v2).
+  const child = isChild(p.threadId);
   if (
     client &&
     session &&
     signal &&
     !signal.aborted &&
-    p.threadId === session &&
-    (!turnId || p.turnId === turnId)
+    (child || (p.threadId === session && (!turnId || p.turnId === turnId)))
   ) {
     const command = "command" in p ? p.command : undefined;
     const detail = command ?? ("grantRoot" in p ? p.grantRoot : undefined);
@@ -49,7 +51,7 @@ export async function approval(
       .request(
         methods.client.session.requestPermission,
         {
-          sessionId: session,
+          sessionId: child ? p.threadId : session,
           title,
           subject: {
             type: "tool_call",

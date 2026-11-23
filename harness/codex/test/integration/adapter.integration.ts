@@ -136,6 +136,31 @@ supports_websockets=false
         }),
       );
       expect(received.join("")).not.toContain("host-only-secret");
+      // Plan mode goes to Codex as its experimental collaboration mode, with its settings, and the turn completes.
+      const set = (value: string) =>
+        agent.request(methods.agent.session.setConfigOption, {
+          sessionId,
+          configId: "mode",
+          type: "id",
+          value,
+        } as never);
+      await set("plan");
+      await prompt();
+      await waitFor(() => idle().length === 3);
+      expect(idle()[2]).toMatchObject({ stopReason: "end_turn" });
+      await set("default");
+      // /compact runs as a turn of Codex's own: it ends like one, with its compaction begun and completed.
+      await agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "/compact" }],
+      });
+      await waitFor(() => idle().length === 4);
+      expect(idle()[3]).toMatchObject({ stopReason: "end_turn" });
+      expect(
+        updates
+          .filter((u) => u.sessionUpdate === "compaction_update")
+          .map((u) => (u as { status?: string }).status),
+      ).toEqual(["in_progress", "completed"]);
       nextCommand = "touch running && sleep 10";
       hold = true;
 
@@ -148,8 +173,8 @@ supports_websockets=false
       });
       expect(steered.messageId).toBeString();
       await agent.notify(methods.agent.session.cancel, { sessionId });
-      await waitFor(() => idle().length === 3);
-      expect(idle()[2]).toMatchObject({ stopReason: "cancelled" });
+      await waitFor(() => idle().length === 5);
+      expect(idle()[4]).toMatchObject({ stopReason: "cancelled" });
       await agent.request(methods.agent.session.close, { sessionId });
     });
   } finally {

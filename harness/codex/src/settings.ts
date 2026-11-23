@@ -63,11 +63,7 @@ export function turnPolicy(mode: Mode, writableRoots: string[] = []) {
       : sandbox === "read-only"
         ? { type: "readOnly", networkAccess: false }
         : { type: "dangerFullAccess" };
-  return {
-    ...rest,
-    sandboxPolicy,
-    ...(mode === "plan" ? { collaborationMode: { mode: "plan" } } : {}),
-  };
+  return { ...rest, sandboxPolicy };
 }
 export const options = (mode: Mode, catalog: Catalog = [], model = "default", effort = "default") =>
   [
