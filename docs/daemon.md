@@ -193,7 +193,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 
 ## 配置:`<数据目录>/config.json`
 
-每个 agent 有自己的顶层一段，键是 agent 的 id;现在只有 `claude`。
+每个 agent 有自己的顶层一段，键是 agent 的 id（`claude`、`codex`、`agy`）。
 
 ```json
 {
@@ -201,6 +201,14 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
     "configDir": "/path/to/claude-config",
     "allowEnv": ["PATH", "LANG", "LC_ALL", "TERM"],
     "env": { "ANTHROPIC_API_KEY": "..." }
+  },
+  "agy": {
+    "executable": "/path/to/agy",
+    "home": "/path/to/agy-home",
+    "allowEnv": ["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR"],
+    "env": {},
+    "sandbox": false,
+    "telemetry": false
   }
 }
 ```

@@ -16,6 +16,24 @@ export const TERMINAL_DEFAULTS = {
  * override a user's login and bill an API.
  */
 export const ConfigSchema = z.object({
+  agy: z
+    .object({
+      /** Explicit absolute path to the `agy` binary; overrides `~/.local/bin/agy` and `PATH`. */
+      executable: z.string().startsWith("/").optional(),
+      /** Isolated HOME directory for `agy` (default `<dataDir>/agy`). */
+      home: z.string().startsWith("/").optional(),
+      /** Names of the daemon's own variables `agy` may see. */
+      allowEnv: z.array(z.string()).default(["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR"]),
+      /** Explicit variables passed to `agy` (e.g. `GEMINI_API_KEY`, proxy vars). Never inherited. */
+      env: z.record(z.string(), z.string()).default({}),
+      /** Pass `--sandbox` to `agy acp`. */
+      sandbox: z.boolean().optional(),
+      /** Custom main agent name passed via `--agent`. */
+      agent: z.string().min(1).optional(),
+      /** When explicitly `false`, pass `--disable-telemetry` to `agy acp`. */
+      telemetry: z.boolean().optional(),
+    })
+    .prefault({}),
   codex: z
     .object({
       configDir: z.string().startsWith("/").optional(),

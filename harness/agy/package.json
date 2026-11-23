@@ -1,0 +1,18 @@
+{
+  "name": "@cycle/harness-agy",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./run": "./src/run.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "catalog:",
+    "@cycle/protocol": "workspace:*"
+  },
+  "scripts": {
+    "test:integration": "bun test ./test/integration/adapter.integration.ts",
+    "test:real": "bun test ./test/integration/real-model.integration.ts"
+  }
+}

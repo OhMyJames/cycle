@@ -766,7 +766,24 @@ export class ConnectionManager
 
   async createSession(environmentId: string, params: NewSession): Promise<string> {
     const connection = this.#connection(environmentId);
-    const sessionId = await connection.client.newSession(params);
+    let sessionId: string;
+    try {
+      sessionId = await connection.client.newSession(params);
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === -32000) {
+        this.#track("agent_auth_required", {
+          agent: agentOf(params.agent ?? ""),
+          environment: this.#kindOf(environmentId),
+        });
+        const detail = error instanceof Error ? error.message : "Authentication required";
+        const authError = new Error(
+          detail.includes("-32000") ? detail : `Authentication required (-32000): ${detail}`,
+        );
+        (authError as { code?: number }).code = -32000;
+        throw authError;
+      }
+      throw error;
+    }
     // Not in the list until its first message (docs/protocol.md §6): the daemon announces it then, and it is read again.
     connection.made.set(sessionId, params.cwd);
     // Its agent is not in the list yet either, and the reports about it (opened, a prompt) need the word for it.

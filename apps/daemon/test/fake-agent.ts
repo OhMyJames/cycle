@@ -9,6 +9,8 @@ import {
 import type { AgentDefinition } from "../src/index.ts";
 
 type Script = {
+  /** Called on `session/new` before creating the session (e.g. to reject with `-32000`). */
+  onNew?: () => Promise<void>;
   /** Called when a prompt arrives: what the agent does with it. */
   onPrompt?: (ctx: Turn) => Promise<unknown>;
   /** How every turn ends. Default `end_turn`. */
@@ -102,8 +104,19 @@ export const fakeAgent = (
           capabilities: options.mcpHttp === true ? { session: { mcp: { http: {} } } } : {},
         };
       })
-      .onRequest(methods.agent.session.new, ({ params }) => {
+      .onRequest(methods.agent.session.new, async ({ params }) => {
         log.news.push(params as unknown as Record<string, unknown>);
+        if (script.onNew) {
+          try {
+            await script.onNew();
+          } catch (error) {
+            const code = (error as { code?: unknown })?.code;
+            if (typeof code === "number") {
+              throw new RequestError(code, error instanceof Error ? error.message : String(error));
+            }
+            throw error;
+          }
+        }
         const proposed = (params._meta as Record<string, unknown> | null)?.["cycle/sessionId"];
         const id = typeof proposed === "string" ? proposed : randomUUID();
         sessions.add(id);

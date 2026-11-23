@@ -20,6 +20,7 @@
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",
         "@cycle/client": "workspace:*",
+        "@cycle/harness-agy": "workspace:*",
         "@cycle/harness-claude": "workspace:*",
         "@cycle/harness-codex": "workspace:*",
         "@cycle/protocol": "workspace:*",
@@ -49,6 +50,14 @@
         "@types/react-dom": "^19.3.0",
         "node-api-headers": "1.9.0",
         "playwright": "1.65.1",
+      },
+    },
+    "harness/agy": {
+      "name": "@cycle/harness-agy",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agentclientprotocol/sdk": "catalog:",
+        "@cycle/protocol": "workspace:*",
       },
     },
     "harness/claude": {
@@ -219,6 +228,8 @@
     "@cycle/daemon": ["@cycle/daemon@workspace:apps/daemon"],
 
     "@cycle/desktop": ["@cycle/desktop@workspace:apps/desktop"],
+
+    "@cycle/harness-agy": ["@cycle/harness-agy@workspace:harness/agy"],
 
     "@cycle/harness-claude": ["@cycle/harness-claude@workspace:harness/claude"],
 

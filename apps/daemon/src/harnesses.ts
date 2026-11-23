@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "./agents.ts";
+import { agyHarness } from "./agy-agent.ts";
 import { claudeHarness } from "./claude-agent.ts";
 import { codexHarness } from "./codex-agent.ts";
 import type { Config } from "./config.ts";
@@ -10,7 +11,7 @@ import { selfCommand } from "./self.ts";
  * The agents this build has, in the order a client is offered them: the first is what a session is made with when
  * none is named. A new harness is added here, with its section in config.ts and its binary in scripts/binaries.ts.
  */
-export const HARNESSES: readonly Harness[] = [claudeHarness, codexHarness];
+export const HARNESSES: readonly Harness[] = [claudeHarness, codexHarness, agyHarness];
 
 export const agentsFor = (
   config: Config,

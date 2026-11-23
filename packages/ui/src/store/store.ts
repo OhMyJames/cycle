@@ -130,6 +130,8 @@ export type BlankConversation = {
    * that it will be asked (`undecided`). Undefined while it is read, or when the daemon cannot say.
    */
   trust?: "trusted" | "untrusted" | "undecided";
+  /** Starting a session with this agent failed with `-32000` (not signed in): prompt the user to sign in. */
+  authRequired?: { agentId: string; agentName: string };
 };
 
 export type SessionView = {
@@ -685,10 +687,14 @@ export class AppStore {
 
   // ---- the blank conversation ----
 
-  /** The agent a blank conversation starts: the one chosen, if the environment has it, else its first available. */
+  /** The agent a blank conversation starts: the one explicitly chosen (even if unavailable, so install guidance shows), else the first available. */
   blankAgent = (blank: BlankConversation): AgentInfo | undefined => {
-    const available = (this.#state.agents[blank.environmentId] ?? []).filter((a) => a.available);
-    return available.find((a) => a.id === blank.agent) ?? available[0];
+    const all = this.#state.agents[blank.environmentId] ?? [];
+    if (blank.agent !== undefined) {
+      const picked = all.find((a) => a.id === blank.agent);
+      if (picked !== undefined) return picked;
+    }
+    return all.find((a) => a.available);
   };
 
   /**
@@ -742,6 +748,7 @@ export class AppStore {
       next = { ...next, agent: change.agent, config: undefined };
       delete next.unreadable;
       delete next.chosen;
+      delete next.authRequired;
     }
     if (change.setting !== undefined && next.config !== undefined) {
       const { key, value } = change.setting;
@@ -862,6 +869,7 @@ export class AppStore {
       blank.asking !== undefined ||
       this.#checkingTrust ||
       agent === undefined ||
+      !agent.available ||
       blank.config === undefined ||
       cwd === ""
     )
@@ -887,21 +895,42 @@ export class AppStore {
     const content = promptBlocks(this.drafts.get(BLANK_KEY));
     if (content === undefined) return;
     this.drafts.clear(BLANK_KEY);
-    const starting: BlankConversation = { ...blank, cwd, starting: content };
+    const { authRequired: _clearedAuth, ...baseBlank } = blank;
+    const starting: BlankConversation = { ...baseBlank, cwd, starting: content };
     this.#set({ blank: starting });
-    const sessionId = await this.#attempt(() =>
-      this.#bridge.createSession(environmentId, {
+    let sessionId: string | undefined;
+    let needsAuth = false;
+    try {
+      sessionId = await this.#bridge.createSession(environmentId, {
         cwd,
         agent: agent.id,
         config: blank.config ?? {},
-      }),
-    );
+      });
+    } catch (error) {
+      const msg = messageOf(error);
+      if (
+        (error as { code?: unknown })?.code === -32000 ||
+        /(^|[^0-9])-32000(?![0-9])|authentication required/i.test(msg)
+      ) {
+        needsAuth = true;
+      } else {
+        this.#set({ error: msg });
+      }
+    }
     if (sessionId !== undefined)
       // Once, when the session is made: a start that fails and is sent again is not counted twice.
       this.track("blank_sent", { waited: waitedOf(Date.now() - this.#blankOpenedAt) });
     if (sessionId === undefined) {
       this.drafts.restore(BLANK_KEY, [content]);
-      if (this.#state.blank === starting) this.#set({ blank: { ...blank, cwd } });
+      if (this.#state.blank === starting) {
+        this.#set({
+          blank: {
+            ...baseBlank,
+            cwd,
+            ...(needsAuth ? { authRequired: { agentId: agent.id, agentName: agent.name } } : {}),
+          },
+        });
+      }
       return;
     }
     const sent = await this.#attempt(async () => {

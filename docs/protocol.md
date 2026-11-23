@@ -644,7 +644,7 @@ session 里 ACP 的 `configOptions` 用 ACP 自己的字段表达同样的东西
 
 能把 prompt 插入正在运行的 turn 的 agent 带 `steer: true`(§8 "插入"),没有就是不能。
 
-每个 agent 还有 `promptCapabilities`(ACP 的 `PromptCapabilities`:`image`、`embeddedContext`,缺省都是没有),客户端据此决定是否提供附件入口,daemon 据此校验 prompt(§8)。Claude 的 `model` 用 `oneOf` 给出取值和名字(`default` 叫 "Default model",以及 `sonnet`、`opus`、`haiku`;值不变,0.2.7 之前是只有值的 `enum`,客户端两种都认),`mode` 是权限模式,取值就是 Claude Agent SDK 的 `PermissionMode`:`default`、`acceptEdits`、`plan`、`auto`、`dontAsk`、`bypassPermissions`,新 session 默认且推荐 `auto`,各自的名字和说明见 L3 文档。
+每个 agent 还有 `promptCapabilities`(ACP 的 `PromptCapabilities`:`image`、`embeddedContext`,缺省都是没有),客户端据此决定是否提供附件入口,daemon 据此校验 prompt(§8)。Claude 的 `model` 用 `oneOf` 给出取值和名字(`default` 叫 "Default model",以及 `sonnet`、`opus`、`haiku`;值不变,0.2.7 之前是只有值的 `enum`,客户端两种都认),`mode` 是权限模式,取值就是 Claude Agent SDK 的 `PermissionMode`:`default`、`acceptEdits`、`plan`、`auto`、`dontAsk`、`bypassPermissions`,新 session 默认且推荐 `auto`,各自的名字和说明见 L3 文档。`agy`（Google Antigravity CLI）同样提供 `mode`（`auto` 推荐、`default`、`accept-edits`、`plan`）、开放的 `model`（由会话清单缓存动态填充）与 `effort`（`default`、`low`、`medium`、`high`、`xhigh`，对应 agy 的 `thought_level`），详见 `docs/adapters/agy.md`。
 
 **思考强度(`effort`,CYCL-72)**:Claude 的 `configSchema` 里有 `effort`,`oneOf` 为 `default`、`low`、`medium`、`high`、`xhigh`、`max`,不设时是 `default`。
 

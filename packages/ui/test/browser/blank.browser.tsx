@@ -6,7 +6,7 @@ import { userEvent } from "vitest/browser";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
-import { chosenFolder, openFolders, typeFolder } from "./blank.ts";
+import { chosenFolder, openFolders } from "./blank.ts";
 import { boxText, press, ready, write } from "./box.ts";
 
 afterEach(cleanup);
@@ -221,4 +221,84 @@ test("the folders offered are this environment's with sessions that are not arch
   const menu = await openFolders(user);
   expect(within(menu).queryByRole("menuitem", { name: /^old/ })).toBeNull();
   expect(within(menu).getByRole("menuitem", { name: /^work/ })).toBeTruthy();
+});
+
+test("a -32000 auth error keeps the draft, shows cycle login command, and tracks copy (CYCL-172)", async () => {
+  const copied: string[] = [];
+  const { user, named, bridge } = await mount((script) => {
+    script.bridge.agents = async () => [
+      {
+        id: "agy",
+        name: "Antigravity",
+        available: true,
+        promptCapabilities: {},
+        configSchema: {},
+      },
+    ];
+    script.bridge.copyText = async (text: string) => {
+      copied.push(text);
+      return true;
+    };
+  });
+  bridge.createSession = async () => {
+    throw Object.assign(
+      new Error("Authentication required. Run `cycle login agy` on the daemon's machine. (-32000)"),
+      { code: -32000 },
+    );
+  };
+  await newSession(user);
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await ready(box);
+  await write(box, "secret draft for agy");
+  await press(box, "Enter");
+  expect(await screen.findByText("Antigravity is not signed in on This computer.")).toBeTruthy();
+  expect(screen.getByText("cycle login agy")).toBeTruthy();
+  await waitFor(() => expect(boxText(box)).toBe("secret draft for agy"));
+  await user.click(screen.getByRole("button", { name: "Copy command" }));
+  await waitFor(() => expect(copied).toEqual(["cycle login agy"]));
+  expect(named("track")).toContainEqual([
+    "track",
+    "agent_setup_command_copied",
+    { agent: "agy", kind: "login" },
+  ]);
+  expect(JSON.stringify(named("track"))).not.toContain("secret draft for agy");
+  expect(JSON.stringify(named("track"))).not.toContain("cycle login agy");
+});
+
+test("selecting an unavailable agy agent disables sending and shows the install command (CYCL-172)", async () => {
+  let asked = 0;
+  const { user } = await mount((script) => {
+    script.bridge.agents = async () => {
+      asked += 1;
+      return [
+        {
+          id: "claude",
+          name: "Claude Code",
+          available: true,
+          promptCapabilities: {},
+          configSchema: {},
+        },
+        {
+          id: "agy",
+          name: "Antigravity",
+          available: false,
+          promptCapabilities: {},
+          configSchema: {},
+        },
+      ];
+    };
+  });
+  await newSession(user);
+  const select = await screen.findByRole("combobox", { name: "Agent" });
+  await user.click(select);
+  await user.click(await screen.findByRole("option", { name: "Antigravity (not installed)" }));
+  expect(await screen.findByText("Antigravity is not available on This computer.")).toBeTruthy();
+  expect(
+    screen.getByText("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
+  ).toBeTruthy();
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  expect(box.getAttribute("contenteditable")).toBe("false");
+  const before = asked;
+  await user.click(screen.getByRole("button", { name: "Check again" }));
+  await waitFor(() => expect(asked).toBeGreaterThan(before));
 });
