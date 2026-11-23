@@ -132,29 +132,34 @@ const fromInput = (tool: ToolItem): Review | undefined => {
  */
 const SKILL_HEAD = /^[\s\S]*?completed \(forked execution\)\.[ \t]*\n\s*Result:[ \t]*\n/;
 /** A ```json block, on lines of its own. */
-const JSON_BLOCK = /^```json[ \t]*\n([\s\S]*?)\n?```[ \t]*$/gm;
+const JSON_BLOCK = /^```json[ \t]*\n([\s\S]*?)\n?```[ \t]*$/gim;
+
+/** The findings a ```json block holds, when it is a list of them all in shape. */
+const blockFindings = (block: string): Finding[] | undefined => {
+  try {
+    return findingsOf(JSON.parse(block));
+  } catch {
+    return undefined;
+  }
+};
 
 /**
  * A finished code-review skill whose result holds one ```json block of findings. The words around the block are kept,
- * as the review's prose; anything else (no block, two, one that does not parse, a finding out of shape) is no review.
+ * as the review's prose (another ```json block in them, a snippet the agent quotes, stays in them); anything else (no
+ * block of findings, two, a finding out of shape) is no review.
  */
 const fromSkill = (tool: ToolItem): Review | undefined => {
   // Only a finished one: its result is whole only then, and one still going is not shown at all (`isPendingReview`).
   if (tool.status !== "completed") return undefined;
   const result = streamsOf(tool).out;
   if (result.length > MAX_RESULT) return undefined;
-  const body = result.replace(SKILL_HEAD, "");
-  const blocks = [...body.matchAll(JSON_BLOCK)];
-  const block = blocks[0];
-  if (blocks.length !== 1 || block === undefined) return undefined;
-  let findings: unknown;
-  try {
-    findings = JSON.parse(block[1] ?? "");
-  } catch {
-    return undefined;
-  }
-  const read = findingsOf(findings);
-  if (read === undefined) return undefined;
+  const body = result.replace(/\r\n?/g, "\n").replace(SKILL_HEAD, "");
+  const blocks = [...body.matchAll(JSON_BLOCK)]
+    .map((match) => ({ match, findings: blockFindings(match[1] ?? "") }))
+    .filter((b) => b.findings !== undefined);
+  const [only] = blocks;
+  if (blocks.length !== 1 || only?.findings === undefined) return undefined;
+  const { match: block, findings: read } = only;
   const around = `${body.slice(0, block.index)}\n\n${body.slice(block.index + block[0].length)}`;
   const prose = text(around.replace(/\n{3,}/g, "\n\n"));
   // The level the skill was asked for, when its arguments start with one (`high origin/main...HEAD`).
@@ -164,14 +169,27 @@ const fromSkill = (tool: ToolItem): Review | undefined => {
 };
 
 /**
+ * A skill call still on its way that is, or may yet be, the code-review skill: its first update names only the tool,
+ * and which skill comes with the next. Only a status that says it is going counts: a call with none is never closed by
+ * the end of its turn, and is shown. One with a sub-agent of its own is shown too, as that sub-agent's card.
+ */
+const isPendingReviewSkill = (tool: ToolItem): boolean =>
+  tool.name === SKILL_TOOL &&
+  tool.subagent === undefined &&
+  ["pending", "in_progress", "paused"].includes(tool.status ?? "") &&
+  (tool.rawInput === undefined || tool.rawInput === null || isReviewCall(tool));
+
+/**
  * A review call still on its way whose input is not yet a review: shown as nothing, not as a row that would then turn
  * into the card; the step line says what is going meanwhile. Once it has ended, a call that is not a review in shape is
  * a call like any other.
  */
 export const isPendingReview = (tool: ToolItem): boolean =>
-  isReviewCall(tool) &&
-  !["completed", "failed", "cancelled"].includes(tool.status ?? "pending") &&
-  reviewOf(tool) === undefined;
+  tool.name === SKILL_TOOL
+    ? isPendingReviewSkill(tool)
+    : isReviewCall(tool) &&
+      !["completed", "failed", "cancelled"].includes(tool.status ?? "pending") &&
+      reviewOf(tool) === undefined;
 
 /** How many findings there are of each verdict, for the card's summary line. */
 export const reviewTally = (

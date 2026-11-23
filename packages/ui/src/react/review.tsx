@@ -1,9 +1,10 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
+import { useContext, useMemo } from "react";
 import { agentPathInFolder } from "../files-view.ts";
 import { type Finding, type Review, reviewTally, type ToolItem } from "../model/index.ts";
 import { filesRootOf } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
-import { Markdown } from "./markdown.tsx";
+import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /**
@@ -32,13 +33,7 @@ export function ReviewCard({ tool, review }: { tool: ToolItem; review: Review })
         <h3 data-slot="review-title">{t("review.title")}</h3>
         <span data-slot="review-tally">{parts.join(" · ")}</span>
       </header>
-      {review.prose !== undefined ? (
-        <div data-slot="review-prose">
-          <div data-slot="message" data-role="agent">
-            <Markdown text={review.prose} />
-          </div>
-        </div>
-      ) : null}
+      {review.prose !== undefined ? <ReviewProse text={review.prose} /> : null}
       {review.findings.length > 0 ? (
         <ol data-slot="review-findings" aria-label={t("review.findings")}>
           {review.findings
@@ -50,6 +45,39 @@ export function ReviewCard({ tool, review }: { tool: ToolItem; review: Review })
         </ol>
       ) : null}
     </section>
+  );
+}
+
+/** What the agent said around its findings. A file named in it opens as from a reply's, and is counted as the review's. */
+function ReviewProse({ text }: { text: string }) {
+  const store = useAppStore();
+  const links = useContext(FileLinksContext);
+  const reviewLinks = useMemo<FileLinks | undefined>(
+    () =>
+      links === undefined
+        ? undefined
+        : {
+            root: links.root,
+            open: (file) => {
+              const folder = file.folder === true;
+              store.showInFiles(file.path, { folder, line: file.line, end: file.end });
+              store.track("file_shown_from_conversation", {
+                target: folder ? "folder" : "file",
+                from: "review",
+                line: file.line !== undefined,
+              });
+            },
+          },
+    [links, store],
+  );
+  return (
+    <div data-slot="review-prose">
+      <div data-slot="message" data-role="agent">
+        <FileLinksContext.Provider value={reviewLinks}>
+          <Markdown text={text} />
+        </FileLinksContext.Provider>
+      </div>
+    </div>
   );
 }
 

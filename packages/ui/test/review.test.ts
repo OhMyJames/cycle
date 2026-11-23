@@ -257,6 +257,34 @@ test("a failed or stopped code-review skill is its call; one on its way shows no
   }
   // Another skill on its way is a call like any other.
   expect(isPendingReview(skillCall(undefined, { skill: "run" }))).toBe(false);
+  // Its first update names only the tool, and which skill comes next: nothing yet, so no row comes and goes.
+  const first = reduce(skillUpdates(undefined).slice(0, 3));
+  expect(blocksOf(first).map((b) => b.kind)).toEqual(["user"]);
+  // A call that never said it was going is shown, since nothing will close it; one with a sub-agent is its card.
+  const bare = { kind: "tool", id: "s", turn: 0, name: "Skill", content: [] } as ToolItem;
+  expect(isPendingReview({ ...bare, rawInput: { skill: "code-review" } })).toBe(false);
+  expect(
+    isPendingReview({
+      ...bare,
+      status: "in_progress",
+      rawInput: { skill: "code-review" },
+      subagent: { state: "running" },
+    } as ToolItem),
+  ).toBe(false);
+});
+
+test("a skill's findings block is found among others, in CRLF, and in any case", () => {
+  const snippet = '```json\n{ "name": "cycle" }\n```';
+  const review = reviewOf(
+    skillCall(skillResult(`It reads:\n\n${snippet}\n\n${fenced([finding()])}`)),
+  );
+  expect(review?.findings).toHaveLength(1);
+  expect(review?.prose).toBe(`It reads:\n\n${snippet}`);
+  const crlf = skillResult(`Words.\n\n${fenced([finding()])}`).replace(/\n/g, "\r\n");
+  expect(reviewOf(skillCall(crlf))).toMatchObject({ prose: "Words." });
+  expect(reviewOf(skillCall(skillResult(fenced([]).replace("json", "JSON"))))).toEqual({
+    findings: [],
+  });
 });
 
 test("what is odd in a skill's review is cut or left out, as in the tool's", () => {

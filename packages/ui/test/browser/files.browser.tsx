@@ -548,7 +548,7 @@ test("the code-review skill's result is a card, its words above; a finding's lin
   ];
   const { user, tracked } = await mount({
     updates: skillReview(
-      `Reviewed **two files** on the branch.\n\n\`\`\`json\n${JSON.stringify(findings, null, 2)}\n\`\`\``,
+      `Reviewed **two files** on the branch; see \`src/long.ts:40\`.\n\n\`\`\`json\n${JSON.stringify(findings, null, 2)}\n\`\`\``,
     ),
   });
   fitWindow();
@@ -572,9 +572,13 @@ test("the code-review skill's result is a card, its words above; a finding's lin
   await user.click(within(card).getByRole("button", { name: "Show src/main.ts in Files" }));
   await waitFor(() => expect(panel().textContent).toContain("let x = 1;"));
   expect(markOf()).toBeNull();
+  // A file the words name opens there too, counted as the review's.
+  await user.click(within(prose).getByRole("link", { name: "src/long.ts:40" }));
+  await waitFor(() => expect(seen(lineOf(40))).toBe(true));
   expect(tracked().filter(([event]) => event === "file_shown_from_conversation")).toEqual([
     ["file_shown_from_conversation", { target: "file", from: "review", line: true }],
     ["file_shown_from_conversation", { target: "file", from: "review", line: false }],
+    ["file_shown_from_conversation", { target: "file", from: "review", line: true }],
   ]);
 });
 
