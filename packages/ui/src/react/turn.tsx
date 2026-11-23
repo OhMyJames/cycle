@@ -8,14 +8,17 @@ import {
   isLive,
   isSubagentCall,
   type Resend,
+  type Step,
   type StopReason,
   stepOf,
   type ToolItem,
 } from "../model/index.ts";
+import { startedAt } from "../started.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, ErrorCircleIcon, WarningIcon } from "./icons.tsx";
 import { InlineAiStatus } from "./inline-ai-status.tsx";
+import { useSteady } from "./steady.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import {
   Lead,
@@ -230,6 +233,12 @@ function TurnAgain({ resend }: { resend: Resend }) {
 }
 
 /** What the agent is doing, at the end of the turn that is going, so a hidden thought or a long tool is not a silence. */
+/** What a step is known by: a call by its id, anything else by its kind (and attempt) in the turn it is in. */
+const stepKeyOf = (step: Step, turns: number): string =>
+  step.kind === "tool"
+    ? `tool:${step.tool.id}`
+    : `${turns}:${step.kind === "retrying" ? `retrying:${step.attempt ?? ""}` : step.kind}`;
+
 export function StepLine({
   conversation,
   awaitingApproval,
@@ -238,7 +247,15 @@ export function StepLine({
   awaitingApproval: boolean;
 }) {
   const { t } = useI18n();
-  const step = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
+  const wanted = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
+  // Each attempt is a new state: its own key, so the line says it afresh. A call's is its own, whatever the turn, so
+  // the line and the call's row count its time from the same start.
+  const wantedKey = wanted === undefined ? "" : stepKeyOf(wanted, conversation.turns);
+  // Held steady, so a run of quick calls does not flicker through their names.
+  const held = useSteady(wanted, wantedKey);
+  // A turn that is over is over at once; a line that held on would say the agent still works. A question for the person
+  // is said at once too: it waits for them.
+  const step = wanted === undefined || wanted.kind === "approval" ? wanted : held;
   if (step === undefined) return null;
   const activity = step.kind === "tool" ? activityOf(step.tool) : undefined;
   // A sub-agent at work has its own card that says what it does: the line only says the agent waits for it.
@@ -259,21 +276,13 @@ export function StepLine({
               : activity === "other"
                 ? t("step.other", { name: toolName(t, step.tool) })
                 : t(`step.${activity}`);
-  // Each attempt is a new state: its own key, so the line says it afresh.
-  const stepKey = `${conversation.turns}:${
-    step.kind === "tool"
-      ? `tool:${step.tool.id}`
-      : step.kind === "retrying"
-        ? `retrying:${step.attempt ?? ""}`
-        : step.kind
-  }`;
   return (
     <InlineAiStatus
       // Trying again is the agent at work, said in other words: nothing here for the person to do.
       kind={step.kind === "retrying" ? "working" : step.kind}
       activity={activity}
       label={words}
-      stepKey={stepKey}
+      since={startedAt(stepKeyOf(step, conversation.turns))}
       detail={step.kind === "tool" && !subagent ? <StepDetail tool={step.tool} /> : undefined}
     />
   );

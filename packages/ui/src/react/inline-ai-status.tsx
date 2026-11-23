@@ -15,8 +15,8 @@ export type InlineAiStatusProps = {
   activity?: string | undefined;
   /** Localized status text. */
   label: string;
-  /** Stable key for the current step/tool so the elapsed counter resets cleanly on change. */
-  stepKey: string;
+  /** When the current step started (epoch ms, `startedAt`): the elapsed counter counts from it. */
+  since: number;
   /** Optional live tool detail rendered beside the status label. */
   detail?: ReactNode;
   className?: string;
@@ -33,20 +33,27 @@ export const formatElapsed = (seconds: number, t: Translator["t"]): string => {
     : t("step.elapsedMinutesSeconds", { minutes, seconds: remainder });
 };
 
-function ElapsedTimer() {
+const secondsSince = (since: number): number =>
+  Math.max(0, Math.floor((Date.now() - since) / 1000));
+
+/**
+ * How long something has been at work, from `since` (epoch ms, `startedAt`): so a line drawn again goes on counting.
+ * Nothing for the first second, so quick steps stay quiet. Not for a screen reader: it would hear every tick.
+ */
+export function Elapsed({ since, slot = "step-elapsed" }: { since: number; slot?: string }) {
   const { t } = useI18n();
-  const [elapsed, setElapsed] = useState(0);
+  const [elapsed, setElapsed] = useState(() => secondsSince(since));
   useEffect(() => {
-    const started = performance.now();
+    setElapsed(secondsSince(since));
     const id = setInterval(() => {
-      const next = Math.max(0, Math.floor((performance.now() - started) / 1000));
+      const next = secondsSince(since);
       setElapsed((prev) => (prev === next ? prev : next));
     }, 500);
     return () => clearInterval(id);
-  }, []);
+  }, [since]);
   if (elapsed < 1) return null;
   return (
-    <span data-slot="step-elapsed" aria-hidden="true">
+    <span data-slot={slot} aria-hidden="true">
       {formatElapsed(elapsed, t)}
     </span>
   );
@@ -75,7 +82,7 @@ export function InlineAiStatus({
   kind,
   activity,
   label,
-  stepKey,
+  since,
   detail,
   className,
 }: InlineAiStatusProps) {
@@ -114,7 +121,7 @@ export function InlineAiStatus({
         </motion.span>
         {detail}
       </div>
-      {trackTime ? <ElapsedTimer key={stepKey} /> : null}
+      {trackTime ? <Elapsed since={since} /> : null}
     </div>
   );
 }

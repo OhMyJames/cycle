@@ -15,11 +15,13 @@ import type { Translator } from "../i18n.ts";
 import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import { activityOf, isLive, streamsOf, toolFacts } from "../model/index.ts";
 import { reveal } from "../reveal.ts";
+import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ChevronRightIcon, CloseIcon, FileIcon } from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
+import { Elapsed } from "./inline-ai-status.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -293,6 +295,8 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
           {summary}
         </span>{" "}
         {subagent !== undefined ? <SubagentFacts subagent={subagent} /> : <Facts facts={facts} />}{" "}
+        {/* How long it has been at work, counted from when the page first saw it: the row drawn again goes on. */}
+        {working ? <Elapsed since={startedAt(`tool:${tool.id}`)} slot="tool-elapsed" /> : null}{" "}
         <span data-slot={failed ? "tool-status" : "visually-hidden"}>{statusWord(t, status)}</span>{" "}
         <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
       </CollapsibleTrigger>
