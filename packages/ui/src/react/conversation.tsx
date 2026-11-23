@@ -37,6 +37,7 @@ import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
+import { SubagentCard } from "./subagent.tsx";
 import { ThoughtText, useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
 import { ToolCard } from "./tool.tsx";
@@ -326,6 +327,8 @@ const BlockView = memo(function BlockView({
       return <ThoughtText item={block.item} live={streaming} />;
     case "work":
       return <WorkBlock tools={block.tools} live={live} />;
+    case "subagent":
+      return <SubagentCard tool={block.tool} />;
     case "failed":
       return <ToolCard tool={block.tool} />;
     case "end":

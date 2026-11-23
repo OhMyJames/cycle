@@ -946,3 +946,66 @@ test("a long plan does not lengthen the window: nothing scrolls the header off i
     root.remove();
   }
 });
+
+test("a sub-agent is a card of its own: its task, how it goes, and once back the start of its answer, all of it when opened", async () => {
+  const { user, log, emit } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("s1", "Agent", "in_progress", {
+      description: "Find the flaky test",
+      subagent_type: "Explore",
+      prompt: "Find which test is flaky and why.",
+    }),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-1",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "s1", background: false, lastTool: "Grep" } },
+    }),
+  );
+  const card = await waitFor(() => {
+    const found = log.querySelector<HTMLElement>('[data-kind="subagent"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  expect(card.textContent).toContain("Find the flaky test");
+  expect(card.textContent).toContain("Explore");
+  expect(card.textContent).toContain("using Grep");
+  expect(card.querySelector('[data-slot="subagent-answer"]')).toBeNull();
+  await emit(
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-1",
+      state: { state: "idle", stopReason: "end_turn" },
+      _meta: {
+        "cycle/subagent": {
+          toolCallId: "s1",
+          usage: { tokens: 900, toolUses: 4, durationMs: 12_000 },
+        },
+      },
+    }),
+  );
+  await emit(
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "s1",
+      status: "completed",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "**queue.test.ts** is flaky: it sleeps instead of waiting.",
+          },
+        },
+      ],
+    }),
+  );
+  await waitFor(() => expect(card.textContent).toContain("4 steps"));
+  const preview = card.querySelector('[data-slot="subagent-answer"]') as HTMLElement;
+  // Drawn as markdown, as the reply it is.
+  expect(preview.querySelector('[data-streamdown="strong"]')?.textContent).toBe("queue.test.ts");
+  await user.click(within(card).getByRole("button", { name: "Show the whole answer" }));
+  await waitFor(() => expect(card.textContent).toContain("Find which test is flaky and why."));
+  expect(card.querySelector('[data-slot="subagent-answer"]')).toBeNull();
+});

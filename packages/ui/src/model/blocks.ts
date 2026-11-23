@@ -6,6 +6,7 @@
 //
 // - What the user and the agent say, a plan and a notice are blocks of their own. They cut a turn into stretches.
 // - The tool calls of one stretch share one block (the view draws a card for two or more, a bare row for one).
+// - A call that starts a sub-agent is a block of its own, like a message: it cuts the stretch.
 // - In a turn that did not end normally, the failures of its last stretch are pulled out under it, because they may
 //   be why it stopped. Elsewhere the agent dealt with them, and they stay in the card.
 // - A thought is a block of its own, where its stretch's card is: it never cuts a stretch. Shown only in detailed mode
@@ -67,6 +68,13 @@ export const activityCounts = (
   return [...counts].map(([activity, count]) => ({ activity, count }));
 };
 
+/** Claude's tools that start a sub-agent: "Agent", and "Task" as it was called before. */
+const SUBAGENT_TOOLS: ReadonlySet<string> = new Set(["Agent", "Task"]);
+
+/** A call that started a sub-agent: its name says so from its start, or the sub-agent's own updates did. */
+export const isSubagentCall = (tool: ToolItem): boolean =>
+  tool.subagent !== undefined || SUBAGENT_TOOLS.has(tool.name ?? "");
+
 const FINAL: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
 
 /** A tool call that has not ended. */
@@ -80,6 +88,8 @@ export type LaidBlock = { key: string; turn: number; startsTurn: boolean } & (
   | { kind: "notice"; item: NoticeItem }
   | { kind: "compaction"; item: CompactionItem }
   | { kind: "work"; tools: readonly ToolItem[] }
+  /** A call that started a sub-agent (Claude's Agent tool): its own card. */
+  | { kind: "subagent"; tool: ToolItem }
   /** A failure pulled out from under the card of a turn that stopped. */
   | { kind: "failed"; tool: ToolItem }
   /** How a turn that did not end normally ended. */
@@ -111,6 +121,12 @@ const laidTurn = (
         // The agent changing its plan (ACP's `think`: TodoWrite, TaskCreate, TaskUpdate): the plan says it, not a row per
         // call, from its start (so nothing shows and then goes). One that failed is shown; none cuts a stretch.
         if (item.toolKind === "think" && item.status !== "failed") break;
+        // A sub-agent is work of its own, with its own answer: a card of its own, which cuts the stretch.
+        if (isSubagentCall(item)) {
+          stretch = undefined;
+          add(`subagent:${item.id}`, { kind: "subagent", tool: item });
+          break;
+        }
         if (stretch === undefined) {
           stretch = { key: `work:${item.id}`, tools: [] };
           add(stretch.key, { kind: "work", tools: stretch.tools });

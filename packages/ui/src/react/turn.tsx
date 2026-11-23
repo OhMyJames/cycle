@@ -6,6 +6,7 @@ import {
   activityOf,
   type Conversation,
   isLive,
+  isSubagentCall,
   type Resend,
   type StopReason,
   stepOf,
@@ -244,6 +245,8 @@ export function StepLine({
   const step = awaitingApproval ? ({ kind: "approval" } as const) : stepOf(conversation);
   if (step === undefined) return null;
   const activity = step.kind === "tool" ? activityOf(step.tool) : undefined;
+  // A sub-agent at work has its own card that says what it does: the line only says the agent waits for it.
+  const subagent = step.kind === "tool" && isSubagentCall(step.tool);
   const words =
     step.kind === "approval"
       ? t("step.approval")
@@ -255,9 +258,11 @@ export function StepLine({
             ? step.attempt !== undefined && step.maxRetries !== undefined
               ? t("step.retryingCount", { attempt: step.attempt, max: step.maxRetries })
               : t("step.retrying")
-            : activity === "other"
-              ? t("step.other", { name: toolName(t, step.tool) })
-              : t(`step.${activity}`);
+            : subagent
+              ? t("step.subagent")
+              : activity === "other"
+                ? t("step.other", { name: toolName(t, step.tool) })
+                : t(`step.${activity}`);
   // Each attempt is a new state: its own key, so the line says it afresh.
   const stepKey = `${conversation.turns}:${
     step.kind === "tool"
@@ -273,7 +278,7 @@ export function StepLine({
       activity={activity}
       label={words}
       stepKey={stepKey}
-      detail={step.kind === "tool" ? <StepDetail tool={step.tool} /> : undefined}
+      detail={step.kind === "tool" && !subagent ? <StepDetail tool={step.tool} /> : undefined}
     />
   );
 }

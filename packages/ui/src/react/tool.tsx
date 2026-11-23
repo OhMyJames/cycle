@@ -475,7 +475,7 @@ const TAIL_LINES = 40;
  * A command, an output or an output's errors: sunken, with a button to copy all of it. A long output shows its last
  * lines, and says how many more there are; one click shows the rest.
  */
-function Copyable({ kind, text }: { kind: "command" | "output" | "stderr"; text: string }) {
+export function Copyable({ kind, text }: { kind: "command" | "output" | "stderr"; text: string }) {
   const { t } = useI18n();
   const store = useAppStore();
   const [whole, setWhole] = useState(false);
@@ -533,7 +533,7 @@ function Copyable({ kind, text }: { kind: "command" | "output" | "stderr"; text:
  * What a sub-agent is doing, on the line of the call that started it: what it uses now (or the SDK's line on what it is
  * doing) while it runs, and how much it did when it is done.
  */
-function SubagentFacts({ subagent }: { subagent: NonNullable<ToolItem["subagent"]> }) {
+export function SubagentFacts({ subagent }: { subagent: NonNullable<ToolItem["subagent"]> }) {
   const i18n = useI18n();
   const { t } = i18n;
   const parts: string[] = [];
