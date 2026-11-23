@@ -472,6 +472,8 @@ test("scrolled up, a button takes the reader back to the end, says when somethin
   const root = log.closest('[data-slot="app"]')?.parentElement;
   if (root instanceof HTMLElement) root.style.height = "100%";
   await waitFor(() => expect(log.scrollHeight).toBeGreaterThan(log.clientHeight + 500));
+  // The view settles into its new height (a scroll in the same frame would count as the layout's, not the reader's).
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   log.scrollTop = log.scrollHeight;
   const fromEnd = () => log.scrollHeight - log.scrollTop - log.clientHeight;
   await waitFor(() => expect(fromEnd()).toBeLessThan(2));

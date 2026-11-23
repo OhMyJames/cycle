@@ -214,6 +214,9 @@
   --cycle-accent-foreground: #ffffff;
   --cycle-attention: light-dark(#8a5a00, #f5b82e);
   --cycle-success: light-dark(#1a7f37, #30d158);
+  /* The ground of a line that warns or says what failed, in the hue of its tone: pale in light, deep in dark. */
+  --cycle-attention-soft: light-dark(#fdf4dc, #231b0a);
+  --cycle-destructive-soft: light-dark(#fcecec, #2a1414);
   --cycle-input-border: light-dark(#8b8b93, #63636a);
   --cycle-focus-ring: light-dark(#6b6b75, #8e8e98);
   --cycle-focus-halo: 0 0 0 3px light-dark(rgb(0 0 0 / 7%), rgb(255 255 255 / 9%));
@@ -2339,6 +2342,85 @@ html[data-platform="darwin"]
 
 [data-slot="banner"][data-severity="error"] > svg {
   color: var(--ui-destructive);
+}
+
+/* What is the matter with the page, under its title bar (notice-line.tsx): a line tinted with its tone, the icon
+   in the tone, the words in ink on one line, then what can be done. Lined up with the title bar: the icon where the title starts,
+   the close button under its buttons. */
+[data-slot="notice-stack"] {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+[data-slot="notice-line"] {
+  --notice-tone: var(--cycle-attention);
+  --notice-ground: var(--cycle-attention-soft);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  padding: 0 0.5rem 0 var(--cycle-gap);
+  background: var(--notice-ground);
+  border-block: 1px solid color-mix(in oklab, var(--notice-tone) 14%, var(--notice-ground));
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+  animation: cycle-banner-in var(--cycle-motion-enter) var(--cycle-ease);
+  -webkit-app-region: no-drag;
+}
+
+/* Two lines, one rule between them. */
+[data-slot="notice-line"] + [data-slot="notice-line"] {
+  border-block-start: 0;
+}
+
+[data-slot="notice-line"][data-tone="error"] {
+  --notice-tone: var(--ui-destructive);
+  --notice-ground: var(--cycle-destructive-soft);
+}
+
+[data-slot="notice-line"] > svg {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  color: var(--notice-tone);
+}
+
+[data-slot="notice-line"][data-busy] > svg {
+  animation: cycle-spin 1.2s linear infinite;
+}
+
+/* One line: what does not fit fades out at its end, and the whole of it is its title. Selectable: an error's own words
+   are copied into a report. */
+[data-slot="notice-text"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: var(--cycle-fade-end);
+  user-select: text;
+}
+
+[data-slot="notice-line"] [data-kind="notice-action"] {
+  flex: none;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  color: var(--cycle-ink);
+  font-weight: 500;
+}
+
+[data-slot="notice-line"] [data-kind="notice-dismiss"] {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="notice-line"] :is([data-kind="notice-action"], [data-kind="notice-dismiss"]):hover {
+  background: color-mix(in oklab, var(--notice-tone) 12%, var(--notice-ground));
+  color: var(--cycle-ink);
 }
 
 /* The daemon's banner sits under the title and is one line; the command, when it is shown, wraps below. */

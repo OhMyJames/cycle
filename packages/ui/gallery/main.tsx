@@ -226,6 +226,18 @@ const scenario = async (key: string) => {
       void store.send();
     }
   }
+  if (s.fails !== undefined) {
+    const first = s.sessions?.[0];
+    const words = s.fails;
+    script.bridge.prompt = async () => {
+      throw new Error(words);
+    };
+    await sleep(200);
+    if (first !== undefined) {
+      store.drafts.setText(viewKey(first.environmentId, first.sessionId), "Run the tests again");
+      await store.send();
+    }
+  }
   await sleep(300);
   await s.after?.(root, script.emit);
   await sleep(400);

@@ -70,6 +70,8 @@ export type Scenario = {
   sidePanel?: boolean;
   /** How the account stands (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md). Without it: signed in. */
   account?: AccountStatus;
+  /** A message is sent from the open session and refused in these words: the red line under its title bar. */
+  fails?: string;
   /** Runs once the page has drawn: open a dialog, press a key, or send an event as the app's main process would. */
   after?: (root: HTMLElement, emit: (event: AppEvent) => void) => Promise<void>;
 };
@@ -1747,6 +1749,39 @@ export const scenarios: Record<string, Scenario> = {
     title: "An open session can still take a draft during reconnection",
     sessions: [session("s1", { title: "Fix the remote session" })],
     history: conversation,
+    after: async (_root, emit) => {
+      emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+    },
+  },
+  "notice-error": {
+    title: "What was just done failed: a red line under the title bar, its own words, and Dismiss",
+    sessions: [session("s1", { title: "Fix the remote session" })],
+    history: conversation,
+    fails: "The session is working on a turn. Wait for it to end, or stop it, then send again.",
+  },
+  "notice-away": {
+    title:
+      "The open session's environment went away: an amber line under the title bar, and Connect again",
+    environments: [BUILD],
+    status: [UP("build")],
+    sessions: [session("s1", { environmentId: "build", title: "Fix the remote session" })],
+    history: conversation,
+    after: async (_root, emit) => {
+      emit({
+        type: "environment-status",
+        environmentId: "build",
+        state: "closed",
+        error: "ssh: connect to host build-1 port 22: Connection refused",
+      });
+    },
+  },
+  "notice-both": {
+    title:
+      "A failure while the connection is being retried: two lines, the failure first; a long one stays on one line and fades out at its end",
+    sessions: [session("s1", { title: "Fix the remote session" })],
+    history: conversation,
+    fails:
+      "session/prompt failed: the daemon closed the stream before it answered (ECONNRESET at /home/dev/.cycle/daemon/sock/7f3a9c1e-4b2d-4e8a-9f61-0c5d2b7a8e44.sock, after 30012 ms), so the message was kept in the box and not sent",
     after: async (_root, emit) => {
       emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
     },

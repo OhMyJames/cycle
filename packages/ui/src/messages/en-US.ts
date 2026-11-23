@@ -16,6 +16,7 @@ export const enUS = {
 
   // Environments that are away, and starting a session on one of several
   "session.away": "{environment} · {state}",
+  "notice.connecting": "Connecting to {environment}…",
   "session.awayBanner":
     "{environment} is not connected. This is what the session had when it went away.",
   "defaults.reading": "Reading the defaults…",

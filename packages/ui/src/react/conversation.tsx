@@ -540,6 +540,9 @@ export function ConversationView({
   if (anchor.current !== undefined && blocks[start]?.key !== anchor.current)
     anchor.current = undefined;
   const stuck = useRef(saved === undefined || saved.top === "bottom");
+  // The view's height and place when last seen. A scroll that comes with a change of height and does not go up (a line
+  // under the title bar, the box growing) is the layout's, not the reader's: it does not stop following the end.
+  const lastSeen = useRef({ height: 0, top: 0 });
   const restored = useRef(false);
   const prepending = useRef<{ node: Element; top: number } | null>(null);
   const refocus = useRef(false);
@@ -662,8 +665,11 @@ export function ConversationView({
   following.current.loading = loading;
   useEffect(() => {
     const el = ref.current;
-    if (el === null || typeof ResizeObserver === "undefined") return;
+    if (el === null) return;
+    lastSeen.current = { height: el.clientHeight, top: el.scrollTop };
+    if (typeof ResizeObserver === "undefined") return;
     const keep = new ResizeObserver(() => {
+      lastSeen.current.height = el.clientHeight;
       if (!stuck.current || following.current.loading) return;
       if (performance.now() - acted.current < ACTED_MS) {
         stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_END_PX;
@@ -672,6 +678,8 @@ export function ConversationView({
       el.scrollTop = el.scrollHeight;
     });
     for (const child of Array.from(el.children)) keep.observe(child);
+    // The view itself too: a line that comes under the title bar takes its height from it, and the end stays in view.
+    keep.observe(el);
     const children = new MutationObserver((changes) => {
       for (const change of changes) {
         for (const node of Array.from(change.addedNodes))
@@ -742,6 +750,18 @@ export function ConversationView({
   const onScroll = () => {
     const el = ref.current;
     if (el === null) return;
+    const was = lastSeen.current;
+    lastSeen.current = { height: el.clientHeight, top: el.scrollTop };
+    // The layout moved it, not the reader: the end that was followed is kept in view. A scroll up is the reader's.
+    if (
+      el.clientHeight !== was.height &&
+      el.scrollTop >= was.top &&
+      stuck.current &&
+      !following.current.loading
+    ) {
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
     const fromEnd = el.scrollHeight - el.scrollTop - el.clientHeight;
     setAway(fromEnd > AWAY_PX);
     if (fromEnd < NEAR_END_PX) setFresh(false);
