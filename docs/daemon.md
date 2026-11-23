@@ -142,10 +142,19 @@ bun apps/daemon/src/main.ts proxy  [--data-dir <dir>] [--socket <path>]   # stdi
 bun run --cwd apps/daemon build
 ```
 
-产出 `apps/daemon/dist/cycle-<os>-<arch>/`(和同名 `.tar.gz`,约 220 MB):
+产出 `apps/daemon/dist/cycle-<os>-<arch>/`(和同名 `.tar.gz`):
 
 - `cycle`:daemon 本身,一个可执行文件(`bun build --compile`,约 110 MB,里面带着 Bun 和 Claude 适配)。
 - `claude`:Claude Code 的二进制(约 370 MB,取自 SDK 的平台包),放在它旁边,适配通过 `shippedExecutable("claude")` 找到它。每个带二进制的 agent 都这样放一个，清单见下面"加一个 agent"。
+
+- `codex`：内部 `cycle adapter codex` 驱动的固定版 Codex CLI。Linux 包含配套的 `codex-resources/bwrap`，安装和复制时保留整个目录。
+
+2026-11-23，加入 Codex 0.171.0 后的本地发行包实测（十进制 MB）：
+
+| 平台            | cycle | claude | codex | 完整压缩包 |
+| --------------- | ----: | -----: | ----: | ---------: |
+| macOS ARM64     |    92 |    355 |   298 |        316 |
+| Debian 12 ARM64 |   112 |    372 |   309 |        347 |
 
 2026-11-20，GitHub 原生 Ubuntu 24.04 runner 构建同一提交并用已安装的单文件 daemon 跑通后端集成测试。耗时包含压缩，大小按十进制 MB 计算。[两种架构的构建日志](https://github.com/OhMyJames/Cycle-V1/actions/runs/44699952120)
 

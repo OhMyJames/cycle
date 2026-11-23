@@ -29,11 +29,13 @@ test("every harness has what the daemon reads by its id: a section in config.jso
   const ids = HARNESSES.map((h) => h.id);
   expect(new Set(ids).size).toBe(ids.length);
   for (const harness of HARNESSES) {
-    expect(Object.keys(config)).toContain(harness.id);
+    if (harness.definition) expect(Object.keys(config)).toContain(harness.id);
     if (harness.binary !== undefined) expect(Object.keys(BINARY_SOURCES)).toContain(harness.id);
   }
   // The agents are made in the registry's order: the first is what a session with none named gets.
-  expect(agentsFor(config, dir, { PATH: "/bin" }).map((a) => a.id)).toEqual(ids);
+  expect(agentsFor(config, dir, { PATH: "/bin" }).map((a) => a.id)).toEqual(
+    HARNESSES.filter((h) => h.definition).map((h) => h.id),
+  );
 });
 
 test("a second agent goes the whole way: listed, a session made with it, a prompt answered by its own adapter process, and resumed by the next daemon (CYCL-155)", async () => {

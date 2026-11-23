@@ -39,6 +39,7 @@ jobs:
           D="$RUNNER_TEMP/install/share/cycle"
           test "$(env -i PATH=/usr/bin:/bin "$D/cycle" version)" = "$(jq -r .version ../../desktop/package.json)"
           env -i PATH=/usr/bin:/bin "$D/claude" --version
+          CYCLE_DAEMON_BIN="$D/cycle" bun test ../../../harness/codex/test/integration/adapter.integration.ts
           CYCLE_DAEMON_BIN="$D/cycle" bun run --cwd .. test:integration
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'

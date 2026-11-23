@@ -12,6 +12,7 @@ test("packaged: the bundled daemon, and never Bun or the source", () => {
     "/App/Resources/app/build.json",
     "/App/Resources/app/bin/cycle",
     "/App/Resources/app/bin/claude",
+    "/App/Resources/app/bin/codex",
   );
   expect(
     daemonCommand({

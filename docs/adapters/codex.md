@@ -1,6 +1,18 @@
 # Codex 适配(调研)
 
-状态:调研结论,还没有代码。调研日期 2026-11-23(CYCL-156,属于 epic CYCL-152)。
+## 第一阶段实现（CYCL-194、195）
+
+基线为 2026-11-23 的最新稳定版 **Codex CLI 0.171.0**。构建时由 Bun lockfile 校验官方 npm 平台包，从中取原生 CLI。发行物运行时无需 Node 或 npm。在 daemon 安装目录和桌面包的 `bin` 下均有 `codex`；Linux 还带同版本的 `codex-resources/bwrap`。许可随 `codex-resources/licenses` 一起安装。
+
+内部入口 `cycle adapter codex` 通过 ACP v2 支持 initialize、new、纯文字 prompt、cancel 和 close。一份适配器拥有一个 thread；文字和思考增量、命令、文件变更、搜索和 MCP 工具更新按 item id 关联，回合成功、失败、取消或子进程退出都结束 running 状态。每个 app-server 只接收 `CYCLE_ADAPTER_CONFIG.env` 指定的环境，要求显式提供绝对路径 HOME 和 CODEX_HOME。第一阶段固定 workspace-write、never（沙箱外操作没有审批提权路径）。daemon 的会话列表和登录入口在 CYCL-196/197 接入。
+
+升级时核对 npm 的 latest 与 GitHub 正式 release，在 `harness/codex/package.json` 更新精确版本并运行 `bun install`。用 `bun harness/codex/scripts/generate.ts` 重新提取这一版的协议类型，运行 `bun run format`、`bun run check` 和 `bun run test:integration`。在各目标平台从安装目录运行 Codex 集成套件，并复核沙箱、包体积和上游许可。模拟模型只在 loopback 提供 Responses API，真实账户验收留到后续阶段。
+
+本阶段验证：macOS ARM64 和 Debian 12 ARM64 的安装布局能执行工作区命令，工作区外的同级目录写入被拒；未向 Codex 提供的宿主环境变量在命令进程中不可见。默认限制的 Debian Docker 容器能启动 CLI，但执行命令时内核拒绝 bwrap 创建 namespace。此时应保留错误和失败状态；应用不会自动扩大权限。
+
+## 初始调研（CYCL-156）
+
+以下记录针对调研时的版本。
 
 Codex 指 OpenAI 的 coding agent 命令行(<https://github.com/openai/codex>,Rust,Apache-2.0)。结论一句话:**自己写 `harness/codex`,对 daemon 说 ACP v2,对下驱动随 Cycle 分发、固定版本的 `codex app-server`(stdio 上的 JSON-RPC);登录隔离在 `CODEX_HOME=<数据目录>/codex`。**
 

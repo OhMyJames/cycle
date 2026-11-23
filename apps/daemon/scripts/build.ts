@@ -6,6 +6,7 @@
 // plus a .tar.gz of it. The machine needs nothing else: no Bun, no Node, no `claude` on PATH.
 import { chmod, cp, mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { vendorDirectory } from "../../../harness/codex/src/binary.ts";
 import { HARNESSES } from "../src/harnesses.ts";
 import { BINARY_SOURCES } from "./binaries.ts";
 
@@ -43,6 +44,11 @@ for (const { name: file, from } of binaries) {
   await cp(from, join(out, file));
   await chmod(join(out, file), 0o755);
 }
+await cp(join(root, "../../harness/codex/licenses"), join(out, "codex-resources/licenses"), {
+  recursive: true,
+});
+if (process.platform === "linux")
+  await cp(join(vendorDirectory(), "codex-resources/bwrap"), join(out, "codex-resources/bwrap"));
 await cp(join(root, "scripts/install.sh"), join(out, "install.sh"));
 await chmod(join(out, "install.sh"), 0o755);
 await chmod(join(out, "cycle"), 0o755);

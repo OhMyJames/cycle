@@ -33,7 +33,7 @@ cycle-v1 是 ADE(agentic development environment),是 cycle 的重写。这是�
 - `bun run check`:门禁,提交前必须通过(pre-commit 钩子会运行它)。依次检查边界、类型、lint、测试。
 - `bun run test:browser`(根目录):界面测试,在无界面的 Chromium 里跑(`packages/ui/test/browser`),不在门禁里(约 23 秒、2 GB),CI 的 `browser` 作业每次跑。改了界面,提交前自己跑一次。
 - `bun run format`:格式化并修复可自动修复的 lint。
-- `bun run test:integration`(根目录):集成测试,串行跑 6 个套件(Node 下的客户端、Claude 适配、真实 ssh、整个后端、打包后的应用、浏览器里的端到端),每个套件有自己的时限。每次全跑,不按改动挑选(见 `.agents/notes/2026-11-21-integration-runs-every-suite.md`),清单在 `scripts/integration-suites.ts`。它们会启动真实进程(Claude、daemon、打包后的 Electron 应用,Linux 上在 xvfb 下,macOS 上窗口隐藏、不抢焦点;以及无界面的 Chromium),最重的约 1.5 GB,所以不在门禁里。`bun run test:integration web` 只跑名字里有 web 的。需要真实模型的运行必须显式开启:`CYCLE_REAL_MODEL_TOKEN=... bun run test:real`(在 `harness/claude` 下;daemon 层的在 `apps/daemon` 下用 `test:real:daemon`),token 只给 Claude 进程,不要从环境里继承,不要进 CI。
+- `bun run test:integration`(根目录):集成测试,串行跑 7 个套件(Node 下的客户端、Claude 和 Codex 适配、真实 ssh、整个后端、打包后的应用、浏览器里的端到端),每个套件有自己的时限。每次全跑,不按改动挑选(见 `.agents/notes/2026-11-21-integration-runs-every-suite.md`),清单在 `scripts/integration-suites.ts`。它们会启动真实进程(Claude、daemon、打包后的 Electron 应用,Linux 上在 xvfb 下,macOS 上窗口隐藏、不抢焦点;以及无界面的 Chromium),最重的约 1.5 GB,所以不在门禁里。`bun run test:integration web` 只跑名字里有 web 的。需要真实模型的运行必须显式开启:`CYCLE_REAL_MODEL_TOKEN=... bun run test:real`(在 `harness/claude` 下;daemon 层的在 `apps/daemon` 下用 `test:real:daemon`),token 只给 Claude 进程,不要从环境里继承,不要进 CI。
 - `bun run build`(根目录):构建 daemon 的单文件可执行(约 40 秒,峰值内存约 0.25 GB,产出约 480 MB)和桌面端;`bun run start` 启动桌面端。真实模型的 `test:real` 在 `apps/daemon` 和 `apps/desktop` 下也有,要先 build。
 - 目标机器是 2 核 4 GB:门禁在开发机上约 14 秒(2 核上会更慢)、峰值约 0.5 GB;不要把重的东西加进门禁,也不要并行跑集成套件。
 - 测试里的等待要有上限:单个测试的超时是它该有的时间,不是"够长就行"。挂住的测试几十秒内必须失败。

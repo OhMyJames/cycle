@@ -12,6 +12,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "catalog:",
     "@cycle/client": "workspace:*",
+    "@cycle/harness-codex": "workspace:*",
     "@cycle/harness-claude": "workspace:*",
     "@cycle/protocol": "workspace:*",
     "@xterm/addon-serialize": "0.14.0",

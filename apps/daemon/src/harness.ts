@@ -30,7 +30,8 @@ export type Harness = {
   runAdapter: () => Promise<void>;
   /** The file name its own binary is shipped under, beside the daemon. Absent: it ships none. */
   binary?: string;
-  definition: (context: HarnessContext) => AgentDefinition;
+  /** Absent while only the packaged internal adapter is available. */
+  definition?: (context: HarnessContext) => AgentDefinition;
   /** Its own command line, run with the environment the daemon gives the agent. Absent: it has none to run. */
   cli?: {
     /** The binary to run: the shipped one, else the machine's. */

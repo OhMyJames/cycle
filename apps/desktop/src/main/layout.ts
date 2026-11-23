@@ -12,7 +12,7 @@ export const BUILD_FILE = "build.json";
 /** The daemon, compiled to one executable, with each agent's own binary beside it (the daemon looks there). */
 export const DAEMON_BIN = "bin/cycle";
 /** One for each agent that ships a binary: what the daemon's build makes (a test holds the two lists together). */
-export const AGENT_BINS = ["bin/claude"] as const;
+export const AGENT_BINS = ["bin/claude", "bin/codex"] as const;
 /** The built main process, preload and page, laid out as `apps/desktop/dist` is. */
 export const DIST_DIR = "dist";
 export const MAIN = `${DIST_DIR}/main.mjs`;
