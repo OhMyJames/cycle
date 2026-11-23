@@ -245,6 +245,8 @@ export const EVENTS = {
    * not only the task and the answer. `running`: the sub-agent was still at work.
    */
   subagent_opened: o({ work: z.boolean(), running: z.boolean() }),
+  /** The whole of the task a sub-agent was given, past the three lines its open card shows (CYCL-217). */
+  subagent_task_expanded: o({}),
   plan_opened: o({}),
   /**
    * The composer's context ring opened into its details. `state`: what it had to show, a number measured now, none
@@ -354,6 +356,7 @@ export const UI_EVENTS = [
   "tool_copied",
   "tool_output_expanded",
   "subagent_opened",
+  "subagent_task_expanded",
   "plan_opened",
   "context_details_opened",
   "tool_link_opened",

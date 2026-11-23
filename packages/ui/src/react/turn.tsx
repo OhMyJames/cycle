@@ -19,6 +19,7 @@ import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, WarningIcon } from "./icons.tsx";
 import { Elapsed, InlineAiStatus } from "./inline-ai-status.tsx";
+import { useLoaderClaim } from "./loader-claim.ts";
 import { useStartScope } from "./start-scope.ts";
 import { useSteady } from "./steady.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -291,6 +292,8 @@ export function StepLine({
   const since = going ? startedAt(`${session}:turn:${conversation.turns}`) : 0;
   // Held steady, so a run of quick calls does not flicker between the quiet line and words.
   const [step] = useSteady(wanted, wanted === undefined ? "" : stepKeyOf(wanted), urgent);
+  // Speaking, the line holds the conversation's one loader before any sub-agent's card (loader-claim.ts).
+  useLoaderClaim("step-line", step !== undefined && !rowAtWork(step), Number.NEGATIVE_INFINITY);
   if (step === undefined) return null;
   const quiet = rowAtWork(step);
   const label = quiet

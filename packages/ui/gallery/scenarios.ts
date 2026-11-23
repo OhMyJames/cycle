@@ -146,6 +146,53 @@ const diff = (path: string, created: boolean, hunks: string) => ({
 const idle = (extra: object = {}) => u({ sessionUpdate: "state_update", state: "idle", ...extra });
 const running = () => u({ sessionUpdate: "state_update", state: "running" });
 
+/** The local daemon, able to stop one sub-agent alone (CYCL-143): a sub-agent at work shows its Stop button. */
+const STOPS: EnvironmentStatus = {
+  ...UP("local"),
+  capabilities: { queue: true, files: true, folders: true, stopSubagent: true },
+};
+/** What the agent says of sub-agent `id`, of call `call`: at work (and can be stopped), or how it ended. */
+const subagentNews = (
+  id: string,
+  call: string,
+  state: "running" | "end_turn" | "error" | "cancelled",
+  meta: object,
+) =>
+  u({
+    sessionUpdate: "subagent_update",
+    sessionId: id,
+    state: state === "running" ? { state: "running" } : { state: "idle", stopReason: state },
+    ...(state === "running" ? { capabilities: { cancel: {} } } : {}),
+    _meta: { "cycle/subagent": { toolCallId: call, background: false, ...meta } },
+  });
+/** Something sub-agent `id` said or called, in its own conversation (CYCL-134). */
+const child = (id: string, update: object) =>
+  u({ sessionUpdate: "_cycle/child_update", childId: id, update });
+/** `count` finished calls a sub-agent made in a row. */
+const childTools = (
+  id: string,
+  prefix: string,
+  count: number,
+  name: string,
+  kind: string,
+  input: (n: number) => object,
+) =>
+  Array.from({ length: count }, (_, n) => [
+    child(id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: `${prefix}${n}`,
+      name,
+      kind,
+      status: "pending",
+    }),
+    child(id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: `${prefix}${n}`,
+      status: "completed",
+      rawInput: input(n),
+    }),
+  ]).flat();
+
 const MARKDOWN = [
   "The build fails in two places. Both come from the same change.",
   "",
@@ -1647,7 +1694,9 @@ export const scenarios: Record<string, Scenario> = {
     ],
   },
   subagents: {
-    title: "Sub-agents as cards of their own: one at work, one back with the start of its answer",
+    title:
+      "Sub-agents as cards, closed as they start: one back with the start of its answer, one at work with the loader, what it does and Stop",
+    status: [STOPS],
     sessions: [session("s1", { state: "running", title: "Find the flaky test" })],
     history: [
       you("u1", "Find out why CI is flaky and check the cache settings."),
@@ -1667,29 +1716,181 @@ export const scenarios: Record<string, Scenario> = {
           ),
         },
       ),
-      u({
-        sessionUpdate: "subagent_update",
-        sessionId: "task-1",
-        state: { state: "idle", stopReason: "end_turn" },
-        _meta: {
-          "cycle/subagent": {
-            toolCallId: "a1",
-            usage: { tokens: 18200, toolUses: 9, durationMs: 41000 },
-          },
-        },
+      subagentNews("task-1", "a1", "end_turn", {
+        usage: { tokens: 18200, toolUses: 9, durationMs: 41000 },
       }),
       ...tool("a2", "Agent", "in_progress", {
         description: "Check the cache settings",
         subagent_type: "general-purpose",
         prompt: "Check whether CI caches node_modules between runs.",
       }),
+      subagentNews("task-2", "a2", "running", { lastTool: "Read" }),
+    ],
+  },
+  "subagents-parallel": {
+    title:
+      "Sub-agents side by side, each its own card: two at work (one loader in the conversation, a still ring on the other), one in the background, one failed, one stopped",
+    status: [STOPS],
+    sessions: [session("s1", { state: "running", title: "Audit the daemon" })],
+    history: [
+      you("u1", "Audit the daemon: the queue, the logs and the socket."),
+      running(),
+      ...tool("p1", "Agent", "in_progress", {
+        description: "Read the queue code",
+        subagent_type: "Explore",
+        prompt: "Read apps/daemon/src/queue.ts and say how it orders work.",
+      }),
+      subagentNews("task-p1", "p1", "running", { lastTool: "Grep" }),
+      ...tool("p2", "Agent", "in_progress", {
+        description: "Check how logs are kept",
+        subagent_type: "general-purpose",
+        prompt: "Find where the daemon writes its logs and how long it keeps them.",
+      }),
+      subagentNews("task-p2", "p2", "running", {
+        summary: "Reading the log rotation settings",
+        usage: { tokens: 3100, toolUses: 3, durationMs: 0 },
+      }),
+      ...tool("p3", "Agent", "completed", {
+        description: "Watch the socket under load",
+        subagent_type: "general-purpose",
+        prompt: "Run the load script and watch the socket for dropped frames.",
+      }),
+      subagentNews("task-p3", "p3", "running", { background: true, lastTool: "Bash" }),
+      ...tool("p4", "Agent", "failed", {
+        description: "Profile the start-up",
+        subagent_type: "general-purpose",
+        prompt: "Profile how long the daemon takes to start.",
+      }),
       u({
-        sessionUpdate: "subagent_update",
-        sessionId: "task-2",
-        state: { state: "running" },
-        _meta: { "cycle/subagent": { toolCallId: "a2", background: false, lastTool: "Read" } },
+        sessionUpdate: "tool_call_update",
+        toolCallId: "p4",
+        content: text("Agent failed: the profiler could not attach to the daemon (EPERM)."),
+      }),
+      subagentNews("task-p4", "p4", "error", {
+        usage: { tokens: 900, toolUses: 2, durationMs: 8000 },
+      }),
+      ...tool("p5", "Agent", "in_progress", {
+        description: "Count the open sockets",
+        subagent_type: "Explore",
+        prompt: "Count the sockets the daemon keeps open.",
+      }),
+      subagentNews("task-p5", "p5", "cancelled", {
+        usage: { tokens: 400, toolUses: 1, durationMs: 4000 },
       }),
     ],
+  },
+  "subagents-open": {
+    title:
+      "A sub-agent's card opened: the task in three lines, what it did as a compact timeline, and its result last",
+    sessions: [session("s1", { title: "Find the flaky test" })],
+    history: [
+      you("u1", "Find out why CI is flaky."),
+      running(),
+      ...done(
+        "o1",
+        "Agent",
+        {
+          description: "Find the flaky test",
+          subagent_type: "Explore",
+          prompt: [
+            "Find which test in apps/daemon fails now and then, and why.",
+            "Look at the last twenty CI runs first: the failures are in the `test` job, never in `lint`.",
+            "Read the tests that failed, then the code they test. Do not change anything.",
+            "Say which test it is, why it is flaky, and how to fix it, in a few lines.",
+          ].join("\n"),
+        },
+        {
+          content: text(
+            "**`queue.test.ts` › hands back in order** is flaky. It sleeps 50 ms instead of waiting for the queue to drain.\n\nFix: await `queue.idle()` before the assertion.",
+          ),
+        },
+      ),
+      subagentNews("task-o1", "o1", "running", {}),
+      child("task-o1", {
+        sessionUpdate: "agent_message",
+        messageId: "c1",
+        content: [{ type: "text", text: "Looking at the last twenty CI runs first." }],
+      }),
+      ...childTools("task-o1", "c-run", 2, "Bash", "execute", (n) => ({
+        command: `gh run view ${4100 + n} --log-failed`,
+      })),
+      child("task-o1", {
+        sessionUpdate: "agent_message",
+        messageId: "c2",
+        content: [
+          {
+            type: "text",
+            text: "All seven failures are the same test, `hands back in order`. Reading it and the queue.",
+          },
+        ],
+      }),
+      ...childTools("task-o1", "c-read", 4, "Read", "read", (n) => ({
+        file_path: ["test/queue.test.ts", "src/queue.ts", "src/worker.ts", "src/clock.ts"][n],
+      })),
+      subagentNews("task-o1", "o1", "end_turn", {
+        usage: { tokens: 18200, toolUses: 6, durationMs: 41000 },
+      }),
+      idle({ stopReason: "end_turn" }),
+    ],
+    after: async (root) => {
+      const head = root.querySelector<HTMLElement>('[data-kind="subagent"] > button');
+      head?.click();
+      await until(
+        () => root.querySelector('[data-slot="subagent-work"]') !== null,
+        "the sub-agent's work",
+      );
+      (document.activeElement as HTMLElement | null)?.blur();
+      await frames(4);
+    },
+  },
+  "subagents-long": {
+    title:
+      "A sub-agent at work with a very long title, the whole of a very long task, and a very long process: nothing leaves the card",
+    status: [STOPS],
+    sessions: [session("s1", { state: "running", title: "Survey the repository" })],
+    history: [
+      you("u1", "Survey every package."),
+      running(),
+      ...tool("l1", "Agent", "in_progress", {
+        description:
+          `Survey every package and say what each one exports, ${"and which of those are used ".repeat(3)}`.trim(),
+        subagent_type: "a-very-long-custom-agent-type-name-that-goes-on",
+        prompt: Array.from(
+          { length: 18 },
+          (_, n) =>
+            `${n + 1}. Read ${LONG_PATH.slice(0, 60 + n * 4)} and list what it exports, then search for each export.`,
+        ).join("\n"),
+      }),
+      subagentNews("task-l1", "l1", "running", { lastTool: "Read" }),
+      ...Array.from({ length: 12 }, (_, n) => [
+        child("task-l1", {
+          sessionUpdate: "agent_message",
+          messageId: `w${n}`,
+          content: [
+            {
+              type: "text",
+              text: `Package ${n + 1} of 24: reading its index and searching for its exports across the repository.`,
+            },
+          ],
+        }),
+        ...childTools("task-l1", `w${n}-r`, 3, "Read", "read", (k) => ({
+          file_path: `packages/p${n + 1}/src/${["index", "api", "types"][k]}.ts`,
+        })),
+      ]).flat(),
+    ],
+    after: async (root) => {
+      root.querySelector<HTMLElement>('[data-kind="subagent"] > button')?.click();
+      await until(
+        () => root.querySelector('[data-slot="subagent-prompt"]') !== null,
+        "the sub-agent's task",
+      );
+      await frames(2);
+      [...root.querySelectorAll<HTMLElement>('[data-slot="subagent-more"]')]
+        .find((b) => b.textContent === "Show the whole task")
+        ?.click();
+      (document.activeElement as HTMLElement | null)?.blur();
+      await frames(4);
+    },
   },
   "permission-edit": {
     title: "An edit waits for a decision: the change it would make is shown before it is answered",
