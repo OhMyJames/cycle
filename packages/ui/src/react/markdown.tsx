@@ -1,4 +1,5 @@
 import { createCodePlugin } from "@streamdown/code";
+import { useReducedMotion } from "motion/react";
 import type { ComponentProps, ReactElement, ReactNode } from "react";
 import {
   cloneElement,
@@ -10,7 +11,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { defaultRehypePlugins, Streamdown, useIsCodeFenceIncomplete } from "streamdown";
+import {
+  type AnimateOptions,
+  defaultRehypePlugins,
+  Streamdown,
+  useIsCodeFenceIncomplete,
+} from "streamdown";
 import { type CodeThemeId, codeTheme, themesOf } from "../code-theme.ts";
 import { mendStreaming } from "../markdown-mend.ts";
 import { AgentLink } from "./agent-link.tsx";
@@ -185,8 +191,29 @@ const CONTROLS = {
   image: false,
 };
 
+/**
+ * New words fade in a character at a time, so a batch of a few or a few dozen reads as flowing rather than jumping in.
+ * Characters, not words, since Chinese has no spaces. What waits to fade is never more than 200ms behind, so a fast
+ * model is not held back by it.
+ */
+const FADE: AnimateOptions = {
+  animation: "fadeIn",
+  sep: "char",
+  duration: 160,
+  stagger: 6,
+  maxBacklogMs: 200,
+};
+
+/** At most this much text when it is first drawn, and a reply is one just begun: a batch is far less. */
+const FIRST_BATCH = 200;
+
 export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const theme = useSyncExternalStore(codeTheme.subscribe, codeTheme.get, codeTheme.get);
+  const reduced = Boolean(useReducedMotion());
+  // Only a reply seen from its start fades in. One drawn again mid-way (the session opened again, the window scrolled
+  // back to it) shows what it has at once: Streamdown would count all of it as new and fade it all in. Decided once, so
+  // the end of the reply changes nothing in how its blocks are drawn.
+  const [fresh] = useState(() => streaming && text.length <= FIRST_BATCH);
   return (
     <Streaming.Provider value={streaming}>
       <Streamdown
@@ -194,6 +221,7 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
         data-markdown=""
         mode="streaming"
         isAnimating={streaming}
+        animated={fresh && !reduced ? FADE : false}
         parseIncompleteMarkdown={streaming}
         codeBlockMaxHeight="none"
         tableMaxHeight="none"

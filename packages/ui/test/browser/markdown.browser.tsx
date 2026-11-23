@@ -253,3 +253,21 @@ test("a reply's blocks are 12px apart whatever they are, paragraphs and code ali
     (first as HTMLElement).getBoundingClientRect().bottom;
   expect(gap).toBe(12);
 });
+
+test("a reply seen from its start fades its new words in; one drawn again mid-way shows what it has at once", async () => {
+  const begun = render(<Markdown text="Hel" streaming />);
+  begun.rerender(<Markdown text="Hello, and more words" streaming />);
+  await waitFor(() =>
+    expect(begun.container.querySelectorAll("[data-sd-animate]").length).toBeGreaterThan(0),
+  );
+  // The paragraph is the same element when the reply ends: only the words were wrapped.
+  const paragraph = begun.container.querySelector("p");
+  begun.rerender(<Markdown text="Hello, and more words." />);
+  await waitFor(() => expect(begun.container.textContent).toContain("words."));
+  expect(begun.container.querySelector("p")).toBe(paragraph);
+  cleanup();
+  const resumed = render(<Markdown text={"Long already. ".repeat(30)} streaming />);
+  resumed.rerender(<Markdown text={`${"Long already. ".repeat(30)}More.`} streaming />);
+  await waitFor(() => expect(resumed.container.textContent).toContain("More."));
+  expect(resumed.container.querySelectorAll("[data-sd-animate]")).toHaveLength(0);
+});
