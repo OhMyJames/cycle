@@ -847,6 +847,7 @@ function AppWindow() {
       <div data-slot="app-body" hidden={pageOpen} inert={pageOpen}>
         <SplitLayout
           controller={layout}
+          panelOf={panelKey}
           panel={
             panelKey !== undefined && sidePanel?.open === true
               ? {
@@ -963,7 +964,7 @@ function AppWindow() {
                       }}
                     >
                       <Tip label={t("session.actions")} side="bottom">
-                        <MenuTrigger data-variant="ghost">
+                        <MenuTrigger data-variant="ghost" data-kind="session-more">
                           <MoreIcon />
                         </MenuTrigger>
                       </Tip>

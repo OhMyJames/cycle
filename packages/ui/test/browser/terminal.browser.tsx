@@ -1,5 +1,6 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { FitAddon } from "@xterm/addon-fit";
+import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { TerminalInfo, TerminalProblem } from "../../src/api.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
@@ -106,6 +107,41 @@ test("the Terminal button opens a shell in a tab of its own, with the keyboard i
   await user.click(screen.getByRole("button", { name: "Hide terminal" }));
   await waitFor(() => expect(document.querySelector('[data-slot="side-panel"]')).toBeNull());
   expect(script.named("detachTerminal").length).toBeGreaterThan(0);
+});
+
+test("a terminal in a panel that is opening is measured at the panel's width, not again on every frame", async () => {
+  const fits = vi.spyOn(FitAddon.prototype, "fit");
+  try {
+    const { user } = await mount({ terminals: new Map([["s1", [running("t1")]]]) });
+    await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+    const host = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-slot="terminal-screen"]');
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    // Through the whole slide, a frame at a time: the screen keeps one size, so what fits it to the panel is not woken.
+    let resized = 0;
+    const watch = new ResizeObserver(() => resized++);
+    watch.observe(host);
+    const widths = new Set<number>();
+    let frames = 0;
+    const until = performance.now() + 300;
+    while (performance.now() < until) {
+      widths.add(host.clientWidth);
+      frames++;
+      await new Promise((done) => requestAnimationFrame(done));
+    }
+    watch.disconnect();
+    expect(widths.size).toBe(1);
+    // The first call is the observer's own, on being given the element.
+    expect(resized).toBe(1);
+    await waitFor(() => expect(screenText()).toContain("screen of t1"));
+    // A handful, when it is shown, its font comes in and the daemon's screen is written; not one a frame.
+    expect(frames).toBeGreaterThan(10);
+    expect(fits.mock.calls.length).toBeLessThan(frames / 2);
+  } finally {
+    fits.mockRestore();
+  }
 });
 
 test("New terminal opens another; closing a tab ends its shell and shows the one before it", async () => {

@@ -925,6 +925,19 @@ html[data-platform="darwin"] [data-slot="page-heading"] {
   height: 100%;
   min-width: 0;
   background: var(--cycle-surface-sidebar);
+  /* Opened or closed by the user, it slides a little from the edge it lives on and fades (CYCL-213; the SDK's presence
+     sets the starting and ending styles, split-layout.tsx). Its column takes its width at once, not a frame at a time:
+     moving the width would reflow the conversation and resize a terminal in the panel on every frame, so only
+     transform and opacity move (motion.md). A transition, not an animation, so the panel shown again after a page
+     that hid it does not arrive again. */
+  transition:
+    opacity var(--cycle-motion-disclosure) var(--cycle-ease),
+    transform var(--cycle-motion-disclosure) var(--cycle-ease);
+}
+
+[data-slot="side-panel"]:is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+  transform: translateX(0.5rem);
 }
 
 [data-kind="panel-tabs"] {
@@ -1099,6 +1112,18 @@ html[data-platform="darwin"] [data-slot="page-heading"] {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  transition: opacity var(--cycle-motion-state) var(--cycle-ease);
+}
+
+/* A tab's content fades in as it is chosen (the SDK's starting style), so a switch reads as one view taking the
+   other's place; opacity only, so a terminal shown is measured once (CYCL-213). The one it replaces goes at once:
+   kept while it faded, the two would stand one above the other. */
+[data-kind="panel-tabs"] > [data-slot="tabs-panel"][data-starting-style] {
+  opacity: 0;
+}
+
+[data-kind="panel-tabs"] > [data-slot="tabs-panel"]:not([data-selected]) {
+  display: none;
 }
 
 /* The Files tab (CYCL-92): a head with where it is and its actions, then the tree, or the file shown in its place. The
@@ -2697,6 +2722,7 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
 
 [data-kind="sidebar-toggle"],
 [data-kind="settings-open"],
+[data-kind="session-more"],
 [data-kind="panel-toggle"] {
   flex: none;
   width: 1.75rem;
@@ -2784,9 +2810,11 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   color: var(--ui-destructive);
 }
 
+/* The actions at the end: close together, so they read as one group (CYCL-213). */
 [data-slot="session-header"] [data-slot="row"] {
   flex: none;
   flex-wrap: nowrap;
+  gap: 0.25rem;
 }
 
 [data-destructive] {
