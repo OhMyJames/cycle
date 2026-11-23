@@ -9,12 +9,16 @@ import {
   DEFAULT_EFFORT_LEVEL,
   DEFAULT_PERMISSION_MODE,
 } from "@cycle/harness-claude";
+import { runAdapter } from "@cycle/harness-claude/run";
 import { META } from "@cycle/protocol";
-import type { AgentDefinition } from "./agents.ts";
 import type { Config } from "./config.ts";
-import type { Logger } from "./logger.ts";
+import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
-import { claudeExecutable, selfCommand } from "./self.ts";
+import { shippedExecutable } from "./self.ts";
+
+/** The name the Claude Code binary is shipped under, beside the daemon. */
+const BINARY = "claude";
+const claudeExecutable = () => shippedExecutable(BINARY);
 
 export const CLAUDE_CONFIG_SCHEMA = {
   type: "object",
@@ -74,36 +78,43 @@ export const claudeEnv = (
   return { ...env, ...config.env };
 };
 
-export const agentsFor = (
-  config: Config,
-  dataDir: string,
-  inherited: Record<string, string | undefined> = process.env,
-  log?: Logger,
-): AgentDefinition[] => [
-  processAgent({
-    id: "claude",
-    name: "Claude",
-    configSchema: CLAUDE_CONFIG_SCHEMA,
-    promptCapabilities: CLAUDE_PROMPT_CAPABILITIES,
-    steer: true,
-    // In the executable, the Claude binary shipped beside it must be there: say so now, not on the first prompt.
-    available: () => claudeExecutable() === undefined || existsSync(claudeExecutable() as string),
-    command: [...selfCommand(), "adapter", "claude"],
-    // Claude's own command line, with what a Claude session gets and nothing more, in a folder that is no project.
-    plugins: new ClaudePlugins({
-      executable: claudeExecutable(),
-      env: { PATH: inherited.PATH ?? "", ...claudeEnv(config.claude, dataDir, inherited) },
-      cwd: join(dataDir, "plugins", "claude"),
-    }),
-    ...(log !== undefined ? { log } : {}),
-    env: {
-      PATH: inherited.PATH ?? "",
-      CYCLE_ADAPTER_CONFIG: JSON.stringify({
-        env: claudeEnv(config.claude, dataDir, inherited),
-        warmStart: config.claude.warmStart,
-        progressSummaries: config.claude.progressSummaries,
-        ...(claudeExecutable() !== undefined ? { claudeExecutable: claudeExecutable() } : {}),
+export const claudeHarness: Harness = {
+  id: "claude",
+  name: "Claude",
+  runAdapter,
+  binary: BINARY,
+  cli: {
+    executable: () => claudeExecutable() ?? Bun.which("claude") ?? undefined,
+    env: ({ config, dataDir, inherited }) => claudeEnv(config.claude, dataDir, inherited),
+    login: ["auth", "login"],
+  },
+  definition: ({ config, dataDir, inherited, self, log }) =>
+    processAgent({
+      id: "claude",
+      name: "Claude",
+      configSchema: CLAUDE_CONFIG_SCHEMA,
+      promptCapabilities: CLAUDE_PROMPT_CAPABILITIES,
+      steer: true,
+      // In the executable, the Claude binary shipped beside it must be there: say so now, not on the first prompt.
+      available: () => claudeExecutable() === undefined || existsSync(claudeExecutable() as string),
+      // Each session has a process of its own once it is made (decision 0014): this many may wait for a first prompt.
+      ...(config.claude.warmStart ? { maxAhead: config.claude.maxWarm } : {}),
+      command: [...self, "adapter", "claude"],
+      // Claude's own command line, with what a Claude session gets and nothing more, in a folder that is no project.
+      plugins: new ClaudePlugins({
+        executable: claudeExecutable(),
+        env: { PATH: inherited.PATH ?? "", ...claudeEnv(config.claude, dataDir, inherited) },
+        cwd: join(dataDir, "plugins", "claude"),
       }),
-    },
-  }),
-];
+      ...(log !== undefined ? { log } : {}),
+      env: {
+        PATH: inherited.PATH ?? "",
+        CYCLE_ADAPTER_CONFIG: JSON.stringify({
+          env: claudeEnv(config.claude, dataDir, inherited),
+          warmStart: config.claude.warmStart,
+          progressSummaries: config.claude.progressSummaries,
+          ...(claudeExecutable() !== undefined ? { claudeExecutable: claudeExecutable() } : {}),
+        }),
+      },
+    }),
+};

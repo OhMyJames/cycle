@@ -1,9 +1,9 @@
 import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { agentsFor } from "./claude-agent.ts";
 import { type Config, ConfigSchema, loadConfig, type Paths } from "./config.ts";
 import { Daemon, defaultTerminals } from "./daemon.ts";
+import { agentsFor } from "./harnesses.ts";
 import { errorText, type FileLogger, fileLogger } from "./logger.ts";
 import { listenUnix } from "./transport/server.ts";
 import { VERSION } from "./version.ts";
@@ -56,7 +56,6 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       version: VERSION,
       log,
       terminals: defaultTerminals(process.env, config.terminal),
-      ...(config.claude.warmStart ? { maxAheadAgents: config.claude.maxWarm } : {}),
       ...(agentIdleMs !== undefined ? { agentIdleMs } : {}),
     });
     let clients = 0;

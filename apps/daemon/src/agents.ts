@@ -20,6 +20,11 @@ export type AgentDefinition = {
   /** It takes a prompt into the turn that is running (`_meta["cycle/steer"]`, docs/protocol.md §8). */
   steer?: boolean;
   available?: () => boolean | Promise<boolean>;
+  /**
+   * How many of its sessions may hold a process that has had no prompt yet; past it the oldest such is let go
+   * (decision 0014). Counted among this agent's sessions only. No limit when absent.
+   */
+  maxAhead?: number;
   /** Its plugins, when it has them (docs/protocol.md §15). */
   plugins?: PluginProvider;
   launch: () => Promise<AgentTarget>;

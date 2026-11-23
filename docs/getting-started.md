@@ -31,7 +31,7 @@ daemon 启动 Claude 时**不继承**你 shell 的环境变量(防止你环境�
 { "claude": { "env": { "ANTHROPIC_API_KEY": "<key>" } } }
 ```
 
-**C. 在 daemon 的机器上登录**:`cycle login`(应用自带的在 `Cycle.app/Contents/Resources/app/bin/cycle`)。登录信息存在 `<数据目录>/claude`,不会碰你的 `~/.claude`。这一条需要浏览器完成 OAuth,还没有在真实账号上完整验证过。
+**C. 在 daemon 的机器上登录**:`cycle login`(等同于 `cycle login claude`;应用自带的在 `Cycle.app/Contents/Resources/app/bin/cycle`)。登录信息存在 `<数据目录>/claude`,不会碰你的 `~/.claude`。这一条需要浏览器完成 OAuth,还没有在真实账号上完整验证过。
 
 写完请收紧权限:`chmod 600 ~/.cycle/config.json`。其他可选项(模型、已有的 Claude 配置目录、环境白名单)见 [daemon.md](daemon.md)。
 

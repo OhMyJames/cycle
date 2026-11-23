@@ -153,13 +153,6 @@ export type DaemonOptions = {
   /** What this build is, told to every client that connects. Default `dev`: not a release. */
   version?: string;
   /**
-   * How many sessions may have an agent running that has not been given a prompt yet. Past it, a new session
-   * lets go of the oldest such agent: the next prompt starts one again. For an agent that is started when its
-   * session is made (decision 0014), where each session has a process of its own and no agent can see the others.
-   * No limit when it is not given.
-   */
-  maxAheadAgents?: number;
-  /**
    * How long a session's agent may sit with nothing to do and nobody attached before it is let go (`reclaimIdleAgents`):
    * the process ends, the session stays, and its next prompt starts and resumes one. Never, when not given.
    */
@@ -304,7 +297,6 @@ export class Daemon {
   readonly #connectors: ConnectorService;
   readonly #plugins: PluginService;
   readonly #terminals: Terminals;
-  readonly #maxAhead: number | undefined;
   readonly #agentIdleMs: number | undefined;
   readonly #now: () => number;
   /** When the daemon started, or a client last connected or left: where an idle daemon starts counting. */
@@ -330,7 +322,6 @@ export class Daemon {
     connectors: ConnectorService,
   ) {
     this.#version = options.version ?? "dev";
-    this.#maxAhead = options.maxAheadAgents;
     this.#agentIdleMs = options.agentIdleMs;
     this.#now = options.now ?? Date.now;
     this.#lastClientAt = this.#now();
@@ -674,14 +665,15 @@ export class Daemon {
   }
 
   /**
-   * An agent started for a session that has had no prompt holds a process for nothing yet. Past `maxAheadAgents` of
-   * them, the oldest is let go (the session `keep` is the newest, and stays): its next prompt starts one again.
+   * An agent started for a session that has had no prompt holds a process for nothing yet. Past its agent's
+   * `maxAhead` of them, counted among that agent's sessions, the oldest is let go (the session `keep` is the newest, and stays): its next prompt starts one again.
    */
   #letGoOfOldestAhead(keep: Session): void {
-    const limit = this.#maxAhead;
+    const limit = this.#agents.get(keep.entry.agent)?.maxAhead;
     if (limit === undefined) return;
     const ahead = [...this.#sessions.values()].filter(
       (s) =>
+        s.entry.agent === keep.entry.agent &&
         s.link !== undefined &&
         s.starting === undefined &&
         s.entry.prompted !== true &&

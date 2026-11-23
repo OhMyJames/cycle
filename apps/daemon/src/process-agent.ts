@@ -22,6 +22,8 @@ export type ProcessAgentOptions = {
   /** Whether it can run at all, checked when clients ask which agents there are. */
   available?: () => boolean | Promise<boolean>;
   /** See `AgentDefinition`. */
+  maxAhead?: number;
+  /** See `AgentDefinition`. */
   plugins?: PluginProvider;
   /**
    * Where what the process says on stderr goes, line by line, and how it exited (docs/daemon.md "日志"). Its stdout
@@ -59,6 +61,7 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
     : {}),
   ...(options.steer === true ? { steer: true } : {}),
   ...(options.available !== undefined ? { available: options.available } : {}),
+  ...(options.maxAhead !== undefined ? { maxAhead: options.maxAhead } : {}),
   ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
   launch: async () => {
     const proc = Bun.spawn(options.command, {

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseCli } from "../src/args.ts";
+import { parseCli as parse } from "../src/args.ts";
+
+const parseCli = (argv: string[]) => parse(argv, ["login", "claude"]);
 
 test("Cycle's options are read before the command, and the line after claude is left alone", () => {
   const line = [
@@ -42,39 +44,63 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test("cycle claude gives the Claude binary every argument as typed", async () => {
+/** Runs `cycle` from source with a stub `claude` on PATH that writes down its arguments; gives them back. */
+const withStubClaude = async (main: string, ...args: string[]) => {
   const seen = join(dir, "argv");
   const stub = join(dir, "bin", "claude");
+  await rm(seen, { force: true });
   await Bun.write(stub, `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > ${seen}\n`);
   await chmod(stub, 0o755);
-  const main = new URL("../src/main.ts", import.meta.url).pathname;
-  const child = Bun.spawn(
-    [
-      process.execPath,
-      main,
-      "--data-dir",
-      join(dir, "data"),
-      "claude",
-      "--version",
-      "-p",
-      "hi",
-      "--",
-      "--help",
-    ],
-    {
-      env: { ...process.env, HOME: dir, PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` },
-      stdout: "ignore",
-      stderr: "pipe",
-    },
-  );
+  const child = Bun.spawn([process.execPath, main, "--data-dir", join(dir, "data"), ...args], {
+    env: { ...process.env, HOME: dir, PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
   const code = await child.exited;
-  expect(await new Response(child.stderr).text()).toBe("");
-  expect(code).toBe(0);
-  expect((await readFile(seen, "utf8")).split("\n").slice(0, -1)).toEqual([
-    "--version",
-    "-p",
-    "hi",
-    "--",
-    "--help",
-  ]);
+  const stderr = await new Response(child.stderr).text();
+  const argv = (await readFile(seen, "utf8").catch(() => "")).split("\n").slice(0, -1);
+  return { code, stderr, argv };
+};
+const MAIN = new URL("../src/main.ts", import.meta.url).pathname;
+
+test("cycle claude gives the Claude binary every argument as typed", async () => {
+  const ran = await withStubClaude(MAIN, "claude", "--version", "-p", "hi", "--", "--help");
+  expect(ran.stderr).toBe("");
+  expect(ran.code).toBe(0);
+  expect(ran.argv).toEqual(["--version", "-p", "hi", "--", "--help"]);
 }, 15_000);
+
+test("login signs in to the agent that is named, and to Claude when none is", async () => {
+  expect((await withStubClaude(MAIN, "login")).argv).toEqual(["auth", "login"]);
+  expect((await withStubClaude(MAIN, "login", "--console")).argv).toEqual([
+    "auth",
+    "login",
+    "--console",
+  ]);
+  // One this build does not have is refused, not handed to Claude's sign-in as an argument.
+  const unknown = await withStubClaude(MAIN, "login", "codex");
+  expect(unknown.code).toBe(2);
+  expect(unknown.argv).toEqual([]);
+  expect(unknown.stderr).toContain("No agent named codex to sign in to: this build has claude.");
+  // The agent's name is Cycle's word, not the agent's: it is not handed on.
+  expect((await withStubClaude(MAIN, "login", "claude", "--console")).argv).toEqual([
+    "auth",
+    "login",
+    "--console",
+  ]);
+}, 30_000);
+
+test("a build's commands are its agents': one with no command line has no login, and an adapter nobody has is refused", async () => {
+  // The fixture is a `cycle` whose only agent ships no binary and has nothing to sign in to.
+  const echo = new URL("./fixtures/echo-harness.ts", import.meta.url).pathname;
+  const login = await withStubClaude(echo, "login");
+  expect(login.code).toBe(2);
+  expect(login.argv).toEqual([]);
+  expect(login.stderr).not.toContain("login");
+  const claude = await withStubClaude(echo, "claude");
+  expect(claude.code).toBe(2);
+  expect(claude.argv).toEqual([]);
+  const adapter = await withStubClaude(echo, "adapter", "claude");
+  expect(adapter.code).toBe(2);
+  expect(adapter.stderr).toContain("No adapter for claude: this build has echo.");
+}, 30_000);

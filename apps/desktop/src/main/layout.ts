@@ -9,9 +9,10 @@ export const MAC_BUNDLE = `${APP_NAME}.app`;
 
 /** Present only in a packaged app: its presence is how the main process knows it is one. */
 export const BUILD_FILE = "build.json";
-/** The daemon, compiled to one executable, with `claude` beside it (the daemon looks there). */
+/** The daemon, compiled to one executable, with each agent's own binary beside it (the daemon looks there). */
 export const DAEMON_BIN = "bin/cycle";
-export const CLAUDE_BIN = "bin/claude";
+/** One for each agent that ships a binary: what the daemon's build makes (a test holds the two lists together). */
+export const AGENT_BINS = ["bin/claude"] as const;
 /** The built main process, preload and page, laid out as `apps/desktop/dist` is. */
 export const DIST_DIR = "dist";
 export const MAIN = `${DIST_DIR}/main.mjs`;
@@ -34,8 +35,9 @@ export const daemonCommand = (options: {
   if (exists(join(appDir, BUILD_FILE))) {
     const bundled = join(appDir, DAEMON_BIN);
     if (!exists(bundled)) throw new Error(`The app is missing its daemon: ${bundled}`);
-    if (!exists(join(appDir, CLAUDE_BIN))) {
-      throw new Error(`The app is missing the Claude binary: ${join(appDir, CLAUDE_BIN)}`);
+    for (const bin of AGENT_BINS) {
+      if (!exists(join(appDir, bin)))
+        throw new Error(`The app is missing an agent's binary: ${join(appDir, bin)}`);
     }
     return [bundled];
   }

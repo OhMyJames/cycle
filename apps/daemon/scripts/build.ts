@@ -1,11 +1,13 @@
 // Builds the daemon into one directory you can copy to a machine and run:
 //
 //   dist/cycle-<os>-<arch>/cycle   the daemon, one executable (Bun inside)
-//   dist/cycle-<os>-<arch>/claude         the Claude Code binary the adapter drives
+//   dist/cycle-<os>-<arch>/claude  each agent's own binary that its adapter drives (src/harnesses.ts, binaries.ts)
 //
 // plus a .tar.gz of it. The machine needs nothing else: no Bun, no Node, no `claude` on PATH.
-import { chmod, cp, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { chmod, cp, mkdir, rm, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { HARNESSES } from "../src/harnesses.ts";
+import { BINARY_SOURCES } from "./binaries.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const name = `cycle-${process.platform}-${process.arch}`;
@@ -13,17 +15,15 @@ const out = join(root, "dist", name);
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 
-// The SDK's platform package holds the Claude Code binary. Find it where the SDK is installed.
-const sdkPackage = Bun.resolveSync(
-  "@anthropic-ai/claude-agent-sdk/package.json",
-  join(root, "../../harness/claude"),
-);
-const platformPackage = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
-const platformDir = dirname(
-  Bun.resolveSync(`${platformPackage}/package.json`, dirname(sdkPackage)),
-);
-const binary = (await readdir(platformDir)).find((f) => f === "claude" || f === "claude.exe");
-if (binary === undefined) throw new Error(`no Claude binary in ${platformDir}`);
+// Found before anything is built: a binary that is not there fails in a second, not after the compile.
+const binaries: { name: string; from: string }[] = [];
+for (const harness of HARNESSES) {
+  if (harness.binary === undefined) continue;
+  const source = BINARY_SOURCES[harness.id];
+  if (source === undefined)
+    throw new Error(`scripts/binaries.ts does not say where ${harness.id}'s binary is`);
+  binaries.push({ name: harness.binary, from: await source() });
+}
 
 const version = String((await Bun.file(join(root, "../desktop/package.json")).json()).version);
 
@@ -39,10 +39,12 @@ if (!result.success) {
   for (const log of result.logs) console.error(log);
   process.exit(1);
 }
-await cp(join(platformDir, binary), join(out, "claude"));
+for (const { name: file, from } of binaries) {
+  await cp(from, join(out, file));
+  await chmod(join(out, file), 0o755);
+}
 await cp(join(root, "scripts/install.sh"), join(out, "install.sh"));
 await chmod(join(out, "install.sh"), 0o755);
-await chmod(join(out, "claude"), 0o755);
 await chmod(join(out, "cycle"), 0o755);
 
 if (Bun.argv.includes("--no-tarball")) {
@@ -56,6 +58,9 @@ const tar = Bun.spawn(["tar", "-czf", `${name}.tar.gz`, name], {
 });
 if ((await tar.exited) !== 0) process.exit(1);
 const size = async (p: string) => ((await stat(p)).size / 1e6).toFixed(0);
+const sizes = [];
+for (const file of ["cycle", ...binaries.map((b) => b.name)])
+  sizes.push(`${file} ${await size(join(out, file))} MB`);
 console.log(
-  `built ${out}  (cycle ${await size(join(out, "cycle"))} MB, claude ${await size(join(out, "claude"))} MB, tarball ${await size(join(root, "dist", `${name}.tar.gz`))} MB)`,
+  `built ${out}  (${sizes.join(", ")}, tarball ${await size(join(root, "dist", `${name}.tar.gz`))} MB)`,
 );

@@ -1,8 +1,5 @@
 import { parseArgs } from "node:util";
 
-/** The commands that hand the rest of the line to Claude, which has options of its own. */
-const FORWARDING = ["login", "claude"];
-
 /** Cycle's own options: the one table both the scan for the command and the parse are read from. */
 const OPTIONS = {
   "data-dir": { type: "string" },
@@ -20,18 +17,18 @@ const WITH_VALUE = Object.entries(OPTIONS)
   .map(([name]) => `--${name}`);
 
 /**
- * Cycle's options, and what follows the command. For the commands that run Claude, everything
- * after the command word is Claude's, as it was typed (`--version`, `-p`, `--`, a value that looks
- * like an option): Cycle's options are read only before it.
+ * Cycle's options, and what follows the command. For the commands in `forwarding` (`login`, and each agent's own name:
+ * they run the agent's binary, which has options of its own), everything after the command word is the agent's, as it
+ * was typed (`--version`, `-p`, `--`, a value that looks like an option): Cycle's options are read only before it.
  */
-export const parseCli = (argv: string[]) => {
+export const parseCli = (argv: string[], forwarding: readonly string[]) => {
   let own = argv;
   let forwarded: string[] | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
     if (WITH_VALUE.includes(arg)) i++;
     else if (!arg.startsWith("-")) {
-      if (FORWARDING.includes(arg)) {
+      if (forwarding.includes(arg)) {
         own = argv.slice(0, i + 1);
         forwarded = argv.slice(i + 1);
       }

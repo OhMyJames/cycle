@@ -91,7 +91,7 @@ CYCL-104。目标机器是 2 核 4 GB,长期挂着的 daemon 不能让进程越�
 - 没有进行中的 turn、没有待回答的请求;队列为空，或者是已经扣着等客户端取回的队列(见"排队",它不需要 agent,原因不变);
 - 没有在跑的后台子 agent(`cycle/background` 为 0)。只剩"结束原因未知"的记录不算(protocol.md §8)。
 
-计时从最后一件事算起：写进日志的记录(daemon 自己的 `meta` 不算)、附着或离开、有请求要用 agent(prompt、改设置)、agent 启动完成。结束的方式和预热上限、信任变化时一样(`link.kill()`),并且当场按 agent 已退出处理，不等连接关闭的通知，这样紧接着来的 prompt 会起一个新的，不会交给正在退出的那个。session 留在内存和列表里，状态是 `stopped`,下一个 prompt 按已有路径启动并 `session/resume` 它。日志记 `agent_reclaimed`(session id 和空闲秒数)。和预热上限(`claude.maxWarm`,CYCL-24)是两回事：上限管"同时有几个",回收管"空闲多久";预热起来、没人发 prompt 的进程，没人附着时同样按时间回收。
+计时从最后一件事算起：写进日志的记录(daemon 自己的 `meta` 不算)、附着或离开、有请求要用 agent(prompt、改设置)、agent 启动完成。结束的方式和预热上限、信任变化时一样(`link.kill()`),并且当场按 agent 已退出处理，不等连接关闭的通知，这样紧接着来的 prompt 会起一个新的，不会交给正在退出的那个。session 留在内存和列表里，状态是 `stopped`,下一个 prompt 按已有路径启动并 `session/resume` 它。日志记 `agent_reclaimed`(session id 和空闲秒数)。和预热上限(每个 agent 自己的，Claude 的是 `claude.maxWarm`,CYCL-24;只数这个 agent 的 session)是两回事：上限管"同时有几个",回收管"空闲多久";预热起来、没人发 prompt 的进程，没人附着时同样按时间回收。
 
 **空闲退出**(`serve` 里同一个定时器):`Daemon.idleSince()` 在下面都成立时给出从何时起空闲：没有任何客户端连着、没有 session 在加载或启动 agent、`activity()` 为空。持续 `idle.exitMinutes`(默认 30 分钟)后，daemon 按收到 `SIGTERM` 的同一条路径停下(日志 `idle_exit`,然后 `daemon_stopping`),退出码 0。
 
@@ -145,7 +145,7 @@ bun run --cwd apps/daemon build
 产出 `apps/daemon/dist/cycle-<os>-<arch>/`(和同名 `.tar.gz`,约 220 MB):
 
 - `cycle`:daemon 本身,一个可执行文件(`bun build --compile`,约 110 MB,里面带着 Bun 和 Claude 适配)。
-- `claude`:Claude Code 的二进制(约 370 MB,取自 SDK 的平台包),放在它旁边,适配通过 `claudeExecutable` 找到它。
+- `claude`:Claude Code 的二进制(约 370 MB,取自 SDK 的平台包),放在它旁边,适配通过 `shippedExecutable("claude")` 找到它。每个带二进制的 agent 都这样放一个，清单见下面"加一个 agent"。
 
 2026-11-20，GitHub 原生 Ubuntu 24.04 runner 构建同一提交并用已安装的单文件 daemon 跑通后端集成测试。耗时包含压缩，大小按十进制 MB 计算。[两种架构的构建日志](https://github.com/OhMyJames/Cycle-V1/actions/runs/44699952120)
 
@@ -154,21 +154,35 @@ bun run --cwd apps/daemon build
 | x64   | 23.79 秒 |  253 MiB | 484.2 MB | 222.6 MB |
 | ARM64 | 16.96 秒 |  247 MiB | 483.2 MB | 221.9 MB |
 
-机器上不需要 Bun、Node,也不需要装 `claude`。适配器作为同一个可执行文件的子命令(`cycle adapter claude`)运行,所以只有这一个文件加 `claude`。
+机器上不需要 Bun、Node,也不需要装 `claude`。适配器作为同一个可执行文件的子命令(`cycle adapter <agent id>`,Claude 的是 `cycle adapter claude`)运行,所以只有这一个文件加各 agent 自己的二进制。
 
 ```bash
 cycle status   # 在运行返回 0,不在运行返回 1;并给出日志的位置
 cycle logs     # 日志的最后 100 行(--lines <n> 改行数)
 cycle stop     # 停掉;有会话在工作时先列出来,问等待还是强停(见下面"停止和升级")
-cycle login    # 为这个 daemon 登录 Claude(跑 claude auth login),在 daemon 所在的机器上执行
-cycle claude auth status   # 用同样的环境跑 claude 的其他命令
+cycle login [agent]   # 为这个 daemon 登录一个 agent,在 daemon 所在的机器上执行;不写 agent 时是 Claude(跑 claude auth login)
+cycle claude auth status   # cycle <agent id> <参数>:用同样的环境跑那个 agent 自己的命令行
 ```
 
-**登录**:`login` 和 `claude` 用的环境和目录,正是 daemon 给它启动的 Claude 的那份(`config.json` 里的 `configDir`,默认 `<数据目录>/claude`;`HOME` 回落到它),所以登录落在 Claude 以后会去找的地方,不会碰 `~/.claude`。全新的数据目录里 `claude auth status` 报 `loggedIn: false`(已验证)。**登录流程本身没有验证过**:它要在浏览器里完成 OAuth,我没法替你做。验证过的做法是把 OAuth token 或 API key 写进 `config.json` 的 `claude.env`。构建目录里缺 `claude` 时,`agents/list` 里 Claude 是 `available: false`,不是等到第一个 prompt 才失败。
+**登录**:命令按 agent 走(`cycle login <agent id>`、`cycle <agent id> <参数>`),每个 agent 的登录各自隔离在数据目录里。现在只有 Claude:`login` 和 `claude` 用的环境和目录,正是 daemon 给它启动的 Claude 的那份(`config.json` 里的 `configDir`,默认 `<数据目录>/claude`;`HOME` 回落到它),所以登录落在 Claude 以后会去找的地方,不会碰 `~/.claude`。全新的数据目录里 `claude auth status` 报 `loggedIn: false`(已验证)。**登录流程本身没有验证过**:它要在浏览器里完成 OAuth,我没法替你做。验证过的做法是把 OAuth token 或 API key 写进 `config.json` 的 `claude.env`。构建目录里缺 `claude` 时,`agents/list` 里 Claude 是 `available: false`,不是等到第一个 prompt 才失败。
 
 **装到远端机器**:解开 tarball,把目录放到 `$PATH` 上(或在桌面端 "Add environment" 里把命令写成绝对路径,如 `/opt/cycle/cycle proxy`)。`<os>-<arch>` 要和那台机器一致:在哪个平台构建就产出哪个平台的;跨平台要在对应平台构建。凭证写进那台机器上的 `<数据目录>/config.json`(见下)。
 
+## 加一个 agent
+
+agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和命令名。daemon 的核心(会话、插件、默认设置)只认 `AgentDefinition`,不认具体的 agent;核心之外要按名字认 agent 的地方都从一张清单读(`src/harnesses.ts` 的 `HARNESSES`,每项是 `src/harness.ts` 的 `Harness`)。加一个 agent 要做的：
+
+1. 在 `harness/<id>` 写适配器，导出在 stdin/stdout 上运行它的函数。
+2. 在 `apps/daemon/src` 写它的 `Harness`(`runAdapter`、`definition`,有自己命令行的加 `cli`,自带二进制的加 `binary`),加进 `HARNESSES`。清单的顺序是客户端看到的顺序，第一个是没有指名时用的。
+3. 在 `src/config.ts` 的 `ConfigSchema` 加一段，键是它的 id。agent 看到的环境只能来自这一段(`allowEnv` 点名的和 `env` 写明的),登录目录默认放在 `<数据目录>/<id>`。
+4. 自带二进制的：在 `scripts/binaries.ts` 写构建时从哪里取，在 `apps/desktop/src/main/layout.ts` 的 `AGENT_BINS` 加上 `bin/<名字>`,在 `scripts/install.sh` 的文件清单里加上它(根目录的 `scripts/agent-binaries.test.ts` 检查这三处一致)。发版流程里对二进制的运行检查(`.github/workflows/release.yml`、`daemon-linux.yml`)和 `apps/desktop/test/integration/packaged.integration.ts` 是按名字写的，没有测试看着，要手动加。
+5. 埋点：在 `packages/analytics/src/events.ts` 的 `agent` 枚举里加它的 id,否则它算作 `other`。
+
+`test/harnesses.test.ts` 用一个测试用的 harness(`test/fixtures/echo-harness.ts`,适配器是替身 agent)走完这条路：出现在 `_cycle/agents/list`、新建、prompt 由它自己的适配器进程回答、换一个 daemon 后恢复。理由见决定笔记 [2026-11-23-each-agent-is-a-top-level-config-section](../.agents/notes/2026-11-23-each-agent-is-a-top-level-config-section.md)。
+
 ## 配置:`<数据目录>/config.json`
+
+每个 agent 有自己的顶层一段，键是 agent 的 id;现在只有 `claude`。
 
 ```json
 {
