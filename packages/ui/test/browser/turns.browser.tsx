@@ -539,6 +539,15 @@ test("the conversation's text lines up with the input box, short or scrolling, w
   for (const update of turnsOf(20, 1)) await emit(update);
   await waitFor(() => expect(log.scrollHeight).toBeGreaterThan(log.clientHeight + 200));
   expect(edges(log)).toEqual(short);
+  // In a narrow window, where the column's pad is its least, the same holds.
+  if (root instanceof HTMLElement) root.style.width = "640px";
+  await waitFor(() => expect(log.getBoundingClientRect().width).toBeLessThan(600));
+  const narrow = edges(log);
+  expect(narrow.block[0]).toBeCloseTo(narrow.box[0] ?? 0, 0);
+  expect(narrow.block[1]).toBeCloseTo(narrow.box[1] ?? 0, 0);
+  expect(narrow.margins[0]).toBeCloseTo(narrow.margins[1] ?? 0, 0);
+  if (root instanceof HTMLElement) root.style.width = "";
+  await waitFor(() => expect(edges(log)).toEqual(short));
   // A permission card above the box has the same edges.
   await ask({
     key: "local:s1:p1",
@@ -549,7 +558,8 @@ test("the conversation's text lines up with the input box, short or scrolling, w
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
   });
   const card = (await screen.findByLabelText("Allow Read?")).getBoundingClientRect();
-  expect([card.left, card.right]).toEqual(short.box);
+  expect(card.left).toBeCloseTo(short.box[0] ?? 0, 0);
+  expect(card.right).toBeCloseTo(short.box[1] ?? 0, 0);
 });
 
 test("a conversation that grows from a few blocks to many draws about a page, not all of it", async () => {

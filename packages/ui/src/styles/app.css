@@ -2754,10 +2754,11 @@ html[data-platform="darwin"]
   flex-direction: column;
   gap: var(--cycle-gap);
   /* The scrollbar's 10px slot (see the scrollbars above) is taken whether its thumb shows or not, but only while the content
-     overflows. Keep the slot always and take it out of the right padding: the column's edges are the composer's, left and
-     right are equal, and nothing moves sideways when the content grows past the view. */
+     overflows. Keep the slot always and take it out of the padding on its side: the column's edges are the composer's,
+     left and right are equal, and nothing moves sideways when the content grows past the view. */
   scrollbar-gutter: stable;
-  padding: 1rem max(0px, calc(var(--cycle-column-pad) - 10px)) 1rem var(--cycle-column-pad);
+  padding-block: 1rem;
+  padding-inline: var(--cycle-column-pad) max(0px, calc(var(--cycle-column-pad) - 10px));
   font-size: var(--cycle-text-body);
   line-height: var(--cycle-leading-body);
 }
@@ -4785,9 +4786,9 @@ button[data-slot="review-file"]:focus-visible {
   gap: 0.5rem;
   max-height: 60%;
   overflow-y: auto;
-  /* As the conversation: the scrollbar's slot comes out of the right padding, so the cards line up with the box. */
+  /* As the conversation: the scrollbar's slot comes out of the padding on its side, so the cards line up with the box. */
   scrollbar-gutter: stable;
-  padding: 0 max(0px, calc(var(--cycle-column-pad) - 10px)) 0 var(--cycle-column-pad);
+  padding-inline: var(--cycle-column-pad) max(0px, calc(var(--cycle-column-pad) - 10px));
 }
 
 [data-slot="permission"] {
