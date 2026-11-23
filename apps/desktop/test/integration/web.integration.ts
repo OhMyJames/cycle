@@ -32,7 +32,7 @@ const latestUserText = (body: unknown): string => {
 };
 
 test.skipIf(!built)(
-  "a person can use the app: connect, start a session, type and paste, chat, answer a permission, and reload",
+  "a person can use the app: connect, start a session, type and paste, chat, answer a permission, use a terminal, and reload",
   async () => {
     const mock = startMock((requests) => {
       const body = requests.at(-1)?.body;
@@ -157,6 +157,27 @@ test.skipIf(!built)(
       await sendShown();
       expect(existsSync(join(cwd, "made-by-the-agent.txt"))).toBe(true);
 
+      // A terminal beside the session (CYCL-98): a real shell on the daemon's side, in the session's folder, that takes
+      // what is typed and shows what it prints.
+      const terminalText = () =>
+        page
+          .locator('[data-slot="terminal-screen"] .xterm-rows')
+          .textContent()
+          .catch(() => "");
+      await page.getByRole("button", { name: "Show terminal" }).click();
+      await page.getByRole("tab", { selected: true, name: /sh$/ }).waitFor();
+      await until(
+        () =>
+          page.evaluate(
+            () => document.activeElement?.closest('[data-slot="terminal-screen"]') != null,
+          ),
+        (v) => v,
+      );
+      await page.keyboard.type("echo cycle-$((6*7)); ls");
+      await page.keyboard.press("Enter");
+      await until(terminalText, (v) => String(v).includes("cycle-42"), 15_000);
+      await until(terminalText, (v) => String(v).includes("made-by-the-agent.txt"));
+
       // The page reloads: it is given the session whole, not an empty one.
       await page.reload();
       await until(
@@ -167,6 +188,11 @@ test.skipIf(!built)(
       await page.getByRole("option").first().click();
       await until(agentSaid, (v) => String(v).includes("Hello from the mock"));
       await until(agentSaid, (v) => String(v).includes("All done"));
+      // The terminal outlived the page: its tab is back, drawn from the daemon's screen. Delete on its tab ends it.
+      await until(terminalText, (v) => String(v).includes("cycle-42"), 15_000);
+      await page.getByRole("tab", { selected: true, name: /sh$/ }).focus();
+      await page.keyboard.press("Delete");
+      await page.locator('[data-slot="terminal"]').waitFor({ state: "detached" });
 
       // The look, chosen in Settings as a person does: the page's own media query says light, then dark. The language,
       // kept outside the page: after a reload the page's words are in it, without a restart.

@@ -43,6 +43,9 @@ import {
   type PromptBlock,
   type SessionSnapshot,
   type SessionSummary,
+  type TerminalAttached,
+  type TerminalInfo,
+  type TerminalProblem,
   type WorkspacePatch,
   type WorkspaceStatus,
 } from "@cycle/ui";
@@ -145,6 +148,26 @@ const PROBLEMS: readonly ConnectorProblem[] = [
   "auth_rejected",
   "unreachable",
 ];
+
+const TERMINAL_REASONS: readonly TerminalProblem[] = [
+  "archived",
+  "cwd_missing",
+  "spawn_failed",
+  "daemon_stopping",
+];
+
+/** Why the daemon would not open a terminal, as a word the page has a sentence for (docs/protocol.md §8 "终端"). */
+export const terminalProblemOf = (
+  error: unknown,
+): { problem: TerminalProblem; message?: string } => {
+  const { code, data } = (error ?? {}) as { code?: unknown; data?: { reason?: unknown } };
+  const reason = data?.reason;
+  if (typeof reason === "string" && (TERMINAL_REASONS as readonly string[]).includes(reason))
+    return { problem: reason as TerminalProblem };
+  if (code === -32019) return { problem: "limit" };
+  if (code === -32002) return { problem: "not_found" };
+  return { problem: "failed", message: messageOf(error) };
+};
 
 /** What the daemon's error says, as a word the page has a sentence for (docs/protocol.md §14). */
 export const connectorProblemOf = (
@@ -377,6 +400,12 @@ export class ConnectionManager
         connectorsChanged: () => this.#options.emit({ type: "connectors", environmentId }),
         planUsage: (agent, usage) =>
           this.#options.emit({ type: "plan-usage", environmentId, agent, usage }),
+        terminalsChanged: (sessionId, terminals) =>
+          this.#options.emit({ type: "terminals", environmentId, sessionId, terminals }),
+        terminalOutput: (output) =>
+          this.#options.emit({ type: "terminal-output", environmentId, ...output }),
+        terminalReset: (reset) =>
+          this.#options.emit({ type: "terminal-reset", environmentId, ...reset }),
         gone: (sessionId) => this.#onGone(environmentId, connection, sessionId),
         // A history that cannot be read after a reconnect: nothing more comes to it, the list row says why.
         unreadable: (sessionId) => this.#onUnreadable(connection, sessionId),
@@ -408,6 +437,7 @@ export class ConnectionManager
                     sessionMentions: connection.client.capabilities.sessionMentions === true,
                     fs: connection.client.capabilities.fs === true,
                     diff: connection.client.capabilities.diff === true,
+                    terminal: connection.client.capabilities.terminal === true,
                   },
                 }
               : state === "reconnecting" && connection.status.capabilities !== undefined
@@ -858,6 +888,48 @@ export class ConnectionManager
     offset?: number,
   ): Promise<FileContent> {
     return this.#connection(environmentId).client.readFile(sessionId, path, offset);
+  }
+
+  async listTerminals(environmentId: string, sessionId: string): Promise<TerminalInfo[]> {
+    return this.#connection(environmentId).client.listTerminals(sessionId);
+  }
+
+  async createTerminal(
+    environmentId: string,
+    sessionId: string,
+    cols: number,
+    rows: number,
+  ): Promise<TerminalAttached | { problem: TerminalProblem; message?: string }> {
+    try {
+      return await this.#connection(environmentId).client.createTerminal(sessionId, cols, rows);
+    } catch (error) {
+      return terminalProblemOf(error);
+    }
+  }
+
+  async attachTerminal(environmentId: string, terminalId: string): Promise<TerminalAttached> {
+    return this.#connection(environmentId).client.attachTerminal(terminalId);
+  }
+
+  async detachTerminal(environmentId: string, terminalId: string): Promise<void> {
+    await this.#connection(environmentId).client.detachTerminal(terminalId);
+  }
+
+  async terminalInput(environmentId: string, terminalId: string, data: string): Promise<void> {
+    await this.#connection(environmentId).client.terminalInput(terminalId, data);
+  }
+
+  async resizeTerminal(
+    environmentId: string,
+    terminalId: string,
+    cols: number,
+    rows: number,
+  ): Promise<void> {
+    await this.#connection(environmentId).client.resizeTerminal(terminalId, cols, rows);
+  }
+
+  async closeTerminal(environmentId: string, terminalId: string): Promise<void> {
+    await this.#connection(environmentId).client.closeTerminal(terminalId);
   }
 
   async workspaceStatus(environmentId: string, sessionId: string): Promise<WorkspaceStatus> {

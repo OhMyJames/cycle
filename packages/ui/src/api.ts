@@ -53,6 +53,8 @@ export type EnvironmentStatus = {
     fs?: boolean;
     /** The session's folder can be compared with HEAD, for the Diff tab's workspace view (docs/protocol.md §8). */
     diff?: boolean;
+    /** Shells can be opened beside a session, for the Terminal tabs (docs/protocol.md §8 "终端"). */
+    terminal?: boolean;
   };
   /**
    * The daemon on the environment speaks another major version of Cycle's protocol, so the app cannot use it
@@ -184,6 +186,36 @@ export type WorkspaceStatus =
 
 /** One file's patch against HEAD, in git's format; empty when binary or unchanged. */
 export type WorkspacePatch = { path: string; patch: string; truncated: boolean; binary: boolean };
+
+/**
+ * A shell the person opened beside a session, running in the daemon (docs/protocol.md §8 "终端"). `title` is the shell's
+ * name until the shell sets one; `exitCode` is there once it has exited, null when a signal ended it.
+ */
+export type TerminalInfo = {
+  terminalId: string;
+  sessionId: string;
+  title: string;
+  cols: number;
+  rows: number;
+  status: "running" | "exited";
+  exitCode?: number | null | undefined;
+};
+
+/** A terminal as it is now: what redraws its screen, and the last piece of output that holds (`seq`). */
+export type TerminalAttached = { terminal: TerminalInfo; screen: string; seq: number };
+
+/**
+ * Why a terminal could not be opened: too many open (on the session, or on the daemon), the session is archived or gone,
+ * its folder is not there, the shell would not start, the daemon is stopping, or else (`failed`, with main's message).
+ */
+export type TerminalProblem =
+  | "limit"
+  | "archived"
+  | "not_found"
+  | "cwd_missing"
+  | "spawn_failed"
+  | "daemon_stopping"
+  | "failed";
 
 /** What an environment's machine has in a folder: names of folders only. `path` is the real path (links resolved). */
 export type FolderListing = {
@@ -368,6 +400,26 @@ export type AppEvent =
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */
   | { type: "session-gone"; environmentId: string; sessionId: string }
   | { type: "app-update"; state: UpdateState }
+  /** A session's terminals, whole: one was opened, closed, renamed, resized or ended. */
+  | { type: "terminals"; environmentId: string; sessionId: string; terminals: TerminalInfo[] }
+  /** Output of a terminal the app is attached to. Drop it if the screen in hand already holds `seq`. */
+  | {
+      type: "terminal-output";
+      environmentId: string;
+      terminalId: string;
+      seq: number;
+      data: string;
+    }
+  /** The app fell behind a terminal's output: draw it again from `screen`, then take what comes after `seq`. */
+  | {
+      type: "terminal-reset";
+      environmentId: string;
+      terminalId: string;
+      seq: number;
+      screen: string;
+      cols: number;
+      rows: number;
+    }
   /** A notification was pressed: show this session. */
   | { type: "focus-session"; environmentId: string; sessionId: string };
 
@@ -453,6 +505,31 @@ export type AppApi = {
   workspaceStatus(environmentId: string, sessionId: string): Promise<WorkspaceStatus>;
   /** One file's patch against HEAD. Fails with the daemon's reason, or when it is too old. */
   workspaceFile(environmentId: string, sessionId: string, path: string): Promise<WorkspacePatch>;
+  /** A session's terminals, oldest first; none from a daemon that has none. */
+  listTerminals(environmentId: string, sessionId: string): Promise<TerminalInfo[]>;
+  /** Opens a shell in the session's folder, attached; or says why it could not. */
+  createTerminal(
+    environmentId: string,
+    sessionId: string,
+    cols: number,
+    rows: number,
+  ): Promise<TerminalAttached | { problem: TerminalProblem; message?: string }>;
+  /**
+   * The terminal's screen now; its output comes after as `terminal-output` events, in no fixed order against this
+   * answer. A lost connection lets go of it: attach again once the environment is connected.
+   */
+  attachTerminal(environmentId: string, terminalId: string): Promise<TerminalAttached>;
+  detachTerminal(environmentId: string, terminalId: string): Promise<void>;
+  /** Keys and pastes, as they are. */
+  terminalInput(environmentId: string, terminalId: string, data: string): Promise<void>;
+  resizeTerminal(
+    environmentId: string,
+    terminalId: string,
+    cols: number,
+    rows: number,
+  ): Promise<void>;
+  /** Ends the shell and everything running in it. */
+  closeTerminal(environmentId: string, terminalId: string): Promise<void>;
   /**
    * The folders in a folder on that environment's machine, for choosing where a session works. Without a path: its
    * home. Fails with the daemon's reason (not a folder, cannot be read) or when the daemon is too old.
@@ -575,6 +652,13 @@ export const API_METHODS = [
   "readFile",
   "workspaceStatus",
   "workspaceFile",
+  "listTerminals",
+  "createTerminal",
+  "attachTerminal",
+  "detachTerminal",
+  "terminalInput",
+  "resizeTerminal",
+  "closeTerminal",
   "listFolders",
   "readTrust",
   "planUsage",

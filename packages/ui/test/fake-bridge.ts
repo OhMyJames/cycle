@@ -10,6 +10,8 @@ import type {
   Preferences,
   SessionSnapshot,
   SessionSummary,
+  TerminalInfo,
+  TerminalProblem,
   UpdateState,
 } from "../src/api.ts";
 import { emptyConversation } from "../src/model/index.ts";
@@ -57,7 +59,12 @@ export const fakeBridge = (
       sessionMentions?: boolean;
       fs?: boolean;
       diff?: boolean;
+      terminal?: boolean;
     };
+    /** The terminals the daemon has, by session. Changed by what the page asks; a test may change it and emit. */
+    terminals?: Map<string, TerminalInfo[]>;
+    /** Why the next terminal cannot be opened, if it cannot. */
+    terminalProblem?: TerminalProblem;
     /** The connectors the daemon keeps. Changed in place by what the page asks. */
     connectors?: ConnectorInfo[];
     /** The agent can take a message into a running turn. */
@@ -77,6 +84,8 @@ export const fakeBridge = (
   };
   const calls: [string, ...unknown[]][] = [];
   const connectors = options.connectors ?? [];
+  const terminals = options.terminals ?? new Map<string, TerminalInfo[]>();
+  let made = 0;
   let listener: ((event: AppEvent) => void) | undefined;
   const record =
     <A extends unknown[], R>(name: string, result: (...args: A) => R) =>
@@ -178,6 +187,44 @@ export const fakeBridge = (
       truncated: false,
       binary: false,
     })),
+    listTerminals: record("listTerminals", async (_e: string, sessionId: string) => [
+      ...(terminals.get(sessionId) ?? []),
+    ]),
+    createTerminal: record(
+      "createTerminal",
+      async (environmentId: string, sessionId: string, cols: number, rows: number) => {
+        if (options.terminalProblem !== undefined) return { problem: options.terminalProblem };
+        made += 1;
+        const terminal: TerminalInfo = {
+          terminalId: `t${made}`,
+          sessionId,
+          title: "zsh",
+          cols,
+          rows,
+          status: "running",
+        };
+        const list = [...(terminals.get(sessionId) ?? []), terminal];
+        terminals.set(sessionId, list);
+        listener?.({ type: "terminals", environmentId, sessionId, terminals: list });
+        return { terminal, screen: "", seq: 0 };
+      },
+    ),
+    attachTerminal: record("attachTerminal", async (_e: string, terminalId: string) => {
+      const terminal = [...terminals.values()].flat().find((t) => t.terminalId === terminalId);
+      if (terminal === undefined) throw new Error(`No terminal ${terminalId}`);
+      return { terminal, screen: `screen of ${terminalId}\r\n`, seq: 3 };
+    }),
+    detachTerminal: record("detachTerminal", async () => {}),
+    terminalInput: record("terminalInput", async () => {}),
+    resizeTerminal: record("resizeTerminal", async () => {}),
+    closeTerminal: record("closeTerminal", async (environmentId: string, terminalId: string) => {
+      for (const [sessionId, list] of terminals) {
+        if (!list.some((t) => t.terminalId === terminalId)) continue;
+        const rest = list.filter((t) => t.terminalId !== terminalId);
+        terminals.set(sessionId, rest);
+        listener?.({ type: "terminals", environmentId, sessionId, terminals: rest });
+      }
+    }),
     searchFiles: record("searchFiles", async () => ({
       root: "/work",
       entries: [],

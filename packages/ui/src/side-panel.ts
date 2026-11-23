@@ -5,17 +5,22 @@
 import { browserStorage, type DraftStorage } from "./draft.ts";
 
 /**
- * The kinds of tab the panel can hold. Overview, Files and Diff are views of the session, one of each at most; Terminal
- * and Browser come with CYCL-98 and CYCL-99. The id of a tab is its kind while there is one of each. A fixed word: the
- * analytics name it.
+ * The kinds of tab the panel keeps. Overview, Files and Diff are views of the session, one of each at most, and the id
+ * of each is its kind. A fixed word: the analytics name it.
  */
 export const PANEL_TABS = ["overview", "files", "diff"] as const;
 export type PanelTabKind = (typeof PANEL_TABS)[number];
 
+/**
+ * A tab of the panel: one of the kinds above, or a terminal (CYCL-98), `terminal:` and its id. Terminal tabs are not
+ * kept here: they are the session's terminals, as the daemon lists them. Only which one was shown is.
+ */
+export type PanelTabId = PanelTabKind | `terminal:${string}`;
+
 export type SidePanelState = {
   readonly open: boolean;
   readonly tabs: readonly PanelTabKind[];
-  readonly active: PanelTabKind;
+  readonly active: PanelTabId;
 };
 
 /** A session whose panel was never opened: closed, with the Overview ready for when it is. */
@@ -26,8 +31,12 @@ export const REMEMBERED = 200;
 
 const KEY = "cycle:side-panel";
 
-const isTab = (value: unknown): value is PanelTabKind =>
+/** One of the kinds the panel keeps (not a terminal). */
+export const isTab = (value: unknown): value is PanelTabKind =>
   typeof value === "string" && (PANEL_TABS as readonly string[]).includes(value);
+
+const isTerminalTab = (value: unknown): value is `terminal:${string}` =>
+  typeof value === "string" && /^terminal:.{1,200}$/.test(value);
 
 /** What storage held, as a state: anything not understood (an old tab kind, a hand-edited value) is left out. */
 const parse = (value: unknown): SidePanelState | undefined => {
@@ -35,7 +44,10 @@ const parse = (value: unknown): SidePanelState | undefined => {
   const v = value as { open?: unknown; tabs?: unknown; active?: unknown };
   const tabs = Array.isArray(v.tabs) ? [...new Set(v.tabs.filter(isTab))] : [];
   if (tabs.length === 0) return undefined;
-  const active = isTab(v.active) && tabs.includes(v.active) ? v.active : (tabs[0] ?? "overview");
+  const active =
+    (isTab(v.active) && tabs.includes(v.active)) || isTerminalTab(v.active)
+      ? v.active
+      : (tabs[0] ?? "overview");
   return { open: v.open === true, tabs, active };
 };
 
@@ -112,11 +124,14 @@ export class SidePanelStore {
     this.#put(key, { ...old, open });
   }
 
-  /** Shows a tab of a session's panel, adding it if the panel does not have it, and opens the panel. */
-  show(key: string, tab: PanelTabKind): void {
+  /**
+   * Shows a tab of a session's panel, adding it if the panel does not have it, and opens the panel. A terminal's tab is
+   * the terminal's: only that it is the one shown is kept.
+   */
+  show(key: string, tab: PanelTabId): void {
     const old = this.get(key);
     if (old.open && old.active === tab) return;
-    const tabs = old.tabs.includes(tab) ? old.tabs : [...old.tabs, tab];
+    const tabs = !isTab(tab) || old.tabs.includes(tab) ? old.tabs : [...old.tabs, tab];
     this.#put(key, { open: true, tabs, active: tab });
   }
 

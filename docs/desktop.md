@@ -215,6 +215,22 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - **埋点**:`connector_added`(传输、登录方式、密钥个数)、`connector_changed`、`connector_removed`、`connector_authorized`(`ok`/`failed`/`cancelled`)、`connector_signed_out`,打开面板是 `panel_opened` 的 `connectors`。不发名字、URL、命令和密钥(`test/manager-connectors.test.ts`)。
 - **没验证**:真实的授权服务器(测试里是假的 daemon 和假的浏览器);真实窗口里的样子和深色模式。
 
+## 终端(CYCL-98)
+
+右侧面板里可以开 session 的终端:shell 跑在 daemon 那边,在 session 的文件夹里,本地和 ssh 一样(protocol.md §8"终端",决定笔记 [2026-11-22-terminals-in-the-daemon-over-l1](../.agents/notes/2026-11-22-terminals-in-the-daemon-over-l1.md))。daemon 没有能力 `terminal` 时,界面上没有终端的入口。
+
+- **入口**:会话头部的终端按钮。没有终端时开一个;有就显示上次看的那个,没看过就显示最新的;正在看终端时再按就收起面板。面板标签条末尾的 **New terminal** 再开一个。每个终端一个标签,排在 Overview、Files、Diff 之后,标题是 shell 的名字,shell 设了标题就换成它。
+- **标签从哪来**:终端是 daemon 的,不存在页面里。标签条显示的就是 daemon 列出的这个 session 的终端(`_cycle/terminal/list` 加 `changed` 通知);`side-panel.ts` 只记住上次显示的是哪一个。所以重开应用、刷新页面后标签还在,从 daemon 的屏幕重画。
+- **关闭**:点标签上的叉,或者焦点在标签上时按 Delete 或 Backspace。关闭会结束 shell 和里面跑的东西,不再确认(删除会话才要确认)。关掉正在看的标签时,显示它前面那个。daemon 没收到关闭(连接正好断了)时,说出原因,重新读列表,shell 还在的话标签回来。
+- **显示和输入**:页面用 `@xterm/xterm` 画,只有显示着的标签附着(`attach`),切走或收起就 `detach`,不看的终端不占这边的资源。`attach` 的应答和输出走两条路,先后不定:输出先到的先存着,应答到了以后丢掉屏幕里已经有的(`seq` 不大于应答的),落后时 daemon 发 `reset` 也一样(`terminals.ts` 的 `TerminalFeed`)。按键和粘贴原样发出,大段粘贴切成小于 64 KiB 的几段。复制粘贴用的是应用菜单的复制、粘贴,xterm 自己处理,页面不需要剪贴板权限。
+- **尺寸**:跟着面板变,停下来 80 ms 后告诉 daemon;附着之后和终端拿到焦点时各告诉一次(多个客户端以最后一个为准)。daemon 给的屏幕(附着的应答、`reset`)是按 daemon 当时的尺寸画的:先按那个尺寸写进去,再缩放回面板的尺寸,行和光标才对得上。
+- **状态**:shell 退出后标签变淡,底部一行说退出码,带 **Close terminal**;环境断开时底部一行说断开了,不能输入,连回来后重新附着;连回来发现终端已经没了(daemon 停了,包括空闲退出),标签留着,说它随 daemon 停止而结束,用户关掉标签为止;附着失败时说原因,可以重试。打不开时(数量到上限、会话已归档、文件夹不在了、shell 起不来、daemon 正在停止)主进程把 daemon 的拒绝转成固定的词(`terminalProblemOf`),页面显示对应的整句。
+- **颜色**:底色、文字、光标、选区取 Cycle 的令牌,跟着深浅色变;16 个 ANSI 颜色是程序输出的内容,和代码配色一样用 GitHub 的配色(`terminal-theme.ts`)。
+- **键盘**:焦点在终端里时,按键先给 shell。macOS 上 ⌘ 组合键 xterm 不处理,应用的快捷键照常;其他平台上 Ctrl 组合键归 shell,面板用按钮开关。
+- **埋点**:`terminal_opened`、`terminal_closed`、`terminal_open_failed`,只有入口、状态、个数分档和原因的固定词。不发 shell、目录、输入和输出。
+- **测试**:规则在 `packages/ui/test/terminals.test.ts`;界面在 `test/browser/terminal.browser.tsx`(假的 bridge);真 daemon 和真 shell 在 `apps/desktop/test/integration/web.integration.ts` 里:打开、输入、看到输出、刷新后重画、关闭。
+- **没验证**:远端(ssh)环境上的终端,和打包后的真实窗口里的复制粘贴。
+
 ## 公共组件(CYCL-52)
 
 后面的界面(设置页、右侧面板、空 session 页)都从这些部件搭,不再各写一套。清单来自 CYCL-64 的盘点(2026-11-21),只看首批消费者:输入区(权限、模型、Effort 芯片和 context 详情)、设置(盘点时是 Agent defaults、Session settings 两个对话框和侧栏底部的 App settings 菜单;CYCL-78 起应用级的都在设置页)、右侧面板(还没有,按[右侧面板笔记](../.agents/notes/2026-11-19-right-panel-scope.md)预留)。规格在 DESIGN.md 第 3 层。
@@ -246,7 +262,6 @@ SDK 的几个坑(beta.6,写在这里免得再踩):
   - **失败时**:那一行变成错误并附上同一条命令,让用户在那台机器上手动运行(远端连不上 GitHub、没有 `curl`/`sha256sum`、ssh 需要交互,都会走到这里)。第一版不做"应用下载再传过去"。
   - 按远端架构选用 Linux x64 或 ARM64 包。理由见 `.agents/notes/2026-11-19-daemon-minimum-version-and-upgrade-button.md`。
   - **协议不兼容(与上面的最低版本不同)**:最低版本说的是"能不能用",而协议主版本不同时 daemon 在握手就以 `-32022` 拒绝,连接根本建立不起来(docs/protocol.md §3)。客户端把它保留成带 `supported`(daemon 说它支持的)和 `requested`(应用要的)的结构化错误,初次连接和重连都一样;重连时仍按退避继续试,换上兼容的 daemon 后自己连上。环境的状态里带 `incompatible`:`with` 说哪一边要改(daemon 的主版本低于应用的是 `daemon`,高于的是 `app`,比不出来是 `unknown`)。界面在那个环境下显示一行原因:`daemon` 时给出远端 Linux 上更新 daemon 的命令(本地 daemon 不给,它随应用更新);`app` 时只说要更新应用,**不**提示降级 daemon。普通的 ssh 或网络故障不带 `incompatible`,仍是连接错误和重连。连接成功后这行消失。目前两边的主版本都是 `0`,这条路径要等协议升主版本才会走到。
-- **异团队签名包的更新**：同一 Developer ID 团队签名包的替换和 ad hoc 更新的拒绝已实测；两个不同团队签名的 Cycle 包之间的拒绝路径仍待验。详见[签名更新验收记录](testing.md#cycl-105-实测记录)。
 - **会话内容的全文搜索**:⌘K 搜的是标题、文件夹、agent 和主机(跨已连接的主机)。对话内容的全文要在历史所在的 daemon 里做。
 - **图片和文件的发送只对声明了能力的 agent 开放**:附加的控件(按钮、粘贴、拖放)只在 `_cycle/agents/list` 里这个 agent 的 `promptCapabilities.image` 或 `embeddedContext` 存在时出现;只有 `image` 时只收图片(按钮叫 "Attach image"),有 `embeddedContext` 时还收文本文件和 PDF(按钮叫 "Attach files",选择框不限类型),其余文件就地拒绝并说原因(决策笔记 [`2026-11-22-attach-any-file`](../.agents/notes/2026-11-22-attach-any-file.md))。带附件支持的 daemon(decision 0010)上的 Claude 声明了;更早的 daemon 不报告,界面上就没有附加入口,不会发出 daemon 不认的内容。主进程这一段有测试(`apps/desktop/test/manager.test.ts`):能力被报告,图片块原样送达 agent,没有声明的 agent 拒绝图片。
 - **Claude 的 `config.json`**(`configDir`、密钥):没有 UI,因为它会把凭证放上线路。要在 daemon 所在机器上手改。CYCL-80 研究的结论是界面只显示状态(从不显示值)、修改仍在那台机器上做,见决定笔记 [`2026-11-22-claude-config-status-not-values`](../.agents/notes/2026-11-22-claude-config-status-not-values.md);还没有实现。

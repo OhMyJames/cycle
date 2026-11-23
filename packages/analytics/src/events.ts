@@ -27,6 +27,8 @@ const panel = z.enum([
 const settingsSection = z.enum(["general", "appearance", "environments", "defaults", "shortcuts"]);
 /** The kinds of tab in the right panel (CYCL-90): a fixed word, never a tab's title or what it shows. */
 const panelTab = z.enum(["overview", "files", "diff", "terminal", "browser"]);
+/** How many terminals a session has, in four words: 0, 1, 2 to 3, 4 or more. Never which, nor what runs in them. */
+const terminalCount = z.enum(["none", "one", "few", "many"]);
 const connectorTransport = z.enum(["http", "stdio"]);
 const connectorAuth = z.enum(["none", "oauth"]);
 
@@ -147,6 +149,23 @@ export const EVENTS = {
   diff_file_opened: o({ view: z.enum(["session", "workspace"]) }),
   /** The Diff tab took the conversation to the call that made an edit. */
   diff_edit_revealed: o({}),
+  /**
+   * A terminal was opened beside a session (CYCL-98): from the header's Terminal button, or the panel's "New terminal".
+   * `count`: how many the session has now. Never the shell, the folder, or anything typed or shown in it.
+   */
+  terminal_opened: o({ via: z.enum(["header", "tab_strip"]), count: terminalCount }),
+  /**
+   * A terminal's tab was closed. `state`: its shell was still running (and was ended), had exited, or had already ended
+   * with the daemon. `count`: how many the session has left.
+   */
+  terminal_closed: o({
+    state: z.enum(["running", "exited", "ended"]),
+    count: terminalCount,
+  }),
+  /** A terminal could not be opened: the daemon's reason as a fixed word, never its message. */
+  terminal_open_failed: o({
+    reason: z.enum(["limit", "archived", "cwd_missing", "other"]),
+  }),
   /** A file or folder named in the conversation was shown in the Files tab: what it was and where it was named. */
   file_shown_from_conversation: o({
     target: z.enum(["file", "folder"]),
@@ -238,6 +257,9 @@ export const UI_EVENTS = [
   "diff_view_changed",
   "diff_file_opened",
   "diff_edit_revealed",
+  "terminal_opened",
+  "terminal_closed",
+  "terminal_open_failed",
   "file_shown_from_conversation",
   "code_theme_changed",
   "slash_command_used",
