@@ -3,16 +3,19 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
+import { displayMode } from "../../src/display-mode.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
-import { thinking } from "../../src/thinking.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 
-beforeEach(() => thinking.set(false));
+/** The session these tests open, by its view key: what its display mode is kept under. */
+const SESSION = "local:s1";
+
+beforeEach(() => displayMode.set(SESSION, "normal"));
 afterEach(() => {
   cleanup();
-  thinking.set(false);
+  displayMode.set(SESSION, "normal");
   // A panel opened here is kept per session, and the files that run beside this one read the same storage.
   localStorage.clear();
 });
@@ -225,11 +228,10 @@ test("a turn the person stopped says so, with the word and not only a colour", a
   await screen.findByText("Stopped before it finished.");
 });
 
-test("a thought is a closed row: Thinking… while it streams, then how long it took, opening to markdown", async () => {
-  const { user, log, script } = await open(you("u1"), state({ state: "running" }));
-  const T = Date.now() - 60_000;
-  let version = 2;
-  const emit = (update: SessionUpdate, at?: number) =>
+/** Emits updates with the time the daemon logged them, as a session that is going gets them. */
+const timed = (script: Awaited<ReturnType<typeof open>>["script"], from: number) => {
+  let version = from;
+  return (update: SessionUpdate, at?: number) =>
     act(() =>
       script.emit({
         type: "update",
@@ -240,86 +242,84 @@ test("a thought is a closed row: Thinking… while it streams, then how long it 
         version: ++version,
       }),
     );
-  const chunk = (text: string) =>
-    u({ sessionUpdate: "agent_thought_chunk", messageId: "t1", content: { type: "text", text } });
-  await emit(chunk("weighing **the options**"), T);
-  const row = await screen.findByRole("button", { name: "Thinking…" });
-  expect(row.getAttribute("aria-expanded")).toBe("false");
+};
+const thoughtChunk = (text: string) =>
+  u({ sessionUpdate: "agent_thought_chunk", messageId: "t1", content: { type: "text", text } });
+const answerChunk = (text: string) =>
+  u({ sessionUpdate: "agent_message_chunk", messageId: "a1", content: { type: "text", text } });
+
+test("in normal mode a thought is not shown: the line at the end says Thinking… while it goes", async () => {
+  const { log, script } = await open(you("u1"), state({ state: "running" }));
+  const emit = timed(script, 2);
+  await emit(thoughtChunk("weighing **the options**"));
+  await waitFor(() => expect(log.textContent?.match(/Thinking…/g)).toHaveLength(1));
   expect(log.textContent).not.toContain("weighing");
-  // The row says it: the line at the end does not say "Thinking…" a second time.
-  expect(log.textContent?.match(/Thinking…/g)).toHaveLength(1);
-  await emit(chunk(" and more"), T + 5_000);
-  await emit(
-    u({
-      sessionUpdate: "agent_message_chunk",
-      messageId: "a1",
-      content: { type: "text", text: "answer" },
-    }),
-    T + 6_000,
-  );
-  const done = await screen.findByRole("button", { name: "Thought for 5 sec" });
-  await user.click(done);
-  // Markdown, through the same path as a reply: the bold is bold, not asterisks.
-  await waitFor(() =>
-    expect(log.querySelector('[data-role="thought"] [data-streamdown="strong"]')).not.toBeNull(),
-  );
-  expect(log.textContent).toContain("weighing the options and more");
-  expect(log.textContent).not.toContain("**");
-  // Opening it is told, never what it said.
-  expect(script.calls.filter(([name]) => name === "track")).toEqual([
-    ["track", "thought_expanded", { live: false }],
-  ]);
+  expect(log.querySelector('[data-kind="thought"]')).toBeNull();
+  await emit(answerChunk("answer"));
+  await waitFor(() => expect(log.textContent).toContain("answer"));
+  expect(log.textContent).not.toContain("weighing");
+  expect(log.textContent).not.toContain("Thinking…");
 });
 
-test("a thought without times reads Thought, and Expand thinking in Settings opens thoughts by themselves", async () => {
+test("detailed mode, set in Session settings, shows the thinking itself as an italic quote, and is told", async () => {
   const { user, log, script } = await open(
     you("u1"),
-    think("t1", "weighing the options"),
+    think("t1", "weighing **the options**"),
     say("a1"),
     state({ state: "idle", stopReason: "end_turn" }),
   );
-  const row = await screen.findByRole("button", { name: "Thought" });
-  expect(row.getAttribute("aria-expanded")).toBe("false");
-  // Not in the session's menu: it is how every conversation reads, so it is with the other appearance settings.
-  await user.click(screen.getByRole("button", { name: "Session actions" }));
-  expect(screen.queryByRole("menuitemcheckbox", { name: "Expand thinking" })).toBeNull();
-  await user.keyboard("{Escape}");
+  await waitFor(() => expect(log.textContent).toContain("a1"));
+  expect(log.textContent).not.toContain("weighing");
+  // With the session's settings, not in Settings → Appearance.
   await user.click(screen.getByRole("button", { name: /^Settings/ }));
   await user.click(await screen.findByRole("tab", { name: "Appearance" }));
-  const choice = await screen.findByRole("switch", { name: "Expand thinking" });
-  expect(choice.getAttribute("aria-checked")).toBe("false");
-  await user.click(choice);
-  await waitFor(() => expect(choice.getAttribute("aria-checked")).toBe("true"));
-  expect(thinking.get()).toBe(true);
+  expect(screen.queryByRole("switch", { name: /thinking/i })).toBeNull();
   await user.keyboard("{Escape}");
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Thought" }).getAttribute("aria-expanded")).toBe(
-      "true",
-    ),
-  );
-  await waitFor(() => expect(log.textContent).toContain("weighing the options"));
+  await user.click(await screen.findByRole("button", { name: "Session actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Session settings" }));
+  const dialog = await screen.findByRole("dialog");
+  const choice = within(dialog).getByRole("combobox", { name: "Display mode" });
+  expect(choice.textContent).toContain("Normal");
+  await user.click(choice);
+  await user.click(await screen.findByRole("option", { name: /^Detailed/ }));
+  await waitFor(() => expect(choice.textContent).toContain("Detailed"));
+  expect(displayMode.get(SESSION)).toBe("detailed");
+  // Shown at once, not behind a row to open; markdown through the same path as a reply: the bold is bold.
+  const thought = await waitFor(() => {
+    const found = log.querySelector('blockquote[data-kind="thought"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  expect(within(thought).queryByRole("button")).toBeNull();
+  expect(thought.querySelector('[data-streamdown="strong"]')).not.toBeNull();
+  expect(thought.textContent).toContain("weighing the options");
   expect(
-    script.calls.filter(([name, event]) => name === "track" && event === "thinking_expand_changed"),
-  ).toEqual([["track", "thinking_expand_changed", { on: true }]]);
+    getComputedStyle(thought.querySelector('[data-role="thought"]') as Element).fontStyle,
+  ).toBe("italic");
+  // The mode, never the words.
+  expect(
+    script.calls.filter(([name, event]) => name === "track" && event === "display_mode_changed"),
+  ).toEqual([["track", "display_mode_changed", { mode: "detailed" }]]);
+  // It is this session's mode, kept for the next time it is opened.
+  expect(displayMode.get("local:other")).toBe("normal");
 });
 
-test("a thought with no words is a line with nothing to open", async () => {
-  thinking.set(true);
-  const { log } = await open(
-    you("u1"),
-    think("t1", ""),
-    say("a1"),
-    state({ state: "idle", stopReason: "end_turn" }),
-  );
-  await waitFor(() => expect(log.querySelector('[data-kind="thought"]')).not.toBeNull());
-  const thought = log.querySelector('[data-kind="thought"]') as HTMLElement;
-  expect(thought.textContent).toBe("Thought");
-  // Nothing to open: no chevron, closed although thoughts are set to open, and the row is not a control that opens.
-  const row = within(thought).getByRole("button", { name: "Thought" });
-  expect(thought.querySelector('[data-slot="tool-chevron"]')).toBeNull();
-  expect(row.getAttribute("aria-expanded")).toBe("false");
-  expect(row.matches('[data-disabled], [aria-disabled="true"], :disabled')).toBe(true);
-  expect(thought.querySelector('[data-slot="thought-text"]')).toBeNull();
+test("in detailed mode a thought streams in place; one with no words shows nothing; the line says Thinking… under it", async () => {
+  displayMode.set(SESSION, "detailed");
+  const { log, script } = await open(you("u1"), state({ state: "running" }));
+  const emit = timed(script, 2);
+  await emit(thoughtChunk(""));
+  await waitFor(() => expect(log.textContent).toContain("Thinking…"));
+  expect(log.querySelector('[data-kind="thought"]')).toBeNull();
+  await emit(thoughtChunk("weighing"));
+  const thought = await screen.findByRole("blockquote", { name: "Thinking" });
+  expect(thought.textContent).toContain("weighing");
+  expect(thought.hasAttribute("data-live")).toBe(true);
+  // The words are an aside: until what comes next, the line at the end still says the agent is at it.
+  expect(log.textContent).toContain("Thinking…");
+  await emit(answerChunk("answer"));
+  await waitFor(() => expect(log.textContent).not.toContain("Thinking…"));
+  expect(thought.hasAttribute("data-live")).toBe(false);
 });
 
 test("a message says when it was sent and a reply when it finished, with the full time on focus; none when not known", async () => {

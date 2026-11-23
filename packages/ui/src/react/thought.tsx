@@ -1,61 +1,30 @@
-// The agent thinking, as one quiet row where it happened: "Thinking…" while it streams, "Thought for 5 sec" once done
-// ("Thought" when its times are not known). It opens to the thinking as markdown, through the same sanitized path as a
-// reply. Closed unless the person opens it, or has chosen "Expand thinking" in Settings → Appearance.
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { useState, useSyncExternalStore } from "react";
-import { type ThoughtItem, textOf, thoughtMs } from "../model/index.ts";
-import { thinking } from "../thinking.ts";
+// The agent's thinking, in a session in detailed mode (Session settings → Display mode): its words where it thought them,
+// shown as they are, not behind a row to open. Set as a markdown quote, in italics and the secondary colour, so it reads
+// as an aside and not as the reply; the markdown goes through the same sanitized path as a reply. In normal mode the
+// conversation leaves thoughts out, and this is not drawn.
+import { useSyncExternalStore } from "react";
+import { type DisplayMode, displayMode } from "../display-mode.ts";
+import { type ThoughtItem, textOf } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
-import { ChevronRightIcon, ThoughtIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
-import { useAppStore } from "./store-context.tsx";
-import { durationOf } from "./tool.tsx";
 
-/** Under a second is not worth a number: it reads "Thought". */
-const MIN_SHOWN_MS = 1000;
+/** A session's display mode (by its view key), and the page drawn again when it changes. */
+export const useDisplayMode = (sessionKey: string): DisplayMode =>
+  useSyncExternalStore(
+    displayMode.subscribe,
+    () => displayMode.get(sessionKey),
+    () => displayMode.get(sessionKey),
+  );
 
-export function ThoughtRow({ item, live }: { item: ThoughtItem; live: boolean }) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const store = useAppStore();
-  const expand = useSyncExternalStore(thinking.subscribe, thinking.get, thinking.get);
-  // The person's own choice for this row, once they make one; until then, the one in Settings.
-  const [chosen, setChosen] = useState<boolean | undefined>(undefined);
-  const took = thoughtMs(item);
-  const label = live
-    ? t("thought.thinking")
-    : took !== undefined && took >= MIN_SHOWN_MS
-      ? t("thought.took", { duration: durationOf(i18n, took) })
-      : t("thought.done");
-  const text = textOf(item.blocks);
-  // No words (yet, or at all: older sessions, where Claude Code left them out): the row only says that the agent thought,
-  // and has nothing to open. The same element either way, so a row that gets its words keeps its place and focus.
-  const empty = text.trim() === "";
-  const open = !empty && (chosen ?? expand);
-  // The text sits in a message slot (role "thought"), so its markdown is set the same way as a reply.
+export function ThoughtText({ item, live }: { item: ThoughtItem; live: boolean }) {
+  const { t } = useI18n();
+  // One with no words (yet, or at all: older sessions, where Claude Code left them out) is not laid (`shownBlocks`).
+  // Named, so a screen reader says where the thinking is and does not run it into the reply.
   return (
-    <Collapsible
-      data-kind="thought"
-      data-live={live || undefined}
-      open={open}
-      disabled={empty}
-      onOpenChange={(next) => {
-        setChosen(next);
-        if (next) store.track("thought_expanded", { live });
-      }}
-    >
-      <CollapsibleTrigger>
-        <ThoughtIcon size={14} />
-        <span data-slot="thought-label">{label}</span>
-        {empty ? null : <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />}
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        <div data-slot="thought-text">
-          <div data-slot="message" data-role="thought">
-            <Markdown text={text} streaming={live} />
-          </div>
-        </div>
-      </CollapsiblePanel>
-    </Collapsible>
+    <blockquote data-kind="thought" data-live={live || undefined} aria-label={t("thought.label")}>
+      <div data-slot="message" data-role="thought">
+        <Markdown text={textOf(item.blocks)} streaming={live} />
+      </div>
+    </blockquote>
   );
 }

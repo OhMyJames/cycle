@@ -2907,7 +2907,7 @@ html[data-platform="darwin"]
   line-height: var(--cycle-leading-ui);
 }
 
-:is([data-kind="tool"], [data-kind="work"], [data-kind="thought"], [data-kind="plan"]) > button {
+:is([data-kind="tool"], [data-kind="work"], [data-kind="plan"]) > button {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -3594,43 +3594,29 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   margin: 0.25rem 0.75rem 0;
 }
 
+/* A thought, in detailed mode: a markdown quote of its words (the same rule as a quote in a reply), in italics and the
+   secondary ink, a step smaller, so it reads as an aside to the reply and not as part of it. */
 [data-kind="thought"] {
-  font-size: var(--cycle-text-ui);
-  color: var(--ui-muted-foreground);
-}
-
-[data-kind="thought"] > button {
-  width: auto;
-  color: var(--ui-muted-foreground);
-}
-
-[data-kind="thought"] > button:hover:not([data-disabled], [aria-disabled="true"]) {
-  background: var(--cycle-surface-hover);
-  color: var(--cycle-ink);
-}
-
-/* A thought with no words has nothing to open: it is a line, not a control, and is not dimmed for it. */
-[data-kind="thought"] > button:is([data-disabled], [aria-disabled="true"]) {
-  cursor: default;
-  opacity: 1;
-}
-
-/* While it streams, the words breathe as the step line's do: only opacity, and still under reduced motion. */
-[data-kind="thought"][data-live] [data-slot="thought-label"] {
-  animation: cycle-step-breathe 2.2s ease-in-out infinite;
-}
-
-[data-kind="thought"] [data-slot="thought-text"] {
-  margin: 0.25rem 0 0 0.4rem;
-  padding: 0.125rem 0 0.125rem 0.875rem;
-  border-left: 2px solid var(--ui-border);
+  margin: 0;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--cycle-border-default);
   overflow-wrap: anywhere;
 }
 
 [data-slot="message"][data-role="thought"] {
-  color: var(--ui-muted-foreground);
+  color: var(--cycle-ink-secondary);
   font-size: var(--cycle-text-ui);
+  font-style: italic;
   line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="message"][data-role="thought"] :is(code, pre) {
+  font-style: normal;
+}
+
+/* A quote in a thought stays in the thought's italics: the rule for a quote in a reply sets it upright. */
+[data-slot="message"][data-role="thought"] [data-streamdown="blockquote"] {
+  font-style: italic;
 }
 
 /* The plan in the conversation is one quiet line where it was made, styled as a tool's (above), that opens to the list.

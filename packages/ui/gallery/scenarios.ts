@@ -12,8 +12,8 @@ import type {
   UpdateState,
 } from "../src/api.ts";
 import { type CodeThemeId, codeTheme } from "../src/code-theme.ts";
+import { displayMode } from "../src/display-mode.ts";
 import { applyUpdate, emptyConversation } from "../src/model/index.ts";
-import { thinking } from "../src/thinking.ts";
 import { READING, READING_STREAMING } from "../test/markdown-samples.ts";
 import {
   BEFORE_DROP,
@@ -908,7 +908,7 @@ export const scenarios: Record<string, Scenario> = {
   },
   "thinking-shown": {
     title:
-      "Thinking as rows, opened by Expand thinking (Settings): one done, one still streaming (Thinking…)",
+      "A session in detailed mode (Session settings): its thinking shown as italic quotes, one done, one still streaming",
     sessions: [session("s1", { title: "Think it through", state: "running" })],
     history: [
       you("u1", "Why is it slow?"),
@@ -930,7 +930,7 @@ export const scenarios: Record<string, Scenario> = {
       }),
     ],
     after: async () => {
-      thinking.set(true);
+      displayMode.set("local:s1", "detailed");
     },
   },
   code: {

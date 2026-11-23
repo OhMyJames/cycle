@@ -3,18 +3,16 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import {
   activityCounts,
   activityOf,
-  applyUpdate,
   type BlockCache,
   blocksOf,
   type Conversation,
   earlierAnchor,
-  emptyConversation,
+  type LaidBlock,
   PAGE,
   reduce,
+  shownBlocks,
   stepOf,
-  type ThoughtItem,
   type ToolItem,
-  thoughtMs,
   windowStart,
 } from "../src/model/index.ts";
 
@@ -55,11 +53,23 @@ test("a thought is a row of its own, and never cuts a stretch", () => {
   expect(shape(c)).toEqual(["user", "work(a,b)", "thought"]);
 });
 
-test("a thought took from its first chunk to its last, and is not known without their times", () => {
-  let c = applyUpdate(emptyConversation(), chunk("t", "hmm"), { at: 10_000 });
-  c = applyUpdate(c, chunk("t", "…"), { at: 15_000 });
-  expect(thoughtMs(c.items[0] as ThoughtItem)).toBe(5_000);
-  expect(thoughtMs(reduce([chunk("t", "hmm")]).items[0] as ThoughtItem)).toBeUndefined();
+test("normal mode leaves thoughts out, detailed keeps those with words, and a turn still begins where it did", () => {
+  const c = reduce([
+    you("u"),
+    idle("end_turn"),
+    think("t1"),
+    chunk("t0", ""),
+    say("m"),
+    idle("end_turn"),
+  ]);
+  const laid = blocksOf(c);
+  const kinds = (blocks: LaidBlock[]) => blocks.map((b) => `${b.kind}${b.startsTurn ? "^" : ""}`);
+  expect(kinds(laid)).toEqual(["user^", "thought^", "thought", "agent"]);
+  expect(kinds(shownBlocks(laid, "detailed"))).toEqual(["user^", "thought^", "agent"]);
+  // The turn that began with a thought now begins at its reply.
+  expect(kinds(shownBlocks(laid, "normal"))).toEqual(["user^", "agent^"]);
+  // What is kept as it was is the same object, so it is not drawn again.
+  expect(shownBlocks(laid, "normal")[0]).toBe(laid[0]);
 });
 
 test("a plan and a notice are blocks of their own and cut a stretch", () => {
@@ -217,8 +227,8 @@ test("the step says what is going on, and says nothing when the text itself is a
   const step = (updates: SessionUpdate[]) => stepOf(reduce(updates));
   expect(step([you("u"), idle("end_turn")])).toBeUndefined();
   expect(step([you("u"), running])).toEqual({ kind: "working" });
-  // A thought on its way is its own row's "Thinking…": the step line does not say it twice.
-  expect(step([you("u"), running, think("t")])).toBeUndefined();
+  // A thought on its way says "Thinking…" here, whether its words are shown or not.
+  expect(step([you("u"), running, think("t")])).toEqual({ kind: "thinking" });
   expect(step([you("u"), running, say("m")])).toBeUndefined();
   expect(step([you("u"), running, tool("a", "Bash", "in_progress")])).toMatchObject({
     kind: "tool",

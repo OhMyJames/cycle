@@ -22,6 +22,7 @@ import {
   type LaidBlock,
   type Resend,
   resendOf,
+  shownBlocks,
   textOf,
   windowStart,
 } from "../model/index.ts";
@@ -36,7 +37,7 @@ import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-import { ThoughtRow } from "./thought.tsx";
+import { ThoughtText, useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
 import { ToolCard } from "./tool.tsx";
 import { EndBlock, Notice, StepLine, WorkBlock } from "./turn.tsx";
@@ -322,7 +323,7 @@ const BlockView = memo(function BlockView({
         </>
       );
     case "thought":
-      return <ThoughtRow item={block.item} live={streaming} />;
+      return <ThoughtText item={block.item} live={streaming} />;
     case "work":
       return <WorkBlock tools={block.tools} live={live} />;
     case "failed":
@@ -388,7 +389,10 @@ export function ConversationView({
   const { t } = useI18n();
   // Turns that have not changed give back the same blocks, so only the turn that is going is drawn again.
   const cache = useRef<BlockCache>(new Map());
-  const blocks = useMemo(() => blocksOf(conversation, cache.current), [conversation]);
+  // In normal mode (Session settings → Display mode) the agent's thinking is left out; detailed shows it.
+  const mode = useDisplayMode(sessionKey);
+  const laidOut = useMemo(() => blocksOf(conversation, cache.current), [conversation]);
+  const blocks = useMemo(() => shownBlocks(laidOut, mode), [laidOut, mode]);
   // The last turn, when it failed: its end offers to send its message again.
   const resend = useMemo(() => resendOf(conversation), [conversation]);
 
@@ -610,7 +614,9 @@ export function ConversationView({
     if (fromEnd < NEAR_END_PX) setFresh(false);
     stuck.current = fromEnd < NEAR_END_PX;
     if (stuck.current) anchor.current = undefined;
-    else if (anchor.current === undefined) anchor.current = blocks[start]?.key;
+    // Not a thought: one is left out when the session is set to normal, and the place would be lost with it.
+    else if (anchor.current === undefined)
+      anchor.current = blocks.slice(start).find((block) => block.kind !== "thought")?.key;
     remember(sessionKey, { anchor: anchor.current, top: stuck.current ? "bottom" : el.scrollTop });
     if (el.scrollTop < LEAD_PX && start > 0) showEarlier();
   };

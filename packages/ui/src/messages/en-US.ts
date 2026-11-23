@@ -304,9 +304,6 @@ export const enUS = {
   "time.finished": "Finished {time}",
   "message.copy.agent": "Copy the reply",
   "message.copy.user": "Copy the message",
-  "thought.thinking": "Thinking…",
-  "thought.took": "Thought for {duration}",
-  "thought.done": "Thought",
   "plan.label": "Plan",
   "plan.progress": "{done} of {count} done",
   "plan.count": "{done}/{count}",
@@ -436,8 +433,13 @@ export const enUS = {
   "step.elapsedSeconds": "{seconds}s",
   "step.elapsedMinutes": "{minutes}m",
   "step.elapsedMinutesSeconds": "{minutes}m {seconds}s",
-  "thinking.expand": "Expand thinking",
   "session.settings": "Session settings",
+  "session.display": "Display mode",
+  "session.display.description": "Only how this session is shown here. The agent is not told.",
+  "session.display.normal": "Normal",
+  "session.display.normal.description": "What the agent says and does, without its thinking.",
+  "session.display.detailed": "Detailed",
+  "session.display.detailed.description": "Its thinking too, as it writes it.",
   "session.actions": "Session actions",
   "workspace.actions": "Workspace actions",
 
@@ -655,6 +657,9 @@ export const enUS = {
   "environment.state.connecting": "Connecting…",
   "environment.state.reconnecting": "Reconnecting…",
   "environment.state.closed": "Not connected",
+  "session.settingsOffline":
+    "The agent's settings can be changed once its environment is connected.",
+  "thought.label": "Thinking",
   "session.settingsDescription": "A change applies to the next thing the agent does.",
   "session.rename": "Rename",
   "session.archive": "Archive",
@@ -730,8 +735,6 @@ export const enUS = {
     "Cycle counts which features are used, to improve them. It never sends what you write, your files, or their names.",
   "settings.codeTheme.description": "Used for code in the conversation, in light and in dark.",
   "settings.codeTheme.preview": "Preview",
-  "settings.thinking.description":
-    "Open the agent's thinking in the conversation by itself. Off, each thought stays closed until you open it.",
   "settings.environments.lead":
     "Where sessions run: this computer, and other machines reached over ssh.",
   "settings.environments.actions": "Actions for {name}",
