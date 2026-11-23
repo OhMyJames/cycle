@@ -451,6 +451,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "step.approval": "等待你的回答",
   "step.thinking": "思考中…",
   "step.working": "工作中…",
+  "step.replying": "回复中…",
   "step.retrying": "请求失败，正在重试…",
   "step.retryingCount": "请求失败，正在重试（第 {attempt} 次，共 {max} 次）…",
   "step.run": "正在运行命令",
