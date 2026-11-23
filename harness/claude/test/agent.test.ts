@@ -177,6 +177,46 @@ test("an idle process is let go, and the next prompt resumes the session", async
   expect(fake.calls[1]?.options).toMatchObject({ resume: ID });
 });
 
+test("a process is kept while a cron the Stop hook told is due within the hour, and let go for one further off (CYCL-145)", async () => {
+  // The cron is in local time, as Claude Code reads it: the minute and hour this far from now.
+  const cronIn = (ms: number) => {
+    const d = new Date(Date.now() + ms);
+    return `${d.getMinutes()} ${d.getHours()} * * *`;
+  };
+  for (const [schedule, kept] of [
+    [cronIn(20 * 60_000), true],
+    [cronIn(3 * 60 * 60_000), false],
+  ] as const) {
+    const fake = fakeQuery(async (call) => {
+      // What the SDK does at the end of the turn, before its result: the Stop hook, with what is set to wake it.
+      const stop = call.options.hooks?.Stop?.[0]?.hooks[0];
+      expect(stop).toBeDefined();
+      expect(
+        await stop?.(
+          {
+            hook_event_name: "Stop",
+            session_crons: [{ id: "c1", schedule, recurring: false, prompt: "check back" }],
+          } as never,
+          undefined,
+          { signal: new AbortController().signal },
+        ),
+      ).toEqual({});
+      return textTurn(ID, "m", "ok");
+    });
+    await connect(
+      fake.run,
+      async ({ agent, waitForIdle }) => {
+        await open(agent);
+        await prompt(agent as never, waitForIdle, "remind me");
+        await settle(150);
+        expect(fake.state.inputClosed).toBe(!kept);
+      },
+      undefined,
+      { idleMs: 40 },
+    );
+  }
+});
+
 test("a process in the middle of a turn is not let go for being quiet", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
