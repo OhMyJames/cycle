@@ -41,7 +41,7 @@ bun run check    # 边界、类型、lint、测试
 
 右侧面板、diff 视图、交互式终端、内置浏览器及 agent 操作浏览器（browser use）、插件（plugins）和设置页（settings）已纳入 v1 规划。已发布功能见[使用指南](docs/getting-started.md)。
 
-git worktree、多 provider 和独立 Web 端仍在 v1 范围外。
+git worktree 和独立 Web 端仍在 v1 范围外。多个 agent 已在范围内：Claude 之外，Codex、agy、pi 正在接入（调研见 `docs/adapters/`）。
 
 ## 文档
 

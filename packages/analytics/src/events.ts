@@ -8,7 +8,16 @@
 import { z } from "zod";
 
 const count = z.number().int().min(0);
-const agent = z.enum(["claude", "other"]);
+/**
+ * The agents Cycle is built with or is taking in (CYCL-152 Codex, CYCL-153 agy, CYCL-154 pi): fixed words of ours,
+ * the ids their harnesses have in the daemon. The words are
+ * here before the harnesses are (CYCL-155), so that the first session of each is counted under its name; an agent
+ * that ships under another id is added here with its harness.
+ */
+export const KNOWN_AGENTS = ["claude", "codex", "agy", "pi"] as const;
+const agent = z.enum([...KNOWN_AGENTS, "other"]);
+/** An agent as the dictionary says it: one of ours by name, or "other". */
+export type AgentWord = z.infer<typeof agent>;
 const environment = z.enum(["local", "remote"]);
 const size = z.enum(["short", "medium", "long"]);
 const panel = z.enum([
@@ -344,8 +353,8 @@ export const isUiEvent = (name: string): name is UiEventName =>
 // ---- words for what is not one of a list: the id of an agent, a setting, a length ----
 
 /** Agents we know by name; any other is "other", so a custom agent's id is not sent. */
-export const agentOf = (id: string): z.infer<typeof agent> =>
-  id === "claude" ? "claude" : "other";
+export const agentOf = (id: string): AgentWord =>
+  (KNOWN_AGENTS as readonly string[]).includes(id) ? (id as AgentWord) : "other";
 
 export const settingOf = (configId: string): "mode" | "model" | "effort" | "other" =>
   configId === "mode" || configId === "model" || configId === "effort" ? configId : "other";

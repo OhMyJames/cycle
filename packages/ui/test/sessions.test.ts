@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { SessionSummary } from "../src/api.ts";
 import {
+  agentLabel,
   currentWorkspace,
   elsewhere,
   markOf,
@@ -268,4 +269,33 @@ test("a session that has a time comes before one that has none, across environme
     on("old", "y", { lastSeq: 70 }),
   ];
   expect(rows.toSorted(newest).map((s) => s.sessionId)).toEqual(["z", "y", "x"]);
+});
+
+// ---- which agent a session is of (CYCL-155) ----
+
+const info = (id: string, name: string, available = true) => ({
+  id,
+  name,
+  available,
+  configSchema: {},
+});
+
+test("a session's agent is named only where it tells sessions apart", () => {
+  const claude = info("claude", "Claude");
+  const codex = info("codex", "Codex");
+  // One agent, and the session is its: the same word on every row would say nothing.
+  expect(agentLabel([claude], "claude")).toBeUndefined();
+  // Several to choose from: each session says which.
+  expect(agentLabel([claude, codex], "claude")).toBe("Claude");
+  expect(agentLabel([claude, codex], "codex")).toBe("Codex");
+  // A second agent that cannot run is no choice, as on the new session page; a session of it is still named.
+  const away = info("codex", "Codex", false);
+  expect(agentLabel([claude, away], "claude")).toBeUndefined();
+  expect(agentLabel([claude, away], "codex")).toBe("Codex");
+  // An agent the environment no longer lists is named by its id; agents not read yet name nothing.
+  expect(agentLabel([claude], "gone")).toBe("gone");
+  expect(agentLabel(undefined, "claude")).toBeUndefined();
+  expect(agentLabel([], "claude")).toBeUndefined();
+  // None can run: the one listed is still the only one there is.
+  expect(agentLabel([info("claude", "Claude", false)], "claude")).toBeUndefined();
 });

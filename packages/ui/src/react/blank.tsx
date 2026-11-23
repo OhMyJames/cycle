@@ -82,7 +82,7 @@ export function BlankConversationView({
   sidebarToggle?: ReactNode;
   onSent: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, list } = useI18n();
   const store = useAppStore();
   const status = useAppState((s) => s.status[blank.environmentId]);
   // Read here so that the page draws again when they come: which agent starts depends on them.
@@ -369,20 +369,31 @@ export function BlankConversationView({
           }}
         />
       );
-    if (noAgent)
+    if (noAgent) {
+      // The agents the environment has, none of which can run: named, so it is known what to install or sign in to.
+      const listed = (agents ?? []).map((a) => a.name);
+      const noAgentHint = t(
+        listed.length === 0
+          ? "blank.noAgentHint"
+          : listed.length === 1
+            ? "blank.noAgentHint.one"
+            : "blank.noAgentHint.several",
+        { environment: environmentName, agents: list(listed) },
+      );
       return (
         <StateBlock
           tone="away"
           align="start"
           size="inline"
           title={t("blank.noAgent", { environment: environmentName })}
-          body={t("blank.noAgentHint", { environment: environmentName })}
+          body={noAgentHint}
           action={{
             label: t("blank.retryAgents"),
             onAction: () => void store.reloadAgents(blank.environmentId),
           }}
         />
       );
+    }
     if (blank.unreadable === true)
       return (
         <StateBlock

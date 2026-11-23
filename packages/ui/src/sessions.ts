@@ -3,7 +3,7 @@
 // keyboard walking it (Cmd+[ and Cmd+]) are one thing and are tested without a page. `now` is given, never read.
 //
 // A workspace is a folder on one environment: `(environmentId, cwd)` (docs/desktop.md). The sidebar shows one at a time.
-import type { SessionSummary } from "./api.ts";
+import type { AgentInfo, SessionSummary } from "./api.ts";
 import { viewKey } from "./store/store.ts";
 
 /** How many of a workspace's older sessions show before "Show more". */
@@ -311,4 +311,24 @@ export const sessionList = (
     if (list.length > 0) groups.push({ key: kind, kind, sessions: list });
   }
   return { groups, order: groups.flatMap((g) => g.sessions), hidden };
+};
+
+/**
+ * The name of a session's agent, where saying it tells sessions apart: when its environment has more than one agent
+ * to choose from, or the session is of one that is not the environment's only choice (an agent since removed).
+ * Nothing while the environment's agents are not known, and nothing where there is one agent and this is its
+ * session: a word on every row that is the same on every row says nothing. An agent the environment no longer lists
+ * is named by its id.
+ */
+export const agentLabel = (
+  agents: readonly AgentInfo[] | undefined,
+  agentId: string,
+): string | undefined => {
+  if (agents === undefined) return undefined;
+  // The choice a new session has: the agents that can run, as the blank conversation offers them.
+  const available = agents.filter((a) => a.available);
+  const choice = available.length > 0 ? available : agents;
+  // No agent at all is no choice either: there is nothing for the word to tell this session from.
+  if (choice.length === 0 || (choice.length === 1 && choice[0]?.id === agentId)) return undefined;
+  return agents.find((a) => a.id === agentId)?.name ?? agentId;
 };

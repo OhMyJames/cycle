@@ -208,6 +208,10 @@ describe("the dictionary", () => {
 
   test("agents, settings and lengths are put into words, not sent as they are", () => {
     expect(agentOf("claude")).toBe("claude");
+    // Each agent of ours is told apart (CYCL-155); the word is its id, which is ours, never one a user chose.
+    expect(["codex", "agy", "pi"].map(agentOf)).toEqual(["codex", "agy", "pi"]);
+    expect(agentOf("Codex")).toBe("other");
+    expect(agentOf("")).toBe("other");
     expect(agentOf("my-private-agent")).toBe("other");
     expect(settingOf("mode")).toBe("mode");
     expect(settingOf("model")).toBe("model");

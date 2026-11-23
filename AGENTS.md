@@ -26,7 +26,7 @@ cycle-v1 是 ADE(agentic development environment),是 cycle 的重写。这是�
 - agent 是可替换的接口。现在只实现了 Claude;Codex、agy、pi 在接入中(CYCL-152、153、154)。daemon 核心之外按名字认 agent 的地方都从 `apps/daemon/src/harnesses.ts` 的清单读，不要再写死某一个 agent;加一个 agent 的步骤见 [docs/daemon.md](docs/daemon.md) 的"加一个 agent"。
 - 协议和传输分离。远程连接走 SSH 隧道,协议本身不依赖具体传输。
 - v1 桌面端规划包括右侧面板、diff 视图、交互式终端、内置浏览器及 browser use、plugins 和 settings 页。后续设计沿用三份决定笔记：[右侧面板（CYCL-89）](.agents/notes/2026-11-19-right-panel-scope.md)、[终端（CYCL-96）](.agents/notes/2026-11-19-desktop-terminal-scope.md)、[browser use（CYCL-100）](.agents/notes/2026-11-19-browser-use-scope.md)。
-- git worktree、多 provider 和独立 Web 端仍在 v1 范围外。
+- git worktree 和独立 Web 端仍在 v1 范围外。多个 agent(以及它们各自的模型 provider)已在范围内，见上面"agent 是可替换的接口"一条和 `docs/adapters/`。
 
 ## 命令
 

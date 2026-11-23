@@ -1995,6 +1995,25 @@ svg[data-slot="dot"] {
   font-weight: 600;
 }
 
+/* Which agent a session is of, where the environment has more than one (sessions.ts `agentLabel`): quiet, after the
+   title in a row and in the header, and it keeps its width (the title fades, the path shrinks). */
+[data-slot="session-agent"] {
+  flex: none;
+  font-size: var(--cycle-text-meta);
+  line-height: inherit;
+  white-space: nowrap;
+  color: var(--ui-muted-foreground);
+}
+
+/* The time stays at the row's end with the agent before it. */
+[data-slot="session-agent"] + [data-slot="session-time"] {
+  margin-left: 0;
+}
+
+[role="option"] > [data-slot="session-agent"] {
+  margin-left: auto;
+}
+
 /* When the session last changed, at the row's end: quiet, and it never gives way to the title (the title fades). */
 [data-slot="session-time"] {
   flex: none;

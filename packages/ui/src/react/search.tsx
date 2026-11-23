@@ -9,8 +9,8 @@ import {
   CommandList,
 } from "@ui-sdk/react/command";
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@ui-sdk/react/dialog";
-import type { EnvironmentConfig, EnvironmentStatus, SessionSummary } from "../api.ts";
-import { markOf, workspacesOf } from "../sessions.ts";
+import type { AgentInfo, EnvironmentConfig, EnvironmentStatus, SessionSummary } from "../api.ts";
+import { agentLabel, markOf, workspacesOf } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
 import { PlusIcon, SearchIcon } from "./icons.tsx";
 import { sessionTitle } from "./sidebar.tsx";
@@ -25,6 +25,8 @@ export type SearchDialogProps = {
   environments: EnvironmentConfig[];
   status: Record<string, EnvironmentStatus>;
   sessions: Record<string, SessionSummary[]>;
+  /** Each environment's agents, to say which a session is of where there is more than one. */
+  agents: Record<string, AgentInfo[]>;
   onPick: (environmentId: string, sessionId: string) => void;
   onNewSession: () => void;
 };
@@ -109,6 +111,7 @@ export function SearchDialog(props: SearchDialogProps) {
                   {workspace.sessions.map((session) => {
                     const mark = markOf(session, away);
                     const style = mark !== undefined ? MARK_STYLE[mark] : undefined;
+                    const agent = agentLabel(props.agents[session.environmentId], session.agent);
                     return (
                       <CommandItem
                         key={rowValue(session.environmentId, session.sessionId)}
@@ -117,6 +120,7 @@ export function SearchDialog(props: SearchDialogProps) {
                           workspace.name,
                           workspace.cwd,
                           session.agent,
+                          agent ?? "",
                           environment?.name ?? "",
                         ]}
                       >
@@ -129,7 +133,7 @@ export function SearchDialog(props: SearchDialogProps) {
                           <span data-slot="search-title">{sessionTitle(session)}</span>
                           <span data-slot="search-meta">
                             {mark !== undefined ? <span>{t(MARK_WORD[mark])}</span> : null}
-                            <span>{session.agent}</span>
+                            {agent !== undefined ? <span>{agent}</span> : null}
                             {session.archived ? <span>{t("search.archived")}</span> : null}
                           </span>
                         </span>
