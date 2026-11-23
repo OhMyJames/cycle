@@ -489,6 +489,8 @@ test("scrolled up, a button takes the reader back to the end, says when somethin
   const box = toEnd()?.getBoundingClientRect();
   const view = log.getBoundingClientRect();
   expect(box && box.bottom <= view.bottom && box.bottom > view.bottom - 64).toBe(true);
+  // Clear of the view's bottom fade (32px), which would fade it too.
+  expect(box && view.bottom - box.bottom).toBeGreaterThanOrEqual(32);
   // A reply arrives below: the reader stays where they are, and the button says there is something new.
   const top = log.scrollTop;
   await emit(you("later"));
@@ -560,6 +562,46 @@ test("the conversation's text lines up with the input box, short or scrolling, w
   const card = (await screen.findByLabelText("Allow Read?")).getBoundingClientRect();
   expect(card.left).toBeCloseTo(short.box[0] ?? 0, 0);
   expect(card.right).toBeCloseTo(short.box[1] ?? 0, 0);
+});
+
+test("the conversation fades at its top and bottom edges, and at the end the last message is 64px above the input box", async () => {
+  const { log } = await open(...turnsOf(20));
+  await waitFor(() => expect(log.textContent).toContain("answer 19"));
+  const root = log.closest('[data-slot="app"]')?.parentElement;
+  if (root instanceof HTMLElement) root.style.height = "100%";
+  await waitFor(() => expect(log.scrollHeight).toBeGreaterThan(log.clientHeight + 200));
+  // A mask of the view, with no colour in it: 16px at the top, 32px at the bottom.
+  const { maskImage } = getComputedStyle(log);
+  expect(maskImage).toBe(
+    "linear-gradient(rgba(0, 0, 0, 0), rgb(0, 0, 0) 16px, rgb(0, 0, 0) calc(100% - 32px), rgba(0, 0, 0, 0))",
+  );
+  log.scrollTop = log.scrollHeight;
+  await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
+  // At the end, the last message ends 64px above the view's bottom (the input box is right below it): past the fade.
+  const blocks = log.querySelectorAll('[data-slot="block"]');
+  const last = blocks[blocks.length - 1]?.getBoundingClientRect();
+  const view = log.getBoundingClientRect();
+  const composer = document.querySelector('[data-slot="composer"]')?.getBoundingClientRect();
+  expect(composer?.top).toBeCloseTo(view.bottom, 0);
+  expect((last?.bottom ?? 0) + 64).toBeCloseTo(view.bottom, 0);
+  // At the top, the first message starts below the top fade.
+  log.scrollTop = 0;
+  await waitFor(() => expect(log.scrollTop).toBe(0));
+  const first = log
+    .querySelector('[data-slot="block"], [data-slot="earlier"]')
+    ?.getBoundingClientRect();
+  expect((first?.top ?? 0) - view.top).toBeGreaterThanOrEqual(16);
+});
+
+test("an empty session's message stays in the middle of the view, whatever room is kept under a last message", async () => {
+  const { log } = await open();
+  const root = log.closest('[data-slot="app"]')?.parentElement;
+  if (root instanceof HTMLElement) root.style.height = "100%";
+  const empty = await screen.findByText("Nothing here yet. Say something below.");
+  const box = empty.getBoundingClientRect();
+  const view = log.getBoundingClientRect();
+  expect(box.top - view.top).toBeCloseTo(view.bottom - box.bottom, 0);
+  expect(box.top - view.top).toBeGreaterThan(32);
 });
 
 test("a conversation that grows from a few blocks to many draws about a page, not all of it", async () => {
