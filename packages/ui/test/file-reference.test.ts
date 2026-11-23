@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { codeReference, isPathLink, linkReference } from "../src/file-reference.ts";
+import { codeReference, isPathLink, linkReference, pathLinkUrl } from "../src/file-reference.ts";
 
 const ROOT = "/home/dev/cycle";
 
@@ -31,6 +31,9 @@ test("inline code that could as well be code, a command, a package or somewhere 
     "/etc/hosts.conf",
     "../outside/file.ts",
     "src/folder",
+    "/home/dev/cycle/packages",
+    "github.com/user/repo.git",
+    "example.com/index.html",
   ])
     expect(codeReference(text, ROOT)).toBeUndefined();
 });
@@ -49,6 +52,19 @@ test("a link to a path is one to show; an address, a fragment or a path outside 
     line: 3,
   });
   expect(linkReference("file:///home/dev/cycle/x.ts", ROOT)).toEqual({ path: "x.ts" });
+  expect(linkReference("cycle-file:file:///home/dev/cycle/x.ts", ROOT)).toEqual({ path: "x.ts" });
+  expect(linkReference("cycle-file:packages/ui/", ROOT)).toEqual({
+    path: "packages/ui",
+    folder: true,
+  });
   expect(linkReference("cycle-file:../elsewhere.ts", ROOT)).toBeUndefined();
   expect(linkReference("https://example.com/a.ts", ROOT)).toBeUndefined();
+});
+
+test("a link to a file is made a path the link checks keep, an address is not touched", () => {
+  expect(pathLinkUrl("file:///home/dev/cycle/x.ts")).toBe("/home/dev/cycle/x.ts");
+  expect(pathLinkUrl("app.tsx:12")).toBe("./app.tsx:12");
+  expect(pathLinkUrl("src/app.tsx:12")).toBe("src/app.tsx:12");
+  expect(pathLinkUrl("https://bun.sh")).toBe("https://bun.sh");
+  expect(pathLinkUrl("mailto:a@b.c")).toBe("mailto:a@b.c");
 });

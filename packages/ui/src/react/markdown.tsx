@@ -15,6 +15,7 @@ import {
 import {
   type AnimateOptions,
   defaultRehypePlugins,
+  defaultRemarkPlugins,
   Streamdown,
   useIsCodeFenceIncomplete,
 } from "streamdown";
@@ -25,6 +26,7 @@ import {
   type FileReference,
   isPathLink,
   linkReference,
+  pathLinkUrl,
 } from "../file-reference.ts";
 import { mendStreaming } from "../markdown-mend.ts";
 import { AgentLink } from "./agent-link.tsx";
@@ -60,28 +62,38 @@ export const isSafeLink = (href: string | undefined): boolean => {
 export type FileLinks = { root: string; open: (file: FileReference) => void };
 export const FileLinksContext = createContext<FileLinks | undefined>(undefined);
 
-/** A click that ended a drag selecting the words is not a request to open them. */
-const selecting = (): boolean => {
+/** The words are a link's already: code in them is not a link of its own. */
+const InLink = createContext(false);
+
+/** A press that ended a drag selecting these words is not a request to open them; text selected elsewhere does not count. */
+const selectingIn = (element: Element): boolean => {
   const selection = window.getSelection();
-  return selection !== null && !selection.isCollapsed;
+  return selection !== null && !selection.isCollapsed && selection.containsNode(element, true);
 };
 
-/** Words of a reply that name a file of the session's folder: a press shows it in Files. */
+/**
+ * Words of a reply that name a file of the session's folder: a press shows it in Files. A link, not a `<button>`, whose
+ * words cannot be selected: a path can still be copied out of a reply. It cannot be dragged, so a drag selects it.
+ */
 function FileLink({ file, children }: { file: FileReference; children: ReactNode }) {
   const { t } = useI18n();
   const links = useContext(FileLinksContext);
-  const label = file.line !== undefined ? `${file.path}:${file.line}` : file.path;
   return (
-    <button
-      type="button"
-      data-slot="file-link"
-      title={`${t("files.showInFiles")}: ${label}`}
-      onClick={() => {
-        if (!selecting()) links?.open(file);
-      }}
-    >
-      {children}
-    </button>
+    <InLink.Provider value={true}>
+      <a
+        href={`${FILE_LINK_SCHEME}${encodeURI(file.path)}`}
+        draggable={false}
+        data-slot="file-link"
+        title={`${t("files.showInFiles")}: ${file.path}`}
+        onClick={(event) => {
+          event.preventDefault();
+          // A key press is never a selection's end.
+          if (event.detail === 0 || !selectingIn(event.currentTarget)) links?.open(file);
+        }}
+      >
+        {children}
+      </a>
+    </InLink.Provider>
   );
 }
 
@@ -94,27 +106,52 @@ const nodeText = (node: unknown): string => {
     : "";
 };
 
-/** Inline code. One that names a file of the session's folder opens it in Files; anything else is code. */
-function InlineCode({ node, children }: { node?: unknown; children?: ReactNode }) {
+/**
+ * Inline code. One that names a file of the session's folder opens it in Files, once the reply is written: while it is,
+ * `src/app.t` would be a link to a file that is not there, and the code would be drawn again at every letter.
+ */
+function InlineCode({
+  node,
+  className,
+  children,
+  ...rest
+}: ComponentProps<"code"> & { node?: unknown }) {
   const links = useContext(FileLinksContext);
-  const code = <code data-streamdown="inline-code">{children}</code>;
-  const file = links !== undefined ? codeReference(nodeText(node), links.root) : undefined;
+  const inLink = useContext(InLink);
+  const streaming = useContext(Streaming);
+  // Streamdown's own classes, which the Files preview's markdown is drawn with.
+  const classes = ["rounded bg-muted px-1.5 py-0.5 font-mono text-sm", className]
+    .filter(Boolean)
+    .join(" ");
+  const code = (
+    <code {...rest} className={classes} data-streamdown="inline-code">
+      {children}
+    </code>
+  );
+  const file =
+    links !== undefined && !inLink && !streaming
+      ? codeReference(nodeText(node), links.root)
+      : undefined;
   return file !== undefined ? <FileLink file={file}>{code}</FileLink> : code;
 }
 
 function SafeLink({ href, children }: { href?: string | undefined; children?: ReactNode }) {
   const store = useOptionalAppStore();
   const links = useContext(FileLinksContext);
-  // A path in the session's folder (relative, absolute or `file:`) opens in Files; any other one is its words.
-  const file = links !== undefined ? linkReference(href, links.root) : undefined;
+  const streaming = useContext(Streaming);
+  // A path in the session's folder (relative, absolute or `file:`) opens in Files, once the reply is written; any other
+  // one is its words.
+  const file = links !== undefined && !streaming ? linkReference(href, links.root) : undefined;
   if (file !== undefined) return <FileLink file={file}>{children}</FileLink>;
   if (href === undefined || !isSafeLink(href))
     return <span data-slot="unsafe-link">{children}</span>;
   // That a link in a message was opened, never which.
   return (
-    <AgentLink href={href} onOpened={() => store?.track("message_link_opened", {})}>
-      {children}
-    </AgentLink>
+    <InLink.Provider value={true}>
+      <AgentLink href={href} onOpened={() => store?.track("message_link_opened", {})}>
+        {children}
+      </AgentLink>
+    </InLink.Provider>
   );
 }
 
@@ -240,6 +277,22 @@ const rehypePlugins = Object.entries(defaultRehypePlugins).flatMap(([name, plugi
   return [markPathLinks, [harden, { ...options, linkBlockPolicy: "text-only" }]];
 }) as ComponentProps<typeof Streamdown>["rehypePlugins"];
 
+type MdastNode = { type?: string; url?: string; children?: MdastNode[] };
+
+/** A link's address made one the checks keep, when it is a path (`pathLinkUrl`), as the markdown is read. */
+const pathLinkUrls = () => (tree: MdastNode) => {
+  const visit = (node: MdastNode) => {
+    if ((node.type === "link" || node.type === "definition") && typeof node.url === "string")
+      node.url = pathLinkUrl(node.url);
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+};
+
+const remarkPlugins = [...Object.values(defaultRemarkPlugins), pathLinkUrls] as ComponentProps<
+  typeof Streamdown
+>["remarkPlugins"];
+
 const components: ComponentProps<typeof Streamdown>["components"] = {
   a: SafeLink as never,
   inlineCode: InlineCode as never,
@@ -331,6 +384,7 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
         tableMaxHeight="none"
         skipHtml
         rehypePlugins={rehypePlugins}
+        remarkPlugins={remarkPlugins}
         components={components}
         plugins={{ code: pluginFor(theme) }}
         controls={CONTROLS}

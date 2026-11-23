@@ -282,6 +282,7 @@ test("a file of the session's folder named in a reply, in code or a link, opens 
       <Markdown
         text={
           "Fixed `src/app.ts:42` and `state.active`; see [the manager](apps/daemon/manager.ts), " +
+          "[x](file:///work/x.ts), [y](y.ts:3), [`src/b.ts`](src/b.ts), [`src/c.ts`](https://bun.sh/c), " +
           "[outside](../etc/passwd) and [bun](https://bun.sh)."
         }
       />
@@ -289,14 +290,56 @@ test("a file of the session's folder named in a reply, in code or a link, opens 
   );
   const user = userEvent.setup();
   const links = container.querySelectorAll<HTMLElement>('[data-slot="file-link"]');
-  expect([...links].map((link) => link.textContent)).toEqual(["src/app.ts:42", "the manager"]);
-  await user.click(links[0] as HTMLElement);
-  await user.click(links[1] as HTMLElement);
-  expect(opened).toEqual([{ path: "src/app.ts", line: 42 }, { path: "apps/daemon/manager.ts" }]);
+  expect([...links].map((link) => link.textContent)).toEqual([
+    "src/app.ts:42",
+    "the manager",
+    "x",
+    "y",
+    "src/b.ts",
+  ]);
+  for (const link of links) await user.click(link);
+  // Code in a link is the link's words, not a second link.
+  expect(opened).toEqual([
+    { path: "src/app.ts", line: 42 },
+    { path: "apps/daemon/manager.ts" },
+    { path: "x.ts" },
+    { path: "y.ts", line: 3 },
+    { path: "src/b.ts" },
+  ]);
+  expect(
+    container.querySelectorAll('[data-slot="file-link"] [data-slot="file-link"]'),
+  ).toHaveLength(0);
+  expect(container.querySelector('a [data-slot="file-link"]')).toBeNull();
+  // The keyboard opens one too.
+  (links[1] as HTMLElement).focus();
+  await user.keyboard("{Enter}");
+  expect(opened.at(-1)).toEqual({ path: "apps/daemon/manager.ts" });
   // Code that is not a path, a path outside the folder, and an address are as they were.
   expect(container.querySelector('[data-slot="unsafe-link"]')?.textContent).toBe("outside");
   expect(container.querySelector('a[href^="https://bun.sh"]')).not.toBeNull();
   expect(container.textContent).not.toContain("cycle-file");
+});
+
+test("text selected elsewhere does not stop a file link opening; while a reply is written, a path is its words", async () => {
+  const opened: unknown[] = [];
+  const links = { root: "/work", open: (file: unknown) => opened.push(file) };
+  const { container, rerender } = render(
+    <FileLinksContext.Provider value={links}>
+      <p data-testid="other">Some other words</p>
+      <Markdown text={"See `src/app.ts`."} streaming />
+    </FileLinksContext.Provider>,
+  );
+  expect(container.querySelector('[data-slot="file-link"]')).toBeNull();
+  rerender(
+    <FileLinksContext.Provider value={links}>
+      <p data-testid="other">Some other words</p>
+      <Markdown text={"See `src/app.ts`."} />
+    </FileLinksContext.Provider>,
+  );
+  const other = container.querySelector('[data-testid="other"]') as HTMLElement;
+  window.getSelection()?.selectAllChildren(other);
+  (container.querySelector('[data-slot="file-link"]') as HTMLElement).click();
+  expect(opened).toEqual([{ path: "src/app.ts" }]);
 });
 
 test("without a session's folder, a path in a reply is only its words", () => {

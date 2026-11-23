@@ -658,8 +658,12 @@ export function ConversationView({
         : {
             root: filesRoot,
             open: (file) => {
-              store.showInFiles(file.path);
-              store.track("file_shown_from_conversation", { target: "file", from: "message" });
+              const folder = file.folder === true;
+              store.showInFiles(file.path, { folder });
+              store.track("file_shown_from_conversation", {
+                target: folder ? "folder" : "file",
+                from: "message",
+              });
             },
           },
     [filesRoot, store],

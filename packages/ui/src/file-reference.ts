@@ -3,8 +3,13 @@
 // (`packages/ui/src/content/file-reference.ts`): inline code is full of things that look like paths and are not (
 // `state.active`, `process.env`, a command, a glob, a package), so only what can only be a path counts.
 
-/** A file named in a reply: where it is, inside the session's folder, and the line named with it, if any. */
-export type FileReference = { path: string; line?: number };
+import { insideFolder } from "./files-view.ts";
+
+/**
+ * A file named in a reply: where it is, inside the session's folder, and the line named with it, if any. A link that ends
+ * in `/` names a folder.
+ */
+export type FileReference = { path: string; line?: number; folder?: true };
 
 /**
  * A bare name counts as a file only with one of these extensions, since inline code is full of `state.active` and
@@ -31,12 +36,11 @@ const located = (written: string): { path: string; line?: number } => {
 };
 
 /**
- * Where `path` is inside `root` (the session's folder), from `root` itself when it is relative: its parts, with `.` and
- * `..` worked out. Nothing for a path that leaves the folder or is the folder.
+ * Where `path` is inside `root` (the session's folder), from `root` itself when it is relative: `.` and `..` worked out,
+ * then the same rule as every other way into Files (`insideFolder`). Nothing for a path that leaves the folder or is it.
  */
 const inside = (path: string, root: string): string | undefined => {
-  const base = root.replace(/\/+$/, "");
-  const full = path.startsWith("/") ? path : `${base}/${path}`;
+  const full = path.startsWith("/") ? path : `${root.replace(/\/+$/, "")}/${path}`;
   const parts: string[] = [];
   for (const part of full.split("/")) {
     if (part === "" || part === ".") continue;
@@ -44,15 +48,24 @@ const inside = (path: string, root: string): string | undefined => {
       if (parts.pop() === undefined) return undefined;
     } else parts.push(part);
   }
-  const normal = `/${parts.join("/")}`;
-  return normal.startsWith(`${base}/`) ? normal.slice(base.length + 1) : undefined;
+  return insideFolder(`/${parts.join("/")}`, root);
 };
 
-const found = (path: string, line: number | undefined, root: string): FileReference | undefined => {
+const found = (
+  path: string,
+  line: number | undefined,
+  root: string,
+  folder = false,
+): FileReference | undefined => {
   const at = inside(path, root);
   if (at === undefined) return undefined;
+  if (folder) return { path: at, folder: true };
   return line === undefined ? { path: at } : { path: at, line };
 };
+
+/** `github.com/user/repo.git`, `example.com/index.html`: an address without its scheme, not a folder of the session. */
+const DOMAIN =
+  /^[a-z\d-]+(?:\.[a-z\d-]+)*\.(?:com|org|net|io|dev|app|ai|co|edu|gov|sh|so|xyz|me|us|uk|cn|de)\//i;
 
 /** The file a reply's inline code names, inside `root`. Anything that could as well be code, a command or a package stays text. */
 export const codeReference = (text: string, root: string): FileReference | undefined => {
@@ -60,16 +73,20 @@ export const codeReference = (text: string, root: string): FileReference | undef
   if (trimmed === "" || trimmed.includes("://") || NOT_A_PATH.test(trimmed)) return undefined;
   if (/^[~@-]/.test(trimmed)) return undefined;
   const { path, line } = located(trimmed);
+  if (DOMAIN.test(path)) return undefined;
   const name = path.split("/").at(-1) ?? "";
-  if (!path.startsWith("/")) {
-    const extension = /\.([A-Za-z][\w-]*)$/.exec(name)?.[1];
-    if (extension === undefined) return undefined;
-    if (!path.includes("/") && !NAME_EXTENSIONS.has(extension.toLowerCase())) return undefined;
-  }
+  // Without an extension, even a whole path could as well be a folder: only a file is opened from inline code.
+  const extension = /\.([A-Za-z][\w-]*)$/.exec(name)?.[1];
+  if (extension === undefined) return undefined;
+  if (!path.includes("/") && !NAME_EXTENSIONS.has(extension.toLowerCase())) return undefined;
   return found(path, line, root);
 };
 
-/** The scheme a reply's relative link is given before Streamdown's link check, which drops any link it cannot resolve. */
+/**
+ * The scheme a reply's link to a path is given before Streamdown's link check, which drops any link it cannot resolve.
+ * A `file:` link or one like `app.tsx:12` is made a plain path before that (`pathLinkUrl`), since an earlier step drops
+ * any scheme it does not know, and would read `app.tsx` as one.
+ */
 export const FILE_LINK_SCHEME = "cycle-file:";
 
 /**
@@ -87,9 +104,9 @@ export const linkReference = (
   root: string,
 ): FileReference | undefined => {
   if (href === undefined) return undefined;
-  const local = href.startsWith(FILE_LINK_SCHEME)
-    ? href.slice(FILE_LINK_SCHEME.length)
-    : href.replace(/^file:\/\/(?=\/)/i, "");
+  const local = (
+    href.startsWith(FILE_LINK_SCHEME) ? href.slice(FILE_LINK_SCHEME.length) : href
+  ).replace(/^file:\/\/(?=\/)/i, "");
   if (!isPathLink(local)) return undefined;
   let decoded: string;
   try {
@@ -100,5 +117,15 @@ export const linkReference = (
   const [beforeQuery = ""] = decoded.split("?");
   const { path, line } = located(beforeQuery);
   const [bare = ""] = path.split("#");
-  return bare === "" ? undefined : found(bare, line, root);
+  return bare === "" ? undefined : found(bare, line, root, bare.endsWith("/"));
+};
+
+/**
+ * A link's address as the markdown is read, before any check: a path to a file (`file:///abs/a.ts`, `a.ts:12`) is made
+ * one the checks keep (`/abs/a.ts`, `./a.ts:12`); anything else is as it was.
+ */
+export const pathLinkUrl = (url: string): string => {
+  if (/^file:\/\/\//i.test(url)) return url.slice("file://".length);
+  if (/^[^/:#?]+:\d/.test(url) && isPathLink(url)) return `./${url}`;
+  return url;
 };
