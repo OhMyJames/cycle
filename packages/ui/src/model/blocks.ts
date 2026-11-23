@@ -320,18 +320,22 @@ const folded = (turn: readonly LaidBlock[]): LaidBlock[] => {
   if (reply === -1) return [...turn];
   const out: LaidBlock[] = [];
   let run: LaidBlock[] = [];
+  let folds = 0;
   const close = (next: LaidBlock | undefined) => {
     const first = run[0];
     if (first === undefined) return;
     const from = out.at(-1);
     const began = from !== undefined ? startOf(from) : undefined;
     const answered = next !== undefined ? startOf(next) : undefined;
+    // Under a second says nothing ("0 sec"): the line then says only that it worked.
     const ms =
-      began !== undefined && answered !== undefined && answered >= began
+      began !== undefined && answered !== undefined && answered - began >= 1000
         ? answered - began
         : undefined;
     out.push({
-      key: `fold:${first.key}`,
+      // By its turn and place in it, not by its first block: that is a thought in detailed mode and not in normal, and a
+      // fold must stay the same block (open, and the anchor of the reader's place) when the mode changes.
+      key: `fold:${first.turn}:${folds++}`,
       turn: first.turn,
       startsTurn: first.startsTurn,
       kind: "fold",
@@ -342,7 +346,9 @@ const folded = (turn: readonly LaidBlock[]): LaidBlock[] => {
   };
   turn.forEach((block, at) => {
     // What the person said stays, a message put into the turn while it went included; and so does all after the reply.
-    if (at >= reply || block.kind === "user") {
+    // So does a sub-agent still at work (sent to the background): its card is the one sign that something still runs.
+    const running = block.kind === "subagent" && block.tool.subagent?.state === "running";
+    if (at >= reply || block.kind === "user" || running) {
       close(block);
       out.push(block);
     } else run.push(block);

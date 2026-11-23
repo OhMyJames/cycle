@@ -339,10 +339,16 @@ function SubagentWork({ conversation, live }: { conversation: Conversation; live
 function FoldBlock({ block }: { block: Extract<LaidBlock, { kind: "fold" }> }) {
   const i18n = useI18n();
   const { t } = i18n;
+  const store = useAppStore();
   const [open, setOpen] = useState(false);
+  // Opened for an item asked to be shown is not the person opening it: only their own press is told.
   useRevealOpen(heldIds(block), setOpen);
+  const toggle = (next: boolean) => {
+    if (next) store.track("turn_work_opened", {});
+    setOpen(next);
+  };
   return (
-    <Collapsible data-kind="fold" open={open} onOpenChange={setOpen}>
+    <Collapsible data-kind="fold" open={open} onOpenChange={toggle}>
       <CollapsibleTrigger>
         <span data-slot="fold-label">
           {block.ms !== undefined
@@ -521,6 +527,14 @@ export function ConversationView({
   const ref = useRef<HTMLDivElement>(null);
   const anchor = useRef<string | undefined>(saved?.anchor);
   const [, redraw] = useReducer((n: number) => n + 1, 0);
+  // A turn the reader was reading in folds when it ends: their place is now the fold that holds it, not gone.
+  if (anchor.current !== undefined && !blocks.some((block) => block.key === anchor.current)) {
+    const held = anchor.current;
+    const fold = blocks.find(
+      (block) => block.kind === "fold" && block.blocks.some((inner) => inner.key === held),
+    );
+    if (fold !== undefined) anchor.current = fold.key;
+  }
   const start = windowStart(blocks, anchor.current);
   // An anchor whose block is gone (a turn was laid again): back to the last page.
   if (anchor.current !== undefined && blocks[start]?.key !== anchor.current)

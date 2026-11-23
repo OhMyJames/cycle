@@ -1077,6 +1077,9 @@ test("an MCP tool reads by its title and the first short line of its input; a se
   await user.click(search);
   const link = within(log).getByRole("link", { name: "Test runner" });
   expect(link.getAttribute("href")).toBe("https://bun.sh/docs/cli/test");
+  // What the page told, apart from opening the folded work to reach the links.
+  const links = () =>
+    script.calls.filter(([name, event]) => name === "track" && event !== "turn_work_opened");
   const opened: unknown[][] = [];
   const windowOpen = window.open;
   window.open = ((...args: unknown[]) => {
@@ -1089,16 +1092,14 @@ test("an MCP tool reads by its title and the first short line of its input; a se
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog.textContent).toContain("https://bun.sh/docs/cli/test");
     expect(opened).toEqual([]);
-    expect(script.calls.filter(([name]) => name === "track")).toEqual([]);
+    expect(links()).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: "Open link" }));
     expect(opened).toEqual([["https://bun.sh/docs/cli/test", "_blank", "noopener,noreferrer"]]);
   } finally {
     window.open = windowOpen;
   }
   // That a link was opened, never which.
-  expect(script.calls.filter(([name]) => name === "track")).toEqual([
-    ["track", "tool_link_opened", {}],
-  ]);
+  expect(links()).toEqual([["track", "tool_link_opened", {}]]);
   expect(link.parentElement?.textContent).toContain("bun.sh");
   // An address that is not a web one is text, never a link.
   expect(within(log).queryByRole("link", { name: "Trap" })).toBeNull();
@@ -1426,7 +1427,7 @@ test("a sub-agent sent to the background shows no answer from its launch; one th
 });
 
 test("a turn that ended normally shows its answer with its work folded above it; one that stopped stays open", async () => {
-  const { user, log } = await open(
+  const { user, log, script } = await open(
     you("u1"),
     say("first look"),
     ...tool("a", "Bash", "completed", { command: "make" }),
@@ -1447,6 +1448,10 @@ test("a turn that ended normally shows its answer with its work folded above it;
   expect(log.textContent).toContain("halfway");
   await user.click(fold);
   expect(fold.getAttribute("aria-expanded")).toBe("true");
+  // Told that it was opened, never what it holds.
+  expect(
+    script.calls.filter(([name, event]) => name === "track" && event === "turn_work_opened"),
+  ).toEqual([["track", "turn_work_opened", {}]]);
   await waitFor(() => expect(log.textContent).toContain("first look"));
   expect(log.textContent).toContain("make");
   // Keyboard: the same line closes it.

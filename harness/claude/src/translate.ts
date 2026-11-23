@@ -427,13 +427,16 @@ export const stopReasonOf = (result: SDKMessage): StopReason => {
       const text = typeof failed.result === "string" ? failed.result.trim() : "";
       const status =
         typeof failed.api_error_status === "number" ? failed.api_error_status : undefined;
+      // Claude Code also says the error's text as an assistant message, which the turn shows: with a status, the end
+      // says only that, so the text is not read twice; without one, its first line, cut whole characters at a time.
+      const line = [...(text.split("\n")[0] ?? "")];
       const message =
-        text !== ""
-          ? text.length > 500
-            ? `${text.slice(0, 500)}…`
-            : text
-          : status !== undefined
-            ? `API error ${status}`
+        status !== undefined
+          ? `API error ${status}`
+          : line.length > 0
+            ? line.length > 300
+              ? `${line.slice(0, 300).join("")}…`
+              : line.join("")
             : "The model request failed";
       return { stopReason: "error", error: { code: -32603, message } };
     }

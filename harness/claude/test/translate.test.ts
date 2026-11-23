@@ -156,6 +156,17 @@ test("maps how a turn ended", () => {
   expect(
     stopReasonOf(result({ subtype: "success", is_error: true, result: "", api_error_status: 529 })),
   ).toEqual({ stopReason: "error", error: { code: -32603, message: "API error 529" } });
+  // With a status the text is not said again: the turn already shows it as the agent's message.
+  expect(
+    stopReasonOf(
+      result({
+        subtype: "success",
+        is_error: true,
+        result: "API Error: 401 invalid key\nmore",
+        api_error_status: 401,
+      }),
+    ),
+  ).toEqual({ stopReason: "error", error: { code: -32603, message: "API error 401" } });
 });
 
 test("TodoWrite becomes a plan: the whole list, with the statuses ACP knows", () => {

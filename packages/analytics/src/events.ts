@@ -233,6 +233,8 @@ export const EVENTS = {
   message_copied: o({ kind: z.enum(["agent", "user"]) }),
   /** "Back to bottom" took a reader who had scrolled up back to the end. `fresh`: something had arrived there meanwhile. */
   back_to_bottom_used: o({ fresh: z.boolean() }),
+  /** The work a finished turn folds above its answer ("Worked for …") was opened by the person. */
+  turn_work_opened: o({}),
   /** A long code block in a reply, shown in part, was shown whole. */
   code_block_expanded: o({}),
   /** A diagram drawn from a ```mermaid fence in a reply was opened large. */
@@ -319,6 +321,7 @@ export const UI_EVENTS = [
   "message_link_opened",
   "message_copied",
   "back_to_bottom_used",
+  "turn_work_opened",
   "code_block_expanded",
   "diagram_opened",
   "diagram_source_shown",

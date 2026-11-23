@@ -371,3 +371,40 @@ test("a folded turn that has not changed gives back the very same blocks", () =>
   const after = foldedBlocks(laid, first.stops, cache);
   expect(after[1]).toBe(before[1] as LaidBlock);
 });
+
+test("a sub-agent still at work after the turn is not folded: its card is the sign that something runs", () => {
+  const c = reduce([
+    you("u"),
+    tool("a", "Bash"),
+    tool("x", "Agent", "completed"),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "x", background: true } },
+    }),
+    say("started it in the background"),
+    idle("end_turn"),
+  ]);
+  expect(folds(c)).toEqual(["user", "fold(work)", "subagent", "agent"]);
+});
+
+test("a fold keeps its key when the display mode shows or leaves out the thought it begins with", () => {
+  const c = reduce([you("u"), think("t"), tool("a", "Bash"), say("m"), idle("end_turn")]);
+  const keyIn = (mode: "normal" | "detailed") =>
+    foldedBlocks(shownBlocks(blocksOf(c), mode), c.stops).find((b) => b.kind === "fold")?.key;
+  expect(keyIn("detailed")).toBe(keyIn("normal"));
+});
+
+test("a fold under a second does not say how long", () => {
+  const timed: [SessionUpdate, number | undefined][] = [
+    [you("u"), 1_000],
+    [tool("a", "Bash"), 1_200],
+    [say("m"), 1_400],
+    [idle("end_turn"), undefined],
+  ];
+  const c = timed.reduce((c, [update, at]) => applyUpdate(c, update, { at }), reduce([]));
+  expect(foldedBlocks(blocksOf(c), c.stops).find((b) => b.kind === "fold")).not.toHaveProperty(
+    "ms",
+  );
+});
