@@ -3,7 +3,7 @@
 import { APP_NAME } from "../main/layout.ts";
 
 /** The repository whose releases the app updates from. */
-export const RELEASE_REPO = "OhMyJames/Cycle-V1";
+export const RELEASE_REPO = "OhMyJames/cycle";
 
 /** A release's tag for a version, and the only tags the workflow builds. */
 export const tagOf = (version: string): string => `v${version}`;

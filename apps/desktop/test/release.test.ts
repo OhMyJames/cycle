@@ -49,7 +49,7 @@ test("the command for a remote machine downloads this release's daemon, checks i
   const command = daemonUpgradeCommand("0.1.1");
   const steps = command.split(" && ");
   expect(steps[1]).toBe(
-    "curl -fsSLO 'https://github.com/OhMyJames/Cycle-V1/releases/download/v0.1.1/install.sh'",
+    "curl -fsSLO 'https://github.com/OhMyJames/cycle/releases/download/v0.1.1/install.sh'",
   );
   expect(steps.indexOf("sha256sum -c install.sh.sha256")).toBeLessThan(
     steps.indexOf("sh install.sh 'v0.1.1'"),

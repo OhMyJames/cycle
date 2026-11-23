@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Writes the Apple signing secrets into this repository's GitHub Actions secrets, from the files and
-# values on the machine that holds them (the owner's Mac mini). Run it there:
+# values on the machine that holds them. Run it there:
 #
 #   scripts/set-apple-secrets.sh path/to/DeveloperID.p12 path/to/AuthKey_XXXX.p8
 #
@@ -8,7 +8,7 @@
 # `gh secret set` on its standard input. Needs `gh` logged in with rights on the repository.
 set -euo pipefail
 
-REPO="${CYCLE_REPO:-OhMyJames/Cycle-V1}"
+REPO="${CYCLE_REPO:-OhMyJames/cycle}"
 P12="${1:?usage: $0 <DeveloperID.p12> <AuthKey.p8>}"
 P8="${2:?usage: $0 <DeveloperID.p12> <AuthKey.p8>}"
 [ -r "$P12" ] || { echo "cannot read $P12" >&2; exit 1; }
