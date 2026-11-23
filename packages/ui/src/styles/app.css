@@ -1325,9 +1325,9 @@ button[data-slot="files-row"]:focus-visible {
   font-size: var(--cycle-text-meta);
 }
 
-/* In a call that read or changed a file: a quiet link to it in the Files tab, flush with the line's text. */
+/* In a call that read or changed a file: a quiet link to it in the Files tab, its text at the tool's indent. */
 [data-slot="tool-files-link"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.25rem;
   padding: 0 0.25rem;
   border: 0;
   border-radius: var(--ui-radius);
@@ -3884,6 +3884,12 @@ button:is(:hover, :focus-visible) > [data-slot="tool-chevron"],
   transform: rotate(90deg);
 }
 
+/* What a call opens to is flush with the line's text. Its parts are set in 1.5rem where they are drawn elsewhere too (the
+   Diff tab, a form, a sub-agent's card), so here the panel starts that much before the line instead. */
+[data-kind="tool"] > [data-slot="collapsible-panel"] {
+  margin-inline-start: -1.5rem;
+}
+
 /* The collapsible parts of the conversation are told apart by data-kind: ui-sdk sets data-slot itself on Collapsible and
    replaces ours, so a rule on data-slot="tool" never matched. */
 /* A stretch of tool calls: its summary is a line like a row's; open, its rows hang under it at the same 1.5rem step as
@@ -4692,10 +4698,10 @@ button[data-slot="review-file"]:focus-visible {
   margin-top: calc(var(--cycle-gap-turn) - var(--cycle-gap));
 }
 
-/* What a call was given and what came back: sunken, flush with the line's text, so it reads as the line's own. */
+/* What a call was given and what came back: sunken, set in from the line's text so it reads as the line's own. */
 [data-slot="tool-input"],
 [data-slot="tool-output"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0.5rem 0.75rem;
   max-height: 16rem;
   overflow: auto;
@@ -4708,9 +4714,9 @@ button[data-slot="review-file"]:focus-visible {
 }
 
 /* A command, an output, its errors: sunken like the input, a small head with what it is and a button to copy all of
-   it. The text inside is the block's; the block is flush with the line's text. */
+   it. The text inside is the block's; the block is set in from the line. */
 [data-slot="tool-block"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
   border-radius: var(--ui-radius);
   background: var(--ui-muted);
   overflow: hidden;
@@ -4786,7 +4792,7 @@ button[data-slot="review-file"]:focus-visible {
 /* One call's change: its own lines, numbered as in the file, removed and added ones on a faint red and green. Sunken like
    the output, and as tall at most. */
 [data-slot="tool-diff"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0.5rem 0;
   max-height: 16rem;
   overflow: auto;
@@ -4802,8 +4808,8 @@ button[data-slot="review-file"]:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  width: 100%;
-  margin-block: 0.25rem;
+  width: calc(100% - 1.5rem);
+  margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0.375rem 0.75rem;
   border: 0;
   border-radius: var(--ui-radius);
@@ -4837,7 +4843,7 @@ button[data-slot="review-file"]:focus-visible {
 }
 
 [data-slot="tool-diff-head"][data-joined] + :is([data-slot="tool-diff"], [data-slot="tool-note"]) {
-  margin-block: 0 0.25rem;
+  margin: 0 0 0.25rem 1.5rem;
   padding-block: 0.5rem;
   border-top: 1px solid var(--cycle-border-subtle);
   border-radius: 0 0 var(--ui-radius) var(--ui-radius);
@@ -5050,12 +5056,12 @@ button[data-slot="review-file"]:focus-visible {
 
 /* A picture a call gave back (a Read of an image) sits in the panel like its text. */
 [data-kind="tool"] [data-slot="image"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
 }
 
 /* A plan a call proposes: the document, as the agent's own messages are drawn. */
 [data-slot="tool-plan"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0.5rem 0.75rem;
   max-height: 24rem;
   overflow: auto;
@@ -5065,7 +5071,7 @@ button[data-slot="review-file"]:focus-visible {
 }
 
 [data-slot="tool-questions"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
   padding-left: 1.25rem;
   font-size: var(--cycle-text-ui);
 }
@@ -5080,7 +5086,7 @@ button[data-slot="review-file"]:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
   padding: 0;
   list-style: none;
   font-size: var(--cycle-text-ui);
@@ -5108,7 +5114,7 @@ button[data-slot="review-file"]:focus-visible {
 
 /* A line about the panel itself: a long diff cut short, a change too large to show. */
 [data-slot="tool-note"] {
-  margin-block: 0.25rem;
+  margin: 0.25rem 0 0.25rem 1.5rem;
   color: var(--ui-muted-foreground);
   font-size: var(--cycle-text-meta);
 }
@@ -5206,7 +5212,7 @@ button[data-slot="review-file"]:focus-visible {
   background: var(--cycle-surface-hover);
 }
 
-/* Under its line in the conversation, in line with the line's text (not in the input box's tray, whose row is also
+/* Under its line in the conversation, flush with the line's text (not in the input box's tray, whose row is also
    `plan`). */
 [data-kind="plan"]:not([data-slot="extension-row"]) [data-slot="plan"] {
   margin-block: 0.25rem;
