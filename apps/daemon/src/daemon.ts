@@ -126,6 +126,7 @@ import {
 import { checkToolResult } from "./tool-result.ts";
 import { FolderTrust, realFolder, within } from "./trust-file.ts";
 import { type Activity, isUserMessage, opensOrEndsTurn, turnLeftOpen } from "./turns.ts";
+import { worktreeHost } from "./worktree-host.ts";
 
 /**
  * Makes the agents with the daemon's own live runtime settings (`<dataDir>/agent-settings.json`): the one instance
@@ -278,6 +279,15 @@ export class Daemon {
     this.#optionsCache = optionsCache;
     this.#trust = trust;
     this.#connectors = connectors;
+    // Codex and agy have no worktree tools of their own: Cycle gives them the ones Claude has.
+    connectors.useWorktrees(
+      worktreeHost({
+        session: (id) => this.#sessions.get(id),
+        remember: (session, patch) => this.#remember(session, patch),
+        warn: (event) => this.#log.warn(event, {}),
+      }),
+      ["codex", "agy"],
+    );
     this.#terminals = new Terminals({
       ...(options.terminals ?? defaultTerminals(process.env)),
       log: this.#log,

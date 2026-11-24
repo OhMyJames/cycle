@@ -428,7 +428,7 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       await session.log.close();
       await core.store.remove(session.id);
       if (tree !== undefined)
-        await endWorktree(core, session.entry, tree, unsaved?.commits.length ? true : false);
+        await endWorktree(core, session.entry, tree, (unsaved?.commits.length ?? 0) > 0);
     } finally {
       core.changed();
     }
