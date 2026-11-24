@@ -1,8 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { META } from "@cycle/protocol";
 import { z } from "zod";
+import { JsonFile, readJsonFile } from "./json-file.ts";
 
 const CachedChoiceSchema = z.object({
   const: z.string(),
@@ -25,29 +23,25 @@ const OptionsCacheSchema = z.object({
  * than blocking daemon startup.
  */
 export class AgentOptionsCache {
-  readonly #path: string;
-  #agents: Map<string, Record<string, CachedChoice[]>>;
-  #queue: Promise<unknown> = Promise.resolve();
+  readonly #file: JsonFile<ReadonlyMap<string, Record<string, CachedChoice[]>>>;
 
   private constructor(path: string, agents: Map<string, Record<string, CachedChoice[]>>) {
-    this.#path = path;
-    this.#agents = agents;
+    this.#file = new JsonFile<ReadonlyMap<string, Record<string, CachedChoice[]>>>(
+      path,
+      agents,
+      (value) => ({ version: 1, agents: Object.fromEntries(value) }),
+    );
   }
 
   static async load(path: string): Promise<AgentOptionsCache> {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return new AgentOptionsCache(path, new Map());
-    try {
-      const parsed = OptionsCacheSchema.parse(JSON.parse(await file.text()));
-      return new AgentOptionsCache(path, new Map(Object.entries(parsed.agents)));
-    } catch {
-      return new AgentOptionsCache(path, new Map());
-    }
+    // Only a cache: one that cannot be read is started again, not a reason to stop.
+    const parsed = await readJsonFile(path, OptionsCacheSchema);
+    return new AgentOptionsCache(path, new Map(Object.entries(parsed?.agents ?? {})));
   }
 
   /** Overlays cached dynamic choices onto an agent's static `configSchema`, preserving defaults and `_meta`. */
   apply(agent: string, schema: Record<string, unknown>): Record<string, unknown> {
-    const cached = this.#agents.get(agent);
+    const cached = this.#file.value.get(agent);
     if (cached === undefined) return schema;
     const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
     if (properties === undefined || typeof properties !== "object") return schema;
@@ -80,43 +74,29 @@ export class AgentOptionsCache {
         : {}),
       ...(c.efforts !== undefined ? { efforts: [...c.efforts] } : {}),
     }));
-    const run = this.#queue.then(async () => {
-      const previousAgent = this.#agents.get(agent);
-      const current = previousAgent?.[configId];
+    return this.#file.change((agents) => {
+      const previous = agents.get(agent);
+      const current = previous?.[configId];
       // A list that does not say a model's effort levels (the adapter's fallback before the SDK's catalog
       // arrives) keeps what an earlier one said, rather than forgetting it.
-      for (const [index, choice] of normalized.entries()) {
-        if (choice.efforts !== undefined) continue;
+      const next = normalized.map((choice) => {
+        if (choice.efforts !== undefined) return choice;
         const known = current?.find((c) => c.const === choice.const)?.efforts;
-        if (known !== undefined) normalized[index] = { ...choice, efforts: known };
+        return known !== undefined ? { ...choice, efforts: known } : choice;
+      });
+      if (current !== undefined && JSON.stringify(current) === JSON.stringify(next)) {
+        return { answer: undefined };
       }
-      if (current !== undefined && JSON.stringify(current) === JSON.stringify(normalized)) {
-        return;
-      }
-      this.#agents.set(agent, { ...(previousAgent ?? {}), [configId]: normalized });
-      const snapshot = JSON.stringify(
-        { version: 1, agents: Object.fromEntries(this.#agents) },
-        null,
-        2,
-      );
-      try {
-        await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
-        const temporary = `${this.#path}.${randomUUID()}.tmp`;
-        await writeFile(temporary, `${snapshot}\n`, { mode: 0o600 });
-        await rename(temporary, this.#path);
-      } catch (error) {
-        if (previousAgent === undefined) this.#agents.delete(agent);
-        else this.#agents.set(agent, previousAgent);
-        throw error;
-      }
+      return {
+        value: new Map(agents).set(agent, { ...(previous ?? {}), [configId]: next }),
+        answer: undefined,
+      };
     });
-    this.#queue = run.catch(() => undefined);
-    return run;
   }
 
   /** Waits for any in-flight cache writes to finish before daemon shutdown. */
   flush(): Promise<void> {
-    return this.#queue.then(() => undefined);
+    return this.#file.flush();
   }
 }
 

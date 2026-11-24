@@ -1,11 +1,10 @@
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import {
   ConnectorAuthSchema,
   ConnectorNameSchema,
   ConnectorTransportSchema,
 } from "@cycle/protocol";
 import { z } from "zod";
+import { JsonFile, readJsonFile } from "../json-file.ts";
 
 /**
  * The two stores behind connectors (docs/protocol.md §14, note 2026-11-19-connectors-behind-a-daemon-gateway).
@@ -105,65 +104,44 @@ export class ConnectorFileUnreadableError extends Error {
 }
 
 /**
- * A map kept whole in one JSON file: written to a temporary file and renamed, one write at a time.
- * The folder is 0700 and the file 0600, since the vault's file holds keys.
+ * A map kept whole in one JSON file (json-file.ts). The folder is the connectors' own and 0700, the file 0600, since the
+ * vault's file holds keys.
  */
 class JsonMapFile<T> {
-  readonly #path: string;
-  #items: Map<string, T>;
-  #queue: Promise<unknown> = Promise.resolve();
+  readonly #file: JsonFile<ReadonlyMap<string, T>>;
 
   private constructor(path: string, items: Map<string, T>) {
-    this.#path = path;
-    this.#items = items;
+    this.#file = new JsonFile<ReadonlyMap<string, T>>(
+      path,
+      items,
+      (value) => ({ version: 1, items: Object.fromEntries(value) }),
+      { ownFolder: true },
+    );
   }
 
   static async load<T>(path: string, item: z.ZodType<T>): Promise<JsonMapFile<T>> {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return new JsonMapFile<T>(path, new Map());
-    try {
-      const parsed = z
-        .object({ version: z.literal(1), items: z.record(z.string(), item) })
-        .parse(JSON.parse(await file.text()));
-      return new JsonMapFile<T>(path, new Map(Object.entries(parsed.items)));
-    } catch (error) {
-      throw new ConnectorFileUnreadableError(
-        path,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+    const parsed = await readJsonFile(
+      path,
+      z.object({ version: z.literal(1), items: z.record(z.string(), item) }),
+      (detail) => new ConnectorFileUnreadableError(path, detail),
+    );
+    return new JsonMapFile<T>(path, new Map(Object.entries(parsed?.items ?? {})));
   }
 
   values(): T[] {
-    return [...this.#items.values()];
+    return [...this.#file.value.values()];
   }
 
   get(id: string): T | undefined {
-    return this.#items.get(id);
+    return this.#file.value.get(id);
   }
 
   change(apply: (items: Map<string, T>) => void): Promise<void> {
-    const run = this.#queue.then(async () => {
-      const before = new Map(this.#items);
-      try {
-        apply(this.#items);
-        const folder = dirname(this.#path);
-        await mkdir(folder, { recursive: true, mode: 0o700 });
-        await chmod(folder, 0o700);
-        const temporary = `${this.#path}.${process.pid}.tmp`;
-        await writeFile(
-          temporary,
-          `${JSON.stringify({ version: 1, items: Object.fromEntries(this.#items) }, null, 2)}\n`,
-          { mode: 0o600 },
-        );
-        await rename(temporary, this.#path);
-      } catch (error) {
-        this.#items = before;
-        throw error;
-      }
+    return this.#file.change((current) => {
+      const items = new Map(current);
+      apply(items);
+      return { value: items, answer: undefined };
     });
-    this.#queue = run.catch(() => undefined);
-    return run;
   }
 }
 
