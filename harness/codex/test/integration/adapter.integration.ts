@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   client,
@@ -17,6 +17,8 @@ import { response } from "./mock-responses.ts";
 type Agent = Parameters<Parameters<ReturnType<typeof client>["connectWith"]>[1]>[0];
 
 test("the packaged adapter streams, executes a sandboxed command, interrupts and closes", async () => {
+  // Under the home directory on purpose: the sandbox lets a command write the temp directory, and this test needs
+  // `touch ../outside` to be refused. Tests that make no such claim use tmpdir() (CYC-277).
   const dir = await mkdtemp(join(homedir(), ".cycle-test-codex-"));
   const cwd = join(dir, "project"),
     home = join(dir, "home");
@@ -191,7 +193,7 @@ supports_websockets=false
 }, 30_000);
 
 test("an MCP gateway is reached with this launch's key, a resumed session with the next one, and the key is not kept", async () => {
-  const dir = await mkdtemp(join(homedir(), ".cycle-test-codex-mcp-"));
+  const dir = await mkdtemp(join(tmpdir(), "cycle-test-codex-mcp-"));
   const cwd = join(dir, "project"),
     home = join(dir, "home");
   await mkdir(cwd);
@@ -395,7 +397,7 @@ const OWN = {
 };
 
 test("a session that begins on one of the owner's models talks to the gateway with its token, keeps to the owner's models, and keeps the token from commands", async () => {
-  const dir = await mkdtemp(join(homedir(), ".cycle-test-codex-providers-"));
+  const dir = await mkdtemp(join(tmpdir(), "cycle-test-codex-providers-"));
   const cwd = join(dir, "project"),
     home = join(dir, "home");
   await mkdir(cwd);
