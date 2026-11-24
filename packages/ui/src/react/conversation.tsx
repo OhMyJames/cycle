@@ -873,7 +873,11 @@ export function ConversationView({
             </div>
           ))}
           {!loading ? (
-            <StepLine conversation={conversation} awaitingApproval={awaitingApproval} />
+            <StepLine
+              conversation={conversation}
+              awaitingApproval={awaitingApproval}
+              sessionKey={sessionKey}
+            />
           ) : null}
           {/* Held to the bottom of the view while the end is below it, and taking no room, so it moves nothing it floats over. */}
           <div data-slot="to-end">

@@ -4,7 +4,7 @@ import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge, idle, text } from "../fake-bridge.ts";
+import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -245,4 +245,64 @@ test("a task started by a call inside a closed card of several calls opens the c
   await waitFor(() =>
     expect(document.querySelector('[data-item-id="c2"][data-revealed]')).not.toBeNull(),
   );
+});
+
+/** Opens the session as the daemon lists it, `background` running; the panel stays shut. */
+const openBetweenTurns = async (snapshot: SessionSnapshot, background: number | undefined) => {
+  const script = fakeBridge({ connected: true, snapshot: () => snapshot });
+  script.bridge.sessions = async (locationId: string) => [
+    { ...summary("s1", locationId), ...(background === undefined ? {} : { background }) },
+  ];
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /work/ }));
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  return { script, user, log };
+};
+
+test("between turns, what still runs in the background is said at the end of the conversation and opens the Overview", async () => {
+  const { script, user, log } = await openBetweenTurns(busy, 1);
+  // Not the turn's loader and no clock: a ring, how many, and what.
+  const line = await within(log).findByRole("button", { name: /1 running in the background/ });
+  expect(line.textContent).toContain("Run the dev server");
+  expect(line.textContent).not.toContain("old");
+  // It says what it does, and it is not read out as it changes.
+  expect(line.getAttribute("aria-label") ?? line.textContent).toContain(
+    "Show background work in the Overview",
+  );
+  expect(line.closest("[aria-live]")).toBeNull();
+  expect(
+    log.querySelector('[data-step="background"] [data-slot="dot"][data-shape="ring"]'),
+  ).not.toBeNull();
+  expect(log.querySelector('[data-step="background"] [data-slot="morph-loader"]')).toBeNull();
+  expect(log.querySelector('[data-step="background"] [data-slot="step-elapsed"]')).toBeNull();
+  expect(screen.queryByRole("complementary", { name: "Panel" })).toBeNull();
+  await user.click(line);
+  const panel = await screen.findByRole("complementary", { name: "Panel" });
+  expect(within(panel).getByRole("heading", { name: "Background" })).toBeDefined();
+  // A second click, on the Overview already shown, is not counted again.
+  await user.click(line);
+  const events = script.calls.filter(
+    ([name, event]) => name === "track" && event === "background_shown_from_conversation",
+  );
+  expect(events).toHaveLength(1);
+});
+
+test("a task the history says runs is not said to once the daemon counts nothing (its agent process died)", async () => {
+  const { log } = await openBetweenTurns(busy, undefined);
+  await within(log).findByText("Working on it");
+  expect(log.querySelector('[data-slot="step"]')).toBeNull();
+});
+
+test("nothing is said between turns once the background has ended", async () => {
+  const ended = history(
+    u({ sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text: "Go" }] }),
+    u({ sessionUpdate: "_cycle/task_update", taskId: "b1", kind: "shell", state: "running" }),
+    u({ sessionUpdate: "_cycle/task_update", taskId: "b1", state: "completed" }),
+    text("Done", "a1"),
+    idle({ stopReason: "end_turn" }),
+  );
+  const { log } = await openBetweenTurns(ended, 1);
+  await within(log).findByText("Done");
+  expect(log.querySelector('[data-slot="step"]')).toBeNull();
 });

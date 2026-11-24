@@ -483,6 +483,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "turn.resend.changedConfirm": "把消息放回输入框",
   "turn.resend.more": "另外 {count} 个",
   "step.approval": "等待你的回答",
+  "step.background": "后台 {count} 个在运行",
+  "step.backgroundOpen": "在概览中查看后台任务",
   "step.thinking": "思考中…",
   "step.working": "工作中…",
   "step.replying": "回复中…",

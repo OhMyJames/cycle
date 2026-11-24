@@ -107,7 +107,7 @@ export type SessionSummary = {
   lastSeq: number;
   /** News the person has not seen (`cycle/unread`, protocol 0.2). Absent from an older daemon: then nothing is unread. */
   unread?: boolean;
-  /** How many background sub-agents are working (`cycle/background`). Absent from an older daemon. */
+  /** How many background sub-agents and background tasks are working (`cycle/background`). Absent from an older daemon. */
   background?: number;
   unknownBackground?: string[];
   /**

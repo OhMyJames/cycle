@@ -536,6 +536,11 @@ export const enUS = {
   "turn.resend.changedConfirm": "Put the message back",
   "turn.resend.more": "{count} more",
   "step.approval": "Waiting for your answer",
+  "step.background": {
+    one: "{count} running in the background",
+    other: "{count} running in the background",
+  },
+  "step.backgroundOpen": "Show background work in the Overview",
   "step.thinking": "Thinking…",
   "step.working": "Working…",
   "step.replying": "Writing…",

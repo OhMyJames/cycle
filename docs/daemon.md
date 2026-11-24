@@ -99,7 +99,7 @@ CYCL-104。目标机器是 2 核 4 GB,长期挂着的 daemon 不能让进程越�
 
 - 没有客户端附着(附着就是在看它;客户端离开时开始计时，而不是从最后一条记录算起);
 - 没有进行中的 turn、没有待回答的请求;队列为空，或者是已经扣着等客户端取回的队列(见"排队",它不需要 agent,原因不变);
-- 没有在跑的后台子 agent(`cycle/background` 为 0)。只剩"结束原因未知"的记录不算(protocol.md §8)。
+- 没有在跑的后台子 agent 或后台任务(`cycle/background` 为 0)。只剩"结束原因未知"的记录不算(protocol.md §8)。
 
 计时从最后一件事算起：写进日志的记录(daemon 自己的 `meta` 不算)、附着或离开、有请求要用 agent(prompt、改设置)、agent 启动完成。结束的方式和预热上限、信任变化时一样(`link.kill()`),并且当场按 agent 已退出处理，不等连接关闭的通知，这样紧接着来的 prompt 会起一个新的，不会交给正在退出的那个。session 留在内存和列表里，状态是 `stopped`,下一个 prompt 按已有路径启动并 `session/resume` 它。日志记 `agent_reclaimed`(session id 和空闲秒数)。和预热上限(每个 agent 自己的，Claude 的是 `claude.maxWarm`,CYCL-24;只数这个 agent 的 session)是两回事：上限管"同时有几个",回收管"空闲多久";预热起来、没人发 prompt 的进程，没人附着时同样按时间回收。
 

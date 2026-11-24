@@ -80,7 +80,7 @@ export const newest = (a: SessionSummary, b: SessionSummary): number =>
   younger(a, b) || before(a.locationId, b.locationId) || before(a.sessionId, b.sessionId);
 
 /**
- * What a row says of its session, one thing: waiting for the person, working, a background sub-agent working, or news
+ * What a row says of its session, one thing: waiting for the person, working, background work running, or news
  * the person has not seen. An archived session is put away and a session of a location that is away is the last list read:
  * neither waits for anyone nor works for anyone.
  */

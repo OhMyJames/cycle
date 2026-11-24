@@ -44,7 +44,7 @@ export const META = {
   lastSeq: "cycle/lastSeq",
   /** In a `session/list` row: whether something worth seeing came after the last `_cycle/session/mark_read`. */
   unread: "cycle/unread",
-  /** In a `session/list` row: how many background sub-agents are still running. Absent when none. */
+  /** In a `session/list` row: how many background sub-agents and background tasks are still running. Absent when none. */
   background: "cycle/background",
   backgroundUnknown: "cycle/backgroundUnknown",
   /** In a session/list row, and in the state_update a client opens a session with: true once the session's history could not be written (docs/protocol.md section 12). Absent otherwise. */

@@ -1020,6 +1020,58 @@ test("background sub-agents are counted while they run, and are gone with the ag
   expect(await background()).toBeUndefined();
 });
 
+test("a background task that is not a sub-agent counts in the list until it ends", async () => {
+  const task = (state: string, taskId = "bash-1") => ({
+    sessionUpdate: "_cycle/task_update",
+    taskId,
+    ...(state === "running" ? { kind: "shell", title: "Watch the build" } : {}),
+    state,
+  });
+  const { daemon, fake } = await start(
+    fakeAgent({
+      onPrompt: async ({ prompt, say }) => {
+        if (prompt === "start") await say(task("running"));
+        // Told again while it runs: still one.
+        if (prompt === "again") await say(task("running"));
+        if (prompt === "second") await say(task("running", "bash-2"));
+        if (prompt === "end") await say(task("completed"));
+        // Gone from the agent's list without an end: not held as running.
+        if (prompt === "lost") await say(task("unknown", "bash-2"));
+      },
+    }),
+  );
+  const c = await connectClient(daemon);
+  const sessionId = await startedSession(c);
+  let turns = 0;
+  const turn = async (word: string) => {
+    turns += 1;
+    await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text(word) });
+    await until(() => c.ended() >= turns, `the "${word}" turn to end`);
+  };
+  const background = async () => (await rowOf(c, sessionId)).meta["cycle/background"];
+
+  let announced = c.listChanged();
+  await turn("start");
+  await turn("again");
+  expect(stateOf((await rowOf(c, sessionId)).row)).toBe("idle");
+  expect(await background()).toBe(1);
+  await until(() => c.listChanged() > announced, "0 to 1 to be announced");
+  await turn("second");
+  expect(await background()).toBe(2);
+  await turn("end");
+  expect(await background()).toBe(1);
+  await turn("lost");
+  expect(await background()).toBeUndefined();
+
+  // The agent process going takes its tasks with it.
+  await turn("start");
+  expect(await background()).toBe(1);
+  announced = c.listChanged();
+  fake.crash();
+  await until(() => c.listChanged() > announced, "the list to be announced");
+  expect(await background()).toBeUndefined();
+});
+
 test("a mark the index holds past the end of the log is brought back to it", async () => {
   const first = await start();
   const c = await connectClient(first.daemon);
