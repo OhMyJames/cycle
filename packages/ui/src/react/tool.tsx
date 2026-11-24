@@ -224,7 +224,8 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   const failed = status === "failed" || status === "cancelled";
   // The model ends a turn's calls when the turn ends (cancelled), so one that is live is going.
   const going = isLive(tool);
-  // Every row starts closed, a failure too: its head says it failed in red, and opening it is the person's choice.
+  // Every row starts closed, whatever its state: the head says in red words how one ended badly, and opening it is the
+  // person's choice.
   const [open, setOpen] = useState(false);
   const streams = streamsOf(tool);
   const output = tool.content.length > 0 ? streams.out : stringify(tool.rawOutput);

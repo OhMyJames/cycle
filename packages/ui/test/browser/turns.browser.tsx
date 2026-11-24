@@ -245,9 +245,10 @@ test("a failure that arrives while the card is on screen leaves it closed, and i
   );
   // The other call is still going, and the card says both; it stays as the person left it.
   await waitFor(() => expect(log.textContent).toContain("1 failed"));
-  expect(card.getAttribute("aria-expanded")).toBe("false");
   expect(log.textContent).toContain("Running");
-  expect(log.textContent).toContain("1 failed");
+  // Rendered again later (the clock ticks), it is still closed.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  expect(card.getAttribute("aria-expanded")).toBe("false");
 });
 
 test("a turn the person stopped says so, with the word and not only a colour", async () => {
