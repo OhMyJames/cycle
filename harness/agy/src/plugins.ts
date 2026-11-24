@@ -77,7 +77,7 @@ const WRITE_TIMEOUT_MS = 180_000;
 /** What a plugin's `mcp_config.json` writes for its own directory (not a template of ours). */
 const PLUGIN_ROOT_TOKEN = ["$", "{PLUGIN_ROOT}"].join("");
 /** Listing plugins as a session starts: short, a slow `agy` must not hold the session up. */
-const STDIO_LIST_TIMEOUT_MS = 5_000;
+const STDIO_LIST_TIMEOUT_MS = 10_000;
 
 const bunRun: RunAgyPluginCommand = async (command, { env, cwd, timeoutMs }) => {
   const proc = Bun.spawn([...command], {
@@ -309,14 +309,21 @@ export class AgyPlugins {
       if (!isObject(servers)) continue;
       for (const [name, def] of Object.entries(servers)) {
         if (!isObject(def) || typeof def.command !== "string" || def.command === "") continue;
+        if (def.type !== undefined && def.type !== "stdio") continue;
         const fill = (value: string) => value.replaceAll(PLUGIN_ROOT_TOKEN, root);
-        const args = Array.isArray(def.args)
-          ? def.args.filter((a): a is string => typeof a === "string").map(fill)
-          : [];
+        // A number or boolean is how a plugin writes a port or a flag: it is passed as the text it would be.
+        const scalar = (value: unknown): string | undefined =>
+          typeof value === "string"
+            ? fill(value)
+            : typeof value === "number" || typeof value === "boolean"
+              ? String(value)
+              : undefined;
+        const args = Array.isArray(def.args) ? def.args.flatMap((a) => scalar(a) ?? []) : [];
         const env = isObject(def.env)
-          ? Object.entries(def.env).flatMap(([key, value]) =>
-              typeof value === "string" ? [{ name: key, value: fill(value) }] : [],
-            )
+          ? Object.entries(def.env).flatMap(([key, value]) => {
+              const filled = scalar(value);
+              return filled === undefined ? [] : [{ name: key, value: filled }];
+            })
           : [];
         out.push({ name: `${plugin}_${name}`, command: fill(def.command), args, env });
       }

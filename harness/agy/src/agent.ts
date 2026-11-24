@@ -168,13 +168,11 @@ const coversPrefix = (remembered: ReadonlySet<string>, prefix: string): boolean 
 
 const ALWAYS_OPTION_ID = "cycle-allow-session";
 /**
- * MCP tools "always allow" is never offered for: agy-fast's `apply_edits` writes any file and `run_checks` runs any
- * command, so one answer would stand for everything the model later asks of them.
+ * MCP tools "always allow" is never offered for: ones named `apply_edits` (writes any file) or `run_checks` (runs any
+ * command), whichever server brings them, so one answer would not stand for everything the model later asks of them.
+ * By tool name only: an MCP tool that does the same under another name is still offered it.
  */
-const NEVER_REMEMBERED_TOOLS = new Set([
-  "mcp_agy-fast_fast_apply_edits",
-  "mcp_agy-fast_fast_run_checks",
-]);
+const NEVER_REMEMBERED_TOOL = /^mcp_.+_(apply_edits|run_checks)$/;
 
 const TURN_ACTIVITY_UPDATES = new Set([
   "agent_message_chunk",
@@ -332,7 +330,10 @@ export function createAdapter(config: AdapterConfig) {
     cwd: config.env.HOME && isAbsolute(config.env.HOME) ? config.env.HOME : tmpdir(),
   });
   const withPluginServers = async (given: V1McpServer[]): Promise<V1McpServer[]> => {
-    const extra = await (config.pluginServers?.() ?? pluginReader.stdioServers());
+    // A plugin that cannot be read brings no server; it never stops a session from starting.
+    const extra = await (config.pluginServers?.() ?? pluginReader.stdioServers()).catch(
+      (): V1McpServer[] => [],
+    );
     const named = new Set(given.map((server) => server.name));
     return [...given, ...extra.filter((server) => !named.has(server.name))];
   };
@@ -701,7 +702,7 @@ export function createAdapter(config: AdapterConfig) {
     if (name === undefined) return undefined;
     // Writing any file or running any command: asked every time, as `run_command` is checked by its parts.
     if (name.startsWith("mcp_")) {
-      return NEVER_REMEMBERED_TOOLS.has(name) ? undefined : { tools: [name], prefixes: [] };
+      return NEVER_REMEMBERED_TOOL.test(name) ? undefined : { tools: [name], prefixes: [] };
     }
     if (name !== "run_command") return undefined;
     const input = (req.toolCall.rawInput ?? known?.input) as { CommandLine?: unknown } | undefined;
@@ -1014,10 +1015,12 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.new, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
-      const mcpServers = await withPluginServers(translateMcpServers(params.mcpServers));
+      // Read beside starting agy: neither waits for the other.
+      const pluginServers = withPluginServers(translateMcpServers(params.mcpServers));
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
+      const mcpServers = await pluginServers;
       let created: V1SessionResponse;
       try {
         created = await startingWorker(initialToolPermission, () =>
@@ -1064,12 +1067,13 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.resume, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
-      const mcpServers = await withPluginServers(translateMcpServers(params.mcpServers));
+      const pluginServers = withPluginServers(translateMcpServers(params.mcpServers));
       const hadTurn =
         (params._meta as Record<string, unknown> | undefined)?.[META.hadTurn] === true;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
+      const mcpServers = await pluginServers;
 
       let response: V1ResumeResponse;
       let resolvedId = params.sessionId;

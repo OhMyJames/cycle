@@ -91,7 +91,10 @@ describe("AgyPlugins.stdioServers", () => {
           name: "agy-fast_fast",
           command: "node",
           args: [`${fast}/dist/mcp-server.mjs`],
-          env: [{ name: "DATA", value: `${fast}/data` }],
+          env: [
+            { name: "DATA", value: `${fast}/data` },
+            { name: "N", value: "1" },
+          ],
         },
       ]);
     } finally {
