@@ -457,6 +457,76 @@ test("the agent's title names a session until the user does", async () => {
   expect(told(later)).toEqual(["Fixing the login bug"]);
 });
 
+test("the first message names a session at once, until the agent names it", async () => {
+  let finish = () => {};
+  const held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const fake = fakeAgent({
+    onPrompt: async ({ say }) => {
+      await held;
+      await say({ sessionUpdate: "session_info_update", title: "Fixing the login bug" });
+    },
+  });
+  const { daemon } = await start(fake);
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
+  void c.agent.request(methods.agent.session.prompt, {
+    sessionId,
+    prompt: text("  the login   button does nothing\nsteps: open, click"),
+  });
+  // Before the turn ends: the agent has the message and has said nothing yet.
+  await until(() => fake.log.prompts.length === 1, "the agent to get the message");
+  expect((await sessionRow(c)).title).toBe("the login button does nothing");
+  finish();
+  await until(() => c.ended() >= 1, "the turn to end");
+  await Bun.sleep(30);
+  expect((await sessionRow(c)).title).toBe("Fixing the login bug");
+  // The name for the meantime is not in the history: only what the agent said is.
+  expect(
+    c.seen
+      .filter((s) => s.update.sessionUpdate === "session_info_update")
+      .map((s) => (s.update as unknown as { title: string }).title),
+  ).toEqual(["Fixing the login bug"]);
+
+  // A later message does not name it again.
+  const before = c.ended();
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("another") });
+  await until(() => c.ended() > before, "the second turn to end");
+  expect((await sessionRow(c)).title).toBe("Fixing the login bug");
+});
+
+test("the first message does not rename a session the person named, nor name one with no words", async () => {
+  const fake = fakeAgent({}, { promptCapabilities: both });
+  const { daemon } = await start(fake);
+  const c = await connectClient(daemon);
+  const turn = async (sessionId: string, prompt: unknown[]) => {
+    const before = c.ended();
+    await c.agent.request(methods.agent.session.prompt, { sessionId, prompt } as never);
+    await until(() => c.ended() > before, "the turn to end");
+    await Bun.sleep(30);
+  };
+  const titleOf = async (sessionId: string) =>
+    (await c.agent.request(methods.agent.session.list, {})).sessions.find(
+      (s) => s.sessionId === sessionId,
+    )?._meta?.title;
+
+  const named = (await c.agent.request(methods.agent.session.new, { cwd: "/tmp" })).sessionId;
+  await c.agent.request(methods.agent.session.resume, { sessionId: named, cwd: "/tmp" });
+  await c.agent.request("_cycle/session/set_title", { sessionId: named, title: "My name for it" });
+  await turn(named, text("fix the bug"));
+  expect(await titleOf(named)).toBe("My name for it");
+
+  const pictured = (await c.agent.request(methods.agent.session.new, { cwd: "/tmp" })).sessionId;
+  await c.agent.request(methods.agent.session.resume, { sessionId: pictured, cwd: "/tmp" });
+  await turn(pictured, [image]);
+  expect(await titleOf(pictured)).toBeUndefined();
+  // Nor does the next message, with words: only the first names a session.
+  await turn(pictured, text("what is this?"));
+  expect(await titleOf(pictured)).toBeUndefined();
+});
+
 // ---- found in review ----
 
 test("a client that says it can answer forms, and cannot, does not hold the turn", async () => {

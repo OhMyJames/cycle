@@ -657,6 +657,8 @@ agent 自己改了配置(例如 Claude 在 plan 模式里被批准后切回常�
 
 **标题**:agent 的 `session_info_update.title` 只在用户没有改过名的 session 上生效:`_cycle/session/set_title` 设置的标题优先,之后 agent 给的标题忽略。agent 给出的标题写入索引,`session/list` 的 `_meta.title` 反映它,并发 `_cycle/session_list_changed`。
 
+**临时标题**(CYCL-224):agent 往往在首轮结束后才给标题。session 收到第一条 `session/prompt` 时,如果还没有标题,daemon 立刻用这条消息的开头作临时标题:文字块的第一个非空行,去掉首尾空白、连续空白合成一个空格,超过 60 个字符(按字素数)截断并以 `…` 结尾;消息里没有文字(只有图片或附件)就不设。它和 agent 给的标题同等对待,agent 之后给的标题替换它;用户改过的名字不受影响,之后的 prompt 也不再设。它只写入索引,`session/list` 反映它并发 `_cycle/session_list_changed`,不进日志。标题变化不改 `updatedAt`,列表里的顺序不变。
+
 ### 默认配置
 
 - `_cycle/agent_defaults/read`:参数 `{agent}`,返回该 agent 当前的默认配置。
