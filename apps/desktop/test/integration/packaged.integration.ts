@@ -161,6 +161,7 @@ test.skipIf(!ready)(
           "openSession",
           "planUsage",
           "preferences",
+          "prewarmAgent",
           "prompt",
           "readFile",
           "readTrust",
