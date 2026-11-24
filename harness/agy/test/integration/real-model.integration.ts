@@ -188,4 +188,93 @@ describe("harness/agy real-model integration (opt-in via CYCLE_AGY_REAL_HOME)", 
     },
     180_000,
   );
+
+  test.skipIf(!enabled)(
+    "Approvals: asks by default, stops asking under always-proceed, asks again after switching back",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "cycle-agy-perm-"));
+      const agyHome = join(root, "home");
+      const workDir = join(root, "work");
+      mkdirSync(workDir, { recursive: true });
+      copyAuthToTempHome(agyHome);
+      const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: agyHome, TMPDIR: tmpdir() };
+      const updates: SessionUpdate[] = [];
+      let asked = 0;
+      const adapter = createAdapter({ env, agyExecutable: agyPath as string, telemetry: false });
+      const app = client()
+        .onNotification(methods.client.session.update, ({ params }) => {
+          updates.push(params.update);
+        })
+        .onRequest(methods.client.session.requestPermission, () => {
+          asked += 1;
+          return { outcome: { outcome: "selected", optionId: "allow" } } as never;
+        });
+      const touch = async (
+        agent: { request: (m: never, p: never) => Promise<unknown> },
+        sessionId: string,
+        name: string,
+      ) => {
+        const before = asked;
+        const since = updates.length;
+        await agent.request(
+          methods.agent.session.prompt as never,
+          {
+            sessionId,
+            prompt: [
+              {
+                type: "text",
+                text: `Use your shell tool to run exactly: touch ${join(workDir, name)} . Then reply done.`,
+              },
+            ],
+          } as never,
+        );
+        await waitIdle(updates, since);
+        expect(existsSync(join(workDir, name))).toBe(true);
+        return asked - before;
+      };
+      const choose = (
+        agent: { request: (m: never, p: never) => Promise<unknown> },
+        sessionId: string,
+        value: string,
+      ) =>
+        agent.request(
+          methods.agent.session.setConfigOption as never,
+          {
+            sessionId,
+            configId: "toolPermission",
+            type: "id",
+            value,
+          } as never,
+        );
+      try {
+        await app.connectWith(adapter.app, async (agent) => {
+          await agent.request(methods.agent.initialize, {
+            protocolVersion: 2,
+            capabilities: {},
+            info: { name: "agy-real-test", version: "1" },
+          } as never);
+          const created = (await agent.request(methods.agent.session.new, {
+            cwd: workDir,
+          } as never)) as { sessionId: string };
+          const id = created.sessionId;
+          // New sessions start in auto, which lets a harmless `touch` through; default mode asks for every command.
+          await agent.request(methods.agent.session.setConfigOption, {
+            sessionId: id,
+            configId: "mode",
+            type: "id",
+            value: "default",
+          } as never);
+          expect(await touch(agent as never, id, "one.txt")).toBeGreaterThan(0);
+          await choose(agent as never, id, "always-proceed");
+          expect(await touch(agent as never, id, "two.txt")).toBe(0);
+          await choose(agent as never, id, "request-review");
+          expect(await touch(agent as never, id, "three.txt")).toBeGreaterThan(0);
+        });
+      } finally {
+        adapter.close();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    300_000,
+  );
 });

@@ -942,7 +942,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
     "向 Google Antigravity 发送使用遥测；关闭时 Cycle 会传入 --disable-telemetry。",
   "settings.harness.runtime.field.agy.skipPermissions.title": "跳过所有权限确认",
   "settings.harness.runtime.field.agy.skipPermissions.description":
-    "不管会话是什么模式，agy 编辑文件、运行命令、调用工具都不再询问。它能动到 daemon 所在用户能访问的一切。",
+    "不管会话是什么模式，agy 编辑文件、运行命令、调用工具都不再询问。它能动到 daemon 所在用户能访问的一切。新会话的“权限”默认就是“完全放行”，每个会话仍可自己改。",
   "settings.harness.account.signIn": "登录",
   "settings.harness.account.signOut": "退出登录",
   "settings.harness.auth.title": "登录 {agent}",

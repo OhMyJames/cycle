@@ -1045,7 +1045,7 @@ export const enUS = {
     "Send usage telemetry to Google Antigravity. When disabled, Cycle passes --disable-telemetry.",
   "settings.harness.runtime.field.agy.skipPermissions.title": "Skip all permission prompts",
   "settings.harness.runtime.field.agy.skipPermissions.description":
-    "agy edits files, runs commands and calls tools without asking, whatever the session's mode. It can reach everything the daemon's user can.",
+    "agy edits files, runs commands and calls tools without asking, whatever the session's mode. It can reach everything the daemon's user can. New sessions start with Approvals set to Allow all; each session can change it.",
   "settings.harness.account.signIn": "Sign in",
   "settings.harness.account.signOut": "Sign out",
   "settings.harness.auth.title": "Sign in to {agent}",

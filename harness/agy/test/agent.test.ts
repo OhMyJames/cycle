@@ -91,15 +91,11 @@ describe("version check and CLI arguments", () => {
       "reviewer",
       "--disable-telemetry",
     ]);
-    expect(buildAgyArgs({ ...base, sandbox: true })).not.toContain(
-      "--dangerously-skip-permissions",
-    );
-    expect(buildAgyArgs({ ...base, skipPermissions: false })).not.toContain(
-      "--dangerously-skip-permissions",
-    );
-    expect(buildAgyArgs({ ...base, skipPermissions: true })).toContain(
-      "--dangerously-skip-permissions",
-    );
+    // Permissions go through agy's settings.json at session start, never through a process-wide flag.
+    expect(buildAgyArgs({ ...base, skipPermissions: true })).toEqual([
+      "acp",
+      "--process-per-session",
+    ]);
   });
 });
 
