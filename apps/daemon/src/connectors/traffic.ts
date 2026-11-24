@@ -15,6 +15,8 @@ import type { CatalogEntry, Credentials } from "./store.ts";
  */
 export const STDIO_ENV_ALLOWLIST = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR"] as const;
 
+type StdioTransport = Extract<CatalogEntry["transport"], { type: "stdio" }>;
+
 /** A session's connector processes, by connector. */
 type SessionBridges = Map<string, StdioBridge>;
 
@@ -119,7 +121,8 @@ export class ConnectorTraffic {
     const generation = this.#state.generation(connectorId);
     const entry = await this.#state.catalog.get(connectorId);
     if (entry === undefined || !entry.enabled) return new Response("Not found", { status: 404 });
-    if (entry.transport.type === "stdio") return this.#stdio(sessionId, entry, generation, request);
+    if (entry.transport.type === "stdio")
+      return this.#stdio(sessionId, entry, entry.transport, generation, request);
     const url = entry.transport.url;
     const held = await hold(request);
     const origin = entry.origin;
@@ -173,10 +176,10 @@ export class ConnectorTraffic {
   async #stdio(
     sessionId: string,
     entry: CatalogEntry,
+    transport: StdioTransport,
     generation: number,
     request: Request,
   ): Promise<Response> {
-    if (entry.transport.type !== "stdio") return new Response(null, { status: 404 });
     let bridges = this.#bridges.get(sessionId);
     if (bridges === undefined) {
       bridges = new Map();
@@ -191,10 +194,10 @@ export class ConnectorTraffic {
         if (value !== undefined) env[name] = value;
       }
       Object.assign(env, credentials.env);
-      const cwd = entry.transport.cwd ?? this.#cwds.get(sessionId) ?? this.#env.HOME ?? "/";
+      const cwd = transport.cwd ?? this.#cwds.get(sessionId) ?? this.#env.HOME ?? "/";
       let spawned: ReturnType<Spawn>;
       try {
-        spawned = this.#spawn([entry.transport.command, ...entry.transport.args], { cwd, env });
+        spawned = this.#spawn([transport.command, ...transport.args], { cwd, env });
       } catch {
         this.#state.setRuntime(entry.id, generation, { state: "error", reason: "spawn_failed" });
         return new Response("The connector could not be started", { status: 502 });

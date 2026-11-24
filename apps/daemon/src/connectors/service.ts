@@ -165,7 +165,8 @@ export class ConnectorService {
       params.auth !== undefined ||
       params.secrets !== undefined ||
       (entry.enabled && !before.enabled);
-    if (fresh) this.#plugins.renewed(entry);
+    if (fresh && entry.origin !== undefined) this.#plugins.renewed(entry);
+    else if (fresh) this.#state.reset(entry.id);
     // A process started with the old command, values or switch does not go on with them.
     if (!sameServer || params.secrets?.env !== undefined || !entry.enabled) {
       this.#traffic.stopBridges(entry.id);
