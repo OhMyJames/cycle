@@ -41,21 +41,19 @@ export function useContinueHint(params: {
   );
   const updatedAt = session?.updatedAt;
   const [, redraw] = useState(0);
-  const [late, setLate] = useState(false);
+  // Which last activity the idle time was reached for: a new turn is not late until its own time comes.
+  const [lateFor, setLateFor] = useState<string | undefined>();
+  const late = updatedAt !== undefined && lateFor === updatedAt;
   // One timer, set for the moment the threshold is crossed: nothing else makes the page look at the clock.
   useEffect(() => {
     const at = updatedAt === undefined ? Number.NaN : Date.parse(updatedAt);
-    if (Number.isNaN(at)) {
-      setLate(false);
-      return;
-    }
+    if (updatedAt === undefined || Number.isNaN(at)) return;
     const wait = at + IDLE_MS - Date.now();
     if (wait <= 0) {
-      setLate(true);
+      setLateFor(updatedAt);
       return;
     }
-    setLate(false);
-    const timer = setTimeout(() => setLate(true), Math.min(wait, 2 ** 31 - 1));
+    const timer = setTimeout(() => setLateFor(updatedAt), Math.min(wait, 2 ** 31 - 1));
     return () => clearTimeout(timer);
   }, [updatedAt]);
 

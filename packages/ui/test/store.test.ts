@@ -943,9 +943,15 @@ test("continuing in a new session opens a blank one in the same folder and agent
     branches: { branches: ["main"], current: "main", defaultBranch: "main" },
     preferences: { worktreeAgents: ["fake"] },
   });
+  // The session is in a worktree.
+  script.bridge.sessions = async () => [
+    { ...summaryOf("s1"), worktree: { root: "/repo", path: "/work", managed: true } },
+  ];
   const { store, named } = await opened(script);
   const title = "Fix login bug";
   expect(store.continueInNewSession("local", "gone", title)).toBe(false);
+  expect(store.continueInNewSession("local", "s1", title)).toBe(true);
+  // Pressed again, the box holds the one mention.
   expect(store.continueInNewSession("local", "s1", title)).toBe(true);
   await Bun.sleep(10);
   const blank = store.getState().blank;
@@ -973,4 +979,25 @@ test("continuing in a new session is refused by a daemon that cannot expand a me
   const { store } = await opened(fakeBridge({ connected: true }));
   expect(store.continueInNewSession("local", "s1", "x")).toBe(false);
   expect(store.getState().blank).toBeUndefined();
+});
+
+test("continuing a session that is not in a worktree leaves the person's worktree default alone", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: {
+      queue: true,
+      files: true,
+      folders: true,
+      worktrees: true,
+      sessionMentions: true,
+    },
+    branches: { branches: ["main"], current: "main", defaultBranch: "main" },
+    preferences: { worktreeAgents: ["fake"] },
+  });
+  const { store } = await opened(script);
+  expect(store.continueInNewSession("local", "s1", "x")).toBe(true);
+  await Bun.sleep(10);
+  const blank = store.getState().blank;
+  if (blank === undefined) throw new Error("no blank conversation");
+  expect(blankWorktreeOf(store.getState(), blank, "fake")?.on).toBe(true);
 });

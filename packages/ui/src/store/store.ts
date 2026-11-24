@@ -260,9 +260,12 @@ export class AppStore extends StoreBase {
     if (state.status[locationId]?.capabilities?.sessionMentions !== true) return false;
     this.#blank.open({ locationId, cwd: session.cwd });
     this.#blank.change({ agent: session.agent });
-    // The folder may be a worktree already: another one is not made inside it.
-    this.#blank.chooseWorktree({ on: false });
+    // The folder is a worktree already: another one is not made inside it. Elsewhere the person's own default stands.
+    if (session.worktree !== undefined) this.#blank.chooseWorktree({ on: false });
     const mention = { path: sessionLabel(title), kind: "session" as const };
+    // Pressed twice, the box holds the one mention, not two.
+    if (this.drafts.get(BLANK_KEY).mentions.some((m) => m.uri === sessionUri(sessionId)))
+      return true;
     this.drafts.restore(BLANK_KEY, [
       [
         { type: "text", text: `${mentionText(mention)} ` },
