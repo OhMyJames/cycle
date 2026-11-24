@@ -1,13 +1,18 @@
 import { expect, test } from "bun:test";
 import {
   ACP_ERROR_CODES,
+  AGENT_SETUP_CHANGED,
   AgentAuthFailureReasonSchema,
+  AgentSetupChangedSchema,
   AgentSetupInvalidParamReasonSchema,
   type AgentSetupSnapshot,
   AgentSetupSnapshotSchema,
   agentSetupRead,
+  agentSetupSetRuntime,
   CapabilitiesSchema,
   CycleErrorCode,
+  META,
+  RuntimePropertySchema,
 } from "../src/index.ts";
 
 const baseSnapshot = (): AgentSetupSnapshot => ({
@@ -181,4 +186,81 @@ test("CapabilitiesSchema exposes single optional agentSetup flag and AgentAuthFa
   expect(AgentSetupInvalidParamReasonSchema.safeParse("raw stderr").success).toBe(false);
   expect(AgentAuthFailureReasonSchema.safeParse("auth_in_progress").success).toBe(true);
   expect(AgentAuthFailureReasonSchema.safeParse("something_random").success).toBe(false);
+});
+
+test("RuntimePropertySchema enforces closed v1 types and bounds", () => {
+  expect(
+    RuntimePropertySchema.safeParse({
+      type: "boolean",
+      title: "Warm start",
+      default: true,
+      _meta: { [META.applyScope]: "immediate" },
+    }).success,
+  ).toBe(true);
+
+  expect(
+    RuntimePropertySchema.safeParse({
+      type: "integer",
+      title: "Max warm",
+      minimum: 1,
+      maximum: 10,
+      default: 3,
+      _meta: {
+        [META.applyScope]: "immediate",
+        [META.enabledWhen]: { key: "warmStart", equals: true },
+      },
+    }).success,
+  ).toBe(true);
+
+  // Unbounded integer or default outside bounds rejected.
+  expect(
+    RuntimePropertySchema.safeParse({ type: "integer", title: "Bad", default: 3 }).success,
+  ).toBe(false);
+  expect(
+    RuntimePropertySchema.safeParse({
+      type: "integer",
+      title: "Out of range default",
+      minimum: 1,
+      maximum: 10,
+      default: 20,
+    }).success,
+  ).toBe(false);
+
+  // Free-form string without oneOf rejected.
+  expect(
+    RuntimePropertySchema.safeParse({ type: "string", title: "Free text", default: "abc" }).success,
+  ).toBe(false);
+
+  // Closed string enum accepted.
+  expect(
+    RuntimePropertySchema.safeParse({
+      type: "string",
+      title: "Mode",
+      oneOf: [
+        { const: "strict", title: "Strict" },
+        { const: "off", title: "Off", _meta: { [META.danger]: true } },
+      ],
+      default: "strict",
+    }).success,
+  ).toBe(true);
+});
+
+test("agentSetupSetRuntime supports partial patch, null unset, and per-agent revision", () => {
+  expect(agentSetupSetRuntime.name).toBe("_cycle/agent_setup/set_runtime");
+  expect(AGENT_SETUP_CHANGED).toBe("_cycle/agent_setup_changed");
+  expect(
+    agentSetupSetRuntime.params.safeParse({
+      agent: "claude",
+      patch: { warmStart: false, maxWarm: null },
+      expectedRevision: 0,
+    }).success,
+  ).toBe(true);
+  expect(
+    agentSetupSetRuntime.params.safeParse({
+      agent: "claude",
+      patch: { warmStart: false },
+      expectedRevision: -1,
+    }).success,
+  ).toBe(false);
+  expect(AgentSetupChangedSchema.safeParse({ agent: "claude", revision: 2 }).success).toBe(true);
 });

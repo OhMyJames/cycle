@@ -21,6 +21,10 @@ export const META = {
   recommended: "cycle/recommended",
   /** On a choice an agent offers: true on a high-risk option (such as skipping all permission checks) that the UI should warn on. */
   danger: "cycle/danger",
+  /** On a runtime `configSchema` property: when changes take effect (docs/protocol.md §16). */
+  applyScope: "cycle/applyScope",
+  /** On a runtime `configSchema` property: `{ key, equals }` enabling condition (docs/protocol.md §16). */
+  enabledWhen: "cycle/enabledWhen",
   /** On a `configSchema` property that lists choices: true when the agent takes values that are not listed, so the list is a menu, not a limit. */
   open: "cycle/open",
   /** On a model choice: the effort levels that model takes (`[]` when it takes none); absent when not known (docs/protocol.md §10). */

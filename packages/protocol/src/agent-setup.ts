@@ -3,6 +3,7 @@
 // Long-lived credentials (OAuth tokens, refresh tokens, API keys) and host environment variable values
 // never appear in any schema here.
 import { z } from "zod";
+import { META } from "./meta.ts";
 import { cycleMethod } from "./method.ts";
 import { PlanUsageSchema } from "./plan-usage.ts";
 
@@ -93,6 +94,77 @@ export type AgentAuthStatus = z.infer<typeof AgentAuthStatusSchema>;
 export const AgentRuntimeValueSchema = z.union([z.boolean(), z.number(), z.string()]);
 export type AgentRuntimeValue = z.infer<typeof AgentRuntimeValueSchema>;
 
+export const RuntimeApplyScopeSchema = z.enum([
+  "immediate",
+  "next_session",
+  "next_idle_restart",
+  "daemon_restart",
+]);
+export type RuntimeApplyScope = z.infer<typeof RuntimeApplyScopeSchema>;
+
+export const RuntimeEnabledWhenSchema = z.object({
+  key: z.string().min(1),
+  equals: AgentRuntimeValueSchema,
+});
+export type RuntimeEnabledWhen = z.infer<typeof RuntimeEnabledWhenSchema>;
+
+export const RuntimePropertyMetaSchema = z.object({
+  [META.applyScope]: RuntimeApplyScopeSchema.optional(),
+  [META.enabledWhen]: RuntimeEnabledWhenSchema.optional(),
+  [META.danger]: z.boolean().optional(),
+});
+export type RuntimePropertyMeta = z.infer<typeof RuntimePropertyMetaSchema>;
+
+export const RuntimeBooleanPropertySchema = z.object({
+  type: z.literal("boolean"),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  default: z.boolean(),
+  _meta: RuntimePropertyMetaSchema.optional(),
+});
+export type RuntimeBooleanProperty = z.infer<typeof RuntimeBooleanPropertySchema>;
+
+export const RuntimeIntegerPropertySchema = z
+  .object({
+    type: z.literal("integer"),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    minimum: z.number().int(),
+    maximum: z.number().int(),
+    multipleOf: z.number().int().positive().optional(),
+    default: z.number().int(),
+    _meta: RuntimePropertyMetaSchema.optional(),
+  })
+  .refine((p) => p.minimum <= p.maximum && p.default >= p.minimum && p.default <= p.maximum, {
+    message: "integer runtime property bounds and default must be ordered",
+  });
+export type RuntimeIntegerProperty = z.infer<typeof RuntimeIntegerPropertySchema>;
+
+export const RuntimeStringChoiceSchema = z.object({
+  const: z.string(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  _meta: z.object({ [META.danger]: z.boolean().optional() }).optional(),
+});
+
+export const RuntimeStringEnumPropertySchema = z.object({
+  type: z.literal("string"),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  oneOf: z.array(RuntimeStringChoiceSchema).min(1),
+  default: z.string(),
+  _meta: RuntimePropertyMetaSchema.optional(),
+});
+export type RuntimeStringEnumProperty = z.infer<typeof RuntimeStringEnumPropertySchema>;
+
+/** Closed v1 subset of §10 `configSchema` allowed for editable Harness runtime properties. */
+export const RuntimePropertySchema = z.union([
+  RuntimeBooleanPropertySchema,
+  RuntimeIntegerPropertySchema,
+  RuntimeStringEnumPropertySchema,
+]);
+export type RuntimeProperty = z.infer<typeof RuntimePropertySchema>;
+
 /**
  * Runtime settings snapshot for one agent. `schema.properties` keeps unknown property shapes
  * intact on the wire so older clients can degrade unfamiliar future fields to read-only instead
@@ -111,6 +183,33 @@ export const AgentRuntimeSnapshotSchema = z.object({
   fileError: z.string().min(1).optional(),
 });
 export type AgentRuntimeSnapshot = z.infer<typeof AgentRuntimeSnapshotSchema>;
+
+export const AgentRuntimePatchValueSchema = z.union([AgentRuntimeValueSchema, z.null()]);
+export type AgentRuntimePatchValue = z.infer<typeof AgentRuntimePatchValueSchema>;
+
+export const agentSetupSetRuntime = cycleMethod(
+  "_cycle/agent_setup/set_runtime",
+  z.object({
+    agent: z.string().min(1),
+    /** Partial patch; `null` removes an explicit override to inherit from config.json / schema default. */
+    patch: z.record(z.string(), AgentRuntimePatchValueSchema),
+    /** Per-agent monotonic revision for compare-and-swap optimistic concurrency. */
+    expectedRevision: z.number().int().nonnegative(),
+  }),
+  z.object({
+    values: z.record(z.string(), AgentRuntimeValueSchema),
+    overrides: z.array(z.string()),
+    revision: z.number().int().nonnegative(),
+  }),
+);
+
+/** Broadcast to all clients when an agent's setup snapshot changes (runtime save, login, logout). */
+export const AGENT_SETUP_CHANGED = "_cycle/agent_setup_changed";
+export const AgentSetupChangedSchema = z.object({
+  agent: z.string().min(1),
+  revision: z.number().int().nonnegative().optional(),
+});
+export type AgentSetupChanged = z.infer<typeof AgentSetupChangedSchema>;
 
 export const AgentConfigFileStatusSchema = z.object({
   path: z.string().min(1),

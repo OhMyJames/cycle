@@ -941,6 +941,27 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
     - `dataDir`、`customDataDir`:Cycle 为该 agent 托管的状态目录及是否在 `config.json` 中自定义。
     - `allowEnv`、`envNames`:只包含变量名列表,绝不含值。
 
+### 运行时配置(`_cycle/agent_setup/set_runtime` 与 `_cycle/agent_setup_changed`)
+
+- **封闭版本化 `configSchema` 子集(`schemaVersion: 1`)**:`runtime.schema` 沿用 §10 的 JSON Schema 风格(`{ type: "object", properties }`),每个可编辑属性仅允许以下三种受控类型:
+  1. `type: "boolean"`(`title`、`description?`、`default: boolean`、`_meta?`)
+  2. `type: "integer"`(`title`、`description?`、`minimum`、`maximum`、`multipleOf?`、`default: number`、`_meta?`)
+  3. `type: "string"` + `oneOf: [{ const, title, description?, _meta? }]`(`title`、`description?`、`default: string`、`_meta?`)
+  - 允许的 `_meta` 键:
+    - `_meta["cycle/applyScope"]`:`"immediate" | "next_session" | "next_idle_restart" | "daemon_restart"`
+    - `_meta["cycle/enabledWhen"]`:`{ key: string, equals: boolean | number | string }`
+    - `_meta["cycle/danger"]`:`true`
+  - 客户端遇到未来版本新增的不认识属性类型时,必须降级为只读展示,不得整页报错。
+- **`_cycle/agent_setup/set_runtime`**:
+  - 参数:`{ agent, patch: Record<string, boolean | number | string | null>, expectedRevision: number }`。
+  - `patch` 为局部修改;字段值为 `null` 表示删除 `<dataDir>/agent-settings.json` 中的显式覆盖,恢复继承 `config.json` 或字段默认值。
+  - 合并优先级:`agent-settings.json` > `config.json` > schema 默认值。
+  - 每个 agent 维护独立的单调递增整数 `revision`(未写过为 `0`)。若 `expectedRevision` 与当前该 agent 的 `revision` 不一致,返回 `-32602`(`data.reason: "revision_conflict"`)。
+  - 未知字段、类型不符、越界值,或 `<dataDir>/agent-settings.json` 损坏/版本未知(`fileError`)拒绝覆写时,返回 `-32014`(`invalid_config`)。
+  - 响应:`{ values, overrides, revision }`。
+- **`_cycle/agent_setup_changed`**(daemon → 客户端通知):
+  - 载荷:`{ agent, revision? }`,在运行时配置保存、登录完成或登出后广播给所有已连接客户端,提示刷新快照。
+
 ### 错误约定
 
 本节所有错误沿用数字 `code` + 固定词 `data.reason`,**绝不透传原始 stderr、URL、路径或授权码**:
