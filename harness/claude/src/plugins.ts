@@ -5,7 +5,7 @@
  *
  * What comes back is in words any agent's plugins could be said in; Claude's own shapes stop at this file.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
@@ -330,6 +330,23 @@ export type ClaudePluginSnapshot = {
   available: ClaudePlugin[];
 };
 
+/** What is shipped with Cycle: one marketplace of plugins, each in a directory of its own. */
+/** Whether two locations are the same folder, whichever way each is written (a link, a trailing slash). */
+const samePath = (a: string | undefined, b: string): boolean => {
+  if (a === undefined) return false;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+export type ClaudeBuiltinBundle = {
+  root: string;
+  marketplace: string;
+  plugins: { name: string; version: string; dir: string }[];
+};
+
 export class ClaudePlugins {
   readonly #executable: string | undefined;
   readonly #env: Record<string, string>;
@@ -511,5 +528,36 @@ export class ClaudePlugins {
 
   async refreshSource(id?: string): Promise<void> {
     await this.#write(["marketplace", "update", ...(id !== undefined ? ["--", id] : [])]);
+  }
+
+  /**
+   * What ships with Cycle is installed, and updated when what ships is newer. What the person has done to an
+   * installed one (turned it off) is left as it is.
+   */
+  async ensureBuiltin(bundle: ClaudeBuiltinBundle): Promise<void> {
+    const marketplaces = await this.#read(["marketplace", "list"]);
+    const sources = (Array.isArray(marketplaces) ? marketplaces : [])
+      .map(sourceOf)
+      .filter((source): source is ClaudePluginSource => source !== undefined);
+    const have = sources.find((source) => source.id === bundle.marketplace);
+    const same = have !== undefined && samePath(have.location, bundle.root);
+    // Taking a marketplace away takes its plugins with it: what the person turned off is turned off again after.
+    const turnedOff = new Set(
+      same ? [] : (await this.installed()).filter((p) => p.enabled === false).map((p) => p.id),
+    );
+    if (have !== undefined && !same) await this.removeSource(have.id);
+    if (!same) await this.addSource(bundle.root);
+    const installed = await this.installed();
+    for (const plugin of bundle.plugins) {
+      const id = `${plugin.name}@${bundle.marketplace}`;
+      const found = installed.find((p) => p.id === id);
+      if (found === undefined) {
+        await this.install(id);
+        if (turnedOff.has(id)) await this.setEnabled(id, false);
+      } else if (found.version !== plugin.version) {
+        await this.refreshSource(bundle.marketplace);
+        await this.update(id);
+      }
+    }
   }
 }

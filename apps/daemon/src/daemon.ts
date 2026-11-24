@@ -100,7 +100,7 @@ import { JsonlLogStore } from "./log/jsonl.ts";
 import type { LogRecord, LogStore, NewRecord } from "./log/types.ts";
 import { errorText, type Logger, silentLogger } from "./logger.ts";
 import { AgentOptionsCache, choicesFromConfigOptions } from "./options-cache.ts";
-import { type PluginProvider, PluginService } from "./plugins.ts";
+import { type BuiltinBundle, type PluginProvider, PluginService } from "./plugins.ts";
 import { redactParams, redactRecord } from "./redact.ts";
 import {
   type Attachment,
@@ -170,6 +170,8 @@ export type DaemonOptions = {
   configFile?: ConfigFileSnapshotOptions;
   /** For tests: override the 10-minute TTL on in-app agent auth flows. */
   authFlowTtlMs?: number;
+  /** The plugins that ship with Cycle: installed for each agent in the background once started. Default: none. */
+  builtinPlugins?: BuiltinBundle;
 };
 
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
@@ -311,6 +313,9 @@ export class Daemon {
       connectors,
       now: this.#now,
       onChanged: (agentId) => this.#clients.broadcast(PLUGINS_CHANGED, { agentId }),
+      ...(options.builtinPlugins !== undefined ? { builtin: options.builtinPlugins } : {}),
+      warn: (agentId, error) =>
+        this.#log.warn("builtin_plugins_failed", { agent: agentId, error: errorText(error) }),
     });
     connectors.onChanged(() => this.#clients.broadcast(CONNECTORS_CHANGED, {}));
     this.#core = this.#makeCore();
@@ -334,7 +339,7 @@ export class Daemon {
       if (agent.setup?.runtimeSchema !== undefined) schemas[agent.id] = agent.setup.runtimeSchema;
     }
     agentSettings.useSchemas(schemas);
-    return new Daemon(
+    const daemon = new Daemon(
       { ...options, agents },
       await SessionIndex.load(indexPath(options.dataDir)),
       await AgentDefaults.load(defaultsPath(options.dataDir)),
@@ -343,6 +348,9 @@ export class Daemon {
       await FolderTrust.load(trustPath(options.dataDir)),
       options.connectors ?? (await ConnectorService.load(options.dataDir)),
     );
+    // Quietly, and not waited for: nothing starts later because of it (a failure is tried again as an agent starts).
+    void daemon.#plugins.ensureBuiltins();
+    return daemon;
   }
 
   /** Serves one client on a stream. */

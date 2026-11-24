@@ -16,6 +16,7 @@
     "@cycle/harness-codex": "workspace:*",
     "@cycle/harness-claude": "workspace:*",
     "@cycle/protocol": "workspace:*",
+    "clawdot-plugins": "workspace:*",
     "@xterm/addon-serialize": "0.14.0",
     "@xterm/headless": "6.0.0",
     "zod": "catalog:"

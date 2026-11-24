@@ -288,10 +288,21 @@ function Installed({ location, agentId, words, onChanged }: SectionProps) {
                 key={plugin.id}
                 label={plugin.name}
                 before={
-                  <StatusDot
-                    tone={!on ? "muted" : wants.length > 0 ? "attention" : "success"}
-                    shape={on && wants.length === 0 ? "solid" : "ring"}
-                  />
+                  <>
+                    {plugin.icon !== undefined ? (
+                      <img
+                        data-slot="plugin-icon"
+                        src={plugin.icon}
+                        alt=""
+                        width={16}
+                        height={16}
+                      />
+                    ) : null}
+                    <StatusDot
+                      tone={!on ? "muted" : wants.length > 0 ? "attention" : "success"}
+                      shape={on && wants.length === 0 ? "solid" : "ring"}
+                    />
+                  </>
                 }
                 description={
                   <>
@@ -404,9 +415,11 @@ function Installed({ location, agentId, words, onChanged }: SectionProps) {
                   </Tip>
                   <MenuContent align="end">
                     <MenuItem value="update">{t("plugins.update")}</MenuItem>
-                    <MenuItem value="remove" data-destructive>
-                      {t("plugins.uninstall")}
-                    </MenuItem>
+                    {plugin.builtin !== true && (
+                      <MenuItem value="remove" data-destructive>
+                        {t("plugins.uninstall")}
+                      </MenuItem>
+                    )}
                   </MenuContent>
                 </Menu>
               </PageRow>

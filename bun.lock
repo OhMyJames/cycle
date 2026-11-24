@@ -26,6 +26,7 @@
         "@cycle/protocol": "workspace:*",
         "@xterm/addon-serialize": "0.14.0",
         "@xterm/headless": "6.0.0",
+        "clawdot-plugins": "workspace:*",
         "zod": "catalog:",
       },
     },
@@ -88,6 +89,10 @@
         "posthog-node": "6.0.4",
         "zod": "catalog:",
       },
+    },
+    "packages/clawdot-plugins": {
+      "name": "clawdot-plugins",
+      "version": "0.0.0",
     },
     "packages/client": {
       "name": "@cycle/client",
@@ -723,6 +728,8 @@
     "character-entities-legacy": ["character-entities-legacy@3.0.0", "", {}, "sha512-RpPp0asT/6ufRm//AJVwpViZbGM/MkjQFxJccQRHmISF/22NBtsHqAWmL+/pmkPWoIUJdWyeVleTl1wydHATVQ=="],
 
     "character-reference-invalid": ["character-reference-invalid@2.0.1", "", {}, "sha512-iBZ4F4wRbyORVsu0jPV7gXkOsGYjGHPmAyv+HiHG8gi5PtC9KI2j1+v8/tlibRvjoWX027ypmG/n0HtO5t7unw=="],
+
+    "clawdot-plugins": ["clawdot-plugins@workspace:packages/clawdot-plugins"],
 
     "clsx": ["clsx@2.1.1", "", {}, "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA=="],
 

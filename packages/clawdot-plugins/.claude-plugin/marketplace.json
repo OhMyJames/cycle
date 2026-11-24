@@ -1,0 +1,13 @@
+{
+  "name": "clawdot",
+  "owner": {
+    "name": "Clawdot"
+  },
+  "plugins": [
+    {
+      "name": "clawdot-itsaplan",
+      "source": "./plugins/clawdot-itsaplan",
+      "description": "Work with Clawdot's Itsaplan project tracker"
+    }
+  ]
+}

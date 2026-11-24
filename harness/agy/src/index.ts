@@ -6,6 +6,7 @@ export {
   type ToolPermission,
 } from "./permissions.ts";
 export {
+  type AgyBuiltinBundle,
   type AgyPlugin,
   AgyPluginError,
   type AgyPluginFailureReason,

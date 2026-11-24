@@ -926,6 +926,8 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 }
 ```
 
+- `builtin?`:`true` 表示它随 Cycle 一起发(`packages/clawdot-plugins`),由 daemon 静默装好。能停用(`set_enabled`),不能卸载:`uninstall` 以 `plugin_failed`、`reason: "failed"` 拒绝。客户端不显示它的卸载入口。`icon?`:它的图片,`data:image/…;base64,…`(不超过约 60 KB),取自 plugin 目录里的 `assets/icon.svg`(或 `icon.png`);只有内置的有,agent 自己的 plugin 没有。Claude、Codex、agy 的清单都没有通用的图标字段,所以这是 Cycle 一层的约定。
+
 - `agentId`:它是哪个 agent 的。`id`:在这个 agent 里唯一,**客户端不解析它**(Claude 的是 `名字@来源`,别的 agent 可以是别的)。
 - `name`、`description?`、`version?`:显示用,原样来自 plugin 或它的来源。
 - `sourceId`:它来自哪个来源(下面的 `PluginSource.id`)。
@@ -957,6 +959,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - `uninstall` 同时删掉它带来的 connector 和它们的凭证;客户端必须先向用户确认。
 - 这些操作由 agent 自己的机制执行(Claude:用和 session 相同的白名单环境、在 Cycle 托管的配置目录里运行 `claude plugin …`),可能联网、要几秒到几十秒。同一个 agent 的写操作一次只做一个,后来的排队。
 - 有变化时 daemon 向每个连接发 `_cycle/plugins_changed`,参数 `{agentId}`,客户端重新 `list`。失败的改动之后也发(它可能做了一半)。plugin 带来的 connector 变了,另有 `_cycle/connectors_changed`。
+- **内置 plugin**:daemon 启动后,在后台为每个有 plugin 的 agent 装好随 Cycle 发的那一批(Claude、Codex 把 `clawdot-plugins` 目录作为名为 `clawdot` 的本地 marketplace 加进去再装;agy 按目录装,它自己转换格式)。装过的不再问,随 Cycle 发的版本更新了就更新;用户停用的保持停用。失败(agent 没装好、没有权限)不影响任何事,下次启动这个 agent 之前再试。这一批是 Cycle 自己的代码,所以不要求 `acknowledged`。
 - **生效**:下次启动这个 agent 时(新 session,或恢复一个 session);正在运行的 agent 不变。
 
 ### plugin 带的 MCP 服务器
