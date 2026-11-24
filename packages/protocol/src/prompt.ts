@@ -43,61 +43,126 @@ export const base64Bytes = (data: string): number | undefined => {
 type Block = { type?: unknown; [key: string]: unknown };
 
 /**
- * The first thing wrong with a prompt, or undefined if it is acceptable to an agent with
- * `capabilities`. Nothing is dropped: a prompt is taken whole or refused. The daemon enforces
- * this; a client can call it before sending.
+ * A block of a prompt, as an adapter needs it once the prompt is checked: one shape for each thing a prompt can carry.
+ * `link`: a `resource_link` (a mention). `file`: an embedded resource of text. `pdf`: an embedded PDF.
  */
-export const checkPrompt = (
+export type PromptBlock =
+  | { type: "text"; text: string }
+  | { type: "link"; name: string; uri: string }
+  | { type: "image"; mimeType: (typeof IMAGE_TYPES)[number]; data: string }
+  | { type: "file"; uri: string; text: string }
+  | { type: "pdf"; uri: string; data: string };
+
+export type NormalizedPrompt =
+  | { ok: true; blocks: PromptBlock[] }
+  | { ok: false; problem: PromptProblem };
+
+/** What else a prompt is held to: the sizes in PROMPT_LIMITS (by default), and whether an agent takes a PDF. */
+export type PromptRules = {
+  /**
+   * False for an adapter: the daemon holds a prompt to the sizes as it is sent, and then may make it larger (a session
+   * it mentions, put in as a transcript) before an agent gets it.
+   */
+  limits?: boolean;
+  /** False for an agent that takes embedded text but no PDF (ACP's capabilities cannot tell them apart). */
+  pdf?: boolean;
+};
+
+const encoder = new TextEncoder();
+
+/**
+ * A prompt checked and in typed blocks, or the first thing wrong with it for an agent with `capabilities`, in the
+ * order of its blocks. Nothing is dropped: a prompt is taken whole or refused. The daemon checks what a client sends
+ * with it; an adapter reads its blocks from here, so that it only knows what each becomes for its agent.
+ */
+export const normalizePrompt = (
   prompt: readonly unknown[],
   capabilities: PromptCapabilities | undefined,
-): PromptProblem | undefined => {
-  if (prompt.length === 0) return { reason: "empty" };
-  if (prompt.length > PROMPT_LIMITS.blocks) return { reason: "too_many_blocks" };
+  rules: PromptRules = {},
+): NormalizedPrompt => {
+  const limits = rules.limits ?? true;
+  const refuse = (reason: PromptProblemReason, index?: number): NormalizedPrompt => ({
+    ok: false,
+    problem: index === undefined ? { reason } : { reason, index },
+  });
+  if (prompt.length === 0) return refuse("empty");
+  if (limits && prompt.length > PROMPT_LIMITS.blocks) return refuse("too_many_blocks");
+  const blocks: PromptBlock[] = [];
   let total = 0;
   for (const [index, raw] of prompt.entries()) {
     const block = (typeof raw === "object" && raw !== null ? raw : {}) as Block;
     let bytes = 0;
     if (block.type === "text") {
-      if (typeof block.text !== "string") return { reason: "malformed_block", index };
+      if (typeof block.text !== "string") return refuse("malformed_block", index);
       // Text counts too: a pasted file of text is as large on the wire as an image of the same size.
-      bytes = new TextEncoder().encode(block.text).length;
+      if (limits) bytes = encoder.encode(block.text).length;
+      blocks.push({ type: "text", text: block.text });
     } else if (block.type === "resource_link") {
       if (typeof block.name !== "string" || typeof block.uri !== "string") {
-        return { reason: "malformed_block", index };
+        return refuse("malformed_block", index);
       }
       // A link has no content, but a long name or uri is as large on the wire as any text.
-      bytes = new TextEncoder().encode(block.name + block.uri).length;
+      if (limits) bytes = encoder.encode(block.name + block.uri).length;
+      blocks.push({ type: "link", name: block.name, uri: block.uri });
     } else if (block.type === "image") {
-      if (capabilities?.image == null) return { reason: "unsupported_block", index };
-      if (!(IMAGE_TYPES as readonly unknown[]).includes(block.mimeType)) {
-        return { reason: "unsupported_media_type", index };
-      }
+      if (capabilities?.image == null) return refuse("unsupported_block", index);
+      const mimeType = IMAGE_TYPES.find((type) => type === block.mimeType);
+      if (mimeType === undefined) return refuse("unsupported_media_type", index);
       const decoded = typeof block.data === "string" ? base64Bytes(block.data) : undefined;
       // An image of no bytes is not an image.
-      if (decoded === undefined || decoded === 0) return { reason: "invalid_base64", index };
+      if (decoded === undefined || decoded === 0) return refuse("invalid_base64", index);
       bytes = decoded;
+      blocks.push({ type: "image", mimeType, data: block.data as string });
     } else if (block.type === "resource") {
-      if (capabilities?.embeddedContext == null) return { reason: "unsupported_block", index };
+      if (capabilities?.embeddedContext == null) return refuse("unsupported_block", index);
       const resource = (block.resource ?? {}) as Record<string, unknown>;
-      if (typeof resource.uri !== "string") return { reason: "malformed_block", index };
+      if (typeof resource.uri !== "string") return refuse("malformed_block", index);
       if (typeof resource.text === "string") {
-        bytes = new TextEncoder().encode(resource.text).length;
+        if (limits) bytes = encoder.encode(resource.text).length;
+        blocks.push({ type: "file", uri: resource.uri, text: resource.text });
       } else if (typeof resource.blob === "string") {
-        if (resource.mimeType !== "application/pdf") {
-          return { reason: "unsupported_media_type", index };
+        if (resource.mimeType !== "application/pdf" || rules.pdf === false) {
+          return refuse("unsupported_media_type", index);
         }
         const decoded = base64Bytes(resource.blob);
-        if (decoded === undefined || decoded === 0) return { reason: "invalid_base64", index };
+        if (decoded === undefined || decoded === 0) return refuse("invalid_base64", index);
         bytes = decoded;
+        blocks.push({ type: "pdf", uri: resource.uri, data: resource.blob });
       } else {
-        return { reason: "unsupported_block", index };
+        return refuse("unsupported_block", index);
       }
     } else {
-      return { reason: "unsupported_block", index };
+      return refuse("unsupported_block", index);
     }
-    if (bytes > PROMPT_LIMITS.blockBytes) return { reason: "block_too_large", index };
+    if (!limits) continue;
+    if (bytes > PROMPT_LIMITS.blockBytes) return refuse("block_too_large", index);
     total += bytes;
-    if (total > PROMPT_LIMITS.promptBytes) return { reason: "prompt_too_large", index };
+    if (total > PROMPT_LIMITS.promptBytes) return refuse("prompt_too_large", index);
   }
-  return undefined;
+  return { ok: true, blocks };
 };
+
+/**
+ * The first thing wrong with a prompt, or undefined if it is acceptable to an agent with
+ * `capabilities`. The daemon enforces this; a client can call it before sending.
+ */
+export const checkPrompt = (
+  prompt: readonly unknown[],
+  capabilities: PromptCapabilities | undefined,
+): PromptProblem | undefined => {
+  const normalized = normalizePrompt(prompt, capabilities);
+  return normalized.ok ? undefined : normalized.problem;
+};
+
+/** A problem in words, for an adapter's refusal: the reason and index go with it as data, for a client to act on. */
+export const describePromptProblem = (problem: PromptProblem): string =>
+  ({
+    empty: "A prompt needs content",
+    too_many_blocks: "The prompt has too many blocks",
+    unsupported_block: "Unsupported content block",
+    malformed_block: "A content block is malformed",
+    unsupported_media_type: "Unsupported media type",
+    block_too_large: "A content block is too large",
+    prompt_too_large: "The prompt is too large",
+    invalid_base64: "A content block's data is not base64",
+  })[problem.reason];

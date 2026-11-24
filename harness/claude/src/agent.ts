@@ -13,7 +13,7 @@ import {
   PERMISSION_MODES,
   type PermissionMode,
 } from "./config-options.ts";
-import { toSdkContent } from "./content.ts";
+import { CLAUDE_PROMPT_CAPABILITIES, toSdkContent } from "./content.ts";
 import { announceConfigOptions } from "./events.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import { type AdapterConfig, newSession, newTurn, notify, type QueryFn } from "./session.ts";
@@ -30,7 +30,7 @@ export {
 export type { AdapterConfig, QueryFn, SessionInfo } from "./session.ts";
 
 /** What this agent takes in a prompt beyond text and links (decision 0010). */
-export const CLAUDE_PROMPT_CAPABILITIES = { image: {}, embeddedContext: {} } as const;
+export { CLAUDE_PROMPT_CAPABILITIES };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
