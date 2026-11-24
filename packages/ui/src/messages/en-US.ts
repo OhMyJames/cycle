@@ -1027,7 +1027,6 @@ export const enUS = {
     "{agent} {version} on {location} is older than the required {minVersion}.",
   "settings.harness.unavailable.probeFailed": "{agent} on {location} could not be checked.",
   "settings.harness.unavailable.notListed": "{agent} is not enabled on {location}.",
-  "settings.harness.account.title": "Account & usage",
   "settings.harness.account.refresh": "Refresh",
   "settings.harness.account.refreshing": "Refreshing…",
   "settings.harness.account.signedIn": "Signed in",

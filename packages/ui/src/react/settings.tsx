@@ -87,6 +87,9 @@ export function SettingsPage(props: SettingsPageProps) {
   const activeTabValue =
     props.section === "harness" ? `${HARNESS_TAB_PREFIX}${activeHarness}` : props.section;
 
+  /** What each daemon last said it can do, kept while the person moves between the pages of Settings. */
+  const knownSetup = useRef<Record<string, boolean>>({});
+
   const topSections: PageSection[] = [
     { id: "general", label: t("settings.section.general"), content: <GeneralSection /> },
     { id: "appearance", label: t("settings.section.appearance"), content: <AppearanceSection /> },
@@ -110,13 +113,14 @@ export function SettingsPage(props: SettingsPageProps) {
     locationId: chosenEnv,
     onLocationChange: setChosenEnv,
     onShowLocations: () => props.onSection("locations"),
+    knownSetup,
   };
   const providerSections: PageSection[] = [
     {
       id: "subscriptions",
       label: t("settings.section.subscriptions"),
       group: providersGroup,
-      content: <SubscriptionsSection {...location} agents={props.agents} />,
+      content: <SubscriptionsSection {...location} agents={props.agents} harnesses={harnesses} />,
     },
     {
       id: "api_keys",

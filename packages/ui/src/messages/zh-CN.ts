@@ -927,7 +927,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
     "{location} 上的 {agent} {version} 低于最低要求 {minVersion}。",
   "settings.harness.unavailable.probeFailed": "无法检查 {location} 上的 {agent}。",
   "settings.harness.unavailable.notListed": "{location} 上未启用 {agent}。",
-  "settings.harness.account.title": "账号与用量",
   "settings.harness.account.refresh": "刷新",
   "settings.harness.account.refreshing": "刷新中…",
   "settings.harness.account.signedIn": "已登录",

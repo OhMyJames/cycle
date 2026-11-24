@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@ui-sdk/react/select";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
   CUSTOM_PROVIDER_KIND,
   type LocationConfig,
@@ -63,9 +63,12 @@ export function ApiKeysSection(props: {
   locationId: string | undefined;
   onLocationChange: (locationId: string) => void;
   onShowLocations: () => void;
+  knownSetup: RefObject<Record<string, boolean>>;
 }) {
   return (
-    <LocationScope {...props}>{(location) => <ProvidersGroup location={location} />}</LocationScope>
+    <LocationScope {...props}>
+      {(location) => <ProvidersGroup key={location.id} location={location} />}
+    </LocationScope>
   );
 }
 

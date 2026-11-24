@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@ui-sdk/react/select";
-import { type ReactNode, useRef } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { LocationConfig, LocationStatus } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -20,6 +20,7 @@ export function LocationScope({
   locationId,
   onLocationChange,
   onShowLocations,
+  knownSetup,
   children,
 }: {
   locations: LocationConfig[];
@@ -27,11 +28,12 @@ export function LocationScope({
   locationId: string | undefined;
   onLocationChange: (locationId: string) => void;
   onShowLocations: () => void;
+  /** What each daemon last said it can do: kept by the page, so it outlives a section (a tab left and come back to). */
+  knownSetup: RefObject<Record<string, boolean>>;
   /** What the page shows for the location; `supportsSetup` is whether its daemon can read an agent's setup. */
   children: (location: LocationConfig, supportsSetup: boolean) => ReactNode;
 }) {
   const { t } = useI18n();
-  const knownSetup = useRef<Record<string, boolean>>({});
   const connected = locations.filter((e) => status[e.id]?.state === "connected");
   // The chosen location stays chosen while it reconnects: swapping it out would unmount the page, and with it a
   // sign-in that is under way.

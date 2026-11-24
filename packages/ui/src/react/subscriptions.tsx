@@ -3,7 +3,7 @@
 // the plan has left, are here and not on the agent's Harness page.
 import type { AgentWord } from "@cycle/analytics/events";
 import { Button } from "@ui-sdk/react/button";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentAuthProblemReason,
   AgentInfo,
@@ -29,17 +29,13 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 
 const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
 
-/** The agents that are signed in to a subscription, in the order they are listed. */
-export const SUBSCRIPTION_AGENTS: readonly { id: string; name: string }[] = [
-  { id: "claude", name: "Claude" },
-  { id: "codex", name: "Codex" },
-  { id: "agy", name: "Antigravity" },
-];
-
 const agentWord = (id: string): AgentWord =>
   id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
 export type SubscriptionsSectionProps = {
+  /** The agents, in the order the Harness pages list them: every one of them can be signed in. */
+  harnesses: readonly { id: string; name: string }[];
+  knownSetup: RefObject<Record<string, boolean>>;
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
   agents: Record<string, AgentInfo[]>;
@@ -56,9 +52,10 @@ export function SubscriptionsSection(props: SubscriptionsSectionProps) {
       locationId={props.locationId}
       onLocationChange={props.onLocationChange}
       onShowLocations={props.onShowLocations}
+      knownSetup={props.knownSetup}
     >
       {(location, supportsSetup) =>
-        SUBSCRIPTION_AGENTS.map((agent) => (
+        props.harnesses.map((agent) => (
           <SubscriptionGroup
             key={`${location.id}:${agent.id}:${supportsSetup ? "setup" : "legacy"}`}
             agentId={agent.id}

@@ -975,6 +975,9 @@ test("Model providers is a group of three: Subscriptions, API keys, and Team tha
   await user.click(within(sections).getByRole("tab", { name: "Subscriptions" }));
   expect(await screen.findByRole("heading", { name: "Subscriptions", level: 2 })).toBeTruthy();
   expect(team.getAttribute("aria-disabled")).toBe("true");
+  // No tab points at a panel that is not there.
+  const controls = team.getAttribute("aria-controls");
+  expect(controls === null || document.getElementById(controls) !== null).toBe(true);
   // The arrows can reach it, as the tabs pattern asks, and it still does not open.
   await user.click(within(sections).getByRole("tab", { name: "API keys" }));
   await user.keyboard("{ArrowDown}");

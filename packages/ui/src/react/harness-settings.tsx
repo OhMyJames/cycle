@@ -199,6 +199,7 @@ function HarnessLocationBody({
   // Whether the agent is listed, not the listing itself: a new agents list (a reconnect) is not a reason to read again.
   const hasAgent = agentInfo !== undefined;
   const [loading, setLoading] = useState(supportsSetup && hasAgent);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | undefined>(undefined);
   const [runtimeBusyKey, setRuntimeBusyKey] = useState<string | undefined>(undefined);
   const [runtimeProblem, setRuntimeProblem] = useState<
@@ -231,7 +232,8 @@ function HarnessLocationBody({
       const loud = opts.silent !== true;
       if (loud) {
         pendingLoudRef.current += 1;
-        if (!opts.forceRefresh) setLoading(true);
+        if (opts.forceRefresh) setRefreshing(true);
+        else setLoading(true);
         setLoadError(undefined);
       }
       try {
@@ -252,6 +254,7 @@ function HarnessLocationBody({
           pendingLoudRef.current -= 1;
           if (pendingLoudRef.current === 0) {
             setLoading(false);
+            setRefreshing(false);
           }
         }
       }
@@ -416,8 +419,12 @@ function HarnessLocationBody({
             }
             reason={agentId === "agy" ? AGY_INSTALL_COMMAND : undefined}
             action={{
-              label: t("settings.harness.account.refresh"),
-              onAction: () => void fetchSetup({ forceRefresh: true, refreshUsage: true }),
+              label: refreshing
+                ? t("settings.harness.account.refreshing")
+                : t("settings.harness.account.refresh"),
+              onAction: () => {
+                if (!refreshing) void fetchSetup({ forceRefresh: true, refreshUsage: true });
+              },
             }}
           />
         ) : null
