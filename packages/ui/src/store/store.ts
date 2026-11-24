@@ -161,6 +161,8 @@ export type AppState = {
   agents: Record<string, AgentInfo[]>;
   /** Counts changes to an agent's defaults, so a form that shows them knows to read them again. */
   defaultsRevision: Record<string, number>;
+  /** Counts `_cycle/agent_setup_changed` notifications per `${environmentId}:${agent}` so Harness settings auto-refresh. */
+  agentSetupRevision: Record<string, number>;
   /**
    * Each environment's connectors as last read, or why they could not be. Only for an environment the page has asked
    * about; a change there (here or elsewhere) reads them again.
@@ -220,6 +222,7 @@ const initial = (): AppState => ({
   sessions: {},
   agents: {},
   defaultsRevision: {},
+  agentSetupRevision: {},
   connectors: {},
   plugins: {},
   planUsage: {},
@@ -468,6 +471,17 @@ export class AppStore {
         // A blank conversation starts from the defaults as they are now, under what was chosen on it.
         if (this.#state.blank?.environmentId === event.environmentId)
           void this.#readBlankDefaults(true);
+        return;
+      case "agent-setup-changed":
+        this.#set((s) => {
+          const key = `${event.environmentId}:${event.agent}`;
+          return {
+            agentSetupRevision: {
+              ...s.agentSetupRevision,
+              [key]: (s.agentSetupRevision[key] ?? 0) + 1,
+            },
+          };
+        });
         return;
       case "plan-usage":
         this.#planEvents.set(
@@ -1527,6 +1541,13 @@ export class AppStore {
     agent: string,
     options?: { refreshUsage?: boolean; forceRefresh?: boolean },
   ) => this.#bridge.readAgentSetup(environmentId, agent, options);
+
+  setAgentRuntimeSettings = (
+    environmentId: string,
+    agent: string,
+    patch: Record<string, boolean | number | string | null>,
+    expectedRevision: number,
+  ) => this.#bridge.setAgentRuntimeSettings(environmentId, agent, patch, expectedRevision);
 
   /** Shows the local daemon's `config.json` in the system file manager; false on remote environments. */
   revealDaemonConfig = (environmentId: string): Promise<boolean> =>

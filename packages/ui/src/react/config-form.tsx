@@ -1,3 +1,4 @@
+import { Button } from "@ui-sdk/react/button";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import {
@@ -7,8 +8,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@ui-sdk/react/select";
+import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
+import { useEffect, useId, useState } from "react";
+import type { AgentRuntimePatchValue, AgentRuntimeValue } from "../api.ts";
 import { type DynamicConfigOption, effortLevelsOf } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
+import { PageRow, PageRows } from "./page-layout.tsx";
 
 type Choice = {
   const: string;
@@ -40,6 +45,8 @@ export type Option = {
 const RECOMMENDED = "cycle/recommended";
 const DANGER = "cycle/danger";
 const EFFORTS = "cycle/efforts";
+const APPLY_SCOPE = "cycle/applyScope";
+const ENABLED_WHEN = "cycle/enabledWhen";
 
 /** A property's values, with a name and a line on each when the schema gives them (`oneOf`). */
 export const optionsOf = (property: Property): Option[] | undefined => {
@@ -206,5 +213,305 @@ export function ConfigForm({ schema, value, onChange, defaults = true }: ConfigF
         );
       })}
     </div>
+  );
+}
+
+type RuntimePropertyShape = {
+  type?: unknown;
+  title?: unknown;
+  description?: unknown;
+  default?: unknown;
+  minimum?: unknown;
+  maximum?: unknown;
+  enum?: unknown;
+  oneOf?: unknown;
+  _meta?: unknown;
+};
+
+type EnabledWhenCondition = {
+  key: string;
+  equals: AgentRuntimeValue;
+};
+
+type ApplyScope = "immediate" | "next_idle_restart" | "next_session";
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const readEnabledWhen = (
+  meta: Record<string, unknown> | undefined,
+): EnabledWhenCondition | undefined => {
+  const raw = meta?.[ENABLED_WHEN];
+  if (!isRecord(raw) || typeof raw.key !== "string") return undefined;
+  const eq = raw.equals;
+  if (typeof eq !== "boolean" && typeof eq !== "number" && typeof eq !== "string") return undefined;
+  return { key: raw.key, equals: eq };
+};
+
+const readApplyScope = (meta: Record<string, unknown> | undefined): ApplyScope | undefined => {
+  const raw = meta?.[APPLY_SCOPE];
+  if (raw === "immediate" || raw === "next_idle_restart" || raw === "next_session") return raw;
+  return undefined;
+};
+
+const formatReadonlyValue = (value: unknown): string => {
+  if (value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+export type RuntimeFieldText = {
+  title?: string | undefined;
+  description?: string | undefined;
+};
+
+export type RuntimeConfigFormProps = {
+  schema: { type: "object"; properties: Record<string, unknown> };
+  values: Record<string, AgentRuntimeValue>;
+  overrides: readonly string[];
+  /** True when `agent-settings.json` is corrupt (read-only) or a save is disabled globally. */
+  disabled?: boolean | undefined;
+  /** Property currently being saved, if any. */
+  busyKey?: string | undefined;
+  onPatch: (patch: Record<string, AgentRuntimePatchValue>) => void;
+  /** Optional localized text for known keys; falls back to the daemon's `title` and `description`. */
+  describe?: ((key: string) => RuntimeFieldText | undefined) | undefined;
+};
+
+/**
+ * Closed-schema runtime settings editor (`docs/protocol.md §16`, `CYCL-232`):
+ * renders boolean switches, bounded integer inputs, string `oneOf` selects, and read-only
+ * fallback for unknown future property types from newer daemons.
+ */
+export function RuntimeConfigForm({
+  schema,
+  values,
+  overrides,
+  disabled = false,
+  busyKey,
+  onPatch,
+  describe,
+}: RuntimeConfigFormProps) {
+  const entries = Object.entries(schema.properties ?? {});
+  if (entries.length === 0) return null;
+  const overrideSet = new Set(overrides);
+
+  return (
+    <PageRows>
+      {entries.map(([key, raw]) => (
+        <RuntimeFieldRow
+          key={key}
+          fieldKey={key}
+          rawProperty={raw}
+          values={values}
+          overridden={overrideSet.has(key)}
+          disabled={disabled}
+          busy={busyKey !== undefined}
+          onPatch={onPatch}
+          localized={describe?.(key)}
+        />
+      ))}
+    </PageRows>
+  );
+}
+
+function RuntimeFieldRow({
+  fieldKey,
+  rawProperty,
+  values,
+  overridden,
+  disabled,
+  busy,
+  onPatch,
+  localized,
+}: {
+  fieldKey: string;
+  rawProperty: unknown;
+  values: Record<string, AgentRuntimeValue>;
+  overridden: boolean;
+  disabled: boolean;
+  busy: boolean;
+  onPatch: (patch: Record<string, AgentRuntimePatchValue>) => void;
+  localized: RuntimeFieldText | undefined;
+}) {
+  const { t } = useI18n();
+  const labelId = useId();
+  const prop: RuntimePropertyShape = isRecord(rawProperty) ? rawProperty : {};
+  const meta = isRecord(prop._meta) ? prop._meta : undefined;
+  const enabledWhen = readEnabledWhen(meta);
+  const applyScope = readApplyScope(meta);
+  const danger = meta?.[DANGER] === true;
+
+  const conditionUnmet =
+    enabledWhen !== undefined && values[enabledWhen.key] !== enabledWhen.equals;
+  const controlDisabled = disabled || busy || conditionUnmet;
+
+  const daemonTitle = typeof prop.title === "string" ? prop.title : undefined;
+  const daemonDescription = typeof prop.description === "string" ? prop.description : undefined;
+  const label = localized?.title ?? daemonTitle ?? fieldKey;
+  const descriptionText = localized?.description ?? daemonDescription;
+
+  const current = values[fieldKey] ?? (prop.default as AgentRuntimeValue | undefined);
+  const type = prop.type;
+  const stringOptions =
+    type === "string"
+      ? optionsOf({
+          type: "string",
+          ...(Array.isArray(prop.oneOf) ? { oneOf: prop.oneOf as Choice[] } : {}),
+          ...(Array.isArray(prop.enum) ? { enum: prop.enum as string[] } : {}),
+        })
+      : undefined;
+
+  const isBoolean = type === "boolean";
+  const isInteger = type === "integer";
+  const isStringSelect =
+    type === "string" && stringOptions !== undefined && stringOptions.length > 0;
+  const isSupported = isBoolean || isInteger || isStringSelect;
+
+  const scopeText =
+    applyScope !== undefined ? t(`settings.harness.runtime.scope.${applyScope}`) : undefined;
+
+  const descriptionNode = (
+    <span data-slot="runtime-description">
+      {descriptionText !== undefined ? <span>{descriptionText}</span> : null}
+      {!isSupported ? (
+        <span data-slot="runtime-meta-note">{t("settings.harness.runtime.unsupportedField")}</span>
+      ) : null}
+      {scopeText !== undefined || danger ? (
+        <span data-slot="runtime-tags">
+          {danger ? (
+            <span data-slot="option-tag" data-tone="attention">
+              {t("config.caution")}
+            </span>
+          ) : null}
+          {scopeText !== undefined ? <span data-slot="runtime-scope">{scopeText}</span> : null}
+        </span>
+      ) : null}
+    </span>
+  );
+
+  return (
+    <PageRow label={label} labelId={labelId} description={descriptionNode}>
+      <div data-slot="runtime-control">
+        {overridden && isSupported ? (
+          <Button
+            type="button"
+            data-variant="ghost"
+            aria-label={t("settings.harness.runtime.resetField", { field: label })}
+            disabled={disabled || busy}
+            onClick={() => onPatch({ [fieldKey]: null })}
+          >
+            {t("settings.harness.runtime.reset")}
+          </Button>
+        ) : null}
+        {isBoolean ? (
+          <Switch
+            aria-labelledby={labelId}
+            checked={current === true}
+            disabled={controlDisabled}
+            onCheckedChange={(checked) => onPatch({ [fieldKey]: checked === true })}
+          >
+            <SwitchThumb />
+          </Switch>
+        ) : isInteger ? (
+          <RuntimeIntegerInput
+            labelId={labelId}
+            value={typeof current === "number" ? current : undefined}
+            minimum={typeof prop.minimum === "number" ? prop.minimum : undefined}
+            maximum={typeof prop.maximum === "number" ? prop.maximum : undefined}
+            disabled={controlDisabled}
+            onCommit={(next) => onPatch({ [fieldKey]: next })}
+          />
+        ) : isStringSelect ? (
+          <Select
+            items={stringOptions.map((o) => ({ value: o.value, label: o.label }))}
+            value={typeof current === "string" ? current : null}
+            disabled={controlDisabled}
+            onValueChange={(next) => {
+              if (typeof next === "string" && next !== current) onPatch({ [fieldKey]: next });
+            }}
+          >
+            <SelectTrigger aria-labelledby={labelId}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {stringOptions.map((o) => (
+                <SelectItem key={o.value} value={o.value} label={o.label}>
+                  <OptionLabel option={o} />
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <code data-slot="reason">{formatReadonlyValue(current)}</code>
+        )}
+      </div>
+    </PageRow>
+  );
+}
+
+function RuntimeIntegerInput({
+  labelId,
+  value,
+  minimum,
+  maximum,
+  disabled,
+  onCommit,
+}: {
+  labelId: string;
+  value: number | undefined;
+  minimum: number | undefined;
+  maximum: number | undefined;
+  disabled: boolean;
+  onCommit: (next: number) => void;
+}) {
+  const [draft, setDraft] = useState(value !== undefined ? String(value) : "");
+
+  useEffect(() => {
+    setDraft(value !== undefined ? String(value) : "");
+  }, [value]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      setDraft(value !== undefined ? String(value) : "");
+      return;
+    }
+    const parsed = Number(trimmed);
+    const inRange =
+      Number.isInteger(parsed) &&
+      (minimum === undefined || parsed >= minimum) &&
+      (maximum === undefined || parsed <= maximum);
+    if (!inRange) {
+      setDraft(value !== undefined ? String(value) : "");
+      return;
+    }
+    if (parsed !== value) onCommit(parsed);
+  };
+
+  return (
+    <Input
+      type="number"
+      data-slot="runtime-integer"
+      aria-labelledby={labelId}
+      min={minimum}
+      max={maximum}
+      step={1}
+      disabled={disabled}
+      value={draft}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        }
+      }}
+    />
   );
 }

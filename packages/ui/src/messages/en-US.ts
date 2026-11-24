@@ -989,6 +989,38 @@ export const enUS = {
   "settings.harness.host.configFile.staleBody":
     "Restart the daemon (`cycle stop --wait`) to apply host configuration changes.",
   "settings.harness.host.configFile.errorTitle": "config.json has an error",
+  "settings.harness.runtime.title": "Agent settings",
+  "settings.harness.runtime.lead":
+    "Saved on {environment}. Changes apply without restarting the daemon.",
+  "settings.harness.runtime.reset": "Reset",
+  "settings.harness.runtime.resetField": "Reset {field} to default",
+  "settings.harness.runtime.scope.immediate": "Takes effect immediately",
+  "settings.harness.runtime.scope.next_idle_restart": "Takes effect on next idle restart",
+  "settings.harness.runtime.scope.next_session": "Takes effect in new sessions",
+  "settings.harness.runtime.unsupportedField":
+    "Read-only in this version of Cycle. Update the app to edit this setting.",
+  "settings.harness.runtime.fileErrorTitle": "agent-settings.json could not be read",
+  "settings.harness.runtime.fileErrorBody":
+    "Runtime settings are shown read-only so your file is not overwritten. Fix or remove the file on the host to edit again.",
+  "settings.harness.runtime.conflictTitle": "Settings changed elsewhere",
+  "settings.harness.runtime.conflictBody": "Reload to see the latest values before saving again.",
+  "settings.harness.runtime.reload": "Reload",
+  "settings.harness.runtime.saveFailed": "Could not save setting",
+  "settings.harness.runtime.field.claude.warmStart.title": "Warm start",
+  "settings.harness.runtime.field.claude.warmStart.description":
+    "Start a Claude process when a new session is created so slash commands appear before the first message.",
+  "settings.harness.runtime.field.claude.maxWarm.title": "Max warm processes",
+  "settings.harness.runtime.field.claude.maxWarm.description":
+    "Maximum number of unprompted sessions kept warm before the oldest is reclaimed.",
+  "settings.harness.runtime.field.claude.progressSummaries.title": "Sub-agent progress summaries",
+  "settings.harness.runtime.field.claude.progressSummaries.description":
+    "Ask Claude for short model-written progress lines for running sub-agents.",
+  "settings.harness.runtime.field.agy.sandbox.title": "Sandbox",
+  "settings.harness.runtime.field.agy.sandbox.description":
+    "Run agy acp with --sandbox enabled to restrict filesystem and shell access.",
+  "settings.harness.runtime.field.agy.telemetry.title": "Telemetry",
+  "settings.harness.runtime.field.agy.telemetry.description":
+    "Send usage telemetry to Google Antigravity. When disabled, Cycle passes --disable-telemetry.",
   "settings.language": "Language",
   "settings.language.description":
     "The language of the interface. What agents write stays in their own words.",

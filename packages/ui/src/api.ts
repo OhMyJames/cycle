@@ -184,6 +184,21 @@ export type AgentAuthStatus = {
 };
 
 export type AgentRuntimeValue = boolean | number | string;
+export type AgentRuntimePatchValue = AgentRuntimeValue | null;
+export type AgentRuntimeSaveAnswer =
+  | {
+      saved: true;
+      values: Record<string, AgentRuntimeValue>;
+      overrides: string[];
+      revision: number;
+    }
+  | {
+      saved: false;
+      problem: "revision_conflict" | "invalid_config" | "file_corrupt" | "failed";
+      currentRevision?: number | undefined;
+      field?: string | undefined;
+      message?: string | undefined;
+    };
 export type AgentRuntimeSnapshot = {
   schemaVersion: 1;
   schema: {
@@ -577,6 +592,8 @@ export type AppEvent =
       version: number;
     }
   | { type: "agent-defaults"; environmentId: string; agent: string }
+  /** An agent's setup snapshot changed (runtime settings saved, login, or logout). */
+  | { type: "agent-setup-changed"; environmentId: string; agent: string; revision?: number }
   /** An agent on that environment told how much of its account's plan limits is used. */
   | { type: "plan-usage"; environmentId: string; agent: string; usage: PlanUsage }
   /** The environment's connectors changed, here or elsewhere: read them again. */
@@ -774,6 +791,13 @@ export type AppApi = {
     agent: string,
     options?: { refreshUsage?: boolean; forceRefresh?: boolean },
   ): Promise<AgentSetupSnapshot>;
+  /** Patches hot-reloadable runtime settings (`null` unsets an override) with per-agent optimistic concurrency. */
+  setAgentRuntimeSettings(
+    environmentId: string,
+    agent: string,
+    patch: Record<string, AgentRuntimePatchValue>,
+    expectedRevision: number,
+  ): Promise<AgentRuntimeSaveAnswer>;
   /** Shows the local daemon's `config.json` in the system file manager; returns false on remote environments. */
   revealDaemonConfig(environmentId: string): Promise<boolean>;
 
@@ -951,6 +975,7 @@ export const API_METHODS = [
   "agentDefaults",
   "setAgentDefaults",
   "readAgentSetup",
+  "setAgentRuntimeSettings",
   "revealDaemonConfig",
   "listConnectors",
   "addConnector",

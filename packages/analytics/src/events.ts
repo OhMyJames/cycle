@@ -131,6 +131,8 @@ export const EVENTS = {
   session_deleted: o({}),
   session_config_changed: o({ setting: z.enum(["mode", "model", "effort", "other"]) }),
   agent_defaults_saved: o({ agent }),
+  /** Hot-reloadable runtime settings saved for an agent (CYCL-232). Never sends setting keys or values. */
+  agent_runtime_settings_saved: o({ agent, environment: environment }),
   /** A session that was working changed to something the person is told of: it finished, it needs them, or it stopped. */
   session_attention: o({ kind: z.enum(["finished", "needs-you", "stopped"]) }),
 

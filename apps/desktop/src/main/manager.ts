@@ -19,6 +19,8 @@ import {
 } from "@cycle/client";
 import {
   type AgentInfo,
+  type AgentRuntimePatchValue,
+  type AgentRuntimeSaveAnswer,
   type AgentSetupSnapshot,
   type AppApi,
   type AppEvent,
@@ -447,6 +449,13 @@ export class ConnectionManager
           void this.#refreshSessions(environmentId, connection).catch(() => undefined),
         defaultsChanged: (agent) =>
           this.#options.emit({ type: "agent-defaults", environmentId, agent }),
+        agentSetupChanged: (agent, revision) =>
+          this.#options.emit({
+            type: "agent-setup-changed",
+            environmentId,
+            agent,
+            ...(revision !== undefined ? { revision } : {}),
+          }),
         connectorsChanged: () => this.#options.emit({ type: "connectors", environmentId }),
         pluginsChanged: (agentId) =>
           this.#options.emit({ type: "plugins", environmentId, agentId }),
@@ -1323,6 +1332,61 @@ export class ConnectionManager
       this.#localConfigPath.set(environmentId, snapshot.environment.configFile.path);
     }
     return snapshot;
+  }
+
+  async setAgentRuntimeSettings(
+    environmentId: string,
+    agent: string,
+    patch: Record<string, AgentRuntimePatchValue>,
+    expectedRevision: number,
+  ): Promise<AgentRuntimeSaveAnswer> {
+    try {
+      const result = await this.#connection(environmentId).client.setAgentRuntimeSettings(
+        agent,
+        patch,
+        expectedRevision,
+      );
+      this.#track("agent_runtime_settings_saved", {
+        agent: agentOf(agent),
+        environment: this.#kindOf(environmentId),
+      });
+      return { saved: true, ...result };
+    } catch (error) {
+      const rpc = error as {
+        code?: number;
+        message?: string;
+        data?: { reason?: string; currentRevision?: number; field?: string };
+      };
+      if (rpc.code === -32602 && rpc.data?.reason === "revision_conflict") {
+        return {
+          saved: false,
+          problem: "revision_conflict",
+          ...(typeof rpc.data.currentRevision === "number"
+            ? { currentRevision: rpc.data.currentRevision }
+            : {}),
+        };
+      }
+      if (rpc.code === -32014 && rpc.data?.reason === "file_corrupt") {
+        return {
+          saved: false,
+          problem: "file_corrupt",
+          ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
+        };
+      }
+      if (rpc.code === -32014) {
+        return {
+          saved: false,
+          problem: "invalid_config",
+          ...(typeof rpc.data?.field === "string" ? { field: rpc.data.field } : {}),
+          ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
+        };
+      }
+      return {
+        saved: false,
+        problem: "failed",
+        ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
+      };
+    }
   }
 
   async revealDaemonConfig(environmentId: string): Promise<boolean> {

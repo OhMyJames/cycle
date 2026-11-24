@@ -6,10 +6,14 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
+  AGENT_SETUP_CHANGED,
+  type AgentRuntimePatchValue,
+  AgentSetupChangedSchema,
   type AgentSetupSnapshot,
   agentDefaultsRead,
   agentDefaultsSet,
   agentSetupRead,
+  agentSetupSetRuntime,
   agentsList,
   CONNECTORS_CHANGED,
   type Connector,
@@ -170,6 +174,8 @@ export type ClientEvents = {
   pluginsChanged?: (agentId: string) => void;
   /** An agent's defaults were changed, here or by another client. */
   defaultsChanged?: (agent: string) => void;
+  /** An agent's setup snapshot changed (runtime settings saved, sign-in, or sign-out). */
+  agentSetupChanged?: (agent: string, revision?: number) => void;
   /** An agent told how much of its account's plan limits is used (docs/protocol.md §8 "套餐用量"). */
   planUsage?: (agent: string, usage: PlanUsage) => void;
   /**
@@ -300,6 +306,15 @@ export class CycleClient {
       ...(options?.refreshUsage !== undefined ? { refreshUsage: options.refreshUsage } : {}),
       ...(options?.forceRefresh !== undefined ? { forceRefresh: options.forceRefresh } : {}),
     })) as AgentSetupSnapshot;
+  }
+
+  /** Patch hot-reloadable runtime settings for one agent (`null` unsets an override). */
+  async setAgentRuntimeSettings(
+    agent: string,
+    patch: Record<string, AgentRuntimePatchValue>,
+    expectedRevision: number,
+  ): Promise<ResultOf<typeof agentSetupSetRuntime>> {
+    return this.#call(agentSetupSetRuntime, { agent, patch, expectedRevision });
   }
 
   /**
@@ -844,6 +859,16 @@ export class CycleClient {
         NOTIFICATIONS.agentDefaultsChanged,
         (p: unknown) => p as { agent: string },
         ({ params }) => this.#events.defaultsChanged?.(params.agent),
+      )
+      .onNotification(
+        AGENT_SETUP_CHANGED,
+        (p: unknown) => p,
+        ({ params }) => {
+          const told = AgentSetupChangedSchema.safeParse(params);
+          if (told.success) {
+            this.#events.agentSetupChanged?.(told.data.agent, told.data.revision);
+          }
+        },
       )
       .onNotification(
         PLAN_USAGE_CHANGED,

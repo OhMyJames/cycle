@@ -506,3 +506,251 @@ test("blank page auth/unavailable prompt opens the matching Harness settings tab
     { agent: "agy", environment: "local", from: "blank" },
   ]);
 });
+
+test("Harness runtime settings support boolean/integer editing, enabledWhen, reset null, conflict reload, fileError read-only, unknown types, and hide when empty", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, agentSetup: true },
+  });
+  script.bridge.agents = async () => [
+    { id: "claude", name: "Claude", available: true, configSchema: {} },
+    { id: "codex", name: "Codex", available: true, configSchema: {} },
+    { id: "agy", name: "Antigravity", available: true, configSchema: {} },
+  ];
+
+  let claudeValues: Record<string, boolean | number | string> = {
+    warmStart: true,
+    maxWarm: 3,
+    futureList: "v1",
+  };
+  let claudeOverrides: string[] = [];
+  let claudeRevision = 1;
+  let forceConflict = false;
+  let agyFileError: string | undefined = "Unexpected token } in JSON";
+
+  const claudeSchema = {
+    type: "object" as const,
+    properties: {
+      warmStart: {
+        type: "boolean",
+        title: "Warm start",
+        default: true,
+        _meta: { "cycle/applyScope": "immediate" },
+      },
+      maxWarm: {
+        type: "integer",
+        title: "Max warm processes",
+        minimum: 1,
+        maximum: 10,
+        default: 3,
+        _meta: {
+          "cycle/applyScope": "immediate",
+          "cycle/enabledWhen": { key: "warmStart", equals: true },
+        },
+      },
+      futureList: {
+        type: "array",
+        title: "Future array option",
+        description: "From a newer daemon.",
+      },
+    },
+  };
+
+  script.bridge.readAgentSetup = async (_env, agent) => {
+    script.calls.push(["readAgentSetup", _env, agent]);
+    if (agent === "codex") {
+      return {
+        agent: "codex",
+        name: "Codex",
+        available: true,
+        binary: { source: "path", path: "/usr/bin/codex", version: "0.90.0" },
+        auth: {
+          state: "signed_in",
+          method: "subscription",
+          signInModes: [],
+          canSignOut: false,
+          loginCommand: "cycle login codex",
+        },
+        canRefreshUsage: true,
+        runtime: {
+          schemaVersion: 1,
+          schema: { type: "object", properties: {} },
+          values: {},
+          overrides: [],
+          revision: 0,
+        },
+        environment: {
+          configFile: { path: "/tmp/config.json", exists: true, stale: false },
+          dataDir: "/tmp/codex",
+          customDataDir: false,
+          allowEnv: [],
+          envNames: [],
+        },
+      };
+    }
+    if (agent === "agy") {
+      return {
+        agent: "agy",
+        name: "Antigravity",
+        available: true,
+        binary: { source: "path", path: "/usr/bin/agy", version: "1.0.0" },
+        auth: {
+          state: "signed_in",
+          method: "subscription",
+          signInModes: [],
+          canSignOut: false,
+          loginCommand: "cycle login agy",
+        },
+        canRefreshUsage: false,
+        runtime: {
+          schemaVersion: 1,
+          schema: {
+            type: "object",
+            properties: {
+              sandbox: {
+                type: "boolean",
+                title: "Sandbox",
+                default: false,
+                _meta: { "cycle/applyScope": "next_idle_restart", "cycle/danger": true },
+              },
+            },
+          },
+          values: { sandbox: false },
+          overrides: [],
+          revision: 0,
+          fileError: agyFileError,
+        },
+        environment: {
+          configFile: { path: "/tmp/config.json", exists: true, stale: false },
+          dataDir: "/tmp/agy",
+          customDataDir: false,
+          allowEnv: [],
+          envNames: [],
+        },
+      };
+    }
+    return {
+      agent: "claude",
+      name: "Claude",
+      available: true,
+      binary: { source: "path", path: "/usr/bin/claude", version: "2.1.0" },
+      auth: {
+        state: "signed_in",
+        method: "subscription",
+        signInModes: [],
+        canSignOut: false,
+        loginCommand: "cycle login claude",
+      },
+      canRefreshUsage: false,
+      runtime: {
+        schemaVersion: 1,
+        schema: claudeSchema,
+        values: { ...claudeValues },
+        overrides: [...claudeOverrides],
+        revision: claudeRevision,
+      },
+      environment: {
+        configFile: { path: "/tmp/config.json", exists: true, stale: false },
+        dataDir: "/tmp/claude",
+        customDataDir: false,
+        allowEnv: [],
+        envNames: [],
+      },
+    };
+  };
+
+  script.bridge.setAgentRuntimeSettings = async (env, agent, patch, expectedRevision) => {
+    script.calls.push(["setAgentRuntimeSettings", env, agent, patch, expectedRevision]);
+    if (forceConflict) {
+      forceConflict = false;
+      claudeRevision += 1;
+      claudeValues = { ...claudeValues, maxWarm: 7 };
+      return { saved: false, problem: "revision_conflict", currentRevision: claudeRevision };
+    }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) {
+        claudeOverrides = claudeOverrides.filter((o) => o !== k);
+        if (k === "warmStart") claudeValues = { ...claudeValues, warmStart: true };
+        if (k === "maxWarm") claudeValues = { ...claudeValues, maxWarm: 3 };
+      } else {
+        if (!claudeOverrides.includes(k)) claudeOverrides = [...claudeOverrides, k];
+        claudeValues = { ...claudeValues, [k]: v };
+      }
+    }
+    claudeRevision += 1;
+    return {
+      saved: true,
+      values: { ...claudeValues },
+      overrides: [...claudeOverrides],
+      revision: claudeRevision,
+    };
+  };
+
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await openSettings(user);
+  await user.click(await screen.findByRole("tab", { name: "Claude" }));
+
+  // Agent settings group renders with warmStart switch, maxWarm integer input, and unknown array property read-only.
+  expect(await screen.findByRole("heading", { name: "Agent settings" })).toBeTruthy();
+  const warmSwitch = screen.getByRole("switch", { name: "Warm start" });
+  const maxWarmInput = screen.getByRole("spinbutton", { name: "Max warm processes" });
+  expect(warmSwitch.getAttribute("aria-checked")).toBe("true");
+  expect((maxWarmInput as HTMLInputElement).disabled).toBe(false);
+  expect(screen.getByText("Future array option")).toBeTruthy();
+  expect(screen.getByText(/Read-only in this version of Cycle/)).toBeTruthy();
+
+  // Toggling warmStart off sends { warmStart: false } with expectedRevision=1 and disables maxWarm (enabledWhen).
+  await user.click(warmSwitch);
+  await waitFor(() =>
+    expect(script.named("setAgentRuntimeSettings").at(-1)).toEqual([
+      "setAgentRuntimeSettings",
+      "local",
+      "claude",
+      { warmStart: false },
+      1,
+    ]),
+  );
+  await waitFor(() => expect((maxWarmInput as HTMLInputElement).disabled).toBe(true));
+
+  // Reset button appears for overridden warmStart and sends { warmStart: null }.
+  await user.click(screen.getByRole("button", { name: "Reset Warm start to default" }));
+  await waitFor(() =>
+    expect(script.named("setAgentRuntimeSettings").at(-1)).toEqual([
+      "setAgentRuntimeSettings",
+      "local",
+      "claude",
+      { warmStart: null },
+      2,
+    ]),
+  );
+  await waitFor(() => expect((maxWarmInput as HTMLInputElement).disabled).toBe(false));
+
+  // Revision conflict shows conflict banner and Reload fetches latest values.
+  forceConflict = true;
+  await user.click(warmSwitch);
+  expect(await screen.findByText("Settings changed elsewhere")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Reload" }));
+  await waitFor(() => expect((maxWarmInput as HTMLInputElement).value).toBe("7"));
+
+  // Codex has empty runtime schema & no fileError: Agent settings group is hidden.
+  await user.click(screen.getByRole("tab", { name: "Codex" }));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Agent settings" })).toBeNull());
+
+  // Antigravity with fileError renders error notice and read-only (disabled) switch + caution tag.
+  await user.click(screen.getByRole("tab", { name: "Antigravity" }));
+  expect(await screen.findByText("agent-settings.json could not be read")).toBeTruthy();
+  const sandboxSwitch = screen.getByRole("switch", { name: "Sandbox" });
+  expect(
+    sandboxSwitch.getAttribute("aria-disabled") === "true" ||
+      (sandboxSwitch as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(screen.getByText("Caution")).toBeTruthy();
+  agyFileError = undefined;
+});

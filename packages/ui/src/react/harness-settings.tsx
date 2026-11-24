@@ -15,11 +15,12 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentInfo,
+  AgentRuntimePatchValue,
   AgentSetupSnapshot,
   EnvironmentConfig,
   EnvironmentStatus,
 } from "../api.ts";
-import { ConfigForm } from "./config-form.tsx";
+import { ConfigForm, RuntimeConfigForm, type RuntimeFieldText } from "./config-form.tsx";
 import { useI18n } from "./i18n.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { PlanUsageBars, planRowsOf } from "./plan-usage-bars.tsx";
@@ -183,15 +184,23 @@ function HarnessEnvironmentBody({
   const { t, date } = useI18n();
   const store = useAppStore();
   const livePlanUsage = useAppState((s) => s.planUsage[environment.id]?.[agentId]);
+  const setupRevision = useAppState(
+    (s) => s.agentSetupRevision[`${environment.id}:${agentId}`] ?? 0,
+  );
 
   const [snapshot, setSnapshot] = useState<AgentSetupSnapshot | undefined>(undefined);
   const [loading, setLoading] = useState(supportsSetup && agentInfo !== undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | undefined>(undefined);
+  const [runtimeBusyKey, setRuntimeBusyKey] = useState<string | undefined>(undefined);
+  const [runtimeProblem, setRuntimeProblem] = useState<
+    { kind: "conflict" } | { kind: "error"; reason?: string | undefined } | undefined
+  >(undefined);
   const [copiedLogin, setCopiedLogin] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const [defaultsAttempt, setDefaultsAttempt] = useState(0);
   const mountedRef = useRef(true);
+  const seenSetupRevisionRef = useRef(setupRevision);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
@@ -203,20 +212,26 @@ function HarnessEnvironmentBody({
   }, []);
 
   const fetchSetup = useCallback(
-    async (opts: { forceRefresh?: boolean; refreshUsage?: boolean }) => {
+    async (opts: { forceRefresh?: boolean; refreshUsage?: boolean; silent?: boolean }) => {
       if (!supportsSetup || agentInfo === undefined) return;
-      if (opts.forceRefresh) setRefreshing(true);
-      else setLoading(true);
+      if (!opts.silent) {
+        if (opts.forceRefresh) setRefreshing(true);
+        else setLoading(true);
+      }
       setLoadError(undefined);
       try {
-        const result = await store.readAgentSetup(environment.id, agentId, opts);
+        const result = await store.readAgentSetup(environment.id, agentId, {
+          ...(opts.forceRefresh ? { forceRefresh: true } : {}),
+          ...(opts.refreshUsage ? { refreshUsage: true } : {}),
+        });
         if (!mountedRef.current) return;
         setSnapshot(result);
+        setRuntimeProblem(undefined);
       } catch (error) {
         if (!mountedRef.current) return;
-        setLoadError(error instanceof Error ? error.message : String(error));
+        if (!opts.silent) setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
-        if (mountedRef.current) {
+        if (mountedRef.current && !opts.silent) {
           setLoading(false);
           setRefreshing(false);
         }
@@ -229,6 +244,76 @@ function HarnessEnvironmentBody({
     if (!supportsSetup || agentInfo === undefined) return;
     void fetchSetup({ refreshUsage: agentId === "codex" });
   }, [fetchSetup, supportsSetup, agentInfo, agentId]);
+
+  useEffect(() => {
+    if (setupRevision === seenSetupRevisionRef.current) return;
+    seenSetupRevisionRef.current = setupRevision;
+    if (!supportsSetup || agentInfo === undefined) return;
+    void fetchSetup({ silent: true });
+  }, [setupRevision, fetchSetup, supportsSetup, agentInfo]);
+
+  const patchRuntime = useCallback(
+    async (patch: Record<string, AgentRuntimePatchValue>) => {
+      if (snapshot === undefined || runtimeBusyKey !== undefined) return;
+      const key = Object.keys(patch)[0] ?? "*";
+      setRuntimeBusyKey(key);
+      setRuntimeProblem(undefined);
+      try {
+        const answer = await store.setAgentRuntimeSettings(
+          environment.id,
+          agentId,
+          patch,
+          snapshot.runtime.revision,
+        );
+        if (!mountedRef.current) return;
+        if (answer === undefined) return;
+        if (answer.saved) {
+          setSnapshot((prev) =>
+            prev === undefined
+              ? prev
+              : {
+                  ...prev,
+                  runtime: {
+                    ...prev.runtime,
+                    values: answer.values,
+                    overrides: answer.overrides,
+                    revision: answer.revision,
+                    fileError: undefined,
+                  },
+                },
+          );
+          return;
+        }
+        if (answer.problem === "revision_conflict") {
+          setRuntimeProblem({ kind: "conflict" });
+          return;
+        }
+        if (answer.problem === "file_corrupt") {
+          setSnapshot((prev) =>
+            prev === undefined
+              ? prev
+              : {
+                  ...prev,
+                  runtime: {
+                    ...prev.runtime,
+                    fileError: answer.message ?? prev.runtime.fileError ?? "",
+                  },
+                },
+          );
+          return;
+        }
+        setRuntimeProblem({ kind: "error", reason: answer.message });
+      } finally {
+        if (mountedRef.current) setRuntimeBusyKey(undefined);
+      }
+    },
+    [snapshot, runtimeBusyKey, store, environment.id, agentId],
+  );
+
+  const describeRuntime = useCallback(
+    (key: string): RuntimeFieldText | undefined => describeRuntimeField(agentId, key, t),
+    [agentId, t],
+  );
 
   const readDefaults = useCallback(
     (id: string) => store.readAgentDefaults(environment.id, id),
@@ -409,6 +494,57 @@ function HarnessEnvironmentBody({
         </PageGroup>
       ) : null}
 
+      {supportsSetup &&
+      snapshot !== undefined &&
+      (Object.keys(snapshot.runtime.schema.properties).length > 0 ||
+        snapshot.runtime.fileError !== undefined) ? (
+        <PageGroup
+          title={t("settings.harness.runtime.title")}
+          lead={t("settings.harness.runtime.lead", { environment: environment.name })}
+        >
+          {snapshot.runtime.fileError !== undefined ? (
+            <StateBlock
+              size="inline"
+              align="start"
+              tone="error"
+              title={t("settings.harness.runtime.fileErrorTitle")}
+              body={t("settings.harness.runtime.fileErrorBody")}
+              reason={snapshot.runtime.fileError}
+            />
+          ) : null}
+          {runtimeProblem?.kind === "conflict" ? (
+            <StateBlock
+              size="inline"
+              align="start"
+              tone="away"
+              title={t("settings.harness.runtime.conflictTitle")}
+              body={t("settings.harness.runtime.conflictBody")}
+              action={{
+                label: t("settings.harness.runtime.reload"),
+                onAction: () => void fetchSetup({ forceRefresh: true }),
+              }}
+            />
+          ) : runtimeProblem?.kind === "error" ? (
+            <StateBlock
+              size="inline"
+              align="start"
+              tone="error"
+              title={t("settings.harness.runtime.saveFailed")}
+              reason={runtimeProblem.reason}
+            />
+          ) : null}
+          <RuntimeConfigForm
+            schema={snapshot.runtime.schema}
+            values={snapshot.runtime.values}
+            overrides={snapshot.runtime.overrides}
+            disabled={snapshot.runtime.fileError !== undefined}
+            busyKey={runtimeBusyKey}
+            onPatch={(patch) => void patchRuntime(patch)}
+            describe={describeRuntime}
+          />
+        </PageGroup>
+      ) : null}
+
       {supportsSetup && snapshot !== undefined ? (
         <PageGroup title={t("settings.harness.host.title")} lead={t("settings.harness.host.lead")}>
           {snapshot.environment.configFile.error !== undefined ? (
@@ -557,6 +693,48 @@ const binaryDescription = (snapshot: AgentSetupSnapshot, t: Translate): string =
     parts.push(t("settings.harness.host.binary.minVersion", { version: binary.minVersion }));
   }
   return parts.join(" · ");
+};
+
+const describeRuntimeField = (
+  agentId: string,
+  key: string,
+  t: Translate,
+): RuntimeFieldText | undefined => {
+  if (agentId === "claude") {
+    if (key === "warmStart") {
+      return {
+        title: t("settings.harness.runtime.field.claude.warmStart.title"),
+        description: t("settings.harness.runtime.field.claude.warmStart.description"),
+      };
+    }
+    if (key === "maxWarm") {
+      return {
+        title: t("settings.harness.runtime.field.claude.maxWarm.title"),
+        description: t("settings.harness.runtime.field.claude.maxWarm.description"),
+      };
+    }
+    if (key === "progressSummaries") {
+      return {
+        title: t("settings.harness.runtime.field.claude.progressSummaries.title"),
+        description: t("settings.harness.runtime.field.claude.progressSummaries.description"),
+      };
+    }
+  }
+  if (agentId === "agy") {
+    if (key === "sandbox") {
+      return {
+        title: t("settings.harness.runtime.field.agy.sandbox.title"),
+        description: t("settings.harness.runtime.field.agy.sandbox.description"),
+      };
+    }
+    if (key === "telemetry") {
+      return {
+        title: t("settings.harness.runtime.field.agy.telemetry.title"),
+        description: t("settings.harness.runtime.field.agy.telemetry.description"),
+      };
+    }
+  }
+  return undefined;
 };
 
 /** Single-agent Session defaults editor (migrated from the former flat `Defaults` tab). */

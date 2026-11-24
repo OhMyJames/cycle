@@ -325,6 +325,25 @@ export const fakeBridge = (
         envNames: [],
       },
     })),
+    setAgentRuntimeSettings: record(
+      "setAgentRuntimeSettings",
+      async (
+        _environmentId: string,
+        _agent: string,
+        patch: Record<string, boolean | number | string | null>,
+        expectedRevision: number,
+      ) => {
+        const values: Record<string, boolean | number | string> = {};
+        const overrides: string[] = [];
+        for (const [k, v] of Object.entries(patch)) {
+          if (v !== null) {
+            values[k] = v;
+            overrides.push(k);
+          }
+        }
+        return { saved: true as const, values, overrides, revision: expectedRevision + 1 };
+      },
+    ),
     revealDaemonConfig: record("revealDaemonConfig", async () => true),
     listConnectors: record("listConnectors", async () => connectors.map((c) => ({ ...c }))),
     addConnector: record("addConnector", async (_environment: string, draft) => {

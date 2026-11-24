@@ -1531,3 +1531,129 @@ test("stopping one sub-agent is counted when the daemon takes it, with whether i
   await until(() => fake.log.childCancels.length > 0, "the agent to be told");
   expect(fake.log.childCancels).toEqual(["task-private"]);
 });
+
+test("saving runtime settings reports behavioral analytics without config values, handles conflicts, and forwards setup-changed events", async () => {
+  const fake = fakeAgent();
+  const runtimeSchema = {
+    warmStart: { type: "boolean" as const, title: "Warm start", default: true },
+    secretLabel: {
+      type: "string" as const,
+      title: "Mode",
+      oneOf: [
+        { const: "alpha-secret-val", title: "Alpha" },
+        { const: "beta-secret-val", title: "Beta" },
+      ],
+      default: "alpha-secret-val",
+    },
+  };
+  const agent: Parameters<typeof Daemon.start>[0]["agents"][number] = {
+    ...fake.definition,
+    id: "claude",
+    name: "Claude",
+    setup: {
+      probeBinary: async () => ({
+        source: "path" as const,
+        path: "/usr/bin/claude",
+        version: "2.1.0",
+      }),
+      readAuth: async () => ({ state: "signed_in" as const, method: "subscription" as const }),
+      signInModes: () => [],
+      canSignOut: () => false,
+      canRefreshUsage: false,
+      loginCommand: "cycle login claude",
+      diagnostics: () => ({
+        dataDir: join(dir, "claude"),
+        customDataDir: false,
+        allowEnv: [],
+        envNames: [],
+      }),
+      runtimeSchema,
+      runtimeSnapshot: (settings) => {
+        const defaults = { warmStart: true, secretLabel: "alpha-secret-val" };
+        const eff = settings?.effective("claude", defaults, {}) ?? {
+          values: defaults,
+          overrides: [],
+          revision: 0,
+        };
+        return {
+          schemaVersion: 1 as const,
+          schema: { type: "object" as const, properties: runtimeSchema },
+          ...eff,
+        };
+      },
+    },
+  };
+  const daemon = await Daemon.start({
+    dataDir: join(dir, "daemon"),
+    agents: [agent],
+  });
+  const socket = join(dir, "rt.sock");
+  const server = await listenUnix({
+    path: socket,
+    onConnection: ({ stream }) => void daemon.accept(stream),
+  });
+  cleanup.push(async () => {
+    server.close();
+    await daemon.close();
+  });
+
+  const tracked: [string, unknown][] = [];
+  const eventsA: AppEvent[] = [];
+  const eventsB: AppEvent[] = [];
+  const makeManager = async (name: string, bucket: AppEvent[], track?: Tracker) => {
+    const m = new ConnectionManager({
+      settings: fileSettings(join(dir, `settings-${name}.json`)),
+      channelFor: () => async () => connectUnix(socket),
+      emit: (event) => bucket.push(event),
+      backoff: { first: 10, max: 50 },
+      ...(track !== undefined ? { track } : {}),
+    });
+    await m.init();
+    cleanup.push(() => m.close());
+    await m.connect("local");
+    return m;
+  };
+
+  const mA = await makeManager("a", eventsA, (name, props) => {
+    if (name === "agent_runtime_settings_saved") tracked.push([name, props]);
+  });
+  const mB = await makeManager("b", eventsB);
+
+  const initial = await mA.readAgentSetup("local", "claude");
+  expect(initial.runtime.revision).toBe(0);
+
+  const saved = await mA.setAgentRuntimeSettings(
+    "local",
+    "claude",
+    { warmStart: false, secretLabel: "beta-secret-val" },
+    0,
+  );
+  expect(saved).toEqual({
+    saved: true,
+    values: { warmStart: false, secretLabel: "beta-secret-val" },
+    overrides: ["secretLabel", "warmStart"],
+    revision: 1,
+  });
+
+  // Other connected manager receives `_cycle/agent_setup_changed`.
+  await until(
+    () => of(eventsB, "agent-setup-changed").some((e) => e.agent === "claude" && e.revision === 1),
+    "agent-setup-changed event on peer manager",
+  );
+
+  // Stale expectedRevision returns structured revision_conflict without emitting analytics.
+  const conflict = await mB.setAgentRuntimeSettings("local", "claude", { warmStart: true }, 0);
+  expect(conflict).toMatchObject({
+    saved: false,
+    problem: "revision_conflict",
+    currentRevision: 1,
+  });
+
+  // Behavioral analytics only: agent + environment kind, zero field names or values.
+  expect(tracked).toEqual([
+    ["agent_runtime_settings_saved", { agent: "claude", environment: "local" }],
+  ]);
+  expect(JSON.stringify(tracked)).not.toContain("secret");
+  expect(JSON.stringify(tracked)).not.toContain("warmStart");
+  expect(JSON.stringify(tracked)).not.toContain("beta");
+});

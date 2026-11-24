@@ -894,6 +894,36 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.harness.host.configFile.staleBody":
     "重启 daemon（`cycle stop --wait`）后宿主配置才会生效。",
   "settings.harness.host.configFile.errorTitle": "config.json 存在错误",
+  "settings.harness.runtime.title": "Agent 设置",
+  "settings.harness.runtime.lead": "保存在 {environment} 上，修改后无需重启 daemon。",
+  "settings.harness.runtime.reset": "重置",
+  "settings.harness.runtime.resetField": "将 {field} 重置为默认",
+  "settings.harness.runtime.scope.immediate": "立即生效",
+  "settings.harness.runtime.scope.next_idle_restart": "空闲重启或新会话时生效",
+  "settings.harness.runtime.scope.next_session": "新会话生效",
+  "settings.harness.runtime.unsupportedField": "当前版本的 Cycle 中为只读，更新应用后可编辑。",
+  "settings.harness.runtime.fileErrorTitle": "无法读取 agent-settings.json",
+  "settings.harness.runtime.fileErrorBody":
+    "运行时设置已切换为只读以避免覆盖原文件。请在宿主机修复或删除该文件后再编辑。",
+  "settings.harness.runtime.conflictTitle": "设置已在别处被修改",
+  "settings.harness.runtime.conflictBody": "请先重新加载最新值，再重新保存。",
+  "settings.harness.runtime.reload": "重新加载",
+  "settings.harness.runtime.saveFailed": "无法保存设置",
+  "settings.harness.runtime.field.claude.warmStart.title": "预热启动",
+  "settings.harness.runtime.field.claude.warmStart.description":
+    "创建新会话时预先启动 Claude 进程，以便发送第一条消息前即可显示斜杠命令。",
+  "settings.harness.runtime.field.claude.maxWarm.title": "最大预热进程数",
+  "settings.harness.runtime.field.claude.maxWarm.description":
+    "同时保持预热的未提问会话上限，超出时回收最早的进程。",
+  "settings.harness.runtime.field.claude.progressSummaries.title": "子 agent 进度摘要",
+  "settings.harness.runtime.field.claude.progressSummaries.description":
+    "让 Claude 为运行中的子 agent 生成简短进度说明。",
+  "settings.harness.runtime.field.agy.sandbox.title": "沙盒模式",
+  "settings.harness.runtime.field.agy.sandbox.description":
+    "为 agy acp 启用 --sandbox，限制文件系统与 Shell 访问。",
+  "settings.harness.runtime.field.agy.telemetry.title": "遥测",
+  "settings.harness.runtime.field.agy.telemetry.description":
+    "向 Google Antigravity 发送使用遥测；关闭时 Cycle 会传入 --disable-telemetry。",
   "settings.language": "语言",
   "settings.language.description": "界面的语言。agent 写的内容保持它自己的语言。",
   "settings.language.system": "跟随系统（{language}）",
