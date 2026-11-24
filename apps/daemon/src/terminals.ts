@@ -1,3 +1,4 @@
+import { dlopen, FFIType } from "bun:ffi";
 import { accessSync, constants, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename } from "node:path";
@@ -27,8 +28,8 @@ export type Pty = {
   resize(cols: number, rows: number): void;
   /**
    * The processes whose controlling terminal this is: the shell, the job in front and the jobs in the background
-   * (each in a group of its own), and those left behind by a shell that exited. Asked while this end is open, so the
-   * device cannot have gone to another terminal.
+   * (each in a group of its own). Asked while this end is open, so the device cannot have gone to another terminal.
+   * And those left behind by a shell that exited: they lost the terminal with it, and are found by its session.
    */
   processes(): Promise<number[]>;
   /** Closes this end of the pseudo-terminal. Until then output keeps coming, even after the shell exits. */
@@ -172,6 +173,52 @@ const ps = async (args: string[]): Promise<string> => {
   }
 };
 
+const pidsOf = (out: string): number[] =>
+  out
+    .split("\n")
+    .map((line) => Number(line.trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 1);
+
+/** `getsid(2)`, where only it says a process's session (a Mac's `ps` does not); undefined where it cannot be had. */
+let getsid: ((pid: number) => number) | null | undefined;
+const sessionOf = (pid: number): number | undefined => {
+  if (getsid === undefined) {
+    try {
+      const lib = dlopen("/usr/lib/libSystem.B.dylib", {
+        getsid: { args: [FFIType.i32], returns: FFIType.i32 },
+      });
+      getsid = (p) => lib.symbols.getsid(p);
+    } catch {
+      getsid = null;
+    }
+  }
+  if (getsid === null) return undefined;
+  const sid = getsid(pid);
+  return sid < 0 ? undefined : sid;
+};
+
+/**
+ * The processes still in the session `sid` led, once its leader has exited: what a shell left behind loses the
+ * terminal with it, so `ps -t` no longer finds them. The session's number is the shell's: the caller makes sure no
+ * other process has taken that number since.
+ */
+const sessionMembers = async (sid: number): Promise<number[]> => {
+  if (process.platform === "linux") return pidsOf(await ps(["-s", String(sid), "-o", "pid="]));
+  if (process.platform !== "darwin") return [];
+  // This account's processes only: no other's could be signalled.
+  return pidsOf(await ps(["-x", "-o", "pid="])).filter((pid) => sessionOf(pid) === sid);
+};
+
+/** Whether a process has this number now (one of another user's included). */
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 export const bunPtySpawn: PtySpawn = (options) => {
   const proc = Bun.spawn(options.argv, {
     cwd: options.cwd,
@@ -198,12 +245,18 @@ export const bunPtySpawn: PtySpawn = (options) => {
       if (!terminal.closed) terminal.resize(cols, rows);
     },
     processes: async () => {
+      if (terminal.closed) return [];
       const name = await device;
-      if (name === undefined || terminal.closed) return [];
-      return (await ps(["-t", name, "-o", "pid="]))
-        .split("\n")
-        .map((line) => Number(line.trim()))
-        .filter((pid) => Number.isInteger(pid) && pid > 1);
+      const on = name === undefined ? [] : pidsOf(await ps(["-t", name, "-o", "pid="]));
+      // The session the shell led has the shell's number. Until Bun has waited for the shell (running, or exited and
+      // not yet reaped) the number is still the shell's; after, it is the session's only while no process has taken
+      // it, which is asked before the session is looked up and again after.
+      const reaped = proc.exitCode !== null || proc.signalCode !== null;
+      const ours = () => !reaped || !alive(proc.pid);
+      if (!ours()) return on;
+      const members = await sessionMembers(proc.pid);
+      if (!ours()) return on;
+      return [...new Set([...on, ...members])];
     },
     hangup: () => {
       if (!terminal.closed) terminal.close();
@@ -604,8 +657,11 @@ export class Terminals {
       // What closing a terminal window does: every process on it is hung up (one that ignores it, as under nohup,
       // is left). A shell still there after the grace is killed with its group. The terminal is closed last: while
       // it is open its device is not another terminal's, so the processes found on it are this one's.
+      // A shell that has exited and been waited for is not signalled: its number may be another process's by now.
       const shell = entry.pty.pid;
-      for (const pid of new Set([shell, ...(await entry.pty.processes())])) signal(pid, "SIGHUP");
+      const processes = new Set(await entry.pty.processes());
+      if (entry.info.status !== "exited") processes.add(shell);
+      for (const pid of processes) signal(pid, "SIGHUP");
       const grace = this.#options.killGraceMs ?? 2000;
       const ended = await Promise.race([
         entry.pty.exited.then(() => true),

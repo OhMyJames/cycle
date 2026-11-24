@@ -183,6 +183,34 @@ test("closing a terminal ends the job in front of its shell and the jobs behind 
   await until(() => !running(front) && !running(behind), "both jobs to end", 5_000);
 });
 
+test("closing a terminal whose shell exited ends what the shell left behind", async () => {
+  const daemon = await start();
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: work });
+  const id = (await call<Attached>(c, "_cycle/terminal/create", { sessionId, cols: 80, rows: 24 }))
+    .terminal.terminalId;
+  const marker = 43_000 + Math.floor(Math.random() * 999);
+  const left = `sleep ${marker}`;
+  // In a subshell: no job of the shell's, so it is not hung up as the shell exits, and it loses the terminal then.
+  await call(c, "_cycle/terminal/input", { terminalId: id, data: `(${left} &)\nexit\n` });
+  const exited = () =>
+    c.terminal.some(
+      (t) =>
+        t.kind === "changed" &&
+        (t.params.terminals as Info[]).some((x) => x.terminalId === id && x.status === "exited"),
+    );
+  try {
+    await until(() => running(left), "the job to start", 5_000);
+    await until(exited, "the shell to exit", 5_000);
+    expect(running(left)).toBe(true);
+    await call(c, "_cycle/terminal/close", { terminalId: id });
+    await until(() => !running(left), "what it left to end", 5_000);
+  } finally {
+    // Not left running on the machine when this fails.
+    Bun.spawnSync(["pkill", "-f", left]);
+  }
+});
+
 test("what a shell prints as it exits reaches the client", async () => {
   const daemon = await start();
   const c = await connectClient(daemon);
