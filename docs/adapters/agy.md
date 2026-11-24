@@ -78,7 +78,7 @@
 - **二进制 `resource`(如 PDF)与 `audio`**:实测 `agy` 1.5.15 会静默丢弃 `blob` 附件且不支持音频,桥在转发前以 `-32602` 明确拒绝。
 - **SSE MCP、`override` 系统提示、URL 模式 elicitation**:明确拒绝(`-32602`)或取消。
 - **子 agent 独立子对话与后台任务追踪**:`agy` 1.5.15 的 `invoke_subagent` / `schedule` 在 ACP v1 中仅作为普通 `tool_call` 发出,无子对话 id 或内部进度事件,不做 `subagent_update`、`_cycle/child_update`、`cycle/background`。
-- **套餐用量(`_cycle/plan_usage`,CYC-298)**:适配器在每个回合开始和结束时(至少隔 5 分钟)起一个旁路进程 `agy -p "/usage" --output-format json`,不开回合(返回的 `usage` token 全为 0,实测 agy 1.5.16 的 `/usage`、`/quota`、`/credits` 都不消耗额度),只在变化时发 `_cycle/plan_usage`。结构:`command.data.groups[].buckets[]`,`window` 为 `5h`/`weekly`,`remaining_fraction`(剩余比例)、`reset_time`(ISO 时间)。Gemini 组对应 `five_hour`/`seven_day`;"Claude and GPT"组对应 `five_hour_other`/`seven_day_other`。用 API key 登录(环境里有 `GEMINI_API_KEY`/`GOOGLE_API_KEY`)不读。`_meta.antigravity.tier` 仍只含订阅档位。
+- **套餐用量(`_cycle/plan_usage`,CYC-298)**:适配器在每个回合结束时(至少隔 5 分钟,读失败不占间隔)起一个旁路进程 `agy -p "/usage" --output-format json`,不开回合(返回的 `usage` token 全为 0,实测 agy 1.5.16 的 `/usage`、`/quota`、`/credits` 都不消耗额度),通过这个回合的 session 发 `_cycle/plan_usage`(每次读到都发,daemon 留最新的)。结构:`command.data.groups[].buckets[]`,`window` 为 `5h`/`weekly`,`remaining_fraction`(剩余比例)、`reset_time`(ISO 时间)。Gemini 组对应 `five_hour`/`seven_day`;"Claude and GPT"组对应 `five_hour_other`/`seven_day_other`。用 API key 登录(环境里有 `GEMINI_API_KEY`/`GOOGLE_API_KEY`)不读。`_meta.antigravity.tier` 仍只含订阅档位。
 - **`session/load` 补历史(CYC-298 评估,未实现)**:agy 1.5.15 起 `session/load` 先回放完全部历史再返回。Cycle 现在用 `session/resume`(不回放),本地 JSONL 缺失或损坏时无法从 agy 补回。要做需先在真实 agy 上验证回放的更新能否无损映射成 L1 事件,再决定补齐的触发条件(只在本地记录缺失时),所以这次没有改。
 - **plugin 可装目录与源管理**:`agy plugin` CLI 无机器可读目录与源增删命令,返回 `unavailable`。
 - Remote Control / Remote Agents、语音、swarm、artifact 审阅、`/rewind`、`/fork`。

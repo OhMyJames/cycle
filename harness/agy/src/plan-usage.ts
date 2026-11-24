@@ -45,9 +45,12 @@ export const planWindowsOf = (output: string): PlanWindow[] => {
         typeof bucket.reset_time === "string" ? Date.parse(bucket.reset_time) : Number.NaN;
       if (base === "" || typeof remaining !== "number" || !Number.isFinite(remaining)) continue;
       if (!Number.isFinite(resets) || resets <= 0) continue;
-      const utilization = Math.min(1, Math.max(0, 1 - remaining));
+      const utilization = Math.round(Math.min(1, Math.max(0, 1 - remaining)) * 10_000) / 10_000;
+      const kind = `${base}${suffix}`;
+      // A second group by the same name would show twice under one label: the first stands.
+      if (windows.some((w) => w.kind === kind)) continue;
       windows.push({
-        kind: `${base}${suffix}`,
+        kind,
         utilization,
         resetsAt: resets,
         status: utilization >= 1 ? "rejected" : "allowed",
@@ -65,43 +68,41 @@ const MIN_INTERVAL_MS = 5 * 60_000;
 const TIMEOUT_MS = 20_000;
 
 /**
- * Reads the plan usage at most every five minutes, and tells it when it changed: a side process that opens no turn and
- * costs no quota. Never throws; a failed read is tried again after the interval.
+ * Reads the plan usage at most every five minutes and tells it through the session that asked: a side process that
+ * opens no turn and costs no quota. Never throws; a read that failed is tried again at the next ask. Told every time
+ * it is read (the daemon keeps the newest), so a session opened later hears it too.
  */
-export class PlanUsageReader {
+export class PlanUsageReader<S = undefined> {
   #last = 0;
   #running = false;
-  #told = "";
 
   constructor(
     private readonly options: {
       executable: string;
       env: Record<string, string>;
-      tell: (windows: PlanWindow[]) => void;
+      tell: (windows: PlanWindow[], session: S) => void;
       run?: (executable: string, env: Record<string, string>) => Promise<string>;
       now?: () => number;
     },
   ) {}
 
-  async poll(): Promise<void> {
+  async poll(session: S): Promise<void> {
     const now = (this.options.now ?? Date.now)();
     if (this.#running || now - this.#last < MIN_INTERVAL_MS) return;
     if (usesApiKey(this.options.env)) return;
     this.#running = true;
-    this.#last = now;
     try {
       const output = await (this.options.run ?? runUsage)(
         this.options.executable,
         this.options.env,
       );
       const windows = planWindowsOf(output);
-      const key = JSON.stringify(windows);
-      if (windows.length > 0 && key !== this.#told) {
-        this.#told = key;
-        this.options.tell(windows);
+      if (windows.length > 0) {
+        this.#last = now;
+        this.options.tell(windows, session);
       }
     } catch {
-      // Not told: the next poll tries again.
+      // Not told: the next ask tries again.
     } finally {
       this.#running = false;
     }
@@ -116,9 +117,15 @@ const runUsage = async (executable: string, env: Record<string, string>): Promis
     stdout: "pipe",
     stderr: "ignore",
   });
-  const timer = setTimeout(() => child.kill(), TIMEOUT_MS);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<string>((resolve) => {
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve("");
+    }, TIMEOUT_MS);
+  });
   try {
-    return await new Response(child.stdout).text();
+    return await Promise.race([new Response(child.stdout).text(), expired]);
   } finally {
     clearTimeout(timer);
   }

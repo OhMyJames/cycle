@@ -60,7 +60,7 @@ test("/usage's buckets become plan windows, the used share and the reset time", 
   expect(planWindowsOf(USAGE)).toEqual([
     {
       kind: "seven_day",
-      utilization: 0.09999999999999998,
+      utilization: 0.1,
       resetsAt: Date.parse("2026-11-30T22:15:29Z"),
       status: "allowed",
     },
@@ -105,14 +105,14 @@ test("the reader polls at most every five minutes, tells only a change, and leav
     },
     now: () => clock,
   });
-  await reader.poll();
-  await reader.poll();
+  await reader.poll(undefined);
+  await reader.poll(undefined);
   expect(runs).toBe(1);
   clock += 5 * 60_000;
-  await reader.poll();
+  await reader.poll(undefined);
   expect(runs).toBe(2);
-  // Unchanged: told once.
-  expect(told).toHaveLength(1);
+  // Told each time it is read, so a session opened later hears it too.
+  expect(told).toHaveLength(2);
 
   expect(usesApiKey({ GEMINI_API_KEY: "k" })).toBe(true);
   let keyed = 0;
@@ -124,6 +124,6 @@ test("the reader polls at most every five minutes, tells only a change, and leav
       keyed++;
       return USAGE;
     },
-  }).poll();
+  }).poll(undefined);
   expect(keyed).toBe(0);
 });

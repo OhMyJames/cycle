@@ -305,18 +305,15 @@ export function createAdapter(config: AdapterConfig) {
   let clientCanElicit = false;
   const sessions = new Map<string, SessionState>();
   // The account's limits, read by a side process now and then (never a turn): told through whichever session is at hand.
-  const planUsage = new PlanUsageReader({
+  const planUsage = new PlanUsageReader<SessionState>({
     executable: config.agyExecutable,
     env: config.env,
-    tell: (windows) => {
-      const session = [...sessions.values()][0];
-      if (session !== undefined)
-        emitUpdate(session, {
-          sessionUpdate: PLAN_USAGE_UPDATE,
-          windows,
-          at: Date.now(),
-        } as unknown as SessionUpdate);
-    },
+    tell: (windows, session) =>
+      emitUpdate(session, {
+        sessionUpdate: PLAN_USAGE_UPDATE,
+        windows,
+        at: Date.now(),
+      } as unknown as SessionUpdate),
   });
   const cancelTimeoutMs = config.cancelTimeoutMs ?? 5_000;
   // agy's model call between two steps often takes longer than 1.5 s, which flickered running/idle and let a queued
@@ -505,7 +502,7 @@ export function createAdapter(config: AdapterConfig) {
       stopReason,
       ...(error !== undefined ? { error } : {}),
     } as SessionUpdate);
-    void planUsage.poll();
+    void planUsage.poll(session);
   };
 
   const handleServerExit = (error: Error) => {
@@ -1249,7 +1246,6 @@ export function createAdapter(config: AdapterConfig) {
       const session = sessions.get(params.sessionId);
       if (!session) throw new RequestError(-32002, `Unknown session: ${params.sessionId}`);
       validatePromptBlocks(params.prompt);
-      void planUsage.poll();
       await session.rebuilding;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
