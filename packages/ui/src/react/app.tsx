@@ -1,87 +1,44 @@
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
-import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@ui-sdk/react/menu";
-import { createResizableController } from "@ui-sdk/react/resizable";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@ui-sdk/react/select";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { AccountStatus, SessionSummary } from "../api.ts";
-import { DISPLAY_MODES, displayMode, isDisplayMode } from "../display-mode.ts";
 import { SOURCE_LOCALE } from "../i18n.ts";
 import { resolveLanguage, translatorFor } from "../languages.ts";
-import { type Conversation, contextOf, subagentCallOf } from "../model/conversation.ts";
+import { contextOf } from "../model/conversation.ts";
 import { pins } from "../pins.ts";
-import {
-  currentWorkspace,
-  elsewhere as elsewhereOf,
-  sessionKey,
-  sessionList,
-  workspacesOf,
-} from "../sessions.ts";
-import type { PanelTabId, PanelTabKind } from "../side-panel.ts";
-import { BLANK_KEY, viewKey } from "../store/index.ts";
-import { tabKind, terminalOfTab } from "../terminals.ts";
+import { sessionKey } from "../sessions.ts";
+import { viewKey } from "../store/index.ts";
 import { AccountMenu, SignInPage } from "./account.tsx";
+import { useSessionPanel, useSidebarFold } from "./app-layout.ts";
+import { NoSession, PendingRequest } from "./app-main.tsx";
+import { useMarkRead, useSessionNavigation, useWorkspaceTrust } from "./app-navigation.ts";
 import { AppNotices } from "./app-notices.tsx";
+import { usePages } from "./app-pages.ts";
+import { useAppShortcuts } from "./app-shortcuts.ts";
 import { BlankConversationView } from "./blank.tsx";
-import { Composer, composerInput } from "./composer.tsx";
-import { ConfigForm, mergeConfigSchema, OptionLabel, propertiesOf } from "./config-form.tsx";
-import { CONNECTORS_SECTIONS, ConnectorsPage, type ConnectorsSection } from "./connectors.tsx";
+import { Composer } from "./composer.tsx";
+import { mergeConfigSchema } from "./config-form.tsx";
+import { ConnectorsPage } from "./connectors.tsx";
 import { ConversationView } from "./conversation.tsx";
 import { ConfirmDialog, EnvironmentDialog, type RemoteEnvironment } from "./dialogs.tsx";
-import { FormCard } from "./form.tsx";
 import { I18nProvider, useI18n } from "./i18n.tsx";
-import {
-  DiffIcon,
-  ErrorCircleIcon,
-  FolderIcon,
-  MoreIcon,
-  OverviewIcon,
-  PanelIcon,
-  SidebarIcon,
-  TerminalIcon,
-} from "./icons.tsx";
-import { useDay, useInFront } from "./in-front.ts";
+import { ErrorCircleIcon, SidebarIcon } from "./icons.tsx";
 import { errorText, SessionNotices } from "./notice-line.tsx";
-import { PermissionCard } from "./permission.tsx";
 import { currentPlan } from "./plan.tsx";
-import { SessionHeading } from "./rename-field.tsx";
 import { SearchDialog } from "./search.tsx";
-import type { Away } from "./session-list.tsx";
-import { SettingsPage, type SettingsSection } from "./settings.tsx";
-import { FIRST_SIZE, SidePanel, terminalToShow } from "./side-panel.tsx";
-import { MOD, Sidebar, sessionTitle } from "./sidebar.tsx";
-import { SplitLayout, slideColumns } from "./split-layout.tsx";
+import { SessionHeader } from "./session-header.tsx";
+import { SessionSettings } from "./session-settings.tsx";
+import { SettingsPage } from "./settings.tsx";
+import { SidePanel } from "./side-panel.tsx";
+import { Sidebar } from "./sidebar.tsx";
+import { SplitLayout } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
-import { ENVIRONMENT_STATE } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-import { useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
-import { toolDescription } from "./tool.tsx";
 
-/**
- * What is drawn over a page and takes its keys first: a dialog, a menu, the choices of a select. Not every listbox: the
- * sidebar's list of sessions is one too.
- */
 /** What the sign-in page shows when main has not said how the account stands (it could not be asked). */
 const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn: false };
 
-const OVER_THE_PAGE =
-  '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot="select-content"]';
-
+/** The dialogs the window opens over what it shows, one at a time. */
 type Panel =
   | "none"
   | "add-environment"
@@ -102,119 +59,6 @@ const PANEL_EVENT = {
   delete: "delete",
   trust: "trust",
 } as const;
-
-/**
- * A session's settings: the agent's (model, mode, effort…), which reach it through the daemon and so only while its
- * environment is connected, and how the session is shown here, which is always there.
- */
-/** What the sub-agent that asks was sent to do, as its own card titles it; undefined when that is not known. */
-const askerOf = (conversation: Conversation, subagentId: string): string | undefined => {
-  const call = subagentCallOf(conversation, subagentId);
-  return call !== undefined ? toolDescription(call) : undefined;
-};
-
-function SessionSettings({ connected, onClose }: { connected: boolean; onClose: () => void }) {
-  const store = useAppStore();
-  const { t } = useI18n();
-  const environment = useAppState((s) => s.selectedEnvironment);
-  const sessionId = useAppState((s) => s.selectedSession);
-  const sessions = useAppState((s) =>
-    environment !== undefined ? s.sessions[environment] : undefined,
-  );
-  const agents = useAppState((s) =>
-    environment !== undefined ? s.agents[environment] : undefined,
-  );
-  const session = sessions?.find((x) => x.sessionId === sessionId);
-  const agent = agents?.find((a) => a.id === session?.agent);
-  const liveConfigOptions = useAppState((s) =>
-    environment !== undefined && sessionId !== undefined
-      ? s.views[viewKey(environment, sessionId)]?.conversation.configOptions
-      : undefined,
-  );
-  const schema = useMemo(
-    () =>
-      agent === undefined ? undefined : mergeConfigSchema(agent.configSchema, liveConfigOptions),
-    [agent, liveConfigOptions],
-  );
-  if (session === undefined || environment === undefined) return null;
-  const agentSettings = schema !== undefined && propertiesOf(schema).length > 0;
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogBackdrop />
-      <DialogContent>
-        <DialogTitle>{t("session.settings")}</DialogTitle>
-        {/* What it says is of the agent's settings: when they are not here, why. */}
-        {!agentSettings ? null : connected ? (
-          <DialogDescription>{t("session.settingsDescription")}</DialogDescription>
-        ) : (
-          <DialogDescription>{t("session.settingsOffline")}</DialogDescription>
-        )}
-        {connected && agentSettings ? (
-          <ConfigForm
-            schema={schema ?? {}}
-            value={session.config ?? {}}
-            defaults={false}
-            onChange={(next) => {
-              // One setting at a time: the form hands back the whole set, and only what changed is sent.
-              const before = session.config ?? {};
-              for (const [key, value] of Object.entries(next)) {
-                if (before[key] !== value) void store.setSessionConfig(key, value);
-              }
-            }}
-          />
-        ) : null}
-        <DisplayModeField sessionKey={viewKey(environment, session.sessionId)} />
-        <div data-slot="row" data-dialog-footer="">
-          <DialogClose>{t("dialog.close")}</DialogClose>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
- * A session's display mode, with its agent settings: normal leaves the agent's thinking out of the conversation, detailed
- * shows it. Kept on this machine and not sent to the agent (display-mode.ts), so it is drawn here, not from the agent's
- * schema, and applies at once.
- */
-function DisplayModeField({ sessionKey }: { sessionKey: string }) {
-  const store = useAppStore();
-  const { t } = useI18n();
-  const mode = useDisplayMode(sessionKey);
-  const options = DISPLAY_MODES.map((value) => ({
-    value,
-    label: t(`session.display.${value}`),
-    description: t(`session.display.${value}.description`),
-  }));
-  return (
-    <div data-slot="config-form">
-      <Field name="display">
-        <FieldLabel>{t("session.display")}</FieldLabel>
-        <Select
-          items={options.map((o) => ({ value: o.value, label: o.label }))}
-          value={mode}
-          onValueChange={(next) => {
-            if (!isDisplayMode(next) || next === mode) return;
-            displayMode.set(sessionKey, next);
-            store.track("display_mode_changed", { mode: next });
-          }}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {options.map((o) => (
-              <SelectItem key={o.value} value={o.value} label={o.label}>
-                <OptionLabel option={o} />
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <FieldDescription>{t("session.display.description")}</FieldDescription>
-      </Field>
-    </div>
-  );
-}
 
 /**
  * The app, in the language the person chose (or the system's, when it is one the interface has). The page's `lang`
@@ -241,6 +85,11 @@ export function App() {
   );
 }
 
+/**
+ * The window once someone is signed in: the sidebar, the open session (or a blank one) with its right panel, the pages
+ * that take the window over them, and the dialogs. What each part does is in its own hook or component; here they are
+ * put together.
+ */
 function AppWindow() {
   const store = useAppStore();
   const { t } = useI18n();
@@ -260,13 +109,9 @@ function AppWindow() {
   const pinned = useSyncExternalStore(pins.subscribe, pins.all, pins.all);
   // The open session whose title is being edited in the header, by its key.
   const [renaming, setRenaming] = useState<string | undefined>();
-  const [showArchived, setShowArchived] = useState(false);
   const [sent, setSent] = useState(0);
-  const [showAll, setShowAll] = useState(false);
-  // The workspace chosen in the switcher holds until something else is opened: it is only good for the open session it was chosen on.
-  const [chosen, setChosen] = useState<{ workspace: string; on: string | undefined } | undefined>(
-    undefined,
-  );
+  const [targetEnvironment, setTargetEnvironment] = useState<string | undefined>(undefined);
+  const appRef = useRef<HTMLDivElement>(null);
 
   // The sessions of every environment, in one list; what is open is on the environment `selectedEnvironment` names.
   const sessions = useMemo(
@@ -279,26 +124,7 @@ function AppWindow() {
     (s) => s.environmentId === selectedEnvironment && s.sessionId === selectedSession,
   );
   const agent = agents.find((a) => a.id === session?.agent);
-  // The settings page, when it is what the window shows (CYCL-78): the sessions stay as they are under it.
-  const [settings, setSettings] = useState<SettingsSection | undefined>(undefined);
-  const lastSection = useRef<SettingsSection>("general");
-  // The Connectors page (CYCL-82), the same way: one page at a time takes the window.
-  const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
-  const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
-  const [targetEnvironment, setTargetEnvironment] = useState<string | undefined>(undefined);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const appRef = useRef<HTMLDivElement>(null);
   const connectedEnvironments = environments.filter((h) => status[h.id]?.state === "connected");
-  // An environment that is not connected: its sessions are the last it gave, and are shown greyed.
-  const away = useMemo(() => {
-    const map = new Map<string, Away>();
-    for (const h of environments) {
-      const state = status[h.id]?.state ?? "closed";
-      if (state !== "connected")
-        map.set(h.id, { name: h.name, word: t(ENVIRONMENT_STATE[state].word) });
-    }
-    return map;
-  }, [environments, status, t]);
   const view =
     selectedEnvironment !== undefined && selectedSession !== undefined
       ? views[viewKey(selectedEnvironment, selectedSession)]
@@ -330,10 +156,22 @@ function AppWindow() {
   const environmentState =
     selectedEnvironment !== undefined ? status[selectedEnvironment]?.state : undefined;
   const connected = environmentState === "connected";
-  const environmentError =
-    selectedEnvironment !== undefined ? status[selectedEnvironment]?.error : undefined;
-  const environmentIncompatible =
-    selectedEnvironment !== undefined && status[selectedEnvironment]?.incompatible !== undefined;
+
+  const pages = usePages(appRef);
+  const { layout, sidebarCollapsed, toggleSidebar } = useSidebarFold(appRef, ready);
+  const sessionPanel = useSessionPanel(session, blank);
+  const { panelKey, sidePanel } = sessionPanel;
+  const nav = useSessionNavigation({
+    environments,
+    status,
+    sessions,
+    session,
+    blank,
+    pinned,
+  });
+  const trust = useWorkspaceTrust(nav.current, status, panel !== "none");
+  useMarkRead(session, status);
+
   const close = () => setPanel("none");
   // Opens a panel, and counts that it was opened (which one, and whether by a key).
   const open = (next: Exclude<Panel, "none">, via: "click" | "shortcut" = "click") => {
@@ -350,169 +188,6 @@ function AppWindow() {
     setDeleting(chosen);
     open("delete");
   };
-  // Settings, from wherever it is asked for: over the sessions, or in place of the Connectors page.
-  const openSettings = (via: "click" | "shortcut" = "click", section?: SettingsSection) => {
-    if (section !== undefined) lastSection.current = section;
-    setConnectors(undefined);
-    setSettings(lastSection.current);
-    store.track("panel_opened", { panel: "settings", via });
-  };
-  const openConnectors = () => {
-    setConnectors(lastConnectorsSection.current);
-    store.track("panel_opened", { panel: "connectors", via: "click" });
-  };
-  // Whichever page is over the sessions is left: they are what is asked for.
-  const closePage = () => {
-    setSettings(undefined);
-    setConnectors(undefined);
-  };
-  // Left by the person (Escape, Back, the shortcut): the keyboard goes back to the button that opened the page. Left
-  // for something else (a new session, a found one, a notification's), the keyboard is that thing's.
-  const returnFocus = useRef<string | undefined>(undefined);
-  const leaveSettings = () => {
-    returnFocus.current = '[data-slot="menu-trigger"][data-kind="account-menu"]';
-    setSettings(undefined);
-  };
-  const leaveConnectors = () => {
-    returnFocus.current = '[data-page-open="connectors"]';
-    setConnectors(undefined);
-  };
-  const showSection = (section: SettingsSection) => {
-    if (section === settings) return;
-    lastSection.current = section;
-    setSettings(section);
-    store.track("settings_section_shown", { section });
-  };
-  const showConnectorsSection = (section: ConnectorsSection) => {
-    if (section === connectors) return;
-    lastConnectorsSection.current = section;
-    setConnectors(section);
-    store.track("connectors_section_shown", { section });
-  };
-  const [layout] = useState(createResizableController);
-  // The right panel is the open session's (CYCL-90): a blank conversation or no session has none.
-  const sidePanels = store.sidePanels;
-  const panelKey =
-    blank === undefined && session !== undefined
-      ? viewKey(session.environmentId, session.sessionId)
-      : undefined;
-  const readPanel = () => (panelKey !== undefined ? sidePanels.get(panelKey) : undefined);
-  const sidePanel = useSyncExternalStore(sidePanels.subscribe, readPanel, readPanel);
-  const toggleSidePanel = (via: "click" | "shortcut" | "handle") => {
-    if (panelKey === undefined || sidePanel === undefined) return;
-    sidePanels.setOpen(panelKey, !sidePanel.open);
-    store.track("side_panel_toggled", {
-      open: !sidePanel.open,
-      via,
-      tab: tabKind(sidePanel.active),
-    });
-  };
-  // A tab's own button in the header: opens the panel on that tab; on it already, closes the panel.
-  const toggleTab = (tab: PanelTabKind) => {
-    if (panelKey === undefined || sidePanel === undefined) return;
-    if (sidePanel.open && sidePanel.active === tab) {
-      sidePanels.setOpen(panelKey, false);
-      store.track("side_panel_toggled", { open: false, via: "tab_button", tab });
-    } else if (sidePanel.open) {
-      sidePanels.show(panelKey, tab);
-      store.track("side_panel_tab_shown", { tab });
-    } else {
-      sidePanels.show(panelKey, tab);
-      store.track("side_panel_toggled", { open: true, via: "tab_button", tab });
-    }
-  };
-  const overviewShown = sidePanel?.open === true && sidePanel.active === "overview";
-  const filesShown = sidePanel?.open === true && sidePanel.active === "files";
-  const diffShown = sidePanel?.open === true && sidePanel.active === "diff";
-  // The session's terminals (CYCL-98), once its daemon can open them: the Terminal button shows one, or opens one.
-  const canOpenTerminals = useAppState((s) =>
-    session !== undefined
-      ? s.status[session.environmentId]?.capabilities?.terminal === true
-      : false,
-  );
-  const terminalsConnected = useAppState((s) =>
-    session !== undefined ? s.status[session.environmentId]?.state === "connected" : false,
-  );
-  const sessionTerminals = useAppState((s) =>
-    panelKey !== undefined ? s.terminals[panelKey] : undefined,
-  );
-  const terminalsOf = panelKey !== undefined ? session : undefined;
-  const terminalsEnvironment = terminalsOf?.environmentId;
-  const terminalsSession = terminalsOf?.sessionId;
-  useEffect(() => {
-    if (terminalsEnvironment === undefined || terminalsSession === undefined) return;
-    if (!canOpenTerminals || !terminalsConnected) return;
-    void store.loadTerminals(terminalsEnvironment, terminalsSession);
-  }, [store, terminalsEnvironment, terminalsSession, canOpenTerminals, terminalsConnected]);
-  const terminalShown =
-    sidePanel?.open === true &&
-    terminalOfTab(sidePanel.active) !== undefined &&
-    (sessionTerminals ?? []).some((x) => x.terminalId === terminalOfTab(sidePanel.active));
-  // The header's Terminal button: on a terminal already, it closes the panel; else it shows the terminal shown last,
-  // or the newest; with none, it opens one.
-  const toggleTerminal = async () => {
-    if (panelKey === undefined || sidePanel === undefined || session === undefined) return;
-    if (terminalShown) {
-      sidePanels.setOpen(panelKey, false);
-      store.track("side_panel_toggled", { open: false, via: "tab_button", tab: "terminal" });
-      return;
-    }
-    // Pressed before the list came: it is read first, so a terminal already there is shown, not another one opened.
-    await store.loadTerminals(session.environmentId, session.sessionId);
-    const panel = sidePanels.get(panelKey);
-    const tab = terminalToShow(panel, store.getState().terminals[panelKey] ?? []);
-    if (tab === undefined) {
-      void store.createTerminal(session.environmentId, session.sessionId, FIRST_SIZE, "header");
-      return;
-    }
-    sidePanels.show(panelKey, tab);
-    if (panel.open) store.track("side_panel_tab_shown", { tab: "terminal" });
-    else store.track("side_panel_toggled", { open: true, via: "tab_button", tab: "terminal" });
-  };
-  // Files needs a daemon that reads a session's folder (docs/protocol.md §8): an older one is not offered it.
-  const canShowFiles = useAppState((s) =>
-    session !== undefined ? s.status[session.environmentId]?.capabilities?.fs === true : false,
-  );
-  // The workspaces, and the one the sidebar shows; the list on screen and the keys that walk it (Cmd+[ and Cmd+]) are one thing.
-  const environmentLabels = useMemo(
-    () => environments.map((h) => ({ id: h.id, name: h.name, local: h.kind === "local" })),
-    [environments],
-  );
-  const awayEnvironments = useMemo(() => new Set(away.keys()), [away]);
-  const workspaces = useMemo(
-    () =>
-      workspacesOf(sessions, {
-        environments: environmentLabels,
-        away: awayEnvironments,
-        showArchived,
-      }),
-    [sessions, environmentLabels, awayEnvironments, showArchived],
-  );
-  // A blank conversation is open in place of a session: the sidebar shows its folder, if it has sessions there.
-  const openKey =
-    session !== undefined ? sessionKey(session) : blank !== undefined ? BLANK_KEY : undefined;
-  // The folders a blank conversation offers: those its environment has sessions in that are not archived, newest first,
-  // named among themselves only (one environment: no environment's name after them), whatever the sidebar shows.
-  const blankEnvironment = blank?.environmentId;
-  const blankRecent = useMemo(
-    () =>
-      blankEnvironment === undefined
-        ? []
-        : workspacesOf(sessions.filter((s) => s.environmentId === blankEnvironment))
-            .filter((w) => w.cwd !== "")
-            .slice(0, 8)
-            .map((w) => ({ cwd: w.cwd, name: w.name })),
-    [sessions, blankEnvironment],
-  );
-  const current = currentWorkspace(workspaces, {
-    chosen: chosen !== undefined && chosen.on === openKey ? chosen.workspace : undefined,
-    open: session ?? blank,
-  });
-  const [shownWorkspace, setShownWorkspace] = useState(current?.key);
-  if (shownWorkspace !== current?.key) {
-    setShownWorkspace(current?.key);
-    if (showAll) setShowAll(false);
-  }
   const environmentIds = useMemo(() => new Set(environments.map((h) => h.id)), [environments]);
   const editingEnvironment = useMemo(() => {
     const found = environments.find((h) => h.id === targetEnvironment);
@@ -524,20 +199,15 @@ function AppWindow() {
     const found = environments.find((h) => h.id === targetEnvironment);
     return found !== undefined && found.kind !== "local" ? found : undefined;
   }, [environments, targetEnvironment]);
-  // A new session starts in the workspace that is shown, if its environment can have one started.
-  const startOn =
-    current !== undefined && connectedEnvironments.some((h) => h.id === current.environmentId)
-      ? current
-      : undefined;
-  const elsewhere = useMemo(() => elsewhereOf(workspaces, current), [workspaces, current]);
   /**
    * Opens a blank conversation: a new session that is made by its first message. It starts in the workspace that is
    * shown, else on the environment that is open, else on the first that is connected.
    */
   const newSession = (via: "click" | "shortcut" = "click") => {
-    closePage();
+    pages.closePage();
     // One is open already: it stays as it is, with what was chosen and written on it.
     if (blank !== undefined) return store.openBlank({ environmentId: blank.environmentId });
+    const { startOn } = nav;
     const environmentId =
       startOn?.environmentId ??
       (connected ? selectedEnvironment : undefined) ??
@@ -549,201 +219,38 @@ function AppWindow() {
       cwd: startOn?.environmentId === environmentId ? startOn.cwd : undefined,
     });
   };
-  // Whether the shown workspace's folder is trusted, when its daemon can say. Read again as a dialog closes: it may have been decided there.
-  const trustEnvironment =
-    current !== undefined &&
-    status[current.environmentId]?.state === "connected" &&
-    status[current.environmentId]?.capabilities?.trust === true
-      ? current.environmentId
-      : undefined;
-  const trustCwd = trustEnvironment !== undefined ? current?.cwd : undefined;
-  const [trust, setTrust] = useState<{ key: string; trusted: boolean | null } | undefined>();
-  const [trustRevision, setTrustRevision] = useState(0);
-  const trustKey =
-    trustEnvironment !== undefined && trustCwd !== undefined
-      ? `${trustEnvironment}\u0000${trustCwd}\u0000${trustRevision}\u0000${panel === "none"}`
-      : undefined;
-  useEffect(() => {
-    if (trustKey === undefined || trustEnvironment === undefined || trustCwd === undefined) return;
-    let live = true;
-    store.readTrust(trustEnvironment, trustCwd).then(
-      (read) => {
-        if (live) setTrust({ key: trustKey, trusted: read.trusted });
-      },
-      // Not offered when it cannot be read (the folder is gone): there is nothing to decide on.
-      () => {
-        if (live) setTrust(undefined);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [store, trustKey, trustEnvironment, trustCwd]);
-  const shownTrust = trust !== undefined && trust.key === trustKey ? trust.trusted : undefined;
-  const day = useDay();
-  const list = useMemo(
-    () =>
-      sessionList(current?.sessions ?? [], {
-        showAll,
-        selected: openKey,
-        away: awayEnvironments,
-        pinned,
-        now: new Date(day),
-      }),
-    [current, showAll, openKey, awayEnvironments, pinned, day],
-  );
-
-  // What is on screen has been seen: the daemon is told, so the mark goes and stays gone (also on another client).
-  // Only while the app is in front, and only for a daemon that says there is news.
-  const inFront = useInFront();
-  // Once for what the list says (the session, how far it goes, and whether the app is in front): a daemon that refuses it
-  // would otherwise be asked again for each new list, and each ask lists again.
-  const told = useRef("");
-  useEffect(() => {
-    if (session?.unread !== true || !inFront) return;
-    if (status[session.environmentId]?.state !== "connected") return;
-    const what = `${session.environmentId}/${session.sessionId}/${session.lastSeq}`;
-    if (told.current === what) return;
-    told.current = what;
-    void store.markRead(session.environmentId, session.sessionId);
-  }, [session, inFront, status, store]);
-  // Leaving the app and coming back asks again.
-  useEffect(() => {
-    if (!inFront) told.current = "";
-  }, [inFront]);
 
   const activity = view?.permissions.length
     ? "requires_action"
     : (view?.conversation.status ?? "idle");
   // The plan, above the input box, while some of it is still to do (DESIGN.md section 23).
   const plan = view !== undefined ? currentPlan(view.conversation) : undefined;
-  const firstAllow = view?.permissions[0]?.options.find((o) => o.kind === "allow_once");
+  const firstRequest = view?.permissions[0];
+  const firstAllow = firstRequest?.options.find((o) => o.kind === "allow_once");
 
-  // The sidebar slides only when it is folded or opened on purpose (`slideColumns`, as the panel does): a drag, or a
-  // window being resized, moves it at once.
-  const endSlide = useRef<(() => void) | undefined>(undefined);
-  useEffect(() => () => endSlide.current?.(), []);
-  const toggleSidebar = useCallback(
-    (via: "click" | "shortcut") => {
-      const wasCollapsed = layout.isCollapsed("sidebar") || sidebarCollapsed;
-      const split = appRef.current?.querySelector<HTMLElement>('[data-slot="split"]');
-      endSlide.current?.();
-      const fold = () => (wasCollapsed ? layout.expand("sidebar") : layout.collapse("sidebar"));
-      if (split == null) fold();
-      else
-        endSlide.current = slideColumns(split, "sidebar", fold, () => {
-          endSlide.current = undefined;
-        });
-      setSidebarCollapsed(!wasCollapsed);
-      // The button moves (into the sidebar's corner, or the conversation's header): focus follows it, so a keyboard
-      // user is not left on the page.
-      if (document.activeElement?.closest('[data-kind="sidebar-toggle"]') != null)
-        requestAnimationFrame(() =>
-          appRef.current
-            ?.querySelector<HTMLElement>('[data-kind="sidebar-toggle"]:not([inert] *)')
-            ?.focus(),
-        );
-      store.track("sidebar_toggled", { open: wasCollapsed, via });
+  useAppShortcuts({
+    dialogOpen: panel !== "none",
+    pageOpen: pages.pageOpen,
+    toggleSettings: () =>
+      pages.settings === undefined ? pages.openSettings("shortcut") : pages.leaveSettings(),
+    search: () => open("search", "shortcut"),
+    newSession: connectedEnvironments.length > 0 ? () => newSession("shortcut") : undefined,
+    toggleSidebar: () => toggleSidebar("shortcut"),
+    toggleSidePanel:
+      panelKey !== undefined ? () => sessionPanel.toggleSidePanel("shortcut") : undefined,
+    blankOpen: blank !== undefined,
+    stop: connected && activity !== "idle" ? () => void store.cancel() : undefined,
+    allow:
+      connected && firstAllow !== undefined && firstRequest !== undefined
+        ? () => void store.answerPermission(firstRequest.key, firstAllow.optionId)
+        : undefined,
+    walk: {
+      order: nav.list.order,
+      open: session,
+      away: nav.away,
+      select: (next) => void store.selectSession(next.environmentId, next.sessionId),
     },
-    [layout, sidebarCollapsed, store],
-  );
-
-  // Keep toggle button label synced with drag, double-click, keyboard and saved layout.
-  useEffect(() => {
-    if (!ready) return;
-    const root = appRef.current;
-    if (root === null) return;
-    const sync = () => {
-      const panel = root.querySelector('[data-slot="resizable-panel"]#sidebar');
-      setSidebarCollapsed(panel?.hasAttribute("data-collapsed") === true);
-    };
-    sync();
-    const observer = new MutationObserver(sync);
-    observer.observe(root, {
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["data-collapsed"],
-    });
-    return () => observer.disconnect();
-  }, [ready]);
-
-  // Keyboard (DESIGN.md §5.4). One handler bound once via ref, so every shortcut stays in one place.
-  const onKeyRef = useRef<(event: KeyboardEvent) => void>(() => {});
-  onKeyRef.current = (event: KeyboardEvent) => {
-    // ⌘ on a Mac (Ctrl+B and Ctrl+N are cursor keys in a text field there); Ctrl elsewhere.
-    const isMac = MOD === "⌘";
-    if (!(isMac ? event.metaKey : event.ctrlKey) || event.altKey || panel !== "none") return;
-    const key = event.key;
-    const run = (action: () => void) => {
-      event.preventDefault();
-      action();
-    };
-    if (key === ",") {
-      // What is open over the page (a confirmation, a list of choices) is answered first.
-      if (document.querySelector(OVER_THE_PAGE) !== null) return;
-      run(() => (settings === undefined ? openSettings("shortcut") : leaveSettings()));
-    }
-    // A page is over the sessions: only what leaves it (a search, a new session) is taken.
-    else if ((settings !== undefined || connectors !== undefined) && key !== "k" && key !== "n")
-      return;
-    else if (key === "k") run(() => open("search", "shortcut"));
-    else if (key === "n" && connectedEnvironments.length > 0) run(() => newSession("shortcut"));
-    else if (key === "b") run(() => toggleSidebar("shortcut"));
-    else if (key === "\\" && panelKey !== undefined) run(() => toggleSidePanel("shortcut"));
-    else if (key === "l") run(() => composerInput()?.focus());
-    else if (
-      key === "o" &&
-      blank !== undefined &&
-      document.querySelector('[role="dialog"], [role="alertdialog"]') === null
-    )
-      // The blank page's folder menu: what its button does when pressed.
-      run(() =>
-        document
-          .querySelector<HTMLButtonElement>('[data-kind="blank-folder"]:not(:disabled)')
-          ?.click(),
-      );
-    else if (key === "." && connected && activity !== "idle") run(() => void store.cancel());
-    else if (
-      key === "Enter" &&
-      connected &&
-      firstAllow !== undefined &&
-      view?.permissions[0] !== undefined
-    ) {
-      const request = view.permissions[0];
-      run(() => void store.answerPermission(request.key, firstAllow.optionId));
-    } else if (key === "[" || key === "]") {
-      const at = session === undefined ? -1 : list.order.indexOf(session);
-      // A row on an environment that is away and was never opened cannot be opened: the walk goes past it.
-      const step = key === "]" ? 1 : -1;
-      // The open session is not in the workspace that is shown: the walk starts at the end it is going from.
-      let to = at === -1 ? (step === 1 ? 0 : list.order.length - 1) : at + step;
-      while (list.order[to] !== undefined && away.has(list.order[to]?.environmentId ?? ""))
-        to += step;
-      const next = list.order[to];
-      if (next !== undefined)
-        run(() => void store.selectSession(next.environmentId, next.sessionId));
-    }
-  };
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => onKeyRef.current(event);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // A notification was pressed: its session is what the person asked for, also when it is the one already open.
-  const focusRequests = useAppState((s) => s.focusRequests);
-  const [shownRequests, setShownRequests] = useState(focusRequests);
-  if (shownRequests !== focusRequests) {
-    setShownRequests(focusRequests);
-    if (settings !== undefined || connectors !== undefined) closePage();
-  }
-  const pageOpen = settings !== undefined || connectors !== undefined;
-  useEffect(() => {
-    const opener = returnFocus.current;
-    if (pageOpen || opener === undefined) return;
-    returnFocus.current = undefined;
-    appRef.current?.querySelector<HTMLElement>(opener)?.focus();
-  }, [pageOpen]);
+  });
 
   if (!ready)
     return (
@@ -787,18 +294,18 @@ function AppWindow() {
       <SessionNotices
         environmentId={selectedEnvironment}
         shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
-        errors={!pageOpen}
+        errors={!pages.pageOpen}
       />
     </>
   );
 
   return (
     <div data-slot="app" ref={appRef}>
-      {settings !== undefined ? (
+      {pages.settings !== undefined ? (
         <SettingsPage
-          section={settings}
-          onSection={showSection}
-          onClose={leaveSettings}
+          section={pages.settings}
+          onSection={pages.showSection}
+          onClose={pages.leaveSettings}
           banner={errorBanner}
           environments={environments}
           status={status}
@@ -818,20 +325,20 @@ function AppWindow() {
           }}
         />
       ) : null}
-      {connectors !== undefined ? (
+      {pages.connectors !== undefined ? (
         <ConnectorsPage
-          section={connectors}
-          onSection={showConnectorsSection}
-          onClose={leaveConnectors}
+          section={pages.connectors}
+          onSection={pages.showConnectorsSection}
+          onClose={pages.leaveConnectors}
           banner={errorBanner}
           environments={environments}
           status={status}
           environmentId={selectedEnvironment}
-          onShowEnvironments={() => openSettings("click", "environments")}
+          onShowEnvironments={() => pages.openSettings("click", "environments")}
         />
       ) : null}
       {/* Under a page the sessions are kept as they are, not drawn again: what was open and half-written is there on the way back. */}
-      <div data-slot="app-body" hidden={pageOpen} inert={pageOpen}>
+      <div data-slot="app-body" hidden={pages.pageOpen} inert={pages.pageOpen}>
         <SplitLayout
           controller={layout}
           panelOf={panelKey}
@@ -846,13 +353,10 @@ function AppWindow() {
                       environmentId={session?.environmentId ?? ""}
                       sessionId={session?.sessionId ?? ""}
                       state={sidePanel}
-                      onShow={(tab: PanelTabId) => {
-                        sidePanels.show(panelKey, tab);
-                        store.track("side_panel_tab_shown", { tab: tabKind(tab) });
-                      }}
+                      onShow={sessionPanel.showTab}
                     />
                   ),
-                  onClose: () => toggleSidePanel("handle"),
+                  onClose: () => sessionPanel.toggleSidePanel("handle"),
                 }
               : undefined
           }
@@ -861,14 +365,14 @@ function AppWindow() {
               toggle={sidebarCollapsed ? undefined : sidebarToggle}
               environments={environments}
               status={status}
-              workspaces={workspaces}
-              current={current}
-              elsewhere={elsewhere}
-              onChooseWorkspace={(workspace) => setChosen({ workspace, on: openKey })}
-              list={list}
-              selected={openKey}
-              away={away}
-              showArchived={showArchived}
+              workspaces={nav.workspaces}
+              current={nav.current}
+              elsewhere={nav.elsewhere}
+              onChooseWorkspace={nav.chooseWorkspace}
+              list={nav.list}
+              selected={nav.openKey}
+              away={nav.away}
+              showArchived={nav.showArchived}
               pinned={pinned}
               onSelectSession={(chosen) =>
                 void store.selectSession(chosen.environmentId, chosen.sessionId)
@@ -896,21 +400,18 @@ function AppWindow() {
               }}
               onNewSession={() => newSession()}
               onSearch={() => open("search")}
-              onConnectors={openConnectors}
+              onConnectors={pages.openConnectors}
               onConnectEnvironment={(id) => void store.connectEnvironment(id)}
-              onToggleArchived={() => setShowArchived((v) => !v)}
-              onShowAll={() => setShowAll(true)}
-              trust={shownTrust}
+              onToggleArchived={() => nav.setShowArchived((v) => !v)}
+              onShowAll={nav.showAllSessions}
+              trust={trust.trusted}
               onTrust={(trusted) => {
                 if (trusted) open("trust");
-                else if (trustEnvironment !== undefined && trustCwd !== undefined)
-                  void store
-                    .changeTrust(trustEnvironment, trustCwd, false)
-                    .then(() => setTrustRevision((n) => n + 1));
+                else void trust.changeTrust(false);
               }}
               notices={sidebarCollapsed ? null : <AppNotices />}
             >
-              <AccountMenu onSettings={() => openSettings()} />
+              <AccountMenu onSettings={() => pages.openSettings()} />
             </Sidebar>
           }
           main={
@@ -920,7 +421,7 @@ function AppWindow() {
                   blank={blank}
                   notices={notices}
                   environments={connectedEnvironments}
-                  recent={blankRecent}
+                  recent={nav.blankRecent}
                   connected={connected}
                   follow={sent}
                   sidebarToggle={sidebarCollapsed ? sidebarToggle : undefined}
@@ -928,122 +429,17 @@ function AppWindow() {
                 />
               ) : null}
               {blank === undefined && session !== undefined ? (
-                <header data-slot="session-header">
-                  {sidebarCollapsed ? sidebarToggle : null}
-                  <SessionHeading
-                    key={sessionKey(session)}
-                    session={session}
-                    title={sessionTitle(session)}
-                    editing={renaming === sessionKey(session)}
-                    onEditingChange={(editing) =>
-                      setRenaming(editing ? sessionKey(session) : undefined)
-                    }
-                  />
-                  <div data-slot="row">
-                    <Menu
-                      onAction={(value) => {
-                        if (value === "rename") setRenaming(sessionKey(session));
-                        else if (value === "pin" || value === "unpin")
-                          pin(session, value === "pin", "header");
-                        else if (value === "dismiss-background")
-                          void store.dismissBackground(session);
-                        else if (value === "settings") open("settings");
-                        else if (value === "archive")
-                          void store.archiveSession(session.sessionId, !session.archived);
-                        else if (value === "delete") askDelete(session);
-                      }}
-                    >
-                      <Tip label={t("session.actions")} side="bottom">
-                        <MenuTrigger data-variant="ghost" data-kind="session-more">
-                          <MoreIcon />
-                        </MenuTrigger>
-                      </Tip>
-                      <MenuContent>
-                        {session.unknownBackground?.length ? (
-                          <MenuItem value="dismiss-background">
-                            {t("session.dismissBackground", {
-                              count: session.unknownBackground.length,
-                            })}
-                          </MenuItem>
-                        ) : null}
-                        <MenuItem value={pinned.has(sessionKey(session)) ? "unpin" : "pin"}>
-                          {t(pinned.has(sessionKey(session)) ? "session.unpin" : "session.pin")}
-                        </MenuItem>
-                        <MenuItem value="rename">{t("session.rename")}</MenuItem>
-                        <MenuItem value="settings">{t("session.settings")}</MenuItem>
-                        <MenuItem value="archive">
-                          {t(session.archived ? "session.restore" : "session.archive")}
-                        </MenuItem>
-                        <MenuSeparator />
-                        <MenuItem value="delete" data-destructive>
-                          {t("session.delete")}
-                        </MenuItem>
-                      </MenuContent>
-                    </Menu>
-                    <Tip label={t(overviewShown ? "overview.hide" : "overview.show")} side="bottom">
-                      <Button
-                        data-variant="ghost"
-                        data-kind="panel-toggle"
-                        data-active={overviewShown || undefined}
-                        onClick={() => toggleTab("overview")}
-                      >
-                        <OverviewIcon />
-                      </Button>
-                    </Tip>
-                    {canShowFiles ? (
-                      <Tip label={t(filesShown ? "files.hide" : "files.show")} side="bottom">
-                        <Button
-                          data-variant="ghost"
-                          data-kind="panel-toggle"
-                          data-active={filesShown || undefined}
-                          onClick={() => toggleTab("files")}
-                        >
-                          <FolderIcon />
-                        </Button>
-                      </Tip>
-                    ) : null}
-                    {/* Diff needs no daemon: this session's edits are in its conversation. */}
-                    <Tip label={t(diffShown ? "diff.hide" : "diff.show")} side="bottom">
-                      <Button
-                        data-variant="ghost"
-                        data-kind="panel-toggle"
-                        data-active={diffShown || undefined}
-                        onClick={() => toggleTab("diff")}
-                      >
-                        <DiffIcon />
-                      </Button>
-                    </Tip>
-                    {canOpenTerminals ? (
-                      <Tip
-                        label={t(terminalShown ? "terminal.hide" : "terminal.show")}
-                        side="bottom"
-                      >
-                        <Button
-                          data-variant="ghost"
-                          data-kind="panel-toggle"
-                          data-active={terminalShown || undefined}
-                          disabled={!terminalsConnected && (sessionTerminals ?? []).length === 0}
-                          onClick={() => void toggleTerminal()}
-                        >
-                          <TerminalIcon />
-                        </Button>
-                      </Tip>
-                    ) : null}
-                    <Tip
-                      label={t(sidePanel?.open === true ? "panel.hide" : "panel.show")}
-                      shortcut="mod+\\"
-                      side="bottom"
-                    >
-                      <Button
-                        data-variant="ghost"
-                        data-kind="panel-toggle"
-                        onClick={() => toggleSidePanel("click")}
-                      >
-                        <PanelIcon />
-                      </Button>
-                    </Tip>
-                  </div>
-                </header>
+                <SessionHeader
+                  session={session}
+                  sidebarToggle={sidebarCollapsed ? sidebarToggle : null}
+                  renaming={renaming === sessionKey(session)}
+                  onRenaming={(editing) => setRenaming(editing ? sessionKey(session) : undefined)}
+                  pinned={pinned.has(sessionKey(session))}
+                  onPin={(on) => pin(session, on, "header")}
+                  onSettings={() => open("settings")}
+                  onDelete={() => askDelete(session)}
+                  panel={sessionPanel}
+                />
               ) : null}
               {blank === undefined && session === undefined && sidebarCollapsed ? (
                 <header data-slot="session-header" data-empty-header="">
@@ -1062,71 +458,26 @@ function AppWindow() {
                   awaitingApproval={activity === "requires_action"}
                 />
               ) : (
-                <div data-slot="empty">
-                  {environmentState === "connected" ? (
-                    <StateBlock
-                      tone="empty"
-                      title={t("empty.chooseOrStart")}
-                      action={
-                        connectedEnvironments.length > 0
-                          ? { label: t("empty.startSession"), onAction: () => newSession() }
-                          : undefined
-                      }
-                    />
-                  ) : environmentIncompatible ? (
-                    // Connecting again would not change it: why, and where it says what to update.
-                    <StateBlock
-                      tone="away"
-                      title={t("environment.notConnected")}
-                      body={t("environment.incompatible")}
-                    />
-                  ) : environmentState === "connecting" || environmentState === "reconnecting" ? (
-                    <StateBlock tone="loading" title={t("environment.connecting")} />
-                  ) : (
-                    <StateBlock
-                      tone="error"
-                      title={t("environment.notConnected")}
-                      reason={environmentError}
-                      action={
-                        selectedEnvironment !== undefined
-                          ? {
-                              label: t("environment.connectAgain"),
-                              onAction: () => void store.connectEnvironment(selectedEnvironment),
-                            }
-                          : undefined
-                      }
-                    />
-                  )}
-                </div>
+                <NoSession
+                  environmentId={selectedEnvironment}
+                  state={environmentState}
+                  error={
+                    selectedEnvironment !== undefined
+                      ? status[selectedEnvironment]?.error
+                      : undefined
+                  }
+                  incompatible={
+                    selectedEnvironment !== undefined &&
+                    status[selectedEnvironment]?.incompatible !== undefined
+                  }
+                  onNewSession={connectedEnvironments.length > 0 ? () => newSession() : undefined}
+                />
               )}
-              <div data-slot="permissions">
-                {/* One request at a time, in the order they came: the one to answer, and how many wait behind it. */}
-                {(view?.permissions ?? [])
-                  .slice(0, 1)
-                  .map((request) =>
-                    request.form !== undefined ? (
-                      <FormCard
-                        key={request.key}
-                        request={{ ...request, form: request.form }}
-                        disabled={!connected}
-                        onAnswer={store.answerForm}
-                      />
-                    ) : (
-                      <PermissionCard
-                        key={request.key}
-                        request={request}
-                        asker={
-                          request.subagentId !== undefined && conversation !== undefined
-                            ? (askerOf(conversation, request.subagentId) ?? "")
-                            : undefined
-                        }
-                        disabled={!connected}
-                        onAnswer={store.answerPermission}
-                        waiting={(view?.permissions.length ?? 1) - 1}
-                      />
-                    ),
-                  )}
-              </div>
+              <PendingRequest
+                permissions={view?.permissions ?? []}
+                conversation={conversation}
+                connected={connected}
+              />
               {view !== undefined ? (
                 <Composer
                   key={`composer:${viewKey(view.environmentId, view.sessionId)}`}
@@ -1167,10 +518,10 @@ function AppWindow() {
           if (
             sessionsByEnvironment[environmentId]?.find((s) => s.sessionId === sessionId)?.archived
           )
-            setShowArchived(true);
+            nav.setShowArchived(true);
           // What was found is shown with its workspace, also when it is the session that is open.
-          setChosen(undefined);
-          closePage();
+          nav.followOpen();
+          pages.closePage();
           await store.selectSession(environmentId, sessionId);
         }}
         onNewSession={() => {
@@ -1178,21 +529,17 @@ function AppWindow() {
           newSession();
         }}
       />
-      {trustEnvironment !== undefined && trustCwd !== undefined ? (
+      {trust.folder !== undefined ? (
         <ConfirmDialog
           open={panel === "trust"}
           onOpenChange={(open) => !open && close()}
           title={t("trust.title")}
           description={t("trust.description", {
-            environment: environments.find((h) => h.id === trustEnvironment)?.name ?? "",
+            environment: environments.find((h) => h.id === trust.folder?.environmentId)?.name ?? "",
           })}
-          detail={trustCwd}
+          detail={trust.folder.cwd}
           confirmLabel={t("trust.confirm")}
-          onConfirm={() =>
-            store
-              .changeTrust(trustEnvironment, trustCwd, true)
-              .then(() => setTrustRevision((n) => n + 1))
-          }
+          onConfirm={() => trust.changeTrust(true)}
         />
       ) : null}
       <EnvironmentDialog

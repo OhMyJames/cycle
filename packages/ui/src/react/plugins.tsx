@@ -35,6 +35,7 @@ import { ConnectorValuesDialog } from "./connector-values.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
+import { useKeyedAsyncAction } from "./keyed-action.ts";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { StatusDot } from "./status.tsx";
@@ -200,8 +201,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
   const read = useAppState((s) => s.plugins[pluginsKey(environmentId, agentId)]);
   const connectors = useAppState((s) => s.connectors[environmentId]?.list);
   const list = read?.list;
-  const [failures, setFailures] = useState<Record<string, PluginFailure>>({});
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const { busy, problems: failures, run } = useKeyedAsyncAction<PluginFailure>();
   /** What the last action came to, said once for a screen reader and the eye alike. */
   const [said, setSaid] = useState<string | undefined>(undefined);
   const [removing, setRemoving] = useState<PluginInfo | undefined>(undefined);
@@ -217,17 +217,10 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
     plugin: PluginInfo,
     action: () => Promise<T | PluginFailure>,
   ) => {
-    setBusy((b) => ({ ...b, [plugin.id]: true }));
-    setFailures(({ [plugin.id]: _gone, ...rest }) => rest);
     setSaid(undefined);
-    try {
-      const answer = await action();
-      if ("problem" in answer) setFailures((f) => ({ ...f, [plugin.id]: answer }));
-      else onChanged();
-      return answer;
-    } finally {
-      setBusy(({ [plugin.id]: _gone, ...rest }) => rest);
-    }
+    const answer = await run(plugin.id, action);
+    if (!("problem" in answer)) onChanged();
+    return answer;
   };
 
   const signIn = async (connector: ConnectorInfo) => {
