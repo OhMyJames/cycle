@@ -5,6 +5,7 @@ import { userEvent } from "vitest/browser";
 import type { AccountStatus } from "../../src/api.ts";
 import { fakeBridge, SIGNED_IN } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
+import { getAlert } from "./alert.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -46,13 +47,13 @@ test("signed out, the sign-in page is the whole window: one button, which has th
 
 test("the sign-in page says why it is shown, and what went wrong the last time", async () => {
   const { emit } = await mount({ account: { ...SIGNED_OUT, reason: "expired" } });
-  expect(screen.getByRole("alert").textContent).toContain("more than 30 days");
+  expect(getAlert().textContent).toContain("more than 30 days");
   act(() => emit({ type: "account", account: { ...SIGNED_OUT, reason: "revoked" } }));
-  expect(screen.getByRole("alert").textContent).toContain("Your sign-in has ended");
+  expect(getAlert().textContent).toContain("Your sign-in has ended");
   act(() => emit({ type: "account", account: { ...SIGNED_OUT, problem: "failed" } }));
-  expect(screen.getByRole("alert").textContent).toContain("did not finish");
+  expect(getAlert().textContent).toContain("did not finish");
   act(() => emit({ type: "account", account: { ...SIGNED_OUT, problem: "unreachable" } }));
-  expect(screen.getByRole("alert").textContent).toContain("could not be reached");
+  expect(getAlert().textContent).toContain("could not be reached");
 });
 
 test("offline within the grace: the app opens, and a line says online features wait", async () => {

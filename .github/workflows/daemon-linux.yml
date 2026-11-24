@@ -19,7 +19,7 @@ jobs:
     env:
       PACKAGE: cycle-linux-${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
@@ -43,14 +43,14 @@ jobs:
           env -i PATH=/usr/bin:/bin "$D/codex-code-mode-host" --help >/dev/null
           CYCLE_DAEMON_BIN="$D/cycle" bun test ../../../harness/codex/test/integration/adapter.integration.ts
           CYCLE_DAEMON_BIN="$D/cycle" bun run --cwd .. test:integration
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
           name: daemon-linux-${{ matrix.arch }}
           path: |
             apps/daemon/dist/${{ env.PACKAGE }}.tar.gz
             apps/daemon/dist/${{ env.PACKAGE }}.tar.gz.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request' && matrix.arch == 'x64'
         with:
           name: daemon-installer

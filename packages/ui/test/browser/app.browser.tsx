@@ -8,6 +8,7 @@ import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { MOD } from "../../src/react/sidebar.tsx";
 import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
+import { findAlert, getAlert, queryAlert } from "./alert.ts";
 import { chosenFolder, typeFolder } from "./blank.ts";
 import { boxText, press, ready, sleep, write } from "./box.ts";
 import { renderApp } from "./render-app.tsx";
@@ -581,10 +582,10 @@ test("shows what went wrong, and lets it be dismissed", async () => {
   await ready(box);
   await write(box, "hi");
   await press(box, "Enter");
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   expect(alert.textContent).toContain("The session is working");
   await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
-  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await waitFor(() => expect(queryAlert()).toBeNull());
 });
 
 test("says so when the connection is lost", async () => {
@@ -1063,7 +1064,7 @@ test("a file that is not an image the agent takes is refused with the reason, an
   // The picker's own filter (`accept`) is only a hint: a drop or a paste brings anything, so the code checks again. (The
   // browser's own upload does not apply it either.)
   await userEvent.upload(picker, new File(["x"], "pic.bmp", { type: "image/bmp" }));
-  expect((await screen.findByRole("alert")).textContent).toContain(
+  expect((await findAlert()).textContent).toContain(
     "pic.bmp is not a PNG, JPEG, GIF or WebP image.",
   );
   expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
@@ -1277,7 +1278,7 @@ test("a host that cannot be reached says why, not only that it is not connected"
     error: "bash: /home/james/.local/bin/cycle-daemon: No such file or directory",
   });
   expect(screen.getByText("Not connected to this location.")).toBeTruthy();
-  expect(screen.getByRole("alert").textContent).toContain("No such file or directory");
+  expect(getAlert().textContent).toContain("No such file or directory");
 });
 
 test("a development run says updates are for the installed app and offers no check", async () => {
