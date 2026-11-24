@@ -131,6 +131,8 @@ export const CapabilitiesSchema = z.object({
   trust: z.boolean().optional(),
   /** `_cycle/plan_usage/read` and `_cycle/plan_usage_changed` are there (docs/protocol.md §8 "套餐用量"). */
   planUsage: z.boolean().optional(),
+  /** `_cycle/agent_setup/*` and `_cycle/agent_auth/*` are there (docs/protocol.md §16). */
+  agentSetup: z.boolean().optional(),
   /** A `cycle://session/` mention in a prompt reaches the agent as that session's record (docs/protocol.md §8). */
   sessionMentions: z.boolean().optional(),
 });

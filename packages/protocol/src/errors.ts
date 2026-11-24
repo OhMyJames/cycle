@@ -20,6 +20,8 @@ export const CycleErrorCode = {
   TerminalLimit: -32019,
   /** An agent's own plugin machinery did not do what was asked (docs/protocol.md §15). */
   PluginFailed: -32020,
+  /** An agent subscription auth or sign-out flow failed at runtime (docs/protocol.md §16). */
+  AgentAuthFailed: -32021,
 } as const;
 export type CycleErrorCode = (typeof CycleErrorCode)[keyof typeof CycleErrorCode];
 

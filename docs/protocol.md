@@ -54,6 +54,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "trust": true,
   "connectors": true,
   "plugins": ["claude"],
+  "agentSetup": true,
   "sessionMentions": true,
   "terminal": true
 }
@@ -76,34 +77,36 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 
 下表中"客户端 → daemon"的方法,daemon 按 `sessionId` 路由到对应 agent 并转发,除非标注"daemon 处理"。
 
-| 方法                         | 方向            | 在 L1 的行为                                          |
-| ---------------------------- | --------------- | ----------------------------------------------------- |
-| `initialize`                 | 客户端 → daemon | daemon 处理,见 §3                                     |
-| `session/new`                | 客户端 → daemon | daemon 创建 session 并启动 agent,见 §6                |
-| `session/list`               | 客户端 → daemon | daemon 处理,只返回 Cycle 自己的 session,见 §6         |
-| `session/resume`             | 客户端 → daemon | daemon 处理,表示"附着并按需补发历史",见 §7            |
-| `session/prompt`             | 客户端 → daemon | 转发。session 忙时入队或插入当前 turn,见 §8           |
-| `_cycle/prompt/dequeue`      | 客户端 → daemon | daemon 处理:把排队的 prompt 撤回,见 §8                |
-| `_cycle/files/search`        | 客户端 → daemon | daemon 处理:在 session 的 `cwd` 里找文件,见 §8        |
-| `_cycle/folders/list`        | 客户端 → daemon | daemon 处理:列出一个目录下的文件夹(选 `cwd` 用),见 §8 |
-| `_cycle/fs/list`             | 客户端 → daemon | daemon 处理:列出 session 的 `cwd` 里一个文件夹,见 §8  |
-| `_cycle/fs/read`             | 客户端 → daemon | daemon 处理:读 session 的 `cwd` 里一个文件,见 §8      |
-| `_cycle/diff/status`         | 客户端 → daemon | daemon 处理:工作区相对 HEAD 改了哪些文件,见 §8        |
-| `_cycle/diff/file`           | 客户端 → daemon | daemon 处理:一个文件相对 HEAD 的补丁,见 §8            |
-| `_cycle/trust/read`          | 客户端 → daemon | daemon 处理:一个文件夹是否信任,见 §8                  |
-| `_cycle/trust/set`           | 客户端 → daemon | daemon 处理:记下对一个文件夹的信任决定,见 §8          |
-| `_cycle/plan_usage/read`     | 客户端 → daemon | daemon 处理:各 agent 账号的套餐用量,见 §8 "套餐用量"  |
-| `_cycle/connectors/*`        | 客户端 → daemon | daemon 处理:管理 connector 和授权,见 §14              |
-| `_cycle/plugins/*`           | 客户端 → daemon | daemon 处理:浏览、安装、启停各 agent 的 plugin,见 §15 |
-| `session/cancel`             | 客户端 → daemon | 转发(通知)                                            |
-| `session/close`              | 客户端 → daemon | daemon 处理:停止 agent 进程,保留历史                  |
-| `session/delete`             | 客户端 → daemon | daemon 处理:删除日志和索引,客户端必须先向用户确认     |
-| `session/set_config_option`  | 客户端 → daemon | 转发,并把结果写入 session 的配置记录                  |
-| `tool_call/cancel`           | 客户端 → daemon | 转发                                                  |
-| `session/update`             | daemon → 客户端 | 转发 agent 的更新,并加上 `seq`,见 §5                  |
-| `session/request_permission` | daemon → 客户端 | 转发 agent 的请求,见 §9                               |
-| `elicitation/create`         | daemon → 客户端 | 转发,处理方式同 §9                                    |
-| `auth/*`                     | —               | v1 不用。agent 的登录由 agent 所在环境自己完成        |
+| 方法                         | 方向            | 在 L1 的行为                                                                                                  |
+| ---------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------- |
+| `initialize`                 | 客户端 → daemon | daemon 处理,见 §3                                                                                             |
+| `session/new`                | 客户端 → daemon | daemon 创建 session 并启动 agent,见 §6                                                                        |
+| `session/list`               | 客户端 → daemon | daemon 处理,只返回 Cycle 自己的 session,见 §6                                                                 |
+| `session/resume`             | 客户端 → daemon | daemon 处理,表示"附着并按需补发历史",见 §7                                                                    |
+| `session/prompt`             | 客户端 → daemon | 转发。session 忙时入队或插入当前 turn,见 §8                                                                   |
+| `_cycle/prompt/dequeue`      | 客户端 → daemon | daemon 处理:把排队的 prompt 撤回,见 §8                                                                        |
+| `_cycle/files/search`        | 客户端 → daemon | daemon 处理:在 session 的 `cwd` 里找文件,见 §8                                                                |
+| `_cycle/folders/list`        | 客户端 → daemon | daemon 处理:列出一个目录下的文件夹(选 `cwd` 用),见 §8                                                         |
+| `_cycle/fs/list`             | 客户端 → daemon | daemon 处理:列出 session 的 `cwd` 里一个文件夹,见 §8                                                          |
+| `_cycle/fs/read`             | 客户端 → daemon | daemon 处理:读 session 的 `cwd` 里一个文件,见 §8                                                              |
+| `_cycle/diff/status`         | 客户端 → daemon | daemon 处理:工作区相对 HEAD 改了哪些文件,见 §8                                                                |
+| `_cycle/diff/file`           | 客户端 → daemon | daemon 处理:一个文件相对 HEAD 的补丁,见 §8                                                                    |
+| `_cycle/trust/read`          | 客户端 → daemon | daemon 处理:一个文件夹是否信任,见 §8                                                                          |
+| `_cycle/trust/set`           | 客户端 → daemon | daemon 处理:记下对一个文件夹的信任决定,见 §8                                                                  |
+| `_cycle/plan_usage/read`     | 客户端 → daemon | daemon 处理:各 agent 账号的套餐用量,见 §8 "套餐用量"                                                          |
+| `_cycle/connectors/*`        | 客户端 → daemon | daemon 处理:管理 connector 和授权,见 §14                                                                      |
+| `_cycle/plugins/*`           | 客户端 → daemon | daemon 处理:浏览、安装、启停各 agent 的 plugin,见 §15                                                         |
+| `_cycle/agent_setup/*`       | 客户端 → daemon | daemon 处理:读取 agent 状态/宿主诊断与热改运行项,见 §16                                                       |
+| `_cycle/agent_auth/*`        | 客户端 → daemon | daemon 处理:发起、提交、取消订阅登录与登出,见 §16                                                             |
+| `session/cancel`             | 客户端 → daemon | 转发(通知)                                                                                                    |
+| `session/close`              | 客户端 → daemon | daemon 处理:停止 agent 进程,保留历史                                                                          |
+| `session/delete`             | 客户端 → daemon | daemon 处理:删除日志和索引,客户端必须先向用户确认                                                             |
+| `session/set_config_option`  | 客户端 → daemon | 转发,并把结果写入 session 的配置记录                                                                          |
+| `tool_call/cancel`           | 客户端 → daemon | 转发                                                                                                          |
+| `session/update`             | daemon → 客户端 | 转发 agent 的更新,并加上 `seq`,见 §5                                                                          |
+| `session/request_permission` | daemon → 客户端 | 转发 agent 的请求,见 §9                                                                                       |
+| `elicitation/create`         | daemon → 客户端 | 转发,处理方式同 §9                                                                                            |
+| `auth/*`                     | —               | v1 不用 ACP 原生 `auth/*`;多 agent 订阅登录走 Cycle 自有扩展 `_cycle/agent_auth/*`(§16),不改变 ACP 会话层约定 |
 
 `session/update` 的变体沿用 ACP v2:`user_message(_chunk)`、`agent_message(_chunk)`、`agent_thought(_chunk)`、`state_update`、`tool_call_update`、`tool_call_content_chunk`、`terminal_update`、`terminal_output_chunk`、`plan_update`、`available_commands_update`、`config_option_update`、`session_info_update`、`usage_update`、`notice`、`compaction_update`、`compaction_summary_chunk`、`replay_complete`、`subagent_update`、`session_message(_chunk)`,以及 Cycle 自己的 `_cycle/queue_update`(§8)和 `_cycle/child_update`(子 agent 的对话,§9)。客户端遇到不认识的变体应忽略,不得报错。
 
@@ -695,6 +698,7 @@ daemon 启动 agent 时只传入显式白名单里的环境变量,不继承自�
 | -32018 | `daemon_stopped`    | daemon 停止时 turn 还在进行,turn 被打断(§8"daemon 停止时进行中的 turn") |
 | -32019 | `terminal_limit`    | 终端数到了上限(§8"终端")                                                |
 | -32020 | `plugin_failed`     | agent 的 plugin 机制没做成:找不到、取不到、被它拒绝(§15)                |
+| -32021 | `agent_auth_failed` | agent 订阅认证或登出在运行期失败(§16)                                   |
 
 ACP 以后可能占用这个范围里的码,所以 Cycle 的码在 schema 里集中定义,升级 ACP 时对照检查。
 
@@ -899,3 +903,48 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - `agentId` 不存在或不支持 plugin、`id` 不存在:`-32002`。
 - 没确认:`-32602`,`data.reason` 是 `not_acknowledged`。
 - agent 的机制没做成:`-32020`(`plugin_failed`),`data.reason` 是固定的词:`not_found`(来源里没有这个 plugin,或来源取不到)、`needs_command`(来源要先运行它声明的命令,v1 不支持)、`unavailable`(agent 的程序不在或起不来)、`timeout`、`failed`(其余);`detail` 是 agent 的原话,供人阅读。
+
+## 16. Harness 状态、认证与运行时配置
+
+用于 Settings → Harness 页查询各 agent 的可用性、订阅账号态、套餐用量、Cycle 托管的运行时配置和只读宿主诊断,并在界面内驱动订阅登录与登出。schema 在 `@cycle/protocol` 的 `agent-setup.ts`,完整设计见 [harness-settings.md](harness-settings.md)。
+
+- **能力协商**:daemon 在 `initialize` 响应的 `_meta["cycle/capabilities"]` 里声明单一布尔位 `agentSetup: true`。未声明该能力的旧 daemon,客户端不调用本节任何方法,Settings → Harness 页平滑降级为仅展示会话默认配置(`_cycle/agent_defaults/*`)。
+- **凭证安全边界**:
+  - 长期凭证(OAuth access token、refresh token、API key)永不经 L1 传输。
+  - `environment.allowEnv` 与 `environment.envNames` 以及 `auth.viaEnv` **只返回环境变量名,绝不返回值**。
+  - hosted-callback 登录模式(`"code"`)中用户粘贴的一次性授权码是短期凭证,经 `_cycle/agent_auth/submit` 送至 daemon 仅在内存中写入登录子进程 stdin,永不落盘、永不进 session JSONL 或 `daemon.log`,受 PKCE 绑定、`flowId` 单次消费与 10 分钟 TTL 约束。
+
+### 只读快照(`_cycle/agent_setup/read`)
+
+- 参数:`{ agent, refreshUsage?, forceRefresh? }`
+  - `agent`:agent id(如 `"claude"`、`"codex"`、`"agy"`);未知 agent 返回 `-32602`(`data.reason: "unknown_agent"`)。
+  - `refreshUsage`:为 `true` 且该 agent 支持主动查询套餐用量(如 Codex `account/rateLimits/read`)时同步刷新 `planUsage`。
+  - `forceRefresh`:为 `true` 时绕过 daemon 侧对只读探测的短 TTL 缓存(如 `agy models`)。
+- 响应 `AgentSetupSnapshot`:
+  - `agent`、`name`、`available`:agent 标识、显示名与当前是否可用。
+  - `binary`:`{ source: "builtin" | "configured" | "path" | "missing", path?, version?, minVersion?, problem?: "missing" | "version_too_old" | "probe_failed" }`。
+  - `auth`:
+    - `state`:`"binary_unavailable" | "signed_out" | "signing_in" | "signed_in" | "signing_out" | "auth_unknown"`。无法可靠判定时必须报 `auth_unknown` 并带固定 `unknownReason`(`"network_error" | "timeout" | "probe_failed"`),不得把探测失败误报为未登录。
+    - `method`:`"subscription" | "api_key" | "oauth_token" | "third_party" | "none" | "unknown"`。
+    - `viaEnv?`:若 `config.json` 通过环境变量覆盖了账号鉴权,只给变量名(如 `"ANTHROPIC_API_KEY"`),绝不给值。
+    - `account?`:`{ email?, organization?, plan?, expiresAt?, tierObservedAt? }`。其中 `tierObservedAt` 为被动观测档位(如 `agy` 的 `_meta.antigravity.tier`)的毫秒时间戳,登出后清空。
+    - `signInModes`:daemon 为该 agent 声明的有序登录模式数组,每项 `{ mode: "browser" | "code" | "device_code", requiresLocalLoopback: boolean }`。环境是客户端概念,由客户端(桌面主进程 `ConnectionManager`)按本地/远程传输过滤并选用合适模式,daemon 在发起登录时二次校验。
+    - `canSignOut`:布尔,是否支持界面内登出。
+    - `loginCommand`:始终保留的可复制兜底命令(如 `"cycle login claude"`)。
+  - `planUsage?`:复用 §8 的 `PlanUsage`。
+  - `canRefreshUsage`:布尔,是否支持通过 `refreshUsage: true` 主动拉取用量。
+  - `runtime`:`{ schemaVersion: 1, schema: { type: "object", properties }, values, overrides, revision, fileError? }`。
+    - `schema` 复用 §10 的 `configSchema` JSON Schema 风格,限定为封闭版本化子集(Phase 2 细化可编辑字段与 `_cycle/agent_setup/set_runtime` / `_cycle/agent_setup_changed`)。客户端遇到不认识的属性类型时降级为只读展示,不得整页报错。
+    - `revision` 为该 agent 独立的单调递增整数(未写过为 `0`);`fileError` 在 `<dataDir>/agent-settings.json` 损坏或版本未知时存在。
+  - `environment`:
+    - `configFile`:`{ path, exists, stale, error? }`。`stale` 表示 `config.json` 的修改时间晚于 daemon 启动时刻,需重启 daemon 后生效。
+    - `dataDir`、`customDataDir`:Cycle 为该 agent 托管的状态目录及是否在 `config.json` 中自定义。
+    - `allowEnv`、`envNames`:只包含变量名列表,绝不含值。
+
+### 错误约定
+
+本节所有错误沿用数字 `code` + 固定词 `data.reason`,**绝不透传原始 stderr、URL、路径或授权码**:
+
+- 参数/状态校验错误:`-32602`,固定 `data.reason`:`unknown_agent`、`unsupported_mode`、`flow_not_found`、`flow_forbidden`、`flow_consumed`、`flow_not_active`、`revision_conflict`。
+- 运行时配置校验错误:`-32014`(`invalid_config`),附带 `data.field` / `data.reason`。
+- 认证或登出运行期失败:`-32021`(`agent_auth_failed`),固定 `data.reason`:`binary_unavailable`、`auth_in_progress`、`parse_failed`、`invalid_code`、`expired`、`cancelled`、`process_failed`、`timeout`。
