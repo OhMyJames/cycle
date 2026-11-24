@@ -5,8 +5,17 @@ import {
   type AgentContext,
   agent as acpAgent,
   type ClientApp,
+  type ContentBlock,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   type McpServer,
   methods,
+  type NewSessionRequest,
+  type PromptResponse,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
+  type ResumeSessionResponse,
+  type SessionConfigOption,
   type SessionUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
@@ -82,6 +91,16 @@ import {
   trustSet,
 } from "@cycle/protocol";
 import type { z } from "zod";
+import {
+  asPrompt,
+  type CycleHandler,
+  clientConn,
+  elicitationAnswer,
+  madeWith,
+  onCycle,
+  PERMISSION_CANCELLED,
+  permissionOutcome,
+} from "./acp.ts";
 import { AgentLink } from "./agent-link.ts";
 import type { AgentDefinition } from "./agents.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
@@ -218,23 +237,6 @@ const orderedConfigEntries = (config: Record<string, string>): [string, string][
  * agents, and serves any number of clients. A client sees a session through the session's log, so
  * replay and live updates are one path.
  */
-const ANSWER_ACTIONS = ["accept", "decline", "cancel"];
-
-/** A client's answer to a form as the agent may see it: its action and its content, nothing else a client could add (such as the daemon's own `_meta`). Anything that is not an answer is a cancel. */
-const elicitationAnswer = (response: unknown): { action: string; content?: object } => {
-  const r = (typeof response === "object" && response !== null ? response : {}) as {
-    action?: unknown;
-    content?: unknown;
-  };
-  if (typeof r.action !== "string" || !ANSWER_ACTIONS.includes(r.action)) {
-    return { action: "cancel" };
-  }
-  if (r.action === "accept" && typeof r.content === "object" && r.content !== null) {
-    return { action: "accept", content: r.content };
-  }
-  return { action: r.action };
-};
-
 const withoutContent = (outcome: unknown): unknown => {
   if (typeof outcome !== "object" || outcome === null) return outcome;
   const { content: _content, ...rest } = outcome as Record<string, unknown>;
@@ -401,14 +403,7 @@ export class Daemon {
     holder: { value?: ClientConn },
     connection: { client: AgentContext; closed: Promise<void>; close: () => void },
   ): { closed: Promise<void>; close: () => void } {
-    const client = connection.client;
-    const conn: ClientConn = {
-      id: `c${++this.#counter}`,
-      notify: (method, params) => client.notify(method as never, params as never),
-      request: (method, params) => client.request(method as never, params as never),
-      elicitation: false,
-      ackReturns: false,
-    };
+    const conn = clientConn(`c${++this.#counter}`, connection.client);
     holder.value = conn;
     this.#conns.add(conn);
     this.#lastClientAt = this.#now();
@@ -705,7 +700,7 @@ export class Daemon {
   }
 
   /** Starts the agent for a session and has it create or resume it. */
-  async #startAgent(session: Session, mode: "new" | "resume", create?: Record<string, unknown>) {
+  async #startAgent(session: Session, mode: "new" | "resume", create?: NewSessionRequest) {
     const definition = this.#definition(session.entry.agent);
     const trust = await this.#trustMeta(session.entry.cwd);
     // The connection can end before connect() has returned the link (an agent that fails to start,
@@ -731,38 +726,42 @@ export class Daemon {
     if (endedEarly) this.#onAgentClosed(session, link);
     try {
       // Cycle's connectors, each through the gateway (docs/protocol.md §14). A session's own servers keep their names.
-      const own = ((mode === "new" ? create?.mcpServers : undefined) ??
-        session.entry.mcpServers ??
-        []) as McpServer[];
+      const own: McpServer[] =
+        (mode === "new" ? create?.mcpServers : undefined) ??
+        madeWith(session.entry).mcpServers ??
+        [];
       // What its plugins bring is made current first: a plugin can have changed without anyone having looked.
       if (link.mcpHttp) await this.#plugins.beforeAgentStarts(session.entry.agent);
       const connectors = link.mcpHttp
         ? await this.#connectors.serversFor(
             session.id,
             session.entry.cwd,
-            new Set(own.map((server) => (server as { name: string }).name)),
+            new Set(
+              own.flatMap((server) => (typeof server.name === "string" ? [server.name] : [])),
+            ),
             session.entry.agent,
           )
         : [];
       const mcpServers = [...own, ...connectors];
       if (mode === "new") {
         const created = await link.agent.request(methods.agent.session.new, {
-          ...(create as object),
+          ...(create ?? { cwd: session.entry.cwd }),
           ...(mcpServers.length > 0 ? { mcpServers } : {}),
           _meta: {
-            ...((create as { _meta?: object })?._meta ?? {}),
+            ...(create?._meta ?? {}),
             ...trust,
             [META.sessionId]: session.id,
           },
-        } as never);
+        });
         return { link, created };
       }
       session.resuming = true;
-      let resumed: unknown;
+      let resumed: ResumeSessionResponse | undefined;
       try {
         try {
           // What the session was made with goes again: the agent does not keep it across a restart.
-          const { additionalDirectories, systemPrompt } = session.entry;
+          const { additionalDirectories } = session.entry;
+          const { systemPrompt } = madeWith(session.entry);
           resumed = await link.agent.request(methods.agent.session.resume, {
             sessionId: session.entry.agentSessionId,
             cwd: session.entry.cwd,
@@ -774,10 +773,8 @@ export class Daemon {
               // So that an agent that finds no record of a session that had turns says so.
               ...(session.entry.hadTurn === true ? { [META.hadTurn]: true } : {}),
             },
-          } as never);
-          const replacement = (resumed as { _meta?: Record<string, unknown> } | undefined)?._meta?.[
-            META.agentSessionId
-          ];
+          });
+          const replacement = resumed._meta?.[META.agentSessionId];
           if (replacement !== undefined && replacement !== session.entry.agentSessionId) {
             if (session.entry.hadTurn || typeof replacement !== "string" || !replacement.trim())
               throw new Error("Invalid replacement agent session ID");
@@ -796,9 +793,7 @@ export class Daemon {
         }
         // A setting not on record (a session older than the record of what it started with) is
         // whatever the agent resumed it in: on record from now, so a client can show it.
-        const resumedWith = currentValues(
-          (resumed as { configOptions?: unknown } | undefined)?.configOptions,
-        );
+        const resumedWith = currentValues(resumed?.configOptions);
         const missing = Object.fromEntries(
           Object.entries(resumedWith).filter(([key]) => !(key in (session.entry.config ?? {}))),
         );
@@ -816,7 +811,7 @@ export class Daemon {
               configId,
               type: "id",
               value,
-            } as never)
+            })
             .catch((error: unknown) => {
               // Only the agent's own answer is a refusal. A link that broke is not: the record is kept.
               if (typeof (error as { code?: unknown } | null)?.code === "number")
@@ -827,10 +822,7 @@ export class Daemon {
       } finally {
         session.resuming = false;
       }
-      const resumedModels = choicesFromConfigOptions(
-        (resumed as { configOptions?: unknown } | undefined)?.configOptions,
-        "model",
-      );
+      const resumedModels = choicesFromConfigOptions(resumed?.configOptions, "model");
       if (resumedModels !== undefined) {
         void this.#optionsCache
           .update(session.entry.agent, "model", resumedModels)
@@ -1169,7 +1161,7 @@ export class Daemon {
     session.agentState = "running";
     // A new turn: its end, or its failure, is to be put on record (the one before left this set).
     session.turnEnded = false;
-    this.#send(session, next.prompt).catch((error: unknown) => {
+    this.#send(session, asPrompt(next.prompt)).catch((error: unknown) => {
       this.#promptFailed(session, error);
       // It did not go, and what was behind it must not go past it: all of it is handed back, in order.
       session.queue.unshift(next);
@@ -1199,29 +1191,29 @@ export class Daemon {
    * cannot take it (it does not steer, it is not there, or it refused, as when the turn has just
    * ended): the caller queues it, or sends it, as the session now is.
    */
-  async #steer(session: Session, prompt: unknown[]): Promise<unknown> {
+  async #steer(session: Session, prompt: ContentBlock[]): Promise<PromptResponse | undefined> {
     const link = session.link;
     if (this.#definition(session.entry.agent).steer !== true || link === undefined) return;
     try {
-      const answer = (await link.agent.request(methods.agent.session.prompt, {
+      const answer = await link.agent.request(methods.agent.session.prompt, {
         sessionId: session.entry.agentSessionId,
         prompt: await this.#expand(session, prompt),
         _meta: { [META.steer]: true },
-      } as never)) as { messageId?: unknown; _meta?: Record<string, unknown> | null };
+      });
       return { ...answer, _meta: { ...(answer._meta ?? {}), [META.steered]: true } };
     } catch {
       return undefined;
     }
   }
 
-  async #send(session: Session, given: unknown[]): Promise<unknown> {
+  async #send(session: Session, given: ContentBlock[]): Promise<PromptResponse> {
     const stopsBefore = session.startingCancels;
     // Asked for first: the session is starting from now, so a prompt that comes in meanwhile is queued behind this one.
     const starting = this.#ensureAgent(session);
     // Its failure is met below, once the prompt is ready; not reported as unhandled while the prompt is read.
     starting.catch(() => undefined);
     session.preparing++;
-    let prompt: unknown[];
+    let prompt: ContentBlock[];
     try {
       prompt = await this.#expand(session, given);
     } finally {
@@ -1244,14 +1236,14 @@ export class Daemon {
       ...(session.promptSuggestions !== undefined
         ? { _meta: { [META.promptSuggestions]: session.promptSuggestions } }
         : {}),
-    } as never);
+    });
   }
 
   /**
    * The prompt as the agent is given it: a mention of another session of this daemon becomes that session's record, as
    * it is now (docs/protocol.md §8 "提及(@)另一个 session"). One that mentions none is given as it is.
    */
-  async #expand(session: Session, prompt: unknown[]): Promise<unknown[]> {
+  async #expand(session: Session, prompt: ContentBlock[]): Promise<ContentBlock[]> {
     if (!mentionsSession(prompt)) return prompt;
     const embedded = this.#definition(session.entry.agent).promptCapabilities?.embeddedContext;
     const read = async (sessionId: string): Promise<Mentioned> => {
@@ -1265,7 +1257,8 @@ export class Daemon {
       const records = await other.log.read(undefined, { stored: true });
       return { found: true, title: other.entry.title, records };
     };
-    const expanded = await expandSessionMentions(prompt, read, embedded != null);
+    // What is put in for a mention is a text or resource block (`expandSessionMentions`).
+    const expanded = asPrompt(await expandSessionMentions(prompt, read, embedded != null));
     this.#log.info("session_mentions_expanded", {
       session: session.id,
       count: prompt.filter((b, i) => b !== expanded[i]).length,
@@ -1317,7 +1310,7 @@ export class Daemon {
     }
     session.agentState = "idle";
     void session.link?.agent
-      .notify(methods.agent.session.cancel, { sessionId: session.entry.agentSessionId } as never)
+      .notify(methods.agent.session.cancel, { sessionId: session.entry.agentSessionId })
       .catch(() => undefined);
     // Not logged: the log is what failed. Like a snapshot it carries no seq.
     const update = {
@@ -1477,14 +1470,18 @@ export class Daemon {
     }
   }
 
-  /** Puts a request to the clients, waits for the answer, and writes the request to the log. */
-  async #ask(
+  /**
+   * Puts a request to the clients, waits for the answer, and writes the request to the log. What the agent is told is
+   * `how.cancelled`, or what `how.answer` makes of a client's answer, or something the daemon settles it with itself
+   * (`#settle`, `#abandonForms`): each of the same kind, so the outcome is `T`.
+   */
+  async #ask<T>(
     session: Session,
     method: string,
-    params: Record<string, unknown>,
-    how: { cancelled: unknown; answer: (response: unknown) => unknown },
+    params: { _meta?: Record<string, unknown> | null },
+    how: { cancelled: T; answer: (response: unknown) => T },
     signal?: AbortSignal,
-  ): Promise<unknown> {
+  ): Promise<T> {
     // A stopping daemon puts nothing more to anyone: the agent is told no, as at a cancel.
     if (this.#closing || signal?.aborted) return how.cancelled;
     const requestId = session.nextRequestId();
@@ -1497,8 +1494,8 @@ export class Daemon {
       _meta: { ...meta, [META.requestId]: requestId },
     };
     let resolve: (outcome: unknown) => void = () => {};
-    const outcome = new Promise<unknown>((r) => {
-      resolve = r;
+    const outcome = new Promise<T>((r) => {
+      resolve = r as (outcome: unknown) => void;
     });
     const pending: Pending = {
       requestId,
@@ -1534,28 +1531,18 @@ export class Daemon {
 
   async #onPermission(
     session: Session,
-    params: Record<string, unknown>,
+    params: RequestPermissionRequest,
     signal?: AbortSignal,
-  ): Promise<unknown> {
+  ): Promise<RequestPermissionResponse> {
     // Which sub-agent asks, when one does: the agent asks in that sub-agent's session (ACP v2), clients are asked in
     // the parent's and told whose it is (docs/protocol.md §9). Only the daemon says so: an agent's own word is dropped.
-    const { [META.subagentId]: _said, ...meta } = (params._meta ?? {}) as Record<string, unknown>;
-    const asker =
-      typeof params.sessionId === "string" && session.isChild(params.sessionId)
-        ? params.sessionId
-        : undefined;
-    params = {
-      ...params,
-      _meta: asker !== undefined ? { ...meta, [META.subagentId]: asker } : meta,
-    };
+    const { [META.subagentId]: _said, ...meta } = params._meta ?? {};
+    const asker = session.isChild(params.sessionId) ? params.sessionId : undefined;
     const outcome = await this.#ask(
       session,
       REQUEST_PERMISSION,
-      params,
-      {
-        cancelled: { outcome: "cancelled" },
-        answer: (response) => (response as { outcome: unknown }).outcome,
-      },
+      { ...params, _meta: asker !== undefined ? { ...meta, [META.subagentId]: asker } : meta },
+      { cancelled: PERMISSION_CANCELLED, answer: permissionOutcome },
       signal,
     );
     return { outcome };
@@ -1568,9 +1555,9 @@ export class Daemon {
    */
   async #onElicitation(
     session: Session,
-    params: Record<string, unknown>,
+    params: CreateElicitationRequest,
     signal?: AbortSignal,
-  ): Promise<unknown> {
+  ): Promise<CreateElicitationResponse> {
     if (!this.#canAskForms(session)) return { action: "cancel", _meta: { [META.noClient]: true } };
     return this.#ask(
       session,
@@ -1888,7 +1875,7 @@ export class Daemon {
             terminal: true,
           },
         },
-      } as never;
+      };
     });
 
     app.onRequest(methods.agent.session.new, async ({ params }) => {
@@ -1948,18 +1935,15 @@ export class Daemon {
           kind: "meta",
           data: { event: "created", agent: agentId, cwd: params.cwd },
         });
-        const { link, created } = await this.#startAgent(session, "new", {
-          cwd: params.cwd,
-          additionalDirectories: params.additionalDirectories,
-          mcpServers: params.mcpServers,
-          systemPrompt: params.systemPrompt,
-        });
-        const answer = created as { sessionId: string; configOptions?: unknown[] };
+        // What the agent is given of the request: not the client's `_meta`, which is the daemon's to read.
+        const { _meta: _clientMeta, ...made } = params;
+        const { link, created: answer } = await this.#startAgent(session, "new", made);
+        if (answer === undefined) throw new Error("The agent did not answer session/new");
         session.entry = { ...session.entry, agentSessionId: answer.sessionId };
         // What the user set as the agent's defaults, then what they asked of this one.
         const config = { ...this.#defaults.get(agentId), ...overrides };
         // What the agent says its settings are now: each change answers with the whole set.
-        let options = answer.configOptions ?? [];
+        let options: SessionConfigOption[] = answer.configOptions ?? [];
         for (const [configId, value] of orderedConfigEntries(config)) {
           try {
             const changed = await link.agent.request(methods.agent.session.setConfigOption, {
@@ -1967,9 +1951,8 @@ export class Daemon {
               configId,
               type: "id",
               value,
-            } as never);
-            const latest = (changed as { configOptions?: unknown[] } | undefined)?.configOptions;
-            if (Array.isArray(latest) && latest.length > 0) options = latest;
+            });
+            if (changed.configOptions.length > 0) options = changed.configOptions;
           } catch (error) {
             throw new RpcError(
               CycleErrorCode.InvalidConfig,
@@ -1998,7 +1981,7 @@ export class Daemon {
         await this.#index.put(id, session.entry);
         this.#changed();
         this.#letGoOfOldestAhead(session);
-        return { sessionId: id, configOptions: options } as never;
+        return { sessionId: id, configOptions: options };
       } catch (error) {
         session.closed = true;
         session.link?.kill();
@@ -2031,7 +2014,10 @@ export class Daemon {
           rows.push(this.#unreadableRow(sessionId, entry));
         }
       }
-      return { sessions: rows, nextCursor: page.nextCursor } as never;
+      return {
+        sessions: rows,
+        ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+      };
     });
 
     app.onRequest(methods.agent.session.resume, async ({ params }) => {
@@ -2092,7 +2078,7 @@ export class Daemon {
             .filter((pending) => pending.asked.has(attachment))
             .map((pending) => pending.requestId),
         },
-      } as never;
+      };
     });
 
     app.onRequest(methods.agent.session.prompt, async ({ params }) => {
@@ -2132,7 +2118,7 @@ export class Daemon {
       if (busy() && steer === true) {
         // Into the running turn, where the agent can take it; otherwise it is queued as any other.
         const steered = await this.#steer(session, params.prompt);
-        if (steered !== undefined) return steered as never;
+        if (steered !== undefined) return steered;
       }
       if (busy()) {
         // The agent is busy: the prompt waits here, and goes when the turn ends well.
@@ -2149,14 +2135,14 @@ export class Daemon {
             throw logUnavailable(session.id, session.historyError ?? HISTORY_NOT_SAVED);
           }
         }
-        return { messageId: queueId, _meta: { [META.queued]: true } } as never;
+        return { messageId: queueId, _meta: { [META.queued]: true } };
       }
       // Marked at once: the agent's own "running" comes later, and a second prompt must not slip in.
       session.agentState = "running";
       session.turnEnded = false;
       this.#changed();
       try {
-        return (await this.#send(session, params.prompt)) as never;
+        return await this.#send(session, params.prompt);
       } catch (error) {
         this.#promptFailed(session, error);
         // The prompt never reached the agent, so no turn will end to send or return what was queued behind it.
@@ -2177,7 +2163,7 @@ export class Daemon {
       // be given to it is held back.
       if (session.starting !== undefined || session.preparing > 0) session.startingCancels++;
       await session.link?.agent
-        .notify(methods.agent.session.cancel, { sessionId: session.entry.agentSessionId } as never)
+        .notify(methods.agent.session.cancel, { sessionId: session.entry.agentSessionId })
         .catch(() => undefined);
     });
 
@@ -2187,7 +2173,7 @@ export class Daemon {
       const answer = await link.agent.request(methods.agent.session.setConfigOption, {
         ...params,
         sessionId: session.entry.agentSessionId,
-      } as never);
+      });
       const value = "value" in params ? params.value : undefined;
       if (typeof value === "string") {
         const config = { ...(session.entry.config ?? {}), [params.configId]: value };
@@ -2195,14 +2181,14 @@ export class Daemon {
         await this.#index.update(session.id, { config });
         this.#changed();
       }
-      return answer as never;
+      return answer;
     });
 
     app.onRequest(methods.agent.session.close, async ({ params }) => {
       const session = this.#sessions.get(params.sessionId);
       if (session !== undefined) this.#returnQueue(session, "closed");
       session?.link?.kill();
-      return {} as never;
+      return {};
     });
 
     app.onRequest(methods.agent.session.delete, async ({ params }) => {
@@ -2219,7 +2205,7 @@ export class Daemon {
         } finally {
           this.#changed();
         }
-        return {} as never;
+        return {};
       }
       if (session.status() === "running" || session.status() === "requires_action")
         throw sessionBusy(session.id);
@@ -2239,21 +2225,15 @@ export class Daemon {
       } finally {
         this.#changed();
       }
-      return {} as never;
+      return {};
     });
 
     // The handler answers what the method's result schema says: a field the schema has and the handler leaves out
-    // (or one of another shape) does not compile.
+    // (or one of another shape) does not compile, and an answer the schema refuses is not sent.
     const cycle = <P extends z.ZodType, R extends z.ZodType>(
       method: CycleMethod<P, R>,
-      handler: (params: z.output<P>) => Promise<z.input<R>> | z.input<R>,
-    ) => {
-      app.onRequest(
-        method.name as `_${string}`,
-        method.params,
-        async ({ params }) => (await handler(params as z.output<P>)) as never,
-      );
-    };
+      handler: CycleHandler<P, R>,
+    ) => onCycle(app, this.#log, method, handler);
 
     cycle(agentsList, async () => ({
       agents: await Promise.all(
@@ -2334,7 +2314,7 @@ export class Daemon {
         return { stopping: false };
       // ACP v2: a cancel in the child's own session stops that child, not the turn. Its end comes as its subagent_update.
       await link.agent
-        .notify(methods.agent.session.cancel, { sessionId: childId } as never)
+        .notify(methods.agent.session.cancel, { sessionId: childId })
         .catch(() => undefined);
       this.#log.info("subagent_stop_asked", { session: session.id });
       return { stopping: true };
