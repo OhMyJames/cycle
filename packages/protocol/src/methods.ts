@@ -138,6 +138,17 @@ export const trustRead = cycleMethod(
   TrustSchema,
 );
 
+/** The branches a session in `cwd` could start a worktree from; refused with `not_a_repository` outside a repository. */
+export const gitBranches = cycleMethod(
+  "_cycle/git/branches",
+  z.object({ cwd: z.string().min(1).max(4096) }),
+  z.object({
+    branches: z.array(z.string()),
+    current: z.string().optional(),
+    defaultBranch: z.string().optional(),
+  }),
+);
+
 export const trustSet = cycleMethod(
   "_cycle/trust/set",
   z.object({ path: z.string().min(1).max(4096), trusted: z.boolean() }),

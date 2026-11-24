@@ -22,6 +22,12 @@ export const META = {
    * `session/list` row: its summary, `SessionEnvironmentSummarySchema`, never a variable's value.
    */
   environment: "cycle/environment",
+  /**
+   * In `session/new`: make a worktree and run in it, `WorktreeRequestSchema`. In a `session/list` row: the one the
+   * session is in, `WorktreeSummarySchema`. In `session/delete`: `{ discard: true }` removes a worktree that holds
+   * unsaved work (docs/protocol.md §6 "Worktree").
+   */
+  worktree: "cycle/worktree",
   /** On a choice an agent offers (an ACP select option, a `configSchema` `oneOf` entry): true on the one it suggests. */
   recommended: "cycle/recommended",
   /** On a choice an agent offers: true on a high-risk option (such as skipping all permission checks) that the UI should warn on. */
@@ -159,6 +165,8 @@ export const CapabilitiesSchema = z.object({
   sessionMentions: z.boolean().optional(),
   /** `session/new` takes `_meta["cycle/environment"]`, and `_cycle/terminal/create` an `actionId` (docs/protocol.md §6 "环境"). */
   environments: z.boolean().optional(),
+  /** `session/new` takes `_meta["cycle/worktree"]`, and `_cycle/git/branches` is there (docs/protocol.md §6 "Worktree"). */
+  worktrees: z.boolean().optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 
