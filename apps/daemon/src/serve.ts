@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { captureConfigMtime } from "./agent-setup.ts";
 import { builtinPlugins } from "./builtin-plugins.ts";
-import { type Config, ConfigSchema, loadConfig, type Paths } from "./config.ts";
+import { type Config, ConfigSchema, loadConfig, type Paths, secureConfigFile } from "./config.ts";
 import { Daemon, defaultTerminals } from "./daemon.ts";
 import { agentsFor, HARNESSES } from "./harnesses.ts";
 import { errorText, type FileLogger, fileLogger } from "./logger.ts";
@@ -45,6 +45,13 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   }
   const log = loggerFor(paths, config, options.echo);
   log.info("daemon_starting", { version: VERSION, pid: process.pid, level: config.log.level });
+  try {
+    const was = await secureConfigFile(paths.config);
+    if (was !== undefined)
+      log.warn("config_mode_tightened", { path: paths.config, was: was.toString(8) });
+  } catch (error) {
+    log.warn("config_mode_unsafe", { path: paths.config, error: errorText(error) });
+  }
   let daemon: Daemon;
   const builtin = builtinPlugins();
   const agentIdleMs = minutes(config.idle.agentMinutes);

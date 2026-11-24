@@ -1,3 +1,4 @@
+import { chmod, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { defaultDataDir } from "./data-dir.ts";
@@ -153,6 +154,27 @@ export const loadConfig = async (path: string): Promise<Config> => {
   } catch (error) {
     throw new Error(`${path} cannot be read: ${error instanceof Error ? error.message : error}`);
   }
+};
+
+/**
+ * `config.json` holds tokens in the clear (`env`), and the user creates it by hand with whatever mode their umask
+ * gave. If anyone but the owner can read or write it, take that away (the owner's own bits stay) and return the mode
+ * it had. Undefined when it was fine, is missing, is a symlink (its target may be shared; not ours to change), or the
+ * platform has no such modes. Anything else that goes wrong is thrown.
+ */
+export const secureConfigFile = async (path: string): Promise<number | undefined> => {
+  if (process.platform === "win32") return undefined;
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const mode = info.mode & 0o777;
+  if (info.isSymbolicLink() || (mode & 0o077) === 0) return undefined;
+  await chmod(path, mode & 0o700);
+  return mode;
 };
 
 export { defaultDataDir };
