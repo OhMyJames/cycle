@@ -9,7 +9,7 @@ import { ClaudePluginError, ClaudePlugins, type RunCommand } from "../src/plugin
  * asked. The real one is asked in test/integration/adapter.integration.ts.
  */
 const scripted = (
-  answers: Record<string, { stdout: string; code?: number; timedOut?: boolean }>,
+  answers: Record<string, { stdout: string; code?: number | null; timedOut?: boolean }>,
 ) => {
   const calls: { args: string[]; env: Record<string, string>; cwd: string }[] = [];
   const run: RunCommand = async (command, options) => {
@@ -18,7 +18,11 @@ const scripted = (
     const key = Object.keys(answers).find((k) => args.join(" ").startsWith(k));
     const answer = key !== undefined ? answers[key] : undefined;
     if (answer === undefined) throw new Error(`not scripted: ${args.join(" ")}`);
-    return { code: answer.code ?? 0, stdout: answer.stdout, timedOut: answer.timedOut ?? false };
+    return {
+      code: answer.code === undefined ? 0 : answer.code,
+      stdout: answer.stdout,
+      timedOut: answer.timedOut ?? false,
+    };
   };
   return { run, calls };
 };
@@ -235,7 +239,7 @@ test("a refusal is a fixed word and what Claude said; no answer in time, or no C
     code: 1,
     stdout: JSON.stringify({ outcome: "failed", failureCode, message }),
   });
-  const reasonOf = async (answer: { stdout: string; code?: number; timedOut?: boolean }) => {
+  const reasonOf = async (answer: { stdout: string; code?: number | null; timedOut?: boolean }) => {
     const { run } = scripted({ "plugin install": answer });
     try {
       await make(run).install("x@y");
@@ -259,6 +263,42 @@ test("a refusal is a fixed word and what Claude said; no answer in time, or no C
     "failed",
     "Segmentation fault",
   ]);
+
+  // A change is read from Claude's verdict: one that says ok is done, whatever the exit code.
+  expect(
+    await make(scripted({ "plugin install": { code: 1, stdout: '{"outcome":"ok"}' } }).run).install(
+      "x@y",
+    ),
+  ).toBeUndefined();
+
+  // A listing has no verdict of its own: an exit code that says it failed is a failure, whatever it printed, and
+  // what it printed is not the reason (a listing names paths), only Claude's refusal is.
+  const listing = '{"installed":[{"id":"p@m","installPath":"/Users/someone/p"}],"available":[]}';
+  for (const [command, read] of [
+    ["plugin list --available", (p: ClaudePlugins) => p.snapshot()],
+    ["plugin list", (p: ClaudePlugins) => p.installed()],
+  ] as const) {
+    const exited = scripted({
+      [command]: { code: 2, stdout: listing },
+      "plugin marketplace list": { stdout: "[]" },
+    });
+    await expect(read(make(exited.run))).rejects.toMatchObject({ reason: "failed", detail: "" });
+    const killed = scripted({
+      [command]: { code: null, stdout: listing },
+      "plugin marketplace list": { stdout: "[]" },
+    });
+    await expect(read(make(killed.run))).rejects.toMatchObject({ reason: "failed", detail: "" });
+  }
+  const refused = scripted({
+    "plugin list": {
+      code: 1,
+      stdout: JSON.stringify({ outcome: "failed", failureCode: "not_configured", message: "No" }),
+    },
+  });
+  await expect(make(refused.run).installed()).rejects.toMatchObject({
+    reason: "not_found",
+    detail: "No",
+  });
 
   // A listing that is not one is a failure, not an empty list.
   const odd = scripted({
