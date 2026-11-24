@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { applyUpdate, emptyConversation } from "../../../packages/ui/src/model/index.ts";
-import { toV2ToolCallUpdate, translateSimpleUpdate } from "../src/translate.ts";
-import type { V1SessionUpdate } from "../src/v1.ts";
+import { StepsPlans, toV2ToolCallUpdate, translateSimpleUpdate } from "../src/translate.ts";
+import type { V1SessionUpdate, V1ToolCallPayload } from "../src/v1.ts";
 
 const translate = (update: Record<string, unknown>, messageId = "m1") =>
   translateSimpleUpdate(update as V1SessionUpdate, messageId, "agy-1-plan", () => {
@@ -89,4 +89,59 @@ describe("v1 plan to v2", () => {
     expect(conv.ignored).toBe(0);
     expect(conv.items.filter((item) => item.kind === "plan")).toHaveLength(1);
   });
+});
+
+test("update_steps is agy's plan: its calls are marked, and the finished one replaces the plan", () => {
+  // As a real agy session sends it: the whole list each time, `{ title, status }`.
+  const steps = [
+    { status: "done", title: "Research" },
+    { status: "in_progress", title: "Implement" },
+    { status: "pending", title: "Test" },
+    { status: "failed", title: "Benchmark" },
+    { status: "pending" },
+  ];
+  const plans = new StepsPlans();
+  const start = {
+    sessionUpdate: "tool_call",
+    toolCallId: "call_1",
+    name: "update_steps",
+    kind: "other",
+    status: "in_progress",
+    rawInput: { steps },
+  } as V1ToolCallPayload;
+  expect(plans.see(start, "s-plan")).toEqual({ plan: true });
+  // An update carries only what changed: no name, no steps, still the plan's call.
+  expect(plans.see({ toolCallId: "call_1", kind: "other" } as V1ToolCallPayload, "s-plan")).toEqual(
+    { plan: true },
+  );
+  expect(
+    plans.see({ toolCallId: "call_1", status: "completed" } as V1ToolCallPayload, "s-plan"),
+  ).toEqual({
+    plan: true,
+    update: {
+      sessionUpdate: "plan_update",
+      plan: {
+        type: "items",
+        planId: "s-plan",
+        // A step with no title is left out.
+        entries: [
+          { content: "Research", priority: "medium", status: "completed" },
+          { content: "Implement", priority: "medium", status: "in_progress" },
+          { content: "Test", priority: "medium", status: "pending" },
+          { content: "Benchmark", priority: "medium", status: "completed" },
+        ],
+      },
+    } as SessionUpdate,
+  });
+  // A failed call changed nothing; another tool is not the plan's.
+  plans.see({ ...start, toolCallId: "call_2" }, "s-plan");
+  expect(
+    plans.see({ toolCallId: "call_2", status: "failed" } as V1ToolCallPayload, "s-plan"),
+  ).toEqual({ plan: true });
+  expect(
+    plans.see(
+      { ...start, toolCallId: "call_3", name: "manage_task", status: "completed" },
+      "s-plan",
+    ),
+  ).toEqual({ plan: false });
 });

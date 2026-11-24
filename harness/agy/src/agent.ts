@@ -12,7 +12,12 @@ import { CycleErrorCode, META } from "@cycle/protocol";
 import { translateMcpServers } from "./mcp.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { toV2ConfigOptions } from "./settings.ts";
-import { toV2ToolCallUpdate, translateSimpleUpdate, validatePromptBlocks } from "./translate.ts";
+import {
+  StepsPlans,
+  toV2ToolCallUpdate,
+  translateSimpleUpdate,
+  validatePromptBlocks,
+} from "./translate.ts";
 import {
   AGY_MIN_VERSION,
   AGY_PROMPT_CAPABILITIES,
@@ -25,6 +30,7 @@ import {
   type V1PromptResult,
   type V1ResumeResponse,
   type V1SessionResponse,
+  type V1ToolCallPayload,
   type V1UpdateNotification,
 } from "./v1.ts";
 
@@ -59,6 +65,8 @@ type SessionState = {
   defaultEffort?: string | undefined;
   requestedModel?: string | undefined;
   requestedEffort?: string | undefined;
+  /** agy's update_steps calls still going: what makes its plan. */
+  stepsPlans: StepsPlans;
 };
 
 const currentOption = (opts: readonly V1ConfigOption[], id: string): V1ConfigOption | undefined =>
@@ -288,10 +296,22 @@ export function createAdapter(config: AdapterConfig) {
     }
 
     const msgId = session.turn?.assistantMessageId ?? randomUUID();
-    const translated = translateSimpleUpdate(update, msgId, `${session.id}-plan`, (kind) => {
+    const planId = `${session.id}-plan`;
+    const translated = translateSimpleUpdate(update, msgId, planId, (kind) => {
       process.stderr.write(`[harness/agy] ignored unknown v1 sessionUpdate: ${kind}\n`);
     });
-    if (translated) emitUpdate(session, translated);
+    // agy's update_steps changes the plan: the plan says it (docs/conversation-content.md), not a row per call, as
+    // Claude's TodoWrite and TaskCreate do.
+    const steps =
+      update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update"
+        ? session.stepsPlans.see(update as V1ToolCallPayload, planId)
+        : undefined;
+    if (translated)
+      emitUpdate(
+        session,
+        steps?.plan ? ({ ...translated, kind: "think" } as SessionUpdate) : translated,
+      );
+    if (steps?.update) emitUpdate(session, steps.update);
     if (session.turn?.autonomous && TURN_ACTIVITY_UPDATES.has(update.sessionUpdate)) {
       scheduleAutonomousIdle(session, session.turn);
     }
@@ -496,6 +516,7 @@ export function createAdapter(config: AdapterConfig) {
         owner: client,
         availableModels: created.models?.availableModels ?? [],
         v1ConfigOptions: v1Opts,
+        stepsPlans: new StepsPlans(),
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
       };
@@ -561,6 +582,7 @@ export function createAdapter(config: AdapterConfig) {
         owner: client,
         availableModels: response.models?.availableModels ?? [],
         v1ConfigOptions: v1Opts,
+        stepsPlans: new StepsPlans(),
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
       };

@@ -443,6 +443,10 @@ test("offers every SDK permission mode, each with a name and a description", asy
   expect(fake.calls[0]?.options.allowDangerouslySkipPermissions).toBe(true);
   // Without it Claude Code omits thinking's text, and every thought arrives empty.
   expect(fake.calls[0]?.options.settings).toMatchObject({ showThinkingSummaries: true });
+  // Newer models get no task list unless its tools are named: without it there is no plan to show.
+  expect(fake.calls[0]?.options.allowedTools).toEqual(
+    expect.arrayContaining(["TaskCreate", "TaskUpdate"]),
+  );
 });
 
 test("a second prompt right after the first is refused: the turn exists before anything is awaited", async () => {
