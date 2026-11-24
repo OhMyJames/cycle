@@ -228,6 +228,30 @@ export const pluginProblemOf = (error: unknown): PluginFailure => {
   return { problem: "failed", message: detail ?? messageOf(error) };
 };
 
+/**
+ * Runs one of the page's actions whose failure is an answer rather than a throw (a connector that will not sign in, a
+ * plugin that will not install): what went wrong comes back as `problemOf` words it. `report` is told what came back,
+ * whichever it was, once.
+ */
+export const runAction = async <T extends object, F extends object>(
+  act: () => Promise<T>,
+  problemOf: (error: unknown) => F,
+  report?: (answer: T | F) => void,
+): Promise<T | F> => {
+  let answer: T | F;
+  try {
+    answer = await act();
+  } catch (error) {
+    answer = problemOf(error);
+  }
+  report?.(answer);
+  return answer;
+};
+
+/** The `result` of a plugin event: `ok`, or the word for what went wrong. */
+const pluginResultOf = (answer: object): PluginProblem | "ok" =>
+  "problem" in answer ? (answer as PluginFailure).problem : "ok";
+
 const sessionSummary = (environmentId: string, row: SessionRow): SessionSummary => {
   const meta = (row._meta ?? {}) as Record<string, unknown>;
   return {
@@ -953,11 +977,10 @@ export class ConnectionManager implements ManagerApi {
     cols: number,
     rows: number,
   ): Promise<TerminalAttached | { problem: TerminalProblem; message?: string }> {
-    try {
-      return await this.#connection(environmentId).client.createTerminal(sessionId, cols, rows);
-    } catch (error) {
-      return terminalProblemOf(error);
-    }
+    return runAction(
+      () => this.#connection(environmentId).client.createTerminal(sessionId, cols, rows),
+      terminalProblemOf,
+    );
   }
 
   async attachTerminal(environmentId: string, terminalId: string): Promise<TerminalAttached> {
@@ -1301,17 +1324,19 @@ export class ConnectionManager implements ManagerApi {
   }
 
   async addConnector(environmentId: string, draft: ConnectorDraft): Promise<ConnectorAnswer> {
-    try {
-      const connector = await this.#connection(environmentId).client.addConnector(draft);
-      this.#track("connector_added", {
-        transport: connector.transport.type,
-        auth: connector.auth.type,
-        secrets: connector.secrets.headers.length + connector.secrets.env.length,
-      });
-      return { connector };
-    } catch (error) {
-      return connectorProblemOf(error);
-    }
+    return runAction(
+      async () => ({ connector: await this.#connection(environmentId).client.addConnector(draft) }),
+      connectorProblemOf,
+      (answer) => {
+        if (!("connector" in answer)) return;
+        const { connector } = answer;
+        this.#track("connector_added", {
+          transport: connector.transport.type,
+          auth: connector.auth.type,
+          secrets: connector.secrets.headers.length + connector.secrets.env.length,
+        });
+      },
+    );
   }
 
   async updateConnector(
@@ -1319,39 +1344,44 @@ export class ConnectionManager implements ManagerApi {
     id: string,
     change: ConnectorChange,
   ): Promise<ConnectorAnswer> {
-    try {
-      const connector = await this.#connection(environmentId).client.updateConnector({
-        id,
-        ...change,
-      });
-      const onlyEnabled = Object.keys(change).every((key) => key === "enabled");
-      this.#track("connector_changed", {
-        change:
-          onlyEnabled && change.enabled !== undefined
-            ? change.enabled
-              ? "enabled"
-              : "disabled"
-            : "edited",
-      });
-      return { connector };
-    } catch (error) {
-      return connectorProblemOf(error);
-    }
+    const onlyEnabled = Object.keys(change).every((key) => key === "enabled");
+    return runAction(
+      async () => ({
+        connector: await this.#connection(environmentId).client.updateConnector({ id, ...change }),
+      }),
+      connectorProblemOf,
+      (answer) => {
+        if (!("connector" in answer)) return;
+        this.#track("connector_changed", {
+          change:
+            onlyEnabled && change.enabled !== undefined
+              ? change.enabled
+                ? "enabled"
+                : "disabled"
+              : "edited",
+        });
+      },
+    );
   }
 
   async removeConnector(
     environmentId: string,
     id: string,
   ): Promise<{ removed: true } | { problem: ConnectorProblem; message?: string }> {
-    try {
-      const client = this.#connection(environmentId).client;
-      const transport = (await client.listConnectors()).find((c) => c.id === id)?.transport.type;
-      await client.removeConnector(id);
-      if (transport !== undefined) this.#track("connector_removed", { transport });
-      return { removed: true };
-    } catch (error) {
-      return connectorProblemOf(error);
-    }
+    let transport: ConnectorInfo["transport"]["type"] | undefined;
+    return runAction(
+      async () => {
+        const client = this.#connection(environmentId).client;
+        transport = (await client.listConnectors()).find((c) => c.id === id)?.transport.type;
+        await client.removeConnector(id);
+        return { removed: true as const };
+      },
+      connectorProblemOf,
+      (answer) => {
+        if ("removed" in answer && transport !== undefined)
+          this.#track("connector_removed", { transport });
+      },
+    );
   }
 
   /**
@@ -1366,31 +1396,30 @@ export class ConnectionManager implements ManagerApi {
     const signIn = new AbortController();
     this.#signIn = signIn;
     try {
-      const client = this.#connection(environmentId).client;
-      const open = this.#options.openBrowser;
-      if (open === undefined) throw new Error("This app cannot open a browser");
-      const outcome = await authorizeInBrowser({
-        start: (redirectUri) => client.startConnectorAuth(id, redirectUri),
-        finish: (params) => client.finishConnectorAuth(params),
-        open,
-        signal: signIn.signal,
-        ...(this.#options.authTimeoutMs !== undefined
-          ? { timeoutMs: this.#options.authTimeoutMs }
-          : {}),
-      });
-      if (outcome.kind === "cancelled") {
-        this.#track("connector_authorized", { result: "cancelled" });
-        return { cancelled: true };
-      }
-      if (outcome.kind === "refused") {
-        this.#track("connector_authorized", { result: "failed" });
-        return { problem: "auth_rejected" };
-      }
-      this.#track("connector_authorized", { result: "ok" });
-      return { connector: outcome.value };
-    } catch (error) {
-      this.#track("connector_authorized", { result: "failed" });
-      return connectorProblemOf(error);
+      return await runAction<ConnectorAnswer | { cancelled: true }, ConnectorAnswer>(
+        async () => {
+          const client = this.#connection(environmentId).client;
+          const open = this.#options.openBrowser;
+          if (open === undefined) throw new Error("This app cannot open a browser");
+          const outcome = await authorizeInBrowser({
+            start: (redirectUri) => client.startConnectorAuth(id, redirectUri),
+            finish: (params) => client.finishConnectorAuth(params),
+            open,
+            signal: signIn.signal,
+            ...(this.#options.authTimeoutMs !== undefined
+              ? { timeoutMs: this.#options.authTimeoutMs }
+              : {}),
+          });
+          if (outcome.kind === "cancelled") return { cancelled: true };
+          if (outcome.kind === "refused") return { problem: "auth_rejected" };
+          return { connector: outcome.value };
+        },
+        connectorProblemOf,
+        (answer) =>
+          this.#track("connector_authorized", {
+            result: "cancelled" in answer ? "cancelled" : "problem" in answer ? "failed" : "ok",
+          }),
+      );
     } finally {
       if (this.#signIn === signIn) this.#signIn = undefined;
     }
@@ -1401,13 +1430,15 @@ export class ConnectionManager implements ManagerApi {
   }
 
   async signOutConnector(environmentId: string, id: string): Promise<ConnectorAnswer> {
-    try {
-      const connector = await this.#connection(environmentId).client.clearConnectorAuth(id);
-      this.#track("connector_signed_out", {});
-      return { connector };
-    } catch (error) {
-      return connectorProblemOf(error);
-    }
+    return runAction(
+      async () => ({
+        connector: await this.#connection(environmentId).client.clearConnectorAuth(id),
+      }),
+      connectorProblemOf,
+      (answer) => {
+        if ("connector" in answer) this.#track("connector_signed_out", {});
+      },
+    );
   }
 
   // ---- plugins (docs/protocol.md §15) ----
@@ -1432,20 +1463,18 @@ export class ConnectionManager implements ManagerApi {
     agentId: string,
     id: string,
   ): Promise<{ plugin: PluginInfo } | PluginFailure> {
-    const agent = agentOf(agentId);
-    try {
-      const plugin = await this.#connection(environmentId).client.installPlugin(agentId, id);
-      this.#track("plugin_installed", {
-        agent,
-        result: "ok",
-        servers: plugin.servers?.length ?? 0,
-      });
-      return { plugin };
-    } catch (error) {
-      const failure = pluginProblemOf(error);
-      this.#track("plugin_installed", { agent, result: failure.problem, servers: 0 });
-      return failure;
-    }
+    return runAction(
+      async () => ({
+        plugin: await this.#connection(environmentId).client.installPlugin(agentId, id),
+      }),
+      pluginProblemOf,
+      (answer) =>
+        this.#track("plugin_installed", {
+          agent: agentOf(agentId),
+          result: pluginResultOf(answer),
+          servers: "plugin" in answer ? (answer.plugin.servers?.length ?? 0) : 0,
+        }),
+    );
   }
 
   async uninstallPlugin(
@@ -1453,16 +1482,15 @@ export class ConnectionManager implements ManagerApi {
     agentId: string,
     id: string,
   ): Promise<{ removed: true } | PluginFailure> {
-    const agent = agentOf(agentId);
-    try {
-      await this.#connection(environmentId).client.uninstallPlugin(agentId, id);
-      this.#track("plugin_removed", { agent, result: "ok" });
-      return { removed: true };
-    } catch (error) {
-      const failure = pluginProblemOf(error);
-      this.#track("plugin_removed", { agent, result: failure.problem });
-      return failure;
-    }
+    return runAction(
+      async () => {
+        await this.#connection(environmentId).client.uninstallPlugin(agentId, id);
+        return { removed: true as const };
+      },
+      pluginProblemOf,
+      (answer) =>
+        this.#track("plugin_removed", { agent: agentOf(agentId), result: pluginResultOf(answer) }),
+    );
   }
 
   async updatePlugin(
@@ -1470,16 +1498,16 @@ export class ConnectionManager implements ManagerApi {
     agentId: string,
     id: string,
   ): Promise<{ plugin: PluginInfo; updated: boolean } | PluginFailure> {
-    const agent = agentOf(agentId);
-    try {
-      const answer = await this.#connection(environmentId).client.updatePlugin(agentId, id);
-      this.#track("plugin_updated", { agent, result: "ok", updated: answer.updated });
-      return answer;
-    } catch (error) {
-      const failure = pluginProblemOf(error);
-      this.#track("plugin_updated", { agent, result: failure.problem, updated: false });
-      return failure;
-    }
+    return runAction(
+      () => this.#connection(environmentId).client.updatePlugin(agentId, id),
+      pluginProblemOf,
+      (answer) =>
+        this.#track("plugin_updated", {
+          agent: agentOf(agentId),
+          result: pluginResultOf(answer),
+          updated: "updated" in answer && answer.updated,
+        }),
+    );
   }
 
   async setPluginEnabled(
@@ -1488,17 +1516,19 @@ export class ConnectionManager implements ManagerApi {
     id: string,
     enabled: boolean,
   ): Promise<{ plugin: PluginInfo } | PluginFailure> {
-    const agent = agentOf(agentId);
     const on = enabled === true;
-    try {
-      const plugin = await this.#connection(environmentId).client.setPluginEnabled(agentId, id, on);
-      this.#track("plugin_toggled", { agent, enabled: on, result: "ok" });
-      return { plugin };
-    } catch (error) {
-      const failure = pluginProblemOf(error);
-      this.#track("plugin_toggled", { agent, enabled: on, result: failure.problem });
-      return failure;
-    }
+    return runAction(
+      async () => ({
+        plugin: await this.#connection(environmentId).client.setPluginEnabled(agentId, id, on),
+      }),
+      pluginProblemOf,
+      (answer) =>
+        this.#track("plugin_toggled", {
+          agent: agentOf(agentId),
+          enabled: on,
+          result: pluginResultOf(answer),
+        }),
+    );
   }
 
   /** The page asked the person first: what a source lists can be installed and run. */
@@ -1507,19 +1537,18 @@ export class ConnectionManager implements ManagerApi {
     agentId: string,
     location: string,
   ): Promise<{ source: PluginSourceInfo } | PluginFailure> {
-    const agent = agentOf(agentId);
-    try {
-      const source = await this.#connection(environmentId).client.addPluginSource(
-        agentId,
-        location,
-      );
-      this.#track("plugin_source_added", { agent, result: "ok", kind: source.kind });
-      return { source };
-    } catch (error) {
-      const failure = pluginProblemOf(error);
-      this.#track("plugin_source_added", { agent, result: failure.problem, kind: "other" });
-      return failure;
-    }
+    return runAction(
+      async () => ({
+        source: await this.#connection(environmentId).client.addPluginSource(agentId, location),
+      }),
+      pluginProblemOf,
+      (answer) =>
+        this.#track("plugin_source_added", {
+          agent: agentOf(agentId),
+          result: pluginResultOf(answer),
+          kind: "source" in answer ? answer.source.kind : "other",
+        }),
+    );
   }
 
   async removePluginSource(
@@ -1527,32 +1556,36 @@ export class ConnectionManager implements ManagerApi {
     agentId: string,
     id: string,
   ): Promise<{ removed: true } | PluginFailure> {
-    const agent = agentOf(agentId);
-    try {
-      await this.#connection(environmentId).client.removePluginSource(agentId, id);
-      this.#track("plugin_source_removed", { agent, result: "ok" });
-      return { removed: true };
-    } catch (error) {
-      const failure = pluginProblemOf(error);
-      this.#track("plugin_source_removed", { agent, result: failure.problem });
-      return failure;
-    }
+    return runAction(
+      async () => {
+        await this.#connection(environmentId).client.removePluginSource(agentId, id);
+        return { removed: true as const };
+      },
+      pluginProblemOf,
+      (answer) =>
+        this.#track("plugin_source_removed", {
+          agent: agentOf(agentId),
+          result: pluginResultOf(answer),
+        }),
+    );
   }
 
   async refreshPluginSources(
     environmentId: string,
     agentId: string,
   ): Promise<{ refreshed: true } | PluginFailure> {
-    const agent = agentOf(agentId);
-    try {
-      await this.#connection(environmentId).client.refreshPluginSources(agentId);
-      this.#track("plugin_sources_refreshed", { agent, result: "ok" });
-      return { refreshed: true };
-    } catch (error) {
-      const failure = pluginProblemOf(error);
-      this.#track("plugin_sources_refreshed", { agent, result: failure.problem });
-      return failure;
-    }
+    return runAction(
+      async () => {
+        await this.#connection(environmentId).client.refreshPluginSources(agentId);
+        return { refreshed: true as const };
+      },
+      pluginProblemOf,
+      (answer) =>
+        this.#track("plugin_sources_refreshed", {
+          agent: agentOf(agentId),
+          result: pluginResultOf(answer),
+        }),
+    );
   }
 
   chooseDirectory(): Promise<string | undefined> {
