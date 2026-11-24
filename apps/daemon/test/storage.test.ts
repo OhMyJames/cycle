@@ -182,3 +182,24 @@ test("each harness's home is what its own environment says, a configured one inc
   expect(found.codex).toBe("/data/mine/codex");
   expect(found.agy).toBe("/data/agy");
 });
+
+test("a link to another place in the same home does not get that place removed", async () => {
+  const home = join(dir, "claude");
+  await file(join(home, "plugins", "_cacache", "keep.txt"));
+  await symlink(join(home, "plugins"), join(home, ".npm"));
+  expect((await cleanStorage(homes(home), dir, "a0")).cleaned).toBe(true);
+  expect(existsSync(join(home, "plugins", "_cacache", "keep.txt"))).toBe(true);
+  expect((await readStorage(homes(home), dir))[0]?.items).toEqual([]);
+});
+
+test("a turn that starts while it clears stops it: what is already gone stays gone, the rest stays", async () => {
+  const home = join(dir, "claude");
+  await seed(home);
+  let asked = 0;
+  const result = await cleanStorage(homes(home), dir, "a0", () => ++asked > 1);
+  expect(result).toMatchObject({ cleaned: false, problem: "busy" });
+  const left = [".bun/install/cache", ".npm/_cacache", "Library/Caches"].filter((p) =>
+    existsSync(join(home, p)),
+  );
+  expect(left.length).toBe(2);
+});

@@ -33,8 +33,8 @@ export const storageRead = cycleMethod(
   z.object({ agents: z.array(StorageAgentSchema).max(32) }),
 );
 
-/** Why nothing was cleared. `busy`: a turn of that agent is running. `unmanaged`: its home is outside the data directory. */
-export const StorageCleanProblemSchema = z.enum(["busy", "unmanaged", "unknown_agent"]);
+/** Why nothing was cleared. `busy`: a turn of that agent is running. `unmanaged`: its home is outside the data directory. `failed`: a cache could not be removed and nothing was. */
+export const StorageCleanProblemSchema = z.enum(["busy", "unmanaged", "unknown_agent", "failed"]);
 export type StorageCleanProblem = z.infer<typeof StorageCleanProblemSchema>;
 
 export const storageClean = cycleMethod(
