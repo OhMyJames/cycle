@@ -21,6 +21,8 @@ export class ConnectorState {
   readonly #generations = new Map<string, number>();
   /** The last credential change queued for each connector (see mutate). */
   readonly #locks = new Map<string, Promise<unknown>>();
+  /** Structural catalog+vault edits (update, remove, plugin sync) serialized per connector. */
+  readonly #serials = new Map<string, Promise<unknown>>();
   readonly #listeners = new Set<() => void>();
 
   constructor(catalog: ConnectorCatalog, vault: CredentialVault) {
@@ -68,11 +70,15 @@ export class ConnectorState {
    * snapshot older than a sign-out or an edit made meanwhile. `apply` returns undefined to leave
    * them as they are. A connector removed meanwhile is not brought back.
    */
-  mutate(id: string, apply: (current: Credentials) => Credentials | undefined): Promise<boolean> {
+  mutate(
+    id: string,
+    apply: (current: Credentials, entry: CatalogEntry) => Credentials | undefined,
+  ): Promise<boolean> {
     const previous = this.#locks.get(id) ?? Promise.resolve();
     const run = previous.then(async () => {
-      if ((await this.catalog.get(id)) === undefined) return false;
-      const next = apply(await this.vault.get(id));
+      const entry = await this.catalog.get(id);
+      if (entry === undefined) return false;
+      const next = apply(await this.vault.get(id), entry);
       if (next === undefined) return false;
       await this.vault.put(id, next);
       return true;
@@ -88,6 +94,21 @@ export class ConnectorState {
   /** Resolves once the credential changes queued for a connector are done: none can write them back after. */
   async settled(id: string): Promise<void> {
     await (this.#locks.get(id) ?? Promise.resolve());
+  }
+
+  /** Serializes structural edits (update, remove, plugin sync) for one connector so none interleave or resurrect it. */
+  serial<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.#serials.get(id) ?? Promise.resolve();
+    const run = previous.then(fn);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#serials.set(id, settled);
+    void settled.then(() => {
+      if (this.#serials.get(id) === settled) this.#serials.delete(id);
+    });
+    return run;
   }
 
   async view(entry: CatalogEntry): Promise<Connector> {

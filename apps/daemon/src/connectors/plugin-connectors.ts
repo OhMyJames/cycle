@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Fetch } from "./http-proxy.ts";
 import { secureUrl } from "./oauth.ts";
-import { filled, requiredBy } from "./rules.ts";
+import { filled, requiredBy, serverOf } from "./rules.ts";
 import type { ConnectorSignIn } from "./sign-in.ts";
 import type { ConnectorState } from "./state.ts";
-import type { CatalogEntry } from "./store.ts";
+import type { CatalogEntry, Credentials } from "./store.ts";
 
 /** A name for a plugin's server among the connectors: nobody types it, an agent never sees it. */
 const slugFor = (plugin: string, server: string, taken: ReadonlySet<string>): string => {
@@ -38,16 +38,16 @@ export class PluginConnectors {
   readonly #state: ConnectorState;
   readonly #signIn: ConnectorSignIn;
   readonly #fetch: Fetch;
-  /** Removes a connector whose plugin's server is gone, as the service removes any. */
-  readonly #drop: (entry: CatalogEntry) => Promise<void>;
-  /** One reconciliation of plugins' connectors at a time. */
+  /** Removes a connector whose plugin's server is gone, returning any credentials to revoke. */
+  readonly #drop: (entry: CatalogEntry) => Promise<Credentials | undefined>;
+  /** One reconciliation of plugins' connectors (and sign-in discovery writes) at a time. */
   #syncing: Promise<unknown> = Promise.resolve();
 
   constructor(
     state: ConnectorState,
     signIn: ConnectorSignIn,
     fetch: Fetch,
-    drop: (entry: CatalogEntry) => Promise<void>,
+    drop: (entry: CatalogEntry) => Promise<Credentials | undefined>,
   ) {
     this.#state = state;
     this.#signIn = signIn;
@@ -61,19 +61,21 @@ export class PluginConnectors {
    * connector stands for which server (`pluginId`, then server name); a server whose address would not be safe for
    * a token has none and is left to the agent.
    */
-  sync(
+  async sync(
     agentId: string,
     servers: readonly PluginServerSpec[],
   ): Promise<Map<string, Map<string, string>>> {
     const run = this.#syncing.then(() => this.#sync(agentId, servers));
     this.#syncing = run.catch(() => undefined);
-    return run;
+    const { made, toRevoke } = await run;
+    await Promise.all(toRevoke.map((credentials) => this.#signIn.revoke(credentials)));
+    return made;
   }
 
   async #sync(
     agentId: string,
     servers: readonly PluginServerSpec[],
-  ): Promise<Map<string, Map<string, string>>> {
+  ): Promise<{ made: Map<string, Map<string, string>>; toRevoke: Credentials[] }> {
     const all = await this.#state.catalog.list();
     const mine = new Map<string, CatalogEntry>();
     for (const entry of all) {
@@ -83,6 +85,7 @@ export class PluginConnectors {
     }
     const names = new Set(all.map((entry) => entry.name));
     const made = new Map<string, Map<string, string>>();
+    const toRevoke: Credentials[] = [];
     let changed = false;
     const seen = new Set<string>();
     for (const spec of servers) {
@@ -121,31 +124,44 @@ export class PluginConnectors {
         changed = true;
         if (spec.enabled) void this.#probe(entry.id);
       } else {
-        const moved = before.transport.type !== "http" || before.transport.url !== spec.url;
-        entry = {
-          ...before,
-          enabled: spec.enabled,
-          transport: { type: "http", url: spec.url },
-          ...(moved ? { auth: { type: "none" as const } } : {}),
-          origin,
-        };
-        if (JSON.stringify(entry) !== JSON.stringify(before)) {
-          if (moved) {
-            // What the person gave belongs to the address they gave it for: an update of the plugin that moves its
-            // server signs it out, and the keys they typed are asked for again rather than sent to the new address.
-            await this.#signIn.signOut(entry.id);
-            await this.#state.mutate(entry.id, () => ({ headers: {}, env: {} }));
+        entry = before;
+        await this.#state.serial(before.id, async () => {
+          const current = (await this.#state.catalog.get(before.id)) ?? before;
+          const moved = current.transport.type !== "http" || current.transport.url !== spec.url;
+          entry = {
+            ...current,
+            enabled: spec.enabled,
+            transport: { type: "http", url: spec.url },
+            ...(moved ? { auth: { type: "none" as const } } : {}),
+            origin,
+          };
+          if (JSON.stringify(entry) !== JSON.stringify(current)) {
+            let releaseDetach: (() => void) | undefined;
+            try {
+              if (moved) {
+                // What the person gave belongs to the address they gave it for: an update of the plugin that moves its
+                // server signs it out, and the keys they typed are asked for again rather than sent to the new address.
+                const detached = await this.#signIn.beginDetach(entry.id, () => ({
+                  headers: {},
+                  env: {},
+                }));
+                releaseDetach = detached.release;
+                if (detached.revoked !== undefined) toRevoke.push(detached.revoked);
+              }
+              // Another address, other headers, or switched on again: what the last request learnt (a refusal of the old
+              // headers, a server that was down) is no longer said, and the server is asked afresh.
+              const fresh =
+                moved ||
+                !isDeepStrictEqual(current.origin?.headers, origin.headers) ||
+                (spec.enabled && !current.enabled);
+              await this.#state.catalog.put(entry);
+              if (fresh) this.renewed(entry);
+              changed = true;
+            } finally {
+              releaseDetach?.();
+            }
           }
-          // Another address, other headers, or switched on again: what the last request learnt (a refusal of the old
-          // headers, a server that was down) is no longer said, and the server is asked afresh.
-          const fresh =
-            moved ||
-            !isDeepStrictEqual(before.origin?.headers, origin.headers) ||
-            (spec.enabled && !before.enabled);
-          await this.#state.catalog.put(entry);
-          if (fresh) this.renewed(entry);
-          changed = true;
-        }
+        });
       }
       let ofPlugin = made.get(spec.pluginId);
       if (ofPlugin === undefined) {
@@ -155,11 +171,12 @@ export class PluginConnectors {
       ofPlugin.set(spec.server, entry.id);
     }
     for (const gone of mine.values()) {
-      await this.#drop(gone);
+      const revoked = await this.#drop(gone);
+      if (revoked !== undefined) toRevoke.push(revoked);
       changed = true;
     }
     if (changed) this.#state.changed();
-    return made;
+    return { made, toRevoke };
   }
 
   /**
@@ -173,21 +190,30 @@ export class PluginConnectors {
 
   /**
    * A plugin's server signs in when it answers 401 to a request with no token: what MCP's authorization says it does.
-   * `generation`: the settings the request was sent with; a 401 to settings since changed says nothing.
+   * `generation` and `server`: the settings the request was sent with; a 401 to settings since changed says nothing.
+   * Serialized with `sync` so a late 401 cannot read an old entry and overwrite a move in progress.
    */
-  async needsSignIn(id: string, generation: number): Promise<void> {
-    const entry = await this.#state.catalog.get(id);
-    if (generation !== this.#state.generation(id)) return;
-    if (entry?.origin === undefined || entry.auth.type !== "none") return;
-    // A plugin that carries a credential of its own (an `Authorization` header, or a key the person types into any
-    // header) is refused because that is wrong, not because it wants a sign-in.
-    const own =
-      requiredBy(entry.origin.headers).length > 0 ||
-      Object.keys(entry.origin.headers).some((name) => name.toLowerCase() === "authorization");
-    if (own) return;
-    await this.#state.catalog.put({ ...entry, auth: { type: "oauth" } });
-    this.#state.reset(id);
-    this.#state.changed();
+  needsSignIn(id: string, generation: number, server: string): Promise<void> {
+    if (generation !== this.#state.generation(id)) return Promise.resolve();
+    const run = this.#syncing.then(() =>
+      this.#state.serial(id, async () => {
+        if (generation !== this.#state.generation(id)) return;
+        const entry = await this.#state.catalog.get(id);
+        if (entry?.origin === undefined || entry.auth.type !== "none") return;
+        if (serverOf(entry) !== server) return;
+        // A plugin that carries a credential of its own (an `Authorization` header, or a key the person types into any
+        // header) is refused because that is wrong, not because it wants a sign-in.
+        const own =
+          requiredBy(entry.origin.headers).length > 0 ||
+          Object.keys(entry.origin.headers).some((name) => name.toLowerCase() === "authorization");
+        if (own) return;
+        await this.#state.catalog.put({ ...entry, auth: { type: "oauth" } });
+        this.#state.reset(id);
+        this.#state.changed();
+      }),
+    );
+    this.#syncing = run.catch(() => undefined);
+    return run;
   }
 
   /** Asks a plugin's server once, as an agent would begin, whether it wants a sign-in. */
@@ -196,6 +222,7 @@ export class PluginConnectors {
     try {
       const entry = await this.#state.catalog.get(id);
       if (entry?.origin === undefined || entry.transport.type !== "http") return;
+      const server = serverOf(entry);
       const headers = filled(entry.origin.headers, (await this.#state.vault.get(id)).env);
       if (headers === undefined) return;
       const response = await this.#fetch(entry.transport.url, {
@@ -219,7 +246,7 @@ export class PluginConnectors {
         signal: AbortSignal.timeout(10_000),
       });
       await response.body?.cancel().catch(() => undefined);
-      if (response.status === 401) await this.needsSignIn(id, generation);
+      if (response.status === 401) await this.needsSignIn(id, generation, server);
     } catch {
       // Not reachable now: it is asked again by the first request an agent makes.
     }

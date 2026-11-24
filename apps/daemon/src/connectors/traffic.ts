@@ -2,7 +2,7 @@ import type { McpServer } from "@agentclientprotocol/sdk/experimental/v2";
 import { McpGateway } from "./gateway.ts";
 import { type Fetch, hold, send } from "./http-proxy.ts";
 import type { PluginConnectors } from "./plugin-connectors.ts";
-import { filled } from "./rules.ts";
+import { filled, serverOf } from "./rules.ts";
 import type { ConnectorSignIn } from "./sign-in.ts";
 import type { ConnectorState } from "./state.ts";
 import { type Spawn, StdioBridge } from "./stdio-bridge.ts";
@@ -17,8 +17,17 @@ export const STDIO_ENV_ALLOWLIST = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "T
 
 type StdioTransport = Extract<CatalogEntry["transport"], { type: "stdio" }>;
 
-/** A session's connector processes, by connector. */
-type SessionBridges = Map<string, StdioBridge>;
+type StdioStartResult =
+  | { ok: true; bridge: StdioBridge }
+  | { ok: false; status: number; message: string };
+
+/** One active session's stdio connector processes, pending starts, and working folder. */
+type SessionSlot = {
+  cwd: string;
+  bridges: Map<string, StdioBridge>;
+  starting: Map<string, Promise<StdioStartResult>>;
+  active: boolean;
+};
 
 /**
  * What agents get of the connectors: each as an address at the gateway (gateway.ts), and every request that comes to
@@ -31,9 +40,11 @@ export class ConnectorTraffic {
   readonly #fetch: Fetch;
   readonly #spawn: Spawn;
   readonly #env: Record<string, string | undefined>;
-  readonly #bridges = new Map<string, SessionBridges>();
-  /** Each session's folder, for a stdio connector that runs in it. */
-  readonly #cwds = new Map<string, string>();
+  readonly #sessions = new Map<string, SessionSlot>();
+  /** Moved on by `stopBridges` so an in-flight stdio start never spawns after a change, disable, or removal. */
+  readonly #bridgeEpochs = new Map<string, number>();
+  /** Connectors currently updating or being removed: no new stdio process may spawn until the transition finishes. */
+  readonly #stopping = new Map<string, number>();
   #gateway: McpGateway | undefined;
 
   constructor(options: {
@@ -77,7 +88,12 @@ export class ConnectorTraffic {
     this.#gateway ??= McpGateway.start((session, connector, request) =>
       this.#forward(session, connector, request),
     );
-    this.#cwds.set(sessionId, cwd);
+    this.#sessions.set(sessionId, {
+      cwd,
+      bridges: new Map(),
+      starting: new Map(),
+      active: true,
+    });
     const key = this.#gateway.grant(
       sessionId,
       entries.map((e) => e.id),
@@ -97,23 +113,50 @@ export class ConnectorTraffic {
   /** The session's agent is gone: its key stops working and its connector processes end. */
   release(sessionId: string): void {
     this.#gateway?.revoke(sessionId);
-    const bridges = this.#bridges.get(sessionId);
-    this.#bridges.delete(sessionId);
-    this.#cwds.delete(sessionId);
-    for (const bridge of bridges?.values() ?? []) bridge.stop();
+    const slot = this.#sessions.get(sessionId);
+    if (slot === undefined) return;
+    slot.active = false;
+    this.#sessions.delete(sessionId);
+    slot.starting.clear();
+    for (const bridge of slot.bridges.values()) bridge.stop();
+    slot.bridges.clear();
   }
 
   close(): void {
-    for (const sessionId of [...this.#bridges.keys()]) this.release(sessionId);
+    for (const sessionId of [...this.#sessions.keys()]) this.release(sessionId);
     this.#gateway?.stop();
     this.#gateway = undefined;
   }
 
+  #bridgeEpoch(connectorId: string): number {
+    return this.#bridgeEpochs.get(connectorId) ?? 0;
+  }
+
   stopBridges(connectorId: string): void {
-    for (const bridges of this.#bridges.values()) {
-      bridges.get(connectorId)?.stop();
-      bridges.delete(connectorId);
+    this.#bridgeEpochs.set(connectorId, this.#bridgeEpoch(connectorId) + 1);
+    for (const slot of this.#sessions.values()) {
+      slot.starting.delete(connectorId);
+      slot.bridges.get(connectorId)?.stop();
+      slot.bridges.delete(connectorId);
     }
+  }
+
+  /**
+   * Stops running and starting stdio bridges for `connectorId` and keeps any new one from spawning
+   * until the returned release callback runs after catalog, vault, and generation updates finish.
+   */
+  holdBridges(connectorId: string): () => void {
+    this.#stopping.set(connectorId, (this.#stopping.get(connectorId) ?? 0) + 1);
+    this.stopBridges(connectorId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.#stopping.get(connectorId) ?? 1) - 1;
+      if (left <= 0) this.#stopping.delete(connectorId);
+      else this.#stopping.set(connectorId, left);
+      this.stopBridges(connectorId);
+    };
   }
 
   async #forward(sessionId: string, connectorId: string, request: Request): Promise<Response> {
@@ -134,6 +177,9 @@ export class ConnectorTraffic {
         : {}),
     });
     let credentials = await this.#state.vault.get(entry.id);
+    if (this.#state.generation(entry.id) !== generation) {
+      return new Response("The connector changed", { status: 502 });
+    }
     if (origin !== undefined && filled(origin.headers, credentials.env) === undefined) {
       // Not sent with a hole where the person's key goes.
       return new Response("Set this connector's values in Cycle", { status: 401 });
@@ -143,9 +189,16 @@ export class ConnectorTraffic {
       response = await send(this.#fetch, url, held, credentialsOf(credentials));
       if (response.status === 401 && entry.auth.type === "oauth") {
         await response.body?.cancel().catch(() => undefined);
-        if (await this.#signIn.refresh(entry.id, credentials)) {
+        if (
+          (await this.#signIn.refresh(entry.id, credentials)) &&
+          this.#state.generation(entry.id) === generation
+        ) {
           credentials = await this.#state.vault.get(entry.id);
-          response = await send(this.#fetch, url, held, credentialsOf(credentials));
+          if (this.#state.generation(entry.id) === generation) {
+            response = await send(this.#fetch, url, held, credentialsOf(credentials));
+          } else {
+            response = new Response("Sign in to this connector in Cycle", { status: 401 });
+          }
         } else {
           // Its body is spent; the agent is told no, without the server's invitation to sign in.
           response = new Response("Sign in to this connector in Cycle", { status: 401 });
@@ -157,7 +210,7 @@ export class ConnectorTraffic {
       return new Response("The connector could not be reached", { status: 502 });
     }
     if (response.status === 401 && origin !== undefined && entry.auth.type === "none") {
-      await this.#plugins.needsSignIn(entry.id, generation);
+      await this.#plugins.needsSignIn(entry.id, generation, serverOf(entry));
     }
     if (response.status === 401 || response.status === 403) {
       this.#state.setRuntime(
@@ -173,6 +226,69 @@ export class ConnectorTraffic {
     return response;
   }
 
+  #startStdio(
+    slot: SessionSlot,
+    connectorId: string,
+    transport: StdioTransport,
+    generation: number,
+  ): Promise<StdioStartResult> {
+    const existing = slot.starting.get(connectorId);
+    if (existing !== undefined) return existing;
+    if ((this.#stopping.get(connectorId) ?? 0) > 0) {
+      return Promise.resolve({
+        ok: false,
+        status: 502,
+        message: "The connector changed while starting",
+      });
+    }
+    const bridgeEpoch = this.#bridgeEpoch(connectorId);
+    const pending = (async (): Promise<StdioStartResult> => {
+      const credentials = await this.#state.vault.get(connectorId);
+      const current = await this.#state.catalog.get(connectorId);
+      if (!slot.active) return { ok: false, status: 401, message: "Unauthorized" };
+      if (current === undefined || !current.enabled || current.transport.type !== "stdio") {
+        return { ok: false, status: 404, message: "Not found" };
+      }
+      if (
+        (this.#stopping.get(connectorId) ?? 0) > 0 ||
+        this.#state.generation(connectorId) !== generation ||
+        this.#bridgeEpoch(connectorId) !== bridgeEpoch
+      ) {
+        return { ok: false, status: 502, message: "The connector changed while starting" };
+      }
+      const env: Record<string, string> = {};
+      for (const name of STDIO_ENV_ALLOWLIST) {
+        const value = this.#env[name];
+        if (value !== undefined) env[name] = value;
+      }
+      Object.assign(env, credentials.env);
+      const cwd = transport.cwd ?? slot.cwd;
+      let spawned: ReturnType<Spawn>;
+      try {
+        spawned = this.#spawn([transport.command, ...transport.args], { cwd, env });
+      } catch {
+        this.#state.setRuntime(connectorId, generation, { state: "error", reason: "spawn_failed" });
+        return { ok: false, status: 502, message: "The connector could not be started" };
+      }
+      const started = new StdioBridge(spawned, (failed) => {
+        if (slot.bridges.get(connectorId) === started) slot.bridges.delete(connectorId);
+        // Said under the settings it was started with: a change stops it and starts afresh.
+        if (failed) {
+          this.#state.setRuntime(connectorId, generation, {
+            state: "error",
+            reason: "spawn_failed",
+          });
+        }
+      });
+      slot.bridges.set(connectorId, started);
+      return { ok: true, bridge: started };
+    })().finally(() => {
+      if (slot.starting.get(connectorId) === pending) slot.starting.delete(connectorId);
+    });
+    slot.starting.set(connectorId, pending);
+    return pending;
+  }
+
   async #stdio(
     sessionId: string,
     entry: CatalogEntry,
@@ -180,41 +296,13 @@ export class ConnectorTraffic {
     generation: number,
     request: Request,
   ): Promise<Response> {
-    let bridges = this.#bridges.get(sessionId);
-    if (bridges === undefined) {
-      bridges = new Map();
-      this.#bridges.set(sessionId, bridges);
-    }
-    let bridge = bridges.get(entry.id);
+    const slot = this.#sessions.get(sessionId);
+    if (slot === undefined || !slot.active) return new Response("Unauthorized", { status: 401 });
+    let bridge = slot.bridges.get(entry.id);
     if (bridge === undefined) {
-      const credentials = await this.#state.vault.get(entry.id);
-      const env: Record<string, string> = {};
-      for (const name of STDIO_ENV_ALLOWLIST) {
-        const value = this.#env[name];
-        if (value !== undefined) env[name] = value;
-      }
-      Object.assign(env, credentials.env);
-      const cwd = transport.cwd ?? this.#cwds.get(sessionId) ?? this.#env.HOME ?? "/";
-      let spawned: ReturnType<Spawn>;
-      try {
-        spawned = this.#spawn([transport.command, ...transport.args], { cwd, env });
-      } catch {
-        this.#state.setRuntime(entry.id, generation, { state: "error", reason: "spawn_failed" });
-        return new Response("The connector could not be started", { status: 502 });
-      }
-      const mine = bridges;
-      const started = new StdioBridge(spawned, (failed) => {
-        if (mine.get(entry.id) === started) mine.delete(entry.id);
-        // Said under the settings of now: a process is stopped when the ones it was started with change.
-        if (failed) {
-          this.#state.setRuntime(entry.id, this.#state.generation(entry.id), {
-            state: "error",
-            reason: "spawn_failed",
-          });
-        }
-      });
-      bridge = started;
-      bridges.set(entry.id, bridge);
+      const started = await this.#startStdio(slot, entry.id, transport, generation);
+      if (!started.ok) return new Response(started.message, { status: started.status });
+      bridge = started.bridge;
     }
     const response = await bridge.handle(request);
     if (response.ok) this.#state.setRuntime(entry.id, generation, undefined);
