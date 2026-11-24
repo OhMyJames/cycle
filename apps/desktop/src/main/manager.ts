@@ -121,6 +121,14 @@ type Watched = {
   version: number;
 };
 
+/** Where a request waiting for an answer is held: found by its key without going through every session. */
+type PendingAt = {
+  environmentId: string;
+  sessionId: string;
+  connection: Connection;
+  watched: Watched;
+};
+
 type Connection = {
   client: CycleClient;
   status: EnvironmentStatus;
@@ -300,6 +308,8 @@ export class ConnectionManager implements ManagerApi {
   /** Why the last attempt to connect to an environment failed, for a renderer that asks after the event went by. */
   readonly #lastError = new Map<string, string>();
   readonly #lastIncompatible = new Map<string, NonNullable<EnvironmentStatus["incompatible"]>>();
+  /** Every request waiting for an answer, by its key: what `watched.pending` holds, indexed across connections. */
+  readonly #pendingByKey = new Map<string, PendingAt>();
   /** The sign-in waiting for the browser: one at a time, a new one stops it. */
   #signIn: AbortController | undefined;
 
@@ -328,6 +338,7 @@ export class ConnectionManager implements ManagerApi {
     this.#signIn?.abort();
     for (const connection of this.#connections.values()) await connection.client.close();
     this.#connections.clear();
+    this.#pendingByKey.clear();
   }
 
   // ---- environments ----
@@ -413,6 +424,7 @@ export class ConnectionManager implements ManagerApi {
   async connect(environmentId: string): Promise<void> {
     const existing = this.#connections.get(environmentId);
     if (existing && existing.status.state !== "closed") return;
+    if (existing !== undefined) this.#forgetPending(existing);
     const environment = this.#environments.find((h) => h.id === environmentId);
     if (environment === undefined) throw new Error(`No such environment: ${environmentId}`);
 
@@ -522,6 +534,7 @@ export class ConnectionManager implements ManagerApi {
       // Removed or replaced while it was starting: what is there now is not this attempt's to change.
       if (this.#connections.get(environmentId) !== connection) throw error;
       this.#connections.delete(environmentId);
+      this.#forgetPending(connection);
       this.#lastError.set(environmentId, messageOf(error));
       const incompatible = this.#incompatibleOf(error, environment);
       if (incompatible !== undefined) this.#lastIncompatible.set(environmentId, incompatible);
@@ -543,6 +556,7 @@ export class ConnectionManager implements ManagerApi {
       // A daemon that answers but cannot list is not usable: say so, instead of sitting connected with no list.
       const current = this.#connections.get(environmentId) === connection;
       if (current) this.#connections.delete(environmentId);
+      this.#forgetPending(connection);
       await connection.client.close().catch(() => undefined);
       if (!current) throw error;
       this.#lastError.set(environmentId, messageOf(error));
@@ -676,6 +690,7 @@ export class ConnectionManager implements ManagerApi {
     for (const watched of connection.watched.values()) {
       for (const pending of watched.pending.values()) pending.answer({ outcome: "cancelled" });
     }
+    this.#forgetPending(connection);
     await connection.client.close();
     this.#options.emit({ type: "environment-status", environmentId, state: "closed" });
   }
@@ -851,6 +866,7 @@ export class ConnectionManager implements ManagerApi {
     const watched = connection.watched.get(sessionId);
     if (watched === undefined) return;
     for (const pending of watched.pending.values()) pending.answer({ outcome: "cancelled" });
+    this.#forgetPending(connection, sessionId);
     connection.watched.delete(sessionId);
   }
 
@@ -859,6 +875,7 @@ export class ConnectionManager implements ManagerApi {
     const watched = connection.watched.get(sessionId);
     if (watched === undefined) return;
     for (const pending of watched.pending.values()) pending.answer({ outcome: "cancelled" });
+    this.#forgetPending(connection, sessionId);
     connection.watched.delete(sessionId);
     // The renderer drops the view (and with it the permission dialogs), the draft and the selection.
     this.#options.emit({ type: "session-gone", environmentId, sessionId });
@@ -1100,6 +1117,7 @@ export class ConnectionManager implements ManagerApi {
   async deleteSession(environmentId: string, sessionId: string): Promise<void> {
     const connection = this.#connection(environmentId);
     await connection.client.delete(sessionId);
+    this.#forgetPending(connection, sessionId);
     connection.watched.delete(sessionId);
     this.#track("session_deleted", {});
   }
@@ -1150,6 +1168,7 @@ export class ConnectionManager implements ManagerApi {
         ...(form !== undefined ? { answerForm: form.resolve } : {}),
         stale: false,
       });
+      this.#pendingByKey.set(key, { environmentId, sessionId, connection, watched });
       if (old === undefined) {
         watched.version += 1;
         this.#options.emit({ type: "permission", request: built, version: watched.version });
@@ -1187,67 +1206,86 @@ export class ConnectionManager implements ManagerApi {
     });
   }
 
-  async answerForm(key: string, answer: unknown): Promise<void> {
-    for (const [environmentId, connection] of this.#connections) {
-      for (const [sessionId, watched] of connection.watched) {
-        const pending = watched.pending.get(key);
-        if (pending?.answerForm === undefined) continue;
-        // Only the fields the form asked for go on.
-        const checked = formAnswerOf(answer, fieldsAsked(pending.request.form?.schema));
-        pending.answerForm(checked);
-        // The request that holds the form is settled too: it was answered, nothing waits on it.
-        pending.answer({ outcome: "cancelled" });
-        // What was done with it, never what was written in it.
-        this.#track("form_answered", {
-          outcome:
-            checked.action === "accept"
-              ? "answered"
-              : checked.action === "decline"
-                ? "declined"
-                : "dismissed",
-        });
-        this.#closePermission(environmentId, sessionId, watched, key);
-        return;
-      }
+  /**
+   * The request waiting under `key`, if it still is: the index is checked against what holds the request, so a
+   * connection that was replaced or a session no longer watched never answers.
+   */
+  #findPending(key: string): (PendingAt & { pending: Pending }) | undefined {
+    const at = this.#pendingByKey.get(key);
+    if (at === undefined) return undefined;
+    const pending = at.watched.pending.get(key);
+    if (
+      pending === undefined ||
+      this.#connections.get(at.environmentId) !== at.connection ||
+      at.connection.watched.get(at.sessionId) !== at.watched
+    ) {
+      this.#pendingByKey.delete(key);
+      return undefined;
     }
+    return { ...at, pending };
+  }
+
+  /** Drops from the index the requests of a connection, or of one session of it, that is no longer held. */
+  #forgetPending(connection: Connection, sessionId?: string): void {
+    const sessions =
+      sessionId === undefined ? connection.watched.values() : [connection.watched.get(sessionId)];
+    for (const watched of sessions)
+      for (const key of watched?.pending.keys() ?? []) this.#pendingByKey.delete(key);
+  }
+
+  async answerForm(key: string, answer: unknown): Promise<void> {
+    const found = this.#findPending(key);
+    if (found?.pending.answerForm === undefined) return;
+    const { environmentId, sessionId, watched, pending } = found;
+    // Only the fields the form asked for go on.
+    const checked = formAnswerOf(answer, fieldsAsked(pending.request.form?.schema));
+    pending.answerForm?.(checked);
+    // The request that holds the form is settled too: it was answered, nothing waits on it.
+    pending.answer({ outcome: "cancelled" });
+    // What was done with it, never what was written in it.
+    this.#track("form_answered", {
+      outcome:
+        checked.action === "accept"
+          ? "answered"
+          : checked.action === "decline"
+            ? "declined"
+            : "dismissed",
+    });
+    this.#closePermission(environmentId, sessionId, watched, key);
   }
 
   async answerPermission(key: string, optionId: string | "cancelled"): Promise<void> {
-    for (const [environmentId, connection] of this.#connections) {
-      for (const [sessionId, watched] of connection.watched) {
-        const pending = watched.pending.get(key);
-        if (pending === undefined) continue;
-        // A form is answered with `answerForm`; here it can only be dismissed.
-        if (pending.answerForm !== undefined) {
-          if (optionId === "cancelled") await this.answerForm(key, { action: "cancel" });
-          return;
-        }
-        pending.answer(
-          optionId === "cancelled" ? { outcome: "cancelled" } : { outcome: "selected", optionId },
-        );
-        // Which kind of answer (ACP names them allow_once, allow_always, reject_once, reject_always), never what was asked.
-        const kind =
-          optionId === "cancelled"
-            ? "cancelled"
-            : (pending.request.options.find((o) => o.optionId === optionId)?.kind ?? "");
-        const outcome = kind.startsWith("allow")
-          ? "allowed"
-          : kind.startsWith("reject")
-            ? "rejected"
-            : kind === "cancelled"
-              ? "cancelled"
-              : undefined;
-        // An answer that is none of these (an option of a kind this does not know) is not counted as another.
-        if (outcome !== undefined)
-          this.#track("permission_answered", {
-            outcome,
-            remembered: kind.endsWith("_always"),
-            queued: watched.pending.size - 1,
-          });
-        this.#closePermission(environmentId, sessionId, watched, key);
-        return;
-      }
+    const found = this.#findPending(key);
+    if (found === undefined) return;
+    const { environmentId, sessionId, watched, pending } = found;
+    // A form is answered with `answerForm`; here it can only be dismissed.
+    if (pending.answerForm !== undefined) {
+      if (optionId === "cancelled") await this.answerForm(key, { action: "cancel" });
+      return;
     }
+    pending.answer(
+      optionId === "cancelled" ? { outcome: "cancelled" } : { outcome: "selected", optionId },
+    );
+    // Which kind of answer (ACP names them allow_once, allow_always, reject_once, reject_always), never what was asked.
+    const kind =
+      optionId === "cancelled"
+        ? "cancelled"
+        : (pending.request.options.find((o) => o.optionId === optionId)?.kind ?? "");
+    const outcome = kind.startsWith("allow")
+      ? "allowed"
+      : kind.startsWith("reject")
+        ? "rejected"
+        : kind === "cancelled"
+          ? "cancelled"
+          : undefined;
+    // An answer that is none of these (an option of a kind this does not know) is not counted as another.
+    if (outcome !== undefined)
+      this.#track("permission_answered", {
+        outcome,
+        remembered: kind.endsWith("_always"),
+        queued: watched.pending.size - 1,
+      });
+    this.#closePermission(environmentId, sessionId, watched, key);
   }
 
   /**
@@ -1273,6 +1311,7 @@ export class ConnectionManager implements ManagerApi {
 
   #closePermission(environmentId: string, sessionId: string, watched: Watched, key: string): void {
     watched.pending.delete(key);
+    if (this.#pendingByKey.get(key)?.watched === watched) this.#pendingByKey.delete(key);
     watched.version += 1;
     this.#options.emit({
       type: "permission-closed",
