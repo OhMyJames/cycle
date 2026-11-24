@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { McpServer } from "@agentclientprotocol/sdk/experimental/v2";
 import {
   type Connector,
@@ -184,6 +185,12 @@ export class ConnectorService {
   readonly #spawn: Spawn;
   readonly #env: Record<string, string | undefined>;
   readonly #runtime = new Map<string, Runtime>();
+  /**
+   * Each connector's settings, counted: moved on by every change to what its requests are (another address, other
+   * headers or values, another sign-in, switched on again). What a request learns is kept only under the settings it
+   * was sent with, so an answer to the old ones that comes in late does not say anything of the new.
+   */
+  readonly #generations = new Map<string, number>();
   readonly #bridges = new Map<string, SessionBridges>();
   /** Each session's folder, for a stdio connector that runs in it. */
   readonly #cwds = new Map<string, string>();
@@ -231,7 +238,18 @@ export class ConnectorService {
     for (const listener of this.#listeners) listener();
   }
 
-  #setRuntime(id: string, runtime: Runtime | undefined): void {
+  #generation(id: string): number {
+    return this.#generations.get(id) ?? 0;
+  }
+
+  /** Its settings changed: what was learnt of the old ones is no longer said, nor learnt from a request still out. */
+  #reset(id: string): void {
+    this.#runtime.delete(id);
+    this.#generations.set(id, this.#generation(id) + 1);
+  }
+
+  #setRuntime(id: string, generation: number, runtime: Runtime | undefined): void {
+    if (generation !== this.#generation(id)) return;
     const before = JSON.stringify(this.#runtime.get(id));
     if (runtime === undefined) this.#runtime.delete(id);
     else this.#runtime.set(id, runtime);
@@ -371,8 +389,14 @@ export class ConnectorService {
       return rest;
     });
     await this.#catalog.put(entry);
-    // Another server, or other keys: what was last known of it (a refusal of the old key) is no longer said.
-    if (!sameServer || params.secrets !== undefined) this.#runtime.delete(entry.id);
+    // Another server, other keys or sign-in, or switched on again: what was last known of it (a refusal of the old
+    // key, a server that was down) is no longer said, and a plugin's server is asked afresh.
+    const fresh =
+      !sameServer ||
+      params.auth !== undefined ||
+      params.secrets !== undefined ||
+      (entry.enabled && !before.enabled);
+    if (fresh) this.#renewed(entry);
     // A process started with the old command, values or switch does not go on with them.
     if (!sameServer || params.secrets?.env !== undefined || !entry.enabled) {
       this.#stopBridges(entry.id);
@@ -399,7 +423,7 @@ export class ConnectorService {
     // After the queued changes: none of them can write the credentials back.
     await (this.#locks.get(id) ?? Promise.resolve());
     await this.#vault.remove(entry.id);
-    this.#runtime.delete(id);
+    this.#reset(id);
   }
 
   // ---- what plugins bring ----
@@ -485,11 +509,16 @@ export class ConnectorService {
             this.#broker.forget(entry.id);
             await this.#broker.revoke(await this.#vault.get(entry.id));
             await this.#mutate(entry.id, () => ({ headers: {}, env: {} }));
-            this.#runtime.delete(entry.id);
           }
+          // Another address, other headers, or switched on again: what the last request learnt (a refusal of the old
+          // headers, a server that was down) is no longer said, and the server is asked afresh.
+          const fresh =
+            moved ||
+            !isDeepStrictEqual(before.origin?.headers, origin.headers) ||
+            (spec.enabled && !before.enabled);
           await this.#catalog.put(entry);
+          if (fresh) this.#renewed(entry);
           changed = true;
-          if (moved && spec.enabled) void this.#probe(entry.id);
         }
       }
       let ofPlugin = made.get(spec.pluginId);
@@ -507,9 +536,22 @@ export class ConnectorService {
     return made;
   }
 
-  /** A plugin's server signs in when it answers 401 to a request with no token: what MCP's authorization says it does. */
-  async #needsSignIn(id: string): Promise<void> {
+  /**
+   * Its settings, as now written, are not what they were: nothing learnt of the old is said any more, and a plugin's
+   * server is asked afresh whether it wants a sign-in.
+   */
+  #renewed(entry: CatalogEntry): void {
+    this.#reset(entry.id);
+    if (entry.enabled && entry.origin !== undefined) void this.#probe(entry.id);
+  }
+
+  /**
+   * A plugin's server signs in when it answers 401 to a request with no token: what MCP's authorization says it does.
+   * `generation`: the settings the request was sent with; a 401 to settings since changed says nothing.
+   */
+  async #needsSignIn(id: string, generation: number): Promise<void> {
     const entry = await this.#catalog.get(id);
+    if (generation !== this.#generation(id)) return;
     if (entry?.origin === undefined || entry.auth.type !== "none") return;
     // A plugin that carries a credential of its own (an `Authorization` header, or a key the person types into any
     // header) is refused because that is wrong, not because it wants a sign-in.
@@ -518,12 +560,13 @@ export class ConnectorService {
       Object.keys(entry.origin.headers).some((name) => name.toLowerCase() === "authorization");
     if (own) return;
     await this.#catalog.put({ ...entry, auth: { type: "oauth" } });
-    this.#runtime.delete(id);
+    this.#reset(id);
     this.#changed();
   }
 
   /** Asks a plugin's server once, as an agent would begin, whether it wants a sign-in. */
   async #probe(id: string): Promise<void> {
+    const generation = this.#generation(id);
     try {
       const entry = await this.#catalog.get(id);
       if (entry?.origin === undefined || entry.transport.type !== "http") return;
@@ -550,7 +593,7 @@ export class ConnectorService {
         signal: AbortSignal.timeout(10_000),
       });
       await response.body?.cancel().catch(() => undefined);
-      if (response.status === 401) await this.#needsSignIn(id);
+      if (response.status === 401) await this.#needsSignIn(id, generation);
     } catch {
       // Not reachable now: it is asked again by the first request an agent makes.
     }
@@ -617,7 +660,7 @@ export class ConnectorService {
         tokens: exchanged.oauth?.tokens,
       },
     }));
-    this.#runtime.delete(entry.id);
+    this.#reset(entry.id);
     this.#changed();
     return this.#view(entry);
   }
@@ -630,7 +673,7 @@ export class ConnectorService {
       const { oauth: _gone, ...rest } = current;
       return rest;
     });
-    this.#runtime.delete(id);
+    this.#reset(id);
     this.#changed();
     return this.#view(entry);
   }
@@ -702,9 +745,11 @@ export class ConnectorService {
   }
 
   async #forward(sessionId: string, connectorId: string, request: Request): Promise<Response> {
+    // Read with the entry, before anything is awaited: what this request learns is of these settings.
+    const generation = this.#generation(connectorId);
     const entry = await this.#catalog.get(connectorId);
     if (entry === undefined || !entry.enabled) return new Response("Not found", { status: 404 });
-    if (entry.transport.type === "stdio") return this.#stdio(sessionId, entry, request);
+    if (entry.transport.type === "stdio") return this.#stdio(sessionId, entry, generation, request);
     const url = entry.transport.url;
     const held = await hold(request);
     const origin = entry.origin;
@@ -735,21 +780,22 @@ export class ConnectorService {
       }
     } catch {
       if (!held.signal.aborted)
-        this.#setRuntime(entry.id, { state: "error", reason: "unreachable" });
+        this.#setRuntime(entry.id, generation, { state: "error", reason: "unreachable" });
       return new Response("The connector could not be reached", { status: 502 });
     }
     if (response.status === 401 && origin !== undefined && entry.auth.type === "none") {
-      await this.#needsSignIn(entry.id);
+      await this.#needsSignIn(entry.id, generation);
     }
     if (response.status === 401 || response.status === 403) {
       this.#setRuntime(
         entry.id,
+        generation,
         entry.auth.type === "oauth"
           ? { state: "needs_auth" }
           : { state: "error", reason: "auth_failed" },
       );
     } else if (response.status < 500) {
-      this.#setRuntime(entry.id, undefined);
+      this.#setRuntime(entry.id, generation, undefined);
     }
     return response;
   }
@@ -777,7 +823,12 @@ export class ConnectorService {
     return run;
   }
 
-  async #stdio(sessionId: string, entry: CatalogEntry, request: Request): Promise<Response> {
+  async #stdio(
+    sessionId: string,
+    entry: CatalogEntry,
+    generation: number,
+    request: Request,
+  ): Promise<Response> {
     if (entry.transport.type !== "stdio") return new Response(null, { status: 404 });
     let bridges = this.#bridges.get(sessionId);
     if (bridges === undefined) {
@@ -798,19 +849,25 @@ export class ConnectorService {
       try {
         spawned = this.#spawn([entry.transport.command, ...entry.transport.args], { cwd, env });
       } catch {
-        this.#setRuntime(entry.id, { state: "error", reason: "spawn_failed" });
+        this.#setRuntime(entry.id, generation, { state: "error", reason: "spawn_failed" });
         return new Response("The connector could not be started", { status: 502 });
       }
       const mine = bridges;
       const started = new StdioBridge(spawned, (failed) => {
         if (mine.get(entry.id) === started) mine.delete(entry.id);
-        if (failed) this.#setRuntime(entry.id, { state: "error", reason: "spawn_failed" });
+        // Said under the settings of now: a process is stopped when the ones it was started with change.
+        if (failed) {
+          this.#setRuntime(entry.id, this.#generation(entry.id), {
+            state: "error",
+            reason: "spawn_failed",
+          });
+        }
       });
       bridge = started;
       bridges.set(entry.id, bridge);
     }
     const response = await bridge.handle(request);
-    if (response.ok) this.#setRuntime(entry.id, undefined);
+    if (response.ok) this.#setRuntime(entry.id, generation, undefined);
     return response;
   }
 }
