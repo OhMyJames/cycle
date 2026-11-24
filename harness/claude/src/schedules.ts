@@ -4,6 +4,8 @@
 // 0.3.327, CYCL-119). So a process is kept while one of them is due soon (CYCL-145), and clients are told the list
 // (`_cycle/schedule_update`, docs/protocol.md §9, CYCL-146).
 
+import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+
 /** The `sessionUpdate` of the list: `@cycle/protocol`'s `SCHEDULE_UPDATE`; the adapter stays self-contained. */
 export const SCHEDULE_UPDATE = "_cycle/schedule_update";
 
@@ -446,3 +448,57 @@ export class Schedules {
     });
   }
 }
+
+/**
+ * A wakeup or cron the process set or unset in `message`, noted in `schedules`: told now, and kept in case the turn ends
+ * without the Stop hook. True when what clients were told may have changed.
+ */
+export const scheduledBy = (schedules: Schedules, message: SDKMessage): boolean => {
+  if (message.type === "assistant") {
+    for (const block of message.message.content as { type: string }[]) {
+      if (block.type !== "tool_use") continue;
+      const use = block as unknown as { id: string; name: string; input: unknown };
+      schedules.asked(use.id, use.name, use.input);
+    }
+    return false;
+  }
+  if (message.type !== "user") return false;
+  const blocks = (message.message as { content?: unknown }).content;
+  const answered = Array.isArray(blocks)
+    ? (blocks as { type?: string; tool_use_id?: string }[])
+        .filter((b) => b.type === "tool_result")
+        .map((b) => b.tool_use_id)
+    : [];
+  // The structured result is one call's: it goes with a message of one result only.
+  const result =
+    answered.length === 1 ? (message as { tool_use_result?: unknown }).tool_use_result : undefined;
+  let scheduling = false;
+  for (const id of answered.length > 0 ? answered : [undefined]) {
+    if (schedules.called(id, result)) scheduling = true;
+  }
+  return scheduling;
+};
+
+/**
+ * Only read: at the end of every turn Claude says here what is set to wake the session, which is not said anywhere else.
+ * The hook decides nothing, so the turn ends as it would without it.
+ */
+export const scheduleHooks = (
+  schedules: Schedules,
+  changed: () => void,
+): NonNullable<Options["hooks"]> => ({
+  Stop: [
+    {
+      hooks: [
+        async (input) => {
+          const crons = cronsOf(input);
+          if (crons !== undefined) {
+            schedules.told(crons, Date.now());
+            changed();
+          }
+          return {};
+        },
+      ],
+    },
+  ],
+});

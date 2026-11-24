@@ -10,6 +10,10 @@
 
 一个 session 一个 Claude 进程(流式输入),空闲 5 分钟释放,取消用 `interrupt`,详见 [决策 0007](../decisions/0007-resident-claude-process.md)。真实模型:首个回合 2.7 秒,同一进程里的后续回合 1.5 秒。一个空闲的进程约 230 MB。
 
+## 代码结构
+
+分两层(CYCL-250):`src/agent.ts` 只管 ACP,读请求、回答;session、进程和 turn 的生命周期在 `src/lifecycle.ts`(`Lifecycle`:起进程、读它的输出、结束 turn、空闲释放、取消)。其余各自一个模块:`process.ts` 起一个 Claude 进程(输入队列和 `Options`),`session.ts` 是 session 和 turn 的状态,`events.ts` 处理 turn 之外的消息(压缩、命令、模式、任务、重试),`permissions.ts` 是权限卡和表单,`config-options.ts` 是模型、effort、权限模式的选项,`usage.ts` 是用量和套餐用量,`schedules.ts` 是定时调用(含 Stop hook)。子 agent(`subagents.ts`)和其他后台任务(`tasks.ts`)共用 `task-ledger.ts` 记哪些任务已告知、在哪一轮运行、离开清单和进程退出时怎样结束。
+
 ## 启动与配置
 
 - 入口 `src/main.ts`。所有配置通过环境变量 `CYCLE_ADAPTER_CONFIG`(JSON)传入:`{ env, claudeExecutable? }`。
@@ -43,7 +47,7 @@
 
 ## 权限模式
 
-取值是 SDK `PermissionMode` 的原值,不改名(存进配置和索引的就是它);给人看的名字和说明只在 `CLAUDE_PERMISSION_MODES`(`harness/claude/src/agent.ts`)里写一次,ACP 的 `configOptions` 和 daemon 的 `configSchema`(`oneOf`)都从它生成。
+取值是 SDK `PermissionMode` 的原值,不改名(存进配置和索引的就是它);给人看的名字和说明只在 `CLAUDE_PERMISSION_MODES`(`harness/claude/src/config-options.ts`)里写一次,ACP 的 `configOptions` 和 daemon 的 `configSchema`(`oneOf`)都从它生成。
 
 | 值                  | 名字               | 说明(界面上显示的英文原文)                                                                                                     |
 | ------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
