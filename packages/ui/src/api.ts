@@ -561,6 +561,10 @@ export type PluginInfo = {
     | undefined;
   /** Its MCP servers: `cycle` is one Cycle serves as the connector named, `agent` one the agent starts itself. */
   servers?: { name: string; by: "cycle" | "agent"; connectorId?: string | undefined }[] | undefined;
+  /** Shipped with Cycle: it can be turned off, not uninstalled. */
+  builtin?: boolean | undefined;
+  /** Its picture as a `data:image/` URL: only a built-in plugin has one. */
+  icon?: string | undefined;
 };
 
 /** Why an agent's plugin machinery did not do it: a fixed word the page has a sentence for. */

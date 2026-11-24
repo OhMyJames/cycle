@@ -175,6 +175,15 @@
   overflow-y: auto;
 }
 
+/* A built-in plugin's picture, before its state dot: the same 16px column as an agent's logo. */
+[data-slot="plugin-icon"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 6px;
+  border-radius: var(--cycle-radius-sm);
+}
+
 /* A plugin's row (CYCL-84): what it is in one line that is cut at its end, its facts before it. */
 [data-slot="plugin-facts"] {
   /* Its own line too, and one that wraps: in a narrow window the facts are more than a line. */

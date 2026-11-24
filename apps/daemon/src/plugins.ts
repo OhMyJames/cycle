@@ -27,7 +27,19 @@ export type ProviderServer = {
   http?: { url: string; headers: Record<string, string> };
 };
 
-export type ProviderPlugin = Omit<Plugin, "agentId" | "servers"> & { servers?: ProviderServer[] };
+export type ProviderPlugin = Omit<Plugin, "agentId" | "servers" | "builtin" | "icon"> & {
+  servers?: ProviderServer[];
+};
+
+/**
+ * What ships with Cycle (packages/clawdot-plugins): a marketplace `root` of plugins, each in its own `dir` and in
+ * Claude's layout, which Claude and Codex read as they are and agy converts as it installs.
+ */
+export type BuiltinBundle = {
+  root: string;
+  marketplace: string;
+  plugins: { name: string; version: string; dir: string; icon?: string }[];
+};
 
 export type ProviderSnapshot = {
   sources: ProviderSource[];
@@ -52,6 +64,11 @@ export interface PluginProvider {
   addSource(location: string): Promise<string>;
   removeSource(id: string): Promise<void>;
   refreshSource(id?: string): Promise<void>;
+  /**
+   * Makes what ships with Cycle installed, and newer when Cycle is: nothing the person turned off is turned on, and
+   * what is there already is not asked again. Absent: the agent has none.
+   */
+  ensureBuiltin?(bundle: BuiltinBundle): Promise<void>;
 }
 
 /** How long an agent's answer is believed before it is asked again. Every change made here asks again at once. */
@@ -76,6 +93,10 @@ export class PluginService {
   readonly #connectors: ConnectorService;
   readonly #onChanged: (agentId: string) => void;
   readonly #now: () => number;
+  readonly #builtin: BuiltinBundle | undefined;
+  readonly #warn: ((agentId: string, error: unknown) => void) | undefined;
+  /** Each agent's last making-it-so that worked or is under way. */
+  readonly #builtins = new Map<string, Promise<void>>();
   readonly #views = new Map<string, { at: number; view: Promise<View> }>();
   /** When each agent's connectors were last made what is installed, apart from a view being read. */
   readonly #syncedAt = new Map<string, number>();
@@ -87,7 +108,13 @@ export class PluginService {
     connectors: ConnectorService;
     onChanged: (agentId: string) => void;
     now?: () => number;
+    /** What ships with Cycle, installed for every agent that can without being asked. */
+    builtin?: BuiltinBundle;
+    /** Told when making it so failed: it is tried again before the agent next starts. */
+    warn?: (agentId: string, error: unknown) => void;
   }) {
+    this.#builtin = options.builtin;
+    this.#warn = options.warn;
     this.#providers = options.providers;
     this.#connectors = options.connectors;
     this.#onChanged = options.onChanged;
@@ -128,6 +155,34 @@ export class PluginService {
   }
 
   /**
+   * What ships with Cycle is installed for each agent that has plugins: quietly, as one change among the agent's
+   * others. Once done it is not done again until the daemon restarts; a failure (the agent not installed yet, no
+   * network) is not kept, so the next call tries again. It is never an error for the caller.
+   */
+  ensureBuiltin(agentId: string): Promise<void> {
+    const bundle = this.#builtin;
+    const provider = this.#providers.get(agentId);
+    if (bundle === undefined || provider?.ensureBuiltin === undefined) return Promise.resolve();
+    const held = this.#builtins.get(agentId);
+    if (held !== undefined) return held;
+    const run = this.#change(agentId, (p) => p.ensureBuiltin?.(bundle) ?? Promise.resolve()).catch(
+      (error) => {
+        this.#builtins.delete(agentId);
+        this.#warn?.(agentId, error);
+      },
+    );
+    this.#builtins.set(agentId, run);
+    return run;
+  }
+
+  /** Every agent's, in the background. */
+  ensureBuiltins(): Promise<void> {
+    return Promise.all(this.agents().map((agentId) => this.ensureBuiltin(agentId))).then(
+      () => undefined,
+    );
+  }
+
+  /**
    * Before an agent starts: its plugins' connectors are made what is installed now, since a plugin can change without
    * anyone having looked (the agent updating one itself, a change made outside Cycle). Not asked again when the answer
    * is fresh; never in the way of the agent starting (it gives up after `withinMs`, and a failure is not one of the
@@ -136,6 +191,8 @@ export class PluginService {
   async beforeAgentStarts(agentId: string, withinMs = 3_000): Promise<void> {
     const provider = this.#providers.get(agentId);
     if (provider === undefined) return;
+    // Not waited for beyond `withinMs` like the rest: an agent is never kept from starting by it.
+    const built = this.ensureBuiltin(agentId);
     const held = this.#views.get(agentId);
     const fresh = Math.max(
       held?.at ?? Number.NEGATIVE_INFINITY,
@@ -143,6 +200,7 @@ export class PluginService {
     );
     if (this.#now() - fresh < SNAPSHOT_MS) return;
     const run = (async () => {
+      await built;
       const installed = await provider.installed();
       await this.#sync(agentId, installed);
       this.#syncedAt.set(agentId, this.#now());
@@ -157,6 +215,17 @@ export class PluginService {
     clearTimeout(timer);
   }
 
+  /**
+   * The shipped plugin this is, if it is one: by its id (`name@marketplace` in an agent with marketplaces, the name in
+   * one without), so a plugin of the same name from another source is not taken for it.
+   */
+  #shipped(plugin: { id: string; name: string }): BuiltinBundle["plugins"][number] | undefined {
+    const bundle = this.#builtin;
+    return bundle?.plugins.find(
+      (p) => plugin.id === p.name || plugin.id === `${p.name}@${bundle.marketplace}`,
+    );
+  }
+
   async #load(agentId: string): Promise<View> {
     let snapshot: ProviderSnapshot;
     try {
@@ -167,9 +236,18 @@ export class PluginService {
     const made = await this.#sync(agentId, snapshot.installed);
     const view = (plugin: ProviderPlugin): Plugin => {
       const { servers, ...rest } = plugin;
-      if (servers === undefined) return { ...rest, agentId };
+      const shipped = this.#shipped(plugin);
+      const builtin =
+        shipped !== undefined
+          ? {
+              builtin: true as const,
+              ...(shipped.icon !== undefined ? { icon: shipped.icon } : {}),
+            }
+          : {};
+      if (servers === undefined) return { ...rest, ...builtin, agentId };
       return {
         ...rest,
+        ...builtin,
         agentId,
         servers: servers.map((server) => {
           const connectorId = made.get(plugin.id)?.get(server.name);
@@ -273,6 +351,16 @@ export class PluginService {
   }
 
   async uninstall(agentId: string, id: string): Promise<void> {
+    // Refused only for what is known to ship with Cycle: anything else goes to the agent, as it always did.
+    const known = (await this.#view(agentId).catch(() => undefined))?.installed.find(
+      (plugin) => plugin.id === id,
+    );
+    if (known?.builtin === true) {
+      throw new RpcError(CycleErrorCode.PluginFailed, "The agent's plugins could not do that", {
+        reason: "failed",
+        detail: "A plugin that comes with Cycle can be turned off, not uninstalled",
+      });
+    }
     await this.#change(agentId, (provider) => provider.uninstall(id));
     // Its connectors go with it: asked again now, not when someone next looks.
     await this.#view(agentId).catch(() => undefined);
@@ -297,6 +385,8 @@ export class PluginService {
 
   async removeSource(agentId: string, id: string): Promise<void> {
     await this.#change(agentId, (provider) => provider.removeSource(id));
+    // It may have been the one the built-in plugins come from: they are made so again as the agent next starts.
+    this.#builtins.delete(agentId);
   }
 
   async refreshSource(agentId: string, id?: string): Promise<void> {

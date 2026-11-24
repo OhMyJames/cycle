@@ -1,0 +1,8 @@
+{
+  "name": "clawdot-itsaplan",
+  "version": "0.1.0",
+  "description": "How to work with Clawdot's Itsaplan project tracker (plan.ops.shrimpdot.ai) through its MCP server: issue keys, states, comments, commit messages.",
+  "author": {
+    "name": "Clawdot"
+  }
+}

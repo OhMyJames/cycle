@@ -62,6 +62,13 @@ await cp(join(root, "../../harness/codex/licenses"), join(out, "codex-resources/
 });
 if (process.platform === "linux")
   await cp(join(vendorDirectory(), "codex-resources/bwrap"), join(out, "codex-resources/bwrap"));
+// The plugins that ship with Cycle: the marketplace and each plugin's folder as they are (Claude and Codex read them,
+// agy converts them as it installs). Not the package's own code, its tests or its notes.
+for (const part of [".claude-plugin", "plugins"]) {
+  await cp(join(root, "../../packages/clawdot-plugins", part), join(out, "clawdot-plugins", part), {
+    recursive: true,
+  });
+}
 await cp(join(root, "scripts/install.sh"), join(out, "install.sh"));
 await chmod(join(out, "install.sh"), 0o755);
 await chmod(join(out, "cycle"), 0o755);

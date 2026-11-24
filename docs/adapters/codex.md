@@ -82,7 +82,8 @@
 ## 未做(显式列出,不要悄悄补)
 
 - "以后不问这类命令"(`acceptForSession`、`acceptWithExecpolicyAmendment`)这类审批选项:只给允许一次、拒绝一次。
-- goal(`thread/goal/*`)、后台终端、`/review`、plugin(`PluginProvider`)、Fast 档(`serviceTier`)、从桌面端发起登录(`account/login/start`)。
+- goal(`thread/goal/*`)、后台终端、`/review`、Fast 档(`serviceTier`)、从桌面端发起登录(`account/login/start`)。
+- **plugin**(protocol.md §15,`harness/codex/src/plugins.ts`):`CodexPlugins` 在 daemon 私有的 `CODEX_HOME` 下运行 `codex plugin list|add|remove|marketplace … --json`。`codex plugin` 没有启停命令,开关是 `config.toml` 的 `[plugins."<id>"] enabled`,只改这一行。`ensureBuiltin` 装随 Cycle 发的 plugin(`packages/clawdot-plugins`,见笔记 2026-11-24-builtin-plugins-are-installed-by-cycle)。plugin 自带的 MCP 服务器没有接网关,都标 `by: "agent"`。
 - `isSecret` 的问题没有单独处理:表单答案本来就不进日志(protocol.md §9)。
 - 沙箱拦下的工作区外写入,app-server 不发对应的 `commandExecution` item(容器里实测;模型看得到失败,客户端看不到这条命令)。是 Codex 的行为,适配器补不出来。
 - 长会话的内存没测(一个 session 是适配器加 app-server 两个进程)。
@@ -376,4 +377,4 @@ CYCL-155 的"每个 agent 一个顶层键":
 | 14  | 桌面端和埋点                                                   | 新建会话时能选 Codex;界面里写死 "Claude" 的地方按 agent 显示;`agent` 枚举加 `codex`,docs/analytics.md 字典同步                                                                                                                                                                                             | 界面测试:选 Codex 新建会话;事件里 agent 是 `codex` 而不是 `other`,且没有内容跟着发出去                                                                                                                                                    | **CYCL-155**(埋点认 agent id);3                           |
 | 15  | 真实模型和远端验证,文档收尾                                    | `harness/codex` 和 `apps/daemon` 的 `test:real`(token 只给 Codex 进程,不进 CI);一台远端 Linux 和一个容器里各跑一次,看沙箱;把本文从"调研"改成和 claude.md 一样的"已做/未做/验证结果"                                                                                                                        | claude.md "真实模型验证"那张表的每一行在 Codex 上有结果;Linux 沙箱的结论和退路写进文档;本文里的【推断】要么变成【实测】,要么删掉                                                                                                          | 2–10                                                      |
 
-不在这批里,等核心稳了再开:plugin(`PluginProvider`)、goal、后台任务、`/review`、"以后不问这类命令"的审批选项、从桌面端发起登录(设备码)、Fast 档。
+不在这批里,等核心稳了再开:goal、后台任务、`/review`、"以后不问这类命令"的审批选项、从桌面端发起登录(设备码)、Fast 档。
