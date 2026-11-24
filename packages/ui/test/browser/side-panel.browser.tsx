@@ -339,6 +339,8 @@ test("the panel opens as wide as the user left it, closed in between and after a
   await user.click(await screen.findByRole("option", { name: /first/ }));
   await user.click(await screen.findByRole("button", { name: "Show panel" }));
   await waitFor(() => expect(column("panel")).toBe(400), { timeout: 1000 });
+  // Open, not sliding to it: a key then would slide the handle too, and the width read here would be on the way.
+  await waitFor(() => expect(split().hasAttribute("data-animate")).toBe(false), { timeout: 1000 });
   screen.getByRole("separator", { name: "Resize panel" }).focus();
   await user.keyboard("{ArrowLeft}{ArrowLeft}");
   const wide = column("panel");
@@ -355,5 +357,20 @@ test("the panel opens as wide as the user left it, closed in between and after a
   await again.click(await screen.findByRole("option", { name: /first/ }));
   expect(column("panel")).toBe(0);
   await again.click(await screen.findByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(column("panel")).toBe(wide), { timeout: 1000 });
+});
+
+test("a key on the panel's handle while it is still sliding open sets its width all the same", async () => {
+  const { user } = await mount();
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  screen.getByRole("separator", { name: "Resize panel" }).focus();
+  await user.keyboard("{ArrowLeft}{ArrowLeft}");
+  await waitFor(() => expect(split().hasAttribute("data-animate")).toBe(false), { timeout: 1000 });
+  const wide = column("panel");
+  expect(wide).toBeGreaterThan(400);
+  await user.click(screen.getByRole("button", { name: "Hide panel" }));
+  await waitFor(() => expect(panel()).toBeNull(), { timeout: 1000 });
+  await user.click(screen.getByRole("button", { name: "Show panel" }));
   await waitFor(() => expect(column("panel")).toBe(wide), { timeout: 1000 });
 });

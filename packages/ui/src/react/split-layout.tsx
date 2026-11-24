@@ -144,6 +144,21 @@ const widthIn = (group: HTMLElement, id: string) =>
   group.querySelector<HTMLElement>(`[data-slot="resizable-panel"]#${id}`)?.getBoundingClientRect()
     .width ?? 0;
 
+const COLUMNS = ["sidebar", "main", "panel"] as const;
+/** A column's width as the layout has it (where a slide is going, not where it is): its share of the columns' room. */
+const sizeIn = (
+  group: HTMLElement,
+  controller: ResizableController,
+  id: (typeof COLUMNS)[number],
+) => {
+  const handles = [...group.querySelectorAll<HTMLElement>('[data-slot="resizable-handle"]')].reduce(
+    (sum, handle) => sum + handle.getBoundingClientRect().width,
+    0,
+  );
+  const share = controller.getLayout()[COLUMNS.indexOf(id)] ?? 0;
+  return ((group.getBoundingClientRect().width - handles) * share) / 100;
+};
+
 export type SplitPanel = {
   /** What the panel holds: its tabs. */
   content: ReactNode;
@@ -365,15 +380,10 @@ export function SplitLayout({
             panel.onClose?.();
             return;
           }
-          // The panel's own width only when the user changed it: not one it is sliding through, nor the one the window
-          // narrowed it to while the user changed something else.
-          const width = widthIn(group, "panel");
-          if (
-            endSlide.current !== undefined ||
-            width === 0 ||
-            Math.abs(width - fitted.current) <= 1
-          )
-            return;
+          // The panel's own width only when the user changed it, not the one the window narrowed it to while the user
+          // changed something else. Taken from the layout, not the page: the column may still be sliding there.
+          const width = sizeIn(group, controller, "panel");
+          if (width === 0 || Math.abs(width - fitted.current) <= 1) return;
           want.current.panel = width;
           fitted.current = width;
           writePanel(width);
