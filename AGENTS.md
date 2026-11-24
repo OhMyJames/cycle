@@ -35,7 +35,7 @@ cycle-v1 是 ADE(agentic development environment),是 cycle 的重写。这是�
 - `bun run format`:格式化并修复可自动修复的 lint。
 - `bun run test:integration`(根目录):集成测试,串行跑 8 个套件(Node 下的客户端、Claude、Codex 和 agy 适配、真实 ssh、整个后端、打包后的应用、浏览器里的端到端),每个套件有自己的时限。每次全跑,不按改动挑选(见 `.agents/notes/2026-11-21-integration-runs-every-suite.md`),清单在 `scripts/integration-suites.ts`。它们会启动真实进程(Claude、daemon、打包后的 Electron 应用,Linux 上在 xvfb 下,macOS 上窗口隐藏、不抢焦点;以及无界面的 Chromium),最重的约 1.5 GB,所以不在门禁里。`bun run test:integration web` 只跑名字里有 web 的。需要真实模型的运行必须显式开启:`CYCLE_REAL_MODEL_TOKEN=... bun run test:real`(在 `harness/claude` 下;daemon 层的在 `apps/daemon` 下用 `test:real:daemon`;agy 用 `CYCLE_AGY_REAL_HOME=... bun run --cwd harness/agy test:real` 或 `apps/daemon` 下的 `test:real:agy`),token/凭据目录只给对应 agent 进程,不要从环境里继承,不要进 CI。
 - `bun run build`(根目录):构建 daemon 的单文件可执行(约 40 秒,峰值内存约 0.25 GB,产出约 480 MB)和桌面端;`bun run start` 启动桌面端。真实模型的 `test:real` 在 `apps/daemon` 和 `apps/desktop` 下也有,要先 build。
-- 目标机器是 2 核 4 GB:门禁在开发机上约 14 秒(2 核上会更慢)、峰值约 0.5 GB;不要把重的东西加进门禁,也不要并行跑集成套件。
+- 目标机器是 2 核 4 GB:门禁在开发机上约 16 秒(测试用两个 worker 并行,2 核上会更慢)、各进程内存加起来峰值约 1.2 GB;不要把重的东西加进门禁,也不要并行跑集成套件。
 - 测试里的等待要有上限:单个测试的超时是它该有的时间,不是"够长就行"。挂住的测试几十秒内必须失败。
 - 不要用 `--no-verify`、`@ts-ignore`、`@ts-expect-error` 或 `biome-ignore` 绕过它;修复原因,或有意改规则。
 - 测试放在各包的 `test/` 目录,与 `src/` 并列。
