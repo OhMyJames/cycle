@@ -8,6 +8,7 @@ import {
   NOTIFICATIONS,
   planUsageRead,
 } from "@cycle/protocol";
+import { withProviderModels } from "../providers.ts";
 import { checkedConfig } from "../session-config.ts";
 import { type Core, cycleOn } from "./core.ts";
 
@@ -19,7 +20,10 @@ export const registerAgents = (app: AgentApp, core: Core): void => {
         id: a.id,
         name: a.name,
         available: (await a.available?.()) ?? true,
-        configSchema: core.optionsCache.apply(a.id, a.configSchema),
+        configSchema: withProviderModels(
+          core.optionsCache.apply(a.id, a.configSchema),
+          a.providerModels?.() ?? [],
+        ),
         ...(a.promptCapabilities !== undefined ? { promptCapabilities: a.promptCapabilities } : {}),
         ...(a.steer === true ? { steer: true } : {}),
       })),

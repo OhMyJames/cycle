@@ -1,5 +1,11 @@
 export { createAdapter } from "./agent.ts";
 export {
+  DEFAULT_TOOL_PERMISSION,
+  isToolPermission,
+  TOOL_PERMISSIONS,
+  type ToolPermission,
+} from "./permissions.ts";
+export {
   type AgyBuiltinBundle,
   type AgyPlugin,
   AgyPluginError,

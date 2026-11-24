@@ -1,6 +1,10 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { defaultDataDir } from "./data-dir.ts";
+import { PROXY_ENV_NAMES } from "./system-proxy.ts";
+
+/** What an agent process sees of the daemon's environment by default: where to find things, the locale, the proxy. */
+const AGENT_ENV = ["PATH", "LANG", "LC_ALL", "TERM", ...PROXY_ENV_NAMES];
 
 /** Terminals' settings when `config.json` names none. The environment is who and where, never a key. */
 export const TERMINAL_DEFAULTS = {
@@ -23,7 +27,7 @@ export const ConfigSchema = z.object({
       /** Isolated HOME directory for `agy` (default `<dataDir>/agy`). */
       home: z.string().startsWith("/").optional(),
       /** Names of the daemon's own variables `agy` may see. */
-      allowEnv: z.array(z.string()).default(["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR"]),
+      allowEnv: z.array(z.string()).default([...AGENT_ENV, "TMPDIR"]),
       /** Explicit variables passed to `agy` (e.g. `GEMINI_API_KEY`, proxy vars). Never inherited. */
       env: z.record(z.string(), z.string()).default({}),
       /** Pass `--sandbox` to `agy acp`. */
@@ -32,7 +36,7 @@ export const ConfigSchema = z.object({
       agent: z.string().min(1).optional(),
       /** When explicitly `false`, pass `--disable-telemetry` to `agy acp`. */
       telemetry: z.boolean().optional(),
-      /** Pass `--dangerously-skip-permissions` to `agy acp`: nothing asks before it runs. */
+      /** Start every session with agy's `toolPermission` at `always-proceed`: nothing asks before it runs. */
       skipPermissions: z.boolean().optional(),
     })
     .prefault({}),
@@ -40,7 +44,7 @@ export const ConfigSchema = z.object({
     .object({
       configDir: z.string().startsWith("/").optional(),
       executable: z.string().startsWith("/").optional(),
-      allowEnv: z.array(z.string()).default(["PATH", "LANG", "LC_ALL", "TERM"]),
+      allowEnv: z.array(z.string()).default(AGENT_ENV),
       env: z.record(z.string(), z.string()).default({}),
     })
     .prefault({}),
@@ -52,7 +56,7 @@ export const ConfigSchema = z.object({
        */
       configDir: z.string().optional(),
       /** Names of the daemon's own variables the Claude process may see. */
-      allowEnv: z.array(z.string()).default(["PATH", "LANG", "LC_ALL", "TERM"]),
+      allowEnv: z.array(z.string()).default(AGENT_ENV),
       /** Variables set to a value, e.g. a key or a base URL. Written here, never inherited. */
       env: z.record(z.string(), z.string()).default({}),
       /**
@@ -66,7 +70,7 @@ export const ConfigSchema = z.object({
       progressSummaries: z.boolean().default(true),
     })
     .default({
-      allowEnv: ["PATH", "LANG", "LC_ALL", "TERM"],
+      allowEnv: AGENT_ENV,
       env: {},
       warmStart: true,
       maxWarm: 3,
@@ -97,12 +101,18 @@ export const ConfigSchema = z.object({
        */
       agentMinutes: z.number().min(0).default(10),
       /**
+       * The same for a session a client is still attached to: the desktop stays attached to every session it has
+       * shown, so without this their agents (agy's three processes each, 30-150 MB a worker) live as long as the app.
+       * The session stays; its next prompt starts and resumes the agent.
+       */
+      attachedAgentMinutes: z.number().min(0).default(60),
+      /**
        * The daemon itself, once no client has been connected and no session has been doing anything this long, stops.
        * Nothing is lost; the next `cycle proxy` (a client connecting) starts it again.
        */
       exitMinutes: z.number().min(0).default(30),
     })
-    .default({ agentMinutes: 10, exitMinutes: 30 }),
+    .default({ agentMinutes: 10, attachedAgentMinutes: 60, exitMinutes: 30 }),
   /** The daemon's own log, `<dataDir>/daemon.log` (docs/daemon.md "日志"). Events only, never content. */
   log: z
     .object({

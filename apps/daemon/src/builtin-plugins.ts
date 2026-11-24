@@ -11,16 +11,40 @@ export const BUILTIN_PLUGINS_FOLDER = "clawdot-plugins";
 export const builtinPluginsRoot = (): string =>
   compiled() ? join(dirname(process.execPath), BUILTIN_PLUGINS_FOLDER) : MARKETPLACE_DIR;
 
-const versionOf = (dir: string): string | undefined => {
+/** The version a plugin's manifest gives, when the manifest names the plugin as its folder does (an id is made of it). */
+const versionOf = (dir: string, name: string): string | undefined => {
   try {
-    const manifest: unknown = JSON.parse(
+    const manifest = JSON.parse(
       readFileSync(join(dir, ".claude-plugin", "plugin.json"), "utf8"),
-    );
-    const version = (manifest as { version?: unknown } | null)?.version;
-    return typeof version === "string" && version !== "" ? version : undefined;
+    ) as { name?: unknown; version?: unknown } | null;
+    if (manifest?.name !== name) return undefined;
+    return typeof manifest.version === "string" && manifest.version !== ""
+      ? manifest.version
+      : undefined;
   } catch {
     return undefined;
   }
+};
+
+const ICONS: Record<string, string> = {
+  "icon.svg": "image/svg+xml",
+  "icon.png": "image/png",
+};
+const ICON_MAX_BYTES = 60_000;
+
+/** `assets/icon.svg` (or `.png`) of a plugin as a data URL: what a client shows without fetching anything. */
+const iconOf = (dir: string): string | undefined => {
+  for (const [file, type] of Object.entries(ICONS)) {
+    try {
+      const bytes = readFileSync(join(dir, "assets", file));
+      if (bytes.length > 0 && bytes.length <= ICON_MAX_BYTES) {
+        return `data:${type};base64,${bytes.toString("base64")}`;
+      }
+    } catch {
+      // Not there: the next one.
+    }
+  }
+  return undefined;
 };
 
 /**
@@ -34,8 +58,11 @@ export const builtinPlugins = (root = builtinPluginsRoot()): BuiltinBundle | und
   for (const entry of readdirSync(base, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const dir = join(base, entry.name);
-    const version = versionOf(dir);
-    if (version !== undefined) plugins.push({ name: entry.name, version, dir });
+    const version = versionOf(dir, entry.name);
+    const icon = iconOf(dir);
+    if (version !== undefined) {
+      plugins.push({ name: entry.name, version, dir, ...(icon !== undefined ? { icon } : {}) });
+    }
   }
   if (plugins.length === 0) return undefined;
   plugins.sort((a, b) => a.name.localeCompare(b.name));

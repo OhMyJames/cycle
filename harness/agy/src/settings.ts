@@ -1,5 +1,6 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk/experimental/v2";
 import { META } from "@cycle/protocol";
+import { DEFAULT_TOOL_PERMISSION, TOOL_PERMISSIONS, type ToolPermission } from "./permissions.ts";
 import type { V1ConfigOption, V1ModelInfo } from "./v1.ts";
 
 export const AGY_MODES = [
@@ -63,6 +64,16 @@ export const AGY_CONFIG_SCHEMA = {
       _meta: { [META.open]: true },
       oneOf: [{ const: "default", title: "Default" }],
     },
+    toolPermission: {
+      type: "string",
+      title: "Approvals",
+      default: DEFAULT_TOOL_PERMISSION,
+      oneOf: TOOL_PERMISSIONS.map(({ value, name, ...rest }) => ({
+        const: value,
+        title: name,
+        ...rest,
+      })),
+    },
     effort: {
       type: "string",
       title: "Effort",
@@ -97,6 +108,8 @@ export type ConfigSelectionState = {
   defaultModel?: string | undefined;
   requestedModel?: string | undefined;
   requestedEffort?: string | undefined;
+  /** agy does not report its tool permission; the adapter keeps the one it started the session's worker with. */
+  toolPermission?: ToolPermission | undefined;
 };
 
 /** Translate agy ACP v1 `configOptions` (where effort is `thought_level`) into Cycle ACP v2 `SessionConfigOption[]`. */
@@ -167,6 +180,21 @@ export const toV2ConfigOptions = (
           };
         }),
       ],
+    });
+  }
+
+  if (selection?.toolPermission !== undefined) {
+    out.push({
+      configId: "toolPermission",
+      name: "Approvals",
+      type: "select",
+      currentValue: selection.toolPermission,
+      options: TOOL_PERMISSIONS.map(({ value, name, description, ...rest }) => ({
+        value,
+        name,
+        description,
+        ...("_meta" in rest ? { _meta: rest._meta } : {}),
+      })),
     });
   }
 

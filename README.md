@@ -2,7 +2,7 @@
 
 一个 ADE(agentic development environment)。cycle 的重写版:协议先行,更小、更容易维护和改造。
 
-> 状态:v1 可用。桌面应用(macOS,Apple 芯片)加 Linux daemon,Claude 为唯一的 agent。应用会自动更新自己,也能在应用里升级远端的 Linux x64 或 ARM64 daemon,图标已有。从 0.3.16 起,发布的 macOS 包有 Developer ID 签名并经过公证。使用见 [docs/getting-started.md](docs/getting-started.md)。
+> 状态:v1 可用。桌面应用(macOS,Apple 芯片)加 Linux daemon,已接入 Claude、Codex、agy 三个 agent。应用会自动更新自己,也能在应用里升级远端的 Linux x64 或 ARM64 daemon,图标已有。从 0.3.16 起,发布的 macOS 包有 Developer ID 签名并经过公证。使用见 [docs/getting-started.md](docs/getting-started.md)。
 
 ## 目标(v1)
 

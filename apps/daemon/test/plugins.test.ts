@@ -510,7 +510,14 @@ test("what ships with Cycle is installed without being asked, marked as built in
   const bundle = {
     root: "/shipped",
     marketplace: "clawdot",
-    plugins: [{ name: "basics", version: "1.0.0", dir: "/shipped/plugins/basics" }],
+    plugins: [
+      {
+        name: "basics",
+        version: "1.0.0",
+        dir: "/shipped/plugins/basics",
+        icon: "data:image/svg+xml;base64,PHN2Zy8+",
+      },
+    ],
   };
   let made = 0;
   provider.ensureBuiltin = async (given) => {
@@ -537,7 +544,7 @@ test("what ships with Cycle is installed without being asked, marked as built in
   const c = await connectClient(daemon);
   await until(() => installed.size === 1, "built in plugins installed");
 
-  const listed = await call<{ plugins: (Plugin & { builtin?: boolean })[] }>(
+  const listed = await call<{ plugins: (Plugin & { builtin?: boolean; icon?: string })[] }>(
     c,
     "_cycle/plugins/list",
     { agentId: "fake" },
@@ -545,6 +552,7 @@ test("what ships with Cycle is installed without being asked, marked as built in
   expect(listed.plugins.map((p) => [p.id, p.builtin, p.enabled])).toEqual([
     ["basics@clawdot", true, true],
   ]);
+  expect(listed.plugins[0]?.icon).toBe("data:image/svg+xml;base64,PHN2Zy8+");
 
   // Turned off: yes. Uninstalled: no, and nothing was asked of the agent.
   const off = await call<{ plugin: Plugin }>(c, "_cycle/plugins/set_enabled", {
@@ -560,4 +568,37 @@ test("what ships with Cycle is installed without being asked, marked as built in
   expect(calls.some((call) => call.startsWith("uninstall"))).toBe(false);
   // Made once, not again for every look.
   expect(made).toBe(1);
+});
+
+test("a plugin of the same name from another source is not the one that ships with Cycle, and can be uninstalled", async () => {
+  const fake = fakeAgent({}, { mcpHttp: true });
+  const { provider, installed } = fakeProvider([]);
+  installed.set("basics@elsewhere", {
+    id: "basics@elsewhere",
+    name: "basics",
+    sourceId: "elsewhere",
+    installed: true,
+    enabled: true,
+    scope: "user",
+  });
+  const daemon = await Daemon.start({
+    dataDir: dir,
+    agents: [{ ...fake.definition, plugins: provider }],
+    connectors: await ConnectorService.load(dir),
+    builtinPlugins: {
+      root: "/shipped",
+      marketplace: "clawdot",
+      plugins: [{ name: "basics", version: "1.0.0", dir: "/shipped/plugins/basics" }],
+    },
+  });
+  open.push(daemon);
+  const c = await connectClient(daemon);
+  const listed = await call<{ plugins: (Plugin & { builtin?: boolean })[] }>(
+    c,
+    "_cycle/plugins/list",
+    { agentId: "fake" },
+  );
+  expect(listed.plugins.map((p) => [p.id, p.builtin])).toEqual([["basics@elsewhere", undefined]]);
+  await call(c, "_cycle/plugins/uninstall", { agentId: "fake", id: "basics@elsewhere" });
+  expect(installed.size).toBe(0);
 });

@@ -7,6 +7,7 @@ import { AgentSettings } from "../src/agent-settings.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { agentsFor, HARNESSES } from "../src/harnesses.ts";
 import { Daemon } from "../src/index.ts";
+import { ModelProviders } from "../src/providers.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
 import { ECHO_MAIN, echoHarness } from "./fixtures/echo-harness.ts";
@@ -29,13 +30,16 @@ test("every harness has what the daemon reads by its id: a section in config.jso
   }
   // The agents are made in the registry's order: the first is what a session with none named gets.
   const settings = await AgentSettings.load(join(dir, "agent-settings.json"));
-  expect(agentsFor(config, dir, { PATH: "/bin" })(settings).map((a) => a.id)).toEqual(ids);
+  const providers = await ModelProviders.load(join(dir, "providers.json"));
+  expect(agentsFor(config, dir, { PATH: "/bin" })(settings, providers).map((a) => a.id)).toEqual(
+    ids,
+  );
 });
 
 test("a second agent goes the whole way: listed, a session made with it, a prompt answered by its own adapter process, and resumed by the next daemon (CYCL-155)", async () => {
   // A harness that is not Claude, beside a first agent: nothing but its entry says how it runs.
   const first = fakeAgent();
-  const agents = () => (settings: AgentSettings) => [
+  const agents = () => (settings: AgentSettings, providers: ModelProviders) => [
     first.definition,
     ...agentsFor(
       ConfigSchema.parse({}),
@@ -44,7 +48,7 @@ test("a second agent goes the whole way: listed, a session made with it, a promp
       undefined,
       [echoHarness],
       [process.execPath, ECHO_MAIN],
-    )(settings),
+    )(settings, providers),
   ];
   const daemon = await Daemon.start({ dataDir: dir, agents: agents() });
   open.push(daemon);

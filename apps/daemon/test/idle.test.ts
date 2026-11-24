@@ -24,11 +24,12 @@ afterEach(async () => {
   await dispose();
 });
 
-const start = async (fake = fakeAgent()) => {
+const start = async (fake = fakeAgent(), attachedAgentIdleMs?: number) => {
   const daemon = await Daemon.start({
     dataDir: dir,
     agents: [fake.definition],
     agentIdleMs: LIMIT,
+    ...(attachedAgentIdleMs !== undefined ? { attachedAgentIdleMs } : {}),
     now: () => clock,
   });
   open.push(daemon);
@@ -88,6 +89,19 @@ test("an agent is kept while a client is attached, however long", async () => {
   expect(daemon.reclaimIdleAgents()).toEqual([]);
   clock += LIMIT;
   expect(daemon.reclaimIdleAgents()).toHaveLength(1);
+});
+
+test("with an attached limit, an agent a client stays attached to is let go after it, and the next prompt resumes it (CYC-297)", async () => {
+  const { daemon, fake } = await start(fakeAgent(), LIMIT * 6);
+  const { c, sessionId } = await finishedTurn(daemon);
+  clock += LIMIT * 6 - 1;
+  expect(daemon.reclaimIdleAgents()).toEqual([]);
+  clock += 1;
+  expect(daemon.reclaimIdleAgents()).toEqual([sessionId]);
+  // Still attached; its next prompt starts the agent again.
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("again") });
+  await until(() => fake.log.prompts.length === 2, "the second prompt to reach an agent");
+  expect(fake.log.launches).toBe(2);
 });
 
 test("an agent is kept while its turn runs, and while a background task works", async () => {

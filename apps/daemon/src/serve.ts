@@ -48,6 +48,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   let daemon: Daemon;
   const builtin = builtinPlugins();
   const agentIdleMs = minutes(config.idle.agentMinutes);
+  const attachedAgentIdleMs = minutes(config.idle.attachedAgentMinutes);
   // Set once the daemon starts to stop: a client that connects after that is let go at once, and reconnects to the
   // next daemon.
   let refusing = false;
@@ -69,6 +70,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
         ...(configLoadedMtimeMs !== undefined ? { loadedMtimeMs: configLoadedMtimeMs } : {}),
       },
       ...(agentIdleMs !== undefined ? { agentIdleMs } : {}),
+      ...(attachedAgentIdleMs !== undefined ? { attachedAgentIdleMs } : {}),
     });
     let clients = 0;
     server = await listenUnix({

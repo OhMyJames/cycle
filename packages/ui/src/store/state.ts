@@ -14,6 +14,7 @@ import type {
   PluginSourceInfo,
   PreferencesState,
   PromptBlock,
+  ProvidersRead,
   SessionSummary,
   UpdateState,
 } from "../api.ts";
@@ -124,6 +125,8 @@ export type AppState = {
    * about; a change there (here or elsewhere) reads them again.
    */
   connectors: Record<string, { list?: ConnectorInfo[]; error?: string }>;
+  /** Each location's model providers as last read, or why they could not be. As connectors: only once asked about. */
+  providers: Record<string, { read?: ProvidersRead; error?: string }>;
   /**
    * Each agent's plugins on each location as last read (by `pluginsKey`), or why they could not be. Only for what
    * the page has asked for.
@@ -170,6 +173,7 @@ export const initialState = (): AppState => ({
   agentSetupRevision: {},
   agentAuthCompletions: {},
   connectors: {},
+  providers: {},
   plugins: {},
   planUsage: {},
   environments: undefined,

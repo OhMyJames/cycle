@@ -27,7 +27,7 @@ export type ProviderServer = {
   http?: { url: string; headers: Record<string, string> };
 };
 
-export type ProviderPlugin = Omit<Plugin, "agentId" | "servers" | "builtin"> & {
+export type ProviderPlugin = Omit<Plugin, "agentId" | "servers" | "builtin" | "icon"> & {
   servers?: ProviderServer[];
 };
 
@@ -38,7 +38,7 @@ export type ProviderPlugin = Omit<Plugin, "agentId" | "servers" | "builtin"> & {
 export type BuiltinBundle = {
   root: string;
   marketplace: string;
-  plugins: { name: string; version: string; dir: string }[];
+  plugins: { name: string; version: string; dir: string; icon?: string }[];
 };
 
 export type ProviderSnapshot = {
@@ -215,8 +215,15 @@ export class PluginService {
     clearTimeout(timer);
   }
 
-  #isBuiltin(plugin: ProviderPlugin): boolean {
-    return this.#builtin?.plugins.some((p) => p.name === plugin.name) ?? false;
+  /**
+   * The shipped plugin this is, if it is one: by its id (`name@marketplace` in an agent with marketplaces, the name in
+   * one without), so a plugin of the same name from another source is not taken for it.
+   */
+  #shipped(plugin: { id: string; name: string }): BuiltinBundle["plugins"][number] | undefined {
+    const bundle = this.#builtin;
+    return bundle?.plugins.find(
+      (p) => plugin.id === p.name || plugin.id === `${p.name}@${bundle.marketplace}`,
+    );
   }
 
   async #load(agentId: string): Promise<View> {
@@ -229,7 +236,14 @@ export class PluginService {
     const made = await this.#sync(agentId, snapshot.installed);
     const view = (plugin: ProviderPlugin): Plugin => {
       const { servers, ...rest } = plugin;
-      const builtin = this.#isBuiltin(plugin) ? { builtin: true as const } : {};
+      const shipped = this.#shipped(plugin);
+      const builtin =
+        shipped !== undefined
+          ? {
+              builtin: true as const,
+              ...(shipped.icon !== undefined ? { icon: shipped.icon } : {}),
+            }
+          : {};
       if (servers === undefined) return { ...rest, ...builtin, agentId };
       return {
         ...rest,
@@ -337,7 +351,11 @@ export class PluginService {
   }
 
   async uninstall(agentId: string, id: string): Promise<void> {
-    if ((await this.#installed(agentId, id)).builtin === true) {
+    // Refused only for what is known to ship with Cycle: anything else goes to the agent, as it always did.
+    const known = (await this.#view(agentId).catch(() => undefined))?.installed.find(
+      (plugin) => plugin.id === id,
+    );
+    if (known?.builtin === true) {
       throw new RpcError(CycleErrorCode.PluginFailed, "The agent's plugins could not do that", {
         reason: "failed",
         detail: "A plugin that comes with Cycle can be turned off, not uninstalled",
@@ -367,6 +385,8 @@ export class PluginService {
 
   async removeSource(agentId: string, id: string): Promise<void> {
     await this.#change(agentId, (provider) => provider.removeSource(id));
+    // It may have been the one the built-in plugins come from: they are made so again as the agent next starts.
+    this.#builtins.delete(agentId);
   }
 
   async refreshSource(agentId: string, id?: string): Promise<void> {

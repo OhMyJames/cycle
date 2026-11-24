@@ -18,6 +18,7 @@ import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
 import { shippedExecutable } from "./self.ts";
+import { systemProxyFill } from "./system-proxy.ts";
 
 /** The name the Claude Code binary is shipped under, beside the daemon. */
 const BINARY = "claude";
@@ -147,7 +148,7 @@ export const claudeEnv = (
   env.CLAUDE_CONFIG_DIR = config.configDir ?? join(dataDir, "claude");
   // HOME is not passed on: it would let Claude find a login or settings nobody chose to share.
   env.HOME ??= env.CLAUDE_CONFIG_DIR;
-  return { ...env, ...config.env };
+  return { ...env, ...systemProxyFill(config.allowEnv, inherited, config.env), ...config.env };
 };
 
 export const claudeHarness: Harness = {

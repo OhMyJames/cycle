@@ -261,6 +261,7 @@ test("a stop while a mentioned session is being read means the prompt is not giv
         sessionId: log.sessionId,
         lastSeq: () => log.lastSeq(),
         updatedAt: () => log.updatedAt(),
+        lastCommands: () => log.lastCommands(),
         read: async (range, options) => {
           if (holding && options?.stored === true) {
             reading++;

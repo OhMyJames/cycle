@@ -174,3 +174,24 @@ test("the adapter writes effort levels and the context's parts under the keys th
   expect(CONTEXT_META).toBe(META.context);
   expect(PLAN_USAGE_UPDATE).toBe(PLAN_USAGE);
 });
+
+test("a session on the owner's own models does not replace what the agent itself offers", () => {
+  expect(
+    choicesFromConfigOptions(
+      [
+        {
+          configId: "model",
+          options: [
+            { value: "default", name: "Default" },
+            {
+              value: "acme/fast",
+              name: "Fast",
+              _meta: { "cycle/provider": { id: "acme", name: "Acme" } },
+            },
+          ],
+        },
+      ],
+      "model",
+    ),
+  ).toBeUndefined();
+});

@@ -1,4 +1,5 @@
 import { ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
+import type { ProviderModelInfo } from "@cycle/model-gateway";
 import type { PromptCapabilities } from "@cycle/protocol";
 import type { AgentSetupProvider } from "./agent-setup.ts";
 import type { AgentDefinition, LaunchContext } from "./agents.ts";
@@ -26,7 +27,10 @@ export type ProcessAgentOptions = {
   /** Whether it can run at all, checked when clients ask which agents there are. */
   available?: () => boolean | Promise<boolean>;
   /** See `AgentDefinition`. */
+  providerModels?: () => ProviderModelInfo[];
+  /** See `AgentDefinition`. */
   maxAhead?: number | (() => number | undefined);
+  standby?: boolean;
   /** See `AgentDefinition`. */
   plugins?: PluginProvider;
   /** See `AgentDefinition`. */
@@ -67,8 +71,10 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
     ? { promptCapabilities: options.promptCapabilities }
     : {}),
   ...(options.steer === true ? { steer: true } : {}),
+  ...(options.providerModels !== undefined ? { providerModels: options.providerModels } : {}),
   ...(options.available !== undefined ? { available: options.available } : {}),
   ...(options.maxAhead !== undefined ? { maxAhead: options.maxAhead } : {}),
+  ...(options.standby === true ? { standby: true } : {}),
   ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
   ...(options.setup !== undefined ? { setup: options.setup } : {}),
   launch: async (context = { sessionId: "", sessionEnv: {} }) => {

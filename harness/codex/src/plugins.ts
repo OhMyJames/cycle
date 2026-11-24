@@ -6,7 +6,7 @@
  * `codex plugin` has no enable or disable: that switch is `[plugins."<id>"] enabled` in `$CODEX_HOME/config.toml`,
  * which is written here, and only there.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type CodexPluginFailureReason =
@@ -54,6 +54,16 @@ export type CodexPluginSnapshot = {
 };
 
 /** What is shipped with Cycle: one marketplace of plugins, each in a directory of its own. */
+/** Whether two locations are the same folder, whichever way each is written (a link, a trailing slash). */
+const samePath = (a: string | undefined, b: string): boolean => {
+  if (a === undefined) return false;
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
 export type CodexBuiltinBundle = {
   root: string;
   marketplace: string;
@@ -328,10 +338,12 @@ export class CodexPlugins {
   async ensureBuiltin(bundle: CodexBuiltinBundle): Promise<void> {
     const sources = await this.#sources();
     const have = sources.find((source) => source.id === bundle.marketplace);
-    if (have !== undefined && have.location !== bundle.root) await this.removeSource(have.id);
-    if (have === undefined || have.location !== bundle.root) {
-      await this.#exec(["marketplace", "add", bundle.root], WRITE_TIMEOUT_MS);
-    }
+    const same = have !== undefined && samePath(have.location, bundle.root);
+    const turnedOff = new Set(
+      same ? [] : (await this.installed()).filter((p) => p.enabled === false).map((p) => p.id),
+    );
+    if (have !== undefined && !same) await this.removeSource(have.id);
+    if (!same) await this.#exec(["marketplace", "add", bundle.root], WRITE_TIMEOUT_MS);
     const installed = await this.installed();
     for (const plugin of bundle.plugins) {
       const id = `${plugin.name}@${bundle.marketplace}`;
@@ -339,7 +351,9 @@ export class CodexPlugins {
       if (found !== undefined && found.version === plugin.version) continue;
       await this.install(id);
       // `plugin add` turns it on: what the person turned off stays off.
-      if (found?.enabled === false) await this.setEnabled(id, false);
+      if (found?.enabled === false || (found === undefined && turnedOff.has(id))) {
+        await this.setEnabled(id, false);
+      }
     }
   }
 }

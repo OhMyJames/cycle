@@ -183,6 +183,8 @@ export type DynamicConfigChoice = {
   danger?: boolean;
   /** On a model: the effort levels it takes (`_meta["cycle/efforts"]`, docs/protocol.md §10); `[]` none, absent not known. */
   efforts?: string[];
+  /** On a model of the owner's own: the provider it is served by (`_meta["cycle/provider"]`, docs/protocol.md §10). */
+  provider?: { id: string; name: string };
 };
 
 /** Live configuration options pushed by the agent for a session, overlaying its static `configSchema`. */
@@ -416,6 +418,16 @@ export const effortLevelsOf = (meta: Record<string, unknown> | undefined): strin
     : undefined;
 };
 
+/** The provider a model choice is served by, from its `_meta["cycle/provider"]`; absent for the agent's own models. */
+export const providerOfChoice = (
+  meta: Record<string, unknown> | undefined,
+): { id: string; name: string } | undefined => {
+  const value = meta?.["cycle/provider"] as { id?: unknown; name?: unknown } | null | undefined;
+  return typeof value?.id === "string" && value.id !== "" && typeof value.name === "string"
+    ? { id: value.id, name: value.name }
+    : undefined;
+};
+
 const effortsEntry = (meta: Record<string, unknown> | undefined): { efforts?: string[] } => {
   const efforts = effortLevelsOf(meta);
   return efforts !== undefined ? { efforts } : {};
@@ -452,6 +464,9 @@ const configOptionsOf = (value: unknown): DynamicConfigOption[] => {
         ...(o._meta?.["cycle/recommended"] === true ? { recommended: true } : {}),
         ...(o._meta?.["cycle/danger"] === true ? { danger: true } : {}),
         ...effortsEntry(o._meta),
+        ...(providerOfChoice(o._meta) !== undefined
+          ? { provider: providerOfChoice(o._meta) as { id: string; name: string } }
+          : {}),
       });
     }
     if (options.length === 0) continue;

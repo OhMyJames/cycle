@@ -45,6 +45,7 @@ export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
           plugins: core.plugins.agents(),
           planUsage: true,
           agentSetup: true,
+          agentPrewarm: true,
           sessionMentions: true,
           terminal: true,
           environments: true,

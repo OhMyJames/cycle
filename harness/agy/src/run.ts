@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
 import { createAdapter } from "./agent.ts";
+import { logFileFor, pruneLogs } from "./logs.ts";
 import type { AdapterConfig } from "./server.ts";
 
 const isExecutable = (path: string): boolean => {
@@ -35,9 +36,15 @@ export async function runAdapter() {
   const agyExecutable = resolveExecutable(config);
   if (!agyExecutable) throw new Error("agy binary not found");
   await mkdir(config.env.HOME, { recursive: true, mode: 0o700 });
-  if (config.logFile) await mkdir(dirname(config.logFile), { recursive: true, mode: 0o700 });
+  // Each adapter's frontend has its own log (`agy-acp.<pid>.log`), and the logs of earlier runs are cleared away.
+  const logFile = config.logFile ? logFileFor(config.logFile) : undefined;
+  if (config.logFile && logFile) {
+    await mkdir(dirname(config.logFile), { recursive: true, mode: 0o700 });
+    pruneLogs(config.logFile, { current: logFile });
+  }
   const adapter = createAdapter({
     ...config,
+    ...(logFile !== undefined ? { logFile } : {}),
     agyExecutable,
     onServerExit: () => setTimeout(() => process.exit(1), 200),
   });

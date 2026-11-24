@@ -12,6 +12,9 @@ import { blankWorktreeOf } from "./worktrees.ts";
 const waitedOf = (ms: number): EventProps<"blank_sent">["waited"] =>
   ms < 10_000 ? "under_10s" : ms < 60_000 ? "under_1m" : ms < 300_000 ? "under_5m" : "longer";
 
+/** How long before the blank conversation says again that it wants its agent started ahead. */
+const PREWARM_REPEAT_MS = 60_000;
+
 export class BlankSlice {
   readonly #kit: StoreKit;
   /** Opens the session its first message made. */
@@ -22,6 +25,8 @@ export class BlankSlice {
   #openedAt = 0;
   /** The latest read of the blank folder's trust, or answer to it: an older read that comes back after is not used. */
   #trustRead = 0;
+  /** The agent last started ahead for the blank conversation, and when. */
+  #prewarmed: { key: string; at: number } | undefined;
 
   /** Keeps the environment a workspace starts with from now on. */
   readonly #setDefault: (
@@ -88,6 +93,24 @@ export class BlankSlice {
     set({ blank: { ...now, branches: { locationId: blank.locationId, cwd, value } } });
   }
 
+  /**
+   * The agent the blank conversation starts is started ahead, where its location can: the first message then finds it
+   * up. Said again only after a minute, which is well inside what the daemon keeps it for.
+   */
+  #prewarm(): void {
+    const { bridge, state } = this.#kit;
+    const blank = state().blank;
+    if (blank === undefined || blank.starting !== undefined) return;
+    const agent = this.agentOf(blank);
+    if (agent === undefined || !agent.available) return;
+    if (state().status[blank.locationId]?.capabilities?.agentPrewarm !== true) return;
+    const key = `${blank.locationId}:${agent.id}`;
+    const now = Date.now();
+    if (this.#prewarmed?.key === key && now - this.#prewarmed.at < PREWARM_REPEAT_MS) return;
+    this.#prewarmed = { key, at: now };
+    void bridge.prewarmAgent(blank.locationId, agent.id).catch(() => undefined);
+  }
+
   /** The blank conversation open on `locationId`, if there is one. */
   #on(locationId: string): boolean {
     return this.#kit.state().blank?.locationId === locationId;
@@ -103,7 +126,10 @@ export class BlankSlice {
 
   /** Its location's agents were read: it was waiting to know which agent it starts. */
   agentsRead(locationId: string): void {
-    if (this.#on(locationId)) void this.#readDefaults();
+    if (this.#on(locationId)) {
+      void this.#readDefaults();
+      this.#prewarm();
+    }
   }
 
   /** An agent's defaults changed on its location: it starts from them as they are now, under what was chosen on it. */
@@ -147,6 +173,7 @@ export class BlankSlice {
       void this.#readTrust();
       void this.#readBranches();
     }
+    this.#prewarm();
   };
 
   /** Changes what the blank conversation will start as. Not while it is starting. */
@@ -208,6 +235,7 @@ export class BlankSlice {
       void this.#readTrust();
       void this.#readBranches();
     }
+    if (next.agent !== blank.agent || next.locationId !== blank.locationId) this.#prewarm();
   };
 
   /**

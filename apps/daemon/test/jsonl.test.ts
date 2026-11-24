@@ -10,7 +10,8 @@ eachTempDir((made) => {
   dir = made;
 });
 
-const store = () => new JsonlLogStore({ dir, now: () => new Date("2026-11-18T00:00:00Z") });
+const store = () =>
+  new JsonlLogStore({ dir, now: () => new Date("2026-11-18T00:00:00Z"), minSaving: 1 });
 
 test("gives records seq 1, 2, 3 and writes one line each", async () => {
   const log = await store().open("s1");
@@ -105,7 +106,11 @@ test("removes a closed log for good, and not an open one", async () => {
 test("updatedAt is the time of the last record that is not a meta one, and survives a reopen", async () => {
   let minute = 0;
   const ticking = () =>
-    new JsonlLogStore({ dir, now: () => new Date(Date.UTC(2026, 10, 18, 0, minute++)) });
+    new JsonlLogStore({
+      dir,
+      now: () => new Date(Date.UTC(2026, 10, 18, 0, minute++)),
+      minSaving: 1,
+    });
   const log = await ticking().open("s1");
   expect(log.updatedAt()).toBeUndefined();
   await log.append({ kind: "meta", data: { event: "created" } });
@@ -138,4 +143,127 @@ test("a log that could not be opened is not left reserved", async () => {
   await expect(s.open("s1")).rejects.toMatchObject({ code: CycleErrorCode.LogUnavailable });
   await rm(join(dir, "s1.jsonl"));
   await (await s.open("s1")).close();
+});
+
+const chunk = (text: string, extra: Record<string, unknown> = {}) => ({
+  kind: "update" as const,
+  data: {
+    sessionUpdate: "agent_message_chunk",
+    messageId: "m1",
+    content: { type: "text", text },
+    ...extra,
+  },
+});
+
+test("joins adjacent text chunks when an existing log is opened, keeping the last seq", async () => {
+  const first = await store().open("s1");
+  await first.append({ kind: "update", data: { sessionUpdate: "user_message" } });
+  for (const text of ["a", "b", "c", "d", "e"]) await first.append(chunk(text));
+  await first.append(chunk("x", { messageId: "m2" }));
+  await first.append({ kind: "update", data: { sessionUpdate: "state_update", state: "idle" } });
+  await first.close();
+
+  const again = await store().open("s1", "existing");
+  expect(again.lastSeq()).toBe(8);
+  const records = await again.read();
+  expect(records.map((r) => [r.seq, r.merged])).toEqual([
+    [1, undefined],
+    [2, undefined],
+    [5, 3],
+    [6, undefined],
+    [7, undefined],
+    [8, undefined],
+  ]);
+  expect(records[2]?.data).toMatchObject({ content: { type: "text", text: "bcd" } });
+  // A client that had seen seq 5 asks for what is after it and gets what it is missing.
+  expect((await again.read({ after: 5 })).map((r) => r.seq)).toEqual([6, 7, 8]);
+  expect((await again.append({ kind: "update", data: 9 })).seq).toBe(9);
+  await again.close();
+
+  // The file is still a good log: it opens again, and nothing is joined a second time.
+  const third = await store().open("s1", "existing");
+  expect(third.lastSeq()).toBe(9);
+  expect((await third.read()).map((r) => r.seq)).toEqual([1, 2, 5, 6, 7, 8, 9]);
+  await third.close();
+  expect(await Bun.file(join(dir, "s1.jsonl.compact")).exists()).toBe(false);
+});
+
+test("the first and last of a run keep their own ts, and updatedAt is still the last record's", async () => {
+  let minute = 0;
+  const ticking = () =>
+    new JsonlLogStore({
+      dir,
+      now: () => new Date(Date.UTC(2026, 10, 18, 0, minute++)),
+      minSaving: 1,
+    });
+  const log = await ticking().open("s1");
+  const a = await log.append(chunk("a"));
+  for (const text of ["b", "c", "d"]) await log.append(chunk(text));
+  const last = await log.append(chunk("e"));
+  await log.append({ kind: "meta", data: { event: "agent_exited" } });
+  await log.close();
+  const again = await ticking().open("s1", "existing");
+  const records = await again.read();
+  expect(records.map((r) => [r.seq, r.merged])).toEqual([
+    [1, undefined],
+    [4, 3],
+    [5, undefined],
+    [6, undefined],
+  ]);
+  expect([records[0]?.ts, records[2]?.ts]).toEqual([a.ts, last.ts]);
+  expect(again.updatedAt()).toBe(last.ts);
+  await again.close();
+});
+
+test("leaves alone the chunks at the end, other kinds of block, and chunks that differ", async () => {
+  const log = await store().open("s1");
+  await log.append(chunk("a"));
+  await log.append({
+    kind: "update",
+    data: { sessionUpdate: "agent_message_chunk", messageId: "m1", content: { type: "image" } },
+  });
+  await log.append({
+    kind: "update",
+    data: { ...chunk("b").data, sessionUpdate: "agent_thought_chunk" },
+  });
+  await log.append(chunk("c"));
+  await log.append(chunk("d"));
+  await log.close();
+  const again = await store().open("s1", "existing");
+  expect((await again.read()).map((r) => r.merged)).toEqual([
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ]);
+  await again.close();
+});
+
+test("knows the last list of commands written, also after a reopen", async () => {
+  const commands = (name: string) => ({
+    kind: "update" as const,
+    data: { sessionUpdate: "available_commands_update", availableCommands: [{ name }] },
+  });
+  const log = await store().open("s1");
+  expect(log.lastCommands()).toBeUndefined();
+  await log.append(commands("a"));
+  await log.append(commands("b"));
+  await log.append(chunk("x"));
+  expect(log.lastCommands()).toBe(JSON.stringify(commands("b").data));
+  await log.close();
+  const again = await store().open("s1", "existing");
+  expect(again.lastCommands()).toBe(JSON.stringify(commands("b").data));
+  await again.close();
+});
+
+test("a gap in seq that `merged` does not account for is still refused", async () => {
+  const line = (seq: number, merged?: number) =>
+    JSON.stringify({ seq, ts: "2026-11-18T00:00:00.000Z", kind: "update", data: seq, merged });
+  await appendFile(join(dir, "s1.jsonl"), `${line(1)}\n${line(4, 3)}\n${line(6)}\n`);
+  await expect(store().open("s1")).rejects.toMatchObject({ code: CycleErrorCode.LogUnavailable });
+  await writeFile(join(dir, "s1.jsonl"), `${line(1)}\n${line(4, 3)}\n${line(5)}\n`);
+  const log = await store().open("s1");
+  expect(log.lastSeq()).toBe(5);
+  await log.close();
 });

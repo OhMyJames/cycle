@@ -68,6 +68,8 @@ export const PluginSchema = z.object({
   servers: z.array(PluginServerSchema).optional(),
   /** Shipped with Cycle and installed by it: it can be turned off, not uninstalled. */
   builtin: z.boolean().optional(),
+  /** Its picture as a `data:image/…;base64,` URL, small. Only built-in plugins have one: the agents' own have none. */
+  icon: z.string().max(100_000).startsWith("data:image/").optional(),
 });
 export type Plugin = z.infer<typeof PluginSchema>;
 

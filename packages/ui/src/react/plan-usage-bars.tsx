@@ -9,6 +9,8 @@ export const PLAN_NAMES = {
   seven_day: "composer.plan.weekly",
   seven_day_opus: "composer.plan.weeklyOpus",
   seven_day_sonnet: "composer.plan.weeklySonnet",
+  five_hour_other: "composer.plan.fiveHourOther",
+  seven_day_other: "composer.plan.weeklyOther",
 } as const;
 
 /**

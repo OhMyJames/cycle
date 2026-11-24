@@ -654,6 +654,81 @@ test("connectors: a change elsewhere is read again only where the page has asked
   });
 });
 
+test("providers: a change is read again only where asked, the agents always, and a key is never kept", async () => {
+  const script = fakeBridge({
+    connected: true,
+    providers: { list: [], kinds: [{ id: "openrouter", name: "OpenRouter" }] },
+  });
+  const store = new AppStore(script.bridge, new DraftStore(undefined));
+  await store.start();
+  // Nobody has asked about the providers: their menus are in the agents, which are read again, the list is not.
+  script.emit({ type: "providers", locationId: "local" });
+  await Bun.sleep(0);
+  expect(script.named("listProviders")).toHaveLength(0);
+  expect(script.named("agents").length).toBeGreaterThan(1);
+
+  await store.loadProviders("local");
+  expect(store.getState().providers.local?.read?.kinds).toEqual([
+    { id: "openrouter", name: "OpenRouter" },
+  ]);
+  script.emit({ type: "providers", locationId: "local" });
+  await Bun.sleep(0);
+  expect(script.named("listProviders")).toHaveLength(2);
+
+  const model = {
+    id: "m1",
+    name: "M1",
+    reasoning: true,
+    images: false,
+    contextWindow: 1000,
+    maxTokens: 100,
+  };
+  const saved = await store.saveProvider("local", {
+    name: "Mine",
+    kind: "custom",
+    api: "openai-completions",
+    baseUrl: "https://llm.example/v1",
+    apiKey: "sk-secret",
+    models: [model],
+  });
+  expect("provider" in saved && saved.provider.hasKey).toBe(true);
+  const kept = store.getState().providers.local?.read?.providers ?? [];
+  expect(kept.map((p) => p.name)).toEqual(["Mine"]);
+  expect(JSON.stringify(store.getState())).not.toContain("sk-secret");
+
+  // A key not given is kept at the same address; at another one it is not.
+  const id = kept[0]?.id;
+  const same = await store.saveProvider("local", {
+    id,
+    name: "Mine",
+    kind: "custom",
+    api: "openai-completions",
+    baseUrl: "https://llm.example/v1",
+    models: [model],
+  });
+  expect("provider" in same && same.provider.hasKey).toBe(true);
+  const moved = await store.saveProvider("local", {
+    id,
+    name: "Mine",
+    kind: "custom",
+    api: "openai-completions",
+    baseUrl: "https://other.example/v1",
+    models: [model],
+  });
+  expect("provider" in moved && moved.provider.hasKey).toBe(false);
+
+  expect(await store.removeProvider("local", id ?? "")).toEqual({ removed: true });
+  expect(store.getState().providers.local?.read?.providers).toEqual([]);
+
+  script.bridge.removeProvider = async () => {
+    throw new Error("Not connected to that location");
+  };
+  expect(await store.removeProvider("local", "p1")).toEqual({
+    problem: "failed",
+    message: "Not connected to that location",
+  });
+});
+
 test("saveLocation, renameSession, and reloadAgents surface failures and refresh agents", async () => {
   const script = fakeBridge({ connected: true });
   script.bridge.saveLocation = async () => {

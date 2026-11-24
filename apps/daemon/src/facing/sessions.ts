@@ -33,6 +33,7 @@ import {
   sessionBusy,
 } from "../errors.ts";
 import type { SessionEntry } from "../index-file.ts";
+import { isGoneOwnModel } from "../providers.ts";
 import { CLEANUP_TIMEOUT_MS, runScript, SETUP_TIMEOUT_MS } from "../scripts.ts";
 import { HISTORY_NOT_SAVED, Session } from "../session.ts";
 import { checkedConfig, currentValues, orderedConfigEntries } from "../session-config.ts";
@@ -249,12 +250,21 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
         data: { event: "created", agent: agentId, cwd: params.cwd },
       });
       // What the agent is given of the request: not the client's `_meta`, which is the daemon's to read.
-      const { _meta: _clientMeta, ...made } = params;
+      const { _meta: _clientMeta, ...rest } = params;
+      // The model the session starts with, told to the agent now: one that serves the owner's own models begins its
+      // conversation with the right provider, which cannot be changed once it has begun.
+      const offered = definition.providerModels?.();
+      const saved = { ...core.defaults.get(agentId) };
+      // A saved default that names one of the owner's models, gone since, is let go: only a model asked for now is an error.
+      if (offered !== undefined && isGoneOwnModel(saved.model, offered)) delete saved.model;
+      const startModel = { ...definition.newSession, ...saved, ...overrides }.model;
+      const made =
+        startModel !== undefined ? { ...rest, _meta: { [META.model]: startModel } } : rest;
       const { link, created: answer } = await core.startAgent(session, made);
       if (answer === undefined) throw new Error("The agent did not answer session/new");
       session.entry = { ...session.entry, agentSessionId: answer.sessionId };
       // Cycle's defaults for the agent, then what the user set as its defaults, then what they asked of this one.
-      const chosen = { ...core.defaults.get(agentId), ...overrides };
+      const chosen = { ...saved, ...overrides };
       const config = { ...definition.newSession, ...chosen };
       // What the agent says its settings are now: each change answers with the whole set.
       let options: SessionConfigOption[] = answer.configOptions ?? [];

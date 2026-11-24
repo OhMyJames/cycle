@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 /** Source of the built-in plugins: one directory each, in Claude plugin layout. */
@@ -9,7 +9,9 @@ export const MARKETPLACE_DIR = join(import.meta.dir, "..");
 
 /** Names of the built-in plugins. */
 export const builtinPluginNames = (): string[] =>
-  readdirSync(PLUGINS_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+  existsSync(PLUGINS_DIR)
+    ? readdirSync(PLUGINS_DIR, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()
+    : [];

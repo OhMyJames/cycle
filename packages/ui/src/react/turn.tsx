@@ -7,6 +7,7 @@ import {
   activityOf,
   type Conversation,
   isLive,
+  isNetworkError,
   isSubagentCall,
   type Resend,
   type Step,
@@ -150,7 +151,10 @@ export function EndBlock({ stop, resend }: { stop: StopReason; resend?: Resend |
     return (
       <div data-slot="notice" data-kind="turn-end" data-severity="error" role="alert">
         <ErrorCircleIcon size={14} />
-        <span>{message ? t("turn.end.errorWith", { message }) : t("turn.end.error")}</span>
+        <span>
+          {message ? t("turn.end.errorWith", { message }) : t("turn.end.error")}
+          {isNetworkError(message) ? ` ${t("turn.end.networkHint")}` : ""}
+        </span>
         {resend !== undefined ? <TurnAgain resend={resend} /> : null}
       </div>
     );

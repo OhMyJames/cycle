@@ -21,6 +21,7 @@ import {
   agentAuthSubmit,
   agentDefaultsRead,
   agentDefaultsSet,
+  agentPrewarm,
   agentSetupRead,
   agentSetupSetRuntime,
   agentsList,
@@ -48,6 +49,8 @@ import {
   fsRead,
   gitBranches,
   META,
+  type ModelProvider,
+  type ModelProviderDraft,
   NOTIFICATIONS,
   type ParamsOf,
   PLAN_USAGE_CHANGED,
@@ -57,6 +60,8 @@ import {
   type Plugin,
   type PluginSource,
   PluginsChangedSchema,
+  type ProviderKind,
+  type ProviderModel,
   planUsageRead,
   pluginSourcesAdd,
   pluginSourcesRefresh,
@@ -69,6 +74,10 @@ import {
   pluginsUpdate,
   promptAckReturn,
   promptDequeue,
+  providersCatalog,
+  providersList,
+  providersRemove,
+  providersSave,
   type ResultOf,
   type SessionPageOptions,
   seqOf,
@@ -180,6 +189,8 @@ export type ClientEvents = {
   listChanged?: () => void;
   /** A connector was added, changed or removed, or its status moved: list them again (docs/protocol.md §14). */
   connectorsChanged?: () => void;
+  /** The owner's model providers were added, changed or removed: read them and the agents again (docs/protocol.md §10). */
+  providersChanged?: () => void;
   /** An agent's plugins or their sources changed: list them again (docs/protocol.md §15). */
   pluginsChanged?: (agentId: string) => void;
   /** An agent's defaults were changed, here or by another client. */
@@ -327,6 +338,11 @@ export class CycleClient {
     expectedRevision: number,
   ): Promise<ResultOf<typeof agentSetupSetRuntime>> {
     return this.#call(agentSetupSetRuntime, { agent, patch, expectedRevision });
+  }
+
+  /** Asks the daemon to start an agent ahead of the session that will want it (docs/protocol.md §16). */
+  async prewarmAgent(agent: string): Promise<void> {
+    await this.#call(agentPrewarm, { agent });
   }
 
   /** Starts an in-app subscription sign-in flow for an agent (docs/protocol.md §16). */
@@ -641,6 +657,27 @@ export class CycleClient {
   async clearConnectorAuth(id: string): Promise<Connector> {
     this.#connectors();
     return (await this.#call(connectorsAuthClear, { id })).connector;
+  }
+
+  // ---- the owner's model providers (docs/protocol.md §10 "自带模型") ----
+
+  /** The owner's providers, and the known services one can be made for. A key is named (`hasKey`), never given. */
+  async listProviders(): Promise<{ providers: ModelProvider[]; kinds: ProviderKind[] }> {
+    return this.#call(providersList, {});
+  }
+
+  /** The models a known service is known to serve. */
+  async providerCatalog(kind: string): Promise<ProviderModel[]> {
+    return (await this.#call(providersCatalog, { kind })).models;
+  }
+
+  /** Adds a provider, or changes the one the draft's `id` names. The key in the draft goes in and never comes out. */
+  async saveProvider(provider: ModelProviderDraft): Promise<ModelProvider> {
+    return (await this.#call(providersSave, { provider })).provider;
+  }
+
+  async removeProvider(id: string): Promise<void> {
+    await this.#call(providersRemove, { id });
   }
 
   // ---- plugins (docs/protocol.md §15) ----
@@ -999,6 +1036,11 @@ export class CycleClient {
         CONNECTORS_CHANGED,
         (p: unknown) => p as object,
         () => this.#events.connectorsChanged?.(),
+      )
+      .onNotification(
+        NOTIFICATIONS.providersChanged,
+        (p: unknown) => p as object,
+        () => this.#events.providersChanged?.(),
       )
       .onNotification(
         PLUGINS_CHANGED,

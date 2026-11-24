@@ -13,6 +13,7 @@ import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
 import { shippedExecutable } from "./self.ts";
+import { systemProxyFill } from "./system-proxy.ts";
 
 /** What the Codex process is allowed to see, and nothing else: the allowlist, what config.json names, its own home. */
 export const codexEnv = (
@@ -22,7 +23,7 @@ export const codexEnv = (
 ): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const key of config.allowEnv) if (inherited[key] !== undefined) env[key] = inherited[key];
-  Object.assign(env, config.env);
+  Object.assign(env, systemProxyFill(config.allowEnv, inherited, config.env), config.env);
   env.CODEX_HOME = config.configDir ?? join(dataDir, "codex");
   // HOME is not passed on: it would let Codex find a login (~/.codex) nobody chose to share.
   env.HOME ??= env.CODEX_HOME;
@@ -53,7 +54,7 @@ export const codexHarness: Harness = {
     login: ["login"],
     directories: ["CODEX_HOME"],
   },
-  definition: ({ config, dataDir, inherited, self, log }) => {
+  definition: ({ config, dataDir, inherited, self, log, providers }) => {
     const settings = config.codex;
     const env = codexEnv(settings, dataDir, inherited);
     const executable = () => settings.executable ?? shippedExecutable("codex") ?? sourceBinary();
@@ -63,15 +64,21 @@ export const codexHarness: Harness = {
       configSchema,
       promptCapabilities: CODEX_PROMPT_CAPABILITIES,
       steer: true,
+      ...(providers !== undefined ? { providerModels: () => providers.models() } : {}),
       command: [...self, "adapter", "codex"],
-      env: ({ sessionEnv }) => ({
-        PATH: inherited.PATH ?? "",
-        CYCLE_ADAPTER_CONFIG: JSON.stringify({
-          env,
-          sessionEnv,
-          codexExecutable: settings.executable,
-        }),
-      }),
+      env: ({ sessionEnv }) => {
+        // Read at each start: a provider saved since is there for the next session.
+        const own = providers?.adapterConfig();
+        return {
+          PATH: inherited.PATH ?? "",
+          CYCLE_ADAPTER_CONFIG: JSON.stringify({
+            env,
+            sessionEnv,
+            codexExecutable: settings.executable,
+            ...(own !== undefined ? { providers: own } : {}),
+          }),
+        };
+      },
       // Codex's own command line, with the environment a session gets, in a folder that is no project.
       plugins: new CodexPlugins({
         executable,

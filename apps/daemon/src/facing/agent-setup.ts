@@ -6,6 +6,7 @@ import {
   agentAuthLogout,
   agentAuthStart,
   agentAuthSubmit,
+  agentPrewarm,
   agentSetupRead,
   agentSetupSetRuntime,
 } from "@cycle/protocol";
@@ -15,6 +16,10 @@ export const registerAgentSetup = (app: AgentApp, core: Core, me: Me): void => {
   const cycle = cycleOn(app, core.log);
   cycle(agentSetupRead, (params) => core.readAgentSetup(params));
   cycle(agentSetupSetRuntime, (params) => core.setAgentRuntime(params));
+  cycle(agentPrewarm, async (params) => {
+    await core.prewarmAgent(params.agent);
+    return {};
+  });
   cycle(agentAuthStart, (params) => core.startAgentAuth(me().id, params));
   cycle(agentAuthSubmit, (params) => core.submitAgentAuth(me().id, params));
   cycle(agentAuthCancel, (params) => core.cancelAgentAuth(me().id, params));

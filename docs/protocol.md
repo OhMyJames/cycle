@@ -55,6 +55,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "connectors": true,
   "plugins": ["claude"],
   "agentSetup": true,
+  "agentPrewarm": true,
   "sessionMentions": true,
   "terminal": true
 }
@@ -93,6 +94,10 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 | `_cycle/diff/file`           | 客户端 → daemon | daemon 处理:一个文件相对 HEAD 的补丁,见 §8                                                                    |
 | `_cycle/trust/read`          | 客户端 → daemon | daemon 处理:一个文件夹是否信任,见 §8                                                                          |
 | `_cycle/trust/set`           | 客户端 → daemon | daemon 处理:记下对一个文件夹的信任决定,见 §8                                                                  |
+| `_cycle/providers/list`      | 客户端 → daemon | daemon 处理:主人的模型服务商和可选的服务种类,见 §10 "自带模型"                                                |
+| `_cycle/providers/catalog`   | 客户端 → daemon | daemon 处理:一种已知服务已知的模型                                                                            |
+| `_cycle/providers/save`      | 客户端 → daemon | daemon 处理:新增或修改一个服务商。key 只进不出                                                                |
+| `_cycle/providers/remove`    | 客户端 → daemon | daemon 处理:删除一个服务商                                                                                    |
 | `_cycle/plan_usage/read`     | 客户端 → daemon | daemon 处理:各 agent 账号的套餐用量,见 §8 "套餐用量"                                                          |
 | `_cycle/connectors/*`        | 客户端 → daemon | daemon 处理:管理 connector 和授权,见 §14                                                                      |
 | `_cycle/plugins/*`           | 客户端 → daemon | daemon 处理:浏览、安装、启停各 agent 的 plugin,见 §15                                                         |
@@ -751,6 +756,8 @@ session 里 ACP 的 `configOptions` 用 ACP 自己的字段表达同样的东西
 - **不知道时**:进程还没报模型清单(新 session 第一个进程起来之前)、或当前模型不在清单里时,`effort` 列出全部档位,值照常交给 SDK,由它决定;清单到了之后,当前值不在当前模型的档位里,adapter 把它改回 `default` 并发 `config_option_update`。换模型时同样:旧档位新模型不支持,改回 `default`(一个值,不按模型分别记)。
 - daemon 缓存它见过的模型清单(含各模型的 `cycle/efforts`),叠加到 `_cycle/agents` 返回的 `configSchema` 的 `model.oneOf` 上(同样放在每项的 `_meta["cycle/efforts"]`),新 session 页据此在选模型时决定是否显示 effort、显示哪些档位。缓存只是提示,不做校验:真正可选的档位以 session 里 agent 报的为准。
 
+**自带模型(CYC-300,codex)。** 主人自己的模型服务商(`providers.json`,key 只在 daemon,任何答复只有 `hasKey`)的模型,id 是 `<服务商 id>/<模型 id>`。`_cycle/agents` 返回的 codex `configSchema` 的 `model.oneOf` 里,daemon 现算地追加它们,每项 `_meta["cycle/provider"] = {id, name}`,并带 `cycle/efforts`;这些项不进上面说的缓存。一个 session 要么在 agent 自己的模型上,要么在主人的模型上,由它开始时的模型决定:daemon 在发给 agent 的 `session/new`、`session/resume` 的 `_meta["cycle/model"]` 里带上这个模型。session 里 adapter 报的 `model` 选项只列同一种,另一种的 `setConfigOption` 被拒绝(`-32602`)。服务商变化时 daemon 向所有客户端发 `_cycle/providers_changed`(参数 `{}`),客户端重读 `_cycle/providers/list` 和 `_cycle/agents`。决定见 `.agents/notes/2026-11-24-codex-own-models-through-a-pi-ai-gateway.md`。
+
 agent 自己改了配置(例如 Claude 在 plan 模式里被批准后切回常规模式),通过 `config_option_update` 回报;daemon 把变化写进索引的 `config`,恢复时才不会把它改回去。
 
 **标题**:agent 的 `session_info_update.title` 只在用户没有改过名的 session 上生效:`_cycle/session/set_title` 设置的标题优先,之后 agent 给的标题忽略。agent 给出的标题写入索引,`session/list` 的 `_meta.title` 反映它,并发 `_cycle/session_list_changed`。
@@ -828,7 +835,9 @@ ACP 以后可能占用这个范围里的码,所以 Cycle 的码在 schema 里集
 要求:
 
 - 只追加。写入单行,崩溃留下的末尾半行在读取时丢弃。
-- `seq` 严格递增且连续。读取时发现不连续视为日志损坏,以 `-32015` 报告,不静默跳过。
+- `seq` 严格递增且连续。读取时发现不连续视为日志损坏,以 `-32015` 报告,不静默跳过。唯一的例外是压缩(下面"压缩"):带 `merged: n` 的记录代表它之前连续的 n 条,所以它的 `seq` 比上一行大 n。
+- **命令表去重。** `available_commands_update` 平均 15 KB,agent 常常原样重发。写入前与这个 session 日志里最近一条比较(过滤之后的内容逐字相同),相同就不写、不占 `seq`、不推给客户端(客户端手里已经有那一条)。打开日志时已从读进来的记录里取得最近一条(不再读第二遍),所以重启后 agent 重发同样的表也不会再写;比较和落盘之间不等待,记录仍按 agent 发来的顺序得到 `seq`。
+- **压缩。** 打开已有 session 的日志时(没有写入者,也还没有客户端附着),把已结束的相邻文本块并成一条:同一个 `sessionUpdate`(`agent_message_chunk` 或 `agent_thought_chunk`)、除文字外各字段(`messageId`、`_meta`)全等、`content` 只有 `type: "text"` 和 `text` 的一连串记录,首尾两条不动,中间 ≥2 条并成一条:`seq` 取它们最后一条的,`ts` 取第一条的,`text` 依次相接,加 `merged: n`(n 是被并的条数)。首尾不动是因为客户端用第一块的时间当开始、最后一块的时间当结束(思考用时);只并中间的,时间一个都不丢。日志末尾的一串不并(消息可能还在增长)。不改 `seq` 的编号,所以 `readSeq`、`attentionSeq` 和客户端记着的位置都仍然有效;只有一个客户端恰好停在被并的那一段中间(断线后 daemon 重启)才会把那段文字再收一遍。省下的行数不到 32 条不重写文件。写入是先写临时文件并 fsync、再改名,崩溃留下旧文件或新文件;失败就保持原样。`merged` 是日志记录的字段,不在 `data` 里,不发给客户端。
 - 日志不包含已知的凭证。写入前过滤,过滤发生在 daemon 把记录交给存储的那一处;客户端收到的是日志写下的那份,所以磁盘、实时推送和重放看到的一样。给客户端的权限请求(它不经过日志)用同一个过滤。规则刻意收得窄,因为猜错会改掉用户自己历史里的内容:
   1. **键名**:`tool_call` / `tool_call_update` 和权限请求里的工具调用(`subject.toolCall`)中,键名表示秘密的值换成 `"[redacted]"`,不论嵌套多深。键名按小写、去掉 `_ - .` 和空格后比较,以 password、passwd、passphrase、secret、apikey、accesskey、privatekey、credential、authorization、cookie 结尾(可带复数 s),或以 token 结尾(单数:`inputTokens` 这类计数不算),或恰好是 auth、bearer、pwd、pin。`{name, value}` 形式的列表(环境变量),`name` 符合上面的规则时换掉 `value`。
   2. **字符串**:工具调用里的所有字符串(命令、输出、文件内容、标题),把确定是凭证的部分换掉:常见令牌形态(`sk-ant-`、`sk-`、GitHub、Slack、AWS、Google、JWT)、私钥块、`Bearer`/`Basic` 后面又长又带数字的串(`Basic configuration` 这类文字不动)、`://用户:密码@主机` 里的密码、等号两边没有空格的赋值(全大写的 `NAME_KEY=值`,即 `cat .env` 的输出;小写的 `token=值`,如查询串)、`--token=值` 这类命令行参数、文本里 JSON 的 `"password": "值"`。等号两边有空格的(`const API_KEY = x`)、`==` 是代码,不动。
@@ -959,7 +968,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 }
 ```
 
-- `builtin?`:`true` 表示它随 Cycle 一起发(`packages/clawdot-plugins`),由 daemon 静默装好。能停用(`set_enabled`),不能卸载:`uninstall` 以 `plugin_failed`、`reason: "failed"` 拒绝。客户端不显示它的卸载入口。
+- `builtin?`:`true` 表示它随 Cycle 一起发(`packages/clawdot-plugins`),由 daemon 静默装好。能停用(`set_enabled`),不能卸载:`uninstall` 以 `plugin_failed`、`reason: "failed"` 拒绝。客户端不显示它的卸载入口。`icon?`:它的图片,`data:image/…;base64,…`(不超过约 60 KB),取自 plugin 目录里的 `assets/icon.svg`(或 `icon.png`);只有内置的有,agent 自己的 plugin 没有。Claude、Codex、agy 的清单都没有通用的图标字段,所以这是 Cycle 一层的约定。
 
 - `agentId`:它是哪个 agent 的。`id`:在这个 agent 里唯一,**客户端不解析它**(Claude 的是 `名字@来源`,别的 agent 可以是别的)。
 - `name`、`description?`、`version?`:显示用,原样来自 plugin 或它的来源。
@@ -1075,6 +1084,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 | `_cycle/agent_auth/submit`    | C → D             | `{ flowId, code }`                                       | `{ ok: true }`                                                                |
 | `_cycle/agent_auth/cancel`    | C → D             | `{ flowId }`                                             | `{}`                                                                          |
 | `_cycle/agent_auth/logout`    | C → D             | `{ agent }`                                              | `{}`                                                                          |
+| `_cycle/agent_setup/prewarm`  | C → D             | `{ agent }`                                              | `{}`                                                                          |
 | `_cycle/agent_auth_completed` | D → C(仅发起连接) | `{ flowId, agent, ok, reason? }`                         | —                                                                             |
 
 - **模式选择与校验**:客户端按本地/远程传输从 `auth.signInModes` 过滤并选择 `mode`(远程环境跳过 `requiresLocalLoopback: true`);daemon 二次校验 `mode` 必须属于该 agent 当前允许的 `signInModes`,否则返回 `-32602`(`data.reason: "unsupported_mode"`)。若 agent 二进制不可用,返回 `-32021`(`binary_unavailable`)。
@@ -1083,6 +1093,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - **一次性授权码边界**:`_cycle/agent_auth/submit` 中的 `code` 仅驻留内存并一次性送入登录子进程 stdin,绝不落盘、绝不进 session JSONL / `daemon.log` / 错误对象。
 - **TTL 与断线/退出清理**:每个登录流固定 10 分钟 TTL(`expiresAt` 为毫秒时间戳)。发起连接断开、TTL 到期或 daemon 关闭时,daemon 立即终止对应登录子进程,不留孤儿进程。
 - **完成通知范围**:`_cycle/agent_auth_completed` **仅推送给发起该流程的连接**,用于更新该客户端的登录弹窗态;全局状态刷新统一通过 `_cycle/agent_setup_changed` 广播给所有客户端。
+- **提前起进程**(`agentPrewarm: true`):空白页选中某个 agent 时,客户端发 `_cycle/agent_setup/prewarm`。agent 的定义声明了 `standby`(进程的启动与 `initialize` 和 session 的 cwd、MCP、环境无关,目前是 agy)时,daemon 先起好并初始化一个,每个 agent 最多一个;下一个要起这个 agent 的 session 直接接手它(日志 `agent_standby_taken`),不再起新的。没人接手时 5 分钟后释放(`agent_standby_expired`);该 agent 的账号或运行时设置变了、daemon 停止时同样释放。不能提前起、起失败都回 `{}`,由 session 自己起并报原因。
 - **登出、登录与会话生命周期**:`_cycle/agent_auth/logout` 成功,或登录流以 `ok: true` 完成时,账号可能已经换了,两者走同一套处理:不中断运行中 turn 或后台任务;立即终止该 agent 未发过 prompt 的预热进程,将其余运行中或启动中的 session 标为 `stale` 并复用空闲重启路径(`#restartIfStale`;正在 `session/new` 里、还没登记的 session 在登记后立即回收);清空 daemon 内存中该 agent 的 `planUsage`、观测档位时间与只读探测缓存,向所有连接发 `_cycle/plan_usage_changed`(`windows: []`),并广播 `_cycle/agent_setup_changed`。标为 `stale`(账号原因)的旧进程在回收前报的套餐用量不再记下。
 - **断线与关闭**:发起连接在 `start` 尚未返回时断开,该 agent 的互斥锁保持到驱动的启动结束、子进程被取消之后才释放;daemon 关闭时等待进行中的启动与登出结束(有上限)。连接已断,daemon 不再发 `_cycle/agent_auth_completed`;`disconnected` 只是客户端(主进程埋点)的说法,不是协议里的 `reason`。
 

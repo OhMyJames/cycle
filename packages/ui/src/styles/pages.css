@@ -198,10 +198,20 @@
 /* A connector's form, over the Connectors page: wider than a question, and it scrolls when its secrets are many. */
 [data-kind="connector-form"],
 [data-kind="connector-values"],
-[data-kind="plugin-source-form"] {
+[data-kind="plugin-source-form"],
+[data-kind="provider-form"] {
   width: min(36rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
   overflow-y: auto;
+}
+
+/* A built-in plugin's picture, before its state dot: the same 16px column as an agent's logo. */
+[data-slot="plugin-icon"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 6px;
+  border-radius: var(--cycle-radius-sm);
 }
 
 /* A plugin's row (CYCL-84): what it is in one line that is cut at its end, its facts before it. */
@@ -252,7 +262,8 @@
 [data-slot="page-group"] > [role="alert"],
 [data-kind="connector-form"] form > [role="alert"],
 [data-kind="connector-values"] form > [role="alert"],
-[data-kind="plugin-source-form"] form > [role="alert"] {
+[data-kind="plugin-source-form"] form > [role="alert"],
+[data-kind="provider-form"] form > [role="alert"] {
   margin: 0;
   color: var(--ui-destructive);
 }
@@ -270,6 +281,40 @@
 [data-slot="secrets"] > legend {
   padding: 0;
   font-weight: 500;
+}
+
+/* A provider's models: the known service's, ticked from a list that scrolls; or the owner's own, a row each. */
+[data-slot="provider-models"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+[data-slot="provider-models"] > legend {
+  padding: 0;
+  font-weight: 500;
+}
+
+[data-slot="provider-models"] > [data-slot="form-options"] {
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+[data-slot="provider-model-row"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--cycle-border-default);
+}
+
+[data-slot="provider-model-row"] [data-slot="form-option"] {
+  width: auto;
+  align-items: center;
 }
 
 [data-slot="secret-name"] {

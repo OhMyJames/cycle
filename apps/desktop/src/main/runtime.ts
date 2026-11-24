@@ -294,6 +294,7 @@ export class Runtime {
           }),
         agentAuthCompleted: (completed) => this.#hooks.authCompleted(locationId, completed),
         connectorsChanged: () => this.emit({ type: "connectors", locationId }),
+        providersChanged: () => this.emit({ type: "providers", locationId }),
         pluginsChanged: (agentId) => this.emit({ type: "plugins", locationId, agentId }),
         planUsage: (agent, usage) => this.emit({ type: "plan-usage", locationId, agent, usage }),
         terminalsChanged: (sessionId, terminals) =>
@@ -505,6 +506,7 @@ const capabilitiesOf = (client: CycleClient): NonNullable<LocationStatus["capabi
   connectors: client.capabilities.connectors === true,
   plugins: client.pluginAgents,
   agentSetup: client.capabilities.agentSetup === true,
+  agentPrewarm: client.capabilities.agentPrewarm === true,
   sessionMentions: client.capabilities.sessionMentions === true,
   fs: client.capabilities.fs === true,
   diff: client.capabilities.diff === true,

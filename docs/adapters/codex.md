@@ -79,10 +79,22 @@
 
 请求里(实验字段)列出 Codex 接受的回答。要跑出沙箱的命令只列 `accept`、`acceptWithExecpolicyAmendment`、`cancel`,没有 `decline`。实测:回 `decline` 它照收,命令不跑,模型接着说完("Refused."),回合正常结束;回 `cancel` 则整个回合以取消结束。所以拒绝一律回 `decline`。
 
+## 自带模型(CYC-300)
+
+Codex 只会说 Responses API。主人自己的模型服务(Anthropic、Google、OpenRouter 等 pi-ai 认识的,或任何 OpenAI/Anthropic 兼容端点)经 daemon 里的回环网关(`packages/model-gateway`,用 pi-ai)交给 Codex。决定和理由见 [决定笔记](../../.agents/notes/2026-11-24-codex-own-models-through-a-pi-ai-gateway.md)。
+
+- 服务商存在 `<数据目录>/providers.json`(0600,含 key)。协议里没有任何答复带 key,只有 `hasKey`。方法:`_cycle/providers/{list,catalog,save,remove}`,变化时广播 `_cycle/providers_changed`。
+- 模型叫 `<服务商 id>/<模型 id>`。daemon 把它们加进 codex 的 `model` 选项(`_meta["cycle/provider"]` 标出服务商),不进选项缓存。
+- **一个 session 要么在 Codex 自己的模型上,要么在主人的模型上**,由它开始时的模型决定:daemon 在 `session/new`、`session/resume` 的 `_meta["cycle/model"]` 里告诉适配器。适配器用线程自己的 `config` 把网关设为 model provider(不写 `config.toml`),网关令牌只在 app-server 的环境里,并用 `shell_environment_policy.exclude` 挡住命令。session 里的模型菜单只列同一种,另一种被拒绝。
+- 网关只回答本次 daemon 启动时生成的令牌,第一次有 session 用到才起,daemon 关闭时停。
+
+没有验证:任何真实的服务商、打包后的桌面应用。已知限制:Codex 对不认识的模型不给 `apply_patch`,网页搜索和图片生成是 OpenAI 的服务端工具,都用不了;Gemini 的 thoughtSignature 只在内存里,daemon 重启后丢。
+
 ## 未做(显式列出,不要悄悄补)
 
 - "以后不问这类命令"(`acceptForSession`、`acceptWithExecpolicyAmendment`)这类审批选项:只给允许一次、拒绝一次。
 - goal(`thread/goal/*`)、后台终端、`/review`、Fast 档(`serviceTier`)、从桌面端发起登录(`account/login/start`)。
+- **plugin**(protocol.md §15,`harness/codex/src/plugins.ts`):`CodexPlugins` 在 daemon 私有的 `CODEX_HOME` 下运行 `codex plugin list|add|remove|marketplace … --json`。`codex plugin` 没有启停命令,开关是 `config.toml` 的 `[plugins."<id>"] enabled`,只改这一行。`ensureBuiltin` 装随 Cycle 发的 plugin(`packages/clawdot-plugins`,见笔记 2026-11-24-builtin-plugins-are-installed-by-cycle)。plugin 自带的 MCP 服务器没有接网关,都标 `by: "agent"`。
 - `isSecret` 的问题没有单独处理:表单答案本来就不进日志(protocol.md §9)。
 - 沙箱拦下的工作区外写入,app-server 不发对应的 `commandExecution` item(容器里实测;模型看得到失败,客户端看不到这条命令)。是 Codex 的行为,适配器补不出来。
 - 长会话的内存没测(一个 session 是适配器加 app-server 两个进程)。
@@ -376,4 +388,4 @@ CYCL-155 的"每个 agent 一个顶层键":
 | 14  | 桌面端和埋点                                                   | 新建会话时能选 Codex;界面里写死 "Claude" 的地方按 agent 显示;`agent` 枚举加 `codex`,docs/analytics.md 字典同步                                                                                                                                                                                             | 界面测试:选 Codex 新建会话;事件里 agent 是 `codex` 而不是 `other`,且没有内容跟着发出去                                                                                                                                                    | **CYCL-155**(埋点认 agent id);3                           |
 | 15  | 真实模型和远端验证,文档收尾                                    | `harness/codex` 和 `apps/daemon` 的 `test:real`(token 只给 Codex 进程,不进 CI);一台远端 Linux 和一个容器里各跑一次,看沙箱;把本文从"调研"改成和 claude.md 一样的"已做/未做/验证结果"                                                                                                                        | claude.md "真实模型验证"那张表的每一行在 Codex 上有结果;Linux 沙箱的结论和退路写进文档;本文里的【推断】要么变成【实测】,要么删掉                                                                                                          | 2–10                                                      |
 
-不在这批里,等核心稳了再开:plugin(`PluginProvider`)、goal、后台任务、`/review`、"以后不问这类命令"的审批选项、从桌面端发起登录(设备码)、Fast 档。
+不在这批里,等核心稳了再开:goal、后台任务、`/review`、"以后不问这类命令"的审批选项、从桌面端发起登录(设备码)、Fast 档。

@@ -1,4 +1,5 @@
 import type { AgentApp, Stream } from "@agentclientprotocol/sdk/experimental/v2";
+import type { ProviderModelInfo } from "@cycle/model-gateway";
 import type { PromptCapabilities } from "@cycle/protocol";
 import type { AgentSetupProvider } from "./agent-setup.ts";
 import type { PluginProvider } from "./plugins.ts";
@@ -33,12 +34,23 @@ export type AgentDefinition = {
   promptCapabilities?: PromptCapabilities;
   /** It takes a prompt into the turn that is running (`_meta["cycle/steer"]`, docs/protocol.md §8). */
   steer?: boolean;
+  /**
+   * The owner's own models this agent can run, beside its own: added to the `model` choices a client is shown, and kept
+   * out of the cache of what the agent itself offers (they change with the owner's settings, not the agent's).
+   */
+  providerModels?: () => ProviderModelInfo[];
   available?: () => boolean | Promise<boolean>;
   /**
    * How many of its sessions may hold a process that has had no prompt yet; past it the oldest such is let go
    * (decision 0014). Counted among this agent's sessions only. No limit when absent; 0 disables warm pool retention.
    */
   maxAhead?: number | (() => number | undefined);
+  /**
+   * It can be started before any session wants it (`Daemon.prewarmAgent`): the process is up and initialised, and the
+   * first session to start takes it over. Only for an agent whose start does not depend on the session (cwd, MCP
+   * servers, environment): those come with `session/new`. None when absent.
+   */
+  standby?: boolean;
   /** Its plugins, when it has them (docs/protocol.md §15). */
   plugins?: PluginProvider;
   /** Read-only status, diagnostics, auth, and runtime settings provider (docs/protocol.md §16). */

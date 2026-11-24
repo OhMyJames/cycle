@@ -15,6 +15,9 @@ import type {
   PluginInfo,
   PluginSourceInfo,
   Preferences,
+  ProviderInfo,
+  ProviderKind,
+  ProviderModel,
   SessionSnapshot,
   SessionSummary,
   TerminalInfo,
@@ -74,6 +77,7 @@ export const fakeBridge = (
       connectors?: boolean;
       plugins?: string[];
       agentSetup?: boolean;
+      agentPrewarm?: boolean;
       sessionMentions?: boolean;
       fs?: boolean;
       diff?: boolean;
@@ -90,6 +94,12 @@ export const fakeBridge = (
     terminalProblem?: TerminalProblem;
     /** The connectors the daemon keeps. Changed in place by what the page asks. */
     connectors?: ConnectorInfo[];
+    /** The owner's model providers, the known services, and what each known service serves. Changed in place. */
+    providers?: {
+      list: ProviderInfo[];
+      kinds?: ProviderKind[];
+      catalog?: Record<string, ProviderModel[]>;
+    };
     /**
      * An agent's plugins: what can be installed (the installed ones among them) and where it comes from. Changed in
      * place by what the page asks. `fail`: what the next change comes to instead of being done.
@@ -121,6 +131,7 @@ export const fakeBridge = (
   };
   const calls: [string, ...unknown[]][] = [];
   const connectors = options.connectors ?? [];
+  const providers = options.providers ?? { list: [] };
   const plugins = options.plugins ?? { sources: [], all: [] };
   /** A change to the plugins: refused as the test said, or done. */
   const pluginChange = <T>(done: () => T): T | PluginFailure => {
@@ -365,6 +376,7 @@ export const fakeBridge = (
         return { saved: true as const, values, overrides, revision: expectedRevision + 1 };
       },
     ),
+    prewarmAgent: record("prewarmAgent", async () => {}),
     revealDaemonConfig: record("revealDaemonConfig", async () => true),
     startAgentAuth: record("startAgentAuth", async () => ({
       started: false as const,
@@ -420,6 +432,40 @@ export const fakeBridge = (
       connector.authorized = false;
       connector.status = { state: "needs_auth" };
       return { connector: { ...connector } };
+    }),
+    listProviders: record("listProviders", async () => ({
+      providers: providers.list.map((p) => ({ ...p, models: [...p.models] })),
+      kinds: providers.kinds ?? [],
+    })),
+    providerCatalog: record(
+      "providerCatalog",
+      async (_location: string, kind: string) => providers.catalog?.[kind] ?? [],
+    ),
+    saveProvider: record("saveProvider", async (_location: string, draft) => {
+      const before = providers.list.find((p) => p.id === draft.id);
+      if (draft.id !== undefined && before === undefined) return { problem: "not_found" as const };
+      // A key is only ever written: what comes back says there is one, as the daemon's answer does.
+      const provider: ProviderInfo = {
+        id: before?.id ?? `p${providers.list.length + 1}`,
+        name: draft.name,
+        kind: before?.kind ?? draft.kind,
+        api: draft.api,
+        baseUrl: draft.baseUrl,
+        hasKey:
+          draft.apiKey === undefined
+            ? before !== undefined && before.baseUrl === draft.baseUrl && before.hasKey
+            : draft.apiKey !== "",
+        models: draft.models,
+      };
+      const at = providers.list.findIndex((p) => p.id === provider.id);
+      if (at < 0) providers.list.push(provider);
+      else providers.list[at] = provider;
+      return { provider };
+    }),
+    removeProvider: record("removeProvider", async (_location: string, id: string) => {
+      const at = providers.list.findIndex((p) => p.id === id);
+      if (at >= 0) providers.list.splice(at, 1);
+      return { removed: true as const };
     }),
     listPlugins: record("listPlugins", async () => ({
       sources: plugins.sources.map((s) => ({ ...s })),

@@ -25,6 +25,11 @@ import type {
   PluginProblem,
   PluginSourceInfo,
   PromptBlock,
+  ProviderAnswer,
+  ProviderDraft,
+  ProviderModel,
+  ProviderProblem,
+  ProvidersRead,
   TerminalAttached,
   TerminalInfo,
   TerminalProblem,
@@ -114,6 +119,16 @@ export const connectorProblemOf = (
   if (code === -32017) return { problem: "unreachable" };
   if (code === -32602) return { problem: "invalid" };
   if (messageOf(error).includes("too old to keep connectors")) return { problem: "unsupported" };
+  return { problem: "failed", message: messageOf(error) };
+};
+
+/** What the daemon's error says about a provider, as a word the page has a sentence for (docs/protocol.md §10). */
+export const providerProblemOf = (
+  error: unknown,
+): { problem: ProviderProblem; message?: string } => {
+  const { code } = (error ?? {}) as { code?: unknown };
+  if (code === -32002) return { problem: "not_found" };
+  if (code === -32602) return { problem: "invalid", message: messageOf(error) };
   return { problem: "failed", message: messageOf(error) };
 };
 
@@ -575,6 +590,35 @@ export class LocationActions {
           this.#runtime.track("connector_removed", { transport });
       },
     );
+  }
+
+  // ---- the owner's model providers (docs/protocol.md §10 "自带模型") ----
+
+  async listProviders(locationId: string): Promise<ProvidersRead> {
+    return this.#runtime.connection(locationId).client.listProviders();
+  }
+
+  async providerCatalog(locationId: string, kind: string): Promise<ProviderModel[]> {
+    return this.#runtime.connection(locationId).client.providerCatalog(kind);
+  }
+
+  async saveProvider(locationId: string, draft: ProviderDraft): Promise<ProviderAnswer> {
+    return runAction(
+      async () => ({
+        provider: await this.#runtime.connection(locationId).client.saveProvider(draft),
+      }),
+      providerProblemOf,
+    );
+  }
+
+  async removeProvider(
+    locationId: string,
+    id: string,
+  ): Promise<{ removed: true } | { problem: ProviderProblem; message?: string }> {
+    return runAction(async () => {
+      await this.#runtime.connection(locationId).client.removeProvider(id);
+      return { removed: true as const };
+    }, providerProblemOf);
   }
 
   /**

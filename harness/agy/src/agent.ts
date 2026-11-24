@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { isAbsolute } from "node:path";
 import {
   type AgentContext,
   agent,
@@ -9,7 +11,17 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleErrorCode, META } from "@cycle/protocol";
-import { translateMcpServers } from "./mcp.ts";
+import { translateMcpServers, type V1McpServer } from "./mcp.ts";
+import {
+  agySettingsPath,
+  DEFAULT_TOOL_PERMISSION,
+  isToolPermission,
+  type ToolPermission,
+  withSettingsLock,
+  writeManagedSettings,
+} from "./permissions.ts";
+import { PLAN_USAGE_UPDATE, PlanUsageReader } from "./plan-usage.ts";
+import { AgyPlugins } from "./plugins.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { DEFAULT_AGY_MODE, toV2ConfigOptions } from "./settings.ts";
 import {
@@ -44,7 +56,123 @@ type ActiveTurn = {
   assistantMessageId: string;
   openTools: Set<string>;
   approvals: AbortController;
+  /**
+   * agy's `invoke_subagent` calls. The call itself shows as done within seconds while the sub-agent keeps working
+   * for minutes without a word on ACP (CYC-289), so a finished call does not end it: only a failure, a
+   * `manage_task` call finishing (agy's own check on its tasks), or `SUBAGENT_MAX_MS` does.
+   */
+  subagents: Map<string, { since: number; title: string }>;
+  subagentTicker?: ReturnType<typeof setInterval> | undefined;
 };
+
+/** agy tools that start work which outlives the call. */
+const SUBAGENT_TOOL = "invoke_subagent";
+const TASK_TOOL = "manage_task";
+/** Longest a sub-agent is waited for with nothing said: past it the turn may end, so a lost one cannot pin it. */
+const SUBAGENT_MAX_MS = 10 * 60_000;
+/** How often a working sub-agent is shown as still working. */
+const SUBAGENT_TICK_MS = 5_000;
+
+const newTurn = (autonomous: boolean): ActiveTurn => ({
+  inFlight: 0,
+  autonomous,
+  activeRequests: 0,
+  cancelled: false,
+  assistantMessageId: randomUUID(),
+  openTools: new Set(),
+  approvals: new AbortController(),
+  subagents: new Map(),
+});
+
+const formatElapsed = (ms: number): string => {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  return m > 0 ? `${m}m${String(total % 60).padStart(2, "0")}s` : `${total}s`;
+};
+
+/** Shell programs that run other commands or are too wide to remember by their name: never remembered. */
+const UNREMEMBERABLE_PROGRAMS = new Set([
+  "sudo",
+  "su",
+  "doas",
+  "env",
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "eval",
+  "exec",
+  "xargs",
+  "nohup",
+  "time",
+  "command",
+  "builtin",
+  "watch",
+  "timeout",
+  "rm",
+  "dd",
+  "ssh",
+  "source",
+  ".",
+  "python",
+  "python3",
+  "node",
+  "deno",
+  "bun",
+  "bunx",
+  "npx",
+  "perl",
+  "ruby",
+  "php",
+  "awk",
+  "find",
+  "curl",
+  "wget",
+  "mv",
+  "chmod",
+  "chown",
+  "kill",
+  "docker",
+  "osascript",
+  "open",
+  "tee",
+]);
+
+/**
+ * The rule a shell command is remembered by: one prefix per segment of a `|` / `&&` / `||` / `;` chain (the program
+ * and, when it is a plain word, its subcommand: `git status`). Undefined when it cannot be judged by segments:
+ * a substitution, a redirect, a newline or a program that runs others.
+ */
+export const commandPrefixes = (command: string): string[] | undefined => {
+  // A lone `&` (background), a group, a negation, a substitution, a redirect or a newline: not judged by segments.
+  if (/[`\n\r<>(){}!\\]|\$[({]/.test(command) || /(^|[^&])&([^&]|$)/.test(command))
+    return undefined;
+  const prefixes: string[] = [];
+  for (const segment of command.split(/&&|\|\||[|;]/)) {
+    const words = segment.trim().split(/\s+/).filter(Boolean);
+    const program = words[0];
+    if (program === undefined || /^\w+=/.test(program)) return undefined;
+    if (UNREMEMBERABLE_PROGRAMS.has(program.split("/").pop() ?? program)) return undefined;
+    // The program, the flags straight after it, and the plain word that follows: `git status`, `git -C repo`.
+    // Remembered exactly, so `git -C repo` is never `git push`.
+    let end = 1;
+    while (words[end]?.startsWith("-")) end += 1;
+    if (/^[a-z][\w-]*$/i.test(words[end] ?? "")) end += 1;
+    prefixes.push(words.slice(0, end).join(" "));
+  }
+  return prefixes.length > 0 ? prefixes : undefined;
+};
+
+const coversPrefix = (remembered: ReadonlySet<string>, prefix: string): boolean =>
+  remembered.has(prefix);
+
+const ALWAYS_OPTION_ID = "cycle-allow-session";
+/**
+ * MCP tools "always allow" is never offered for: ones named `apply_edits` (writes any file) or `run_checks` (runs any
+ * command), whichever server brings them, so one answer would not stand for everything the model later asks of them.
+ * By tool name only: an MCP tool that does the same under another name is still offered it.
+ */
+const NEVER_REMEMBERED_TOOL = /^mcp_.+_(apply_edits|run_checks)$/;
 
 const TURN_ACTIVITY_UPDATES = new Set([
   "agent_message_chunk",
@@ -65,8 +193,23 @@ type SessionState = {
   defaultEffort?: string | undefined;
   requestedModel?: string | undefined;
   requestedEffort?: string | undefined;
+  /** The tool permission agy's worker for this session started with (agy does not report it). */
+  toolPermission: ToolPermission;
+  /** Chosen during a turn: agy's worker is rebuilt with it before the next one. */
+  pendingToolPermission?: ToolPermission | undefined;
+  /** A rebuild of agy's worker in progress: nothing else is sent for this session until it has settled. */
+  rebuilding?: Promise<void> | undefined;
+  /** What `session/resume` needs to rebuild the worker. */
+  launch: { cwd: string; mcpServers: unknown[]; additionalDirectories?: string[]; meta?: unknown };
+  /** set_config_option requests in flight: agy's echo of them is folded into the one update they end with. */
+  configInFlight: number;
   /** agy's update_steps calls still going: what makes its plan. */
   stepsPlans: StepsPlans;
+  /** What a call is, by id, until it ends: a permission request names the call but not always its input. */
+  calls: Map<string, { name?: string | undefined; input?: unknown; status?: string | undefined }>;
+  /** "Always allow in this session", kept in memory only: MCP tool names and shell command prefixes. */
+  allowedTools: Set<string>;
+  allowedPrefixes: Set<string>;
 };
 
 const currentOption = (opts: readonly V1ConfigOption[], id: string): V1ConfigOption | undefined =>
@@ -103,6 +246,7 @@ const sessionConfigOptions = (session: SessionState): SessionConfigOption[] =>
     defaultModel: session.defaultModel,
     requestedModel: session.requestedModel,
     requestedEffort: session.requestedEffort,
+    toolPermission: session.pendingToolPermission ?? session.toolPermission,
   });
 
 const toRequestError = (error: unknown): RequestError => {
@@ -149,14 +293,84 @@ const systemPromptMeta = (
   return { antigravity: { systemPrompt: { append: text } } };
 };
 
+const launchOf = (
+  params: { cwd: string; additionalDirectories?: string[] | null | undefined },
+  mcpServers: unknown[],
+  meta: unknown,
+): SessionState["launch"] => ({
+  cwd: params.cwd,
+  mcpServers,
+  ...(params.additionalDirectories?.length
+    ? { additionalDirectories: params.additionalDirectories }
+    : {}),
+  ...(meta !== undefined ? { meta } : {}),
+});
+
 export function createAdapter(config: AdapterConfig) {
   let transport: AgyTransport | undefined;
   let initialized: Promise<V1InitializeResult> | undefined;
   let closing = false;
   let clientCanElicit = false;
   const sessions = new Map<string, SessionState>();
+  // The account's limits, read by a side process now and then (never a turn): told through whichever session is at hand.
+  const planUsage = new PlanUsageReader<SessionState>({
+    executable: config.agyExecutable,
+    env: config.env,
+    tell: (windows, session) =>
+      emitUpdate(session, {
+        sessionUpdate: PLAN_USAGE_UPDATE,
+        windows,
+        at: Date.now(),
+      } as unknown as SessionUpdate),
+  });
+  // `agy acp` does not start a plugin's own MCP servers, so the enabled plugins' stdio servers are handed over here.
+  const pluginReader = new AgyPlugins({
+    executable: () => config.agyExecutable,
+    env: config.env,
+    cwd: config.env.HOME && isAbsolute(config.env.HOME) ? config.env.HOME : tmpdir(),
+  });
+  const withPluginServers = async (given: V1McpServer[]): Promise<V1McpServer[]> => {
+    // A plugin that cannot be read brings no server; it never stops a session from starting.
+    const extra = await (config.pluginServers?.() ?? pluginReader.stdioServers()).catch(
+      (): V1McpServer[] => [],
+    );
+    const named = new Set(given.map((server) => server.name));
+    return [...given, ...extra.filter((server) => !named.has(server.name))];
+  };
   const cancelTimeoutMs = config.cancelTimeoutMs ?? 5_000;
-  const autonomousIdleMs = config.autonomousIdleMs ?? 1_500;
+  // agy's model call between two steps often takes longer than 1.5 s, which flickered running/idle and let a queued
+  // message go while agy still worked (CYC-290). No measured spread yet: the low end of 5-10 s, as a message sent in the window is refused.
+  const autonomousIdleMs = config.autonomousIdleMs ?? 5_000;
+  const initialToolPermission: ToolPermission = isToolPermission(config.toolPermission)
+    ? config.toolPermission
+    : config.skipPermissions === true
+      ? "always-proceed"
+      : DEFAULT_TOOL_PERMISSION;
+  const settingsPathOf = (): string => {
+    const home = config.env.HOME;
+    if (!home || !isAbsolute(home)) {
+      throw new RequestError(-32603, "agy needs an explicit absolute HOME");
+    }
+    return agySettingsPath(home);
+  };
+
+  /**
+   * Starts agy's worker for a session at `level`. agy reads `toolPermission` from settings.json only as the worker
+   * starts, and the file is shared by every session, so the level is written and the worker started under one lock.
+   * The file is written every time, even for the default, so a level another session left is never inherited.
+   */
+  const startingWorker = <T>(level: ToolPermission, start: () => Promise<T>): Promise<T> =>
+    withSettingsLock(settingsPathOf(), async () => {
+      try {
+        await writeManagedSettings(settingsPathOf(), { toolPermission: level });
+      } catch (error) {
+        throw new RequestError(
+          -32603,
+          `Could not set agy's tool permission: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return start();
+    });
 
   const emitUpdate = (session: SessionState, update: SessionUpdate) => {
     void session.owner
@@ -167,16 +381,86 @@ export function createAdapter(config: AdapterConfig) {
       .catch(() => undefined);
   };
 
+  /** Sub-agents still counted as working: not yet let go and not past `SUBAGENT_MAX_MS`. */
+  const liveSubagents = (turn: ActiveTurn): number => {
+    const now = Date.now();
+    let live = 0;
+    for (const sub of turn.subagents.values()) if (now - sub.since <= SUBAGENT_MAX_MS) live += 1;
+    return live;
+  };
+
+  /** A sub-agent over: its call, shown running while it worked, is closed as the end says. */
+  const releaseSubagents = (
+    session: SessionState,
+    turn: ActiveTurn,
+    ids: Iterable<string>,
+    status: "completed" | "failed" | "cancelled",
+  ) => {
+    for (const toolCallId of [...ids]) {
+      const sub = turn.subagents.get(toolCallId);
+      if (!sub) continue;
+      turn.subagents.delete(toolCallId);
+      if (status === "failed") continue; // agy's own failed update already closed it.
+      emitUpdate(session, {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status,
+        title: sub.title,
+      } as SessionUpdate);
+    }
+  };
+
+  const holdsTurn = (turn: ActiveTurn): boolean =>
+    turn.openTools.size > 0 || turn.activeRequests > 0 || liveSubagents(turn) > 0;
+
+  const stopSubagentTicker = (turn: ActiveTurn) => {
+    if (turn.subagentTicker) clearInterval(turn.subagentTicker);
+    turn.subagentTicker = undefined;
+  };
+
+  /** While a sub-agent works the call is shown running again, with how long it has been: agy says nothing else. */
+  const syncSubagentTicker = (session: SessionState, turn: ActiveTurn) => {
+    releaseSubagents(
+      session,
+      turn,
+      [...turn.subagents]
+        .filter(([, sub]) => Date.now() - sub.since > SUBAGENT_MAX_MS)
+        .map(([id]) => id),
+      "completed",
+    );
+    if (liveSubagents(turn) === 0) {
+      stopSubagentTicker(turn);
+      scheduleAutonomousIdle(session, turn);
+      return;
+    }
+    if (turn.subagentTicker) return;
+    turn.subagentTicker = setInterval(() => {
+      if (session.turn !== turn) return stopSubagentTicker(turn);
+      syncSubagentTicker(session, turn);
+      if (!turn.subagentTicker) return;
+      const now = Date.now();
+      for (const [toolCallId, sub] of turn.subagents) {
+        emitUpdate(session, {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "in_progress",
+          title: `${sub.title} · working ${formatElapsed(now - sub.since)}`,
+        } as SessionUpdate);
+      }
+    }, SUBAGENT_TICK_MS);
+    turn.subagentTicker.unref?.();
+  };
+
   const scheduleAutonomousIdle = (session: SessionState, turn: ActiveTurn) => {
     if (!turn.autonomous || session.turn !== turn) return;
     if (turn.idleTimer) {
       clearTimeout(turn.idleTimer);
       turn.idleTimer = undefined;
     }
-    if (turn.openTools.size > 0 || turn.activeRequests > 0) return;
+    if (holdsTurn(turn)) return;
     turn.idleTimer = setTimeout(() => {
       if (session.turn !== turn) return;
-      if (turn.openTools.size > 0 || turn.activeRequests > 0) return;
+      if (holdsTurn(turn)) return;
       finishTurn(session, turn, turn.cancelled ? "cancelled" : "end_turn");
     }, autonomousIdleMs);
     turn.idleTimer.unref?.();
@@ -184,15 +468,7 @@ export function createAdapter(config: AdapterConfig) {
 
   const ensureAutonomousTurn = (session: SessionState): ActiveTurn => {
     if (session.turn) return session.turn;
-    const turn: ActiveTurn = {
-      inFlight: 0,
-      autonomous: true,
-      activeRequests: 0,
-      cancelled: false,
-      assistantMessageId: randomUUID(),
-      openTools: new Set(),
-      approvals: new AbortController(),
-    };
+    const turn = newTurn(true);
     session.turn = turn;
     emitUpdate(session, {
       sessionUpdate: "state_update",
@@ -231,6 +507,14 @@ export function createAdapter(config: AdapterConfig) {
       clearTimeout(turn.idleTimer);
       turn.idleTimer = undefined;
     }
+    stopSubagentTicker(turn);
+    session.calls.clear();
+    releaseSubagents(
+      session,
+      turn,
+      [...turn.subagents.keys()],
+      turn.cancelled ? "cancelled" : "completed",
+    );
     abortPendingRequests(turn);
     closeDanglingTools(session, turn);
     session.turn = undefined;
@@ -240,6 +524,7 @@ export function createAdapter(config: AdapterConfig) {
       stopReason,
       ...(error !== undefined ? { error } : {}),
     } as SessionUpdate);
+    void planUsage.poll(session);
   };
 
   const handleServerExit = (error: Error) => {
@@ -271,6 +556,7 @@ export function createAdapter(config: AdapterConfig) {
     }
 
     if (update.sessionUpdate === "config_option_update") {
+      const before = JSON.stringify(sessionConfigOptions(session));
       session.v1ConfigOptions = update.configOptions as V1ConfigOption[];
       const thought = currentOption(session.v1ConfigOptions, "thought_level");
       if (
@@ -280,10 +566,14 @@ export function createAdapter(config: AdapterConfig) {
       ) {
         session.requestedEffort = "default";
       }
-      emitUpdate(session, {
-        sessionUpdate: "config_option_update",
-        configOptions: sessionConfigOptions(session),
-      } as SessionUpdate);
+      // A set_config_option of ours ends with its own update; an echo of nothing new is not said again.
+      const configOptions = sessionConfigOptions(session);
+      if (session.configInFlight === 0 && JSON.stringify(configOptions) !== before) {
+        emitUpdate(session, {
+          sessionUpdate: "config_option_update",
+          configOptions,
+        } as SessionUpdate);
+      }
       return;
     }
 
@@ -308,9 +598,63 @@ export function createAdapter(config: AdapterConfig) {
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
       const toolId = (update as { toolCallId?: string }).toolCallId;
       const status = (update as { status?: string }).status;
+      const payload = update as V1ToolCallPayload;
+      if (toolId) {
+        const known = session.calls.get(toolId) ?? {};
+        // agy sends a started call back to pending while it checks it and waits to be allowed: never shown going back.
+        // A request waiting for the person is already shown on the call by the permission dialog.
+        if (status === "pending" && known.status === "in_progress") {
+          (update as { status?: string }).status = "in_progress";
+        }
+        const shownStatus = (update as { status?: string }).status;
+        session.calls.set(toolId, {
+          name: payload.name ?? known.name,
+          input: payload.rawInput ?? known.input,
+          status: shownStatus ?? known.status,
+        });
+      }
+      if (session.turn && toolId) {
+        const turn = session.turn;
+        const name = session.calls.get(toolId)?.name;
+        if (name === SUBAGENT_TOOL && !turn.subagents.has(toolId)) {
+          if (status !== "failed" && status !== "cancelled") {
+            const role = (payload.rawInput as { Role?: unknown } | undefined)?.Role;
+            turn.subagents.set(toolId, {
+              since: Date.now(),
+              title:
+                payload.title ?? (typeof role === "string" && role !== "" ? role : "Sub-agent"),
+            });
+            syncSubagentTicker(session, turn);
+          }
+        } else if (turn.subagents.has(toolId) && (status === "failed" || status === "cancelled")) {
+          releaseSubagents(session, turn, [toolId], "failed");
+          syncSubagentTicker(session, turn);
+        } else if (
+          name === TASK_TOOL &&
+          status === "completed" &&
+          turn.subagents.size > 0 &&
+          /status/i.test(JSON.stringify(session.calls.get(toolId)?.input ?? ""))
+        ) {
+          // agy asking for the status of its tasks is the one sign of a sub-agent being over.
+          releaseSubagents(session, turn, [...turn.subagents.keys()], "completed");
+          syncSubagentTicker(session, turn);
+        }
+      }
+      // A permission request for a call comes before it ends: what it was is only needed until then.
+      if (toolId && (status === "completed" || status === "failed" || status === "cancelled")) {
+        session.calls.delete(toolId);
+      }
       if (session.turn) {
-        // Start a fresh assistant message id for any text/thought arriving after a tool call.
-        session.turn.assistantMessageId = randomUUID();
+        // A fresh assistant message id for text after a call starts or ends; progress in between keeps the one it has,
+        // or the text said meanwhile is cut into a bubble per update (CYC-292).
+        if (
+          update.sessionUpdate === "tool_call" ||
+          status === "completed" ||
+          status === "failed" ||
+          status === "cancelled"
+        ) {
+          session.turn.assistantMessageId = randomUUID();
+        }
         if (toolId) {
           if (status === "completed" || status === "failed" || status === "cancelled") {
             session.turn.openTools.delete(toolId);
@@ -326,6 +670,11 @@ export function createAdapter(config: AdapterConfig) {
     const translated = translateSimpleUpdate(update, msgId, planId, (kind) => {
       process.stderr.write(`[harness/agy] ignored unknown v1 sessionUpdate: ${kind}\n`);
     });
+    // A sub-agent is shown under the name the call is shown by, whatever agy titled it.
+    const shownTitle = (translated as { title?: unknown } | undefined)?.title;
+    const working = (update as { toolCallId?: string }).toolCallId;
+    const sub = working === undefined ? undefined : session.turn?.subagents.get(working);
+    if (sub && typeof shownTitle === "string" && shownTitle !== "") sub.title = shownTitle;
     // agy's update_steps changes the plan: the plan says it (docs/conversation-content.md), not a row per call, as
     // Claude's TodoWrite and TaskCreate do.
     const steps =
@@ -343,6 +692,33 @@ export function createAdapter(config: AdapterConfig) {
     }
   };
 
+  /** What "always allow" would remember for a request: an MCP tool by its name, a shell command by its prefixes. */
+  const permissionRule = (
+    session: SessionState,
+    req: V1PermissionRequest,
+  ): { tools: string[]; prefixes: string[] } | undefined => {
+    const known = session.calls.get(req.toolCall.toolCallId);
+    const name = req.toolCall.name ?? known?.name;
+    if (name === undefined) return undefined;
+    // Writing any file or running any command: asked every time, as `run_command` is checked by its parts.
+    if (name.startsWith("mcp_")) {
+      return NEVER_REMEMBERED_TOOL.test(name) ? undefined : { tools: [name], prefixes: [] };
+    }
+    if (name !== "run_command") return undefined;
+    const input = (req.toolCall.rawInput ?? known?.input) as { CommandLine?: unknown } | undefined;
+    const command = typeof input?.CommandLine === "string" ? input.CommandLine : undefined;
+    const prefixes = command === undefined ? undefined : commandPrefixes(command);
+    return prefixes === undefined ? undefined : { tools: [], prefixes };
+  };
+
+  /** Every part of the request is covered by what was remembered; a command only when all its segments are. */
+  const ruleAllowed = (
+    session: SessionState,
+    rule: { tools: string[]; prefixes: string[] },
+  ): boolean =>
+    rule.tools.every((t) => session.allowedTools.has(t)) &&
+    rule.prefixes.every((p) => coversPrefix(session.allowedPrefixes, p));
+
   const handleRequest = async (method: string, params: unknown): Promise<unknown> => {
     if (method === "session/request_permission") {
       const req = params as V1PermissionRequest;
@@ -352,6 +728,31 @@ export function createAdapter(config: AdapterConfig) {
       const turn = ensureAutonomousTurn(session);
       const signal = turn.approvals.signal;
       if (signal.aborted) return { outcome: { outcome: "cancelled" } };
+
+      // Said "always allow" for this earlier in the session: answered here, the person is not asked again.
+      const allowOnce = req.options.find((o) => o.kind === "allow_once");
+      const rule = permissionRule(session, req);
+      if (allowOnce !== undefined && rule !== undefined && ruleAllowed(session, rule)) {
+        if (turn.autonomous) scheduleAutonomousIdle(session, turn);
+        return {
+          outcome: { outcome: "selected", optionId: allowOnce.optionId },
+        };
+      }
+      // agy's own "always" option, if it ever gives one, is passed on as it is; otherwise one is added.
+      const canRemember =
+        allowOnce !== undefined &&
+        rule !== undefined &&
+        !req.options.some((o) => o.kind === "allow_always");
+      const options = canRemember
+        ? [
+            ...req.options,
+            {
+              optionId: ALWAYS_OPTION_ID,
+              name: "Always allow in this session",
+              kind: "allow_always",
+            },
+          ]
+        : req.options;
 
       turn.activeRequests += 1;
       if (turn.idleTimer) {
@@ -373,12 +774,29 @@ export function createAdapter(config: AdapterConfig) {
                 type: "tool_call",
                 toolCall,
               },
-              options: req.options,
+              options,
             } as never,
             { cancellationSignal: signal, stopWaitingOnCancel: true },
           )
           .catch(() => undefined);
         if (signal.aborted || !answer) return { outcome: { outcome: "cancelled" } };
+        const picked = answer as {
+          outcome?: { outcome?: string; optionId?: string };
+        };
+        if (
+          canRemember &&
+          rule !== undefined &&
+          allowOnce !== undefined &&
+          picked.outcome?.outcome === "selected" &&
+          picked.outcome.optionId === ALWAYS_OPTION_ID
+        ) {
+          // agy knows only its own options: it is told this once, and the session remembers the rest.
+          for (const tool of rule.tools) session.allowedTools.add(tool);
+          for (const prefix of rule.prefixes) session.allowedPrefixes.add(prefix);
+          return {
+            outcome: { outcome: "selected", optionId: allowOnce.optionId },
+          };
+        }
         return answer;
       } finally {
         turn.activeRequests = Math.max(0, turn.activeRequests - 1);
@@ -439,7 +857,10 @@ export function createAdapter(config: AdapterConfig) {
     throw new AgyRpcError(-32601, `Unsupported client request from agy: ${method}`);
   };
 
-  const ensureTransport = async (): Promise<{ conn: AgyTransport; info: V1InitializeResult }> => {
+  const ensureTransport = async (): Promise<{
+    conn: AgyTransport;
+    info: V1InitializeResult;
+  }> => {
     if (!transport || transport.closed) {
       const handlers = {
         onNotification: handleNotification,
@@ -487,6 +908,82 @@ export function createAdapter(config: AdapterConfig) {
     return { conn: transport, info };
   };
 
+  /**
+   * Changes a session's tool permission: agy reads it only when a session's worker starts, so the worker is closed and
+   * the session resumed under the new level (agy keeps the conversation, not the mode, which is set again). The session
+   * keeps its id. If the resume fails, the old level is resumed once more so the session is not left without a worker.
+   */
+  const rebuildWorker = (session: SessionState, level: ToolPermission): Promise<void> => {
+    const run = async () => {
+      await session.rebuilding?.catch(() => undefined);
+      if (level === session.toolPermission) return;
+      await rebuild(session, level);
+    };
+    const task = run();
+    const tracked = task
+      .catch(() => undefined)
+      .finally(() => {
+        if (session.rebuilding === tracked) session.rebuilding = undefined;
+      });
+    session.rebuilding = tracked;
+    return task;
+  };
+
+  const rebuild = async (session: SessionState, level: ToolPermission): Promise<void> => {
+    const { conn } = await ensureTransport().catch((error) => {
+      throw toRequestError(error);
+    });
+    const before = session.v1ConfigOptions;
+    const resume = (at: ToolPermission) =>
+      startingWorker(at, () =>
+        conn.request<V1ResumeResponse>("session/resume", {
+          sessionId: session.id,
+          cwd: session.launch.cwd,
+          mcpServers: session.launch.mcpServers,
+          ...(session.launch.additionalDirectories !== undefined
+            ? { additionalDirectories: session.launch.additionalDirectories }
+            : {}),
+          ...(session.launch.meta !== undefined ? { _meta: session.launch.meta } : {}),
+        }),
+      );
+    // The resumed worker starts from agy's own defaults; put back what the session had.
+    const adopt = async (response: V1ResumeResponse) => {
+      session.v1ConfigOptions = response.configOptions ?? session.v1ConfigOptions;
+      if (response.models?.availableModels) {
+        session.availableModels = response.models.availableModels;
+      }
+      for (const id of ["mode", "model", "thought_level"]) {
+        const wanted = currentOption(before, id)?.currentValue;
+        const now = currentOption(session.v1ConfigOptions, id);
+        if (wanted === undefined || now === undefined || now.currentValue === wanted) continue;
+        if (!(now.options ?? []).some((option) => option.value === wanted)) continue;
+        try {
+          const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
+            "session/set_config_option",
+            { sessionId: session.id, configId: now.id, value: wanted },
+          );
+          if (Array.isArray(res?.configOptions)) session.v1ConfigOptions = res.configOptions;
+        } catch {
+          // The session goes on with agy's value; the option list says what it is.
+        }
+      }
+    };
+    await conn.request("session/close", { sessionId: session.id }).catch(() => undefined);
+    try {
+      await adopt(await resume(level));
+      session.toolPermission = level;
+    } catch (error) {
+      // Not left without a worker: back to the old level, and the options say what is really running.
+      await resume(session.toolPermission).then(adopt, () => undefined);
+      session.pendingToolPermission = undefined;
+      emitUpdate(session, {
+        sessionUpdate: "config_option_update",
+        configOptions: sessionConfigOptions(session),
+      } as SessionUpdate);
+      throw toRequestError(error);
+    }
+  };
+
   const app = agent({ name: "cycle-agy-adapter" })
     .onRequest(methods.agent.initialize, async ({ params }) => {
       const caps = (params as { capabilities?: { elicitation?: { form?: unknown } } })
@@ -518,20 +1015,24 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.new, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
-      const mcpServers = translateMcpServers(params.mcpServers);
+      // Read beside starting agy: neither waits for the other.
+      const pluginServers = withPluginServers(translateMcpServers(params.mcpServers));
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
+      const mcpServers = await pluginServers;
       let created: V1SessionResponse;
       try {
-        created = await conn.request<V1SessionResponse>("session/new", {
-          cwd: params.cwd,
-          mcpServers,
-          ...(params.additionalDirectories?.length
-            ? { additionalDirectories: params.additionalDirectories }
-            : {}),
-          ...(meta !== undefined ? { _meta: meta } : {}),
-        });
+        created = await startingWorker(initialToolPermission, () =>
+          conn.request<V1SessionResponse>("session/new", {
+            cwd: params.cwd,
+            mcpServers,
+            ...(params.additionalDirectories?.length
+              ? { additionalDirectories: params.additionalDirectories }
+              : {}),
+            ...(meta !== undefined ? { _meta: meta } : {}),
+          }),
+        );
       } catch (error) {
         throw toRequestError(error);
       }
@@ -543,8 +1044,14 @@ export function createAdapter(config: AdapterConfig) {
         availableModels: created.models?.availableModels ?? [],
         v1ConfigOptions: v1Opts,
         stepsPlans: new StepsPlans(),
+        calls: new Map(),
+        allowedTools: new Set(),
+        allowedPrefixes: new Set(),
+        configInFlight: 0,
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
+        toolPermission: initialToolPermission,
+        launch: launchOf(params, mcpServers, meta),
       };
       sessions.set(state.id, state);
       const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
@@ -560,25 +1067,28 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.resume, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
-      const mcpServers = translateMcpServers(params.mcpServers);
+      const pluginServers = withPluginServers(translateMcpServers(params.mcpServers));
       const hadTurn =
         (params._meta as Record<string, unknown> | undefined)?.[META.hadTurn] === true;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
+      const mcpServers = await pluginServers;
 
       let response: V1ResumeResponse;
       let resolvedId = params.sessionId;
       try {
-        response = await conn.request<V1ResumeResponse>("session/resume", {
-          sessionId: params.sessionId,
-          cwd: params.cwd,
-          mcpServers,
-          ...(params.additionalDirectories?.length
-            ? { additionalDirectories: params.additionalDirectories }
-            : {}),
-          ...(meta !== undefined ? { _meta: meta } : {}),
-        });
+        response = await startingWorker(initialToolPermission, () =>
+          conn.request<V1ResumeResponse>("session/resume", {
+            sessionId: params.sessionId,
+            cwd: params.cwd,
+            mcpServers,
+            ...(params.additionalDirectories?.length
+              ? { additionalDirectories: params.additionalDirectories }
+              : {}),
+            ...(meta !== undefined ? { _meta: meta } : {}),
+          }),
+        );
         if (typeof response.sessionId === "string" && response.sessionId.trim() !== "") {
           resolvedId = response.sessionId;
         }
@@ -587,14 +1097,16 @@ export function createAdapter(config: AdapterConfig) {
           throw toRequestError(error);
         }
         try {
-          const created = await conn.request<V1SessionResponse>("session/new", {
-            cwd: params.cwd,
-            mcpServers,
-            ...(params.additionalDirectories?.length
-              ? { additionalDirectories: params.additionalDirectories }
-              : {}),
-            ...(meta !== undefined ? { _meta: meta } : {}),
-          });
+          const created = await startingWorker(initialToolPermission, () =>
+            conn.request<V1SessionResponse>("session/new", {
+              cwd: params.cwd,
+              mcpServers,
+              ...(params.additionalDirectories?.length
+                ? { additionalDirectories: params.additionalDirectories }
+                : {}),
+              ...(meta !== undefined ? { _meta: meta } : {}),
+            }),
+          );
           response = {
             ...created,
             configOptions: await startInDefaultMode(
@@ -616,15 +1128,24 @@ export function createAdapter(config: AdapterConfig) {
         availableModels: response.models?.availableModels ?? [],
         v1ConfigOptions: v1Opts,
         stepsPlans: new StepsPlans(),
+        calls: new Map(),
+        allowedTools: new Set(),
+        allowedPrefixes: new Set(),
+        configInFlight: 0,
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
+        toolPermission: initialToolPermission,
+        launch: launchOf(params, mcpServers, meta),
       };
       sessions.set(state.id, state);
 
       // ACP v2: announce current session state before returning from session/resume.
       await client.notify(methods.client.session.update, {
         sessionId: state.id,
-        update: { sessionUpdate: "state_update", state: "idle" } as SessionUpdate,
+        update: {
+          sessionUpdate: "state_update",
+          state: "idle",
+        } as SessionUpdate,
       });
 
       const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
@@ -646,91 +1167,114 @@ export function createAdapter(config: AdapterConfig) {
       if (params.type !== "id" || typeof params.value !== "string") {
         throw new RequestError(-32602, "Expected a string option ID");
       }
+      // agy's worker may be being rebuilt; whatever is set goes to the new one.
+      await session.rebuilding;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
 
-      const applyV1 = async (configId: string, value: string) => {
-        try {
-          const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
-            "session/set_config_option",
-            {
+      session.configInFlight += 1;
+      const before = JSON.stringify(sessionConfigOptions(session));
+      try {
+        const applyV1 = async (configId: string, value: string) => {
+          // Already what agy has: nothing to send.
+          if (currentOption(session.v1ConfigOptions, configId)?.currentValue === value) return;
+          try {
+            const res = await conn.request<{
+              configOptions?: V1ConfigOption[];
+            }>("session/set_config_option", {
               sessionId: session.id,
               configId,
               value,
-            },
-          );
-          if (Array.isArray(res?.configOptions)) {
-            session.v1ConfigOptions = res.configOptions;
+            });
+            if (Array.isArray(res?.configOptions)) {
+              session.v1ConfigOptions = res.configOptions;
+            }
+          } catch (error) {
+            throw toRequestError(error);
           }
-        } catch (error) {
-          throw toRequestError(error);
-        }
-      };
+        };
 
-      if (params.configId === "mode") {
-        await applyV1("mode", params.value);
-      } else if (params.configId === "model") {
-        if (params.value === "default") {
-          session.requestedModel = "default";
-          const currentModel = currentOption(session.v1ConfigOptions, "model")?.currentValue;
-          if (session.defaultModel !== undefined && currentModel !== session.defaultModel) {
-            await applyV1("model", session.defaultModel);
+        if (params.configId === "mode") {
+          await applyV1("mode", params.value);
+        } else if (params.configId === "toolPermission") {
+          if (!isToolPermission(params.value)) {
+            throw new RequestError(-32602, `Unknown tool permission: ${params.value}`);
           }
-        } else {
-          await applyV1("model", params.value);
-          session.requestedModel = params.value;
-        }
-        // Keep requested effort only if the newly selected model supports it; otherwise reset to default.
-        const thought = currentOption(session.v1ConfigOptions, "thought_level");
-        const supportedEfforts = (thought?.options ?? []).map((o) => o.value);
-        if (session.requestedEffort !== undefined && session.requestedEffort !== "default") {
-          if (!supportedEfforts.includes(session.requestedEffort)) {
-            session.requestedEffort = "default";
-          } else if (thought?.currentValue !== session.requestedEffort) {
-            try {
-              await applyV1("thought_level", session.requestedEffort);
-            } catch {
+          if (session.turn) {
+            // agy's worker is rebuilt to change this, which cannot happen under a running turn.
+            session.pendingToolPermission =
+              params.value === session.toolPermission ? undefined : params.value;
+          } else if (params.value !== session.toolPermission) {
+            await rebuildWorker(session, params.value);
+          }
+        } else if (params.configId === "model") {
+          if (params.value === "default") {
+            session.requestedModel = "default";
+            const currentModel = currentOption(session.v1ConfigOptions, "model")?.currentValue;
+            if (session.defaultModel !== undefined && currentModel !== session.defaultModel) {
+              await applyV1("model", session.defaultModel);
+            }
+          } else {
+            await applyV1("model", params.value);
+            session.requestedModel = params.value;
+          }
+          // Keep requested effort only if the newly selected model supports it; otherwise reset to default.
+          const thought = currentOption(session.v1ConfigOptions, "thought_level");
+          const supportedEfforts = (thought?.options ?? []).map((o) => o.value);
+          if (session.requestedEffort !== undefined && session.requestedEffort !== "default") {
+            if (!supportedEfforts.includes(session.requestedEffort)) {
               session.requestedEffort = "default";
+            } else if (thought?.currentValue !== session.requestedEffort) {
+              try {
+                await applyV1("thought_level", session.requestedEffort);
+              } catch {
+                session.requestedEffort = "default";
+              }
             }
           }
-        }
-      } else if (params.configId === "effort") {
-        const thought = currentOption(session.v1ConfigOptions, "thought_level");
-        if (params.value === "default") {
-          session.requestedEffort = "default";
-          if (
-            thought !== undefined &&
-            session.defaultEffort !== undefined &&
-            thought.currentValue !== session.defaultEffort &&
-            (thought.options ?? []).some((o) => o.value === session.defaultEffort)
-          ) {
-            await applyV1("thought_level", session.defaultEffort).catch(() => undefined);
+        } else if (params.configId === "effort") {
+          const thought = currentOption(session.v1ConfigOptions, "thought_level");
+          if (params.value === "default") {
+            session.requestedEffort = "default";
+            if (
+              thought !== undefined &&
+              session.defaultEffort !== undefined &&
+              thought.currentValue !== session.defaultEffort &&
+              (thought.options ?? []).some((o) => o.value === session.defaultEffort)
+            ) {
+              await applyV1("thought_level", session.defaultEffort).catch(() => undefined);
+            }
+          } else {
+            if (!thought || (thought.options ?? []).length === 0) {
+              throw new RequestError(-32602, "Current model does not support effort levels");
+            }
+            await applyV1("thought_level", params.value);
+            session.requestedEffort = params.value;
           }
+        } else if (currentOption(session.v1ConfigOptions, params.configId) !== undefined) {
+          await applyV1(params.configId, params.value);
         } else {
-          if (!thought || (thought.options ?? []).length === 0) {
-            throw new RequestError(-32602, "Current model does not support effort levels");
-          }
-          await applyV1("thought_level", params.value);
-          session.requestedEffort = params.value;
+          throw new RequestError(-32602, `Unknown agy setting: ${params.configId}`);
         }
-      } else if (currentOption(session.v1ConfigOptions, params.configId) !== undefined) {
-        await applyV1(params.configId, params.value);
-      } else {
-        throw new RequestError(-32602, `Unknown agy setting: ${params.configId}`);
+      } finally {
+        session.configInFlight -= 1;
       }
 
       const configOptions = sessionConfigOptions(session);
-      emitUpdate(session, {
-        sessionUpdate: "config_option_update",
-        configOptions,
-      } as SessionUpdate);
+      if (JSON.stringify(configOptions) !== before) {
+        emitUpdate(session, {
+          sessionUpdate: "config_option_update",
+          configOptions,
+        } as SessionUpdate);
+      }
       return { configOptions } as never;
     })
     .onRequest(methods.agent.session.prompt, async ({ params }) => {
       const session = sessions.get(params.sessionId);
       if (!session) throw new RequestError(-32002, `Unknown session: ${params.sessionId}`);
       validatePromptBlocks(params.prompt);
+      await session.rebuilding;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
@@ -754,15 +1298,13 @@ export function createAdapter(config: AdapterConfig) {
         if (turn) {
           throw new RequestError(-32600, "A turn is already running");
         }
-        turn = {
-          inFlight: 0,
-          autonomous: false,
-          activeRequests: 0,
-          cancelled: false,
-          assistantMessageId: randomUUID(),
-          openTools: new Set(),
-          approvals: new AbortController(),
-        };
+        if (session.pendingToolPermission !== undefined) {
+          const pending = session.pendingToolPermission;
+          session.pendingToolPermission = undefined;
+          await rebuildWorker(session, pending);
+        }
+        if (session.turn) throw new RequestError(-32600, "A turn is already running");
+        turn = newTurn(false);
         session.turn = turn;
         emitUpdate(session, {
           sessionUpdate: "user_message",

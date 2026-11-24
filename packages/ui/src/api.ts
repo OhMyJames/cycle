@@ -53,6 +53,8 @@ export type LocationStatus = {
     plugins?: string[];
     /** Harness setup diagnostics, auth, and runtime config methods are there (docs/protocol.md §16). */
     agentSetup?: boolean;
+    /** An agent can be started ahead of its session (docs/protocol.md §16 "提前起进程"). */
+    agentPrewarm?: boolean;
     /** An @ may name another of its sessions, which it gives the agent as a record (docs/protocol.md §8). */
     sessionMentions?: boolean;
     /** The session's folder can be listed and its files read, for the Files tab (docs/protocol.md §8). */
@@ -555,6 +557,70 @@ export type ConnectorAnswer =
   | { connector: ConnectorInfo }
   | { problem: ConnectorProblem; message?: string };
 
+/** The protocols an endpoint of the owner's own may speak. */
+export const PROVIDER_APIS = [
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+] as const;
+export type ProviderApi = (typeof PROVIDER_APIS)[number];
+
+/** The kind of a provider that is an endpoint the owner describes, not a known service. */
+export const CUSTOM_PROVIDER_KIND = "custom";
+
+/** One model of an owner's provider. */
+export type ProviderModel = {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  images: boolean;
+  contextWindow: number;
+  maxTokens: number;
+};
+
+/** A known service a provider can be for. */
+export type ProviderKind = { id: string; name: string };
+
+/**
+ * A model provider of the owner's (docs/protocol.md §10 "自带模型"). Its key stays in the daemon: `hasKey` says there is
+ * one, and nothing here can hold it.
+ */
+export type ProviderInfo = {
+  id: string;
+  name: string;
+  kind: string;
+  /** What a custom endpoint speaks. Null for a known service. */
+  api: ProviderApi | null;
+  /** A custom endpoint's address, or another address for a known service. */
+  baseUrl: string | null;
+  hasKey: boolean;
+  models: ProviderModel[];
+};
+
+/**
+ * What the owner sends to add a provider, or to change the one with this `id`. `apiKey` is written once: absent keeps
+ * the key (at the same address), an empty string removes it.
+ */
+export type ProviderDraft = {
+  id?: string | undefined;
+  name: string;
+  kind: string;
+  api: ProviderApi | null;
+  baseUrl: string | null;
+  apiKey?: string | undefined;
+  models: ProviderModel[];
+};
+
+/** Why a provider could not be saved or removed. `invalid`: the daemon refused what was sent (`message` says why). */
+export type ProviderProblem = "invalid" | "not_found" | "failed";
+
+export type ProviderAnswer =
+  | { provider: ProviderInfo }
+  | { problem: ProviderProblem; message?: string };
+
+/** A location's providers as last read: the ones the owner has, and the known services one can be made for. */
+export type ProvidersRead = { providers: ProviderInfo[]; kinds: ProviderKind[] };
+
 /** Where an agent's plugins come from (Claude: a marketplace). `kind` is a fixed word the page has its own for. */
 export type PluginSourceInfo = {
   agentId: string;
@@ -587,6 +653,8 @@ export type PluginInfo = {
   servers?: { name: string; by: "cycle" | "agent"; connectorId?: string | undefined }[] | undefined;
   /** Shipped with Cycle: it can be turned off, not uninstalled. */
   builtin?: boolean | undefined;
+  /** Its picture as a `data:image/` URL: only a built-in plugin has one. */
+  icon?: string | undefined;
 };
 
 /** Why an agent's plugin machinery did not do it: a fixed word the page has a sentence for. */
@@ -742,6 +810,8 @@ export type AppEvent =
   | { type: "plan-usage"; locationId: string; agent: string; usage: PlanUsage }
   /** The location's connectors changed, here or elsewhere: read them again. */
   | { type: "connectors"; locationId: string }
+  /** The location's model providers changed, here or elsewhere: read them, and its agents, again. */
+  | { type: "providers"; locationId: string }
   /** An agent's plugins on that location changed, here or elsewhere: read them again. */
   | { type: "plugins"; locationId: string; agentId: string }
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */
@@ -1000,6 +1070,11 @@ export type AppApi = {
     patch: Record<string, AgentRuntimePatchValue>,
     expectedRevision: number,
   ): Promise<AgentRuntimeSaveAnswer>;
+  /**
+   * The blank conversation chose this agent: start it ahead, when its location can, so the first message does not wait
+   * for it. Never fails, and says nothing: the session starts its own agent if this did not come to anything.
+   */
+  prewarmAgent(locationId: string, agent: string): Promise<void>;
   /** Shows the local daemon's `config.json` in the system file manager; returns false on remote locations. */
   revealDaemonConfig(locationId: string): Promise<boolean>;
   /** Starts an in-app subscription sign-in flow; chooses mode by transport and validates URLs against hardcoded allowlist. */
@@ -1038,6 +1113,17 @@ export type AppApi = {
   cancelConnectorAuth(): Promise<void>;
   /** Forgets the connector's token. */
   signOutConnector(locationId: string, id: string): Promise<ConnectorAnswer>;
+  /** The location's model providers (keys named, never given). Fails when it is not connected or its daemon is too old. */
+  listProviders(locationId: string): Promise<ProvidersRead>;
+  /** The models a known service is known to serve. Fails when it cannot be asked. */
+  providerCatalog(locationId: string, kind: string): Promise<ProviderModel[]>;
+  /** Adds a provider, or changes the one the draft's `id` names. The key goes to the daemon and is not kept here. */
+  saveProvider(locationId: string, draft: ProviderDraft): Promise<ProviderAnswer>;
+  /** Removes a provider and its key for good. The page asks the person first. */
+  removeProvider(
+    locationId: string,
+    id: string,
+  ): Promise<{ removed: true } | { problem: ProviderProblem; message?: string }>;
   /** An agent's installed plugins and where its plugins come from. Fails when it cannot be asked. */
   listPlugins(
     locationId: string,
@@ -1207,6 +1293,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   setAgentDefaults: true,
   readAgentSetup: true,
   setAgentRuntimeSettings: true,
+  prewarmAgent: true,
   revealDaemonConfig: true,
   startAgentAuth: true,
   openAgentAuthUrl: true,
@@ -1220,6 +1307,10 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   authorizeConnector: true,
   cancelConnectorAuth: true,
   signOutConnector: true,
+  listProviders: true,
+  providerCatalog: true,
+  saveProvider: true,
+  removeProvider: true,
   listPlugins: true,
   availablePlugins: true,
   installPlugin: true,

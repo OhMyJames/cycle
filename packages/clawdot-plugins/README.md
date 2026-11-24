@@ -10,7 +10,8 @@ turn them off but not uninstall them (docs/protocol.md §15, note 2026-11-24-bui
    - `skills/<skill>/SKILL.md` (frontmatter `name` = the directory, and `description`), `commands/*.md`, `.mcp.json`.
 2. List it in `.claude-plugin/marketplace.json`: `{ "name": "<name>", "source": "./plugins/<name>", "description": "…" }`.
 3. `bun test packages/clawdot-plugins` checks the layout.
-4. **Change `version` whenever the content changes**: it is how installed copies are told to update.
+4. Optional: `assets/icon.svg` (or `icon.png`, under 60 KB): Cycle shows it in the plugin's row. Only Cycle reads it; the agents ignore it.
+5. **Change `version` whenever the content changes**: it is how installed copies are told to update.
 
 ## What to use
 

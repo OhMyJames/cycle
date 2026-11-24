@@ -35,7 +35,17 @@ export const modes = [
   },
 ] as const;
 export type Mode = (typeof modes)[number]["value"];
-export type Catalog = readonly Model[];
+/** What a menu of models needs of one: Codex's own (`model/list`), or one of the owner's (providers.ts). */
+export type CatalogModel = Pick<
+  Model,
+  "model" | "displayName" | "description" | "hidden" | "supportedReasoningEfforts"
+> & {
+  isDefault: boolean;
+  defaultReasoningEffort: string | null;
+  /** The owner's model provider that serves it. Absent on Codex's own. */
+  provider?: { id: string; name: string };
+};
+export type Catalog = readonly CatalogModel[];
 export function policy(mode: Mode) {
   return {
     approvalPolicy:
@@ -117,6 +127,7 @@ export const options = (
             description: item.description,
             _meta: {
               [META.efforts]: item.supportedReasoningEfforts.map((item) => item.reasoningEffort),
+              ...(item.provider !== undefined ? { [META.provider]: item.provider } : {}),
             },
           })),
       ],

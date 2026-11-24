@@ -20,6 +20,7 @@ import { messageOf, StoreBase } from "./core.ts";
 import { EnvironmentsSlice } from "./environments.ts";
 import { LocationsSlice } from "./locations.ts";
 import { PluginsSlice } from "./plugins.ts";
+import { ProvidersSlice } from "./providers.ts";
 import { SessionsSlice } from "./sessions.ts";
 import { viewKey } from "./state.ts";
 import { TerminalsSlice } from "./terminals.ts";
@@ -67,6 +68,9 @@ export class AppStore extends StoreBase {
   );
   readonly #terminals = new TerminalsSlice(this.kit);
   readonly #connectors = new ConnectorsSlice(this.kit);
+  readonly #providers = new ProvidersSlice(this.kit, (locationId) =>
+    this.#locations.loadAgents(locationId),
+  );
   readonly #plugins = new PluginsSlice(this.kit, this.#connectors);
   dismissError = (): void => this.set({ error: undefined });
 
@@ -164,6 +168,9 @@ export class AppStore extends StoreBase {
         return;
       case "connectors":
         this.#connectors.changed(event.locationId);
+        return;
+      case "providers":
+        this.#providers.changed(event.locationId);
         return;
       case "plugins":
         this.#plugins.changed(event.locationId, event.agentId);
@@ -290,6 +297,13 @@ export class AppStore extends StoreBase {
   authorizeConnector = this.#connectors.authorize;
   cancelConnectorAuth = this.#connectors.cancelAuth;
   signOutConnector = this.#connectors.signOut;
+
+  // ---- model providers (docs/protocol.md §10) ----
+
+  loadProviders = this.#providers.load;
+  providerCatalog = this.#providers.catalog;
+  saveProvider = this.#providers.save;
+  removeProvider = this.#providers.remove;
 
   // ---- plugins (docs/protocol.md §15) ----
 

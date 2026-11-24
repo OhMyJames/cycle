@@ -29,6 +29,7 @@ import type { LogStore, NewRecord } from "../log/types.ts";
 import type { Logger } from "../logger.ts";
 import type { AgentOptionsCache } from "../options-cache.ts";
 import type { PluginService } from "../plugins.ts";
+import type { ModelProviders } from "../providers.ts";
 import type { Attachment, ClientConn, Pending, Session } from "../session.ts";
 import type { Terminals } from "../terminals.ts";
 import type { FolderTrust } from "../trust-file.ts";
@@ -45,6 +46,8 @@ export type Core = {
   readonly defaults: AgentDefaults;
   readonly optionsCache: AgentOptionsCache;
   readonly trust: FolderTrust;
+  /** The owner's model providers, and the gateway that serves them to Codex. */
+  readonly providers: ModelProviders;
   readonly connectors: ConnectorService;
   readonly plugins: PluginService;
   readonly terminals: Terminals;
@@ -124,6 +127,8 @@ export type Core = {
     overrides: string[];
     revision: number;
   }>;
+  /** Starts an agent ahead of the session that will want it, when it can be (`Daemon.prewarmAgent`). */
+  prewarmAgent(agent: string): Promise<void>;
   /** A sign-in flow, bound to the connection that starts it. */
   startAgentAuth(
     connectionId: string,

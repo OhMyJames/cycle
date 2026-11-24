@@ -11,6 +11,7 @@ import type { Core, Me } from "./core.ts";
 import { registerFiles } from "./files.ts";
 import { registerPlugins } from "./plugins.ts";
 import { registerPrompts } from "./prompts.ts";
+import { registerProviders } from "./providers.ts";
 import { registerSessions } from "./sessions.ts";
 import { registerTerminals } from "./terminals.ts";
 import { registerTrust } from "./trust.ts";
@@ -33,5 +34,6 @@ export const facing = (core: Core, holder: { value?: ClientConn }): AgentApp => 
   registerTrust(app, core);
   registerPlugins(app, core);
   registerConnectors(app, core);
+  registerProviders(app, core);
   return app;
 };
