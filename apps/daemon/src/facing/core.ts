@@ -31,12 +31,16 @@ import type { AgentOptionsCache } from "../options-cache.ts";
 import type { PluginService } from "../plugins.ts";
 import type { ModelProviders } from "../providers.ts";
 import type { Attachment, ClientConn, Pending, Session } from "../session.ts";
+import type { AgentHome } from "../storage.ts";
 import type { Terminals } from "../terminals.ts";
 import type { FolderTrust } from "../trust-file.ts";
 
 export type Core = {
   // ---- the daemon's parts ----
   readonly version: string;
+  /** Where the daemon keeps its data, and each agent's home as it gives it (docs/protocol.md §16 "本地存储"). */
+  readonly dataDir: string;
+  readonly agentHomes: () => AgentHome[];
   readonly log: Logger;
   readonly agents: ReadonlyMap<string, AgentDefinition>;
   readonly store: LogStore;
