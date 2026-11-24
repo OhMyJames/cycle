@@ -111,7 +111,7 @@ export const pluginProblemOf = (error: unknown): PluginFailure => {
  * plugin that will not install): what went wrong comes back as `problemOf` words it. `report` is told what came back,
  * whichever it was, once.
  */
-export const runAction = async <T extends object, F extends object>(
+const runAction = async <T extends object, F extends object>(
   act: () => Promise<T>,
   problemOf: (error: unknown) => F,
   report?: (answer: T | F) => void,
@@ -122,7 +122,11 @@ export const runAction = async <T extends object, F extends object>(
   } catch (error) {
     answer = problemOf(error);
   }
-  report?.(answer);
+  try {
+    report?.(answer);
+  } catch {
+    // A report that fails is a count missed, not an action undone: the answer is what the daemon did.
+  }
   return answer;
 };
 

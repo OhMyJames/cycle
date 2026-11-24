@@ -100,9 +100,9 @@ export class Runtime {
   #environments: EnvironmentConfig[] = [LOCAL_ENVIRONMENT];
   /** Environments whose daemon is being updated from here, and the last one's failure. */
   readonly #upgrading = new Map<string, Upgrade>();
-  readonly connections = new Map<string, Connection>();
+  readonly #connections = new Map<string, Connection>();
   /** The last list read from each environment, kept when its connection goes: what the interface greys out. */
-  readonly lastSessions = new Map<string, SessionSummary[]>();
+  readonly #lastSessions = new Map<string, SessionSummary[]>();
   /** Why the last attempt to connect to an environment failed, for a renderer that asks after the event went by. */
   readonly #lastError = new Map<string, string>();
   readonly #lastIncompatible = new Map<string, NonNullable<EnvironmentStatus["incompatible"]>>();
@@ -132,25 +132,38 @@ export class Runtime {
 
   /** The agent of a session, as one of the words the dictionary has. */
   agentOf(environmentId: string, sessionId: string): AgentWord {
-    const connection = this.connections.get(environmentId);
+    const connection = this.#connections.get(environmentId);
     const row = connection?.sessions.find((s) => s.sessionId === sessionId);
     return agentOf(row?.agent ?? connection?.madeAgent.get(sessionId) ?? "");
   }
 
   connection(environmentId: string): Connection {
-    const connection = this.connections.get(environmentId);
+    const connection = this.#connections.get(environmentId);
     if (connection === undefined) throw new Error("Not connected to that environment");
     return connection;
   }
 
   /** Whether `connection` is still the one of its environment: not closed, removed or replaced since. */
   isCurrent(environmentId: string, connection: Connection): boolean {
-    return this.connections.get(environmentId) === connection;
+    return this.#connections.get(environmentId) === connection;
+  }
+
+  /** Whether a list has been read from the environment, on this connection or one before. */
+  hasListed(environmentId: string): boolean {
+    return this.#lastSessions.has(environmentId);
+  }
+
+  /** The list just read from the environment, kept for when its connection goes. */
+  keepSessions(environmentId: string, sessions: SessionSummary[]): void {
+    this.#lastSessions.set(environmentId, sessions);
   }
 
   async close(): Promise<void> {
-    for (const connection of this.connections.values()) await connection.client.close();
-    this.connections.clear();
+    for (const connection of this.#connections.values()) {
+      this.#hooks.dropped(connection, false);
+      await connection.client.close();
+    }
+    this.#connections.clear();
   }
 
   /** The environments, the status of each, and the last list read from each. */
@@ -161,7 +174,7 @@ export class Runtime {
         const error = this.#lastError.get(environment.id);
         const incompatible = this.#lastIncompatible.get(environment.id);
         return (
-          this.connections.get(environment.id)?.status ?? {
+          this.#connections.get(environment.id)?.status ?? {
             environmentId: environment.id,
             state: "closed",
             ...(error !== undefined ? { error } : {}),
@@ -169,7 +182,7 @@ export class Runtime {
           }
         );
       }),
-      sessions: Object.fromEntries(this.lastSessions),
+      sessions: Object.fromEntries(this.#lastSessions),
     };
   }
 
@@ -221,7 +234,7 @@ export class Runtime {
     await this.#edit(async () => {
       kind = this.kindOf(environmentId);
       await this.disconnect(environmentId);
-      this.lastSessions.delete(environmentId);
+      this.#lastSessions.delete(environmentId);
       this.#lastError.delete(environmentId);
       this.#lastIncompatible.delete(environmentId);
       const next = this.#environments.filter((h) => h.id !== environmentId);
@@ -233,7 +246,7 @@ export class Runtime {
   }
 
   async connect(environmentId: string): Promise<void> {
-    const existing = this.connections.get(environmentId);
+    const existing = this.#connections.get(environmentId);
     if (existing && existing.status.state !== "closed") return;
     if (existing !== undefined) this.#hooks.dropped(existing, false);
     const environment = this.#environments.find((h) => h.id === environmentId);
@@ -301,14 +314,14 @@ export class Runtime {
         },
       },
     });
-    this.connections.set(environmentId, connection);
+    this.#connections.set(environmentId, connection);
     this.emit({ type: "environment-status", ...connection.status });
     try {
       await connection.client.start();
     } catch (error) {
       // Removed or replaced while it was starting: what is there now is not this attempt's to change.
       if (!this.isCurrent(environmentId, connection)) throw error;
-      this.connections.delete(environmentId);
+      this.#connections.delete(environmentId);
       this.#hooks.dropped(connection, false);
       this.#lastError.set(environmentId, messageOf(error));
       const incompatible = this.#incompatibleOf(error, environment);
@@ -330,7 +343,7 @@ export class Runtime {
     } catch (error) {
       // A daemon that answers but cannot list is not usable: say so, instead of sitting connected with no list.
       const current = this.isCurrent(environmentId, connection);
-      if (current) this.connections.delete(environmentId);
+      if (current) this.#connections.delete(environmentId);
       this.#hooks.dropped(connection, false);
       await connection.client.close().catch(() => undefined);
       if (!current) throw error;
@@ -415,7 +428,7 @@ export class Runtime {
   async upgradeDaemon(environmentId: string, when?: unknown): Promise<void> {
     // From the page: only the words it may send.
     const stop: DaemonStop = when === "now" || when === "later" ? when : "ask";
-    const connection = this.connections.get(environmentId);
+    const connection = this.#connections.get(environmentId);
     const environment = this.#environments.find((e) => e.id === environmentId);
     const { runOnHost } = this.options;
     const upgrade = connection?.status.daemon?.upgrade;
@@ -459,9 +472,9 @@ export class Runtime {
   }
 
   async disconnect(environmentId: string): Promise<void> {
-    const connection = this.connections.get(environmentId);
+    const connection = this.#connections.get(environmentId);
     if (connection === undefined) return;
-    this.connections.delete(environmentId);
+    this.#connections.delete(environmentId);
     this.#hooks.dropped(connection, true);
     await connection.client.close();
     this.emit({ type: "environment-status", environmentId, state: "closed" });

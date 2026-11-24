@@ -32,12 +32,15 @@ const subagentOf = (request: Record<string, unknown>): { subagentId?: string } =
   return typeof id === "string" && id !== "" ? { subagentId: id } : {};
 };
 
+/** What the store needs of the runtime: to tell the page, to report, and which connection is an environment's now. */
+export type PendingRuntime = Pick<Runtime, "emit" | "track" | "isCurrent">;
+
 export class PendingStore {
-  readonly #runtime: Runtime;
+  readonly #runtime: PendingRuntime;
   /** Every request waiting for an answer, by its key: what the sessions' `pending` hold, across connections. */
   readonly #byKey = new Map<string, PendingAt>();
 
-  constructor(runtime: Runtime) {
+  constructor(runtime: PendingRuntime) {
     this.#runtime = runtime;
   }
 
@@ -82,7 +85,9 @@ export class PendingStore {
         ...(form !== undefined ? { answerForm: form.resolve } : {}),
         stale: false,
       });
-      this.#byKey.set(key, { environmentId, sessionId, connection, watched });
+      // A connection replaced since cannot be answered on: its late ask must not hide the current one's.
+      if (this.#runtime.isCurrent(environmentId, connection))
+        this.#byKey.set(key, { environmentId, sessionId, connection, watched });
       if (old === undefined) {
         watched.version += 1;
         this.#runtime.emit({ type: "permission", request: built, version: watched.version });
@@ -217,13 +222,10 @@ export class PendingStore {
     for (const watched of sessions) {
       for (const [key, pending] of watched?.pending ?? []) {
         if (cancel) pending.answer({ outcome: "cancelled" });
-        this.#byKey.delete(key);
+        // The same key may be asked again on the connection that replaced this one: that entry is not this one's.
+        if (this.#byKey.get(key)?.connection === connection) this.#byKey.delete(key);
       }
     }
-  }
-
-  clear(): void {
-    this.#byKey.clear();
   }
 
   /**

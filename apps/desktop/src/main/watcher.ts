@@ -98,7 +98,7 @@ export class SessionWatcher {
         page.hasMore &&
         !connection.listed &&
         asked === connection.asked &&
-        !runtime.lastSessions.has(environmentId) &&
+        !runtime.hasListed(environmentId) &&
         runtime.isCurrent(environmentId, connection)
       ) {
         runtime.emit({ type: "sessions", environmentId, sessions: [...sessions] });
@@ -114,7 +114,7 @@ export class SessionWatcher {
     if (first) runtime.track("session_list_loaded", { pages });
     connection.listed = true;
     connection.sessions = sessions;
-    runtime.lastSessions.set(environmentId, sessions);
+    runtime.keepSessions(environmentId, sessions);
     runtime.emit({ type: "sessions", environmentId, sessions });
     this.#tell(environmentId, before, sessions, afterOutage, first);
     return sessions;

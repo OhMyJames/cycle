@@ -5,12 +5,7 @@ import { PendingStore } from "./pending.ts";
 import { type ManagerOptions, Runtime } from "./runtime.ts";
 import { SessionWatcher } from "./watcher.ts";
 
-export {
-  connectorProblemOf,
-  pluginProblemOf,
-  runAction,
-  terminalProblemOf,
-} from "./actions.ts";
+export { connectorProblemOf, pluginProblemOf, terminalProblemOf } from "./actions.ts";
 export { formAnswerOf } from "./pending.ts";
 export type { ManagerOptions, Tracker } from "./runtime.ts";
 export type { AttentionNotice } from "./watcher.ts";
@@ -69,7 +64,6 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
   async close(): Promise<void> {
     await this.cancelConnectorAuth();
     await this.#runtime.close();
-    this.#pending.clear();
   }
 
   // ---- environments ----
