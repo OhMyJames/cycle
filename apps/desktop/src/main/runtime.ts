@@ -294,6 +294,7 @@ export class Runtime {
           }),
         agentAuthCompleted: (completed) => this.#hooks.authCompleted(locationId, completed),
         connectorsChanged: () => this.emit({ type: "connectors", locationId }),
+        providersChanged: () => this.emit({ type: "providers", locationId }),
         pluginsChanged: (agentId) => this.emit({ type: "plugins", locationId, agentId }),
         planUsage: (agent, usage) => this.emit({ type: "plan-usage", locationId, agent, usage }),
         terminalsChanged: (sessionId, terminals) =>

@@ -378,3 +378,154 @@ supports_websockets=false
     await rm(dir, { recursive: true, force: true });
   }
 }, 60_000);
+
+// A session on the owner's own models (docs/adapters/codex.md "自带模型"): a local Responses API stands for the daemon's gateway.
+const OWN = {
+  id: "acme/fast-1",
+  name: "Fast 1",
+  description: "Acme",
+  efforts: [
+    { id: "low", description: "" },
+    { id: "high", description: "" },
+  ],
+  defaultEffort: "low",
+  images: false,
+  contextWindow: 64_000,
+  provider: { id: "acme", name: "Acme" },
+};
+
+test("a session that begins on one of the owner's models talks to the gateway with its token, keeps to the owner's models, and keeps the token from commands", async () => {
+  const dir = await mkdtemp(join(homedir(), ".cycle-test-codex-providers-"));
+  const cwd = join(dir, "project"),
+    home = join(dir, "home");
+  await mkdir(cwd);
+  await mkdir(home);
+  let nextCommand: string | undefined;
+  const seen: { auth: string | null; model: string; tools: number }[] = [];
+  const gateway = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (req) => {
+      if (!new URL(req.url).pathname.endsWith("/responses"))
+        return new Response(null, { status: 404 });
+      const body = JSON.parse(await req.text()) as { model: string; tools?: unknown[] };
+      seen.push({
+        auth: req.headers.get("authorization"),
+        model: body.model,
+        tools: body.tools?.length ?? 0,
+      });
+      if (nextCommand !== undefined) {
+        const cmd = nextCommand;
+        nextCommand = undefined;
+        return response(true, cmd);
+      }
+      return response(false, "");
+    },
+  });
+  const entry = new URL("../../../../apps/daemon/src/main.ts", import.meta.url).pathname;
+  const executable = process.env.CYCLE_DAEMON_BIN;
+  const proc = Bun.spawn(
+    [...(executable ? [executable] : [process.execPath, entry]), "adapter", "codex"],
+    {
+      cwd,
+      env: {
+        PATH: "/usr/bin:/bin",
+        CYCLE_ADAPTER_CONFIG: JSON.stringify({
+          env: { HOME: home, CODEX_HOME: home, PATH: "/usr/bin:/bin" },
+          providers: {
+            url: `http://127.0.0.1:${gateway.port}/v1`,
+            token: "gw-token",
+            models: [OWN],
+          },
+        }),
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    },
+  );
+  const updates: SessionUpdate[] = [];
+  const input = new WritableStream<Uint8Array>({
+    write(chunk) {
+      proc.stdin.write(chunk);
+      proc.stdin.flush();
+    },
+    close() {
+      proc.stdin.end();
+    },
+  });
+  const acp = client().onNotification(methods.client.session.update, ({ params }) => {
+    updates.push(params.update);
+  });
+  const idle = () =>
+    updates.filter((u) => u.sessionUpdate === "state_update" && "state" in u && u.state === "idle");
+  async function waitFor(predicate: () => boolean) {
+    for (let i = 0; i < 400 && !predicate(); i++) await Bun.sleep(25);
+    if (!predicate()) throw new Error(`Timed out, ACP updates: ${JSON.stringify(updates)}`);
+  }
+  try {
+    await acp.connectWith(ndJsonStream(input, proc.stdout), async (agent) => {
+      await agent.request(methods.agent.initialize, {
+        protocolVersion: 2,
+        info: { name: "test", version: "1" },
+      });
+      const created = await agent.request(methods.agent.session.new, {
+        cwd,
+        _meta: { "cycle/model": OWN.id },
+      });
+      const sessionId = created.sessionId;
+      const model = (created.configOptions ?? []).find(
+        (o) => o.configId === "model",
+      ) as unknown as {
+        options: { value: string; _meta?: Record<string, unknown> }[];
+      };
+      // Only the owner's models are the menu of this session, each marked with its provider.
+      expect(model.options.filter((o) => o.value !== "default").map((o) => o.value)).toEqual([
+        OWN.id,
+      ]);
+      expect(model.options.find((o) => o.value === OWN.id)?._meta).toMatchObject({
+        "cycle/provider": OWN.provider,
+        "cycle/efforts": ["low", "high"],
+      });
+      const set = (configId: string, value: string) =>
+        agent.request(methods.agent.session.setConfigOption, {
+          sessionId,
+          configId,
+          type: "id",
+          value,
+        } as never);
+      await set("model", OWN.id);
+      await expect(set("model", "gpt-5.4")).rejects.toThrow();
+      await agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
+      await waitFor(() => idle().length === 1);
+      expect(idle()[0]).toMatchObject({ stopReason: "end_turn" });
+      expect(seen[0]).toMatchObject({ auth: "Bearer gw-token", model: OWN.id });
+      expect(updates).toContainEqual(
+        expect.objectContaining({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "cycle reply" },
+        }),
+      );
+      // Codex hands its environment to the commands the agent runs: the gateway's token is not in it.
+      nextCommand =
+        "if env | grep -q CYCLE_PROVIDER_TOKEN; then printf leaked > marker; else printf clean > marker; fi";
+      await agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "run it" }],
+      });
+      await waitFor(() => idle().length === 2);
+      expect(await Bun.file(join(cwd, "marker")).text()).toBe("clean");
+      await agent.request(methods.agent.session.close, { sessionId });
+    });
+  } finally {
+    proc.stdin.end();
+    await Promise.race([proc.exited, Bun.sleep(1500)]);
+    proc.kill();
+    await proc.exited;
+    gateway.stop(true);
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30_000);

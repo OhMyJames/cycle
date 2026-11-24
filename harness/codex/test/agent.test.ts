@@ -285,3 +285,28 @@ test("every turn names its model and effort, plan mode is entered and left, and 
     await rm(dir, { recursive: true, force: true });
   }
 }, 5000);
+
+test("a session that began on one of the owner's models is not resumed once that model is gone", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cycle-codex-gone-"));
+  const adapter = createAdapter({
+    env: { HOME: dir, CODEX_HOME: dir },
+    codexExecutable: "/nonexistent/codex",
+  });
+  try {
+    await client().connectWith(adapter.app, async (agent) => {
+      await agent.request(methods.agent.initialize, {
+        protocolVersion: 2,
+        info: { name: "test", version: "1" },
+      });
+      await expect(
+        agent.request(methods.agent.session.resume, {
+          sessionId: "thread-1",
+          cwd: dir,
+          _meta: { "cycle/model": "acme/fast" },
+        }),
+      ).rejects.toThrow("no longer in your model providers");
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

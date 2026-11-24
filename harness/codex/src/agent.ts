@@ -8,7 +8,7 @@ import {
   type ResumeSessionRequest,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
-import { describePromptProblem, normalizePrompt } from "@cycle/protocol";
+import { describePromptProblem, META, normalizePrompt } from "@cycle/protocol";
 import { approval } from "./approval.ts";
 import {
   elicitationAnswer,
@@ -21,6 +21,7 @@ import {
 import { itemUpdate } from "./items.ts";
 import { PLAN_USAGE_UPDATE, planWindowsOf } from "./plan-usage.ts";
 import { CODEX_NOTIFICATION_METHODS, CODEX_PROMPT_CAPABILITIES } from "./protocol.ts";
+import { PROVIDER_TOKEN_ENV, providerCatalog, providerThreadConfig } from "./providers.ts";
 import { type AdapterConfig, AppServer, CodexRpcError } from "./server.ts";
 import {
   type Catalog,
@@ -84,6 +85,8 @@ export function createAdapter(config: AdapterConfig) {
     turn: Turn | undefined;
   let mode: Mode = "default";
   let catalog: Catalog = [];
+  /** The session runs on the owner's own models: what its thread began on, for as long as it lives. */
+  let onProviders = false;
   let model = "default";
   let effort = "default";
   /** What the thread was opened with: what "default" means, since a turn's choices stay for the turns after it. */
@@ -664,8 +667,25 @@ export function createAdapter(config: AdapterConfig) {
         ? { projects: { [params.cwd]: { trust_level: trusted ? "trusted" : "untrusted" } } }
         : {}),
     };
+    // A session is on Codex's own models or on the owner's, by the model it begins with (a thread stays with the model
+    // provider it began on, and Codex refuses a turn of another).
+    const wanted = params._meta?.[META.model];
+    const chosen = config.providers?.models.find((item) => item.id === wanted);
+    // A session that began on one of the owner's models, whose provider or model is gone, cannot go on under Codex's own
+    // provider: its thread is the gateway's. Said plainly, not resumed as something else.
+    if (resume && chosen === undefined && typeof wanted === "string" && wanted.includes("/"))
+      throw new RequestError(
+        -32602,
+        `This session runs on ${wanted}, which is no longer in your model providers. Add it back to continue it.`,
+      );
+    onProviders = chosen !== undefined;
+    if (config.providers && chosen) {
+      codexConfig = { ...codexConfig, ...providerThreadConfig(config.providers, chosen) };
+    }
     const child = new AppServer(
-      config,
+      config.providers && chosen
+        ? { ...config, env: { ...config.env, [PROVIDER_TOKEN_ENV]: config.providers.token } }
+        : config,
       event,
       (error) => {
         finish(turn?.cancelled ? "cancelled" : "error", error.message);
@@ -678,24 +698,27 @@ export function createAdapter(config: AdapterConfig) {
     const settings = {
       cwd: params.cwd,
       ...policy(mode),
+      ...(chosen !== undefined ? { model: chosen.id } : {}),
       ...(Object.keys(codexConfig).length > 0 ? { config: codexConfig } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
     };
     type Thread = { thread: { id: string }; model?: string; reasoningEffort?: string | null };
     try {
       await child.initialize();
-      try {
-        let cursor: string | null = null;
-        do {
-          const page: { data: Catalog[number][]; nextCursor: string | null } = await child.request(
-            "model/list",
-            { cursor, limit: 100 },
-          );
-          catalog = [...catalog, ...page.data];
-          cursor = page.nextCursor;
-        } while (cursor !== null);
-      } catch {
-        catalog = [];
+      if (onProviders && config.providers) {
+        catalog = providerCatalog(config.providers.models);
+      } else {
+        try {
+          let cursor: string | null = null;
+          do {
+            const page: { data: Catalog[number][]; nextCursor: string | null } =
+              await child.request("model/list", { cursor, limit: 100 });
+            catalog = [...catalog, ...page.data];
+            cursor = page.nextCursor;
+          } while (cursor !== null);
+        } catch {
+          catalog = [];
+        }
       }
       let result: Thread;
       if (resume) {
@@ -779,8 +802,20 @@ export function createAdapter(config: AdapterConfig) {
       } else if (params.configId === "model") {
         if (typeof params.value !== "string")
           throw new RequestError(-32602, "Expected a string value");
-        if (params.value !== "default" && !catalog.some((item) => item.model === params.value))
+        if (params.value !== "default" && !catalog.some((item) => item.model === params.value)) {
+          // The other kind of model is real, but not this session's: its thread began with the other provider.
+          if (
+            (config.providers?.models.some((item) => item.id === params.value) ?? false) !==
+            onProviders
+          )
+            throw new RequestError(
+              -32602,
+              onProviders
+                ? "This session runs on your own models; start a new session to use Codex's"
+                : "This session runs on Codex's models; start a new session to use your own",
+            );
           throw new RequestError(-32602, "Unknown Codex model");
+        }
         model = params.value;
         if (effort !== "default" && !supports(model, effort)) effort = "default";
       } else if (params.configId === "effort") {

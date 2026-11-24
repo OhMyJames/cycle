@@ -167,4 +167,5 @@ export const NOTIFICATIONS = {
   sessionListChanged: "_cycle/session_list_changed",
   requestResolved: "_cycle/request_resolved",
   agentDefaultsChanged: "_cycle/agent_defaults_changed",
+  providersChanged: "_cycle/providers_changed",
 } as const;

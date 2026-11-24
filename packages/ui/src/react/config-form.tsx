@@ -4,6 +4,8 @@ import { Input } from "@ui-sdk/react/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
+  SelectGroupLabel,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -11,7 +13,7 @@ import {
 import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
 import { useEffect, useId, useState } from "react";
 import type { AgentRuntimePatchValue, AgentRuntimeValue } from "../api.ts";
-import { type DynamicConfigOption, effortLevelsOf } from "../model/index.ts";
+import { type DynamicConfigOption, effortLevelsOf, providerOfChoice } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { PageRow, PageRows } from "./page-layout.tsx";
 
@@ -40,6 +42,8 @@ export type Option = {
   danger?: boolean;
   /** On a model: the effort levels it takes; `[]` none, absent not known (docs/protocol.md §10). */
   efforts?: readonly string[] | undefined;
+  /** On a model of the owner's own: the provider that serves it (`cycle/provider`, docs/protocol.md §10). */
+  provider?: { id: string; name: string } | undefined;
 };
 
 /** Marks the choice the agent suggests or warns on, in `_meta`. Mirrors `META` of `@cycle/protocol`. */
@@ -47,6 +51,7 @@ const RECOMMENDED = "cycle/recommended";
 const DANGER = "cycle/danger";
 const NEXT_TURN = "cycle/nextTurn";
 const EFFORTS = "cycle/efforts";
+const PROVIDER = "cycle/provider";
 const APPLY_SCOPE = "cycle/applyScope";
 const ENABLED_WHEN = "cycle/enabledWhen";
 
@@ -61,6 +66,7 @@ export const optionsOf = (property: Property): Option[] | undefined => {
       .filter((c) => typeof c?.const === "string")
       .map((c) => {
         const efforts = effortLevelsOf(c._meta);
+        const provider = providerOfChoice(c._meta);
         return {
           value: c.const,
           label: c.title ?? c.const,
@@ -68,6 +74,7 @@ export const optionsOf = (property: Property): Option[] | undefined => {
           recommended: c._meta?.[RECOMMENDED] === true,
           danger: c._meta?.[DANGER] === true,
           ...(efforts !== undefined ? { efforts } : {}),
+          ...(provider !== undefined ? { provider } : {}),
         };
       });
   }
@@ -91,6 +98,26 @@ export const withEffortFor = (
   const levels = optionsOf(properties.model ?? {})?.find((o) => o.value === model)?.efforts;
   if (levels === undefined || levels.includes(effort)) return config;
   return { ...config, effort: "default" };
+};
+
+/**
+ * A choice list in runs by provider: the agent's own (no provider) first, then one run per provider in the order each is
+ * first met. A list with no provider in it is one run, as it was.
+ */
+export const runsByProvider = (
+  options: readonly Option[],
+): { provider: { id: string; name: string } | undefined; options: Option[] }[] => {
+  const runs: { provider: { id: string; name: string } | undefined; options: Option[] }[] = [
+    { provider: undefined, options: options.filter((o) => o.provider === undefined) },
+  ];
+  for (const option of options) {
+    if (option.provider === undefined) continue;
+    const id = option.provider.id;
+    const run = runs.find((r) => r.provider?.id === id);
+    if (run !== undefined) run.options.push(option);
+    else runs.push({ provider: option.provider, options: [option] });
+  }
+  return runs.filter((run) => run.options.length > 0);
 };
 
 /** The settings an agent says it has, from its JSON Schema: a choice if it lists values, else text. */
@@ -118,12 +145,13 @@ export const mergeConfigSchema = (
       const: c.value,
       title: c.name,
       ...(c.description !== undefined ? { description: c.description } : {}),
-      ...(c.recommended || c.danger || c.efforts !== undefined
+      ...(c.recommended || c.danger || c.efforts !== undefined || c.provider !== undefined
         ? {
             _meta: {
               ...(c.recommended ? { [RECOMMENDED]: true } : {}),
               ...(c.danger ? { [DANGER]: true } : {}),
               ...(c.efforts !== undefined ? { [EFFORTS]: c.efforts } : {}),
+              ...(c.provider !== undefined ? { [PROVIDER]: c.provider } : {}),
             },
           }
         : {}),
@@ -205,11 +233,24 @@ export function ConfigForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {options.map((o) => (
-                    <SelectItem key={o.value} value={o.value} label={o.label}>
-                      <OptionLabel option={o} />
-                    </SelectItem>
-                  ))}
+                  {runsByProvider(options).map((run) => {
+                    const items = run.options.map((o) => (
+                      <SelectItem key={o.value} value={o.value} label={o.label}>
+                        <OptionLabel
+                          option={{ ...o, description: o.provider ? undefined : o.description }}
+                        />
+                      </SelectItem>
+                    ));
+                    // The agent's own models first with no heading; each provider of the owner's under its name.
+                    return run.provider === undefined ? (
+                      items
+                    ) : (
+                      <SelectGroup key={run.provider.id}>
+                        <SelectGroupLabel>{run.provider.name}</SelectGroupLabel>
+                        {items}
+                      </SelectGroup>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             ) : (

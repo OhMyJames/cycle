@@ -15,6 +15,7 @@
     "@cycle/harness-agy": "workspace:*",
     "@cycle/harness-codex": "workspace:*",
     "@cycle/harness-claude": "workspace:*",
+    "@cycle/model-gateway": "workspace:*",
     "@cycle/protocol": "workspace:*",
     "clawdot-plugins": "workspace:*",
     "@xterm/addon-serialize": "0.14.0",

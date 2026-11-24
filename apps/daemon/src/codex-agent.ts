@@ -54,7 +54,7 @@ export const codexHarness: Harness = {
     login: ["login"],
     directories: ["CODEX_HOME"],
   },
-  definition: ({ config, dataDir, inherited, self, log }) => {
+  definition: ({ config, dataDir, inherited, self, log, providers }) => {
     const settings = config.codex;
     const env = codexEnv(settings, dataDir, inherited);
     const executable = () => settings.executable ?? shippedExecutable("codex") ?? sourceBinary();
@@ -64,15 +64,21 @@ export const codexHarness: Harness = {
       configSchema,
       promptCapabilities: CODEX_PROMPT_CAPABILITIES,
       steer: true,
+      ...(providers !== undefined ? { providerModels: () => providers.models() } : {}),
       command: [...self, "adapter", "codex"],
-      env: ({ sessionEnv }) => ({
-        PATH: inherited.PATH ?? "",
-        CYCLE_ADAPTER_CONFIG: JSON.stringify({
-          env,
-          sessionEnv,
-          codexExecutable: settings.executable,
-        }),
-      }),
+      env: ({ sessionEnv }) => {
+        // Read at each start: a provider saved since is there for the next session.
+        const own = providers?.adapterConfig();
+        return {
+          PATH: inherited.PATH ?? "",
+          CYCLE_ADAPTER_CONFIG: JSON.stringify({
+            env,
+            sessionEnv,
+            codexExecutable: settings.executable,
+            ...(own !== undefined ? { providers: own } : {}),
+          }),
+        };
+      },
       // Codex's own command line, with the environment a session gets, in a folder that is no project.
       plugins: new CodexPlugins({
         executable,

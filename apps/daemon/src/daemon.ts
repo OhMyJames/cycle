@@ -80,6 +80,7 @@ import {
   defaultsPath,
   indexPath,
   optionsCachePath,
+  providersPath,
   sessionsDir,
   trustPath,
 } from "./data-dir.ts";
@@ -101,6 +102,7 @@ import type { LogRecord, LogStore, NewRecord } from "./log/types.ts";
 import { errorText, type Logger, silentLogger } from "./logger.ts";
 import { AgentOptionsCache, choicesFromConfigOptions } from "./options-cache.ts";
 import { type BuiltinBundle, type PluginProvider, PluginService } from "./plugins.ts";
+import { ModelProviders } from "./providers.ts";
 import { redactParams, redactRecord } from "./redact.ts";
 import {
   type Attachment,
@@ -132,7 +134,10 @@ import { type Activity, isUserMessage, opensOrEndsTurn, turnLeftOpen } from "./t
  * Makes the agents with the daemon's own live runtime settings (`<dataDir>/agent-settings.json`): the one instance
  * `_cycle/agent_setup/set_runtime` writes, so what harnesses read at each start (env, `maxAhead`) is what was saved.
  */
-export type AgentsFactory = (agentSettings: AgentSettings) => AgentDefinition[];
+export type AgentsFactory = (
+  agentSettings: AgentSettings,
+  providers: ModelProviders,
+) => AgentDefinition[];
 
 export type DaemonOptions = {
   /** Where the daemon keeps its data. Always given: nothing here guesses a home. */
@@ -217,6 +222,7 @@ export class Daemon {
   readonly #auth: AgentAuthManager;
   readonly #optionsCache: AgentOptionsCache;
   readonly #trust: FolderTrust;
+  readonly #modelProviders: ModelProviders;
   readonly #connectors: ConnectorService;
   readonly #plugins: PluginService;
   readonly #terminals: Terminals;
@@ -259,6 +265,7 @@ export class Daemon {
     optionsCache: AgentOptionsCache,
     trust: FolderTrust,
     connectors: ConnectorService,
+    modelProviders: ModelProviders,
   ) {
     this.#version = options.version ?? "dev";
     this.#dataDir = options.dataDir;
@@ -298,6 +305,8 @@ export class Daemon {
     this.#optionsCache = optionsCache;
     this.#trust = trust;
     this.#connectors = connectors;
+    this.#modelProviders = modelProviders;
+    modelProviders.onChange(() => this.#clients.broadcast(NOTIFICATIONS.providersChanged, {}));
     this.#terminals = new Terminals({
       ...(options.terminals ?? defaultTerminals(process.env)),
       log: this.#log,
@@ -331,8 +340,11 @@ export class Daemon {
   ): Promise<Daemon> {
     // The daemon owns the one AgentSettings: the harnesses are made with it, so a runtime change it saves is what they read.
     const agentSettings = await AgentSettings.load(agentSettingsPath(options.dataDir), options.log);
+    const providers = await ModelProviders.load(providersPath(options.dataDir));
     const agents =
-      typeof options.agents === "function" ? options.agents(agentSettings) : options.agents;
+      typeof options.agents === "function"
+        ? options.agents(agentSettings, providers)
+        : options.agents;
     // What the file holds is checked against each agent's schema: a value out of range is dropped, not used.
     const schemas: Record<string, Record<string, RuntimeProperty>> = {};
     for (const agent of agents) {
@@ -347,6 +359,7 @@ export class Daemon {
       await AgentOptionsCache.load(optionsCachePath(options.dataDir)),
       await FolderTrust.load(trustPath(options.dataDir)),
       options.connectors ?? (await ConnectorService.load(options.dataDir)),
+      providers,
     );
     // Quietly, and not waited for: nothing starts later because of it (a failure is tried again as an agent starts).
     void daemon.#plugins.ensureBuiltins();
@@ -500,6 +513,7 @@ export class Daemon {
     }
     this.#sessions.clear();
     this.#connectors.close();
+    await this.#modelProviders.close();
     // What the sessions noted as they went (an unread mark, a usage) is written by now, not dropped.
     await this.#index.flush();
     await this.#optionsCache.flush();
@@ -904,6 +918,10 @@ export class Daemon {
             ...(systemPrompt !== undefined ? { systemPrompt } : {}),
             _meta: {
               ...trust,
+              // Where the session began: an agent that serves the owner's own models resumes it on the same provider.
+              ...(session.entry.config?.model !== undefined
+                ? { [META.model]: session.entry.config.model }
+                : {}),
               // So that an agent that finds no record of a session that had turns says so.
               ...(session.entry.hadTurn === true ? { [META.hadTurn]: true } : {}),
             },
@@ -2109,6 +2127,7 @@ export class Daemon {
       defaults: this.#defaults,
       optionsCache: this.#optionsCache,
       trust: this.#trust,
+      providers: this.#modelProviders,
       connectors: this.#connectors,
       plugins: this.#plugins,
       terminals: this.#terminals,

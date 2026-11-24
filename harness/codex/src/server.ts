@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import { LineJsonRpcProcess, type LineRpcOptions, RpcError } from "@cycle/line-rpc";
 import { CODEX_VERSION, codexAppServerArgs } from "./protocol.ts";
+import type { AdapterProviders } from "./providers.ts";
 
 export type AdapterConfig = {
   env: Record<string, string>;
@@ -10,6 +11,8 @@ export type AdapterConfig = {
    */
   sessionEnv?: Record<string, string>;
   codexExecutable: string;
+  /** The owner's own models, and the gateway that serves them. Absent: there are none. */
+  providers?: AdapterProviders;
   /** The app-server ended while its session was open: nothing more can be done with this adapter. */
   onServerExit?: () => void;
 };

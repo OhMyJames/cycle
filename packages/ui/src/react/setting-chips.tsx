@@ -7,10 +7,12 @@
 import {
   Menu,
   MenuContent,
+  MenuGroup,
   MenuGroupLabel,
   MenuItemIndicator,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuSeparator,
   MenuTrigger,
 } from "@ui-sdk/react/menu";
 import { useEffect, useId, useRef, useState } from "react";
@@ -20,6 +22,7 @@ import {
   OptionLabel,
   optionsOf,
   propertiesOf,
+  runsByProvider,
 } from "./config-form.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ShieldAlertIcon, ShieldIcon } from "./icons.tsx";
@@ -142,21 +145,34 @@ function SettingPickerChip({
               {t("config.nextTurn")}
             </p>
           ) : null}
-          {options.map((option) => (
-            <MenuRadioItem
-              key={option.value}
-              value={option.value}
-              label={option.label}
-              closeOnSelect
-              data-danger={option.danger || undefined}
-              title={option.description}
-            >
-              <OptionLabel option={compact ? { ...option, description: undefined } : option} />
-              <MenuItemIndicator>
-                <CheckIcon size={13} />
-              </MenuItemIndicator>
-            </MenuRadioItem>
-          ))}
+          {runsByProvider(options).map((run, at) => {
+            const items = run.options.map((option) => (
+              <MenuRadioItem
+                key={option.value}
+                value={option.value}
+                label={option.label}
+                closeOnSelect
+                data-danger={option.danger || undefined}
+                title={option.description}
+              >
+                <OptionLabel option={compact ? { ...option, description: undefined } : option} />
+                <MenuItemIndicator>
+                  <CheckIcon size={13} />
+                </MenuItemIndicator>
+              </MenuRadioItem>
+            ));
+            // The agent's own come first with no heading of their own; each of the owner's providers is a group named
+            // by the provider, set apart from what is above it.
+            return run.provider === undefined ? (
+              items
+            ) : (
+              <MenuGroup key={run.provider.id} data-kind="provider-group">
+                {at > 0 ? <MenuSeparator /> : null}
+                <MenuGroupLabel>{run.provider.name}</MenuGroupLabel>
+                {items}
+              </MenuGroup>
+            );
+          })}
         </MenuRadioGroup>
       </MenuContent>
     </Menu>

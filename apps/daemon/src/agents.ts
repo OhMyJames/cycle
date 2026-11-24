@@ -1,4 +1,5 @@
 import type { AgentApp, Stream } from "@agentclientprotocol/sdk/experimental/v2";
+import type { ProviderModelInfo } from "@cycle/model-gateway";
 import type { PromptCapabilities } from "@cycle/protocol";
 import type { AgentSetupProvider } from "./agent-setup.ts";
 import type { PluginProvider } from "./plugins.ts";
@@ -33,6 +34,11 @@ export type AgentDefinition = {
   promptCapabilities?: PromptCapabilities;
   /** It takes a prompt into the turn that is running (`_meta["cycle/steer"]`, docs/protocol.md §8). */
   steer?: boolean;
+  /**
+   * The owner's own models this agent can run, beside its own: added to the `model` choices a client is shown, and kept
+   * out of the cache of what the agent itself offers (they change with the owner's settings, not the agent's).
+   */
+  providerModels?: () => ProviderModelInfo[];
   available?: () => boolean | Promise<boolean>;
   /**
    * How many of its sessions may hold a process that has had no prompt yet; past it the oldest such is let go

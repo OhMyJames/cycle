@@ -22,3 +22,5 @@ export const agentSettingsPath = (dataDir: string): string => join(dataDir, "age
 export const optionsCachePath = (dataDir: string): string => join(dataDir, "agent-options.json");
 /** Which folders may run their own configuration's commands (docs/protocol.md §8 "信任文件夹"). */
 export const trustPath = (dataDir: string): string => join(dataDir, "trust.json");
+/** The owner's model providers, keys included: private to the account (docs/adapters/codex.md "自带模型"). */
+export const providersPath = (dataDir: string): string => join(dataDir, "providers.json");

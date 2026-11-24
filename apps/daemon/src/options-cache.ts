@@ -118,6 +118,16 @@ export const choicesFromConfigOptions = (
       (item as { configId?: unknown }).configId === configId,
   );
   if (!Array.isArray(entry?.options)) return undefined;
+  // A session on the owner's own models lists those and `default` only: not the agent's own list, which it must not replace.
+  if (
+    entry.options.some(
+      (choice) =>
+        typeof choice === "object" &&
+        choice !== null &&
+        (choice as { _meta?: Record<string, unknown> })._meta?.[META.provider] !== undefined,
+    )
+  )
+    return undefined;
   const out: CachedChoice[] = [];
   for (const choice of entry.options) {
     if (typeof choice !== "object" || choice === null) continue;

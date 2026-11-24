@@ -6,6 +6,7 @@ import { codexHarness } from "./codex-agent.ts";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import type { Logger } from "./logger.ts";
+import type { ModelProviders } from "./providers.ts";
 import { selfCommand } from "./self.ts";
 
 /**
@@ -26,8 +27,8 @@ export const agentsFor =
     log?: Logger,
     harnesses: readonly Harness[] = HARNESSES,
     self: string[] = selfCommand(),
-  ): ((agentSettings: AgentSettings) => AgentDefinition[]) =>
-  (agentSettings) =>
+  ): ((agentSettings: AgentSettings, providers: ModelProviders) => AgentDefinition[]) =>
+  (agentSettings, providers) =>
     harnesses.map((harness) =>
       harness.definition({
         config,
@@ -35,6 +36,7 @@ export const agentsFor =
         inherited,
         self,
         agentSettings,
+        providers,
         ...(log !== undefined ? { log } : {}),
       }),
     );

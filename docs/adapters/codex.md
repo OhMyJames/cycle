@@ -79,6 +79,17 @@
 
 请求里(实验字段)列出 Codex 接受的回答。要跑出沙箱的命令只列 `accept`、`acceptWithExecpolicyAmendment`、`cancel`,没有 `decline`。实测:回 `decline` 它照收,命令不跑,模型接着说完("Refused."),回合正常结束;回 `cancel` 则整个回合以取消结束。所以拒绝一律回 `decline`。
 
+## 自带模型(CYC-300)
+
+Codex 只会说 Responses API。主人自己的模型服务(Anthropic、Google、OpenRouter 等 pi-ai 认识的,或任何 OpenAI/Anthropic 兼容端点)经 daemon 里的回环网关(`packages/model-gateway`,用 pi-ai)交给 Codex。决定和理由见 [决定笔记](../../.agents/notes/2026-11-24-codex-own-models-through-a-pi-ai-gateway.md)。
+
+- 服务商存在 `<数据目录>/providers.json`(0600,含 key)。协议里没有任何答复带 key,只有 `hasKey`。方法:`_cycle/providers/{list,catalog,save,remove}`,变化时广播 `_cycle/providers_changed`。
+- 模型叫 `<服务商 id>/<模型 id>`。daemon 把它们加进 codex 的 `model` 选项(`_meta["cycle/provider"]` 标出服务商),不进选项缓存。
+- **一个 session 要么在 Codex 自己的模型上,要么在主人的模型上**,由它开始时的模型决定:daemon 在 `session/new`、`session/resume` 的 `_meta["cycle/model"]` 里告诉适配器。适配器用线程自己的 `config` 把网关设为 model provider(不写 `config.toml`),网关令牌只在 app-server 的环境里,并用 `shell_environment_policy.exclude` 挡住命令。session 里的模型菜单只列同一种,另一种被拒绝。
+- 网关只回答本次 daemon 启动时生成的令牌,第一次有 session 用到才起,daemon 关闭时停。
+
+没有验证:任何真实的服务商、打包后的桌面应用。已知限制:Codex 对不认识的模型不给 `apply_patch`,网页搜索和图片生成是 OpenAI 的服务端工具,都用不了;Gemini 的 thoughtSignature 只在内存里,daemon 重启后丢。
+
 ## 未做(显式列出,不要悄悄补)
 
 - "以后不问这类命令"(`acceptForSession`、`acceptWithExecpolicyAmendment`)这类审批选项:只给允许一次、拒绝一次。
