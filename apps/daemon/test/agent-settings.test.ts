@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { META, type RuntimeProperty } from "@cycle/protocol";
 import {
+  AGENT_SETTINGS_UNREADABLE,
   AgentSettings,
   AgentSettingsConflictError,
   AgentSettingsCorruptError,
@@ -172,4 +173,90 @@ test("corrupt or unsupported-version agent-settings.json reports fileError and i
     future.patch("claude", { warmStart: false }, 0, CLAUDE_SCHEMA),
   ).rejects.toBeInstanceOf(AgentSettingsCorruptError);
   expect(await readFile(path, "utf8")).toBe(futureContent);
+});
+
+test("an unreadable file is re-checked on read and write: fixed or removed, it is used again", async () => {
+  const path = join(dir, "agent-settings.json");
+  await writeFile(path, "{ not valid json", "utf8");
+  const settings = await AgentSettings.load(path);
+  expect(settings.fileError()).toBe(AGENT_SETTINGS_UNREADABLE);
+  expect(settings.fileError()).not.toContain(dir);
+
+  await writeFile(
+    path,
+    JSON.stringify({ version: 1, agents: { claude: { revision: 2, values: { maxWarm: 4 } } } }),
+    "utf8",
+  );
+  expect(settings.fileError()).toBeUndefined();
+  expect(settings.overridesOf("claude")).toEqual({ maxWarm: 4 });
+
+  const removed = await AgentSettings.load(path);
+  await writeFile(path, "{ broken again", "utf8");
+  const broken = await AgentSettings.load(path);
+  await expect(
+    broken.patch("claude", { warmStart: false }, 0, CLAUDE_SCHEMA),
+  ).rejects.toBeInstanceOf(AgentSettingsCorruptError);
+  await rm(path);
+  // Gone: the write re-checks, finds nothing to protect, and goes through.
+  expect(await broken.patch("claude", { warmStart: false }, 0, CLAUDE_SCHEMA)).toEqual({
+    overrides: { warmStart: false },
+    revision: 1,
+  });
+  expect(broken.fileError()).toBeUndefined();
+  expect(removed.fileError()).toBeUndefined();
+});
+
+test("loaded values outside the agent's schema are dropped and logged without their value", async () => {
+  const path = join(dir, "agent-settings.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      version: 1,
+      agents: {
+        claude: {
+          revision: 3,
+          values: { maxWarm: -5, warmStart: false, progressSummaries: "yes", secretKey: true },
+        },
+        agy: { revision: 1, values: { sandbox: true } },
+      },
+    }),
+    "utf8",
+  );
+  const logged: { event: string; fields?: unknown }[] = [];
+  const record = (event: string, fields?: unknown) => logged.push({ event, fields });
+  const settings = await AgentSettings.load(path, {
+    debug: record,
+    info: record,
+    warn: record,
+    error: record,
+  });
+  settings.useSchemas({ claude: CLAUDE_SCHEMA, agy: AGY_SCHEMA });
+  expect(settings.overridesOf("claude")).toEqual({ warmStart: false });
+  expect(settings.revisionOf("claude")).toBe(3);
+  expect(settings.overridesOf("agy")).toEqual({ sandbox: true });
+  const defaults = { warmStart: true, maxWarm: 3, progressSummaries: true };
+  expect(settings.effective("claude", defaults, {}).values).toEqual({
+    warmStart: false,
+    maxWarm: 3,
+    progressSummaries: true,
+  });
+  const dropped = logged.filter((l) => l.event === "agent_settings_value_dropped");
+  expect(dropped.map((l) => l.fields)).toEqual([
+    { agent: "claude", field: "maxWarm", reason: "out_of_range" },
+    { agent: "claude", field: "progressSummaries", reason: "invalid_type" },
+    { agent: "claude", field: "unknown", reason: "unknown_field" },
+  ]);
+  expect(JSON.stringify(logged)).not.toContain("secretKey");
+});
+
+test("a write that fails leaves no temporary file behind", async () => {
+  const path = join(dir, "agent-settings.json");
+  const settings = await AgentSettings.load(path);
+  // A directory now stands where the file goes: the rename onto it fails after the temporary file was written.
+  await mkdir(path);
+  await expect(
+    settings.patch("claude", { warmStart: false }, 0, CLAUDE_SCHEMA),
+  ).rejects.toBeDefined();
+  expect((await readdir(dir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  expect(settings.revisionOf("claude")).toBe(0);
 });

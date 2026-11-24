@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   CLAUDE_EFFORT_LEVELS,
   CLAUDE_MODELS,
@@ -20,6 +20,57 @@ import { shippedExecutable } from "./self.ts";
 /** The name the Claude Code binary is shipped under, beside the daemon. */
 const BINARY = "claude";
 const claudeExecutable = () => shippedExecutable(BINARY);
+
+/**
+ * The Claude Code binary the Agent SDK runs when the adapter names none (from source, nothing is shipped): the SDK's own
+ * platform package, found the way the SDK finds it (`@anthropic-ai/claude-agent-sdk-<platform>-<arch>/claude`, resolved
+ * from the SDK, musl first on a Linux without glibc). Undefined when that package is not installed.
+ */
+export const sdkBundledClaude = (): string | undefined => {
+  try {
+    const harness = dirname(Bun.resolveSync("@cycle/harness-claude", import.meta.dir));
+    const sdk = dirname(Bun.resolveSync("@anthropic-ai/claude-agent-sdk/package.json", harness));
+    const { platform, arch } = process;
+    const report = process.report?.getReport?.() as
+      | { header?: { glibcVersionRuntime?: string } }
+      | undefined;
+    const musl = platform === "linux" && report?.header?.glibcVersionRuntime === undefined;
+    const names =
+      platform === "linux"
+        ? musl
+          ? [`linux-${arch}-musl`, `linux-${arch}`]
+          : [`linux-${arch}`, `linux-${arch}-musl`]
+        : [`${platform}-${arch}`];
+    const ext = platform === "win32" ? ".exe" : "";
+    for (const name of names) {
+      try {
+        return Bun.resolveSync(`@anthropic-ai/claude-agent-sdk-${name}/claude${ext}`, sdk);
+      } catch {
+        // not this one
+      }
+    }
+  } catch {
+    // no SDK to resolve from (the compiled daemon ships its own binary)
+  }
+  return undefined;
+};
+
+/**
+ * The binary a Claude session runs, which sign-in, sign-out and the setup page must use too: the one shipped beside the
+ * daemon, else the SDK's bundled one (what the adapter falls back to when it is given none).
+ */
+export const locateClaudeBinary = ():
+  | { source: "builtin"; path: string }
+  | { source: "missing" } => {
+  const shipped = claudeExecutable();
+  if (shipped !== undefined) {
+    return existsSync(shipped) ? { source: "builtin", path: shipped } : { source: "missing" };
+  }
+  const bundled = sdkBundledClaude();
+  return bundled !== undefined && existsSync(bundled)
+    ? { source: "builtin", path: bundled }
+    : { source: "missing" };
+};
 
 export const CLAUDE_CONFIG_SCHEMA = {
   type: "object",
@@ -115,16 +166,7 @@ export const claudeHarness: Harness = {
         dataDir,
         inherited,
         env: () => claudeEnv(config.claude, dataDir, inherited),
-        locateBinary: () => {
-          const shipped = claudeExecutable();
-          if (shipped !== undefined) {
-            return existsSync(shipped)
-              ? { source: "builtin", path: shipped }
-              : { source: "missing" };
-          }
-          const onPath = Bun.which("claude", { PATH: inherited.PATH ?? "" });
-          return onPath ? { source: "path", path: onPath } : { source: "missing" };
-        },
+        locateBinary: locateClaudeBinary,
       }),
       ...(log !== undefined ? { log } : {}),
       env: () => {

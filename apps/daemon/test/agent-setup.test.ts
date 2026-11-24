@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { AgentApp, methods } from "@agentclientprotocol/sdk/experimental/v2";
+import { codexAppServerArgs } from "@cycle/harness-codex";
 import { AgentSetupSnapshotSchema, agentSetupRead, META } from "@cycle/protocol";
 import {
   AGY_AUTH_URL_RE,
@@ -12,12 +14,16 @@ import {
   createClaudeSetupProvider,
   createCodexSetupProvider,
   extractAuthUrl,
+  loginCommandFor,
+  probeBinaryVersion,
   readConfigFileStatus,
   runAgyAcpLogout,
   runCodexAppServerLogout,
   runCodexAppServerProbe,
+  runIsolatedCommand,
   startCliCodeAuth,
   startCodexAppServerAuth,
+  VERSION_FAILURE_TTL_MS,
 } from "../src/agent-setup.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { Daemon } from "../src/daemon.ts";
@@ -133,14 +139,14 @@ test("Claude setup provider parses auth status JSON, detects viaEnv without leak
     stderr: "",
     timedOut: false,
   };
-  expect(await provider.readAuth()).toEqual({
+  expect(await provider.readAuth({ forceRefresh: true })).toEqual({
     state: "signed_out",
     method: "none",
     viaEnv: "ANTHROPIC_API_KEY",
   });
 
   nextStatus = { exitCode: null, stdout: "", stderr: "", timedOut: true };
-  expect(await provider.readAuth()).toEqual({
+  expect(await provider.readAuth({ forceRefresh: true })).toEqual({
     state: "auth_unknown",
     unknownReason: "timeout",
     method: "unknown",
@@ -148,7 +154,7 @@ test("Claude setup provider parses auth status JSON, detects viaEnv without leak
   });
 
   nextStatus = { exitCode: 1, stdout: "not json", stderr: "crash", timedOut: false };
-  expect(await provider.readAuth()).toEqual({
+  expect(await provider.readAuth({ forceRefresh: true })).toEqual({
     state: "auth_unknown",
     unknownReason: "probe_failed",
     method: "unknown",
@@ -517,6 +523,7 @@ test("Codex auth driver drives browser login, device_code login/cancel, and logo
   const script = `#!/usr/bin/env bun
 import { appendFileSync } from "node:fs";
 const logPath = ${JSON.stringify(logFile)};
+appendFileSync(logPath, "argv " + process.argv.slice(2).join(" ") + "\\n");
 const decoder = new TextDecoder();
 let buf = "";
 for await (const chunk of Bun.stdin.stream()) {
@@ -573,6 +580,16 @@ for await (const chunk of Bun.stdin.stream()) {
   // 3. Logout
   await runCodexAppServerLogout({ executable: fakeCodex, env });
 
+  // Every app-server Cycle starts gets the session's own arguments (codexAppServerArgs).
+  const argvLines = readFileSync(logFile, "utf8")
+    .split("\n")
+    .filter((line) => line.startsWith("argv "));
+  expect(argvLines).toHaveLength(3);
+  for (const line of argvLines) {
+    expect(line).toBe(`argv ${codexAppServerArgs().join(" ")}`);
+  }
+  expect(codexAppServerArgs()).toContain("check_for_update_on_startup=false");
+
   // 4. Provider advertises both modes (browser loopback + device_code remote) and canSignOut.
   const provider = createCodexSetupProvider({
     config: ConfigSchema.parse({}).codex,
@@ -606,6 +623,10 @@ if (args[0] === "auth" && args[1] === "logout") {
 if (process.env.FAKE_MODE === "no_url") {
   process.stdout.write("Something unexpected\\n");
   process.exit(1);
+}
+if (process.env.FAKE_MODE === "silent") {
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
 }
 process.stdout.write("Opening browser to sign in...\\n");
 process.stdout.write("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=xyz\\n");
@@ -666,6 +687,22 @@ for await (const chunk of Bun.stdin.stream()) {
       urlPattern: CLAUDE_AUTH_URL_RE,
     }),
   ).rejects.toMatchObject({ reason: "parse_failed" });
+
+  // 4b. Aborted while still waiting for its URL (a disconnect, the daemon closing): the child dies at once, not when
+  // the URL wait would have ended.
+  const abort = new AbortController();
+  const startedAt = Date.now();
+  const silent = startCliCodeAuth({
+    command: [fakeClaude, "auth", "login", "--claudeai"],
+    env: { ...env, FAKE_MODE: "silent" },
+    urlPattern: CLAUDE_AUTH_URL_RE,
+    startTimeoutMs: 10_000,
+    signal: abort.signal,
+  });
+  await Bun.sleep(300);
+  abort.abort();
+  await expect(silent).rejects.toMatchObject({ reason: "cancelled" });
+  expect(Date.now() - startedAt).toBeLessThan(3_000);
 
   // 5. Provider advertises code mode + canSignOut and runs logout cleanly.
   const provider = createClaudeSetupProvider({
@@ -771,3 +808,303 @@ if (args[0] === "acp") {
   expect(broken.error).toBe("Invalid JSON syntax in config.json");
   expect(broken.error).not.toContain("TOPSECRET");
 });
+
+test("runIsolatedCommand returns promptly when a grandchild keeps the output pipes open, and kills its process group", async () => {
+  const pidFile = join(dir, "grandchild.pid");
+  // Exits at once, leaving a background child (like agy's language server) holding stdout and stderr.
+  const leaves = makeExecutableStub(
+    "leaves-grandchild",
+    `#!/bin/sh\nsleep 30 &\necho $! > ${JSON.stringify(pidFile)}\necho "1.2.3"\nexit 0\n`,
+  );
+  const started = Date.now();
+  const result = await runIsolatedCommand([leaves], {
+    env: { PATH: "/usr/bin:/bin" },
+    timeoutMs: 5_000,
+  });
+  expect(Date.now() - started).toBeLessThan(3_000);
+  expect(result).toMatchObject({ exitCode: 0, timedOut: false });
+  expect(result.stdout).toContain("1.2.3");
+  const grandchild = Number(readFileSync(pidFile, "utf8").trim());
+  await Bun.sleep(50);
+  expect(() => process.kill(grandchild, 0)).toThrow();
+
+  // The command itself hangs too: the timeout bounds the whole call.
+  const hangs = makeExecutableStub("hangs", "#!/bin/sh\nsleep 30 &\nsleep 30\n");
+  const hungStart = Date.now();
+  const hung = await runIsolatedCommand([hangs], {
+    env: { PATH: "/usr/bin:/bin" },
+    timeoutMs: 300,
+  });
+  expect(hung.timedOut).toBe(true);
+  expect(Date.now() - hungStart).toBeLessThan(3_000);
+}, 10_000);
+
+test("probeBinaryVersion shares one probe, caches good answers, retries failures after a short TTL or on forceRefresh", async () => {
+  const bin = makeExecutableStub("versioned-bin");
+  let calls = 0;
+  let answer = { exitCode: 1 as number | null, stdout: "", stderr: "boom", timedOut: false };
+  const run: AgentSetupRunCommand = async () => {
+    calls += 1;
+    await Bun.sleep(5);
+    return answer;
+  };
+  let nowMs = 1_000;
+  const now = () => nowMs;
+
+  // Concurrent callers share the single in-flight probe.
+  const [a, b] = await Promise.all([
+    probeBinaryVersion(bin, {}, { run, now }),
+    probeBinaryVersion(bin, {}, { run, now }),
+  ]);
+  expect([a, b, calls]).toEqual([undefined, undefined, 1]);
+
+  // A failure is remembered only briefly...
+  answer = { exitCode: 0, stdout: "tool 2.0.1\n", stderr: "", timedOut: false };
+  expect(await probeBinaryVersion(bin, {}, { run, now })).toBeUndefined();
+  expect(calls).toBe(1);
+  // ...and forceRefresh skips it.
+  expect(await probeBinaryVersion(bin, {}, { run, now, forceRefresh: true })).toBe("2.0.1");
+  expect(calls).toBe(2);
+
+  // A good answer stays cached; a failure after the TTL is probed again.
+  nowMs += VERSION_FAILURE_TTL_MS * 10;
+  expect(await probeBinaryVersion(bin, {}, { run, now })).toBe("2.0.1");
+  expect(calls).toBe(2);
+
+  const flaky = makeExecutableStub("flaky-bin");
+  answer = { exitCode: null, stdout: "", stderr: "", timedOut: true };
+  expect(await probeBinaryVersion(flaky, {}, { run, now })).toBeUndefined();
+  answer = { exitCode: 0, stdout: "3.1.4\n", stderr: "", timedOut: false };
+  nowMs += VERSION_FAILURE_TTL_MS;
+  expect(await probeBinaryVersion(flaky, {}, { run, now })).toBe("3.1.4");
+});
+
+test("setup providers share in-flight probes, cache definitive answers briefly, and invalidate on sign-in/out", async () => {
+  const bin = makeExecutableStub("claude-dedupe-bin");
+  let versionCalls = 0;
+  let statusCalls = 0;
+  let nowMs = 5_000;
+  const runCommand: AgentSetupRunCommand = async (cmd) => {
+    await Bun.sleep(5);
+    if (cmd[1] === "--version") {
+      versionCalls += 1;
+      return { exitCode: 0, stdout: "2.1.327\n", stderr: "", timedOut: false };
+    }
+    statusCalls += 1;
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({ loggedIn: true, authMethod: "claudeai" }),
+      stderr: "",
+      timedOut: false,
+    };
+  };
+  const provider = createClaudeSetupProvider({
+    config: ConfigSchema.parse({}).claude,
+    dataDir: dir,
+    inherited: { PATH: "/usr/bin:/bin" },
+    env: () => ({ CLAUDE_CONFIG_DIR: join(dir, "claude") }),
+    locateBinary: () => ({ source: "builtin", path: bin }),
+    runCommand,
+    now: () => nowMs,
+  });
+
+  // What the daemon does for one read (and every client after `_cycle/agent_setup_changed`).
+  await Promise.all([
+    provider.probeBinary(),
+    provider.readAuth(),
+    provider.probeBinary(),
+    provider.readAuth(),
+  ]);
+  expect(versionCalls).toBe(1);
+  expect(statusCalls).toBe(1);
+
+  await provider.readAuth();
+  expect(statusCalls).toBe(1);
+  await provider.readAuth({ forceRefresh: true });
+  expect(statusCalls).toBe(2);
+  provider.authDriver?.invalidateCache?.();
+  await provider.readAuth();
+  expect(statusCalls).toBe(3);
+  nowMs += 60_000;
+  await provider.readAuth();
+  expect(statusCalls).toBe(4);
+
+  // Codex: refreshUsage always probes (and gets usage); a cached answer never repeats old usage.
+  let codexProbes = 0;
+  const codex = createCodexSetupProvider({
+    config: ConfigSchema.parse({}).codex,
+    dataDir: dir,
+    inherited: { PATH: "/usr/bin:/bin" },
+    env: () => ({ CODEX_HOME: join(dir, "codex") }),
+    locateBinary: () => ({ source: "builtin", path: bin }),
+    runCommand,
+    probeAppServer: async ({ refreshUsage }) => {
+      codexProbes += 1;
+      return {
+        account: { type: "chatgpt" },
+        ...(refreshUsage
+          ? {
+              rateLimits: {
+                limitId: "codex",
+                primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: 1795500000 },
+              } as never,
+            }
+          : {}),
+      };
+    },
+    now: () => nowMs,
+  });
+  expect((await codex.readAuth({ refreshUsage: true })).planUsage).toBeDefined();
+  expect((await codex.readAuth()).planUsage).toBeUndefined();
+  expect(codexProbes).toBe(1);
+  await codex.readAuth({ refreshUsage: true });
+  expect(codexProbes).toBe(2);
+});
+
+test("Codex with no account but no OpenAI sign-in needed is signed in through a third party; agy with an API key reports api_key", async () => {
+  const bin = makeExecutableStub("codex-provider-bin");
+  const runCommand: AgentSetupRunCommand = async () => ({
+    exitCode: 0,
+    stdout: "1.5.15\n",
+    stderr: "",
+    timedOut: false,
+  });
+  let requiresOpenaiAuth = false;
+  const codex = createCodexSetupProvider({
+    config: ConfigSchema.parse({}).codex,
+    dataDir: dir,
+    inherited: { PATH: "/usr/bin:/bin" },
+    env: () => ({ CODEX_HOME: join(dir, "codex") }),
+    locateBinary: () => ({ source: "builtin", path: bin }),
+    runCommand,
+    probeAppServer: async () => ({ account: null, requiresOpenaiAuth }),
+  });
+  expect(await codex.readAuth()).toEqual({ state: "signed_in", method: "third_party" });
+  requiresOpenaiAuth = true;
+  expect(await codex.readAuth({ forceRefresh: true })).toEqual({
+    state: "signed_out",
+    method: "none",
+  });
+
+  const agy = createAgySetupProvider({
+    config: ConfigSchema.parse({ agy: { env: { GEMINI_API_KEY: "never-shown" } } }).agy,
+    dataDir: dir,
+    inherited: { PATH: "/usr/bin:/bin" },
+    env: () => ({ HOME: join(dir, "agy"), GEMINI_API_KEY: "never-shown" }),
+    locateBinary: () => ({ source: "path", path: bin }),
+    runCommand,
+  });
+  const auth = await agy.readAuth();
+  expect(auth).toEqual({ state: "signed_in", method: "api_key", viaEnv: "GEMINI_API_KEY" });
+  expect(JSON.stringify(auth)).not.toContain("never-shown");
+});
+
+test("diagnostics report the data directory the agent's environment really uses, and the login fallback names a custom --data-dir", () => {
+  const bin = makeExecutableStub("diag-bin");
+  const overridden = join(dir, "elsewhere");
+  const claude = createClaudeSetupProvider({
+    config: ConfigSchema.parse({ claude: { env: { CLAUDE_CONFIG_DIR: overridden } } }).claude,
+    dataDir: dir,
+    inherited: {},
+    env: () => ({ CLAUDE_CONFIG_DIR: overridden }),
+    locateBinary: () => ({ source: "builtin", path: bin }),
+  });
+  expect(claude.diagnostics()).toMatchObject({ dataDir: overridden, customDataDir: true });
+  const agy = createAgySetupProvider({
+    config: ConfigSchema.parse({ agy: { env: { HOME: overridden } } }).agy,
+    dataDir: dir,
+    inherited: {},
+    env: () => ({ HOME: overridden }),
+    locateBinary: () => ({ source: "path", path: bin }),
+  });
+  expect(agy.diagnostics()).toMatchObject({ dataDir: overridden, customDataDir: true });
+  const codex = createCodexSetupProvider({
+    config: ConfigSchema.parse({}).codex,
+    dataDir: dir,
+    inherited: {},
+    env: () => ({ CODEX_HOME: join(dir, "codex") }),
+    locateBinary: () => ({ source: "builtin", path: bin }),
+  });
+  expect(codex.diagnostics()).toMatchObject({ dataDir: join(dir, "codex"), customDataDir: false });
+
+  // A temporary data directory is not the default one: the fallback must point `cycle` at it.
+  expect(claude.loginCommand).toBe(`cycle --data-dir ${dir} login claude`);
+  expect(loginCommandFor("agy", join(homedir(), ".cycle"))).toBe("cycle login agy");
+  expect(loginCommandFor("codex", "/tmp/my data/it's")).toBe(
+    `cycle --data-dir '/tmp/my data/it'\\''s' login codex`,
+  );
+});
+
+test("agy sign-in and sign-out honour the telemetry opt-out the sessions get", async () => {
+  const bin = makeExecutableStub("agy-flags-bin");
+  const commands: string[][] = [];
+  const logoutArgs: (readonly string[] | undefined)[] = [];
+  const make = (telemetry: boolean) =>
+    createAgySetupProvider({
+      config: ConfigSchema.parse({ agy: { telemetry } }).agy,
+      dataDir: dir,
+      inherited: { PATH: "/usr/bin:/bin" },
+      env: () => ({ HOME: join(dir, "agy") }),
+      locateBinary: () => ({ source: "path", path: bin }),
+      runCommand: async () => ({ exitCode: 0, stdout: "1.5.15\n", stderr: "", timedOut: false }),
+      startCodeAuth: async ({ command }) => {
+        commands.push(command);
+        return {
+          authorizationUrl: "https://accounts.google.com/x",
+          completed: new Promise(() => {}),
+          cancel: () => {},
+        };
+      },
+      logoutAcp: async ({ args }) => {
+        logoutArgs.push(args);
+      },
+    });
+  const off = make(false);
+  await off.authDriver?.start("code");
+  await off.authDriver?.logout?.();
+  expect(commands[0]).toEqual([bin, "acp", "--login", "--disable-telemetry"]);
+  expect(logoutArgs[0]).toEqual(["--disable-telemetry"]);
+
+  const on = make(true);
+  await on.authDriver?.start("code");
+  await on.authDriver?.logout?.();
+  expect(commands[1]).toEqual([bin, "acp", "--login"]);
+  expect(logoutArgs[1]).toEqual([]);
+});
+
+test("CLI code sign-in refuses a code with a newline or control character, and judges a wrong code only by output after it", async () => {
+  const seen = join(dir, "stdin-seen.txt");
+  const fake = makeExecutableStub(
+    "fake-login",
+    `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+// Text before the code is asked for that looks like a rejection must not decide the outcome.
+process.stdout.write("Tip: an invalid code or expired code means starting over\\n");
+process.stdout.write("Visit https://claude.com/cai/oauth/authorize?state=1\\n");
+const decoder = new TextDecoder();
+let buf = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buf += decoder.decode(chunk, { stream: true });
+  appendFileSync(${JSON.stringify(seen)}, decoder.decode(chunk));
+  if (buf.includes("\\n")) {
+    process.stderr.write("network unreachable\\n");
+    process.exit(1);
+  }
+}
+`,
+  );
+  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
+
+  const flow = await startCliCodeAuth({ command: [fake], env, urlPattern: CLAUDE_AUTH_URL_RE });
+  expect(await flow.submit?.("abc\nsecond-line")).toEqual({ ok: false, reason: "invalid_code" });
+  expect(await flow.submit?.("abc\u0007")).toEqual({ ok: false, reason: "invalid_code" });
+  expect(existsSync(seen)).toBe(false);
+  await flow.cancel();
+
+  const failing = await startCliCodeAuth({ command: [fake], env, urlPattern: CLAUDE_AUTH_URL_RE });
+  expect(await failing.submit?.("  GOOD-SHAPE-CODE  ")).toEqual({
+    ok: false,
+    reason: "process_failed",
+  });
+  expect(readFileSync(seen, "utf8")).toBe("GOOD-SHAPE-CODE\n");
+}, 10_000);

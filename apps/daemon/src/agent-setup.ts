@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { AGY_MIN_VERSION, isVersionSupported } from "@cycle/harness-agy";
-import { CODEX_FIXED_ARGS, planWindowsOf, type RateLimitSnapshot } from "@cycle/harness-codex";
+import { codexAppServerArgs, planWindowsOf, type RateLimitSnapshot } from "@cycle/harness-codex";
 import {
   type AgentAccountInfo,
   type AgentAuthFailureReason,
@@ -20,6 +20,7 @@ import {
 } from "@cycle/protocol";
 import type { AgentSettings } from "./agent-settings.ts";
 import { type Config, ConfigSchema } from "./config.ts";
+import { defaultDataDir } from "./data-dir.ts";
 
 export type CommandResult = {
   exitCode: number | null;
@@ -76,14 +77,18 @@ export type AgentAuthFlowHandle = {
 };
 
 export type AgentAuthDriver = {
-  start: (mode: AgentAuthMode) => Promise<AgentAuthFlowHandle>;
+  /** `signal` aborts a start still waiting for its URL: the child is killed at once, and the start rejects. */
+  start: (mode: AgentAuthMode, signal?: AbortSignal) => Promise<AgentAuthFlowHandle>;
   logout?: () => Promise<void>;
   /** Clear any short-TTL in-memory auth probe cache (e.g. agy 45s cache). */
   invalidateCache?: () => void;
 };
 
 export type AgentSetupProvider = {
-  probeBinary: () => Promise<AgentBinaryStatus> | AgentBinaryStatus;
+  /** `forceRefresh` re-runs the `--version` probe instead of using its cache. */
+  probeBinary: (options?: {
+    forceRefresh?: boolean;
+  }) => Promise<AgentBinaryStatus> | AgentBinaryStatus;
   readAuth: (options?: {
     refreshUsage?: boolean;
     forceRefresh?: boolean;
@@ -261,25 +266,69 @@ export const readConfigFileStatus = (options: ConfigFileSnapshotOptions): AgentC
   };
 };
 
-/** Gracefully stops a child process via `SIGTERM`, escalating to `SIGKILL` after `graceMs`, and awaits exit. */
+/** How long a stopped subprocess gets between `SIGTERM` and `SIGKILL`. */
+const KILL_GRACE_MS = 500;
+/** How long output is still read after the command itself has exited (a grandchild may hold the pipes). */
+const OUTPUT_DRAIN_MS = 250;
+/** Captured output beyond this is dropped: a probe's answer is short. */
+const MAX_OUTPUT_CHARS = 1_000_000;
+
+/**
+ * Signal a setup subprocess and everything it started. Every setup subprocess is spawned `detached` (its own process
+ * group, see `Bun.spawn`), so the group id is its pid; when the group is already gone, the child itself is signalled.
+ */
+const signalGroup = (
+  proc: { pid: number; kill: (signal?: number | NodeJS.Signals) => void },
+  signal: NodeJS.Signals,
+): void => {
+  try {
+    process.kill(-proc.pid, signal);
+    return;
+  } catch {
+    // no such group: fall back to the child alone
+  }
+  try {
+    proc.kill(signal);
+  } catch {
+    // already exited
+  }
+};
+
+/** Whether `promise` settles within `ms` (its outcome is not looked at). Never leaves a timer behind. */
+const settlesWithin = async (promise: Promise<unknown>, ms: number): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * Stops a setup subprocess and its process group: `SIGTERM`, then `SIGKILL` after `graceMs`, and waits for the child's
+ * exit (bounded: a child that ignores even `SIGKILL` does not hang the caller).
+ */
 const terminateProcess = async (
   proc: ReturnType<typeof Bun.spawn>,
-  graceMs = 500,
+  graceMs = KILL_GRACE_MS,
 ): Promise<void> => {
-  try {
-    proc.kill("SIGTERM");
-  } catch {
+  signalGroup(proc, "SIGTERM");
+  if (await settlesWithin(proc.exited, graceMs)) {
+    // The child is gone; anything it left in its group is not kept either.
+    signalGroup(proc, "SIGKILL");
     return;
   }
-  const grace = setTimeout(() => {
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      // already exited
-    }
-  }, graceMs);
-  await proc.exited.catch(() => {});
-  clearTimeout(grace);
+  signalGroup(proc, "SIGKILL");
+  await settlesWithin(proc.exited, graceMs);
 };
 
 const isExecutable = (path: string): boolean => {
@@ -291,15 +340,44 @@ const isExecutable = (path: string): boolean => {
   }
 };
 
-/** Run a subprocess with an explicit isolated environment (never inherits `process.env`) and a hard timeout. */
+/** Reads a stream to text in the background; `cancel()` stops it, keeping what was read. */
+const collectText = (stream: ReadableStream<Uint8Array>) => {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  const done = (async () => {
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        if (text.length < MAX_OUTPUT_CHARS) text += decoder.decode(chunk.value, { stream: true });
+      }
+      text += decoder.decode();
+    } catch {
+      // cancelled
+    }
+  })();
+  return {
+    done,
+    text: () => text,
+    cancel: () => reader.cancel().catch(() => {}),
+  };
+};
+
+/**
+ * Run a subprocess with an explicit isolated environment (never inherits `process.env`) and a hard timeout that bounds
+ * the whole call: the command's exit, and its output. A grandchild that keeps the pipes open (agy starts a language
+ * server) is given a short drain, then its process group is killed and the readers are cancelled.
+ */
 export const runIsolatedCommand: AgentSetupRunCommand = async (command, { env, timeoutMs }) => {
-  let proc: ReturnType<typeof Bun.spawn>;
+  let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
   try {
     proc = Bun.spawn(command, {
       env,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
+      detached: true,
     });
   } catch (error) {
     return {
@@ -309,37 +387,27 @@ export const runIsolatedCommand: AgentSetupRunCommand = async (command, { env, t
       timedOut: false,
     };
   }
+  const stdout = collectText(proc.stdout);
+  const stderr = collectText(proc.stderr);
   let timedOut = false;
-  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
-  const timer = setTimeout(() => {
+  if (!(await settlesWithin(proc.exited, timeoutMs))) {
     timedOut = true;
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      return;
-    }
-    forceKillTimer = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        // already exited
-      }
-    }, 500);
-  }, timeoutMs);
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout as ReadableStream<Uint8Array>).text(),
-      new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
-      proc.exited,
-    ]);
-    return { exitCode, stdout, stderr, timedOut };
-  } finally {
-    clearTimeout(timer);
-    clearTimeout(forceKillTimer);
+    await terminateProcess(proc);
   }
+  const output = Promise.all([stdout.done, stderr.done]);
+  if (!(await settlesWithin(output, OUTPUT_DRAIN_MS))) {
+    signalGroup(proc, "SIGKILL");
+    await Promise.all([stdout.cancel(), stderr.cancel()]);
+    await settlesWithin(output, OUTPUT_DRAIN_MS);
+  }
+  return { exitCode: proc.exitCode, stdout: stdout.text(), stderr: stderr.text(), timedOut };
 };
 
-const extractVersion = (raw: string): string | undefined => {
+/**
+ * The one rule every agent's `--version` output is read with (Claude, Codex, agy, the setup page and agy's
+ * `available()` alike): the first `x.y.z[-pre]` anywhere, else the first non-empty line.
+ */
+export const extractVersion = (raw: string): string | undefined => {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   const semver = /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/.exec(trimmed);
@@ -348,29 +416,208 @@ const extractVersion = (raw: string): string | undefined => {
   return firstLine || undefined;
 };
 
-const binaryVersionCache = new Map<string, string | null>();
+const VERSION_TIMEOUT_MS = 3000;
+/** A failed `--version` (timeout, crash, unreadable output) is remembered this long, a good one until the file changes. */
+export const VERSION_FAILURE_TTL_MS = 5000;
 
-const probeVersion = async (
-  executable: string,
-  env: Record<string, string>,
-  run: AgentSetupRunCommand,
-): Promise<string | undefined> => {
-  let cacheKey: string | undefined;
+const versionCache = new Map<string, { version: string | undefined; at: number }>();
+const versionInFlight = new Map<string, Promise<string | undefined>>();
+
+/** The cache key: the file and what it is now, so an upgrade in place is probed again. */
+const versionKey = (executable: string): string | undefined => {
   try {
     const st = statSync(executable);
-    cacheKey = `${executable}:${st.mtimeMs}:${st.size}`;
-    const cached = binaryVersionCache.get(cacheKey);
-    if (cached !== undefined) return cached ?? undefined;
+    return `${executable}:${st.mtimeMs}:${st.size}`;
   } catch {
     return undefined;
   }
-  const result = await run([executable, "--version"], { env, timeoutMs: 3000 });
-  const version =
-    !result.timedOut && result.exitCode === 0
-      ? (extractVersion(result.stdout) ?? extractVersion(result.stderr))
-      : undefined;
-  if (cacheKey !== undefined) binaryVersionCache.set(cacheKey, version ?? null);
-  return version;
+};
+
+/**
+ * What is known of `executable --version` without running anything: `{ version }` (version `undefined` for a recent
+ * failure), or `undefined` when nothing is known.
+ */
+export const cachedBinaryVersion = (
+  executable: string,
+  now: number = Date.now(),
+): { version: string | undefined } | undefined => {
+  const key = versionKey(executable);
+  if (key === undefined) return undefined;
+  const hit = versionCache.get(key);
+  if (hit === undefined) return undefined;
+  if (hit.version === undefined && now - hit.at >= VERSION_FAILURE_TTL_MS) return undefined;
+  return { version: hit.version };
+};
+
+/**
+ * `executable --version`, shared by every caller: one subprocess at a time per binary (concurrent callers share it),
+ * a good answer cached until the file changes, a failure for `VERSION_FAILURE_TTL_MS`; `forceRefresh` skips the cache.
+ */
+export const probeBinaryVersion = (
+  executable: string,
+  env: Record<string, string>,
+  options: { run?: AgentSetupRunCommand; forceRefresh?: boolean; now?: () => number } = {},
+): Promise<string | undefined> => {
+  const key = versionKey(executable);
+  if (key === undefined) return Promise.resolve(undefined);
+  const now = options.now ?? Date.now;
+  if (options.forceRefresh !== true) {
+    const hit = cachedBinaryVersion(executable, now());
+    if (hit !== undefined) return Promise.resolve(hit.version);
+  }
+  const pending = versionInFlight.get(key);
+  if (pending !== undefined) return pending;
+  const run = options.run ?? runIsolatedCommand;
+  const probe = (async () => {
+    let version: string | undefined;
+    try {
+      const result = await run([executable, "--version"], { env, timeoutMs: VERSION_TIMEOUT_MS });
+      version =
+        !result.timedOut && result.exitCode === 0
+          ? (extractVersion(result.stdout) ?? extractVersion(result.stderr))
+          : undefined;
+    } catch {
+      version = undefined;
+    }
+    versionCache.set(key, { version, at: now() });
+    versionInFlight.delete(key);
+    return version;
+  })();
+  versionInFlight.set(key, probe);
+  return probe;
+};
+
+/** The environment every setup subprocess gets: `PATH`, and the agent's own isolated environment. */
+const isolatedEnv =
+  (inherited: Record<string, string | undefined>, env: () => Record<string, string>) =>
+  (): Record<string, string> => ({
+    PATH: inherited.PATH ?? "/usr/bin:/bin",
+    ...env(),
+  });
+
+/** Create an agent's private directory if it is missing; the agent reports it if it cannot be. */
+const ensurePrivateDir = (dir: string | undefined): void => {
+  if (!dir) return;
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch {
+    // let the agent report an unwritable directory
+  }
+};
+
+export type LocateBinary = () => { source: AgentBinarySource; path?: string };
+
+/** `probeBinary` for a provider: where the binary is, its version, and (with `minVersion`) whether it is new enough. */
+const binaryProber =
+  (
+    locate: LocateBinary,
+    env: () => Record<string, string>,
+    run: AgentSetupRunCommand,
+    minVersion?: string,
+  ) =>
+  async (options?: { forceRefresh?: boolean }): Promise<AgentBinaryStatus> => {
+    const min = minVersion !== undefined ? { minVersion } : {};
+    const found = locate();
+    if (found.source === "missing" || !found.path || !isExecutable(found.path)) {
+      return { source: "missing", ...min, problem: "missing" };
+    }
+    const version = await probeBinaryVersion(found.path, env(), {
+      run,
+      forceRefresh: options?.forceRefresh === true,
+    });
+    const at = { source: found.source, path: found.path };
+    if (minVersion === undefined) return { ...at, ...(version !== undefined ? { version } : {}) };
+    if (version === undefined) return { ...at, ...min, problem: "probe_failed" };
+    if (!isVersionSupported(version, minVersion)) {
+      return { ...at, version, ...min, problem: "version_too_old" };
+    }
+    return { ...at, version, ...min };
+  };
+
+/** How long a definitive Claude / Codex account answer is reused (agy's own default is longer, its probe is slower). */
+export const AUTH_CACHE_TTL_MS = 10_000;
+
+/**
+ * One agent's account reads: a definitive answer (`signed_in` / `signed_out`) is reused for `ttlMs`, and reads that
+ * overlap share one probe (every `_cycle/agent_setup_changed` makes every client read at once). `forceRefresh` skips the
+ * cached answer; `refreshUsage` needs a probe that fetched usage. `invalidate()` (sign-in, sign-out) drops both the
+ * cached answer and any probe already running, whose answer may predate the change.
+ */
+const authCache = (ttlMs: number, now: () => number) => {
+  let cached: { at: number; result: AgentAuthProbeResult } | undefined;
+  let inFlight: { gen: number; usage: boolean; promise: Promise<AgentAuthProbeResult> } | undefined;
+  let gen = 0;
+  return {
+    read: (
+      options: { refreshUsage?: boolean; forceRefresh?: boolean } | undefined,
+      probe: () => Promise<AgentAuthProbeResult>,
+    ): Promise<AgentAuthProbeResult> => {
+      const usage = options?.refreshUsage === true;
+      if (
+        options?.forceRefresh !== true &&
+        !usage &&
+        cached !== undefined &&
+        now() - cached.at < ttlMs
+      ) {
+        return Promise.resolve(cached.result);
+      }
+      if (inFlight !== undefined && inFlight.gen === gen && (inFlight.usage || !usage)) {
+        return inFlight.promise;
+      }
+      const startedGen = gen;
+      const entry = {
+        gen: startedGen,
+        usage,
+        promise: probe().then(
+          (result) => {
+            if (gen === startedGen) {
+              if (result.state === "signed_in" || result.state === "signed_out") {
+                // Usage is reported once, when it is fetched: a cached answer does not repeat it.
+                const { planUsage: _planUsage, ...rest } = result;
+                cached = { at: now(), result: rest };
+              } else {
+                cached = undefined;
+              }
+            }
+            if (inFlight === entry) inFlight = undefined;
+            return result;
+          },
+          (error: unknown) => {
+            if (inFlight === entry) inFlight = undefined;
+            throw error;
+          },
+        ),
+      };
+      inFlight = entry;
+      return entry.promise;
+    },
+    invalidate: () => {
+      gen += 1;
+      cached = undefined;
+      inFlight = undefined;
+    },
+  };
+};
+
+const shellWord = (word: string): string =>
+  /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+
+/**
+ * The copyable sign-in fallback: `cycle login <agent>`, with `--data-dir` (a Cycle option, so before the command) when
+ * the daemon keeps its data anywhere but the default `~/.cycle`, so the command signs in to the same place.
+ */
+export const loginCommandFor = (agent: string, dataDir: string): string =>
+  resolve(dataDir) === resolve(defaultDataDir({}))
+    ? `cycle login ${agent}`
+    : `cycle --data-dir ${shellWord(dataDir)} login ${agent}`;
+
+/** Where an agent's state lives as its environment says (config.json `env` may override the default). */
+const dataDirDiagnostics = (
+  resolved: string | undefined,
+  fallback: string,
+): Pick<AgentEnvironmentDetails, "dataDir" | "customDataDir"> => {
+  const dataDir = resolved ?? fallback;
+  return { dataDir, customDataDir: resolve(dataDir) !== resolve(fallback) };
 };
 
 /**
@@ -457,10 +704,12 @@ export type ClaudeSetupOptions = {
   dataDir: string;
   inherited: Record<string, string | undefined>;
   env: () => Record<string, string>;
-  locateBinary: () => { source: AgentBinarySource; path?: string };
+  locateBinary: LocateBinary;
   runCommand?: AgentSetupRunCommand;
   startCodeAuth?: StartCliCodeAuth;
   timeoutMs?: number;
+  cacheTtlMs?: number;
+  now?: () => number;
 };
 
 const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;?]*[ -/]*[@-~]`, "g");
@@ -472,6 +721,15 @@ export const AGY_AUTH_URL_RE = /https:\/\/accounts\.google\.com\/[^\s"'<>]+/;
 
 const INVALID_CODE_RE =
   /invalid[_ -]?code|invalid[_ -]?grant|incorrect code|expired code|code.*(?:invalid|expired|rejected)/i;
+
+/** A one-time code is one line of printable text: anything else could answer more than the code prompt. */
+const hasControlChar = (text: string): boolean => {
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+};
 
 /** Strips ANSI sequences and extracts the first complete authorization URL matching `pattern`. */
 export const extractAuthUrl = (text: string, pattern: RegExp): string | undefined => {
@@ -488,6 +746,7 @@ export type CliCodeAuthOptions = {
   urlPattern: RegExp;
   startTimeoutMs?: number;
   submitTimeoutMs?: number;
+  signal?: AbortSignal | undefined;
 };
 
 export type StartCliCodeAuth = (options: CliCodeAuthOptions) => Promise<AgentAuthFlowHandle>;
@@ -507,6 +766,7 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
   urlPattern,
   startTimeoutMs = 15_000,
   submitTimeoutMs = 30_000,
+  signal,
 }) => {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
@@ -515,6 +775,7 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      detached: true,
     });
   } catch {
     throw new AgentAuthDriverError("process_failed", "Failed to start CLI login process");
@@ -527,6 +788,8 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
   const errReader = stderr.getReader();
 
   let combined = "";
+  // Only what the CLI says after the code is written can say the code was wrong (not, say, a URL's `code=` before it).
+  let afterSubmit: string | undefined;
   let cancelled = false;
   let settled = false;
   let resolveCompleted!: (outcome: AgentAuthFlowOutcome) => void;
@@ -580,6 +843,10 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
   const onChunk = (text: string) => {
     combined += text;
     if (combined.length > 64_000) combined = combined.slice(-32_000);
+    if (afterSubmit !== undefined) {
+      afterSubmit += text;
+      if (afterSubmit.length > 64_000) afterSubmit = afterSubmit.slice(-32_000);
+    }
     if (!urlSettled) {
       const found = extractAuthUrl(combined, urlPattern);
       if (found !== undefined) resolveUrl(found);
@@ -626,7 +893,10 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
       } else if (exitCode === 0) {
         resolveCompleted({ ok: true });
       } else {
-        const reason = INVALID_CODE_RE.test(combined) ? "invalid_code" : "process_failed";
+        const reason =
+          afterSubmit !== undefined && INVALID_CODE_RE.test(afterSubmit)
+            ? "invalid_code"
+            : "process_failed";
         resolveCompleted({ ok: false, reason });
       }
     }
@@ -635,6 +905,12 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
   const startTimer = setTimeout(() => {
     rejectUrl(new AgentAuthDriverError("timeout", "Timed out waiting for authorization URL"));
   }, startTimeoutMs);
+  const onAbort = () => {
+    cancelled = true;
+    rejectUrl(new AgentAuthDriverError("cancelled", "Sign-in was cancelled before it started"));
+  };
+  if (signal?.aborted === true) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
 
   let authorizationUrl: string;
   try {
@@ -645,6 +921,7 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
     throw error;
   } finally {
     clearTimeout(startTimer);
+    signal?.removeEventListener("abort", onAbort);
   }
 
   return {
@@ -652,8 +929,13 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
     completed,
     submit: async (code: string): Promise<AgentAuthFlowOutcome> => {
       if (settled) return { ok: false, reason: "process_failed" };
+      const oneLine = code.trim();
+      if (oneLine === "" || hasControlChar(oneLine)) {
+        return { ok: false, reason: "invalid_code" };
+      }
       try {
-        stdin.write(`${code.trim()}\n`);
+        afterSubmit = "";
+        stdin.write(`${oneLine}\n`);
         stdin.flush();
       } catch {
         return { ok: false, reason: "process_failed" };
@@ -685,57 +967,32 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
   const run = options.runCommand ?? runIsolatedCommand;
   const startCodeAuth = options.startCodeAuth ?? startCliCodeAuth;
   const timeoutMs = options.timeoutMs ?? 8000;
-  const minimalEnv = (): Record<string, string> => ({
-    PATH: options.inherited.PATH ?? "/usr/bin:/bin",
-    ...options.env(),
-  });
+  const cache = authCache(options.cacheTtlMs ?? AUTH_CACHE_TTL_MS, options.now ?? Date.now);
+  const minimalEnv = isolatedEnv(options.inherited, options.env);
+  const probeBinary = binaryProber(options.locateBinary, minimalEnv, run);
+  const viaEnv = detectViaEnv(
+    CLAUDE_AUTH_ENV_NAMES,
+    options.config.env,
+    options.config.allowEnv,
+    options.inherited,
+  );
+  const via = viaEnv !== undefined ? { viaEnv } : {};
 
-  const probeBinary = async (): Promise<AgentBinaryStatus> => {
-    const found = options.locateBinary();
-    if (found.source === "missing" || !found.path || !isExecutable(found.path)) {
-      return { source: "missing", problem: "missing" };
-    }
-    const version = await probeVersion(found.path, minimalEnv(), run);
-    return {
-      source: found.source,
-      path: found.path,
-      ...(version !== undefined ? { version } : {}),
-    };
-  };
-
-  const readAuth: AgentSetupProvider["readAuth"] = async () => {
-    const viaEnv = detectViaEnv(
-      CLAUDE_AUTH_ENV_NAMES,
-      options.config.env,
-      options.config.allowEnv,
-      options.inherited,
-    );
+  /** A usable binary or the `binary_unavailable` driver error. */
+  const requireBinary = async (): Promise<string> => {
     const binary = await probeBinary();
     if (binary.problem !== undefined || !binary.path) {
-      return {
-        state: "binary_unavailable",
-        method: "none",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
+      throw new AgentAuthDriverError("binary_unavailable", "Claude binary is unavailable");
     }
+    return binary.path;
+  };
 
+  const probeAuth = async (executable: string): Promise<AgentAuthProbeResult> => {
     const env = minimalEnv();
-    if (env.CLAUDE_CONFIG_DIR) {
-      try {
-        mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
-      } catch {
-        // best effort; let claude report if unwritable
-      }
-    }
-
-    const result = await run([binary.path, "auth", "status", "--json"], { env, timeoutMs });
+    ensurePrivateDir(env.CLAUDE_CONFIG_DIR);
+    const result = await run([executable, "auth", "status", "--json"], { env, timeoutMs });
     if (result.timedOut) {
-      return {
-        state: "auth_unknown",
-        unknownReason: "timeout",
-        method: "unknown",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
+      return { state: "auth_unknown", unknownReason: "timeout", method: "unknown", ...via };
     }
 
     let parsed: Record<string, unknown> | undefined;
@@ -754,17 +1011,11 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
         state: "auth_unknown",
         unknownReason: NETWORK_ERROR_RE.test(combined) ? "network_error" : "probe_failed",
         method: "unknown",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
+        ...via,
       };
     }
 
-    if (!parsed.loggedIn) {
-      return {
-        state: "signed_out",
-        method: "none",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
-    }
+    if (!parsed.loggedIn) return { state: "signed_out", method: "none", ...via };
 
     const method = mapClaudeAuthMethod(parsed.authMethod, parsed.apiProvider);
     const email = nonEmptyString(parsed.email);
@@ -781,9 +1032,19 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
     return {
       state: "signed_in",
       method,
-      ...(viaEnv !== undefined ? { viaEnv } : {}),
+      ...via,
       ...(Object.keys(account).length > 0 ? { account } : {}),
     };
+  };
+
+  const readAuth: AgentSetupProvider["readAuth"] = async (opts) => {
+    const binary = await probeBinary(opts?.forceRefresh === true ? { forceRefresh: true } : {});
+    if (binary.problem !== undefined || !binary.path) {
+      cache.invalidate();
+      return { state: "binary_unavailable", method: "none", ...via };
+    }
+    const executable = binary.path;
+    return cache.read(opts, () => probeAuth(executable));
   };
 
   return {
@@ -792,45 +1053,29 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
     signInModes: () => [{ mode: "code", requiresLocalLoopback: false }],
     canSignOut: () => true,
     canRefreshUsage: false,
-    loginCommand: "cycle login claude",
+    loginCommand: loginCommandFor("claude", options.dataDir),
     authDriver: {
-      start: async (mode) => {
+      start: async (mode, signal) => {
         if (mode !== "code") {
           throw new AgentAuthDriverError("process_failed", `Unsupported Claude auth mode: ${mode}`);
         }
-        const binary = await probeBinary();
-        if (binary.problem !== undefined || !binary.path) {
-          throw new AgentAuthDriverError("binary_unavailable", "Claude binary is unavailable");
-        }
+        const executable = await requireBinary();
         const env = minimalEnv();
-        if (env.CLAUDE_CONFIG_DIR) {
-          try {
-            mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
-          } catch {
-            // let claude report if unwritable
-          }
-        }
+        ensurePrivateDir(env.CLAUDE_CONFIG_DIR);
         return startCodeAuth({
-          command: [binary.path, "auth", "login", "--claudeai"],
+          command: [executable, "auth", "login", "--claudeai"],
           env,
           urlPattern: CLAUDE_AUTH_URL_RE,
           startTimeoutMs: Math.max(timeoutMs, 15_000),
+          signal,
         });
       },
       logout: async () => {
-        const binary = await probeBinary();
-        if (binary.problem !== undefined || !binary.path) {
-          throw new AgentAuthDriverError("binary_unavailable", "Claude binary is unavailable");
-        }
+        const executable = await requireBinary();
         const env = minimalEnv();
-        if (env.CLAUDE_CONFIG_DIR) {
-          try {
-            mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
-          } catch {
-            // ignore
-          }
-        }
-        const result = await run([binary.path, "auth", "logout"], { env, timeoutMs });
+        ensurePrivateDir(env.CLAUDE_CONFIG_DIR);
+        const result = await run([executable, "auth", "logout"], { env, timeoutMs });
+        cache.invalidate();
         if (result.timedOut) {
           throw new AgentAuthDriverError("timeout", "Claude logout timed out");
         }
@@ -838,10 +1083,10 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
           throw new AgentAuthDriverError("process_failed", "Claude logout failed");
         }
       },
+      invalidateCache: cache.invalidate,
     },
     diagnostics: () => ({
-      dataDir: options.config.configDir ?? join(options.dataDir, "claude"),
-      customDataDir: options.config.configDir !== undefined,
+      ...dataDirDiagnostics(options.env().CLAUDE_CONFIG_DIR, join(options.dataDir, "claude")),
       allowEnv: [...options.config.allowEnv],
       envNames: Object.keys(options.config.env).sort(),
     }),
@@ -861,8 +1106,186 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
   };
 };
 
+type RpcMessage = Record<string, unknown>;
+
+/** Why a request to a short-lived JSON-RPC child got no answer. */
+class RpcChildError extends Error {
+  readonly kind: "timeout" | "exited";
+  constructor(kind: "timeout" | "exited", message: string) {
+    super(message);
+    this.name = "RpcChildError";
+    this.kind = kind;
+  }
+}
+
+type RpcChild = {
+  /** Resolves with the whole response message (`result` or `error`); rejects with `RpcChildError`. */
+  request: (method: string, params: unknown, timeoutMs: number) => Promise<RpcMessage>;
+  notify: (method: string, params: unknown) => void;
+  /** Resolves when the child's stdout ends (it exited, or `close()` was called). */
+  ended: Promise<void>;
+  /** End stdin, stop reading, and stop the child's process group. Idempotent. */
+  close: () => Promise<void>;
+  isClosing: () => boolean;
+};
+
+/**
+ * A short-lived NDJSON JSON-RPC child (`codex app-server`, `agy acp`) on stdio, in its own process group: requests with
+ * their own deadline, notifications to `onNotification`, other output ignored. Throws if it cannot be spawned.
+ */
+const startRpcChild = (
+  command: string[],
+  env: Record<string, string>,
+  onNotification?: (message: RpcMessage) => void,
+): RpcChild => {
+  const proc = Bun.spawn(command, {
+    env,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "ignore",
+    detached: true,
+  });
+  const stdin = proc.stdin;
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  const pending = new Map<
+    number,
+    { resolve: (message: RpcMessage) => void; reject: (error: RpcChildError) => void }
+  >();
+  let seq = 0;
+  let ended = false;
+
+  const send = (payload: RpcMessage) => {
+    stdin.write(`${JSON.stringify(payload)}\n`);
+    stdin.flush();
+  };
+
+  const endedPromise = (async () => {
+    let buffer = "";
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        for (let nl = buffer.indexOf("\n"); nl !== -1; nl = buffer.indexOf("\n")) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          let message: RpcMessage;
+          try {
+            message = JSON.parse(line) as RpcMessage;
+          } catch {
+            continue; // non-JSON chatter
+          }
+          if (typeof message.id === "number" && pending.has(message.id)) {
+            const waiter = pending.get(message.id);
+            pending.delete(message.id);
+            waiter?.resolve(message);
+          } else if (message.id === undefined && typeof message.method === "string") {
+            onNotification?.(message);
+          }
+        }
+      }
+    } catch {
+      // cancelled
+    } finally {
+      ended = true;
+      for (const waiter of pending.values()) {
+        waiter.reject(new RpcChildError("exited", "The process ended before answering"));
+      }
+      pending.clear();
+    }
+  })();
+
+  let closing: Promise<void> | undefined;
+  return {
+    request: (method, params, timeoutMs) =>
+      new Promise<RpcMessage>((resolve, reject) => {
+        if (ended) {
+          reject(new RpcChildError("exited", "The process has ended"));
+          return;
+        }
+        seq += 1;
+        const id = seq;
+        const timer = setTimeout(() => {
+          if (pending.delete(id)) reject(new RpcChildError("timeout", `${method} timed out`));
+        }, timeoutMs);
+        pending.set(id, {
+          resolve: (message) => {
+            clearTimeout(timer);
+            resolve(message);
+          },
+          reject: (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        });
+        try {
+          send({ jsonrpc: "2.0", id, method, params });
+        } catch {
+          clearTimeout(timer);
+          pending.delete(id);
+          reject(new RpcChildError("exited", "Could not write to the process"));
+        }
+      }),
+    notify: (method, params) => {
+      try {
+        send({ jsonrpc: "2.0", method, params });
+      } catch {
+        // the process is gone; the next request says so
+      }
+    },
+    ended: endedPromise,
+    close: () => {
+      closing ??= (async () => {
+        try {
+          stdin.end();
+        } catch {
+          // ignore
+        }
+        await reader.cancel().catch(() => {});
+        await terminateProcess(proc);
+      })();
+      return closing;
+    },
+    isClosing: () => closing !== undefined,
+  };
+};
+
+/** A request whose error answer, timeout or missing answer is the driver error the auth manager reports. */
+const driverCall = async (
+  child: RpcChild,
+  method: string,
+  params: unknown,
+  timeoutMs: number,
+): Promise<unknown> => {
+  let reply: RpcMessage;
+  try {
+    reply = await child.request(method, params, timeoutMs);
+  } catch (error) {
+    if (error instanceof RpcChildError && error.kind === "timeout") {
+      throw new AgentAuthDriverError("timeout", `${method} timed out`);
+    }
+    throw new AgentAuthDriverError("process_failed", `${method} got no answer`);
+  }
+  if (reply.error !== undefined) {
+    throw new AgentAuthDriverError("process_failed", `${method} failed`);
+  }
+  return reply.result;
+};
+
+/** Milliseconds left until a deadline `timeoutMs` from now (at least 1). */
+const deadlineIn = (timeoutMs: number) => {
+  const deadline = Date.now() + timeoutMs;
+  return () => Math.max(1, deadline - Date.now());
+};
+
+const CODEX_CLIENT_INFO = { name: "cycle", version: "0.2" };
+
 export type CodexAppServerProbeResult = {
   account?: unknown;
+  /** `account/read`'s `requiresOpenaiAuth`: `false` when the configured provider needs no OpenAI sign-in. */
+  requiresOpenaiAuth?: boolean;
   rateLimits?: RateLimitSnapshot | null;
   timedOut?: boolean;
   error?: string;
@@ -876,8 +1299,8 @@ export type RunCodexAppServerProbe = (options: {
 }) => Promise<CodexAppServerProbeResult>;
 
 /**
- * Spawn a short-lived `codex -c cli_auth_credentials_store="file" app-server`, query `account/read`
- * and optionally `account/rateLimits/read`, then tear it down cleanly within `timeoutMs`.
+ * Spawn a short-lived `codex app-server` (the session's arguments, `codexAppServerArgs`), query `account/read` and
+ * optionally `account/rateLimits/read`, then tear it down cleanly within `timeoutMs`.
  */
 export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
   executable,
@@ -885,90 +1308,30 @@ export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
   refreshUsage,
   timeoutMs,
 }) => {
-  if (env.CODEX_HOME) {
-    try {
-      mkdirSync(env.CODEX_HOME, { recursive: true, mode: 0o700 });
-    } catch {
-      // best effort
-    }
-  }
-
-  let proc: ReturnType<typeof Bun.spawn>;
+  ensurePrivateDir(env.CODEX_HOME);
+  let child: RpcChild;
   try {
-    proc = Bun.spawn([executable, ...CODEX_FIXED_ARGS, "app-server"], {
-      env,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    child = startRpcChild([executable, ...codexAppServerArgs()], env);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-
-  const stdin = proc.stdin as Bun.FileSink;
-  const stdout = proc.stdout as ReadableStream<Uint8Array>;
-  const reader = stdout.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let timedOut = false;
-
-  const timer = setTimeout(() => {
-    timedOut = true;
-    void reader.cancel().catch(() => {});
-    void terminateProcess(proc);
-  }, timeoutMs);
-
-  const send = (payload: Record<string, unknown>) => {
-    stdin.write(`${JSON.stringify(payload)}\n`);
-    stdin.flush();
-  };
-
-  const waitForId = async (targetId: number): Promise<Record<string, unknown> | undefined> => {
-    while (true) {
-      const nl = buffer.indexOf("\n");
-      if (nl !== -1) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        try {
-          const msg = JSON.parse(line) as Record<string, unknown>;
-          if (msg.id === targetId) return msg;
-        } catch {
-          // ignore non-JSON chatter
-        }
-        continue;
-      }
-      const chunk = await reader.read();
-      if (chunk.done) return undefined;
-      buffer += decoder.decode(chunk.value, { stream: true });
-    }
-  };
+  const left = deadlineIn(timeoutMs);
 
   try {
-    send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { clientInfo: { name: "cycle", version: "0.2" } },
-    });
-    const init = await waitForId(1);
-    if (!init || init.error) {
-      return { timedOut, error: "codex_init_failed" };
-    }
-    send({ jsonrpc: "2.0", method: "initialized", params: {} });
+    const init = await child.request("initialize", { clientInfo: CODEX_CLIENT_INFO }, left());
+    if (init.error !== undefined) return { error: "codex_init_failed" };
+    child.notify("initialized", {});
 
-    send({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "account/read",
-      params: { refreshToken: false },
-    });
-    const accountResp = await waitForId(2);
-    if (!accountResp || accountResp.error) {
-      return { timedOut, error: "codex_account_read_failed" };
-    }
-    const accountResult = accountResp.result as { account?: unknown } | undefined;
+    const accountResp = await child.request("account/read", { refreshToken: false }, left());
+    if (accountResp.error !== undefined) return { error: "codex_account_read_failed" };
+    const accountResult = accountResp.result as
+      | { account?: unknown; requiresOpenaiAuth?: unknown }
+      | undefined;
     const account = accountResult?.account ?? null;
+    const requiresOpenaiAuth =
+      typeof accountResult?.requiresOpenaiAuth === "boolean"
+        ? accountResult.requiresOpenaiAuth
+        : undefined;
 
     let rateLimits: RateLimitSnapshot | null | undefined;
     const isChatGpt =
@@ -976,14 +1339,11 @@ export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
       account !== null &&
       (account as { type?: unknown }).type === "chatgpt";
     if (refreshUsage && isChatGpt) {
-      send({
-        jsonrpc: "2.0",
-        id: 3,
-        method: "account/rateLimits/read",
-        params: {},
-      });
-      const limitsResp = await waitForId(3);
-      if (limitsResp && !limitsResp.error) {
+      // Usage is extra: without it the account answer still stands.
+      const limitsResp = await child
+        .request("account/rateLimits/read", {}, left())
+        .catch(() => undefined);
+      if (limitsResp !== undefined && limitsResp.error === undefined) {
         const limitsResult = limitsResp.result as
           | { rateLimits?: RateLimitSnapshot | null }
           | undefined;
@@ -991,22 +1351,20 @@ export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
       }
     }
 
-    return { account, ...(rateLimits !== undefined ? { rateLimits } : {}) };
+    return {
+      account,
+      ...(requiresOpenaiAuth !== undefined ? { requiresOpenaiAuth } : {}),
+      ...(rateLimits !== undefined ? { rateLimits } : {}),
+    };
   } catch (error) {
-    return { timedOut, error: error instanceof Error ? error.message : String(error) };
+    if (error instanceof RpcChildError) {
+      return error.kind === "timeout"
+        ? { timedOut: true, error: "codex_timeout" }
+        : { error: "codex_exited" };
+    }
+    return { error: error instanceof Error ? error.message : String(error) };
   } finally {
-    clearTimeout(timer);
-    try {
-      stdin.end();
-    } catch {
-      // ignore
-    }
-    try {
-      await reader.cancel();
-    } catch {
-      // ignore
-    }
-    await terminateProcess(proc);
+    await child.close();
   }
 };
 
@@ -1015,6 +1373,7 @@ export type CodexAuthStartOptions = {
   env: Record<string, string>;
   mode: "browser" | "device_code";
   startTimeoutMs?: number;
+  signal?: AbortSignal | undefined;
 };
 
 export type StartCodexAppServerAuth = (
@@ -1039,41 +1398,17 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
   env,
   mode,
   startTimeoutMs = 15_000,
+  signal,
 }) => {
-  if (env.CODEX_HOME) {
-    try {
-      mkdirSync(env.CODEX_HOME, { recursive: true, mode: 0o700 });
-    } catch {
-      // let codex report its own error
-    }
+  ensurePrivateDir(env.CODEX_HOME);
+  if (signal?.aborted === true) {
+    throw new AgentAuthDriverError("cancelled", "Sign-in was cancelled before it started");
   }
 
-  let proc: ReturnType<typeof Bun.spawn>;
-  try {
-    proc = Bun.spawn([executable, "app-server", ...CODEX_FIXED_ARGS], {
-      env,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-  } catch {
-    throw new AgentAuthDriverError("process_failed", "Failed to launch codex app-server");
-  }
-
-  const stdin = proc.stdin as Bun.FileSink;
-  const stdout = proc.stdout as ReadableStream<Uint8Array>;
-  const reader = stdout.getReader();
-  const decoder = new TextDecoder();
-
-  let seq = 1;
-  const pending = new Map<
-    number,
-    { resolve: (result: unknown) => void; reject: (error: unknown) => void }
-  >();
   let loginId: string | undefined;
   let cancelled = false;
-  let resolveCompleted!: (outcome: AgentAuthFlowOutcome) => void;
   let settled = false;
+  let resolveCompleted!: (outcome: AgentAuthFlowOutcome) => void;
   const completed = new Promise<AgentAuthFlowOutcome>((resolve) => {
     resolveCompleted = (outcome) => {
       if (settled) return;
@@ -1082,121 +1417,44 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
     };
   });
 
-  let killPromise: Promise<void> | undefined;
-  const killProc = (): Promise<void> => {
-    killPromise ??= (async () => {
-      try {
-        stdin.end();
-      } catch {
-        // ignore
-      }
-      try {
-        await reader.cancel();
-      } catch {
-        // ignore
-      }
-      await terminateProcess(proc);
-    })();
-    return killPromise;
-  };
-
-  const send = (payload: Record<string, unknown>) => {
-    stdin.write(`${JSON.stringify(payload)}\n`);
-    stdin.flush();
-  };
-
-  const request = (method: string, params: unknown, timeoutMs: number): Promise<unknown> =>
-    new Promise((resolve, reject) => {
-      const id = seq++;
-      const timer = setTimeout(() => {
-        if (!pending.delete(id)) return;
-        reject(new AgentAuthDriverError("timeout", `Codex ${method} timed out`));
-      }, timeoutMs);
-      pending.set(id, {
-        resolve: (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        reject: (err) => {
-          clearTimeout(timer);
-          reject(err);
-        },
-      });
-      try {
-        send({ jsonrpc: "2.0", id, method, params });
-      } catch (error) {
-        clearTimeout(timer);
-        pending.delete(id);
-        reject(error);
-      }
+  let child: RpcChild;
+  try {
+    child = startRpcChild([executable, ...codexAppServerArgs()], env, (message) => {
+      if (message.method !== "account/login/completed") return;
+      if (typeof message.params !== "object" || message.params === null) return;
+      const p = message.params as { loginId?: unknown; success?: unknown };
+      if (loginId !== undefined && p.loginId !== undefined && p.loginId !== loginId) return;
+      resolveCompleted(
+        p.success === true
+          ? { ok: true }
+          : { ok: false, reason: cancelled ? "cancelled" : "process_failed" },
+      );
+      void child.close();
     });
-
-  // Background NDJSON reader loop for both request responses and `account/login/completed`.
-  void (async () => {
-    let buffer = "";
-    try {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, { stream: true });
-        for (let nl = buffer.indexOf("\n"); nl !== -1; nl = buffer.indexOf("\n")) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-          if (!line) continue;
-          let msg: Record<string, unknown>;
-          try {
-            msg = JSON.parse(line) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          if (typeof msg.id === "number" && pending.has(msg.id)) {
-            const waiter = pending.get(msg.id);
-            pending.delete(msg.id);
-            if (msg.error !== undefined) {
-              waiter?.reject(new AgentAuthDriverError("process_failed", "Codex RPC error"));
-            } else {
-              waiter?.resolve(msg.result);
-            }
-            continue;
-          }
-          if (
-            msg.method === "account/login/completed" &&
-            typeof msg.params === "object" &&
-            msg.params !== null
-          ) {
-            const p = msg.params as { loginId?: unknown; success?: unknown };
-            if (loginId !== undefined && p.loginId !== undefined && p.loginId !== loginId) continue;
-            const ok = p.success === true;
-            resolveCompleted(
-              ok ? { ok: true } : { ok: false, reason: cancelled ? "cancelled" : "process_failed" },
-            );
-            void killProc();
-          }
-        }
-      }
-    } catch {
-      // stream cancelled or closed
-    } finally {
-      for (const [, waiter] of pending) {
-        waiter.reject(new AgentAuthDriverError("process_failed", "Codex app-server exited"));
-      }
-      pending.clear();
-      if (!settled) {
-        resolveCompleted({ ok: false, reason: cancelled ? "cancelled" : "process_failed" });
-      }
-    }
-  })();
+  } catch {
+    throw new AgentAuthDriverError("process_failed", "Failed to launch codex app-server");
+  }
+  void child.ended.then(() => {
+    resolveCompleted({ ok: false, reason: cancelled ? "cancelled" : "process_failed" });
+  });
+  // Aborted while starting: closing the child fails the pending request, and the start rejects as cancelled.
+  const onAbort = () => {
+    cancelled = true;
+    void child.close();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
-    await request(
+    await driverCall(
+      child,
       "initialize",
-      { clientInfo: { name: "cycle", version: "0.2" }, capabilities: {} },
+      { clientInfo: CODEX_CLIENT_INFO, capabilities: {} },
       startTimeoutMs,
     );
-    send({ jsonrpc: "2.0", method: "initialized", params: {} });
+    child.notify("initialized", {});
 
     const startParams = mode === "browser" ? { type: "chatgpt" } : { type: "chatgptDeviceCode" };
-    const result = (await request("account/login/start", startParams, startTimeoutMs)) as
+    const result = (await driverCall(child, "account/login/start", startParams, startTimeoutMs)) as
       | Record<string, unknown>
       | undefined;
 
@@ -1224,16 +1482,20 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
       completed,
       cancel: async () => {
         cancelled = true;
-        if (killPromise === undefined && loginId !== undefined) {
-          await request("account/login/cancel", { loginId }, 1_500).catch(() => {});
+        if (!child.isClosing() && loginId !== undefined) {
+          await child.request("account/login/cancel", { loginId }, 1_500).catch(() => {});
         }
-        await killProc();
+        await child.close();
       },
     };
   } catch (error) {
-    await killProc();
+    await child.close();
+    if (cancelled)
+      throw new AgentAuthDriverError("cancelled", "Sign-in was cancelled before it started");
     if (error instanceof AgentAuthDriverError) throw error;
     throw new AgentAuthDriverError("process_failed", "Failed to start Codex sign-in");
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 };
 
@@ -1243,96 +1505,25 @@ export const runCodexAppServerLogout: RunCodexAppServerLogout = async ({
   env,
   timeoutMs = 10_000,
 }) => {
-  if (env.CODEX_HOME) {
-    try {
-      mkdirSync(env.CODEX_HOME, { recursive: true, mode: 0o700 });
-    } catch {
-      // ignore
-    }
-  }
-
-  let proc: ReturnType<typeof Bun.spawn>;
+  ensurePrivateDir(env.CODEX_HOME);
+  let child: RpcChild;
   try {
-    proc = Bun.spawn([executable, "app-server", ...CODEX_FIXED_ARGS], {
-      env,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    child = startRpcChild([executable, ...codexAppServerArgs()], env);
   } catch {
     throw new AgentAuthDriverError("process_failed", "Failed to launch codex app-server");
   }
-
-  const stdin = proc.stdin as Bun.FileSink;
-  const stdout = proc.stdout as ReadableStream<Uint8Array>;
-  const reader = stdout.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let timedOut = false;
-
-  const timer = setTimeout(() => {
-    timedOut = true;
-    void reader.cancel().catch(() => {});
-    void terminateProcess(proc);
-  }, timeoutMs);
-
-  const send = (payload: Record<string, unknown>) => {
-    stdin.write(`${JSON.stringify(payload)}\n`);
-    stdin.flush();
-  };
-
-  const waitForId = async (targetId: number): Promise<Record<string, unknown> | undefined> => {
-    while (true) {
-      const nl = buffer.indexOf("\n");
-      if (nl !== -1) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        try {
-          const msg = JSON.parse(line) as Record<string, unknown>;
-          if (msg.id === targetId) return msg;
-        } catch {
-          // ignore
-        }
-        continue;
-      }
-      const chunk = await reader.read();
-      if (chunk.done) return undefined;
-      buffer += decoder.decode(chunk.value, { stream: true });
-    }
-  };
-
+  const left = deadlineIn(timeoutMs);
   try {
-    send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { clientInfo: { name: "cycle", version: "0.2" }, capabilities: {} },
-    });
-    const init = await waitForId(1);
-    if (!init || init.error) {
-      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
-    }
-    send({ jsonrpc: "2.0", method: "initialized", params: {} });
-
-    send({ jsonrpc: "2.0", id: 2, method: "account/logout", params: {} });
-    const resp = await waitForId(2);
-    if (!resp || resp.error) {
-      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
-    }
+    await driverCall(
+      child,
+      "initialize",
+      { clientInfo: CODEX_CLIENT_INFO, capabilities: {} },
+      left(),
+    );
+    child.notify("initialized", {});
+    await driverCall(child, "account/logout", {}, left());
   } finally {
-    clearTimeout(timer);
-    try {
-      stdin.end();
-    } catch {
-      // ignore
-    }
-    try {
-      await reader.cancel();
-    } catch {
-      // ignore
-    }
-    await terminateProcess(proc);
+    await child.close();
   }
 };
 
@@ -1341,12 +1532,13 @@ export type CodexSetupOptions = {
   dataDir: string;
   inherited: Record<string, string | undefined>;
   env: () => Record<string, string>;
-  locateBinary: () => { source: AgentBinarySource; path?: string };
+  locateBinary: LocateBinary;
   runCommand?: AgentSetupRunCommand;
   probeAppServer?: RunCodexAppServerProbe;
   startAuth?: StartCodexAppServerAuth;
   logoutAppServer?: RunCodexAppServerLogout;
   timeoutMs?: number;
+  cacheTtlMs?: number;
   now?: () => number;
 };
 
@@ -1357,79 +1549,53 @@ export const createCodexSetupProvider = (options: CodexSetupOptions): AgentSetup
   const logoutAppServer = options.logoutAppServer ?? runCodexAppServerLogout;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const now = options.now ?? Date.now;
-  const minimalEnv = (): Record<string, string> => ({
-    PATH: options.inherited.PATH ?? "/usr/bin:/bin",
-    ...options.env(),
-  });
+  const cache = authCache(options.cacheTtlMs ?? AUTH_CACHE_TTL_MS, now);
+  const minimalEnv = isolatedEnv(options.inherited, options.env);
+  const probeBinary = binaryProber(options.locateBinary, minimalEnv, run);
+  const viaEnv = detectViaEnv(
+    CODEX_AUTH_ENV_NAMES,
+    options.config.env,
+    options.config.allowEnv,
+    options.inherited,
+  );
+  const via = viaEnv !== undefined ? { viaEnv } : {};
 
-  const probeBinary = async (): Promise<AgentBinaryStatus> => {
-    const found = options.locateBinary();
-    if (found.source === "missing" || !found.path || !isExecutable(found.path)) {
-      return { source: "missing", problem: "missing" };
-    }
-    const version = await probeVersion(found.path, minimalEnv(), run);
-    return {
-      source: found.source,
-      path: found.path,
-      ...(version !== undefined ? { version } : {}),
-    };
-  };
-
-  const readAuth: AgentSetupProvider["readAuth"] = async (opts) => {
-    const viaEnv = detectViaEnv(
-      CODEX_AUTH_ENV_NAMES,
-      options.config.env,
-      options.config.allowEnv,
-      options.inherited,
-    );
+  const requireBinary = async (): Promise<string> => {
     const binary = await probeBinary();
     if (binary.problem !== undefined || !binary.path) {
-      return {
-        state: "binary_unavailable",
-        method: "none",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
+      throw new AgentAuthDriverError("binary_unavailable", "Codex binary is unavailable");
     }
+    return binary.path;
+  };
 
-    const probed = await probeAppServer({
-      executable: binary.path,
-      env: minimalEnv(),
-      refreshUsage: opts?.refreshUsage === true,
-      timeoutMs,
-    });
+  const probeAuth = async (
+    executable: string,
+    refreshUsage: boolean,
+  ): Promise<AgentAuthProbeResult> => {
+    const probed = await probeAppServer({ executable, env: minimalEnv(), refreshUsage, timeoutMs });
 
     if (probed.timedOut) {
-      return {
-        state: "auth_unknown",
-        unknownReason: "timeout",
-        method: "unknown",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
+      return { state: "auth_unknown", unknownReason: "timeout", method: "unknown", ...via };
     }
     if (probed.error !== undefined) {
       return {
         state: "auth_unknown",
         unknownReason: NETWORK_ERROR_RE.test(probed.error) ? "network_error" : "probe_failed",
         method: "unknown",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
+        ...via,
       };
     }
 
     if (probed.account === null || probed.account === undefined) {
-      return {
-        state: "signed_out",
-        method: "none",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
+      // No account, and none needed: the configured model provider is not OpenAI's (config.toml `model_provider`).
+      if (probed.requiresOpenaiAuth === false) {
+        return { state: "signed_in", method: "third_party", ...via };
+      }
+      return { state: "signed_out", method: "none", ...via };
     }
 
     if (typeof probed.account !== "object" || Array.isArray(probed.account)) {
-      return {
-        state: "auth_unknown",
-        unknownReason: "probe_failed",
-        method: "unknown",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
+      return { state: "auth_unknown", unknownReason: "probe_failed", method: "unknown", ...via };
     }
 
     const raw = probed.account as Record<string, unknown>;
@@ -1455,10 +1621,20 @@ export const createCodexSetupProvider = (options: CodexSetupOptions): AgentSetup
     return {
       state: "signed_in",
       method,
-      ...(viaEnv !== undefined ? { viaEnv } : {}),
+      ...via,
       ...(Object.keys(account).length > 0 ? { account } : {}),
       ...(planUsage !== undefined ? { planUsage } : {}),
     };
+  };
+
+  const readAuth: AgentSetupProvider["readAuth"] = async (opts) => {
+    const binary = await probeBinary(opts?.forceRefresh === true ? { forceRefresh: true } : {});
+    if (binary.problem !== undefined || !binary.path) {
+      cache.invalidate();
+      return { state: "binary_unavailable", method: "none", ...via };
+    }
+    const executable = binary.path;
+    return cache.read(opts, () => probeAuth(executable, opts?.refreshUsage === true));
   };
 
   return {
@@ -1470,38 +1646,32 @@ export const createCodexSetupProvider = (options: CodexSetupOptions): AgentSetup
     ],
     canSignOut: () => true,
     canRefreshUsage: true,
-    loginCommand: "cycle login codex",
+    loginCommand: loginCommandFor("codex", options.dataDir),
     authDriver: {
-      start: async (mode) => {
+      start: async (mode, signal) => {
         if (mode !== "browser" && mode !== "device_code") {
           throw new AgentAuthDriverError("process_failed", `Unsupported Codex auth mode: ${mode}`);
         }
-        const binary = await probeBinary();
-        if (binary.problem !== undefined || !binary.path) {
-          throw new AgentAuthDriverError("binary_unavailable", "Codex binary is unavailable");
-        }
         return startAuth({
-          executable: binary.path,
+          executable: await requireBinary(),
           env: minimalEnv(),
           mode,
           startTimeoutMs: timeoutMs,
+          signal,
         });
       },
       logout: async () => {
-        const binary = await probeBinary();
-        if (binary.problem !== undefined || !binary.path) {
-          throw new AgentAuthDriverError("binary_unavailable", "Codex binary is unavailable");
+        const executable = await requireBinary();
+        try {
+          await logoutAppServer({ executable, env: minimalEnv(), timeoutMs });
+        } finally {
+          cache.invalidate();
         }
-        await logoutAppServer({
-          executable: binary.path,
-          env: minimalEnv(),
-          timeoutMs,
-        });
       },
+      invalidateCache: cache.invalidate,
     },
     diagnostics: () => ({
-      dataDir: options.config.configDir ?? join(options.dataDir, "codex"),
-      customDataDir: options.config.configDir !== undefined,
+      ...dataDirDiagnostics(options.env().CODEX_HOME, join(options.dataDir, "codex")),
       allowEnv: [...options.config.allowEnv],
       envNames: Object.keys(options.config.env).sort(),
     }),
@@ -1527,6 +1697,8 @@ export type AgyLogoutOptions = {
   executable: string;
   env: Record<string, string>;
   timeoutMs?: number;
+  /** Extra `agy acp` flags (e.g. `--disable-telemetry`), the same the sessions get. */
+  args?: readonly string[];
 };
 
 export type RunAgyAcpLogout = (options: AgyLogoutOptions) => Promise<void>;
@@ -1535,109 +1707,45 @@ export type RunAgyAcpLogout = (options: AgyLogoutOptions) => Promise<void>;
  * Signs out of Antigravity strictly through `agy acp`'s native `logout` JSON-RPC method.
  * Hard red line: Cycle never reads, parses, stores, or deletes agy's OAuth token files directly.
  */
-export const runAgyAcpLogout: RunAgyAcpLogout = async ({ executable, env, timeoutMs = 15_000 }) => {
-  if (env.HOME) {
-    try {
-      mkdirSync(env.HOME, { recursive: true, mode: 0o700 });
-    } catch {
-      // ignore
-    }
-  }
-
-  let proc: ReturnType<typeof Bun.spawn>;
+export const runAgyAcpLogout: RunAgyAcpLogout = async ({
+  executable,
+  env,
+  timeoutMs = 15_000,
+  args = [],
+}) => {
+  ensurePrivateDir(env.HOME);
+  let child: RpcChild;
   try {
-    proc = Bun.spawn([executable, "acp"], {
-      env,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    child = startRpcChild([executable, "acp", ...args], env);
   } catch {
     throw new AgentAuthDriverError("process_failed", "Failed to launch agy acp");
   }
-
-  const stdin = proc.stdin as Bun.FileSink;
-  const stdout = proc.stdout as ReadableStream<Uint8Array>;
-  const reader = stdout.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let timedOut = false;
-
-  const timer = setTimeout(() => {
-    timedOut = true;
-    void reader.cancel().catch(() => {});
-    void terminateProcess(proc);
-  }, timeoutMs);
-
-  const send = (payload: Record<string, unknown>) => {
-    stdin.write(`${JSON.stringify(payload)}\n`);
-    stdin.flush();
-  };
-
-  const waitForId = async (targetId: number): Promise<Record<string, unknown> | undefined> => {
-    while (true) {
-      const nl = buffer.indexOf("\n");
-      if (nl !== -1) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        try {
-          const msg = JSON.parse(line) as Record<string, unknown>;
-          if (msg.id === targetId) return msg;
-        } catch {
-          // ignore non-JSON chatter
-        }
-        continue;
-      }
-      const chunk = await reader.read();
-      if (chunk.done) return undefined;
-      buffer += decoder.decode(chunk.value, { stream: true });
-    }
-  };
-
+  const left = deadlineIn(timeoutMs);
   try {
-    send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: 1,
-        clientInfo: { name: "cycle", version: "0.2" },
-        clientCapabilities: {},
-      },
-    });
-    const init = await waitForId(1);
-    if (!init || init.error) {
-      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
-    }
-
-    send({ jsonrpc: "2.0", id: 2, method: "logout", params: {} });
-    const resp = await waitForId(2);
-    if (!resp || resp.error) {
-      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
-    }
+    await driverCall(
+      child,
+      "initialize",
+      { protocolVersion: 1, clientInfo: CODEX_CLIENT_INFO, clientCapabilities: {} },
+      left(),
+    );
+    await driverCall(child, "logout", {}, left());
   } finally {
-    clearTimeout(timer);
-    try {
-      stdin.end();
-    } catch {
-      // ignore
-    }
-    try {
-      await reader.cancel();
-    } catch {
-      // ignore
-    }
-    await terminateProcess(proc);
+    await child.close();
   }
 };
+
+/** The `agy acp` flags a session gets from the effective runtime settings that sign-in and sign-out must share. */
+export const agyAcpFlags = (config: Config["agy"], settings?: AgentSettings): string[] =>
+  agyEffectiveRuntime(config, settings).values.telemetry === false ? ["--disable-telemetry"] : [];
 
 export type AgySetupOptions = {
   config: Config["agy"];
   dataDir: string;
   inherited: Record<string, string | undefined>;
   env: () => Record<string, string>;
-  locateBinary: () => { source: AgentBinarySource; path?: string };
+  locateBinary: LocateBinary;
+  /** The daemon's runtime settings (`agent-settings.json`), so setup subprocesses honour e.g. telemetry off. */
+  agentSettings?: AgentSettings | undefined;
   runCommand?: AgentSetupRunCommand;
   startCodeAuth?: StartCliCodeAuth;
   logoutAcp?: RunAgyAcpLogout;
@@ -1652,133 +1760,61 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
   const logoutAcp = options.logoutAcp ?? runAgyAcpLogout;
   // Probed at ~1.5s on isolated HOME when signed out, up to ~5s+ on keychain-fallback platforms.
   const timeoutMs = options.timeoutMs ?? 15_000;
-  const cacheTtlMs = options.cacheTtlMs ?? 45_000;
-  const now = options.now ?? Date.now;
+  const cache = authCache(options.cacheTtlMs ?? 45_000, options.now ?? Date.now);
+  const minimalEnv = isolatedEnv(options.inherited, options.env);
+  const probeBinary = binaryProber(options.locateBinary, minimalEnv, run, AGY_MIN_VERSION);
+  const acpFlags = () => agyAcpFlags(options.config, options.agentSettings);
+  const viaEnv = detectViaEnv(
+    AGY_AUTH_ENV_NAMES,
+    options.config.env,
+    options.config.allowEnv,
+    options.inherited,
+  );
+  const via = viaEnv !== undefined ? { viaEnv } : {};
 
-  let cachedAuth: { at: number; result: AgentAuthProbeResult } | undefined;
-  let cacheGen = 0;
-
-  const minimalEnv = (): Record<string, string> => ({
-    PATH: options.inherited.PATH ?? "/usr/bin:/bin",
-    ...options.env(),
-  });
-
-  const probeBinary = async (): Promise<AgentBinaryStatus> => {
-    const found = options.locateBinary();
-    if (found.source === "missing" || !found.path || !isExecutable(found.path)) {
-      return { source: "missing", minVersion: AGY_MIN_VERSION, problem: "missing" };
+  const requireBinary = async (): Promise<string> => {
+    const binary = await probeBinary();
+    if (binary.problem !== undefined || !binary.path) {
+      throw new AgentAuthDriverError("binary_unavailable", "agy binary is unavailable");
     }
-    const version = await probeVersion(found.path, minimalEnv(), run);
-    if (version === undefined) {
+    return binary.path;
+  };
+
+  const probeAuth = async (executable: string): Promise<AgentAuthProbeResult> => {
+    const env = minimalEnv();
+    ensurePrivateDir(env.HOME);
+    // Hard red line: never read, stat, parse, or touch agy's OAuth token files; probe only via `agy models`
+    // (which takes no `--disable-telemetry`: that flag is `agy acp`'s).
+    const result = await run([executable, "models"], { env, timeoutMs });
+    if (result.timedOut) {
+      return { state: "auth_unknown", unknownReason: "timeout", method: "unknown", ...via };
+    }
+    if (result.exitCode === 0) {
+      // An API key from config.json is what answered, not a Google sign-in.
       return {
-        source: found.source,
-        path: found.path,
-        minVersion: AGY_MIN_VERSION,
-        problem: "probe_failed",
+        state: "signed_in",
+        method: viaEnv !== undefined ? "api_key" : "subscription",
+        ...via,
       };
     }
-    if (!isVersionSupported(version, AGY_MIN_VERSION)) {
-      return {
-        source: found.source,
-        path: found.path,
-        version,
-        minVersion: AGY_MIN_VERSION,
-        problem: "version_too_old",
-      };
-    }
+    const combined = `${result.stdout}\n${result.stderr}`;
+    if (AGY_SIGNED_OUT_RE.test(combined)) return { state: "signed_out", method: "none", ...via };
     return {
-      source: found.source,
-      path: found.path,
-      version,
-      minVersion: AGY_MIN_VERSION,
+      state: "auth_unknown",
+      unknownReason: NETWORK_ERROR_RE.test(combined) ? "network_error" : "probe_failed",
+      method: "unknown",
+      ...via,
     };
   };
 
   const readAuth: AgentSetupProvider["readAuth"] = async (opts) => {
-    const viaEnv = detectViaEnv(
-      AGY_AUTH_ENV_NAMES,
-      options.config.env,
-      options.config.allowEnv,
-      options.inherited,
-    );
-    const binary = await probeBinary();
+    const binary = await probeBinary(opts?.forceRefresh === true ? { forceRefresh: true } : {});
     if (binary.problem !== undefined || !binary.path) {
-      cachedAuth = undefined;
-      return {
-        state: "binary_unavailable",
-        method: "none",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
+      cache.invalidate();
+      return { state: "binary_unavailable", method: "none", ...via };
     }
-
-    if (!opts?.forceRefresh && cachedAuth !== undefined && now() - cachedAuth.at < cacheTtlMs) {
-      return {
-        ...cachedAuth.result,
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
-    }
-
-    const env = minimalEnv();
-    if (env.HOME) {
-      try {
-        mkdirSync(env.HOME, { recursive: true, mode: 0o700 });
-      } catch {
-        // best effort
-      }
-    }
-
-    // Hard red line: never read, stat, parse, or touch agy's OAuth token files; probe only via `agy models`.
-    const probeGen = cacheGen;
-    const result = await run([binary.path, "models"], { env, timeoutMs });
-    let authResult: AgentAuthProbeResult;
-    if (result.timedOut) {
-      authResult = {
-        state: "auth_unknown",
-        unknownReason: "timeout",
-        method: "unknown",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
-    } else if (result.exitCode === 0) {
-      authResult = {
-        state: "signed_in",
-        method: "subscription",
-        ...(viaEnv !== undefined ? { viaEnv } : {}),
-      };
-    } else {
-      const combined = `${result.stdout}\n${result.stderr}`;
-      if (AGY_SIGNED_OUT_RE.test(combined)) {
-        authResult = {
-          state: "signed_out",
-          method: "none",
-          ...(viaEnv !== undefined ? { viaEnv } : {}),
-        };
-      } else if (NETWORK_ERROR_RE.test(combined)) {
-        authResult = {
-          state: "auth_unknown",
-          unknownReason: "network_error",
-          method: "unknown",
-          ...(viaEnv !== undefined ? { viaEnv } : {}),
-        };
-      } else {
-        authResult = {
-          state: "auth_unknown",
-          unknownReason: "probe_failed",
-          method: "unknown",
-          ...(viaEnv !== undefined ? { viaEnv } : {}),
-        };
-      }
-    }
-
-    // Cache only definitive states if no login/logout invalidated the cache while this probe was in flight.
-    if (probeGen === cacheGen) {
-      if (authResult.state === "signed_in" || authResult.state === "signed_out") {
-        cachedAuth = { at: now(), result: authResult };
-      } else {
-        cachedAuth = undefined;
-      }
-    }
-
-    return authResult;
+    const executable = binary.path;
+    return cache.read(opts, () => probeAuth(executable));
   };
 
   return {
@@ -1787,53 +1823,36 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
     signInModes: () => [{ mode: "code", requiresLocalLoopback: false }],
     canSignOut: () => true,
     canRefreshUsage: false,
-    loginCommand: "cycle login agy",
+    loginCommand: loginCommandFor("agy", options.dataDir),
     authDriver: {
-      start: async (mode) => {
+      start: async (mode, signal) => {
         if (mode !== "code") {
           throw new AgentAuthDriverError("process_failed", `Unsupported agy auth mode: ${mode}`);
         }
-        const binary = await probeBinary();
-        if (binary.problem !== undefined || !binary.path) {
-          throw new AgentAuthDriverError("binary_unavailable", "agy binary is unavailable");
-        }
+        const executable = await requireBinary();
         const env = minimalEnv();
-        if (env.HOME) {
-          try {
-            mkdirSync(env.HOME, { recursive: true, mode: 0o700 });
-          } catch {
-            // ignore
-          }
-        }
+        ensurePrivateDir(env.HOME);
         // Hard red line: drive ONLY `agy acp --login`; never touch token files directly.
         return startCodeAuth({
-          command: [binary.path, "acp", "--login"],
+          command: [executable, "acp", "--login", ...acpFlags()],
           env,
           urlPattern: AGY_AUTH_URL_RE,
           startTimeoutMs: Math.max(timeoutMs, 15_000),
+          signal,
         });
       },
       logout: async () => {
-        const binary = await probeBinary();
-        if (binary.problem !== undefined || !binary.path) {
-          throw new AgentAuthDriverError("binary_unavailable", "agy binary is unavailable");
+        const executable = await requireBinary();
+        try {
+          await logoutAcp({ executable, env: minimalEnv(), timeoutMs, args: acpFlags() });
+        } finally {
+          cache.invalidate();
         }
-        await logoutAcp({
-          executable: binary.path,
-          env: minimalEnv(),
-          timeoutMs,
-        });
-        cacheGen += 1;
-        cachedAuth = undefined;
       },
-      invalidateCache: () => {
-        cacheGen += 1;
-        cachedAuth = undefined;
-      },
+      invalidateCache: cache.invalidate,
     },
     diagnostics: () => ({
-      dataDir: options.config.home ?? join(options.dataDir, "agy"),
-      customDataDir: options.config.home !== undefined,
+      ...dataDirDiagnostics(options.env().HOME, join(options.dataDir, "agy")),
       allowEnv: [...options.config.allowEnv],
       envNames: Object.keys(options.config.env).sort(),
     }),

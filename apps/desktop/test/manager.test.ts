@@ -1830,8 +1830,11 @@ test("ConnectionManager validates auth URLs against hardcoded allowlist, never s
   expect(await m.logoutAgent("local", "claude")).toEqual({ ok: true });
 
   // Verify behavioral-only analytics: zero codes, URLs, accounts, or error strings.
+  // A start the desktop refused (an untrusted URL) is still a start: every completion has one before it.
   expect(tracked).toEqual([
+    ["agent_auth_started", { agent: "claude", environment: "local", mode: "code" }],
     ["agent_auth_completed", { agent: "claude", environment: "local", result: "failed" }],
+    ["agent_auth_started", { agent: "claude", environment: "local", mode: "code" }],
     ["agent_auth_completed", { agent: "claude", environment: "local", result: "failed" }],
     ["agent_auth_started", { agent: "claude", environment: "local", mode: "code" }],
     ["agent_auth_completed", { agent: "claude", environment: "local", result: "ok" }],

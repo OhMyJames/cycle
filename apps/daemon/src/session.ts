@@ -122,6 +122,11 @@ export class Session {
     return this.#staleReasons.size > 0;
   }
 
+  /** Whether it is stale for `reason` (an `auth` one speaks for the account it was started with, not the current one). */
+  isStaleFor(reason: string): boolean {
+    return this.#staleReasons.has(reason);
+  }
+
   clearStale(): void {
     this.#staleReasons.clear();
   }

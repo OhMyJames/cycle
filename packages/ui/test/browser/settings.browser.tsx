@@ -762,35 +762,39 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
   ];
 
   let signedIn = false;
-  script.bridge.readAgentSetup = async () => ({
-    agent: "claude",
-    name: "Claude",
-    available: true,
-    binary: { source: "path", path: "/usr/bin/claude", version: "2.1.0" },
-    auth: {
-      state: signedIn ? "signed_in" : "signed_out",
-      method: signedIn ? "subscription" : "none",
-      ...(signedIn ? { account: { email: "dev@example.com" } } : {}),
-      signInModes: [{ mode: "code", requiresLocalLoopback: false }],
-      canSignOut: true,
-      loginCommand: "cycle login claude",
-    },
-    canRefreshUsage: false,
-    runtime: {
-      schemaVersion: 1,
-      schema: { type: "object", properties: {} },
-      values: {},
-      overrides: [],
-      revision: 0,
-    },
-    environment: {
-      configFile: { path: "/tmp/config.json", exists: true, stale: false },
-      dataDir: "/tmp/claude",
-      customDataDir: false,
-      allowEnv: [],
-      envNames: [],
-    },
-  });
+  script.bridge.readAgentSetup = async (_env, _agent, options) => {
+    // A forced read answers last, so the silent read the daemon's broadcast starts overtakes it (as it can for real).
+    if (options?.forceRefresh === true) await new Promise((resolve) => setTimeout(resolve, 30));
+    return {
+      agent: "claude",
+      name: "Claude",
+      available: true,
+      binary: { source: "path", path: "/usr/bin/claude", version: "2.1.0" },
+      auth: {
+        state: signedIn ? "signed_in" : "signed_out",
+        method: signedIn ? "subscription" : "none",
+        ...(signedIn ? { account: { email: "dev@example.com" } } : {}),
+        signInModes: [{ mode: "code", requiresLocalLoopback: false }],
+        canSignOut: true,
+        loginCommand: "cycle login claude",
+      },
+      canRefreshUsage: false,
+      runtime: {
+        schemaVersion: 1,
+        schema: { type: "object", properties: {} },
+        values: {},
+        overrides: [],
+        revision: 0,
+      },
+      environment: {
+        configFile: { path: "/tmp/config.json", exists: true, stale: false },
+        dataDir: "/tmp/claude",
+        customDataDir: false,
+        allowEnv: [],
+        envNames: [],
+      },
+    };
+  };
 
   let flowCounter = 0;
   script.bridge.startAgentAuth = async (env, agent) => {
@@ -861,6 +865,7 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
 
   signedIn = true;
   act(() => {
+    // As the daemon does: the initiator hears it finished, then everyone hears the setup changed.
     script.emit({
       type: "agent-auth-completed",
       environmentId: "local",
@@ -869,7 +874,14 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
       ok: true,
     });
   });
+  act(() => {
+    script.emit({ type: "agent-setup-changed", environmentId: "local", agent: "claude" });
+  });
   expect(await screen.findByText("dev@example.com")).toBeTruthy();
+  // The forced read that the sign-in started was overtaken; its spinner still ends with it.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Refresh" }).hasAttribute("disabled")).toBe(false),
+  );
 
   // 4. Sign out requires ConfirmDialog confirmation before calling logoutAgent.
   await user.click(screen.getByRole("button", { name: "Sign out" }));

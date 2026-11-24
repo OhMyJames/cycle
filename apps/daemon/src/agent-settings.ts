@@ -1,7 +1,8 @@
 // Per-agent hot-reloadable runtime settings persisted in `<dataDir>/agent-settings.json`
 // (docs/protocol.md §16, docs/harness-settings.md §6.1).
 // Merge precedence: `agent-settings.json` (explicit overrides) > `config.json` (startup host config) > schema defaults.
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { chmod, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   type AgentRuntimePatchValue,
@@ -24,6 +25,12 @@ const AgentSettingsFileSchema = z.object({
 
 type AgentEntry = z.infer<typeof AgentEntrySchema>;
 
+/**
+ * What a client is told when `agent-settings.json` cannot be read (snapshot `runtime.fileError`, `set_runtime` error):
+ * fixed, so neither the file's path nor the parser's message leaves the daemon. The detail is in daemon.log.
+ */
+export const AGENT_SETTINGS_UNREADABLE = "agent-settings.json is unreadable";
+
 /** Thrown when `expectedRevision` does not match the agent's current revision (`-32602` / `revision_conflict`). */
 export class AgentSettingsConflictError extends Error {
   readonly currentRevision: number;
@@ -36,11 +43,9 @@ export class AgentSettingsConflictError extends Error {
 
 /** Thrown when `<dataDir>/agent-settings.json` was corrupt on load and must not be silently overwritten. */
 export class AgentSettingsCorruptError extends Error {
-  readonly fileError: string;
-  constructor(path: string, detail: string) {
-    super(`Refusing to overwrite unreadable ${path}: ${detail}`);
+  constructor() {
+    super(AGENT_SETTINGS_UNREADABLE);
     this.name = "AgentSettingsCorruptError";
-    this.fileError = detail;
   }
 }
 
@@ -118,49 +123,111 @@ export const validateRuntimePatch = (
   return patch;
 };
 
+/** Reads the file: its agents, `undefined` when there is none, or the reason it cannot be read (for daemon.log only). */
+const readFile = (path: string): Map<string, AgentEntry> | undefined | { error: string } => {
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed = AgentSettingsFileSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+    return new Map(Object.entries(parsed.agents));
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+};
+
 export class AgentSettings {
   readonly #path: string;
-  #agents: Map<string, AgentEntry>;
-  readonly #fileError: string | undefined;
+  readonly #log: Logger;
+  #agents = new Map<string, AgentEntry>();
+  /** Set while the file on disk cannot be read: writes are refused so it is never overwritten. */
+  #unreadable = false;
+  /** Each agent's runtime schema, once known: loaded values are checked against it. */
+  #schemas = new Map<string, Record<string, RuntimeProperty>>();
   #queue: Promise<unknown> = Promise.resolve();
 
-  private constructor(
-    path: string,
-    agents: Map<string, AgentEntry>,
-    fileError: string | undefined,
-  ) {
+  private constructor(path: string, log: Logger) {
     this.#path = path;
-    this.#agents = agents;
-    this.#fileError = fileError;
+    this.#log = log;
   }
 
   /**
    * Load `<dataDir>/agent-settings.json`. If the file exists but fails JSON/schema validation or has an unknown
    * version, never overwrites it: logs an error, records `fileError`, and starts with empty overrides so the daemon
-   * continues to run using `config.json` / schema defaults.
+   * continues to run using `config.json` / schema defaults. The file is read again while it is unreadable (on each
+   * `fileError()` and `patch()`), so one that is fixed or removed is picked up without a restart.
    */
   static async load(path: string, log: Logger = silentLogger): Promise<AgentSettings> {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return new AgentSettings(path, new Map(), undefined);
-    try {
-      const parsed = AgentSettingsFileSchema.parse(JSON.parse(await file.text()));
-      return new AgentSettings(path, new Map(Object.entries(parsed.agents)), undefined);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      log.error("agent_settings_unreadable", { error: detail });
-      return new AgentSettings(path, new Map(), detail);
-    }
+    const settings = new AgentSettings(path, log);
+    settings.#reload();
+    return settings;
   }
 
+  /**
+   * The agents' runtime schemas (each harness's `runtimeSchema`). A loaded value that does not satisfy its agent's
+   * schema (unknown key, wrong type, out of range) is dropped and logged, now and on every later reload.
+   */
+  useSchemas(schemas: Record<string, Record<string, RuntimeProperty>>): void {
+    this.#schemas = new Map(Object.entries(schemas));
+    this.#agents = this.#validated(this.#agents);
+  }
+
+  /** Fixed text while the file cannot be read (never its path or the parse error), else `undefined`. */
   fileError(): string | undefined {
-    return this.#fileError;
+    this.#recheck();
+    return this.#unreadable ? AGENT_SETTINGS_UNREADABLE : undefined;
+  }
+
+  /** While the file is unreadable, reads it again (a synchronous read of one small file): fixed or gone, it is used. */
+  #recheck(): void {
+    if (this.#unreadable) this.#reload();
+  }
+
+  #reload(): void {
+    const read = readFile(this.#path);
+    if (read !== undefined && !(read instanceof Map)) {
+      if (!this.#unreadable) this.#log.error("agent_settings_unreadable", { error: read.error });
+      this.#unreadable = true;
+      this.#agents = new Map();
+      return;
+    }
+    if (this.#unreadable) this.#log.info("agent_settings_readable_again");
+    this.#unreadable = false;
+    this.#agents = this.#validated(read ?? new Map());
+  }
+
+  #validated(agents: Map<string, AgentEntry>): Map<string, AgentEntry> {
+    const out = new Map<string, AgentEntry>();
+    for (const [agent, entry] of agents) {
+      const schema = this.#schemas.get(agent);
+      if (schema === undefined) {
+        out.set(agent, entry);
+        continue;
+      }
+      const values: Record<string, AgentRuntimeValue> = {};
+      for (const [key, value] of Object.entries(entry.values)) {
+        try {
+          validateRuntimePatch(schema, { [key]: value });
+          values[key] = value;
+        } catch (error) {
+          // The key is the schema's own name (or one the file has that the schema does not): never the value.
+          this.#log.warn("agent_settings_value_dropped", {
+            agent,
+            field: Object.hasOwn(schema, key) ? key : "unknown",
+            reason: error instanceof AgentSettingsValidationError ? error.reason : "invalid",
+          });
+        }
+      }
+      out.set(agent, { revision: entry.revision, values });
+    }
+    return out;
   }
 
   revisionOf(agent: string): number {
+    this.#recheck();
     return this.#agents.get(agent)?.revision ?? 0;
   }
 
   overridesOf(agent: string): Record<string, AgentRuntimeValue> {
+    this.#recheck();
     return { ...(this.#agents.get(agent)?.values ?? {}) };
   }
 
@@ -170,6 +237,7 @@ export class AgentSettings {
     defaults: T,
     configValues: Partial<T>,
   ): { values: T; overrides: string[]; revision: number } {
+    this.#recheck();
     const entry = this.#agents.get(agent);
     const merged: Record<string, AgentRuntimeValue> = { ...defaults };
     for (const [k, v] of Object.entries(configValues)) {
@@ -203,9 +271,8 @@ export class AgentSettings {
     schema: Record<string, RuntimeProperty>,
   ): Promise<{ overrides: Record<string, AgentRuntimeValue>; revision: number }> {
     const run = this.#queue.then(async () => {
-      if (this.#fileError !== undefined) {
-        throw new AgentSettingsCorruptError(this.#path, this.#fileError);
-      }
+      this.#recheck();
+      if (this.#unreadable) throw new AgentSettingsCorruptError();
       const current = this.#agents.get(agent) ?? { revision: 0, values: {} };
       if (expectedRevision !== current.revision) {
         throw new AgentSettingsConflictError(agent, expectedRevision, current.revision);
@@ -227,9 +294,22 @@ export class AgentSettings {
         null,
         2,
       )}\n`;
-      await writeFile(temporary, body, { mode: 0o600 });
-      await chmod(temporary, 0o600);
-      await rename(temporary, this.#path);
+      let renamed = false;
+      try {
+        const file = await open(temporary, "w", 0o600);
+        try {
+          await file.writeFile(body);
+          // On disk before it replaces the old file: a crash after the rename never leaves an empty one.
+          await file.sync();
+        } finally {
+          await file.close();
+        }
+        await chmod(temporary, 0o600);
+        await rename(temporary, this.#path);
+        renamed = true;
+      } finally {
+        if (!renamed) await unlink(temporary).catch(() => undefined);
+      }
       // Commit in-memory state ONLY after atomic rename succeeds so concurrent readers never observe uncommitted state.
       this.#agents = nextAgents;
       return { overrides: { ...nextValues }, revision: nextRevision };

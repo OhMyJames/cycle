@@ -833,7 +833,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.section.general": "通用",
   "settings.section.appearance": "外观",
   "settings.section.environments": "环境",
-  "settings.section.defaults": "会话默认设置",
   "settings.section.shortcuts": "键盘快捷键",
   "settings.section.harness": "Harness",
   "settings.harness.group": "Harness",
@@ -933,6 +932,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.harness.auth.openHost":
     "请在浏览器中访问 {host} 完成登录。点击下方按钮前 Cycle 不会自动打开链接。",
   "settings.harness.auth.openBrowser": "在浏览器中打开",
+  "settings.harness.auth.openFailed": "没能为这次登录打开浏览器。请重新开始，或使用下面的命令。",
   "settings.harness.auth.waitingBrowser": "正在等待浏览器完成登录…",
   "settings.harness.auth.deviceCodeLabel": "一次性验证码",
   "settings.harness.auth.copyCode": "复制验证码",

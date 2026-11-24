@@ -82,13 +82,14 @@ export const codexHarness: Harness = {
         inherited,
         env: () => codexEnv(settings, dataDir, inherited),
         locateBinary: () => {
+          // Exactly the binary the session's app-server runs (never one found on PATH, which it does not use).
           if (settings.executable !== undefined) {
             return { source: "configured", path: settings.executable };
           }
-          const shipped = shippedExecutable("codex") ?? sourceBinary();
-          if (shipped !== undefined) return { source: "builtin", path: shipped };
-          const onPath = Bun.which("codex", { PATH: inherited.PATH ?? "" });
-          return onPath ? { source: "path", path: onPath } : { source: "missing" };
+          const shipped = executable();
+          return shipped !== undefined
+            ? { source: "builtin", path: shipped }
+            : { source: "missing" };
         },
       }),
       ...(log ? { log } : {}),

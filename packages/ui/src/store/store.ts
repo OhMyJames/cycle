@@ -3,6 +3,9 @@
 import type { EventProps, UiEventName } from "@cycle/analytics/events";
 import type {
   AccountStatus,
+  AgentAuthLogoutAnswer,
+  AgentAuthStartAnswer,
+  AgentAuthSubmitAnswer,
   AgentInfo,
   AnalyticsStatus,
   AppEvent,
@@ -1580,20 +1583,32 @@ export class AppStore {
   revealDaemonConfig = (environmentId: string): Promise<boolean> =>
     this.#bridge.revealDaemonConfig(environmentId).catch(() => false);
 
-  startAgentAuth = (environmentId: string, agent: string) =>
-    this.#bridge.startAgentAuth(environmentId, agent);
+  // A sign-in call the bridge refused (the window's IPC failed) is an answer the dialog shows, not a dialog left
+  // waiting: main already turns every daemon failure into a reason, so only the bridge itself can throw here.
+  startAgentAuth = (environmentId: string, agent: string): Promise<AgentAuthStartAnswer> =>
+    this.#bridge
+      .startAgentAuth(environmentId, agent)
+      .catch((): AgentAuthStartAnswer => ({ started: false, reason: "failed" }));
 
   openAgentAuthUrl = (environmentId: string, flowId: string): Promise<boolean> =>
     this.#bridge.openAgentAuthUrl(environmentId, flowId).catch(() => false);
 
-  submitAgentAuth = (environmentId: string, flowId: string, code: string) =>
-    this.#bridge.submitAgentAuth(environmentId, flowId, code);
+  submitAgentAuth = (
+    environmentId: string,
+    flowId: string,
+    code: string,
+  ): Promise<AgentAuthSubmitAnswer> =>
+    this.#bridge
+      .submitAgentAuth(environmentId, flowId, code)
+      .catch((): AgentAuthSubmitAnswer => ({ ok: false, reason: "failed" }));
 
   cancelAgentAuth = (environmentId: string, flowId: string): Promise<void> =>
     this.#bridge.cancelAgentAuth(environmentId, flowId).catch(() => undefined);
 
-  logoutAgent = (environmentId: string, agent: string) =>
-    this.#bridge.logoutAgent(environmentId, agent);
+  logoutAgent = (environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer> =>
+    this.#bridge
+      .logoutAgent(environmentId, agent)
+      .catch((): AgentAuthLogoutAnswer => ({ ok: false, reason: "failed" }));
 
   // ---- connectors: the page shows what went wrong itself, next to what it was about ----
 

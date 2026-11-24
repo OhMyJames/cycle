@@ -3,11 +3,15 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { agentSetupRead, agentSetupSetRuntime, CycleErrorCode, META } from "@cycle/protocol";
-import { AgentSettings } from "../src/agent-settings.ts";
+import { AGENT_SETTINGS_UNREADABLE, type AgentSettings } from "../src/agent-settings.ts";
 import { claudeEffectiveRuntime, createClaudeSetupProvider } from "../src/agent-setup.ts";
+import type { AgentDefinition } from "../src/agents.ts";
+import { agyHarness } from "../src/agy-agent.ts";
+import { claudeHarness } from "../src/claude-agent.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { Daemon } from "../src/daemon.ts";
 import { agentSettingsPath } from "../src/data-dir.ts";
+import { agentsFor } from "../src/harnesses.ts";
 import { processAgent } from "../src/process-agent.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
@@ -28,7 +32,11 @@ afterEach(async () => {
 });
 
 const makeClaudeRuntimeDaemon = async (
-  options: { turnGate?: () => Promise<void>; corruptSettingsFile?: boolean } = {},
+  options: {
+    turnGate?: () => Promise<void>;
+    corruptSettingsFile?: boolean;
+    onNew?: () => Promise<void>;
+  } = {},
 ) => {
   const bin = join(dir, "claude-stub");
   writeFileSync(bin, "#!/bin/sh\nexit 0\n", "utf8");
@@ -37,7 +45,6 @@ const makeClaudeRuntimeDaemon = async (
     writeFileSync(agentSettingsPath(dir), "{ broken json", "utf8");
   }
   const config = ConfigSchema.parse({ claude: { warmStart: true, maxWarm: 3 } }).claude;
-  const agentSettings = await AgentSettings.load(agentSettingsPath(dir));
   const setup = createClaudeSetupProvider({
     config,
     dataDir: dir,
@@ -65,12 +72,12 @@ const makeClaudeRuntimeDaemon = async (
         content: { type: "text", text: "done" },
       });
     },
+    ...(options.onNew !== undefined ? { onNew: options.onNew } : {}),
   });
 
   const daemon = await Daemon.start({
     dataDir: dir,
-    agentSettings,
-    agents: [
+    agents: (agentSettings: AgentSettings) => [
       {
         ...fake.definition,
         id: "claude",
@@ -318,4 +325,214 @@ test("processAgent evaluates dynamic env function on every launch", async () => 
 
   const lines = readFileSync(outFile, "utf8").trim().split("\n");
   expect(lines).toEqual(["first", "second"]);
+});
+
+test("the real Claude and agy harnesses read the daemon's own AgentSettings: maxAhead and env follow set_runtime", async () => {
+  // agentsFor hands the daemon a factory; the daemon calls it with the instance set_runtime writes. The daemon's
+  // sessions run on a fake agent; maxAhead is the harness's own closure, and the env each start gets is read by
+  // launching the harness's own definition, whose command (`self`) only writes down what it was given.
+  const configs = join(dir, "adapter-configs.txt");
+  const self = join(dir, "self.sh");
+  writeFileSync(
+    self,
+    `#!/bin/sh\nprintf '%s\\n' "$CYCLE_ADAPTER_CONFIG" >> "${configs}"\n`,
+    "utf8",
+  );
+  chmodSync(self, 0o755);
+  const fake = fakeAgent();
+  const kills: string[] = [];
+  let launches = 0;
+  const made: AgentDefinition[] = [];
+  const real = new Map<string, AgentDefinition>();
+  const daemon = await Daemon.start({
+    dataDir: dir,
+    agents: (settings) =>
+      agentsFor(
+        ConfigSchema.parse({}),
+        dir,
+        { PATH: "/usr/bin:/bin" },
+        undefined,
+        [claudeHarness, agyHarness],
+        [self],
+      )(settings).map((definition) => {
+        real.set(definition.id, definition);
+        const wrapped: AgentDefinition = {
+          ...definition,
+          launch: async () => {
+            const index = ++launches;
+            const launched = await fake.definition.launch();
+            return {
+              ...launched,
+              kill: () => {
+                kills.push(`launch-${index}`);
+                launched.kill?.();
+              },
+            };
+          },
+        };
+        made.push(wrapped);
+        return wrapped;
+      }),
+  });
+  open.push(daemon);
+  const claude = made.find((d) => d.id === "claude") as AgentDefinition;
+  const maxAhead = () =>
+    typeof claude.maxAhead === "function" ? claude.maxAhead() : claude.maxAhead;
+  const adapterConfig = async (id: string) => {
+    const before = existsSync(configs) ? readFileSync(configs, "utf8").split("\n").length : 1;
+    const launched = await (real.get(id) as AgentDefinition).launch();
+    await until(
+      () => existsSync(configs) && readFileSync(configs, "utf8").split("\n").length > before,
+      `${id} adapter config written`,
+    );
+    launched.kill?.();
+    const lines = readFileSync(configs, "utf8").trim().split("\n");
+    return JSON.parse(lines.at(-1) as string) as Record<string, unknown>;
+  };
+  expect(maxAhead()).toBe(3);
+  expect(await adapterConfig("claude")).toMatchObject({ warmStart: true, progressSummaries: true });
+  expect(await adapterConfig("agy")).toMatchObject({ sandbox: false, telemetry: true });
+
+  const c = await connectClient(daemon);
+  await c.agent.request(methods.agent.session.new, { cwd: dir, _meta: { [META.agent]: "claude" } });
+  await c.agent.request(methods.agent.session.new, { cwd: dir, _meta: { [META.agent]: "claude" } });
+  expect(kills).toEqual([]);
+
+  // Lowering maxWarm through L1 is seen by the real maxAhead closure, and reclaims the oldest warm process.
+  await c.agent.request(agentSetupSetRuntime.name, {
+    agent: "claude",
+    patch: { maxWarm: 1 },
+    expectedRevision: 0,
+  });
+  expect(maxAhead()).toBe(1);
+  expect(kills).toEqual(["launch-1"]);
+
+  await c.agent.request(agentSetupSetRuntime.name, {
+    agent: "claude",
+    patch: { warmStart: false },
+    expectedRevision: 1,
+  });
+  expect(maxAhead()).toBe(0);
+  expect(kills).toEqual(["launch-1", "launch-2"]);
+
+  // A next_idle_restart setting reaches the env of the next start.
+  await c.agent.request(agentSetupSetRuntime.name, {
+    agent: "claude",
+    patch: { progressSummaries: false },
+    expectedRevision: 2,
+  });
+  expect(await adapterConfig("claude")).toMatchObject({
+    warmStart: false,
+    progressSummaries: false,
+  });
+
+  await c.agent.request(agentSetupSetRuntime.name, {
+    agent: "agy",
+    patch: { sandbox: true, telemetry: false },
+    expectedRevision: 0,
+  });
+  expect(await adapterConfig("agy")).toMatchObject({ sandbox: true, telemetry: false });
+});
+
+test("a session still inside session/new when a next_idle_restart setting changes is recycled once it is published", async () => {
+  let releaseNew: (() => void) | undefined;
+  let holdNext = true;
+  const { daemon, kills, launchCount } = await makeClaudeRuntimeDaemon({
+    onNew: () => {
+      if (!holdNext) return Promise.resolve();
+      holdNext = false;
+      return new Promise<void>((resolve) => {
+        releaseNew = resolve;
+      });
+    },
+  });
+  const c = await connectClient(daemon);
+  const creating = c.agent.request(methods.agent.session.new, {
+    cwd: dir,
+    _meta: { [META.agent]: "claude" },
+  });
+  await until(() => releaseNew !== undefined, "session/new reached the agent");
+  await c.agent.request(agentSetupSetRuntime.name, {
+    agent: "claude",
+    patch: { progressSummaries: false },
+    expectedRevision: 0,
+  });
+  // Not yet listed, so the change could not reach it directly.
+  expect(kills).toEqual([]);
+  releaseNew?.();
+  const created = await creating;
+  // Started with the old setting: let go as soon as it is published (it is idle and unprompted).
+  expect(kills).toEqual(["launch-1"]);
+  await c.agent.request(methods.agent.session.prompt, {
+    sessionId: created.sessionId,
+    prompt: [{ type: "text", text: "after the change" }],
+  });
+  expect(launchCount()).toBe(2);
+});
+
+test("an unreadable agent-settings.json is reported with a fixed message, and recovers once fixed or removed", async () => {
+  const { daemon } = await makeClaudeRuntimeDaemon({ corruptSettingsFile: true });
+  const c = await connectClient(daemon);
+  const read = async () =>
+    (await c.agent.request(agentSetupRead.name, { agent: "claude" })) as {
+      runtime: { fileError?: string; values: Record<string, unknown>; revision: number };
+    };
+  const snap = await read();
+  // Neither the path nor the parser's message leaves the daemon.
+  expect(snap.runtime.fileError).toBe(AGENT_SETTINGS_UNREADABLE);
+  try {
+    await c.agent.request(agentSetupSetRuntime.name, {
+      agent: "claude",
+      patch: { warmStart: false },
+      expectedRevision: 0,
+    });
+    throw new Error("Expected corrupt file refusal");
+  } catch (error) {
+    const rpc = error as { code?: number; message?: string; data?: { reason?: string } };
+    expect(rpc.code).toBe(CycleErrorCode.InvalidConfig);
+    expect(rpc.data?.reason).toBe("file_corrupt");
+    expect(rpc.message).toBe(AGENT_SETTINGS_UNREADABLE);
+    expect(JSON.stringify(error)).not.toContain(dir);
+  }
+
+  // Fixed on disk: the next read and write see it, with no restart.
+  writeFileSync(
+    agentSettingsPath(dir),
+    JSON.stringify({ version: 1, agents: { claude: { revision: 4, values: { maxWarm: 2 } } } }),
+    "utf8",
+  );
+  const fixed = await read();
+  expect(fixed.runtime.fileError).toBeUndefined();
+  expect(fixed.runtime.values.maxWarm).toBe(2);
+  expect(fixed.runtime.revision).toBe(4);
+  const written = (await c.agent.request(agentSetupSetRuntime.name, {
+    agent: "claude",
+    patch: { warmStart: false },
+    expectedRevision: 4,
+  })) as { revision: number };
+  expect(written.revision).toBe(5);
+});
+
+test("values in agent-settings.json outside the agent's schema are dropped on load, not used", async () => {
+  writeFileSync(
+    agentSettingsPath(dir),
+    JSON.stringify({
+      version: 1,
+      agents: {
+        claude: {
+          revision: 2,
+          values: { maxWarm: 1000, warmStart: "yes", progressSummaries: false, bogus: true },
+        },
+      },
+    }),
+    "utf8",
+  );
+  const { daemon } = await makeClaudeRuntimeDaemon();
+  const c = await connectClient(daemon);
+  const snap = (await c.agent.request(agentSetupRead.name, { agent: "claude" })) as {
+    runtime: { values: Record<string, unknown>; overrides: string[]; fileError?: string };
+  };
+  expect(snap.runtime.fileError).toBeUndefined();
+  expect(snap.runtime.values).toEqual({ warmStart: true, maxWarm: 3, progressSummaries: false });
+  expect(snap.runtime.overrides).toEqual(["progressSummaries"]);
 });

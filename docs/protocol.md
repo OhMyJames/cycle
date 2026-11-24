@@ -947,7 +947,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
   - `canRefreshUsage`:布尔,是否支持通过 `refreshUsage: true` 主动拉取用量。
   - `runtime`:`{ schemaVersion: 1, schema: { type: "object", properties }, values, overrides, revision, fileError? }`。
     - `schema` 复用 §10 的 `configSchema` JSON Schema 风格,限定为封闭版本化子集(Phase 2 细化可编辑字段与 `_cycle/agent_setup/set_runtime` / `_cycle/agent_setup_changed`)。客户端遇到不认识的属性类型时降级为只读展示,不得整页报错。
-    - `revision` 为该 agent 独立的单调递增整数(未写过为 `0`);`fileError` 在 `<dataDir>/agent-settings.json` 损坏或版本未知时存在。
+    - `revision` 为该 agent 独立的单调递增整数(未写过为 `0`);`fileError` 在 `<dataDir>/agent-settings.json` 损坏或版本未知时存在,值固定为 `"agent-settings.json is unreadable"`(路径和解析错误只进 `daemon.log`);文件不可读期间每次读取快照或写入都会重读它,修好或移走后自动恢复。文件里不符合该 agent schema 的值(未知键、类型不符、越界)在加载时丢弃并记日志。
   - `environment`:
     - `configFile`:`{ path, exists, stale, error? }`。`stale` 表示 `config.json` 的修改时间晚于 daemon 启动时刻,需重启 daemon 后生效。
     - `dataDir`、`customDataDir`:Cycle 为该 agent 托管的状态目录及是否在 `config.json` 中自定义。
@@ -992,7 +992,8 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - **一次性授权码边界**:`_cycle/agent_auth/submit` 中的 `code` 仅驻留内存并一次性送入登录子进程 stdin,绝不落盘、绝不进 session JSONL / `daemon.log` / 错误对象。
 - **TTL 与断线/退出清理**:每个登录流固定 10 分钟 TTL(`expiresAt` 为毫秒时间戳)。发起连接断开、TTL 到期或 daemon 关闭时,daemon 立即终止对应登录子进程,不留孤儿进程。
 - **完成通知范围**:`_cycle/agent_auth_completed` **仅推送给发起该流程的连接**,用于更新该客户端的登录弹窗态;全局状态刷新统一通过 `_cycle/agent_setup_changed` 广播给所有客户端。
-- **登出与会话生命周期**:`_cycle/agent_auth/logout` 不中断运行中 turn 或后台任务;立即终止该 agent 未发过 prompt 的预热进程,将已发言的运行中 session 标为 `stale` 并复用空闲重启路径(`#restartIfStale`),清空 daemon 内存中该 agent 的 `planUsage`、观测档位时间与只读探测缓存,并广播 `_cycle/agent_setup_changed`。
+- **登出、登录与会话生命周期**:`_cycle/agent_auth/logout` 成功,或登录流以 `ok: true` 完成时,账号可能已经换了,两者走同一套处理:不中断运行中 turn 或后台任务;立即终止该 agent 未发过 prompt 的预热进程,将其余运行中或启动中的 session 标为 `stale` 并复用空闲重启路径(`#restartIfStale`;正在 `session/new` 里、还没登记的 session 在登记后立即回收);清空 daemon 内存中该 agent 的 `planUsage`、观测档位时间与只读探测缓存,向所有连接发 `_cycle/plan_usage_changed`(`windows: []`),并广播 `_cycle/agent_setup_changed`。标为 `stale`(账号原因)的旧进程在回收前报的套餐用量不再记下。
+- **断线与关闭**:发起连接在 `start` 尚未返回时断开,该 agent 的互斥锁保持到驱动的启动结束、子进程被取消之后才释放;daemon 关闭时等待进行中的启动与登出结束(有上限)。连接已断,daemon 不再发 `_cycle/agent_auth_completed`;`disconnected` 只是客户端(主进程埋点)的说法,不是协议里的 `reason`。
 
 ### 错误约定
 

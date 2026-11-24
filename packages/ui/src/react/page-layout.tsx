@@ -6,7 +6,7 @@
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs";
-import { Fragment, type ReactNode, useEffect, useRef } from "react";
+import { Fragment, type ReactNode, useEffect, useId, useRef } from "react";
 import { ChevronLeftIcon } from "./icons.tsx";
 
 /** The key that goes back, as it is printed on the keyboard: a name, not a word to translate. */
@@ -73,6 +73,8 @@ export function PageLayout({
   }, []);
 
   const shown = sections.find((section) => section.id === value);
+  const groupIdPrefix = useId();
+  const groupIdOf = (group: string) => `${groupIdPrefix}-${group.replace(/\s+/g, "-")}`;
 
   return (
     <div data-slot="page" ref={rootRef}>
@@ -100,12 +102,22 @@ export function PageLayout({
               const showGroup = section.group !== undefined && section.group !== prevGroup;
               return (
                 <Fragment key={section.id}>
-                  {showGroup ? (
-                    <div data-slot="page-nav-group" role="presentation">
+                  {/* A tablist holds only tabs: the group's name is drawn for the eye, and said with each of its tabs. */}
+                  {showGroup && section.group !== undefined ? (
+                    <div
+                      data-slot="page-nav-group"
+                      id={groupIdOf(section.group)}
+                      aria-hidden="true"
+                    >
                       {section.group}
                     </div>
                   ) : null}
-                  <TabsTab value={section.id}>
+                  <TabsTab
+                    value={section.id}
+                    aria-describedby={
+                      section.group !== undefined ? groupIdOf(section.group) : undefined
+                    }
+                  >
                     {section.icon}
                     <span data-slot="page-nav-label">{section.label}</span>
                   </TabsTab>

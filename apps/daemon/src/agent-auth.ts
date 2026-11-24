@@ -23,6 +23,8 @@ import { type Logger, silentLogger } from "./logger.ts";
 
 export const AUTH_FLOW_TTL_MS = 10 * 60_000;
 const FINISHED_FLOW_CAP = 200;
+/** How long `close()` waits for in-flight driver starts / logouts to settle before giving up on them. */
+const CLOSE_WAIT_MS = 5_000;
 
 type FlowState = "pending" | "submitting" | "cancelled" | "expired" | "completed";
 
@@ -39,7 +41,19 @@ type ActiveFlow = {
   invalidateCache?: (() => void) | undefined;
 };
 
-type ActiveEntry = { kind: "starting"; connectionId: string } | { kind: "logout" } | ActiveFlow;
+/**
+ * Held while `driver.start()` is pending. A disconnect or `close()` only marks it `aborted`: the lock stays held until
+ * the start settles (and its handle is cancelled), so a reconnecting client cannot start a second login meanwhile.
+ */
+type StartingEntry = {
+  kind: "starting";
+  connectionId: string;
+  aborted: boolean;
+  /** Aborts the driver's start, which kills its child at once instead of when the URL wait ends. */
+  abort: AbortController;
+};
+
+type ActiveEntry = StartingEntry | { kind: "logout" } | ActiveFlow;
 
 type FinishedFlowRecord = {
   connectionId: string;
@@ -55,6 +69,8 @@ export type AgentAuthManagerOptions = {
   onCompleted: (connectionId: string, payload: AgentAuthCompleted) => void;
   /** Broadcasts `_cycle/agent_setup_changed` to all connected clients. */
   onChanged: (agent: string) => void;
+  /** A sign-in flow completed with `ok: true`: the account may have changed (recycle processes, clear caches). */
+  onSignedIn?: ((agent: string) => void) | undefined;
 };
 
 const authError = (reason: AgentAuthFailureReason, message: string): RpcError =>
@@ -72,10 +88,13 @@ export class AgentAuthManager {
   readonly #log: Logger;
   readonly #onCompleted: (connectionId: string, payload: AgentAuthCompleted) => void;
   readonly #onChanged: (agent: string) => void;
+  readonly #onSignedIn: (agent: string) => void;
 
   readonly #activeByAgent = new Map<string, ActiveEntry>();
   readonly #flowsById = new Map<string, ActiveFlow>();
   readonly #finishedFlows = new Map<string, FinishedFlowRecord>();
+  /** Driver starts (through their abort-cancel) and logouts still running: `close()` waits for them. */
+  readonly #inFlight = new Set<Promise<unknown>>();
   #closed = false;
 
   constructor(options: AgentAuthManagerOptions) {
@@ -84,6 +103,7 @@ export class AgentAuthManager {
     this.#log = options.log ?? silentLogger;
     this.#onCompleted = options.onCompleted;
     this.#onChanged = options.onChanged;
+    this.#onSignedIn = options.onSignedIn ?? (() => {});
   }
 
   /** Current live auth transition state for an agent, if any (`signing_in` / `signing_out`). */
@@ -121,22 +141,47 @@ export class AgentAuthManager {
     if (this.#activeByAgent.has(agent)) {
       throw authError("auth_in_progress", "An authentication operation is already in progress");
     }
-    const placeholder: ActiveEntry = { kind: "starting", connectionId };
+    const placeholder: StartingEntry = {
+      kind: "starting",
+      connectionId,
+      aborted: false,
+      abort: new AbortController(),
+    };
     this.#activeByAgent.set(agent, placeholder);
 
-    let handle: AgentAuthFlowHandle;
+    // The start and, when it was aborted meanwhile, the cancel of what it started: `close()` waits for both.
+    const starting = this.#track(
+      (async (): Promise<AgentAuthFlowHandle | undefined> => {
+        let handle: AgentAuthFlowHandle;
+        try {
+          handle = await driver.start(mode, placeholder.abort.signal);
+        } catch (error) {
+          if (this.#activeByAgent.get(agent) === placeholder) this.#activeByAgent.delete(agent);
+          throw error;
+        }
+        // The connection or the daemon closed while starting: cancel at once, then release the lock.
+        if (this.#closed || placeholder.aborted || this.#activeByAgent.get(agent) !== placeholder) {
+          try {
+            await Promise.resolve(handle.cancel()).catch(() => {});
+          } finally {
+            if (this.#activeByAgent.get(agent) === placeholder) this.#activeByAgent.delete(agent);
+          }
+          return undefined;
+        }
+        return handle;
+      })(),
+    );
+
+    let handle: AgentAuthFlowHandle | undefined;
     try {
-      handle = await driver.start(mode);
+      handle = await starting;
     } catch (error) {
-      if (this.#activeByAgent.get(agent) === placeholder) this.#activeByAgent.delete(agent);
       const reason = toFailureReason(error);
       this.#log.warn("agent_auth_start_failed", { agent, mode, reason });
       throw authError(reason, "Failed to start agent sign-in");
     }
-
-    // If the connection closed or daemon closed while starting, cancel immediately.
-    if (this.#closed || this.#activeByAgent.get(agent) !== placeholder) {
-      await Promise.resolve(handle.cancel()).catch(() => {});
+    if (handle === undefined) {
+      this.#log.info("agent_auth_aborted_starting", { agent, mode });
       throw authError("cancelled", "Sign-in was cancelled before it started");
     }
 
@@ -223,6 +268,16 @@ export class AgentAuthManager {
       outcome = { ok: false, reason: toFailureReason(error) };
     }
 
+    // Read again: expiry, a disconnect or close() may have ended the flow while the driver had the code.
+    const ended = flow.state as FlowState;
+    if (outcome.ok && (ended === "cancelled" || ended === "expired")) {
+      // The flow already ended (and its completion, if any, was sent) as that: the submission is not a success. But the
+      // CLI may have kept the account by then, so what was started under the old one is recycled all the same.
+      this.#signedIn(flow.agent);
+      this.#onChanged(flow.agent);
+      throw authError(ended, "Auth flow ended before the code was accepted");
+    }
+
     if (!outcome.ok) {
       // Only finish if not already settled/detached by #onFlowSettled, #expire, disconnect, or close().
       if (flow.state === "submitting" && this.#flowsById.get(flow.flowId) === flow) {
@@ -275,7 +330,9 @@ export class AgentAuthManager {
     onSignedOut: () => Promise<void> | void,
   ): Promise<void> {
     if (this.#closed) throw authError("cancelled", "Daemon is shutting down");
-    if (!provider.canSignOut() || provider.authDriver?.logout === undefined) {
+    const driver = provider.authDriver;
+    const logoutDriver = driver?.logout;
+    if (!provider.canSignOut() || driver === undefined || logoutDriver === undefined) {
       throw paramError("unsupported_mode", "Sign-out is not supported for this agent");
     }
     if (this.#activeByAgent.has(agent)) {
@@ -287,8 +344,8 @@ export class AgentAuthManager {
     this.#onChanged(agent);
 
     try {
-      await provider.authDriver.logout();
-      provider.authDriver.invalidateCache?.();
+      await this.#track(logoutDriver.call(driver));
+      driver.invalidateCache?.();
       await onSignedOut();
       this.#log.info("agent_signed_out", { agent });
     } catch (error) {
@@ -303,10 +360,12 @@ export class AgentAuthManager {
 
   /** Immediately tears down any active auth flows started by a disconnected client. */
   onConnectionClosed(connectionId: string): void {
-    // Cancel any in-flight start placeholder for this connection so it aborts when driver resolves.
-    for (const [agent, entry] of this.#activeByAgent) {
+    // An in-flight start for this connection is aborted, not released: its lock is held until driver.start() settles
+    // and what it started is cancelled (start() does both), so no second login can begin for the agent meanwhile.
+    for (const entry of this.#activeByAgent.values()) {
       if (entry.kind === "starting" && entry.connectionId === connectionId) {
-        this.#activeByAgent.delete(agent);
+        entry.aborted = true;
+        entry.abort.abort();
       }
     }
     const owned = [...this.#flowsById.values()].filter((f) => f.connectionId === connectionId);
@@ -321,10 +380,18 @@ export class AgentAuthManager {
   /** Stops all active auth flows and waits for their subprocesses to terminate (`daemon.close()`). */
   async close(): Promise<void> {
     this.#closed = true;
+    for (const entry of this.#activeByAgent.values()) {
+      if (entry.kind === "starting") {
+        entry.aborted = true;
+        entry.abort.abort();
+      }
+    }
     const flows = [...this.#flowsById.values()];
     this.#flowsById.clear();
-    this.#activeByAgent.clear();
-    await Promise.all(
+    for (const flow of flows) {
+      if (this.#activeByAgent.get(flow.agent) === flow) this.#activeByAgent.delete(flow.agent);
+    }
+    const cancelled = Promise.all(
       flows.map(async (flow) => {
         clearTimeout(flow.timer);
         if (flow.state === "pending" || flow.state === "submitting") {
@@ -334,6 +401,39 @@ export class AgentAuthManager {
         await Promise.resolve(flow.handle.cancel()).catch(() => {});
       }),
     );
+    // Starts still pending cancel what they started as soon as the driver answers (they see #closed); logouts run to
+    // their end. Both are waited for, within a bound, so no login child outlives the daemon.
+    const pending = Promise.allSettled([...this.#inFlight]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bounded = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), CLOSE_WAIT_MS);
+    });
+    const result = await Promise.race([Promise.all([cancelled, pending]), bounded]);
+    clearTimeout(timer);
+    if (result === "timeout") {
+      this.#log.warn("agent_auth_close_timeout", { pending: this.#inFlight.size });
+    }
+  }
+
+  #signedIn(agent: string): void {
+    try {
+      this.#onSignedIn(agent);
+    } catch (error) {
+      this.#log.warn("agent_auth_signed_in_hook_failed", {
+        agent,
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+
+  /** Keeps `promise` in #inFlight until it settles, for `close()` to wait on. */
+  #track<T>(promise: Promise<T>): Promise<T> {
+    this.#inFlight.add(promise);
+    const remove = () => {
+      this.#inFlight.delete(promise);
+    };
+    promise.then(remove, remove);
+    return promise;
   }
 
   async #expire(flowId: string): Promise<void> {
@@ -357,6 +457,8 @@ export class AgentAuthManager {
     if (flow.state !== "pending" && flow.state !== "submitting") return;
     const finishedOutcome = flow.state === "submitting" || outcome.ok ? "consumed" : "inactive";
     flow.invalidateCache?.();
+    // Before the completion and the setup broadcast, so a client that refreshes sees the account's state cleared.
+    if (outcome.ok) this.#signedIn(flow.agent);
     this.#finishFlow(flow, "completed", finishedOutcome, {
       flowId: flow.flowId,
       agent: flow.agent,

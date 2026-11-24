@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 import { LineJsonRpcProcess, type LineRpcOptions, RpcError } from "@cycle/line-rpc";
-import { CODEX_FIXED_ARGS, CODEX_VERSION } from "./protocol.ts";
+import { CODEX_VERSION, codexAppServerArgs } from "./protocol.ts";
 
 export type AdapterConfig = {
   env: Record<string, string>;
@@ -26,7 +26,7 @@ const options = (config: AdapterConfig): LineRpcOptions => {
   return {
     name: "Codex app-server",
     executable: config.codexExecutable,
-    args: [...CODEX_FIXED_ARGS, "-c", "check_for_update_on_startup=false", "app-server"],
+    args: codexAppServerArgs(),
     cwd: config.env.HOME,
     env: config.env,
     // The app-server's messages are JSON-RPC without the version field.

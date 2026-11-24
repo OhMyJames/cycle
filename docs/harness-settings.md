@@ -222,7 +222,8 @@ Cycle 的既有架构约定是“**环境是客户端概念，daemon 只看到 u
 - **不中断正在工作的会话**：Sign out 不强杀正在运行 turn、等待权限审批或有后台任务的 session（避免丢工作）。
 - **立即回收旧账号未发言预热进程**：Sign out 立即终止该 agent 所有尚未发过 prompt 的 warm process（session 留在列表、状态转为 `stopped`）。
 - **已发言的空闲会话复用 `#restartIfStale`**：Sign out 将该 agent 其余已发言的运行中 session 标为 `stale` 并调用 `#restartIfStale`——当前空闲的进程立即优雅回收（下次发消息按新状态重启，不会继续带着旧账号进程跑），正在忙的 session 在当前 turn 结束后自动回收。
-- **清理缓存状态**：立即清掉 daemon 内存中该 agent 的 `planUsage`、`tierObservedAt` 与 `readAuth` 短 TTL 缓存，并广播 `_cycle/agent_setup_changed`。
+- **清理缓存状态**：立即清掉 daemon 内存中该 agent 的 `planUsage`、`tierObservedAt` 与 `readAuth` 短 TTL 缓存，向所有连接发 `_cycle/plan_usage_changed`（`windows: []`），并广播 `_cycle/agent_setup_changed`；因账号而 `stale` 的旧进程在回收前报的套餐用量不再记下。
+- **登录成功同样处理**：登录流以 `ok: true` 完成时账号可能已换，走与 Sign out 相同的回收与清缓存（daemon 内同一个 helper）。启动中或仍在 `session/new` 里的 session 也会在启动完成后按代数比对补标 `stale` 并回收。
 
 ## 6. Daemon 存储、并发与热生效架构
 

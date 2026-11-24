@@ -14,22 +14,27 @@ import { selfCommand } from "./self.ts";
  */
 export const HARNESSES: readonly Harness[] = [claudeHarness, codexHarness, agyHarness];
 
-export const agentsFor = (
-  config: Config,
-  dataDir: string,
-  inherited: Record<string, string | undefined> = process.env,
-  log?: Logger,
-  harnesses: readonly Harness[] = HARNESSES,
-  self: string[] = selfCommand(),
-  agentSettings?: AgentSettings,
-): AgentDefinition[] =>
-  harnesses.map((harness) =>
-    harness.definition({
-      config,
-      dataDir,
-      inherited,
-      self,
-      ...(log !== undefined ? { log } : {}),
-      ...(agentSettings !== undefined ? { agentSettings } : {}),
-    }),
-  );
+/**
+ * The agents for a daemon to run, made with the daemon's own `AgentSettings` (`DaemonOptions.agents` takes this
+ * function): the instance `_cycle/agent_setup/set_runtime` writes is the one every harness reads.
+ */
+export const agentsFor =
+  (
+    config: Config,
+    dataDir: string,
+    inherited: Record<string, string | undefined> = process.env,
+    log?: Logger,
+    harnesses: readonly Harness[] = HARNESSES,
+    self: string[] = selfCommand(),
+  ): ((agentSettings: AgentSettings) => AgentDefinition[]) =>
+  (agentSettings) =>
+    harnesses.map((harness) =>
+      harness.definition({
+        config,
+        dataDir,
+        inherited,
+        self,
+        agentSettings,
+        ...(log !== undefined ? { log } : {}),
+      }),
+    );

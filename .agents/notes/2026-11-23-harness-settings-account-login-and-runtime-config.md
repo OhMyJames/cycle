@@ -2,7 +2,7 @@
 
 Status: accepted
 Date: 2026-11-23
-Basis: 负责人 2026-11-23 在多 agent（Claude、Codex、Antigravity）配置设计讨论中的拍板（Settings 增加 Harness 分组与各 agent 子 tab、上半区账号与用量、下半区部分可编辑部分只读、三家本轮只做订阅账号登录并将 API key 留给后续 pi、不做切换到宿主 `~/.claude`/`~/.codex`/`~/.gemini` 登录、只管 Cycle 托管配置），2026-11-23 在隔离临时目录（非 TTY 管道）中对锁定二进制 `claude 2.1.327`、`codex 0.171.0`、`agy 1.5.15` 的只读 CLI/RPC 实测探测，以及 PR #131 两轮评审后负责人确认采纳的收敛方案。完整设计方案见 [docs/harness-settings.md](../../docs/harness-settings.md)。尚未开始代码实现与测试。
+Basis: 负责人 2026-11-23 在多 agent（Claude、Codex、Antigravity）配置设计讨论中的拍板（Settings 增加 Harness 分组与各 agent 子 tab、上半区账号与用量、下半区部分可编辑部分只读、三家本轮只做订阅账号登录并将 API key 留给后续 pi、不做切换到宿主 `~/.claude`/`~/.codex`/`~/.gemini` 登录、只管 Cycle 托管配置），2026-11-23 在隔离临时目录（非 TTY 管道）中对锁定二进制 `claude 2.1.327`、`codex 0.171.0`、`agy 1.5.15` 的只读 CLI/RPC 实测探测，以及 PR #131 两轮评审后负责人确认采纳的收敛方案。完整设计方案见 [docs/harness-settings.md](../../docs/harness-settings.md)。已在 PR #149 实现（CYCL-227–237）。
 
 ## Problem
 

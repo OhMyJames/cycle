@@ -22,7 +22,7 @@ const enabled =
   sourceHome !== "" &&
   existsSync(join(sourceHome, ".gemini", "antigravity-cli", "antigravity-oauth-token")) &&
   agyPath !== undefined &&
-  isAgyVersionSupported(agyPath, process.env);
+  (await isAgyVersionSupported(agyPath, process.env));
 const main = new URL("../../src/main.ts", import.meta.url).pathname;
 
 let root: string;

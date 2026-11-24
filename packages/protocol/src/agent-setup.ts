@@ -338,6 +338,8 @@ export const AgentAuthCompletedSchema = z.object({
   flowId: z.string().min(1),
   agent: z.string().min(1),
   ok: z.boolean(),
-  reason: AgentAuthFailureReasonSchema.optional(),
+  // A reason a newer daemon adds is read as a process failure, not a notice dropped whole: the person who started the
+  // flow must hear that it ended, whatever word it ended with.
+  reason: AgentAuthFailureReasonSchema.optional().catch("process_failed"),
 });
 export type AgentAuthCompleted = z.infer<typeof AgentAuthCompletedSchema>;

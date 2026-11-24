@@ -101,7 +101,17 @@ export function HarnessSection({
   const { t } = useI18n();
   const store = useAppStore();
   const connected = environments.filter((e) => status[e.id]?.state === "connected");
-  const environment = connected.find((e) => e.id === environmentId) ?? connected[0];
+  // The chosen environment stays chosen while it reconnects: swapping to another (or to none) would unmount the page
+  // and with it a sign-in dialog, which must say that the connection dropped and offer the command instead.
+  const chosen = environments.find((e) => e.id === environmentId);
+  const holding = chosen !== undefined && status[chosen.id]?.state === "reconnecting";
+  const environment = holding
+    ? chosen
+    : (connected.find((e) => e.id === environmentId) ?? connected[0]);
+  const choices = environments.filter(
+    (e) => status[e.id]?.state === "connected" || (holding && e === chosen),
+  );
+  const knownSetup = useRef<Record<string, boolean>>({});
   const revision = useAppState((s) =>
     environment !== undefined ? (s.defaultsRevision[environment.id] ?? 0) : 0,
   );
@@ -134,17 +144,21 @@ export function HarnessSection({
   }
 
   const envStatus = status[environment.id];
-  const supportsSetup = envStatus?.capabilities?.agentSetup === true;
+  // What the daemon said it can do, kept through a reconnect (when it has not said again yet).
+  const said = envStatus?.capabilities?.agentSetup;
+  if (said !== undefined) knownSetup.current[environment.id] = said === true;
+  const supportsSetup =
+    said === true || (said === undefined && knownSetup.current[environment.id] === true);
   const agentInfo = (agents[environment.id] ?? []).find((a) => a.id === agentId);
 
   return (
     <>
-      {connected.length > 1 ? (
+      {choices.length > 1 ? (
         <div data-slot="page-form">
           <Field name="environment">
             <FieldLabel>{t("settings.defaults.environment")}</FieldLabel>
             <Select
-              items={connected.map((e) => ({ value: e.id, label: e.name }))}
+              items={choices.map((e) => ({ value: e.id, label: e.name }))}
               value={environment.id}
               onValueChange={(next) => {
                 if (typeof next === "string") onEnvironmentChange(next);
@@ -154,7 +168,7 @@ export function HarnessSection({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {connected.map((e) => (
+                {choices.map((e) => (
                   <SelectItem key={e.id} value={e.id}>
                     {e.name}
                   </SelectItem>
@@ -201,7 +215,9 @@ function HarnessEnvironmentBody({
   );
 
   const [snapshot, setSnapshot] = useState<AgentSetupSnapshot | undefined>(undefined);
-  const [loading, setLoading] = useState(supportsSetup && agentInfo !== undefined);
+  // Whether the agent is listed, not the listing itself: a new agents list (a reconnect) is not a reason to read again.
+  const hasAgent = agentInfo !== undefined;
+  const [loading, setLoading] = useState(supportsSetup && hasAgent);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | undefined>(undefined);
   const [runtimeBusyKey, setRuntimeBusyKey] = useState<string | undefined>(undefined);
@@ -216,6 +232,9 @@ function HarnessEnvironmentBody({
   const mountedRef = useRef(true);
   const seenSetupRevisionRef = useRef(setupRevision);
   const fetchSeqRef = useRef(0);
+  /** The newest read (or save) whose answer is on screen: an older answer arriving later is dropped. */
+  const appliedSeqRef = useRef(0);
+  const pendingLoudRef = useRef(0);
   const signInSessionRef = useRef(0);
   const activeFlowIdRef = useRef<string | undefined>(undefined);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -236,45 +255,54 @@ function HarnessEnvironmentBody({
 
   const fetchSetup = useCallback(
     async (opts: { forceRefresh?: boolean; refreshUsage?: boolean; silent?: boolean }) => {
-      if (!supportsSetup || agentInfo === undefined) return;
+      if (!supportsSetup || !hasAgent) return;
+      // Each read is numbered; an answer is kept only if no newer one (or a save) has been kept since. The spinner
+      // belongs to the visible reads still out, so a silent read that overtakes a visible one cannot leave it spinning.
       const seq = ++fetchSeqRef.current;
-      if (!opts.silent) {
+      const loud = opts.silent !== true;
+      if (loud) {
+        pendingLoudRef.current += 1;
         if (opts.forceRefresh) setRefreshing(true);
         else setLoading(true);
+        setLoadError(undefined);
       }
-      setLoadError(undefined);
       try {
         const result = await store.readAgentSetup(environment.id, agentId, {
           ...(opts.forceRefresh ? { forceRefresh: true } : {}),
           ...(opts.refreshUsage ? { refreshUsage: true } : {}),
         });
-        if (!mountedRef.current || seq !== fetchSeqRef.current) return;
+        if (!mountedRef.current || seq <= appliedSeqRef.current) return;
+        appliedSeqRef.current = seq;
         setSnapshot(result);
+        setLoadError(undefined);
         setRuntimeProblem(undefined);
       } catch (error) {
-        if (!mountedRef.current || seq !== fetchSeqRef.current) return;
-        if (!opts.silent) setLoadError(error instanceof Error ? error.message : String(error));
+        if (!mountedRef.current || seq <= appliedSeqRef.current) return;
+        if (loud) setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
-        if (mountedRef.current && seq === fetchSeqRef.current && !opts.silent) {
-          setLoading(false);
-          setRefreshing(false);
+        if (loud && mountedRef.current) {
+          pendingLoudRef.current -= 1;
+          if (pendingLoudRef.current === 0) {
+            setLoading(false);
+            setRefreshing(false);
+          }
         }
       }
     },
-    [supportsSetup, agentInfo, store, environment.id, agentId],
+    [supportsSetup, hasAgent, store, environment.id, agentId],
   );
 
   useEffect(() => {
-    if (!supportsSetup || agentInfo === undefined) return;
+    if (!supportsSetup || !hasAgent) return;
     void fetchSetup({ refreshUsage: agentId === "codex" });
-  }, [fetchSetup, supportsSetup, agentInfo, agentId]);
+  }, [fetchSetup, supportsSetup, hasAgent, agentId]);
 
   useEffect(() => {
     if (setupRevision === seenSetupRevisionRef.current) return;
     seenSetupRevisionRef.current = setupRevision;
-    if (!supportsSetup || agentInfo === undefined) return;
+    if (!supportsSetup || !hasAgent) return;
     void fetchSetup({ silent: true });
-  }, [setupRevision, fetchSetup, supportsSetup, agentInfo]);
+  }, [setupRevision, fetchSetup, supportsSetup, hasAgent]);
 
   const patchRuntime = useCallback(
     async (patch: Record<string, AgentRuntimePatchValue>) => {
@@ -292,8 +320,8 @@ function HarnessEnvironmentBody({
         if (!mountedRef.current) return;
         if (answer === undefined) return;
         if (answer.saved) {
-          // Advance fetch sequence so any older in-flight readAgentSetup cannot clobber the newer revision.
-          fetchSeqRef.current += 1;
+          // Every read already sent is older than this save: none of their answers may replace it.
+          appliedSeqRef.current = fetchSeqRef.current;
           setSnapshot((prev) =>
             prev === undefined
               ? prev
@@ -581,7 +609,7 @@ function HarnessEnvironmentBody({
               loginCommand={snapshot.auth.loginCommand}
               copiedLogin={copiedLogin}
               onCopyLogin={() => copyLoginCommand(snapshot.auth.loginCommand)}
-              onOpenBrowser={(flowId) => void store.openAgentAuthUrl(environment.id, flowId)}
+              onOpenBrowser={(flowId) => store.openAgentAuthUrl(environment.id, flowId)}
               onSubmitCode={(flowId, code) => store.submitAgentAuth(environment.id, flowId, code)}
               onRetry={() => void beginSignIn()}
               onClose={() => {
@@ -851,7 +879,8 @@ function AgentSignInDialog({
   loginCommand: string;
   copiedLogin: boolean;
   onCopyLogin: () => void;
-  onOpenBrowser: (flowId: string) => void;
+  /** False when main had nothing to open for the flow (it ended, or was never verified): the dialog says so. */
+  onOpenBrowser: (flowId: string) => Promise<boolean>;
   onSubmitCode: (
     flowId: string,
     code: string,
@@ -865,6 +894,7 @@ function AgentSignInDialog({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<AgentAuthProblemReason | undefined>(undefined);
   const [copiedDeviceCode, setCopiedDeviceCode] = useState(false);
+  const [openFailed, setOpenFailed] = useState(false);
 
   const flowId = state?.kind === "active" ? state.flowId : undefined;
   const flowIdRef = useRef(flowId);
@@ -877,6 +907,7 @@ function AgentSignInDialog({
     setSubmitting(false);
     setSubmitError(undefined);
     setCopiedDeviceCode(false);
+    setOpenFailed(false);
   }, [flowId, stateKind]);
 
   const submit = async () => {
@@ -956,11 +987,22 @@ function AgentSignInDialog({
                   <Button
                     type="button"
                     data-variant="solid"
-                    onClick={() => onOpenBrowser(state.flowId)}
+                    onClick={() => {
+                      const target = state.flowId;
+                      setOpenFailed(false);
+                      void onOpenBrowser(target).then((opened) => {
+                        if (flowIdRef.current === target) setOpenFailed(!opened);
+                      });
+                    }}
                   >
                     {t("settings.harness.auth.openBrowser")}
                   </Button>
                 </div>
+              ) : null}
+              {openFailed ? (
+                <p data-slot="hint" role="alert">
+                  {t("settings.harness.auth.openFailed")}
+                </p>
               ) : null}
 
               {state.mode === "browser" ? (

@@ -8,14 +8,34 @@ test("hardcoded per-agent auth domain allowlist permits exact official HTTPS hos
     url: "https://claude.ai/oauth/authorize?state=1",
     host: "claude.ai",
   });
-  expect(validateAgentAuthUrl("claude", "https://claude.com/login")).toMatchObject({
-    ok: true,
-    host: "claude.com",
-  });
-  expect(validateAgentAuthUrl("claude", "https://platform.claude.com/oauth")).toMatchObject({
+  expect(
+    validateAgentAuthUrl(
+      "claude",
+      "https://claude.com/cai/oauth/authorize?code=true&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
+    ),
+  ).toMatchObject({ ok: true, host: "claude.com" });
+  expect(
+    validateAgentAuthUrl("claude", "https://platform.claude.com/oauth/authorize"),
+  ).toMatchObject({
     ok: true,
     host: "platform.claude.com",
   });
+  expect(
+    validateAgentAuthUrl(
+      "codex",
+      "https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback",
+    ),
+  ).toMatchObject({ ok: true, host: "auth.openai.com" });
+  expect(validateAgentAuthUrl("codex", "https://auth.openai.com/codex/device")).toMatchObject({
+    ok: true,
+    host: "auth.openai.com",
+  });
+  expect(
+    validateAgentAuthUrl(
+      "agy",
+      "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback",
+    ),
+  ).toMatchObject({ ok: true, host: "accounts.google.com" });
   expect(validateAgentAuthUrl("codex", "https://auth.openai.com/oauth/authorize")).toMatchObject({
     ok: true,
     host: "auth.openai.com",
@@ -43,6 +63,28 @@ test("hardcoded per-agent auth domain allowlist permits exact official HTTPS hos
     ["hasOwnProperty", "https://claude.ai/oauth"],
     ["toString", "https://claude.ai/oauth"],
     ["claude", "not a url"],
+    // The right host, but not the page the CLI opens: another app's consent, an open redirect, a login form.
+    ["claude", "https://claude.com/login"],
+    ["claude", "https://claude.ai/oauth/authorize/../../redirect?to=evil"],
+    ["codex", "https://auth.openai.com/log-in"],
+    ["agy", "https://accounts.google.com/ServiceLogin?continue=https://evil.example"],
+    // The right page, sending the code to someone else's callback.
+    [
+      "agy",
+      "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fevil.example%2Fcb",
+    ],
+    [
+      "claude",
+      "https://claude.com/cai/oauth/authorize?redirect_uri=http%3A%2F%2Fplatform.claude.com%2Fcb",
+    ],
+    [
+      "codex",
+      "https://auth.openai.com/oauth/authorize?redirect_uri=https%3A%2F%2Fevil.example%2Fcb",
+    ],
+    [
+      "codex",
+      "https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A1455&redirect_uri=https%3A%2F%2Fevil.example",
+    ],
   ];
   for (const [agent, url] of blocked) {
     expect(validateAgentAuthUrl(agent, url)).toEqual({ ok: false, reason: "untrusted_url" });

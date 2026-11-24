@@ -483,9 +483,12 @@ function RuntimeIntegerInput({
 }) {
   const [draft, setDraft] = useState(value !== undefined ? String(value) : "");
 
+  // Back to what is saved whenever that changes, and whenever a save settles: a refused save (a conflict, an error)
+  // leaves `value` as it was, and the refused number must not stay on screen as if it had been kept.
   useEffect(() => {
+    if (disabled) return;
     setDraft(value !== undefined ? String(value) : "");
-  }, [value]);
+  }, [value, disabled]);
 
   const commit = () => {
     const trimmed = draft.trim();

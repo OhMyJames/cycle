@@ -1489,12 +1489,20 @@ export class ConnectionManager implements ManagerApi {
     try {
       started = await client.startAgentAuth(agent, mode);
     } catch (error) {
+      this.#forgetUnclaimedCompletions(environmentId);
       return { started: false, reason: authProblemReasonOf(error) };
     } finally {
       const remaining = (this.#startingAuthCount.get(environmentId) ?? 1) - 1;
       if (remaining <= 0) this.#startingAuthCount.delete(environmentId);
       else this.#startingAuthCount.set(environmentId, remaining);
     }
+    // The daemon started a flow: counted before the URLs are judged, so a refused URL is a start that failed and the
+    // funnel's completions never outnumber its starts.
+    this.#track("agent_auth_started", {
+      agent: agentOf(agent),
+      environment: envKind,
+      mode: started.mode,
+    });
 
     const flowKey = `${environmentId}:${started.flowId}`;
     const rejectUntrusted = () => {
@@ -1505,6 +1513,7 @@ export class ConnectionManager implements ManagerApi {
         if (oldest !== undefined) this.#rejectedAuthFlows.delete(oldest);
       }
       void client.cancelAgentAuth(started.flowId).catch(() => undefined);
+      this.#forgetUnclaimedCompletions(environmentId);
       this.#track("agent_auth_completed", {
         agent: agentOf(agent),
         environment: envKind,
@@ -1530,11 +1539,6 @@ export class ConnectionManager implements ManagerApi {
     }
 
     const primary = verifiedAuth ?? verifiedVerify;
-    this.#track("agent_auth_started", {
-      agent: agentOf(agent),
-      environment: envKind,
-      mode: started.mode,
-    });
     const early = this.#earlyAuthCompleted.get(flowKey);
     if (early !== undefined) {
       this.#earlyAuthCompleted.delete(flowKey);
@@ -1547,6 +1551,7 @@ export class ConnectionManager implements ManagerApi {
         ...(primary !== undefined ? { url: primary.url, host: primary.host } : {}),
       });
     }
+    this.#forgetUnclaimedCompletions(environmentId);
     return {
       started: true,
       flowId: started.flowId,
@@ -1609,7 +1614,11 @@ export class ConnectionManager implements ManagerApi {
     ok: boolean,
     reason?: AgentAuthProblemReason,
   ): void {
-    const result = ok ? "ok" : reason === "cancelled" ? "cancelled" : "failed";
+    const result = ok
+      ? "ok"
+      : reason === "cancelled" || reason === "disconnected"
+        ? reason
+        : "failed";
     this.#track("agent_auth_completed", {
       agent: agentOf(agent),
       environment: this.#kindOf(environmentId),
@@ -1623,6 +1632,18 @@ export class ConnectionManager implements ManagerApi {
       ok,
       ...(reason !== undefined ? { reason } : {}),
     });
+  }
+
+  /**
+   * A completion is kept aside only while a start on its environment awaits the daemon's answer (it may come first, in
+   * the same chunk). Once no start is waiting there, what nobody claimed was not ours: dropped, so it cannot pile up.
+   */
+  #forgetUnclaimedCompletions(environmentId: string): void {
+    if ((this.#startingAuthCount.get(environmentId) ?? 0) > 0) return;
+    const prefix = `${environmentId}:`;
+    for (const key of [...this.#earlyAuthCompleted.keys()]) {
+      if (key.startsWith(prefix)) this.#earlyAuthCompleted.delete(key);
+    }
   }
 
   #failAuthFlowsOnDisconnect(environmentId: string): void {

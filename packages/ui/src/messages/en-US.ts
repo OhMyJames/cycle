@@ -924,7 +924,6 @@ export const enUS = {
   "settings.section.general": "General",
   "settings.section.appearance": "Appearance",
   "settings.section.environments": "Environments",
-  "settings.section.defaults": "Session defaults",
   "settings.section.shortcuts": "Keyboard shortcuts",
   "settings.section.harness": "Harness",
   "settings.harness.group": "Harness",
@@ -1030,6 +1029,8 @@ export const enUS = {
   "settings.harness.auth.openHost":
     "Continue in your browser at {host}. Cycle will never open the link until you click below.",
   "settings.harness.auth.openBrowser": "Open in browser",
+  "settings.harness.auth.openFailed":
+    "The browser could not be opened for this sign-in. Start again, or use the command below.",
   "settings.harness.auth.waitingBrowser": "Waiting for browser sign-in to finish…",
   "settings.harness.auth.deviceCodeLabel": "One-time code",
   "settings.harness.auth.copyCode": "Copy code",

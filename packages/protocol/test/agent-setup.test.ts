@@ -308,12 +308,17 @@ test("agent auth methods and notification use _cycle/ namespace and validate sha
       reason: "expired",
     }).success,
   ).toBe(true);
+  // A word this client does not know (a newer daemon's, or anything else) still ends the flow, as a process failure:
+  // the text itself is never kept.
   expect(
-    AgentAuthCompletedSchema.safeParse({
+    AgentAuthCompletedSchema.parse({
       flowId: "f-1",
       agent: "claude",
       ok: false,
       reason: "raw stderr text",
-    }).success,
-  ).toBe(false);
+    }).reason,
+  ).toBe("process_failed");
+  expect(AgentAuthCompletedSchema.parse({ flowId: "f-1", agent: "claude", ok: true }).reason).toBe(
+    undefined,
+  );
 });
