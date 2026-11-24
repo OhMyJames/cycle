@@ -13,6 +13,7 @@ export function StateBlock({
   body,
   reason,
   action,
+  secondaryAction,
   size = "page",
   align = "center",
 }: {
@@ -24,6 +25,7 @@ export function StateBlock({
   /** The system's or the remote's own words: shown as they are, in monospace. */
   reason?: string | undefined;
   action?: { label: string; onAction: () => void } | undefined;
+  secondaryAction?: { label: string; onAction: () => void } | undefined;
   /** `page`: a whole pane's; `inline`: within a panel, a list or a dialog. */
   size?: "page" | "inline";
   align?: "center" | "start";
@@ -50,10 +52,19 @@ export function StateBlock({
       <p data-slot="state-title">{title}</p>
       {body !== undefined ? <p data-slot="state-body">{body}</p> : null}
       {reason !== undefined ? <code data-slot="reason">{reason}</code> : null}
-      {action !== undefined ? (
-        <Button data-variant="outline" onClick={action.onAction}>
-          {action.label}
-        </Button>
+      {action !== undefined || secondaryAction !== undefined ? (
+        <div data-slot="state-actions">
+          {action !== undefined ? (
+            <Button data-variant="outline" onClick={action.onAction}>
+              {action.label}
+            </Button>
+          ) : null}
+          {secondaryAction !== undefined ? (
+            <Button data-variant="ghost" onClick={secondaryAction.onAction}>
+              {secondaryAction.label}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

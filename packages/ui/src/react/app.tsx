@@ -282,6 +282,9 @@ function AppWindow() {
   // The settings page, when it is what the window shows (CYCL-78): the sessions stay as they are under it.
   const [settings, setSettings] = useState<SettingsSection | undefined>(undefined);
   const lastSection = useRef<SettingsSection>("general");
+  const [harnessAgent, setHarnessAgent] = useState<string>("claude");
+  const [harnessEnvironment, setHarnessEnvironment] = useState<string | undefined>(undefined);
+  const [harnessFrom, setHarnessFrom] = useState<"settings" | "blank" | "other">("settings");
   // The Connectors page (CYCL-82), the same way: one page at a time takes the window.
   const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
   const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
@@ -353,9 +356,20 @@ function AppWindow() {
   // Settings, from wherever it is asked for: over the sessions, or in place of the Connectors page.
   const openSettings = (via: "click" | "shortcut" = "click", section?: SettingsSection) => {
     if (section !== undefined) lastSection.current = section;
+    setHarnessFrom("settings");
+    setHarnessEnvironment(undefined);
     setConnectors(undefined);
     setSettings(lastSection.current);
     store.track("panel_opened", { panel: "settings", via });
+  };
+  const openHarnessSettings = (environmentId: string, agentId: string) => {
+    lastSection.current = "harness";
+    setHarnessAgent(agentId);
+    setHarnessEnvironment(environmentId);
+    setHarnessFrom("blank");
+    setConnectors(undefined);
+    setSettings("harness");
+    store.track("panel_opened", { panel: "settings", via: "click" });
   };
   const openConnectors = () => {
     setConnectors(lastConnectorsSection.current);
@@ -810,12 +824,18 @@ function AppWindow() {
         <SettingsPage
           section={settings}
           onSection={showSection}
+          harnessAgent={harnessAgent}
+          harnessFrom={harnessFrom}
+          onHarnessAgent={(agentId) => {
+            setHarnessAgent(agentId);
+            setHarnessFrom("settings");
+          }}
           onClose={leaveSettings}
           banner={errorBanner}
           environments={environments}
           status={status}
           agents={agentsByEnvironment}
-          environmentId={selectedEnvironment}
+          environmentId={harnessEnvironment ?? selectedEnvironment}
           onAddEnvironment={() => {
             setTargetEnvironment(undefined);
             open("add-environment");
@@ -934,6 +954,7 @@ function AppWindow() {
                   follow={sent}
                   sidebarToggle={sidebarCollapsed ? sidebarToggle : undefined}
                   onSent={() => setSent((n) => n + 1)}
+                  onOpenHarnessSettings={openHarnessSettings}
                 />
               ) : null}
               {blank === undefined && session !== undefined ? (

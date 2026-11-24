@@ -19,6 +19,7 @@ import {
 } from "@cycle/client";
 import {
   type AgentInfo,
+  type AgentSetupSnapshot,
   type AppApi,
   type AppEvent,
   type Attention,
@@ -64,6 +65,8 @@ export type ManagerOptions = {
   channelFor: (environment: EnvironmentConfig) => () => Promise<Channel>;
   emit: (event: AppEvent) => void;
   chooseDirectory?: () => Promise<string | undefined>;
+  /** Shows a local file in the OS file manager (`shell.showItemInFolder`). */
+  revealPath?: (path: string) => void;
   backoff?: { first: number; max: number };
   /** The version of this app: the one an update of a daemon puts there. Without it, nothing is said. */
   appVersion?: string;
@@ -287,6 +290,8 @@ export class ConnectionManager
     { running: true } | { error: string } | { waiting: true }
   >();
   readonly #connections = new Map<string, Connection>();
+  /** The local daemon's `config.json` path last reported by `readAgentSetup`, for `revealDaemonConfig`. */
+  readonly #localConfigPath = new Map<string, string>();
   /** The last list read from each environment, kept when its connection goes: what the interface greys out. */
   readonly #lastSessions = new Map<string, SessionSummary[]>();
   /** Why the last attempt to connect to an environment failed, for a renderer that asks after the event went by. */
@@ -482,6 +487,7 @@ export class ConnectionManager
                     trust: connection.client.capabilities.trust === true,
                     connectors: connection.client.capabilities.connectors === true,
                     plugins: connection.client.pluginAgents,
+                    agentSetup: connection.client.capabilities.agentSetup === true,
                     sessionMentions: connection.client.capabilities.sessionMentions === true,
                     fs: connection.client.capabilities.fs === true,
                     diff: connection.client.capabilities.diff === true,
@@ -1305,6 +1311,28 @@ export class ConnectionManager
   ): Promise<void> {
     await this.#connection(environmentId).client.setAgentDefaults(agent, config);
     this.#track("agent_defaults_saved", { agent: agentOf(agent) });
+  }
+
+  async readAgentSetup(
+    environmentId: string,
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ): Promise<AgentSetupSnapshot> {
+    const snapshot = await this.#connection(environmentId).client.readAgentSetup(agent, options);
+    if (this.#kindOf(environmentId) === "local") {
+      this.#localConfigPath.set(environmentId, snapshot.environment.configFile.path);
+    }
+    return snapshot;
+  }
+
+  async revealDaemonConfig(environmentId: string): Promise<boolean> {
+    if (this.#kindOf(environmentId) !== "local" || this.#options.revealPath === undefined) {
+      return false;
+    }
+    const path = this.#localConfigPath.get(environmentId);
+    if (path === undefined) return false;
+    this.#options.revealPath(path);
+    return true;
   }
 
   // ---- connectors (docs/protocol.md §14) ----

@@ -77,6 +77,7 @@ export function BlankConversationView({
   sidebarToggle,
   notices,
   onSent,
+  onOpenHarnessSettings,
 }: {
   blank: BlankConversation;
   /** The environments a session can be started on: those that are connected. */
@@ -90,6 +91,8 @@ export function BlankConversationView({
   /** What is the matter with this page, under its title bar. */
   notices?: ReactNode;
   onSent: () => void;
+  /** Navigates directly to Settings → Harness for this environment & agent when `agentSetup` is supported. */
+  onOpenHarnessSettings?: (environmentId: string, agentId: string) => void;
 }) {
   const { t, list } = useI18n();
   const store = useAppStore();
@@ -392,6 +395,11 @@ export function BlankConversationView({
     if (noAgent) {
       // The agents the environment has, none of which can run: named, so it is known what to install or sign in to.
       const listed = (agents ?? []).map((a) => a.name);
+      const firstAgent = (agents ?? [])[0];
+      const canOpenSettings =
+        firstAgent !== undefined &&
+        status?.capabilities?.agentSetup === true &&
+        onOpenHarnessSettings !== undefined;
       const noAgentHint = t(
         listed.length === 0
           ? "blank.noAgentHint"
@@ -411,10 +419,20 @@ export function BlankConversationView({
             label: t("blank.retryAgents"),
             onAction: () => void store.reloadAgents(blank.environmentId),
           }}
+          secondaryAction={
+            canOpenSettings
+              ? {
+                  label: t("settings.harness.open", { agent: firstAgent.name }),
+                  onAction: () => onOpenHarnessSettings(blank.environmentId, firstAgent.id),
+                }
+              : undefined
+          }
         />
       );
     }
     if (agentUnavailable && agent !== undefined) {
+      const canOpenSettings =
+        status?.capabilities?.agentSetup === true && onOpenHarnessSettings !== undefined;
       return (
         <StateBlock
           tone="away"
@@ -434,12 +452,22 @@ export function BlankConversationView({
             label: t("blank.retryAgents"),
             onAction: () => void store.reloadAgents(blank.environmentId),
           }}
+          secondaryAction={
+            canOpenSettings
+              ? {
+                  label: t("settings.harness.open", { agent: agent.name }),
+                  onAction: () => onOpenHarnessSettings(blank.environmentId, agent.id),
+                }
+              : undefined
+          }
         />
       );
     }
     if (blank.authRequired !== undefined) {
       const { agentId, agentName } = blank.authRequired;
       const command = `cycle login ${agentId}`;
+      const canOpenSettings =
+        status?.capabilities?.agentSetup === true && onOpenHarnessSettings !== undefined;
       return (
         <StateBlock
           tone="away"
@@ -463,6 +491,14 @@ export function BlankConversationView({
               });
             },
           }}
+          secondaryAction={
+            canOpenSettings
+              ? {
+                  label: t("settings.harness.open", { agent: agentName }),
+                  onAction: () => onOpenHarnessSettings(blank.environmentId, agentId),
+                }
+              : undefined
+          }
         />
       );
     }

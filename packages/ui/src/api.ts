@@ -51,6 +51,8 @@ export type EnvironmentStatus = {
     connectors?: boolean;
     /** The agents of it that have plugins (docs/protocol.md §15). None, or absent: no plugins there. */
     plugins?: string[];
+    /** Harness setup diagnostics, auth, and runtime config methods are there (docs/protocol.md §16). */
+    agentSetup?: boolean;
     /** An @ may name another of its sessions, which it gives the agent as a record (docs/protocol.md §8). */
     sessionMentions?: boolean;
     /** The session's folder can be listed and its files read, for the Files tab (docs/protocol.md §8). */
@@ -131,6 +133,93 @@ export type AgentInfo = {
     | undefined;
   /** It can take a message into the turn that is running (docs/protocol.md §8). Absent: it cannot. */
   steer?: boolean | undefined;
+};
+
+export type AgentBinarySource = "builtin" | "configured" | "path" | "missing";
+export type AgentBinaryProblem = "missing" | "version_too_old" | "probe_failed";
+export type AgentBinaryStatus = {
+  source: AgentBinarySource;
+  path?: string | undefined;
+  version?: string | undefined;
+  minVersion?: string | undefined;
+  problem?: AgentBinaryProblem | undefined;
+};
+
+export type AgentAuthState =
+  | "binary_unavailable"
+  | "signed_out"
+  | "signing_in"
+  | "signed_in"
+  | "signing_out"
+  | "auth_unknown";
+export type AgentAuthUnknownReason = "network_error" | "timeout" | "probe_failed";
+export type AgentAuthMethod =
+  | "subscription"
+  | "api_key"
+  | "oauth_token"
+  | "third_party"
+  | "none"
+  | "unknown";
+export type AgentAuthMode = "browser" | "code" | "device_code";
+export type AgentSignInMode = {
+  mode: AgentAuthMode;
+  requiresLocalLoopback: boolean;
+};
+export type AgentAccountInfo = {
+  email?: string | undefined;
+  organization?: string | undefined;
+  plan?: string | undefined;
+  expiresAt?: number | undefined;
+  tierObservedAt?: number | undefined;
+};
+export type AgentAuthStatus = {
+  state: AgentAuthState;
+  unknownReason?: AgentAuthUnknownReason | undefined;
+  method: AgentAuthMethod;
+  viaEnv?: string | undefined;
+  account?: AgentAccountInfo | undefined;
+  signInModes: AgentSignInMode[];
+  canSignOut: boolean;
+  loginCommand: string;
+};
+
+export type AgentRuntimeValue = boolean | number | string;
+export type AgentRuntimeSnapshot = {
+  schemaVersion: 1;
+  schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+  };
+  values: Record<string, AgentRuntimeValue>;
+  overrides: string[];
+  revision: number;
+  fileError?: string | undefined;
+};
+
+export type AgentConfigFileStatus = {
+  path: string;
+  exists: boolean;
+  stale: boolean;
+  error?: string | undefined;
+};
+export type AgentEnvironmentDiagnostics = {
+  configFile: AgentConfigFileStatus;
+  dataDir: string;
+  customDataDir: boolean;
+  allowEnv: string[];
+  envNames: string[];
+};
+
+export type AgentSetupSnapshot = {
+  agent: string;
+  name: string;
+  available: boolean;
+  binary: AgentBinaryStatus;
+  auth: AgentAuthStatus;
+  planUsage?: PlanUsage | undefined;
+  canRefreshUsage: boolean;
+  runtime: AgentRuntimeSnapshot;
+  environment: AgentEnvironmentDiagnostics;
 };
 
 /** What a message to an agent is made of: text, and images as ACP carries them (base64). */
@@ -679,6 +768,14 @@ export type AppApi = {
     agent: string,
     config: Record<string, string>,
   ): Promise<void>;
+  /** Read-only status, auth, runtime config, and host diagnostics for one agent (docs/protocol.md §16). */
+  readAgentSetup(
+    environmentId: string,
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ): Promise<AgentSetupSnapshot>;
+  /** Shows the local daemon's `config.json` in the system file manager; returns false on remote environments. */
+  revealDaemonConfig(environmentId: string): Promise<boolean>;
 
   /** The environment's connectors. Fails when it is not connected or its daemon is too old. */
   listConnectors(environmentId: string): Promise<ConnectorInfo[]>;
@@ -853,6 +950,8 @@ export const API_METHODS = [
   "agents",
   "agentDefaults",
   "setAgentDefaults",
+  "readAgentSetup",
+  "revealDaemonConfig",
   "listConnectors",
   "addConnector",
   "updateConnector",

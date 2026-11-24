@@ -709,6 +709,7 @@ body {
 [data-kind="page"] [data-slot="tabs-tab"] {
   display: flex;
   align-items: center;
+  gap: 0.5rem;
   width: 100%;
   height: 1.75rem;
   padding: 0 0.5rem;
@@ -738,6 +739,44 @@ body {
 [data-kind="page"] [data-slot="tabs-tab"]:focus-visible {
   outline: 1.5px solid var(--cycle-focus-ring);
   outline-offset: -1.5px;
+}
+
+[data-slot="page-nav-group"] {
+  margin-top: 0.875rem;
+  padding: 0 0.5rem 0.25rem;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ui-muted-foreground);
+  user-select: none;
+}
+
+[data-slot="harness-heading"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="harness-command-row"] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+[data-slot="harness-usage"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+[data-slot="state-actions"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 [data-slot="page-main"] {

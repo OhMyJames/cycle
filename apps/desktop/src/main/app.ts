@@ -239,6 +239,7 @@ export const startApp = async (options: AppOptions) => {
       });
       return result.canceled ? undefined : result.filePaths[0];
     },
+    revealPath: (path) => shell.showItemInFolder(path),
   });
   await manager.init();
   analytics.track("app_launched", {

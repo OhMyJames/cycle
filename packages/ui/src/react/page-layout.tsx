@@ -5,7 +5,7 @@
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs";
-import { type ReactNode, useEffect, useRef } from "react";
+import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import { ChevronLeftIcon } from "./icons.tsx";
 
 /** The key that goes back, as it is printed on the keyboard: a name, not a word to translate. */
@@ -15,6 +15,12 @@ export type PageSection = {
   /** Stable: what is remembered, and what the analytics name (a fixed word, never a title). */
   id: string;
   label: string;
+  /** Optional non-focusable group header rendered before the first section of a consecutive group. */
+  group?: string;
+  /** Optional icon rendered before the label inside the nav tab (e.g. `<AgentLogo />`). */
+  icon?: ReactNode;
+  /** Optional custom heading content in the right pane; defaults to `label`. */
+  heading?: ReactNode;
   content: ReactNode;
 };
 
@@ -84,11 +90,23 @@ export function PageLayout({
           </Button>
           <h1 data-slot="page-title">{title}</h1>
           <TabsList aria-label={sectionsLabel}>
-            {sections.map((section) => (
-              <TabsTab key={section.id} value={section.id}>
-                {section.label}
-              </TabsTab>
-            ))}
+            {sections.map((section, index) => {
+              const prevGroup = index > 0 ? sections[index - 1]?.group : undefined;
+              const showGroup = section.group !== undefined && section.group !== prevGroup;
+              return (
+                <Fragment key={section.id}>
+                  {showGroup ? (
+                    <div data-slot="page-nav-group" role="presentation">
+                      {section.group}
+                    </div>
+                  ) : null}
+                  <TabsTab value={section.id}>
+                    {section.icon}
+                    <span data-slot="page-nav-label">{section.label}</span>
+                  </TabsTab>
+                </Fragment>
+              );
+            })}
           </TabsList>
         </nav>
         <div data-slot="page-main">
@@ -96,7 +114,7 @@ export function PageLayout({
           {sections.map((section) => (
             <TabsPanel key={section.id} value={section.id}>
               <div data-slot="page-column">
-                <h2 data-slot="page-heading">{section.label}</h2>
+                <h2 data-slot="page-heading">{section.heading ?? section.label}</h2>
                 {section.content}
               </div>
             </TabsPanel>

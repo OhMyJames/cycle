@@ -41,8 +41,19 @@ test("Settings is a page over the sessions: its button opens it, Escape goes bac
   expect(
     within(sections)
       .getAllByRole("tab")
-      .map((tab) => tab.textContent),
-  ).toEqual(["General", "Appearance", "Environments", "Session defaults", "Keyboard shortcuts"]);
+      .map(
+        (tab) => tab.querySelector('[data-slot="page-nav-label"]')?.textContent ?? tab.textContent,
+      ),
+  ).toEqual([
+    "General",
+    "Appearance",
+    "Environments",
+    "Keyboard shortcuts",
+    "Claude",
+    "Codex",
+    "Antigravity",
+    "Fake",
+  ]);
   expect(screen.getByRole("heading", { name: "General", level: 2 })).toBeTruthy();
   // The keyboard is on the sections, and the sessions under the page are not reachable.
   expect(document.activeElement).toBe(within(sections).getByRole("tab", { name: "General" }));
@@ -133,7 +144,7 @@ test("an agent's defaults are read, changed and saved for the environment chosen
   await act(() => store.start());
   const user = userEvent.setup();
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Session defaults" }));
+  await user.click(await screen.findByRole("tab", { name: "Fake" }));
   // Two environments are connected: which one's defaults is a choice, and it starts on the one that is open.
   const environment = await screen.findByRole("combobox", { name: "Environment" });
   expect(environment.textContent).toContain("This computer");
@@ -167,7 +178,7 @@ test("an agent's defaults are read, changed and saved for the environment chosen
 test("with no environment connected, the defaults say so and lead to the environments", async () => {
   const { user } = await mount({ connected: false });
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Session defaults" }));
+  await user.click(await screen.findByRole("tab", { name: "Claude" }));
   expect(await screen.findByText("No environment is connected.")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Show environments" }));
   expect(await screen.findByRole("heading", { name: "Environments", level: 2 })).toBeTruthy();
@@ -299,4 +310,199 @@ test("leaving Settings for a new session leaves the keyboard with the new sessio
   await screen.findByRole("textbox", { name: "Message" });
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(document.activeElement).not.toBe(await accountMenu());
+});
+
+test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, and local reveal vs remote copy", async () => {
+  const script = fakeBridge({
+    connected: true,
+    environments: [far],
+    capabilities: { queue: true, files: true, folders: true, agentSetup: true },
+  });
+  script.bridge.agents = async () => [
+    {
+      id: "claude",
+      name: "Claude",
+      available: true,
+      configSchema: {
+        type: "object",
+        properties: { model: { type: "string", title: "Model", enum: ["default", "opus"] } },
+      },
+    },
+    { id: "codex", name: "Codex", available: true, configSchema: {} },
+  ];
+  script.bridge.readAgentSetup = async (environmentId, agent, opts) => {
+    script.calls.push(["readAgentSetup", environmentId, agent, opts]);
+    return {
+      agent,
+      name: agent === "codex" ? "Codex" : "Claude",
+      available: true,
+      binary: { source: "builtin", path: `/opt/cycle/${agent}`, version: "2.1.327" },
+      auth:
+        environmentId === "local"
+          ? {
+              state: "signed_in",
+              method: "subscription",
+              viaEnv: "ANTHROPIC_API_KEY",
+              account: { email: "dev@example.com", plan: "max", organization: "Acme" },
+              signInModes: [],
+              canSignOut: false,
+              loginCommand: `cycle login ${agent}`,
+            }
+          : {
+              state: "signed_out",
+              method: "none",
+              signInModes: [],
+              canSignOut: false,
+              loginCommand: `cycle login ${agent}`,
+            },
+      planUsage:
+        environmentId === "local"
+          ? {
+              windows: [
+                {
+                  kind: "five_hour",
+                  utilization: 0.4,
+                  resetsAt: Date.now() + 3_600_000,
+                  status: "allowed",
+                },
+              ],
+              at: Date.now(),
+            }
+          : undefined,
+      canRefreshUsage: agent === "codex",
+      runtime: {
+        schemaVersion: 1,
+        schema: { type: "object", properties: {} },
+        values: {},
+        overrides: [],
+        revision: 0,
+      },
+      environment: {
+        configFile: {
+          path: "/home/dev/.cycle/config.json",
+          exists: true,
+          stale: environmentId === "far",
+        },
+        dataDir: `/home/dev/.cycle/${agent}`,
+        customDataDir: false,
+        allowEnv: ["HTTPS_PROXY", "PATH"],
+        envNames: ["ANTHROPIC_API_KEY"],
+      },
+    };
+  };
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await openSettings(user);
+  await user.click(await screen.findByRole("tab", { name: "Claude" }));
+
+  // Account & Usage + PlanUsageBars + viaEnv variable name (never a secret value).
+  expect(await screen.findByText("dev@example.com")).toBeTruthy();
+  expect(screen.getByText(/Overridden by ANTHROPIC_API_KEY/)).toBeTruthy();
+  expect(screen.getByText("5-hour limit")).toBeTruthy();
+
+  // Read-only host diagnostics + local "Show in file manager".
+  expect(screen.getByText("HTTPS_PROXY, PATH")).toBeTruthy();
+  expect(screen.getByText("ANTHROPIC_API_KEY")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Show in file manager" }));
+  await waitFor(() =>
+    expect(script.named("revealDaemonConfig")).toEqual([["revealDaemonConfig", "local"]]),
+  );
+
+  // Refresh bypasses cache and requests usage.
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(script.named("readAgentSetup").at(-1)).toEqual([
+      "readAgentSetup",
+      "local",
+      "claude",
+      { forceRefresh: true, refreshUsage: true },
+    ]),
+  );
+
+  // Switch to remote environment: shows signed out + copyable command + stale notice + Copy path.
+  await user.click(screen.getByRole("combobox", { name: "Environment" }));
+  await user.click(await screen.findByRole("option", { name: "Build box" }));
+  expect(await screen.findByText("Not signed in")).toBeTruthy();
+  expect(screen.getByText("config.json changed since daemon startup")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Copy sign-in command" }));
+  await waitFor(() =>
+    expect(tracked(script.calls)).toContainEqual([
+      "agent_setup_command_copied",
+      { agent: "claude", kind: "login" },
+    ]),
+  );
+  expect(tracked(script.calls)).toContainEqual([
+    "harness_settings_shown",
+    { agent: "claude", environment: "local", from: "settings" },
+  ]);
+  expect(tracked(script.calls)).toContainEqual([
+    "harness_settings_shown",
+    { agent: "claude", environment: "remote", from: "settings" },
+  ]);
+});
+
+test("older daemon without agentSetup capability smoothly degrades Harness tab to Session defaults without calling readAgentSetup", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true },
+  });
+  script.bridge.agents = async () => [
+    {
+      id: "claude",
+      name: "Claude",
+      available: true,
+      configSchema: {
+        type: "object",
+        properties: { model: { type: "string", title: "Model", enum: ["sonnet", "opus"] } },
+      },
+    },
+  ];
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await openSettings(user);
+  await user.click(await screen.findByRole("tab", { name: "Claude" }));
+  expect(
+    await screen.findByText(
+      /Cycle on This computer is older and does not report account or host status/,
+    ),
+  ).toBeTruthy();
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeTruthy();
+  expect(script.named("readAgentSetup")).toHaveLength(0);
+});
+
+test("blank page auth/unavailable prompt opens the matching Harness settings tab when agentSetup is supported", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, agentSetup: true },
+  });
+  script.bridge.agents = async () => [
+    { id: "agy", name: "Antigravity", available: false, configSchema: {} },
+  ];
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "New session" }));
+  await user.click(await screen.findByRole("button", { name: "Open Antigravity settings" }));
+  expect(await screen.findByRole("heading", { name: "Antigravity", level: 2 })).toBeTruthy();
+  expect(tracked(script.calls)).toContainEqual([
+    "harness_settings_shown",
+    { agent: "agy", environment: "local", from: "blank" },
+  ]);
 });

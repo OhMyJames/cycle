@@ -6,8 +6,10 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
+  type AgentSetupSnapshot,
   agentDefaultsRead,
   agentDefaultsSet,
+  agentSetupRead,
   agentsList,
   CONNECTORS_CHANGED,
   type Connector,
@@ -286,6 +288,18 @@ export class CycleClient {
 
   async setAgentDefaults(agent: string, config: Record<string, string>): Promise<void> {
     await this.#call(agentDefaultsSet, { agent, config });
+  }
+
+  /** Read-only setup status, auth state, runtime config, and host diagnostics for one agent (docs/protocol.md §16). */
+  async readAgentSetup(
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ): Promise<AgentSetupSnapshot> {
+    return (await this.#call(agentSetupRead, {
+      agent,
+      ...(options?.refreshUsage !== undefined ? { refreshUsage: options.refreshUsage } : {}),
+      ...(options?.forceRefresh !== undefined ? { forceRefresh: options.forceRefresh } : {}),
+    })) as AgentSetupSnapshot;
   }
 
   /**

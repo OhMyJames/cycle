@@ -69,6 +69,7 @@ export const fakeBridge = (
       trust?: boolean;
       connectors?: boolean;
       plugins?: string[];
+      agentSetup?: boolean;
       sessionMentions?: boolean;
       fs?: boolean;
       diff?: boolean;
@@ -289,6 +290,42 @@ export const fakeBridge = (
     ]),
     agentDefaults: record("agentDefaults", async () => ({})),
     setAgentDefaults: record("setAgentDefaults", async () => {}),
+    readAgentSetup: record("readAgentSetup", async (_environmentId: string, agent: string) => ({
+      agent,
+      name:
+        agent === "claude"
+          ? "Claude"
+          : agent === "codex"
+            ? "Codex"
+            : agent === "agy"
+              ? "Antigravity"
+              : agent,
+      available: true,
+      binary: { source: "builtin" as const, path: `/opt/cycle/${agent}`, version: "1.0.0" },
+      auth: {
+        state: "signed_out" as const,
+        method: "none" as const,
+        signInModes: [],
+        canSignOut: false,
+        loginCommand: `cycle login ${agent}`,
+      },
+      canRefreshUsage: agent === "codex",
+      runtime: {
+        schemaVersion: 1 as const,
+        schema: { type: "object" as const, properties: {} },
+        values: {},
+        overrides: [],
+        revision: 0,
+      },
+      environment: {
+        configFile: { path: "/tmp/cycle/config.json", exists: true, stale: false },
+        dataDir: `/tmp/cycle/${agent}`,
+        customDataDir: false,
+        allowEnv: ["PATH", "LANG"],
+        envNames: [],
+      },
+    })),
+    revealDaemonConfig: record("revealDaemonConfig", async () => true),
     listConnectors: record("listConnectors", async () => connectors.map((c) => ({ ...c }))),
     addConnector: record("addConnector", async (_environment: string, draft) => {
       const connector: ConnectorInfo = {

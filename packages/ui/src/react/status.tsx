@@ -1,5 +1,5 @@
 // How a state is drawn: a colour, a shape and a word, so it is never told by colour alone (DESIGN.md section 3).
-import type { ConnectionState } from "../api.ts";
+import type { AgentAuthState, ConnectionState } from "../api.ts";
 import type { Mark } from "../sessions.ts";
 import { CloseIcon } from "./icons.tsx";
 
@@ -36,3 +36,12 @@ export const MARK_WORD = {
   background: "mark.background",
   unread: "mark.unread",
 } as const;
+
+export const AGENT_AUTH_DOT: Record<AgentAuthState, { tone: Tone; shape: Shape }> = {
+  signed_in: { tone: "success", shape: "solid" },
+  signed_out: { tone: "muted", shape: "ring" },
+  signing_in: { tone: "accent", shape: "pulse" },
+  signing_out: { tone: "accent", shape: "ring" },
+  auth_unknown: { tone: "attention", shape: "ring" },
+  binary_unavailable: { tone: "danger", shape: "cross" },
+};

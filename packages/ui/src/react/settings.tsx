@@ -17,15 +17,7 @@ import {
   SelectValue,
 } from "@ui-sdk/react/select";
 import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { type ReactNode, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import {
   type AgentInfo,
   type EnvironmentConfig,
@@ -38,8 +30,10 @@ import { CODE_THEMES, type CodeThemeId, codeTheme } from "../code-theme.ts";
 import { LANGUAGES, resolveLanguage } from "../languages.ts";
 import { SETTINGS_SECTIONS, type SettingsSection } from "../settings-sections.ts";
 import { AccountGroup } from "./account.tsx";
+import { AgentLogo } from "./agent-logos.tsx";
 import { ConfigForm } from "./config-form.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
+import { HarnessSection, harnessListOf } from "./harness-settings.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
@@ -56,36 +50,78 @@ export { SETTINGS_SECTIONS, type SettingsSection };
 export type SettingsPageProps = {
   section: SettingsSection;
   onSection: (section: SettingsSection) => void;
+  /** Currently selected agent id when `section === "harness"`. */
+  harnessAgent?: string | undefined;
+  /** Where the Harness page was opened from, for behavioral analytics. */
+  harnessFrom?: "settings" | "blank" | "other" | undefined;
+  onHarnessAgent?: ((agentId: string) => void) | undefined;
   onClose: () => void;
   /** What went wrong, said at the top of the page as it is at the top of the sessions. */
   banner?: ReactNode;
   environments: EnvironmentConfig[];
   status: Record<string, EnvironmentStatus>;
   agents: Record<string, AgentInfo[]>;
-  /** The environment whose defaults are shown first: the one that is open, when it is connected. */
+  /** The environment whose defaults/harness settings are shown first: the one that is open, when connected. */
   environmentId: string | undefined;
   onAddEnvironment: () => void;
   onEditEnvironment: (environmentId: string) => void;
   onRemoveEnvironment: (environmentId: string) => void;
 };
 
+const HARNESS_TAB_PREFIX = "harness:";
+
 export function SettingsPage(props: SettingsPageProps) {
   const { t } = useI18n();
-  const content: Record<SettingsSection, PageSection["content"]> = {
-    general: <GeneralSection />,
-    appearance: <AppearanceSection />,
-    environments: <EnvironmentsSection {...props} />,
-    defaults: (
-      <DefaultsSection
+  const harnesses = harnessListOf(props.agents);
+  const [chosenEnv, setChosenEnv] = useState<string | undefined>(props.environmentId);
+  useEffect(() => {
+    if (props.environmentId !== undefined) setChosenEnv(props.environmentId);
+  }, [props.environmentId]);
+  const [localHarness, setLocalHarness] = useState<string>(
+    props.harnessAgent ?? harnesses[0]?.id ?? "claude",
+  );
+  const activeHarness = props.harnessAgent ?? localHarness;
+  const activeTabValue =
+    props.section === "harness" ? `${HARNESS_TAB_PREFIX}${activeHarness}` : props.section;
+
+  const topSections: PageSection[] = [
+    { id: "general", label: t("settings.section.general"), content: <GeneralSection /> },
+    { id: "appearance", label: t("settings.section.appearance"), content: <AppearanceSection /> },
+    {
+      id: "environments",
+      label: t("settings.section.environments"),
+      content: <EnvironmentsSection {...props} />,
+    },
+    { id: "shortcuts", label: t("settings.section.shortcuts"), content: <ShortcutsSection /> },
+  ];
+
+  const harnessGroup = t("settings.harness.group");
+  const harnessSections: PageSection[] = harnesses.map((harness) => ({
+    id: `${HARNESS_TAB_PREFIX}${harness.id}`,
+    label: harness.name,
+    group: harnessGroup,
+    icon: <AgentLogo agentId={harness.id} name={harness.name} decorative />,
+    heading: (
+      <span data-slot="harness-heading">
+        <AgentLogo agentId={harness.id} name={harness.name} decorative />
+        <span>{harness.name}</span>
+      </span>
+    ),
+    content: (
+      <HarnessSection
+        agentId={harness.id}
+        agentName={harness.name}
         environments={props.environments}
         status={props.status}
         agents={props.agents}
-        environmentId={props.environmentId}
+        environmentId={chosenEnv}
+        onEnvironmentChange={setChosenEnv}
+        from={props.harnessFrom ?? "settings"}
         onShowEnvironments={() => props.onSection("environments")}
       />
     ),
-    shortcuts: <ShortcutsSection />,
-  };
+  }));
+
   return (
     <PageLayout
       title={t("settings.title")}
@@ -93,16 +129,20 @@ export function SettingsPage(props: SettingsPageProps) {
       backLabel={t("settings.back")}
       onBack={props.onClose}
       banner={props.banner}
-      value={props.section}
+      value={activeTabValue}
       onValueChange={(id) => {
-        if ((SETTINGS_SECTIONS as readonly string[]).includes(id))
+        if (id.startsWith(HARNESS_TAB_PREFIX)) {
+          const agentId = id.slice(HARNESS_TAB_PREFIX.length);
+          setLocalHarness(agentId);
+          props.onHarnessAgent?.(agentId);
+          if (props.section !== "harness") props.onSection("harness");
+          return;
+        }
+        if ((SETTINGS_SECTIONS as readonly string[]).includes(id)) {
           props.onSection(id as SettingsSection);
+        }
       }}
-      sections={SETTINGS_SECTIONS.map((id) => ({
-        id,
-        label: t(`settings.section.${id}`),
-        content: content[id],
-      }))}
+      sections={[...topSections, ...harnessSections]}
     />
   );
 }
@@ -398,107 +438,6 @@ function EnvironmentsSection(props: SettingsPageProps) {
         })}
       </PageRows>
     </PageGroup>
-  );
-}
-
-/** What every new session of an agent starts with, on one environment: the daemon there keeps it. */
-function DefaultsSection({
-  environments,
-  status,
-  agents,
-  environmentId,
-  onShowEnvironments,
-}: {
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
-  agents: Record<string, AgentInfo[]>;
-  environmentId: string | undefined;
-  onShowEnvironments: () => void;
-}) {
-  const { t } = useI18n();
-  const connected = environments.filter((e) => status[e.id]?.state === "connected");
-  const [chosen, setChosen] = useState<string | undefined>(environmentId);
-  const environment = connected.find((e) => e.id === chosen) ?? connected[0];
-  const revision = useAppState((s) =>
-    environment !== undefined ? (s.defaultsRevision[environment.id] ?? 0) : 0,
-  );
-  if (environment === undefined)
-    return (
-      <StateBlock
-        size="inline"
-        align="start"
-        tone="away"
-        title={t("settings.defaults.none")}
-        body={t("settings.defaults.noneBody")}
-        action={{ label: t("settings.defaults.showEnvironments"), onAction: onShowEnvironments }}
-      />
-    );
-  return (
-    <PageGroup lead={t("settings.defaults.lead")}>
-      <div data-slot="page-form">
-        {connected.length > 1 ? (
-          <Field name="environment">
-            <FieldLabel>{t("settings.defaults.environment")}</FieldLabel>
-            <Select
-              items={connected.map((e) => ({ value: e.id, label: e.name }))}
-              value={environment.id}
-              onValueChange={(next) => {
-                if (typeof next === "string") setChosen(next);
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {connected.map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {e.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        ) : null}
-        {/* Another environment's form starts from nothing. What this one says of its defaults (`revision`) is read again in place. */}
-        <EnvironmentDefaults
-          key={environment.id}
-          environment={environment}
-          agents={agents[environment.id] ?? []}
-          revision={revision}
-        />
-      </div>
-    </PageGroup>
-  );
-}
-
-function EnvironmentDefaults({
-  environment,
-  agents,
-  revision,
-}: {
-  environment: EnvironmentConfig;
-  agents: AgentInfo[];
-  revision: number;
-}) {
-  const store = useAppStore();
-  const environmentId = environment.id;
-  const read = useCallback(
-    (agent: string) => store.readAgentDefaults(environmentId, agent),
-    [store, environmentId],
-  );
-  const save = useCallback(
-    (agent: string, config: Record<string, string>) =>
-      store.setAgentDefaults(environmentId, agent, config),
-    [store, environmentId],
-  );
-  return (
-    <AgentDefaultsForm
-      environmentName={environment.name}
-      agents={agents}
-      read={read}
-      onSave={save}
-      revision={revision}
-    />
   );
 }
 

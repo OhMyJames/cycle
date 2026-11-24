@@ -1521,6 +1521,17 @@ export class AppStore {
       return true;
     })) === true;
 
+  /** Read-only Harness setup snapshot (auth, usage, runtime config, host diagnostics). */
+  readAgentSetup = (
+    environmentId: string,
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ) => this.#bridge.readAgentSetup(environmentId, agent, options);
+
+  /** Shows the local daemon's `config.json` in the system file manager; false on remote environments. */
+  revealDaemonConfig = (environmentId: string): Promise<boolean> =>
+    this.#bridge.revealDaemonConfig(environmentId).catch(() => false);
+
   // ---- connectors: the page shows what went wrong itself, next to what it was about ----
 
   /** Reads the environment's connectors into the state; why it could not is kept there too. */

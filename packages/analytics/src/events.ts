@@ -32,8 +32,8 @@ const panel = z.enum([
   "trust",
   "connectors",
 ]);
-/** The sections of the settings page (CYCL-78): fixed words, as `SETTINGS_SECTIONS` of @cycle/ui lists them. */
-const settingsSection = z.enum(["general", "appearance", "environments", "defaults", "shortcuts"]);
+/** The sections of the settings page (CYCL-78, CYCL-226): fixed words, as `SETTINGS_SECTIONS` of @cycle/ui lists them. */
+const settingsSection = z.enum(["general", "appearance", "environments", "shortcuts", "harness"]);
 /** The sections of the Connectors page (CYCL-82): fixed words, as `CONNECTORS_SECTIONS` of @cycle/ui lists them. */
 const connectorsSection = z.enum(["plugins", "mcp"]);
 /** The kinds of tab in the right panel (CYCL-90): a fixed word, never a tab's title or what it shows. */
@@ -191,6 +191,12 @@ export const EVENTS = {
   sidebar_toggled: o({ open: z.boolean(), via: z.enum(["click", "shortcut"]) }),
   /** Another section of the settings page was chosen (opening the page is `panel_opened` with `settings`). */
   settings_section_shown: o({ section: settingsSection }),
+  /** One Harness settings sub-page was shown (CYCL-229). Never the environment name, account, or paths. */
+  harness_settings_shown: o({
+    agent,
+    environment: environment,
+    from: z.enum(["settings", "blank", "other"]),
+  }),
   /** Another section of the Connectors page was shown. Opening the page is `panel_opened` with `connectors`. */
   connectors_section_shown: o({ section: connectorsSection }),
   /**
@@ -339,6 +345,7 @@ export const UI_EVENTS = [
   "panel_opened",
   "sidebar_toggled",
   "settings_section_shown",
+  "harness_settings_shown",
   "connectors_section_shown",
   "side_panel_toggled",
   "side_panel_tab_shown",
