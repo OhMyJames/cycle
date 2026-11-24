@@ -1,7 +1,7 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
 import { motion, type Transition, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
-import type { Conversation, PlanEntry, PlanItem } from "../model/index.ts";
+import { type Conversation, latestPlan, type PlanEntry, type PlanItem } from "../model/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon } from "./icons.tsx";
 import { useAppStore } from "./store-context.tsx";
@@ -176,9 +176,9 @@ export function PlanBlock({ item }: { item: PlanItem }) {
   );
 }
 
-/** The session's plan while some of it is still to do: the newest plan item, if any of its entries is not done. */
+/** The session's plan while some of it is still to do: the plan told last, if any of its entries is not done. */
 export const currentPlan = (conversation: Conversation): PlanItem | undefined => {
-  const plan = conversation.items.findLast((item): item is PlanItem => item.kind === "plan");
+  const plan = latestPlan(conversation);
   return plan?.entries.some((entry) => entry.status !== "completed") ? plan : undefined;
 };
 

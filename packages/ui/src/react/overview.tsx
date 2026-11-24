@@ -11,7 +11,7 @@ import {
   type Conversation,
   contextOf,
   type DynamicConfigOption,
-  type PlanItem,
+  latestPlan,
   type ScheduledJob,
   type TaskKind,
   type ToolItem,
@@ -213,7 +213,7 @@ export function Overview() {
     store.track("overview_item_revealed", { section });
     reveal.request(key, itemId);
   };
-  const plan = conversation.items.findLast((item): item is PlanItem => item.kind === "plan");
+  const plan = latestPlan(conversation);
   const done = plan?.entries.filter((e) => e.status === "completed").length ?? 0;
   const running = background.filter(
     (row) => row.state !== "completed" && row.state !== "failed" && row.state !== "stopped",

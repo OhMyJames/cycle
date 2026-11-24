@@ -8,6 +8,7 @@ import {
   contextOf,
   emptyConversation,
   type Item,
+  latestPlan,
   reduce,
   type ToolItem,
   textOf,
@@ -288,6 +289,22 @@ test("a plan is replaced by its id", () => {
   ]);
   expect(c.items).toHaveLength(1);
   expect(c.items[0]).toMatchObject({ kind: "plan", entries: [{ status: "completed" }] });
+});
+
+test("the plan told last is the session's, though another came after it in the conversation", () => {
+  // Codex: a task list, then plan mode's plan, then the task list again, updated where it first appeared.
+  const plan = (planId: string, status: string) =>
+    u({
+      sessionUpdate: "plan_update",
+      plan: { type: "items", planId, entries: [{ content: planId, priority: "medium", status }] },
+    });
+  const c = reduce([
+    plan("tasks", "pending"),
+    plan("proposal", "completed"),
+    plan("tasks", "in_progress"),
+  ]);
+  expect(c.items.map((item) => item.id)).toEqual(["tasks", "proposal"]);
+  expect(latestPlan(c)).toMatchObject({ id: "tasks", entries: [{ status: "in_progress" }] });
 });
 
 test("replay_complete ends the replay, and usage is kept", () => {

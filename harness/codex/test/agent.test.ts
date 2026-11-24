@@ -169,7 +169,10 @@ test("every turn names its model and effort, plan mode is entered and left, and 
        send({method:"item/completed",params:{threadId:"s",turnId:t,item:{type:"collabAgentToolCall",id:"c",tool:"spawnAgent",status:"completed",senderThreadId:"s",receiverThreadIds:["kid"],prompt:null,model:null,reasoningEffort:null,agentsStates:{kid:{status:"running",message:null}}}}});
        send({id:"ask",method:"item/commandExecution/requestApproval",params:{threadId:"kid",turnId:"k1",itemId:"x",command:"ls",reason:null}});
        send({method:"turn/completed",params:{threadId:"s",turn:{id:t,status:"completed",error:null}}});
-     } else send({method:"turn/completed",params:{threadId:"s",turn:{id:t,status:"completed",error:null}}});
+     } else {
+       if(n===2)send({method:"turn/plan/updated",params:{threadId:"s",turnId:t,explanation:null,plan:[{step:"look",status:"completed"}]}});
+       send({method:"turn/completed",params:{threadId:"s",turn:{id:t,status:"completed",error:null}}});
+     }
    }
  }
 `,
@@ -251,14 +254,16 @@ test("every turn names its model and effort, plan mode is entered and left, and 
       // Back to Default is said, not left out: Codex keeps a turn's choice for the turns after it.
       expect(sent[2]).toMatchObject({ model: "base", effort: "medium" });
       expect(sent[2].collaborationMode).toBeUndefined();
-      expect(updates).toContainEqual(
-        expect.objectContaining({
-          sessionUpdate: "plan_update",
-          plan: expect.objectContaining({
-            entries: [expect.objectContaining({ status: "in_progress" })],
-          }),
-        }),
+      // One plan per thread, not per turn: the second turn's list replaces the first's.
+      const plans = updates.flatMap((u) =>
+        u.sessionUpdate === "plan_update"
+          ? [(u as unknown as { plan: { planId: string; entries: { status: string }[] } }).plan]
+          : [],
       );
+      expect(plans.map((p) => [p.planId, p.entries[0]?.status])).toEqual([
+        ["s-tasks", "in_progress"],
+        ["s-tasks", "completed"],
+      ]);
       // The spawn's call is done but the agent runs; it ends with its own turn, told in the parent's session.
       const kid = updates.filter((u) => u.sessionUpdate === "subagent_update");
       expect(
