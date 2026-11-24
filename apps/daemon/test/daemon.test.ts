@@ -360,6 +360,20 @@ test("an agent started ahead is taken over by the next session instead of starti
   expect(fake.log.launches).toBe(2);
 });
 
+test("a session made while its agent is still starting ahead waits for that one instead of starting another", async () => {
+  const fake = fakeAgent();
+  const daemon = await Daemon.start({
+    dataDir: dir,
+    agents: [{ ...fake.definition, standby: true }],
+  });
+  open.push(daemon);
+  const c = await connectClient(daemon);
+  const starting = daemon.prewarmAgent("fake");
+  await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  await starting;
+  expect(fake.log.launches).toBe(1);
+});
+
 test("an agent started ahead that nobody takes is let go after its time, and an agent that cannot be is left alone", async () => {
   const fake = fakeAgent();
   const plain = fakeAgent();

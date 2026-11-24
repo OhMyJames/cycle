@@ -652,7 +652,7 @@ export class Daemon {
         elicitation: async () => ({ action: "cancel" }),
         closed: () => {
           if (connected === undefined) endedEarly = true;
-          else if (this.#standby.get(agentId)?.link === connected) this.#forgetStandby(agentId);
+          else if (this.#standby.get(agentId)?.link === connected) this.#takeStandby(agentId);
         },
       });
       connected = link;
@@ -689,7 +689,8 @@ export class Daemon {
     held.timer = this.#standbyTimer(agentId);
   }
 
-  #forgetStandby(agentId: string): AgentLink | undefined {
+  /** The agent started ahead, if there is one, is the caller's now: nothing else will end it. */
+  #takeStandby(agentId: string): AgentLink | undefined {
     const held = this.#standby.get(agentId);
     if (held === undefined) return undefined;
     clearTimeout(held.timer);
@@ -699,12 +700,7 @@ export class Daemon {
 
   /** The agent started ahead, if there is one, ends. */
   #dropStandby(agentId: string): void {
-    this.#forgetStandby(agentId)?.kill();
-  }
-
-  /** The agent started ahead, if there is one, is the caller's now: nothing else will end it. */
-  #takeStandby(agentId: string): AgentLink | undefined {
-    return this.#forgetStandby(agentId);
+    this.#takeStandby(agentId)?.kill();
   }
 
   /**
@@ -823,8 +819,10 @@ export class Daemon {
         else this.#onAgentClosed(session, connected);
       },
     };
-    // An agent already started for it (`prewarmAgent`) is taken over, not started again.
-    const ahead = this.#takeStandby(session.entry.agent);
+    // An agent already started for it (`prewarmAgent`) is taken over, not started again; one still starting is waited for,
+    // since it is that much of the way there. Only a new session: one resumed is not what it was started for.
+    if (mode === "new") await this.#standbyStarting.get(session.entry.agent);
+    const ahead = mode === "new" ? this.#takeStandby(session.entry.agent) : undefined;
     if (ahead !== undefined) this.#log.info("agent_standby_taken", { agent: session.entry.agent });
     const link =
       ahead ??
