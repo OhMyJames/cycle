@@ -9,7 +9,8 @@
 // - A call that starts a sub-agent is a block of its own, like a message: it cuts the stretch. So is a code review the
 //   agent reported (CYCL-138).
 // - In a turn that did not end normally, the failures of its last stretch are pulled out under it, because they may
-//   be why it stopped. Elsewhere the agent dealt with them, and they stay in the card.
+//   be why it stopped (closed like any row: the turn says how it ended, the row says it failed). Elsewhere the agent dealt
+//   with them, and they stay in the card.
 // - A thought is a block of its own, where its stretch's card is: it never cuts a stretch. Shown only in detailed mode
 //   (`shownBlocks`).
 // - A turn that did not end normally says how, last.

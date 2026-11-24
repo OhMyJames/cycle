@@ -33,7 +33,6 @@ import {
   toolName,
   toolSummary,
   toolVerb,
-  useOpenOnFailure,
   useRevealOpen,
 } from "./tool.tsx";
 
@@ -49,7 +48,8 @@ export function Notice({ severity, title }: { severity: string; title: string })
 
 /**
  * The tool calls of one stretch. One call is a row of its own; two or more are a card that says what they were in a line
- * (and, while one is going, which), and opens to the rows. A card with a failure is open: that is what the person came to read.
+ * (and, while one is going, which), and opens to the rows. A card starts closed, a failure in it too: its line says how
+ * many failed.
  */
 export function WorkBlock({ tools, live }: { tools: readonly ToolItem[]; live: boolean }) {
   const only = tools[0];
@@ -69,7 +69,7 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       : "";
   const goingTip = goingDetail || undefined;
   const scope = useStartScope();
-  const [open, setOpen] = useOpenOnFailure(failed > 0);
+  const [open, setOpen] = useState(false);
   // Asked to show one of its calls (from the Overview): the card opens to it; also when it mounts while that is still
   // asked, since the request may be what moved the window to it.
   useRevealOpen(

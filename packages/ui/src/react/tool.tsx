@@ -1,5 +1,5 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   ANSI_COLORS,
   type AnsiColor,
@@ -45,20 +45,6 @@ export function useRevealOpen(ids: readonly string[], setOpen: (open: boolean) =
     check();
     return reveal.subscribe(check);
   }, [key, setOpen]);
-}
-
-/**
- * Whether a card or row is open: it starts open when it holds a failure (that is what the person came to read), opens by
- * itself when a failure arrives while it is on screen, and after that follows the person's own clicks.
- */
-export function useOpenOnFailure(failed: boolean): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = useState(failed);
-  const was = useRef(failed);
-  useEffect(() => {
-    if (failed && !was.current) setOpen(true);
-    was.current = failed;
-  }, [failed]);
-  return [open, setOpen];
 }
 
 /** The status words a tool call has in the catalog; any other is shown as it came. */
@@ -238,7 +224,9 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   const failed = status === "failed" || status === "cancelled";
   // The model ends a turn's calls when the turn ends (cancelled), so one that is live is going.
   const going = isLive(tool);
-  const [open, setOpen] = useOpenOnFailure(status === "failed");
+  // Every row starts closed, whatever its state: the head says in red words how one ended badly, and opening it is the
+  // person's choice.
+  const [open, setOpen] = useState(false);
   const streams = streamsOf(tool);
   const output = tool.content.length > 0 ? streams.out : stringify(tool.rawOutput);
   const command = commandOf(tool);
@@ -284,7 +272,6 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
       : toolName(t, tool);
   const summaryTip = summary || undefined;
   return (
-    // A failure is what the person came to read: it starts open.
     <Collapsible
       data-kind="tool"
       data-status={status}
