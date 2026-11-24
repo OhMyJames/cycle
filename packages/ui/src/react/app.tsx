@@ -1,4 +1,5 @@
 import { Button } from "@ui-sdk/react/button";
+import { ToastRegion } from "@ui-sdk/react/toast";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { AccountStatus, SessionSummary } from "../api.ts";
 import { SOURCE_LOCALE } from "../i18n.ts";
@@ -575,6 +576,7 @@ function AppWindow() {
       {session !== undefined && panel === "settings" ? (
         <SessionSettings connected={connected} onClose={close} />
       ) : null}
+      <ToastRegion side="bottom" align="center" />
     </div>
   );
 }

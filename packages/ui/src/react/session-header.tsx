@@ -8,6 +8,7 @@ import { EnvironmentActions } from "./environments.tsx";
 import { useI18n } from "./i18n.tsx";
 import { DiffIcon, FolderIcon, MoreIcon, OverviewIcon, PanelIcon, TerminalIcon } from "./icons.tsx";
 import { SessionHeading } from "./rename-field.tsx";
+import { SessionCopyMenu } from "./session-copy-menu.tsx";
 import { FIRST_SIZE } from "./side-panel.tsx";
 import { sessionTitle } from "./sidebar.tsx";
 import { useAppStore } from "./store-context.tsx";
@@ -94,6 +95,7 @@ export function SessionHeader({
               {t(pinned ? "session.unpin" : "session.pin")}
             </MenuItem>
             <MenuItem value="rename">{t("session.rename")}</MenuItem>
+            <SessionCopyMenu session={session} />
             <MenuItem value="settings">{t("session.settings")}</MenuItem>
             <MenuItem value="archive">
               {t(session.archived ? "session.restore" : "session.archive")}
