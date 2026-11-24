@@ -1,0 +1,1134 @@
+/* The composer: its tray, the input box, the utility bar, attachments, the @ menu. */
+
+/* Composer: three clean bands — recessed extension tray above, adaptive input card in the middle,
+   borderless utility bar beneath (permission left, model + effort & context ring right). */
+[data-slot="composer"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0.375rem var(--cycle-column-pad) 0.625rem;
+}
+
+/* Part 1: Extension tray — docked cleanly above the input box, strictly one compact row per extension type.
+   Inset matches the flat top span of the box beneath it (its 16px radius). */
+[data-slot="composer-extensions"] {
+  display: flex;
+  flex-direction: column;
+  max-height: 12rem;
+  overflow-y: auto;
+  margin: 0 1rem;
+  /* The input box's own border colour, so the tray and the box read as one piece. */
+  border: 1px solid var(--cycle-border-default);
+  border-bottom: 0;
+  border-radius: var(--cycle-radius-card) var(--cycle-radius-card) 0 0;
+  background: color-mix(in srgb, var(--cycle-surface-raised) 55%, var(--cycle-surface-canvas));
+}
+
+[data-slot="composer-extensions"] > * + * {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="extension-row"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.75rem;
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="extension-row"][data-kind="plan"] {
+  display: block;
+  padding: 0;
+}
+
+[data-slot="extension-row"][data-kind="drop"] {
+  color: var(--cycle-accent);
+  font-weight: 500;
+}
+
+[data-slot="extension-row"][data-severity="error"] {
+  color: var(--ui-destructive);
+}
+
+/* Part 2: Input box — sleek single-line bar by default ([+] input [Queue][Send][Stop]); promotes to a 3-row layout
+   (attachments above, 2-line content region, bottom action row) when text wraps or attachments are added. Restrained hairline border at rest, crisp focus lift, and high-contrast fallback. */
+[data-slot="composer-box"] {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "lead field actions";
+  align-items: center;
+  column-gap: 0.375rem;
+  padding: 0.375rem;
+  border: 1px solid var(--cycle-border-default);
+  /* One radius for one line and many: a rounded rectangle at one line's height (not a capsule) and taller. No jump. */
+  border-radius: var(--cycle-radius-composer);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-composer), var(--cycle-shadow-composer);
+  transition:
+    border-color var(--cycle-motion-state) var(--cycle-ease),
+    box-shadow var(--cycle-motion-state) var(--cycle-ease);
+}
+
+@media (prefers-contrast: more) {
+  [data-slot="composer-box"] {
+    border-color: var(--cycle-input-border);
+  }
+}
+
+/* Without a +, the text starts where it does on many lines: 12px of box and 4px of field from the edge. */
+[data-slot="composer-box"][data-no-lead]:not([data-multiline]) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "field actions";
+  padding-left: 0.75rem;
+  column-gap: 0.5rem;
+}
+
+/* On many lines the buttons keep the inset they have on one line (6px from the edge), so promoting the box moves none
+   of them; the text takes its own 10px inside that, and its first line stays about where one line's text sat. */
+[data-slot="composer-box"][data-multiline] {
+  grid-template-areas:
+    "field field field"
+    "lead . actions";
+  align-items: end;
+  row-gap: 0.5rem;
+  padding: 0.625rem 0.375rem 0.375rem;
+}
+
+[data-slot="composer-box"][data-multiline][data-has-attachments] {
+  grid-template-areas:
+    "attachments attachments attachments"
+    "field field field"
+    "lead . actions";
+}
+
+/* Quiet focus: the one border gets deeper and the box lifts a little; no ring, no halo, no inner rim, so it is never two
+   lines. The box is where the caret lives most of the day: its focus is a nudge, not an alarm (owner's word, CYCL-75). */
+[data-slot="composer-box"]:has([data-slot="composer-input"]:focus-visible) {
+  border-color: color-mix(in srgb, var(--cycle-input-border) 60%, var(--cycle-border-default));
+  box-shadow: var(--cycle-edge-composer), var(--cycle-focus-composer);
+}
+
+@media (prefers-contrast: more) {
+  /* Focus never makes the edge fainter than at rest. */
+  [data-slot="composer-box"]:has([data-slot="composer-input"]:focus-visible) {
+    border-color: var(--cycle-input-border);
+  }
+}
+
+[data-slot="composer"][data-dropping] [data-slot="composer-box"] {
+  border-color: var(--cycle-accent);
+  outline: 1.5px dashed var(--cycle-accent);
+  outline-offset: 2px;
+}
+
+[data-slot="composer-lead"] {
+  grid-area: lead;
+  display: flex;
+  align-items: center;
+}
+
+[data-slot="composer-box"][data-no-lead]:not([data-multiline]) [data-slot="composer-lead"] {
+  display: none;
+}
+
+[data-slot="composer-actions"] {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+/* The box's buttons are drawn 28px and take a press 32px across: a clear 2px ring round each one is part of it
+   (CYCL-214). The ring is never drawn and stays inside the box's 6px padding. */
+[data-slot="composer-box"]
+  :is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"]) {
+  position: relative;
+}
+
+[data-slot="composer-box"]
+  :is([data-kind="composer-plus"], [data-kind="round"], [data-kind="queue"])::after {
+  content: "";
+  position: absolute;
+  /* Measured from inside the button's 1px border: 2px beyond its outer edge. */
+  inset: calc(-0.125rem - 1px);
+  border-radius: inherit;
+}
+
+/* The +: a 28px circle on the same quiet fill as Queue, so it reads as a button before it is hovered (CYCL-214). */
+[data-slot="button"][data-variant="ghost"][data-kind="composer-plus"] {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink-secondary);
+}
+
+[data-slot="button"][data-variant="ghost"][data-kind="composer-plus"]:hover:not([data-disabled]) {
+  background: var(--cycle-surface-selected);
+  color: var(--cycle-ink);
+}
+
+/* Disabled like an empty Send: the fill stays, the glyph goes quiet, nothing dims to a muddy half. */
+[data-slot="button"][data-variant="ghost"][data-kind="composer-plus"][data-disabled] {
+  opacity: 1;
+  color: var(--cycle-ink-disabled);
+}
+
+/* Send and Stop: 28px circles. Empty/disabled Send stays neutral and quiet instead of dimming accent orange
+   into muddy brown; once ready to send it lights up in Cycle safety orange. */
+[data-kind="round"] {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: var(--cycle-radius-pill);
+}
+
+[data-slot="button"][data-variant="solid"][data-action="send"][data-disabled] {
+  opacity: 1;
+  border-color: transparent;
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink-disabled);
+  box-shadow: none;
+}
+
+/* Queue while the agent works: words, on a quiet pill fill, because it is not the next step the way Send is. */
+[data-kind="queue"] {
+  height: 1.75rem;
+  padding-inline: 0.75rem;
+  border-color: transparent;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-hover);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+}
+
+[data-kind="queue"]:hover:not([data-disabled]) {
+  background: var(--cycle-surface-selected);
+}
+
+/* A fill one step off the box is not an edge to count on: asked for more contrast, the filled buttons get one. */
+@media (prefers-contrast: more) {
+  [data-slot="composer-box"]
+    :is(
+      [data-slot="button"][data-variant="ghost"][data-kind="composer-plus"],
+      [data-kind="queue"],
+      [data-slot="button"][data-variant="solid"][data-action="send"][data-disabled]
+    ) {
+    border-color: var(--cycle-input-border);
+  }
+
+  [data-slot="button"][data-variant="ghost"][data-kind="composer-plus"]:not([data-disabled]) {
+    color: var(--cycle-ink);
+  }
+}
+
+/* Part 3: Utility bar — borderless, compact row beneath the input box. Permission left, model + effort & context ring right.
+   The chips' icon and words start and end on the box's outer edge, the line the conversation and a new session's heading
+   keep too (CYCL-220); their pills, drawn only when hovered or open, hang out by their own padding. */
+[data-slot="composer-tools"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.5rem;
+  /* A chip's clear 1px border and its padding. */
+  margin: 0.25rem calc(-0.375rem - 1px) 0;
+  padding: 0;
+  min-width: 0;
+}
+
+[data-slot="composer-tools-start"],
+[data-slot="composer-tools-end"] {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+/* How full the context is: a spring progress ring and its percentage on the right. A button: the details open in a
+   popover (CYCL-74). Swells softly on 100% completion. */
+[data-kind="context-meter"] {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: 1.5rem;
+  padding-inline: 0.375rem;
+  border: 0;
+  border-radius: var(--cycle-radius-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--cycle-ink-muted);
+  cursor: pointer;
+  transition:
+    color var(--cycle-motion-state) var(--cycle-ease),
+    background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-kind="context-meter"]:is(:hover, [data-open]) {
+  background: var(--cycle-surface-hover);
+}
+
+[data-kind="context-meter"]:not([data-tone]):is(:hover, [data-open]) {
+  color: var(--cycle-ink);
+}
+
+/* Nothing measured yet: the empty track alone. Measured before the last compaction: shown, but not as now's. */
+[data-kind="context-meter"][data-empty] [data-slot="context-percent"] {
+  display: none;
+}
+
+[data-kind="context-meter"][data-before] [data-slot="context-fill"] {
+  opacity: 0.45;
+}
+
+[data-kind="context-meter"][data-before] [data-slot="context-track"] {
+  stroke-dasharray: 1.5 2;
+}
+
+[data-kind="context-meter"] circle {
+  fill: none;
+  stroke-width: 1.75;
+}
+
+[data-slot="context-track"] {
+  stroke: color-mix(in srgb, var(--cycle-ink) 12%, transparent);
+}
+
+[data-slot="context-fill"] {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+
+[data-kind="context-meter"][data-full] [data-slot="context-fill"] {
+  animation: cycle-ring-swell 600ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+@keyframes cycle-ring-swell {
+  40% {
+    stroke-width: 2.35;
+  }
+}
+
+/* A setting at hand: refined borderless chip in the utility bar; permission carries a shield icon (attention orange when
+   high-risk), the model in full ink and its effort beside it, muted like the rest. Each opens its own menu. */
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"] {
+  min-width: 0;
+  max-width: 15rem;
+  height: 1.5rem;
+  gap: 0.25rem;
+  padding-inline: 0.375rem;
+  border-radius: var(--cycle-radius-pill);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  font-weight: 500;
+  color: var(--cycle-ink-muted);
+}
+
+/* The bar's chips and ring are drawn 24px tall and take a press 32px tall: 4px above (the gap under the box) and below.
+   Not sideways, where the next chip is 4px off. */
+:is(
+  [data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"],
+  [data-kind="context-meter"]
+) {
+  position: relative;
+}
+
+:is(
+  [data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"],
+  [data-kind="context-meter"]
+)::after {
+  content: "";
+  position: absolute;
+  inset: -0.25rem 0;
+}
+
+/* The chip has a 1px (clear) border, and its ring is measured from inside it. */
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"]::after {
+  inset: calc(-0.25rem - 1px) -1px;
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"]:is(
+  :hover:not(:disabled),
+  [data-open]
+) {
+  color: var(--cycle-ink);
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"][data-setting="model"] {
+  color: var(--cycle-ink);
+}
+
+[data-slot="setting-icon"] {
+  flex: none;
+  opacity: 0.85;
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"][data-unset] {
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"][data-danger],
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"][data-danger]:is(
+  :hover:not(:disabled),
+  [data-open]
+) {
+  color: var(--cycle-attention);
+}
+
+[data-slot="setting-value"] {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* A picker's menu: as wide as its longest name, and scrolled inside when the window is short. */
+[data-slot="menu-content"][data-kind="setting"] {
+  min-width: 13.5rem;
+  max-width: min(19.5rem, calc(100vw - 1.5rem));
+  max-height: min(22rem, var(--available-height));
+  overflow-y: auto;
+}
+
+[data-slot="menu-content"][data-kind="setting"][data-compact] {
+  max-width: min(16.5rem, calc(100vw - 1.5rem));
+}
+
+[data-slot="popover-content"][data-kind="context"] {
+  width: 17.5rem;
+}
+
+/* The details take the focus only so a screen reader reads them; the ring of the trigger says where it came from. */
+[data-slot="popover-content"][data-kind="context"]:focus-visible {
+  outline: none;
+}
+
+/* The context window, read like Claude Code's /context: the total and its share, a bar of the parts, one row a part.
+   Dense on purpose: everything at the meta size, figures in tabular numbers, words only for a state with no number. */
+[data-slot="context-details"] {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem 0.375rem;
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-slot="context-head"] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--cycle-ink-muted);
+  font-weight: 500;
+}
+
+[data-slot="context-total"] {
+  font-variant-numeric: tabular-nums;
+  color: var(--cycle-ink);
+}
+
+[data-slot="context-total"][data-before] {
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="context-bar"] {
+  display: flex;
+  gap: 1px;
+  height: 0.375rem;
+  overflow: hidden;
+  border-radius: var(--cycle-radius-pill);
+  background: color-mix(in srgb, var(--cycle-ink) 6%, transparent);
+}
+
+[data-slot="context-bar"][data-before] {
+  opacity: 0.45;
+}
+
+[data-slot="context-segment"] {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+/* One hue: the accent, lighter for each smaller part; what is kept for compaction in ink, what is free left empty. */
+:is([data-slot="context-segment"], [data-slot="context-swatch"])[data-tone="1"] {
+  background: var(--cycle-accent);
+}
+
+:is([data-slot="context-segment"], [data-slot="context-swatch"])[data-tone="2"] {
+  background: color-mix(in srgb, var(--cycle-accent) 72%, var(--cycle-surface-raised));
+}
+
+:is([data-slot="context-segment"], [data-slot="context-swatch"])[data-tone="3"] {
+  background: color-mix(in srgb, var(--cycle-accent) 52%, var(--cycle-surface-raised));
+}
+
+:is([data-slot="context-segment"], [data-slot="context-swatch"])[data-tone="4"] {
+  background: color-mix(in srgb, var(--cycle-accent) 36%, var(--cycle-surface-raised));
+}
+
+:is([data-slot="context-segment"], [data-slot="context-swatch"])[data-tone="5"] {
+  background: color-mix(in srgb, var(--cycle-accent) 24%, var(--cycle-surface-raised));
+}
+
+:is([data-slot="context-segment"], [data-slot="context-swatch"])[data-tone="buffer"] {
+  background: color-mix(in srgb, var(--cycle-ink) 22%, var(--cycle-surface-raised));
+}
+
+[data-slot="context-segment"][data-tone="free"] {
+  background: transparent;
+}
+
+[data-slot="context-swatch"][data-tone="free"] {
+  box-shadow: inset 0 0 0 1px var(--cycle-border-default);
+}
+
+[data-slot="context-state"] {
+  margin: 0;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="context-state"][data-tone="attention"] {
+  color: var(--cycle-attention);
+}
+
+[data-slot="context-parts"] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  column-gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="context-part"] {
+  display: contents;
+}
+
+[data-slot="context-swatch"] {
+  align-self: center;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 2px;
+}
+
+[data-slot="context-part-name"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cycle-ink);
+}
+
+[data-slot="context-part-tokens"] {
+  text-align: right;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="context-part-share"] {
+  min-width: 2.75rem;
+  text-align: right;
+  color: var(--cycle-ink);
+}
+
+[data-slot="context-facts"] {
+  display: grid;
+  gap: 0.125rem;
+  margin: 0;
+  padding-top: 0.375rem;
+  border-top: 1px solid var(--cycle-border-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="context-facts"] > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+[data-slot="context-facts"] dt {
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="context-facts"] dd {
+  margin: 0;
+  color: var(--cycle-ink);
+}
+
+/* The account's plan limits, under the context: a row a limit (name, share used and when it starts over), a thin bar
+   under it, quiet until it gets close (attention) or is at the limit (danger). */
+[data-slot="plan-usage"] {
+  display: grid;
+  gap: 0.375rem;
+  padding-top: 0.375rem;
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="plan-limit"] {
+  display: grid;
+  gap: 0.25rem;
+}
+
+[data-slot="plan-limit-row"] {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+[data-slot="plan-limit-name"] {
+  color: var(--cycle-ink);
+}
+
+[data-slot="plan-limit-value"] {
+  font-variant-numeric: tabular-nums;
+  color: var(--cycle-ink-muted);
+  white-space: nowrap;
+}
+
+[data-slot="plan-limit"][data-tone] [data-slot="plan-limit-value"] {
+  color: inherit;
+}
+
+[data-slot="plan-bar"] {
+  height: 0.25rem;
+  overflow: hidden;
+  border-radius: var(--cycle-radius-pill);
+  background: color-mix(in srgb, var(--cycle-ink) 6%, transparent);
+}
+
+[data-slot="plan-bar-fill"] {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--cycle-ink-muted);
+}
+
+[data-slot="plan-limit"][data-tone] [data-slot="plan-bar-fill"] {
+  background: currentColor;
+}
+
+/* One menu row everywhere (CYCL-65): a plain fill under the pointer or the keys, no slide, and a radio or checkbox
+   tick on the right, in the accent. A choice may carry a name, a tag and a line of what it does (`OptionLabel`). */
+:is([data-slot="menu-item"], [data-slot="menu-radio-item"], [data-slot="menu-checkbox-item"]) {
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--ui-radius);
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+:is(
+  [data-slot="menu-item"],
+  [data-slot="menu-radio-item"],
+  [data-slot="menu-checkbox-item"]
+)[data-highlighted] {
+  background: var(--cycle-surface-hover);
+}
+
+/* Removing or deleting reads as such: red, as the destructive button is (DESIGN.md §4.5). */
+[data-slot="menu-item"][data-destructive] {
+  color: var(--ui-destructive);
+}
+
+:is([data-slot="menu-radio-item"], [data-slot="menu-checkbox-item"]) {
+  padding-inline-start: 0.5rem;
+}
+
+[data-slot="menu-item-indicator"] {
+  position: static;
+  order: 1;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  margin-inline-start: auto;
+  color: var(--cycle-accent);
+}
+
+[data-slot="menu-group-label"] {
+  padding: 0.25rem 0.5rem;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="menu-radio-item"] [data-slot="option"] {
+  flex: 1;
+  min-width: 0;
+  gap: 0.0625rem;
+  padding: 0;
+}
+
+[data-slot="menu-radio-item"] [data-slot="option-name"] {
+  font-family: var(--cycle-font-display);
+  font-weight: 500;
+}
+
+[data-slot="menu-radio-item"][data-checked] [data-slot="option-name"] {
+  font-weight: 600;
+}
+
+[data-slot="menu-content"] [data-slot="option-description"] {
+  font-size: var(--cycle-text-meta);
+  line-height: 1.35;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="menu-radio-item"][data-danger]
+  :is([data-slot="option-name"], [data-slot="menu-item-indicator"]) {
+  color: var(--cycle-attention);
+}
+
+@media (forced-colors: active) {
+  [data-slot="composer-box"]:has([data-slot="composer-input"]:focus-visible) {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  [data-slot="button"][data-variant="solid"][data-action="send"][data-disabled] {
+    border: 1px solid GrayText;
+    color: GrayText;
+  }
+}
+
+/* Queued messages inside the composer extension tray: one clean row per message. */
+[data-slot="queued"] {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-slot="queued"] > li + li {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="queued-message"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0.1875rem 0.375rem 0.1875rem 0.75rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="queued-tag"] {
+  flex: none;
+  padding: 0.0625rem 0.375rem;
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink-muted);
+  font-weight: 500;
+}
+
+[data-slot="queued-text"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-foreground);
+  white-space: nowrap;
+}
+
+/* Attachments inside the input box, directly above the message field. */
+[data-slot="attachments"] {
+  grid-area: attachments;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  /* Inside the box's 6px: the line ends 12px from its edge, the files start with the text, 16px in. */
+  margin: 0 0.375rem;
+  padding: 0 0.25rem 0.625rem;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+  list-style: none;
+}
+
+[data-slot="attachment"] {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 14rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-message);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="attachment"][data-kind="image"] {
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  background: var(--cycle-surface-message);
+}
+
+[data-slot="attachment"][data-kind="image"] img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: calc(var(--cycle-radius-sm) - 1px);
+  object-fit: cover;
+}
+
+/* An attached image is its own button, opening it large (CYCL-221); Remove sits over its corner, apart from it. */
+[data-slot="attachment-open"] {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--cycle-radius-sm) - 1px);
+  background: none;
+  cursor: zoom-in;
+}
+
+[data-slot="attachment-name"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* A file's size beside its name: quieter, and never squeezed out by a long name. */
+[data-slot="attachment-size"] {
+  flex: none;
+  color: var(--ui-muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="attachment"]:is([data-kind="text"], [data-kind="pdf"]) > svg {
+  flex: none;
+  color: var(--ui-muted-foreground);
+}
+
+/* A file in a sent message: a chip with its name, on a line of its own; its content is never drawn. */
+[data-slot="file-chip"] {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: fit-content;
+  max-width: 100%;
+  margin-block: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-sm);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="file-chip"] > svg {
+  flex: none;
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="attachment-remove"] {
+  display: grid;
+  place-items: center;
+  padding: 0.125rem;
+  border: 0;
+  border-radius: var(--cycle-radius-pill);
+  background: none;
+  color: var(--cycle-ink-muted);
+  cursor: pointer;
+}
+
+[data-slot="attachment"][data-kind="image"] [data-slot="attachment-remove"] {
+  position: absolute;
+  top: -0.3125rem;
+  right: -0.3125rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  padding: 0;
+  border: 1px solid var(--cycle-border-default);
+  background: var(--cycle-surface-raised);
+  color: var(--cycle-ink);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 28%);
+  opacity: 0.85;
+  transition: opacity var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="attachment"][data-kind="image"]:is(:hover, :focus-within)
+  [data-slot="attachment-remove"] {
+  opacity: 1;
+}
+
+/* The input: a document that reads as Markdown while it is written. Its own elements are styled by what they are. */
+[data-slot="composer-field"] {
+  grid-area: field;
+  position: relative;
+  min-width: 0;
+}
+
+[data-slot="composer-input"] {
+  box-sizing: border-box;
+  min-height: calc(var(--cycle-leading-body) * 1em);
+  max-height: 14rem;
+  overflow-y: auto;
+  /* 2px above and below: the one line stays inside the 28px the buttons beside it take, so they set the row (CYCL-214). */
+  padding: 0.125rem 0.25rem;
+  border: 0;
+  background: transparent;
+  color: var(--ui-foreground);
+  font-size: var(--cycle-text-body);
+  line-height: var(--cycle-leading-body);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  outline: none;
+}
+
+[data-slot="composer-box"][data-multiline] [data-slot="composer-input"] {
+  min-height: calc(var(--cycle-leading-body) * 1em * 2);
+  padding: 0 0.625rem;
+}
+
+/* Beside the + on one line, the column gap is the whole space to the text: the + sits as far from the text as from the
+   box's edge (CYCL-140), 6px each side of its circle, so the field adds none. */
+[data-slot="composer-box"]:not([data-multiline], [data-no-lead]) [data-slot="composer-input"] {
+  padding-left: 0;
+}
+
+[data-slot="composer-box"]:not([data-multiline], [data-no-lead])
+  [data-slot="composer-placeholder"] {
+  left: 0;
+}
+
+[data-slot="composer-input"]:focus-visible {
+  outline: none;
+}
+
+[data-slot="composer-input"][contenteditable="false"] {
+  opacity: 0.6;
+}
+
+[data-slot="composer-input"] > * {
+  margin: 0;
+}
+
+[data-slot="composer-input"] h1,
+[data-slot="composer-input"] h2,
+[data-slot="composer-input"] h3,
+[data-slot="composer-input"] h4,
+[data-slot="composer-input"] h5,
+[data-slot="composer-input"] h6 {
+  font-size: inherit;
+  font-weight: 600;
+}
+
+/* Lists show their numbers and bullets as a reply's do (CYCL-142): the reset takes them away, and without them a list is
+   only an indent. An item that holds nothing but a nested list is Lexical's wrapper for it, and has no marker of its own. */
+[data-slot="composer-input"] ul,
+[data-slot="composer-input"] ol {
+  list-style-position: outside;
+  padding-left: 1.5rem;
+}
+
+[data-slot="composer-input"] ol {
+  list-style-type: decimal;
+}
+
+[data-slot="composer-input"] ul {
+  list-style-type: disc;
+}
+
+[data-slot="composer-input"] li {
+  padding-left: 0.25rem;
+}
+
+[data-slot="composer-input"] li::marker {
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="composer-input"] li:has(> :is(ol, ul):only-child) {
+  list-style-type: none;
+}
+
+[data-slot="composer-input"] blockquote {
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--ui-border);
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="composer-input"] code {
+  padding: 0.05em 0.3em;
+  border-radius: var(--cycle-radius-sm);
+  background: var(--ui-muted);
+  font-family: var(--ui-font-mono, ui-monospace, monospace);
+  font-size: 0.9em;
+}
+
+[data-slot="composer-input"] code[data-language],
+[data-slot="composer-input"] code[data-gutter] {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* What fits what is typed after a slash or an @: above the input, aligned in craft with SettingPicker. */
+[data-slot="picker"] {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  left: 0;
+  overflow-x: hidden;
+  z-index: 20;
+  max-height: 15rem;
+  margin: 0;
+  padding: 0.375rem;
+  overflow-y: auto;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware), var(--cycle-shadow-popover);
+  list-style: none;
+}
+
+[data-slot="picker"] [role="option"] {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: var(--ui-radius);
+  cursor: pointer;
+  font-size: var(--cycle-text-ui);
+}
+
+[data-slot="picker"][role="status"] {
+  padding: 0.5rem 0.75rem;
+  color: var(--ui-muted-foreground);
+  font-size: var(--cycle-text-ui);
+}
+
+[data-slot="picker"] [role="option"][data-active] {
+  background: var(--cycle-surface-hover);
+}
+
+/* The @ menu's groups (files and folders, sessions): a quiet heading over each, when there is more than one kind. */
+[data-slot="picker-group"] {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+[data-slot="picker-group"] + [data-slot="picker-group"] {
+  margin-top: 0.25rem;
+}
+
+[data-slot="picker-group-label"] {
+  padding: 0.25rem 0.5rem;
+  color: var(--ui-muted-foreground);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+}
+
+/* A session is named by its title, which is words, not a path. */
+[data-slot="picker"] [role="option"][data-kind="session"] [data-slot="picker-name"] {
+  font-family: inherit;
+}
+
+[data-slot="picker-name"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ui-font-mono, ui-monospace, monospace);
+  font-weight: 500;
+}
+
+[data-slot="picker-hint"] {
+  /* Keeps up to 40% of the row and is cut after that; the name takes the rest. */
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-muted-foreground);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="picker-description"] {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-muted-foreground);
+  white-space: nowrap;
+}
+
+[data-slot="composer-placeholder"] {
+  position: absolute;
+  top: 0.125rem;
+  left: 0.25rem;
+  right: 0.25rem;
+  overflow: hidden;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-body);
+  line-height: var(--cycle-leading-body);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+[data-slot="composer-box"][data-multiline] [data-slot="composer-placeholder"] {
+  top: 0;
+  left: 0.625rem;
+  right: 0.625rem;
+}
+
+[data-slot="config-form"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cycle-gap);
+}
+
+/* A choice that says what it does: its name, then a line under it. The line wraps instead of
+   widening the list (the list is in a popup, outside the form). */
+[data-slot="option"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-width: 24rem;
+}
+
+[data-slot="option"]:has([data-slot="option-description"]) {
+  padding: 0.375rem 0;
+}
+
+[data-slot="option-name"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+/* Says, not shouts: the same quiet text as the description, set apart by its capsule border. */
+[data-slot="option-tag"] {
+  padding: 0 0.4375rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--cycle-radius-pill);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="option-tag"][data-tone="attention"] {
+  border-color: color-mix(in oklab, var(--cycle-attention) 45%, transparent);
+  color: var(--cycle-attention);
+}
+
+[data-slot="option-description"] {
+  font-size: var(--cycle-text-meta);
+  color: var(--ui-muted-foreground);
+}

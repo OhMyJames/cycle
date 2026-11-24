@@ -21,16 +21,16 @@ Cycle 是一个人每天开几个小时的工具:盯着 agent 干活、批准它
 
 1. 读根目录 `DESIGN.md`:确认第 1–2 层的令牌与材质、第 3 层已有的组件与变体、第 4 层对应任务的设计范式、第 5 层的语义决策树与 Do/Don't;
    再读 `packages/ui/AGENTS.md`、`docs/desktop.md` 的界面部分,以及 ui-sdk skill(`packages/ui/.claude/skills/ui-sdk`)。
-2. 读 `packages/ui/src/styles/app.css`:现有的 `data-slot` / `data-kind`、材质与令牌就是这个系统,新东西接在它后面,不另起一套。
+2. 读 `packages/ui/src/styles/`(`app.css` 按顺序导入各领域的分片):现有的 `data-slot` / `data-kind`、材质与令牌就是这个系统,新东西接在它后面,不另起一套。
 3. 动手前用三行写清:**谁在什么时候用这块**(例如"agent 在等批准,用户从别的窗口切回来");**它有哪些状态**(`references/states.md`);**套用 `DESIGN.md` 第 4 层的哪个范式、为什么这样动**(没有理由就不动)。
 
 ## 硬规则
 
 这十条压过其余所有内容。
 
-1. **只用第 1–2 层的令牌与材质。** 只引用 `DESIGN.md` 的 `--cycle-*` 和重映射后的 `--ui-*`(门禁检查 `DESIGN.md` 与 `app.css` 的 `--cycle-*` 一致:增删令牌必须两边同步)。容器必须归属 `DESIGN.md` §2.4 的预设材质之一(卡片/浮层统一叠 `--cycle-edge-hardware` 硬件微高光,主输入框用只有顶部微光的 `--cycle-edge-composer`);输入控件的边用 `--cycle-input-border`(≥ 3:1),不用 `--cycle-border-default`(仅做轻分隔)。圆角六档圆润同心,间距取 `4px` 倍数。不写散落十六进制色、不加新色相、不加冗余渐变/大面积毛玻璃/霓虹发光装饰。全部用 `light-dark()` 跟随系统深浅色。
+1. **只用第 1–2 层的令牌与材质。** 只引用 `DESIGN.md` 的 `--cycle-*` 和重映射后的 `--ui-*`(门禁检查 `DESIGN.md` 与样式里的 `--cycle-*` 一致:增删令牌必须两边同步)。容器必须归属 `DESIGN.md` §2.4 的预设材质之一(卡片/浮层统一叠 `--cycle-edge-hardware` 硬件微高光,主输入框用只有顶部微光的 `--cycle-edge-composer`);输入控件的边用 `--cycle-input-border`(≥ 3:1),不用 `--cycle-border-default`(仅做轻分隔)。圆角六档圆润同心,间距取 `4px` 倍数。不写散落十六进制色、不加新色相、不加冗余渐变/大面积毛玻璃/霓虹发光装饰。全部用 `light-dark()` 跟随系统深浅色。
 2. **一个排版与尺度系统。** 根字号 16px,只使用 `DESIGN.md` §2.1 的四档字阶(`meta`/`ui`/`body`/`title`,另有一档 `display` 只给新会话页的引导语)和三档字重(`--cycle-weight`/500/600);使用本地打包的 Rare UI 三字体(`Open Runde` 展示与交互触点、`Inter Variable` 正文与密集信息、`Geist Mono Variable` 代码/命令/路径/id/系统错误原话),零外网请求。不新增字号、不新增圆角值、不新增间距值。
-3. **复用第 3 层组件与第 4 层范式,样式写在 `app.css`。** 优先复用 `ui-sdk` 原语加 `DESIGN.md` 第 3 层约定的变体与公共件(`Menu`、`Popover`、`Tip`)(`solid`/`destructive`/`outline`/`ghost`/`round`/`queue`)及 `Banner`/`ConfirmDialog` 等基础件,不自行重复造一套弹窗或通知条。常规业务组件样式收口在 `app.css`,不写行内样式;Tailwind `@theme inline` 语义类服务 Streamdown 与按规范接入的 Rare UI 兼容组件。ui-sdk 的 `Collapsible`、`Command` 等会覆盖 `data-slot`,给它们写样式用 `data-kind` 或 `data-palette`。
+3. **复用第 3 层组件与第 4 层范式,样式写在 `packages/ui/src/styles/` 对应领域的分片里。** 优先复用 `ui-sdk` 原语加 `DESIGN.md` 第 3 层约定的变体与公共件(`Menu`、`Popover`、`Tip`)(`solid`/`destructive`/`outline`/`ghost`/`round`/`queue`)及 `Banner`/`ConfirmDialog` 等基础件,不自行重复造一套弹窗或通知条。常规业务组件样式收口在样式分片里,不写行内样式;Tailwind `@theme inline` 语义类服务 Streamdown 与按规范接入的 Rare UI 兼容组件。ui-sdk 的 `Collapsible`、`Command` 等会覆盖 `data-slot`,给它们写样式用 `data-kind` 或 `data-palette`。
 4. **状态要齐。** 每块界面都要覆盖:空、加载、出错、断线、内容很长、数量很多(`references/states.md`)。出错时写清三件事:发生了什么、等宽可选的系统原话、下一步行动按钮;空状态必须给出出口(如就地的 `New session` 或排查引导),不能只丢一句话。
 5. **文案平实与 i18n。** 按钮是动词加对象("Allow once"、"Delete session");不用感叹号、表情、空话、破折号;统一用 `environment`(不用 `host`)。源语言是 `en-US`,界面文字进 `packages/ui/src/messages/en-US.ts`,组件用 `t("key")`(`references/copy.md`)。
 6. **动效只为说明变化。** 三档时长:状态 `100ms`、展开 `160ms`、出现 `200ms`(`--cycle-motion-*`),只动 `transform` 和 `opacity`,曲线 `--cycle-ease`,不弹跳;流式文字不让布局跳;`prefers-reduced-motion` 下全部静止(`references/motion.md`)。
@@ -43,7 +43,7 @@ Cycle 是一个人每天开几个小时的工具:盯着 agent 干活、批准它
 
 1. **读。** 对照 `DESIGN.md` 1–5 层与 `references/states.md`,确认要复用哪个组件变体和设计范式。
 2. **先写文案。** 列出这块界面会出现的每一个字(标题、按钮、空状态、错误、确认),按 `references/copy.md` 过一遍并写入 `en-US.ts`,再写代码。
-3. **做。** 在 `packages/ui/src/react` 里写组件,样式加进 `app.css`。先用最坏数据(200 字符标题、长无空格路径、断线、800 个会话)调对布局,再调正常状态。
+3. **做。** 在 `packages/ui/src/react` 里写组件,样式加进对应领域的分片(侧栏 `sidebar.css`、对话 `conversation.css`、输入框 `composer.css` 等)。先用最坏数据(200 字符标题、长无空格路径、断线、800 个会话)调对布局,再调正常状态。
 4. **查。** 按 [验收指南](references/check.md) 跑门禁、文案扫描、状态画廊与真实窗口检查。改变现有交互或布局时,用相同状态、尺寸和主题对照前后。
 5. **报告。** 区分影响操作的缺陷和体验打磨,给出复现状态、证据和改动结果,说明实际覆盖范围和剩余缺口。
 

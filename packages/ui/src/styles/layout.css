@@ -1,0 +1,1324 @@
+/* The window and its columns, the settings pages, the right panel (files, terminals, the Overview). */
+
+/* Text too long for its line fades at the end; it never ends in "…" (old-cycle's rule). The fade is a scroll-driven
+   animation on the element's own overflow, so it is there only when the text overflows: a short title is not touched.
+   The full text is in the element's title or reachable (search, the folder field). */
+@keyframes cycle-fade {
+  from,
+  to {
+    mask-image: var(--cycle-fade-end);
+  }
+}
+
+:is(
+  [data-slot="environment-name"],
+  [data-slot="session-title"],
+  [data-slot="panel-tab-label"],
+  [data-slot="workspace-name"],
+  [data-slot="search-title"],
+  [data-slot="account-name"],
+  [data-slot="account-card-name"],
+  [data-slot="account-card-detail"],
+  [data-slot="setting-value"],
+  [data-slot="menu-content"] [data-slot="option-description"],
+  [data-slot="queued-text"],
+  [data-slot="attachment-name"],
+  [data-slot="picker-description"],
+  [data-slot="composer-placeholder"],
+  [data-slot="page-row-label"],
+  [data-slot="tool-verb"],
+  [data-slot="tool-summary"],
+  [data-slot="tool-diff-path"],
+  [data-slot="plan-now"],
+  [data-slot="subagent-title"],
+  [data-slot="subagent-tag"],
+  [data-slot="subagent-glimpse"],
+  [data-slot="blank-folder-name"],
+  [data-slot="blank-agent-name"],
+  [data-slot="blank-recent-name"],
+  [data-slot="notice-text"],
+  [data-kind="session-title"]
+) {
+  overflow: hidden;
+  white-space: nowrap;
+  animation: cycle-fade linear both;
+  animation-timeline: scroll(self inline);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ui-background);
+  color: var(--ui-foreground);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="starting"] {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--ui-muted-foreground);
+}
+
+/* The window never scrolls: each column scrolls inside itself. Text placed outside its column (a screen reader's label
+   with no positioned box around it) would otherwise lengthen the page, and a wheel run past the conversation's end, or
+   an item brought into view, would scroll the whole window and carry the header off its top. `clip` on a positioned
+   box holds whatever overflows it, and is not a box a script can scroll. */
+[data-slot="app"] {
+  position: relative;
+  height: 100%;
+  overflow: clip;
+}
+
+/* The window's columns (CYCL-66). ui-sdk's Resizable is a bordered box with padded panels: here it is the whole window. */
+[data-slot="split"] {
+  height: 100%;
+}
+
+[data-slot="split"] > [data-slot="resizable"] {
+  height: 100%;
+  /* Not ui-sdk's `hidden`: bringing something into view must not scroll every column at once. */
+  overflow: clip;
+  border: 0;
+  border-radius: 0;
+}
+
+[data-slot="split"] > [data-slot="resizable"] > [data-slot="resizable-panel"] {
+  padding: 0;
+  min-width: 0;
+}
+
+[data-slot="split"] [data-slot="resizable-handle"]:is(:hover, [data-dragging]) {
+  background: var(--cycle-accent);
+}
+
+/* Under a page that takes the whole window, the sessions stay in the document, not drawn. */
+[data-slot="app-body"] {
+  height: 100%;
+}
+
+[data-slot="app-body"][hidden] {
+  display: none;
+}
+
+/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings and Connectors. The sessions' frame
+   (CYCL-219): where the sidebar was, as wide, on its surface and with its rule, the way back and the page's sections;
+   beside it a title bar as the session's, and under it the section, in the conversation's column. */
+[data-slot="page"],
+[data-kind="page"] {
+  height: 100%;
+}
+
+[data-kind="page"] {
+  display: flex;
+  min-width: 0;
+  background: var(--cycle-surface-workspace);
+}
+
+/* The sidebar's box: its padding and gap, and its width as the user left it (`--cycle-sidebar-width`, set on the app by
+   split-layout.tsx), plus the split's 1px handle drawn as the rule at its edge. On a window too narrow for that and the
+   conversation's least width (MAIN_MIN) it gives way, down to the sidebar's least (SIDEBAR.min): the nav cannot fold. */
+[data-slot="page-nav"] {
+  --sidebar-inset: 0.5rem;
+
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: clamp(12.5rem, calc(100% - 25rem), calc(var(--cycle-sidebar-width, 16rem) + 1px));
+  padding: var(--cycle-gap) var(--sidebar-inset) 0.5rem;
+  border-right: 1px solid var(--ui-border);
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--cycle-surface-sidebar);
+}
+
+[data-slot="page-nav"] > * {
+  flex: none;
+}
+
+[data-slot="page-title"] {
+  margin: 0.5rem 0 0;
+  padding-inline: 0.5rem;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  line-height: var(--cycle-leading-meta);
+  color: var(--ui-muted-foreground);
+}
+
+[data-kind="page"] [data-slot="tabs-list"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+/* A section is a row of the sidebar: the same height, the same selected surface as an open session. */
+[data-kind="page"] [data-slot="tabs-tab"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--cycle-ink-secondary);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: var(--cycle-weight);
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-kind="page"] [data-slot="tabs-tab"]:hover {
+  background: var(--cycle-surface-hover);
+}
+
+[data-kind="page"] [data-slot="tabs-tab"][data-selected] {
+  background: var(--cycle-surface-selected);
+  color: var(--cycle-ink);
+  font-weight: 500;
+}
+
+[data-kind="page"] [data-slot="tabs-tab"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: -1.5px;
+}
+
+[data-slot="page-nav-group"] {
+  margin-top: 0.875rem;
+  padding: 0 0.5rem 0.25rem;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ui-muted-foreground);
+  user-select: none;
+}
+
+[data-slot="harness-heading"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="harness-command-row"] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+[data-slot="harness-usage"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+[data-slot="harness-device-code"] {
+  font-family: var(--ui-font-mono);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+}
+
+[data-slot="harness-auth-fallback"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--ui-border);
+}
+
+[data-slot="runtime-description"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+[data-slot="runtime-tags"] {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+[data-slot="runtime-scope"],
+[data-slot="runtime-meta-note"] {
+  font-size: var(--cycle-text-meta);
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="runtime-control"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="runtime-integer"] {
+  width: 5.5rem;
+}
+
+[data-slot="state-actions"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="page-main"] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The session's title bar (`session-header`): one row of 42px at the top, level with the traffic lights, the name at
+   its start in the header title's type. What the window is dragged by on a Mac. */
+[data-slot="page-header"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 2.625rem;
+  padding: 0 0.5rem 0 var(--cycle-gap);
+}
+
+html[data-platform="darwin"] [data-slot="page-header"] {
+  -webkit-app-region: drag;
+}
+
+[data-slot="page-heading"] {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+[data-slot="page-body"] {
+  --cycle-column-pad: max(1.5rem, calc((100% - var(--cycle-measure)) / 2));
+
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+[data-slot="page-body"] > [data-slot="tabs-panel"] {
+  padding: 0;
+  outline: none;
+}
+
+/* The first group where it was under the old in-column heading: the content does not move between the frames. */
+[data-slot="page-column"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem var(--cycle-column-pad) 2rem;
+}
+
+[data-slot="page-group"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+[data-slot="page-group-head"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+}
+
+[data-slot="page-group-title"] {
+  margin: 0;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="page-group-lead"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--ui-muted-foreground);
+}
+
+/* A group's rows: one card, a rule between rows (Surface/Card). */
+[data-slot="page-rows"] {
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+}
+
+[data-slot="page-row"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem var(--cycle-gap);
+}
+
+[data-slot="page-row"] + [data-slot="page-row"] {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="page-row-line"] {
+  display: flex;
+  align-items: center;
+  gap: var(--cycle-gap);
+  min-height: 1.75rem;
+}
+
+[data-slot="page-row-text"] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+[data-slot="page-row-label"] {
+  font-weight: 500;
+}
+
+[data-slot="page-row-description"] {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.5rem;
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="page-row-description"] [data-update="error"] {
+  color: var(--ui-destructive);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Where a remote environment is, or a connector (a host, a command): the end says the most, so it is the start that is cut. */
+[data-slot="environment-where"],
+[data-slot="connector-where"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+  text-overflow: ellipsis;
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="page-row-control"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="page-row-control"] [data-slot="select-trigger"] {
+  min-width: 12rem;
+}
+
+[data-slot="page-row"] > [data-slot="reason"] {
+  align-self: stretch;
+}
+
+/* A shortcut's keys, one cap each (Surface/Sunken, as the key hints elsewhere). */
+[data-slot="keys"] {
+  display: flex;
+  gap: 0.25rem;
+}
+
+[data-slot="keys"] kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.375rem;
+  border: 0;
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-message);
+  box-shadow: none;
+  color: var(--cycle-ink-secondary);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A form in a page: as wide as a choice reads well, not the whole column. */
+[data-slot="page-form"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cycle-gap);
+  max-width: 24rem;
+}
+
+[data-slot="row"][data-page-actions] {
+  margin-top: 0.25rem;
+}
+
+/* The sample under the choice of code colours: the code block is the card, so the figure adds nothing around it. */
+[data-slot="code-preview"] {
+  margin: 0;
+  min-width: 0;
+}
+
+/* The right panel: the sidebar's quiet surface, its tabs level with the conversation's header. */
+[data-slot="side-panel"] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--cycle-surface-sidebar);
+}
+
+[data-kind="panel-tabs"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+[data-slot="panel-tabs-bar"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  height: 2.625rem;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="panel-tabs-bar"] > [data-slot="tabs-list"] {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+}
+
+/* New terminal: after the last tab, the size of the header's buttons. */
+[data-kind="panel-tab-add"] {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+/* A terminal's title is the shell's, and can be anything: it fades out at the end rather than pushing the strip. */
+[data-slot="panel-tab-label"] {
+  display: block;
+  max-width: 10rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"][data-closable] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-right: 0.25rem;
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"][data-quiet] {
+  color: var(--cycle-ink-disabled);
+}
+
+/* The cross on a terminal's tab: there on the tab shown and the one under the pointer, so the strip stays quiet. */
+[data-slot="panel-tab-close"] {
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: var(--cycle-radius-sm);
+  color: var(--cycle-ink-muted);
+  opacity: 0;
+  transition:
+    opacity var(--cycle-motion-state) var(--cycle-ease),
+    background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="tabs-tab"]:is(:hover, [data-selected]) > [data-slot="panel-tab-close"] {
+  opacity: 1;
+}
+
+[data-slot="panel-tab-close"]:hover {
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink);
+}
+
+/* A Terminal tab (CYCL-98): the shell fills the tab, on the panel's own ground, in the code font. A line under it says
+   when the shell has exited or the environment is away. */
+[data-slot="terminal"] {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--cycle-surface-sidebar);
+  color: var(--cycle-ink);
+  caret-color: var(--cycle-ink);
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+  /* Not drawn (no outline style): the accent, computed, for the terminal's selection (terminal.tsx). */
+  outline-color: var(--cycle-accent);
+}
+
+[data-slot="terminal-screen"] {
+  flex: 1;
+  min-height: 0;
+  padding: 0.5rem 0.25rem 0.25rem 0.75rem;
+}
+
+[data-slot="terminal-screen"][hidden] {
+  display: none;
+}
+
+[data-slot="terminal-screen"] .xterm-viewport {
+  background-color: transparent;
+}
+
+[data-slot="terminal-note"] {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.75rem;
+  color: var(--cycle-ink-muted);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-ui);
+  pointer-events: none;
+}
+
+[data-slot="terminal-bar"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  border-top: 1px solid var(--cycle-border-subtle);
+  color: var(--cycle-ink-secondary);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-ui);
+}
+
+[data-slot="terminal-bar"][data-tone="away"] {
+  color: var(--cycle-attention);
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"] {
+  flex: none;
+  height: 1.75rem;
+  padding: 0 0.625rem;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--cycle-ink-muted);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--cycle-motion-state) var(--cycle-ease),
+    color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"]:hover {
+  color: var(--cycle-ink);
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"][data-selected] {
+  background: var(--cycle-surface-selected);
+  color: var(--cycle-ink);
+}
+
+[data-kind="panel-tabs"] [data-slot="tabs-tab"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: -1.5px;
+}
+
+[data-kind="panel-tabs"] > [data-slot="tabs-panel"] {
+  /* What is hidden for a screen reader in a tab stays in this scroller, not below the window. */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  transition: opacity var(--cycle-motion-state) var(--cycle-ease);
+}
+
+/* A tab's content fades in as it is chosen (the SDK's starting style), so a switch reads as one view taking the
+   other's place; opacity only, so a terminal shown is measured once (CYCL-213). The one it replaces goes at once:
+   kept while it faded, the two would stand one above the other. */
+[data-kind="panel-tabs"] > [data-slot="tabs-panel"][data-starting-style] {
+  opacity: 0;
+}
+
+[data-kind="panel-tabs"] > [data-slot="tabs-panel"]:not([data-selected]) {
+  display: none;
+}
+
+/* The Files tab (CYCL-92): a head with where it is and its actions, then the tree, or the file shown in its place. The
+   tree is the sidebar's density: a row per entry, indented by the folder it is in. */
+[data-slot="files"] {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 0 0.5rem 1.5rem;
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="files-head"] {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.5rem 0;
+  background: var(--cycle-surface-sidebar);
+}
+
+[data-slot="files-root"] {
+  flex: 1;
+  min-width: 0;
+  padding: 0 0.25rem;
+  overflow: hidden;
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-weight: 600;
+  white-space: nowrap;
+  mask-image: var(--cycle-fade-end);
+}
+
+/* A path keeps its end, the file's name: it is cut from the start. */
+[data-slot="files-path"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  color: var(--cycle-ink-secondary);
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-kind="files-action"] {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+[data-slot="files-list"] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* What a folder holds, under it: indented by one step. */
+[data-slot="files-nest"] {
+  padding-left: 1rem;
+}
+
+[data-slot="files-row"] {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  min-width: 0;
+  height: 1.75rem;
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--cycle-ink);
+  font: inherit;
+  text-align: start;
+}
+
+[data-slot="files-row"] > svg {
+  flex: none;
+  color: var(--cycle-ink-muted);
+}
+
+button[data-slot="files-row"] {
+  cursor: pointer;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+button[data-slot="files-row"]:hover {
+  background: var(--cycle-surface-hover);
+}
+
+button[data-slot="files-row"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: -1.5px;
+}
+
+/* Ignored by git, or nothing to open: there, but quieter. */
+[data-slot="files-row"]:is([data-ignored], [data-kind="other"]) {
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="files-chevron"] {
+  flex: none;
+  width: 12px;
+  color: var(--cycle-ink-muted);
+  transition: transform var(--cycle-motion-disclosure) var(--cycle-ease);
+}
+
+[aria-expanded="true"] > [data-slot="files-chevron"] {
+  transform: rotate(90deg);
+}
+
+/* The whole rest of the row, so the fade is at the row's end and only a name that reaches it fades. */
+[data-slot="files-name"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: var(--cycle-fade-end);
+}
+
+[data-slot="files-quiet"] {
+  margin: 0;
+  padding: 0.25rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-slot="files-plain"] {
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  border-radius: var(--ui-radius);
+  background: var(--ui-muted);
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+  white-space: pre;
+}
+
+/* A file's text, and over it the lines a reply named (`app.tsx:12`), marked for a moment once gone to: the selection's
+   tint, lighter, fading out at the end. With reduced motion it does not fade: it is gone at once (files.tsx MARK_MS). */
+[data-slot="files-text"] {
+  position: relative;
+}
+
+[data-slot="files-line-mark"] {
+  position: absolute;
+  border-radius: var(--cycle-radius-sm);
+  background: color-mix(in oklab, var(--cycle-accent) 14%, transparent);
+  pointer-events: none;
+  animation: cycle-fade-out var(--cycle-motion-enter) var(--cycle-ease) 1.4s forwards;
+}
+
+@keyframes cycle-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+[data-slot="files-markdown"] {
+  padding: 0 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+[data-slot="files-image"] {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0;
+}
+
+[data-slot="files-image"] > img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--ui-radius);
+}
+
+[data-slot="files-more"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 0.25rem 0;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+/* In a call that read or changed a file: a quiet link to it in the Files tab, its text at the tool's indent. */
+[data-slot="tool-files-link"] {
+  margin: 0.25rem 0 0.25rem 1.25rem;
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--cycle-ink-secondary);
+  font: inherit;
+  font-size: var(--cycle-text-meta);
+  cursor: pointer;
+}
+
+[data-slot="tool-files-link"]:hover {
+  color: var(--cycle-ink);
+}
+
+button[data-slot="mention-chip"] {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button[data-slot="mention-chip"]:hover {
+  background: var(--cycle-surface-hover);
+}
+
+:is([data-slot="tool-files-link"], button[data-slot="mention-chip"]):focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: 1px;
+}
+
+/* The Overview (CYCL-88): blocks one under another, each a quiet head and a few dense lines, at the sidebar's sizes. */
+[data-slot="overview"] {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0.75rem 1.5rem;
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+/* Blocks are told apart by a hairline between them and a heading in ink: the eye finds where each starts. */
+[data-slot="overview-section"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.875rem 0;
+}
+
+[data-slot="overview-section"] + [data-slot="overview-section"] {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="overview-head"] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.25rem;
+}
+
+[data-slot="overview-head"] h2,
+[data-slot="overview"] [data-slot="context-head"] > span:first-child {
+  margin: 0;
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+}
+
+[data-slot="overview-count"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="overview-quiet"],
+[data-slot="overview-away"] {
+  margin: 0;
+  padding: 0 0.25rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-slot="overview-away"] {
+  padding: 0.75rem 0.25rem 0;
+  color: var(--cycle-attention);
+}
+
+[data-slot="overview-goal"] {
+  margin: 0;
+  padding: 0 0.25rem;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+[data-slot="overview-reason"] {
+  margin: 0;
+  padding: 0 0.25rem;
+  overflow-wrap: anywhere;
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="overview"] [data-slot="plan"] {
+  padding: 0 0.25rem;
+}
+
+[data-slot="overview-list"] {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-slot="overview-row"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.25rem;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+button[data-slot="overview-row"] {
+  cursor: pointer;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+button[data-slot="overview-row"]:hover {
+  background: var(--cycle-surface-hover);
+}
+
+button[data-slot="overview-row"]:focus-visible,
+[data-kind="overview-ended"] > button:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: -1.5px;
+}
+
+[data-slot="overview-dot"] {
+  flex: none;
+  /* Level with the middle of the title's line. */
+  margin-top: calc((var(--cycle-leading-ui) * var(--cycle-text-ui) - 6px) / 2);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-muted-foreground);
+}
+
+[data-slot="overview-dot"][data-state="running"] {
+  background: var(--cycle-accent);
+}
+
+[data-slot="overview-dot"][data-state="failed"] {
+  background: var(--ui-destructive);
+}
+
+[data-slot="overview-dot"][data-state="unknown"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--cycle-attention);
+}
+
+[data-slot="overview-lines"] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+[data-slot="overview-title"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: var(--cycle-fade-end);
+}
+
+[data-slot="overview-facts"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-kind="overview-ended"] > button {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 28px;
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--cycle-ink-muted);
+  font: inherit;
+  font-size: var(--cycle-text-meta);
+  cursor: pointer;
+}
+
+[data-kind="overview-ended"] > button:hover {
+  color: var(--cycle-ink);
+}
+
+[data-kind="overview-link"] {
+  align-self: flex-start;
+  height: 1.75rem;
+  padding: 0 0.25rem;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="overview"] [data-slot="context-details"] {
+  gap: 0.5rem;
+  padding: 0 0.25rem;
+}
+
+[data-slot="overview-facts-list"] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  padding: 0 0.25rem;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="overview-facts-list"] dt {
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="overview-facts-list"] dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A path keeps its end, where the folder's name is: cut at the start. */
+[data-slot="overview-path"] {
+  overflow: hidden;
+  font-family: var(--ui-font-mono);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+}
+
+/* What the Overview went back to in the conversation: marked for a moment, then as it was. */
+[data-item-id] {
+  transition: background-color var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+[data-item-id][data-revealed] {
+  border-radius: var(--ui-radius);
+  background: var(--cycle-surface-selected);
+}
+
+[data-slot="stack"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cycle-gap);
+  min-width: 0;
+}
+
+[data-slot="row"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+[data-slot="hint"] {
+  color: var(--ui-muted-foreground);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+/* The content column: conversation, permission and composer share one centred measure. */
+[data-slot="conversation"],
+[data-slot="permissions"],
+[data-slot="composer"],
+[data-slot="blank-where"],
+[data-kind="plan-strip"] {
+  /* At least 24px from either edge, as a page's column is: beside the right panel the view is narrow, and 12 crowds it. */
+  --cycle-column-pad: max(1.5rem, calc((100% - var(--cycle-measure)) / 2));
+}
+
+/* State shapes (status.tsx): a colour and a shape; the word is beside it. */
+[data-slot="dot"] {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  color: var(--ui-muted-foreground);
+}
+
+svg[data-slot="dot"] {
+  width: 12px;
+  height: 12px;
+  border-radius: 0;
+  background: none;
+}
+
+[data-tone="accent"] {
+  color: var(--cycle-accent);
+}
+
+[data-tone="attention"] {
+  color: var(--cycle-attention);
+}
+
+[data-tone="success"] {
+  color: var(--cycle-success);
+}
+
+[data-tone="danger"] {
+  color: var(--ui-destructive);
+}
+
+[data-slot="dot"][data-shape="square"] {
+  border-radius: 2px;
+}
+
+[data-slot="dot"][data-shape="ring"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+[data-slot="dot"][data-shape="pulse"] {
+  animation: cycle-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes cycle-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes cycle-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+[data-slot="spinner"] {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ui-border);
+  border-top-color: var(--cycle-accent);
+  animation: cycle-spin 0.9s linear infinite;
+}
+
+/* What floats: a 1px edge, hardware specular sheen, a shadow, and the raised surface. Every menu, select and popover
+   is this one surface (CYCL-65). Corners nest: a menu of 16 with 6 of padding holds rows of 10, and a dialog is 20. */
+:is([data-slot="menu-content"], [data-slot="select-content"], [data-slot="popover-content"]) {
+  padding: 0.375rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware), var(--cycle-shadow-popover);
+  transition:
+    opacity var(--cycle-motion-enter) var(--cycle-ease),
+    transform var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+/* A tip names a control that has only an icon (CYCL-65): small, on the raised surface like everything that floats, and
+   quick, since moving along a toolbar reads as one tip that follows the pointer. */
+[data-slot="tooltip-content"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware), var(--cycle-shadow-popover);
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  line-height: 1.3;
+  transition: opacity var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="tooltip-content"]:is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+}
+
+[data-slot="tooltip-content"][data-instant] {
+  transition: none;
+}
+
+[data-slot="tooltip-shortcut"] {
+  color: var(--cycle-ink-muted);
+}
+
+:is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware), var(--cycle-shadow-dialog);
+  transition:
+    opacity var(--cycle-motion-enter) var(--cycle-ease),
+    transform var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+:is([data-slot="dialog-title"], [data-slot="alert-dialog-title"]) {
+  font-family: var(--cycle-font-display);
+  letter-spacing: var(--cycle-tracking-display);
+}
+
+:is(
+  [data-slot="menu-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="dialog-content"],
+  [data-slot="alert-dialog-content"]
+):is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+:is(
+  [data-slot="menu-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="dialog-content"],
+  [data-slot="alert-dialog-content"]
+)[data-ending-style] {
+  transition-duration: var(--cycle-motion-state);
+}
+
+[data-slot="row"][data-dialog-footer] {
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+}

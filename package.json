@@ -19,7 +19,7 @@
     "start": "bun run --cwd apps/desktop start",
     "check": "bun scripts/check.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.model.json && tsc -p tsconfig.renderer.json",
-    "lint": "biome check .",
+    "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
     "test": "bun test",
     "prepare": "git config core.hooksPath .githooks || true",

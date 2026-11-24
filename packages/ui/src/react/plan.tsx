@@ -179,9 +179,7 @@ export function PlanBlock({ item }: { item: PlanItem }) {
 /** The session's plan while some of it is still to do: the newest plan item, if any of its entries is not done. */
 export const currentPlan = (conversation: Conversation): PlanItem | undefined => {
   const plan = conversation.items.findLast((item): item is PlanItem => item.kind === "plan");
-  return plan !== undefined && plan.entries.some((entry) => entry.status !== "completed")
-    ? plan
-    : undefined;
+  return plan?.entries.some((entry) => entry.status !== "completed") ? plan : undefined;
 };
 
 /**

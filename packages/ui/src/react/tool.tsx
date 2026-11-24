@@ -12,7 +12,7 @@ import {
 } from "../ansi.ts";
 import { insideFolder, shownPath } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
-import type { Block, DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
+import type { DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import {
   activityOf,
   commandLabelOf,

@@ -308,7 +308,7 @@ test("a plugin's http server is a connector of Cycle's: given to the agent under
           agentName: "plugin:tracker:api",
           http: {
             url: upstream.url,
-            headers: { "X-Key": "Bearer ${TRACKER_TOKEN}", "X-Bundle": "b1" },
+            headers: { "X-Key": `Bearer \${TRACKER_TOKEN}`, "X-Bundle": "b1" },
           },
         },
         { name: "local", agentName: "plugin:tracker:local" },
@@ -384,7 +384,7 @@ test("a plugin's http server is a connector of Cycle's: given to the agent under
       {
         name: "api",
         agentName: "plugin:tracker:api",
-        http: { url: elsewhere.url, headers: { "X-Key": "Bearer ${TRACKER_TOKEN}" } },
+        http: { url: elsewhere.url, headers: { "X-Key": `Bearer \${TRACKER_TOKEN}` } },
       },
     ],
   });

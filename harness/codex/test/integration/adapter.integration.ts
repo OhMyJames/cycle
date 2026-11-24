@@ -13,6 +13,9 @@ import {
 
 import { response } from "./mock-responses.ts";
 
+/** The agent side of a connection, as a test drives it. */
+type Agent = Parameters<Parameters<ReturnType<typeof client>["connectWith"]>[1]>[0];
+
 test("the packaged adapter streams, executes a sandboxed command, interrupts and closes", async () => {
   const dir = await mkdtemp(join(homedir(), ".cycle-test-codex-"));
   const cwd = join(dir, "project"),
@@ -201,7 +204,11 @@ test("an MCP gateway is reached with this launch's key, a resumed session with t
     fetch: async (req) => {
       if (req.method !== "POST") return new Response(null, { status: 405 });
       keys.push(req.headers.get("authorization") ?? "");
-      const msg = (await req.json()) as { id?: number; method: string; params?: any };
+      const msg = (await req.json()) as {
+        id?: number;
+        method: string;
+        params?: { protocolVersion?: string };
+      };
       if (msg.id === undefined) return new Response(null, { status: 202 });
       const result =
         msg.method === "initialize"
@@ -236,7 +243,7 @@ test("an MCP gateway is reached with this launch's key, a resumed session with t
       if (!new URL(req.url).pathname.endsWith("/responses"))
         return new Response(null, { status: 404 });
       const body = (await req.json()) as {
-        tools?: { name?: string; type?: string; tools?: any[] }[];
+        tools?: { name?: string; type?: string; tools?: { name?: string }[] }[];
       };
       if (!callTool) return response(false, "");
       callTool = false;
@@ -284,7 +291,7 @@ supports_websockets=false
     },
   ];
   async function run(
-    open: (agent: any) => Promise<string>,
+    open: (agent: Agent) => Promise<string>,
     check: (updates: SessionUpdate[]) => void,
   ) {
     const proc = launch();

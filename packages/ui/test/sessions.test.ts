@@ -195,7 +195,8 @@ test("what is pinned comes first and stays there, whatever it is doing; it does 
     row("pin-run", { state: "running", updatedAt: at(18, 9) }),
     row("new", { updatedAt: at(18, 10) }),
   ];
-  const pinned = new Set([sessionKey(rows[1]!), sessionKey(rows[2]!)]);
+  const [, pinOld, pinRun] = rows as [SessionSummary, SessionSummary, SessionSummary];
+  const pinned = new Set([sessionKey(pinOld), sessionKey(pinRun)]);
   const list = sessionList(rows, { ...options, pinned });
   expect(list.groups.map((g) => g.kind)).toEqual(["pinned", "needs-you", "today"]);
   expect(ids(list)).toEqual(["pin-run", "pin-old", "ask", "new"]);

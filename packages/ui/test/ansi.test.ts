@@ -84,7 +84,7 @@ test("the 16 colours read at 4.5:1 on the output's ground in both themes", () =>
 });
 
 test("the output's ground is the page's", async () => {
-  const css = await Bun.file(new URL("../src/styles/app.css", import.meta.url)).text();
+  const css = await Bun.file(new URL("../src/styles/base.css", import.meta.url)).text();
   expect(css).toContain(
     `--cycle-surface-message: light-dark(${OUTPUT_GROUND.light}, ${OUTPUT_GROUND.dark});`,
   );

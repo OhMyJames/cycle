@@ -1,0 +1,792 @@
+/* The main column: its header, the notices, the search palette, the account menu. */
+
+/* Main */
+[data-slot="main"] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* macOS: the title bar is hidden and the traffic lights sit in the sidebar's corner, so the top of the
+   window is what you drag (the page sets data-platform from the user agent). */
+/* The sidebar's top row, level with the conversation's header: the button that folds it at its right end. On a Mac
+   it is also the strip the window is dragged by, beside the traffic lights. */
+[data-slot="titlebar"] {
+  display: none;
+}
+
+html[data-platform="darwin"] [data-slot="titlebar"] {
+  display: block;
+  height: 1.25rem;
+  -webkit-app-region: drag;
+}
+
+/* The session sidebar's top row (every platform): as tall as the session header (2.625rem), from the sidebar's top
+   edge (its padding is --cycle-gap, the gap below it 0.5rem), so the fold button sits level with the header's. A page's
+   nav has the same row, so what is under it starts where the sidebar's rows do. */
+html :is([data-slot="sidebar"], [data-slot="page-nav"]) > [data-slot="titlebar"] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 2.625rem;
+  margin: calc(-1 * var(--cycle-gap)) 0 -0.5rem;
+}
+
+html[data-platform="darwin"] [data-slot="titlebar"] button {
+  -webkit-app-region: no-drag;
+}
+
+/* Folding the sidebar, or opening and closing the right panel, slides the column rather than cutting it off, so it is
+   seen where it went (and where its button or shortcut brings it back from). The one width that moves (motion.md),
+   and only for the buttons and shortcuts (`data-animate`, set for the slide by `slideColumns`, split-layout.tsx): a
+   drag or a window being resized moves it at once. The conversation's column slides with it, in step, so together
+   they always fill the window and the columns beside them keep their width. */
+[data-slot="split"][data-animate]
+  > [data-slot="resizable"]:not([data-dragging])
+  > [data-slot="resizable-panel"] {
+  transition: flex-basis var(--cycle-motion-disclosure) var(--cycle-ease);
+}
+
+[data-slot="resizable-panel"]#sidebar {
+  overflow: hidden;
+}
+
+/* The sidebar's content keeps its least width (SIDEBAR.min, set on the split by split-layout.tsx) and is clipped, so
+   its rows do not reflow as it narrows. */
+[data-slot="resizable-panel"]#sidebar > [data-slot="sidebar"] {
+  min-width: var(--cycle-sidebar-min, 200px);
+}
+
+/* While it slides, the panel's content keeps the width it has open (set on the split by split-layout.tsx) and is
+   clipped on the conversation's side, held to the window's edge as the sidebar's is to the other: nothing in it is
+   squeezed, and a terminal in it is not fitted again on every frame. */
+[data-slot="resizable-panel"]#panel {
+  display: flex;
+  justify-content: flex-end;
+  /* Not `hidden`: a file scrolled to inside it must not scroll the column sideways. */
+  overflow: clip;
+}
+
+[data-slot="resizable-panel"]#panel > [data-slot="side-panel"] {
+  flex: 1 0 0;
+  min-width: var(--cycle-panel-width, 0);
+}
+
+/* Closed, the panel takes no room, even before its column is fitted on starting (the saved layout may have it open), and
+   its handle is not drawn at the window's edge. */
+[data-slot="resizable-panel"]#panel:empty {
+  max-width: 0;
+}
+
+[data-slot="split"] [data-slot="resizable-handle"][data-closed] {
+  /* Not taken out: its room coming back as the panel opens would move the columns a pixel under the slide. */
+  visibility: hidden;
+}
+
+/* The room kept for the traffic lights comes and goes with the slide, not before it. */
+html[data-platform="darwin"] [data-slot="split"][data-animate] [data-slot="main"] > :first-child {
+  transition: padding-left var(--cycle-motion-disclosure) var(--cycle-ease);
+}
+
+html[data-platform="darwin"]
+  :is([data-slot="session-header"], [data-slot="empty"], [data-slot="blank-stage"]) {
+  -webkit-app-region: drag;
+}
+
+/* What can be clicked or selected is not a place to drag from: the error's reason has to be selectable. */
+html[data-platform="darwin"]
+  :is([data-slot="session-header"], [data-slot="empty"], [data-slot="blank-stage"])
+  :is(
+    button,
+    a,
+    input,
+    textarea,
+    code,
+    [data-slot="reason"],
+    [data-slot="state-title"],
+    [data-slot="state-body"],
+    [data-slot="composer"],
+    [data-slot="blank-where"],
+    [data-slot="conversation"]
+  ) {
+  -webkit-app-region: no-drag;
+}
+
+/* A drag region takes the clicks of whatever is drawn over it. Dialogs, menus and lists of choices open over the empty state and the
+   session header, so their backdrop and their surface are not part of one: what is on them is clicked, and a click on the backdrop closes. */
+html[data-platform="darwin"] :is([data-slot$="-backdrop"], [data-slot$="-content"]) {
+  -webkit-app-region: no-drag;
+}
+
+/* With the sidebar folded the traffic lights sit in the main area's top-left corner: clear them on whatever is at the top. */
+html[data-platform="darwin"]
+  [data-slot="app"]:has([data-slot="resizable-panel"]#sidebar[data-collapsed])
+  [data-slot="main"]
+  > :first-child {
+  padding-left: 5.5rem;
+}
+
+@keyframes cycle-banner-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+[data-slot="banner"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem var(--cycle-gap);
+  border-bottom: 1px solid var(--ui-border);
+  border-left: 3px solid var(--cycle-accent);
+  animation: cycle-banner-in var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+[data-slot="banner"]:has([data-slot="stack"]) {
+  align-items: flex-start;
+}
+
+[data-slot="banner"] > svg {
+  flex: none;
+  color: var(--cycle-accent);
+}
+
+[data-slot="banner"] > span,
+[data-slot="banner"] > [data-slot="stack"] {
+  flex: 1;
+  min-width: 0;
+}
+
+[data-slot="banner"][data-severity="warning"] {
+  border-left-color: var(--cycle-attention);
+}
+
+[data-slot="banner"][data-severity="warning"] > svg {
+  color: var(--cycle-attention);
+}
+
+[data-slot="banner"][data-severity="error"] {
+  border-left-color: var(--ui-destructive);
+}
+
+[data-slot="banner"][data-severity="error"] > svg {
+  color: var(--ui-destructive);
+}
+
+/* What is the matter with the page, under its title bar (notice-line.tsx): a line tinted with its tone, the icon
+   in the tone, the words in ink on one line, then what can be done. Lined up with the title bar: the icon where the title starts,
+   the close button under its buttons. */
+[data-slot="notice-stack"] {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+[data-slot="notice-line"] {
+  --notice-tone: var(--cycle-attention);
+  --notice-ground: var(--cycle-attention-soft);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  padding: 0 0.5rem 0 var(--cycle-gap);
+  background: var(--notice-ground);
+  border-block: 1px solid color-mix(in oklab, var(--notice-tone) 14%, var(--notice-ground));
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+  animation: cycle-banner-in var(--cycle-motion-enter) var(--cycle-ease);
+  -webkit-app-region: no-drag;
+}
+
+/* Two lines, one rule between them. */
+[data-slot="notice-line"] + [data-slot="notice-line"] {
+  border-block-start: 0;
+}
+
+[data-slot="notice-line"][data-tone="error"] {
+  --notice-tone: var(--ui-destructive);
+  --notice-ground: var(--cycle-destructive-soft);
+}
+
+[data-slot="notice-line"] > svg {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  color: var(--notice-tone);
+}
+
+[data-slot="notice-line"][data-busy] > svg {
+  animation: cycle-spin 1.2s linear infinite;
+}
+
+/* One line: what does not fit fades out at its end, and the whole of it is its title. Selectable: an error's own words
+   are copied into a report. */
+[data-slot="notice-text"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  user-select: text;
+}
+
+[data-slot="notice-line"] [data-kind="notice-action"] {
+  flex: none;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  color: var(--cycle-ink);
+  font-weight: 500;
+}
+
+[data-slot="notice-line"] [data-kind="notice-dismiss"] {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="notice-line"] :is([data-kind="notice-action"], [data-kind="notice-dismiss"]):hover {
+  background: color-mix(in oklab, var(--notice-tone) 12%, var(--notice-ground));
+  color: var(--cycle-ink);
+}
+
+/* What concerns the whole app (app-notice.tsx): cards at the sidebar's foot, over its footer, a card's material with
+   the icon in its tone; the words wrap to four lines at most, whole in the title, then what can be done, at the end. */
+/* In a short window the cards give way and scroll before the list goes under its minimum or the footer is pushed off. */
+[data-slot="app-notices"] {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+[data-slot="app-notices"] > [data-slot="app-notice"] {
+  flex: none;
+}
+
+/* The list gives some of its floor to a notice: a few rows still show. */
+nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
+  min-height: 6rem;
+}
+
+[data-slot="app-notices"]:empty {
+  display: none;
+}
+
+[data-slot="app-notice"] {
+  --notice-tone: var(--cycle-accent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+  animation: cycle-banner-in var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+[data-slot="app-notice"][data-tone="warning"] {
+  --notice-tone: var(--cycle-attention);
+}
+
+[data-slot="app-notice"][data-tone="error"] {
+  --notice-tone: var(--ui-destructive);
+}
+
+[data-slot="app-notice-head"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+/* The icon on the first line's middle. */
+[data-slot="app-notice-head"] > svg {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin-block: calc((var(--cycle-leading-ui) * 1em - 1rem) / 2);
+  color: var(--notice-tone);
+}
+
+[data-slot="app-notice"][data-busy] [data-slot="app-notice-head"] > svg {
+  animation: cycle-spin 1.2s linear infinite;
+}
+
+[data-slot="app-notice-text"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+[data-slot="app-notice"] [data-kind="notice-dismiss"] {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: -0.25rem -0.25rem 0 0;
+  padding: 0;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="app-notice-actions"] {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+[data-slot="app-notice-actions"] > [data-slot="button"] {
+  height: 1.75rem;
+  padding-inline: 0.75rem;
+  font-size: var(--cycle-text-meta);
+}
+
+/* With the sidebar put away: flat rows under the title bar, like the session's own lines but on the page's ground;
+   the icon where the title starts, the words, what can be done, the close button last, under the title bar's buttons. */
+[data-slot="app-notices"][data-at="top"] {
+  flex: none;
+  overflow: visible;
+  gap: 0;
+  padding: 0;
+}
+
+[data-slot="app-notices"][data-at="top"] > [data-slot="app-notice"] {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem 0.25rem var(--cycle-gap);
+  border: 0;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--cycle-surface-workspace);
+  -webkit-app-region: no-drag;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-head"] {
+  display: contents;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-head"] > svg {
+  margin-block: 0;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-text"] {
+  flex: 1 1 16rem;
+  -webkit-line-clamp: 2;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-kind="notice-dismiss"] {
+  order: 2;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="app-notice-actions"] {
+  order: 1;
+}
+
+[data-slot="app-notices"][data-at="top"] [data-slot="command"] {
+  order: 3;
+  flex-basis: 100%;
+  margin-left: 1.5rem;
+}
+
+[data-slot="command"] {
+  display: block;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  font-size: var(--cycle-text-meta);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* The search palette. ui-sdk's Command is a small bordered box: here it fills the dialog, and the title is for screen readers. */
+[data-palette="search"] {
+  width: min(36rem, calc(100vw - 2rem));
+  padding: 0;
+  overflow: hidden;
+}
+
+[data-palette="search"] [data-slot="dialog-title"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+[data-palette="search"] [data-slot="command"] {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+[data-palette="search"] [data-slot="row"] {
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  padding-inline: 0.75rem;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+[data-palette="search"] [data-slot="command-input"] {
+  flex: 1;
+  padding-inline: 0;
+  border-bottom: 0;
+}
+
+[data-palette="search"] [data-slot="command-list"] {
+  max-height: min(24rem, 60vh);
+}
+
+[data-slot="search-row"] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+[data-slot="search-title"] {
+  overflow: hidden;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+[data-slot="search-meta"] {
+  display: flex;
+  gap: 0.75rem;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--cycle-text-meta);
+  color: var(--ui-muted-foreground);
+}
+
+/* Who is signed in, the whole row wide: it opens the app's menu (Settings, the version and its update, signing out). */
+[data-slot="menu-trigger"][data-kind="account-menu"] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  padding-inline: 0.5rem;
+  color: var(--cycle-ink-secondary);
+  font-weight: var(--cycle-weight);
+}
+
+[data-slot="menu-trigger"][data-kind="account-menu"] > svg {
+  flex: none;
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="menu-trigger"][data-kind="account-menu"] > [data-slot="account-state"] {
+  margin-inline-start: auto;
+  color: var(--cycle-attention);
+}
+
+/* The first letter of who it is: a quiet circle, as a row's own marks are. */
+[data-slot="avatar"] {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-selected);
+  color: var(--cycle-ink-secondary);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* Wide enough for an address under the name; a longer one fades at the end. */
+[data-slot="menu-content"][data-kind="account-menu"] {
+  width: 15rem;
+}
+
+[data-slot="account-card"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+}
+
+[data-slot="account-card"] [data-slot="avatar"] {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: var(--cycle-text-ui);
+}
+
+[data-slot="account-who"] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+[data-slot="account-card-name"] {
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 500;
+}
+
+[data-slot="account-card-detail"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+/* The check, and the version at the row's end, right-aligned and quiet. */
+[data-slot="menu-item"][data-kind="update-check"] [data-slot="update-line"] {
+  flex: 1;
+  min-width: 0;
+}
+
+[data-slot="app-version"] {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The session's title bar: one row of 42px, the title and where it runs on one line, actions at the end. No rule under
+   it: the conversation scrolls up to it (old-cycle's title row). */
+[data-slot="session-header"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  height: 2.625rem;
+  flex: none;
+  padding: 0 0.5rem 0 var(--cycle-gap);
+}
+
+[data-slot="session-header"][data-empty-header] {
+  justify-content: flex-start;
+}
+
+/* A tab's button while its tab is what the panel shows: the selected surface, as a chosen tab has. */
+[data-kind="panel-toggle"][data-active] {
+  background: var(--cycle-surface-selected);
+}
+
+[data-kind="sidebar-toggle"],
+[data-kind="session-more"],
+[data-kind="panel-toggle"] {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+[data-slot="session-heading"] {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* The title gives way last: where it runs shrinks first, then the title. Paths truncate from the start so the repo/folder name at the end stays readable. */
+[data-slot="session-header"] h1 {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="session-where"] {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+  text-overflow: ellipsis;
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+  color: var(--ui-muted-foreground);
+}
+
+/* The title is the button that renames it: it reads as the title, and fades at its end (the fade group above). */
+[data-kind="session-title"] {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: nowrap;
+  cursor: text;
+}
+
+[data-kind="session-title"]:focus-visible {
+  outline-offset: -1.5px;
+}
+
+/* Renaming in the header: the field is where the title was, as wide as a long title needs and no wider than the row. */
+[data-slot="session-heading"]:has([data-kind="rename-field"]) {
+  align-items: center;
+}
+
+[data-slot="session-heading"] [data-kind="rename-field"] {
+  flex: 0 1 30rem;
+  min-width: 10rem;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+}
+
+[data-slot="rename-problem"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--cycle-text-meta);
+  color: var(--ui-destructive);
+}
+
+/* The actions at the end: close together, so they read as one group (CYCL-213). */
+[data-slot="session-header"] [data-slot="row"] {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+}
+
+[data-destructive] {
+  color: var(--ui-destructive);
+}
+
+[data-slot="empty"],
+[data-slot="loading"],
+[data-slot="conversation-empty"] {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: var(--ui-muted-foreground);
+  padding: 2rem;
+}
+
+/* A state where content would be (CYCL-67, `state-block.tsx`): nothing yet, loading, failed or away. A page's is
+   centred under a title; an inline one sits in its list or panel with the icon beside the title. */
+[data-slot="state"] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 32rem;
+  text-align: center;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="state"][data-align="start"] {
+  align-items: flex-start;
+  text-align: left;
+}
+
+[data-slot="state-title"] {
+  margin: 0;
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-title);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-title);
+}
+
+[data-slot="state-body"] {
+  margin: 0;
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="state"] > svg {
+  flex: none;
+}
+
+[data-slot="state"][data-tone="error"] > svg {
+  color: var(--ui-destructive);
+}
+
+[data-slot="state"][data-tone="away"] > svg {
+  color: var(--cycle-attention);
+}
+
+[data-slot="state"][data-size="inline"] {
+  align-items: flex-start;
+  gap: 0.375rem;
+  max-width: none;
+  text-align: left;
+}
+
+[data-slot="state"][data-size="inline"]:has(> svg, > [data-slot="spinner"]) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.5rem;
+}
+
+[data-slot="state"][data-size="inline"] > :not(svg, [data-slot="spinner"]) {
+  grid-column: 2;
+  justify-self: start;
+}
+
+[data-slot="state"][data-size="inline"] [data-slot="state-title"] {
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-ui);
+  font-weight: 500;
+  letter-spacing: normal;
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="state"][data-tone="empty"][data-size="inline"] [data-slot="state-title"] {
+  color: var(--cycle-ink-muted);
+  font-weight: var(--cycle-weight);
+}
+
+/* A path a decision is about (folder trust) is read like a reason: whole, wrapped, selectable. */
+:is([data-slot="reason"], [data-slot="decision-path"]) {
+  max-width: 100%;
+  padding: 0.375rem 0.625rem;
+  font-size: var(--cycle-text-meta);
+  overflow-wrap: anywhere;
+  user-select: text;
+  text-align: left;
+}

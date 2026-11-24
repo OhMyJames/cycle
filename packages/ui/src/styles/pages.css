@@ -1,0 +1,331 @@
+/* Whole pages: a blank conversation, the connectors and plugins, signing in. */
+
+/* A blank conversation: the box in the middle of the page, with where its session will run in one line just above it.
+   Above that, only when something stands in the way (not connected, no agent), what it is and what to do. */
+[data-slot="blank-stage"] {
+  --cycle-column-pad: max(1.5rem, calc((100% - var(--cycle-measure)) / 2));
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* safe: content taller than the stage starts at its top and scrolls, not above where scrolling can reach. */
+  justify-content: safe center;
+  gap: 0.5rem;
+  padding-bottom: 10vh;
+  overflow-y: auto;
+}
+
+/* Once the first message is sent, it shows as the conversation and the box is at the foot, as in a session. */
+[data-slot="blank-stage"][data-starting] {
+  justify-content: flex-start;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+/* The page's one left edge is the box's outer border (CYCL-220): the heading, the state above, the line of choices and the
+   bar under the box start on it. A chip's words and icon sit on that edge and its pill, drawn only when hovered or open,
+   hangs out by its padding, as the bar's chips do (composer-tools). */
+[data-slot="blank-lead"] {
+  padding: 0 var(--cycle-column-pad) 0.5rem;
+}
+
+/* A fieldset, so that it is one named group and is disabled whole while the session is being made. Its controls read
+   as the composer's chips do: quiet words that are buttons, the agent first, then where it runs. */
+[data-slot="blank-where"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+  min-width: 0;
+  padding: 0 var(--cycle-column-pad);
+  /* A chip's clear 1px border and its padding: its icon and words start on the edge. */
+  padding-inline-start: calc(var(--cycle-column-pad) - 0.375rem - 1px);
+  border: 0;
+}
+
+/* The agent and the folder: borderless chips with the measures of the permission and model chips (setting-chip), no
+   border, no arrow. */
+[data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"]) {
+  position: relative;
+  min-width: 0;
+  max-width: 24rem;
+  height: 1.5rem;
+  gap: 0.25rem;
+  padding-inline: 0.375rem;
+  border-radius: var(--cycle-radius-pill);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+  font-weight: 500;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"]):is(
+  :hover:not(:disabled),
+  [data-open]
+) {
+  color: var(--cycle-ink);
+}
+
+/* Drawn 24px tall, they take a press 32px tall, as the bar's chips do (measured from inside the clear 1px border). */
+[data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"])::after {
+  content: "";
+  position: absolute;
+  inset: calc(-0.25rem - 1px) -1px;
+}
+
+/* The agent's logo is drawn as the sidebar draws it (agent-logo); the wrapper only keeps it out of the name read aloud. */
+[data-slot="blank-agent-logo"] {
+  flex: none;
+  display: inline-flex;
+}
+
+[data-slot="blank-agent-name"] {
+  min-width: 0;
+}
+
+[data-slot="menu-trigger"][data-kind="blank-folder"][data-unset] {
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="blank-environment-name"] {
+  flex: none;
+  white-space: nowrap;
+}
+
+[data-slot="blank-where-dot"] {
+  flex: none;
+  opacity: 0.5;
+}
+
+/* The page's heading: the one display size (DESIGN.md §2.1), on the box's left edge. */
+[data-slot="blank-hero"] {
+  margin: 0;
+  padding: 0 var(--cycle-column-pad) 0.75rem;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-display);
+  line-height: var(--cycle-leading-display);
+  letter-spacing: var(--cycle-tracking-display);
+  font-weight: 600;
+  color: var(--cycle-ink);
+}
+
+/* A long name fades at its end (the rule for text too long for its line), rather than pushing the others off the line. */
+[data-slot="blank-folder-name"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+[data-slot="blank-trust"] {
+  padding-inline: 0.25rem;
+  border-radius: var(--cycle-radius-sm);
+  font-size: var(--cycle-text-meta);
+  color: var(--cycle-attention);
+}
+
+[data-slot="menu-content"][data-kind="blank-folders"] {
+  min-width: 15rem;
+  max-width: min(26rem, calc(100vw - 1.5rem));
+  max-height: min(24rem, var(--available-height));
+  overflow-y: auto;
+}
+
+/* A folder: its name, and under it the path, cut at its start (right to left) so the part that tells it apart stays. */
+[data-slot="menu-item"][data-kind="blank-recent"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 0.5rem;
+  align-items: center;
+}
+
+[data-slot="blank-recent-name"] {
+  grid-column: 1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+[data-slot="blank-recent-path"] {
+  grid-column: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="menu-item"][data-kind="blank-recent"] svg {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+/* A connector's form, over the Connectors page: wider than a question, and it scrolls when its secrets are many. */
+[data-kind="connector-form"],
+[data-kind="connector-values"],
+[data-kind="plugin-source-form"] {
+  width: min(36rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+}
+
+/* A plugin's row (CYCL-84): what it is in one line that is cut at its end, its facts before it. */
+[data-slot="plugin-facts"] {
+  /* Its own line too, and one that wraps: in a narrow window the facts are more than a line. */
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+[data-slot="plugin-description"] {
+  /* Always a line of its own: the facts before it differ in length from row to row. */
+  flex-basis: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* What one of a plugin's servers still wants, and the button that gives it: one line under the row. */
+[data-slot="page-row"] > [data-plugin-want-of] > [role="alert"] {
+  margin: 0;
+  color: var(--ui-destructive);
+}
+
+[data-slot="page-row"] [data-plugin-want] {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+/* The search and the source above what can be installed: the search takes the room. */
+[data-plugin-filters] {
+  flex-wrap: nowrap;
+}
+
+[data-plugin-filters] > [data-slot="input"] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* How many are shown, and the way to more, under the list. */
+[data-plugin-more] {
+  justify-content: space-between;
+}
+
+/* What went wrong with one connector, under its row or under its form. */
+[data-slot="page-row"] > [role="alert"],
+[data-slot="page-group"] > [role="alert"],
+[data-kind="connector-form"] form > [role="alert"],
+[data-kind="connector-values"] form > [role="alert"],
+[data-kind="plugin-source-form"] form > [role="alert"] {
+  margin: 0;
+  color: var(--ui-destructive);
+}
+
+[data-slot="secrets"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+[data-slot="secrets"] > legend {
+  padding: 0;
+  font-weight: 500;
+}
+
+[data-slot="secret-name"] {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--ui-font-mono);
+  overflow-wrap: anywhere;
+}
+
+[data-slot="secret-name"][data-removed="true"] {
+  text-decoration: line-through;
+  color: var(--ui-muted-foreground);
+}
+
+/* The sign-in page (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md): the whole window until someone is signed in. One card in the
+   middle of the window's own colour, as quiet as the rest: a title, a line of what happens, one action. */
+[data-slot="sign-in"] {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  background: var(--cycle-surface-sidebar);
+}
+
+[data-slot="sign-in"] > [data-slot="titlebar"] {
+  -webkit-app-region: drag;
+  height: 2.5rem;
+}
+
+[data-slot="sign-in-card"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  place-self: center;
+  width: min(26rem, calc(100% - 2rem));
+  margin-bottom: 2.5rem;
+  padding: 1.5rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+}
+
+[data-slot="sign-in-title"] {
+  margin: 0;
+  color: var(--cycle-ink);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-title);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-title);
+}
+
+[data-slot="sign-in-body"],
+[data-slot="sign-in-kept"] {
+  margin: 0;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="sign-in-kept"] {
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="sign-in-note"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+}
+
+[data-slot="sign-in-note"] > svg {
+  flex: none;
+  margin-top: 0.125rem;
+  color: var(--cycle-attention);
+}
+
+[data-slot="sign-in-note"][data-tone="error"] > svg {
+  color: var(--ui-destructive);
+}
+
+[data-slot="sign-in-waiting"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-ui);
+}

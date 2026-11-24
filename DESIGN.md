@@ -28,7 +28,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 
 ### 1.1 中性表面、边框与文字（纯净中性灰）
 
-参考 Rare UI 与 Apple 硬件中性灰体系重调，在暗色下避免纯黑 OLED 晕影的同时保持深邃质感，在浅色下以纯白画布配 Apple 标志性冷浅灰 `#F5F5F7` 侧栏。`app.css` 将 ui-sdk 与 Tailwind v4 `@theme inline` 的语义令牌统一映射到它们。
+参考 Rare UI 与 Apple 硬件中性灰体系重调，在暗色下避免纯黑 OLED 晕影的同时保持深邃质感，在浅色下以纯白画布配 Apple 标志性冷浅灰 `#F5F5F7` 侧栏。`base.css`（`packages/ui/src/styles/`，由 `app.css` 导入）将 ui-sdk 与 Tailwind v4 `@theme inline` 的语义令牌统一映射到它们。
 
 | 令牌                        | 用途                                                     | 浅色      | 深色      |
 | --------------------------- | -------------------------------------------------------- | --------- | --------- |
@@ -85,7 +85,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 - **展示与交互触点字体 `--cycle-font-display`（`Open Runde`）**：带圆角的几何无衬线（`400 / 500 / 600 / 700`），通过显式字重区间映射使 `--cycle-weight: 420` 准确命中 Regular；用于按钮、触发器、会话头部标题、弹窗标题、空状态标题、权限卡标题与空白页引导。侧栏（工作区切换器、分组标签、会话行）统一用正文字体，靠字重与颜色分层，不靠换字体。标题配紧字距 `--cycle-tracking-display`（`-0.015em`）。
 - **正文与密集信息字体 `--ui-font-sans`（`Inter Variable`）**：可变无衬线（开启 `cv02, cv03, cv04, cv11` 光学字形特性与抗锯齿渲染），用于对话正文、Markdown、输入框、会话列表与工具说明，保证长时间阅读清晰舒适。
 - **等宽字体 `--ui-font-mono`（`Geist Mono Variable`）**：仅用于代码、命令、路径、diff、id、系统错误原话。
-- **中文 PingFang 字重映射**：PingFang SC 为固定字重档，`420` 会落到 Medium 导致中文全粗。`app.css` 保留 `Cycle PingFang`（4 个 `@font-face` + `local()`）把 Light/Regular/Medium/Semibold 映射到 1–349 / 350–449 / 450–549 / 550+，排在 `PingFang SC` 前面。
+- **中文 PingFang 字重映射**：PingFang SC 为固定字重档，`420` 会落到 Medium 导致中文全粗。`base.css` 保留 `Cycle PingFang`（4 个 `@font-face` + `local()`）把 Light/Regular/Medium/Semibold 映射到 1–349 / 350–449 / 450–549 / 550+，排在 `PingFang SC` 前面。
 - **字阶（四档，外加一档只给页面主标题的 `display`，根字号 16px）**：
 
 | 档位      | 大小令牌               | 行高令牌                  | 真实值              | 用在                                               |
@@ -142,7 +142,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 
 ### 2.5 Rare UI / shadcn 令牌桥接（Tailwind v4 `@theme inline`）
 
-为兼容 Streamdown 与后续引入的 Rare UI 组件，`packages/ui/src/styles/app.css` 在 `@theme inline` 中将标准 shadcn/Rare UI 语义变量完整桥接到 Cycle 令牌：
+为兼容 Streamdown 与后续引入的 Rare UI 组件，`packages/ui/src/styles/base.css` 在 `@theme inline` 中将标准 shadcn/Rare UI 语义变量完整桥接到 Cycle 令牌：
 
 - **色彩**：`bg-background` / `bg-card` / `bg-popover` / `bg-muted` / `bg-secondary` / `bg-accent`（悬停柔化面）/ `bg-primary`（安全橙 `--cycle-accent`）/ `bg-destructive` / `bg-sidebar*` / `border-border` / `border-input` / `ring-ring`。
 - **字体**：`font-sans`（Inter Variable）、`font-runde` / `font-display`（Open Runde）、`font-mono`（Geist Mono Variable）。
