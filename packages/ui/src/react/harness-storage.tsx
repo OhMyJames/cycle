@@ -10,10 +10,10 @@ import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppStore } from "./store-context.tsx";
 
-type Number = ReturnType<typeof useI18n>["number"];
+type NumberFormat = ReturnType<typeof useI18n>["number"];
 
 /** A size as people read it, in the person's language: "820 byte", "1.5 kB", "120 MB", "1.9 GB". */
-export const bytesText = (number: Number, bytes: number): string => {
+export const bytesText = (number: NumberFormat, bytes: number): string => {
   const unit = (value: number, name: string, digits: number) =>
     number(value, {
       style: "unit",
@@ -46,7 +46,8 @@ export function StorageGroup({
   const [agent, setAgent] = useState<StorageAgent | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
-  const [confirming, setConfirming] = useState(false);
+  /** The size the person was shown when they asked, so the question does not change as the answer comes in. */
+  const [confirming, setConfirming] = useState<number | undefined>(undefined);
   /** What the last clearing freed, until the next one: the answer to the click, in place. */
   const [freed, setFreed] = useState<number | undefined>(undefined);
   const mounted = useRef(true);
@@ -96,7 +97,7 @@ export function StorageGroup({
         />
       ) : loading && agent === undefined ? (
         <StateBlock size="inline" align="start" tone="loading" title={t("storage.loading")} />
-      ) : agent === undefined || (agent.managed && agent.items.length === 0) ? (
+      ) : agent === undefined ? null : agent.managed && agent.items.length === 0 ? (
         <StateBlock
           size="inline"
           align="start"
@@ -130,7 +131,7 @@ export function StorageGroup({
             <Button
               data-variant="outline"
               disabled={caches === 0}
-              onClick={() => setConfirming(true)}
+              onClick={() => setConfirming(caches)}
             >
               {t("storage.clear")}
             </Button>
@@ -148,15 +149,15 @@ export function StorageGroup({
           ) : null}
         </PageRows>
       )}
-      {confirming ? (
+      {confirming !== undefined ? (
         <ConfirmDialog
           open
-          onOpenChange={(open) => !open && setConfirming(false)}
+          onOpenChange={(open) => !open && setConfirming(undefined)}
           title={t("storage.confirmTitle", { agent: agentName })}
           description={t("storage.confirmDescription", {
             agent: agentName,
             location: location.name,
-            size: bytesText(number, caches),
+            size: bytesText(number, confirming),
           })}
           confirmLabel={t("storage.clear")}
           destructive

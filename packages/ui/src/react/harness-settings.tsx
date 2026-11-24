@@ -597,7 +597,12 @@ function HarnessLocationBody({
         </PageGroup>
       ) : null}
       {supportsStorage && hasAgent ? (
-        <StorageGroup location={location} agentId={agentId} agentName={agentName} />
+        <StorageGroup
+          key={`${location.id}:${agentId}`}
+          location={location}
+          agentId={agentId}
+          agentName={agentName}
+        />
       ) : null}
     </>
   );

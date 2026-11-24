@@ -620,7 +620,6 @@ export type ProviderAnswer =
   | { provider: ProviderInfo }
   | { problem: ProviderProblem; message?: string };
 
-/** A location's providers as last read: the ones the owner has, and the known services one can be made for. */
 /** What an agent keeps in its home on a location's machine. `cache` can be cleared; `history` is only shown. */
 export type StorageItem = { id: string; kind: "cache" | "history"; bytes: number };
 export type StorageAgent = {
@@ -636,6 +635,7 @@ export type StorageCleanAnswer =
   | { cleaned: true; freedBytes: number }
   | { cleaned: false; problem: StorageCleanProblem; message: string };
 
+/** A location's providers as last read: the ones the owner has, and the known services one can be made for. */
 export type ProvidersRead = { providers: ProviderInfo[]; kinds: ProviderKind[] };
 
 /** Where an agent's plugins come from (Claude: a marketplace). `kind` is a fixed word the page has its own for. */
