@@ -276,11 +276,16 @@ describe("harness/agy core v1-to-v2 bridge", () => {
         ) as { _meta?: Record<string, unknown> } | undefined;
         expect(completedTool?._meta?.[META.toolResult]).toEqual({ run: { exitCode: 0 } });
 
-        // Permission options forwarded verbatim (only allow_once and reject_once).
+        // agy's own options are forwarded as they are, with "always allow in this session" added after them.
         expect(seenPermOptions).toEqual([
           [
             { optionId: "allow", name: "Allow", kind: "allow_once" },
             { optionId: "deny", name: "Deny", kind: "reject_once" },
+            {
+              optionId: "cycle-allow-session",
+              name: "Always allow in this session",
+              kind: "allow_always",
+            },
           ],
         ]);
 
