@@ -217,23 +217,36 @@ export class TurnTranslator {
     return updates;
   }
 
-  /** A finished TaskCreate or TaskUpdate changes the plan; a failed one does not. */
+  /**
+   * A finished TaskCreate or TaskUpdate changes the plan; a failed one does not.
+   * `structured` is the message's: when the message has other results too, it is this call's only if it names this
+   * call's task (an update's `taskId`, a created task's id as the text says it); otherwise the text is all there is.
+   */
   #planned(
     callId: string,
     failed: boolean,
     structured: unknown,
     text: string,
+    sole: boolean,
   ): SessionUpdate | undefined {
     const call = this.#calls.get(callId);
     if (call === undefined) return undefined;
     this.#calls.delete(callId);
     if (failed) return undefined;
-    const result = (structured ?? {}) as {
+    const said = /#(\w+)/.exec(text)?.[1];
+    const given = (structured ?? {}) as {
       task?: { id?: unknown; subject?: unknown };
       success?: boolean;
+      taskId?: unknown;
     };
+    const own =
+      sole ||
+      (call.name === "TaskCreate"
+        ? given.task?.id !== undefined && String(given.task.id) === said
+        : given.taskId !== undefined && String(given.taskId) === String(call.input.taskId));
+    const result: typeof given = own ? given : {};
     if (call.name === "TaskCreate") {
-      const id = result.task?.id !== undefined ? String(result.task.id) : /#(\w+)/.exec(text)?.[1];
+      const id = result.task?.id !== undefined ? String(result.task.id) : said;
       if (id === undefined) return undefined;
       this.plan.create(id, String(result.task?.subject ?? call.input.subject ?? ""));
     } else {
@@ -298,6 +311,9 @@ export class TurnTranslator {
   #toolResults(message: { content: unknown }, structured: unknown): SessionUpdate[] {
     if (!Array.isArray(message.content)) return [];
     const blocks = (message.content as Block[]).filter((block) => block.type === "tool_result");
+    // The structured result is the message's, not a block's: with more than one result in it, a tool's reader does not
+    // know whose it is and reads only the text; a Task call's can tell by the task it names (`#planned`).
+    const sole = blocks.length === 1;
     const updates: SessionUpdate[] = [];
     for (const block of blocks) {
       const id = String(block.tool_use_id);
@@ -305,13 +321,12 @@ export class TurnTranslator {
       this.#open.delete(id);
       const name = this.#names.get(id);
       this.#names.delete(id);
-      const planned = this.#planned(id, failed, structured, asText(block.content));
+      const planned = this.#planned(id, failed, structured, asText(block.content), sole);
       if (planned !== undefined) updates.push(planned);
-      // The structured result is the message's, not a block's: with more than one result in it, whose it is is not known.
       // Whether a failed call keeps its text is each tool's own reader's to say (`resultOf`).
       const read =
-        blocks.length === 1 && name !== undefined
-          ? resultOf(name, structured, block.content, failed)
+        name !== undefined
+          ? resultOf(name, sole ? structured : undefined, block.content, failed)
           : undefined;
       const raw = rawOutputOf(block.content);
       updates.push({

@@ -310,6 +310,104 @@ test("TaskCreate and TaskUpdate keep one plan across turns", () => {
   expect(entries(later.feed(failed))).toBeUndefined();
 });
 
+test("a message with several Task results gives its structured result only to the call whose task it names", () => {
+  const translator = new TurnTranslator();
+  const calls = (id: string, uses: [string, string, object][]) =>
+    translator.feed({
+      type: "assistant",
+      message: {
+        id,
+        content: uses.map(([useId, name, input]) => ({ type: "tool_use", id: useId, name, input })),
+      },
+    } as unknown as SDKMessage);
+  const results = (texts: [string, string][], structured: object) =>
+    translator.feed({
+      type: "user",
+      message: {
+        content: texts.map(([id, text]) => ({
+          type: "tool_result",
+          tool_use_id: id,
+          content: text,
+        })),
+      },
+      tool_use_result: structured,
+    } as unknown as SDKMessage);
+  const entries = (updates: { sessionUpdate: string }[]) =>
+    (
+      updates.filter((u) => u.sessionUpdate === "plan_update").at(-1) as unknown as {
+        plan: { entries: { content: string; status: string }[] };
+      }
+    ).plan.entries.map((e) => [e.content, e.status]);
+
+  calls("m1", [
+    ["a", "TaskCreate", { subject: "first" }],
+    ["b", "TaskCreate", { subject: "second" }],
+  ]);
+  // The SDK's structured result is the message's: here, only the second call's.
+  expect(
+    entries(
+      results(
+        [
+          ["a", "Task #1 created successfully: first"],
+          ["b", "Task #2 created successfully: second"],
+        ],
+        { task: { id: "2", subject: "second" } },
+      ),
+    ),
+  ).toEqual([
+    ["first", "pending"],
+    ["second", "pending"],
+  ]);
+
+  calls("m2", [
+    ["c", "TaskUpdate", { taskId: "1", status: "completed" }],
+    ["d", "TaskUpdate", { taskId: "2", status: "completed" }],
+  ]);
+  // The refusal is task 2's: task 1's update still counts, task 2's does not.
+  expect(
+    entries(
+      results(
+        [
+          ["c", "Updated task #1 status"],
+          ["d", "Task not found"],
+        ],
+        { success: false, taskId: "2", updatedFields: [], error: "Task not found" },
+      ),
+    ),
+  ).toEqual([
+    ["first", "completed"],
+    ["second", "pending"],
+  ]);
+});
+
+test("a message with several results still reads each one's text: Bash's folder note is not shown", () => {
+  const translator = new TurnTranslator();
+  translator.feed({
+    type: "assistant",
+    message: {
+      id: "m1",
+      content: [
+        { type: "tool_use", id: "a", name: "Bash", input: { command: "true" } },
+        { type: "tool_use", id: "b", name: "Bash", input: { command: "true" } },
+      ],
+    },
+  } as unknown as SDKMessage);
+  const updates = translator.feed({
+    type: "user",
+    message: {
+      content: [
+        { type: "tool_result", tool_use_id: "a", content: "one\nShell cwd was reset to /w" },
+        { type: "tool_result", tool_use_id: "b", content: "two" },
+      ],
+    },
+    tool_use_result: { stdout: "two", stderr: "", interrupted: false },
+  } as unknown as SDKMessage);
+  const texts = updates
+    .filter((u) => u.sessionUpdate === "tool_call_update")
+    .map((u) => JSON.stringify((u as { content: unknown }).content));
+  expect(texts.some((t) => t.includes("Shell cwd"))).toBe(false);
+});
+
 test("a sub-agent's text, tool calls and tool results are not the session's: nothing is sent for them", () => {
   const translator = new TurnTranslator();
   const sub = "toolu_agent";
