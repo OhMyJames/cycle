@@ -17,6 +17,7 @@ import {
 import { type Config, ConfigSchema } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
+import { systemProxyFill } from "./system-proxy.ts";
 
 const isExecutable = (path: string): boolean => {
   try {
@@ -104,7 +105,7 @@ export const agyEnv = (
     if (value !== undefined) env[key] = value;
   }
   env.HOME = config.home ?? join(dataDir, "agy");
-  Object.assign(env, config.env);
+  Object.assign(env, systemProxyFill(config.allowEnv, inherited, config.env), config.env);
   return env;
 };
 

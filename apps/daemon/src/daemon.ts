@@ -148,6 +148,11 @@ export type DaemonOptions = {
    * the process ends, the session stays, and its next prompt starts and resumes one. Never, when not given.
    */
   agentIdleMs?: number;
+  /**
+   * The same for a session a client is still attached to (the desktop never detaches from one it has shown, so
+   * without this its agent would live as long as the app does, CYC-297). Never, when not given.
+   */
+  attachedAgentIdleMs?: number;
   /** How long an agent started ahead (`prewarmAgent`) waits for a session to take it before it is let go. Default 5 minutes. */
   standbyMs?: number;
   /** For tests: the clock idle times are measured by. */
@@ -214,6 +219,7 @@ export class Daemon {
   readonly #plugins: PluginService;
   readonly #terminals: Terminals;
   readonly #agentIdleMs: number | undefined;
+  readonly #attachedAgentIdleMs: number | undefined;
   readonly #standbyMs: number;
   /** Agents started ahead of any session (`prewarmAgent`): one each at most, taken over by the next session to start. */
   readonly #standby = new Map<string, { link: AgentLink; timer: ReturnType<typeof setTimeout> }>();
@@ -260,6 +266,7 @@ export class Daemon {
       loadedMtimeMs: captureConfigMtime(defaultConfigPath),
     };
     this.#agentIdleMs = options.agentIdleMs;
+    this.#attachedAgentIdleMs = options.attachedAgentIdleMs;
     this.#standbyMs = options.standbyMs ?? STANDBY_MS;
     this.#now = options.now ?? Date.now;
     this.#lastClientAt = this.#now();
@@ -391,12 +398,12 @@ export class Daemon {
    * waiting or in the background. What it held is on disk; the next prompt starts and resumes the agent. A queue already
    * held for a client to take back (docs/daemon.md "排队") needs no agent: it does not hold one, and keeps its reason.
    */
-  #reclaimable(session: Session): boolean {
+  #reclaimable(session: Session, attachedOk = false): boolean {
     return (
       !session.closed &&
       session.link !== undefined &&
       session.starting === undefined &&
-      session.attachments.size === 0 &&
+      (attachedOk || session.attachments.size === 0) &&
       // A request waiting for an answer counts as a turn in progress.
       !this.#turnInProgress(session) &&
       (session.queue.length === 0 || session.heldReason !== undefined) &&
@@ -411,12 +418,16 @@ export class Daemon {
    * starts the agent again. Returns the sessions whose agent was let go.
    */
   reclaimIdleAgents(): string[] {
-    const limit = this.#agentIdleMs;
-    if (limit === undefined || this.#closing) return [];
+    const unattachedLimit = this.#agentIdleMs;
+    const attachedLimit = this.#attachedAgentIdleMs;
+    if ((unattachedLimit === undefined && attachedLimit === undefined) || this.#closing) return [];
     const now = this.#now();
     const reclaimed: string[] = [];
     for (const session of this.#sessions.values()) {
-      if (!this.#reclaimable(session) || now - session.lastActive < limit) continue;
+      const attached = session.attachments.size > 0;
+      const limit = attached ? attachedLimit : unattachedLimit;
+      if (limit === undefined || !this.#reclaimable(session, attached)) continue;
+      if (now - session.lastActive < limit) continue;
       this.#log.info("agent_reclaimed", {
         session: session.id,
         idleSeconds: Math.round((now - session.lastActive) / 1000),

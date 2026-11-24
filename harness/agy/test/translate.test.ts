@@ -109,13 +109,25 @@ test("update_steps is agy's plan: its calls are marked, and the finished one rep
     status: "in_progress",
     rawInput: { steps },
   } as V1ToolCallPayload;
-  expect(plans.see(start, "s-plan")).toEqual({ plan: true });
-  // An update carries only what changed: no name, no steps, still the plan's call.
+  // The steps are shown as soon as the call has them, not when it ends (CYC-295).
+  const early = plans.see(start, "s-plan");
+  expect(early.plan).toBe(true);
+  expect(early.update).toBeDefined();
+  // An update carries only what changed: no name, no steps, still the plan's call, and nothing new to say.
   expect(plans.see({ toolCallId: "call_1", kind: "other" } as V1ToolCallPayload, "s-plan")).toEqual(
     { plan: true },
   );
+  // The call ends with the same steps: the plan is not sent twice.
   expect(
     plans.see({ toolCallId: "call_1", status: "completed" } as V1ToolCallPayload, "s-plan"),
+  ).toEqual({ plan: true });
+  // A call that carries its steps only when it ends still makes its plan then.
+  plans.see({ ...start, toolCallId: "call_4", rawInput: {} }, "s-plan");
+  expect(
+    plans.see(
+      { toolCallId: "call_4", status: "completed", rawInput: { steps } } as V1ToolCallPayload,
+      "s-plan",
+    ),
   ).toEqual({
     plan: true,
     update: {
@@ -134,7 +146,7 @@ test("update_steps is agy's plan: its calls are marked, and the finished one rep
     } as SessionUpdate,
   });
   // A failed call changed nothing; another tool is not the plan's.
-  plans.see({ ...start, toolCallId: "call_2" }, "s-plan");
+  plans.see({ ...start, toolCallId: "call_2", rawInput: {} }, "s-plan");
   expect(
     plans.see({ toolCallId: "call_2", status: "failed" } as V1ToolCallPayload, "s-plan"),
   ).toEqual({ plan: true });

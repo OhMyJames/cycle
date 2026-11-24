@@ -3,6 +3,7 @@ export * from "./command-label.ts";
 export * from "./conversation.ts";
 export * from "./edits.ts";
 export * from "./facts.ts";
+export * from "./network-error.ts";
 export * from "./proposal.ts";
 export * from "./resend.ts";
 export * from "./review.ts";

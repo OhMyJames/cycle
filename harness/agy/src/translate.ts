@@ -47,23 +47,33 @@ const stepStatus = (status: unknown): "pending" | "in_progress" | "completed" =>
  */
 export class StepsPlans {
   readonly #steps = new Map<string, unknown>();
+  /** The plan last sent for a call, so an update that changes nothing sends nothing. */
+  readonly #sent = new Map<string, string>();
 
-  /** For a v1 tool call or its update: whether it is a plan call, and the plan it makes if it has just finished. */
+  /** For a v1 tool call or its update: whether it is a plan call, and the plan it makes if it has just changed. */
   see(payload: V1ToolCallPayload, planId: string): { plan: boolean; update?: SessionUpdate } {
     const id = payload.toolCallId;
     if (payload.name === AGY_PLAN_TOOL && !this.#steps.has(id)) this.#steps.set(id, undefined);
     if (!this.#steps.has(id)) return { plan: false };
     const given = (payload.rawInput as { steps?: unknown } | undefined)?.steps;
     if (given !== undefined) this.#steps.set(id, given);
-    if (payload.status !== "completed" && payload.status !== "failed") return { plan: true };
+    const ended = payload.status === "completed" || payload.status === "failed";
     const steps = this.#steps.get(id);
-    this.#steps.delete(id);
+    const sent = this.#sent.get(id);
+    if (ended) {
+      this.#steps.delete(id);
+      this.#sent.delete(id);
+    }
+    // A failed call changed nothing; one still going shows its steps as soon as it has them, not when it ends.
     if (payload.status === "failed" || !Array.isArray(steps)) return { plan: true };
     const entries = steps.flatMap((step: { title?: unknown; status?: unknown } | null) =>
       typeof step?.title === "string" && step.title.trim() !== ""
         ? [{ content: step.title, priority: "medium", status: stepStatus(step.status) }]
         : [],
     );
+    const key = JSON.stringify(entries);
+    if (key === sent) return { plan: true };
+    if (!ended) this.#sent.set(id, key);
     return {
       plan: true,
       update: {
