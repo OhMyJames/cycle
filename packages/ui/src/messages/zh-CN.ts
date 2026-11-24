@@ -214,6 +214,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "image.open": "打开图片：{name}",
   "image.alt.agent": "agent 发来的图片",
   "image.alt.user": "你发送的图片",
+  "image.alt.attached": "你添加的图片",
   "image.close": "关闭",
   "image.viewer.one": "{name}",
   "image.viewer.many": "{name}，第 {index} 张，共 {total} 张",

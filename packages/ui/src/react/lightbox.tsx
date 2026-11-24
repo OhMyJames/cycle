@@ -65,7 +65,7 @@ const clampPan = (pan: Point, natural: Size, scale: number, room: Size): Point =
  * the picture at the size the window allows, never above its own, and nothing framing it. Copy, Download and Close sit at
  * the top right (the traffic lights are top left on a Mac), − / the percentage / + at the bottom. It zooms by the buttons,
  * + − and 0, ctrl or cmd and the wheel, and a pinch; a zoomed picture is dragged or scrolled to see the rest. Esc, the
- * scrim or Close closes it, and the focus goes back to the thumbnail. Pictures of one message are stepped through with ←
+ * scrim or Close closes it, and the focus goes back to the thumbnail (or where `finalFocus` says). Pictures of one message are stepped through with ←
  * and → or the buttons at the sides.
  */
 export function Lightbox({
@@ -75,6 +75,7 @@ export function Lightbox({
   open,
   onOpenChange,
   from,
+  finalFocus,
 }: {
   images: LightboxImage[];
   index: number;
@@ -83,6 +84,8 @@ export function Lightbox({
   onOpenChange: (open: boolean) => void;
   /** Who sent it, for what analytics counts: never the picture. */
   from: "agent" | "user";
+  /** Where the focus goes once it closes; by default the thumbnail that opened it. */
+  finalFocus?: () => HTMLElement | null;
 }) {
   const { t, number } = useI18n();
   const store = useOptionalAppStore();
@@ -310,6 +313,7 @@ export function Lightbox({
         ref={content}
         data-palette="lightbox"
         initialFocus="content"
+        {...(finalFocus !== undefined ? { finalFocus } : {})}
         onKeyDown={onKeyDown}
         onClick={(event) => {
           // A press on the scrim itself closes, unless it ended a drag; one on the picture or the controls (their gaps and

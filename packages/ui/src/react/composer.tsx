@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -19,6 +20,7 @@ import {
   base64Bytes,
   canAdd,
   IMAGE_TYPES,
+  isImageType,
   isPdfBytes,
   kindOf,
   textOfBytes,
@@ -47,6 +49,7 @@ import { optionsOf, propertiesOf } from "./config-form.tsx";
 import { ContextDetails, planRowsOf } from "./context-details.tsx";
 import { useI18n } from "./i18n.tsx";
 import { AttachIcon, CloseIcon, PlusIcon, SendIcon, StopIcon } from "./icons.tsx";
+import { Lightbox, type LightboxImage } from "./lightbox.tsx";
 import { type InputHandle, type InputKey, MarkdownInput } from "./markdown-input.tsx";
 import { optionId, PickerMenu, type PickerRow } from "./picker-menu.tsx";
 import { PlanStrip } from "./plan.tsx";
@@ -409,6 +412,30 @@ export function Composer({
     bytes < 1048576
       ? number(Math.max(1, Math.round(bytes / 1024)), { style: "unit", unit: "kilobyte" })
       : number(bytes / 1048576, { style: "unit", unit: "megabyte", maximumFractionDigits: 1 });
+  // An attached image opens large, as one of a sent message does (CYCL-221); the others attached beside it are a step away.
+  // The one last opened is kept once it closes, so that it is still what fades out.
+  const [preview, setPreview] = useState<{ id: string; open: boolean } | undefined>();
+  // Made again only when what is attached changes, not with each key: the data URLs can be megabytes.
+  const alt = t("image.alt.attached");
+  const previewable = useMemo(
+    () =>
+      attachments.flatMap((a): (LightboxImage & { id: string })[] =>
+        a.kind === "image" && isImageType(a.type)
+          ? [
+              {
+                id: a.id,
+                src: `data:${a.type};base64,${a.data}`,
+                type: a.type,
+                data: a.data,
+                name: a.name,
+                alt,
+              },
+            ]
+          : [],
+      ),
+    [attachments, alt],
+  );
+  const previewIndex = previewable.findIndex((each) => each.id === preview?.id);
   const accepts: Accepts = { images: canAttach, files: canAttachFiles };
   const attachable = canAttach || canAttachFiles;
   const say = (p: AttachmentProblem): string => {
@@ -737,7 +764,15 @@ export function Composer({
             {attachments.map((a) => (
               <li key={a.id} data-slot="attachment" data-kind={a.kind} title={a.name}>
                 {a.kind === "image" ? (
-                  <img src={`data:${a.type};base64,${a.data}`} alt="" />
+                  // Its own button, beside Remove and not around it: removing never opens it.
+                  <button
+                    type="button"
+                    data-slot="attachment-open"
+                    aria-label={t("image.open", { name: a.name })}
+                    onClick={() => setPreview({ id: a.id, open: true })}
+                  >
+                    <img src={`data:${a.type};base64,${a.data}`} alt="" />
+                  </button>
                 ) : (
                   // A file is named and sized, never shown: its content is not drawn here.
                   <>
@@ -763,6 +798,19 @@ export function Composer({
             ))}
           </ul>
         ) : null}
+        <Lightbox
+          images={previewable}
+          index={Math.max(0, previewIndex)}
+          onIndexChange={(index) => {
+            const next = previewable[index];
+            if (next !== undefined) setPreview({ id: next.id, open: true });
+          }}
+          open={preview?.open === true && previewIndex >= 0}
+          onOpenChange={(open) => setPreview((was) => (was === undefined ? was : { ...was, open }))}
+          from="user"
+          // Back to the message, to go on writing it (the editor keeps its caret); to the thumbnail when it takes nothing now.
+          finalFocus={composerInput}
+        />
 
         <div data-slot="composer-lead">
           {attachable ? (

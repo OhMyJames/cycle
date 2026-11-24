@@ -6602,6 +6602,18 @@ button[data-slot="review-file"]:focus-visible {
   object-fit: cover;
 }
 
+/* An attached image is its own button, opening it large (CYCL-221); Remove sits over its corner, apart from it. */
+[data-slot="attachment-open"] {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--cycle-radius-sm) - 1px);
+  background: none;
+  cursor: zoom-in;
+}
+
 [data-slot="attachment-name"] {
   min-width: 0;
   overflow: hidden;
