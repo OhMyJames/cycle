@@ -1,5 +1,6 @@
 import type { AgentApp, Stream } from "@agentclientprotocol/sdk/experimental/v2";
 import type { PromptCapabilities } from "@cycle/protocol";
+import type { AgentSetupProvider } from "./agent-setup.ts";
 import type { PluginProvider } from "./plugins.ts";
 
 /** Where an agent is reached: a stream to a process, or an app in this process (tests). */
@@ -27,5 +28,7 @@ export type AgentDefinition = {
   maxAhead?: number;
   /** Its plugins, when it has them (docs/protocol.md §15). */
   plugins?: PluginProvider;
+  /** Read-only status, diagnostics, auth, and runtime settings provider (docs/protocol.md §16). */
+  setup?: AgentSetupProvider;
   launch: () => Promise<AgentTarget>;
 };

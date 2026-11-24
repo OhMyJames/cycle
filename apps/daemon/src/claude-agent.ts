@@ -11,6 +11,7 @@ import {
 } from "@cycle/harness-claude";
 import { runAdapter } from "@cycle/harness-claude/run";
 import { META } from "@cycle/protocol";
+import { createClaudeSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
@@ -105,6 +106,22 @@ export const claudeHarness: Harness = {
         executable: claudeExecutable(),
         env: { PATH: inherited.PATH ?? "", ...claudeEnv(config.claude, dataDir, inherited) },
         cwd: join(dataDir, "plugins", "claude"),
+      }),
+      setup: createClaudeSetupProvider({
+        config: config.claude,
+        dataDir,
+        inherited,
+        env: () => claudeEnv(config.claude, dataDir, inherited),
+        locateBinary: () => {
+          const shipped = claudeExecutable();
+          if (shipped !== undefined) {
+            return existsSync(shipped)
+              ? { source: "builtin", path: shipped }
+              : { source: "missing" };
+          }
+          const onPath = Bun.which("claude", { PATH: inherited.PATH ?? "" });
+          return onPath ? { source: "path", path: onPath } : { source: "missing" };
+        },
       }),
       ...(log !== undefined ? { log } : {}),
       env: {

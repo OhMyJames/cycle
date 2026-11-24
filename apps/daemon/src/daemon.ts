@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   type AgentContext,
   agent as acpAgent,
@@ -11,8 +11,10 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
+  type AgentSetupSnapshot,
   agentDefaultsRead,
   agentDefaultsSet,
+  agentSetupRead,
   agentsList,
   CHILD_UPDATE,
   CHILD_UPDATE_KINDS,
@@ -81,6 +83,11 @@ import {
 } from "@cycle/protocol";
 import type { z } from "zod";
 import { AgentLink } from "./agent-link.ts";
+import {
+  type ConfigFileSnapshotOptions,
+  captureConfigMtime,
+  readConfigFileStatus,
+} from "./agent-setup.ts";
 import type { AgentDefinition } from "./agents.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
@@ -168,6 +175,8 @@ export type DaemonOptions = {
    * default allowlist over its environment, with the default limits.
    */
   terminals?: Omit<TerminalsOptions, "onChanged" | "log">;
+  /** Host `config.json` path & startup mtime for read-only diagnostics (docs/protocol.md §16). */
+  configFile?: ConfigFileSnapshotOptions;
 };
 
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
@@ -288,6 +297,8 @@ const checkedConfig = (agent: AgentDefinition, raw: unknown): Record<string, str
 
 export class Daemon {
   readonly #version: string;
+  readonly #dataDir: string;
+  readonly #configFile: ConfigFileSnapshotOptions;
   readonly #agents: Map<string, AgentDefinition>;
   readonly #store: LogStore;
   readonly #index: SessionIndex;
@@ -310,6 +321,8 @@ export class Daemon {
   readonly #planUsage = new Map<string, PlanUsage>();
   /** The same, limit by limit, with when each was told: what a newer word replaces. */
   readonly #planLimits = new Map<string, Map<string, { window: PlanWindow; at: number }>>();
+  /** Passively-observed subscription tier (e.g. agy `_meta.antigravity.tier`), cleared on sign-out. */
+  readonly #observedTier = new Map<string, { plan: string; observedAt: number }>();
   #counter = 0;
   #closing = false;
 
@@ -322,6 +335,12 @@ export class Daemon {
     connectors: ConnectorService,
   ) {
     this.#version = options.version ?? "dev";
+    this.#dataDir = options.dataDir;
+    const defaultConfigPath = join(options.dataDir, "config.json");
+    this.#configFile = options.configFile ?? {
+      path: defaultConfigPath,
+      loadedMtimeMs: captureConfigMtime(defaultConfigPath),
+    };
     this.#agentIdleMs = options.agentIdleMs;
     this.#now = options.now ?? Date.now;
     this.#lastClientAt = this.#now();
@@ -751,6 +770,7 @@ export class Daemon {
             [META.sessionId]: session.id,
           },
         } as never);
+        this.#noteObservedTier(session.entry.agent, created);
         return { link, created };
       }
       session.resuming = true;
@@ -771,6 +791,7 @@ export class Daemon {
               ...(session.entry.hadTurn === true ? { [META.hadTurn]: true } : {}),
             },
           } as never);
+          this.#noteObservedTier(session.entry.agent, resumed);
           const replacement = (resumed as { _meta?: Record<string, unknown> } | undefined)?._meta?.[
             META.agentSessionId
           ];
@@ -925,6 +946,118 @@ export class Daemon {
     this.#planUsage.set(agent, usage);
     for (const conn of this.#conns)
       void conn.notify(PLAN_USAGE_CHANGED, { agent, usage }).catch(() => {});
+  }
+
+  #noteObservedTier(agent: string, response: unknown): void {
+    const tier = (response as { _meta?: { antigravity?: { tier?: unknown } } } | undefined)?._meta
+      ?.antigravity?.tier;
+    if (typeof tier === "string" && tier.trim() !== "") {
+      this.#observedTier.set(agent, { plan: tier.trim(), observedAt: this.#now() });
+    }
+  }
+
+  async #readAgentSetup(params: {
+    agent: string;
+    refreshUsage?: boolean | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentSetupSnapshot> {
+    const definition = this.#agents.get(params.agent);
+    if (!definition) {
+      throw new RpcError(INVALID_PARAMS, `Unknown agent: ${params.agent}`, {
+        reason: "unknown_agent",
+        agent: params.agent,
+      });
+    }
+    const configFile = readConfigFileStatus(this.#configFile);
+    const setup = definition.setup;
+    if (!setup) {
+      const available = (await definition.available?.()) ?? true;
+      const usage = this.#planUsage.get(definition.id);
+      return {
+        agent: definition.id,
+        name: definition.name,
+        available,
+        binary: available ? { source: "builtin" } : { source: "missing", problem: "missing" },
+        auth: {
+          state: available ? "auth_unknown" : "binary_unavailable",
+          ...(available ? { unknownReason: "probe_failed" as const } : {}),
+          method: available ? "unknown" : "none",
+          signInModes: [],
+          canSignOut: false,
+          loginCommand: `cycle login ${definition.id}`,
+        },
+        ...(usage !== undefined ? { planUsage: usage } : {}),
+        canRefreshUsage: false,
+        runtime: {
+          schemaVersion: 1,
+          schema: { type: "object", properties: {} },
+          values: {},
+          overrides: [],
+          revision: 0,
+        },
+        environment: {
+          configFile,
+          dataDir: join(this.#dataDir, definition.id),
+          customDataDir: false,
+          allowEnv: [],
+          envNames: [],
+        },
+      };
+    }
+
+    const [binary, authProbe] = await Promise.all([
+      setup.probeBinary(),
+      setup.readAuth({
+        ...(params.refreshUsage !== undefined ? { refreshUsage: params.refreshUsage } : {}),
+        ...(params.forceRefresh !== undefined ? { forceRefresh: params.forceRefresh } : {}),
+      }),
+    ]);
+
+    if (authProbe.planUsage !== undefined) {
+      this.#notePlanUsage(definition.id, {
+        sessionUpdate: PLAN_USAGE_UPDATE,
+        ...authProbe.planUsage,
+      });
+    }
+
+    const observed = this.#observedTier.get(definition.id);
+    let account = authProbe.account;
+    if (authProbe.state === "signed_in" && observed !== undefined && account?.plan === undefined) {
+      account = {
+        ...account,
+        plan: observed.plan,
+        tierObservedAt: observed.observedAt,
+      };
+    }
+
+    const planUsage = this.#planUsage.get(definition.id);
+    const available = binary.problem === undefined && ((await definition.available?.()) ?? true);
+
+    return {
+      agent: definition.id,
+      name: definition.name,
+      available,
+      binary,
+      auth: {
+        state: authProbe.state,
+        ...(authProbe.unknownReason !== undefined
+          ? { unknownReason: authProbe.unknownReason }
+          : {}),
+        method: authProbe.method,
+        ...(authProbe.viaEnv !== undefined ? { viaEnv: authProbe.viaEnv } : {}),
+        ...(account !== undefined ? { account } : {}),
+        signInModes: [...setup.signInModes()],
+        canSignOut: setup.canSignOut(),
+        loginCommand: setup.loginCommand,
+      },
+      ...(planUsage !== undefined ? { planUsage } : {}),
+      canRefreshUsage: setup.canRefreshUsage,
+      runtime: setup.runtimeSnapshot(),
+      environment: {
+        configFile,
+        ...setup.diagnostics(),
+      },
+    };
   }
 
   /**
@@ -1869,6 +2002,7 @@ export class Daemon {
             connectors: true,
             plugins: this.#plugins.agents(),
             planUsage: true,
+            agentSetup: true,
             sessionMentions: true,
             terminal: true,
           },
@@ -2242,6 +2376,7 @@ export class Daemon {
       ),
     }));
     cycle(planUsageRead, () => ({ agents: Object.fromEntries(this.#planUsage) }));
+    cycle(agentSetupRead, (params) => this.#readAgentSetup(params));
     cycle(agentDefaultsRead, (params) => {
       this.#definition(params.agent);
       return { config: this.#defaults.get(params.agent) };

@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { captureConfigMtime } from "./agent-setup.ts";
 import { type Config, ConfigSchema, loadConfig, type Paths } from "./config.ts";
 import { Daemon, defaultTerminals } from "./daemon.ts";
 import { agentsFor } from "./harnesses.ts";
@@ -29,7 +30,9 @@ const loggerFor = (paths: Paths, config: Config, echo?: (line: string) => void):
  */
 export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   let config: Config;
+  let configLoadedMtimeMs: number | undefined;
   try {
+    configLoadedMtimeMs = captureConfigMtime(paths.config);
     config = await loadConfig(paths.config);
   } catch (error) {
     // The settings for the log are in what could not be read: the reason goes to a log with the defaults.
@@ -56,6 +59,10 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       version: VERSION,
       log,
       terminals: defaultTerminals(process.env, config.terminal),
+      configFile: {
+        path: paths.config,
+        ...(configLoadedMtimeMs !== undefined ? { loadedMtimeMs: configLoadedMtimeMs } : {}),
+      },
       ...(agentIdleMs !== undefined ? { agentIdleMs } : {}),
     });
     let clients = 0;

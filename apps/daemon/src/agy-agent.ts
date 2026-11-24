@@ -8,6 +8,7 @@ import {
   isVersionSupported,
 } from "@cycle/harness-agy";
 import { runAdapter } from "@cycle/harness-agy/run";
+import { createAgySetupProvider } from "./agent-setup.ts";
 import { type Config, ConfigSchema } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
@@ -154,6 +155,19 @@ export const agyHarness: Harness = {
         },
         env,
         cwd: join(dataDir, "plugins", "agy"),
+      }),
+      setup: createAgySetupProvider({
+        config: settings,
+        dataDir,
+        inherited,
+        env: () => agyEnv(settings, dataDir, inherited),
+        locateBinary: () => {
+          if (settings.executable !== undefined) {
+            return { source: "configured", path: settings.executable };
+          }
+          const found = findAgyExecutable(settings, inherited);
+          return found !== undefined ? { source: "path", path: found } : { source: "missing" };
+        },
       }),
       ...(log !== undefined ? { log } : {}),
     });

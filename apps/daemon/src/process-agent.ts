@@ -1,5 +1,6 @@
 import { ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
 import type { PromptCapabilities } from "@cycle/protocol";
+import type { AgentSetupProvider } from "./agent-setup.ts";
 import type { AgentDefinition } from "./agents.ts";
 import type { Logger } from "./logger.ts";
 import type { PluginProvider } from "./plugins.ts";
@@ -25,6 +26,8 @@ export type ProcessAgentOptions = {
   maxAhead?: number;
   /** See `AgentDefinition`. */
   plugins?: PluginProvider;
+  /** See `AgentDefinition`. */
+  setup?: AgentSetupProvider;
   /**
    * Where what the process says on stderr goes, line by line, and how it exited (docs/daemon.md "日志"). Its stdout
    * is the protocol and is never logged. Without it stderr is the daemon's own.
@@ -63,6 +66,7 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
   ...(options.available !== undefined ? { available: options.available } : {}),
   ...(options.maxAhead !== undefined ? { maxAhead: options.maxAhead } : {}),
   ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
+  ...(options.setup !== undefined ? { setup: options.setup } : {}),
   launch: async () => {
     const proc = Bun.spawn(options.command, {
       env: options.env,
