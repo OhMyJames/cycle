@@ -553,6 +553,7 @@ test("an advisor call is a call of its own, once, and its encrypted advice is no
       sessionUpdate: "tool_call_update",
       toolCallId: ADVISOR_ID,
       name: "advisor",
+      title: "Advisor",
       kind: "other",
       status: "in_progress",
       rawInput: {},
@@ -622,4 +623,28 @@ test("the context's window is the main model's, not an advisor's beside it", () 
     },
   } as unknown as SDKMessage);
   expect(usage).toMatchObject({ used: 125, size: 200000 });
+
+  // The main model's name not among them (an error's stand-in message came last): never the advisor's window.
+  const lost = new TurnTranslator();
+  lost.feed({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      id: "m",
+      model: "<synthetic>",
+      content: [],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  } as unknown as SDKMessage);
+  expect(
+    lost.usageOf({
+      type: "result",
+      subtype: "success",
+      usage: { iterations: [{ type: "advisor_message", model: "claude-opus-5-5" }] },
+      modelUsage: {
+        "claude-sonnet-5-5[1m]": { contextWindow: 200000 },
+        "claude-opus-5-5": { contextWindow: 1000000 },
+      },
+    } as unknown as SDKMessage),
+  ).toMatchObject({ size: 200000 });
 });

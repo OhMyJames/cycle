@@ -81,6 +81,7 @@ const advisorStarted = (block: Block): SessionUpdate =>
     sessionUpdate: "tool_call_update",
     toolCallId: String(block.id),
     name: ADVISOR_TOOL,
+    title: "Advisor",
     kind: "other",
     status: "in_progress",
     rawInput: {},
@@ -308,7 +309,8 @@ export class TurnTranslator {
   #noteUsage(message: SDKMessage): void {
     const said = (message as { message?: { usage?: Record<string, unknown>; model?: unknown } })
       .message;
-    if (typeof said?.model === "string") this.#model = said.model;
+    // An error's stand-in message is no model's.
+    if (typeof said?.model === "string" && said.model !== "<synthetic>") this.#model = said.model;
     const usage = said?.usage;
     if (usage === undefined) return;
     const n = (key: string) => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
@@ -330,9 +332,29 @@ export class TurnTranslator {
     const byModel =
       (result as { modelUsage?: Record<string, { contextWindow?: number }> }).modelUsage ?? {};
     // The main model's window. The list also has every other model the turn used (an advisor, a sub-agent's), whose
-    // window is not this context's; only when the main one is not named is the largest taken.
-    const main = this.#model !== undefined ? byModel[this.#model]?.contextWindow : undefined;
-    const size = main ?? Math.max(0, ...Object.values(byModel).map((m) => m.contextWindow ?? 0));
+    // window is not this context's. Named as the API names it, or with a suffix (`[1m]`); when it cannot be found, the
+    // largest of the others, never an advisor's.
+    const model = this.#model;
+    const key =
+      model === undefined
+        ? undefined
+        : model in byModel
+          ? model
+          : Object.keys(byModel).find((k) => k.startsWith(model) || model.startsWith(k));
+    const advisors = new Set(
+      (
+        (result as { usage?: { iterations?: { type?: string; model?: string }[] } }).usage
+          ?.iterations ?? []
+      ).flatMap((i) => (i.type === "advisor_message" && i.model !== undefined ? [i.model] : [])),
+    );
+    const size =
+      (key !== undefined ? byModel[key]?.contextWindow : undefined) ??
+      Math.max(
+        0,
+        ...Object.entries(byModel)
+          .filter(([name]) => !advisors.has(name))
+          .map(([, m]) => m.contextWindow ?? 0),
+      );
     if (size === 0) return undefined;
     const cost = (result as { total_cost_usd?: number }).total_cost_usd;
     return {

@@ -620,6 +620,18 @@ test("a new session starts from the agent's own defaults, under the saved ones a
     _meta: { "cycle/config": { advisor: "off" } },
   });
   expect(Object.fromEntries(configs())).toEqual({ model: "opus", advisor: "off" });
+
+  // One of Cycle's defaults the agent refuses (an effort the chosen model does not take) falls away; the session is made.
+  fake.control.rejectConfig.add("advisor");
+  const made = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  expect(made.sessionId).toBeDefined();
+  // What the person chose is still refused out loud.
+  await expect(
+    c.agent.request(methods.agent.session.new, {
+      cwd: "/tmp",
+      _meta: { "cycle/config": { advisor: "opus" } },
+    }),
+  ).rejects.toMatchObject({ code: CycleErrorCode.InvalidConfig });
 });
 
 test("a default value the agent does not list is refused when it is saved, and one it keeps open is not", async () => {

@@ -155,7 +155,7 @@ export const EVENTS = {
   session_pinned: o({ pinned: z.boolean(), where: z.enum(["sidebar", "header"]) }),
   /** After the person confirmed it (AGENTS.md: a delete is confirmed by the client first). */
   session_deleted: o({}),
-  session_config_changed: o({ setting: z.enum(["mode", "model", "effort", "other"]) }),
+  session_config_changed: o({ setting: z.enum(["mode", "model", "effort", "advisor", "other"]) }),
   agent_defaults_saved: o({ agent }),
   /** Hot-reloadable runtime settings saved for an agent (CYCL-232). Never sends setting keys or values. */
   agent_runtime_settings_saved: o({ agent, location: location }),
@@ -454,8 +454,10 @@ export const isUiEvent = (name: string): name is UiEventName =>
 export const agentOf = (id: string): AgentWord =>
   (KNOWN_AGENTS as readonly string[]).includes(id) ? (id as AgentWord) : "other";
 
-export const settingOf = (configId: string): "mode" | "model" | "effort" | "other" =>
-  configId === "mode" || configId === "model" || configId === "effort" ? configId : "other";
+export const settingOf = (configId: string): "mode" | "model" | "effort" | "advisor" | "other" =>
+  configId === "mode" || configId === "model" || configId === "effort" || configId === "advisor"
+    ? configId
+    : "other";
 
 /** What the page says sent a message, as one of the words; anything else is "other". */
 export const viaOf = (value: unknown): z.infer<typeof via> => {
