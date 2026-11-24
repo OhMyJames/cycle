@@ -8,6 +8,7 @@ import { useI18n } from "./i18n.tsx";
 import { MoreIcon, PinIcon, UnpinIcon } from "./icons.tsx";
 import { RenameField, RenameProblem, useRename } from "./rename-field.tsx";
 import { SessionAgent } from "./session-agent.tsx";
+import { COPY_VALUES, SessionCopyMenu } from "./session-copy-menu.tsx";
 import { SessionTime } from "./session-time.tsx";
 import { MARK_STYLE, MARK_WORD, StatusDot } from "./status.tsx";
 import { useAppStore } from "./store-context.tsx";
@@ -73,6 +74,7 @@ function RowActions({
       {away ? null : (
         <Menu
           onAction={(value) => {
+            if (COPY_VALUES.includes(value)) return;
             if (value === "rename") onRename();
             else onAction(value as RowAction);
           }}
@@ -103,6 +105,7 @@ function RowActions({
               {t(pinned ? "session.unpin" : "session.pin")}
             </MenuItem>
             <MenuItem value="rename">{t("session.rename")}</MenuItem>
+            <SessionCopyMenu session={session} />
             <MenuItem value={session.archived ? "restore" : "archive"}>
               {t(session.archived ? "session.restore" : "session.archive")}
             </MenuItem>
