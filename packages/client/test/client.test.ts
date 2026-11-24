@@ -585,3 +585,17 @@ test("a daemon that speaks another major version of the protocol is refused with
   delete options.protocolVersion;
   await until(() => a.state === "connected", "the right protocol to be found again");
 });
+
+test('a worktree is asked for with the session, its branches are listed, and a refusal says why (docs/protocol.md §6 "Worktree")', async () => {
+  const { make } = await setup();
+  const client = make();
+  await client.start();
+  expect(client.capabilities).toMatchObject({ worktrees: true });
+  // /tmp is no repository: the daemon says so, in a reason the page has a sentence for.
+  await expect(client.gitBranches("/tmp")).rejects.toMatchObject({
+    data: { reason: "not_a_repository" },
+  });
+  await expect(client.newSession({ cwd: "/tmp", worktree: {} })).rejects.toMatchObject({
+    data: { reason: "not_a_repository" },
+  });
+});

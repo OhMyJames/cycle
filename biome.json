@@ -9,6 +9,7 @@
       "!apps/desktop/build",
       "!bun.lock",
       "!**/.claude/skills",
+      "!packages/clawdot-plugins/plugins/**/skills",
       "!.agents/worktree",
       "!.claude/worktrees",
       "!**/skills-lock.json",

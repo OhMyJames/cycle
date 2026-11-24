@@ -6,6 +6,7 @@ import { environmentProblem } from "../environments.ts";
 import { messageOf, type StoreKit } from "./core.ts";
 import { blankEnvironmentOf, environmentDefaultOf } from "./environments.ts";
 import { BLANK_KEY, type BlankConversation, viewKey } from "./state.ts";
+import { blankWorktreeOf } from "./worktrees.ts";
 
 /** How long a blank conversation was open before its first message, in four words: only that is reported. */
 const waitedOf = (ms: number): EventProps<"blank_sent">["waited"] =>
@@ -51,6 +52,42 @@ export class BlankSlice {
     if (cwd !== "") void this.#setDefault(blank.locationId, cwd, environmentId);
   };
 
+  /** What the person chose about a worktree on the blank conversation: whether to make one, and the branch to start it from. */
+  chooseWorktree = (choice: { on?: boolean; base?: string }): void => {
+    const blank = this.#kit.state().blank;
+    if (blank === undefined || blank.starting !== undefined) return;
+    this.#kit.set({ blank: { ...blank, worktreeChoice: { ...blank.worktreeChoice, ...choice } } });
+  };
+
+  /** The latest read of the blank folder's branches: an older one that comes back after is not used. */
+  #branchesRead = 0;
+
+  /** Reads the branches a worktree could start from, once the folder is chosen. Only where one could be made. */
+  async #readBranches(): Promise<void> {
+    const { bridge, set, state } = this.#kit;
+    const blank = state().blank;
+    if (blank === undefined) return;
+    const cwd = blank.cwd.trim();
+    const local = state().locations.find((l) => l.id === blank.locationId)?.kind === "local";
+    if (
+      cwd === "" ||
+      !local ||
+      state().status[blank.locationId]?.capabilities?.worktrees !== true
+    ) {
+      if (blank.branches !== undefined) {
+        const { branches: _gone, ...rest } = blank;
+        set({ blank: rest });
+      }
+      return;
+    }
+    const asked = ++this.#branchesRead;
+    const value = await bridge.gitBranches(blank.locationId, cwd).catch(() => null);
+    const now = state().blank;
+    if (now === undefined || asked !== this.#branchesRead) return;
+    if (now.locationId !== blank.locationId || now.cwd.trim() !== cwd) return;
+    set({ blank: { ...now, branches: { locationId: blank.locationId, cwd, value } } });
+  }
+
   /** The blank conversation open on `locationId`, if there is one. */
   #on(locationId: string): boolean {
     return this.#kit.state().blank?.locationId === locationId;
@@ -58,7 +95,10 @@ export class BlankSlice {
 
   /** Its location has just connected: whether its folder is trusted could not be asked before the daemon said it keeps trust. */
   connected(locationId: string): void {
-    if (this.#on(locationId)) void this.#readTrust();
+    if (this.#on(locationId)) {
+      void this.#readTrust();
+      void this.#readBranches();
+    }
   }
 
   /** Its location's agents were read: it was waiting to know which agent it starts. */
@@ -103,7 +143,10 @@ export class BlankSlice {
     if (blank !== open) this.#openedAt = Date.now();
     this.#kit.set({ blank, selectedLocation: blank.locationId, selectedSession: undefined });
     if (blank.config === undefined && blank.unreadable === undefined) void this.#readDefaults();
-    if (blank !== open) void this.#readTrust();
+    if (blank !== open) {
+      void this.#readTrust();
+      void this.#readBranches();
+    }
   };
 
   /** Changes what the blank conversation will start as. Not while it is starting. */
@@ -126,11 +169,20 @@ export class BlankSlice {
         agent: undefined,
         config: undefined,
         ...(blank.environment !== undefined ? { environment: blank.environment } : {}),
+        // Whether to make a worktree is the person's wish; the branch is of a repository.
+        ...(blank.worktreeChoice?.on !== undefined
+          ? { worktreeChoice: { on: blank.worktreeChoice.on } }
+          : {}),
       };
     }
     if (change.cwd !== undefined && change.cwd !== next.cwd) {
       next.cwd = change.cwd;
       delete next.trust;
+      delete next.branches;
+      if (next.worktreeChoice?.base !== undefined) {
+        const { base: _base, ...kept } = next.worktreeChoice;
+        next.worktreeChoice = kept;
+      }
     }
     if (change.agent !== undefined && change.agent !== next.agent) {
       // Another agent has other settings: what was chosen for this one is not for it.
@@ -152,7 +204,10 @@ export class BlankSlice {
     }
     this.#kit.set({ blank: next, selectedLocation: next.locationId });
     if (next.config === undefined && next.unreadable === undefined) void this.#readDefaults();
-    if (next.cwd !== blank.cwd || next.locationId !== blank.locationId) void this.#readTrust();
+    if (next.cwd !== blank.cwd || next.locationId !== blank.locationId) {
+      void this.#readTrust();
+      void this.#readBranches();
+    }
   };
 
   /**
@@ -291,6 +346,12 @@ export class BlankSlice {
       set({ error: { key: "blank.environment.needsFix", params: { name: environment.name } } });
       return;
     }
+    // A worktree when one is offered here and on; sent from the branch shown.
+    const offered = blankWorktreeOf(state(), { ...blank, cwd }, agent.id);
+    const worktree =
+      offered?.on === true
+        ? { ...(offered.base !== undefined ? { base: offered.base } : {}) }
+        : undefined;
     drafts.clear(BLANK_KEY);
     const { authRequired: _clearedAuth, ...baseBlank } = blank;
     const starting: BlankConversation = { ...baseBlank, cwd, starting: content };
@@ -306,6 +367,7 @@ export class BlankSlice {
         agent: agent.id,
         config: blank.config ?? {},
         ...(environment !== undefined ? { environmentId: environment.id } : {}),
+        ...(worktree !== undefined ? { worktree } : {}),
       });
       if (typeof made === "string") sessionId = made;
       // A sentence of the page's, naming the variable and never its value.

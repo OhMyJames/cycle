@@ -66,6 +66,8 @@ export const PluginSchema = z.object({
   scope: PluginScopeSchema.optional(),
   contents: PluginContentsSchema.optional(),
   servers: z.array(PluginServerSchema).optional(),
+  /** Shipped with Cycle and installed by it: it can be turned off, not uninstalled. */
+  builtin: z.boolean().optional(),
 });
 export type Plugin = z.infer<typeof PluginSchema>;
 

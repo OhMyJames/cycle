@@ -1,5 +1,6 @@
 export { createAdapter } from "./agent.ts";
 export {
+  type AgyBuiltinBundle,
   type AgyPlugin,
   AgyPluginError,
   type AgyPluginFailureReason,

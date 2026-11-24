@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   CODEX_FIXED_ARGS,
   CODEX_PROMPT_CAPABILITIES,
+  CodexPlugins,
   configSchema,
   nativeBinary,
 } from "@cycle/harness-codex";
@@ -70,6 +71,13 @@ export const codexHarness: Harness = {
           sessionEnv,
           codexExecutable: settings.executable,
         }),
+      }),
+      // Codex's own command line, with the environment a session gets, in a folder that is no project.
+      plugins: new CodexPlugins({
+        executable,
+        args: CODEX_FIXED_ARGS,
+        env: { PATH: inherited.PATH ?? "", ...env },
+        cwd: join(dataDir, "plugins", "codex"),
       }),
       available: () => {
         const path = executable();

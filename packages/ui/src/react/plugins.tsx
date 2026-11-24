@@ -404,9 +404,11 @@ function Installed({ location, agentId, words, onChanged }: SectionProps) {
                   </Tip>
                   <MenuContent align="end">
                     <MenuItem value="update">{t("plugins.update")}</MenuItem>
-                    <MenuItem value="remove" data-destructive>
-                      {t("plugins.uninstall")}
-                    </MenuItem>
+                    {plugin.builtin !== true && (
+                      <MenuItem value="remove" data-destructive>
+                        {t("plugins.uninstall")}
+                      </MenuItem>
+                    )}
                   </MenuContent>
                 </Menu>
               </PageRow>

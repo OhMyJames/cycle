@@ -330,6 +330,13 @@ export type ClaudePluginSnapshot = {
   available: ClaudePlugin[];
 };
 
+/** What is shipped with Cycle: one marketplace of plugins, each in a directory of its own. */
+export type ClaudeBuiltinBundle = {
+  root: string;
+  marketplace: string;
+  plugins: { name: string; version: string; dir: string }[];
+};
+
 export class ClaudePlugins {
   readonly #executable: string | undefined;
   readonly #env: Record<string, string>;
@@ -511,5 +518,30 @@ export class ClaudePlugins {
 
   async refreshSource(id?: string): Promise<void> {
     await this.#write(["marketplace", "update", ...(id !== undefined ? ["--", id] : [])]);
+  }
+
+  /**
+   * What ships with Cycle is installed, and updated when what ships is newer. What the person has done to an
+   * installed one (turned it off) is left as it is.
+   */
+  async ensureBuiltin(bundle: ClaudeBuiltinBundle): Promise<void> {
+    const marketplaces = await this.#read(["marketplace", "list"]);
+    const sources = (Array.isArray(marketplaces) ? marketplaces : [])
+      .map(sourceOf)
+      .filter((source): source is ClaudePluginSource => source !== undefined);
+    const have = sources.find((source) => source.id === bundle.marketplace);
+    if (have !== undefined && have.location !== bundle.root) await this.removeSource(have.id);
+    if (have === undefined || have.location !== bundle.root) await this.addSource(bundle.root);
+    const installed = await this.installed();
+    for (const plugin of bundle.plugins) {
+      const id = `${plugin.name}@${bundle.marketplace}`;
+      const found = installed.find((p) => p.id === id);
+      if (found === undefined) {
+        await this.install(id);
+      } else if (found.version !== plugin.version) {
+        await this.refreshSource(bundle.marketplace);
+        await this.update(id);
+      }
+    }
   }
 }

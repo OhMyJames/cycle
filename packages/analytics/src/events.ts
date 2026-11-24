@@ -86,6 +86,10 @@ export const EVENTS = {
   language_changed: o({ language: z.enum(["system", "en-US", "zh-CN"]) }),
   /** The person turned the agent's suggestions of what to say next on or off in Settings (CYCL-225). */
   prompt_suggestions_toggled: o({ enabled: z.boolean() }),
+  /** The person turned "start new sessions in a worktree" on or off for an agent in Settings (CYC-273). */
+  worktree_default_toggled: o({ agent, enabled: z.boolean() }),
+  /** A session was deleted together with a worktree that held work nothing else had: the person said to discard it. */
+  worktree_discarded: o({}),
 
   // ---- the account (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md): never who, only how it went ----
   /**
@@ -138,7 +142,13 @@ export const EVENTS = {
 
   // ---- sessions ----
   session_list_loaded: o({ pages: z.number().int().positive() }),
-  session_created: o({ agent, location: location, configured: z.boolean() }),
+  session_created: o({
+    agent,
+    location: location,
+    configured: z.boolean(),
+    /** Whether it was made in a worktree of its own (CYC-273). */
+    worktree: z.boolean(),
+  }),
   /** Starting a session failed because the agent is not signed in (-32000). */
   agent_auth_required: o({ agent, location: location }),
   /** The person copied an install or sign-in command shown for an unavailable or signed-out agent. */

@@ -45,7 +45,10 @@ export const sessionKey = (session: SessionSummary): string =>
   viewKey(session.locationId, session.sessionId);
 
 /** Where something runs: a session, or a blank conversation that has no session yet. */
-export type Place = Pick<SessionSummary, "locationId" | "cwd">;
+export type Place = Pick<SessionSummary, "locationId" | "cwd"> & {
+  /** A session in a worktree is listed under the main checkout it belongs to (docs/desktop.md "Worktree"). */
+  worktree?: Pick<NonNullable<SessionSummary["worktree"]>, "root"> | undefined;
+};
 
 /** A workspace is a folder on one location (a location's id has no "|" in it, so the first one ends it). */
 export const workspaceKey = (session: Place): string =>
@@ -53,8 +56,9 @@ export const workspaceKey = (session: Place): string =>
 
 /** The folder a session works in, without a trailing slash (`/a/app` and `/a/app/` are one). */
 export const folderOf = (session: Place): string => {
-  const trimmed = session.cwd.replace(/\/+$/, "");
-  return trimmed === "" ? (session.cwd.startsWith("/") ? "/" : "") : trimmed;
+  const folder = session.worktree?.root ?? session.cwd;
+  const trimmed = folder.replace(/\/+$/, "");
+  return trimmed === "" ? (folder.startsWith("/") ? "/" : "") : trimmed;
 };
 
 const before = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);

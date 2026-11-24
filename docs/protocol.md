@@ -252,7 +252,43 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 
 **动作**:在 session 的终端里跑。`_cycle/terminal/create` 加可选参数 `actionId`:daemon 从 session 存的快照里取这个动作的命令(按自己的系统选),用登录 shell 的 `-c` 跑,标题是动作的名字。客户端不能借这个参数跑任意命令:命令只来自 session 创建时存下的快照。`actionId` 不存在以 `-32602`、`data.reason: "unknown_action"` 拒绝。
 
-**setup 和 cleanup**:只在 daemon 为 session 新建 worktree 之后、删除之前运行。v1 没有 worktree,所以 daemon 只存不跑。有了 worktree 再定:失败时 session 建不建、输出怎么给客户端看、超时多久。
+**setup 和 cleanup**:只在 daemon 新建 worktree 之后、删除它之前,在这个 worktree 的根目录运行,不在主 checkout 里运行(见下一节 "Worktree")。
+
+### Worktree(2026-11-24,CYC-273)
+
+决定见 [2026-11-24-worktree-is-cycles](../.agents/notes/2026-11-24-worktree-is-cycles.md)。三个 agent 在 Cycle 驱动的这一层都只接收 `cwd`,所以 worktree 由 daemon 管,对三个 agent 一视同仁。
+
+**能力**:`initialize` 里 `"worktrees": true` 才接受下面的字段和 `_cycle/git/branches`。
+
+**位置和名字**:`<主 checkout>/.agents/worktree/<name>`,分支 `worktree-<name>`。和仓库里 Claude 的 `WorktreeCreate` hook 完全一样,两边做出来的 worktree 互相认得。`name` 是用 `/` 分段的若干段,每段只含字母、数字、`.`、`_`、`-`,总长不超过 64;没给就随机生成(`wt-<8 位十六进制>`)。同名目录已经是这个仓库的 worktree 就直接用,不再跑 setup。
+
+**创建时带上**:`session/new` 的 `_meta["cycle/worktree"]`:`{ "base"?: string, "name"?: string }`。daemon 在 session 创建之前建好 worktree,把它的路径作为 `cwd` 交给 agent;session 的 `cwd` 就是这个路径。
+
+- `base`:起始分支,本地分支名,或远端默认分支 `origin/<name>`。不给时用远端默认分支(`refs/remotes/origin/HEAD`),没有就用 `HEAD`。**不 fetch**:用本地已有的引用。
+- 目录不是 git 仓库时以 `-32602`、`reason: "not_a_repository"` 拒绝。第一版不支持远程(SSH)工作位置:daemon 不知道自己是不是被远程连接的,所以由客户端不给远程位置发这个字段。
+- 校验失败以 `-32602` 拒绝,`data.reason`:`not_a_repository`、`invalid_name`、`invalid_base`、`not_a_worktree`。session 创建失败时,这次请求新建的 worktree 一并删掉。
+- **setup**:这次新建了 worktree 且环境带 setup 时,在 worktree 根目录运行一次(超时 10 分钟)。**失败不阻止 session 创建**:worktree 保留,session 照常启动,输出的末尾 8 KiB 放进 `session/list` 行 `_meta["cycle/worktree"].setupFailed`,由客户端显示。
+
+**`session/list` 行**:`_meta["cycle/worktree"]` = `{ root, path, branch?, managed, setupFailed? }`。`root` 是主 checkout,客户端用它把 session 归到同一个 workspace 下;`managed` 为真表示 worktree 是 Cycle 建的(只有这种 Cycle 才会删)。
+
+**`_cycle/git/branches`**:参数 `{cwd}`,响应 `{ branches: string[], current?: string, defaultBranch?: string }`:本地分支、当前检出的分支、远端默认分支(有同名本地分支时是本地名,否则是 `origin/<name>`)。不在仓库里以 `-32602`、`data.reason: "not_a_repository"` 拒绝。
+
+**删除 session**:`session/delete` 的 worktree 是 Cycle 建的时:
+
+1. 先看 worktree 里有没有没提交的文件、没有出现在其他分支上的提交。有,而且 `_meta["cycle/worktree"]` 不是 `{ "discard": true }`,就以 `-32602`、`data.reason: "unsaved_changes"` 拒绝,`data.files`、`data.commits`(各最多 50 条)列出来,session 原样保留。
+2. 通过后,先结束 agent,再运行 cleanup(超时 60 秒,失败只记日志,不阻止删除),再 `git worktree remove` 并删分支(有丢弃的提交时强删,否则让 git 决定)。
+3. **归档不动 worktree**:归档的 session 以后可能取消归档,它的 `cwd` 要还在。
+4. 不是 Cycle 建的 worktree(Claude 的 hook 或人自己建的)Cycle 不删。
+
+**中途进出**:
+
+- **Claude** 用自己的 `EnterWorktree` / `ExitWorktree`,Cycle 不屏蔽、不替换。
+- **Codex、agy** 由 daemon 的 MCP 网关(§14)给 session 一个名为 `cycle-worktree` 的内置服务器,里面是同名、同契约的 `EnterWorktree` / `ExitWorktree`(只在 session 的目录在 git 仓库里、且 agent 是 Codex 或 agy 时给)。入参、出参和拒绝的条件照 Claude SDK 0.3.327 的类型定义:
+  - `EnterWorktree`:`name?` 和 `path?` 互斥;`path` 必须在 `git worktree list` 里;出参 `worktreePath`、`worktreeBranch?`、`message`。已经在 worktree 里时拒绝。
+  - `ExitWorktree`:`action: "keep" | "remove"`,`discard_changes?`;`remove` 且有没提交的文件或没合并的提交时,必须传 `discard_changes: true`,否则拒绝并列出;只删 Cycle 建的;出参 `action`、`originalCwd`、`worktreePath`、`worktreeBranch?`、`discardedFiles?`、`discardedCommits?`、`message`。
+  - 工具名在 agent 里会带前缀(如 `mcp__cycle-worktree__EnterWorktree`);服务器的 `instructions` 说明它们就是 Claude 那两个工具。
+- session 的 `cwd`、`worktree` 立刻变(文件、diff、终端跟着变);**agent 自己的目录从下一个 turn 起变**:daemon 把 agent 标为过期,这个 turn 结束后结束它的进程,下一条 prompt 用 `session/resume` 带新的 `cwd` 把它拉起。这条路对 Codex 和 agy 一样;agy 恢复时换 `cwd` 能否保留上下文没有用真实账号验证过。队列里还有 prompt 时,过期的重启要等队列处理完。
+- Claude 自己建的 worktree 目前**不会**触发 Cycle 的 setup / cleanup,Cycle 也不观察 `EnterWorktree` 的结果(见"待定")。
 
 ## 7. 附着、历史补发与重连
 
@@ -831,7 +867,7 @@ session 索引是另一个文件,记录 sessionId、agent id、agent 侧 session
 - `attentionSeq` 里"值得看"的记录是否还要包括用户取消的 turn(`stopReason: cancelled`)。现在按"都算",因为取消时用户通常在看,客户端会立刻标记已读。
 - `cycle/background` 要不要在 daemon 重启后重建:agent 进程已不在,v1 不重建。
 - connector(§14):loopback 回调的随机端口哪些授权服务器接受(没有在真实服务器上验证);agent 在云端 sandbox 时网关的地址;正在运行的 agent 要不要在 connector 变化后重启。
-- 环境(§6):有了 worktree 后 setup/cleanup 的失败处理和输出。
+- Worktree(§6):Claude 原生 `EnterWorktree` 建出来的 worktree 怎么触发 Cycle 的 setup/cleanup、cwd 变化怎么观察;agy 恢复时换 `cwd` 的真实验证;远程(SSH)工作位置;起始分支是否允许先 fetch。
 - plugin(§15):项目级范围;运行中的 session 即时生效(Claude 有 `reloadPlugins`);来源自己声明要运行命令才能取到的 plugin;agent 给 plugin 服务器起的名字变了时怎么发现。
 
 ## 14. Connector
@@ -923,6 +959,8 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 }
 ```
 
+- `builtin?`:`true` 表示它随 Cycle 一起发(`packages/clawdot-plugins`),由 daemon 静默装好。能停用(`set_enabled`),不能卸载:`uninstall` 以 `plugin_failed`、`reason: "failed"` 拒绝。客户端不显示它的卸载入口。
+
 - `agentId`:它是哪个 agent 的。`id`:在这个 agent 里唯一,**客户端不解析它**(Claude 的是 `名字@来源`,别的 agent 可以是别的)。
 - `name`、`description?`、`version?`:显示用,原样来自 plugin 或它的来源。
 - `sourceId`:它来自哪个来源(下面的 `PluginSource.id`)。
@@ -954,6 +992,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - `uninstall` 同时删掉它带来的 connector 和它们的凭证;客户端必须先向用户确认。
 - 这些操作由 agent 自己的机制执行(Claude:用和 session 相同的白名单环境、在 Cycle 托管的配置目录里运行 `claude plugin …`),可能联网、要几秒到几十秒。同一个 agent 的写操作一次只做一个,后来的排队。
 - 有变化时 daemon 向每个连接发 `_cycle/plugins_changed`,参数 `{agentId}`,客户端重新 `list`。失败的改动之后也发(它可能做了一半)。plugin 带来的 connector 变了,另有 `_cycle/connectors_changed`。
+- **内置 plugin**:daemon 启动后,在后台为每个有 plugin 的 agent 装好随 Cycle 发的那一批(Claude、Codex 把 `clawdot-plugins` 目录作为名为 `clawdot` 的本地 marketplace 加进去再装;agy 按目录装,它自己转换格式)。装过的不再问,随 Cycle 发的版本更新了就更新;用户停用的保持停用。失败(agent 没装好、没有权限)不影响任何事,下次启动这个 agent 之前再试。这一批是 Cycle 自己的代码,所以不要求 `acknowledged`。
 - **生效**:下次启动这个 agent 时(新 session,或恢复一个 session);正在运行的 agent 不变。
 
 ### plugin 带的 MCP 服务器

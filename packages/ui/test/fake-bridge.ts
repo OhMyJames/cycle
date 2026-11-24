@@ -8,6 +8,7 @@ import type {
   CycleBridge,
   Environment,
   EnvironmentsState,
+  GitBranches,
   LocationConfig,
   PlanUsage,
   PluginFailure,
@@ -77,6 +78,7 @@ export const fakeBridge = (
       fs?: boolean;
       diff?: boolean;
       terminal?: boolean;
+      worktrees?: boolean;
       stopSubagent?: boolean;
       environments?: boolean;
     };
@@ -102,6 +104,8 @@ export const fakeBridge = (
     preferences?: Partial<Preferences> & { systemLanguage?: string };
     /** What the daemon answers a stop of one sub-agent with (CYCL-143). Default: it is being stopped. */
     stopSubagent?: (childId: string) => Promise<boolean>;
+    /** What `gitBranches` answers: the branches of the folder, or null for no repository. */
+    branches?: GitBranches | null;
     /** How the account stands. Default: signed in. `signIn` answers with `signInAs` (default: signed in) and says so. */
     account?: AccountStatus;
     signInAs?: AccountStatus;
@@ -111,6 +115,7 @@ export const fakeBridge = (
     theme: "system" as Preferences["theme"],
     language: "system" as Preferences["language"],
     promptSuggestions: true,
+    worktreeAgents: [] as string[],
     systemLanguage: "en-US",
     ...options.preferences,
   };
@@ -288,7 +293,8 @@ export const fakeBridge = (
     ),
     archiveSession: record("archiveSession", async () => {}),
     markRead: record("markRead", async () => {}),
-    deleteSession: record("deleteSession", async () => {}),
+    deleteSession: record("deleteSession", async () => undefined),
+    gitBranches: record("gitBranches", async () => options.branches ?? null),
     answerPermission: record("answerPermission", async () => {}),
     answerForm: record("answerForm", async () => {}),
     copyText: record("copyText", async () => true),

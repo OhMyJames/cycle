@@ -62,6 +62,14 @@ await cp(join(root, "../../harness/codex/licenses"), join(out, "codex-resources/
 });
 if (process.platform === "linux")
   await cp(join(vendorDirectory(), "codex-resources/bwrap"), join(out, "codex-resources/bwrap"));
+// The plugins that ship with Cycle: the sources as they are, read by Claude and Codex and converted by agy.
+await cp(join(root, "../../packages/clawdot-plugins"), join(out, "clawdot-plugins"), {
+  recursive: true,
+  filter: (source) =>
+    !source.includes("node_modules") &&
+    !source.endsWith("/src") &&
+    !source.endsWith("package.json"),
+});
 await cp(join(root, "scripts/install.sh"), join(out, "install.sh"));
 await chmod(join(out, "install.sh"), 0o755);
 await chmod(join(out, "cycle"), 0o755);

@@ -13,6 +13,7 @@ import { FIRST_SIZE } from "./side-panel.tsx";
 import { sessionTitle } from "./sidebar.tsx";
 import { useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
+import { WorktreeBadge } from "./worktrees.tsx";
 
 /**
  * The open session's title bar: its title (renamed in place), its menu, and the buttons of its right panel's tabs.
@@ -55,6 +56,7 @@ export function SessionHeader({
         onEditingChange={onRenaming}
       />
       <div data-slot="row">
+        <WorktreeBadge worktree={session.worktree} />
         <EnvironmentActions
           locationId={session.locationId}
           environment={session.environment}

@@ -205,6 +205,13 @@ const pluginArg = (id: string): string => {
   return id;
 };
 
+/** What is shipped with Cycle: plugins, each in a directory of its own (agy has no marketplace to add). */
+export type AgyBuiltinBundle = {
+  root: string;
+  marketplace: string;
+  plugins: { name: string; version: string; dir: string }[];
+};
+
 export class AgyPlugins {
   readonly #executable: () => string | undefined;
   readonly #env: Record<string, string>;
@@ -300,5 +307,19 @@ export class AgyPlugins {
       "unavailable",
       "agy does not support refreshing plugin sources via CLI",
     );
+  }
+
+  /**
+   * What ships with Cycle is installed from its directory, and installed again (agy replaces it) when what ships is
+   * newer. What the person has done to an installed one (turned it off) is left as it is, also across a replacement.
+   */
+  async ensureBuiltin(bundle: AgyBuiltinBundle): Promise<void> {
+    const installed = await this.installed();
+    for (const plugin of bundle.plugins) {
+      const found = installed.find((p) => p.name === plugin.name);
+      if (found !== undefined && found.version === plugin.version) continue;
+      await this.install(plugin.dir);
+      if (found?.enabled === false) await this.setEnabled(plugin.name, false);
+    }
   }
 }

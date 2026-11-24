@@ -9,6 +9,7 @@ import type {
   SendVia,
   SessionSnapshot,
   SessionSummary,
+  UnsavedWork,
   WorkspacePatch,
   WorkspaceStatus,
 } from "../api.ts";
@@ -407,10 +408,15 @@ export class SessionsSlice {
   delete = async (
     sessionId: string,
     locationId = this.#kit.state().selectedLocation,
-  ): Promise<string | undefined> => {
+    discardWorktree = false,
+  ): Promise<string | UnsavedWork | undefined> => {
     if (locationId === undefined) return undefined;
     try {
-      await this.#kit.bridge.deleteSession(locationId, sessionId);
+      const refused = discardWorktree
+        ? await this.#kit.bridge.deleteSession(locationId, sessionId, true)
+        : await this.#kit.bridge.deleteSession(locationId, sessionId);
+      // Its worktree holds work nothing else has: what would be lost goes back, to ask the person.
+      if (refused !== undefined) return refused.unsaved;
       this.forget(locationId, sessionId);
       return undefined;
     } catch (error) {

@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { captureConfigMtime } from "./agent-setup.ts";
+import { builtinPlugins } from "./builtin-plugins.ts";
 import { type Config, ConfigSchema, loadConfig, type Paths } from "./config.ts";
 import { Daemon, defaultTerminals } from "./daemon.ts";
 import { agentsFor, HARNESSES } from "./harnesses.ts";
@@ -45,6 +46,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   const log = loggerFor(paths, config, options.echo);
   log.info("daemon_starting", { version: VERSION, pid: process.pid, level: config.log.level });
   let daemon: Daemon;
+  const builtin = builtinPlugins();
   const agentIdleMs = minutes(config.idle.agentMinutes);
   // Set once the daemon starts to stop: a client that connects after that is let go at once, and reconnects to the
   // next daemon.
@@ -60,6 +62,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       agents: agentsFor(config, paths.dataDir, process.env, log, HARNESSES, selfCommand()),
       version: VERSION,
       log,
+      ...(builtin !== undefined ? { builtinPlugins: builtin } : {}),
       terminals: defaultTerminals(process.env, config.terminal),
       configFile: {
         path: paths.config,

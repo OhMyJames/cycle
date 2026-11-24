@@ -4,7 +4,7 @@
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { EventName, EventProps } from "@cycle/analytics/events";
+import { agentOf, type EventName, type EventProps } from "@cycle/analytics/events";
 import {
   LANGUAGE_CHOICES,
   type LanguageChoice,
@@ -18,6 +18,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   theme: "system",
   language: "system",
   promptSuggestions: true,
+  worktreeAgents: [],
 };
 
 const isTheme = (value: unknown): value is ThemeChoice =>
@@ -28,11 +29,20 @@ const isLanguage = (value: unknown): value is LanguageChoice =>
 /** What is understood of what was read or asked: a value that is not one of the choices is not taken. */
 export const preferencesOf = (value: unknown): Partial<Preferences> => {
   if (typeof value !== "object" || value === null) return {};
-  const { theme, language, promptSuggestions } = value as Record<string, unknown>;
+  const { theme, language, promptSuggestions, worktreeAgents } = value as Record<string, unknown>;
   return {
     ...(isTheme(theme) ? { theme } : {}),
     ...(isLanguage(language) ? { language } : {}),
     ...(typeof promptSuggestions === "boolean" ? { promptSuggestions } : {}),
+    ...(Array.isArray(worktreeAgents)
+      ? {
+          worktreeAgents: [
+            ...new Set(
+              worktreeAgents.filter((a): a is string => typeof a === "string" && a !== ""),
+            ),
+          ].sort(),
+        }
+      : {}),
   };
 };
 
@@ -120,7 +130,9 @@ export const startPreferences = async (options: {
     const theme = next.theme !== current.theme;
     const language = next.language !== current.language;
     const suggestions = next.promptSuggestions !== current.promptSuggestions;
-    if (!theme && !language && !suggestions) return state();
+    const worktrees = next.worktreeAgents.join("\0") !== current.worktreeAgents.join("\0");
+    if (!theme && !language && !suggestions && !worktrees) return state();
+    const was = current.worktreeAgents;
     // Kept first: if it cannot be, nothing changes and the person is told, instead of a look that is gone at the next start.
     await options.store.save(next);
     current = next;
@@ -131,6 +143,16 @@ export const startPreferences = async (options: {
     if (language) options.track?.("language_changed", { language: next.language });
     if (suggestions)
       options.track?.("prompt_suggestions_toggled", { enabled: next.promptSuggestions });
+    if (worktrees) {
+      // One event for each agent whose default changed: which agent, and on or off, never anything else.
+      for (const agent of new Set([...was, ...next.worktreeAgents])) {
+        if (was.includes(agent) !== next.worktreeAgents.includes(agent))
+          options.track?.("worktree_default_toggled", {
+            agent: agentOf(agent),
+            enabled: next.worktreeAgents.includes(agent),
+          });
+      }
+    }
     return state();
   };
   return {

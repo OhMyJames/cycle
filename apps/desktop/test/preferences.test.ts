@@ -42,6 +42,7 @@ test("a choice is still there after the app starts again", async () => {
     theme: "system",
     language: "system",
     promptSuggestions: true,
+    worktreeAgents: [],
     systemLanguage: "en-GB",
   });
   expect(await first.set({ theme: "dark" })).toMatchObject({ theme: "dark", language: "system" });
@@ -96,6 +97,7 @@ test("a value that is not one of the choices is not taken, from the file or from
     theme: "light",
     language: "tlh",
     promptSuggestions: true,
+    worktreeAgents: [],
   });
   // Once the person chooses a language here, theirs is what is kept.
   await control.set({ language: "zh-CN" });
@@ -158,7 +160,12 @@ test("two changes made at once both hold: the second starts from what the first 
     control.set({ language: "zh-CN" }),
   ]);
   expect(second).toMatchObject({ theme: "dark", language: "zh-CN" });
-  expect(await kept.load()).toEqual({ theme: "dark", language: "zh-CN", promptSuggestions: true });
+  expect(await kept.load()).toEqual({
+    theme: "dark",
+    language: "zh-CN",
+    promptSuggestions: true,
+    worktreeAgents: [],
+  });
   // A change that could not be kept does not stop the one after it.
   expect(applied).toEqual(["system", "dark"]);
 });
@@ -168,4 +175,27 @@ test("the words the analytics take for a theme, a language and a section are the
   expect(EVENTS.language_changed.shape.language.options).toEqual([...LANGUAGE_CHOICES]);
   expect(EVENTS.settings_section_shown.shape.section.options).toEqual([...SETTINGS_SECTIONS]);
   expect(EVENTS.connectors_section_shown.shape.section.options).toEqual([...CONNECTORS_SECTIONS]);
+});
+
+test("the agents that start in a worktree are kept sorted and once, counted by agent word, and anything else is not taken", async () => {
+  const tracked: [string, unknown][] = [];
+  const control = await startPreferences({
+    store: memoryPreferencesStore(),
+    systemLanguage: () => "en-US",
+    applyTheme: () => {},
+    track: (name, props) => tracked.push([name, props]),
+  });
+  expect(
+    (await control.set({ worktreeAgents: ["codex", "agy", "codex", 7, ""] })).worktreeAgents,
+  ).toEqual(["agy", "codex"]);
+  expect(tracked).toEqual([
+    ["worktree_default_toggled", { agent: "agy", enabled: true }],
+    ["worktree_default_toggled", { agent: "codex", enabled: true }],
+  ]);
+  // The same again changes nothing; one taken away is reported as off.
+  await control.set({ worktreeAgents: ["codex", "agy"] });
+  await control.set({ worktreeAgents: ["codex"] });
+  expect(tracked.at(-1)).toEqual(["worktree_default_toggled", { agent: "agy", enabled: false }]);
+  expect(tracked).toHaveLength(3);
+  expect((await control.set({ worktreeAgents: "codex" })).worktreeAgents).toEqual(["codex"]);
 });

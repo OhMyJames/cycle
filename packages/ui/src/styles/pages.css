@@ -47,7 +47,10 @@
 /* The agent and the folder: borderless chips with the measures of the permission and model chips (setting-chip), no
    border, no arrow. */
 [data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"]),
-:is([data-slot="menu-trigger"], [data-slot="button"])[data-kind="blank-environment"] {
+:is([data-slot="menu-trigger"], [data-slot="button"]):is(
+  [data-kind="blank-environment"],
+  [data-kind="blank-worktree"]
+) {
   position: relative;
   min-width: 0;
   max-width: 24rem;
@@ -63,7 +66,7 @@
 
 :is(
   [data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"]),
-  [data-slot="menu-trigger"][data-kind="blank-environment"]
+  [data-slot="menu-trigger"]:is([data-kind="blank-environment"], [data-kind="blank-worktree"])
 ):is(:hover:not(:disabled), [data-open]) {
   color: var(--cycle-ink);
 }
@@ -71,7 +74,10 @@
 /* Drawn 24px tall, they take a press 32px tall, as the bar's chips do (measured from inside the clear 1px border). */
 :is(
   [data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"]),
-  :is([data-slot="menu-trigger"], [data-slot="button"])[data-kind="blank-environment"]
+  :is([data-slot="menu-trigger"], [data-slot="button"]):is(
+    [data-kind="blank-environment"],
+    [data-kind="blank-worktree"]
+  )
 )::after {
   content: "";
   position: absolute;
@@ -89,6 +95,7 @@
 }
 
 [data-slot="menu-trigger"][data-kind="blank-folder"][data-unset],
+[data-kind="blank-worktree"][data-unset],
 [data-kind="blank-environment"][data-unset] {
   color: var(--ui-muted-foreground);
 }
@@ -466,4 +473,27 @@
 /* An environment the file holds that the daemon would refuse: what to fix, in the attention colour. */
 [data-slot="environment-needs-fix"] {
   color: var(--cycle-attention);
+}
+
+/* A session's branch, under its title bar's actions: the one its worktree works on. */
+[data-slot="session-worktree"] {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cycle-ink-muted, inherit);
+  font-size: 0.75rem;
+}
+
+/* The setup script said it failed: text, in the conversation's column. */
+[data-slot="session-worktree-setup"] {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+[data-slot="session-worktree-setup"] pre {
+  margin: 0.25rem 0 0;
+  max-height: 10rem;
+  overflow: auto;
+  white-space: pre-wrap;
 }

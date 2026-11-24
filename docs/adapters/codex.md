@@ -82,7 +82,7 @@
 ## 未做(显式列出,不要悄悄补)
 
 - "以后不问这类命令"(`acceptForSession`、`acceptWithExecpolicyAmendment`)这类审批选项:只给允许一次、拒绝一次。
-- goal(`thread/goal/*`)、后台终端、`/review`、plugin(`PluginProvider`)、Fast 档(`serviceTier`)、从桌面端发起登录(`account/login/start`)。
+- goal(`thread/goal/*`)、后台终端、`/review`、Fast 档(`serviceTier`)、从桌面端发起登录(`account/login/start`)。
 - `isSecret` 的问题没有单独处理:表单答案本来就不进日志(protocol.md §9)。
 - 沙箱拦下的工作区外写入,app-server 不发对应的 `commandExecution` item(容器里实测;模型看得到失败,客户端看不到这条命令)。是 Codex 的行为,适配器补不出来。
 - 长会话的内存没测(一个 session 是适配器加 app-server 两个进程)。

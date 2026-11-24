@@ -1,0 +1,11 @@
+{
+  "name": "clawdot",
+  "owner": { "name": "Clawdot" },
+  "plugins": [
+    {
+      "name": "clawdot-basics",
+      "source": "./plugins/clawdot-basics",
+      "description": "Clawdot team basics"
+    }
+  ]
+}

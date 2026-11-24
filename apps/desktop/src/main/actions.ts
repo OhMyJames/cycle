@@ -17,6 +17,7 @@ import type {
   FileSearch,
   FolderListing,
   FolderTrust,
+  GitBranches,
   NewSession,
   PlanUsage,
   PluginFailure,
@@ -27,6 +28,7 @@ import type {
   TerminalAttached,
   TerminalInfo,
   TerminalProblem,
+  UnsavedWork,
   WorkspacePatch,
   WorkspaceStatus,
 } from "@cycle/ui";
@@ -73,6 +75,18 @@ export const environmentRefusalOf = (error: unknown): EnvironmentRefusal | undef
   );
   if (reason === undefined) return undefined;
   return { reason, ...(typeof data?.name === "string" ? { name: data.name } : {}) };
+};
+
+/** What the daemon says a worktree would lose (`unsaved_changes`, docs/protocol.md §6 "Worktree"); undefined: not that refusal. */
+export const unsavedWorkOf = (error: unknown): UnsavedWork | undefined => {
+  const { code, data } = (error ?? {}) as {
+    code?: unknown;
+    data?: { reason?: unknown; files?: unknown; commits?: unknown };
+  };
+  if (code !== -32602 || data?.reason !== "unsaved_changes") return undefined;
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+  return { files: strings(data.files), commits: strings(data.commits) };
 };
 
 /** Why the daemon would not open a terminal, as a word the page has a sentence for (docs/protocol.md §8 "终端"). */
@@ -195,6 +209,9 @@ export class LocationActions {
       environment = snapshot;
     }
     const { environmentId: _chosen, ...rest } = params;
+    // A worktree is made on this computer only (docs/desktop.md "Worktree"): a remote location is not asked for one.
+    if (params.worktree !== undefined && this.#runtime.kindOf(locationId) !== "local")
+      throw new Error("A worktree can only be made on this computer");
     let sessionId: string;
     try {
       sessionId = await connection.client.newSession({
@@ -226,6 +243,7 @@ export class LocationActions {
       agent: agentOf(params.agent ?? ""),
       location: this.#runtime.kindOf(locationId),
       configured: Object.keys(params.config ?? {}).length > 0,
+      worktree: params.worktree !== undefined,
     });
     return sessionId;
   }
@@ -436,11 +454,37 @@ export class LocationActions {
     await connection.client.markRead(sessionId, row.lastSeq);
   }
 
-  async deleteSession(locationId: string, sessionId: string): Promise<void> {
+  async deleteSession(
+    locationId: string,
+    sessionId: string,
+    discardWorktree?: boolean,
+  ): Promise<{ unsaved: UnsavedWork } | undefined> {
     const connection = this.#runtime.connection(locationId);
-    await connection.client.delete(sessionId);
+    try {
+      await connection.client.delete(sessionId, {
+        ...(discardWorktree === true ? { discardWorktree: true } : {}),
+      });
+    } catch (error) {
+      // The worktree holds work nothing else has: what would be lost goes to the page, to ask the person.
+      const unsaved = unsavedWorkOf(error);
+      if (unsaved !== undefined) return { unsaved };
+      throw error;
+    }
     this.#watcher.deleted(connection, sessionId);
     this.#runtime.track("session_deleted", {});
+    if (discardWorktree === true) this.#runtime.track("worktree_discarded", {});
+    return undefined;
+  }
+
+  /** The branches a worktree could start from; null where there is no repository to make one of. */
+  async gitBranches(locationId: string, cwd: string): Promise<GitBranches | null> {
+    try {
+      return await this.#runtime.connection(locationId).client.gitBranches(cwd);
+    } catch (error) {
+      if ((error as { data?: { reason?: unknown } })?.data?.reason === "not_a_repository")
+        return null;
+      throw error;
+    }
   }
 
   // ---- agents ----
