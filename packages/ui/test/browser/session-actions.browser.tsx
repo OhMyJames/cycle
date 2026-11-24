@@ -53,7 +53,11 @@ test("a row with a mark shows the mark where its time would be", async () => {
   );
   await act(() => store.start());
   await screen.findAllByRole("option");
+  // Under the pointer a row's mark gives way to its actions (display: none), and the pointer is wherever an earlier
+  // test left it: it is put on the other row, so this one is measured at rest.
+  await userEvent.hover(option("Quiet"));
   const busy = option("Busy");
+  expect(busy.matches(":hover")).toBe(false);
   expect(busy.querySelector('[data-slot="session-time"]')).toBeNull();
   const dot = busy.querySelector('[data-slot="session-dot"]') as HTMLElement;
   expect(dot).not.toBeNull();
