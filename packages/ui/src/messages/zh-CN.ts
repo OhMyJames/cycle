@@ -293,6 +293,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "composer.plan.weekly": "每周限额",
   "composer.plan.weeklyOpus": "每周限额，Opus",
   "composer.plan.weeklySonnet": "每周限额，Sonnet",
+  "composer.plan.fiveHourOther": "5 小时限额，Claude 和 GPT",
+  "composer.plan.weeklyOther": "每周限额，Claude 和 GPT",
   "composer.plan.used": "{percent} · {resets}",
   "composer.plan.resetsInMinutes": "{minutes} 分钟后重置",
   "composer.plan.resetsInHours": "{hours} 小时 {minutes} 分钟后重置",

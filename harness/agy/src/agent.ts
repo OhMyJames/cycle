@@ -19,6 +19,7 @@ import {
   withSettingsLock,
   writeManagedSettings,
 } from "./permissions.ts";
+import { PLAN_USAGE_UPDATE, PlanUsageReader } from "./plan-usage.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { DEFAULT_AGY_MODE, toV2ConfigOptions } from "./settings.ts";
 import {
@@ -303,6 +304,17 @@ export function createAdapter(config: AdapterConfig) {
   let closing = false;
   let clientCanElicit = false;
   const sessions = new Map<string, SessionState>();
+  // The account's limits, read by a side process now and then (never a turn): told through whichever session is at hand.
+  const planUsage = new PlanUsageReader<SessionState>({
+    executable: config.agyExecutable,
+    env: config.env,
+    tell: (windows, session) =>
+      emitUpdate(session, {
+        sessionUpdate: PLAN_USAGE_UPDATE,
+        windows,
+        at: Date.now(),
+      } as unknown as SessionUpdate),
+  });
   const cancelTimeoutMs = config.cancelTimeoutMs ?? 5_000;
   // agy's model call between two steps often takes longer than 1.5 s, which flickered running/idle and let a queued
   // message go while agy still worked (CYC-290). No measured spread yet: the low end of 5-10 s, as a message sent in the window is refused.
@@ -490,6 +502,7 @@ export function createAdapter(config: AdapterConfig) {
       stopReason,
       ...(error !== undefined ? { error } : {}),
     } as SessionUpdate);
+    void planUsage.poll(session);
   };
 
   const handleServerExit = (error: Error) => {

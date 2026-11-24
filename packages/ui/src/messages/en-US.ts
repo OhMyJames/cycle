@@ -324,6 +324,8 @@ export const enUS = {
   "composer.plan.weekly": "Weekly limit",
   "composer.plan.weeklyOpus": "Weekly limit, Opus",
   "composer.plan.weeklySonnet": "Weekly limit, Sonnet",
+  "composer.plan.fiveHourOther": "5-hour limit, Claude and GPT",
+  "composer.plan.weeklyOther": "Weekly limit, Claude and GPT",
   "composer.plan.used": "{percent} · {resets}",
   "composer.plan.resetsInMinutes": "resets in {minutes}m",
   "composer.plan.resetsInHours": "resets in {hours}h {minutes}m",
