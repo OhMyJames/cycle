@@ -263,6 +263,47 @@ test("the step says what is going on, and says nothing when the text itself is a
   });
 });
 
+test("a code review on its way is said on the line, since its call shows nothing until its findings come", () => {
+  const skill = (id: string, rawInput?: object) =>
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: id,
+      name: "Skill",
+      status: "in_progress",
+      rawInput,
+    });
+  expect(stepOf(reduce([you("u"), running, skill("s", { skill: "code-review" })]))).toEqual({
+    kind: "review",
+  });
+  // Not yet named: it may be the review, so it shows no row, and the line is not quiet for it.
+  expect(stepOf(reduce([you("u"), running, skill("s")]))).toEqual({ kind: "working" });
+  // Another skill is a call like any other: its row says it is at work.
+  expect(stepOf(reduce([you("u"), running, skill("s", { skill: "run" })]))).toMatchObject({
+    kind: "tool",
+  });
+  // Something done after it, in the same turn, does not hide it: the review is still what is going.
+  const review = skill("s", { skill: "code-review" });
+  expect(stepOf(reduce([you("u"), running, review, tool("a", "Bash")]))).toEqual({
+    kind: "review",
+  });
+  // A call at work after it says so on its own row.
+  expect(
+    stepOf(reduce([you("u"), running, review, tool("a", "Bash", "in_progress")])),
+  ).toMatchObject({ kind: "tool" });
+  // Reporting findings is not reviewing: the agent is at work, and the line is not quiet for a call with no row.
+  const report = (findings?: object[]) =>
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "r",
+      name: "ReportFindings",
+      status: "in_progress",
+      rawInput: findings === undefined ? undefined : { findings },
+    });
+  expect(stepOf(reduce([you("u"), running, report()]))).toEqual({ kind: "working" });
+  const found = { file: "a.ts", summary: "It breaks.", failure_scenario: "When empty." };
+  expect(stepOf(reduce([you("u"), running, report([found])]))).toEqual({ kind: "working" });
+});
+
 const many = (turns: number) =>
   blocksOf(
     reduce(

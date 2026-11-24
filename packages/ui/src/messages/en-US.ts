@@ -542,6 +542,7 @@ export const enUS = {
   // The agent's request to the model failed and it is trying again by itself: nothing for the person to do
   "step.retrying": "The request failed, trying again…",
   "step.retryingCount": "The request failed, trying again ({attempt} of {max})…",
+  "step.review": "Running a code review…",
   "step.run": "Running a command",
   "step.read": "Reading a file",
   "step.edit": "Editing a file",

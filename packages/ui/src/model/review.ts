@@ -191,6 +191,13 @@ export const isPendingReview = (tool: ToolItem): boolean =>
       !["completed", "failed", "cancelled"].includes(tool.status ?? "pending") &&
       reviewOf(tool) === undefined;
 
+/**
+ * The code-review skill at work, named as it: the review itself, which takes minutes and shows nothing until its findings
+ * come, so the step line says it. A ReportFindings call on its way is not: it only reports a review already done.
+ */
+export const isRunningReview = (tool: ToolItem): boolean =>
+  isPendingReviewSkill(tool) && isReviewCall(tool);
+
 /** How many findings there are of each verdict, for the card's summary line. */
 export const reviewTally = (
   review: Review,

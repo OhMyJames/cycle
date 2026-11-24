@@ -30,7 +30,7 @@ import type {
   UserItem,
 } from "./conversation.ts";
 import { textOf } from "./conversation.ts";
-import { isPendingReview, type Review, reviewOf } from "./review.ts";
+import { isPendingReview, isRunningReview, type Review, reviewOf } from "./review.ts";
 
 export type Activity = "run" | "read" | "edit" | "search" | "list" | "fetch" | "other";
 
@@ -410,6 +410,11 @@ export type Step =
   | { kind: "tool"; tool: ToolItem }
   | { kind: "thinking" }
   | { kind: "working" }
+  /**
+   * A code review on its way. Its call shows nothing until its findings come (`isPendingReview`), and a review runs for
+   * minutes: the line says it, so the turn does not look stuck.
+   */
+  | { kind: "review" }
   /** The agent's model request failed and it is trying again by itself: nothing for the person to do. */
   | { kind: "retrying"; attempt?: number; maxRetries?: number };
 
@@ -423,18 +428,32 @@ export const stepOf = (c: Conversation): Step | undefined => {
   if (c.status === "requires_action") return { kind: "approval" };
   const last = c.items.at(-1);
   if (last === undefined || last.turn !== c.turns) return { kind: "working" };
+  // What is said when nothing more particular is going: a review still at work, if one is, since nothing else says it.
+  const busy = (): Step => (reviewing(c) ? { kind: "review" } : { kind: "working" });
   switch (last.kind) {
     case "tool":
-      return isLive(last) ? { kind: "tool", tool: last } : { kind: "working" };
+      // A call that shows no row (a review on its way, or a review card) has no row to say it is at work: the line does.
+      if (isPendingReview(last) || (isLive(last) && reviewOf(last) !== undefined)) return busy();
+      return isLive(last) ? { kind: "tool", tool: last } : busy();
     case "thought":
       return { kind: "thinking" };
     case "agent":
       return undefined;
     case "notice":
-      return last.retry !== undefined ? { kind: "retrying", ...last.retry } : { kind: "working" };
+      return last.retry !== undefined ? { kind: "retrying", ...last.retry } : busy();
     default:
-      return { kind: "working" };
+      return busy();
   }
+};
+
+/** Whether the turn that is going has the code-review skill at work: from its end, back to the turn's first item. */
+const reviewing = (c: Conversation): boolean => {
+  for (let at = c.items.length - 1; at >= 0; at--) {
+    const item = c.items[at];
+    if (item === undefined || item.turn !== c.turns) return false;
+    if (item.kind === "tool" && isRunningReview(item)) return true;
+  }
+  return false;
 };
 
 /** How many blocks a long conversation shows at first, and how many more each time the person nears its top. */
