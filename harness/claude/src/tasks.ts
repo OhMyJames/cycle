@@ -77,7 +77,7 @@ export class BackgroundTasks {
   }
 
   /** Whether a list entry is one of these tasks, and not one already told as ended. */
-  #listed = (task: Task): task is Task & { task_id: string } => {
+  #accepts = (task: Task): task is Task & { task_id: string } => {
     // Every entry of the list names its type (SDK); one that does not is not known to be ours to tell.
     if (
       typeof task.task_id !== "string" ||
@@ -97,7 +97,7 @@ export class BackgroundTasks {
   reconcile(tasks: readonly Task[]): SessionUpdate[] {
     return this.#known.reconcile(
       tasks,
-      this.#listed,
+      this.#accepts,
       (task) => {
         const known = this.#known.get(task.task_id);
         this.#known.set(task.task_id, { run: task.run_id ?? known?.run, unknown: false });

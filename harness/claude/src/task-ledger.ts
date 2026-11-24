@@ -7,7 +7,7 @@ export type LedgerEntry = { run: string | undefined; unknown: boolean };
 export type Listed = { task_id?: unknown; run_id?: string };
 
 /**
- * The life of the tasks a client was told of, shared by the sub-agents and the other background tasks (D-16): the
+ * The life of the tasks a client was told of, shared by the sub-agents and the other background tasks (CYCL-263): the
  * SDK's `task_*` messages and its background list, with the same rules for both.
  *
  * - A task Claude Code ran again has a later `run_id`: what is said of an earlier run is stale.

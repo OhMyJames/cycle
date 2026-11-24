@@ -82,7 +82,10 @@ export class Subagents {
   reconcile(tasks: readonly Task[]): SessionUpdate[] {
     return this.#known.reconcile(
       tasks,
-      (task): task is Task => (task as Task).task_type === "local_agent" && !(task as Task).ambient,
+      (task): task is Task =>
+        typeof task.task_id === "string" &&
+        (task as Task).task_type === "local_agent" &&
+        !(task as Task).ambient,
       (task) => this.update({ ...task, subtype: "task_started", is_backgrounded: true }),
       (id) => this.#make({ task_id: id }, undefined, undefined, "unknown"),
     );
