@@ -1,20 +1,16 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { FILE_SEARCH_LIMITS, searchFiles } from "../src/files.ts";
-import { tempDir } from "./support.ts";
+import { eachTempDir } from "./support.ts";
 
 let root: string;
 let outside: string;
-let dispose: () => Promise<void>;
-let disposeOutside: () => Promise<void>;
-beforeEach(async () => {
-  ({ dir: root, dispose } = await tempDir());
-  ({ dir: outside, dispose: disposeOutside } = await tempDir());
+eachTempDir((made) => {
+  root = made;
 });
-afterEach(async () => {
-  await dispose();
-  await disposeOutside();
+eachTempDir((made) => {
+  outside = made;
 });
 
 const touch = async (path: string, where = root) => {

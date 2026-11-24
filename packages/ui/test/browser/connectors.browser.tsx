@@ -1,10 +1,9 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { ConnectorInfo, EnvironmentConfig } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
 
@@ -44,14 +43,8 @@ const mount = async (
     connectors: options.connectors ?? [],
     ...(options.environments !== undefined ? { environments: options.environments } : {}),
   });
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await user.click(await screen.findByRole("button", { name: "Connectors" }));
   // The page opens on its first section, Plugins (plugins.browser.tsx): these are about the second.
   await user.click(await screen.findByRole("tab", { name: "MCP servers" }));
@@ -156,14 +149,8 @@ test("a list that cannot be read says why, in the system's words, and can be ask
   script.bridge.listConnectors = async () => {
     throw new Error("Error invoking remote method 'cycle:listConnectors': Error: Not connected");
   };
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await user.click(await screen.findByRole("button", { name: "Connectors" }));
   await user.click(await screen.findByRole("tab", { name: "MCP servers" }));
   const failed = await screen.findByRole("alert");

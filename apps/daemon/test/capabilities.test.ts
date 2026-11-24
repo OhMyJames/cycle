@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
@@ -6,18 +6,11 @@ import { PROMPT_LIMITS } from "@cycle/protocol";
 import { Daemon, indexPath, sessionsDir } from "../src/index.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const start = async (fake = fakeAgent()) => {
@@ -71,7 +64,7 @@ test("a big image is kept beside the log, comes back whole for the next client a
   expect(await readdir(join(dir, "blobs", sessionId))).toHaveLength(1);
 
   await daemon.close();
-  open = [];
+  open.length = 0;
   const again = await start();
   const later = await connectClient(again.daemon);
   await later.agent.request(methods.agent.session.resume, {
@@ -320,7 +313,7 @@ test("the setup survives a new daemon, and a session without one sends none", as
   } as never);
   const plain = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   await first.daemon.close();
-  open = [];
+  open.length = 0;
 
   const second = await start();
   const d = await connectClient(second.daemon);
@@ -655,7 +648,7 @@ test("the latest usage is in the session list, and survives a restart", async ()
   const expected = { used: 5000, size: 200000, cost: { amount: 0.08, currency: "USD" } };
   expect((await sessionRow(c))["cycle/usage"]).toEqual(expected);
   await daemon.close();
-  open = [];
+  open.length = 0;
   const again = await start();
   const d = await connectClient(again.daemon);
   expect((await sessionRow(d))["cycle/usage"]).toEqual(expected);
@@ -855,7 +848,7 @@ test("a name the user gave before agents named sessions is not replaced by the a
   const c = await connectClient(first.daemon);
   const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   await first.daemon.close();
-  open = [];
+  open.length = 0;
   // The index as an older daemon wrote it: a title, and nothing that says where it came from.
   const index = JSON.parse(await readFile(indexPath(dir), "utf8"));
   index.sessions[sessionId].title = "Old name";

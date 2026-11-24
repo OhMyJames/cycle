@@ -1,12 +1,11 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSnapshot, WorkspaceStatus } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -64,13 +63,7 @@ const mount = async (
     truncated: false,
     binary: false,
   });
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("option", { name: /work/ }));
   await screen.findByRole("log", { name: "Conversation" });

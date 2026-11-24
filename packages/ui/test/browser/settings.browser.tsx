@@ -1,11 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { EnvironmentConfig } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -21,13 +20,7 @@ const far: EnvironmentConfig = {
 
 const mount = async (options: Parameters<typeof fakeBridge>[0] = {}) => {
   const script = fakeBridge({ connected: true, ...options });
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  const store = await renderApp(script.bridge);
   return { user: userEvent.setup(), store, ...script };
 };
 const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
@@ -134,13 +127,7 @@ test("an agent's defaults are read, changed and saved for the environment chosen
     script.calls.push(["agentDefaults", environmentId]);
     return { model: "sonnet" };
   };
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Fake" }));
@@ -387,13 +374,7 @@ test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, an
       },
     };
   };
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Claude" }));
@@ -460,13 +441,7 @@ test("older daemon without agentSetup capability smoothly degrades Harness tab t
       },
     },
   ];
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Claude" }));
@@ -487,13 +462,7 @@ test("blank page auth/unavailable prompt opens the matching Harness settings tab
   script.bridge.agents = async () => [
     { id: "agy", name: "Antigravity", available: false, configSchema: {} },
   ];
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "New session" }));
   await user.click(await screen.findByRole("button", { name: "Open Antigravity settings" }));
@@ -683,13 +652,7 @@ test("Harness runtime settings support boolean/integer editing, enabledWhen, res
     };
   };
 
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Claude" }));
@@ -816,13 +779,7 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
     return { ok: true };
   };
 
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Claude" }));
@@ -958,13 +915,7 @@ test("Codex sign-in supports browser waiting flow locally and device_code userCo
     };
   };
 
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Codex" }));

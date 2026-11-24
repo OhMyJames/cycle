@@ -1,15 +1,13 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { appendFile, readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { BLOB_META, BLOB_MISSING_META, BlobLogStore, JsonlLogStore } from "../src/index.ts";
-import { tempDir } from "./support.ts";
+import { eachTempDir } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
+eachTempDir((made) => {
+  dir = made;
 });
-afterEach(() => dispose());
 
 const stores = () => {
   const inner = new JsonlLogStore({ dir: join(dir, "sessions") });

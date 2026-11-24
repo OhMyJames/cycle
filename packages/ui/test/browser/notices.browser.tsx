@@ -1,13 +1,12 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, idle, text } from "../fake-bridge.ts";
 import { press, ready, write } from "./box.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -20,14 +19,8 @@ const mount = async (
 ) => {
   const script = fakeBridge({ connected: true, ...(snapshot ? { snapshot } : {}) });
   configure?.(script);
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
   await user.click(await screen.findByRole("option", { name: /work/ }));
   await screen.findByRole("log", { name: "Conversation" });
@@ -144,13 +137,7 @@ test("a conversation read at its end stays at its end when a line comes under th
 
 test("with no session open the page says how the connection stands, and no line says it again", async () => {
   const script = fakeBridge({ connected: true });
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   await act(() =>
     script.emit({ type: "environment-status", environmentId: "local", state: "reconnecting" }),
   );

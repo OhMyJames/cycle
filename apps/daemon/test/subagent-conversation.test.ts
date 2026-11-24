@@ -1,22 +1,15 @@
 // A sub-agent's conversation (docs/protocol.md §9, CYCL-134): the agent speaks for an announced sub-agent under its id,
 // and the daemon keeps that as `_cycle/child_update` records of the parent session.
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { Daemon } from "../src/index.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const text = (value: string) => [{ type: "text" as const, text: value }];

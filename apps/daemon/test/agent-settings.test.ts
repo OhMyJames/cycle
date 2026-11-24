@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { META, type RuntimeProperty } from "@cycle/protocol";
@@ -9,17 +9,11 @@ import {
   AgentSettingsCorruptError,
   AgentSettingsValidationError,
 } from "../src/agent-settings.ts";
-import { tempDir } from "./support.ts";
+import { eachTempDir } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-
-afterEach(async () => {
-  await dispose();
+eachTempDir((made) => {
+  dir = made;
 });
 
 const CLAUDE_SCHEMA: Record<string, RuntimeProperty> = {

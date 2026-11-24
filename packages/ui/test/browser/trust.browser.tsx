@@ -1,11 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { chosenFolder, typeFolder } from "./blank.ts";
 import { boxText, press, ready, write } from "./box.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
 
@@ -26,14 +25,8 @@ const mount = async (trusted: boolean | null) => {
     decided.set(path, value);
     return { path, trusted: value, from: path };
   };
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await screen.findAllByRole("option");
   return { user, ...script };
 };

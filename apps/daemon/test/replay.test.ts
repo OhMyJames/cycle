@@ -1,13 +1,11 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { attach, JsonlLogStore, type LogRecord } from "../src/index.ts";
-import { tempDir } from "./support.ts";
+import { eachTempDir } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
+eachTempDir((made) => {
+  dir = made;
 });
-afterEach(() => dispose());
 
 const open = () => new JsonlLogStore({ dir }).open("s1");
 const seqs = (records: LogRecord[]) => records.map((r) => r.seq);

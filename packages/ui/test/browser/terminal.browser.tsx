@@ -1,11 +1,10 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { FitAddon } from "@xterm/addon-fit";
 import { afterEach, expect, test, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import type { TerminalInfo, TerminalProblem } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -43,13 +42,7 @@ const mount = async (
     ...(options.terminalProblem !== undefined ? { terminalProblem: options.terminalProblem } : {}),
   });
   script.bridge.sessions = async () => [{ ...summary("s1"), title: "first" }];
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("option", { name: /first/ }));
   const tracked = () =>
@@ -341,13 +334,7 @@ test("pressed before the list has come, the Terminal button shows the terminal t
     await held;
     return list(...args);
   };
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("option", { name: /first/ }));
   await user.click(await screen.findByRole("button", { name: "Show terminal" }));

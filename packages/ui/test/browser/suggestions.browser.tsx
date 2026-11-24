@@ -1,16 +1,15 @@
 // What to say next (CYCL-225): the agent's suggestion stands in the empty message box in place of its usual words, →
 // or Tab makes it the message, typing hides it, and the next turn makes it stale.
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { Preferences, SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
 import { boxText, ready, write } from "./box.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -37,14 +36,8 @@ const open = async (updates: SessionUpdate[], preferences: Partial<Preferences> 
     version: updates.length,
   });
   const script = fakeBridge({ connected: true, snapshot, preferences });
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await user.click(await screen.findByRole("option", { name: /work/ }));
   const box = await screen.findByRole("textbox", { name: "Message" });
   await ready(box);

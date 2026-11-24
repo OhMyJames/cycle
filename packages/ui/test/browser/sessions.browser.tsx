@@ -1,11 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
 import { PER_WORKSPACE } from "../../src/sessions.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
 
@@ -19,14 +18,8 @@ const row = (id: string, over: Partial<SessionSummary>): SessionSummary => ({
 const mount = async (sessions: SessionSummary[]) => {
   const script = fakeBridge({ connected: true });
   script.bridge.sessions = async () => sessions;
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await screen.findAllByRole("option");
   const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
   return { user, ...script, emit };

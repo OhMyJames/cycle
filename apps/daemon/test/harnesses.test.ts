@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { META } from "@cycle/protocol";
@@ -10,18 +10,11 @@ import { Daemon } from "../src/index.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
 import { ECHO_MAIN, echoHarness } from "./fixtures/echo-harness.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
@@ -85,7 +78,7 @@ test("a second agent goes the whole way: listed, a session made with it, a promp
 
   // Another daemon on the same data: the session is still this agent's, and its next prompt resumes it there.
   await daemon.close();
-  open = [];
+  open.length = 0;
   const again = await Daemon.start({ dataDir: dir, agents: agents() });
   open.push(again);
   const d = await connectClient(again);

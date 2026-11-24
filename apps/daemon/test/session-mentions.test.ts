@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { SESSION_MENTION_LIMITS, sessionIdOfUri, sessionUri } from "@cycle/protocol";
@@ -12,7 +12,7 @@ import {
 } from "../src/session-mentions.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 let seq = 0;
 const update = (data: Record<string, unknown>): LogRecord => {
@@ -161,15 +161,8 @@ test("a mention becomes the record in place, or a note when there is none, and c
 // ---- through the daemon ----
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const say = (value: string) => [{ type: "text" as const, text: value }];

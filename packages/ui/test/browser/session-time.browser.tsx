@@ -1,9 +1,8 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { SessionSummary } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -18,13 +17,7 @@ const mount = async (sessions: SessionSummary[], language?: "zh-CN") => {
     ...(language !== undefined ? { preferences: { language } } : {}),
   });
   script.bridge.sessions = async () => sessions;
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   await screen.findAllByRole("option");
 };
 

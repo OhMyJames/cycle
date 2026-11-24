@@ -1,9 +1,7 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { EnvironmentConfig } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
 import {
@@ -14,6 +12,7 @@ import {
   typeFolder,
 } from "./blank.ts";
 import { press, ready, sleep, write } from "./box.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
 
@@ -34,14 +33,8 @@ const mount = async (
     states,
     ...(capabilities !== undefined ? { capabilities } : {}),
   });
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await screen.findAllByRole("option");
   // An event can start a read (the agents of an environment that connected): wait for it inside act, or React warns.
   const emit = (event: Parameters<typeof script.emit>[0]) =>

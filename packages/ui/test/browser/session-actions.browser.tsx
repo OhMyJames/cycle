@@ -1,11 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
 import { pins } from "../../src/pins.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -21,14 +20,8 @@ const row = (id: string, title: string): SessionSummary => ({
 const mount = async () => {
   const script = fakeBridge({ connected: true });
   script.bridge.sessions = async () => [row("a", "First"), row("b", "Second")];
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await screen.findAllByRole("option");
   return { user, script };
 };
@@ -45,13 +38,7 @@ test("a row with a mark shows the mark where its time would be", async () => {
     { ...row("a", "Busy"), state: "running" },
     row("b", "Quiet"),
   ];
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   await screen.findAllByRole("option");
   // Under the pointer a row's mark gives way to its actions (display: none), and the pointer is wherever an earlier
   // test left it: it is put on the other row, so this one is measured at rest.

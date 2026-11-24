@@ -1,12 +1,11 @@
 // The sign-in page and the notes about the login (CYCL-166, CYCL-167), in a real browser.
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { AccountStatus } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, SIGNED_IN } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -17,13 +16,7 @@ const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn:
 
 const mount = async (options: Parameters<typeof fakeBridge>[0] = {}) => {
   const script = fakeBridge({ connected: true, ...options });
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  const store = await renderApp(script.bridge);
   return { user: userEvent.setup(), store, ...script };
 };
 

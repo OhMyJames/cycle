@@ -1,10 +1,9 @@
 // The sidebar is a column of pixels the user chose: the window and the right panel do not stretch or squeeze it.
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { page, userEvent } from "vitest/browser";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -24,13 +23,7 @@ test("the sidebar keeps its width as the panel opens and closes, and as the wind
   await page.viewport(1400, 800);
   const script = fakeBridge({ connected: true });
   script.bridge.sessions = async () => [{ ...summary("s1"), title: "first" }];
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("option", { name: /first/ }));
   // Opened, the window narrowed, the panel opened and closed, the window widened again: the same width each time.
@@ -67,13 +60,7 @@ test("a page keeps the sidebar's width as the user left it, its first row and th
   await page.viewport(1400, 800);
   const script = fakeBridge({ connected: true });
   script.bridge.sessions = async () => [{ ...summary("s1"), title: "first" }];
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("option", { name: /first/ }));
   // Not the default: a width the user moved it to, with the keyboard.

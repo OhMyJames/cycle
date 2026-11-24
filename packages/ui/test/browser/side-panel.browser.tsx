@@ -1,9 +1,9 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
-import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -32,13 +32,7 @@ const mount = async (all = false) => {
     { ...summary("s1"), title: "first" },
     { ...summary("s2"), title: "second" },
   ];
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
   const tracked = () =>
     script.calls
