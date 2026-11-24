@@ -321,9 +321,37 @@ const foundOf = (words: readonly string[]): Found | undefined => {
   return undefined;
 };
 
-const read = (command: string): CommandLabel | undefined => {
-  if (NESTED.test(command)) return undefined;
+const SHELLS = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "/bin/sh",
+  "/bin/bash",
+  "/bin/zsh",
+  "/usr/bin/bash",
+  "/usr/bin/zsh",
+]);
+const SHELL_C_FLAGS = new Set(["-c", "-lc", "-cl"]);
+
+/** Unwrap a single `/bin/zsh -lc "..."` shell wrapper (as Codex emits) when there is no redirection or pipeline around it. */
+const unwrapShell = (command: string): string => {
   const parsed = partsOf(command);
+  if (parsed === undefined || parsed.writes || parsed.parts.length !== 1) return command;
+  const words = parsed.parts[0]?.words ?? [];
+  if (
+    words.length === 3 &&
+    SHELLS.has(words[0] ?? "") &&
+    SHELL_C_FLAGS.has(words[1] ?? "") &&
+    (words[2] ?? "").trim() !== ""
+  )
+    return words[2] as string;
+  return command;
+};
+
+const read = (command: string): CommandLabel | undefined => {
+  const effective = unwrapShell(command);
+  if (NESTED.test(effective)) return undefined;
+  const parsed = partsOf(effective);
   if (parsed === undefined || parsed.writes) return undefined;
   const found: Found[] = [];
   for (const { words, after } of parsed.parts) {

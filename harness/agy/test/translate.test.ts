@@ -71,6 +71,33 @@ describe("v1 tool calls to v2", () => {
     );
     expect(later).not.toHaveProperty("title");
   });
+
+  test("PascalCase tool inputs are normalized to standard ACP rawInput keys without duplication", () => {
+    const cmd = toV2ToolCallUpdate({
+      toolCallId: "r1",
+      name: "run_command",
+      kind: "execute",
+      title: "git status",
+      rawInput: { CommandLine: "git status", Cwd: "/repo", WaitMsBeforeAsync: 5000 },
+    }) as { rawInput?: Record<string, unknown> };
+    expect(cmd.rawInput).toEqual({ command: "git status", cwd: "/repo", WaitMsBeforeAsync: 5000 });
+
+    const read = toV2ToolCallUpdate({
+      toolCallId: "f1",
+      name: "read_file",
+      kind: "read",
+      rawInput: { Path: "/repo/src/index.ts", StartLine: 1 },
+    }) as { rawInput?: Record<string, unknown> };
+    expect(read.rawInput).toEqual({ file_path: "/repo/src/index.ts", StartLine: 1 });
+
+    const search = toV2ToolCallUpdate({
+      toolCallId: "q1",
+      name: "search_web",
+      kind: "search",
+      rawInput: { Query: "bun test", Url: "https://bun.sh", Pattern: "foo" },
+    }) as { rawInput?: Record<string, unknown> };
+    expect(search.rawInput).toEqual({ query: "bun test", url: "https://bun.sh", pattern: "foo" });
+  });
 });
 
 describe("v1 plan to v2", () => {
