@@ -206,7 +206,7 @@ test("a location whose Cycle cannot take an environment shows the choice, unusab
   });
   await newSession(user);
   const picker = await screen.findByRole("button", {
-    name: "Cycle on This computer needs an update to use environments.",
+    name: "Cycle on Local needs an update to use environments.",
   });
   expect(picker.getAttribute("aria-disabled")).toBe("true");
   // Reached by the keyboard, so its reason can be read; a press does nothing.

@@ -4,7 +4,7 @@ import { entryIdOf, isRecord, jsonFile, KeptEntries } from "./json-file.ts";
 
 export const LOCAL_LOCATION: LocationConfig = {
   id: "local",
-  name: "This computer",
+  name: "Local",
   kind: "local",
 };
 
@@ -32,8 +32,7 @@ export const locationOf = (entry: unknown): LocationConfig | undefined => {
     return undefined;
   const { id, name } = entry;
   // This computer is the one "local" there is: another entry that says it is local would be a second way into the same daemon.
-  if (entry.kind === "local")
-    return id === LOCAL_LOCATION.id ? { id, name, kind: "local" } : undefined;
+  if (entry.kind === "local") return id === LOCAL_LOCATION.id ? { ...LOCAL_LOCATION } : undefined;
   if (entry.kind === "remote" && isRecord(entry.transport) && entry.transport.type === "ssh") {
     const { host } = entry.transport;
     const command = strings(entry.transport.command);

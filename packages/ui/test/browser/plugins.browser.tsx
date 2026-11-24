@@ -135,7 +135,7 @@ test("installing asks first and says what a plugin can do; only a yes installs i
   await user.click(await within(list).findByRole("button", { name: "Install linear" }));
   const dialog = await screen.findByRole("alertdialog", { name: "Install linear?" });
   expect(dialog.textContent).toContain("It comes from Plugin directory.");
-  expect(dialog.textContent).toContain("can run code on This computer");
+  expect(dialog.textContent).toContain("can run code on Local");
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(named("installPlugin")).toHaveLength(0);
@@ -290,7 +290,7 @@ test("a source is added after saying what that means, refreshed, and removed aft
   const form = await screen.findByRole("dialog", { name: "Add a source" });
   const field = within(form).getByRole("textbox", { name: "Repository, URL or folder" });
   expect(document.activeElement).toBe(field);
-  expect(form.textContent).toContain("can be installed and run on This computer");
+  expect(form.textContent).toContain("can be installed and run on Local");
   await user.type(field, "acme/more-plugins{Enter}");
   expect(await within(sources).findByText("more-plugins")).toBeTruthy();
   expect(named("addPluginSource")).toEqual([
@@ -304,7 +304,7 @@ test("a source is added after saying what that means, refreshed, and removed aft
   await user.click(within(sources).getByRole("button", { name: "Refresh lists" }));
   expect(
     await within(sources).findByText(
-      "claude did not answer in time. Check the network on This computer, then try again.",
+      "claude did not answer in time. Check the network on Local, then try again.",
     ),
   ).toBeTruthy();
   plugins.fail = undefined;
@@ -338,7 +338,7 @@ test("plugins that cannot be read say why in the system's words, and can be aske
 
 test("a location whose Cycle knows no plugins says so on that section, and still keeps its connectors", async () => {
   const { user, page, named } = await mount({ plugins: [] });
-  expect(within(page).getByText("Cycle on This computer is too old for this.")).toBeTruthy();
+  expect(within(page).getByText("Cycle on Local is too old for this.")).toBeTruthy();
   expect(named("listPlugins")).toHaveLength(0);
   await user.click(screen.getByRole("tab", { name: "MCP servers" }));
   expect(await screen.findByText("No connectors yet.")).toBeTruthy();

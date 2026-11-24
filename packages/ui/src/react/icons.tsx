@@ -47,6 +47,16 @@ export const ChevronDownIcon = ({ size = 16, ...rest }: IconProps) => (
   </Svg>
 );
 
+/** iconmcp: laptop */
+export const LaptopIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <rect x="3.25" y="3.25" width="9.5" height="6.5" rx="1.2" />
+      <path d="M1.75 12.25 H14.25" />
+    </g>
+  </Svg>
+);
+
 /** iconmcp: server */
 export const ServerIcon = ({ size = 16, ...rest }: IconProps) => (
   <Svg size={size} {...rest}>

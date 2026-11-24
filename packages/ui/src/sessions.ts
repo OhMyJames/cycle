@@ -165,7 +165,7 @@ const parts = (folder: string): string[] => folder.split("/").filter(Boolean);
 
 /**
  * The names of the workspaces: the last part of the folder, with more of it only where two on the same location would be
- * the same; and where two on different locations would still be the same, the location's name after it.
+ * the same. Two on different locations may share a name: the switcher groups them by location and marks each with an icon.
  */
 const namesOf = (
   workspaces: readonly { key: string; locationId: string; cwd: string }[],
@@ -197,17 +197,11 @@ const namesOf = (
     }
     if (!grew) break;
   }
-  const taken = new Map<string, number>();
-  for (const w of workspaces) taken.set(label(w), (taken.get(label(w)) ?? 0) + 1);
   return new Map(
     workspaces.map((w) => {
       const name = label(w);
       const location = locations.find((h) => h.id === w.locationId);
-      const clash = (taken.get(name) ?? 0) > 1 && location !== undefined;
-      return [
-        w.key,
-        name === "" ? (location?.name ?? "") : clash ? `${name} · ${location.name}` : name,
-      ];
+      return [w.key, name === "" ? (location?.name ?? "") : name];
     }),
   );
 };

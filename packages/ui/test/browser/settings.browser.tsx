@@ -93,7 +93,7 @@ test("the locations are listed with how each stands, one that is away can be con
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Work in" }));
   const page = await screen.findByRole("tabpanel", { name: "Work in" });
-  expect(within(page).getByText("This computer")).toBeTruthy();
+  expect(within(page).getByText("Local")).toBeTruthy();
   expect(within(page).getByText("Connected")).toBeTruthy();
   expect(within(page).getByText("Build box")).toBeTruthy();
   expect(within(page).getByText("me@box")).toBeTruthy();
@@ -101,8 +101,8 @@ test("the locations are listed with how each stands, one that is away can be con
   expect(
     within(page).getByText("ssh: connect to host box port 22: Connection refused"),
   ).toBeTruthy();
-  // This computer is not one to edit or remove.
-  expect(within(page).queryByRole("button", { name: "Actions for This computer" })).toBeNull();
+  // Local is not one to edit or remove.
+  expect(within(page).queryByRole("button", { name: "Actions for Local" })).toBeNull();
   await user.click(within(page).getByRole("button", { name: "Connect again" }));
   await waitFor(() => expect(named("connect")).toEqual([["connect", "far"]]));
 
@@ -134,7 +134,7 @@ test("an agent's defaults are read, changed and saved for the location chosen", 
   await user.click(await screen.findByRole("tab", { name: "Fake" }));
   // Two locations are connected: which one's defaults is a choice, and it starts on the one that is open.
   const location = await screen.findByRole("combobox", { name: "Work in" });
-  expect(location.textContent).toContain("This computer");
+  expect(location.textContent).toContain("Local");
   const model = await screen.findByRole("combobox", { name: "Model" });
   expect(model.textContent).toContain("sonnet");
   await user.click(location);
@@ -447,9 +447,7 @@ test("older daemon without agentSetup capability smoothly degrades Harness tab t
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Claude" }));
   expect(
-    await screen.findByText(
-      /Cycle on This computer is older and does not report account or host status/,
-    ),
+    await screen.findByText(/Cycle on Local is older and does not report account or host status/),
   ).toBeTruthy();
   expect(await screen.findByRole("combobox", { name: "Model" })).toBeTruthy();
   expect(script.named("readAgentSetup")).toHaveLength(0);

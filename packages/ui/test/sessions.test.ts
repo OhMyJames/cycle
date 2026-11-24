@@ -31,7 +31,7 @@ const at = (day: number, hour = 9) => new Date(2026, 10, day, hour, 0, 0).toISOS
 const options = { showAll: false, now };
 const ids = (list: ReturnType<typeof sessionList>) => list.order.map((s) => s.sessionId);
 const locations = [
-  { id: "local", name: "This computer", local: true },
+  { id: "local", name: "Local", local: true },
   { id: "far", name: "Build box", local: false },
 ];
 
@@ -105,14 +105,14 @@ test("a workspace is named by its folder, with more of the path only where two w
   expect(list.map((w) => w.name).toSorted()).toEqual(["a/app", "b/app", "lib"]);
 });
 
-test("a workspace on another host is named after the host only where the name would clash", () => {
+test("a workspace on another host is named by its folder alone, the host is shown by an icon", () => {
   const clash = workspacesOf(
     [row("a", { cwd: "/work/app" }), on("far", "b", { cwd: "/srv/app" })],
     {
       locations,
     },
   );
-  expect(clash.map((w) => w.name).toSorted()).toEqual(["app · Build box", "app · This computer"]);
+  expect(clash.map((w) => w.name).toSorted()).toEqual(["app", "app"]);
   const apart = workspacesOf(
     [row("a", { cwd: "/work/app" }), on("far", "b", { cwd: "/srv/api" })],
     {

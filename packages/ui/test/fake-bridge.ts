@@ -23,7 +23,7 @@ import type {
 import { environmentProblem, workspaceKey } from "../src/environments.ts";
 import { emptyConversation } from "../src/model/index.ts";
 
-export const LOCAL: LocationConfig = { id: "local", name: "This computer", kind: "local" };
+export const LOCAL: LocationConfig = { id: "local", name: "Local", kind: "local" };
 export const summary = (sessionId: string, locationId = "local"): SessionSummary => ({
   locationId,
   sessionId,
