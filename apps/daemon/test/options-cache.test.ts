@@ -50,8 +50,14 @@ test("caches discovered model choices to disk and overlays them onto configSchem
       };
     };
   };
-  expect(merged.properties.model.oneOf.map((o) => o.const)).toEqual(["default", "fabel", "opus"]);
-  expect(merged.properties.model.default).toBe("default");
+  // The default a new session starts with (Sonnet) stays a choice, though the agent's list has no row of its own for it.
+  expect(merged.properties.model.oneOf.map((o) => o.const)).toEqual([
+    "default",
+    "fabel",
+    "opus",
+    "sonnet",
+  ]);
+  expect(merged.properties.model.default).toBe("sonnet");
   expect(merged.properties.model._meta?.[META.open]).toBe(true);
 });
 
@@ -85,7 +91,8 @@ test("excludes synthetic custom model entries from being cached globally", async
   const merged = reloaded.apply("claude", CLAUDE_CONFIG_SCHEMA) as {
     properties: { model: { oneOf: { const: string }[] } };
   };
-  expect(merged.properties.model.oneOf.map((o) => o.const)).toEqual(["default", "fabel"]);
+  // (The default, Sonnet, is kept as a choice at the end: see the first test.)
+  expect(merged.properties.model.oneOf.map((o) => o.const)).toEqual(["default", "fabel", "sonnet"]);
 });
 
 test("keeps each model's effort levels, so a new session knows which models take effort before any process", async () => {
@@ -134,7 +141,11 @@ test("a cache written before effort levels were kept still loads", async () => {
   const merged = (await AgentOptionsCache.load(path)).apply("claude", CLAUDE_CONFIG_SCHEMA) as {
     properties: { model: { oneOf: Record<string, unknown>[] } };
   };
-  expect(merged.properties.model.oneOf).toEqual([{ const: "opus", title: "Opus" }]);
+  expect(merged.properties.model.oneOf).toEqual([
+    { const: "opus", title: "Opus" },
+    // The default a new session starts with, kept as a choice.
+    { const: "sonnet", title: "Sonnet", description: "Balanced speed for everyday coding." },
+  ]);
 });
 
 test("a model list that does not say effort levels keeps the ones an earlier list said", async () => {

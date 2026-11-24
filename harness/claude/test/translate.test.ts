@@ -514,3 +514,137 @@ test("keeping the task list is planning (ACP's think), so a client can let the p
   // Reading the list changes nothing the plan shows: a call of its own.
   for (const name of ["TaskGet", "TaskList", "TaskStop"]) expect(toolKind(name)).toBe("other");
 });
+
+// As SDK 0.3.331 sent them with Sonnet 5.5 and an Opus 5.5 advisor (2026-11-24 probe): the call, then its result whole,
+// each first as a stream event and again in the whole message.
+const ADVISOR_ID = "srvtoolu_01EGgzd7B73vMBq8hZEwSzeE";
+const advisorCall = { type: "server_tool_use", id: ADVISOR_ID, name: "advisor", input: {} };
+const advisorResult = (content: object) => ({
+  type: "advisor_tool_result",
+  tool_use_id: ADVISOR_ID,
+  content,
+});
+const streamStart = (block: object) =>
+  ({
+    type: "stream_event",
+    event: { type: "content_block_start", index: 0, content_block: block },
+  }) as unknown as SDKMessage;
+const whole = (...content: object[]) =>
+  ({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: { id: "msg_a", content, usage: { input_tokens: 1, output_tokens: 1 } },
+  }) as unknown as SDKMessage;
+
+test("an advisor call is a call of its own, once, and its encrypted advice is not passed on", () => {
+  const translator = new TurnTranslator();
+  const redacted = advisorResult({
+    type: "advisor_redacted_result",
+    encrypted_content: "EqcJCioIFhgCIiQ0YzBm",
+  });
+  const updates = [
+    streamStart(advisorCall),
+    whole(advisorCall),
+    streamStart(redacted),
+    whole(advisorCall, redacted),
+  ].flatMap((m) => translator.feed(m));
+  expect(updates).toEqual([
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: ADVISOR_ID,
+      name: "advisor",
+      title: "Advisor",
+      kind: "other",
+      status: "in_progress",
+      rawInput: {},
+    },
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: ADVISOR_ID,
+      status: "completed",
+      rawOutput: { type: "advisor_redacted_result" },
+    },
+  ] as never);
+  expect(JSON.stringify(updates)).not.toContain("EqcJ");
+  // Ended: not cancelled at the turn's end.
+  expect(translator.unfinished()).toEqual([]);
+});
+
+test("an advisor's advice in the clear is its content, and one that failed says why", () => {
+  const clear = new TurnTranslator().feed(
+    whole(
+      advisorCall,
+      advisorResult({ type: "advisor_result", text: "Close the input channel first." }),
+    ),
+  );
+  expect(clear.at(-1)).toMatchObject({
+    status: "completed",
+    content: [
+      { type: "content", content: { type: "text", text: "Close the input channel first." } },
+    ],
+    rawOutput: { type: "advisor_result" },
+  });
+  const failed = new TurnTranslator().feed(
+    whole(
+      advisorCall,
+      advisorResult({ type: "advisor_tool_result_error", error_code: "overloaded" }),
+    ),
+  );
+  expect(failed.at(-1)).toMatchObject({
+    status: "failed",
+    rawOutput: { type: "advisor_tool_result_error", error_code: "overloaded" },
+  });
+  // Stopped while the advisor was asked: the call ends with the turn.
+  const stopped = new TurnTranslator();
+  stopped.feed(streamStart(advisorCall));
+  expect(stopped.unfinished()).toEqual([
+    { sessionUpdate: "tool_call_update", toolCallId: ADVISOR_ID, status: "cancelled" },
+  ] as never);
+});
+
+test("the context's window is the main model's, not an advisor's beside it", () => {
+  const translator = new TurnTranslator();
+  translator.feed({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      id: "m",
+      model: "claude-haiku-4-5",
+      content: [],
+      usage: { input_tokens: 100, output_tokens: 25 },
+    },
+  } as unknown as SDKMessage);
+  const usage = translator.usageOf({
+    type: "result",
+    subtype: "success",
+    modelUsage: {
+      "claude-haiku-4-5": { contextWindow: 200000 },
+      "claude-opus-5-5": { contextWindow: 1000000 },
+    },
+  } as unknown as SDKMessage);
+  expect(usage).toMatchObject({ used: 125, size: 200000 });
+
+  // The main model's name not among them (an error's stand-in message came last): never the advisor's window.
+  const lost = new TurnTranslator();
+  lost.feed({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      id: "m",
+      model: "<synthetic>",
+      content: [],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  } as unknown as SDKMessage);
+  expect(
+    lost.usageOf({
+      type: "result",
+      subtype: "success",
+      usage: { iterations: [{ type: "advisor_message", model: "claude-opus-5-5" }] },
+      modelUsage: {
+        "claude-sonnet-5-5[1m]": { contextWindow: 200000 },
+        "claude-opus-5-5": { contextWindow: 1000000 },
+      },
+    } as unknown as SDKMessage),
+  ).toMatchObject({ size: 200000 });
+});

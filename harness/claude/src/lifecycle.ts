@@ -496,6 +496,20 @@ export class Lifecycle {
   }
 
   /**
+   * Applies the session's advisor to a live process, as its flag settings: `null` takes Cycle's choice away. Turning it on
+   * or off keeps the main model's prompt cache. An advisor the API refused for this conversation stays off until a
+   * `/clear` or `/compact`, whatever is chosen; Claude Code says nothing of it.
+   */
+  applyAdvisor(session: SessionState) {
+    const advisorModel = session.advisor ?? null;
+    this.apply(session, (query) =>
+      typeof query.applyFlagSettings === "function"
+        ? query.applyFlagSettings({ advisorModel })
+        : Promise.resolve(),
+    );
+  }
+
+  /**
    * Whether suggestions of what to say next are wanted, as the prompt about to run says. A process already running is
    * told through its flag settings: `null` takes Cycle's "no" away, leaving the person's own settings.json to decide.
    */

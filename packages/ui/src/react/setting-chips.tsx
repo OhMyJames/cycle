@@ -180,6 +180,8 @@ export function SettingChips({
   const { t } = useI18n();
   const entries: ChoiceEntry[] = [];
   for (const [key, property] of propertiesOf(settings.schema)) {
+    // A setting the agent keeps to the settings pages (`cycle/composer` false) is no chip here.
+    if (property._meta?.["cycle/composer"] === false) continue;
     const options = optionsOf(property);
     if (options === undefined || options.length === 0) continue;
     entries.push({

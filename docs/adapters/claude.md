@@ -165,3 +165,14 @@ SDK 0.3.327(CLI 2.1.327),haiku,`harness/claude` 的 `test:real` 里两条用例,
 - **登录**:在隔离的空 HOME 里跑新二进制:`auth status --json`、`auth logout` 不变;`auth login --claudeai` 打印的地址变为 `https://claude.ai/oauth/authorize?<不透明参数>`,单独一行,仍在 `CLAUDE_AUTH_URL_RE` 之内(测试已改成这个样子)。
 - **打包**:`apps/daemon` 构建出的 `claude --version` 为 2.1.331。
 - **未做**:真实模型测试(`test:real`、`test:real:daemon`)这次没跑,缺 token。后台任务、定时调用事件在真实 CLI 上的形状未复查。
+
+## Advisor(2026-11-24)
+
+Claude 可以在关键时刻请教一个更强的模型(API 的服务端工具 `advisor_20260301`,Claude Code 的 `advisorModel`)。2026-11-24 用 SDK 0.3.331、Sonnet 5.5 主模型、Opus 5.5 advisor 抓过一次真实回合:
+
+- **怎么打开**:`query` 的 `settings.advisorModel`(别名 `opus`、`sonnet`、`fable`);运行中用 `applyFlagSettings({ advisorModel })` 换,`null` 撤掉 Cycle 的选择(那时用户 settings.json 里的,如果有)。会话里也有 `/advisor` 命令。advisor 没有 effort。
+- **流里的样子**:`content_block_start` 一个 `server_tool_use`(`name: "advisor"`,`input: {}`),停一段(这次 12 秒,只有 ping),然后 `advisor_tool_result` 整块到达;整条 assistant 消息里两块再来一次。适配器按 id 只说一次(`translate.ts` 的 `#advisor`):开始是名为 `advisor`、kind `other` 的 `in_progress` 调用;结束是 `completed`(明文时带 `content`)或 `failed`(`rawOutput.error_code`)。加密的 `encrypted_content` 不转发。轮被停时,和其他调用一样以 `cancelled` 结束。
+- **建议多半看不到**:Opus 5.5 这类新模型返回 `advisor_redacted_result`,只有 Claude 能读;只有旧模型给明文 `advisor_result`。
+- **费用**:advisor 读整段对话(这次 18k token),记在 `usage.iterations` 的 `advisor_message` 里,不进顶层合计,所以上下文用量不受影响。`total_cost_usd` 包含它(这次 $0.137 = Sonnet $0.049 + Opus $0.088),`modelUsage` 里 advisor 的模型单独一项。上下文窗口取主模型那一项(以前取最大的,会被 advisor 的 1M 撑大)。
+- **配对**:advisor 至少和主模型一样强,Fable 会话只认 Fable;不合格时 Claude Code 不挂上,也不报错。API 拒绝过的 advisor 在这段对话里一直不用,直到 `/clear` 或 `/compact`。
+- **Cycle 的默认**:新会话 `model: sonnet`、`effort: medium`、`advisor: opus`(daemon 的 `CLAUDE_NEW_SESSION`,在用户保存的默认值之下)。advisor 不在输入框旁的选项里(`cycle/composer: false`),在 Harness 设置的默认值和会话设置里改。决定笔记 [`2026-11-24-claude-advisor`](../../.agents/notes/2026-11-24-claude-advisor.md)。

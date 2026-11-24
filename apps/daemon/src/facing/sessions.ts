@@ -194,8 +194,9 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       const { link, created: answer } = await core.startAgent(session, made);
       if (answer === undefined) throw new Error("The agent did not answer session/new");
       session.entry = { ...session.entry, agentSessionId: answer.sessionId };
-      // What the user set as the agent's defaults, then what they asked of this one.
-      const config = { ...core.defaults.get(agentId), ...overrides };
+      // Cycle's defaults for the agent, then what the user set as its defaults, then what they asked of this one.
+      const chosen = { ...core.defaults.get(agentId), ...overrides };
+      const config = { ...definition.newSession, ...chosen };
       // What the agent says its settings are now: each change answers with the whole set.
       let options: SessionConfigOption[] = answer.configOptions ?? [];
       for (const [configId, value] of orderedConfigEntries(config)) {
@@ -208,6 +209,12 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
           });
           if (changed.configOptions.length > 0) options = changed.configOptions;
         } catch (error) {
+          // Cycle's own default, which nobody chose, may not fit what was chosen (an effort the chosen model does not
+          // take): the agent's own default stands, and the session is made.
+          if (chosen[configId] === undefined) {
+            delete config[configId];
+            continue;
+          }
           throw new RpcError(CycleErrorCode.InvalidConfig, "The agent refused the configuration", {
             configId,
             detail: error instanceof Error ? error.message : String(error),

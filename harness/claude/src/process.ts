@@ -69,6 +69,8 @@ export const spawn = (
       showThinkingSummaries: true,
       // Not asked for (yet): none is made. When asked for, the person's own settings.json may still say no.
       ...(session.suggestions ? {} : { promptSuggestionEnabled: false }),
+      // The advisor tool, when one is chosen. None chosen sets nothing: what the person's settings.json says stands.
+      ...(session.advisor !== undefined ? { advisorModel: session.advisor } : {}),
     },
     // A guess at what the person says next, after each turn (CYCL-225). Whether one is made is the flag above.
     promptSuggestions: true,

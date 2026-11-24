@@ -216,6 +216,7 @@ describe("the dictionary", () => {
     expect(settingOf("mode")).toBe("mode");
     expect(settingOf("model")).toBe("model");
     expect(settingOf("effort")).toBe("effort");
+    expect(settingOf("advisor")).toBe("advisor");
     expect(viaOf("shortcut")).toBe("shortcut");
     expect(viaOf("enter")).toBe("enter");
     expect(viaOf("button")).toBe("button");

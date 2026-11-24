@@ -381,6 +381,41 @@ test("reasoning effort is offered, applied to new and running processes, and cle
   expect(fake.state.flagSettings).toEqual([{ effortLevel: "medium" }, { effortLevel: null }]);
 });
 
+test("the advisor is offered, set on new processes, switched on a running one, and turned off", async () => {
+  const fake = fakeQuery(() => textTurn(ID, "m", "ok"));
+  await connect(fake.run, async ({ agent, idle }) => {
+    const created = (await newSession(agent)) as { configOptions: { configId: string }[] };
+    const advisor = created.configOptions.find((o) => o.configId === "advisor") as unknown as {
+      currentValue: string;
+      options: { value: string }[];
+    };
+    // None until one is chosen: the daemon sets Cycle's default on a new session.
+    expect(advisor.currentValue).toBe("off");
+    expect(advisor.options.map((o) => o.value)).toEqual(["off", "opus", "sonnet", "fable"]);
+
+    const set = (value: string) =>
+      agent.request(methods.agent.session.setConfigOption, {
+        sessionId: ID,
+        configId: "advisor",
+        type: "id",
+        value,
+      } as never) as Promise<{ configOptions: { configId: string; currentValue: string }[] }>;
+
+    expect(
+      (await set("opus")).configOptions.find((o) => o.configId === "advisor")?.currentValue,
+    ).toBe("opus");
+    await prompt(agent, idle, [{ type: "text", text: "one" }]);
+    expect(fake.calls[0]?.options.settings).toMatchObject({ advisorModel: "opus" });
+
+    await set("fable");
+    expect(
+      (await set("off")).configOptions.find((o) => o.configId === "advisor")?.currentValue,
+    ).toBe("off");
+    await expect(set("gpt")).rejects.toMatchObject({ code: -32602 });
+  });
+  expect(fake.state.flagSettings).toEqual([{ advisorModel: "fable" }, { advisorModel: null }]);
+});
+
 const waitFor = async (predicate: () => boolean, timeoutMs = 1_000) => {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {

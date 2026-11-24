@@ -673,6 +673,8 @@ export function Composer({
     settings !== undefined &&
     onSetting !== undefined &&
     propertiesOf(settings.schema).some(([, property]) => {
+      // Kept to the settings pages: no chip (setting-chips.tsx).
+      if (property._meta?.["cycle/composer"] === false) return false;
       const choices = optionsOf(property);
       return choices !== undefined && choices.length > 0;
     });

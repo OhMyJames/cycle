@@ -23,6 +23,12 @@ export type AgentDefinition = {
   name: string;
   /** JSON Schema of what can be configured, for a client to draw a form from. */
   configSchema: Record<string, unknown>;
+  /**
+   * What a new session is set to before the person's saved defaults and the session's own choices: Cycle's defaults for
+   * this agent, each a key of `configSchema` with its schema `default`. Only a new session: one resumed replays what it
+   * was set to, so a later change here does not reach it. None when absent: the agent's own.
+   */
+  newSession?: Record<string, string>;
   /** What the agent takes in a prompt beyond text and links (ACP `PromptCapabilities`). None when absent. */
   promptCapabilities?: PromptCapabilities;
   /** It takes a prompt into the turn that is running (`_meta["cycle/steer"]`, docs/protocol.md §8). */

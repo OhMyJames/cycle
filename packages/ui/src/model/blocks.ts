@@ -33,7 +33,7 @@ import type {
 import { textOf } from "./conversation.ts";
 import { isPendingReview, isRunningReview, type Review, reviewOf } from "./review.ts";
 
-export type Activity = "run" | "read" | "edit" | "search" | "list" | "fetch" | "other";
+export type Activity = "run" | "read" | "edit" | "search" | "list" | "fetch" | "advise" | "other";
 
 const BY_NAME: Record<string, Activity> = {
   Bash: "run",
@@ -46,6 +46,8 @@ const BY_NAME: Record<string, Activity> = {
   Glob: "search",
   WebFetch: "fetch",
   WebSearch: "search",
+  // Claude's advisor (the API's server tool), as its adapter names the call.
+  advisor: "advise",
 };
 
 const BY_KIND: Record<string, Activity> = {

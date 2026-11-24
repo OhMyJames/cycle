@@ -4,7 +4,7 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import type { EffortLevel, Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { PermissionMode } from "./config-options.ts";
+import type { AdvisorModel, PermissionMode } from "./config-options.ts";
 import type { SdkContent } from "./content.ts";
 import { Schedules } from "./schedules.ts";
 import type { SessionSetup } from "./setup.ts";
@@ -116,6 +116,8 @@ export type SessionState = {
   mode: PermissionMode;
   model: string | undefined;
   effort: EffortLevel | undefined;
+  /** The advisor model, or none: what `settings.advisorModel` is. */
+  advisor: AdvisorModel | undefined;
   turn: Turn | undefined;
   live: Live | undefined;
   /** The task list, which outlives a turn. */
@@ -158,6 +160,7 @@ export const newSession = (fields: {
   configKey: undefined,
   model: undefined,
   effort: undefined,
+  advisor: undefined,
   turn: undefined,
   live: undefined,
   plan: new PlanState(),

@@ -1827,3 +1827,80 @@ test("a turn that ended normally shows its answer with its work folded above it;
   await user.keyboard("{Enter}");
   await waitFor(() => expect(fold.getAttribute("aria-expanded")).toBe("false"));
 });
+
+/** A call to Claude's advisor, as its adapter tells it: no input, then how it answered. */
+const advisor = (id: string, end?: { status: string; rawOutput: object; text?: string }) => [
+  u({
+    sessionUpdate: "tool_call_update",
+    toolCallId: id,
+    name: "advisor",
+    kind: "other",
+    status: "in_progress",
+    rawInput: {},
+  }),
+  ...(end === undefined
+    ? []
+    : [
+        u({
+          sessionUpdate: "tool_call_update",
+          toolCallId: id,
+          status: end.status,
+          rawOutput: end.rawOutput,
+          ...(end.text !== undefined
+            ? { content: [{ type: "content", content: { type: "text", text: end.text } }] }
+            : {}),
+        }),
+      ]),
+];
+
+test("asking the advisor is a row that says so while it waits, then that it asked, and opens to why there is nothing to read", async () => {
+  const { user, log, emit } = await open(you("u1"), ...advisor("v"), state({ state: "running" }));
+  const row = await screen.findByRole("button", { name: /Asking the advisor/ });
+  // No input to show, and no tool name of its own on the line.
+  expect(row.textContent).not.toContain("{}");
+  await emit(
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "v",
+      status: "completed",
+      rawOutput: { type: "advisor_redacted_result" },
+    }),
+  );
+  const done = await screen.findByRole("button", { name: /Asked the advisor/ });
+  await user.click(done);
+  await waitFor(() => expect(log.textContent).toContain("only Claude can read it"));
+});
+
+test("the advisor's advice in the clear is read when its row is opened, and one that failed says why", async () => {
+  const { user, log } = await open(
+    you("u1"),
+    ...advisor("v", {
+      status: "completed",
+      rawOutput: { type: "advisor_result" },
+      text: "Close the input channel first.",
+    }),
+    say("a1"),
+    ...advisor("w", {
+      status: "failed",
+      rawOutput: { type: "advisor_tool_result_error", error_code: "overloaded" },
+    }),
+    state({ state: "running" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /Asked the advisor/ }));
+  await waitFor(() => expect(log.textContent).toContain("Close the input channel first."));
+  const failed = await screen.findByRole("button", { name: /The advisor could not answer/ });
+  expect(failed.textContent).toContain("failed");
+  await user.click(failed);
+  await waitFor(() => expect(log.textContent).toContain("(overloaded)"));
+});
+
+test("two calls to the advisor in a card are counted as asking it", async () => {
+  await open(
+    you("u1"),
+    ...advisor("v", { status: "completed", rawOutput: { type: "advisor_redacted_result" } }),
+    ...tool("a", "Bash", "completed", { command: "make" }),
+    ...advisor("w", { status: "completed", rawOutput: { type: "advisor_redacted_result" } }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  await screen.findByRole("button", { name: /^Asked the advisor 2 times and ran 1 command/ });
+});

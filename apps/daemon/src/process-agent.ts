@@ -9,6 +9,8 @@ export type ProcessAgentOptions = {
   id: string;
   name: string;
   configSchema?: Record<string, unknown>;
+  /** Cycle's defaults for a new session; see `AgentDefinition`. */
+  newSession?: Record<string, string>;
   /** What the agent takes in a prompt beyond text and links; see `AgentDefinition`. */
   promptCapabilities?: PromptCapabilities;
   /** See `AgentDefinition`. */
@@ -60,6 +62,7 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
   id: options.id,
   name: options.name,
   configSchema: options.configSchema ?? { type: "object", properties: {} },
+  ...(options.newSession !== undefined ? { newSession: options.newSession } : {}),
   ...(options.promptCapabilities !== undefined
     ? { promptCapabilities: options.promptCapabilities }
     : {}),
