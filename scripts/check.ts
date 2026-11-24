@@ -92,17 +92,31 @@ for await (const file of sources.scan({ cwd: root })) {
 // nothing keeps, and one that is defined and not written is a decision nobody can see.
 {
   const design = await Bun.file(`${root}DESIGN.md`).text();
-  const css = await Bun.file(`${root}packages/ui/src/styles/app.css`).text();
+  // The stylesheet is app.css and the parts it imports (packages/ui/src/styles/), in that order; a part it does not
+  // import is in no build, and is said so.
+  const styles = `${root}packages/ui/src/styles/`;
+  const entry = await Bun.file(`${styles}app.css`).text();
+  const parts = Array.from(
+    entry.matchAll(/^@import "\.\/([\w-]+\.css)";$/gm),
+    (m) => m[1] as string,
+  );
+  for await (const file of new Glob("*.css").scan({ cwd: styles })) {
+    if (file !== "app.css" && file !== "built.css" && !parts.includes(file)) {
+      failures.push(`packages/ui/src/styles/${file} is not imported by app.css`);
+    }
+  }
+  let css = entry;
+  for (const part of parts) css += await Bun.file(styles + part).text();
   const named = new Set(design.match(/--cycle-[a-z-]+/g) ?? []);
   const defined = new Set(
     Array.from(css.matchAll(/^\s*(--cycle-[a-z-]+)\s*:/gm), (m) => m[1] as string),
   );
   for (const token of named)
     if (!defined.has(token))
-      failures.push(`DESIGN.md names ${token}, which app.css does not define`);
+      failures.push(`DESIGN.md names ${token}, which the stylesheet does not define`);
   for (const token of defined)
     if (!named.has(token))
-      failures.push(`app.css defines ${token}, which DESIGN.md does not mention`);
+      failures.push(`the stylesheet defines ${token}, which DESIGN.md does not mention`);
 }
 
 // The dictionary of analytics events and its document agree: an event nobody wrote down is one nobody can review for what it

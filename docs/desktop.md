@@ -125,7 +125,7 @@ agent 的输出是不可信的:里面可以有原始 HTML、链接、图片。
 
 Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色名(`text-muted-foreground`、`bg-sidebar`……),Tailwind 只在这些名字有定义时才生成对应的类。所以:
 
-- `packages/ui/src/styles/app.css` 引入 Tailwind、ui-sdk 的 `web.css`(在 `components` 层)、Streamdown 的样式,`@source` 指向 Streamdown 的代码,并用 `@theme inline` 把那些颜色名映射到 ui-sdk 的 `--ui-*` 变量。换 ui-sdk 的主题,Markdown 也跟着换。
+- `packages/ui/src/styles/app.css` 引入 Tailwind、ui-sdk 的 `web.css`(在 `components` 层)、Streamdown 的样式,`@source` 指向 Streamdown 的代码,并用 `@theme inline` 把那些颜色名映射到 ui-sdk 的 `--ui-*` 变量。Cycle 自己的样式按领域分在同目录的几个文件里(`base`、`motion`、`layout`、`sidebar`、`main`、`conversation`、`composer`、`pages`),`app.css` 按顺序导入它们，顺序就是层叠的顺序。换 ui-sdk 的主题,Markdown 也跟着换。
 - 一个 DOM 测试检查 Streamdown 渲染出的每个工具类都在构建出的 css 里。它抓到过缺口(上面的颜色名没定义,Markdown 会"光着身子")。
 - 生成的 `built.css` 不进 git;`bun run check` 的第一步会生成它。
 

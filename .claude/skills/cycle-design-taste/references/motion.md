@@ -28,7 +28,7 @@ Cycle 里的动效只做一件事:让一个变化被看见。没有理由的动�
 
 ## 数值与令牌
 
-- 三档时长全部集中定义在 `packages/ui/src/styles/app.css`,其他规则只引用变量,不写散落数字:
+- 三档时长全部集中定义在 `packages/ui/src/styles/base.css`,其他规则只引用变量,不写散落数字:
   - `--cycle-motion-state`: `100ms`
   - `--cycle-motion-disclosure`: `160ms`
   - `--cycle-motion-enter`: `200ms`
@@ -43,7 +43,7 @@ Cycle 里的动效只做一件事:让一个变化被看见。没有理由的动�
 }
 ```
 
-这是整个应用唯一允许 `!important` 的地方(仅 `app.css` 中的 `--cycle-fade-end` 滚动静态遮罩作为例外保留)。减少动效下,状态点不脉动,改靠形状与语义文字表达,不能因为动效没了而丢信息。
+这是整个应用唯一允许 `!important` 的地方:减少动效的规则都在 `packages/ui/src/styles/motion.css`,`biome.json` 只对这个文件放开 `noImportantStyles`(其中的尾部渐隐滚动遮罩作为例外保留)。减少动效下,状态点不脉动,改靠形状与语义文字表达,不能因为动效没了而丢信息。
 
 ## 每个动效写一行理由
 

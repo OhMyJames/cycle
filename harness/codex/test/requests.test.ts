@@ -7,6 +7,17 @@ import { createAdapter } from "../src/agent.ts";
 import { elicitationAnswer, questionAnswers, questionForm } from "../src/ask.ts";
 import { planWindowsOf } from "../src/plan-usage.ts";
 
+/** What the adapter sent the fake app-server: read back from its log, in the shapes these tests look at. */
+type Sent = {
+  method?: string;
+  id?: unknown;
+  params: { [name: string]: unknown; config?: { mcp_servers: Record<string, unknown> } };
+  result?: unknown;
+};
+
+/** A form the client was asked to fill. */
+type Form = { message: string; requestedSchema: { properties: Record<string, unknown> } };
+
 /**
  * A fake app-server: answers the handshake, records every message it gets in `log`, and runs `script` (the body of a
  * function of `(method, id, params, send)`) for the rest.
@@ -38,7 +49,7 @@ async function fake(dir: string, script: string) {
     (await Bun.file(log).text())
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l) as { method?: string; id?: unknown; params?: any; result?: any });
+      .map((l) => JSON.parse(l) as Sent);
   return { executable, messages };
 }
 
@@ -163,9 +174,9 @@ test("Codex's question and an MCP server's form are asked as forms, and nobody t
     env: { HOME: dir, CODEX_HOME: dir },
     codexExecutable: executable,
   });
-  const forms: { message: string; requestedSchema: any }[] = [];
+  const forms: Form[] = [];
   const app = client().onRequest(methods.client.elicitation.create, ({ params }) => {
-    const form = params as unknown as { message: string; requestedSchema: any };
+    const form = params as unknown as Form;
     forms.push(form);
     return (
       form.message === "Name?"
@@ -196,7 +207,9 @@ test("Codex's question and an MCP server's form are asked as forms, and nobody t
     expect(answers.url).toEqual({ action: "decline", content: null, _meta: null });
     expect(forms.map((f) => f.message).sort()).toEqual(["Name?", "Which color?"]);
     expect(
-      Object.keys(forms.find((f) => f.message === "Which color?")?.requestedSchema.properties),
+      Object.keys(
+        forms.find((f) => f.message === "Which color?")?.requestedSchema.properties ?? {},
+      ),
     ).toEqual(["q0", "q0_other"]);
   } finally {
     adapter.close();
@@ -491,7 +504,7 @@ test("names that come out the same stay apart, a sub-agent ends on its activity 
       await until(async () => (await messages()).some((m) => m.id === "q" && m.result));
     });
     const start = (await messages()).find((m) => m.method === "thread/start");
-    expect(Object.keys(start?.params.config.mcp_servers)).toEqual([
+    expect(Object.keys(start?.params.config?.mcp_servers ?? {})).toEqual([
       "Linear_work_",
       "Linear_work__2",
       "Linear_work__3",

@@ -1,5 +1,5 @@
 // Ported whole from Cycle v2 (packages/ui/src/loader/morph-loader.tsx), by the owner's decision for CYCL-215; see
-// index.ts. Changed for v1: styled in app.css by `data-slot` (no Tailwind classes), and standing still with reduced motion.
+// index.ts. Changed for v1: styled in conversation.css by `data-slot` (no Tailwind classes), and standing still with reduced motion.
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { mount, paint, unmount } from "./paint.ts";
 import { prefersReducedMotion, subscribeReducedMotion } from "./reduced-motion.ts";

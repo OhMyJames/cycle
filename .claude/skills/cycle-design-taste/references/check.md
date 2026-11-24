@@ -8,7 +8,7 @@
 bun run check        # 边界、css、类型、lint、单元测试、DOM 测试,约 10 秒
 ```
 
-注意门禁会校验 `DESIGN.md` 与 `packages/ui/src/styles/app.css` 里的 `--cycle-*` 令牌双向完全一致。新的界面状态要在界面测试里有一条(`packages/ui/test/browser/app.browser.tsx`,在无界面的 Chromium 里跑,`bun run test:browser`;假桥接在 `test/fake-bridge.ts`)。
+注意门禁会校验 `DESIGN.md` 与 `packages/ui/src/styles/` 下样式里的 `--cycle-*` 令牌双向完全一致;lint 有任何 warning 都会失败(`--error-on-warnings`)。新的界面状态要在界面测试里有一条(`packages/ui/test/browser/app.browser.tsx`,在无界面的 Chromium 里跑,`bun run test:browser`;假桥接在 `test/fake-bridge.ts`)。
 
 ## 2. 文案和 i18n
 

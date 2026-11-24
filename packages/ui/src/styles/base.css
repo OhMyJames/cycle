@@ -1,0 +1,497 @@
+/* The design tokens, the theme, and the base of every control: what the rest is written in. */
+
+/* Streamdown and Rare UI / shadcn-compatible components expect Tailwind semantic tokens
+   (bg-card, text-muted-foreground, bg-primary, font-runde, ...). Mapping them here ensures
+   all third-party and future Rare UI components automatically follow Cycle's light/dark theme. */
+@theme inline {
+  --color-background: var(--ui-background);
+  --color-foreground: var(--ui-foreground);
+  --color-card: var(--cycle-surface-raised);
+  --color-card-foreground: var(--cycle-ink);
+  --color-popover: var(--cycle-surface-raised);
+  --color-popover-foreground: var(--cycle-ink);
+  --color-primary: var(--cycle-accent);
+  --color-primary-foreground: var(--cycle-accent-foreground);
+  --color-secondary: var(--cycle-surface-message);
+  --color-secondary-foreground: var(--cycle-ink);
+  --color-muted: var(--cycle-surface-message);
+  --color-muted-foreground: var(--cycle-ink-muted);
+  --color-accent: var(--cycle-surface-hover);
+  --color-accent-foreground: var(--cycle-ink);
+  --color-destructive: var(--ui-destructive);
+  --color-destructive-foreground: light-dark(#ffffff, #0a0a0a);
+  --color-border: var(--cycle-border-default);
+  --color-input: var(--cycle-input-border);
+  --color-ring: var(--cycle-focus-ring);
+  --color-sidebar: var(--cycle-surface-sidebar);
+  --color-sidebar-foreground: var(--cycle-ink);
+  --color-sidebar-primary: var(--cycle-accent);
+  --color-sidebar-primary-foreground: var(--cycle-accent-foreground);
+  --color-sidebar-accent: var(--cycle-surface-selected);
+  --color-sidebar-accent-foreground: var(--cycle-ink);
+  --color-sidebar-border: var(--cycle-border-subtle);
+  --color-sidebar-ring: var(--cycle-focus-ring);
+
+  --font-sans: var(--ui-font-sans);
+  --font-runde: var(--cycle-font-display);
+  --font-display: var(--cycle-font-display);
+  --font-mono: var(--ui-font-mono);
+
+  --radius-sm: var(--cycle-radius-sm);
+  --radius-md: var(--ui-radius);
+  --radius-lg: var(--cycle-radius-card);
+  --radius-xl: var(--cycle-radius-card);
+  --radius-2xl: var(--cycle-radius-composer);
+}
+
+/* Self-hosted Rare UI open-source font trio (SIL OFL-1.1), staged locally beside the stylesheet
+   by build-css.ts so Electron runs 100% offline under strict CSP (`font-src 'self' data:`).
+   Open Runde uses explicit weight ranges so --cycle-weight: 420 maps cleanly to Regular (400). */
+@font-face {
+  font-family: "Open Runde";
+  font-style: normal;
+  font-weight: 1 449;
+  font-display: swap;
+  src: url("./fonts/open-runde-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Open Runde";
+  font-style: normal;
+  font-weight: 450 549;
+  font-display: swap;
+  src: url("./fonts/open-runde-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Open Runde";
+  font-style: normal;
+  font-weight: 550 649;
+  font-display: swap;
+  src: url("./fonts/open-runde-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Open Runde";
+  font-style: normal;
+  font-weight: 650 1000;
+  font-display: swap;
+  src: url("./fonts/open-runde-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/inter-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter Variable";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/inter-latin-ext-wght-italic.woff2") format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter Variable";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/inter-latin-wght-italic.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Geist Mono Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/geist-mono-symbols2-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+2000-2001, U+2004-2008, U+200A, U+23B8-23BD, U+2500-259F;
+}
+@font-face {
+  font-family: "Geist Mono Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/geist-mono-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Geist Mono Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/geist-mono-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* PingFang has fixed weights, so a weight of 420 would pick Medium and set all Chinese bold. These faces give it
+   Light below 350, Regular below 450, Medium below 550 and Semibold above; Inter Variable takes 420 as it is. */
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Light"), local("PingFang SC Light");
+  font-weight: 1 349;
+}
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Regular"), local("PingFang SC Regular");
+  font-weight: 350 449;
+}
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Medium"), local("PingFang SC Medium");
+  font-weight: 450 549;
+}
+@font-face {
+  font-family: "Cycle PingFang";
+  src: local("PingFangSC-Semibold"), local("PingFang SC Semibold");
+  font-weight: 550 1000;
+}
+
+/* DESIGN.md is the source of what these are and why. Components use the --cycle-* names; ui-sdk's own
+   tokens are remapped here, once, so its controls take the same accent, radius, fonts and focus. */
+:root {
+  --cycle-gap: 0.75rem;
+  --cycle-gap-turn: 2rem;
+
+  /* Surfaces: Rare UI / Apple hardware pure neutrals. Workspace is the crisp conversation ground;
+     sidebar sits recessed; raised elevates cards, menus, dialogs and the composer with a subtle
+     specular top edge; message holds user bubbles and sunken fills. */
+  --cycle-surface-workspace: light-dark(#ffffff, #0a0a0a);
+  --cycle-surface-sidebar: light-dark(#f5f5f7, #050505);
+  --cycle-surface-raised: light-dark(#ffffff, #141414);
+  --cycle-surface-message: light-dark(#f2f2f4, #1b1b1c);
+  --cycle-surface-hover: light-dark(#ececef, #222224);
+  --cycle-surface-selected: light-dark(#e4e4e8, #2b2b2e);
+  --cycle-border-subtle: light-dark(#ededf0, #1f1f22);
+  --cycle-border-default: light-dark(#e2e2e6, #2c2c30);
+
+  /* Ink: four pure neutral steps. Muted holds >= 4.5:1 on every surface above, selected included. */
+  --cycle-ink: light-dark(#141414, #f5f5f7);
+  --cycle-ink-secondary: light-dark(#505055, #a8a8ae);
+  --cycle-ink-muted: light-dark(#636369, #98989f);
+  --cycle-ink-disabled: light-dark(#8a8a92, #6e6e75);
+
+  /* Colour: Rare UI international safety orange (#fc4c01 dark, contrast-calibrated #c93b00 light)
+     for primary actions and active state; Apple HIG amber-gold, emerald and calm coral-crimson for status. */
+  --cycle-accent: light-dark(#c93b00, #fc4c01);
+  /* A link in a reply, and code named inline in one: told apart from the words around them by colour alone. */
+  --cycle-link: light-dark(#1d4ed8, #60a5fa);
+  --cycle-ink-code: light-dark(#b4371f, #fb8b73);
+  --cycle-accent-foreground: #ffffff;
+  --cycle-attention: light-dark(#8a5a00, #f5b82e);
+  --cycle-success: light-dark(#1a7f37, #30d158);
+  /* The ground of a line that warns or says what failed, in the hue of its tone: pale in light, deep in dark. */
+  --cycle-attention-soft: light-dark(#fdf4dc, #231b0a);
+  --cycle-destructive-soft: light-dark(#fcecec, #2a1414);
+  --cycle-input-border: light-dark(#8b8b93, #63636a);
+  --cycle-focus-ring: light-dark(#6b6b75, #8e8e98);
+  --cycle-focus-halo: 0 0 0 3px light-dark(rgb(0 0 0 / 7%), rgb(255 255 255 / 9%));
+
+  /* Type: four disciplined sizes (12/18, 13/20, 14/22, 16/22.4) paired with the Rare UI font trio, and one display size
+     (24/30) for a page's own heading: the new session's (CYCL-220), and nothing else.
+     Open Runde gives brand touchpoints, titles and buttons a rounded, approachable voice; Inter
+     keeps long prose crisp; Geist Mono anchors code, commands and paths. */
+  --cycle-font-display:
+    "Open Runde", "Inter Variable", "Cycle PingFang", "PingFang SC", -apple-system,
+    BlinkMacSystemFont, system-ui, sans-serif;
+  --cycle-tracking-display: -0.015em;
+  --cycle-text-meta: 0.75rem;
+  --cycle-text-ui: var(--ui-font-size, 0.8125rem);
+  --cycle-text-body: 0.875rem;
+  --cycle-text-title: 1rem;
+  --cycle-text-display: 1.5rem;
+  --cycle-leading-meta: 1.5;
+  --cycle-leading-ui: 1.46;
+  --cycle-leading-body: 1.5;
+  --cycle-leading-title: 1.4;
+  --cycle-leading-display: 1.25;
+  --cycle-weight: 420;
+
+  /* Concentric rounded radii: inner = outer - padding.
+     16 composer - 6 pad = 10 controls; 16 popover - 6 pad = 10 menu rows. */
+  --cycle-radius-sm: 6px;
+  --cycle-radius-card: 16px;
+  --cycle-radius-message: 14px;
+  --cycle-radius-composer: 16px;
+  --cycle-radius-pill: 9999px;
+
+  /* Hardware specular rim & layered elevation (inspired by Rare UI's .border-apple).
+     Uses light-dark() inside shadow colors so forced color-scheme previews stay accurate too. */
+  --cycle-edge-hardware:
+    inset 0 0 0 1px light-dark(rgb(0 0 0 / 3%), rgb(255 255 255 / 7%)),
+    inset 0 1px 0 0 light-dark(rgb(255 255 255 / 92%), rgb(255 255 255 / 12%)),
+    inset 0 -1px 0 0 light-dark(transparent, rgb(0 0 0 / 40%));
+  --cycle-edge-accent: inset 0 1px 0 0 rgb(255 255 255 / 28%), inset 0 -1px 0 0 rgb(0 0 0 / 16%);
+  /* The main input box's edge: its one border and a faint top light, no inner ring (two lines read as a frame). */
+  --cycle-edge-composer: inset 0 1px 0 0 light-dark(rgb(255 255 255 / 90%), rgb(255 255 255 / 4%));
+  /* The main input box focused: a little more lift than at rest. With the border a step deeper, that is all of it: one
+     border, no ring (owner's word, CYCL-75). */
+  --cycle-focus-composer:
+    0 6px 20px -6px light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 75%)),
+    0 1px 3px light-dark(rgb(0 0 0 / 6%), rgb(0 0 0 / 50%));
+  --cycle-shadow-composer:
+    0 4px 16px -4px light-dark(rgb(0 0 0 / 6%), rgb(0 0 0 / 60%)),
+    0 1px 3px light-dark(rgb(0 0 0 / 4%), rgb(0 0 0 / 45%));
+  --cycle-shadow-popover:
+    0 8px 24px -4px light-dark(rgb(0 0 0 / 9%), rgb(0 0 0 / 65%)),
+    0 2px 6px -1px light-dark(rgb(0 0 0 / 5%), rgb(0 0 0 / 45%));
+  --cycle-shadow-dialog:
+    0 22px 54px -12px light-dark(rgb(0 0 0 / 15%), rgb(0 0 0 / 78%)),
+    0 4px 14px -2px light-dark(rgb(0 0 0 / 6%), rgb(0 0 0 / 55%));
+  --cycle-scrim: light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 55%));
+  /* Behind a picture opened large: dark in both themes, so the picture's own colours read true and nothing shows through. */
+  --cycle-scrim-lightbox: rgb(0 0 0 / 92%);
+
+  /* Text too long for its line fades out at the end instead of ending in "…" (old-cycle's rule): the box is full width and
+     the last 1.5rem of it fade, so a short line, which never reaches there, is not touched. */
+  --cycle-fade-end: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+
+  /* Layout and motion: 100ms for a state, 160ms for a disclosure, 200ms for something arriving. */
+  --cycle-measure: 48rem;
+  --cycle-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cycle-motion-state: 100ms;
+  --cycle-motion-disclosure: 160ms;
+  --cycle-motion-enter: 200ms;
+
+  /* ui-sdk, remapped. Its primary is what solid buttons, selection and checked states use. */
+  --ui-background: var(--cycle-surface-workspace);
+  --ui-foreground: var(--cycle-ink);
+  --ui-muted: var(--cycle-surface-message);
+  --ui-muted-foreground: var(--cycle-ink-muted);
+  --ui-border: var(--cycle-border-default);
+  --ui-input: var(--cycle-input-border);
+  --ui-shadow: var(--cycle-shadow-popover);
+  --ui-overlay: var(--cycle-scrim);
+  --ui-primary: var(--cycle-accent);
+  --ui-primary-foreground: var(--cycle-accent-foreground);
+  --ui-destructive: light-dark(#c4343b, #e87872);
+  --ui-ring-border: var(--cycle-focus-ring);
+  --ui-radius: 10px;
+  /* PingFang for Chinese comes through "Cycle PingFang" (the faces above), so 420 does not set it bold. */
+  --ui-font-sans:
+    "Inter Variable", "Cycle PingFang", "PingFang SC", -apple-system, BlinkMacSystemFont, system-ui,
+    "Segoe UI", sans-serif;
+  --ui-font-mono:
+    "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, "Cycle PingFang", "PingFang SC",
+    monospace;
+
+  font-family: var(--ui-font-sans);
+  font-weight: var(--cycle-weight);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* ui-sdk sizes in rem: at 14px the root made its 13px controls 11px. */
+  font-size: 16px;
+}
+
+/* The theme follows the system. What light-dark() cannot hold (font weight) changes here. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cycle-weight: 400;
+  }
+}
+
+/* Scrollbars (same as cycle_v2): 6px visible in a 10px slot with 2px clear on each side, no track,
+   round ends, at least 32px long. They show only while the pointer is over the scroller and go a step
+   darker under the pointer. `::-webkit-scrollbar` rather than `scrollbar-width` / `scrollbar-color`:
+   Chromium drops these pseudo-elements on any element that sets either property. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  min-width: 32px;
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-color: transparent;
+  background-clip: padding-box;
+}
+:hover::-webkit-scrollbar-thumb {
+  background-color: light-dark(#d4d4d8, #48484c);
+}
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: light-dark(#a5a5ab, #5f5f64);
+}
+
+/* Code, menus and lists show no bar, since one would only cover their last line; a trackpad, or shift and
+   the wheel, still scroll them. The conversation, pages, panels and forms keep the bar above.
+   Below: code, then menus, then lists. A new scroller of these kinds joins the list. */
+:is(
+  [data-slot="message"] [data-streamdown="code-block-body"],
+  [data-slot="message"] [data-streamdown="code-block-body"] pre,
+  [data-slot="message"] [data-streamdown="table-wrapper"] > div,
+  [data-slot="tool-output"],
+  [data-slot="tool-command"],
+  [data-slot="tool-diff"],
+  [data-slot="files-plain"],
+  [data-slot="composer-input"] code:is([data-language], [data-gutter]),
+  [data-slot="permission-detail"],
+  [data-slot="menu-content"],
+  [data-slot="select-content"],
+  [data-slot="combobox-content"],
+  [data-slot="autocomplete-content"],
+  [data-slot="trigger-menu-content"],
+  [data-slot="popover-content"],
+  [data-slot="command-list"],
+  [data-slot="picker"],
+  [data-slot="sidebar-scroll"],
+  [data-slot="panel-tabs-bar"] > [data-slot="tabs-list"],
+  [data-slot="composer-extensions"]
+)::-webkit-scrollbar {
+  display: none;
+}
+
+/* Reset Inter stylistic sets on monospace code so Geist Mono uses its native glyphs. */
+code,
+pre,
+[data-slot="session-where"],
+[data-slot="connector-where"],
+[data-slot="tool-summary"],
+[data-slot="tool-diff"] {
+  font-feature-settings: normal;
+}
+
+/* Rare UI-compatible utility class for hardware specular rim (layered so Tailwind shadow-* can compose). */
+@layer utilities {
+  .border-apple {
+    box-shadow: var(--cycle-edge-hardware);
+  }
+}
+
+::selection {
+  background: color-mix(in oklab, var(--cycle-accent) 22%, transparent);
+}
+
+/* Refined neutral silver-graphite focus ring: >= 4:1 contrast across all surfaces without competing
+   with safety-orange CTAs or creating harsh wireframe boxes. Inputs pull the ring flush with a soft halo. */
+:where([data-slot]):focus-visible,
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: 1px;
+}
+
+:is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"]):not(
+  [data-invalid]
+):focus-visible {
+  border-color: var(--cycle-focus-ring);
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: -1px;
+  box-shadow: var(--cycle-focus-halo);
+}
+
+:is(
+  [data-slot="input"],
+  [data-slot="textarea"],
+  [data-slot="select-trigger"]
+)[data-invalid]:focus-visible {
+  border-color: var(--ui-destructive);
+  outline: 1.5px solid var(--ui-destructive);
+  outline-offset: -1px;
+}
+
+/* Buttons & interactive triggers carry Open Runde for tactile, approachable warmth and crisp hardware edges. */
+:is(
+  [data-slot="button"],
+  [data-slot="menu-trigger"],
+  [data-slot="select-trigger"],
+  [data-slot="dialog-close"],
+  [data-slot="alert-dialog-close"]
+) {
+  font-family: var(--cycle-font-display);
+  transition:
+    background-color var(--cycle-motion-state) var(--cycle-ease),
+    color var(--cycle-motion-state) var(--cycle-ease),
+    border-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+:is(
+  [data-slot="button"],
+  [data-slot="menu-trigger"]:not([data-slot="menu-content"] *),
+  [data-slot="dialog-close"],
+  [data-slot="alert-dialog-close"]
+):not(
+  [data-variant="ghost"],
+  [data-variant="solid"],
+  [data-variant="destructive"],
+  [data-kind="queue"]
+) {
+  border-color: var(--cycle-input-border);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+}
+
+:is(
+  [data-slot="button"],
+  [data-slot="menu-trigger"]:not([data-slot="menu-content"] *),
+  [data-slot="dialog-close"],
+  [data-slot="alert-dialog-close"]
+):not(
+  [data-variant="ghost"],
+  [data-variant="solid"],
+  [data-variant="destructive"],
+  [data-kind="queue"]
+):hover:not([data-disabled]) {
+  background: var(--cycle-surface-hover);
+}
+
+:is([data-slot="button"], [data-slot="menu-trigger"])[data-variant="solid"] {
+  font-weight: 600;
+  box-shadow: var(--cycle-edge-accent);
+}
+
+:is([data-slot="button"], [data-slot="menu-trigger"])[data-variant="solid"]:hover:not(
+  [data-disabled]
+) {
+  background: color-mix(in oklab, var(--cycle-accent) 90%, #000000);
+}
+
+/* ui-sdk draws every button with an edge and only knows "solid" and "destructive". "ghost" is ours: no edge and no
+   fill until it is hovered, for what sits in a bar of controls (menus, Dismiss, Retry, the sidebar's actions). A button
+   that should look like a button keeps the default edge ("outline" is that default, named). */
+:is([data-slot="button"], [data-slot="menu-trigger"])[data-variant="ghost"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--cycle-ink-secondary);
+}
+
+:is([data-slot="button"], [data-slot="menu-trigger"])[data-variant="ghost"]:is(
+  :hover:not([data-disabled]),
+  [data-open]
+) {
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink);
+}

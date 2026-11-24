@@ -146,8 +146,7 @@ const versionedName = (m: ModelInfo): string => {
   const name = m.displayName || m.value;
   const lead = m.description?.split(" · ")[0]?.trim();
   // Only the name and a version ("Opus 5.5"), never a phrase that happens to start with the name.
-  return lead !== undefined &&
-    lead.toLowerCase().startsWith(`${name.toLowerCase()} `) &&
+  return lead?.toLowerCase().startsWith(`${name.toLowerCase()} `) &&
     /^\d+(\.\d+)*$/.test(lead.slice(name.length + 1))
     ? lead
     : name;

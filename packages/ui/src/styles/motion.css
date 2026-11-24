@@ -1,0 +1,53 @@
+/* Less motion for those who ask for it (prefers-reduced-motion). The one place `!important` is used: a
+   reduction has to win over every animation, whatever its selector. Only this file may use it (biome.json). */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* The end fade is not motion: it is drawn by an animation on scroll, and stays. */
+  :is(
+    [data-slot="environment-name"],
+    [data-slot="session-title"],
+    [data-slot="workspace-name"],
+    [data-slot="search-title"],
+    [data-slot="account-name"],
+    [data-slot="account-card-name"],
+    [data-slot="account-card-detail"],
+    [data-slot="update-line"],
+    [data-slot="setting-value"],
+    [data-slot="menu-content"] [data-slot="option-description"],
+    [data-slot="queued-text"],
+    [data-slot="attachment-name"],
+    [data-slot="picker-description"],
+    [data-slot="composer-placeholder"],
+    [data-slot="page-row-label"],
+    [data-slot="tool-verb"],
+    [data-slot="tool-summary"],
+    [data-slot="tool-diff-path"],
+    [data-slot="plan-now"],
+    [data-slot="subagent-title"],
+    [data-slot="subagent-tag"],
+    [data-slot="subagent-glimpse"],
+    [data-slot="blank-folder-name"],
+    [data-slot="blank-agent-name"],
+    [data-slot="blank-recent-name"],
+    [data-slot="notice-text"],
+    /* A step's label fades in elsewhere: here only its end fade is left. */
+    [data-slot="step-label"],
+    [data-kind="session-title"]
+  ) {
+    animation: cycle-fade linear both !important;
+    animation-timeline: scroll(self inline) !important;
+  }
+
+  /* A long thought's edge fades the same way, down its height. */
+  [data-slot="thought-scroll"][data-scrolls] {
+    animation: cycle-thought-edges linear both !important;
+    animation-timeline: scroll(self block) !important;
+  }
+}
