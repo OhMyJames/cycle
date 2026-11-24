@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { appendFile, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,18 +7,11 @@ import { CycleErrorCode } from "@cycle/protocol";
 import { Daemon, JsonlLogStore, type LogStore, type SessionLog } from "../src/index.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const start = async (fake = fakeAgent()) => {
@@ -427,7 +420,7 @@ test("sessions and their history survive a new daemon on the same data", async (
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("remember") });
   await until(() => c.idle() >= 2, "the turn");
   await first.daemon.close();
-  open = [];
+  open.length = 0;
 
   const second = await start();
   const d = await connectClient(second.daemon);
@@ -492,7 +485,7 @@ test("a session is in the list from the person's first message, and is announced
   expect(listed.sessions.map((s) => s.sessionId)).toEqual([sessionId]);
   // Kept across a restart, from the index.
   await daemon.close();
-  open = [];
+  open.length = 0;
   const again = await start();
   const d = await connectClient(again.daemon);
   expect(
@@ -539,7 +532,7 @@ test("an index written before it said whether anything was said is read from the
   await c.agent.request(methods.agent.session.prompt, { sessionId: spoken, prompt: text("hi") });
   await until(() => c.ended() >= 1, "the turn to end");
   await first.daemon.close();
-  open = [];
+  open.length = 0;
   // As an older daemon wrote it: no `prompted` on any entry.
   const path = join(dir, "index.json");
   const index = JSON.parse(await readFile(path, "utf8")) as {
@@ -554,7 +547,7 @@ test("an index written before it said whether anything was said is read from the
     (await d.agent.request(methods.agent.session.list, SAID)).sessions.map((s) => s.sessionId),
   ).toEqual([spoken]);
   await second.daemon.close();
-  open = [];
+  open.length = 0;
   const kept = JSON.parse(await readFile(path, "utf8")) as {
     sessions: Record<string, { prompted?: boolean }>;
   };
@@ -687,7 +680,7 @@ test("a default for a setting the agent does not have is refused, and defaults s
   ).rejects.toMatchObject({ code: CycleErrorCode.InvalidConfig });
   await c.agent.request("_cycle/agent_defaults/set", { agent: "fake", config: { mode: "plan" } });
   await first.daemon.close();
-  open = [];
+  open.length = 0;
   const second = await start();
   const d = await connectClient(second.daemon);
   expect(await d.agent.request("_cycle/agent_defaults/read", { agent: "fake" })).toEqual({
@@ -818,7 +811,7 @@ test("a turn that ended is unread until a client says it has seen it, and that i
   await until(() => c.ended() >= 2, "the second turn to end");
   expect((await rowOf(c, sessionId)).meta["cycle/unread"]).toBe(true);
   await first.daemon.close();
-  open = [];
+  open.length = 0;
   const second = await start();
   const d = await connectClient(second.daemon);
   expect((await rowOf(d, sessionId)).meta["cycle/unread"]).toBe(true);
@@ -827,7 +820,7 @@ test("a turn that ended is unread until a client says it has seen it, and that i
     seq: await lastSeqOf(d, sessionId),
   });
   await second.daemon.close();
-  open = [];
+  open.length = 0;
   const third = await start();
   const e = await connectClient(third.daemon);
   expect((await rowOf(e, sessionId)).meta["cycle/unread"]).toBe(false);
@@ -1034,7 +1027,7 @@ test("a mark the index holds past the end of the log is brought back to it", asy
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("hi") });
   await until(() => c.ended() >= 1, "the turn to end");
   await first.daemon.close();
-  open = [];
+  open.length = 0;
   // As after a crash that cost the log its tail: the index says more than the log has.
   const path = join(dir, "index.json");
   const stored = JSON.parse(await readFile(path, "utf8"));
@@ -1194,7 +1187,7 @@ test("two clients that open the same stored session at once share one load: one 
   await seed.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("first") });
   await until(() => seed.ended() >= 1, "the first turn");
   await one.daemon.close();
-  open = [];
+  open.length = 0;
 
   const cold = flaky();
   const { daemon } = await startOn(cold.store);
@@ -1217,7 +1210,7 @@ test("a session that cannot be loaded can be asked for again", async () => {
   const seed = await connectClient(one.daemon);
   const { sessionId } = await seed.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   await one.daemon.close();
-  open = [];
+  open.length = 0;
 
   const file = join(dir, "sessions", `${sessionId}.jsonl`);
   const good = await readFile(file, "utf8");
@@ -1323,7 +1316,7 @@ const seedSessions = async (count: number) => {
   }
   await until(() => c.ended() >= count, "the turns");
   await first.daemon.close();
-  open = [];
+  open.length = 0;
   return ids;
 };
 
@@ -1591,7 +1584,7 @@ const resumeMeta = async (stopReason: string | undefined, prompts: number) => {
     await until(() => c.ended() >= i + 1, "the turn");
   }
   await first.daemon.close();
-  open = [];
+  open.length = 0;
 
   const second = await start();
   const d = await connectClient(second.daemon);
@@ -1917,7 +1910,7 @@ test("an older index's sessions are read once each to be listed, a few at a time
   expect(mostAtOnce).toBeGreaterThan(1);
   expect(mostAtOnce).toBeLessThanOrEqual(4);
   await first.daemon.close();
-  open = [];
+  open.length = 0;
 
   reads = 0;
   const second = await startOn(store);

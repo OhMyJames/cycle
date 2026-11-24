@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
@@ -7,20 +7,13 @@ import { indexPath, sessionsDir } from "../src/data-dir.ts";
 import { Daemon } from "../src/index.ts";
 import { connectClient, type Seen, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 // docs/protocol.md §8 "daemon 停止时进行中的 turn": a turn the daemon stops in the middle of ends on record.
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const start = async (fake: ReturnType<typeof fakeAgent>) => {
@@ -31,7 +24,8 @@ const start = async (fake: ReturnType<typeof fakeAgent>) => {
 
 /** Takes a daemon out of the ones the test closes for itself. */
 const stop = async (daemon: Daemon) => {
-  open = open.filter((d) => d !== daemon);
+  const at = open.indexOf(daemon);
+  if (at !== -1) open.splice(at, 1);
   await daemon.close();
 };
 

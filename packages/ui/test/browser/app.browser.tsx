@@ -1,17 +1,16 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { PermissionRequest, PlanUsage, SessionSnapshot } from "../../src/api.ts";
 import { codeTheme } from "../../src/code-theme.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
 import { MOD } from "../../src/react/sidebar.tsx";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
 import { chosenFolder, typeFolder } from "./blank.ts";
 import { boxText, press, ready, sleep, write } from "./box.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -42,14 +41,8 @@ const mount = async (
     ...(options.capabilities ? { capabilities: options.capabilities } : {}),
   });
   options.configure?.(script);
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   // An event arrives outside React's own calls: say so, or each one warns.
   const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
   return { store, user, ...script, emit };

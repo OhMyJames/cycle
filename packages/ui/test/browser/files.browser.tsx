@@ -1,12 +1,11 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { FileContent, FileListing, SessionSnapshot, SessionSummary } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -112,13 +111,7 @@ const mount = async (
     if (file === undefined) throw new Error("No such file or folder");
     return file;
   };
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(
     await screen.findByRole("option", { name: options.sessions !== undefined ? /first/ : /work/ }),

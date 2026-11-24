@@ -1,22 +1,20 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdir, readdir, readFile, rmdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AgentDefaults, DefaultsUnreadableError } from "../src/defaults-file.ts";
 import { IndexUnreadableError, SessionIndex } from "../src/index-file.ts";
 import { AgentOptionsCache } from "../src/options-cache.ts";
 import { FolderTrust, TrustUnreadableError } from "../src/trust-file.ts";
-import { tempDir } from "./support.ts";
+import { eachTempDir } from "./support.ts";
 
 // What the daemon's small JSON files have in common (the session index, the agent defaults, the options cache, the
 // folder trust): each is written whole, one change at a time, so a crash leaves the old file or the new one; a change
 // that cannot be written is undone in memory too; and each is private to the account.
 
 let dir: string;
-let dispose: () => Promise<void>;
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
+eachTempDir((made) => {
+  dir = made;
 });
-afterEach(() => dispose());
 
 const entry = {
   agent: "claude",

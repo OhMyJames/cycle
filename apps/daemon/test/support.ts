@@ -1,3 +1,4 @@
+import { afterEach, beforeEach } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,4 +32,39 @@ export const gitIn = (dir: string, ...args: string[]): string => {
 export const tempDir = async (): Promise<{ dir: string; dispose: () => Promise<void> }> => {
   const dir = await mkdtemp(join(tmpdir(), "cycle-v1-test-"));
   return { dir, dispose: () => rm(dir, { recursive: true, force: true }) };
+};
+
+/** A fresh directory for each test of the file, removed after it; `use` is given its path before the test runs. */
+export const eachTempDir = (use: (dir: string) => void): void => {
+  let dispose: (() => Promise<void>) | undefined;
+  beforeEach(async () => {
+    const made = await tempDir();
+    dispose = made.dispose;
+    use(made.dir);
+  });
+  afterEach(async () => {
+    await dispose?.();
+    dispose = undefined;
+  });
+};
+
+/**
+ * What most daemon tests begin with: a fresh directory for each test (`use` is given its path), and the list a test
+ * puts what it opens in. After the test each of those is closed, in the order it was opened, and then the directory
+ * is removed: nothing is still writing into it.
+ */
+export const daemonHarness = <T extends { close(): unknown }>(use: (dir: string) => void): T[] => {
+  const open: T[] = [];
+  let dispose: (() => Promise<void>) | undefined;
+  beforeEach(async () => {
+    const made = await tempDir();
+    dispose = made.dispose;
+    use(made.dir);
+  });
+  afterEach(async () => {
+    for (const item of open.splice(0)) await item.close();
+    await dispose?.();
+    dispose = undefined;
+  });
+  return open;
 };

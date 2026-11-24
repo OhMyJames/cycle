@@ -1,16 +1,14 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CycleErrorCode } from "@cycle/protocol";
 import { JsonlLogStore } from "../src/index.ts";
-import { tempDir } from "./support.ts";
+import { eachTempDir } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
+eachTempDir((made) => {
+  dir = made;
 });
-afterEach(() => dispose());
 
 const store = () => new JsonlLogStore({ dir, now: () => new Date("2026-11-18T00:00:00Z") });
 

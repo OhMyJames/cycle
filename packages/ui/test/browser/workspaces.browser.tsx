@@ -1,11 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { EnvironmentConfig, SessionSummary } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { sleep } from "./box.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -22,14 +21,8 @@ const row = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => 
 const mount = async (sessions: SessionSummary[]) => {
   const script = fakeBridge({ connected: true });
   script.bridge.sessions = async () => sessions;
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await screen.findAllByRole("option");
   return { user, ...script };
 };
@@ -124,14 +117,8 @@ test("the search finds sessions by workspace: each group is a folder on one envi
     id === "local"
       ? [row("mine", { cwd: "/work/app" }), row("other", { cwd: "/work/lib", lastSeq: 5 })]
       : [row("remote-one", { environmentId: "far", cwd: "/srv/api" })];
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await screen.findAllByRole("option");
   await user.keyboard(
     `{${/Mac/.test(navigator.userAgent) ? "Meta" : "Control"}>}k{/${/Mac/.test(navigator.userAgent) ? "Meta" : "Control"}}`,

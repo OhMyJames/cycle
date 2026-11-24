@@ -1,11 +1,10 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { AnalyticsStatus } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -14,13 +13,7 @@ afterEach(() => {
 
 const mount = async (analytics?: AnalyticsStatus) => {
   const script = fakeBridge({ connected: true, ...(analytics ? { analytics } : {}) });
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   return { user: userEvent.setup(), ...script };
 };
 const tracked = (calls: [string, ...unknown[]][]) =>
@@ -84,13 +77,7 @@ test("toggling the sidebar and opening remote environment panels report only fix
       },
     ],
   });
-  const store = new AppStore(script.bridge);
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
+  await renderApp(script.bridge);
   const user = userEvent.setup();
   const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
   await user.keyboard(`{${mod}>}b{/${mod}}`);

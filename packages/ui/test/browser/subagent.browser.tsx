@@ -1,13 +1,12 @@
 // The sub-agent's card (CYCL-217): its states, one loader in the conversation, cards side by side, the task's clamp.
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import type { PermissionRequest, SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 const reduceMotion = (on: boolean) =>
   cdp().send("Emulation.setEmulatedMedia", {
@@ -51,14 +50,8 @@ const open = async (...updates: SessionUpdate[]) => {
     snapshot,
     capabilities: { queue: true, files: true, folders: true, stopSubagent: true },
   });
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   // Pressed where it is found: the row's name changes as the session's state arrives (it says it is at work), and a
   // locator looked up again by the old name would wait for it in vain.
   const row = await screen.findByRole("option", { name: /work/ });

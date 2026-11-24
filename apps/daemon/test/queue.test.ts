@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
@@ -7,18 +7,11 @@ import { blobsDir, indexPath, sessionsDir } from "../src/data-dir.ts";
 import { Daemon } from "../src/index.ts";
 import { connectClient, type Seen, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const start = async (fake: ReturnType<typeof fakeAgent>) => {
@@ -250,7 +243,7 @@ test("an image in a queued prompt is stored once, beside the log, and not in it"
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("more") });
   await until(() => queueUpdates(c.seen).length === 2, "two snapshots");
   await daemon.close();
-  open = [];
+  open.length = 0;
   const log = await readFile(join(sessionsDir(dir), `${sessionId}.jsonl`), "utf8");
   expect(log).not.toContain(data);
   expect(log).toContain("cycle/blob");
@@ -272,7 +265,7 @@ test("a queue left by a restart is handed back to the client that attaches, live
     "the index",
   );
   await first.close();
-  open = [];
+  open.length = 0;
 
   const second = await start(fakeAgent());
   const d = await connectClient(second);
@@ -418,7 +411,7 @@ test("a queue left by a restart, with a prompt sent before anyone attaches, is h
     "the index",
   );
   await first.close();
-  open = [];
+  open.length = 0;
 
   const fake = fakeAgent();
   const second = await start(fake);
@@ -474,7 +467,7 @@ test("a return without a receipt survives restarting the daemon; another connect
   expect(handbacks(b.seen)).toHaveLength(0);
   await b.agent.request("_cycle/prompt/ack_return" as never, { sessionId, returnId } as never);
   await daemon.close();
-  open = [];
+  open.length = 0;
   const restarted = await start(fakeAgent());
   const c = await connectClient(restarted, { ackReturns: true });
   await c.agent.request(methods.agent.session.resume, watch);
@@ -485,7 +478,7 @@ test("a return without a receipt survives restarting the daemon; another connect
   });
   await c.agent.request("_cycle/prompt/ack_return" as never, { sessionId, returnId } as never);
   await restarted.close();
-  open = [];
+  open.length = 0;
   const d = await connectClient(await start(fakeAgent()));
   await d.agent.request(methods.agent.session.resume, watch);
   expect(handbacks(d.seen)).toHaveLength(0);

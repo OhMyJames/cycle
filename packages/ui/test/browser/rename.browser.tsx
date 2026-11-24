@@ -1,10 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
 
@@ -18,14 +17,8 @@ const mount = async (fail?: string) => {
     renamed.push(args);
     if (fail !== undefined) throw new Error(fail);
   };
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await screen.findAllByRole("option");
   return { user, renamed, store };
 };

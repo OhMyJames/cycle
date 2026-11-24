@@ -10,6 +10,7 @@ import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { renderApp } from "./render-app.tsx";
 
 /** The session these tests open, by its view key: what its display mode is kept under. */
 const SESSION = "local:s1";
@@ -53,14 +54,8 @@ const openWith = async (
       ? { capabilities: { queue: true, files: true, folders: true, stopSubagent: true } }
       : {}),
   });
-  const store = new AppStore(script.bridge);
+  await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await user.click(await screen.findByRole("option", { name: /work/ }));
   const log = await screen.findByRole("log", { name: "Conversation" });
   let version = updates.length;

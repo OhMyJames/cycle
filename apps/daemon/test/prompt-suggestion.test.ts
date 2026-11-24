@@ -1,22 +1,15 @@
 // What to say next (CYCL-225, docs/protocol.md §8): whether one is wanted goes from the client's prompt to every prompt
 // the agent is given, and the agent's suggestion is kept only for the turn that ended, when one was wanted.
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { Daemon } from "../src/index.ts";
 import { connectClient, type Seen, until } from "./client.ts";
 import { fakeAgent, type Turn } from "./fake-agent.ts";
-import { tempDir } from "./support.ts";
+import { daemonHarness } from "./support.ts";
 
 let dir: string;
-let dispose: () => Promise<void>;
-let open: Daemon[] = [];
-beforeEach(async () => {
-  ({ dir, dispose } = await tempDir());
-});
-afterEach(async () => {
-  for (const daemon of open) await daemon.close();
-  open = [];
-  await dispose();
+const open = daemonHarness<Daemon>((made) => {
+  dir = made;
 });
 
 const text = (value: string) => [{ type: "text" as const, text: value }];

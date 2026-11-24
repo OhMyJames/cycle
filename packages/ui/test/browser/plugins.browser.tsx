@@ -1,10 +1,9 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { ConnectorInfo, PluginFailure, PluginInfo, PluginSourceInfo } from "../../src/api.ts";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { renderApp } from "./render-app.tsx";
 
 // The Plugins section of the Connectors page (CYCL-84, docs/protocol.md §15).
 
@@ -91,14 +90,8 @@ const mount = async (
     connectors: options.connectors ?? [],
     plugins,
   });
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   await user.click(await screen.findByRole("button", { name: "Connectors" }));
   const page = await screen.findByRole("tabpanel", { name: "Plugins" });
   return { user, page, store, plugins, ...script };

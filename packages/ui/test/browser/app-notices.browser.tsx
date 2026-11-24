@@ -1,10 +1,9 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import { App, StoreProvider } from "../../src/react/index.ts";
-import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { accountMenu } from "./account-menu.ts";
+import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -13,14 +12,8 @@ afterEach(() => {
 
 const mount = async () => {
   const script = fakeBridge({ connected: true });
-  const store = new AppStore(script.bridge);
+  const store = await renderApp(script.bridge);
   const user = userEvent.setup();
-  render(
-    <StoreProvider store={store}>
-      <App />
-    </StoreProvider>,
-  );
-  await act(() => store.start());
   const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
   await accountMenu();
   return { store, user, ...script, emit };
