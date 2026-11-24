@@ -1,4 +1,5 @@
 import { type ContentBlock, RequestError } from "@agentclientprotocol/sdk/experimental/v2";
+import { describePromptProblem, normalizePrompt } from "@cycle/protocol";
 
 /** What the Claude SDK takes as the content of a user message. */
 export type SdkContent =
@@ -21,14 +22,13 @@ const attribute = (value: string): string =>
 /** A file's text cannot close the tag it is in: a `</file` inside it is written `<\/file`. */
 const closing = (text: string): string => text.replace(/<\/file/gi, "<\\/file");
 
-const refuse = (what: string, data: Record<string, unknown>): never => {
-  throw new RequestError(-32602, what, data);
-};
+/** What Claude takes in a prompt beyond text and links. */
+export const CLAUDE_PROMPT_CAPABILITIES = { image: {}, embeddedContext: {} } as const;
 
 /**
  * A prompt as the SDK takes it. A prompt of only text and links stays a string. Every block is
- * either carried or the prompt is refused: nothing is dropped (decision 0010). The daemon has
- * checked the sizes; this only knows what it can hand to Claude.
+ * either carried or the prompt is refused: nothing is dropped (decision 0010). Its blocks are read and checked by
+ * the protocol's normalizePrompt; this only knows what each becomes for Claude.
  *
  * A `resource_link` is a mention, not content: the agent may read what it names if the path is on
  * its machine. It is written as a tag with the name and the address in attributes, which a model tells apart from the
@@ -36,46 +36,45 @@ const refuse = (what: string, data: Record<string, unknown>): never => {
  * that names its uri.
  */
 export const toSdkContent = (blocks: readonly ContentBlock[]): string | SdkContent[] => {
+  const normalized = normalizePrompt(blocks, CLAUDE_PROMPT_CAPABILITIES, { limits: false });
+  if (!normalized.ok) {
+    throw new RequestError(-32602, describePromptProblem(normalized.problem), normalized.problem);
+  }
   const parts: SdkContent[] = [];
   let plain = true;
-  for (const [index, block] of blocks.entries()) {
-    const b = block as Record<string, unknown> & { type: string };
-    if (b.type === "text") {
-      parts.push({ type: "text", text: String(b.text) });
-    } else if (b.type === "resource_link") {
+  for (const block of normalized.blocks) {
+    if (block.type === "text") {
+      parts.push({ type: "text", text: block.text });
+    } else if (block.type === "link") {
       parts.push({
         type: "text",
-        text: `<mention name="${attribute(String(b.name))}" uri="${attribute(String(b.uri))}"/>`,
+        text: `<mention name="${attribute(block.name)}" uri="${attribute(block.uri)}"/>`,
       });
-    } else if (b.type === "image") {
+    } else if (block.type === "image") {
       plain = false;
       parts.push({
         type: "image",
-        source: { type: "base64", media_type: String(b.mimeType), data: String(b.data) },
+        source: { type: "base64", media_type: block.mimeType, data: block.data },
       });
-    } else if (b.type === "resource") {
-      const resource = b.resource as Record<string, unknown>;
-      if (typeof resource.text === "string") {
-        plain = false;
-        parts.push({
-          type: "text",
-          text: `<file uri="${attribute(String(resource.uri))}">\n${closing(resource.text)}\n</file>`,
-        });
-      } else if (typeof resource.blob === "string" && resource.mimeType === "application/pdf") {
-        plain = false;
-        parts.push({
-          type: "document",
-          source: { type: "base64", media_type: "application/pdf", data: resource.blob },
-          title: String(resource.uri),
-        });
-      } else {
-        refuse("Unsupported embedded resource", { index, mimeType: resource.mimeType });
-      }
+    } else if (block.type === "file") {
+      plain = false;
+      parts.push({
+        type: "text",
+        text: `<file uri="${attribute(block.uri)}">\n${closing(block.text)}\n</file>`,
+      });
+    } else if (block.type === "pdf") {
+      plain = false;
+      parts.push({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: block.data },
+        title: block.uri,
+      });
     } else {
-      refuse("Unsupported content block", { index, type: b.type });
+      // Every kind of block is carried: a new one is a type error here, not one sent as something else.
+      const unknown: never = block;
+      throw new RequestError(-32602, "Unsupported content block", { block: unknown });
     }
   }
-  if (parts.length === 0) refuse("A prompt needs content", {});
   if (plain) return parts.map((part) => (part as { text: string }).text).join("\n\n");
   return parts;
 };

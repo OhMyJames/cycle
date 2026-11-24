@@ -8,6 +8,7 @@ import {
   type ResumeSessionRequest,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
+import { describePromptProblem, normalizePrompt } from "@cycle/protocol";
 import { approval } from "./approval.ts";
 import {
   elicitationAnswer,
@@ -497,42 +498,26 @@ export function createAdapter(config: AdapterConfig) {
     if (id !== session || !server) throw new RequestError(-32002, "Codex session unavailable");
     return server;
   }
-  const inputOf = (prompt: readonly unknown[]): UserInput[] =>
-    prompt.map((raw) => {
-      const block = (typeof raw === "object" && raw !== null ? raw : {}) as {
-        type?: string;
-        text?: string;
-        mimeType?: string;
-        data?: string;
-        name?: string;
-        uri?: string;
-        resource?: { uri?: string; text?: string };
-      };
-      if (
-        block.type === "image" &&
-        typeof block.mimeType === "string" &&
-        typeof block.data === "string"
-      )
+  /** The prompt as Codex's input: checked and read by the protocol, which refuses a PDF for it. */
+  const inputOf = (prompt: readonly unknown[]): UserInput[] => {
+    const normalized = normalizePrompt(prompt, CODEX_PROMPT_CAPABILITIES, {
+      limits: false,
+      pdf: false,
+    });
+    if (!normalized.ok) {
+      throw new RequestError(-32602, describePromptProblem(normalized.problem), normalized.problem);
+    }
+    return normalized.blocks.map((block): UserInput => {
+      if (block.type === "image")
         return { type: "image", url: `data:${block.mimeType};base64,${block.data}` };
-      if (
-        block.type === "resource_link" &&
-        typeof block.name === "string" &&
-        typeof block.uri === "string"
-      )
+      if (block.type === "link")
         return { type: "text", text: `${block.name}\n${block.uri}`, text_elements: [] };
-      if (block.type === "resource" && typeof block.resource?.text === "string")
-        return {
-          type: "text",
-          text: `${block.resource.uri ?? "resource"}\n${block.resource.text}`,
-          text_elements: [],
-        };
-      if (block.type !== "text" || typeof block.text !== "string")
-        throw new RequestError(
-          -32602,
-          "Codex takes text, images, embedded text and resource links only",
-        );
+      if (block.type === "file")
+        return { type: "text", text: `${block.uri}\n${block.text}`, text_elements: [] };
+      if (block.type === "pdf") throw new RequestError(-32602, "Codex takes no PDF");
       return { type: "text", text: block.text, text_elements: [] };
     });
+  };
   /**
    * A prompt that begins `/<skill>` runs that skill, as Codex's own clients do: the skill as an input of its own, and
    * the text naming it with Codex's `$` (the model reads the mention, the input brings the skill's instructions).

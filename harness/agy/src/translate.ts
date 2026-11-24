@@ -3,8 +3,9 @@ import {
   type SessionUpdate,
   type ToolCallStatus,
 } from "@agentclientprotocol/sdk/experimental/v2";
-import { META } from "@cycle/protocol";
+import { describePromptProblem, META, normalizePrompt } from "@cycle/protocol";
 import type { V1SessionUpdate, V1ToolCallContent, V1ToolCallPayload } from "./v1.ts";
+import { AGY_PROMPT_CAPABILITIES } from "./v1.ts";
 
 const VALID_KINDS = new Set([
   "read",
@@ -30,33 +31,16 @@ const normalizeStatus = (status?: string): ToolCallStatus =>
     : "in_progress";
 
 /**
- * Validate prompt content blocks before forwarding to `agy`.
- * agy 1.5.15 silently drops binary `resource` (`blob`, such as PDF) and does not support `audio`.
+ * Checks a prompt before it goes to `agy`: as the protocol reads it (normalizePrompt), and then what agy itself cannot
+ * take. agy 1.5.15 silently drops a binary `resource` (`blob`, such as a PDF).
  */
 export const validatePromptBlocks = (blocks: readonly unknown[]): void => {
-  for (let i = 0; i < blocks.length; i += 1) {
-    const block = blocks[i] as Record<string, unknown> | null | undefined;
-    if (!block || typeof block !== "object") {
-      throw new RequestError(-32602, "Invalid prompt block", { index: i });
-    }
-    if (block.type === "audio") {
-      throw new RequestError(-32602, "agy does not support audio blocks", { index: i });
-    }
-    if (block.type === "resource") {
-      const resource = block.resource as Record<string, unknown> | null | undefined;
-      if (
-        !resource ||
-        typeof resource !== "object" ||
-        "blob" in resource ||
-        typeof resource.text !== "string"
-      ) {
-        throw new RequestError(
-          -32602,
-          "agy does not support binary resource attachments (such as PDF)",
-          { index: i },
-        );
-      }
-    }
+  const normalized = normalizePrompt(blocks, AGY_PROMPT_CAPABILITIES, {
+    limits: false,
+    pdf: false,
+  });
+  if (!normalized.ok) {
+    throw new RequestError(-32602, describePromptProblem(normalized.problem), normalized.problem);
   }
 };
 

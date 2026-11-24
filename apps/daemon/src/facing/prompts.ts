@@ -6,6 +6,7 @@ import { type AgentApp, methods } from "@agentclientprotocol/sdk/experimental/v2
 import {
   CycleErrorCode,
   checkPrompt,
+  describePromptProblem,
   META,
   promptAckReturn,
   promptDequeue,
@@ -28,10 +29,14 @@ export const registerPrompts = (app: AgentApp, core: Core, me: Me): void => {
       core.definition(session.entry.agent).promptCapabilities,
     );
     if (problem !== undefined)
-      throw new RpcError(INVALID_PARAMS, `The prompt cannot be sent: ${problem.reason}`, {
-        sessionId: session.id,
-        ...problem,
-      });
+      throw new RpcError(
+        INVALID_PARAMS,
+        `The prompt cannot be sent: ${describePromptProblem(problem)}`,
+        {
+          sessionId: session.id,
+          ...problem,
+        },
+      );
     core.returnStale(session);
     // Taken: from now on the session is in the list (docs/protocol.md §6), whatever the agent makes of it. Not left to
     // the agent's echo of the message, which an agent that fails, or never echoes, would not send. Announced below.

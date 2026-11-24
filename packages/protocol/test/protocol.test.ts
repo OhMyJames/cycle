@@ -4,8 +4,10 @@ import {
   agentsList,
   CycleErrorCode,
   checkPrompt,
+  describePromptProblem,
   META,
   NOTIFICATIONS,
+  normalizePrompt,
   PROMPT_LIMITS,
   seqOf,
   ToolResultSchema,
@@ -181,4 +183,64 @@ test("a command's result says only how it ended", () => {
 test("a page fetched says only its status and size", () => {
   expect(ToolResultSchema.safeParse({ fetch: { status: 200, bytes: 10 } }).success).toBe(true);
   expect(ToolResultSchema.safeParse({ fetch: { status: 99 } }).success).toBe(false);
+});
+
+test("a prompt is read into one typed block for each thing it carries, and refused as checkPrompt refuses it", () => {
+  const capable = { image: {}, embeddedContext: {} };
+  const prompt = [
+    { type: "text", text: "look" },
+    { type: "resource_link", name: "a.ts", uri: "file:///w/a.ts" },
+    { type: "image", mimeType: "image/png", data: "AAAA" },
+    { type: "resource", resource: { uri: "file:///w/b.md", text: "# b" } },
+    {
+      type: "resource",
+      resource: { uri: "file:///w/c.pdf", mimeType: "application/pdf", blob: "AAAA" },
+    },
+  ];
+  expect(normalizePrompt(prompt, capable)).toEqual({
+    ok: true,
+    blocks: [
+      { type: "text", text: "look" },
+      { type: "link", name: "a.ts", uri: "file:///w/a.ts" },
+      { type: "image", mimeType: "image/png", data: "AAAA" },
+      { type: "file", uri: "file:///w/b.md", text: "# b" },
+      { type: "pdf", uri: "file:///w/c.pdf", data: "AAAA" },
+    ],
+  });
+  for (const [blocks, capabilities] of [
+    [[], capable],
+    [[{ type: "image", mimeType: "image/png", data: "AAAA" }], {}],
+    [[{ type: "audio", data: "AAAA", mimeType: "audio/wav" }], capable],
+    [[{ type: "text" }], capable],
+  ] as const) {
+    const normalized = normalizePrompt(blocks, capabilities);
+    expect(normalized.ok).toBe(false);
+    if (!normalized.ok) {
+      expect(checkPrompt(blocks, capabilities)).toEqual(normalized.problem);
+      expect(describePromptProblem(normalized.problem).length).toBeGreaterThan(0);
+    }
+  }
+});
+
+test("an adapter reads a prompt without the sizes the daemon holds it to, and an agent may take no PDF", () => {
+  const capable = { image: {}, embeddedContext: {} };
+  const large = [{ type: "text", text: "x".repeat(PROMPT_LIMITS.promptBytes + 1) }];
+  expect(normalizePrompt(large, capable).ok).toBe(false);
+  expect(normalizePrompt(large, capable, { limits: false }).ok).toBe(true);
+  const pdf = [
+    { type: "text", text: "x".repeat(PROMPT_LIMITS.blockBytes + 1) },
+    {
+      type: "resource",
+      resource: { uri: "file:///c.pdf", mimeType: "application/pdf", blob: "AAAA" },
+    },
+  ];
+  // In the order of the blocks, and only the PDF once sizes are not this one's to hold.
+  expect(normalizePrompt(pdf, capable, { pdf: false })).toEqual({
+    ok: false,
+    problem: { reason: "block_too_large", index: 0 },
+  });
+  expect(normalizePrompt(pdf, capable, { limits: false, pdf: false })).toEqual({
+    ok: false,
+    problem: { reason: "unsupported_media_type", index: 1 },
+  });
 });
