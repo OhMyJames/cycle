@@ -151,6 +151,7 @@ test.skipIf(!ready)(
           "saveEnvironment",
           "removeEnvironment",
           "setEnvironmentDefault",
+          "gitBranches",
           "installUpdate",
           "listConnectors",
           "listFiles",
