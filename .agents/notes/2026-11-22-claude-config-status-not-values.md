@@ -1,9 +1,8 @@
 # Agent Note: Claude 的 config.json 在界面里只显示状态,修改留在 daemon 所在的机器上
 
-Status: superseded
+Status: accepted
 Date: 2026-11-22
 Basis: CYCL-80(研究项:"不上线路的前提下,怎么在界面里配置 Claude 的 config.json";"评估:只在 daemon 本机设置、只显示状态不显示值、或经本地文件的引导";"产物为决定,不排远程编辑实现")。依据的是 2026-11-22 读到的代码:`apps/daemon/src/config.ts`(格式和读取)、`apps/daemon/src/claude-agent.ts` 的 `claudeEnv`、`apps/daemon/src/main.ts` 的 `login` 和 `claude` 子命令,以及 `docs/daemon.md`"配置"。负责人 2026-11-22 在对话里看过结论后答复"接受"。没有做任何实现或实测。
-Superseded by: [Settings 中以 Harness 分组承载多 agent 订阅账号登录、用量与热生效运行时配置](2026-11-23-harness-settings-account-login-and-runtime-config.md)
 
 ## Problem
 
@@ -56,5 +55,6 @@ Claude 用哪份登录、哪个密钥,写在 daemon 机器上的 `<数据目录>
 
 ## Related
 
+- [Settings 中以 Harness 分组承载多 agent 订阅账号登录、用量与热生效运行时配置](2026-11-23-harness-settings-account-login-and-runtime-config.md):部分取代本笔记(入口迁至 Settings → Harness、允许界面内触发订阅登录与登出、允许经独立的 `agent-settings.json` 热编辑非敏感运行时行为开关);本笔记中关于 `config.json` 仍不在 UI 编辑、只返回变量名不返回值、变量名不进埋点、`mtime` 变更仅作提示、重启沿用 `--wait/--force` 确认以及不在 UI 写入 API Key 的规则继续有效。
 - [Connector 是 Cycle 的公共能力](2026-11-19-connectors-behind-a-daemon-gateway.md):凭证上线路的唯一例外,以及为什么这里不照搬它。
 - [远端 daemon 的最低版本与升级按钮](2026-11-19-daemon-minimum-version-and-upgrade-button.md):重启远端 daemon 时"等会话结束 / 立即中断"的确认,这里沿用。
