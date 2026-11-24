@@ -4,8 +4,9 @@ import type {
   AgentInfo,
   AnalyticsStatus,
   ConnectorInfo,
-  EnvironmentConfig,
-  EnvironmentStatus,
+  EnvironmentsState,
+  LocationConfig,
+  LocationStatus,
   PermissionRequest,
   PlanUsage,
   PluginInfo,
@@ -20,12 +21,12 @@ import type { MessageKey } from "../messages/en-US.ts";
 import type { Conversation } from "../model/index.ts";
 import type { TerminalTab } from "../terminals.ts";
 
-export const viewKey = (environmentId: string, sessionId: string): string =>
-  `${environmentId}:${sessionId}`;
+export const viewKey = (locationId: string, sessionId: string): string =>
+  `${locationId}:${sessionId}`;
 
-/** Where an agent's plugins on an environment are kept in the state. */
-export const pluginsKey = (environmentId: string, agentId: string): string =>
-  `${environmentId}\n${agentId}`;
+/** Where an agent's plugins on a location are kept in the state. */
+export const pluginsKey = (locationId: string, agentId: string): string =>
+  `${locationId}\n${agentId}`;
 
 /**
  * The folder of the open session, when the Files tab can show it (its daemon reads a session's folder): what a place the
@@ -33,15 +34,15 @@ export const pluginsKey = (environmentId: string, agentId: string): string =>
  * appears once the daemon has said what it can do.
  */
 export const filesRootOf = (state: AppState): string | undefined => {
-  const { selectedEnvironment: environmentId, selectedSession: sessionId } = state;
-  if (environmentId === undefined || sessionId === undefined) return undefined;
-  if (state.status[environmentId]?.capabilities?.fs !== true) return undefined;
-  return state.sessions[environmentId]?.find((s) => s.sessionId === sessionId)?.cwd;
+  const { selectedLocation: locationId, selectedSession: sessionId } = state;
+  if (locationId === undefined || sessionId === undefined) return undefined;
+  if (state.status[locationId]?.capabilities?.fs !== true) return undefined;
+  return state.sessions[locationId]?.find((s) => s.sessionId === sessionId)?.cwd;
 };
 
 /**
- * The key of what the blank conversation's box holds. One for every blank conversation, whatever environment it is on:
- * what was written stays when the environment or folder is changed, and when the person goes away and comes back.
+ * The key of what the blank conversation's box holds. One for every blank conversation, whatever location it is on:
+ * what was written stays when the location or folder is changed, and when the person goes away and comes back.
  */
 export const BLANK_KEY = "blank";
 
@@ -50,10 +51,10 @@ export const BLANK_KEY = "blank";
  * (`session/new`, then `session/prompt`), and only then is it in the list (docs/protocol.md §6).
  */
 export type BlankConversation = {
-  environmentId: string;
-  /** Where the agent will work, on the environment's machine. Empty until it is chosen. */
+  locationId: string;
+  /** Where the agent will work, on the location's machine. Empty until it is chosen. */
   cwd: string;
-  /** The agent chosen; undefined: the first that is available on the environment. */
+  /** The agent chosen; undefined: the first that is available on the location. */
   agent: string | undefined;
   /** What the session starts with: the agent's defaults, then what was chosen here. Undefined until they are read. */
   config: Record<string, string> | undefined;
@@ -73,12 +74,17 @@ export type BlankConversation = {
    * that it will be asked (`undecided`). Undefined while it is read, or when the daemon cannot say.
    */
   trust?: "trusted" | "untrusted" | "undecided";
+  /**
+   * The environment chosen on it (null: "No environment"), kept as it moves between folders and locations. It is what
+   * the session starts with where the workspace has no default of its own (docs/desktop.md "环境").
+   */
+  environment?: string | null;
   /** Starting a session with this agent failed with `-32000` (not signed in): prompt the user to sign in. */
   authRequired?: { agentId: string; agentName: string };
 };
 
 export type SessionView = {
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   conversation: Conversation;
   permissions: PermissionRequest[];
@@ -91,36 +97,38 @@ export type AppState = {
   ready: boolean;
   /**
    * The person's account (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md). Undefined until main has said. While it is not `open`, the
-   * page is the sign-in page, and nothing of the environments is read.
+   * page is the sign-in page, and nothing of the locations is read.
    */
   account: AccountStatus | undefined;
   /** The person closed the note that someone else is signed in now. */
   switchNoticeSeen: boolean;
   /** The update version the person put off ("Later"): not offered again in the notices until a newer one. */
   updateDeferred?: string;
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
   sessions: Record<string, SessionSummary[]>;
   agents: Record<string, AgentInfo[]>;
   /** Counts changes to an agent's defaults, so a form that shows them knows to read them again. */
   defaultsRevision: Record<string, number>;
-  /** Counts `_cycle/agent_setup_changed` notifications per `${environmentId}:${agent}` so Harness settings auto-refresh. */
+  /** Counts `_cycle/agent_setup_changed` notifications per `${locationId}:${agent}` so Harness settings auto-refresh. */
   agentSetupRevision: Record<string, number>;
-  /** Latest `_cycle/agent_auth_completed` outcome per `${environmentId}:${flowId}` for active sign-in modals. */
+  /** Latest `_cycle/agent_auth_completed` outcome per `${locationId}:${flowId}` for active sign-in modals. */
   agentAuthCompletions: Record<string, { ok: boolean; reason?: string | undefined }>;
   /**
-   * Each environment's connectors as last read, or why they could not be. Only for an environment the page has asked
+   * Each location's connectors as last read, or why they could not be. Only for a location the page has asked
    * about; a change there (here or elsewhere) reads them again.
    */
   connectors: Record<string, { list?: ConnectorInfo[]; error?: string }>;
   /**
-   * Each agent's plugins on each environment as last read (by `pluginsKey`), or why they could not be. Only for what
+   * Each agent's plugins on each location as last read (by `pluginsKey`), or why they could not be. Only for what
    * the page has asked for.
    */
   plugins: Record<string, { sources?: PluginSourceInfo[]; list?: PluginInfo[]; error?: string }>;
-  /** Each environment's plan usage, by agent: the latest its daemon heard (docs/protocol.md §8 "套餐用量"). */
+  /** Each location's plan usage, by agent: the latest its daemon heard (docs/protocol.md §8 "套餐用量"). */
   planUsage: Record<string, Record<string, PlanUsage>>;
-  selectedEnvironment: string | undefined;
+  /** The environments and each workspace's default (docs/desktop.md "环境"). Undefined until main has said. */
+  environments: EnvironmentsState | undefined;
+  selectedLocation: string | undefined;
   selectedSession: string | undefined;
   /** The blank conversation that is open, in place of a session: `selectedSession` is undefined while it is. */
   blank: BlankConversation | undefined;
@@ -149,7 +157,7 @@ export const initialState = (): AppState => ({
   ready: false,
   account: undefined,
   switchNoticeSeen: false,
-  environments: [],
+  locations: [],
   status: {},
   sessions: {},
   agents: {},
@@ -159,7 +167,8 @@ export const initialState = (): AppState => ({
   connectors: {},
   plugins: {},
   planUsage: {},
-  selectedEnvironment: undefined,
+  environments: undefined,
+  selectedLocation: undefined,
   selectedSession: undefined,
   blank: undefined,
   views: {},

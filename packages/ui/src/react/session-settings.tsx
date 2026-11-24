@@ -24,7 +24,7 @@ import { useDisplayMode } from "./thought.tsx";
 
 /**
  * A session's settings: the agent's (model, mode, effort…), which reach it through the daemon and so only while its
- * environment is connected, and how the session is shown here, which is always there.
+ * location is connected, and how the session is shown here, which is always there.
  */
 export function SessionSettings({
   connected,
@@ -35,19 +35,15 @@ export function SessionSettings({
 }) {
   const store = useAppStore();
   const { t } = useI18n();
-  const environment = useAppState((s) => s.selectedEnvironment);
+  const location = useAppState((s) => s.selectedLocation);
   const sessionId = useAppState((s) => s.selectedSession);
-  const sessions = useAppState((s) =>
-    environment !== undefined ? s.sessions[environment] : undefined,
-  );
-  const agents = useAppState((s) =>
-    environment !== undefined ? s.agents[environment] : undefined,
-  );
+  const sessions = useAppState((s) => (location !== undefined ? s.sessions[location] : undefined));
+  const agents = useAppState((s) => (location !== undefined ? s.agents[location] : undefined));
   const session = sessions?.find((x) => x.sessionId === sessionId);
   const agent = agents?.find((a) => a.id === session?.agent);
   const liveConfigOptions = useAppState((s) =>
-    environment !== undefined && sessionId !== undefined
-      ? s.views[viewKey(environment, sessionId)]?.conversation.configOptions
+    location !== undefined && sessionId !== undefined
+      ? s.views[viewKey(location, sessionId)]?.conversation.configOptions
       : undefined,
   );
   const schema = useMemo(
@@ -55,7 +51,7 @@ export function SessionSettings({
       agent === undefined ? undefined : mergeConfigSchema(agent.configSchema, liveConfigOptions),
     [agent, liveConfigOptions],
   );
-  if (session === undefined || environment === undefined) return null;
+  if (session === undefined || location === undefined) return null;
   const agentSettings = schema !== undefined && propertiesOf(schema).length > 0;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -82,7 +78,7 @@ export function SessionSettings({
             }}
           />
         ) : null}
-        <DisplayModeField sessionKey={viewKey(environment, session.sessionId)} />
+        <DisplayModeField sessionKey={viewKey(location, session.sessionId)} />
         <div data-slot="row" data-dialog-footer="">
           <DialogClose>{t("dialog.close")}</DialogClose>
         </div>

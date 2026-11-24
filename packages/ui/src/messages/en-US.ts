@@ -7,33 +7,33 @@ import type { Messages } from "../i18n.ts";
 export const enUS = {
   // The session search (Cmd+K)
   "search.label": "Search sessions",
-  "search.placeholder": "Search sessions by title, folder, agent or environment",
+  "search.placeholder": "Search sessions by title, folder, agent or location",
   "search.empty": "No session matches that.",
   "search.group.actions": "Actions",
   "search.action.newSession": "New session",
   "search.archived": "archived",
   "search.open": "Search sessions",
 
-  // Environments that are away, and starting a session on one of several
-  "session.away": "{environment} · {state}",
-  "notice.connecting": "Connecting to {environment}…",
-  // Ends every line about an environment that is not connected, on a page with a box: the box does not say it
+  // Locations that are away, and starting a session on one of several
+  "session.away": "{location} · {state}",
+  "notice.connecting": "Connecting to {location}…",
+  // Ends every line about a location that is not connected, on a page with a box: the box does not say it
   "notice.draftKept": "Your draft is kept.",
   "session.awayIncompatible":
-    "{environment} is not connected: Cycle there and this app speak different protocols. Its notice says what to update.",
-  "session.awayBecause": "{environment} is not connected: {reason}",
+    "{location} is not connected: Cycle there and this app speak different protocols. Its notice says what to update.",
+  "session.awayBecause": "{location} is not connected: {reason}",
   "session.awayBanner":
-    "{environment} is not connected. This is what the session had when it went away.",
+    "{location} is not connected. This is what the session had when it went away.",
   "defaults.reading": "Reading the defaults…",
   "defaults.unreadable":
     "The saved settings of this agent could not be read, so they are not shown.",
-  "newSession.environment": "Environment",
-  "environment.editTitle": "Edit {name}",
-  "environment.save": "Save",
-  "environment.removeTitle": "Remove {name}?",
-  "environment.removeDescription":
+  "newSession.location": "Work in",
+  "location.editTitle": "Edit {name}",
+  "location.save": "Save",
+  "location.removeTitle": "Remove {name}?",
+  "location.removeDescription":
     "Its connection settings and unsent drafts on this device are removed. Sessions on {name} are not deleted.",
-  "environment.removeConfirm": "Remove environment",
+  "location.removeConfirm": "Remove location",
 
   // Empty state and sidebar toggle
   "sidebar.show": "Show sidebar",
@@ -92,10 +92,10 @@ export const enUS = {
   "terminal.attaching": "Opening the terminal",
   "terminal.attachFailed": "The terminal could not be shown",
   "terminal.tryAgain": "Try again",
-  "terminal.away": "Not connected. Typing works again once the environment reconnects.",
+  "terminal.away": "Not connected. Typing works again once the location reconnects.",
   "terminal.exited": "The shell exited with code {code}.",
   "terminal.killed": "The shell was ended by a signal.",
-  "terminal.ended": "This terminal ended when the environment's daemon stopped.",
+  "terminal.ended": "This terminal ended when the location's daemon stopped.",
   "terminal.problem.limit": "Too many terminals are open. Close one to open another.",
   "terminal.problem.archived": "This session is archived. Restore it to open a terminal.",
   "terminal.problem.not_found": "This session no longer exists.",
@@ -106,9 +106,9 @@ export const enUS = {
   "files.show": "Show files",
   "files.hide": "Hide files",
   "files.title": "Files",
-  "files.away": "This environment is not connected. Files are read from it once it is.",
-  "files.tooOld": "Cycle on this environment is too old to show files",
-  "files.tooOld.body": "Update Cycle on the environment to browse the session's folder here.",
+  "files.away": "This location is not connected. Files are read from it once it is.",
+  "files.tooOld": "Cycle on this location is too old to show files",
+  "files.tooOld.body": "Update Cycle on the location to browse the session's folder here.",
   "files.refresh": "Read again",
   "files.back": "Back to files",
   "files.loading": "Reading the folder",
@@ -135,7 +135,7 @@ export const enUS = {
   "overview.hide": "Hide overview",
   "overview.noSession": "No session is open",
   "overview.loading": "Loading the session",
-  "overview.away": "{environment} is not connected. This is what it last said.",
+  "overview.away": "{location} is not connected. This is what it last said.",
   "overview.goal": "Goal",
   "overview.goal.set": "Set at {when}",
   "overview.goal.checked": {
@@ -175,7 +175,7 @@ export const enUS = {
   "overview.state.failed": "failed",
   "overview.state.stopped": "stopped",
   "overview.state.unknown": "status unknown",
-  "overview.environment": "Environment",
+  "overview.location": "Location",
   "overview.where": "Runs on",
   "overview.folder": "Folder",
   "overview.agent": "Agent",
@@ -187,11 +187,11 @@ export const enUS = {
   "empty.chooseOrStart": "Choose a session, or start a new one.",
   "empty.startSession": "Start a new session",
   "app.starting": "Starting…",
-  "environment.connecting": "Connecting to this environment…",
-  "environment.incompatible":
+  "location.connecting": "Connecting to this location…",
+  "location.incompatible":
     "Cycle there and this app speak different protocols. Its notice says what to update.",
-  "environment.notConnected": "Not connected to this environment.",
-  "environment.connectAgain": "Connect again",
+  "location.notConnected": "Not connected to this location.",
+  "location.connectAgain": "Connect again",
 
   // A new session before its first message: the blank conversation
   "blank.title": "New session",
@@ -204,28 +204,28 @@ export const enUS = {
   "blank.folder.recent": "Folders with sessions",
   "blank.folder.type": "Enter a path…",
   "blank.folder.typeTitle": "Enter a folder path",
-  "blank.folder.typeLead": "The folder on {environment} the agent works in.",
+  "blank.folder.typeLead": "The folder on {location} the agent works in.",
   "blank.folder.use": "Use folder",
   "blank.untrusted": "Not trusted yet",
   "blank.untrusted.hint": "You will be asked whether to trust it when you send the first message.",
   "blank.agent": "Agent",
   "blank.chooseFolder": "Choose a folder for the agent to work in.",
-  "blank.notConnected": "Not connected to {environment}.",
+  "blank.notConnected": "Not connected to {location}.",
   "blank.draftKept": "You can keep editing your draft.",
-  "blank.connecting": "Connecting to {environment}…",
-  "blank.noAgent": "No agent is available on {environment}.",
-  "blank.noAgentHint": "Check that an agent is installed on {environment} and signed in.",
-  "blank.noAgentHint.one": "Check that {agents} is installed on {environment} and signed in.",
+  "blank.connecting": "Connecting to {location}…",
+  "blank.noAgent": "No agent is available on {location}.",
+  "blank.noAgentHint": "Check that an agent is installed on {location} and signed in.",
+  "blank.noAgentHint.one": "Check that {agents} is installed on {location} and signed in.",
   "blank.noAgentHint.several":
-    "Check that one of these is installed on {environment} and signed in: {agents}.",
+    "Check that one of these is installed on {location} and signed in: {agents}.",
   "blank.retryAgents": "Check again",
   "blank.agent.unavailable": "{name} (not installed)",
-  "blank.agentUnavailable": "{agent} is not available on {environment}.",
-  "blank.agentUnavailable.body": "Install {agent} on {environment}, then check again.",
-  "blank.agentUnavailable.agy": "Install agy (1.5.10 or newer) on {environment}, then check again.",
-  "blank.authRequired": "{agent} is not signed in on {environment}.",
+  "blank.agentUnavailable": "{agent} is not available on {location}.",
+  "blank.agentUnavailable.body": "Install {agent} on {location}, then check again.",
+  "blank.agentUnavailable.agy": "Install agy (1.5.10 or newer) on {location}, then check again.",
+  "blank.authRequired": "{agent} is not signed in on {location}.",
   "blank.authRequired.body":
-    "Run this command on {environment} to sign in, then send your message again.",
+    "Run this command on {location} to sign in, then send your message again.",
   "blank.copyCommand": "Copy command",
   "blank.copied": "Copied",
   "blank.unreadable":
@@ -524,7 +524,7 @@ export const enUS = {
   "turn.end.other": "Ended: {reason}",
   // On the end of a turn that failed: sends its message again as it was, in one click
   "turn.retry": "Try again",
-  "turn.retry.offline": "Connect to the environment to try again.",
+  "turn.retry.offline": "Connect to the location to try again.",
   "turn.retry.busy": "The agent is working. Try again once it stops.",
   "turn.retry.changedBody":
     "Before it failed, it used {tools}. Trying again sends the same message, and the agent may do that again.",
@@ -573,7 +573,7 @@ export const enUS = {
   "sessions.group.today": "Today",
   "sessions.group.yesterday": "Yesterday",
   "sessions.group.earlier": "Earlier",
-  "sessions.unavailable": "Connect to an environment to see its sessions.",
+  "sessions.unavailable": "Connect to a location to see its sessions.",
   "sessions.empty": "No sessions in this workspace yet.",
   "sessions.showArchived": "Show archived",
   "sessions.hideArchived": "Hide archived",
@@ -587,7 +587,7 @@ export const enUS = {
   "mark.background": "Background work is running",
   "mark.unread": "Unread",
 
-  // Choosing a folder on another environment's machine, from the New session dialog
+  // Choosing a folder on another location's machine, from the New session dialog
   "folders.title": "Choose a folder",
   "folders.path": "Folder",
   "folders.list": "Folders",
@@ -606,7 +606,7 @@ export const enUS = {
   // Folder trust: whether a folder may run the commands its own settings name (docs/protocol.md §8)
   "trust.title": "Trust this folder?",
   "trust.description":
-    "{environment} would run what this folder's own settings name: hooks, and the servers and helpers in .mcp.json. Trust it only if you trust what is in it. Folders inside it follow this choice.",
+    "{location} would run what this folder's own settings name: hooks, and the servers and helpers in .mcp.json. Trust it only if you trust what is in it. Folders inside it follow this choice.",
   "trust.startTrusted": "Trust and start",
   "trust.startUntrusted": "Start without trusting",
   "trust.back": "Back",
@@ -620,14 +620,14 @@ export const enUS = {
   "connectors.sections": "Connectors sections",
   "connectors.section.mcp": "MCP servers",
   "connectors.lead":
-    "MCP servers every agent on {environment} can use. Cycle keeps their keys and sign-ins; agents never see them. A change reaches a session the next time its agent starts.",
-  "connectors.environment": "Environment",
-  "connectors.environment.description": "Each environment keeps its own.",
-  "connectors.none": "No connected environment can keep connectors or plugins.",
+    "MCP servers every agent on {location} can use. Cycle keeps their keys and sign-ins; agents never see them. A change reaches a session the next time its agent starts.",
+  "connectors.location": "Work in",
+  "connectors.location.description": "Each location keeps its own.",
+  "connectors.none": "No connected location can keep connectors or plugins.",
   "connectors.noneBody": "Connect one, or update Cycle on it.",
-  "connectors.unsupported": "Cycle on {environment} is too old for this.",
+  "connectors.unsupported": "Cycle on {location} is too old for this.",
   "connectors.unsupportedBody": "Update Cycle on it.",
-  "connectors.unsupportedBody.choose": "Update Cycle on it, or choose another environment.",
+  "connectors.unsupportedBody.choose": "Update Cycle on it, or choose another location.",
   "connectors.loading": "Reading connectors…",
   "connectors.unreadable": "The connectors could not be read.",
   "connectors.retry": "Try again",
@@ -675,7 +675,7 @@ export const enUS = {
   "connectors.form.headers": "Headers",
   "connectors.form.env": "Environment variables",
   "connectors.form.secretsHint":
-    "Kept by Cycle on {environment}. A value is never shown again; you can replace or remove it.",
+    "Kept by Cycle on {location}. A value is never shown again; you can replace or remove it.",
   "connectors.form.secretSet": "{name} is set",
   "connectors.form.secretRemoving": "{name} is removed when you save",
   "connectors.form.secretRemove": "Remove {name}",
@@ -697,23 +697,23 @@ export const enUS = {
     "This server does not register apps itself. Enter a client ID, then sign in.",
   "connectors.problem.auth_rejected":
     "The server refused the sign-in. Try again, or check the client ID.",
-  "connectors.problem.unreachable": "The server could not be reached from {environment}.",
+  "connectors.problem.unreachable": "The server could not be reached from {location}.",
   "connectors.problem.not_found": "This connector is gone. It may have been removed elsewhere.",
   "connectors.problem.invalid": "The daemon did not accept this connector. Check the fields.",
-  "connectors.problem.unsupported": "Cycle on {environment} is too old to keep connectors.",
+  "connectors.problem.unsupported": "Cycle on {location} is too old to keep connectors.",
   "connectors.problem.failed": "It could not be done: {reason}",
   "connectors.section.plugins": "Plugins",
   "connectors.fromPlugin": "From the {plugin} plugin",
   "connectors.status.needs_values": "Needs a value",
   "connectors.setValues": "Set values",
   "connectors.values.title": "Values for {name}",
-  "connectors.values.hint": "Kept on {environment}. A value is never shown again once saved.",
+  "connectors.values.hint": "Kept on {location}. A value is never shown again once saved.",
   "connectors.values.set": "{name} is set. Type a new value to replace it.",
   "connectors.values.save": "Save values",
   "connectors.problem.managed":
     "This connector belongs to a plugin. Turn it off or remove it there.",
   "plugins.lead":
-    "Plugins add skills, commands, hooks and MCP servers to {agent} on {environment}. A change applies to sessions started after it.",
+    "Plugins add skills, commands, hooks and MCP servers to {agent} on {location}. A change applies to sessions started after it.",
   "plugins.agent": "Agent",
   "plugins.agent.description": "Each agent has its own plugins.",
   "plugins.installed.title": "Installed",
@@ -740,7 +740,7 @@ export const enUS = {
   "plugins.uninstall": "Uninstall",
   "plugins.uninstallTitle": "Uninstall {name}?",
   "plugins.uninstallDescription":
-    "What it added to {agent} is removed from {environment}, with the sign-ins of its MCP servers.",
+    "What it added to {agent} is removed from {location}, with the sign-ins of its MCP servers.",
   "plugins.uninstallConfirm": "Uninstall plugin",
   "plugins.available.title": "Available",
   "plugins.search": "Search plugins",
@@ -760,7 +760,7 @@ export const enUS = {
   "plugins.installedMark": "Installed",
   "plugins.installTitle": "Install {name}?",
   "plugins.installDescription":
-    "It comes from {source}. A plugin can run code on {environment}, with everything {agent} can reach there: hooks, commands and MCP servers. Install only what you trust.",
+    "It comes from {source}. A plugin can run code on {location}, with everything {agent} can reach there: hooks, commands and MCP servers. Install only what you trust.",
   "plugins.installConfirm": "Install plugin",
   "plugins.sources.title": "Sources",
   "plugins.sources.lead": "Where the list above comes from.",
@@ -776,33 +776,33 @@ export const enUS = {
   "plugins.sources.removeConfirm": "Remove source",
   "plugins.source.kind.builtin": "Comes with {agent}",
   "plugins.source.kind.git": "Git repository",
-  "plugins.source.kind.directory": "Folder on {environment}",
+  "plugins.source.kind.directory": "Folder on {location}",
   "plugins.source.kind.url": "URL",
   "plugins.source.kind.other": "Other source",
   "plugins.sourceForm.title": "Add a source",
   "plugins.sourceForm.location": "Repository, URL or folder",
   "plugins.sourceForm.hint":
-    "A GitHub repository as owner/name, a git or https URL, or a folder on {environment}.",
+    "A GitHub repository as owner/name, a git or https URL, or a folder on {location}.",
   "plugins.sourceForm.warning":
-    "What a source lists can be installed and run on {environment}. Add only a source you trust.",
+    "What a source lists can be installed and run on {location}. Add only a source you trust.",
   "plugins.sourceForm.submit": "Add source",
   "plugins.problem.not_found": "It was not found. Refresh the lists, then try again.",
   "plugins.problem.needs_command":
     "This source wants to run a command of its own first. Cycle does not install such plugins yet.",
-  "plugins.problem.unavailable": "{agent} could not be started on {environment}.",
+  "plugins.problem.unavailable": "{agent} could not be started on {location}.",
   "plugins.problem.timeout":
-    "{agent} did not answer in time. Check the network on {environment}, then try again.",
-  "plugins.problem.unsupported": "Cycle on {environment} is too old for plugins.",
+    "{agent} did not answer in time. Check the network on {location}, then try again.",
+  "plugins.problem.unsupported": "Cycle on {location} is too old for plugins.",
   "plugins.problem.failed": "It could not be done.",
   "common.cancel": "Cancel",
   "common.close": "Close",
 
-  // The workspace switcher: a workspace is a folder on one environment
+  // The workspace switcher: a workspace is a folder on one location
   "workspace.label": "Workspace",
   "workspace.switch": "Switch workspace",
   "workspace.none": "No workspace yet",
-  "workspace.on": "On {environment}",
-  "workspace.onState": "On {environment} · {state}",
+  "workspace.on": "On {location}",
+  "workspace.onState": "On {location} · {state}",
   "workspace.elsewhere.needsYou": {
     one: "{count} session needs you",
     other: "{count} sessions need you",
@@ -860,25 +860,24 @@ export const enUS = {
   "dialog.close": "Close",
   "dialog.cancel": "Cancel",
   "banner.dismiss": "Dismiss",
-  "environment.reconnectingBanner":
+  "location.reconnectingBanner":
     "Connection lost. Reconnecting… what you miss will be shown when it is back.",
-  "environment.add": "Add environment",
-  "environment.addTitle": "Add an environment",
-  "environment.addSubmit": "Add",
-  "environment.sshNote":
+  "location.add": "Add location",
+  "location.addTitle": "Add a location",
+  "location.addSubmit": "Add",
+  "location.sshNote":
     "Cycle connects with your system's ssh, so your keys and ~/.ssh/config apply. There is no password prompt.",
-  "environment.address": "Address",
-  "environment.addressHint": "user@host, or an alias",
-  "environment.name": "Name",
-  "environment.nameHint": "Shown in the list",
-  "environment.command": "Command on the environment",
-  "environment.status": "{environment} · {state}",
-  "environment.state.connected": "Connected",
-  "environment.state.connecting": "Connecting…",
-  "environment.state.reconnecting": "Reconnecting…",
-  "environment.state.closed": "Not connected",
-  "session.settingsOffline":
-    "The agent's settings can be changed once its environment is connected.",
+  "location.address": "Address",
+  "location.addressHint": "user@host, or an alias",
+  "location.name": "Name",
+  "location.nameHint": "Shown in the list",
+  "location.command": "Command on the location",
+  "location.status": "{location} · {state}",
+  "location.state.connected": "Connected",
+  "location.state.connecting": "Connecting…",
+  "location.state.reconnecting": "Reconnecting…",
+  "location.state.closed": "Not connected",
+  "session.settingsOffline": "The agent's settings can be changed once its location is connected.",
   "thought.label": "Thinking",
   "session.settingsDescription": "A change applies to the next thing the agent does.",
   "session.pin": "Pin",
@@ -893,7 +892,7 @@ export const enUS = {
   "session.deleteTitle": "Delete this session?",
   "session.deleteDescription": "Its whole history is removed for good. This cannot be undone.",
   "session.deleteConfirm": "Delete session",
-  "session.awayCannotOpen": "{environment} is not connected, so this session cannot be opened.",
+  "session.awayCannotOpen": "{location} is not connected, so this session cannot be opened.",
   "trust.changeFailed": "The folder's trust could not be changed: {reason}",
   "defaults.agent": "Agent",
   "defaults.save": "Save",
@@ -911,7 +910,7 @@ export const enUS = {
   "update.install": "Update and restart",
   "update.confirmTitle": "Update to {version}?",
   "update.confirmDescription":
-    "Cycle closes and opens again as the new version. A session on This computer that is working is interrupted; sessions on other environments carry on.",
+    "Cycle closes and opens again as the new version. A session on This computer that is working is interrupted; sessions on other locations carry on.",
   "update.current": "Cycle {version}",
 
   // The code colours choice
@@ -924,7 +923,7 @@ export const enUS = {
   "settings.sections": "Settings sections",
   "settings.section.general": "General",
   "settings.section.appearance": "Appearance",
-  "settings.section.environments": "Environments",
+  "settings.section.locations": "Work in",
   "settings.section.shortcuts": "Keyboard shortcuts",
   "settings.section.harness": "Harness",
   "settings.harness.group": "Harness",
@@ -932,14 +931,14 @@ export const enUS = {
   "settings.harness.loading": "Checking {agent} status…",
   "settings.harness.loadFailed": "Could not read {agent} settings",
   "settings.harness.oldDaemon":
-    "Cycle on {environment} is older and does not report account or host status.",
+    "Cycle on {location} is older and does not report account or host status.",
   "settings.harness.oldDaemonBody":
-    "You can still edit session defaults here. Update Cycle on {environment} for full harness diagnostics.",
-  "settings.harness.unavailable.missing": "{agent} is not installed on {environment}.",
+    "You can still edit session defaults here. Update Cycle on {location} for full harness diagnostics.",
+  "settings.harness.unavailable.missing": "{agent} is not installed on {location}.",
   "settings.harness.unavailable.tooOld":
-    "{agent} {version} on {environment} is older than the required {minVersion}.",
-  "settings.harness.unavailable.probeFailed": "{agent} on {environment} could not be checked.",
-  "settings.harness.unavailable.notListed": "{agent} is not enabled on {environment}.",
+    "{agent} {version} on {location} is older than the required {minVersion}.",
+  "settings.harness.unavailable.probeFailed": "{agent} on {location} could not be checked.",
+  "settings.harness.unavailable.notListed": "{agent} is not enabled on {location}.",
   "settings.harness.account.title": "Account & usage",
   "settings.harness.account.refresh": "Refresh",
   "settings.harness.account.refreshing": "Refreshing…",
@@ -967,8 +966,8 @@ export const enUS = {
     "Plan usage appears here after your first conversation.",
   "settings.harness.defaults.title": "Session defaults",
   "settings.harness.defaults.lead":
-    "New sessions of {agent} start with these settings on {environment}.",
-  "settings.harness.host.title": "Host configuration",
+    "New sessions of {agent} start with these settings on {location}.",
+  "settings.harness.host.title": "Runtime",
   "settings.harness.host.lead":
     "Read-only diagnostics from the daemon's config.json. Environment variable values are never shown.",
   "settings.harness.host.binary": "Binary",
@@ -992,7 +991,7 @@ export const enUS = {
   "settings.harness.host.configFile.errorTitle": "config.json has an error",
   "settings.harness.runtime.title": "Agent settings",
   "settings.harness.runtime.lead":
-    "Saved on {environment}. Changes apply without restarting the daemon.",
+    "Saved on {location}. Changes apply without restarting the daemon.",
   "settings.harness.runtime.reset": "Reset",
   "settings.harness.runtime.resetField": "Reset {field} to default",
   "settings.harness.runtime.scope.immediate": "Takes effect immediately",
@@ -1026,7 +1025,7 @@ export const enUS = {
   "settings.harness.account.signIn": "Sign in",
   "settings.harness.account.signOut": "Sign out",
   "settings.harness.auth.title": "Sign in to {agent}",
-  "settings.harness.auth.starting": "Starting sign-in on {environment}…",
+  "settings.harness.auth.starting": "Starting sign-in on {location}…",
   "settings.harness.auth.openHost":
     "Continue in your browser at {host}. Cycle will never open the link until you click below.",
   "settings.harness.auth.openBrowser": "Open in browser",
@@ -1043,10 +1042,10 @@ export const enUS = {
   "settings.harness.auth.submit": "Complete sign-in",
   "settings.harness.auth.submitting": "Completing…",
   "settings.harness.auth.retry": "Try again",
-  "settings.harness.auth.fallbackLabel": "Or sign in from a terminal on {environment}:",
+  "settings.harness.auth.fallbackLabel": "Or sign in from a terminal on {location}:",
   "settings.harness.auth.signOutTitle": "Sign out of {agent}?",
   "settings.harness.auth.signOutDescription":
-    "Signs out {agent} on {environment}. Running turns keep going; idle sessions restart on the next message, and saved history stays.",
+    "Signs out {agent} on {location}. Running turns keep going; idle sessions restart on the next message, and saved history stays.",
   "settings.harness.auth.error.binary_unavailable": "The agent binary is unavailable on this host.",
   "settings.harness.auth.error.auth_in_progress":
     "Another sign-in or sign-out is already in progress for this agent.",
@@ -1061,7 +1060,7 @@ export const enUS = {
   "settings.harness.auth.error.timeout":
     "Sign-in timed out. Try again or use the terminal command below.",
   "settings.harness.auth.error.unsupported_mode":
-    "In-app sign-in is not available for this environment. Use the terminal command below.",
+    "In-app sign-in is not available for this location. Use the terminal command below.",
   "settings.harness.auth.error.untrusted_url":
     "Blocked an unrecognized sign-in domain. Use the terminal command below instead.",
   "settings.harness.auth.error.disconnected":
@@ -1105,36 +1104,36 @@ export const enUS = {
     "Cycle counts which features are used, to improve them. It never sends what you write, your files, or their names.",
   "settings.codeTheme.description": "Used for code in the conversation, in light and in dark.",
   "settings.codeTheme.preview": "Preview",
-  "settings.environments.lead":
+  "settings.locations.lead":
     "Where sessions run: this computer, and other machines reached over ssh.",
-  "settings.environments.actions": "Actions for {name}",
-  "settings.environments.edit": "Edit",
-  "settings.environments.remove": "Remove",
+  "settings.locations.actions": "Actions for {name}",
+  "settings.locations.edit": "Edit",
+  "settings.locations.remove": "Remove",
   "settings.defaults.lead":
-    "New sessions of the agent start with these settings. They are kept on each environment.",
-  "settings.defaults.environment": "Environment",
-  "settings.defaults.none": "No environment is connected.",
+    "New sessions of the agent start with these settings. They are kept on each location.",
+  "settings.defaults.location": "Work in",
+  "settings.defaults.none": "No location is connected.",
   "settings.defaults.noneBody":
-    "Session defaults are kept on each environment. Connect one to see and change them.",
-  "settings.defaults.showEnvironments": "Show environments",
+    "Session defaults are kept on each location. Connect one to see and change them.",
+  "settings.defaults.showLocations": "Show locations",
   "settings.defaults.saved": "Saved",
   "app.checkForUpdates": "Check for updates",
-  // A remote environment whose Cycle is too old for this app
-  "daemon.tooOld": "Cycle on {environment} is {version}, too old for this app.",
+  // A remote location whose Cycle is too old for this app
+  "daemon.tooOld": "Cycle on {location} is {version}, too old for this app.",
   // The daemon speaks another major version of the protocol: the app cannot use it at all
   "daemon.protocolOlder":
-    "Cycle on {environment} speaks protocol {supported}, older than the {requested} this app needs. Update Cycle on that machine:",
+    "Cycle on {location} speaks protocol {supported}, older than the {requested} this app needs. Update Cycle on that machine:",
   "daemon.protocolNewer":
-    "Cycle on {environment} speaks protocol {supported}, newer than the {requested} this app has. Update this app to connect.",
+    "Cycle on {location} speaks protocol {supported}, newer than the {requested} this app has. Update this app to connect.",
   "daemon.protocolOther":
-    "Cycle on {environment} speaks protocol {supported}, which this app ({requested}) cannot use.",
+    "Cycle on {location} speaks protocol {supported}, which this app ({requested}) cannot use.",
   "daemon.update": "Update to {to}",
   "daemon.updating": "Updating…",
   "daemon.tryAgain": "Try again",
   "daemon.failed":
-    "Could not update Cycle on {environment}: {error}. Run the command on that machine instead:",
-  "daemon.byHand": "Run this on {environment}",
-  "daemon.confirmTitle": "Update Cycle on {environment} to {to}?",
+    "Could not update Cycle on {location}: {error}. Run the command on that machine instead:",
+  "daemon.byHand": "Run this on {location}",
+  "daemon.confirmTitle": "Update Cycle on {location} to {to}?",
   "daemon.confirmBody":
     "Cycle on that machine is stopped and starts again as the new version. No session there is working now.",
   "daemon.confirm": "Update",
@@ -1145,7 +1144,7 @@ export const enUS = {
   "daemon.confirmNow": "Update now and interrupt",
   "daemon.untitled": "Untitled session",
   "daemon.waiting":
-    "Cycle {to} is installed on {environment}. It restarts as the new version when its sessions finish.",
+    "Cycle {to} is installed on {location}. It restarts as the new version when its sessions finish.",
   "daemon.updateNow": "Update now",
 
   // Said once, the first time: what is counted, and that it can be turned off (docs/analytics.md)
@@ -1180,6 +1179,109 @@ export const enUS = {
     "Cycle shows the sign-in page until you sign in again. Your sessions, settings and connectors on this computer stay.",
   "account.state.offline": "Offline",
   "account.state.reauth": "Signed out by the sign-in service",
+  // Environments: reusable setups of scripts, variables and actions (Settings → Environments, docs/desktop.md "环境")
+  "settings.section.environments": "Environments",
+  "settings.environments.lead":
+    "Variables and actions a session can start with. Choose one for a folder when you start a session in it.",
+  "settings.environments.empty": "No environments yet.",
+  "settings.environments.emptyHint":
+    "An environment gives a session variables, like a database address, and actions, like starting a dev server.",
+  "settings.environments.variables": { one: "{count} variable", other: "{count} variables" },
+  "settings.environments.actions": { one: "{count} action", other: "{count} actions" },
+  "settings.environments.manage": "Manage {name}",
+  "settings.environments.edit": "Edit",
+  "settings.environments.duplicate": "Duplicate",
+  "settings.environments.remove": "Remove",
+  "environment.add": "Add environment",
+  "environment.addTitle": "Add an environment",
+  "environment.editTitle": "Edit {name}",
+  "environment.copyName": "{name} copy",
+  "environment.name": "Name",
+  "environment.namePlaceholder": "Node and Postgres",
+  "environment.setup": "Setup script",
+  "environment.setup.note":
+    "Runs in a worktree after Cycle creates it. Cycle does not create worktrees yet, so this is saved and not run.",
+  "environment.cleanup": "Cleanup script",
+  "environment.cleanup.note":
+    "Runs before Cycle removes a worktree. Cycle does not create worktrees yet, so this is saved and not run.",
+  "environment.systems": "Script for",
+  "environment.system.default": "All systems",
+  "environment.system.macos": "macOS",
+  "environment.system.linux": "Linux",
+  "environment.system.windows": "Windows",
+  "environment.system.hint": "A system with a script of its own runs that one instead.",
+  "environment.variables": "Variables",
+  "environment.variables.note":
+    "One NAME=value per line, as in a .env file. Lines starting with # are comments. The session's agent, terminals and actions see them.",
+  "environment.variables.placeholder": "DATABASE_URL=postgres://localhost/dev",
+  "environment.variables.noEquals": "Line {line}: write it as NAME=value.",
+  "environment.variables.unclosedQuote": "Line {line}: the quote is not closed.",
+  "environment.variables.invalidName":
+    "Line {line}: {name} is not a variable name. Use letters, digits and _, and do not start with a digit.",
+  "environment.variables.reserved":
+    "Line {line}: Cycle sets {name} for the agent, so an environment cannot change it.",
+  "environment.variables.duplicate": "Line {line}: {name} is already set on line {first}.",
+  "environment.actions": "Actions",
+  "environment.actions.note":
+    "Buttons in the session's title bar. Each runs its command in a new terminal in the session's folder.",
+  "environment.actions.add": "Add action",
+  "environment.action.name": "Action name",
+  "environment.action.namePlaceholder": "Dev server",
+  "environment.action.icon": "Icon",
+  "environment.icon.terminal": "Terminal",
+  "environment.icon.play": "Run",
+  "environment.icon.test": "Test",
+  "environment.icon.build": "Build",
+  "environment.icon.database": "Database",
+  "environment.icon.server": "Server",
+  "environment.icon.refresh": "Refresh",
+  "environment.icon.clean": "Clean",
+  "environment.action.command": "Command",
+  "environment.action.remove": "Remove action {name}",
+  "environment.action.removeUnnamed": "Remove this action",
+  "environment.save": "Save",
+  "environment.addSubmit": "Add environment",
+  "environment.removeTitle": "Remove {name}?",
+  "environment.removeDescription":
+    "New sessions can no longer start with it. Sessions that already use it keep their own copy.",
+  "environment.removeConfirm": "Remove environment",
+  "environment.problem.name_missing": "Give the environment a name.",
+  "environment.problem.invalid_variable": "{name} is not a variable name.",
+  "environment.problem.duplicate_variable": "{name} is set twice.",
+  "environment.problem.reserved_variable":
+    "Cycle sets {name} for the agent, so an environment cannot change it.",
+  "environment.problem.action_name_missing": "Give each action a name.",
+  "environment.problem.action_command_missing": "Give the action {action} a command.",
+  "environment.problem.too_large":
+    "The environment is larger than {limit}. Shorten its scripts or variables.",
+  "environment.problem.invalid": "The environment could not be saved: {message}",
+  "blank.environment": "Environment",
+  "blank.environment.none": "No environment",
+  "blank.environment.needsFix":
+    "The session was not started: the environment {name} needs a fix. Open it in Settings, Environments, to see what.",
+  "blank.environment.agyNote":
+    "Antigravity runs its own commands without these variables. Terminals and actions have them.",
+  "settings.environments.needsFix": "Needs a fix: {problem}",
+  "environment.problem.action_id_invalid":
+    "Two actions have the same id, or one has none. Save the environment again to give each its own.",
+  "blank.environment.oldDaemon": "Cycle on {location} needs an update to use environments.",
+  "blank.environment.refused.reserved_variable":
+    "The session was not started: the environment sets {name}, which Cycle sets for the agent. Remove it in Settings, Environments.",
+  "blank.environment.refused.invalid_variable":
+    "The session was not started: the environment's variable {name} is not one a shell can take. Fix it in Settings, Environments.",
+  "blank.environment.refused.too_large":
+    "The session was not started: the environment is larger than Cycle on that location takes. Shorten it in Settings, Environments.",
+  "blank.environment.refused.invalid_environment":
+    "The session was not started: Cycle on that location could not read the environment. Check that it is up to date.",
+  "blank.environment.refused.missing":
+    "The session was not started: that environment was removed. Choose another one.",
+  "session.environment.actions": "Environment actions",
+  "session.environment.more": "More actions",
+  "session.environment.run": "Run {name} in a new terminal",
+  "terminal.problem.unknown_action": "This session's environment has no such action.",
+  "overview.environment": "Environment",
+  "overview.variables": "Variables",
+  "overview.variables.none": "None",
 } as const satisfies Messages;
 
 export type MessageKey = keyof typeof enUS;

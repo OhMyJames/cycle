@@ -109,7 +109,7 @@ test("while the agent works there is Stop, and a message typed is queued, not re
   await screen.findByRole("textbox", { name: "Message" });
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: u({ sessionUpdate: "state_update", state: "running" }),
     version: 1,
@@ -129,7 +129,7 @@ test("while the agent works there is Stop, and a message typed is queued, not re
   expect(named("cancel")).toHaveLength(1);
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: idle({ stopReason: "cancelled" }),
     version: 2,
@@ -147,7 +147,7 @@ test("while the agent works, Enter sends into its turn, ⌘Enter queues, and Shi
   await ready(box);
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: u({ sessionUpdate: "state_update", state: "running" }),
     version: 1,
@@ -205,14 +205,14 @@ test("while a permission waits, ⌘Enter is the card's Allow once, not the queue
   await ready(box);
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: u({ sessionUpdate: "state_update", state: "requires_action" }),
     version: 1,
   });
   const request: PermissionRequest = {
     key: "local:s1:p1",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Allow Bash?",
     subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
@@ -239,7 +239,7 @@ test("an agent that cannot be steered keeps Enter as queue while it works", asyn
   await ready(box);
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: u({ sessionUpdate: "state_update", state: "running" }),
     version: 1,
@@ -261,14 +261,14 @@ test("streams: what arrives is added to the message on screen", async () => {
   const log = await screen.findByRole("log", { name: "Conversation" });
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: text("Hel", "a1"),
     version: 1,
   });
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: text("lo!", "a1"),
     version: 2,
@@ -303,7 +303,7 @@ test("a permission request is shown with its options, and the click answers it",
   await ready(box);
   const request: PermissionRequest = {
     key: "local:s1:p1",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Allow Bash?",
     subject: {
@@ -323,11 +323,11 @@ test("a permission request is shown with its options, and the click answers it",
   expect(within(log).getByText("Waiting for your answer")).toBeDefined();
   expect(box.getAttribute("aria-placeholder")).toBe("Waiting for your answer");
   const deny = within(card).getByText<HTMLButtonElement>("Deny");
-  emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+  emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   await waitFor(() => expect(deny.disabled).toBe(true));
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     capabilities: { queue: true, files: false, folders: true },
   });
@@ -345,7 +345,7 @@ test("a permission request is shown with its options, and the click answers it",
   expect(named("answerPermission")).toEqual([["answerPermission", "local:s1:p1", "deny"]]);
   emit({
     type: "permission-closed",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     key: request.key,
     version: 2,
@@ -356,7 +356,7 @@ test("a permission request is shown with its options, and the click answers it",
 
 const asking = (key: string, name: string, rawInput: object): PermissionRequest => ({
   key,
-  environmentId: "local",
+  locationId: "local",
   sessionId: "s1",
   title: `Allow ${name}?`,
   subject: { type: "tool_call", toolCall: { toolCallId: key, name, rawInput } },
@@ -413,7 +413,7 @@ test("several requests are answered one at a time; the keyboard goes on to the n
   expect(named("answerPermission")).toEqual([["answerPermission", "local:s1:p1", "allow"]]);
   emit({
     type: "permission-closed",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     key: "local:s1:p1",
     version: 3,
@@ -430,7 +430,7 @@ test("several requests are answered one at a time; the keyboard goes on to the n
   expect(named("answerPermission")).toHaveLength(2);
   emit({
     type: "permission-closed",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     key: "local:s1:p2",
     version: 4,
@@ -450,7 +450,7 @@ test("an agent's questions are a form: a choice, several choices, an answer of o
   await ready(await screen.findByRole("textbox", { name: "Message" }));
   const request: PermissionRequest = {
     key: "local:s1:f1",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Claude has some questions",
     options: [],
@@ -525,7 +525,7 @@ test("a form's required field must be filled before it is answered; one the app 
   await ready(await screen.findByRole("textbox", { name: "Message" }));
   const form = (key: string, properties: object, required: string[]): PermissionRequest => ({
     key,
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: key,
     options: [],
@@ -551,7 +551,7 @@ test("a form's required field must be filled before it is answered; one the app 
   // Requests are shown one at a time: the next is drawn once this one is closed.
   emit({
     type: "permission-closed",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     key: "Name it",
     version: 2,
@@ -591,7 +591,7 @@ test("says so when the connection is lost", async () => {
   const { emit, user } = await mount();
   // Under the open session's title bar; with none open, the empty page says it (notices.browser.tsx).
   await openFirstSession(user);
-  emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+  emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   const note = await screen.findByText(/Connection lost\. Reconnecting/);
   expect(note.getAttribute("role") ?? note.parentElement?.getAttribute("role")).toBe("status");
 });
@@ -602,7 +602,7 @@ test("an open session keeps its draft offline and can send it after reconnecting
   const box = await screen.findByRole("textbox", { name: "Message" });
   await ready(box);
   await write(box, "Keep this");
-  await emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+  await emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   // Said once, by the line under the title bar: the box does not repeat it.
   await screen.findByText(/Reconnecting….*Your draft is kept\./);
   expect(screen.queryByText(/keep editing your draft/)).toBeNull();
@@ -611,7 +611,7 @@ test("an open session keeps its draft offline and can send it after reconnecting
   await press(box, "Enter");
   expect(boxText(box)).toBe("Keep this draft");
   expect(named("prompt")).toHaveLength(0);
-  await emit({ type: "environment-status", environmentId: "local", state: "connected" });
+  await emit({ type: "location-status", locationId: "local", state: "connected" });
   await press(box, "Enter");
   await waitFor(() =>
     expect(named("prompt")).toEqual([
@@ -763,7 +763,7 @@ test("session settings show an unknown mode and follow the daemon while the dial
   expect(trigger.textContent).not.toContain("Auto");
   emit({
     type: "sessions",
-    environmentId: "local",
+    locationId: "local",
     sessions: [{ ...summary("s1"), config: { mode: "default" } }],
   });
   expect(trigger.textContent).toContain("Ask before acting");
@@ -892,7 +892,7 @@ test("Ctrl or Cmd+Enter allows a pending request even while typing in the messag
     version: 1,
     request: {
       key: "local:s1:p1",
-      environmentId: "local",
+      locationId: "local",
       sessionId: "s1",
       title: "Allow Bash?",
       subject: {
@@ -910,10 +910,10 @@ test("Ctrl or Cmd+Enter allows a pending request even while typing in the messag
   const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
   await write(box, "half-written follow-up");
   await user.click(box);
-  emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+  emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   await user.keyboard(`{${mod}>}{Enter}{/${mod}}`);
   expect(named("answerPermission")).toHaveLength(0);
-  emit({ type: "environment-status", environmentId: "local", state: "connected" });
+  emit({ type: "location-status", locationId: "local", state: "connected" });
   // Connected, Cmd/Ctrl+Enter allows it even with focus and a draft inside the message box, without sending or adding a line break.
   await user.keyboard(`{${mod}>}{Enter}{/${mod}}`);
   await waitFor(() =>
@@ -1145,8 +1145,8 @@ test("a daemon too old for the app says so in one line with a button, and updati
   const { emit, user, named } = await mount();
   expect(screen.queryByText(/too old for this app/)).toBeNull();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     daemon: { version: "0.1.0", upgrade: { to: "0.3.0", command: "sh install.sh" } },
   });
@@ -1162,8 +1162,8 @@ test("a daemon too old for the app says so in one line with a button, and updati
     expect(named("upgradeDaemon")).toEqual([["upgradeDaemon", "local", undefined]]),
   );
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     daemon: { version: "0.3.0" },
   });
@@ -1174,15 +1174,15 @@ test("updating a daemon whose sessions are working names them, and the person wa
   const { emit, user, named } = await mount();
   await emit({
     type: "sessions",
-    environmentId: "local",
+    locationId: "local",
     sessions: [
       { ...summary("s1"), title: "Fix the build", state: "running" },
       { ...summary("s2"), title: "Idle one", state: "idle" },
     ],
   });
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     daemon: { version: "0.1.0", upgrade: { to: "0.3.0", command: "sh install.sh" } },
   });
@@ -1197,8 +1197,8 @@ test("updating a daemon whose sessions are working names them, and the person wa
 
   // Installed and waiting: the line says so, and what is left to choose is to interrupt them.
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     daemon: {
       version: "0.1.0",
@@ -1218,8 +1218,8 @@ test("updating a daemon whose sessions are working names them, and the person wa
 test("a daemon on another protocol says why it cannot be used and what to update, and the line goes when it connects", async () => {
   const { emit } = await mount();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "reconnecting",
     error: "The daemon speaks Cycle protocol 0.2; this client speaks 1.0.",
     incompatible: {
@@ -1236,8 +1236,8 @@ test("a daemon on another protocol says why it cannot be used and what to update
   expect(screen.getByText("sh install.sh")).toBeTruthy();
 
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "reconnecting",
     error: "x",
     incompatible: { with: "app", supported: ["2.0"], requested: "1.0" },
@@ -1246,15 +1246,15 @@ test("a daemon on another protocol says why it cannot be used and what to update
   expect(screen.getByText(/newer than the 1\.0 this app has\. Update this app/)).toBeTruthy();
   expect(screen.queryByText("sh install.sh")).toBeNull();
 
-  await emit({ type: "environment-status", environmentId: "local", state: "connected" });
+  await emit({ type: "location-status", locationId: "local", state: "connected" });
   expect(screen.queryByText(/this app needs|this app has|cannot use/)).toBeNull();
 });
 
 test("a daemon update that did not work says why and shows the command to run by hand", async () => {
   const { emit } = await mount();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     daemon: {
       version: "0.1.0",
@@ -1271,12 +1271,12 @@ test("a daemon update that did not work says why and shows the command to run by
 test("a host that cannot be reached says why, not only that it is not connected", async () => {
   const { emit } = await mount();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "closed",
     error: "bash: /home/james/.local/bin/cycle-daemon: No such file or directory",
   });
-  expect(screen.getByText("Not connected to this environment.")).toBeTruthy();
+  expect(screen.getByText("Not connected to this location.")).toBeTruthy();
   expect(screen.getByRole("alert").textContent).toContain("No such file or directory");
 });
 
@@ -1302,7 +1302,7 @@ test("a development run says updates are for the installed app and offers no che
 
 const queueUpdate = (version: number, entries: object[], extra: object = {}) => ({
   type: "update" as const,
-  environmentId: "local",
+  locationId: "local",
   sessionId: "s1",
   update: u({ sessionUpdate: "_cycle/queue_update", entries, ...extra }),
   version,
@@ -1632,7 +1632,7 @@ test("a daemon that does not queue is not sent a message while the agent works, 
   await ready(box);
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: u({ sessionUpdate: "state_update", state: "running" }),
     version: 1,
@@ -1669,26 +1669,26 @@ test("a daemon that does not find files is not asked for them", async () => {
   expect(named("searchFiles")).toHaveLength(0);
 });
 
-/** The sessions of the environment, for the @ menu: the one open, two others, and one archived. */
+/** The sessions of the location, for the @ menu: the one open, two others, and one archived. */
 const otherSessions = (script: ReturnType<typeof fakeBridge>) => {
-  script.bridge.sessions = async (environmentId: string) => [
-    summary("s1", environmentId),
+  script.bridge.sessions = async (locationId: string) => [
+    summary("s1", locationId),
     {
-      ...summary("s2", environmentId),
+      ...summary("s2", locationId),
       cwd: "/repo/app",
       title: "Fix the login bug",
       updatedAt: "2020-01-01T00:00:00.000Z",
     },
     {
-      ...summary("s3", environmentId),
+      ...summary("s3", locationId),
       title: "Login *styles*",
       updatedAt: "2020-01-01T12:00:00.000Z",
     },
-    { ...summary("s4", environmentId), title: "Old login notes", archived: true },
+    { ...summary("s4", locationId), title: "Old login notes", archived: true },
   ];
 };
 
-test("an @ lists the environment's other sessions under their own heading; one picked is sent as a session link", async () => {
+test("an @ lists the location's other sessions under their own heading; one picked is sent as a session link", async () => {
   const { user, bridge, named, calls } = await mount({
     capabilities: { queue: true, files: true, folders: true, sessionMentions: true },
     configure: otherSessions,
@@ -1835,11 +1835,11 @@ test("composer uses a single-line box by default, stays one line with several bu
   const { user, emit } = await mount({
     configure: (script) => {
       const session = { ...summary("s1"), config: { mode: "auto", model: "opus", effort: "high" } };
-      script.bridge.environments = async () => ({
-        environments: [{ id: "local", name: "This computer", kind: "local" }],
+      script.bridge.locations = async () => ({
+        locations: [{ id: "local", name: "This computer", kind: "local" }],
         status: [
           {
-            environmentId: "local",
+            locationId: "local",
             state: "connected",
             capabilities: { queue: true, files: false, folders: false },
           },
@@ -1901,7 +1901,7 @@ test("composer uses a single-line box by default, stays one line with several bu
   // Usage shows ring + percentage only; the numbers are in its details.
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 1,
     update: {
@@ -1917,14 +1917,14 @@ test("composer uses a single-line box by default, stays one line with several bu
   // Plan + queued message dock inside the extension tray above the input box; the working state's buttons keep one line.
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 2,
     update: { sessionUpdate: "state_update", state: "running" } as never,
   });
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 3,
     update: {
@@ -1938,7 +1938,7 @@ test("composer uses a single-line box by default, stays one line with several bu
   });
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 4,
     update: {
@@ -1959,7 +1959,7 @@ test("composer uses a single-line box by default, stays one line with several bu
   // Live config_option_update from the agent overlays newly discovered models and hides effort when unsupported.
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 5,
     update: {
@@ -1993,7 +1993,7 @@ test("composer uses a single-line box by default, stays one line with several bu
   // Reaching 100% context marks the ring as full and settles cleanly at offset 0.
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 6,
     update: { sessionUpdate: "usage_update", used: 200_000, size: 200_000 } as never,
@@ -2036,7 +2036,7 @@ test("the composer's buttons are drawn 28px, take a press 32px across, and stay 
   await ready(input);
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 1,
     update: { sessionUpdate: "usage_update", used: 12_000, size: 200_000 } as never,
@@ -2117,7 +2117,7 @@ test("the context ring opens into what was reported: nothing yet, now's usage pa
   await openFirstSession(user);
   await screen.findByRole("textbox", { name: "Message" });
   const update = (version: number, u: object) =>
-    emit({ type: "update", environmentId: "local", sessionId: "s1", version, update: u as never });
+    emit({ type: "update", locationId: "local", sessionId: "s1", version, update: u as never });
   const tracked = () =>
     calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
   const dialog = () => screen.findByRole("dialog", { name: "Context window" });
@@ -2275,7 +2275,7 @@ test("the account's plan limits show under the context: the latest the daemon he
   // A newer word from the agent replaces it; one with a later reset reads as a day and a time.
   emit({
     type: "plan-usage",
-    environmentId: "local",
+    locationId: "local",
     agent: "fake",
     usage: {
       at: now,
@@ -2301,8 +2301,8 @@ test("the account's plan limits show under the context: the latest the daemon he
   // The connection comes back to a daemon that has none (it restarted, or the agent is signed in with a key now):
   // what was kept from before goes.
   daemonHas = () => ({});
-  emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
-  emit({ type: "environment-status", environmentId: "local", state: "connected" });
+  emit({ type: "location-status", locationId: "local", state: "reconnecting" });
+  emit({ type: "location-status", locationId: "local", state: "connected" });
   await waitFor(async () => {
     await user.click(ring);
     const shown = await screen.findByRole("dialog", { name: "Context window" });

@@ -91,7 +91,7 @@ test("hardcoded per-agent auth domain allowlist permits exact official HTTPS hos
   }
 });
 
-test("selectAgentSignInMode filters out requiresLocalLoopback modes on remote environments", () => {
+test("selectAgentSignInMode filters out requiresLocalLoopback modes on remote locations", () => {
   const codexModes = [
     { mode: "browser" as const, requiresLocalLoopback: true },
     { mode: "device_code" as const, requiresLocalLoopback: false },

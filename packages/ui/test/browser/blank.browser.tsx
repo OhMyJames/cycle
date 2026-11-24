@@ -13,9 +13,9 @@ afterEach(cleanup);
 const mount = async (configure?: (script: ReturnType<typeof fakeBridge>) => void) => {
   const script = fakeBridge({ connected: true });
   // Two folders with sessions on this computer: /work (newest) and /srv/api.
-  script.bridge.sessions = async (environmentId: string) => [
-    summary("s1", environmentId),
-    { ...summary("s3", environmentId), cwd: "/srv/api", updatedAt: "2019-12-01T00:00:00.000Z" },
+  script.bridge.sessions = async (locationId: string) => [
+    summary("s1", locationId),
+    { ...summary("s3", locationId), cwd: "/srv/api", updatedAt: "2019-12-01T00:00:00.000Z" },
   ];
   configure?.(script);
   const store = await renderApp(script.bridge);
@@ -157,7 +157,7 @@ test("the agent is chosen first, by its logo and name, as a chip like the others
   );
 });
 
-test("an environment that drops says so with a way back, and the draft and its images stay", async () => {
+test("a location that drops says so with a way back, and the draft and its images stay", async () => {
   const { user, named, emit } = await mount((script) => {
     script.bridge.agents = async () => [
       {
@@ -176,8 +176,8 @@ test("an environment that drops says so with a way back, and the draft and its i
   await user.upload(picker(), png("shot.png"));
   expect(await screen.findByRole("button", { name: "Remove shot.png" })).toBeTruthy();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "closed",
     error: "connection refused",
   });
@@ -192,8 +192,8 @@ test("an environment that drops says so with a way back, and the draft and its i
   expect(named("connect")).toHaveLength(1);
   expect(named("track")).toContainEqual(["track", "blank_connect_pressed", {}]);
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     capabilities: { queue: true, files: true, folders: true },
   });
@@ -264,11 +264,11 @@ test("a failed start sent again is reported as sent once, when its session is ma
   expect(named("track").filter((call) => call[1] === "blank_sent")).toHaveLength(1);
 });
 
-test("the folders offered are this environment's with sessions that are not archived", async () => {
+test("the folders offered are this location's with sessions that are not archived", async () => {
   const { user } = await mount((script) => {
-    script.bridge.sessions = async (environmentId: string) => [
-      summary("s1", environmentId),
-      { ...summary("s4", environmentId), cwd: "/old", archived: true },
+    script.bridge.sessions = async (locationId: string) => [
+      summary("s1", locationId),
+      { ...summary("s4", locationId), cwd: "/old", archived: true },
     ];
   });
   await newSession(user);

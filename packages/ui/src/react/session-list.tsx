@@ -21,7 +21,7 @@ export const sessionTitle = (session: SessionSummary): string => {
   return place(session.cwd);
 };
 
-/** An environment that is not connected, as a row of its sessions says it: who, and in what words. */
+/** A location that is not connected, as a row of its sessions says it: who, and in what words. */
 export type Away = { name: string; word: string };
 
 /** What a row's own controls do that the list does not do itself: renaming is done in the row. */
@@ -132,16 +132,14 @@ function Row({
   const store = useAppStore();
   const title = sessionTitle(session);
   const { shown, problem, finish } = useRename(title, (next) =>
-    store.renameSession(session.sessionId, next, "sidebar", session.environmentId),
+    store.renameSession(session.sessionId, next, "sidebar", session.locationId),
   );
-  // Renamed in place by a double click or F2; not while its environment is away, where it could not be.
+  // Renamed in place by a double click or F2; not while its location is away, where it could not be.
   const [editing, setEditing] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
   const tip =
-    away !== undefined
-      ? t("session.away", { environment: away.name, state: away.word })
-      : undefined;
-  // One thing a row says. A session of an environment that is away is the last list read: it says nothing.
+    away !== undefined ? t("session.away", { location: away.name, state: away.word }) : undefined;
+  // One thing a row says. A session of a location that is away is the last list read: it says nothing.
   const mark = away !== undefined ? undefined : markOf(session);
   const style = mark !== undefined ? MARK_STYLE[mark] : undefined;
   return (
@@ -149,7 +147,7 @@ function Row({
       ref={rowRef}
       value={sessionKey(session)}
       data-session={session.sessionId}
-      data-environment={session.environmentId}
+      data-location={session.locationId}
       data-archived={session.archived || undefined}
       data-mark={mark}
       data-away={away !== undefined || undefined}
@@ -236,7 +234,7 @@ export function SessionListView({
   list: SessionList;
   /** The open session, by its `sessionKey`. */
   selected: string | undefined;
-  /** The environments that are not connected, by id. */
+  /** The locations that are not connected, by id. */
   away: ReadonlyMap<string, Away>;
   /** The pinned sessions, by `sessionKey`. */
   pinned: ReadonlySet<string>;
@@ -264,7 +262,7 @@ export function SessionListView({
               <Row
                 key={sessionKey(session)}
                 session={session}
-                away={away.get(session.environmentId)}
+                away={away.get(session.locationId)}
                 pinned={pinned.has(sessionKey(session))}
                 onAction={onAction}
               />

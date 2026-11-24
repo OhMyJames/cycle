@@ -71,14 +71,14 @@ test("a session that is used again is the last one to be forgotten", () => {
   expect(panels.get("local:1").open).toBe(false);
 });
 
-test("a deleted session's panel goes, and a removed environment's panels go with it", () => {
+test("a deleted session's panel goes, and a removed location's panels go with it", () => {
   const storage = memoryStorage();
   const panels = new SidePanelStore(storage);
   panels.setOpen("local:a", true);
   panels.setOpen("ssh-box:b", true);
   panels.setOpen("ssh-box:c", true);
   panels.forget("local:a");
-  panels.forgetEnvironment("ssh-box");
+  panels.forgetLocation("ssh-box");
   expect(panels.get("local:a").open).toBe(false);
   expect(panels.get("ssh-box:b").open).toBe(false);
   expect(storage.getItem("cycle:side-panel")).toBeNull();

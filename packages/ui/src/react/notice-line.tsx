@@ -64,18 +64,18 @@ export const errorText = (
 
 /**
  * What is the matter with the page under this title bar: what was just done failed (`error`, when this page is where
- * it is said), or the environment the open session runs on is reconnecting or not connected. Nothing when all is well.
+ * it is said), or the location the open session runs on is reconnecting or not connected. Nothing when all is well.
  */
 export function SessionNotices({
-  environmentId,
+  locationId,
   shows,
   errors = true,
 }: {
-  /** The environment of what the page shows. */
-  environmentId: string | undefined;
+  /** The location of what the page shows. */
+  locationId: string | undefined;
   /**
-   * What the page shows. A session's conversation is what it had when its environment went away, so that is said; with
-   * nothing open, the page itself says how the environment's connection stands, and the line does not say it again.
+   * What the page shows. A session's conversation is what it had when its location went away, so that is said; with
+   * nothing open, the page itself says how the location's connection stands, and the line does not say it again.
    */
   shows: "session" | "blank" | "nothing";
   /** Whether what failed is said here; not while a page over the app says it itself. */
@@ -84,13 +84,11 @@ export function SessionNotices({
   const { t } = useI18n();
   const store = useAppStore();
   const error = useAppState((s) => s.error);
-  const status = useAppState((s) =>
-    environmentId === undefined ? undefined : s.status[environmentId],
-  );
+  const status = useAppState((s) => (locationId === undefined ? undefined : s.status[locationId]));
   const name = useAppState(
-    (s) => s.environments.find((e) => e.id === environmentId)?.name ?? environmentId ?? "",
+    (s) => s.locations.find((e) => e.id === locationId)?.name ?? locationId ?? "",
   );
-  // An environment with no status yet is not connected, as the sidebar has it.
+  // A location with no status yet is not connected, as the sidebar has it.
   const state = status?.state ?? "closed";
   const reason = status?.error;
   // A daemon that speaks another protocol says so itself, and connecting again would not change it.
@@ -114,48 +112,48 @@ export function SessionNotices({
   if (shows !== "nothing" && state === "reconnecting" && !incompatible)
     lines.push(
       <NoticeLine
-        key="environment"
+        key="location"
         tone="warning"
         busy
         icon={<RefreshIcon />}
-        text={kept(t("environment.reconnectingBanner"))}
+        text={kept(t("location.reconnectingBanner"))}
       />,
     );
   else if (open && state === "connecting" && !incompatible)
     lines.push(
       <NoticeLine
-        key="environment"
+        key="location"
         tone="warning"
         busy
         icon={<RefreshIcon />}
-        text={kept(t("notice.connecting", { environment: name }))}
+        text={kept(t("notice.connecting", { location: name }))}
       />,
     );
   else if (
     open &&
-    environmentId !== undefined &&
+    locationId !== undefined &&
     (state === "closed" || (incompatible && state !== "connected"))
   )
     lines.push(
       <NoticeLine
-        key="environment"
+        key="location"
         tone="warning"
         icon={<WarningIcon />}
         text={kept(
           incompatible
-            ? t("session.awayIncompatible", { environment: name })
+            ? t("session.awayIncompatible", { location: name })
             : reason !== undefined
-              ? t("session.awayBecause", { environment: name, reason })
-              : t("session.awayBanner", { environment: name }),
+              ? t("session.awayBecause", { location: name, reason })
+              : t("session.awayBanner", { location: name }),
         )}
         action={
           incompatible
             ? undefined
             : {
-                label: t("environment.connectAgain"),
+                label: t("location.connectAgain"),
                 onAction: () => {
                   store.track("session_connect_pressed", {});
-                  void store.connectEnvironment(environmentId);
+                  void store.connectLocation(locationId);
                 },
               }
         }

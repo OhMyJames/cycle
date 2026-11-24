@@ -1,9 +1,8 @@
-import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import type { EnvironmentConfig } from "@cycle/ui";
+import type { LocationConfig } from "@cycle/ui";
+import { entryIdOf, isRecord, jsonFile, KeptEntries } from "./json-file.ts";
 
-export const LOCAL_ENVIRONMENT: EnvironmentConfig = {
+export const LOCAL_LOCATION: LocationConfig = {
   id: "local",
   name: "This computer",
   kind: "local",
@@ -11,12 +10,9 @@ export const LOCAL_ENVIRONMENT: EnvironmentConfig = {
 
 /** Where the app keeps what the user set up. */
 export type Settings = {
-  load(): Promise<EnvironmentConfig[]>;
-  save(environments: EnvironmentConfig[]): Promise<void>;
+  load(): Promise<LocationConfig[]>;
+  save(locations: LocationConfig[]): Promise<void>;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** What ssh may be given as the place to go: an address or an alias, never something it would read as an option. */
 export const isSshHost = (host: string): boolean =>
@@ -26,17 +22,18 @@ const strings = (value: unknown): string[] | undefined =>
   Array.isArray(value) && value.every((v) => typeof v === "string") ? value : undefined;
 
 /**
- * One entry of the file as an environment, or undefined when it is not one this app understands. The format before
- * "environment" was a list of `hosts`, each `{ id, name, kind: "ssh", host, command? }`: it is read as a remote one
- * reached over SSH, with the same id (the id is what the sessions and drafts are known by).
+ * One entry of the file as a location, or undefined when it is not one this app understands. The entries of
+ * `locations` and of `environments` (its name until 2026-11-24) have the same format. The one before that was a list of
+ * `hosts`, each `{ id, name, kind: "ssh", host, command? }`: it is read as a remote one reached over SSH, with the same
+ * id (the id is what the sessions and drafts are known by).
  */
-export const environmentOf = (entry: unknown): EnvironmentConfig | undefined => {
+export const locationOf = (entry: unknown): LocationConfig | undefined => {
   if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string")
     return undefined;
   const { id, name } = entry;
   // This computer is the one "local" there is: another entry that says it is local would be a second way into the same daemon.
   if (entry.kind === "local")
-    return id === LOCAL_ENVIRONMENT.id ? { id, name, kind: "local" } : undefined;
+    return id === LOCAL_LOCATION.id ? { id, name, kind: "local" } : undefined;
   if (entry.kind === "remote" && isRecord(entry.transport) && entry.transport.type === "ssh") {
     const { host } = entry.transport;
     const command = strings(entry.transport.command);
@@ -68,86 +65,61 @@ export const environmentOf = (entry: unknown): EnvironmentConfig | undefined => 
 };
 
 /**
- * Settings in a JSON file in the app's data directory, written whole and renamed into place. What this version does not
- * understand is not shown and not lost: an entry it cannot read (a newer app wrote it, or it is damaged), the fields it
- * does not know of in an entry it can, and any other key of the file are written back as they were.
+ * Settings in a JSON file in the app's data directory, written whole and renamed into place (json-file.ts), mode 0600 as
+ * environments.json is: it says which machines the person reaches over ssh. What this version does not understand is not
+ * shown and not lost: an entry it cannot read (a newer app wrote it, or it is damaged), the fields it does not know of in
+ * an entry it can, and any other key of the file are written back as they were.
  */
 export const fileSettings = (path: string): Settings => {
-  let unknown: unknown[] = [];
+  const file = jsonFile(path, { mode: 0o600 });
+  // Only an entry already in the new format is written as it was: the older one has other field names.
+  const entries = new KeptEntries({
+    parse: locationOf,
+    idOf: (location: LocationConfig) => location.id,
+    same: (entry, location) =>
+      entry.kind === location.kind && isDeepStrictEqual(locationOf(entry), location),
+  });
   let rest: Record<string, unknown> = {};
-  // What each environment was in the file, to write back what it has no field for.
-  const raw = new Map<string, Record<string, unknown>>();
-  // Saves one after the other: two at once would write the same temporary file.
-  let saving: Promise<void> = Promise.resolve();
   return {
     async load() {
-      try {
-        const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-        const record = isRecord(parsed) ? parsed : {};
-        // `environments` is the format; `hosts` is the one before it, read when there is no `environments`.
-        const entries = Array.isArray(record.environments)
-          ? record.environments
-          : Array.isArray(record.hosts)
-            ? record.hosts
-            : [];
-        const { environments: _environments, hosts: _hosts, ...others } = record;
-        rest = others;
-        const known: EnvironmentConfig[] = [];
-        unknown = [];
-        raw.clear();
-        for (const entry of entries) {
-          const environment = environmentOf(entry);
-          if (environment === undefined) unknown.push(entry);
-          else if (environment.id !== LOCAL_ENVIRONMENT.id) {
-            known.push(environment);
-            if (isRecord(entry)) raw.set(environment.id, entry);
-          }
-        }
-        // The local daemon is always there, and always first.
-        return [LOCAL_ENVIRONMENT, ...known];
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [LOCAL_ENVIRONMENT];
-        // A file that is not JSON (a crash while it was written by hand, an editor's leftovers) must not keep the app from
-        // opening: it is kept beside, as it was, and the app starts with this computer only.
-        // If it cannot be kept, it is not the app's to start without it: the person is told which file.
-        if (error instanceof SyntaxError) {
-          try {
-            await copyFile(path, `${path}.broken-${Date.now()}`);
-            return [LOCAL_ENVIRONMENT];
-          } catch {
-            // Falls through to the error below.
-          }
-        }
-        throw new Error(
-          `${path} cannot be read: ${error instanceof Error ? error.message : error}`,
-        );
-      }
-    },
-    save(environments) {
-      const done = saving.then(
-        () => write(environments),
-        () => write(environments),
+      const record = (await file.read()) ?? {};
+      // `locations` is the format. Older files have `environments` (the same entries, its name until 2026-11-24) or,
+      // before that, `hosts`. All three are read: an older app opened on a newer file adds to `environments`, and what it
+      // added is kept, after the entries of `locations`, unless one of them has its id. An entry with no id (damaged, or
+      // of a format this app does not know) is kept from any of them, once. None but `locations` is written.
+      const lists = [record.locations, record.environments, record.hosts].map((list) =>
+        Array.isArray(list) ? list : [],
       );
-      saving = done;
-      return done;
+      const seen = new Set<string>();
+      const merged: unknown[] = [];
+      for (const list of lists)
+        for (const entry of list) {
+          const id = entryIdOf(entry);
+          if (id !== undefined) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+          } else if (merged.some((m) => entryIdOf(m) === undefined && isDeepStrictEqual(m, entry)))
+            // The same one in two of the lists: an older app wrote back what it read.
+            continue;
+          merged.push(entry);
+        }
+      const {
+        locations: _locations,
+        environments: _environments,
+        hosts: _hosts,
+        ...others
+      } = record;
+      rest = others;
+      // The local daemon is always there, and always first: an entry for it in the file is not another.
+      return [
+        LOCAL_LOCATION,
+        ...entries.read(merged).filter((location) => location.id !== LOCAL_LOCATION.id),
+      ];
+    },
+    async save(locations) {
+      const written = entries.write(locations.filter((e) => e.id !== LOCAL_LOCATION.id));
+      await file.write({ ...rest, locations: written.entries });
+      written.commit();
     },
   };
-  async function write(environments: EnvironmentConfig[]): Promise<void> {
-    await mkdir(dirname(path), { recursive: true });
-    const temporary = `${path}.${process.pid}.tmp`;
-    const saved = environments.filter((e) => e.id !== LOCAL_ENVIRONMENT.id);
-    const ids = new Set(saved.map((e) => e.id));
-    const written = [
-      // As it was in the file, with its fields we do not know, when it has not changed; else as it is now.
-      ...saved.map((e) => {
-        const before = raw.get(e.id);
-        // Only an entry already in the new format: the older one has other field names, which are not written again.
-        return before?.kind === e.kind && isDeepStrictEqual(environmentOf(before), e) ? before : e;
-      }),
-      // An entry with the id of one that is saved now would be two of one: the one the person saved wins.
-      ...unknown.filter((u) => !(isRecord(u) && typeof u.id === "string" && ids.has(u.id))),
-    ];
-    await writeFile(temporary, `${JSON.stringify({ ...rest, environments: written }, null, 2)}\n`);
-    await rename(temporary, path);
-  }
 };

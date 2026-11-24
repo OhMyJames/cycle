@@ -1,4 +1,4 @@
-// What the page asks of one environment: its sessions, files, terminals, agents, connectors and plugins. Most go
+// What the page asks of one location: its sessions, files, terminals, agents, connectors and plugins. Most go
 // straight to its daemon and report what was done (docs/analytics.md); an action whose failure is an answer the page
 // shows, rather than a throw, goes through `runAction`.
 import { agentOf, renameWhereOf, settingOf, sizeOf, viaOf } from "@cycle/analytics/events";
@@ -10,6 +10,8 @@ import type {
   ConnectorDraft,
   ConnectorInfo,
   ConnectorProblem,
+  Environment,
+  EnvironmentRefusal,
   FileContent,
   FileListing,
   FileSearch,
@@ -28,7 +30,9 @@ import type {
   WorkspacePatch,
   WorkspaceStatus,
 } from "@cycle/ui";
+import { ENVIRONMENT_REFUSALS } from "@cycle/ui/api";
 import { authorizeInBrowser } from "./connector-auth.ts";
+import type { Environments } from "./environments.ts";
 import { messageOf, type Runtime } from "./runtime.ts";
 import type { SessionWatcher } from "./watcher.ts";
 
@@ -50,7 +54,26 @@ const TERMINAL_REASONS: readonly TerminalProblem[] = [
   "cwd_missing",
   "spawn_failed",
   "daemon_stopping",
+  "unknown_action",
 ];
+
+/**
+ * The daemon's refusal of a session's environment (`-32602` with one of its reasons, docs/protocol.md §6 "环境"), as the
+ * page is answered it: the reason, and the variable's name when it is about one. Undefined: not one of those.
+ */
+export const environmentRefusalOf = (error: unknown): EnvironmentRefusal | undefined => {
+  const { code, data } = (error ?? {}) as {
+    code?: unknown;
+    data?: { reason?: unknown; name?: unknown };
+  };
+  if (code !== -32602) return undefined;
+  // `missing` and `needs_fix` are main's own answers, never the daemon's.
+  const reason = ENVIRONMENT_REFUSALS.find(
+    (r) => r === data?.reason && r !== "missing" && r !== "needs_fix",
+  );
+  if (reason === undefined) return undefined;
+  return { reason, ...(typeof data?.name === "string" ? { name: data.name } : {}) };
+};
 
 /** Why the daemon would not open a terminal, as a word the page has a sentence for (docs/protocol.md §8 "终端"). */
 export const terminalProblemOf = (
@@ -134,29 +157,55 @@ const runAction = async <T extends object, F extends object>(
 const pluginResultOf = (answer: object): PluginProblem | "ok" =>
   "problem" in answer ? (answer as PluginFailure).problem : "ok";
 
-export class EnvironmentActions {
+export class LocationActions {
   readonly #runtime: Runtime;
   readonly #watcher: SessionWatcher;
+  /** The environments the person defined: a session is sent the one chosen for it, whole. */
+  protected readonly environmentStore: Environments;
   /** The sign-in waiting for the browser: one at a time, a new one stops it. */
   #signIn: AbortController | undefined;
 
-  constructor(runtime: Runtime, watcher: SessionWatcher) {
+  constructor(runtime: Runtime, watcher: SessionWatcher, environments: Environments) {
     this.#runtime = runtime;
     this.#watcher = watcher;
+    this.environmentStore = environments;
   }
 
   // ---- sessions ----
 
-  async createSession(environmentId: string, params: NewSession): Promise<string> {
-    const connection = this.#runtime.connection(environmentId);
+  /** Without an environment nothing can be refused: the answer is the session's id. */
+  createSession(
+    locationId: string,
+    params: NewSession & { environmentId?: undefined },
+  ): Promise<string>;
+  createSession(
+    locationId: string,
+    params: NewSession,
+  ): Promise<string | { problem: EnvironmentRefusal }>;
+  async createSession(
+    locationId: string,
+    params: NewSession,
+  ): Promise<string | { problem: EnvironmentRefusal }> {
+    const connection = this.#runtime.connection(locationId);
+    // The environment as it is now: a change made to it later is not this session's (docs/desktop.md "环境").
+    let environment: Environment | undefined;
+    if (params.environmentId !== undefined) {
+      const snapshot = await this.environmentStore.snapshot(params.environmentId);
+      if ("problem" in snapshot) return snapshot;
+      environment = snapshot;
+    }
+    const { environmentId: _chosen, ...rest } = params;
     let sessionId: string;
     try {
-      sessionId = await connection.client.newSession(params);
+      sessionId = await connection.client.newSession({
+        ...rest,
+        ...(environment !== undefined ? { environment } : {}),
+      });
     } catch (error) {
       if ((error as { code?: unknown })?.code === -32000) {
         this.#runtime.track("agent_auth_required", {
           agent: agentOf(params.agent ?? ""),
-          environment: this.#runtime.kindOf(environmentId),
+          location: this.#runtime.kindOf(locationId),
         });
         const detail = error instanceof Error ? error.message : "Authentication required";
         const authError = new Error(
@@ -165,6 +214,8 @@ export class EnvironmentActions {
         (authError as { code?: number }).code = -32000;
         throw authError;
       }
+      const refused = environmentRefusalOf(error);
+      if (refused !== undefined) return { problem: refused };
       throw error;
     }
     // Not in the list until its first message (docs/protocol.md §6): the daemon announces it then, and it is read again.
@@ -173,14 +224,14 @@ export class EnvironmentActions {
     connection.madeAgent.set(sessionId, params.agent ?? "");
     this.#runtime.track("session_created", {
       agent: agentOf(params.agent ?? ""),
-      environment: this.#runtime.kindOf(environmentId),
+      location: this.#runtime.kindOf(locationId),
       configured: Object.keys(params.config ?? {}).length > 0,
     });
     return sessionId;
   }
 
   async prompt(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     content: string | PromptBlock[],
     options: { steer?: boolean; via?: unknown } = {},
@@ -189,7 +240,7 @@ export class EnvironmentActions {
       typeof content === "string" ? [{ type: "text" as const, text: content }] : content;
     // The page's blocks are the daemon's to check: a block it does not take is refused whole there (decision 0010).
     await this.#runtime
-      .connection(environmentId)
+      .connection(locationId)
       .client.prompt(sessionId, blocks as Parameters<CycleClient["prompt"]>[1], {
         ...(options.steer === true ? { steer: true } : {}),
         ...(this.#runtime.options.promptSuggestions !== undefined
@@ -198,8 +249,8 @@ export class EnvironmentActions {
       });
     // How much, never what: the length in three words and the number of images, files and mentions.
     this.#runtime.track("prompt_sent", {
-      agent: this.#runtime.agentOf(environmentId, sessionId),
-      environment: this.#runtime.kindOf(environmentId),
+      agent: this.#runtime.agentOf(locationId, sessionId),
+      location: this.#runtime.kindOf(locationId),
       size: sizeOf(blocks.reduce((n, b) => n + (b.type === "text" ? b.text.length : 0), 0)),
       images: blocks.filter((b) => b.type === "image").length,
       files: blocks.filter((b) => b.type === "resource").length,
@@ -210,169 +261,164 @@ export class EnvironmentActions {
     });
   }
 
-  async cancel(environmentId: string, sessionId: string): Promise<void> {
-    await this.#runtime.connection(environmentId).client.cancel(sessionId);
+  async cancel(locationId: string, sessionId: string): Promise<void> {
+    await this.#runtime.connection(locationId).client.cancel(sessionId);
     this.#runtime.track("prompt_cancelled", {
-      agent: this.#runtime.agentOf(environmentId, sessionId),
+      agent: this.#runtime.agentOf(locationId, sessionId),
     });
   }
 
-  async listFolders(
-    environmentId: string,
-    path?: string,
-    hidden?: boolean,
-  ): Promise<FolderListing> {
-    return this.#runtime.connection(environmentId).client.listFolders(path, hidden);
+  async listFolders(locationId: string, path?: string, hidden?: boolean): Promise<FolderListing> {
+    return this.#runtime.connection(locationId).client.listFolders(path, hidden);
   }
 
-  async planUsage(environmentId: string): Promise<Record<string, PlanUsage>> {
-    return this.#runtime.connection(environmentId).client.readPlanUsage();
+  async planUsage(locationId: string): Promise<Record<string, PlanUsage>> {
+    return this.#runtime.connection(locationId).client.readPlanUsage();
   }
 
-  async readTrust(environmentId: string, path: string): Promise<FolderTrust> {
-    return this.#runtime.connection(environmentId).client.readTrust(path);
+  async readTrust(locationId: string, path: string): Promise<FolderTrust> {
+    return this.#runtime.connection(locationId).client.readTrust(path);
   }
 
-  async setTrust(environmentId: string, path: string, trusted: boolean): Promise<FolderTrust> {
-    return this.#runtime.connection(environmentId).client.setTrust(path, trusted);
+  async setTrust(locationId: string, path: string, trusted: boolean): Promise<FolderTrust> {
+    return this.#runtime.connection(locationId).client.setTrust(path, trusted);
   }
 
   async searchFiles(
-    environmentId: string,
+    locationId: string,
     where: { sessionId: string } | { cwd: string },
     query: string,
   ): Promise<FileSearch> {
     return this.#runtime
-      .connection(environmentId)
+      .connection(locationId)
       .client.searchFiles("sessionId" in where ? where.sessionId : { cwd: where.cwd }, query);
   }
 
-  async listFiles(environmentId: string, sessionId: string, path: string): Promise<FileListing> {
-    return this.#runtime.connection(environmentId).client.listFiles(sessionId, path);
+  async listFiles(locationId: string, sessionId: string, path: string): Promise<FileListing> {
+    return this.#runtime.connection(locationId).client.listFiles(sessionId, path);
   }
 
   async readFile(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     path: string,
     offset?: number,
   ): Promise<FileContent> {
-    return this.#runtime.connection(environmentId).client.readFile(sessionId, path, offset);
+    return this.#runtime.connection(locationId).client.readFile(sessionId, path, offset);
   }
 
-  async listTerminals(environmentId: string, sessionId: string): Promise<TerminalInfo[]> {
-    return this.#runtime.connection(environmentId).client.listTerminals(sessionId);
+  async listTerminals(locationId: string, sessionId: string): Promise<TerminalInfo[]> {
+    return this.#runtime.connection(locationId).client.listTerminals(sessionId);
   }
 
   async createTerminal(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     cols: number,
     rows: number,
+    actionId?: unknown,
   ): Promise<TerminalAttached | { problem: TerminalProblem; message?: string }> {
+    const action = typeof actionId === "string" ? actionId : undefined;
     return runAction(
-      () => this.#runtime.connection(environmentId).client.createTerminal(sessionId, cols, rows),
+      () =>
+        this.#runtime.connection(locationId).client.createTerminal(sessionId, cols, rows, action),
       terminalProblemOf,
+      (answer) => {
+        // Which action, never: only that one ran.
+        if (action !== undefined && !("problem" in answer))
+          this.#runtime.track("environment_action_run", {});
+      },
     );
   }
 
-  async attachTerminal(environmentId: string, terminalId: string): Promise<TerminalAttached> {
-    return this.#runtime.connection(environmentId).client.attachTerminal(terminalId);
+  async attachTerminal(locationId: string, terminalId: string): Promise<TerminalAttached> {
+    return this.#runtime.connection(locationId).client.attachTerminal(terminalId);
   }
 
-  async detachTerminal(environmentId: string, terminalId: string): Promise<void> {
-    await this.#runtime.connection(environmentId).client.detachTerminal(terminalId);
+  async detachTerminal(locationId: string, terminalId: string): Promise<void> {
+    await this.#runtime.connection(locationId).client.detachTerminal(terminalId);
   }
 
-  async terminalInput(environmentId: string, terminalId: string, data: string): Promise<void> {
-    await this.#runtime.connection(environmentId).client.terminalInput(terminalId, data);
+  async terminalInput(locationId: string, terminalId: string, data: string): Promise<void> {
+    await this.#runtime.connection(locationId).client.terminalInput(terminalId, data);
   }
 
   async resizeTerminal(
-    environmentId: string,
+    locationId: string,
     terminalId: string,
     cols: number,
     rows: number,
   ): Promise<void> {
-    await this.#runtime.connection(environmentId).client.resizeTerminal(terminalId, cols, rows);
+    await this.#runtime.connection(locationId).client.resizeTerminal(terminalId, cols, rows);
   }
 
-  async closeTerminal(environmentId: string, terminalId: string): Promise<void> {
-    await this.#runtime.connection(environmentId).client.closeTerminal(terminalId);
+  async closeTerminal(locationId: string, terminalId: string): Promise<void> {
+    await this.#runtime.connection(locationId).client.closeTerminal(terminalId);
   }
 
-  async workspaceStatus(environmentId: string, sessionId: string): Promise<WorkspaceStatus> {
-    return this.#runtime.connection(environmentId).client.workspaceStatus(sessionId);
+  async workspaceStatus(locationId: string, sessionId: string): Promise<WorkspaceStatus> {
+    return this.#runtime.connection(locationId).client.workspaceStatus(sessionId);
   }
 
   async workspaceFile(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     path: string,
   ): Promise<WorkspacePatch> {
-    return this.#runtime.connection(environmentId).client.workspaceFile(sessionId, path);
+    return this.#runtime.connection(locationId).client.workspaceFile(sessionId, path);
   }
 
-  async ackReturn(environmentId: string, sessionId: string, returnId: string): Promise<void> {
-    if (await this.#runtime.connection(environmentId).client.ackReturn(sessionId, returnId))
+  async ackReturn(locationId: string, sessionId: string, returnId: string): Promise<void> {
+    if (await this.#runtime.connection(locationId).client.ackReturn(sessionId, returnId))
       this.#runtime.track("queue_return_restored", {});
   }
 
-  async dequeue(environmentId: string, sessionId: string, queueId: string): Promise<PromptBlock[]> {
+  async dequeue(locationId: string, sessionId: string, queueId: string): Promise<PromptBlock[]> {
     return (await this.#runtime
-      .connection(environmentId)
+      .connection(locationId)
       .client.dequeue(sessionId, queueId)) as PromptBlock[];
   }
 
-  async setSessionConfig(
-    environmentId: string,
-    sessionId: string,
-    configId: string,
-    value: string,
-  ) {
-    await this.#runtime.connection(environmentId).client.setConfig(sessionId, configId, value);
+  async setSessionConfig(locationId: string, sessionId: string, configId: string, value: string) {
+    await this.#runtime.connection(locationId).client.setConfig(sessionId, configId, value);
     this.#runtime.track("session_config_changed", { setting: settingOf(configId) });
   }
 
   /** `where`: what the page says it was edited in; checked here, since the page's word is not trusted. */
   async renameSession(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     title: string,
     where?: unknown,
   ): Promise<void> {
-    await this.#runtime.connection(environmentId).client.rename(sessionId, title);
+    await this.#runtime.connection(locationId).client.rename(sessionId, title);
     this.#runtime.track("session_renamed", { where: renameWhereOf(where) });
   }
 
-  async dismissBackground(
-    environmentId: string,
-    sessionId: string,
-    taskIds: string[],
-  ): Promise<void> {
+  async dismissBackground(locationId: string, sessionId: string, taskIds: string[]): Promise<void> {
     const count = await this.#runtime
-      .connection(environmentId)
+      .connection(locationId)
       .client.dismissBackground(sessionId, taskIds);
     if (count > 0) this.#runtime.track("background_dismissed", { count });
   }
 
   /** Stops one sub-agent of a session (CYCL-143); whether it was running in the background is all that is told. */
   async stopSubagent(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     childId: string,
     background: boolean,
   ): Promise<boolean> {
     const stopping = await this.#runtime
-      .connection(environmentId)
+      .connection(locationId)
       .client.stopSubagent(sessionId, childId);
     // From the page: only a boolean is told, whatever came.
     if (stopping) this.#runtime.track("subagent_stopped", { background: background === true });
     return stopping;
   }
 
-  async archiveSession(environmentId: string, sessionId: string, archived: boolean): Promise<void> {
-    await this.#runtime.connection(environmentId).client.archive(sessionId, archived);
+  async archiveSession(locationId: string, sessionId: string, archived: boolean): Promise<void> {
+    await this.#runtime.connection(locationId).client.archive(sessionId, archived);
     this.#runtime.track("session_archived", { archived });
   }
 
@@ -380,18 +426,18 @@ export class EnvironmentActions {
    * The person has seen the session up to what the daemon has now. Never a seq past the log: the row's own
    * `lastSeq`. A daemon that cannot is not asked.
    */
-  async markRead(environmentId: string, sessionId: string): Promise<void> {
-    const connection = this.#runtime.connection(environmentId);
+  async markRead(locationId: string, sessionId: string): Promise<void> {
+    const connection = this.#runtime.connection(locationId);
     // The list as the daemon has it now: a row read before the news came in would say a seq below it.
-    const row = (await this.#watcher.refresh(environmentId, connection)).find(
+    const row = (await this.#watcher.refresh(locationId, connection)).find(
       (s) => s.sessionId === sessionId,
     );
     if (row === undefined) return;
     await connection.client.markRead(sessionId, row.lastSeq);
   }
 
-  async deleteSession(environmentId: string, sessionId: string): Promise<void> {
-    const connection = this.#runtime.connection(environmentId);
+  async deleteSession(locationId: string, sessionId: string): Promise<void> {
+    const connection = this.#runtime.connection(locationId);
     await connection.client.delete(sessionId);
     this.#watcher.deleted(connection, sessionId);
     this.#runtime.track("session_deleted", {});
@@ -399,33 +445,33 @@ export class EnvironmentActions {
 
   // ---- agents ----
 
-  async agents(environmentId: string): Promise<AgentInfo[]> {
-    return (await this.#runtime.connection(environmentId).client.agents()).agents;
+  async agents(locationId: string): Promise<AgentInfo[]> {
+    return (await this.#runtime.connection(locationId).client.agents()).agents;
   }
 
-  async agentDefaults(environmentId: string, agent: string): Promise<Record<string, string>> {
-    return this.#runtime.connection(environmentId).client.agentDefaults(agent);
+  async agentDefaults(locationId: string, agent: string): Promise<Record<string, string>> {
+    return this.#runtime.connection(locationId).client.agentDefaults(agent);
   }
 
   async setAgentDefaults(
-    environmentId: string,
+    locationId: string,
     agent: string,
     config: Record<string, string>,
   ): Promise<void> {
-    await this.#runtime.connection(environmentId).client.setAgentDefaults(agent, config);
+    await this.#runtime.connection(locationId).client.setAgentDefaults(agent, config);
     this.#runtime.track("agent_defaults_saved", { agent: agentOf(agent) });
   }
 
   // ---- connectors (docs/protocol.md §14) ----
 
-  async listConnectors(environmentId: string): Promise<ConnectorInfo[]> {
-    return this.#runtime.connection(environmentId).client.listConnectors();
+  async listConnectors(locationId: string): Promise<ConnectorInfo[]> {
+    return this.#runtime.connection(locationId).client.listConnectors();
   }
 
-  async addConnector(environmentId: string, draft: ConnectorDraft): Promise<ConnectorAnswer> {
+  async addConnector(locationId: string, draft: ConnectorDraft): Promise<ConnectorAnswer> {
     return runAction(
       async () => ({
-        connector: await this.#runtime.connection(environmentId).client.addConnector(draft),
+        connector: await this.#runtime.connection(locationId).client.addConnector(draft),
       }),
       connectorProblemOf,
       (answer) => {
@@ -441,7 +487,7 @@ export class EnvironmentActions {
   }
 
   async updateConnector(
-    environmentId: string,
+    locationId: string,
     id: string,
     change: ConnectorChange,
   ): Promise<ConnectorAnswer> {
@@ -449,7 +495,7 @@ export class EnvironmentActions {
     return runAction(
       async () => ({
         connector: await this.#runtime
-          .connection(environmentId)
+          .connection(locationId)
           .client.updateConnector({ id, ...change }),
       }),
       connectorProblemOf,
@@ -468,13 +514,13 @@ export class EnvironmentActions {
   }
 
   async removeConnector(
-    environmentId: string,
+    locationId: string,
     id: string,
   ): Promise<{ removed: true } | { problem: ConnectorProblem; message?: string }> {
     let transport: ConnectorInfo["transport"]["type"] | undefined;
     return runAction(
       async () => {
-        const client = this.#runtime.connection(environmentId).client;
+        const client = this.#runtime.connection(locationId).client;
         transport = (await client.listConnectors()).find((c) => c.id === id)?.transport.type;
         await client.removeConnector(id);
         return { removed: true as const };
@@ -492,7 +538,7 @@ export class EnvironmentActions {
    * PKCE verifier). The code never reaches the page. A sign-in already waiting is stopped first.
    */
   async authorizeConnector(
-    environmentId: string,
+    locationId: string,
     id: string,
   ): Promise<ConnectorAnswer | { cancelled: true }> {
     this.#signIn?.abort();
@@ -501,7 +547,7 @@ export class EnvironmentActions {
     try {
       return await runAction<ConnectorAnswer | { cancelled: true }, ConnectorAnswer>(
         async () => {
-          const client = this.#runtime.connection(environmentId).client;
+          const client = this.#runtime.connection(locationId).client;
           const open = this.#runtime.options.openBrowser;
           if (open === undefined) throw new Error("This app cannot open a browser");
           const outcome = await authorizeInBrowser({
@@ -532,10 +578,10 @@ export class EnvironmentActions {
     this.#signIn?.abort();
   }
 
-  async signOutConnector(environmentId: string, id: string): Promise<ConnectorAnswer> {
+  async signOutConnector(locationId: string, id: string): Promise<ConnectorAnswer> {
     return runAction(
       async () => ({
-        connector: await this.#runtime.connection(environmentId).client.clearConnectorAuth(id),
+        connector: await this.#runtime.connection(locationId).client.clearConnectorAuth(id),
       }),
       connectorProblemOf,
       (answer) => {
@@ -547,28 +593,28 @@ export class EnvironmentActions {
   // ---- plugins (docs/protocol.md §15) ----
 
   listPlugins(
-    environmentId: string,
+    locationId: string,
     agentId: string,
   ): Promise<{ sources: PluginSourceInfo[]; plugins: PluginInfo[] }> {
-    return this.#runtime.connection(environmentId).client.listPlugins(agentId);
+    return this.#runtime.connection(locationId).client.listPlugins(agentId);
   }
 
   availablePlugins(
-    environmentId: string,
+    locationId: string,
     query: { agentId: string; sourceId?: string; query?: string; cursor?: string; limit?: number },
   ): Promise<{ plugins: PluginInfo[]; nextCursor?: string | undefined; total: number }> {
-    return this.#runtime.connection(environmentId).client.availablePlugins(query);
+    return this.#runtime.connection(locationId).client.availablePlugins(query);
   }
 
   /** The page asked the person first: a plugin can run code on that machine. */
   async installPlugin(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ plugin: PluginInfo } | PluginFailure> {
     return runAction(
       async () => ({
-        plugin: await this.#runtime.connection(environmentId).client.installPlugin(agentId, id),
+        plugin: await this.#runtime.connection(locationId).client.installPlugin(agentId, id),
       }),
       pluginProblemOf,
       (answer) =>
@@ -581,13 +627,13 @@ export class EnvironmentActions {
   }
 
   async uninstallPlugin(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ removed: true } | PluginFailure> {
     return runAction(
       async () => {
-        await this.#runtime.connection(environmentId).client.uninstallPlugin(agentId, id);
+        await this.#runtime.connection(locationId).client.uninstallPlugin(agentId, id);
         return { removed: true as const };
       },
       pluginProblemOf,
@@ -600,12 +646,12 @@ export class EnvironmentActions {
   }
 
   async updatePlugin(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ plugin: PluginInfo; updated: boolean } | PluginFailure> {
     return runAction(
-      () => this.#runtime.connection(environmentId).client.updatePlugin(agentId, id),
+      () => this.#runtime.connection(locationId).client.updatePlugin(agentId, id),
       pluginProblemOf,
       (answer) =>
         this.#runtime.track("plugin_updated", {
@@ -617,7 +663,7 @@ export class EnvironmentActions {
   }
 
   async setPluginEnabled(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
     enabled: boolean,
@@ -625,9 +671,7 @@ export class EnvironmentActions {
     const on = enabled === true;
     return runAction(
       async () => ({
-        plugin: await this.#runtime
-          .connection(environmentId)
-          .client.setPluginEnabled(agentId, id, on),
+        plugin: await this.#runtime.connection(locationId).client.setPluginEnabled(agentId, id, on),
       }),
       pluginProblemOf,
       (answer) =>
@@ -641,14 +685,14 @@ export class EnvironmentActions {
 
   /** The page asked the person first: what a source lists can be installed and run. */
   async addPluginSource(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     location: string,
   ): Promise<{ source: PluginSourceInfo } | PluginFailure> {
     return runAction(
       async () => ({
         source: await this.#runtime
-          .connection(environmentId)
+          .connection(locationId)
           .client.addPluginSource(agentId, location),
       }),
       pluginProblemOf,
@@ -662,13 +706,13 @@ export class EnvironmentActions {
   }
 
   async removePluginSource(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ removed: true } | PluginFailure> {
     return runAction(
       async () => {
-        await this.#runtime.connection(environmentId).client.removePluginSource(agentId, id);
+        await this.#runtime.connection(locationId).client.removePluginSource(agentId, id);
         return { removed: true as const };
       },
       pluginProblemOf,
@@ -681,12 +725,12 @@ export class EnvironmentActions {
   }
 
   async refreshPluginSources(
-    environmentId: string,
+    locationId: string,
     agentId: string,
   ): Promise<{ refreshed: true } | PluginFailure> {
     return runAction(
       async () => {
-        await this.#runtime.connection(environmentId).client.refreshPluginSources(agentId);
+        await this.#runtime.connection(locationId).client.refreshPluginSources(agentId);
         return { refreshed: true as const };
       },
       pluginProblemOf,

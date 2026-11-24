@@ -47,7 +47,7 @@ export const sessionLabel = (title: string): string => {
 
 /** What the @ menu needs of a session. */
 export type MentionableSession = {
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   archived: boolean;
   updatedAt?: string | undefined;
@@ -55,13 +55,13 @@ export type MentionableSession = {
 };
 
 /**
- * The sessions an @ may name: on the same environment, not the one being written in, not archived; those whose title
+ * The sessions an @ may name: on the same location, not the one being written in, not archived; those whose title
  * has every word typed, the most recent first.
  */
 export const mentionableSessions = <S extends MentionableSession>(
   sessions: readonly S[],
   query: string,
-  here: { environmentId: string; sessionId?: string | undefined },
+  here: { locationId: string; sessionId?: string | undefined },
   titleOf: (session: S) => string,
 ): S[] => {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -69,7 +69,7 @@ export const mentionableSessions = <S extends MentionableSession>(
   return sessions
     .filter(
       (s) =>
-        s.environmentId === here.environmentId &&
+        s.locationId === here.locationId &&
         s.sessionId !== here.sessionId &&
         !s.archived &&
         words.every((w) => titleOf(s).toLowerCase().includes(w)),

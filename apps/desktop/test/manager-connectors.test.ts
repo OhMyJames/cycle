@@ -76,7 +76,7 @@ const noContent = (tracked: [string, object][], words: string[]) => {
 
 test("the daemon's capability reaches the page, and its changes become events", async () => {
   const { m, events } = await setup();
-  const status = events.filter((e) => e.type === "environment-status").at(-1);
+  const status = events.filter((e) => e.type === "location-status").at(-1);
   expect(status).toMatchObject({ state: "connected", capabilities: { connectors: true } });
   await m.addConnector("local", {
     name: "docs",
@@ -84,7 +84,7 @@ test("the daemon's capability reaches the page, and its changes become events", 
     auth: { type: "none" },
   });
   await until(
-    () => events.some((e) => e.type === "connectors" && e.environmentId === "local"),
+    () => events.some((e) => e.type === "connectors" && e.locationId === "local"),
     "the connectors event",
   );
 });

@@ -141,7 +141,7 @@ export function SessionHeading({
   const { t } = useI18n();
   const hint = useId();
   const { shown, problem, finish } = useRename(title, (next) =>
-    store.renameSession(session.sessionId, next, "header", session.environmentId),
+    store.renameSession(session.sessionId, next, "header", session.locationId),
   );
   const titleButton = useRef<HTMLButtonElement>(null);
   const refocus = useRef(false);

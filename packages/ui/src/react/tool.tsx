@@ -261,10 +261,9 @@ export function ToolCard({ tool }: { tool: ToolItem }) {
   // The file an edit changed, named as the Diff tab names it (from the session's folder).
   const editPath = facts.edit !== undefined ? editPathOf(tool) : undefined;
   const cwd = useAppState((state) =>
-    state.selectedEnvironment !== undefined
-      ? state.sessions[state.selectedEnvironment]?.find(
-          (x) => x.sessionId === state.selectedSession,
-        )?.cwd
+    state.selectedLocation !== undefined
+      ? state.sessions[state.selectedLocation]?.find((x) => x.sessionId === state.selectedSession)
+          ?.cwd
       : undefined,
   );
   // An edit's diff says what its input said (old and new strings, a whole file), and says it better.

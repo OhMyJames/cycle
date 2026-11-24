@@ -59,7 +59,7 @@ test("a person who says no to the notice has had nothing sent, before or after",
   const file = join(dir, "analytics.json");
   const r = recording();
   const control = await start(r.sink, file);
-  control.analytics.track("app_launched", { remote_environments: 0, first_run: true });
+  control.analytics.track("app_launched", { remote_locations: 0, first_run: true });
   expect(await control.set(false)).toEqual({ available: true, enabled: false, noticed: true });
   control.analytics.track("update_install_started", {});
   expect(r.sent).toEqual([]);
@@ -96,9 +96,9 @@ test("answers given at once are kept one after the other", async () => {
 test("what is reported carries the app and nothing of the machine's name or the user's", async () => {
   const r = recording();
   const control = await start(r.sink, await told());
-  control.analytics.track("app_launched", { remote_environments: 2, first_run: true });
+  control.analytics.track("app_launched", { remote_locations: 2, first_run: true });
   const [event] = r.sent;
-  expect(event?.properties).toMatchObject({ ...context, remote_environments: 2, first_run: true });
+  expect(event?.properties).toMatchObject({ ...context, remote_locations: 2, first_run: true });
   expect(JSON.stringify(event)).not.toContain(dir);
 });
 

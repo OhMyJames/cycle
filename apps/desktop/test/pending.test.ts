@@ -6,7 +6,7 @@ import type { Connection } from "../src/main/runtime.ts";
 
 /** A connection as the store sees it: only what it holds of its sessions. */
 const connection = (): Connection =>
-  ({ watched: new Map(), status: { environmentId: "e", state: "connected" } }) as Connection;
+  ({ watched: new Map(), status: { locationId: "e", state: "connected" } }) as Connection;
 
 const setup = () => {
   const events: AppEvent[] = [];
@@ -14,7 +14,7 @@ const setup = () => {
   const runtime: PendingRuntime = {
     emit: (event) => void events.push(event),
     track: () => undefined,
-    isCurrent: (_environmentId, c) => c === current,
+    isCurrent: (_locationId, c) => c === current,
   };
   return {
     store: new PendingStore(runtime),
@@ -64,7 +64,7 @@ test("a late ask on a replaced connection does not hide the current one's reques
   expect(events.filter((e) => e.type === "permission-closed")).toHaveLength(1);
 });
 
-test("a request whose connection is no longer the environment's is not answered", async () => {
+test("a request whose connection is no longer the location's is not answered", async () => {
   const { store, use, events } = setup();
   const old = connection();
   use(old);

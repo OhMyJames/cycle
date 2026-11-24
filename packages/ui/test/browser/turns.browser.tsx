@@ -62,7 +62,7 @@ const openWith = async (
   const emit = (update: SessionUpdate) => {
     version += 1;
     return act(() =>
-      script.emit({ type: "update", environmentId: "local", sessionId: "s1", update, version }),
+      script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version }),
     );
   };
   /** The agent asks for leave, as the next thing the session says. */
@@ -260,7 +260,7 @@ const timed = (script: Awaited<ReturnType<typeof open>>["script"], from: number)
     act(() =>
       script.emit({
         type: "update",
-        environmentId: "local",
+        locationId: "local",
         sessionId: "s1",
         update,
         ...(at !== undefined ? { at } : {}),
@@ -396,7 +396,7 @@ test("a message says when it was sent and a reply when it finished, with the ful
     act(() =>
       script.emit({
         type: "update",
-        environmentId: "local",
+        locationId: "local",
         sessionId: "s1",
         update,
         at,
@@ -551,7 +551,7 @@ test("the conversation's text lines up with the input box, short or scrolling, w
   // A permission card above the box has the same edges.
   await ask({
     key: "local:s1:p1",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Allow Read?",
     subject: { type: "tool_call", toolCall: { name: "Read", rawInput: { file_path: "a" } } },
@@ -1573,7 +1573,7 @@ test("a sub-agent's card opens to what it did, apart from the main agent's work,
   // It asks for leave: the card says that the sub-agent asks, by what it was sent to do.
   const request = {
     key: "local:s1:p1",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Allow Bash?",
     subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
@@ -1734,7 +1734,7 @@ test("a permission the main agent asks for says nothing of a sub-agent; one from
   const { ask } = await open(you("u1"), state({ state: "running" }));
   const request = {
     key: "local:s1:p2",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Allow Read?",
     subject: { type: "tool_call", toolCall: { name: "Read", rawInput: { file_path: "a" } } },

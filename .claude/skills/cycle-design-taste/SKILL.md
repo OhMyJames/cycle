@@ -32,7 +32,7 @@ Cycle 是一个人每天开几个小时的工具:盯着 agent 干活、批准它
 2. **一个排版与尺度系统。** 根字号 16px,只使用 `DESIGN.md` §2.1 的四档字阶(`meta`/`ui`/`body`/`title`,另有一档 `display` 只给新会话页的引导语)和三档字重(`--cycle-weight`/500/600);使用本地打包的 Rare UI 三字体(`Open Runde` 展示与交互触点、`Inter Variable` 正文与密集信息、`Geist Mono Variable` 代码/命令/路径/id/系统错误原话),零外网请求。不新增字号、不新增圆角值、不新增间距值。
 3. **复用第 3 层组件与第 4 层范式,样式写在 `packages/ui/src/styles/` 对应领域的分片里。** 优先复用 `ui-sdk` 原语加 `DESIGN.md` 第 3 层约定的变体与公共件(`Menu`、`Popover`、`Tip`)(`solid`/`destructive`/`outline`/`ghost`/`round`/`queue`)及 `Banner`/`ConfirmDialog` 等基础件,不自行重复造一套弹窗或通知条。常规业务组件样式收口在样式分片里,不写行内样式;Tailwind `@theme inline` 语义类服务 Streamdown 与按规范接入的 Rare UI 兼容组件。ui-sdk 的 `Collapsible`、`Command` 等会覆盖 `data-slot`,给它们写样式用 `data-kind` 或 `data-palette`。
 4. **状态要齐。** 每块界面都要覆盖:空、加载、出错、断线、内容很长、数量很多(`references/states.md`)。出错时写清三件事:发生了什么、等宽可选的系统原话、下一步行动按钮;空状态必须给出出口(如就地的 `New session` 或排查引导),不能只丢一句话。
-5. **文案平实与 i18n。** 按钮是动词加对象("Allow once"、"Delete session");不用感叹号、表情、空话、破折号;统一用 `environment`(不用 `host`)。源语言是 `en-US`,界面文字进 `packages/ui/src/messages/en-US.ts`,组件用 `t("key")`(`references/copy.md`)。
+5. **文案平实与 i18n。** 按钮是动词加对象("Allow once"、"Delete session");不用感叹号、表情、空话、破折号;统一用 `location`(界面标题 "Work in",不用 `host`;`environment` 留给准备配置)。源语言是 `en-US`,界面文字进 `packages/ui/src/messages/en-US.ts`,组件用 `t("key")`(`references/copy.md`)。
 6. **动效只为说明变化。** 三档时长:状态 `100ms`、展开 `160ms`、出现 `200ms`(`--cycle-motion-*`),只动 `transform` 和 `opacity`,曲线 `--cycle-ease`,不弹跳;流式文字不让布局跳;`prefers-reduced-motion` 下全部静止(`references/motion.md`)。
 7. **图标一套。** 用 iconmcp 线性图标(16 单位网格,集中放在 `packages/ui/src/react/icons.tsx`),`currentColor`,不画仿品;仅图标的按钮用 `Tip` 命名,它同时是提示和读屏名字(`references/icons.md`)。
 8. **键盘、IME 与表单规范。** 每个动作都能不用鼠标完成;焦点环统一 `1.5px solid var(--cycle-focus-ring)`(输入控件贴边叠 `--cycle-focus-halo`,禁用 ui-sdk 默认 `--ui-ring`)。处理 Enter 必须调用 `@ui-sdk/core` 的 `isComposing(event)` 防止中文输入法误发。表单弹窗必须用 `<form>` 支持回车提交并自动聚焦首项;破坏性确认主按钮必须用 `destructive` 变体且默认焦点落 `Cancel`。
@@ -53,7 +53,7 @@ Cycle 是一个人每天开几个小时的工具:盯着 agent 干活、批准它
 - 没有新增散落字号、圆角、间距、行内样式或未走 `@theme inline` 语义令牌的 Tailwind 裸色值类。
 - 复用了第 3 层变体与第 4 层范式(表单回车/首项聚焦、破坏性 `destructive` 确认、空状态出口、折叠恢复入口)。
 - 六种状态(空、加载、出错、断线、长内容、多内容)齐全且布局不溢出。
-- 按钮为"动词加对象",术语一致(`environment`),`scan-copy.mjs` 与 i18n 棘轮通过。
+- 按钮为"动词加对象",术语一致(`location` / "Work in"),`scan-copy.mjs` 与 i18n 棘轮通过。
 - 仅图标按钮有名字;键盘从头走到尾;中文 IME `isComposing` 正确;焦点环不被裁掉。
 - 动效不超过 200ms、尊重 reduced motion;流式输出时页面不跳。
 - agent 输出经过已有的清洗路径;没有新加载外部资源。

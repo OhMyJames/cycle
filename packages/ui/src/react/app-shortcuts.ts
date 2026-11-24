@@ -84,11 +84,11 @@ function onShortcut(event: KeyboardEvent, s: Shortcuts) {
   else if (key === "[" || key === "]") {
     const { order, open, away, select } = s.walk;
     const at = open === undefined ? -1 : order.indexOf(open);
-    // A row on an environment that is away and was never opened cannot be opened: the walk goes past it.
+    // A row on a location that is away and was never opened cannot be opened: the walk goes past it.
     const step = key === "]" ? 1 : -1;
     // The open session is not in the workspace that is shown: the walk starts at the end it is going from.
     let to = at === -1 ? (step === 1 ? 0 : order.length - 1) : at + step;
-    while (order[to] !== undefined && away.has(order[to]?.environmentId ?? "")) to += step;
+    while (order[to] !== undefined && away.has(order[to]?.locationId ?? "")) to += step;
     const next = order[to];
     if (next !== undefined) run(() => select(next));
   }

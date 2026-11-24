@@ -6,8 +6,10 @@ import {
   CLAUDE_PERMISSION_MODES,
   CLAUDE_PROMPT_CAPABILITIES,
   ClaudePlugins,
+  clearSessionEnvFiles,
   DEFAULT_EFFORT_LEVEL,
   DEFAULT_PERMISSION_MODE,
+  writeSessionEnvFile,
 } from "@cycle/harness-claude";
 import { runAdapter } from "@cycle/harness-claude/run";
 import { META } from "@cycle/protocol";
@@ -138,8 +140,12 @@ export const claudeHarness: Harness = {
     env: ({ config, dataDir, inherited }) => claudeEnv(config.claude, dataDir, inherited),
     login: ["auth", "login"],
   },
-  definition: ({ config, dataDir, inherited, self, log, agentSettings }) =>
-    processAgent({
+  definition: ({ config, dataDir, inherited, self, log, agentSettings }) => {
+    // The session's variables, for Claude's commands only (harness/claude env-file.ts). What a former daemon wrote has
+    // no process left to read it.
+    const envFiles = join(dataDir, "claude-env");
+    clearSessionEnvFiles(envFiles);
+    return processAgent({
       id: "claude",
       name: "Claude",
       configSchema: CLAUDE_CONFIG_SCHEMA,
@@ -167,17 +173,20 @@ export const claudeHarness: Harness = {
         locateBinary: locateClaudeBinary,
       }),
       ...(log !== undefined ? { log } : {}),
-      env: () => {
+      env: ({ sessionId, sessionEnv }) => {
         const runtime = claudeEffectiveRuntime(config.claude, agentSettings).values;
+        const sessionEnvFile = writeSessionEnvFile(envFiles, sessionId, sessionEnv);
         return {
           PATH: inherited.PATH ?? "",
           CYCLE_ADAPTER_CONFIG: JSON.stringify({
             env: claudeEnv(config.claude, dataDir, inherited),
+            ...(sessionEnvFile !== undefined ? { sessionEnvFile } : {}),
             warmStart: runtime.warmStart,
             progressSummaries: runtime.progressSummaries,
             ...(claudeExecutable() !== undefined ? { claudeExecutable: claudeExecutable() } : {}),
           }),
         };
       },
-    }),
+    });
+  },
 };

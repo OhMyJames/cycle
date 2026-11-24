@@ -165,14 +165,13 @@ export function EndBlock({ stop, resend }: { stop: StopReason; resend?: Resend |
  * What can be done at the end of the turn that failed (DESIGN.md 4.4). "Try again" sends what was said in it again, as it
  * was; "Edit message" puts it back in the box, for the person to read, change and send. When the turn had already run a
  * command or changed a file, either one asks first: sending it again may do that again. "Try again" waits for the
- * environment and for the agent to be free, and says which it waits for.
+ * location and for the agent to be free, and says which it waits for.
  */
 function TurnAgain({ resend }: { resend: Resend }) {
   const { t, list } = useI18n();
   const store = useAppStore();
   const connected = useAppState(
-    (s) =>
-      s.selectedEnvironment !== undefined && s.status[s.selectedEnvironment]?.state === "connected",
+    (s) => s.selectedLocation !== undefined && s.status[s.selectedLocation]?.state === "connected",
   );
   const [asking, setAsking] = useState<"retry" | "edit" | undefined>();
   const [sending, setSending] = useState(false);

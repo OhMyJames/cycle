@@ -21,6 +21,11 @@ export const SessionEntrySchema = z.object({
   additionalDirectories: z.array(z.string()).optional(),
   mcpServers: z.array(z.unknown()).optional(),
   systemPrompt: z.unknown().optional(),
+  /**
+   * The environment the session was made with (docs/protocol.md §6 "环境"): its variables can be secrets, so it is here,
+   * in the 0600 index, and not in the log. Checked when it was taken; read back as it was written.
+   */
+  environment: z.unknown().optional(),
   /** The agent's latest `usage_update`: shown in the session list. */
   usage: SessionUsageSchema.optional(),
   archived: z.boolean().optional(),

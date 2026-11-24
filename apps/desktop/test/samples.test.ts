@@ -195,14 +195,14 @@ test("a turn the app was away from: back, it shows what it missed once, and the 
 
   away("left");
   await until(
-    () => of(left.events, "environment-status").some((e) => e.state === "reconnecting"),
+    () => of(left.events, "location-status").some((e) => e.state === "reconnecting"),
     "the drop to be noticed",
   );
   dropped.open();
   await until(() => of(stayed.events, "permission").length === 2, "the form, while it was away");
   back("left");
   await until(
-    () => of(left.events, "environment-status").at(-1)?.state === "connected",
+    () => of(left.events, "location-status").at(-1)?.state === "connected",
     "the reconnect",
   );
   await until(() => of(left.events, "permission").length >= 2, "the form, after the reconnect");

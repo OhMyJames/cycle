@@ -42,7 +42,13 @@ const Done = z.object({});
 
 export const terminalCreate = cycleMethod(
   "_cycle/terminal/create",
-  z.object({ sessionId: z.string(), cols: Cols, rows: Rows }),
+  z.object({
+    sessionId: z.string(),
+    cols: Cols,
+    rows: Rows,
+    /** Runs this action of the session's environment in it instead of a shell (capability `environments`). */
+    actionId: z.string().optional(),
+  }),
   TerminalAttachedSchema,
 );
 

@@ -1,6 +1,6 @@
 // The settings page (CYCL-78): what belongs to the app, not to one session, in one place. Each section is what used
 // to be a menu item or a dialog somewhere else: usage statistics and updates (the menu at the sidebar's foot), the
-// colours of code, the environments and each agent's defaults (the menu beside the workspace switcher).
+// colours of code, the locations and each agent's defaults (the menu beside the workspace switcher).
 import { Button } from "@ui-sdk/react/button";
 import { Field, FieldLabel } from "@ui-sdk/react/field";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
@@ -20,9 +20,9 @@ import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
 import { type ReactNode, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import {
   type AgentInfo,
-  type EnvironmentConfig,
-  type EnvironmentStatus,
   type LanguageChoice,
+  type LocationConfig,
+  type LocationStatus,
   THEME_CHOICES,
   type ThemeChoice,
 } from "../api.ts";
@@ -33,6 +33,7 @@ import { AccountGroup } from "./account.tsx";
 import { AgentLogo } from "./agent-logos.tsx";
 import { ConfigForm } from "./config-form.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
+import { EnvironmentsSection } from "./environments.tsx";
 import { HarnessSection, harnessListOf } from "./harness-settings.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
@@ -40,7 +41,7 @@ import { Markdown } from "./markdown.tsx";
 import { PageGroup, PageLayout, PageRow, PageRows, type PageSection } from "./page-layout.tsx";
 import { MOD } from "./sidebar.tsx";
 import { StateBlock } from "./state-block.tsx";
-import { ENVIRONMENT_STATE, StatusDot } from "./status.tsx";
+import { LOCATION_STATE, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 import { updateLine } from "./update.tsx";
@@ -58,14 +59,14 @@ export type SettingsPageProps = {
   onClose: () => void;
   /** What went wrong, said at the top of the page as it is at the top of the sessions. */
   banner?: ReactNode;
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
   agents: Record<string, AgentInfo[]>;
-  /** The environment whose defaults/harness settings are shown first: the one that is open, when connected. */
-  environmentId: string | undefined;
-  onAddEnvironment: () => void;
-  onEditEnvironment: (environmentId: string) => void;
-  onRemoveEnvironment: (environmentId: string) => void;
+  /** The location whose defaults/harness settings are shown first: the one that is open, when connected. */
+  locationId: string | undefined;
+  onAddLocation: () => void;
+  onEditLocation: (locationId: string) => void;
+  onRemoveLocation: (locationId: string) => void;
 };
 
 const HARNESS_TAB_PREFIX = "harness:";
@@ -73,10 +74,10 @@ const HARNESS_TAB_PREFIX = "harness:";
 export function SettingsPage(props: SettingsPageProps) {
   const { t } = useI18n();
   const harnesses = harnessListOf(props.agents);
-  const [chosenEnv, setChosenEnv] = useState<string | undefined>(props.environmentId);
+  const [chosenEnv, setChosenEnv] = useState<string | undefined>(props.locationId);
   useEffect(() => {
-    if (props.environmentId !== undefined) setChosenEnv(props.environmentId);
-  }, [props.environmentId]);
+    if (props.locationId !== undefined) setChosenEnv(props.locationId);
+  }, [props.locationId]);
   const [localHarness, setLocalHarness] = useState<string>(
     props.harnessAgent ?? harnesses[0]?.id ?? "claude",
   );
@@ -88,9 +89,14 @@ export function SettingsPage(props: SettingsPageProps) {
     { id: "general", label: t("settings.section.general"), content: <GeneralSection /> },
     { id: "appearance", label: t("settings.section.appearance"), content: <AppearanceSection /> },
     {
+      id: "locations",
+      label: t("settings.section.locations"),
+      content: <LocationsSection {...props} />,
+    },
+    {
       id: "environments",
       label: t("settings.section.environments"),
-      content: <EnvironmentsSection {...props} />,
+      content: <EnvironmentsSection />,
     },
     { id: "shortcuts", label: t("settings.section.shortcuts"), content: <ShortcutsSection /> },
   ];
@@ -111,13 +117,13 @@ export function SettingsPage(props: SettingsPageProps) {
       <HarnessSection
         agentId={harness.id}
         agentName={harness.name}
-        environments={props.environments}
+        locations={props.locations}
         status={props.status}
         agents={props.agents}
-        environmentId={chosenEnv}
-        onEnvironmentChange={setChosenEnv}
+        locationId={chosenEnv}
+        onLocationChange={setChosenEnv}
         from={props.harnessFrom ?? "settings"}
-        onShowEnvironments={() => props.onSection("environments")}
+        onShowLocations={() => props.onSection("locations")}
       />
     ),
   }));
@@ -396,36 +402,36 @@ function AppearanceSection() {
   );
 }
 
-/** Every environment, how its connection stands, and what can be done with it. */
-function EnvironmentsSection(props: SettingsPageProps) {
+/** Every location, how its connection stands, and what can be done with it. */
+function LocationsSection(props: SettingsPageProps) {
   const store = useAppStore();
   const { t } = useI18n();
   return (
     <PageGroup
-      lead={t("settings.environments.lead")}
+      lead={t("settings.locations.lead")}
       action={
-        <Button data-variant="outline" onClick={props.onAddEnvironment}>
-          {t("environment.add")}
+        <Button data-variant="outline" onClick={props.onAddLocation}>
+          {t("location.add")}
         </Button>
       }
     >
       <PageRows>
-        {props.environments.map((environment) => {
-          const state = props.status[environment.id];
+        {props.locations.map((location) => {
+          const state = props.status[location.id];
           const connection = state?.state ?? "closed";
-          const how = ENVIRONMENT_STATE[connection];
+          const how = LOCATION_STATE[connection];
           const closed = connection === "closed";
           return (
             <PageRow
-              key={environment.id}
-              label={environment.name}
+              key={location.id}
+              label={location.name}
               before={<StatusDot tone={how.tone} shape={how.shape} />}
               description={
                 <>
-                  <span data-slot="environment-word">{t(how.word)}</span>
-                  {environment.kind === "remote" ? (
-                    <code data-slot="environment-where" title={environment.transport.host}>
-                      {environment.transport.host}
+                  <span data-slot="location-word">{t(how.word)}</span>
+                  {location.kind === "remote" ? (
+                    <code data-slot="location-where" title={location.transport.host}>
+                      {location.transport.host}
                     </code>
                   ) : null}
                 </>
@@ -439,27 +445,27 @@ function EnvironmentsSection(props: SettingsPageProps) {
               {closed ? (
                 <Button
                   data-variant="outline"
-                  onClick={() => void store.connectEnvironment(environment.id)}
+                  onClick={() => void store.connectLocation(location.id)}
                 >
-                  {t("environment.connectAgain")}
+                  {t("location.connectAgain")}
                 </Button>
               ) : null}
-              {environment.kind === "remote" ? (
+              {location.kind === "remote" ? (
                 <Menu
                   onAction={(value) => {
-                    if (value === "edit") props.onEditEnvironment(environment.id);
-                    else if (value === "remove") props.onRemoveEnvironment(environment.id);
+                    if (value === "edit") props.onEditLocation(location.id);
+                    else if (value === "remove") props.onRemoveLocation(location.id);
                   }}
                 >
-                  <Tip label={t("settings.environments.actions", { name: environment.name })}>
+                  <Tip label={t("settings.locations.actions", { name: location.name })}>
                     <MenuTrigger data-variant="ghost">
                       <MoreIcon />
                     </MenuTrigger>
                   </Tip>
                   <MenuContent align="end">
-                    <MenuItem value="edit">{t("settings.environments.edit")}</MenuItem>
+                    <MenuItem value="edit">{t("settings.locations.edit")}</MenuItem>
                     <MenuItem value="remove" data-destructive>
-                      {t("settings.environments.remove")}
+                      {t("settings.locations.remove")}
                     </MenuItem>
                   </MenuContent>
                 </Menu>
@@ -474,21 +480,21 @@ function EnvironmentsSection(props: SettingsPageProps) {
 
 export type AgentDefaultsFormProps = {
   /** For the words said when it has no agent. */
-  environmentName: string;
+  locationName: string;
   agents: AgentInfo[];
   read: (agent: string) => Promise<Record<string, string> | undefined>;
   /** Answering `false` says it was not saved (what went wrong is shown elsewhere). */
   onSave: (agent: string, config: Record<string, string>) => Promise<boolean | undefined>;
   /**
-   * Counts the times the environment said its defaults changed, here or elsewhere: each is read again, in place. A save
+   * Counts the times the location said its defaults changed, here or elsewhere: each is read again, in place. A save
    * made here comes back as one too, so the form must not start over for it.
    */
   revision?: number;
 };
 
-/** The defaults of one environment's agents: which agent, when it has several, and that agent's settings. */
+/** The defaults of one location's agents: which agent, when it has several, and that agent's settings. */
 export function AgentDefaultsForm({
-  environmentName,
+  locationName,
   agents,
   read,
   onSave,
@@ -504,8 +510,8 @@ export function AgentDefaultsForm({
         size="inline"
         align="start"
         tone="empty"
-        title={t("blank.noAgent", { environment: environmentName })}
-        body={t("blank.noAgentHint", { environment: environmentName })}
+        title={t("blank.noAgent", { location: locationName })}
+        body={t("blank.noAgentHint", { location: locationName })}
       />
     );
   return (
@@ -564,7 +570,7 @@ function AgentDefaultsFields({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const agentId = agent.id;
-  // Read when shown, and again each time the environment says its defaults changed. What is shown stays while the new
+  // Read when shown, and again each time the location says its defaults changed. What is shown stays while the new
   // is read; a read that fails then leaves it, since it is still what was last read.
   const read0 = useRef(true);
   useEffect(() => {

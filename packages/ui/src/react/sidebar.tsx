@@ -1,20 +1,20 @@
 import { Button } from "@ui-sdk/react/button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
 import type { ReactNode } from "react";
-import type { EnvironmentConfig, EnvironmentStatus, SessionSummary } from "../api.ts";
+import type { LocationConfig, LocationStatus, SessionSummary } from "../api.ts";
 import type { Elsewhere, SessionList, Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon, PlugIcon, PlusIcon, SearchIcon } from "./icons.tsx";
 import { type Away, type RowAction, SessionListView } from "./session-list.tsx";
-import { ENVIRONMENT_STATE, StatusDot } from "./status.tsx";
+import { LOCATION_STATE, StatusDot } from "./status.tsx";
 import { Tip } from "./tip.tsx";
 import { WorkspaceSwitcher } from "./workspace-switcher.tsx";
 
 export type SidebarProps = {
   /** The button that folds the sidebar, in its top-right corner (beside the traffic lights on a Mac). */
   toggle?: ReactNode;
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
   /** Every workspace, and the one shown (sessions.ts). */
   workspaces: readonly Workspace[];
   current: Workspace | undefined;
@@ -25,7 +25,7 @@ export type SidebarProps = {
   list: SessionList;
   /** The open session, by its `sessionKey`. */
   selected: string | undefined;
-  /** The environments that are not connected, whose sessions are shown greyed. */
+  /** The locations that are not connected, whose sessions are shown greyed. */
   away: ReadonlyMap<string, Away>;
   showArchived: boolean;
   /** The pinned sessions, by `sessionKey` (pins.ts). */
@@ -37,7 +37,7 @@ export type SidebarProps = {
   onSearch: () => void;
   /** Opens the Connectors page: what the daemons keep for every agent. */
   onConnectors?: () => void;
-  onConnectEnvironment: (environmentId: string) => void;
+  onConnectLocation: (locationId: string) => void;
   onToggleArchived: () => void;
   onShowAll: () => void;
   /**
@@ -57,8 +57,8 @@ export const MOD = /Mac/.test(globalThis.navigator?.userAgent ?? "") ? "⌘" : "
 
 export function Sidebar(props: SidebarProps) {
   const { t } = useI18n();
-  const connected = props.environments.filter((h) => props.status[h.id]?.state === "connected");
-  const apart = props.environments.filter((h) => props.away.has(h.id));
+  const connected = props.locations.filter((h) => props.status[h.id]?.state === "connected");
+  const apart = props.locations.filter((h) => props.away.has(h.id));
   return (
     <nav data-slot="sidebar" aria-label={t("sessions.label")}>
       <div data-slot="titlebar">{props.toggle}</div>
@@ -99,16 +99,16 @@ export function Sidebar(props: SidebarProps) {
         ) : null}
       </div>
       {/* Below the actions, above the list it chooses: the switcher names what the list shows. */}
-      <div data-slot="environment-bar">
+      <div data-slot="location-bar">
         <WorkspaceSwitcher
           workspaces={props.workspaces}
           current={props.current}
           elsewhere={props.elsewhere}
-          environments={props.environments}
+          locations={props.locations}
           status={props.status}
           onChoose={props.onChooseWorkspace}
         />
-        {/* What can be done with the folder that is shown. The environments themselves are in Settings. */}
+        {/* What can be done with the folder that is shown. The locations themselves are in Settings. */}
         {props.trust !== undefined && props.onTrust !== undefined ? (
           <Menu
             onAction={(value) => {
@@ -131,17 +131,17 @@ export function Sidebar(props: SidebarProps) {
       </div>
       {apart.map((h) => {
         const state = props.status[h.id];
-        const how = ENVIRONMENT_STATE[state?.state ?? "closed"];
-        const line = t("environment.status", { environment: h.name, state: t(how.word) });
+        const how = LOCATION_STATE[state?.state ?? "closed"];
+        const line = t("location.status", { location: h.name, state: t(how.word) });
         return (
           <span
             key={h.id}
-            data-slot="environment-state"
+            data-slot="location-state"
             data-state={state?.state ?? "closed"}
             role="status"
           >
             <StatusDot tone={how.tone} shape={how.shape} />
-            <span data-slot="environment-name" title={line}>
+            <span data-slot="location-name" title={line}>
               {line}
             </span>
             {state?.error !== undefined && (state?.state ?? "closed") === "closed" ? (
@@ -150,8 +150,8 @@ export function Sidebar(props: SidebarProps) {
               </span>
             ) : null}
             {(state?.state ?? "closed") === "closed" ? (
-              <Button data-variant="ghost" onClick={() => props.onConnectEnvironment(h.id)}>
-                {t("environment.connectAgain")}
+              <Button data-variant="ghost" onClick={() => props.onConnectLocation(h.id)}>
+                {t("location.connectAgain")}
               </Button>
             ) : null}
           </span>
@@ -172,7 +172,7 @@ export function Sidebar(props: SidebarProps) {
         ) : (
           <p data-slot="hint">
             {t(
-              connected.length === 0 && props.environments.length > 0
+              connected.length === 0 && props.locations.length > 0
                 ? "sessions.unavailable"
                 : "sessions.empty",
             )}

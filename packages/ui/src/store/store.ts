@@ -1,7 +1,7 @@
 // The renderer's state, and what it does about events and clicks. Plain TypeScript, no React: React
 // only reads it (useSyncExternalStore) and calls its methods, so it is tested with a fake bridge.
 //
-// `AppStore` is what the page holds. What it does is in its parts, each with its own file: the environments and their
+// `AppStore` is what the page holds. What it does is in its parts, each with its own file: the locations and their
 // agents, the sessions, the blank conversation, terminals, connectors and plugins. Here are only what main tells (each
 // event to the part it is about), the account, the app's own settings and updating, and the page's panes.
 import type {
@@ -18,11 +18,13 @@ import { BlankSlice } from "./blank.ts";
 import { ConnectorsSlice } from "./connectors.ts";
 import { messageOf, StoreBase } from "./core.ts";
 import { EnvironmentsSlice } from "./environments.ts";
+import { LocationsSlice } from "./locations.ts";
 import { PluginsSlice } from "./plugins.ts";
 import { SessionsSlice } from "./sessions.ts";
 import { viewKey } from "./state.ts";
 import { TerminalsSlice } from "./terminals.ts";
 
+export { blankEnvironmentOf, environmentDefaultOf } from "./environments.ts";
 export * from "./state.ts";
 export type { TerminalScreen } from "./terminals.ts";
 
@@ -52,16 +54,19 @@ export class AppStore extends StoreBase {
 
   // The parts. Each is handed the kit; what one needs of another, it is handed too.
   readonly #sessions = new SessionsSlice(this.kit);
-  readonly #blank = new BlankSlice(this.kit, (environmentId, sessionId) =>
-    this.#sessions.select(environmentId, sessionId),
+  readonly #environments = new EnvironmentsSlice(this.kit);
+  readonly #blank = new BlankSlice(
+    this.kit,
+    (locationId, sessionId) => this.#sessions.select(locationId, sessionId),
+    (locationId, cwd, environmentId) =>
+      this.#environments.setDefault(locationId, cwd, environmentId),
   );
-  readonly #environments = new EnvironmentsSlice(this.kit, (environmentId) =>
-    this.#blank.agentsRead(environmentId),
+  readonly #locations = new LocationsSlice(this.kit, (locationId) =>
+    this.#blank.agentsRead(locationId),
   );
   readonly #terminals = new TerminalsSlice(this.kit);
   readonly #connectors = new ConnectorsSlice(this.kit);
   readonly #plugins = new PluginsSlice(this.kit, this.#connectors);
-
   dismissError = (): void => this.set({ error: undefined });
 
   /** Starts listening to main and reads what it has. Call once. */
@@ -78,11 +83,12 @@ export class AppStore extends StoreBase {
       (read) => this.set({ preferences: read }),
       () => undefined,
     );
-    // The account first: signed out, the sign-in page is all there is, and the environments are read once it is open.
+    // The account first: signed out, the sign-in page is all there is, and the locations are read once it is open.
     const account = await this.bridge.account().catch(() => undefined);
     await preferences;
     this.set((s) => ({ account: s.account ?? account }));
-    if (this.getState().account?.open === true) await this.#environments.load();
+    if (this.getState().account?.open === true)
+      await Promise.all([this.#locations.load(), this.#environments.load()]);
     this.set({ ready: true });
   }
 
@@ -117,7 +123,10 @@ export class AppStore extends StoreBase {
       ...(account.switched === true && was?.switched !== true ? { switchNoticeSeen: false } : {}),
     });
     // Just opened (signed in from the sign-in page): what was not read while it was closed is read now.
-    if (account.open && was?.open !== true && this.getState().ready) void this.#environments.load();
+    if (account.open && was?.open !== true && this.getState().ready) {
+      void this.#locations.load();
+      void this.#environments.load();
+    }
   }
 
   // ---- what main tells us: each to the part it is about ----
@@ -127,46 +136,46 @@ export class AppStore extends StoreBase {
       case "account":
         this.#onAccount(event.account);
         return;
-      case "environments":
-        this.set({ environments: event.environments });
+      case "locations":
+        this.set({ locations: event.locations });
         return;
-      case "environment-status":
-        if (this.#environments.statusTold(event)) {
-          void this.#terminals.relist(event.environmentId);
-          this.#blank.connected(event.environmentId);
+      case "location-status":
+        if (this.#locations.statusTold(event)) {
+          void this.#terminals.relist(event.locationId);
+          this.#blank.connected(event.locationId);
         }
         return;
       case "sessions":
-        this.set((s) => ({ sessions: { ...s.sessions, [event.environmentId]: event.sessions } }));
+        this.set((s) => ({ sessions: { ...s.sessions, [event.locationId]: event.sessions } }));
         return;
       case "agent-defaults":
-        this.#environments.defaultsChanged(event.environmentId);
-        this.#blank.defaultsChanged(event.environmentId);
+        this.#locations.defaultsChanged(event.locationId);
+        this.#blank.defaultsChanged(event.locationId);
         return;
       case "agent-setup-changed":
-        this.#environments.setupChanged(event.environmentId, event.agent);
+        this.#locations.setupChanged(event.locationId, event.agent);
         return;
       case "agent-auth-completed":
-        this.#environments.authCompleted(event);
+        this.#locations.authCompleted(event);
         return;
       case "plan-usage":
-        this.#environments.planUsageTold(event);
+        this.#locations.planUsageTold(event);
         return;
       case "connectors":
-        this.#connectors.changed(event.environmentId);
+        this.#connectors.changed(event.locationId);
         return;
       case "plugins":
-        this.#plugins.changed(event.environmentId, event.agentId);
+        this.#plugins.changed(event.locationId, event.agentId);
         return;
       case "app-update":
         this.set({ update: event.state });
         return;
       case "focus-session":
         this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
-        void this.focusSession(event.environmentId, event.sessionId);
+        void this.focusSession(event.locationId, event.sessionId);
         return;
       case "session-gone":
-        this.#sessions.forget(event.environmentId, event.sessionId);
+        this.#sessions.forget(event.locationId, event.sessionId);
         return;
       case "terminals":
       case "terminal-output":
@@ -174,7 +183,7 @@ export class AppStore extends StoreBase {
         this.#terminals.onEvent(event);
         return;
       case "update":
-        if (this.#sessions.onEvent(event)) this.#environments.sessionUpdated(event);
+        if (this.#sessions.onEvent(event)) this.#locations.sessionUpdated(event);
         return;
       case "permission":
       case "permission-closed":
@@ -183,23 +192,38 @@ export class AppStore extends StoreBase {
     }
   }
 
-  // ---- environments and their agents ----
+  // ---- locations and their agents ----
 
-  connectEnvironment = this.#environments.connect;
-  /** Reads the environment's agents again, e.g. after credentials or binaries are fixed. */
-  reloadAgents = this.#environments.loadAgents;
+  connectLocation = this.#locations.connect;
+  /** Reads the location's agents again, e.g. after credentials or binaries are fixed. */
+  reloadAgents = this.#locations.loadAgents;
+  saveLocation = this.#locations.save;
+  removeLocation = this.#locations.remove;
+  readAgentDefaults = this.#locations.readAgentDefaults;
+  setAgentDefaults = this.#locations.setAgentDefaults;
+  readAgentSetup = this.#locations.readAgentSetup;
+  setAgentRuntimeSettings = this.#locations.setAgentRuntimeSettings;
+  revealDaemonConfig = this.#locations.revealDaemonConfig;
+  startAgentAuth = this.#locations.startAgentAuth;
+  openAgentAuthUrl = this.#locations.openAgentAuthUrl;
+  submitAgentAuth = this.#locations.submitAgentAuth;
+  cancelAgentAuth = this.#locations.cancelAgentAuth;
+  logoutAgent = this.#locations.logoutAgent;
+
+  // ---- environments (docs/desktop.md "环境") ----
+
+  loadEnvironments = this.#environments.load;
   saveEnvironment = this.#environments.save;
   removeEnvironment = this.#environments.remove;
-  readAgentDefaults = this.#environments.readAgentDefaults;
-  setAgentDefaults = this.#environments.setAgentDefaults;
-  readAgentSetup = this.#environments.readAgentSetup;
-  setAgentRuntimeSettings = this.#environments.setAgentRuntimeSettings;
-  revealDaemonConfig = this.#environments.revealDaemonConfig;
-  startAgentAuth = this.#environments.startAgentAuth;
-  openAgentAuthUrl = this.#environments.openAgentAuthUrl;
-  submitAgentAuth = this.#environments.submitAgentAuth;
-  cancelAgentAuth = this.#environments.cancelAgentAuth;
-  logoutAgent = this.#environments.logoutAgent;
+  setEnvironmentDefault = this.#environments.setDefault;
+
+  /** Runs an action of a session's environment in a new terminal of it, and shows that terminal. */
+  runEnvironmentAction = (
+    locationId: string,
+    sessionId: string,
+    actionId: string,
+    size: { cols: number; rows: number },
+  ): Promise<unknown> => this.#terminals.create(locationId, sessionId, size, "action", actionId);
 
   // ---- the blank conversation ----
 
@@ -208,6 +232,7 @@ export class AppStore extends StoreBase {
   changeBlank = this.#blank.change;
   answerTrust = this.#blank.answerTrust;
   retryBlank = this.#blank.retry;
+  chooseBlankEnvironment = this.#blank.chooseEnvironment;
 
   // ---- sessions ----
 
@@ -286,9 +311,9 @@ export class AppStore extends StoreBase {
     path: string,
     options: { folder?: boolean; line?: number | undefined; end?: number | undefined } = {},
   ): void => {
-    const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.getState();
-    if (environmentId === undefined || sessionId === undefined) return;
-    const key = viewKey(environmentId, sessionId);
+    const { selectedLocation: locationId, selectedSession: sessionId } = this.getState();
+    if (locationId === undefined || sessionId === undefined) return;
+    const key = viewKey(locationId, sessionId);
     const { line, end } = options;
     if (options.folder === true) this.filesViews.reveal(key, path);
     else this.filesViews.show(key, path, line === undefined ? undefined : { line, end });
@@ -300,9 +325,9 @@ export class AppStore extends StoreBase {
    * the call's edits), and the edit opens in its list.
    */
   showInDiff = (toolId: string): boolean => {
-    const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.getState();
-    if (environmentId === undefined || sessionId === undefined) return false;
-    const key = viewKey(environmentId, sessionId);
+    const { selectedLocation: locationId, selectedSession: sessionId } = this.getState();
+    if (locationId === undefined || sessionId === undefined) return false;
+    const key = viewKey(locationId, sessionId);
     this.diffModes.set(key, "session");
     this.sidePanels.show(key, "diff");
     const serial = revealInDiff.request(key, toolId);
@@ -312,23 +337,23 @@ export class AppStore extends StoreBase {
     return true;
   };
 
-  // ---- folders on an environment's machine ----
+  // ---- folders on a location's machine ----
 
-  /** The folders in a folder on an environment's machine. Not a banner when it fails: the one who asked says why. */
-  listFolders = (environmentId: string, path?: string, hidden?: boolean): Promise<FolderListing> =>
-    this.bridge.listFolders(environmentId, path, hidden);
+  /** The folders in a folder on a location's machine. Not a banner when it fails: the one who asked says why. */
+  listFolders = (locationId: string, path?: string, hidden?: boolean): Promise<FolderListing> =>
+    this.bridge.listFolders(locationId, path, hidden);
 
-  /** Whether a folder on an environment's machine may run its own configuration's commands. The caller says why it failed. */
-  readTrust = (environmentId: string, path: string): Promise<FolderTrust> =>
-    this.bridge.readTrust(environmentId, path);
+  /** Whether a folder on a location's machine may run its own configuration's commands. The caller says why it failed. */
+  readTrust = (locationId: string, path: string): Promise<FolderTrust> =>
+    this.bridge.readTrust(locationId, path);
 
-  setTrust = (environmentId: string, path: string, trusted: boolean): Promise<FolderTrust> =>
-    this.bridge.setTrust(environmentId, path, trusted);
+  setTrust = (locationId: string, path: string, trusted: boolean): Promise<FolderTrust> =>
+    this.bridge.setTrust(locationId, path, trusted);
 
   /** Changes a folder's trust from a menu: a failure is shown, with its reason. */
-  changeTrust = async (environmentId: string, path: string, trusted: boolean): Promise<void> => {
+  changeTrust = async (locationId: string, path: string, trusted: boolean): Promise<void> => {
     try {
-      await this.bridge.setTrust(environmentId, path, trusted);
+      await this.bridge.setTrust(locationId, path, trusted);
     } catch (error) {
       this.set({ error: { key: "trust.changeFailed", params: { reason: messageOf(error) } } });
     }
@@ -377,9 +402,9 @@ export class AppStore extends StoreBase {
       (): ImageSaved => "failed",
     );
 
-  /** How it goes comes back in the environment's status. */
-  upgradeDaemon = async (environmentId: string, when?: "now" | "later"): Promise<void> => {
-    await this.attempt(() => this.bridge.upgradeDaemon(environmentId, when));
+  /** How it goes comes back in the location's status. */
+  upgradeDaemon = async (locationId: string, when?: "now" | "later"): Promise<void> => {
+    await this.attempt(() => this.bridge.upgradeDaemon(locationId, when));
   };
 
   /** Main says how it goes through app-update events; an error it throws is shown as any other. */

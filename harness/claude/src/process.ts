@@ -43,7 +43,12 @@ export const spawn = (
   const abort = new AbortController();
   const options: Options = {
     cwd: session.cwd,
-    env: config.env,
+    // The session's variables reach the commands Claude runs, through a file it sources before each, never its own
+    // environment (env-file.ts).
+    env:
+      config.sessionEnvFile !== undefined
+        ? { ...config.env, CLAUDE_ENV_FILE: config.sessionEnvFile }
+        : config.env,
     ...(session.setup.additionalDirectories.length > 0
       ? { additionalDirectories: session.setup.additionalDirectories }
       : {}),

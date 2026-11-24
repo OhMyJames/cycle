@@ -11,14 +11,14 @@ export function StatusDot({ tone, shape }: { tone: Tone; shape: Shape }) {
   return <span data-slot="dot" data-tone={tone} data-shape={shape} aria-hidden="true" />;
 }
 
-export const ENVIRONMENT_STATE: Record<
+export const LOCATION_STATE: Record<
   ConnectionState,
-  { word: `environment.state.${ConnectionState}`; tone: Tone; shape: Shape }
+  { word: `location.state.${ConnectionState}`; tone: Tone; shape: Shape }
 > = {
-  connected: { word: "environment.state.connected", tone: "success", shape: "solid" },
-  connecting: { word: "environment.state.connecting", tone: "accent", shape: "ring" },
-  reconnecting: { word: "environment.state.reconnecting", tone: "attention", shape: "ring" },
-  closed: { word: "environment.state.closed", tone: "danger", shape: "cross" },
+  connected: { word: "location.state.connected", tone: "success", shape: "solid" },
+  connecting: { word: "location.state.connecting", tone: "accent", shape: "ring" },
+  reconnecting: { word: "location.state.reconnecting", tone: "attention", shape: "ring" },
+  closed: { word: "location.state.closed", tone: "danger", shape: "cross" },
 };
 
 /** How a row's one mark is drawn (sessions.ts `markOf`): the words are `mark.*` in the messages. */

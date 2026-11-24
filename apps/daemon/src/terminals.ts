@@ -352,13 +352,18 @@ export class Terminals {
       .map((entry) => ({ ...entry.info }));
   }
 
-  /** Opens a terminal in `cwd` for a session, and attaches `sink` to it. */
+  /**
+   * Opens a terminal in `cwd` for a session, and attaches `sink` to it. `run.env` is the session's environment
+   * variables, added to the shell's own (docs/protocol.md §6 "环境"); `run.command`, an action to run with the login
+   * shell's `-c` in place of an interactive shell, titled by its name.
+   */
   async create(
     sessionId: string,
     cwd: string,
     cols: number,
     rows: number,
     sink: TerminalSink,
+    run: { env?: Record<string, string>; command?: { title: string; script: string } } = {},
   ): Promise<TerminalAttached> {
     if (this.#stopped)
       throw new RpcError(INVALID_PARAMS, "The daemon is stopping", {
@@ -399,9 +404,13 @@ export class Terminals {
     let pty: Pty;
     try {
       pty = this.#spawn({
-        argv: [this.#options.shell, "-l"],
+        argv:
+          run.command !== undefined
+            ? [this.#options.shell, "-l", "-c", run.command.script]
+            : [this.#options.shell, "-l"],
         cwd,
-        env: this.#env,
+        // The environment's names are checked not to be any the shell needs (`isReservedVariable`).
+        env: { ...this.#env, ...(run.env ?? {}) },
         cols,
         rows,
         onData: (data) => (entry ? this.#onData(entry, data) : early.push(data)),
@@ -417,7 +426,7 @@ export class Terminals {
     const info: TerminalInfo = {
       terminalId,
       sessionId,
-      title: basename(this.#options.shell),
+      title: run.command?.title ?? basename(this.#options.shell),
       cols,
       rows,
       status: "running",

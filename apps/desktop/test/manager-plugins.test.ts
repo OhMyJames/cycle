@@ -122,7 +122,7 @@ const setup = async () => {
 
 test("the agents with plugins reach the page, and a change becomes an event", async () => {
   const { m, events } = await setup();
-  const status = events.filter((e) => e.type === "environment-status").at(-1);
+  const status = events.filter((e) => e.type === "location-status").at(-1);
   expect(status).toMatchObject({ state: "connected", capabilities: { plugins: ["fake"] } });
 
   const listed = await m.listPlugins("local", "fake");
@@ -135,7 +135,7 @@ test("the agents with plugins reach the page, and a change becomes an event", as
   await until(() => events.some((e) => e.type === "plugins"), "the change to reach the page");
   expect(events.find((e) => e.type === "plugins")).toEqual({
     type: "plugins",
-    environmentId: "local",
+    locationId: "local",
     agentId: "fake",
   });
 });

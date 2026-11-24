@@ -65,10 +65,10 @@ test("opening the search from the sidebar is counted, with how it was opened", a
   expect(tracked(calls)).toEqual([["panel_opened", { panel: "search", via: "click" }]]);
 });
 
-test("toggling the sidebar and opening remote environment panels report only fixed event properties", async () => {
+test("toggling the sidebar and opening remote location panels report only fixed event properties", async () => {
   const script = fakeBridge({
     connected: true,
-    environments: [
+    locations: [
       {
         id: "ssh-secret",
         name: "secret-prod-host",
@@ -83,7 +83,7 @@ test("toggling the sidebar and opening remote environment panels report only fix
   await user.keyboard(`{${mod}>}b{/${mod}}`);
   await user.click(await screen.findByRole("button", { name: "Show sidebar" }));
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Environments" }));
+  await user.click(await screen.findByRole("tab", { name: "Work in" }));
   await user.click(await screen.findByRole("button", { name: "Actions for secret-prod-host" }));
   await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
   await user.keyboard("{Escape}");
@@ -94,9 +94,9 @@ test("toggling the sidebar and opening remote environment panels report only fix
     ["sidebar_toggled", { open: false, via: "shortcut" }],
     ["sidebar_toggled", { open: true, via: "click" }],
     ["panel_opened", { panel: "settings", via: "click" }],
-    ["settings_section_shown", { section: "environments" }],
-    ["panel_opened", { panel: "edit_environment", via: "click" }],
-    ["panel_opened", { panel: "remove_environment", via: "click" }],
+    ["settings_section_shown", { section: "locations" }],
+    ["panel_opened", { panel: "edit_location", via: "click" }],
+    ["panel_opened", { panel: "remove_location", via: "click" }],
   ]);
   expect(JSON.stringify(events)).not.toContain("secret");
 });

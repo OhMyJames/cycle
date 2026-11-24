@@ -11,9 +11,9 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const store = useAppStore();
   const [settings, setSettings] = useState<SettingsSection | undefined>(undefined);
   const lastSection = useRef<SettingsSection>("general");
-  // Which Harness page is shown, on which environment, and what led there (for `harness_settings_shown`).
+  // Which Harness page is shown, on which location, and what led there (for `harness_settings_shown`).
   const [harnessAgent, setHarnessAgent] = useState<string>("claude");
-  const [harnessEnvironment, setHarnessEnvironment] = useState<string | undefined>(undefined);
+  const [harnessLocation, setHarnessLocation] = useState<string | undefined>(undefined);
   const [harnessFrom, setHarnessFrom] = useState<"settings" | "blank" | "other">("settings");
   const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
   const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
@@ -23,16 +23,16 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const openSettings = (via: "click" | "shortcut" = "click", section?: SettingsSection) => {
     if (section !== undefined) lastSection.current = section;
     setHarnessFrom("settings");
-    setHarnessEnvironment(undefined);
+    setHarnessLocation(undefined);
     setConnectors(undefined);
     setSettings(lastSection.current);
     store.track("panel_opened", { panel: "settings", via });
   };
-  // From a blank conversation whose agent cannot start: straight to that agent's Harness page, on that environment.
-  const openHarnessSettings = (environmentId: string, agentId: string) => {
+  // From a blank conversation whose agent cannot start: straight to that agent's Harness page, on that location.
+  const openHarnessSettings = (locationId: string, agentId: string) => {
     lastSection.current = "harness";
     setHarnessAgent(agentId);
-    setHarnessEnvironment(environmentId);
+    setHarnessLocation(locationId);
     setHarnessFrom("blank");
     setConnectors(undefined);
     setSettings("harness");
@@ -96,7 +96,7 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     openSettings,
     openHarnessSettings,
     harnessAgent,
-    harnessEnvironment,
+    harnessLocation,
     harnessFrom,
     showHarnessAgent,
     openConnectors,

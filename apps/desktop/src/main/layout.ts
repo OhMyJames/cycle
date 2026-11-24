@@ -21,7 +21,7 @@ export const DIST_DIR = "dist";
 export const MAIN = `${DIST_DIR}/main.mjs`;
 
 /**
- * The command that runs the daemon for the local environment. `here` is the folder the main process runs
+ * The command that runs the daemon for this computer. `here` is the folder the main process runs
  * from (`dist`). Packaged, it is the bundled executable and nothing else: a user's machine has no Bun,
  * so there is no fall back to source, only an error that says what is missing. In development, the
  * first that exists of CYCLE_DAEMON_BIN, the built executable, or the source run with bun.

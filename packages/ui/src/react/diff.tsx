@@ -38,22 +38,22 @@ const reasonOf = (error: unknown): string =>
 export function Diff() {
   const { t } = useI18n();
   const store = useAppStore();
-  const environmentId = useAppState((s) => s.selectedEnvironment);
+  const locationId = useAppState((s) => s.selectedLocation);
   const sessionId = useAppState((s) => s.selectedSession);
   const key =
-    environmentId !== undefined && sessionId !== undefined
-      ? viewKey(environmentId, sessionId)
+    locationId !== undefined && sessionId !== undefined
+      ? viewKey(locationId, sessionId)
       : undefined;
   const conversation = useAppState((s) =>
     key !== undefined ? s.views[key]?.conversation : undefined,
   );
   const session = useAppState((s) =>
-    environmentId !== undefined
-      ? s.sessions[environmentId]?.find((x) => x.sessionId === sessionId)
+    locationId !== undefined
+      ? s.sessions[locationId]?.find((x) => x.sessionId === sessionId)
       : undefined,
   );
   const canWorkspace = useAppState((s) =>
-    environmentId !== undefined ? s.status[environmentId]?.capabilities?.diff === true : false,
+    locationId !== undefined ? s.status[locationId]?.capabilities?.diff === true : false,
   );
   // Kept by session in the store: the tab is unmounted while another is shown, and each session has its own.
   const mode =
@@ -62,7 +62,7 @@ export function Diff() {
     ) ?? "session";
   const shown: DiffMode = canWorkspace ? mode : "session";
 
-  if (key === undefined || environmentId === undefined || sessionId === undefined)
+  if (key === undefined || locationId === undefined || sessionId === undefined)
     return (
       <div data-slot="diff">
         <StateBlock tone="empty" size="inline" title={t("overview.noSession")} />
@@ -96,12 +96,7 @@ export function Diff() {
         <SessionView sessionKey={key} conversation={conversation} cwd={session?.cwd} />
       ) : (
         // One per session: another session's workspace and turns are its own.
-        <WorkspaceView
-          key={key}
-          environmentId={environmentId}
-          sessionId={sessionId}
-          running={running}
-        />
+        <WorkspaceView key={key} locationId={locationId} sessionId={sessionId} running={running} />
       )}
     </div>
   );
@@ -257,11 +252,11 @@ function EditRow({
 }
 
 function WorkspaceView({
-  environmentId,
+  locationId,
   sessionId,
   running,
 }: {
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   running: boolean;
 }) {
@@ -279,7 +274,7 @@ function WorkspaceView({
     let current = true;
     // A new round reads over what is shown, so the list does not jump; a failure is replaced by the reading.
     setStatus((old) => (round > 0 && old.state === "ok" ? old : { state: "loading" }));
-    store.workspaceStatus(environmentId, sessionId).then(
+    store.workspaceStatus(locationId, sessionId).then(
       (value) => {
         if (current) setStatus({ state: "ok", value });
       },
@@ -290,7 +285,7 @@ function WorkspaceView({
     return () => {
       current = false;
     };
-  }, [store, environmentId, sessionId, round]);
+  }, [store, locationId, sessionId, round]);
   const refresh = (
     <Tip label={t("files.refresh")} side="bottom">
       <Button data-variant="ghost" data-kind="files-action" onClick={() => setRound((n) => n + 1)}>
@@ -350,7 +345,7 @@ function WorkspaceView({
             <li key={file.path}>
               <WorkspaceRow
                 file={file}
-                environmentId={environmentId}
+                locationId={locationId}
                 sessionId={sessionId}
                 round={round}
               />
@@ -376,12 +371,12 @@ const STATUS_KEY = {
 
 function WorkspaceRow({
   file,
-  environmentId,
+  locationId,
   sessionId,
   round,
 }: {
   file: WorkspaceFile;
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   round: number;
 }) {
@@ -401,7 +396,7 @@ function WorkspaceRow({
     reading.current += 1;
     const serial = reading.current;
     setPatch({ state: "loading" });
-    store.workspaceFile(environmentId, sessionId, file.path).then(
+    store.workspaceFile(locationId, sessionId, file.path).then(
       (value) => {
         if (reading.current === serial) setPatch({ state: "ok", value });
       },
@@ -409,7 +404,7 @@ function WorkspaceRow({
         if (reading.current === serial) setPatch({ state: "error", reason: reasonOf(error) });
       },
     );
-  }, [store, environmentId, sessionId, file.path]);
+  }, [store, locationId, sessionId, file.path]);
   // Read when first opened, and again in a new round while open; a closed one is read when it opens.
   const readIn = useRef<number | undefined>(undefined);
   useEffect(() => {

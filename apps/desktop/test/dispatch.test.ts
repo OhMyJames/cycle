@@ -9,8 +9,8 @@ const own = (): Handlers =>
 
 /** A manager with only `sessions`: the rest of its methods are missing, as a mistake would leave them. */
 const partial = {
-  sessions(this: unknown, environmentId: unknown) {
-    return { manager: "sessions", environmentId, self: this === partial };
+  sessions(this: unknown, locationId: unknown) {
+    return { manager: "sessions", locationId, self: this === partial };
   },
 } as unknown as ManagerApi;
 
@@ -31,7 +31,7 @@ describe("dispatch", () => {
     const call = dispatch(partial, own());
     expect(call("sessions", ["local"])).toEqual({
       manager: "sessions",
-      environmentId: "local",
+      locationId: "local",
       self: true,
     });
   });

@@ -1,7 +1,7 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { EnvironmentConfig } from "../../src/api.ts";
+import type { LocationConfig } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
 import { renderApp } from "./render-app.tsx";
@@ -11,7 +11,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const far: EnvironmentConfig = {
+const far: LocationConfig = {
   id: "far",
   name: "Build box",
   kind: "remote",
@@ -40,6 +40,7 @@ test("Settings is a page over the sessions: its button opens it, Escape goes bac
   ).toEqual([
     "General",
     "Appearance",
+    "Work in",
     "Environments",
     "Keyboard shortcuts",
     "Claude",
@@ -79,19 +80,19 @@ test("the shortcut opens and closes Settings, the arrows walk its sections, and 
   ]);
 });
 
-test("the environments are listed with how each stands, one that is away can be connected again, and one can be added", async () => {
-  const { user, named, emit } = await mount({ environments: [far], states: { far: "closed" } });
+test("the locations are listed with how each stands, one that is away can be connected again, and one can be added", async () => {
+  const { user, named, emit } = await mount({ locations: [far], states: { far: "closed" } });
   await act(async () =>
     emit({
-      type: "environment-status",
-      environmentId: "far",
+      type: "location-status",
+      locationId: "far",
       state: "closed",
       error: "ssh: connect to host box port 22: Connection refused",
     }),
   );
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Environments" }));
-  const page = await screen.findByRole("tabpanel", { name: "Environments" });
+  await user.click(await screen.findByRole("tab", { name: "Work in" }));
+  const page = await screen.findByRole("tabpanel", { name: "Work in" });
   expect(within(page).getByText("This computer")).toBeTruthy();
   expect(within(page).getByText("Connected")).toBeTruthy();
   expect(within(page).getByText("Build box")).toBeTruthy();
@@ -105,17 +106,17 @@ test("the environments are listed with how each stands, one that is away can be 
   await user.click(within(page).getByRole("button", { name: "Connect again" }));
   await waitFor(() => expect(named("connect")).toEqual([["connect", "far"]]));
 
-  await user.click(within(page).getByRole("button", { name: "Add environment" }));
-  const dialog = await screen.findByRole("dialog", { name: "Add an environment" });
+  await user.click(within(page).getByRole("button", { name: "Add location" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add a location" });
   await user.type(within(dialog).getByLabelText("Address"), "me@other");
   await user.click(within(dialog).getByRole("button", { name: "Add" }));
-  await waitFor(() => expect(named("saveEnvironment")).toHaveLength(1));
+  await waitFor(() => expect(named("saveLocation")).toHaveLength(1));
   // Still in Settings: the dialog closed over the page it was opened from.
-  expect(screen.getByRole("heading", { name: "Environments", level: 2 })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Work in", level: 2 })).toBeTruthy();
 });
 
-test("an agent's defaults are read, changed and saved for the environment chosen", async () => {
-  const script = fakeBridge({ connected: true, environments: [far] });
+test("an agent's defaults are read, changed and saved for the location chosen", async () => {
+  const script = fakeBridge({ connected: true, locations: [far] });
   const schema = {
     type: "object",
     properties: { model: { type: "string", title: "Model", enum: ["sonnet", "opus"] } },
@@ -123,20 +124,20 @@ test("an agent's defaults are read, changed and saved for the environment chosen
   script.bridge.agents = async () => [
     { id: "fake", name: "Fake", available: true, configSchema: schema },
   ];
-  script.bridge.agentDefaults = async (environmentId) => {
-    script.calls.push(["agentDefaults", environmentId]);
+  script.bridge.agentDefaults = async (locationId) => {
+    script.calls.push(["agentDefaults", locationId]);
     return { model: "sonnet" };
   };
   await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Fake" }));
-  // Two environments are connected: which one's defaults is a choice, and it starts on the one that is open.
-  const environment = await screen.findByRole("combobox", { name: "Environment" });
-  expect(environment.textContent).toContain("This computer");
+  // Two locations are connected: which one's defaults is a choice, and it starts on the one that is open.
+  const location = await screen.findByRole("combobox", { name: "Work in" });
+  expect(location.textContent).toContain("This computer");
   const model = await screen.findByRole("combobox", { name: "Model" });
   expect(model.textContent).toContain("sonnet");
-  await user.click(environment);
+  await user.click(location);
   await user.click(await screen.findByRole("option", { name: "Build box" }));
   await waitFor(() =>
     expect(script.named("agentDefaults").at(-1)).toEqual(["agentDefaults", "far"]),
@@ -150,24 +151,24 @@ test("an agent's defaults are read, changed and saved for the environment chosen
     ]),
   );
   expect(await screen.findByText("Saved")).toBeTruthy();
-  // The environment tells every client its defaults changed, the one that saved them too: the form reads them again
-  // where it is, still on the environment chosen and still saying it saved.
+  // The location tells every client its defaults changed, the one that saved them too: the form reads them again
+  // where it is, still on the location chosen and still saying it saved.
   await act(async () => {
-    script.emit({ type: "agent-defaults", environmentId: "far", agent: "fake" });
+    script.emit({ type: "agent-defaults", locationId: "far", agent: "fake" });
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
   expect(screen.getByText("Saved")).toBeTruthy();
-  expect(screen.getByRole("combobox", { name: "Environment" }).textContent).toContain("Build box");
+  expect(screen.getByRole("combobox", { name: "Work in" }).textContent).toContain("Build box");
   expect(screen.queryByText("Reading the defaults…")).toBeNull();
 });
 
-test("with no environment connected, the defaults say so and lead to the environments", async () => {
+test("with no location connected, the defaults say so and lead to the locations", async () => {
   const { user } = await mount({ connected: false });
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Claude" }));
-  expect(await screen.findByText("No environment is connected.")).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Show environments" }));
-  expect(await screen.findByRole("heading", { name: "Environments", level: 2 })).toBeTruthy();
+  expect(await screen.findByText("No location is connected.")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Show locations" }));
+  expect(await screen.findByRole("heading", { name: "Work in", level: 2 })).toBeTruthy();
 });
 
 test("an update that is ready can be started from Settings, after the same question", async () => {
@@ -259,20 +260,20 @@ test("the shortcuts are listed with their keys, to look up and not to change", a
 });
 
 test("Settings stays while it is used, also when what was open under it goes away", async () => {
-  const { user, store, named } = await mount({ environments: [far] });
+  const { user, store, named } = await mount({ locations: [far] });
   await act(() => store.selectSession("far", "s1"));
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Environments" }));
+  await user.click(await screen.findByRole("tab", { name: "Work in" }));
   await user.click(await screen.findByRole("button", { name: "Actions for Build box" }));
   await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
   const confirm = await screen.findByRole("alertdialog", { name: "Remove Build box?" });
   // The shortcut does not take the page away from under a question it is asking.
   await user.keyboard(`{${mod}>},{/${mod}}`);
   expect(screen.getByRole("alertdialog", { name: "Remove Build box?" })).toBeTruthy();
-  await user.click(within(confirm).getByRole("button", { name: "Remove environment" }));
-  await waitFor(() => expect(named("removeEnvironment")).toHaveLength(1));
+  await user.click(within(confirm).getByRole("button", { name: "Remove location" }));
+  await waitFor(() => expect(named("removeLocation")).toHaveLength(1));
   // The session that was open was on it and is gone: the person is still where they were working.
-  expect(screen.getByRole("heading", { name: "Environments", level: 2 })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Work in", level: 2 })).toBeTruthy();
 });
 
 test("a notification's session is shown over Settings, also when it is the one already open", async () => {
@@ -280,7 +281,7 @@ test("a notification's session is shown over Settings, also when it is the one a
   await act(() => store.selectSession("local", "s1"));
   await openSettings(user);
   await screen.findByRole("tablist", { name: "Settings sections" });
-  await act(async () => emit({ type: "focus-session", environmentId: "local", sessionId: "s1" }));
+  await act(async () => emit({ type: "focus-session", locationId: "local", sessionId: "s1" }));
   await waitFor(() =>
     expect(screen.queryByRole("tablist", { name: "Settings sections" })).toBeNull(),
   );
@@ -299,7 +300,7 @@ test("leaving Settings for a new session leaves the keyboard with the new sessio
 test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, and local reveal vs remote copy", async () => {
   const script = fakeBridge({
     connected: true,
-    environments: [far],
+    locations: [far],
     capabilities: { queue: true, files: true, folders: true, agentSetup: true },
   });
   script.bridge.agents = async () => [
@@ -314,15 +315,15 @@ test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, an
     },
     { id: "codex", name: "Codex", available: true, configSchema: {} },
   ];
-  script.bridge.readAgentSetup = async (environmentId, agent, opts) => {
-    script.calls.push(["readAgentSetup", environmentId, agent, opts]);
+  script.bridge.readAgentSetup = async (locationId, agent, opts) => {
+    script.calls.push(["readAgentSetup", locationId, agent, opts]);
     return {
       agent,
       name: agent === "codex" ? "Codex" : "Claude",
       available: true,
       binary: { source: "builtin", path: `/opt/cycle/${agent}`, version: "2.1.327" },
       auth:
-        environmentId === "local"
+        locationId === "local"
           ? {
               state: "signed_in",
               method: "subscription",
@@ -340,7 +341,7 @@ test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, an
               loginCommand: `cycle login ${agent}`,
             },
       planUsage:
-        environmentId === "local"
+        locationId === "local"
           ? {
               windows: [
                 {
@@ -365,7 +366,7 @@ test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, an
         configFile: {
           path: "/home/dev/.cycle/config.json",
           exists: true,
-          stale: environmentId === "far",
+          stale: locationId === "far",
         },
         dataDir: `/home/dev/.cycle/${agent}`,
         customDataDir: false,
@@ -403,8 +404,8 @@ test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, an
     ]),
   );
 
-  // Switch to remote environment: shows signed out + copyable command + stale notice + Copy path.
-  await user.click(screen.getByRole("combobox", { name: "Environment" }));
+  // Switch to remote location: shows signed out + copyable command + stale notice + Copy path.
+  await user.click(screen.getByRole("combobox", { name: "Work in" }));
   await user.click(await screen.findByRole("option", { name: "Build box" }));
   expect(await screen.findByText("Not signed in")).toBeTruthy();
   expect(screen.getByText("config.json changed since daemon startup")).toBeTruthy();
@@ -417,11 +418,11 @@ test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, an
   );
   expect(tracked(script.calls)).toContainEqual([
     "harness_settings_shown",
-    { agent: "claude", environment: "local", from: "settings" },
+    { agent: "claude", location: "local", from: "settings" },
   ]);
   expect(tracked(script.calls)).toContainEqual([
     "harness_settings_shown",
-    { agent: "claude", environment: "remote", from: "settings" },
+    { agent: "claude", location: "remote", from: "settings" },
   ]);
 });
 
@@ -469,7 +470,7 @@ test("blank page auth/unavailable prompt opens the matching Harness settings tab
   expect(await screen.findByRole("heading", { name: "Antigravity", level: 2 })).toBeTruthy();
   expect(tracked(script.calls)).toContainEqual([
     "harness_settings_shown",
-    { agent: "agy", environment: "local", from: "blank" },
+    { agent: "agy", location: "local", from: "blank" },
   ]);
 });
 
@@ -800,7 +801,7 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
   act(() => {
     script.emit({
       type: "agent-auth-completed",
-      environmentId: "local",
+      locationId: "local",
       flowId: "flow-1",
       agent: "claude",
       ok: false,
@@ -825,14 +826,14 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
     // As the daemon does: the initiator hears it finished, then everyone hears the setup changed.
     script.emit({
       type: "agent-auth-completed",
-      environmentId: "local",
+      locationId: "local",
       flowId: "flow-2",
       agent: "claude",
       ok: true,
     });
   });
   act(() => {
-    script.emit({ type: "agent-setup-changed", environmentId: "local", agent: "claude" });
+    script.emit({ type: "agent-setup-changed", locationId: "local", agent: "claude" });
   });
   expect(await screen.findByText("dev@example.com")).toBeTruthy();
   // The forced read that the sign-in started was overtaken; its spinner still ends with it.
@@ -852,9 +853,9 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
   expect(await screen.findByText("Not signed in")).toBeTruthy();
 });
 
-test("Codex sign-in supports browser waiting flow locally and device_code userCode + copy flow on remote environments", async () => {
+test("Codex sign-in supports browser waiting flow locally and device_code userCode + copy flow on remote locations", async () => {
   const script = fakeBridge({
-    environments: [far],
+    locations: [far],
     connected: true,
     capabilities: { queue: true, files: true, folders: true, agentSetup: true },
   });
@@ -933,7 +934,7 @@ test("Codex sign-in supports browser waiting flow locally and device_code userCo
   );
 
   // Remote: device_code mode shows userCode + Copy code + verified host click-to-open.
-  await user.click(screen.getByRole("combobox", { name: "Environment" }));
+  await user.click(screen.getByRole("combobox", { name: "Work in" }));
   await user.click(await screen.findByRole("option", { name: "Build box" }));
   await user.click(await screen.findByRole("button", { name: "Sign in" }));
   expect(await screen.findByText("ZNH8-01S7L")).toBeTruthy();

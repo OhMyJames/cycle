@@ -54,7 +54,7 @@ const MARKS: Record<string, ComponentType> = {
 
 /**
  * An agent's logo, by its id; its name is the logo's name for a screen reader, and under the pointer unless `quiet`
- * (where something around it says more under the pointer, as a row of an environment that is away).
+ * (where something around it says more under the pointer, as a row of a location that is away).
  */
 export function AgentLogo({
   agentId,

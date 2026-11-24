@@ -1,7 +1,7 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { EnvironmentConfig, SessionSummary } from "../../src/api.ts";
+import type { LocationConfig, SessionSummary } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { sleep } from "./box.ts";
 import { renderApp } from "./render-app.tsx";
@@ -105,18 +105,18 @@ test("a daemon that says nothing of news is never told anything", async () => {
   expect(named("markRead")).toEqual([]);
 });
 
-test("the search finds sessions by workspace: each group is a folder on one environment, and a folder name finds its sessions", async () => {
-  const far: EnvironmentConfig = {
+test("the search finds sessions by workspace: each group is a folder on one location, and a folder name finds its sessions", async () => {
+  const far: LocationConfig = {
     id: "far",
     name: "Build box",
     kind: "remote",
     transport: { type: "ssh", host: "box" },
   };
-  const script = fakeBridge({ connected: true, environments: [far] });
+  const script = fakeBridge({ connected: true, locations: [far] });
   script.bridge.sessions = async (id) =>
     id === "local"
       ? [row("mine", { cwd: "/work/app" }), row("other", { cwd: "/work/lib", lastSeq: 5 })]
-      : [row("remote-one", { environmentId: "far", cwd: "/srv/api" })];
+      : [row("remote-one", { locationId: "far", cwd: "/srv/api" })];
   await renderApp(script.bridge);
   const user = userEvent.setup();
   await screen.findAllByRole("option");

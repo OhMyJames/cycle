@@ -225,14 +225,14 @@ test("Try again on a turn that had run a command asks first, with the focus on C
   expect(tracked()).toContainEqual(["turn_retried", { failure: "agent_exited", changed: true }]);
 });
 
-test("Try again waits for the environment and says so; Edit message still works", async () => {
+test("Try again waits for the location and says so; Edit message still works", async () => {
   const { user, box, script } = await open(you("Old words"), failed);
   const alert = await screen.findByRole("alert");
-  script.emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+  script.emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   const again = within(alert).getByRole<HTMLButtonElement>("button", { name: "Try again" });
   await waitFor(() => expect(again.disabled).toBe(true));
   const why = document.getElementById(again.getAttribute("aria-describedby") ?? "");
-  expect(why?.textContent).toBe("Connect to the environment to try again.");
+  expect(why?.textContent).toBe("Connect to the location to try again.");
   await user.click(within(alert).getByRole("button", { name: "Edit message" }));
   await waitFor(() => expect(boxText(box)).toBe("Old words"));
 });

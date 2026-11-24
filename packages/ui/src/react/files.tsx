@@ -1,6 +1,6 @@
 // The Files tab of the right panel (CYCL-92): the open session's folder as a tree read one folder at a time, and a file
 // shown in its place. Read-only, and read by the daemon where the files are (docs/protocol.md §8 "浏览和预览文件"), so
-// it is the same for a remote environment. What the agent wrote is shown through the conversation's Markdown, which is
+// it is the same for a remote location. What the agent wrote is shown through the conversation's Markdown, which is
 // already made safe: no HTML, no image or link loaded from elsewhere (.agents/notes/2026-11-22-files-and-diff-sources.md).
 import { Button } from "@ui-sdk/react/button";
 import {
@@ -99,19 +99,17 @@ const reasonOf = (error: unknown): string =>
 export function Files() {
   const { t } = useI18n();
   const store = useAppStore();
-  const environmentId = useAppState((s) => s.selectedEnvironment);
+  const locationId = useAppState((s) => s.selectedLocation);
   const sessionId = useAppState((s) => s.selectedSession);
-  const status = useAppState((s) =>
-    environmentId !== undefined ? s.status[environmentId] : undefined,
-  );
+  const status = useAppState((s) => (locationId !== undefined ? s.status[locationId] : undefined));
   const session = useAppState((s) =>
-    environmentId !== undefined
-      ? s.sessions[environmentId]?.find((x) => x.sessionId === sessionId)
+    locationId !== undefined
+      ? s.sessions[locationId]?.find((x) => x.sessionId === sessionId)
       : undefined,
   );
   const key =
-    environmentId !== undefined && sessionId !== undefined
-      ? viewKey(environmentId, sessionId)
+    locationId !== undefined && sessionId !== undefined
+      ? viewKey(locationId, sessionId)
       : undefined;
   const views = store.filesViews;
   const read = useCallback(() => (key !== undefined ? views.get(key) : undefined), [key, views]);
@@ -121,7 +119,7 @@ export function Files() {
 
   if (
     key === undefined ||
-    environmentId === undefined ||
+    locationId === undefined ||
     sessionId === undefined ||
     view === undefined
   )
@@ -149,12 +147,7 @@ export function Files() {
     );
   // One per session: another session's tree, file and turns are its own, nothing of this one carries over.
   return (
-    <SessionFiles
-      key={key}
-      where={{ environmentId, sessionId, key }}
-      view={view}
-      running={running}
-    />
+    <SessionFiles key={key} where={{ locationId, sessionId, key }} view={view} running={running} />
   );
 }
 
@@ -191,7 +184,7 @@ function SessionFiles({
   );
 }
 
-type Where = { environmentId: string; sessionId: string; key: string };
+type Where = { locationId: string; sessionId: string; key: string };
 
 function Tree({
   where,
@@ -215,7 +208,7 @@ function Tree({
       setFolders((old) =>
         old.get(path)?.state === "ok" ? old : new Map(old).set(path, { state: "loading" }),
       );
-      store.listFiles(where.environmentId, where.sessionId, path).then(
+      store.listFiles(where.locationId, where.sessionId, path).then(
         (value) => {
           if (asked.current.get(path) === serial)
             setFolders((old) => new Map(old).set(path, { state: "ok", value }));
@@ -228,7 +221,7 @@ function Tree({
         },
       );
     },
-    [store, where.environmentId, where.sessionId],
+    [store, where.locationId, where.sessionId],
   );
   // The top, and each open folder, read when first shown, and again in each new round: Refresh, or a turn that ended.
   const [refreshed, setRefreshed] = useState(0);
@@ -499,7 +492,7 @@ function Preview({
     setMore("idle");
     // A new round reads over what is shown, so the page does not jump; a failure shown is replaced by the reading.
     setContent((old) => (round > 0 && old.state === "ok" ? old : { state: "loading" }));
-    store.readFile(where.environmentId, where.sessionId, path).then(
+    store.readFile(where.locationId, where.sessionId, path).then(
       (value) => {
         if (!current) return;
         setContent({ state: "ok", value });
@@ -517,7 +510,7 @@ function Preview({
       current = false;
       if (reading.current === serial) reading.current += 1;
     };
-  }, [store, where.environmentId, where.sessionId, path, round]);
+  }, [store, where.locationId, where.sessionId, path, round]);
 
   // Lines asked for (a reply's `app.tsx:12`), once the file is drawn: scrolled to and marked, then let go, so that showing
   // the file again later does not go there again. Asked for again, the file already shown, they are gone to again.
@@ -579,7 +572,7 @@ function Preview({
     const shown = content.value;
     const serial = reading.current;
     setMore("loading");
-    store.readFile(where.environmentId, where.sessionId, path, shown.next ?? 0).then(
+    store.readFile(where.locationId, where.sessionId, path, shown.next ?? 0).then(
       (piece) => {
         if (reading.current !== serial) return;
         // The file changed between the pieces: what was shown no longer fits with the rest, so start again.

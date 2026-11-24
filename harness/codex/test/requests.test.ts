@@ -11,7 +11,10 @@ import { planWindowsOf } from "../src/plan-usage.ts";
 type Sent = {
   method?: string;
   id?: unknown;
-  params: { [name: string]: unknown; config?: { mcp_servers: Record<string, unknown> } };
+  params: {
+    [name: string]: unknown;
+    config?: { mcp_servers?: Record<string, unknown>; [name: string]: unknown };
+  };
   result?: unknown;
 };
 
@@ -527,3 +530,39 @@ test("names that come out the same stay apart, a sub-agent ends on its activity 
     await rm(dir, { recursive: true, force: true });
   }
 }, 5000);
+
+test("the session's variables go to Codex's commands through the thread's config, and only when there are some", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cycle-codex-env-"));
+  const { executable, messages } = await fake(dir, "");
+  const open = async (sessionEnv?: Record<string, string>) => {
+    const adapter = createAdapter({
+      env: { HOME: dir, CODEX_HOME: dir },
+      ...(sessionEnv !== undefined ? { sessionEnv } : {}),
+      codexExecutable: executable,
+    });
+    try {
+      await client().connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: dir });
+      });
+    } finally {
+      adapter.close();
+    }
+  };
+  try {
+    await open({ DATABASE_URL: "postgres://db", MY_API_KEY: "k", "a.b": "never" });
+    await open();
+    const starts = (await messages()).filter((m) => m.method === "thread/start");
+    // A key per variable, merged into the person's own policy rather than replacing it.
+    expect(starts[0]?.params.config).toEqual({
+      "shell_environment_policy.set.DATABASE_URL": "postgres://db",
+      "shell_environment_policy.set.MY_API_KEY": "k",
+    });
+    expect(starts[1]?.params).not.toHaveProperty("config");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

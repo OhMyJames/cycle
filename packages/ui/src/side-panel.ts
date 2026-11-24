@@ -1,4 +1,4 @@
-// The right panel of each session (CYCL-90): whether it is open, the tabs it has and the one shown. Kept by environment
+// The right panel of each session (CYCL-90): whether it is open, the tabs it has and the one shown. Kept by location
 // and session, as drafts are, so that each session's panel is set out for that session and a restart finds it again
 // (.agents/notes/2026-11-21-right-panel-layout.md). Its width is the window's, not the session's: SplitLayout keeps it.
 // Plain TypeScript, no React and no DOM, so the rules are tested without a page.
@@ -100,7 +100,7 @@ export class SidePanelStore {
     for (const listener of [...this.#listeners]) listener();
   }
 
-  /** The panel of a session (`environmentId:sessionId`). The same object until it changes, so that it can be watched. */
+  /** The panel of a session (`locationId:sessionId`). The same object until it changes, so that it can be watched. */
   get(key: string): SidePanelState {
     return this.#all().get(key) ?? CLOSED;
   }
@@ -143,10 +143,10 @@ export class SidePanelStore {
     this.#changed();
   }
 
-  /** Every panel of an environment that was removed. Its id has no colon, so the prefix names its sessions only. */
-  forgetEnvironment(environmentId: string): void {
+  /** Every panel of a location that was removed. Its id has no colon, so the prefix names its sessions only. */
+  forgetLocation(locationId: string): void {
     const states = this.#all();
-    const prefix = `${environmentId}:`;
+    const prefix = `${locationId}:`;
     let gone = false;
     for (const key of [...states.keys()]) {
       if (key.startsWith(prefix)) gone = states.delete(key) || gone;

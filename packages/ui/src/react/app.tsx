@@ -19,7 +19,7 @@ import { Composer } from "./composer.tsx";
 import { mergeConfigSchema } from "./config-form.tsx";
 import { ConnectorsPage } from "./connectors.tsx";
 import { ConversationView } from "./conversation.tsx";
-import { ConfirmDialog, EnvironmentDialog, type RemoteEnvironment } from "./dialogs.tsx";
+import { ConfirmDialog, LocationDialog, type RemoteLocation } from "./dialogs.tsx";
 import { I18nProvider, useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, SidebarIcon } from "./icons.tsx";
 import { errorText, SessionNotices } from "./notice-line.tsx";
@@ -41,9 +41,9 @@ const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn:
 /** The dialogs the window opens over what it shows, one at a time. */
 type Panel =
   | "none"
-  | "add-environment"
-  | "edit-environment"
-  | "remove-environment"
+  | "add-location"
+  | "edit-location"
+  | "remove-location"
   | "delete"
   | "settings"
   | "search"
@@ -52,9 +52,9 @@ type Panel =
 /** The word each panel has in the dictionary of events (@cycle/analytics). */
 const PANEL_EVENT = {
   search: "search",
-  "add-environment": "add_environment",
-  "edit-environment": "edit_environment",
-  "remove-environment": "remove_environment",
+  "add-location": "add_location",
+  "edit-location": "edit_location",
+  "remove-location": "remove_location",
   settings: "session_settings",
   delete: "delete",
   trust: "trust",
@@ -76,7 +76,7 @@ export function App() {
   const ready = useAppState((s) => s.ready);
   const account = useAppState((s) => s.account);
   // Nobody is signed in: the sign-in page is the whole window. The app's window is not mounted behind it, so none of
-  // its shortcuts or effects runs, and nothing of the environments has been read.
+  // its shortcuts or effects runs, and nothing of the locations has been read.
   const signedOut = ready && (account === undefined || !account.open);
   return (
     <I18nProvider translator={translatorFor(language)}>
@@ -94,12 +94,12 @@ function AppWindow() {
   const store = useAppStore();
   const { t } = useI18n();
   const ready = useAppState((s) => s.ready);
-  const environments = useAppState((s) => s.environments);
+  const locations = useAppState((s) => s.locations);
   const status = useAppState((s) => s.status);
-  const selectedEnvironment = useAppState((s) => s.selectedEnvironment);
+  const selectedLocation = useAppState((s) => s.selectedLocation);
   const selectedSession = useAppState((s) => s.selectedSession);
-  const sessionsByEnvironment = useAppState((s) => s.sessions);
-  const agentsByEnvironment = useAppState((s) => s.agents);
+  const sessionsByLocation = useAppState((s) => s.sessions);
+  const agentsByLocation = useAppState((s) => s.agents);
   const views = useAppState((s) => s.views);
   const blank = useAppState((s) => s.blank);
   const error = useAppState((s) => s.error);
@@ -110,24 +110,23 @@ function AppWindow() {
   // The open session whose title is being edited in the header, by its key.
   const [renaming, setRenaming] = useState<string | undefined>();
   const [sent, setSent] = useState(0);
-  const [targetEnvironment, setTargetEnvironment] = useState<string | undefined>(undefined);
+  const [targetLocation, setTargetLocation] = useState<string | undefined>(undefined);
   const appRef = useRef<HTMLDivElement>(null);
 
-  // The sessions of every environment, in one list; what is open is on the environment `selectedEnvironment` names.
+  // The sessions of every location, in one list; what is open is on the location `selectedLocation` names.
   const sessions = useMemo(
-    () => environments.flatMap((h) => sessionsByEnvironment[h.id] ?? []),
-    [environments, sessionsByEnvironment],
+    () => locations.flatMap((h) => sessionsByLocation[h.id] ?? []),
+    [locations, sessionsByLocation],
   );
-  const agents =
-    selectedEnvironment !== undefined ? (agentsByEnvironment[selectedEnvironment] ?? []) : [];
+  const agents = selectedLocation !== undefined ? (agentsByLocation[selectedLocation] ?? []) : [];
   const session = sessions.find(
-    (s) => s.environmentId === selectedEnvironment && s.sessionId === selectedSession,
+    (s) => s.locationId === selectedLocation && s.sessionId === selectedSession,
   );
   const agent = agents.find((a) => a.id === session?.agent);
-  const connectedEnvironments = environments.filter((h) => status[h.id]?.state === "connected");
+  const connectedLocations = locations.filter((h) => status[h.id]?.state === "connected");
   const view =
-    selectedEnvironment !== undefined && selectedSession !== undefined
-      ? views[viewKey(selectedEnvironment, selectedSession)]
+    selectedLocation !== undefined && selectedSession !== undefined
+      ? views[viewKey(selectedLocation, selectedSession)]
       : undefined;
   const sessionSchema = useMemo(
     () =>
@@ -147,22 +146,22 @@ function AppWindow() {
     () => (hasConversation ? { usage, compactions, compacting } : undefined),
     [hasConversation, usage, compactions, compacting],
   );
-  // The account's limits, as the session's agent last told them on this environment.
+  // The account's limits, as the session's agent last told them on this location.
   const planUsage = useAppState((s) =>
-    selectedEnvironment !== undefined && session !== undefined
-      ? s.planUsage[selectedEnvironment]?.[session.agent]
+    selectedLocation !== undefined && session !== undefined
+      ? s.planUsage[selectedLocation]?.[session.agent]
       : undefined,
   );
-  const environmentState =
-    selectedEnvironment !== undefined ? status[selectedEnvironment]?.state : undefined;
-  const connected = environmentState === "connected";
+  const locationState =
+    selectedLocation !== undefined ? status[selectedLocation]?.state : undefined;
+  const connected = locationState === "connected";
 
   const pages = usePages(appRef);
   const { layout, sidebarCollapsed, toggleSidebar } = useSidebarFold(appRef, ready);
   const sessionPanel = useSessionPanel(session, blank);
   const { panelKey, sidePanel } = sessionPanel;
   const nav = useSessionNavigation({
-    environments,
+    locations,
     status,
     sessions,
     session,
@@ -188,35 +187,33 @@ function AppWindow() {
     setDeleting(chosen);
     open("delete");
   };
-  const environmentIds = useMemo(() => new Set(environments.map((h) => h.id)), [environments]);
-  const editingEnvironment = useMemo(() => {
-    const found = environments.find((h) => h.id === targetEnvironment);
-    return found !== undefined && found.kind === "remote"
-      ? (found as RemoteEnvironment)
-      : undefined;
-  }, [environments, targetEnvironment]);
-  const removingEnvironment = useMemo(() => {
-    const found = environments.find((h) => h.id === targetEnvironment);
+  const locationIds = useMemo(() => new Set(locations.map((h) => h.id)), [locations]);
+  const editingLocation = useMemo(() => {
+    const found = locations.find((h) => h.id === targetLocation);
+    return found !== undefined && found.kind === "remote" ? (found as RemoteLocation) : undefined;
+  }, [locations, targetLocation]);
+  const removingLocation = useMemo(() => {
+    const found = locations.find((h) => h.id === targetLocation);
     return found !== undefined && found.kind !== "local" ? found : undefined;
-  }, [environments, targetEnvironment]);
+  }, [locations, targetLocation]);
   /**
    * Opens a blank conversation: a new session that is made by its first message. It starts in the workspace that is
-   * shown, else on the environment that is open, else on the first that is connected.
+   * shown, else on the location that is open, else on the first that is connected.
    */
   const newSession = (via: "click" | "shortcut" = "click") => {
     pages.closePage();
     // One is open already: it stays as it is, with what was chosen and written on it.
-    if (blank !== undefined) return store.openBlank({ environmentId: blank.environmentId });
+    if (blank !== undefined) return store.openBlank({ locationId: blank.locationId });
     const { startOn } = nav;
-    const environmentId =
-      startOn?.environmentId ??
-      (connected ? selectedEnvironment : undefined) ??
-      connectedEnvironments[0]?.id;
-    if (environmentId === undefined) return;
+    const locationId =
+      startOn?.locationId ??
+      (connected ? selectedLocation : undefined) ??
+      connectedLocations[0]?.id;
+    if (locationId === undefined) return;
     store.track("panel_opened", { panel: "new_session", via });
     store.openBlank({
-      environmentId,
-      cwd: startOn?.environmentId === environmentId ? startOn.cwd : undefined,
+      locationId,
+      cwd: startOn?.locationId === locationId ? startOn.cwd : undefined,
     });
   };
 
@@ -234,7 +231,7 @@ function AppWindow() {
     toggleSettings: () =>
       pages.settings === undefined ? pages.openSettings("shortcut") : pages.leaveSettings(),
     search: () => open("search", "shortcut"),
-    newSession: connectedEnvironments.length > 0 ? () => newSession("shortcut") : undefined,
+    newSession: connectedLocations.length > 0 ? () => newSession("shortcut") : undefined,
     toggleSidebar: () => toggleSidebar("shortcut"),
     toggleSidePanel:
       panelKey !== undefined ? () => sessionPanel.toggleSidePanel("shortcut") : undefined,
@@ -248,7 +245,7 @@ function AppWindow() {
       order: nav.list.order,
       open: session,
       away: nav.away,
-      select: (next) => void store.selectSession(next.environmentId, next.sessionId),
+      select: (next) => void store.selectSession(next.locationId, next.sessionId),
     },
   });
 
@@ -292,7 +289,7 @@ function AppWindow() {
       {/* With the sidebar put away, what concerns the whole app comes first under the title bar. */}
       {sidebarCollapsed ? <AppNotices at="top" /> : null}
       <SessionNotices
-        environmentId={selectedEnvironment}
+        locationId={selectedLocation}
         shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
         errors={!pages.pageOpen}
       />
@@ -310,21 +307,21 @@ function AppWindow() {
           onHarnessAgent={pages.showHarnessAgent}
           onClose={pages.leaveSettings}
           banner={errorBanner}
-          environments={environments}
+          locations={locations}
           status={status}
-          agents={agentsByEnvironment}
-          environmentId={pages.harnessEnvironment ?? selectedEnvironment}
-          onAddEnvironment={() => {
-            setTargetEnvironment(undefined);
-            open("add-environment");
+          agents={agentsByLocation}
+          locationId={pages.harnessLocation ?? selectedLocation}
+          onAddLocation={() => {
+            setTargetLocation(undefined);
+            open("add-location");
           }}
-          onEditEnvironment={(id) => {
-            setTargetEnvironment(id);
-            open("edit-environment");
+          onEditLocation={(id) => {
+            setTargetLocation(id);
+            open("edit-location");
           }}
-          onRemoveEnvironment={(id) => {
-            setTargetEnvironment(id);
-            open("remove-environment");
+          onRemoveLocation={(id) => {
+            setTargetLocation(id);
+            open("remove-location");
           }}
         />
       ) : null}
@@ -334,10 +331,10 @@ function AppWindow() {
           onSection={pages.showConnectorsSection}
           onClose={pages.leaveConnectors}
           banner={errorBanner}
-          environments={environments}
+          locations={locations}
           status={status}
-          environmentId={selectedEnvironment}
-          onShowEnvironments={() => pages.openSettings("click", "environments")}
+          locationId={selectedLocation}
+          onShowLocations={() => pages.openSettings("click", "locations")}
         />
       ) : null}
       {/* Under a page the sessions are kept as they are, not drawn again: what was open and half-written is there on the way back. */}
@@ -353,7 +350,7 @@ function AppWindow() {
               ? {
                   content: (
                     <SidePanel
-                      environmentId={session?.environmentId ?? ""}
+                      locationId={session?.locationId ?? ""}
                       sessionId={session?.sessionId ?? ""}
                       state={sidePanel}
                       onShow={sessionPanel.showTab}
@@ -366,7 +363,7 @@ function AppWindow() {
           sidebar={
             <Sidebar
               toggle={sidebarCollapsed ? undefined : sidebarToggle}
-              environments={environments}
+              locations={locations}
               status={status}
               workspaces={nav.workspaces}
               current={nav.current}
@@ -378,7 +375,7 @@ function AppWindow() {
               showArchived={nav.showArchived}
               pinned={pinned}
               onSelectSession={(chosen) =>
-                void store.selectSession(chosen.environmentId, chosen.sessionId)
+                void store.selectSession(chosen.locationId, chosen.sessionId)
               }
               onSessionAction={(chosen, action) => {
                 switch (action) {
@@ -391,7 +388,7 @@ function AppWindow() {
                     void store.archiveSession(
                       chosen.sessionId,
                       action === "archive",
-                      chosen.environmentId,
+                      chosen.locationId,
                     );
                     return;
                   case "delete":
@@ -404,7 +401,7 @@ function AppWindow() {
               onNewSession={() => newSession()}
               onSearch={() => open("search")}
               onConnectors={pages.openConnectors}
-              onConnectEnvironment={(id) => void store.connectEnvironment(id)}
+              onConnectLocation={(id) => void store.connectLocation(id)}
               onToggleArchived={() => nav.setShowArchived((v) => !v)}
               onShowAll={nav.showAllSessions}
               trust={trust.trusted}
@@ -423,7 +420,7 @@ function AppWindow() {
                 <BlankConversationView
                   blank={blank}
                   notices={notices}
-                  environments={connectedEnvironments}
+                  locations={connectedLocations}
                   recent={nav.blankRecent}
                   connected={connected}
                   follow={sent}
@@ -454,8 +451,8 @@ function AppWindow() {
               {blank === undefined ? notices : null}
               {blank !== undefined ? null : view !== undefined ? (
                 <ConversationView
-                  key={viewKey(view.environmentId, view.sessionId)}
-                  sessionKey={viewKey(view.environmentId, view.sessionId)}
+                  key={viewKey(view.locationId, view.sessionId)}
+                  sessionKey={viewKey(view.locationId, view.sessionId)}
                   follow={sent}
                   conversation={view.conversation}
                   loading={view.loading}
@@ -463,18 +460,16 @@ function AppWindow() {
                 />
               ) : (
                 <NoSession
-                  environmentId={selectedEnvironment}
-                  state={environmentState}
+                  locationId={selectedLocation}
+                  state={locationState}
                   error={
-                    selectedEnvironment !== undefined
-                      ? status[selectedEnvironment]?.error
-                      : undefined
+                    selectedLocation !== undefined ? status[selectedLocation]?.error : undefined
                   }
                   incompatible={
-                    selectedEnvironment !== undefined &&
-                    status[selectedEnvironment]?.incompatible !== undefined
+                    selectedLocation !== undefined &&
+                    status[selectedLocation]?.incompatible !== undefined
                   }
-                  onNewSession={connectedEnvironments.length > 0 ? () => newSession() : undefined}
+                  onNewSession={connectedLocations.length > 0 ? () => newSession() : undefined}
                 />
               )}
               <PendingRequest
@@ -484,9 +479,9 @@ function AppWindow() {
               />
               {view !== undefined ? (
                 <Composer
-                  key={`composer:${viewKey(view.environmentId, view.sessionId)}`}
-                  environmentId={view.environmentId}
-                  sessionKey={viewKey(view.environmentId, view.sessionId)}
+                  key={`composer:${viewKey(view.locationId, view.sessionId)}`}
+                  locationId={view.locationId}
+                  sessionKey={viewKey(view.locationId, view.sessionId)}
                   canAttach={agent?.promptCapabilities?.image != null}
                   canAttachFiles={agent?.promptCapabilities?.embeddedContext != null}
                   settings={
@@ -513,20 +508,18 @@ function AppWindow() {
       <SearchDialog
         open={panel === "search"}
         onOpenChange={(open) => !open && close()}
-        environments={environments}
+        locations={locations}
         status={status}
-        sessions={sessionsByEnvironment}
-        agents={agentsByEnvironment}
-        onPick={async (environmentId, sessionId) => {
+        sessions={sessionsByLocation}
+        agents={agentsByLocation}
+        onPick={async (locationId, sessionId) => {
           // An archived session is not in the list unless archived ones are shown: show them, or the pick would select a hidden row.
-          if (
-            sessionsByEnvironment[environmentId]?.find((s) => s.sessionId === sessionId)?.archived
-          )
+          if (sessionsByLocation[locationId]?.find((s) => s.sessionId === sessionId)?.archived)
             nav.setShowArchived(true);
           // What was found is shown with its workspace, also when it is the session that is open.
           nav.followOpen();
           pages.closePage();
-          await store.selectSession(environmentId, sessionId);
+          await store.selectSession(locationId, sessionId);
         }}
         onNewSession={() => {
           close();
@@ -539,29 +532,29 @@ function AppWindow() {
           onOpenChange={(open) => !open && close()}
           title={t("trust.title")}
           description={t("trust.description", {
-            environment: environments.find((h) => h.id === trust.folder?.environmentId)?.name ?? "",
+            location: locations.find((h) => h.id === trust.folder?.locationId)?.name ?? "",
           })}
           detail={trust.folder.cwd}
           confirmLabel={t("trust.confirm")}
           onConfirm={() => trust.changeTrust(true)}
         />
       ) : null}
-      <EnvironmentDialog
-        open={panel === "add-environment" || panel === "edit-environment"}
+      <LocationDialog
+        open={panel === "add-location" || panel === "edit-location"}
         onOpenChange={(open) => !open && close()}
-        editing={panel === "edit-environment" ? editingEnvironment : undefined}
-        existingIds={environmentIds}
-        onSave={store.saveEnvironment}
+        editing={panel === "edit-location" ? editingLocation : undefined}
+        existingIds={locationIds}
+        onSave={store.saveLocation}
       />
-      {removingEnvironment !== undefined ? (
+      {removingLocation !== undefined ? (
         <ConfirmDialog
-          open={panel === "remove-environment"}
+          open={panel === "remove-location"}
           onOpenChange={(open) => !open && close()}
-          title={t("environment.removeTitle", { name: removingEnvironment.name })}
-          description={t("environment.removeDescription", { name: removingEnvironment.name })}
-          confirmLabel={t("environment.removeConfirm")}
+          title={t("location.removeTitle", { name: removingLocation.name })}
+          description={t("location.removeDescription", { name: removingLocation.name })}
+          confirmLabel={t("location.removeConfirm")}
           destructive
-          onConfirm={() => store.removeEnvironment(removingEnvironment.id)}
+          onConfirm={() => store.removeLocation(removingLocation.id)}
         />
       ) : null}
       {deleting !== undefined ? (
@@ -573,7 +566,7 @@ function AppWindow() {
           confirmLabel={t("session.deleteConfirm")}
           destructive
           onConfirm={async () => {
-            const failed = await store.deleteSession(deleting.sessionId, deleting.environmentId);
+            const failed = await store.deleteSession(deleting.sessionId, deleting.locationId);
             if (failed === undefined) pins.set(sessionKey(deleting), false);
             return failed;
           }}
