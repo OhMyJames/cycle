@@ -19,7 +19,6 @@ import {
 } from "@cycle/client";
 import {
   type AgentInfo,
-  type AppApi,
   type AppEvent,
   type Attention,
   applyUpdate,
@@ -56,6 +55,7 @@ import {
 } from "@cycle/ui";
 import { type DaemonStop, daemonTooOld, daemonUpgradeCommand } from "../shared/release.ts";
 import { authorizeInBrowser, type OpenBrowser } from "./connector-auth.ts";
+import type { ManagerApi } from "./dispatch.ts";
 import { environmentOf, LOCAL_ENVIRONMENT, type Settings } from "./settings.ts";
 
 export type ManagerOptions = {
@@ -259,31 +259,10 @@ const sessionSummary = (environmentId: string, row: SessionRow): SessionSummary 
 
 /**
  * The main process's half of the app: the connections to daemons, and the state of every session
- * being watched. It is the whole of what the renderer can ask for (`AppApi`) and knows nothing of
+ * being watched. It is what the renderer can ask for beyond main's own methods (`ManagerApi`) and knows nothing of
  * Electron, so it is tested against a real daemon without a window.
  */
-export class ConnectionManager
-  implements
-    Omit<
-      AppApi,
-      | "chooseDirectory"
-      | "copyText"
-      | "copyImage"
-      | "saveImage"
-      | "updateState"
-      | "checkForUpdate"
-      | "installUpdate"
-      | "track"
-      | "analytics"
-      | "setAnalytics"
-      | "preferences"
-      | "setPreferences"
-      | "account"
-      | "signIn"
-      | "cancelSignIn"
-      | "signOut"
-    >
-{
+export class ConnectionManager implements ManagerApi {
   readonly #options: ManagerOptions;
   #environments: EnvironmentConfig[] = [LOCAL_ENVIRONMENT];
   /** Environments whose daemon is being updated from here, and the last one's failure. */
