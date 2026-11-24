@@ -5,6 +5,7 @@ import { userEvent } from "vitest/browser";
 import type { AgentInfo, SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { findAlert } from "./alert.ts";
 import { boxText, press, ready, write } from "./box.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -101,7 +102,7 @@ test("a binary file that is not a PDF is refused with the reason, and nothing is
       type: "application/octet-stream",
     }),
   );
-  expect((await screen.findByRole("alert")).textContent).toContain(
+  expect((await findAlert()).textContent).toContain(
     "build.bin is not an image, a text file or a PDF.",
   );
   expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
@@ -113,7 +114,7 @@ test("an agent that takes images only refuses a text file, and its button says i
   const { user, picker } = await open({ image: {} });
   await screen.findByRole("button", { name: "Attach image" });
   await user.upload(picker(), new File(["hello"], "notes.txt", { type: "text/plain" }));
-  expect((await screen.findByRole("alert")).textContent).toContain(
+  expect((await findAlert()).textContent).toContain(
     "notes.txt is not a PNG, JPEG, GIF or WebP image.",
   );
 });

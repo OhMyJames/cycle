@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The whole history: whether the tagged commit is on main cannot be told from a shallow clone.
           fetch-depth: 0
@@ -79,7 +79,7 @@ jobs:
       # A tag signs only when the repository variable RELEASE_SIGN is 'true'; by hand, when asked.
       SIGN: ${{ (github.event_name == 'push' && vars.RELEASE_SIGN == 'true') || inputs.sign }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
@@ -171,7 +171,7 @@ jobs:
             security delete-keychain "$CYCLE_KEYCHAIN" || true
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.SIGN == 'true' && 'app-darwin-arm64' || 'app-darwin-arm64-unsigned' }}
           path: apps/desktop/build/release/*
@@ -183,7 +183,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true

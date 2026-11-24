@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { AgentInfo } from "../../src/api.ts";
 import { ConfirmDialog } from "../../src/react/dialogs.tsx";
 import { AgentDefaultsForm, LocationDialog } from "../../src/react/index.ts";
+import { findAlert } from "./alert.ts";
 
 afterEach(cleanup);
 
@@ -119,7 +120,7 @@ test("location dialog keeps user input on failure, avoids id collisions, and sup
   );
   await user.type(await screen.findByLabelText("Address"), "me@box");
   await user.click(screen.getByRole("button", { name: "Add" }));
-  expect((await screen.findByRole("alert")).textContent).toContain("Disk full");
+  expect((await findAlert()).textContent).toContain("Disk full");
   expect(((await screen.findByLabelText("Address")) as HTMLInputElement).value).toBe("me@box");
   fail = false;
   await user.click(screen.getByRole("button", { name: "Add" }));
@@ -145,6 +146,6 @@ test("destructive confirm dialog uses destructive variant and stays open on fail
   const button = await screen.findByRole("button", { name: "Remove location" });
   expect(button.getAttribute("data-variant")).toBe("destructive");
   await user.click(button);
-  expect((await screen.findByRole("alert")).textContent).toContain("Still busy");
+  expect((await findAlert()).textContent).toContain("Still busy");
   expect(closed).toBe(false);
 });

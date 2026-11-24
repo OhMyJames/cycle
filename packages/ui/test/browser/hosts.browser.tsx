@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { LocationConfig } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { findAlert } from "./alert.ts";
 import { browseFolders, chooseLocation, chosenFolder, openFolders, typeFolder } from "./blank.ts";
 import { press, ready, sleep, write } from "./box.ts";
 import { renderApp } from "./render-app.tsx";
@@ -61,9 +62,10 @@ test("the workspaces of every host are in the switcher, and one on another host 
   const trigger = screen.getByRole("button", { name: /Switch workspace/ });
   // The same folder on two locations: each named after its location.
   expect(trigger.textContent).toContain("work");
-  expect(within(trigger).queryByRole("img")).toBeNull();
+  // Every workspace shows where it is, this computer too: a laptop whose name says so.
+  expect(within(trigger).getByRole("img", { name: "On Local · Connected" })).toBeTruthy();
   await user.click(trigger);
-  const remote = await screen.findByRole("menuitem", { name: /work · Build box/ });
+  const remote = await screen.findByRole("menuitem", { name: /Build box · Connected work/ });
   // The icon's name says where, and how it stands: for the tooltip and for a reader.
   expect(within(remote).getByRole("img", { name: "On Build box · Connected" })).toBeTruthy();
   // Several locations: the menu is grouped by them.
@@ -83,7 +85,7 @@ test("the workspaces of every host are in the switcher, and one on another host 
 
 test("a host that is away: its sessions stay, greyed and saying why, and it can be tried again", async () => {
   const { user, named } = await mount({ far: "closed" });
-  await choose(user, /work · Build box/);
+  await choose(user, /On Build box · .* work/);
   const rows = screen.getAllByRole("option");
   const greyed = rows.filter((row) => row.getAttribute("data-away") !== null);
   expect(greyed).toHaveLength(1);
@@ -100,13 +102,13 @@ test("a host that is away: its sessions stay, greyed and saying why, and it can 
 
 test("a session of a host that is away is not asked of, and opening one that was never opened says why", async () => {
   const { user, named } = await mount({ far: "closed" });
-  await choose(user, /work · Build box/);
+  await choose(user, /On Build box · .* work/);
   await user.click(
     screen
       .getAllByRole("option")
       .find((o) => o.getAttribute("data-location") === "far") as HTMLElement,
   );
-  expect((await screen.findByRole("alert")).textContent).toContain(
+  expect((await findAlert()).textContent).toContain(
     "Build box is not connected, so this session cannot be opened.",
   );
   expect(named("openSession")).toEqual([]);
@@ -114,7 +116,7 @@ test("a session of a host that is away is not asked of, and opening one that was
 
 test("when the host comes back its rows are no longer greyed", async () => {
   const { user, emit } = await mount({ far: "closed" });
-  await choose(user, /work · Build box/);
+  await choose(user, /On Build box · .* work/);
   expect(screen.getAllByRole("option").some((o) => o.getAttribute("data-away") !== null)).toBe(
     true,
   );
@@ -227,7 +229,7 @@ test("a folder that cannot be listed can be left by going up or home", async () 
   await chooseLocation(user, "Build box");
   await browseFolders(user);
   await user.click(await screen.findByRole("option", { name: "locked" }));
-  expect((await screen.findByRole("alert")).textContent).toContain("The folder cannot be read");
+  expect((await findAlert()).textContent).toContain("The folder cannot be read");
   // The way out is there: up from where it failed, and home.
   expect((screen.getByRole("button", { name: "Up one level" }) as HTMLButtonElement).disabled).toBe(
     false,
@@ -261,7 +263,7 @@ test("a folder that cannot be listed says why, and can be tried again", async ()
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
   await chooseLocation(user, "Build box");
   await browseFolders(user);
-  expect((await screen.findByRole("alert")).textContent).toContain("The folder cannot be read");
+  expect((await findAlert()).textContent).toContain("The folder cannot be read");
   fail = false;
   await user.click(screen.getByRole("button", { name: "Try again" }));
   await screen.findByRole("option", { name: "docs" });
