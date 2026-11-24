@@ -39,6 +39,7 @@ import { ConnectorValuesDialog } from "./connector-values.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
+import { useKeyedAsyncAction } from "./keyed-action.ts";
 import { PageGroup, PageLayout, PageRow, PageRows } from "./page-layout.tsx";
 import { PluginsSection } from "./plugins.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -263,8 +264,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
   const read = useAppState((s) => s.connectors[environmentId]);
   const list = read?.list;
   /** What went wrong with one connector, shown under its row. */
-  const [problems, setProblems] = useState<Record<string, Problem>>({});
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const { busy, problems, run } = useKeyedAsyncAction<Problem>();
   const [waiting, setWaiting] = useState<ConnectorInfo | undefined>(undefined);
   const [signedIn, setSignedIn] = useState<string | undefined>(undefined);
   const [removing, setRemoving] = useState<ConnectorInfo | undefined>(undefined);
@@ -277,17 +277,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
     void store.loadConnectors(environmentId);
   }, [store, environmentId]);
 
-  const act = async (connector: ConnectorInfo, action: Act) => {
-    setBusy((b) => ({ ...b, [connector.id]: true }));
-    setProblems(({ [connector.id]: _gone, ...rest }) => rest);
-    try {
-      const answer = await action();
-      if ("problem" in answer) setProblems((p) => ({ ...p, [connector.id]: answer }));
-      return answer;
-    } finally {
-      setBusy(({ [connector.id]: _gone, ...rest }) => rest);
-    }
-  };
+  const act = (connector: ConnectorInfo, action: Act) => run(connector.id, action);
 
   const signIn = async (connector: ConnectorInfo) => {
     setWaiting(connector);
