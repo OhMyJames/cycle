@@ -304,13 +304,15 @@ export function StepLine({
         ? t("step.thinking")
         : step.kind === "replying"
           ? t("step.replying")
-          : step.kind === "retrying"
-            ? step.attempt !== undefined && step.maxRetries !== undefined
-              ? t("step.retryingCount", { attempt: step.attempt, max: step.maxRetries })
-              : t("step.retrying")
-            : step.kind === "tool"
-              ? toolStep(t, step.tool)
-              : t("step.working");
+          : step.kind === "review"
+            ? t("step.review")
+            : step.kind === "retrying"
+              ? step.attempt !== undefined && step.maxRetries !== undefined
+                ? t("step.retryingCount", { attempt: step.attempt, max: step.maxRetries })
+                : t("step.retrying")
+              : step.kind === "tool"
+                ? toolStep(t, step.tool)
+                : t("step.working");
   return (
     <InlineAiStatus
       // Trying again, or a call at work, is the agent at work, said in other words: nothing here for the person to do.
