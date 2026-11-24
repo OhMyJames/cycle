@@ -1023,3 +1023,59 @@ test("a plugin is added from a source, installed, loaded by a session with its h
     await rm(market, { recursive: true, force: true });
   }
 }, 80_000);
+
+test("claude auth login --claudeai in isolated CLAUDE_CONFIG_DIR emits hosted-callback URL and stdin prompt under non-TTY pipe", async () => {
+  const claudeBin = Bun.which("claude");
+  if (!claudeBin) return;
+  const isolated = await tempConfigDir();
+  const home = join(isolated.dir, "home");
+  await mkdir(home, { recursive: true });
+  const env = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: home,
+    CLAUDE_CONFIG_DIR: isolated.dir,
+    BROWSER: "/usr/bin/true",
+    LANG: "en_US.UTF-8",
+  };
+  const proc = Bun.spawn([claudeBin, "auth", "login", "--claudeai"], {
+    env,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  try {
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    const dec = new TextDecoder();
+    let out = "";
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      const read = await Promise.race([
+        reader.read(),
+        Bun.sleep(250).then(() => ({ done: false, value: undefined })),
+      ]);
+      if (read.value) out += dec.decode(read.value, { stream: true });
+      if (
+        /https:\/\/(?:claude\.com|claude\.ai|platform\.claude\.com)\/\S+/.test(out) &&
+        /paste code/i.test(out)
+      ) {
+        break;
+      }
+      if (read.done) break;
+    }
+    expect(out).toMatch(/https:\/\/(?:claude\.com|claude\.ai|platform\.claude\.com)\/\S+/);
+    expect(out.toLowerCase()).toContain("paste code");
+  } finally {
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+    await Promise.race([proc.exited, Bun.sleep(1_000)]);
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+    await isolated.dispose();
+  }
+}, 25_000);

@@ -4,7 +4,7 @@ export const SETTINGS_SECTIONS = [
   "general",
   "appearance",
   "environments",
-  "defaults",
   "shortcuts",
+  "harness",
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];

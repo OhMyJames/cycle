@@ -924,8 +924,149 @@ export const enUS = {
   "settings.section.general": "General",
   "settings.section.appearance": "Appearance",
   "settings.section.environments": "Environments",
-  "settings.section.defaults": "Session defaults",
   "settings.section.shortcuts": "Keyboard shortcuts",
+  "settings.section.harness": "Harness",
+  "settings.harness.group": "Harness",
+  "settings.harness.open": "Open {agent} settings",
+  "settings.harness.loading": "Checking {agent} status…",
+  "settings.harness.loadFailed": "Could not read {agent} settings",
+  "settings.harness.oldDaemon":
+    "Cycle on {environment} is older and does not report account or host status.",
+  "settings.harness.oldDaemonBody":
+    "You can still edit session defaults here. Update Cycle on {environment} for full harness diagnostics.",
+  "settings.harness.unavailable.missing": "{agent} is not installed on {environment}.",
+  "settings.harness.unavailable.tooOld":
+    "{agent} {version} on {environment} is older than the required {minVersion}.",
+  "settings.harness.unavailable.probeFailed": "{agent} on {environment} could not be checked.",
+  "settings.harness.unavailable.notListed": "{agent} is not enabled on {environment}.",
+  "settings.harness.account.title": "Account & usage",
+  "settings.harness.account.refresh": "Refresh",
+  "settings.harness.account.refreshing": "Refreshing…",
+  "settings.harness.account.signedIn": "Signed in",
+  "settings.harness.account.signedOut": "Not signed in",
+  "settings.harness.account.signingIn": "Signing in…",
+  "settings.harness.account.signingOut": "Signing out…",
+  "settings.harness.account.unknown": "Unable to verify account status",
+  "settings.harness.account.unavailable": "Unavailable",
+  "settings.harness.account.method.subscription": "Subscription",
+  "settings.harness.account.method.api_key": "API key",
+  "settings.harness.account.method.oauth_token": "OAuth token",
+  "settings.harness.account.method.third_party": "Third-party provider",
+  "settings.harness.account.method.none": "No active login",
+  "settings.harness.account.method.unknown": "Unknown method",
+  "settings.harness.account.unknownReason.network_error": "Network error while checking status.",
+  "settings.harness.account.unknownReason.timeout": "Timed out while checking status.",
+  "settings.harness.account.unknownReason.probe_failed": "Status probe failed.",
+  "settings.harness.account.viaEnv": "Overridden by {name}",
+  "settings.harness.account.expires": "Expires {when}",
+  "settings.harness.account.tierObserved": "Observed {when}",
+  "settings.harness.account.copyLogin": "Copy sign-in command",
+  "settings.harness.account.copied": "Copied",
+  "settings.harness.account.usagePassiveHint":
+    "Plan usage appears here after your first conversation.",
+  "settings.harness.defaults.title": "Session defaults",
+  "settings.harness.defaults.lead":
+    "New sessions of {agent} start with these settings on {environment}.",
+  "settings.harness.host.title": "Host configuration",
+  "settings.harness.host.lead":
+    "Read-only diagnostics from the daemon's config.json. Environment variable values are never shown.",
+  "settings.harness.host.binary": "Binary",
+  "settings.harness.host.binary.builtin": "Built-in",
+  "settings.harness.host.binary.configured": "Configured in config.json",
+  "settings.harness.host.binary.path": "System PATH",
+  "settings.harness.host.binary.missing": "Not found",
+  "settings.harness.host.binary.minVersion": "Requires >= {version}",
+  "settings.harness.host.dataDir": "Managed directory",
+  "settings.harness.host.dataDir.custom": "Custom (config.json)",
+  "settings.harness.host.allowEnv": "Allowed host env vars",
+  "settings.harness.host.envNames": "Configured env vars",
+  "settings.harness.host.none": "None",
+  "settings.harness.host.configFile": "Config file",
+  "settings.harness.host.configFile.missing": "Not created yet",
+  "settings.harness.host.configFile.reveal": "Show in file manager",
+  "settings.harness.host.configFile.copyPath": "Copy path",
+  "settings.harness.host.configFile.staleTitle": "config.json changed since daemon startup",
+  "settings.harness.host.configFile.staleBody":
+    "Restart the daemon (`cycle stop --wait`) to apply host configuration changes.",
+  "settings.harness.host.configFile.errorTitle": "config.json has an error",
+  "settings.harness.runtime.title": "Agent settings",
+  "settings.harness.runtime.lead":
+    "Saved on {environment}. Changes apply without restarting the daemon.",
+  "settings.harness.runtime.reset": "Reset",
+  "settings.harness.runtime.resetField": "Reset {field} to default",
+  "settings.harness.runtime.scope.immediate": "Takes effect immediately",
+  "settings.harness.runtime.scope.next_idle_restart": "Takes effect on next idle restart",
+  "settings.harness.runtime.scope.next_session": "Takes effect in new sessions",
+  "settings.harness.runtime.scope.daemon_restart": "Takes effect after daemon restart",
+  "settings.harness.runtime.unsupportedField":
+    "Read-only in this version of Cycle. Update the app to edit this setting.",
+  "settings.harness.runtime.fileErrorTitle": "agent-settings.json could not be read",
+  "settings.harness.runtime.fileErrorBody":
+    "Runtime settings are shown read-only so your file is not overwritten. Fix or remove the file on the host to edit again.",
+  "settings.harness.runtime.conflictTitle": "Settings changed elsewhere",
+  "settings.harness.runtime.conflictBody": "Reload to see the latest values before saving again.",
+  "settings.harness.runtime.reload": "Reload",
+  "settings.harness.runtime.saveFailed": "Could not save setting",
+  "settings.harness.runtime.field.claude.warmStart.title": "Warm start",
+  "settings.harness.runtime.field.claude.warmStart.description":
+    "Start a Claude process when a new session is created so slash commands appear before the first message.",
+  "settings.harness.runtime.field.claude.maxWarm.title": "Max warm processes",
+  "settings.harness.runtime.field.claude.maxWarm.description":
+    "Maximum number of unprompted sessions kept warm before the oldest is reclaimed.",
+  "settings.harness.runtime.field.claude.progressSummaries.title": "Sub-agent progress summaries",
+  "settings.harness.runtime.field.claude.progressSummaries.description":
+    "Ask Claude for short model-written progress lines for running sub-agents.",
+  "settings.harness.runtime.field.agy.sandbox.title": "Sandbox",
+  "settings.harness.runtime.field.agy.sandbox.description":
+    "Run agy acp with --sandbox enabled to restrict filesystem and shell access.",
+  "settings.harness.runtime.field.agy.telemetry.title": "Telemetry",
+  "settings.harness.runtime.field.agy.telemetry.description":
+    "Send usage telemetry to Google Antigravity. When disabled, Cycle passes --disable-telemetry.",
+  "settings.harness.account.signIn": "Sign in",
+  "settings.harness.account.signOut": "Sign out",
+  "settings.harness.auth.title": "Sign in to {agent}",
+  "settings.harness.auth.starting": "Starting sign-in on {environment}…",
+  "settings.harness.auth.openHost":
+    "Continue in your browser at {host}. Cycle will never open the link until you click below.",
+  "settings.harness.auth.openBrowser": "Open in browser",
+  "settings.harness.auth.openFailed":
+    "The browser could not be opened for this sign-in. Start again, or use the command below.",
+  "settings.harness.auth.waitingBrowser": "Waiting for browser sign-in to finish…",
+  "settings.harness.auth.deviceCodeLabel": "One-time code",
+  "settings.harness.auth.copyCode": "Copy code",
+  "settings.harness.auth.waitingDevice": "Enter the code at {host}, then return here.",
+  "settings.harness.auth.codeLabel": "Authorization code",
+  "settings.harness.auth.codePlaceholder": "Paste the code from your browser",
+  "settings.harness.auth.codeHint":
+    "Sent once directly to the sign-in process and never saved or logged.",
+  "settings.harness.auth.submit": "Complete sign-in",
+  "settings.harness.auth.submitting": "Completing…",
+  "settings.harness.auth.retry": "Try again",
+  "settings.harness.auth.fallbackLabel": "Or sign in from a terminal on {environment}:",
+  "settings.harness.auth.signOutTitle": "Sign out of {agent}?",
+  "settings.harness.auth.signOutDescription":
+    "Signs out {agent} on {environment}. Running turns keep going; idle sessions restart on the next message, and saved history stays.",
+  "settings.harness.auth.error.binary_unavailable": "The agent binary is unavailable on this host.",
+  "settings.harness.auth.error.auth_in_progress":
+    "Another sign-in or sign-out is already in progress for this agent.",
+  "settings.harness.auth.error.parse_failed":
+    "Could not read the sign-in URL from the agent CLI. Use the terminal command below instead.",
+  "settings.harness.auth.error.invalid_code":
+    "The authorization code was rejected. Start sign-in again or use the terminal command below.",
+  "settings.harness.auth.error.expired": "Sign-in timed out after 10 minutes. Start sign-in again.",
+  "settings.harness.auth.error.cancelled": "Sign-in was cancelled.",
+  "settings.harness.auth.error.process_failed":
+    "The sign-in process exited unexpectedly. Try again or use the terminal command below.",
+  "settings.harness.auth.error.timeout":
+    "Sign-in timed out. Try again or use the terminal command below.",
+  "settings.harness.auth.error.unsupported_mode":
+    "In-app sign-in is not available for this environment. Use the terminal command below.",
+  "settings.harness.auth.error.untrusted_url":
+    "Blocked an unrecognized sign-in domain. Use the terminal command below instead.",
+  "settings.harness.auth.error.disconnected":
+    "Connection was interrupted. Start sign-in again, or run the command below.",
+  "settings.harness.auth.error.failed":
+    "Sign-in could not be completed. Try again or use the terminal command below.",
   "settings.language": "Language",
   "settings.language.description":
     "The language of the interface. What agents write stays in their own words.",

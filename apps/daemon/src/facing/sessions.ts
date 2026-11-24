@@ -205,6 +205,9 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       await core.index.put(id, session.entry);
       core.changed();
       core.letGoOfOldestAhead(session);
+      // Made stale while inside session/new (a sign-in/out or runtime change it was not yet listed for): it holds a
+      // process made with the old state, and nothing has been asked of it yet, so it goes now.
+      core.restartIfStale(session);
       return { sessionId: id, configOptions: options };
     } catch (error) {
       session.closed = true;
@@ -263,6 +266,8 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       await core.index.update(session.id, { config });
       core.changed();
     }
+    // An agent started only to take this setting, after its state changed: let go now that it has taken it.
+    core.restartIfStale(session);
     return answer;
   });
 

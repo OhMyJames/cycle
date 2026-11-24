@@ -143,6 +143,12 @@ export class AppStore extends StoreBase {
         this.#environments.defaultsChanged(event.environmentId);
         this.#blank.defaultsChanged(event.environmentId);
         return;
+      case "agent-setup-changed":
+        this.#environments.setupChanged(event.environmentId, event.agent);
+        return;
+      case "agent-auth-completed":
+        this.#environments.authCompleted(event);
+        return;
       case "plan-usage":
         this.#environments.planUsageTold(event);
         return;
@@ -186,6 +192,14 @@ export class AppStore extends StoreBase {
   removeEnvironment = this.#environments.remove;
   readAgentDefaults = this.#environments.readAgentDefaults;
   setAgentDefaults = this.#environments.setAgentDefaults;
+  readAgentSetup = this.#environments.readAgentSetup;
+  setAgentRuntimeSettings = this.#environments.setAgentRuntimeSettings;
+  revealDaemonConfig = this.#environments.revealDaemonConfig;
+  startAgentAuth = this.#environments.startAgentAuth;
+  openAgentAuthUrl = this.#environments.openAgentAuthUrl;
+  submitAgentAuth = this.#environments.submitAgentAuth;
+  cancelAgentAuth = this.#environments.cancelAgentAuth;
+  logoutAgent = this.#environments.logoutAgent;
 
   // ---- the blank conversation ----
 

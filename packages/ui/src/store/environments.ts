@@ -1,6 +1,10 @@
 // The environments: their status, their agents and those agents' defaults and plan usage, and adding or removing one.
 import type {
+  AgentAuthLogoutAnswer,
+  AgentAuthStartAnswer,
+  AgentAuthSubmitAnswer,
   AgentInfo,
+  AgentRuntimePatchValue,
   AppEvent,
   EnvironmentConfig,
   EnvironmentStatus,
@@ -117,6 +121,44 @@ export class EnvironmentsSlice {
         [environmentId]: (s.defaultsRevision[environmentId] ?? 0) + 1,
       },
     }));
+  }
+
+  /** An agent's setup changed there (`_cycle/agent_setup_changed`): its Harness page reads it again. */
+  setupChanged(environmentId: string, agent: string): void {
+    this.#kit.set((s) => {
+      const key = `${environmentId}:${agent}`;
+      return {
+        agentSetupRevision: {
+          ...s.agentSetupRevision,
+          [key]: (s.agentSetupRevision[key] ?? 0) + 1,
+        },
+      };
+    });
+  }
+
+  /** A sign-in this window started ended: its dialog hears how, and the agent's page reads its setup again. */
+  authCompleted(event: AppEvent & { type: "agent-auth-completed" }): void {
+    this.#kit.set((s) => {
+      const flowKey = `${event.environmentId}:${event.flowId}`;
+      const setupKey = `${event.environmentId}:${event.agent}`;
+      const completions: typeof s.agentAuthCompletions = {
+        ...s.agentAuthCompletions,
+        [flowKey]: {
+          ok: event.ok,
+          ...(event.reason !== undefined ? { reason: event.reason } : {}),
+        },
+      };
+      // Only the latest few are kept: a dialog reads its own flow's at once.
+      const keys = Object.keys(completions);
+      for (const oldest of keys.slice(0, Math.max(0, keys.length - 50))) delete completions[oldest];
+      return {
+        agentAuthCompletions: completions,
+        agentSetupRevision: {
+          ...s.agentSetupRevision,
+          [setupKey]: (s.agentSetupRevision[setupKey] ?? 0) + 1,
+        },
+      };
+    });
   }
 
   planUsageTold(event: AppEvent & { type: "plan-usage" }): void {
@@ -254,4 +296,51 @@ export class EnvironmentsSlice {
       await this.#kit.bridge.setAgentDefaults(environmentId, agent, config);
       return true;
     })) === true;
+
+  // ---- an agent's setup and account (Settings → Harness) ----
+
+  /** Read-only Harness setup snapshot (auth, usage, runtime config, host diagnostics). */
+  readAgentSetup = (
+    environmentId: string,
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ) => this.#kit.bridge.readAgentSetup(environmentId, agent, options);
+
+  setAgentRuntimeSettings = (
+    environmentId: string,
+    agent: string,
+    patch: Record<string, AgentRuntimePatchValue>,
+    expectedRevision: number,
+  ) => this.#kit.bridge.setAgentRuntimeSettings(environmentId, agent, patch, expectedRevision);
+
+  /** Shows the local daemon's `config.json` in the system file manager; false on remote environments. */
+  revealDaemonConfig = (environmentId: string): Promise<boolean> =>
+    this.#kit.bridge.revealDaemonConfig(environmentId).catch(() => false);
+
+  // A sign-in call the bridge refused (the window's IPC failed) is an answer the dialog shows, not a dialog left
+  // waiting: main already turns every daemon failure into a reason, so only the bridge itself can throw here.
+  startAgentAuth = (environmentId: string, agent: string): Promise<AgentAuthStartAnswer> =>
+    this.#kit.bridge
+      .startAgentAuth(environmentId, agent)
+      .catch((): AgentAuthStartAnswer => ({ started: false, reason: "failed" }));
+
+  openAgentAuthUrl = (environmentId: string, flowId: string): Promise<boolean> =>
+    this.#kit.bridge.openAgentAuthUrl(environmentId, flowId).catch(() => false);
+
+  submitAgentAuth = (
+    environmentId: string,
+    flowId: string,
+    code: string,
+  ): Promise<AgentAuthSubmitAnswer> =>
+    this.#kit.bridge
+      .submitAgentAuth(environmentId, flowId, code)
+      .catch((): AgentAuthSubmitAnswer => ({ ok: false, reason: "failed" }));
+
+  cancelAgentAuth = (environmentId: string, flowId: string): Promise<void> =>
+    this.#kit.bridge.cancelAgentAuth(environmentId, flowId).catch(() => undefined);
+
+  logoutAgent = (environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer> =>
+    this.#kit.bridge
+      .logoutAgent(environmentId, agent)
+      .catch((): AgentAuthLogoutAnswer => ({ ok: false, reason: "failed" }));
 }

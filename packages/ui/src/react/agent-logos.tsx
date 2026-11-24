@@ -60,19 +60,31 @@ export function AgentLogo({
   agentId,
   name,
   quiet = false,
+  decorative = false,
 }: {
   agentId: string;
   name: string;
   quiet?: boolean;
+  /** True when the agent's visible name is right beside the mark (e.g. a Settings nav tab). */
+  decorative?: boolean;
 }) {
   const Mark = MARKS[agentId];
+  const inner =
+    Mark !== undefined ? (
+      <Mark />
+    ) : (
+      <span data-kind="initial">{(Array.from(name)[0] ?? "").toUpperCase()}</span>
+    );
+  if (decorative) {
+    return (
+      <span data-slot="agent-logo" aria-hidden="true">
+        {inner}
+      </span>
+    );
+  }
   return (
     <span data-slot="agent-logo" role="img" aria-label={name} title={quiet ? undefined : name}>
-      {Mark !== undefined ? (
-        <Mark />
-      ) : (
-        <span data-kind="initial">{(Array.from(name)[0] ?? "").toUpperCase()}</span>
-      )}
+      {inner}
     </span>
   );
 }

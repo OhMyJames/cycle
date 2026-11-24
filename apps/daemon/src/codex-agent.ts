@@ -7,6 +7,7 @@ import {
   nativeBinary,
 } from "@cycle/harness-codex";
 import { runAdapter } from "@cycle/harness-codex/run";
+import { createCodexSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
@@ -75,6 +76,22 @@ export const codexHarness: Harness = {
           return false;
         }
       },
+      setup: createCodexSetupProvider({
+        config: settings,
+        dataDir,
+        inherited,
+        env: () => codexEnv(settings, dataDir, inherited),
+        locateBinary: () => {
+          // Exactly the binary the session's app-server runs (never one found on PATH, which it does not use).
+          if (settings.executable !== undefined) {
+            return { source: "configured", path: settings.executable };
+          }
+          const shipped = executable();
+          return shipped !== undefined
+            ? { source: "builtin", path: shipped }
+            : { source: "missing" };
+        },
+      }),
       ...(log ? { log } : {}),
     });
   },

@@ -2,9 +2,12 @@
 // (docs/protocol.md §8, `_meta["cycle/context"]`). Numbers only; a line of words only for a state that has no number:
 // nothing reported yet, a compaction running, or a usage from before the last compaction. Under it, the account's plan
 // limits when its agent told them (docs/protocol.md §8 "套餐用量").
-import type { PlanUsage, PlanWindow } from "../api.ts";
+import type { PlanUsage } from "../api.ts";
 import type { ContextPart, ContextState } from "../model/conversation.ts";
 import { useI18n } from "./i18n.tsx";
+import { PlanUsageBars, planRowsOf } from "./plan-usage-bars.tsx";
+
+export { planRowsOf };
 
 /** The parts Cycle names itself, by the agent's id; any other is shown by the agent's name. */
 const PART_NAMES = {
@@ -20,25 +23,6 @@ const PART_NAMES = {
   compact_buffer: "composer.context.part.compactBuffer",
   free_space: "composer.context.part.free",
 } as const;
-
-/** The plan limits Cycle shows, in this order; one it does not know by name is not shown. */
-const PLAN_NAMES = {
-  five_hour: "composer.plan.fiveHour",
-  seven_day: "composer.plan.weekly",
-  seven_day_opus: "composer.plan.weeklyOpus",
-  seven_day_sonnet: "composer.plan.weeklySonnet",
-} as const;
-
-/**
- * The plan's limits worth showing at `now`: the ones Cycle names, that have not started over since they were told (what
- * they are at after a reset is not known, so they are not shown as they were).
- */
-export const planRowsOf = (plan: PlanUsage | undefined, now: number): PlanWindow[] =>
-  plan === undefined
-    ? []
-    : Object.keys(PLAN_NAMES).flatMap((kind) =>
-        plan.windows.filter((w) => w.kind === kind && w.resetsAt > now),
-      );
 
 /** How many shades of the accent the used parts go through, largest first; the rest share the last. */
 const SHADES = 5;
@@ -66,23 +50,10 @@ export function ContextDetails({
   /** The id of the title, for what holds the details to be named by it. */
   titleId?: string;
 }) {
-  const { t, number, date } = useI18n();
+  const { t, number } = useI18n();
   const { usage } = context;
   // Read as the panel opens: a limit that started over meanwhile goes when it is opened again.
   const now = Date.now();
-  const limits = planRowsOf(plan, now);
-  const resetsOf = (at: number) => {
-    const minutes = Math.max(1, Math.ceil((at - now) / 60_000));
-    if (minutes < 60) return t("composer.plan.resetsInMinutes", { minutes: number(minutes) });
-    if (minutes < 24 * 60)
-      return t("composer.plan.resetsInHours", {
-        hours: number(Math.floor(minutes / 60)),
-        minutes: number(minutes % 60),
-      });
-    return t("composer.plan.resetsOn", {
-      when: date(at, { weekday: "short", hour: "numeric", minute: "2-digit" }),
-    });
-  };
   const measured = usage !== undefined && usage.size > 0;
   const before = usage?.beforeCompaction === true;
   const short = (amount: number) =>
@@ -223,41 +194,7 @@ export function ContextDetails({
           ) : null}
         </dl>
       ) : null}
-      {limits.length > 0 ? (
-        <section data-slot="plan-usage" aria-label={t("composer.plan.title")}>
-          <div data-slot="context-head">
-            <span>{t("composer.plan.title")}</span>
-          </div>
-          {limits.map((w) => {
-            const share = Math.max(0, Math.min(1, w.utilization));
-            const tone =
-              w.status === "rejected" || share >= 0.9
-                ? "danger"
-                : w.status === "allowed_warning" || share >= 0.7
-                  ? "attention"
-                  : undefined;
-            return (
-              <div key={w.kind} data-slot="plan-limit" data-tone={tone}>
-                <div data-slot="plan-limit-row">
-                  <span data-slot="plan-limit-name">
-                    {t(PLAN_NAMES[w.kind as keyof typeof PLAN_NAMES])}
-                  </span>
-                  <span data-slot="plan-limit-value">
-                    {t("composer.plan.used", {
-                      // Down, not to the nearest: 99.6% is not yet at the limit, and does not read as 100%.
-                      percent: number(Math.floor(w.utilization * 100) / 100, { style: "percent" }),
-                      resets: resetsOf(w.resetsAt),
-                    })}
-                  </span>
-                </div>
-                <div data-slot="plan-bar" aria-hidden="true">
-                  <span data-slot="plan-bar-fill" style={{ width: `${share * 100}%` }} />
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      ) : null}
+      <PlanUsageBars plan={plan} now={now} />
     </div>
   );
 }

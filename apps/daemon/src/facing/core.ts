@@ -8,7 +8,15 @@ import type {
   NewSessionResponse,
   PromptResponse,
 } from "@agentclientprotocol/sdk/experimental/v2";
-import type { PlanUsage, QueueEntry, QueueReason } from "@cycle/protocol";
+import type {
+  AgentAuthMode,
+  AgentAuthStartResult,
+  AgentRuntimePatchValue,
+  AgentSetupSnapshot,
+  PlanUsage,
+  QueueEntry,
+  QueueReason,
+} from "@cycle/protocol";
 import type { z } from "zod";
 import { type CycleHandler, onCycle } from "../acp.ts";
 import type { AgentLink } from "../agent-link.ts";
@@ -63,6 +71,8 @@ export type Core = {
   ensureAgent(session: Session): Promise<AgentLink>;
   /** Lets go of the oldest agents started ahead of a prompt, past their agent's `maxAhead`. */
   letGoOfOldestAhead(keep: Session): void;
+  /** Stops a session's agent started with a trust, runtime or account state changed since, once it has nothing to do. */
+  restartIfStale(session: Session): void;
   /** Stops each agent in a folder whose trust decision changed, once it has nothing to do. */
   applyTrust(folder: string): Promise<void>;
   /** Appends to a session's log; false when it is not on record. */
@@ -98,6 +108,33 @@ export type Core = {
   offer(session: Session, pending: Pending, attachment: Attachment): void;
   /** Settles a waiting request with an outcome. */
   settle(session: Session, pending: Pending, outcome: unknown, by?: Attachment): void;
+
+  // ---- an agent's setup and account (docs/protocol.md §16) ----
+  readAgentSetup(params: {
+    agent: string;
+    refreshUsage?: boolean | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentSetupSnapshot>;
+  setAgentRuntime(params: {
+    agent: string;
+    patch: Record<string, AgentRuntimePatchValue>;
+    expectedRevision: number;
+  }): Promise<{
+    values: Record<string, string | number | boolean>;
+    overrides: string[];
+    revision: number;
+  }>;
+  /** A sign-in flow, bound to the connection that starts it. */
+  startAgentAuth(
+    connectionId: string,
+    params: { agent: string; mode?: AgentAuthMode | undefined },
+  ): Promise<AgentAuthStartResult>;
+  submitAgentAuth(
+    connectionId: string,
+    params: { flowId: string; code: string },
+  ): Promise<{ ok: true }>;
+  cancelAgentAuth(connectionId: string, params: { flowId: string }): Promise<Record<string, never>>;
+  logoutAgent(params: { agent: string }): Promise<Record<string, never>>;
 };
 
 /** This connection's client. Throws before the connection is ready. */

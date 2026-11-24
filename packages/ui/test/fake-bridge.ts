@@ -69,6 +69,7 @@ export const fakeBridge = (
       trust?: boolean;
       connectors?: boolean;
       plugins?: string[];
+      agentSetup?: boolean;
       sessionMentions?: boolean;
       fs?: boolean;
       diff?: boolean;
@@ -290,6 +291,69 @@ export const fakeBridge = (
     ]),
     agentDefaults: record("agentDefaults", async () => ({})),
     setAgentDefaults: record("setAgentDefaults", async () => {}),
+    readAgentSetup: record("readAgentSetup", async (_environmentId: string, agent: string) => ({
+      agent,
+      name:
+        agent === "claude"
+          ? "Claude"
+          : agent === "codex"
+            ? "Codex"
+            : agent === "agy"
+              ? "Antigravity"
+              : agent,
+      available: true,
+      binary: { source: "builtin" as const, path: `/opt/cycle/${agent}`, version: "1.0.0" },
+      auth: {
+        state: "signed_out" as const,
+        method: "none" as const,
+        signInModes: [],
+        canSignOut: false,
+        loginCommand: `cycle login ${agent}`,
+      },
+      canRefreshUsage: agent === "codex",
+      runtime: {
+        schemaVersion: 1 as const,
+        schema: { type: "object" as const, properties: {} },
+        values: {},
+        overrides: [],
+        revision: 0,
+      },
+      environment: {
+        configFile: { path: "/tmp/cycle/config.json", exists: true, stale: false },
+        dataDir: `/tmp/cycle/${agent}`,
+        customDataDir: false,
+        allowEnv: ["PATH", "LANG"],
+        envNames: [],
+      },
+    })),
+    setAgentRuntimeSettings: record(
+      "setAgentRuntimeSettings",
+      async (
+        _environmentId: string,
+        _agent: string,
+        patch: Record<string, boolean | number | string | null>,
+        expectedRevision: number,
+      ) => {
+        const values: Record<string, boolean | number | string> = {};
+        const overrides: string[] = [];
+        for (const [k, v] of Object.entries(patch)) {
+          if (v !== null) {
+            values[k] = v;
+            overrides.push(k);
+          }
+        }
+        return { saved: true as const, values, overrides, revision: expectedRevision + 1 };
+      },
+    ),
+    revealDaemonConfig: record("revealDaemonConfig", async () => true),
+    startAgentAuth: record("startAgentAuth", async () => ({
+      started: false as const,
+      reason: "unsupported_mode" as const,
+    })),
+    openAgentAuthUrl: record("openAgentAuthUrl", async () => true),
+    submitAgentAuth: record("submitAgentAuth", async () => ({ ok: true as const })),
+    cancelAgentAuth: record("cancelAgentAuth", async () => {}),
+    logoutAgent: record("logoutAgent", async () => ({ ok: true as const })),
     listConnectors: record("listConnectors", async () => connectors.map((c) => ({ ...c }))),
     addConnector: record("addConnector", async (_environment: string, draft) => {
       const connector: ConnectorInfo = {

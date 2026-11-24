@@ -104,6 +104,10 @@ export type AppState = {
   agents: Record<string, AgentInfo[]>;
   /** Counts changes to an agent's defaults, so a form that shows them knows to read them again. */
   defaultsRevision: Record<string, number>;
+  /** Counts `_cycle/agent_setup_changed` notifications per `${environmentId}:${agent}` so Harness settings auto-refresh. */
+  agentSetupRevision: Record<string, number>;
+  /** Latest `_cycle/agent_auth_completed` outcome per `${environmentId}:${flowId}` for active sign-in modals. */
+  agentAuthCompletions: Record<string, { ok: boolean; reason?: string | undefined }>;
   /**
    * Each environment's connectors as last read, or why they could not be. Only for an environment the page has asked
    * about; a change there (here or elsewhere) reads them again.
@@ -150,6 +154,8 @@ export const initialState = (): AppState => ({
   sessions: {},
   agents: {},
   defaultsRevision: {},
+  agentSetupRevision: {},
+  agentAuthCompletions: {},
   connectors: {},
   plugins: {},
   planUsage: {},

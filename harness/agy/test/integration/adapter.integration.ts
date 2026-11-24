@@ -20,7 +20,7 @@ import { agentsFor } from "../../../../apps/daemon/src/harnesses.ts";
 import { AgyPlugins } from "../../src/plugins.ts";
 
 const agyPath = findAgyExecutable(ConfigSchema.parse({}).agy, process.env);
-const hasAgy = agyPath !== undefined && isAgyVersionSupported(agyPath, process.env);
+const hasAgy = agyPath !== undefined && (await isAgyVersionSupported(agyPath, process.env));
 const daemonMain = join(import.meta.dir, "../../../../apps/daemon/src/main.ts");
 
 /** Create a fake `agy` executable speaking real ACP v1 over stdio NDJSON for CI-safe process tests. */

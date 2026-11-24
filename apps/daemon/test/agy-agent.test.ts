@@ -113,14 +113,14 @@ describe("agy daemon harness", () => {
     ).toBeUndefined();
   });
 
-  test("isAgyVersionSupported enforces 1.5.10 floor", () => {
+  test("isAgyVersionSupported enforces 1.5.10 floor", async () => {
     const binDir = makeTemp("cycle-agy-ver-");
     const oldBin = makeFakeAgy(binDir, "1.5.9", "agy-old");
     const okBin = makeFakeAgy(binDir, "1.5.10", "agy-ok");
     const newBin = makeFakeAgy(binDir, "1.5.15", "agy-new");
-    expect(isAgyVersionSupported(oldBin, {})).toBe(false);
-    expect(isAgyVersionSupported(okBin, {})).toBe(true);
-    expect(isAgyVersionSupported(newBin, {})).toBe(true);
+    expect(await isAgyVersionSupported(oldBin, {})).toBe(false);
+    expect(await isAgyVersionSupported(okBin, {})).toBe(true);
+    expect(await isAgyVersionSupported(newBin, {})).toBe(true);
   });
 
   test("_cycle/agents/list includes agy and marks available false when missing or too old", async () => {

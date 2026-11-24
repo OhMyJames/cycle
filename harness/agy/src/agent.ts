@@ -503,9 +503,14 @@ export function createAdapter(config: AdapterConfig) {
       };
       sessions.set(state.id, state);
       const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
+      const tier = (created._meta as { antigravity?: { tier?: unknown } } | undefined)?.antigravity
+        ?.tier;
       return {
         sessionId: state.id,
         configOptions,
+        ...(typeof tier === "string" && tier.trim() !== ""
+          ? { _meta: { antigravity: { tier: tier.trim() } } }
+          : {}),
       } as never;
     })
     .onRequest(methods.agent.session.resume, async ({ params, client }) => {
@@ -571,11 +576,16 @@ export function createAdapter(config: AdapterConfig) {
       });
 
       const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
+      const tier = (response._meta as { antigravity?: { tier?: unknown } } | undefined)?.antigravity
+        ?.tier;
+      const responseMeta: Record<string, unknown> = {};
+      if (resolvedId !== params.sessionId) responseMeta[META.agentSessionId] = resolvedId;
+      if (typeof tier === "string" && tier.trim() !== "") {
+        responseMeta.antigravity = { tier: tier.trim() };
+      }
       return {
         configOptions,
-        ...(resolvedId !== params.sessionId
-          ? { _meta: { [META.agentSessionId]: resolvedId } }
-          : {}),
+        ...(Object.keys(responseMeta).length > 0 ? { _meta: responseMeta } : {}),
       } as never;
     })
     .onRequest(methods.agent.session.setConfigOption, async ({ params }) => {

@@ -51,6 +51,8 @@ export type EnvironmentStatus = {
     connectors?: boolean;
     /** The agents of it that have plugins (docs/protocol.md §15). None, or absent: no plugins there. */
     plugins?: string[];
+    /** Harness setup diagnostics, auth, and runtime config methods are there (docs/protocol.md §16). */
+    agentSetup?: boolean;
     /** An @ may name another of its sessions, which it gives the agent as a record (docs/protocol.md §8). */
     sessionMentions?: boolean;
     /** The session's folder can be listed and its files read, for the Files tab (docs/protocol.md §8). */
@@ -131,6 +133,147 @@ export type AgentInfo = {
     | undefined;
   /** It can take a message into the turn that is running (docs/protocol.md §8). Absent: it cannot. */
   steer?: boolean | undefined;
+};
+
+export type AgentBinarySource = "builtin" | "configured" | "path" | "missing";
+export type AgentBinaryProblem = "missing" | "version_too_old" | "probe_failed";
+export type AgentBinaryStatus = {
+  source: AgentBinarySource;
+  path?: string | undefined;
+  version?: string | undefined;
+  minVersion?: string | undefined;
+  problem?: AgentBinaryProblem | undefined;
+};
+
+export type AgentAuthState =
+  | "binary_unavailable"
+  | "signed_out"
+  | "signing_in"
+  | "signed_in"
+  | "signing_out"
+  | "auth_unknown";
+export type AgentAuthUnknownReason = "network_error" | "timeout" | "probe_failed";
+export type AgentAuthMethod =
+  | "subscription"
+  | "api_key"
+  | "oauth_token"
+  | "third_party"
+  | "none"
+  | "unknown";
+export type AgentAuthMode = "browser" | "code" | "device_code";
+export type AgentSignInMode = {
+  mode: AgentAuthMode;
+  requiresLocalLoopback: boolean;
+};
+export type AgentAccountInfo = {
+  email?: string | undefined;
+  organization?: string | undefined;
+  plan?: string | undefined;
+  expiresAt?: number | undefined;
+  tierObservedAt?: number | undefined;
+};
+export type AgentAuthStatus = {
+  state: AgentAuthState;
+  unknownReason?: AgentAuthUnknownReason | undefined;
+  method: AgentAuthMethod;
+  viaEnv?: string | undefined;
+  account?: AgentAccountInfo | undefined;
+  signInModes: AgentSignInMode[];
+  canSignOut: boolean;
+  loginCommand: string;
+};
+
+export type AgentAuthProblemReason =
+  | "binary_unavailable"
+  | "auth_in_progress"
+  | "parse_failed"
+  | "invalid_code"
+  | "expired"
+  | "cancelled"
+  | "process_failed"
+  | "timeout"
+  | "unsupported_mode"
+  | "untrusted_url"
+  | "flow_not_found"
+  | "flow_forbidden"
+  | "flow_consumed"
+  | "flow_not_active"
+  | "disconnected"
+  | "failed";
+
+export type AgentAuthStartAnswer =
+  | {
+      started: true;
+      flowId: string;
+      mode: AgentAuthMode;
+      expiresAt: number;
+      /** Verified hostname from the desktop's hardcoded allowlist, displayed in the confirmation dialog. */
+      host?: string | undefined;
+      /** True when the main process holds a verified URL ready to open on explicit user click. */
+      hasUrl: boolean;
+      userCode?: string | undefined;
+    }
+  | {
+      started: false;
+      reason: AgentAuthProblemReason;
+    };
+
+export type AgentAuthSubmitAnswer = { ok: true } | { ok: false; reason: AgentAuthProblemReason };
+
+export type AgentAuthLogoutAnswer = { ok: true } | { ok: false; reason: AgentAuthProblemReason };
+
+export type AgentRuntimeValue = boolean | number | string;
+export type AgentRuntimePatchValue = AgentRuntimeValue | null;
+export type AgentRuntimeSaveAnswer =
+  | {
+      saved: true;
+      values: Record<string, AgentRuntimeValue>;
+      overrides: string[];
+      revision: number;
+    }
+  | {
+      saved: false;
+      problem: "revision_conflict" | "invalid_config" | "file_corrupt" | "failed";
+      currentRevision?: number | undefined;
+      field?: string | undefined;
+      message?: string | undefined;
+    };
+export type AgentRuntimeSnapshot = {
+  schemaVersion: 1;
+  schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+  };
+  values: Record<string, AgentRuntimeValue>;
+  overrides: string[];
+  revision: number;
+  fileError?: string | undefined;
+};
+
+export type AgentConfigFileStatus = {
+  path: string;
+  exists: boolean;
+  stale: boolean;
+  error?: string | undefined;
+};
+export type AgentEnvironmentDiagnostics = {
+  configFile: AgentConfigFileStatus;
+  dataDir: string;
+  customDataDir: boolean;
+  allowEnv: string[];
+  envNames: string[];
+};
+
+export type AgentSetupSnapshot = {
+  agent: string;
+  name: string;
+  available: boolean;
+  binary: AgentBinaryStatus;
+  auth: AgentAuthStatus;
+  planUsage?: PlanUsage | undefined;
+  canRefreshUsage: boolean;
+  runtime: AgentRuntimeSnapshot;
+  environment: AgentEnvironmentDiagnostics;
 };
 
 /** What a message to an agent is made of: text, and images as ACP carries them (base64). */
@@ -488,6 +631,17 @@ export type AppEvent =
       version: number;
     }
   | { type: "agent-defaults"; environmentId: string; agent: string }
+  /** An agent's setup snapshot changed (runtime settings saved, login, or logout). */
+  | { type: "agent-setup-changed"; environmentId: string; agent: string; revision?: number }
+  /** An in-app subscription sign-in flow initiated by this app finished or was interrupted. */
+  | {
+      type: "agent-auth-completed";
+      environmentId: string;
+      flowId: string;
+      agent: string;
+      ok: boolean;
+      reason?: AgentAuthProblemReason | undefined;
+    }
   /** An agent on that environment told how much of its account's plan limits is used. */
   | { type: "plan-usage"; environmentId: string; agent: string; usage: PlanUsage }
   /** The environment's connectors changed, here or elsewhere: read them again. */
@@ -686,6 +840,35 @@ export type AppApi = {
     agent: string,
     config: Record<string, string>,
   ): Promise<void>;
+  /** Read-only status, auth, runtime config, and host diagnostics for one agent (docs/protocol.md §16). */
+  readAgentSetup(
+    environmentId: string,
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ): Promise<AgentSetupSnapshot>;
+  /** Patches hot-reloadable runtime settings (`null` unsets an override) with per-agent optimistic concurrency. */
+  setAgentRuntimeSettings(
+    environmentId: string,
+    agent: string,
+    patch: Record<string, AgentRuntimePatchValue>,
+    expectedRevision: number,
+  ): Promise<AgentRuntimeSaveAnswer>;
+  /** Shows the local daemon's `config.json` in the system file manager; returns false on remote environments. */
+  revealDaemonConfig(environmentId: string): Promise<boolean>;
+  /** Starts an in-app subscription sign-in flow; chooses mode by transport and validates URLs against hardcoded allowlist. */
+  startAgentAuth(environmentId: string, agent: string): Promise<AgentAuthStartAnswer>;
+  /** Opens the main-process-verified auth URL for `flowId` in the system browser after explicit user click. */
+  openAgentAuthUrl(environmentId: string, flowId: string): Promise<boolean>;
+  /** Submits a one-time hosted-callback authorization code for a `"code"` mode flow (memory-only). */
+  submitAgentAuth(
+    environmentId: string,
+    flowId: string,
+    code: string,
+  ): Promise<AgentAuthSubmitAnswer>;
+  /** Cancels an active in-app sign-in flow. */
+  cancelAgentAuth(environmentId: string, flowId: string): Promise<void>;
+  /** Signs out an agent's subscription on the daemon (the UI asks the person first). */
+  logoutAgent(environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer>;
 
   /** The environment's connectors. Fails when it is not connected or its daemon is too old. */
   listConnectors(environmentId: string): Promise<ConnectorInfo[]>;
@@ -863,6 +1046,14 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   agents: true,
   agentDefaults: true,
   setAgentDefaults: true,
+  readAgentSetup: true,
+  setAgentRuntimeSettings: true,
+  revealDaemonConfig: true,
+  startAgentAuth: true,
+  openAgentAuthUrl: true,
+  submitAgentAuth: true,
+  cancelAgentAuth: true,
+  logoutAgent: true,
   listConnectors: true,
   addConnector: true,
   updateConnector: true,

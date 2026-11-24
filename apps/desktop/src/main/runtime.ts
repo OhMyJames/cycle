@@ -15,6 +15,8 @@ export type ManagerOptions = {
   channelFor: (environment: EnvironmentConfig) => () => Promise<Channel>;
   emit: (event: AppEvent) => void;
   chooseDirectory?: () => Promise<string | undefined>;
+  /** Shows a local file in the OS file manager (`shell.showItemInFolder`). */
+  revealPath?: (path: string) => void;
   backoff?: { first: number; max: number };
   /** The version of this app: the one an update of a daemon puts there. Without it, nothing is said. */
   appVersion?: string;
@@ -84,6 +86,13 @@ export type RuntimeHooks = {
   lost: (connection: Connection) => void;
   /** The connection is no longer used. `cancel`: what waits on it is answered cancelled (it was closed here). */
   dropped: (connection: Connection, cancel: boolean) => void;
+  /** A sign-in flow this connection started ended (`_cycle/agent_auth_completed`). */
+  authCompleted: (
+    environmentId: string,
+    completed: Parameters<NonNullable<ClientEvents["agentAuthCompleted"]>>[0],
+  ) => void;
+  /** The environment's connection dropped or closed: the sign-in flows on it end. */
+  authLost: (environmentId: string) => void;
 };
 
 type Upgrade = { running: true } | { error: string } | { waiting: true };
@@ -277,6 +286,14 @@ export class Runtime {
         listChanged: () =>
           void this.#hooks.refresh(environmentId, connection).catch(() => undefined),
         defaultsChanged: (agent) => this.emit({ type: "agent-defaults", environmentId, agent }),
+        agentSetupChanged: (agent, revision) =>
+          this.emit({
+            type: "agent-setup-changed",
+            environmentId,
+            agent,
+            ...(revision !== undefined ? { revision } : {}),
+          }),
+        agentAuthCompleted: (completed) => this.#hooks.authCompleted(environmentId, completed),
         connectorsChanged: () => this.emit({ type: "connectors", environmentId }),
         pluginsChanged: (agentId) => this.emit({ type: "plugins", environmentId, agentId }),
         planUsage: (agent, usage) => this.emit({ type: "plan-usage", environmentId, agent, usage }),
@@ -308,6 +325,7 @@ export class Runtime {
           if (state !== "connecting")
             this.track("environment_connection", { kind: this.kindOf(environmentId), state });
           if (state === "reconnecting") this.#hooks.lost(connection);
+          if (state === "reconnecting" || state === "closed") this.#hooks.authLost(environmentId);
           if (state === "connected" && was === "reconnecting") {
             void this.#hooks.refresh(environmentId, connection, true).catch(() => undefined);
           }
@@ -491,6 +509,7 @@ const capabilitiesOf = (client: CycleClient): NonNullable<EnvironmentStatus["cap
   trust: client.capabilities.trust === true,
   connectors: client.capabilities.connectors === true,
   plugins: client.pluginAgents,
+  agentSetup: client.capabilities.agentSetup === true,
   sessionMentions: client.capabilities.sessionMentions === true,
   fs: client.capabilities.fs === true,
   diff: client.capabilities.diff === true,

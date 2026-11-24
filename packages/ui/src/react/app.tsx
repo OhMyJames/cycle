@@ -305,12 +305,15 @@ function AppWindow() {
         <SettingsPage
           section={pages.settings}
           onSection={pages.showSection}
+          harnessAgent={pages.harnessAgent}
+          harnessFrom={pages.harnessFrom}
+          onHarnessAgent={pages.showHarnessAgent}
           onClose={pages.leaveSettings}
           banner={errorBanner}
           environments={environments}
           status={status}
           agents={agentsByEnvironment}
-          environmentId={selectedEnvironment}
+          environmentId={pages.harnessEnvironment ?? selectedEnvironment}
           onAddEnvironment={() => {
             setTargetEnvironment(undefined);
             open("add-environment");
@@ -426,6 +429,7 @@ function AppWindow() {
                   follow={sent}
                   sidebarToggle={sidebarCollapsed ? sidebarToggle : undefined}
                   onSent={() => setSent((n) => n + 1)}
+                  onOpenHarnessSettings={pages.openHarnessSettings}
                 />
               ) : null}
               {blank === undefined && session !== undefined ? (

@@ -33,7 +33,7 @@ const enabled =
   sourceHome !== "" &&
   existsSync(join(sourceHome, ".gemini", "antigravity-cli", "antigravity-oauth-token")) &&
   agyPath !== undefined &&
-  isAgyVersionSupported(agyPath, process.env);
+  (await isAgyVersionSupported(agyPath, process.env));
 
 const copyAuthToTempHome = (destHome: string) => {
   const srcCli = join(sourceHome as string, ".gemini", "antigravity-cli");

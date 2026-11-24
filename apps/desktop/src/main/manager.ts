@@ -1,5 +1,11 @@
-import type { EnvironmentConfig, SessionSnapshot, SessionSummary } from "@cycle/ui";
+import type {
+  AgentRuntimePatchValue,
+  EnvironmentConfig,
+  SessionSnapshot,
+  SessionSummary,
+} from "@cycle/ui";
 import { EnvironmentActions } from "./actions.ts";
+import { AgentAuthFlows } from "./agent-auth-flows.ts";
 import type { ManagerApi } from "./dispatch.ts";
 import { PendingStore } from "./pending.ts";
 import { type ManagerOptions, Runtime } from "./runtime.ts";
@@ -24,6 +30,7 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
   readonly #runtime: Runtime;
   readonly #watcher: SessionWatcher;
   readonly #pending: PendingStore;
+  readonly #auth: AgentAuthFlows;
 
   constructor(options: ManagerOptions) {
     // The runtime builds each connection and hands what happens in its sessions to the watcher and the pending store.
@@ -48,13 +55,17 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
         watcher.refresh(environmentId, connection, afterOutage),
       lost: (connection) => pending.markStale(connection),
       dropped: (connection, cancel) => pending.release(connection, { cancel }),
+      authCompleted: (environmentId, completed) => auth.completed(environmentId, completed),
+      authLost: (environmentId) => auth.lost(environmentId),
     });
+    const auth = new AgentAuthFlows(runtime);
     const pending = new PendingStore(runtime);
     const watcher = new SessionWatcher(runtime, pending);
     super(runtime, watcher);
     this.#runtime = runtime;
     this.#watcher = watcher;
     this.#pending = pending;
+    this.#auth = auth;
   }
 
   init(): Promise<void> {
@@ -114,6 +125,49 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
 
   answerForm(key: string, answer: unknown): Promise<void> {
     return this.#pending.answerForm(key, answer);
+  }
+
+  // ---- an agent's setup and account (agent-auth-flows.ts) ----
+
+  readAgentSetup(
+    environmentId: string,
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ) {
+    return this.#auth.readAgentSetup(environmentId, agent, options);
+  }
+
+  setAgentRuntimeSettings(
+    environmentId: string,
+    agent: string,
+    patch: Record<string, AgentRuntimePatchValue>,
+    expectedRevision: number,
+  ) {
+    return this.#auth.setAgentRuntimeSettings(environmentId, agent, patch, expectedRevision);
+  }
+
+  revealDaemonConfig(environmentId: string) {
+    return this.#auth.revealDaemonConfig(environmentId);
+  }
+
+  startAgentAuth(environmentId: string, agent: string) {
+    return this.#auth.startAgentAuth(environmentId, agent);
+  }
+
+  openAgentAuthUrl(environmentId: string, flowId: string) {
+    return this.#auth.openAgentAuthUrl(environmentId, flowId);
+  }
+
+  submitAgentAuth(environmentId: string, flowId: string, code: string) {
+    return this.#auth.submitAgentAuth(environmentId, flowId, code);
+  }
+
+  cancelAgentAuth(environmentId: string, flowId: string) {
+    return this.#auth.cancelAgentAuth(environmentId, flowId);
+  }
+
+  logoutAgent(environmentId: string, agent: string) {
+    return this.#auth.logoutAgent(environmentId, agent);
   }
 
   chooseDirectory(): Promise<string | undefined> {

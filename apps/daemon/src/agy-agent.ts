@@ -1,4 +1,4 @@
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 import {
   AGY_CONFIG_SCHEMA,
@@ -8,6 +8,12 @@ import {
   isVersionSupported,
 } from "@cycle/harness-agy";
 import { runAdapter } from "@cycle/harness-agy/run";
+import {
+  agyEffectiveRuntime,
+  cachedBinaryVersion,
+  createAgySetupProvider,
+  probeBinaryVersion,
+} from "./agent-setup.ts";
 import { type Config, ConfigSchema } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
@@ -44,37 +50,42 @@ export const findAgyExecutable = (
   return fromPath && isExecutable(fromPath) ? fromPath : undefined;
 };
 
-/** Cache `agy --version` checks by `(path, mtimeMs, size)` so `_cycle/agents/list` stays fast. */
-const versionCache = new Map<string, boolean>();
+const versionEnv = (
+  inherited: Record<string, string | undefined>,
+  isolatedHome?: string,
+): Record<string, string> => ({
+  PATH: inherited.PATH ?? "/usr/bin:/bin",
+  ...(isolatedHome !== undefined ? { HOME: isolatedHome } : {}),
+});
 
-export const isAgyVersionSupported = (
+/**
+ * Whether `agy --version` is at least `AGY_MIN_VERSION`. The one probe and cache the setup page uses too
+ * (`probeBinaryVersion`, one parse rule, run asynchronously so the event loop is never blocked).
+ */
+export const isAgyVersionSupported = async (
+  executable: string,
+  inherited: Record<string, string | undefined>,
+  isolatedHome?: string,
+): Promise<boolean> => {
+  const version = await probeBinaryVersion(executable, versionEnv(inherited, isolatedHome));
+  return version !== undefined && isVersionSupported(version, AGY_MIN_VERSION);
+};
+
+/**
+ * For callers that cannot wait: whether the shared cache already says this agy is unusable (too old, or its version
+ * could not be read). When nothing is known yet a probe is started for next time and the binary is not refused.
+ */
+const knownUnusable = (
   executable: string,
   inherited: Record<string, string | undefined>,
   isolatedHome?: string,
 ): boolean => {
-  let cacheKey: string | undefined;
-  try {
-    const st = statSync(executable);
-    cacheKey = `${executable}:${st.mtimeMs}:${st.size}`;
-    const cached = versionCache.get(cacheKey);
-    if (cached !== undefined) return cached;
-  } catch {
+  const known = cachedBinaryVersion(executable);
+  if (known === undefined) {
+    void isAgyVersionSupported(executable, inherited, isolatedHome);
     return false;
   }
-  const result = Bun.spawnSync([executable, "--version"], {
-    env: {
-      PATH: inherited.PATH ?? "/usr/bin:/bin",
-      ...(isolatedHome !== undefined ? { HOME: isolatedHome } : {}),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 3000,
-  });
-  const ok =
-    result.exitCode === 0 &&
-    isVersionSupported(new TextDecoder().decode(result.stdout).trim(), AGY_MIN_VERSION);
-  if (cacheKey !== undefined) versionCache.set(cacheKey, ok);
-  return ok;
+  return known.version === undefined || !isVersionSupported(known.version, AGY_MIN_VERSION);
 };
 
 /**
@@ -111,7 +122,7 @@ export const agyHarness: Harness = {
     login: ["acp", "--login"],
     directories: ["HOME"],
   },
-  definition: ({ config, dataDir, inherited, self, log }) => {
+  definition: ({ config, dataDir, inherited, self, log, agentSettings }) => {
     const settings = config.agy;
     const env = agyEnv(settings, dataDir, inherited);
     const executable = () => findAgyExecutable(settings, inherited);
@@ -128,32 +139,47 @@ export const agyHarness: Harness = {
       promptCapabilities: AGY_PROMPT_CAPABILITIES,
       steer: true,
       command: [...self, "adapter", "agy"],
-      env: {
-        PATH: inherited.PATH ?? "",
-        CYCLE_ADAPTER_CONFIG: JSON.stringify({
-          env,
-          agyExecutable: executable() ?? "",
-          fallbackExecutables,
-          ...(settings.executable !== undefined ? { searchPath: false } : {}),
-          logFile: join(dataDir, "logs", "agy-acp.log"),
-          ...(settings.sandbox !== undefined ? { sandbox: settings.sandbox } : {}),
-          ...(settings.agent !== undefined ? { agent: settings.agent } : {}),
-          ...(settings.telemetry !== undefined ? { telemetry: settings.telemetry } : {}),
-        }),
+      env: () => {
+        const runtime = agyEffectiveRuntime(settings, agentSettings).values;
+        return {
+          PATH: inherited.PATH ?? "",
+          CYCLE_ADAPTER_CONFIG: JSON.stringify({
+            env,
+            agyExecutable: executable() ?? "",
+            fallbackExecutables,
+            ...(settings.executable !== undefined ? { searchPath: false } : {}),
+            logFile: join(dataDir, "logs", "agy-acp.log"),
+            sandbox: runtime.sandbox,
+            ...(settings.agent !== undefined ? { agent: settings.agent } : {}),
+            telemetry: runtime.telemetry,
+          }),
+        };
       },
-      available: () => {
+      available: async () => {
         const path = executable();
-        return path !== undefined && isAgyVersionSupported(path, inherited, env.HOME);
+        return path !== undefined && (await isAgyVersionSupported(path, inherited, env.HOME));
       },
       plugins: new AgyPlugins({
         executable: () => {
           const path = executable();
-          return path !== undefined && isAgyVersionSupported(path, inherited, env.HOME)
-            ? path
-            : undefined;
+          return path !== undefined && !knownUnusable(path, inherited, env.HOME) ? path : undefined;
         },
         env,
         cwd: join(dataDir, "plugins", "agy"),
+      }),
+      setup: createAgySetupProvider({
+        config: settings,
+        dataDir,
+        inherited,
+        env: () => agyEnv(settings, dataDir, inherited),
+        agentSettings,
+        locateBinary: () => {
+          if (settings.executable !== undefined) {
+            return { source: "configured", path: settings.executable };
+          }
+          const found = findAgyExecutable(settings, inherited);
+          return found !== undefined ? { source: "path", path: found } : { source: "missing" };
+        },
       }),
       ...(log !== undefined ? { log } : {}),
     });

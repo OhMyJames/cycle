@@ -2,6 +2,7 @@
 // registered by its own module, all on the daemon's `Core`; this only puts them together.
 import { type AgentApp, agent as acpAgent } from "@agentclientprotocol/sdk/experimental/v2";
 import type { ClientConn } from "../session.ts";
+import { registerAgentSetup } from "./agent-setup.ts";
 import { registerAgents } from "./agents.ts";
 import { registerAttach } from "./attach.ts";
 import { registerConnection } from "./connection.ts";
@@ -26,6 +27,7 @@ export const facing = (core: Core, holder: { value?: ClientConn }): AgentApp => 
   registerAttach(app, core, me);
   registerPrompts(app, core, me);
   registerAgents(app, core);
+  registerAgentSetup(app, core, me);
   registerFiles(app, core);
   registerTerminals(app, core, me);
   registerTrust(app, core);

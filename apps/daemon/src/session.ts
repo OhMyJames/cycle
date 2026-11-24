@@ -107,12 +107,29 @@ export class Session {
   /** Set when the daemon lets the session go (deleted, or the daemon stops): a log closed then is not a failed one. */
   closed = false;
   /**
-   * The folder's trust decision changed after this session's agent was started (or while it was
-   * starting): it is stopped when it next has nothing to do, so the next start carries the new one.
+   * Reasons why this session's running agent process must be recycled once idle (trust change,
+   * hot-reloaded runtime setting with `next_idle_restart`, or account sign-out).
    */
-  trustStale = false;
+  readonly #staleReasons = new Set<string>();
   /** Set while an agent process is being started, so two prompts do not start two. */
   starting: Promise<AgentLink> | undefined;
+
+  markStale(reason: string): void {
+    this.#staleReasons.add(reason);
+  }
+
+  isStale(): boolean {
+    return this.#staleReasons.size > 0;
+  }
+
+  /** Whether it is stale for `reason` (an `auth` one speaks for the account it was started with, not the current one). */
+  isStaleFor(reason: string): boolean {
+    return this.#staleReasons.has(reason);
+  }
+
+  clearStale(): void {
+    this.#staleReasons.clear();
+  }
   /**
    * When something last happened here (a record written, a client attaching or leaving, an agent started), in ms. An
    * agent left with nothing to do for long enough is let go (docs/daemon.md "空闲回收"); the next prompt starts it again.

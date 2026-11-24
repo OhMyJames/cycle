@@ -32,6 +32,11 @@ export class Clients {
     for (const conn of this.#conns) this.tell(conn, method, params);
   }
 
+  /** Tells the client of one connection, if it is still connected (an answer for it alone). */
+  tellOne(connectionId: string, method: string, params: unknown): void {
+    for (const conn of this.#conns) if (conn.id === connectionId) this.tell(conn, method, params);
+  }
+
   /** Tells one client, without waiting. A failure is logged by client and method, never by what was said. */
   tell(conn: ClientConn, method: string, params: unknown): void {
     conn.notify(method, params).catch((error: unknown) => {

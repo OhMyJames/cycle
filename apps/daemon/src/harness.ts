@@ -1,3 +1,4 @@
+import type { AgentSettings } from "./agent-settings.ts";
 import type { AgentDefinition } from "./agents.ts";
 import type { Config } from "./config.ts";
 import type { Logger } from "./logger.ts";
@@ -11,7 +12,16 @@ export type HarnessContext = {
   /** The command that runs this program again, for `adapter <id>` (self.ts). */
   self: string[];
   log?: Logger;
+  /**
+   * The daemon's own live per-agent runtime overrides (`<dataDir>/agent-settings.json`), for env and limits read at
+   * each start (hot reload). `agentsFor` always gives it: it returns an `AgentsFactory` that the daemon calls with the
+   * instance it owns, so no other one can be handed in. Absent only when a test makes a definition by hand.
+   */
+  agentSettings?: AgentSettings;
 };
+
+/** What a harness's own command line is given: no daemon, so no live runtime settings. */
+export type HarnessCliContext = Omit<HarnessContext, "self" | "log" | "agentSettings">;
 
 /**
  * One agent the daemon is built with: its adapter, its binary, its own command line. Everything outside the daemon's
@@ -34,8 +44,8 @@ export type Harness = {
   /** Its own command line, run with the environment the daemon gives the agent. Absent: it has none to run. */
   cli?: {
     /** The binary to run: the shipped one, else the machine's. */
-    executable: (context?: Omit<HarnessContext, "self" | "log">) => string | undefined;
-    env: (context: Omit<HarnessContext, "self" | "log">) => Record<string, string>;
+    executable: (context?: HarnessCliContext) => string | undefined;
+    env: (context: HarnessCliContext) => Record<string, string>;
     /** Put before every command it is given (its own options that must always hold). Absent: none. */
     args?: string[];
     /** The arguments that sign in. */

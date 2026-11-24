@@ -1,5 +1,6 @@
 import { ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
 import type { PromptCapabilities } from "@cycle/protocol";
+import type { AgentSetupProvider } from "./agent-setup.ts";
 import type { AgentDefinition } from "./agents.ts";
 import type { Logger } from "./logger.ts";
 import type { PluginProvider } from "./plugins.ts";
@@ -14,17 +15,19 @@ export type ProcessAgentOptions = {
   steer?: boolean;
   command: string[];
   /**
-   * The child's whole environment. Nothing is inherited from the daemon: the daemon's own variables
-   * hold keys that override a user's login and bill an API (AGENTS.md).
+   * The child's whole environment, or a function evaluated on every `launch()` so hot-reloaded runtime settings
+   * reach newly spawned adapter processes. Nothing is inherited from the daemon (AGENTS.md).
    */
-  env: Record<string, string>;
+  env: Record<string, string> | (() => Record<string, string>);
   cwd?: string;
   /** Whether it can run at all, checked when clients ask which agents there are. */
   available?: () => boolean | Promise<boolean>;
   /** See `AgentDefinition`. */
-  maxAhead?: number;
+  maxAhead?: number | (() => number | undefined);
   /** See `AgentDefinition`. */
   plugins?: PluginProvider;
+  /** See `AgentDefinition`. */
+  setup?: AgentSetupProvider;
   /**
    * Where what the process says on stderr goes, line by line, and how it exited (docs/daemon.md "日志"). Its stdout
    * is the protocol and is never logged. Without it stderr is the daemon's own.
@@ -63,9 +66,11 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
   ...(options.available !== undefined ? { available: options.available } : {}),
   ...(options.maxAhead !== undefined ? { maxAhead: options.maxAhead } : {}),
   ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
+  ...(options.setup !== undefined ? { setup: options.setup } : {}),
   launch: async () => {
+    const env = typeof options.env === "function" ? options.env() : options.env;
     const proc = Bun.spawn(options.command, {
-      env: options.env,
+      env,
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       stdin: "pipe",
       stdout: "pipe",

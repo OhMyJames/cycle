@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { META } from "@cycle/protocol";
 import { BINARY_SOURCES } from "../scripts/binaries.ts";
+import { AgentSettings } from "../src/agent-settings.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { agentsFor, HARNESSES } from "../src/harnesses.ts";
 import { Daemon } from "../src/index.ts";
@@ -24,7 +26,7 @@ afterEach(async () => {
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
-test("every harness has what the daemon reads by its id: a section in config.json, and where its binary is built from", () => {
+test("every harness has what the daemon reads by its id: a section in config.json, and where its binary is built from", async () => {
   const config = ConfigSchema.parse({});
   const ids = HARNESSES.map((h) => h.id);
   expect(new Set(ids).size).toBe(ids.length);
@@ -33,13 +35,14 @@ test("every harness has what the daemon reads by its id: a section in config.jso
     if (harness.binary !== undefined) expect(Object.keys(BINARY_SOURCES)).toContain(harness.id);
   }
   // The agents are made in the registry's order: the first is what a session with none named gets.
-  expect(agentsFor(config, dir, { PATH: "/bin" }).map((a) => a.id)).toEqual(ids);
+  const settings = await AgentSettings.load(join(dir, "agent-settings.json"));
+  expect(agentsFor(config, dir, { PATH: "/bin" })(settings).map((a) => a.id)).toEqual(ids);
 });
 
 test("a second agent goes the whole way: listed, a session made with it, a prompt answered by its own adapter process, and resumed by the next daemon (CYCL-155)", async () => {
   // A harness that is not Claude, beside a first agent: nothing but its entry says how it runs.
   const first = fakeAgent();
-  const agents = () => [
+  const agents = () => (settings: AgentSettings) => [
     first.definition,
     ...agentsFor(
       ConfigSchema.parse({}),
@@ -48,7 +51,7 @@ test("a second agent goes the whole way: listed, a session made with it, a promp
       undefined,
       [echoHarness],
       [process.execPath, ECHO_MAIN],
-    ),
+    )(settings),
   ];
   const daemon = await Daemon.start({ dataDir: dir, agents: agents() });
   open.push(daemon);

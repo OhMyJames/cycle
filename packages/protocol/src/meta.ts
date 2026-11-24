@@ -21,6 +21,10 @@ export const META = {
   recommended: "cycle/recommended",
   /** On a choice an agent offers: true on a high-risk option (such as skipping all permission checks) that the UI should warn on. */
   danger: "cycle/danger",
+  /** On a runtime `configSchema` property: when changes take effect (docs/protocol.md §16). */
+  applyScope: "cycle/applyScope",
+  /** On a runtime `configSchema` property: `{ key, equals }` enabling condition (docs/protocol.md §16). */
+  enabledWhen: "cycle/enabledWhen",
   /** On a `configSchema` property that lists choices: true when the agent takes values that are not listed, so the list is a menu, not a limit. */
   open: "cycle/open",
   /** On a model choice: the effort levels that model takes (`[]` when it takes none); absent when not known (docs/protocol.md §10). */
@@ -137,6 +141,8 @@ export const CapabilitiesSchema = z.object({
   trust: z.boolean().optional(),
   /** `_cycle/plan_usage/read` and `_cycle/plan_usage_changed` are there (docs/protocol.md §8 "套餐用量"). */
   planUsage: z.boolean().optional(),
+  /** `_cycle/agent_setup/*` and `_cycle/agent_auth/*` are there (docs/protocol.md §16). */
+  agentSetup: z.boolean().optional(),
   /** A `cycle://session/` mention in a prompt reaches the agent as that session's record (docs/protocol.md §8). */
   sessionMentions: z.boolean().optional(),
 });
