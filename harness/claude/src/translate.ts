@@ -81,7 +81,6 @@ export class TurnTranslator {
   #messageId: string | undefined;
   /** Tokens in context after the latest main-thread model call: what the next call will start from. */
   #contextTokens: number | undefined;
-  #blockTypes = new Map<number, string>();
   readonly #streamed = new Set<string>();
   /** Task calls waiting for their results: a created task's id is only in the result. */
   readonly #calls = new Map<string, { name: string; input: Record<string, unknown> }>();
@@ -131,13 +130,10 @@ export class TurnTranslator {
       const id = (event.message as { id?: string } | undefined)?.id;
       this.#messageId = id;
       if (id !== undefined) this.#streamed.add(id);
-      this.#blockTypes.clear();
       return [];
     }
-    const index = typeof event.index === "number" ? event.index : -1;
     if (event.type === "content_block_start") {
       const block = event.content_block as Block;
-      this.#blockTypes.set(index, String(block.type));
       if (block.type === "tool_use") {
         const name = String(block.name);
         this.#open.add(String(block.id));

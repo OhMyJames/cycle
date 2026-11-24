@@ -523,8 +523,6 @@ export const resultOf = (
       return grep(structured, contentOf(content));
     case "Monitor":
       return monitor(structured, contentOf(content));
-    case "WebFetch":
-      return webFetch(structured, contentOf(content));
     case "WebSearch":
       return webSearch(structured);
     default:
