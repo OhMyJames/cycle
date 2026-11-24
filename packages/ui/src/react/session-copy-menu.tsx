@@ -14,7 +14,7 @@ export function SessionCopyMenu({ session }: { session: SessionSummary }) {
   const copy = (text: string) =>
     void store.copyText(text).then((done) => {
       if (done) toast.success(t("tool.copied"), { duration: 1500 });
-      else toast.error(t("tool.copyFailed"));
+      else toast.error(t("session.copyFailed"));
     });
   return (
     <MenuSub>
@@ -23,7 +23,11 @@ export function SessionCopyMenu({ session }: { session: SessionSummary }) {
         <MenuItem value="copy-session-id" onSelect={() => copy(session.sessionId)}>
           {t("session.copySessionId")}
         </MenuItem>
-        <MenuItem value="copy-path" onSelect={() => copy(session.cwd)}>
+        <MenuItem
+          value="copy-path"
+          disabled={session.cwd === ""}
+          onSelect={() => copy(session.cwd)}
+        >
           {t("session.copyPath")}
         </MenuItem>
       </MenuSubContent>

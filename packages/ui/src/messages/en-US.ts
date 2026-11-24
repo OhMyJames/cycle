@@ -903,6 +903,7 @@ export const enUS = {
   "session.rename": "Rename",
   "session.copy": "Copy",
   "session.copySessionId": "Copy session ID",
+  "session.copyFailed": "Could not copy",
   "session.copyPath": "Copy absolute path",
   "session.archive": "Archive",
   "session.restore": "Restore",
