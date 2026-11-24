@@ -5,13 +5,16 @@ import { AgentApp, methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { AgentSetupSnapshotSchema, agentSetupRead, META } from "@cycle/protocol";
 import {
   type AgentSetupRunCommand,
+  CLAUDE_AUTH_URL_RE,
   captureConfigMtime,
   createAgySetupProvider,
   createClaudeSetupProvider,
   createCodexSetupProvider,
+  extractAuthUrl,
   readConfigFileStatus,
   runCodexAppServerLogout,
   runCodexAppServerProbe,
+  startCliCodeAuth,
   startCodexAppServerAuth,
 } from "../src/agent-setup.ts";
 import { ConfigSchema } from "../src/config.ts";
@@ -581,4 +584,96 @@ for await (const chunk of Bun.stdin.stream()) {
     { mode: "device_code", requiresLocalLoopback: false },
   ]);
   expect(provider.canSignOut()).toBe(true);
+});
+
+test("Claude code auth driver extracts ANSI-wrapped URL, submits one-time code via stdin, classifies invalid_code/parse_failed, and cleans up on cancel/logout", async () => {
+  expect(
+    extractAuthUrl(
+      `\x1b[32mVisit: https://claude.com/cai/oauth/authorize?code=true&state=abc\x1b[0m\nPaste code > `,
+      CLAUDE_AUTH_URL_RE,
+    ),
+  ).toBe("https://claude.com/cai/oauth/authorize?code=true&state=abc");
+
+  const fakeClaude = join(dir, "fake-claude");
+  const script = `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (args[0] === "auth" && args[1] === "logout") {
+  process.stdout.write("Successfully logged out\\n");
+  process.exit(0);
+}
+if (process.env.FAKE_MODE === "no_url") {
+  process.stdout.write("Something unexpected\\n");
+  process.exit(1);
+}
+process.stdout.write("Opening browser to sign in...\\n");
+process.stdout.write("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=xyz\\n");
+process.stdout.write("Paste code here if prompted > ");
+const decoder = new TextDecoder();
+let buf = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buf += decoder.decode(chunk, { stream: true });
+  if (buf.includes("\\n")) {
+    const code = buf.trim();
+    if (code === "VALID-CODE-123") {
+      process.stdout.write("Login successful\\n");
+      process.exit(0);
+    }
+    process.stderr.write("Error: invalid_grant (expired code)\\n");
+    process.exit(1);
+  }
+}
+`;
+  writeFileSync(fakeClaude, script, { mode: 0o755 });
+
+  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", CLAUDE_CONFIG_DIR: join(dir, "claude") };
+
+  // 1. Valid code succeeds.
+  const okFlow = await startCliCodeAuth({
+    command: [fakeClaude, "auth", "login", "--claudeai"],
+    env,
+    urlPattern: CLAUDE_AUTH_URL_RE,
+  });
+  expect(okFlow.authorizationUrl).toBe(
+    "https://claude.com/cai/oauth/authorize?code=true&state=xyz",
+  );
+  expect(await okFlow.submit?.("VALID-CODE-123")).toEqual({ ok: true });
+  expect(await okFlow.completed).toEqual({ ok: true });
+
+  // 2. Invalid code returns invalid_code.
+  const badFlow = await startCliCodeAuth({
+    command: [fakeClaude, "auth", "login", "--claudeai"],
+    env,
+    urlPattern: CLAUDE_AUTH_URL_RE,
+  });
+  expect(await badFlow.submit?.("WRONG-CODE")).toEqual({ ok: false, reason: "invalid_code" });
+
+  // 3. Cancel terminates process cleanly.
+  const cancelFlow = await startCliCodeAuth({
+    command: [fakeClaude, "auth", "login", "--claudeai"],
+    env,
+    urlPattern: CLAUDE_AUTH_URL_RE,
+  });
+  await cancelFlow.cancel();
+  expect(await cancelFlow.completed).toEqual({ ok: false, reason: "cancelled" });
+
+  // 4. Missing URL returns parse_failed.
+  await expect(
+    startCliCodeAuth({
+      command: [fakeClaude, "auth", "login", "--claudeai"],
+      env: { ...env, FAKE_MODE: "no_url" },
+      urlPattern: CLAUDE_AUTH_URL_RE,
+    }),
+  ).rejects.toMatchObject({ reason: "parse_failed" });
+
+  // 5. Provider advertises code mode + canSignOut and runs logout cleanly.
+  const provider = createClaudeSetupProvider({
+    config: ConfigSchema.parse({}).claude,
+    dataDir: dir,
+    inherited: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    env: () => ({ CLAUDE_CONFIG_DIR: join(dir, "claude") }),
+    locateBinary: () => ({ source: "path", path: fakeClaude }),
+  });
+  expect(provider.signInModes()).toEqual([{ mode: "code", requiresLocalLoopback: false }]);
+  expect(provider.canSignOut()).toBe(true);
+  await provider.authDriver?.logout?.();
 });

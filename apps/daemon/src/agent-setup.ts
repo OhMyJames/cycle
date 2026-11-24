@@ -406,11 +406,243 @@ export type ClaudeSetupOptions = {
   env: () => Record<string, string>;
   locateBinary: () => { source: AgentBinarySource; path?: string };
   runCommand?: AgentSetupRunCommand;
+  startCodeAuth?: StartCliCodeAuth;
   timeoutMs?: number;
+};
+
+const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+
+export const CLAUDE_AUTH_URL_RE =
+  /https:\/\/(?:claude\.com|claude\.ai|platform\.claude\.com)\/[^\s"'<>]+/;
+
+export const AGY_AUTH_URL_RE = /https:\/\/accounts\.google\.com\/[^\s"'<>]+/;
+
+const INVALID_CODE_RE =
+  /invalid[_ -]?code|invalid[_ -]?grant|incorrect code|expired code|code.*(?:invalid|expired|rejected)/i;
+
+/** Strips ANSI sequences and extracts the first complete authorization URL matching `pattern`. */
+export const extractAuthUrl = (text: string, pattern: RegExp): string | undefined => {
+  const clean = text.replace(ANSI_ESCAPE_RE, "");
+  // Only match URLs followed by whitespace or newline so we don't capture a half-streamed chunk.
+  const match = clean.match(new RegExp(`(${pattern.source})(?=[\\s\\r\\n])`));
+  if (!match?.[1]) return undefined;
+  return match[1].replace(/[.,;)]+$/, "");
+};
+
+export type CliCodeAuthOptions = {
+  command: string[];
+  env: Record<string, string>;
+  urlPattern: RegExp;
+  startTimeoutMs?: number;
+  submitTimeoutMs?: number;
+};
+
+export type StartCliCodeAuth = (options: CliCodeAuthOptions) => Promise<AgentAuthFlowHandle>;
+
+const noopBrowser = (): string => (existsSync("/usr/bin/true") ? "/usr/bin/true" : "/bin/true");
+
+/**
+ * Drives a non-TTY hosted-callback CLI login (`claude auth login --claudeai` or `agy acp --login`):
+ * - Sets `BROWSER=/usr/bin/true` so the CLI never silently launches a browser on the daemon host.
+ * - Extracts the authorization URL from stdout/stderr (stripping ANSI).
+ * - Writes the user's one-time code to stdin in memory on `submit(code)` (never persisted or logged).
+ * - Cleans up via `SIGTERM` + 500ms grace `SIGKILL` on `cancel()`.
+ */
+export const startCliCodeAuth: StartCliCodeAuth = async ({
+  command,
+  env,
+  urlPattern,
+  startTimeoutMs = 15_000,
+  submitTimeoutMs = 30_000,
+}) => {
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(command, {
+      env: { ...env, BROWSER: noopBrowser() },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    throw new AgentAuthDriverError("process_failed", "Failed to start CLI login process");
+  }
+
+  const stdin = proc.stdin as Bun.FileSink;
+  const stdout = proc.stdout as ReadableStream<Uint8Array>;
+  const stderr = proc.stderr as ReadableStream<Uint8Array>;
+  const outReader = stdout.getReader();
+  const errReader = stderr.getReader();
+
+  let combined = "";
+  let cleanedUp = false;
+  let cancelled = false;
+  let settled = false;
+  let resolveCompleted!: (outcome: AgentAuthFlowOutcome) => void;
+  const completed = new Promise<AgentAuthFlowOutcome>((resolve) => {
+    resolveCompleted = (outcome) => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+  });
+
+  let resolveUrl!: (url: string) => void;
+  let rejectUrl!: (error: AgentAuthDriverError) => void;
+  let urlSettled = false;
+  const urlPromise = new Promise<string>((resolve, reject) => {
+    resolveUrl = (url) => {
+      if (urlSettled) return;
+      urlSettled = true;
+      resolve(url);
+    };
+    rejectUrl = (error) => {
+      if (urlSettled) return;
+      urlSettled = true;
+      reject(error);
+    };
+  });
+
+  const killProc = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try {
+      stdin.end();
+    } catch {
+      // ignore
+    }
+    try {
+      await outReader.cancel();
+    } catch {
+      // ignore
+    }
+    try {
+      await errReader.cancel();
+    } catch {
+      // ignore
+    }
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      return;
+    }
+    const grace = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }, 500);
+    await proc.exited.catch(() => {});
+    clearTimeout(grace);
+  };
+
+  const onChunk = (text: string) => {
+    combined += text;
+    if (combined.length > 64_000) combined = combined.slice(-32_000);
+    if (!urlSettled) {
+      const found = extractAuthUrl(combined, urlPattern);
+      if (found !== undefined) resolveUrl(found);
+    }
+  };
+
+  const pump = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        onChunk(decoder.decode(chunk.value, { stream: true }));
+      }
+      const tail = decoder.decode();
+      if (tail) onChunk(tail);
+    } catch {
+      // cancelled
+    }
+  };
+
+  const outDone = pump(outReader);
+  const errDone = pump(errReader);
+
+  void proc.exited.then(async (exitCode) => {
+    await Promise.allSettled([outDone, errDone]);
+    if (!urlSettled) {
+      // Final check with trailing newline in case URL was at EOF without trailing space.
+      const atEof = extractAuthUrl(`${combined}\n`, urlPattern);
+      if (atEof !== undefined) {
+        resolveUrl(atEof);
+      } else {
+        rejectUrl(
+          new AgentAuthDriverError(
+            "parse_failed",
+            "CLI exited before printing a valid authorization URL",
+          ),
+        );
+      }
+    }
+    if (!settled) {
+      if (cancelled) {
+        resolveCompleted({ ok: false, reason: "cancelled" });
+      } else if (exitCode === 0) {
+        resolveCompleted({ ok: true });
+      } else {
+        const reason = INVALID_CODE_RE.test(combined) ? "invalid_code" : "process_failed";
+        resolveCompleted({ ok: false, reason });
+      }
+    }
+  });
+
+  const startTimer = setTimeout(() => {
+    rejectUrl(new AgentAuthDriverError("timeout", "Timed out waiting for authorization URL"));
+  }, startTimeoutMs);
+
+  let authorizationUrl: string;
+  try {
+    authorizationUrl = await urlPromise;
+  } catch (error) {
+    clearTimeout(startTimer);
+    await killProc();
+    throw error;
+  } finally {
+    clearTimeout(startTimer);
+  }
+
+  return {
+    authorizationUrl,
+    completed,
+    submit: async (code: string): Promise<AgentAuthFlowOutcome> => {
+      if (settled) return { ok: false, reason: "process_failed" };
+      try {
+        stdin.write(`${code.trim()}\n`);
+        stdin.flush();
+      } catch {
+        return { ok: false, reason: "process_failed" };
+      }
+
+      let submitTimer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<AgentAuthFlowOutcome>((resolve) => {
+        submitTimer = setTimeout(() => {
+          resolve({ ok: false, reason: "timeout" });
+        }, submitTimeoutMs);
+      });
+      const outcome = await Promise.race([completed, timeoutPromise]);
+      clearTimeout(submitTimer);
+      if (!settled && !outcome.ok && outcome.reason === "timeout") {
+        await killProc();
+        resolveCompleted(outcome);
+      }
+      return outcome;
+    },
+    cancel: async () => {
+      cancelled = true;
+      await killProc();
+      resolveCompleted({ ok: false, reason: "cancelled" });
+    },
+  };
 };
 
 export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSetupProvider => {
   const run = options.runCommand ?? runIsolatedCommand;
+  const startCodeAuth = options.startCodeAuth ?? startCliCodeAuth;
   const timeoutMs = options.timeoutMs ?? 8000;
   const minimalEnv = (): Record<string, string> => ({
     PATH: options.inherited.PATH ?? "/usr/bin:/bin",
@@ -516,10 +748,56 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
   return {
     probeBinary,
     readAuth,
-    signInModes: () => [],
-    canSignOut: () => false,
+    signInModes: () => [{ mode: "code", requiresLocalLoopback: false }],
+    canSignOut: () => true,
     canRefreshUsage: false,
     loginCommand: "cycle login claude",
+    authDriver: {
+      start: async (mode) => {
+        if (mode !== "code") {
+          throw new AgentAuthDriverError("process_failed", `Unsupported Claude auth mode: ${mode}`);
+        }
+        const binary = await probeBinary();
+        if (binary.problem !== undefined || !binary.path) {
+          throw new AgentAuthDriverError("binary_unavailable", "Claude binary is unavailable");
+        }
+        const env = minimalEnv();
+        if (env.CLAUDE_CONFIG_DIR) {
+          try {
+            mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
+          } catch {
+            // let claude report if unwritable
+          }
+        }
+        return startCodeAuth({
+          command: [binary.path, "auth", "login", "--claudeai"],
+          env,
+          urlPattern: CLAUDE_AUTH_URL_RE,
+          startTimeoutMs: Math.max(timeoutMs, 15_000),
+        });
+      },
+      logout: async () => {
+        const binary = await probeBinary();
+        if (binary.problem !== undefined || !binary.path) {
+          throw new AgentAuthDriverError("binary_unavailable", "Claude binary is unavailable");
+        }
+        const env = minimalEnv();
+        if (env.CLAUDE_CONFIG_DIR) {
+          try {
+            mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
+          } catch {
+            // ignore
+          }
+        }
+        const result = await run([binary.path, "auth", "logout"], { env, timeoutMs });
+        if (result.timedOut) {
+          throw new AgentAuthDriverError("timeout", "Claude logout timed out");
+        }
+        if (result.exitCode !== 0) {
+          throw new AgentAuthDriverError("process_failed", "Claude logout failed");
+        }
+      },
+    },
     diagnostics: () => ({
       dataDir: options.config.configDir ?? join(options.dataDir, "claude"),
       customDataDir: options.config.configDir !== undefined,
