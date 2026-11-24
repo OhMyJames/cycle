@@ -1169,17 +1169,21 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "blank.environment.refused.invalid_environment":
     "session 没有开始：那个工作位置上的 Cycle 读不懂这个环境。请确认它是最新版本。",
   "blank.environment.refused.missing": "session 没有开始：那个环境已被移除。请另选一个。",
+  "blank.branch.tip": "分支：{branch}",
+  "blank.branch.label": "分支：{branch}",
+  "blank.branch.none": "无分支",
+  "blank.branch.search": "搜索分支",
+  "blank.branch.heading": "本地分支",
+  "blank.branch.current": "当前",
+  "blank.branch.empty": "没有匹配的分支",
+  "blank.branch.turnsOn": "选择其他分支会新建 worktree。",
+  "session.worktree.name": "Worktree",
   "blank.worktree": "Worktree",
-  "blank.worktree.on": "Worktree",
-  "blank.worktree.none": "不用 worktree",
-  "blank.worktree.from": "Worktree，从 {branch}",
-  "blank.worktree.heading": "在 worktree 里开始，起点是",
   "blank.environment.refused.not_a_repository":
     "session 没有开始：这个文件夹不在 git 仓库里，无法新建 worktree。请关掉 worktree，或换一个文件夹。",
   "blank.environment.refused.invalid_name":
     "session 没有开始：Cycle 没能给 worktree 起名。请再试一次。",
   "blank.environment.refused.invalid_base": "session 没有开始：那个分支已经不在了。请另选一个。",
-  "session.worktree": "Worktree，分支 {branch}",
   "session.worktree.setupFailed":
     "这个 worktree 的 setup 脚本失败了。session 能用，但环境可能没准备好。它的输出：",
   "session.deleteUnsaved":

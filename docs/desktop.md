@@ -107,6 +107,18 @@ type LocationConfig = {
 
 排序用 `updatedAt`,不用 `cycle/lastSeq`(后者按记录条数,不是时间)。旧 daemon 的 session 没有 `updatedAt` 时排在有的之后,彼此按 `lastSeq`。
 
+### Worktree(CYC-273)
+
+交互参考 shrimpdot-durable 的分支与 worktree 选择(它的决定笔记 `2026-10-09-branch-worktree-picker`),按 Cycle 的范围取舍。
+
+- **新会话页的两个 chip**(文件夹、权限那一行,只在本机、daemon 有 `worktrees` 能力、文件夹在 git 仓库里时出现;否则两个都不显示):
+  - **分支 chip**:始终显示一个分支名,没选时是当前检出的分支。菜单顶部是搜索框(打开就在里面,直接打字;↓ 进列表,Enter 选第一项,输入法组字中的 Enter 不算),下面是"本地分支",当前分支标"Current"、行尾打勾,远端默认分支(如果没有同名本地分支)排在最前。没有匹配时写"No matching branches"。
+  - **Worktree 开关**:一个文字加对勾的 chip(`role="switch"`),默认值来自设置里该 agent 的开关。
+  - 选当前分支以外的分支会**自动打开** Worktree,因为 Cycle 不切换用户自己的检出(shrimpdot 的"切换分支"这里不做);关掉开关,chip 回到当前分支。选当前分支且开关是关的,什么都不变。
+  - 分支只列本地的,不 fetch(远端分支、先 fetch 都留待以后)。
+- **会话里**:消息框上方一行,宽度和消息框一致,写"Worktree"(悬停是 worktree 的路径)和等宽的分支名,放不下时末尾淡出。不在 worktree 里的会话没有这一行。shrimpdot 那一行末尾的 `+N −M` 改动数没有做,Cycle 的改动入口在右侧面板。
+- 图标:分支 chip 没有图标(iconmcp 里的分支图标还没取,取到再加);搜索框用已有的 `SearchIcon`。
+
 ### 待定
 
 - Switcher 分组:同一个 workspace 里有 session 在别的工作位置的情况不会出现(workspace 属于一个工作位置),所以不需要处理。如果以后同一个仓库要在本地和远程之间对应起来,那是另一个决定。

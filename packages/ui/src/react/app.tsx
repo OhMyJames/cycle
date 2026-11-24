@@ -35,7 +35,7 @@ import { SplitLayout } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
-import { WorktreeSetupNotice } from "./worktrees.tsx";
+import { WorktreeSetupNotice, WorktreeStrip } from "./worktrees.tsx";
 
 /** What the sign-in page shows when main has not said how the account stands (it could not be asked). */
 const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn: false };
@@ -483,6 +483,7 @@ function AppWindow() {
                 conversation={conversation}
                 connected={connected}
               />
+              {view !== undefined ? <WorktreeStrip worktree={session?.worktree} /> : null}
               {view !== undefined ? (
                 <Composer
                   key={`composer:${viewKey(view.locationId, view.sessionId)}`}
