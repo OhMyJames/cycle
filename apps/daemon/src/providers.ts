@@ -132,6 +132,7 @@ export class ModelProviders {
   readonly #listeners = new Set<() => void>();
   #gateway: Gateway | undefined;
   #token: string | undefined;
+  #closed = false;
 
   private constructor(path: string, providers: readonly ProviderConfig[]) {
     this.#file = new JsonFile(path, providers, (value) => ({ version: 1, providers: value }));
@@ -227,7 +228,7 @@ export class ModelProviders {
    */
   adapterConfig(): AdapterProviders | undefined {
     const models = this.models();
-    if (!models.length) return undefined;
+    if (this.#closed || !models.length) return undefined;
     this.#token ??= randomBytes(32).toString("base64url");
     const token = this.#token;
     this.#gateway ??= startGateway({
@@ -243,6 +244,7 @@ export class ModelProviders {
   }
 
   async close(): Promise<void> {
+    this.#closed = true;
     this.#gateway?.stop();
     this.#gateway = undefined;
     await this.#file.flush();
@@ -261,6 +263,14 @@ export class ModelProviders {
     return id;
   }
 }
+
+/**
+ * Whether a saved default names one of the owner's models that is no longer offered (its provider or the model was
+ * removed). Such a default is let go, so it does not keep every new session from being made. A model of the agent's own
+ * has no `/` in its id; the owner's are `<provider id>/<model id>`.
+ */
+export const isGoneOwnModel = (value: string | undefined, offered: readonly ProviderModelInfo[]) =>
+  (value?.includes("/") ?? false) && !offered.some((info) => info.id === value);
 
 /**
  * An agent's `configSchema` with the owner's models added to its `model` choices, each marked with the provider that

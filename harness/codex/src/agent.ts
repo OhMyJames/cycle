@@ -671,6 +671,13 @@ export function createAdapter(config: AdapterConfig) {
     // provider it began on, and Codex refuses a turn of another).
     const wanted = params._meta?.[META.model];
     const chosen = config.providers?.models.find((item) => item.id === wanted);
+    // A session that began on one of the owner's models, whose provider or model is gone, cannot go on under Codex's own
+    // provider: its thread is the gateway's. Said plainly, not resumed as something else.
+    if (resume && chosen === undefined && typeof wanted === "string" && wanted.includes("/"))
+      throw new RequestError(
+        -32602,
+        `This session runs on ${wanted}, which is no longer in your model providers. Add it back to continue it.`,
+      );
     onProviders = chosen !== undefined;
     if (config.providers && chosen) {
       codexConfig = { ...codexConfig, ...providerThreadConfig(config.providers, chosen) };

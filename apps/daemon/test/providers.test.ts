@@ -3,7 +3,12 @@ import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { META, type ProviderModel } from "@cycle/protocol";
-import { ModelProviders, ProvidersUnreadableError, withProviderModels } from "../src/providers.ts";
+import {
+  isGoneOwnModel,
+  ModelProviders,
+  ProvidersUnreadableError,
+  withProviderModels,
+} from "../src/providers.ts";
 
 let dir: string;
 let path: string;
@@ -106,4 +111,22 @@ test("the owner's models join an agent's model choices, marked with their provid
   ]);
   expect(withProviderModels({ properties: {} }, providers.models())).toEqual({ properties: {} });
   await providers.close();
+});
+
+test("a saved default that names a model gone since is told from one of the agent's own", async () => {
+  const providers = await ModelProviders.load(path);
+  await providers.save(custom);
+  const offered = providers.models();
+  expect(isGoneOwnModel("acme/fast", offered)).toBe(false);
+  expect(isGoneOwnModel("acme/slow", offered)).toBe(true);
+  expect(isGoneOwnModel("gpt-5.4", offered)).toBe(false);
+  expect(isGoneOwnModel(undefined, offered)).toBe(false);
+  await providers.close();
+});
+
+test("nothing is served once the providers are closed", async () => {
+  const providers = await ModelProviders.load(path);
+  await providers.save(custom);
+  await providers.close();
+  expect(providers.adapterConfig()).toBeUndefined();
 });
