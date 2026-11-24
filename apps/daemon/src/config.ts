@@ -1,3 +1,4 @@
+import { chmod, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { defaultDataDir } from "./data-dir.ts";
@@ -153,6 +154,24 @@ export const loadConfig = async (path: string): Promise<Config> => {
   } catch (error) {
     throw new Error(`${path} cannot be read: ${error instanceof Error ? error.message : error}`);
   }
+};
+
+/**
+ * `config.json` holds tokens in the clear (`env`), and the user creates it by hand with whatever mode their umask
+ * gave. If anyone but the owner can read or write it, take that away and return the mode it had; undefined when it
+ * was fine, is missing, or the platform has no such modes.
+ */
+export const secureConfigFile = async (path: string): Promise<number | undefined> => {
+  if (process.platform === "win32") return undefined;
+  let mode: number;
+  try {
+    mode = (await stat(path)).mode & 0o777;
+  } catch {
+    return undefined;
+  }
+  if ((mode & 0o077) === 0) return undefined;
+  await chmod(path, 0o600);
+  return mode;
 };
 
 export { defaultDataDir };
