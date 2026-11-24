@@ -119,6 +119,7 @@ import {
   type Mentioned,
   mentionsSession,
 } from "./session-mentions.ts";
+import type { AgentHome } from "./storage.ts";
 import {
   accountShell,
   Terminals,
@@ -141,6 +142,8 @@ export type AgentsFactory = (
 ) => AgentDefinition[];
 
 export type DaemonOptions = {
+  /** Each agent's home as the daemon gives it, for `_cycle/storage/*`. Default: none, so nothing is measured or cleared. */
+  agentHomes?: () => AgentHome[];
   /** Where the daemon keeps its data. Always given: nothing here guesses a home. */
   dataDir: string;
   /** The agents it runs (`Daemon.start` also takes an `AgentsFactory`, which is what `agentsFor` returns). */
@@ -214,6 +217,7 @@ const withoutContent = (outcome: unknown): unknown => {
 export class Daemon {
   readonly #version: string;
   readonly #dataDir: string;
+  readonly #agentHomes: () => AgentHome[];
   readonly #configFile: ConfigFileSnapshotOptions;
   readonly #agents: Map<string, AgentDefinition>;
   readonly #store: LogStore;
@@ -270,6 +274,7 @@ export class Daemon {
   ) {
     this.#version = options.version ?? "dev";
     this.#dataDir = options.dataDir;
+    this.#agentHomes = options.agentHomes ?? (() => []);
     const defaultConfigPath = join(options.dataDir, "config.json");
     this.#configFile = options.configFile ?? {
       path: defaultConfigPath,
@@ -2129,6 +2134,8 @@ export class Daemon {
   #makeCore(): Core {
     return {
       version: this.#version,
+      dataDir: this.#dataDir,
+      agentHomes: () => this.#agentHomes(),
       log: this.#log,
       agents: this.#agents,
       store: this.#store,

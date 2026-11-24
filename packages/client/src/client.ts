@@ -80,6 +80,8 @@ import {
   providersSave,
   type ResultOf,
   type SessionPageOptions,
+  type StorageAgent,
+  type StorageCleanProblem,
   seqOf,
   sessionArchive,
   sessionDismissBackground,
@@ -87,6 +89,8 @@ import {
   sessionSetTitle,
   sessionStopSubagent,
   sessionUnarchive,
+  storageClean,
+  storageRead,
   TERMINAL_NOTIFICATIONS,
   type TerminalAttached,
   TerminalChangedSchema,
@@ -581,6 +585,27 @@ export class CycleClient {
   async readPlanUsage(): Promise<Record<string, PlanUsage>> {
     if (this.#capabilities.planUsage !== true) return {};
     return (await this.#call(planUsageRead, {})).agents as Record<string, PlanUsage>;
+  }
+
+  /**
+   * What each agent keeps in its home on the daemon's machine (docs/protocol.md §16 "本地存储"). A daemon that does not
+   * say it can is older: it is not asked, and the answer is none.
+   */
+  async readStorage(): Promise<StorageAgent[]> {
+    if (this.#capabilities.storage !== true) return [];
+    return (await this.#call(storageRead, {})).agents as StorageAgent[];
+  }
+
+  /** Clears one agent's caches. It does not throw for a refusal: `cleaned: false` says why. */
+  async cleanStorage(
+    agent: string,
+  ): Promise<
+    | { cleaned: true; freedBytes: number }
+    | { cleaned: false; problem: StorageCleanProblem; message: string }
+  > {
+    if (this.#capabilities.storage !== true)
+      throw new Error("This daemon is too old to clean up storage");
+    return this.#call(storageClean, { agent });
   }
 
   /** Records whether a folder on the daemon's machine may run its own configuration's commands. */

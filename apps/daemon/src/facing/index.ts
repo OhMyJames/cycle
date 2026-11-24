@@ -13,6 +13,7 @@ import { registerPlugins } from "./plugins.ts";
 import { registerPrompts } from "./prompts.ts";
 import { registerProviders } from "./providers.ts";
 import { registerSessions } from "./sessions.ts";
+import { registerStorage } from "./storage.ts";
 import { registerTerminals } from "./terminals.ts";
 import { registerTrust } from "./trust.ts";
 
@@ -28,6 +29,7 @@ export const facing = (core: Core, holder: { value?: ClientConn }): AgentApp => 
   registerAttach(app, core, me);
   registerPrompts(app, core, me);
   registerAgents(app, core);
+  registerStorage(app, core);
   registerAgentSetup(app, core, me);
   registerFiles(app, core);
   registerTerminals(app, core, me);

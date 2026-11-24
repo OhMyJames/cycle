@@ -8,6 +8,7 @@ import { Daemon, defaultTerminals } from "./daemon.ts";
 import { agentsFor, HARNESSES } from "./harnesses.ts";
 import { errorText, type FileLogger, fileLogger } from "./logger.ts";
 import { selfCommand } from "./self.ts";
+import { agentHomesOf } from "./storage.ts";
 import { listenUnix } from "./transport/server.ts";
 import { VERSION } from "./version.ts";
 
@@ -68,6 +69,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       dataDir: paths.dataDir,
       // Made with the daemon's own AgentSettings, so a saved runtime change is what the next start reads.
       agents: agentsFor(config, paths.dataDir, process.env, log, HARNESSES, selfCommand()),
+      agentHomes: () => agentHomesOf(HARNESSES, config, paths.dataDir, process.env),
       version: VERSION,
       log,
       ...(builtin !== undefined ? { builtinPlugins: builtin } : {}),
