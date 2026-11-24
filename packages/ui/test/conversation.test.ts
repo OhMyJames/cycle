@@ -618,6 +618,35 @@ test("a history from before these updates replays with no tasks and a goal nobod
   expect(c.goal).toBeUndefined();
 });
 
+// ---- what to say next (CYCL-225) ----
+
+test("a suggestion of what to say next holds until the next turn begins, and an empty one is not one", () => {
+  const suggest = (text: unknown) =>
+    u({ sessionUpdate: "_cycle/prompt_suggestion", suggestion: text });
+  expect(emptyConversation().suggestion).toBeUndefined();
+  const ended = reduce([
+    chunk("user_message_chunk", "u1", "fix it"),
+    idle({ stopReason: "end_turn" }),
+    suggest(" run the tests "),
+  ]);
+  expect(ended.suggestion).toBe("run the tests");
+  // A snapshot of the state, or news that is not a turn, leaves it.
+  expect(applyUpdate(ended, idle()).suggestion).toBe("run the tests");
+  expect(applyUpdate(ended, suggest("  ")).suggestion).toBe("run the tests");
+  expect(applyUpdate(ended, suggest("commit")).suggestion).toBe("commit");
+  // A message, or the agent at work (a turn it began itself), makes it stale.
+  expect(
+    applyUpdate(ended, u({ sessionUpdate: "user_message", messageId: "u2", content: [] }))
+      .suggestion,
+  ).toBeUndefined();
+  expect(
+    applyUpdate(ended, u({ sessionUpdate: "state_update", state: "running" })).suggestion,
+  ).toBeUndefined();
+  expect(
+    applyUpdate(ended, u({ sessionUpdate: "state_update", state: "requires_action" })).suggestion,
+  ).toBeUndefined();
+});
+
 // ---- what is set to wake the session (CYCL-146) ----
 
 test("the scheduled calls are the last list told, with when it was told; unknown until one is", () => {

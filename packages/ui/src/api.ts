@@ -531,8 +531,15 @@ export type ThemeChoice = (typeof THEME_CHOICES)[number];
 export const LANGUAGE_CHOICES = ["system", "en-US", "zh-CN"] as const;
 export type LanguageChoice = (typeof LANGUAGE_CHOICES)[number];
 
-/** What the person chose for how the app looks and reads. Kept by main, in the app's own data (docs/desktop.md). */
-export type Preferences = { theme: ThemeChoice; language: LanguageChoice };
+/**
+ * What the person chose for how the app looks, reads and helps. Kept by main, in the app's own data (docs/desktop.md).
+ * `promptSuggestions`: the agent suggests what to say next, shown in the empty message box (CYCL-225).
+ */
+export type Preferences = {
+  theme: ThemeChoice;
+  language: LanguageChoice;
+  promptSuggestions: boolean;
+};
 
 /** The preferences, and the system's language as main reads it (`system` follows it). */
 export type PreferencesState = Preferences & { systemLanguage: string };

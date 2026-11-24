@@ -84,6 +84,11 @@ export type ManagerOptions = {
   openBrowser?: OpenBrowser;
   /** How long a sign-in waits for the browser. Default ten minutes. */
   authTimeoutMs?: number;
+  /**
+   * Whether the person wants the agent to suggest what to say next (Settings, CYCL-225): said with every prompt. Without
+   * it, nothing is said, and the daemon keeps what it was told last.
+   */
+  promptSuggestions?: () => boolean;
 };
 
 /** Reports one event of the dictionary in @cycle/analytics. */
@@ -891,6 +896,9 @@ export class ConnectionManager
       blocks as Parameters<CycleClient["prompt"]>[1],
       {
         ...(options.steer === true ? { steer: true } : {}),
+        ...(this.#options.promptSuggestions !== undefined
+          ? { promptSuggestions: this.#options.promptSuggestions() }
+          : {}),
       },
     );
     // How much, never what: the length in three words and the number of images, files and mentions.

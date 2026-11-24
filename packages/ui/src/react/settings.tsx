@@ -131,6 +131,7 @@ function GeneralSection() {
     <>
       <AccountGroup />
       <LanguageGroup />
+      <SuggestionsGroup />
       {update !== undefined ? (
         <PageGroup title={t("settings.updates")}>
           <PageRows>
@@ -238,6 +239,36 @@ function LanguageGroup() {
               ))}
             </SelectContent>
           </Select>
+        </PageRow>
+      </PageRows>
+    </PageGroup>
+  );
+}
+
+/** Whether the agent suggests what to say next, in the empty message box (CYCL-225). On until turned off. */
+function SuggestionsGroup() {
+  const store = useAppStore();
+  const { t } = useI18n();
+  const preferences = useAppState((s) => s.preferences);
+  const label = useId();
+  if (preferences === undefined) return null;
+  return (
+    <PageGroup>
+      <PageRows>
+        <PageRow
+          label={t("settings.suggestions")}
+          labelId={label}
+          description={t("settings.suggestions.description")}
+        >
+          <Switch
+            aria-labelledby={label}
+            checked={preferences.promptSuggestions}
+            onCheckedChange={(checked) =>
+              void store.setPreferences({ promptSuggestions: checked === true })
+            }
+          >
+            <SwitchThumb />
+          </Switch>
         </PageRow>
       </PageRows>
     </PageGroup>
@@ -695,6 +726,7 @@ const SHORTCUTS: readonly { group: string; rows: readonly { action: string; keys
       { action: "settings.shortcuts.allow", keys: "mod Enter" },
       { action: "settings.shortcuts.stop", keys: "mod ." },
       { action: "settings.shortcuts.recall", keys: "↑" },
+      { action: "settings.shortcuts.suggestion", keys: "Tab" },
     ],
   },
 ];

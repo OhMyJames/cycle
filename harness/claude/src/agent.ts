@@ -211,6 +211,10 @@ const HAD_TURN = "cycle/hadTurn";
 const STEER = "cycle/steer";
 /** On a `notice`: Claude is trying its request again by itself (`META.retry`, docs/protocol.md §8). */
 const RETRY = "cycle/retry";
+/** On `session/prompt`: whether a suggestion of what to say next is wanted (`META.promptSuggestions`, §8). */
+const PROMPT_SUGGESTIONS = "cycle/promptSuggestions";
+/** What the person may say next, after a turn (`PROMPT_SUGGESTION_UPDATE` of `@cycle/protocol`, CYCL-225). */
+const PROMPT_SUGGESTION_UPDATE = "_cycle/prompt_suggestion";
 
 type Turn = {
   translator: TurnTranslator;
@@ -242,6 +246,8 @@ type Live = {
   /** Ends the input: the process finishes what it is doing and exits. */
   end: () => void;
   idle: ReturnType<typeof setTimeout> | undefined;
+  /** Whether the process was last told to suggest what to say next (its `promptSuggestionEnabled` flag setting). */
+  suggestions: boolean;
 };
 
 type SessionState = {
@@ -289,6 +295,8 @@ type SessionState = {
   client: AgentContext | undefined;
   /** True while a mode the user chose is on its way to the process: what it says meanwhile is stale. */
   modeChanging: number;
+  /** The last prompt asked for a suggestion of what to say next (`cycle/promptSuggestions`). None until one does. */
+  suggestions: boolean;
 };
 
 const DEFAULT_MODEL_OPTION = {
@@ -735,6 +743,22 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       );
       return;
     }
+    // What the person may say next (CYCL-225): the turn that just ended's, so not once another has begun, and only when
+    // the last prompt asked for one (a process may still make one it was asked for before being told otherwise).
+    if ((message as { type: string }).type === "prompt_suggestion") {
+      const suggestion = (message as { suggestion?: unknown }).suggestion;
+      if (
+        session.suggestions &&
+        (session.turn === undefined || session.turn.done) &&
+        typeof suggestion === "string" &&
+        suggestion.trim() !== ""
+      )
+        await notify(client, session.id, {
+          sessionUpdate: PROMPT_SUGGESTION_UPDATE,
+          suggestion,
+        } as unknown as SessionUpdate);
+      return;
+    }
     // The goal the user set with /goal: told whole after each check (docs/protocol.md §9).
     if ((message as { type: string }).type === "active_goal") {
       const update = goalUpdateOf(message);
@@ -1037,7 +1061,13 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       // Claude Code leaves thinking's text out ("omitted") unless asked: every thought would reach the
       // conversation empty. The setting asks for the API's summaries and leaves the kind of thinking
       // (adaptive, a budget, none) to the model, as `thinking: { display }` would not.
-      settings: { showThinkingSummaries: true },
+      settings: {
+        showThinkingSummaries: true,
+        // Not asked for (yet): none is made. When asked for, the person's own settings.json may still say no.
+        ...(session.suggestions ? {} : { promptSuggestionEnabled: false }),
+      },
+      // A guess at what the person says next, after each turn (CYCL-225). Whether one is made is the flag above.
+      promptSuggestions: true,
       // A sub-agent's row can say what it is doing, not only that it is busy. The SDK makes a
       // model call for each summary, so it is asked for only when the configuration says to.
       ...(config.progressSummaries === true ? { agentProgressSummaries: true } : {}),
@@ -1136,6 +1166,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
         wake?.();
       },
       idle: undefined,
+      suggestions: session.suggestions,
     };
 
     // Commands and live model catalog from the process's initialization response (with independent fallbacks).
@@ -1401,6 +1432,22 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
     );
   };
 
+  /**
+   * Whether suggestions of what to say next are wanted, as the prompt about to run says. A process already running is
+   * told through its flag settings: `null` takes Cycle's "no" away, leaving the person's own settings.json to decide.
+   */
+  const wantSuggestions = (session: SessionState, wanted: boolean) => {
+    session.suggestions = wanted;
+    const live = session.live;
+    if (live === undefined || live.suggestions === wanted) return;
+    live.suggestions = wanted;
+    // Not worth the process (and the turn about to run on it) if it refuses: one not wanted is dropped in `aside` anyway.
+    if (typeof live.query.applyFlagSettings === "function")
+      void live.query
+        .applyFlagSettings({ promptSuggestionEnabled: wanted ? null : false })
+        .catch(() => undefined);
+  };
+
   /** Resets an active effort override if the active model does not support it. */
   const reconcileEffort = (session: SessionState): boolean => {
     if (session.effort === undefined) return false;
@@ -1454,6 +1501,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
         contextSize: undefined,
         client: undefined,
         modeChanging: 0,
+        suggestions: false,
       };
       sessions.set(id, session);
       if (config.warmStart === true) {
@@ -1514,6 +1562,7 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
           contextSize: undefined,
           client: undefined,
           modeChanging: 0,
+          suggestions: false,
         } satisfies SessionState);
       // What the daemon sends again on a resume is what the next process is started with.
       session.setup = setupOf(params);
@@ -1561,6 +1610,10 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
       }
       // Refused whole, before there is a turn: a block that cannot be carried is not dropped.
       const content = toSdkContent(params.prompt);
+      wantSuggestions(
+        session,
+        (params._meta as Record<string, unknown> | null | undefined)?.[PROMPT_SUGGESTIONS] === true,
+      );
       const messageId = randomUUID();
       // The turn exists from here, before anything is awaited: a cancel or a second prompt that
       // arrives while the first notifications are going out must find it.

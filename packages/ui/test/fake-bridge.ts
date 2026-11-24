@@ -103,6 +103,7 @@ export const fakeBridge = (
   const preferences = {
     theme: "system" as Preferences["theme"],
     language: "system" as Preferences["language"],
+    promptSuggestions: true,
     systemLanguage: "en-US",
     ...options.preferences,
   };

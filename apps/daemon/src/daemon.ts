@@ -43,6 +43,8 @@ import {
   type PlanUsage,
   PlanUsageSchema,
   type PlanWindow,
+  PROMPT_SUGGESTION_UPDATE,
+  PromptSuggestionUpdateSchema,
   planUsageRead,
   pluginSourcesAdd,
   pluginSourcesRefresh,
@@ -960,6 +962,14 @@ export class Daemon {
       session.noteChild(announced.sessionId);
     // Once the daemon is stopping, the turn's end is on record: what the agent says after it is not.
     if (session.resuming || session.historyError !== undefined || this.#closing) return;
+    // What to say next belongs to the turn that ended: not kept once another has been taken, nor when none was wanted.
+    if (
+      (update as { sessionUpdate?: unknown }).sessionUpdate === PROMPT_SUGGESTION_UPDATE &&
+      (session.promptSuggestions !== true ||
+        session.status() !== "idle" ||
+        !PromptSuggestionUpdateSchema.safeParse(update).success)
+    )
+      return;
     const state = update as { sessionUpdate: string; state?: string };
     if (state.sessionUpdate === "state_update" && typeof state.state === "string") {
       if (
@@ -1231,6 +1241,9 @@ export class Daemon {
     return link.agent.request(methods.agent.session.prompt, {
       sessionId: session.entry.agentSessionId,
       prompt,
+      ...(session.promptSuggestions !== undefined
+        ? { _meta: { [META.promptSuggestions]: session.promptSuggestions } }
+        : {}),
     } as never);
   }
 
@@ -2111,7 +2124,11 @@ export class Daemon {
         this.#remember(session, { prompted: true, ...named }, false);
       }
       const busy = () => session.status() !== "idle" && session.status() !== "stopped";
-      const steer = (params._meta as Record<string, unknown> | null | undefined)?.[META.steer];
+      const meta = params._meta as Record<string, unknown> | null | undefined;
+      const steer = meta?.[META.steer];
+      // Whoever sent last says whether a suggestion of what to say next is wanted: it goes with every prompt from now.
+      const suggestions = meta?.[META.promptSuggestions];
+      if (typeof suggestions === "boolean") session.promptSuggestions = suggestions;
       if (busy() && steer === true) {
         // Into the running turn, where the agent can take it; otherwise it is queued as any other.
         const steered = await this.#steer(session, params.prompt);

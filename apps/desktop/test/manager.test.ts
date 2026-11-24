@@ -197,6 +197,27 @@ test("an agent that takes images says so, and a message of blocks reaches it as 
   expect(fake.log.blocks[1]).toEqual([{ type: "text", text: "and this" }]);
 });
 
+test("every prompt says whether the person wants a suggestion of what to say next, as the setting is now (CYCL-225)", async () => {
+  const fake = fakeAgent();
+  const { manager } = await setup(fake);
+  let wanted = true;
+  const { m } = await manager("app", undefined, undefined, undefined, {
+    promptSuggestions: () => wanted,
+  });
+  await m.connect("local");
+  const id = await m.createSession("local", { cwd: "/tmp" });
+  await m.openSession("local", id);
+  await m.prompt("local", id, "one");
+  await until(() => fake.log.promptMetas.length === 1, "the first prompt");
+  wanted = false;
+  await m.prompt("local", id, "two");
+  await until(() => fake.log.promptMetas.length === 2, "the second prompt");
+  expect(fake.log.promptMetas).toEqual([
+    { "cycle/promptSuggestions": true },
+    { "cycle/promptSuggestions": false },
+  ]);
+});
+
 test("an image to an agent that did not say it takes images is refused, and nothing reaches it", async () => {
   const fake = fakeAgent();
   const { manager } = await setup(fake);

@@ -2292,3 +2292,85 @@ test("a wakeup the model sets is told at once, then by the Stop hook's id, and t
     { idleMs: 40 },
   );
 });
+
+// ---- what to say next (CYCL-225) ----
+
+const suggestionOf = (text: string) =>
+  ({
+    type: "prompt_suggestion",
+    suggestion: text,
+    uuid: "s",
+    session_id: ID,
+  }) as unknown as SDKMessage;
+const suggestionsIn = (updates: SessionUpdate[]) =>
+  updates
+    .filter((u) => (u as { sessionUpdate: string }).sessionUpdate === "_cycle/prompt_suggestion")
+    .map((u) => (u as unknown as { suggestion: string }).suggestion);
+const promptWith = async (
+  agent: Requester,
+  idle: () => Promise<void>,
+  text: string,
+  suggestions: boolean | undefined,
+) => {
+  const waiting = idle();
+  await agent.request(methods.agent.session.prompt, {
+    sessionId: ID,
+    prompt: [{ type: "text", text }],
+    ...(suggestions !== undefined ? { _meta: { "cycle/promptSuggestions": suggestions } } : {}),
+  });
+  await waiting;
+};
+/** The suggestion comes after the turn's end: waited for, a little. */
+const settle = async (updates: SessionUpdate[], count: number) => {
+  const start = Date.now();
+  while (suggestionsIn(updates).length < count && Date.now() - start < 500) await Bun.sleep(5);
+};
+
+test("a suggestion of what to say next is asked for when the prompt wants one, and told after the turn's end", async () => {
+  const fake = fakeQuery(({ prompt }) => [
+    ...textTurn(ID, "m", "ok"),
+    suggestionOf(prompt === "first" ? "run the tests" : "   "),
+  ]);
+  await connect(fake.run, async ({ agent, idle, updates }) => {
+    await newSession(agent);
+    await promptWith(agent, idle, "first", true);
+    await settle(updates, 1);
+    expect(fake.calls[0]?.options.promptSuggestions).toBe(true);
+    expect(fake.calls[0]?.options.settings).toEqual({ showThinkingSummaries: true });
+    expect(suggestionsIn(updates)).toEqual(["run the tests"]);
+    // After the idle that ends the turn, never before it.
+    const at = updates.findIndex(
+      (u) => (u as { sessionUpdate: string }).sessionUpdate === "_cycle/prompt_suggestion",
+    );
+    expect((updates[at - 1] as { state?: string }).state).toBe("idle");
+    // An empty one says nothing.
+    await promptWith(agent, idle, "second", true);
+    await Bun.sleep(20);
+    expect(suggestionsIn(updates)).toEqual(["run the tests"]);
+    expect(fake.state.flagSettings).toEqual([]);
+  });
+});
+
+test("without a prompt that wants one, no suggestion is made or told; a running process is told when that changes", async () => {
+  const fake = fakeQuery(({ prompt }) => [
+    ...textTurn(ID, "m", "ok"),
+    suggestionOf(`after ${prompt}`),
+  ]);
+  await connect(fake.run, async ({ agent, idle, updates }) => {
+    await newSession(agent);
+    // An older daemon or client says nothing: none is wanted.
+    await promptWith(agent, idle, "one", undefined);
+    expect(fake.calls[0]?.options.settings).toMatchObject({ promptSuggestionEnabled: false });
+    await promptWith(agent, idle, "two", true);
+    await settle(updates, 1);
+    await promptWith(agent, idle, "three", false);
+    await Bun.sleep(20);
+    // The same process throughout: told through its flag settings, `null` leaving the person's own setting to decide.
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.state.flagSettings).toEqual([
+      { promptSuggestionEnabled: null },
+      { promptSuggestionEnabled: false },
+    ]);
+    expect(suggestionsIn(updates)).toEqual(["after two"]);
+  });
+});

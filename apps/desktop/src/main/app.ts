@@ -221,6 +221,7 @@ export const startApp = async (options: AppOptions) => {
     runOnHost,
     emit,
     track: (name, props) => analytics.track(name, props),
+    promptSuggestions: () => preferences.state().promptSuggestions,
     // A connector's sign-in page: the manager only hands over a web address (connector-auth.ts checks it).
     openBrowser: (url) => shell.openExternal(url),
     attention: notifyAttention({

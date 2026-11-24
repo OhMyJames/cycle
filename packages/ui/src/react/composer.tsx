@@ -160,6 +160,12 @@ export function Composer({
   const working = activity !== "idle";
   const queue = useAppState((s) => s.views[sessionKey]?.conversation.queue ?? NONE);
   const commands = useAppState((s) => s.views[sessionKey]?.conversation.commands ?? NONE);
+  // What the agent guessed comes next (CYCL-225), unless the person turned that off in Settings.
+  const suggestion = useAppState((s) =>
+    s.preferences?.promptSuggestions === false
+      ? undefined
+      : s.views[sessionKey]?.conversation.suggestion,
+  );
   // A permission waiting for an answer: ⌘Enter is its "Allow once" (app.tsx), the same test as there.
   const permissionWaits = useAppState((s) => (s.views[sessionKey]?.permissions.length ?? 0) > 0);
   const { text, attachments, kept } = draft;
@@ -344,6 +350,12 @@ export function Composer({
     blocked === undefined &&
     (!working || canQueue) &&
     (text.trim() !== "" || attachments.length > 0 || kept.length > 0);
+  // In place of what the empty box says when the agent is done: → or Tab makes it the message. Typing hides it; emptying
+  // the box again shows it, until the next turn begins.
+  const offered =
+    text === "" && !working && enabled && connected && blocked === undefined
+      ? suggestion
+      : undefined;
   const placeholder =
     told ??
     (!enabled
@@ -359,7 +371,7 @@ export function Composer({
                   : "composer.placeholder.busy",
               { key: QUEUE_KEY },
             )
-          : t("composer.placeholder.idle"));
+          : (offered ?? t("composer.placeholder.idle")));
 
   // Single-line by default; once text wraps past one line, contains a newline or carries attachments, the box promotes
   // cleanly into its 3-row layout (2 lines of content + action row) without flickering
@@ -553,6 +565,21 @@ export function Composer({
    * the queue. ⌘Enter queues. Shift+Enter (or Alt+Enter) is a new line, always. The arrows walk through what was sent.
    */
   const onKey = (key: InputKey, event: KeyboardEvent): boolean => {
+    // The suggestion in the empty box is taken as the message, the caret at its end, to send or change.
+    if (
+      (key === "right" || key === "tab") &&
+      offered !== undefined &&
+      told === undefined &&
+      !menuOpen &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey
+    ) {
+      store.drafts.setText(sessionKey, offered);
+      store.track("prompt_suggestion_accepted", { key: key === "tab" ? "tab" : "arrow" });
+      return true;
+    }
     // An open menu has the keys first: the arrows choose, Enter and Tab take, Escape closes.
     if (menuOpen) {
       if (key === "up" || key === "down") {
@@ -851,6 +878,11 @@ export function Composer({
             disabled={!enabled}
             label={t("composer.message")}
             placeholder={placeholder}
+            suggested={
+              told === undefined && offered !== undefined
+                ? { keyShortcuts: "ArrowRight Tab" }
+                : undefined
+            }
             onKey={onKey}
             pasteFiles={canAttachFiles ? "any" : "images"}
             onPasteFiles={(files) => void attach(files, "paste")}
