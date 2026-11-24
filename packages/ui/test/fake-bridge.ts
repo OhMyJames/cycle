@@ -20,6 +20,8 @@ import type {
   ProviderModel,
   SessionSnapshot,
   SessionSummary,
+  StorageAgent,
+  StorageCleanAnswer,
   TerminalInfo,
   TerminalProblem,
   UpdateState,
@@ -77,6 +79,7 @@ export const fakeBridge = (
       connectors?: boolean;
       plugins?: string[];
       agentSetup?: boolean;
+      storage?: boolean;
       agentPrewarm?: boolean;
       sessionMentions?: boolean;
       fs?: boolean;
@@ -94,6 +97,8 @@ export const fakeBridge = (
     terminalProblem?: TerminalProblem;
     /** The connectors the daemon keeps. Changed in place by what the page asks. */
     connectors?: ConnectorInfo[];
+    /** What each agent keeps in its home, and what clearing answers. Changed in place; clearing empties the caches. */
+    storage?: { agents: StorageAgent[]; cleanAnswer?: StorageCleanAnswer };
     /** The owner's model providers, the known services, and what each known service serves. Changed in place. */
     providers?: {
       list: ProviderInfo[];
@@ -132,6 +137,7 @@ export const fakeBridge = (
   const calls: [string, ...unknown[]][] = [];
   const connectors = options.connectors ?? [];
   const providers = options.providers ?? { list: [] };
+  const storage = options.storage ?? { agents: [] };
   const plugins = options.plugins ?? { sources: [], all: [] };
   /** A change to the plugins: refused as the test said, or done. */
   const pluginChange = <T>(done: () => T): T | PluginFailure => {
@@ -432,6 +438,17 @@ export const fakeBridge = (
       connector.authorized = false;
       connector.status = { state: "needs_auth" };
       return { connector: { ...connector } };
+    }),
+    readStorage: record("readStorage", async () =>
+      storage.agents.map((a) => ({ ...a, items: a.items.map((i) => ({ ...i })) })),
+    ),
+    cleanStorage: record("cleanStorage", async (_location: string, agent: string) => {
+      const answer = storage.cleanAnswer ?? { cleaned: true as const, freedBytes: 0 };
+      if (answer.cleaned) {
+        const found = storage.agents.find((a) => a.agent === agent);
+        if (found) found.items = found.items.filter((i) => i.kind !== "cache");
+      }
+      return answer;
     }),
     listProviders: record("listProviders", async () => ({
       providers: providers.list.map((p) => ({ ...p, models: [...p.models] })),

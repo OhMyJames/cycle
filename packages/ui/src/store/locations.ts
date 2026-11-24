@@ -306,6 +306,12 @@ export class LocationsSlice {
     options?: { refreshUsage?: boolean; forceRefresh?: boolean },
   ) => this.#kit.bridge.readAgentSetup(locationId, agent, options);
 
+  /** What each agent keeps in its home on a location (Settings → Harness). */
+  readStorage = (locationId: string) => this.#kit.bridge.readStorage(locationId);
+
+  cleanStorage = (locationId: string, agent: string) =>
+    this.#kit.bridge.cleanStorage(locationId, agent);
+
   setAgentRuntimeSettings = (
     locationId: string,
     agent: string,

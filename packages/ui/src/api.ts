@@ -53,6 +53,8 @@ export type LocationStatus = {
     plugins?: string[];
     /** Harness setup diagnostics, auth, and runtime config methods are there (docs/protocol.md §16). */
     agentSetup?: boolean;
+    /** What agents keep in their homes can be read and its caches cleared (docs/protocol.md §16 "本地存储"). */
+    storage?: boolean;
     /** An agent can be started ahead of its session (docs/protocol.md §16 "提前起进程"). */
     agentPrewarm?: boolean;
     /** An @ may name another of its sessions, which it gives the agent as a record (docs/protocol.md §8). */
@@ -619,6 +621,21 @@ export type ProviderAnswer =
   | { problem: ProviderProblem; message?: string };
 
 /** A location's providers as last read: the ones the owner has, and the known services one can be made for. */
+/** What an agent keeps in its home on a location's machine. `cache` can be cleared; `history` is only shown. */
+export type StorageItem = { id: string; kind: "cache" | "history"; bytes: number };
+export type StorageAgent = {
+  agent: string;
+  name: string;
+  /** False when its home is the owner's own folder, outside the daemon's data folder: nothing is measured or cleared. */
+  managed: boolean;
+  items: StorageItem[];
+};
+/** Why nothing was cleared: `busy` a session of the agent is working, `unmanaged`, `unknown_agent`, `failed` nothing could be removed. */
+export type StorageCleanProblem = "busy" | "unmanaged" | "unknown_agent" | "failed";
+export type StorageCleanAnswer =
+  | { cleaned: true; freedBytes: number }
+  | { cleaned: false; problem: StorageCleanProblem; message: string };
+
 export type ProvidersRead = { providers: ProviderInfo[]; kinds: ProviderKind[] };
 
 /** Where an agent's plugins come from (Claude: a marketplace). `kind` is a fixed word the page has its own for. */
@@ -1113,6 +1130,10 @@ export type AppApi = {
   cancelConnectorAuth(): Promise<void>;
   /** Forgets the connector's token. */
   signOutConnector(locationId: string, id: string): Promise<ConnectorAnswer>;
+  /** What each agent keeps in its home on the location. Fails when it is not connected or its daemon is too old. */
+  readStorage(locationId: string): Promise<StorageAgent[]>;
+  /** Clears one agent's caches (never its logins or histories). The page asks the person first. */
+  cleanStorage(locationId: string, agent: string): Promise<StorageCleanAnswer>;
   /** The location's model providers (keys named, never given). Fails when it is not connected or its daemon is too old. */
   listProviders(locationId: string): Promise<ProvidersRead>;
   /** The models a known service is known to serve. Fails when it cannot be asked. */
@@ -1308,6 +1329,8 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   cancelConnectorAuth: true,
   signOutConnector: true,
   listProviders: true,
+  readStorage: true,
+  cleanStorage: true,
   providerCatalog: true,
   saveProvider: true,
   removeProvider: true,

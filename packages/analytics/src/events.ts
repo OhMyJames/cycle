@@ -212,6 +212,11 @@ export const EVENTS = {
   plugin_installed: o({ agent, result: pluginResult, servers: count }),
   /** After the person confirmed it. */
   plugin_removed: o({ agent, result: pluginResult }),
+  /** After the person confirmed clearing an agent's caches (Settings → Harness). Never sizes or paths: whose, and how it ended. */
+  storage_cleaned: o({
+    agent,
+    result: z.enum(["ok", "busy", "unmanaged", "unknown_agent", "failed"]),
+  }),
   /** Switched on or off. */
   plugin_toggled: o({ agent, enabled: z.boolean(), result: pluginResult }),
   /** Asked for its latest version. `updated`: there was a newer one. */

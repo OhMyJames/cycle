@@ -304,6 +304,7 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
   - 埋点:`theme_changed`、`language_changed`(主进程发,只带选了哪一项)。
   - 中文目录的键和占位符与 en-US 一致由类型和测试保证(`test/languages.test.ts`);译文本身没有经过母语审校之外的检查,真实窗口里各处的中文版式只在画廊里看过设置页和一个对话场景。
 - **下一轮输入建议(CYCL-225)**:General 里的开关 "Suggest the next message",默认开，和主题、语言一样存在 `preferences.json`。主进程发每条 prompt 时按它带上 `_meta["cycle/promptSuggestions"]`(protocol.md §8),所以关掉之后 agent 不再做建议。agent 给的建议(`_cycle/prompt_suggestion`)在输入框空着、agent 空闲时代替原来的提示文字，样式不变;→ 或 Tab 把它变成输入内容，光标在末尾。打字时它让位，清空后再出现，下一个 turn 开始(`user_message`、`running`、`requires_action`)就作废。关掉开关时，已经收到的建议也不显示。没有建议的 agent 照旧显示原来的提示文字。埋点:`prompt_suggestions_toggled`(主进程)、`prompt_suggestion_accepted`(页面，只带按的是哪个键)。
+- **存储(CYC-277)**:每个 agent 的 Harness 页末尾有一组 Storage,按所选 location 显示该 agent 在 daemon 机器上的 HOME 里占了多少(协议见 protocol.md §16 "本地存储"):**Caches**(包管理的下载缓存,一个 Clear caches 按钮,点了先确认,说明登录和会话记录保留、下次用到会重新下载,确认后在行里写"已清理多少")和 **Session records**(会话恢复要读的记录,只显示不提供清理)。三种不出现按钮的情况:daemon 没声明 `storage` 能力(整组不显示,也不去问),agent 的 HOME 是用户自己的文件夹(说明原因),还没存过东西(说明何时会有)。agent 有会话在工作时 daemon 拒绝清理,界面在确认框里照实说,框不关。埋点 `storage_cleaned`(主进程发,只带 agent 和结果)。测试 `packages/ui/test/browser/storage.browser.tsx`。
 - **旧入口**已去掉:侧栏底部的 App settings 菜单、switcher 旁菜单里的 Add location、Agent defaults、Edit、Remove。会话自己的设置(Session settings)仍在会话标题的菜单里,它属于会话。
 - **埋点**:打开页面是 `panel_opened` 的 `settings`(带 `via`),换分区是 `settings_section_shown`;分区里的动作沿用原有事件(`analytics_toggled`、`update_checked`、`location_saved`、`agent_defaults_saved`、`code_theme_changed` 等)。
 - **没验证**:安装版真实窗口里的拖动区域和红绿灯位置(画廊里看过版式,深浅色、1200×800 和 720×480)。

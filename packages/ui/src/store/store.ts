@@ -210,6 +210,8 @@ export class AppStore extends StoreBase {
   readAgentDefaults = this.#locations.readAgentDefaults;
   setAgentDefaults = this.#locations.setAgentDefaults;
   readAgentSetup = this.#locations.readAgentSetup;
+  readStorage = this.#locations.readStorage;
+  cleanStorage = this.#locations.cleanStorage;
   setAgentRuntimeSettings = this.#locations.setAgentRuntimeSettings;
   revealDaemonConfig = this.#locations.revealDaemonConfig;
   startAgentAuth = this.#locations.startAgentAuth;
