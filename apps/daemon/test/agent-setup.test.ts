@@ -603,7 +603,7 @@ test("Claude code auth driver extracts ANSI-wrapped URL, submits one-time code v
       CLAUDE_AUTH_URL_RE,
     ),
   ).toBe("https://claude.com/cai/oauth/authorize?code=true&state=abc");
-  // As CLI 2.1.331 prints it: on claude.ai, its query one opaque token.
+  // As CLI 2.1.331 prints it: on claude.ai, with a single opaque token as its query (no code= or state=).
   expect(
     extractAuthUrl(
       "Opening browser to sign in…\nIf the browser didn't open, visit:\nhttps://claude.ai/oauth/authorize?z-C99cQ9yANBwHEfuh4CUA5V7TSH3\nPaste code here if prompted > ",
@@ -626,8 +626,10 @@ if (process.env.FAKE_MODE === "silent") {
   setInterval(() => {}, 1000);
   await new Promise(() => {});
 }
-process.stdout.write("Opening browser to sign in...\\n");
-process.stdout.write("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=xyz\\n");
+// As CLI 2.1.331 prints it: the address on a line of its own.
+process.stdout.write("Opening browser to sign in…\\n");
+process.stdout.write("If the browser didn't open, visit:\\n");
+process.stdout.write("https://claude.ai/oauth/authorize?z-C99cQ9yANBwHEfuh4CUA5V7TSH3\\n");
 process.stdout.write("Paste code here if prompted > ");
 const decoder = new TextDecoder();
 let buf = "";
@@ -655,7 +657,7 @@ for await (const chunk of Bun.stdin.stream()) {
     urlPattern: CLAUDE_AUTH_URL_RE,
   });
   expect(okFlow.authorizationUrl).toBe(
-    "https://claude.com/cai/oauth/authorize?code=true&state=xyz",
+    "https://claude.ai/oauth/authorize?z-C99cQ9yANBwHEfuh4CUA5V7TSH3",
   );
   expect(await okFlow.submit?.("VALID-CODE-123")).toEqual({ ok: true });
   expect(await okFlow.completed).toEqual({ ok: true });

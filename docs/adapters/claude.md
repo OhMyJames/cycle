@@ -4,7 +4,7 @@
 
 `harness/claude`:把 Claude Agent SDK 包装成 ACP v2 agent,通过 stdio 与 daemon 通信。决策见 [0001](../decisions/0001-claude-acp-adapter.md)。
 
-验证所用版本:`@anthropic-ai/claude-agent-sdk` 0.3.331(CLI 2.1.331;2026-11-24 从 0.3.327 升级,见文末),`@agentclientprotocol/sdk` 2.7.0,Bun 1.4.4。验证先用本地模拟的 Anthropic API,之后又用真实模型验证过(见文末)。
+当前版本:`@anthropic-ai/claude-agent-sdk` 0.3.331(CLI 2.1.331;2026-11-24 从 0.3.327 升级,哪些复查过见文末"升级到 0.3.331";下面各节的验证多数是在 0.3.327 上做的,各自写明),`@agentclientprotocol/sdk` 2.7.0,Bun 1.4.4。验证先用本地模拟的 Anthropic API,之后又用真实模型验证过(见文末)。
 
 ## 进程模型
 
@@ -155,3 +155,13 @@ SDK 0.3.327(CLI 2.1.327),haiku,`harness/claude` 的 `test:real` 里两条用例,
 2026-11-20（CYCL-110），用临时 HOME、Claude 配置和工作目录运行官方 CLI。初始 `auth status --json` 返回 `loggedIn: false`、`authMethod: "none"`。`claude auth login --claudeai` 打开了浏览器授权流程；按本轮验收范围在用户授权前停止。另用临时 Cycle 数据目录运行 `cycle claude auth status --json`，宿主环境中的模拟 OAuth、API 和 SSO 凭证均未使 Claude 进入登录态。单元测试检查了实际传给 Claude 的环境白名单、HOME 和配置路径。
 
 待验证的是在隔离目录完成账号授权后，经 Cycle 创建会话并完成一个模型回合。已有的显式 token 模型测试覆盖另一条凭证路径。
+
+## 升级到 0.3.331(CLI 2.1.331,2026-11-24)
+
+从 0.3.327 升级。上文的真实模型、plugin 命名、goal、后台任务结论都是在 2.1.327 上得出的;这次复查了的只有下面这些:
+
+- **类型**:对比两版的 `sdk.d.ts`、`agentSdkTypes.d.ts`、`sdk-tools.d.ts`,只有新增和措辞:MCP 调用的 `soft_error_result`、`registryPolicyFingerprint`、cron 的 `maxAgeMs` 和 `otherOneShots`、循环 cron 的期限从 7 天改为 30 天。没有删除或改名的消息、内容块或工具。
+- **集成测试**:`adapter.integration.ts`(本地模拟 API)18 项全过,包括最后一条 plugin MCP 的 `plugin:<plugin 名>:<服务器名>` 命名和同名顶替;`apps/daemon` 的 `test:integration` 通过。
+- **登录**:在隔离的空 HOME 里跑新二进制:`auth status --json`、`auth logout` 不变;`auth login --claudeai` 打印的地址变为 `https://claude.ai/oauth/authorize?<不透明参数>`,单独一行,仍在 `CLAUDE_AUTH_URL_RE` 之内(测试已改成这个样子)。
+- **打包**:`apps/daemon` 构建出的 `claude --version` 为 2.1.331。
+- **未做**:真实模型测试(`test:real`、`test:real:daemon`)这次没跑,缺 token。后台任务、定时调用事件在真实 CLI 上的形状未复查。
