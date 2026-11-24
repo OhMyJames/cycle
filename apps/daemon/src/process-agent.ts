@@ -27,6 +27,7 @@ export type ProcessAgentOptions = {
   available?: () => boolean | Promise<boolean>;
   /** See `AgentDefinition`. */
   maxAhead?: number | (() => number | undefined);
+  standby?: boolean;
   /** See `AgentDefinition`. */
   plugins?: PluginProvider;
   /** See `AgentDefinition`. */
@@ -69,6 +70,7 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
   ...(options.steer === true ? { steer: true } : {}),
   ...(options.available !== undefined ? { available: options.available } : {}),
   ...(options.maxAhead !== undefined ? { maxAhead: options.maxAhead } : {}),
+  ...(options.standby === true ? { standby: true } : {}),
   ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
   ...(options.setup !== undefined ? { setup: options.setup } : {}),
   launch: async (context = { sessionId: "", sessionEnv: {} }) => {

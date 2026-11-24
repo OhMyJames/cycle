@@ -155,6 +155,8 @@ export const CapabilitiesSchema = z.object({
   planUsage: z.boolean().optional(),
   /** `_cycle/agent_setup/*` and `_cycle/agent_auth/*` are there (docs/protocol.md §16). */
   agentSetup: z.boolean().optional(),
+  /** `_cycle/agent_setup/prewarm` is there (docs/protocol.md §16). */
+  agentPrewarm: z.boolean().optional(),
   /** A `cycle://session/` mention in a prompt reaches the agent as that session's record (docs/protocol.md §8). */
   sessionMentions: z.boolean().optional(),
   /** `session/new` takes `_meta["cycle/environment"]`, and `_cycle/terminal/create` an `actionId` (docs/protocol.md §6 "环境"). */

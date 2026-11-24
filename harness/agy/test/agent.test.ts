@@ -272,11 +272,16 @@ describe("harness/agy core v1-to-v2 bridge", () => {
         ) as { _meta?: Record<string, unknown> } | undefined;
         expect(completedTool?._meta?.[META.toolResult]).toEqual({ run: { exitCode: 0 } });
 
-        // Permission options forwarded verbatim (only allow_once and reject_once).
+        // agy's own options are forwarded as they are, with "always allow in this session" added after them.
         expect(seenPermOptions).toEqual([
           [
             { optionId: "allow", name: "Allow", kind: "allow_once" },
             { optionId: "deny", name: "Deny", kind: "reject_once" },
+            {
+              optionId: "cycle-allow-session",
+              name: "Always allow in this session",
+              kind: "allow_always",
+            },
           ],
         ]);
 
@@ -288,6 +293,76 @@ describe("harness/agy core v1-to-v2 bridge", () => {
 
         await agent.request(methods.agent.session.close, { sessionId: "agy-s1" } as never);
         expect(getFake().requests.some((r) => r.method === "session/close")).toBe(true);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("a call's progress keeps one messageId, and a started call is never shown back at pending (CYC-292, CYC-293)", async () => {
+    const { config } = baseConfig((method, params, fake) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-s1");
+      if (method === "session/prompt") {
+        const sid = (params as { sessionId: string }).sessionId;
+        const call = { toolCallId: "call_1", name: "run_command", kind: "execute", title: "ls" };
+        const text = (t: string) =>
+          fake.emitUpdate(sid, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: t },
+          });
+        fake.emitUpdate(sid, { sessionUpdate: "tool_call", ...call, status: "pending" });
+        fake.emitUpdate(sid, { sessionUpdate: "tool_call_update", ...call, status: "in_progress" });
+        text("a");
+        fake.emitUpdate(sid, { sessionUpdate: "tool_call_update", ...call, status: "pending" });
+        text("b");
+        fake.emitUpdate(sid, { sessionUpdate: "tool_call_update", ...call, status: "in_progress" });
+        text("c");
+        fake.emitUpdate(sid, { sessionUpdate: "tool_call_update", ...call, status: "completed" });
+        text("d");
+        return { stopReason: "end_turn" };
+      }
+      return {};
+    });
+    const adapter = createAdapter(config);
+    const updates: SessionUpdate[] = [];
+    const app = client().onNotification(methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+    try {
+      await app.connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" });
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-s1",
+          prompt: [{ type: "text", text: "go" }],
+        } as never);
+        await waitFor(() =>
+          updates.some((u) => u.sessionUpdate === "state_update" && u.state === "idle"),
+        );
+
+        const ids = updates
+          .filter((u) => u.sessionUpdate === "agent_message_chunk")
+          .map((u) => (u as { messageId?: string }).messageId);
+        expect(ids).toHaveLength(4);
+        expect(ids[0]).toBe(ids[1]);
+        expect(ids[1]).toBe(ids[2]);
+        expect(ids[3]).not.toBe(ids[2]);
+
+        const statuses = updates
+          .filter((u) => u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update")
+          .map((u) => (u as { status?: string }).status);
+        expect(statuses).toEqual([
+          "pending",
+          "in_progress",
+          "in_progress",
+          "in_progress",
+          "completed",
+        ]);
       });
     } finally {
       adapter.close();
@@ -953,6 +1028,24 @@ describe("configuration options: mode, model, effort (CYCL-174)", () => {
           configId: "model",
           value: "gemini-4-neon",
         });
+
+        // Setting what agy already has sends no v1 request and says nothing (CYC-291).
+        await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "mode",
+          type: "id",
+          value: "plan",
+        } as never);
+        const requestsBefore = getFake().requests.length;
+        const updatesBefore = updates.length;
+        await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-cfg",
+          configId: "mode",
+          type: "id",
+          value: "plan",
+        } as never);
+        expect(getFake().requests.length).toBe(requestsBefore);
+        expect(updates.length).toBe(updatesBefore);
 
         // Unknown configId rejected with -32602.
         let unknownErr: unknown;

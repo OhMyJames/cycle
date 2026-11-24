@@ -144,6 +144,10 @@ export class ConnectionManager extends LocationActions implements ManagerApi {
     return this.#auth.readAgentSetup(locationId, agent, options);
   }
 
+  prewarmAgent(locationId: string, agent: string) {
+    return this.#auth.prewarmAgent(locationId, agent);
+  }
+
   setAgentRuntimeSettings(
     locationId: string,
     agent: string,

@@ -53,6 +53,8 @@ export type LocationStatus = {
     plugins?: string[];
     /** Harness setup diagnostics, auth, and runtime config methods are there (docs/protocol.md §16). */
     agentSetup?: boolean;
+    /** An agent can be started ahead of its session (docs/protocol.md §16 "提前起进程"). */
+    agentPrewarm?: boolean;
     /** An @ may name another of its sessions, which it gives the agent as a record (docs/protocol.md §8). */
     sessionMentions?: boolean;
     /** The session's folder can be listed and its files read, for the Files tab (docs/protocol.md §8). */
@@ -954,6 +956,11 @@ export type AppApi = {
     patch: Record<string, AgentRuntimePatchValue>,
     expectedRevision: number,
   ): Promise<AgentRuntimeSaveAnswer>;
+  /**
+   * The blank conversation chose this agent: start it ahead, when its location can, so the first message does not wait
+   * for it. Never fails, and says nothing: the session starts its own agent if this did not come to anything.
+   */
+  prewarmAgent(locationId: string, agent: string): Promise<void>;
   /** Shows the local daemon's `config.json` in the system file manager; returns false on remote locations. */
   revealDaemonConfig(locationId: string): Promise<boolean>;
   /** Starts an in-app subscription sign-in flow; chooses mode by transport and validates URLs against hardcoded allowlist. */
@@ -1160,6 +1167,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   setAgentDefaults: true,
   readAgentSetup: true,
   setAgentRuntimeSettings: true,
+  prewarmAgent: true,
   revealDaemonConfig: true,
   startAgentAuth: true,
   openAgentAuthUrl: true,
