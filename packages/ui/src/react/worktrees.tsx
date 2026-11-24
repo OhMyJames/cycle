@@ -9,9 +9,9 @@ import {
   MenuRadioItem,
   MenuTrigger,
 } from "@ui-sdk/react/menu";
-import { useId, useRef } from "react";
+import { useId, useMemo, useRef } from "react";
 import type { WorktreeSummary } from "../api.ts";
-import { type BlankConversation, blankWorktreeOf } from "../store/index.ts";
+import { type BlankConversation, type BlankWorktree, blankWorktreeOf } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon } from "./icons.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -35,7 +35,9 @@ export function WorktreePicker({
 }) {
   const store = useAppStore();
   const { t } = useI18n();
-  const offer = useAppState((s) => blankWorktreeOf(s, blank, agentId));
+  // A string, so the selector gives the same value until something shown changes (the offer is a new object each time).
+  const offered = useAppState((s) => JSON.stringify(blankWorktreeOf(s, blank, agentId) ?? null));
+  const offer = useMemo(() => JSON.parse(offered) as BlankWorktree | null, [offered]) ?? undefined;
   const headingId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   if (offer === undefined) return null;

@@ -176,6 +176,7 @@ test("connects, creates a session, and lists it", async () => {
     diff: true,
     terminal: true,
     environments: true,
+    worktrees: true,
     stopSubagent: true,
   });
   expect((await m.agents("local")).map((a) => a.id)).toEqual(["fake"]);
@@ -444,6 +445,7 @@ test("a connection that drops is picked up again, and a request still open is no
     diff: true,
     terminal: true,
     environments: true,
+    worktrees: true,
     stopSubagent: true,
   });
   await until(() => of(events, "location-status").at(-1)?.state === "connected", "the reconnect");

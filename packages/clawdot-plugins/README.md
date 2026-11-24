@@ -25,7 +25,8 @@ Isolated, so nothing of yours is touched:
 ```sh
 export HOME=$(mktemp -d) CLAUDE_CONFIG_DIR=$(mktemp -d)
 claude plugin marketplace add "$PWD/packages/clawdot-plugins" && claude plugin install <name>@clawdot
-agy plugin validate packages/clawdot-plugins/plugins/<name>   # agy converts on install; validate reports what it skips
+claude plugin validate packages/clawdot-plugins/plugins/<name>
+agy plugin install packages/clawdot-plugins/plugins/<name>     # agy converts on install; its output lists what it took (`validate` rejects an unconverted Claude layout, that is expected)
 ```
 
 Markdown under `plugins/**/skills` is outside Biome's formatting: the formatter would break a SKILL.md's frontmatter.
