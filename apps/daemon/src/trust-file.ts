@@ -1,8 +1,9 @@
-import { mkdir, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import type { Trust } from "@cycle/protocol";
 import { z } from "zod";
 import { INVALID_PARAMS, RESOURCE_NOT_FOUND, RpcError } from "./errors.ts";
+import { JsonFile, readJsonFile } from "./json-file.ts";
 
 const TrustFileSchema = z.object({
   version: z.literal(1),
@@ -50,61 +51,49 @@ export const realFolder = async (path: string): Promise<string> => {
   return real;
 };
 
+const decision = (folders: ReadonlyMap<string, boolean>, real: string): Trust => {
+  for (let at = real; ; at = dirname(at)) {
+    const trusted = folders.get(at);
+    if (trusted !== undefined) return { path: real, trusted, from: at };
+    if (dirname(at) === at) return { path: real, trusted: null, from: null };
+  }
+};
+
 /**
  * Which folders may run the commands their own configuration names (docs/protocol.md §8
  * "信任文件夹"): real path to true or false; a folder with no entry has no decision. A decision
  * covers the folders under it; the nearest one wins. Written whole, to a temporary file and then
- * renamed, like the session index.
+ * renamed, and private to the account, like the session index (json-file.ts).
  */
 export class FolderTrust {
-  readonly #path: string;
-  #folders: Map<string, boolean>;
-  #queue: Promise<unknown> = Promise.resolve();
+  readonly #file: JsonFile<ReadonlyMap<string, boolean>>;
 
   private constructor(path: string, folders: Map<string, boolean>) {
-    this.#path = path;
-    this.#folders = folders;
+    this.#file = new JsonFile<ReadonlyMap<string, boolean>>(path, folders, (value) => ({
+      version: 1,
+      folders: Object.fromEntries(value),
+    }));
   }
 
   static async load(path: string): Promise<FolderTrust> {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return new FolderTrust(path, new Map());
-    try {
-      const parsed = TrustFileSchema.parse(JSON.parse(await file.text()));
-      return new FolderTrust(path, new Map(Object.entries(parsed.folders)));
-    } catch (error) {
-      throw new TrustUnreadableError(path, error instanceof Error ? error.message : String(error));
-    }
+    const parsed = await readJsonFile(
+      path,
+      TrustFileSchema,
+      (detail) => new TrustUnreadableError(path, detail),
+    );
+    return new FolderTrust(path, new Map(Object.entries(parsed?.folders ?? {})));
   }
 
   /** The decision for a real path: its own, else the nearest folder above it with one. */
   of(real: string): Trust {
-    for (let at = real; ; at = dirname(at)) {
-      const trusted = this.#folders.get(at);
-      if (trusted !== undefined) return { path: real, trusted, from: at };
-      if (dirname(at) === at) return { path: real, trusted: null, from: null };
-    }
+    return decision(this.#file.value, real);
   }
 
+  /** Answered with the decision as this change left it, before any made after it. */
   set(real: string, trusted: boolean): Promise<Trust> {
-    const run = this.#queue.then(async () => {
-      const before = new Map(this.#folders);
-      try {
-        this.#folders.set(real, trusted);
-        await mkdir(dirname(this.#path), { recursive: true });
-        const temporary = `${this.#path}.${process.pid}.tmp`;
-        await writeFile(
-          temporary,
-          `${JSON.stringify({ version: 1, folders: Object.fromEntries(this.#folders) }, null, 2)}\n`,
-        );
-        await rename(temporary, this.#path);
-      } catch (error) {
-        this.#folders = before;
-        throw error;
-      }
-      return this.of(real);
+    return this.#file.change((current) => {
+      const folders = new Map(current).set(real, trusted);
+      return { value: folders, answer: decision(folders, real) };
     });
-    this.#queue = run.catch(() => undefined);
-    return run;
   }
 }

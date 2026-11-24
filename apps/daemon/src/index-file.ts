@@ -1,7 +1,6 @@
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { SessionUsageSchema } from "@cycle/protocol";
 import { z } from "zod";
+import { JsonFile, readJsonFile } from "./json-file.ts";
 
 /** One session as the daemon records it. The history itself is in the session's log. */
 export const SessionEntrySchema = z.object({
@@ -85,48 +84,49 @@ export class IndexUnreadableError extends Error {
  * renamed over the old one, so a crash leaves the old index or the new one and never half of one.
  */
 export class SessionIndex {
-  readonly #path: string;
-  #createdOrder: [string, string][] | undefined;
-  #sessions: Map<string, SessionEntry>;
-  #queue: Promise<unknown> = Promise.resolve();
+  readonly #file: JsonFile<ReadonlyMap<string, SessionEntry>>;
+  /** The order of creation, and the sessions it was made of: made again once they are not the ones kept. */
+  #createdOrder: { of: ReadonlyMap<string, SessionEntry>; order: [string, string][] } | undefined;
 
   private constructor(path: string, sessions: Map<string, SessionEntry>) {
-    this.#path = path;
-    this.#sessions = sessions;
+    this.#file = new JsonFile<ReadonlyMap<string, SessionEntry>>(path, sessions, (value) => ({
+      version: 1,
+      sessions: Object.fromEntries(value),
+    }));
   }
 
   static async load(path: string): Promise<SessionIndex> {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return new SessionIndex(path, new Map());
-    let parsed: z.infer<typeof IndexSchema>;
-    try {
-      parsed = IndexSchema.parse(JSON.parse(await file.text()));
-    } catch (error) {
-      throw new IndexUnreadableError(path, error instanceof Error ? error.message : String(error));
-    }
-    return new SessionIndex(path, new Map(Object.entries(parsed.sessions)));
+    const parsed = await readJsonFile(
+      path,
+      IndexSchema,
+      (detail) => new IndexUnreadableError(path, detail),
+    );
+    return new SessionIndex(path, new Map(Object.entries(parsed?.sessions ?? {})));
   }
 
   get(sessionId: string): SessionEntry | undefined {
-    return this.#sessions.get(sessionId);
+    return this.#file.value.get(sessionId);
   }
 
   list(): [string, SessionEntry][] {
-    return [...this.#sessions.entries()];
+    return [...this.#file.value.entries()];
   }
 
   /** Stable keys for paging. Metadata edits keep the order, and a cursor survives deletion of its row. */
   createdOrder(): ReadonlyArray<readonly [string, string]> {
-    this.#createdOrder ??= this.list()
-      .map(([id, e]): [string, string] => [e.createdAt, id])
-      .sort(comparePosition);
-    return this.#createdOrder;
+    const sessions = this.#file.value;
+    if (this.#createdOrder?.of !== sessions) {
+      const order = [...sessions.entries()]
+        .map(([id, e]): [string, string] => [e.createdAt, id])
+        .sort(comparePosition);
+      this.#createdOrder = { of: sessions, order };
+    }
+    return this.#createdOrder.order;
   }
 
   put(sessionId: string, entry: SessionEntry): Promise<void> {
-    return this.#change(() => {
-      this.#createdOrder = undefined;
-      this.#sessions.set(sessionId, SessionEntrySchema.parse(entry));
+    return this.#change((sessions) => {
+      sessions.set(sessionId, SessionEntrySchema.parse(entry));
     });
   }
 
@@ -139,52 +139,31 @@ export class SessionIndex {
     sessionId: string,
     change: Partial<SessionEntry> | ((entry: SessionEntry) => Partial<SessionEntry>),
   ): Promise<void> {
-    return this.#change(() => {
-      const entry = this.#sessions.get(sessionId);
+    return this.#change((sessions) => {
+      const entry = sessions.get(sessionId);
       if (entry === undefined) throw new Error(`No session ${sessionId} in the index`);
       const patch = typeof change === "function" ? change(entry) : change;
-      if (patch.createdAt !== undefined && patch.createdAt !== entry.createdAt)
-        this.#createdOrder = undefined;
-      this.#sessions.set(sessionId, SessionEntrySchema.parse({ ...entry, ...patch }));
+      sessions.set(sessionId, SessionEntrySchema.parse({ ...entry, ...patch }));
     });
   }
 
   /** Resolves when every change made so far is on disk. */
-  async flush(): Promise<void> {
-    await this.#queue;
+  flush(): Promise<void> {
+    return this.#file.flush();
   }
 
   delete(sessionId: string): Promise<void> {
-    return this.#change(() => {
-      this.#createdOrder = undefined;
-      this.#sessions.delete(sessionId);
+    return this.#change((sessions) => {
+      sessions.delete(sessionId);
     });
   }
 
-  #change(apply: () => void): Promise<void> {
-    const run = this.#queue.then(async () => {
-      const before = new Map(this.#sessions);
-      try {
-        apply();
-        await this.#save();
-      } catch (error) {
-        this.#createdOrder = undefined;
-        this.#sessions = before;
-        throw error;
-      }
+  /** `apply` changes a copy of the sessions. */
+  #change(apply: (sessions: Map<string, SessionEntry>) => void): Promise<void> {
+    return this.#file.change((current) => {
+      const sessions = new Map(current);
+      apply(sessions);
+      return { value: sessions, answer: undefined };
     });
-    this.#queue = run.catch(() => undefined);
-    return run;
-  }
-
-  async #save(): Promise<void> {
-    await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.#path}.${process.pid}.tmp`;
-    const body = { version: 1, sessions: Object.fromEntries(this.#sessions) };
-    // 0600: the index can hold what an MCP server is given to sign in with.
-    await writeFile(temporary, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
-    // The mode above is only for a file that is made new: one left by a crash keeps the one it had.
-    await chmod(temporary, 0o600);
-    await rename(temporary, this.#path);
   }
 }
