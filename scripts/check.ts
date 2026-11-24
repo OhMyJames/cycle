@@ -145,7 +145,7 @@ const steps: [string, string[]][] = [
   ["typecheck", ["bun", "run", "typecheck"]],
   ["lint", ["bun", "run", "lint"]],
   // The interface's tests run in a real browser and are not here: `bun run test:browser`, and CI's browser job.
-  ["test", ["bun", "test"]],
+  ["test", ["bun", "test", "--parallel=2"]],
 ];
 const timings: string[] = [];
 for (const [name, cmd] of steps) {

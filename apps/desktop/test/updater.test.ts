@@ -30,8 +30,7 @@ const github = {
   rangeStatus: 0,
 };
 
-beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "cv1-updater-"));
+const resetGithub = () => {
   github.releases = [];
   github.requests = [];
   github.files = new Map();
@@ -40,6 +39,11 @@ beforeEach(async () => {
   github.ranges = true;
   github.ranged = 0;
   github.rangeStatus = 0;
+};
+
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "cv1-updater-"));
+  resetGithub();
   server = Bun.serve({
     port: 0,
     fetch(request) {
@@ -556,23 +560,22 @@ const silent = asFetch(
     }),
 );
 
-test("a check that GitHub does not answer ends with an error, and the next check can be made", async () => {
+test("requests that go quiet time out at every update stage, and the next attempt can proceed", async () => {
   publish("0.2.0");
-  const { updater } = make({ fetch: silent, deadlineMs: 50 });
+  const first = make({ fetch: silent, deadlineMs: 50 });
   const state = await Promise.race([
-    updater.check(true),
+    first.updater.check(true),
     Bun.sleep(2_000).then(() => "still waiting" as const),
   ]);
   expect(state).toMatchObject({
     kind: "error",
     message: expect.stringContaining("did not answer"),
   });
-  // Not held: a later check goes out (this time to the fake GitHub), and finds the update.
+  // A later check is not held by the timed-out request.
   const again = make({ deadlineMs: 50 });
   expect((await again.updater.check(true)).kind).toBe("available");
-});
 
-test("a manifest that GitHub does not send in time ends the check, and the next one goes through", async () => {
+  resetGithub();
   publish("0.2.0");
   let stalledManifest = true;
   const slowManifest = asFetch((input, init) => {
@@ -580,13 +583,12 @@ test("a manifest that GitHub does not send in time ends the check, and the next 
     if (stalledManifest && url.includes("latest-darwin-arm64.json")) return silent(input, init);
     return fetch(input, init);
   });
-  const { updater } = make({ fetch: slowManifest, deadlineMs: 50 });
-  expect((await updater.check(true)).kind).toBe("error");
+  const { updater: manifestUpdater } = make({ fetch: slowManifest, deadlineMs: 50 });
+  expect((await manifestUpdater.check(true)).kind).toBe("error");
   stalledManifest = false;
-  expect((await updater.check(true)).kind).toBe("available");
-});
+  expect((await manifestUpdater.check(true)).kind).toBe("available");
 
-test("an archive that goes quiet part-way ends the install with an error, and the app can try again", async () => {
+  resetGithub();
   publish("0.2.0");
   await mkdir(join(dir, "apps"), { recursive: true });
   let stall = true;
@@ -606,15 +608,14 @@ test("an archive that goes quiet part-way ends the install with an error, and th
       ),
     );
   });
-  const { updater } = make({ fetch: quiet, deadlineMs: 50 });
-  await updater.check(false);
-  await expect(updater.install()).rejects.toThrow(/did not answer/);
+  const { updater: archiveUpdater } = make({ fetch: quiet, deadlineMs: 50 });
+  await archiveUpdater.check(false);
+  await expect(archiveUpdater.install()).rejects.toThrow(/did not answer/);
   // Not held: it can be asked again, and goes through.
   stall = false;
-  await updater.install();
-});
+  await archiveUpdater.install();
 
-test("a release list that begins and then goes quiet ends the check", async () => {
+  resetGithub();
   publish("0.2.0");
   const half = asFetch((input, init) => {
     if (!String(input).includes("/releases")) return fetch(input, init);
@@ -630,6 +631,6 @@ test("a release list that begins and then goes quiet ends the check", async () =
       ),
     );
   });
-  const { updater } = make({ fetch: half, deadlineMs: 50 });
-  expect(await updater.check(true)).toMatchObject({ kind: "error" });
+  const { updater: releaseUpdater } = make({ fetch: half, deadlineMs: 50 });
+  expect(await releaseUpdater.check(true)).toMatchObject({ kind: "error" });
 });

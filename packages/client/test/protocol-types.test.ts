@@ -6,17 +6,14 @@ type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 const same = <T extends true>(_proof?: T) => undefined;
 
-test("the client's answer for the agents is the protocol's, with the capabilities an agent says it has", async () => {
-  // The same type, not one that looks like it: a field added to the schema reaches the client by itself.
-  same<Equal<Awaited<ReturnType<CycleClient["agents"]>>, ResultOf<typeof agentsList>>>(true);
-  const agent = {} as AgentInfo;
-  // Both can be read, and either can be absent.
-  const steer: boolean | undefined = agent.steer;
-  const image: object | null | undefined = agent.promptCapabilities?.image;
-  void steer;
-  void image;
-  expect(true).toBe(true);
-});
+// The same type, not one that looks like it: a field added to the schema reaches the client by itself.
+same<Equal<Awaited<ReturnType<CycleClient["agents"]>>, ResultOf<typeof agentsList>>>(true);
+const agent = {} as AgentInfo;
+// Both can be read, and either can be absent.
+const steer: boolean | undefined = agent.steer;
+const image: object | null | undefined = agent.promptCapabilities?.image;
+void steer;
+void image;
 
 test("an answer from an older daemon, without the optional capabilities, is still an answer", () => {
   const old = agentsList.result.parse({
