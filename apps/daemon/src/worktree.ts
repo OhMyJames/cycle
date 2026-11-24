@@ -18,6 +18,7 @@ export class WorktreeError extends Error {
       | "invalid_name"
       | "invalid_base"
       | "not_a_worktree"
+      | "branch_exists"
       | "unsaved_changes"
       | "git_failed",
     message: string,
@@ -193,8 +194,16 @@ export const createWorktree = async (
   }
   await mkdir(dirname(path), { recursive: true });
   const taken = await git(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
-  if (taken.code === 0) await must(root, ["worktree", "add", path, branch]);
-  else
+  if (taken.code === 0) {
+    // A branch left behind by an earlier worktree: it is reused when no start was asked for, never passed off as
+    // made from `base`.
+    if (options.base !== undefined)
+      throw new WorktreeError(
+        "branch_exists",
+        `The branch ${branch} already exists, so a worktree named ${name} cannot start from ${options.base}. Pick another name, or delete the branch.`,
+      );
+    await must(root, ["worktree", "add", path, branch]);
+  } else
     await must(root, [
       "worktree",
       "add",
@@ -209,9 +218,13 @@ export const createWorktree = async (
 
 /** An existing worktree of the repository, by path (for EnterWorktree's `path`). */
 export const findWorktree = async (dir: string, path: string): Promise<Worktree> => {
-  const found = (await listWorktrees(dir)).find((tree) => resolve(tree.path) === resolve(path));
+  // A relative path is the session's own folder's, not the daemon's.
+  const wanted = resolve(dir, path);
+  const found = (await listWorktrees(dir)).find((tree) => resolve(tree.path) === wanted);
   if (found === undefined)
     throw new WorktreeError("not_a_worktree", `${path} is not in \`git worktree list\``);
+  if (resolve(found.path) === resolve(found.root))
+    throw new WorktreeError("not_a_worktree", `${path} is the main checkout, not a worktree`);
   return found;
 };
 

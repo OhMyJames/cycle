@@ -329,6 +329,7 @@ function WorktreeGroup() {
   const preferences = useAppState((s) => s.preferences);
   const known = useAppState((s) => s.agents);
   const label = useId();
+  const writes = useRef<Promise<void>>(Promise.resolve());
   if (preferences === undefined) return null;
   const agents = new Map<string, string>();
   for (const list of Object.values(known))
@@ -349,13 +350,14 @@ function WorktreeGroup() {
               <Switch
                 aria-labelledby={`${label}${id}`}
                 checked={on}
-                onCheckedChange={(checked) =>
-                  void store.setPreferences({
-                    worktreeAgents: checked
-                      ? [...preferences.worktreeAgents, id]
-                      : preferences.worktreeAgents.filter((a) => a !== id),
-                  })
-                }
+                onCheckedChange={(checked) => {
+                  // One after another, each from what the one before left: two switches turned in a row both count.
+                  writes.current = writes.current.then(() => {
+                    const now = store.getState().preferences?.worktreeAgents ?? [];
+                    const rest = now.filter((a) => a !== id);
+                    return store.setPreferences({ worktreeAgents: checked ? [...rest, id] : rest });
+                  });
+                }}
               >
                 <SwitchThumb />
               </Switch>

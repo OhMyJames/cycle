@@ -114,7 +114,8 @@ export const handleWorktreeMcp = async (
   } catch {
     return failure(null, -32700, "Parse error");
   }
-  if (typeof message !== "object" || message === null)
+  // A batch (an array) is not taken: it would be answered with nothing and the caller left waiting.
+  if (typeof message !== "object" || message === null || Array.isArray(message))
     return failure(null, -32600, "Invalid request");
   // Notifications have no answer.
   if (message.id === undefined) return new Response(null, { status: 202 });

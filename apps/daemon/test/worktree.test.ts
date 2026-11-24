@@ -113,3 +113,22 @@ test("only a worktree in `git worktree list` can be entered by path", async () =
   expect(await findWorktree(root, made.path)).toMatchObject({ path: made.path });
   await expect(findWorktree(root, tmpdir())).rejects.toMatchObject({ reason: "not_a_worktree" });
 });
+
+test("a branch left behind is reused with no base, and refused when a base is asked for", async () => {
+  await run(root, "branch", "worktree-left-over", "topic");
+  const error = await createWorktree(root, { name: "left-over", base: "main" }).catch((e) => e);
+  expect(error).toBeInstanceOf(WorktreeError);
+  expect((error as WorktreeError).reason).toBe("branch_exists");
+  const reused = await createWorktree(root, { name: "left-over" });
+  expect(reused.branch).toBe("worktree-left-over");
+  await removeWorktree(reused, true);
+});
+
+test("the main checkout is not a worktree to enter, and a relative path is the folder's own", async () => {
+  const error = await findWorktree(root, root).catch((e) => e);
+  expect((error as WorktreeError).reason).toBe("not_a_worktree");
+  const made = await createWorktree(root, { name: "rel", base: "main" });
+  const found = await findWorktree(root, join(".agents", "worktree", "rel"));
+  expect(found.path).toBe(made.path);
+  await removeWorktree(made, true);
+});

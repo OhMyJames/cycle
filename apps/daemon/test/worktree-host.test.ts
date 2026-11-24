@@ -147,3 +147,13 @@ test("keeping leaves the worktree on disk; outside a worktree there is nothing t
   const back = await call(host, "tools/call", { name: "EnterWorktree", arguments: { path } });
   expect(JSON.parse(back.result?.content?.[0]?.text ?? "{}").worktreePath).toBe(path);
 });
+
+test("a batch is refused, not answered with nothing", async () => {
+  const batch = new Request("http://gateway/mcp", {
+    method: "POST",
+    body: JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "tools/list" }]),
+  });
+  const response = await handleWorktreeMcp({} as never, "s1", batch);
+  expect(response.status).toBe(200);
+  expect(((await response.json()) as { error: { code: number } }).error.code).toBe(-32600);
+});

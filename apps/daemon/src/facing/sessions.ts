@@ -453,8 +453,11 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       core.sessions.delete(session.id);
       await session.log.close();
       await core.store.remove(session.id);
-      if (tree !== undefined)
-        await endWorktree(core, session.entry, tree, (unsaved?.commits.length ?? 0) > 0);
+      if (tree !== undefined) {
+        // A check that failed and was waved through by `discard` may hide commits: the branch goes with them.
+        const discardCommits = unsaved === undefined ? discard : unsaved.commits.length > 0;
+        await endWorktree(core, session.entry, tree, discardCommits);
+      }
     } finally {
       core.changed();
     }
