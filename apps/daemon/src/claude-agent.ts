@@ -125,8 +125,6 @@ export const claudeEnv = (
   env.CLAUDE_CONFIG_DIR = config.configDir ?? join(dataDir, "claude");
   // HOME is not passed on: it would let Claude find a login or settings nobody chose to share.
   env.HOME ??= env.CLAUDE_CONFIG_DIR;
-  // Without this the SDK gives Claude no task list, so there would be no plan to show (config.json can override).
-  env.CLAUDE_CODE_ENABLE_TODO_TOOLS = "1";
   return { ...env, ...config.env };
 };
 

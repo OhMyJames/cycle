@@ -3,6 +3,9 @@ import type { AskingOptions } from "./permissions.ts";
 import type { AdapterConfig, Live, QueryFn, SessionState } from "./session.ts";
 import { claudeJsonPath, recordTrust } from "./trust.ts";
 
+/** Claude's task-list tools: what a plan is made of (docs/adapters/claude.md). */
+export const TASK_TOOLS = ["TaskCreate", "TaskGet", "TaskUpdate", "TaskList"];
+
 /** What a process calls back that is not the session's settings: how it asks the person, and its hooks. */
 export type ProcessCallbacks = AskingOptions & { hooks: NonNullable<Options["hooks"]> };
 
@@ -69,6 +72,11 @@ export const spawn = (
     ...(config.progressSummaries === true ? { agentProgressSummaries: true } : {}),
     // A sub-agent's words, not only its tool calls: clients show its conversation (CYCL-134).
     forwardSubagentText: true,
+    // The task list, which the plan is made of. Claude Code gives models newer than its own list none unless asked, and
+    // naming these tools is the asking: it turns on TaskCreate/TaskGet/TaskUpdate/TaskList, not TodoWrite, and only
+    // allows calls that change nothing outside the session. CLAUDE_CODE_ENABLE_TODO_TOOLS would do the same for the
+    // whole process; this keeps it to the tools.
+    allowedTools: TASK_TOOLS,
     permissionMode: session.mode,
     // The SDK's guard against starting in bypassPermissions by accident. Here the mode is only
     // ever the one a person chose, and without this a switch to it mid-session would be refused

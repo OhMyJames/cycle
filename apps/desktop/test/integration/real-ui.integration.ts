@@ -141,14 +141,18 @@ test.skipIf(!enabled)(
         }),
       );
 
-      // The header says how full the context is; a plan appears when Claude keeps a todo list.
-      const usage = page.locator('[data-slot="usage"]');
+      // The ring under the input says how full the context is; a plan appears when Claude keeps a todo list.
+      const usage = page.locator('[data-kind="context-meter"]:not([data-empty])');
       await usage.waitFor({ timeout: 10_000 });
-      expect(await usage.textContent()).toMatch(/\d+% of context/);
+      expect(await usage.locator('[data-slot="context-percent"]').textContent()).toMatch(/\d+%/);
       await ask(
         "Use your task tools (TaskCreate and TaskUpdate; load them with ToolSearch if needed) to create exactly two tasks, named first and second, then mark first completed. Then say: listed",
       );
-      const plan = (await page.locator('[data-slot="plan"]').first().textContent()) ?? "";
+      // The plan sits above the input while some of it is left to do; opened, it lists every task.
+      const strip = page.locator('[data-kind="plan-strip"]');
+      await strip.waitFor({ timeout: 10_000 });
+      await strip.getByRole("button").first().click();
+      const plan = (await strip.locator('[data-slot="plan"]').textContent()) ?? "";
       expect(plan).toContain("first");
       expect(plan).toContain("second");
 

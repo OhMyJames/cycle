@@ -25,6 +25,55 @@ const MAX_PATCH_BYTES = 100_000;
 
 const normalizeKind = (kind?: string) => (kind && VALID_KINDS.has(kind) ? kind : "other");
 
+/**
+ * agy's own task list: each call sends the whole list as `rawInput.steps` (`{ title, status }`). Seen in a real
+ * session; agy never sends a v1 `plan` itself.
+ */
+export const AGY_PLAN_TOOL = "update_steps";
+
+/** agy's step statuses as ACP's: `done` is `completed`; a `failed` step is over, not left to do, so it counts as done. */
+const stepStatus = (status: unknown): "pending" | "in_progress" | "completed" =>
+  status === "in_progress"
+    ? "in_progress"
+    : status === "done" || status === "completed" || status === "failed"
+      ? "completed"
+      : "pending";
+
+/**
+ * The session's `update_steps` calls, by id. An update carries only what changed, so the name and the steps a call
+ * started with are remembered until it ends: its rows stay `think` and its plan is sent though the last update is
+ * a bare status. The plan goes once the call has finished (a failed one changed nothing), with the session-wide
+ * `planId` a v1 `plan` uses, so it replaces the one shown.
+ */
+export class StepsPlans {
+  readonly #steps = new Map<string, unknown>();
+
+  /** For a v1 tool call or its update: whether it is a plan call, and the plan it makes if it has just finished. */
+  see(payload: V1ToolCallPayload, planId: string): { plan: boolean; update?: SessionUpdate } {
+    const id = payload.toolCallId;
+    if (payload.name === AGY_PLAN_TOOL && !this.#steps.has(id)) this.#steps.set(id, undefined);
+    if (!this.#steps.has(id)) return { plan: false };
+    const given = (payload.rawInput as { steps?: unknown } | undefined)?.steps;
+    if (given !== undefined) this.#steps.set(id, given);
+    if (payload.status !== "completed" && payload.status !== "failed") return { plan: true };
+    const steps = this.#steps.get(id);
+    this.#steps.delete(id);
+    if (payload.status === "failed" || !Array.isArray(steps)) return { plan: true };
+    const entries = steps.flatMap((step: { title?: unknown; status?: unknown } | null) =>
+      typeof step?.title === "string" && step.title.trim() !== ""
+        ? [{ content: step.title, priority: "medium", status: stepStatus(step.status) }]
+        : [],
+    );
+    return {
+      plan: true,
+      update: {
+        sessionUpdate: "plan_update",
+        plan: { type: "items", planId, entries },
+      } as SessionUpdate,
+    };
+  }
+}
+
 const normalizeStatus = (status?: string): ToolCallStatus =>
   status && VALID_STATUSES.has(status as ToolCallStatus)
     ? (status as ToolCallStatus)

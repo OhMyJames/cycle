@@ -137,7 +137,7 @@ Claude Agent SDK 0.3.327,模型 haiku,账号的 OAuth token(`CLAUDE_CODE_OAUTH_T
 真实运行里的用量和计划(2026-11-18):
 
 - **用量**:真实结果里有 `modelUsage[…].contextWindow` 和 `total_cost_usd`,界面头部显示"2% of context · $0.002"(重载后从历史里重算,仍在)。
-- **计划**:SDK 里 Claude **默认没有任务列表工具**(`TodoWrite` 和 `TaskCreate` 都被 `ToolSearch` 报"没有匹配");要设 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` 才出现,而且出现的是 `TaskCreate`/`TaskUpdate`,不是 `TodoWrite`。daemon 现在给 Claude 的环境里默认带上它(`config.json` 的 `claude.env` 可覆盖)。`TaskCreate` 的任务 id 只在结果里(`tool_use_result.task.id`),所以要等结果再进列表。真实运行:建两个任务、更新一个,界面里出现这两项。
+- **计划**:SDK 里 Claude **默认没有任务列表工具**(`TodoWrite` 和 `TaskCreate` 都被 `ToolSearch` 报"没有匹配");Claude Code 只给它名单上的旧模型(到 Opus 4.7、Sonnet 4.6、Haiku 4.5)默认开任务列表,更新的模型要另外打开:设 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`,或者在启动时点名任务工具。适配进程用后一种:SDK 选项 `allowedTools` 写上 `TaskCreate`、`TaskGet`、`TaskUpdate`、`TaskList`(`process.ts` 的 `TASK_TOOLS`),不再往环境里放那个变量。出现的是 `TaskCreate`/`TaskUpdate`,不是 `TodoWrite`(要 `TodoWrite` 得设 `CLAUDE_CODE_ENABLE_TASKS=false`)。核对过 SDK 0.3.327、Opus 5.5:不点名时 init 的工具里没有这四个,点名后有。`TaskCreate` 的任务 id 只在结果里(`tool_use_result.task.id`),所以要等结果再进列表。真实运行:建两个任务、更新一个,界面里出现这两项。
 
 这次真实运行里没有出现的:`notice`、`compaction_update`、子 agent(适配器本来就没发)。图片、长输出、很长的会话没试过。
 

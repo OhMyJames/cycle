@@ -161,8 +161,9 @@ const laidTurn = (
   for (const item of items) {
     switch (item.kind) {
       case "tool": {
-        // The agent changing its plan (ACP's `think`: TodoWrite, TaskCreate, TaskUpdate): the plan says it, not a row per
-        // call, from its start (so nothing shows and then goes). One that failed is shown; none cuts a stretch.
+        // The agent changing its plan (ACP's `think`: TodoWrite, TaskCreate, TaskUpdate, agy's update_steps): the plan
+        // says it, not a row per call, from its start (so nothing shows and then goes). One that failed is shown; none
+        // cuts a stretch.
         // A sub-agent is work of its own, with its own answer: a card of its own, which cuts the stretch. Before the plan's
         // calls, so one an agent marks `think` is not left out with them.
         // A code review is what the agent found, not a step of its work: a card of its own, like what it says.

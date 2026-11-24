@@ -18,7 +18,6 @@ test("the default Claude environment keeps host login tokens and the host home o
     PATH: "/bin",
     HOME: "/isolated/cycle/claude",
     CLAUDE_CONFIG_DIR: "/isolated/cycle/claude",
-    CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
   });
 });
 
