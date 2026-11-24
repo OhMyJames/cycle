@@ -5,7 +5,7 @@
 ## 1. 门禁(每次)
 
 ```bash
-bun run check        # 边界、css、类型、lint、单元测试、DOM 测试,约 10 秒
+bun run check        # 边界、css、类型、lint、单元测试、DOM 测试,十几秒
 ```
 
 注意门禁会校验 `DESIGN.md` 与 `packages/ui/src/styles/` 下样式里的 `--cycle-*` 令牌双向完全一致;lint 有任何 warning 都会失败(`--error-on-warnings`)。新的界面状态要在界面测试里有一条(`packages/ui/test/browser/app.browser.tsx`,在无界面的 Chromium 里跑,`bun run test:browser`;假桥接在 `test/fake-bridge.ts`)。
@@ -48,6 +48,17 @@ bun .claude/skills/cycle-design-taste/scripts/scan-copy.mjs path/a.tsx # 指定�
 4. **键盘与弹窗**:用真实按键检查改变的路径。焦点环看得见、不被裁掉;表单弹窗支持自动聚焦与 Enter 提交;破坏性确认主按钮为 `destructive` 且焦点在 Cancel;Esc 逐层关闭并归还焦点;`⌘Return` 在有权限卡时即使光标在输入框也可用;中文 IME 选词回车不误发送。
 5. **流式中**:发一条会产生长输出或连续工具调用的消息,看页面是否跳动、滚动是否只在用户在底部时跟随、工具展开状态是否保持。
 6. **缩放**:系统字体放大一档时布局仍然成立。
+
+## 5. 复杂留给系统(每次改交互时过一遍)
+
+对照 `DESIGN.md` 的"复杂留给系统,不留给用户"八条,逐条回答改动有没有违反:
+
+- 有没有让用户做系统本可判断的选择?此刻用不到的东西有没有出现?
+- 同一动作在各处的名字和路径一致吗?按下去有回应、再按能收回吗?
+- 会不会打断用户正在做的事?会丢东西的操作是否难误碰、常用的是否一步到位?
+- 不看文档,界面自己说得清状态和下一步吗?
+
+动效的变化清点方法见 `references/motion.md`。
 
 ## 判定与交付
 
