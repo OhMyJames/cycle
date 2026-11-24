@@ -30,6 +30,7 @@ const baseConfig = (
   const config: AdapterConfig = {
     env: { HOME: "/tmp/cycle-agy-test-home", PATH: "/usr/bin:/bin" },
     agyExecutable: "/usr/local/bin/agy",
+    pluginServers: async () => [],
     connect: (handlers) => {
       fake = new FakeV1Agent(handlers, handler);
       return fake;

@@ -6,6 +6,7 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { V1McpServer } from "./mcp.ts";
 
 export type AgyPluginFailureReason =
   | "not_found"
@@ -73,6 +74,10 @@ export type AgyPluginsOptions = {
 
 const READ_TIMEOUT_MS = 30_000;
 const WRITE_TIMEOUT_MS = 180_000;
+/** What a plugin's `mcp_config.json` writes for its own directory (not a template of ours). */
+const PLUGIN_ROOT_TOKEN = ["$", "{PLUGIN_ROOT}"].join("");
+/** Listing plugins as a session starts: short, a slow `agy` must not hold the session up. */
+const STDIO_LIST_TIMEOUT_MS = 5_000;
 
 const bunRun: RunAgyPluginCommand = async (command, { env, cwd, timeoutMs }) => {
   const proc = Bun.spawn([...command], {
@@ -271,6 +276,52 @@ export class AgyPlugins {
       throw new AgyPluginError("failed", "agy plugin list --json did not return an array");
     }
     return parsed.map(parseInstalledEntry).filter((item): item is AgyPlugin => item !== undefined);
+  }
+
+  /**
+   * The stdio MCP servers of the enabled plugins, as `session/new` takes them. `agy acp` does not start a plugin's own
+   * MCP servers (its worker logs "Not reloading plugin MCP servers: cannot get the signed-in user", 1.5.16), so the
+   * adapter hands them over itself. A server is named `<plugin>_<server>`, as `agy` names it, so the plugin's rules
+   * and skills still find its tools. `${PLUGIN_ROOT}` is the plugin's directory. HTTP servers are not here: those are
+   * Cycle's connectors. Never throws: a plugin that cannot be read just brings no server.
+   */
+  async stdioServers(timeoutMs = STDIO_LIST_TIMEOUT_MS): Promise<V1McpServer[]> {
+    let stdout: string;
+    try {
+      stdout = await this.#exec(["list", "--json"], timeoutMs);
+    } catch {
+      return [];
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(parsed)) return [];
+    const out: V1McpServer[] = [];
+    for (const raw of parsed) {
+      if (!isObject(raw) || raw.enabled !== true) continue;
+      const plugin = text(raw.name);
+      const root = text(raw.path);
+      if (plugin === undefined || root === undefined) continue;
+      const servers = readJsonFile(join(root, "mcp_config.json"))?.mcpServers;
+      if (!isObject(servers)) continue;
+      for (const [name, def] of Object.entries(servers)) {
+        if (!isObject(def) || typeof def.command !== "string" || def.command === "") continue;
+        const fill = (value: string) => value.replaceAll(PLUGIN_ROOT_TOKEN, root);
+        const args = Array.isArray(def.args)
+          ? def.args.filter((a): a is string => typeof a === "string").map(fill)
+          : [];
+        const env = isObject(def.env)
+          ? Object.entries(def.env).flatMap(([key, value]) =>
+              typeof value === "string" ? [{ name: key, value: fill(value) }] : [],
+            )
+          : [];
+        out.push({ name: `${plugin}_${name}`, command: fill(def.command), args, env });
+      }
+    }
+    return out;
   }
 
   async snapshot(): Promise<AgyPluginSnapshot> {

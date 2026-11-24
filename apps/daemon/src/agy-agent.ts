@@ -105,6 +105,9 @@ export const agyEnv = (
     if (value !== undefined) env[key] = value;
   }
   env.HOME = config.home ?? join(dataDir, "agy");
+  // agy-fast checks GitHub for a newer release from its session hook and swaps its own files: not unasked here
+  // (`agy.env` can turn it back on).
+  env.AGY_FAST_AUTO_UPDATE = "off";
   Object.assign(env, systemProxyFill(config.allowEnv, inherited, config.env), config.env);
   return env;
 };

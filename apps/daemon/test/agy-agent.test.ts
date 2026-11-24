@@ -58,6 +58,7 @@ describe("agy daemon harness", () => {
       PATH: "/usr/bin:/bin",
       TMPDIR: "/tmp",
       HOME: "/data/agy",
+      AGY_FAST_AUTO_UPDATE: "off",
     });
   });
 
@@ -72,8 +73,15 @@ describe("agy daemon harness", () => {
     expect(env).toEqual({
       PATH: "/bin",
       HOME: "/custom/agy-home",
+      AGY_FAST_AUTO_UPDATE: "off",
       GEMINI_API_KEY: "explicit-key",
     });
+    const optedIn = agyEnv(
+      ConfigSchema.parse({ agy: { env: { AGY_FAST_AUTO_UPDATE: "notify" } } }).agy,
+      "/data",
+      { PATH: "/bin" },
+    );
+    expect(optedIn.AGY_FAST_AUTO_UPDATE).toBe("notify");
   });
 
   test("findAgyExecutable follows config.executable -> ~/.local/bin/agy -> PATH", () => {
@@ -190,6 +198,7 @@ describe("agy daemon harness", () => {
     ).toEqual({
       PATH: "/usr/bin",
       HOME: "/data/agy",
+      AGY_FAST_AUTO_UPDATE: "off",
     });
   });
 
