@@ -526,6 +526,7 @@ export const enUS = {
   "turn.result": "Result",
   "turn.end.error": "The turn failed.",
   "turn.end.errorWith": "The turn failed: {message}",
+  "turn.end.networkHint": "Check the network or the proxy.",
   "turn.end.cancelled": "Stopped before it finished.",
   "turn.end.maxTokens": "Stopped: the reply reached its length limit.",
   "turn.end.maxTurnRequests": "Stopped: the agent took too many steps.",
@@ -975,8 +976,10 @@ export const enUS = {
   "settings.harness.account.method.third_party": "Third-party provider",
   "settings.harness.account.method.none": "No active login",
   "settings.harness.account.method.unknown": "Unknown method",
-  "settings.harness.account.unknownReason.network_error": "Network error while checking status.",
-  "settings.harness.account.unknownReason.timeout": "Timed out while checking status.",
+  "settings.harness.account.unknownReason.network_error":
+    "Network error while checking status. Check the network or the proxy.",
+  "settings.harness.account.unknownReason.timeout":
+    "Timed out while checking status. Check the network or the proxy.",
   "settings.harness.account.unknownReason.probe_failed": "Status probe failed.",
   "settings.harness.account.viaEnv": "Overridden by {name}",
   "settings.harness.account.expires": "Expires {when}",

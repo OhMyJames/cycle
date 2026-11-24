@@ -129,7 +129,7 @@ CYCL-104。目标机器是 2 核 4 GB,长期挂着的 daemon 不能让进程越�
 - **daemon 的打包和安装**:现在是 `bun apps/daemon/src/main.ts`;没有 `cycle` 可执行文件,也没有远端机器上的安装步骤。ssh 通道里的命令得由调用方写全。
 - **daemon 退出时对客户端的通知**:客户端仍靠连接断开发现,然后重连;重连后按 `cycle/seq` 补发,看到被打断的 turn 的终态(`daemon_stopped`),由此知道发生了什么(见下面"停止和升级")。没有另发一条"要停了"的通知。
 - **重启后续接 agent**:进行中的 turn 被打断,不续接(agent 是 daemon 的子进程,状态在进程里);后台子 agent 也不重建。
-- **附着着的 session 的回收**:桌面端不对看过的 session 取消附着，所以它连着时这些 session 的适配器进程不回收(见"空闲回收和空闲退出")。
+- **附着着的 session 的回收**:桌面端不对看过的 session 取消附着，所以附着着的 session 另按 `idle.attachedAgentMinutes`(默认 60 分钟，0 为不回收)回收，条件同上但不要求没人附着(CYC-297)；下一个 prompt 照常 resume。
 - **客户端先于 `initialize` 发请求的处理**:交给 SDK(返回 `-32600`)。
 
 ## 运行
