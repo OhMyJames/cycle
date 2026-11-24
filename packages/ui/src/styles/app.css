@@ -2373,8 +2373,14 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   min-width: var(--cycle-panel-width, 0);
 }
 
-/* Closed, the panel's handle is not drawn at the window's edge. */
+/* Closed, the panel takes no room, even before its column is fitted on starting (the saved layout may have it open), and
+   its handle is not drawn at the window's edge. */
+[data-slot="resizable-panel"]#panel:empty {
+  max-width: 0;
+}
+
 [data-slot="split"] [data-slot="resizable-handle"][data-closed] {
+  /* Not taken out: its room coming back as the panel opens would move the columns a pixel under the slide. */
   visibility: hidden;
 }
 

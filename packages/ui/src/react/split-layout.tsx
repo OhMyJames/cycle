@@ -109,8 +109,7 @@ const sliding = new WeakMap<HTMLElement, number>();
  * Runs `change` with the columns sliding to where it puts them (`data-animate` on the split, motion.md): the sidebar's
  * button and ⌘B, and the panel opened or closed by the user. A drag, or a window being resized, moves them at once.
  * `done` runs when `column` has got there (at once if nothing moved; with reduced motion, nothing slides and it runs a
- * moment later). Returns what ends the
- * slide early.
+ * moment later). Returns what ends the slide early.
  */
 export const slideColumns = (
   split: HTMLElement,
@@ -183,10 +182,13 @@ export function SplitLayout({
   sidebarWidth.current = onSidebarWidth;
   // What the user left the sidebar and the panel at: read from the page when the columns attach (the SDK has restored
   // the saved layout by then), and from every change the user makes.
-  const want = useRef<{ sidebar: number; panel: number }>({
-    sidebar: SIDEBAR.default,
+  const [wanted] = useState(() => ({
+    sidebar: SIDEBAR.default as number,
     panel: readPanel() ?? PANEL.default,
-  });
+  }));
+  const want = useRef<{ sidebar: number; panel: number }>(wanted);
+  // The width the last fitting gave the panel: a commit that leaves it there did not change it.
+  const fitted = useRef(0);
   // Whether the window folded the sidebar (not the user). Kept beside the saved layout, which saves the fold too: after
   // a restart a fold the window made is still the window's, and comes back when there is room.
   const folded = useRef(readFolded());
@@ -237,16 +239,13 @@ export function SplitLayout({
   // The panel opened or closed: the columns are fitted to it, sliding when it was the user, at once otherwise. Before
   // the page is drawn, so the column is not seen a frame in the wrong place.
   const endSlide = useRef<(() => void) | undefined>(undefined);
-  const attached = useRef(false);
   useLayoutEffect(() => {
-    // On attaching, the first fitting puts the panel's column where it goes.
-    if (!attached.current) {
-      attached.current = true;
-      return;
-    }
     const split = groupRef.current;
     const refit = fit.current;
+    // On attaching (nothing fits yet), the first fitting puts the panel's column where it goes.
     if (split === null || refit === undefined) return;
+    // Measured while a slide still runs: ending it first would put the column where that slide was going.
+    const now = widthIn(split, "panel");
     endSlide.current?.();
     if (!was.slide) {
       refit();
@@ -255,7 +254,7 @@ export function SplitLayout({
     // While it slides, what it shows keeps its open width and is cut off by the column, as the sidebar's rows are:
     // nothing in it is squeezed, and a terminal in it is not fitted again on every frame.
     const keep = (width: number) => split.style.setProperty("--cycle-panel-width", `${width}px`);
-    if (!was.open) keep(widthIn(split, "panel"));
+    if (!was.open) keep(Math.max(now, fitted.current));
     endSlide.current = slideColumns(
       split,
       "panel",
@@ -284,9 +283,11 @@ export function SplitLayout({
     if (!sidebarWasFolded.current && widthOf("sidebar") > 0)
       want.current.sidebar = widthOf("sidebar");
     sidebarWidth.current?.(want.current.sidebar);
-    // The panel's width, from before it was kept apart from the SDK's layout.
-    if (readPanel() === undefined && !controller.isCollapsed("panel") && widthOf("panel") > 0)
+    // The panel's width, from before it was kept apart from the SDK's layout: read once.
+    if (readPanel() === undefined && !controller.isCollapsed("panel") && widthOf("panel") > 0) {
       want.current.panel = widthOf("panel");
+      writePanel(want.current.panel);
+    }
     const refit = () => {
       const width = group.getBoundingClientRect().width;
       if (width === 0) return 0;
@@ -312,6 +313,7 @@ export function SplitLayout({
         if (!controller.isCollapsed("panel")) ask(() => controller.collapse("panel"));
       } else if (controller.isCollapsed("panel") || Math.abs(widthOf("panel") - next.panel) > 1)
         ask(() => controller.resize("panel", `${next.panel}px`));
+      fitted.current = next.panel;
       return next.panel;
     };
     fit.current = refit;
@@ -359,11 +361,22 @@ export function SplitLayout({
             sidebarWidth.current?.(want.current.sidebar);
           }
           if (panel === undefined) return;
-          if (controller.isCollapsed("panel")) panel.onClose?.();
-          else if (widthIn(group, "panel") > 0) {
-            want.current.panel = widthIn(group, "panel");
-            writePanel(want.current.panel);
+          if (controller.isCollapsed("panel")) {
+            panel.onClose?.();
+            return;
           }
+          // The panel's own width only when the user changed it: not one it is sliding through, nor the one the window
+          // narrowed it to while the user changed something else.
+          const width = widthIn(group, "panel");
+          if (
+            endSlide.current !== undefined ||
+            width === 0 ||
+            Math.abs(width - fitted.current) <= 1
+          )
+            return;
+          want.current.panel = width;
+          fitted.current = width;
+          writePanel(width);
         }}
       >
         <ResizablePanel
