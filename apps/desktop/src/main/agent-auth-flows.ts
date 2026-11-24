@@ -1,0 +1,403 @@
+// An agent's setup and account as the page sees them (docs/harness-settings.md, CYCL-226): reading what the daemon knows,
+// saving runtime settings, and the in-app sign-in flows. Main keeps the flows this window started, judges every URL a
+// daemon gives against the hardcoded allowlist (agent-auth-guard.ts), and opens one only when the person clicks.
+import { agentOf } from "@cycle/analytics/events";
+import type { ClientEvents, CycleClient } from "@cycle/client";
+import type {
+  AgentAuthLogoutAnswer,
+  AgentAuthProblemReason,
+  AgentAuthStartAnswer,
+  AgentAuthSubmitAnswer,
+  AgentRuntimePatchValue,
+  AgentRuntimeSaveAnswer,
+  AgentSetupSnapshot,
+  AgentSignInMode,
+} from "@cycle/ui";
+import { selectAgentSignInMode, validateAgentAuthUrl } from "./agent-auth-guard.ts";
+import type { Runtime } from "./runtime.ts";
+
+type AgentAuthCompleted = Parameters<NonNullable<ClientEvents["agentAuthCompleted"]>>[0];
+
+const AUTH_PROBLEM_REASONS = new Set<AgentAuthProblemReason>([
+  "binary_unavailable",
+  "auth_in_progress",
+  "parse_failed",
+  "invalid_code",
+  "expired",
+  "cancelled",
+  "process_failed",
+  "timeout",
+  "unsupported_mode",
+  "untrusted_url",
+  "flow_not_found",
+  "flow_forbidden",
+  "flow_consumed",
+  "flow_not_active",
+  "disconnected",
+  "failed",
+]);
+
+const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
+  const reason = (error as { data?: { reason?: unknown } } | null)?.data?.reason;
+  if (typeof reason === "string" && AUTH_PROBLEM_REASONS.has(reason as AgentAuthProblemReason)) {
+    return reason as AgentAuthProblemReason;
+  }
+  return "failed";
+};
+
+export class AgentAuthFlows {
+  readonly #runtime: Runtime;
+  /** The local daemon's `config.json` path last reported by `readAgentSetup`, for `revealDaemonConfig`. */
+  readonly #localConfigPath = new Map<string, string>();
+  /** Latest daemon-declared `signInModes` per `${environmentId}:${agent}`, for transport-aware mode selection. */
+  readonly #signInModes = new Map<string, AgentSignInMode[]>();
+  /** Active in-app agent auth flows initiated by this desktop instance (keyed by `${environmentId}:${flowId}`). */
+  readonly #activeAuthFlows = new Map<
+    string,
+    { environmentId: string; agent: string; flowId: string; url?: string; host?: string }
+  >();
+  /** Flow IDs cancelled by desktop itself due to untrusted URL, so the daemon's cancel notification isn't double-counted. */
+  readonly #rejectedAuthFlows = new Set<string>();
+  /** In-flight `startAgentAuth` calls per environment, so an immediate completion arriving in the same chunk isn't lost. */
+  readonly #startingAuthCount = new Map<string, number>();
+  readonly #earlyAuthCompleted = new Map<
+    string,
+    { agent: string; ok: boolean; reason?: AgentAuthProblemReason | undefined }
+  >();
+
+  constructor(runtime: Runtime) {
+    this.#runtime = runtime;
+  }
+
+  /** A daemon said a flow it started for this connection ended (`_cycle/agent_auth_completed`). */
+  completed(environmentId: string, completed: AgentAuthCompleted): void {
+    const flowKey = `${environmentId}:${completed.flowId}`;
+    if (this.#rejectedAuthFlows.delete(flowKey)) return;
+    if (!this.#activeAuthFlows.delete(flowKey)) {
+      // If startAgentAuth is currently awaiting the daemon response, stash once; otherwise drop duplicate/unsolicited notifications.
+      if ((this.#startingAuthCount.get(environmentId) ?? 0) > 0) {
+        this.#earlyAuthCompleted.set(flowKey, {
+          agent: completed.agent,
+          ok: completed.ok,
+          ...(completed.reason !== undefined ? { reason: completed.reason } : {}),
+        });
+      }
+      return;
+    }
+    this.#emitAuthCompleted(
+      environmentId,
+      completed.flowId,
+      completed.agent,
+      completed.ok,
+      completed.reason,
+    );
+  }
+
+  async readAgentSetup(
+    environmentId: string,
+    agent: string,
+    options?: { refreshUsage?: boolean; forceRefresh?: boolean },
+  ): Promise<AgentSetupSnapshot> {
+    const snapshot = await this.#runtime
+      .connection(environmentId)
+      .client.readAgentSetup(agent, options);
+    this.#signInModes.set(`${environmentId}:${agent}`, snapshot.auth.signInModes);
+    if (this.#runtime.kindOf(environmentId) === "local") {
+      this.#localConfigPath.set(environmentId, snapshot.environment.configFile.path);
+    }
+    return snapshot;
+  }
+
+  async setAgentRuntimeSettings(
+    environmentId: string,
+    agent: string,
+    patch: Record<string, AgentRuntimePatchValue>,
+    expectedRevision: number,
+  ): Promise<AgentRuntimeSaveAnswer> {
+    try {
+      const result = await this.#runtime
+        .connection(environmentId)
+        .client.setAgentRuntimeSettings(agent, patch, expectedRevision);
+      this.#runtime.track("agent_runtime_settings_saved", {
+        agent: agentOf(agent),
+        environment: this.#runtime.kindOf(environmentId),
+      });
+      return { saved: true, ...result };
+    } catch (error) {
+      const rpc = error as {
+        code?: number;
+        message?: string;
+        data?: { reason?: string; currentRevision?: number; field?: string };
+      };
+      if (rpc.code === -32602 && rpc.data?.reason === "revision_conflict") {
+        return {
+          saved: false,
+          problem: "revision_conflict",
+          ...(typeof rpc.data.currentRevision === "number"
+            ? { currentRevision: rpc.data.currentRevision }
+            : {}),
+        };
+      }
+      if (rpc.code === -32014 && rpc.data?.reason === "file_corrupt") {
+        return {
+          saved: false,
+          problem: "file_corrupt",
+          ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
+        };
+      }
+      if (rpc.code === -32014) {
+        return {
+          saved: false,
+          problem: "invalid_config",
+          ...(typeof rpc.data?.field === "string" ? { field: rpc.data.field } : {}),
+          ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
+        };
+      }
+      return {
+        saved: false,
+        problem: "failed",
+        ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
+      };
+    }
+  }
+
+  async revealDaemonConfig(environmentId: string): Promise<boolean> {
+    if (
+      this.#runtime.kindOf(environmentId) !== "local" ||
+      this.#runtime.options.revealPath === undefined
+    ) {
+      return false;
+    }
+    const path = this.#localConfigPath.get(environmentId);
+    if (path === undefined) return false;
+    this.#runtime.options.revealPath(path);
+    return true;
+  }
+
+  async startAgentAuth(environmentId: string, agent: string): Promise<AgentAuthStartAnswer> {
+    const envKind = this.#runtime.kindOf(environmentId);
+    const cacheKey = `${environmentId}:${agent}`;
+    let signInModes = this.#signInModes.get(cacheKey);
+    if (signInModes === undefined) {
+      try {
+        const snapshot = await this.readAgentSetup(environmentId, agent);
+        signInModes = snapshot.auth.signInModes;
+      } catch (error) {
+        return { started: false, reason: authProblemReasonOf(error) };
+      }
+    }
+    const mode = selectAgentSignInMode(envKind, signInModes);
+    if (mode === undefined) return { started: false, reason: "unsupported_mode" };
+
+    let client: CycleClient;
+    try {
+      client = this.#runtime.connection(environmentId).client;
+    } catch {
+      return { started: false, reason: "disconnected" };
+    }
+    let started: Awaited<ReturnType<typeof client.startAgentAuth>>;
+    this.#startingAuthCount.set(
+      environmentId,
+      (this.#startingAuthCount.get(environmentId) ?? 0) + 1,
+    );
+    try {
+      started = await client.startAgentAuth(agent, mode);
+    } catch (error) {
+      this.#forgetUnclaimedCompletions(environmentId);
+      return { started: false, reason: authProblemReasonOf(error) };
+    } finally {
+      const remaining = (this.#startingAuthCount.get(environmentId) ?? 1) - 1;
+      if (remaining <= 0) this.#startingAuthCount.delete(environmentId);
+      else this.#startingAuthCount.set(environmentId, remaining);
+    }
+    // The daemon started a flow: counted before the URLs are judged, so a refused URL is a start that failed and the
+    // funnel's completions never outnumber its starts.
+    this.#runtime.track("agent_auth_started", {
+      agent: agentOf(agent),
+      environment: envKind,
+      mode: started.mode,
+    });
+
+    const flowKey = `${environmentId}:${started.flowId}`;
+    const rejectUntrusted = () => {
+      this.#earlyAuthCompleted.delete(flowKey);
+      this.#rejectedAuthFlows.add(flowKey);
+      if (this.#rejectedAuthFlows.size > 100) {
+        const oldest = this.#rejectedAuthFlows.values().next().value;
+        if (oldest !== undefined) this.#rejectedAuthFlows.delete(oldest);
+      }
+      void client.cancelAgentAuth(started.flowId).catch(() => undefined);
+      this.#forgetUnclaimedCompletions(environmentId);
+      this.#runtime.track("agent_auth_completed", {
+        agent: agentOf(agent),
+        environment: envKind,
+        result: "failed",
+      });
+      return { started: false as const, reason: "untrusted_url" as const };
+    };
+
+    // Validate BOTH authorizationUrl and verificationUrl against the desktop's hardcoded allowlist.
+    // Never silently call openBrowser here; wait for explicit user click in the modal.
+    let verifiedAuth: { url: string; host: string } | undefined;
+    if (started.authorizationUrl !== undefined) {
+      const check = validateAgentAuthUrl(agent, started.authorizationUrl);
+      if (!check.ok) return rejectUntrusted();
+      verifiedAuth = { url: check.url, host: check.host };
+    }
+
+    let verifiedVerify: { url: string; host: string } | undefined;
+    if (started.verificationUrl !== undefined) {
+      const check = validateAgentAuthUrl(agent, started.verificationUrl);
+      if (!check.ok) return rejectUntrusted();
+      verifiedVerify = { url: check.url, host: check.host };
+    }
+
+    const primary = verifiedAuth ?? verifiedVerify;
+    const early = this.#earlyAuthCompleted.get(flowKey);
+    if (early !== undefined) {
+      this.#earlyAuthCompleted.delete(flowKey);
+      this.#emitAuthCompleted(environmentId, started.flowId, early.agent, early.ok, early.reason);
+    } else {
+      this.#activeAuthFlows.set(flowKey, {
+        environmentId,
+        agent,
+        flowId: started.flowId,
+        ...(primary !== undefined ? { url: primary.url, host: primary.host } : {}),
+      });
+    }
+    this.#forgetUnclaimedCompletions(environmentId);
+    return {
+      started: true,
+      flowId: started.flowId,
+      mode: started.mode,
+      expiresAt: started.expiresAt,
+      ...(primary !== undefined ? { host: primary.host } : {}),
+      hasUrl: primary !== undefined,
+      ...(started.userCode !== undefined ? { userCode: started.userCode } : {}),
+    };
+  }
+
+  async openAgentAuthUrl(environmentId: string, flowId: string): Promise<boolean> {
+    const entry = this.#activeAuthFlows.get(`${environmentId}:${flowId}`);
+    if (entry?.url === undefined || this.#runtime.options.openBrowser === undefined) return false;
+    // Re-verify allowlist on open (defense in depth).
+    const check = validateAgentAuthUrl(entry.agent, entry.url);
+    if (!check.ok) return false;
+    await this.#runtime.options.openBrowser(check.url);
+    return true;
+  }
+
+  async submitAgentAuth(
+    environmentId: string,
+    flowId: string,
+    code: string,
+  ): Promise<AgentAuthSubmitAnswer> {
+    try {
+      await this.#runtime.connection(environmentId).client.submitAgentAuth(flowId, code);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: authProblemReasonOf(error) };
+    }
+  }
+
+  async cancelAgentAuth(environmentId: string, flowId: string): Promise<void> {
+    const key = `${environmentId}:${flowId}`;
+    try {
+      await this.#runtime.connection(environmentId).client.cancelAgentAuth(flowId);
+    } catch {
+      this.#activeAuthFlows.delete(key);
+    }
+  }
+
+  async logoutAgent(environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer> {
+    const envKind = this.#runtime.kindOf(environmentId);
+    try {
+      await this.#runtime.connection(environmentId).client.logoutAgent(agent);
+      this.#runtime.track("agent_signed_out", {
+        agent: agentOf(agent),
+        environment: envKind,
+        ok: true,
+      });
+      return { ok: true };
+    } catch (error) {
+      this.#runtime.track("agent_signed_out", {
+        agent: agentOf(agent),
+        environment: envKind,
+        ok: false,
+      });
+      return { ok: false, reason: authProblemReasonOf(error) };
+    }
+  }
+
+  #emitAuthCompleted(
+    environmentId: string,
+    flowId: string,
+    agent: string,
+    ok: boolean,
+    reason?: AgentAuthProblemReason,
+  ): void {
+    const result = ok
+      ? "ok"
+      : reason === "cancelled" || reason === "disconnected"
+        ? reason
+        : "failed";
+    this.#runtime.track("agent_auth_completed", {
+      agent: agentOf(agent),
+      environment: this.#runtime.kindOf(environmentId),
+      result,
+    });
+    this.#runtime.options.emit({
+      type: "agent-auth-completed",
+      environmentId,
+      flowId,
+      agent,
+      ok,
+      ...(reason !== undefined ? { reason } : {}),
+    });
+  }
+
+  /**
+   * A completion is kept aside only while a start on its environment awaits the daemon's answer (it may come first, in
+   * the same chunk). Once no start is waiting there, what nobody claimed was not ours: dropped, so it cannot pile up.
+   */
+  #forgetUnclaimedCompletions(environmentId: string): void {
+    if ((this.#startingAuthCount.get(environmentId) ?? 0) > 0) return;
+    const prefix = `${environmentId}:`;
+    for (const key of [...this.#earlyAuthCompleted.keys()]) {
+      if (key.startsWith(prefix)) this.#earlyAuthCompleted.delete(key);
+    }
+  }
+
+  /** The environment's connection went (dropped, or closed here): its flows end, as disconnected. */
+  lost(environmentId: string): void {
+    const envKind = this.#runtime.kindOf(environmentId);
+    const prefix = `${environmentId}:`;
+    this.#localConfigPath.delete(environmentId);
+    for (const key of [...this.#signInModes.keys()]) {
+      if (key.startsWith(prefix)) this.#signInModes.delete(key);
+    }
+    for (const key of [...this.#rejectedAuthFlows]) {
+      if (key.startsWith(prefix)) this.#rejectedAuthFlows.delete(key);
+    }
+    for (const key of [...this.#earlyAuthCompleted.keys()]) {
+      if (key.startsWith(prefix)) this.#earlyAuthCompleted.delete(key);
+    }
+    for (const [key, entry] of [...this.#activeAuthFlows.entries()]) {
+      if (entry.environmentId !== environmentId) continue;
+      this.#activeAuthFlows.delete(key);
+      this.#runtime.track("agent_auth_completed", {
+        agent: agentOf(entry.agent),
+        environment: envKind,
+        result: "disconnected",
+      });
+      this.#runtime.options.emit({
+        type: "agent-auth-completed",
+        environmentId,
+        flowId: entry.flowId,
+        agent: entry.agent,
+        ok: false,
+        reason: "disconnected",
+      });
+    }
+  }
+}

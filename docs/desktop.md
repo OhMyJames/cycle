@@ -20,17 +20,21 @@ bun run start                          # 启动桌面端
 
 ## 结构
 
-| 部分                                   | 作用                                                                                                             |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `apps/desktop/src/main/manager.ts`     | `ConnectionManager`:每个 host 一个 `CycleClient`,以及每个被观看 session 的会话。不依赖 Electron,用真 daemon 测试 |
-| `apps/desktop/src/main/app.ts`         | 窗口、安全设置、IPC;只有它知道怎么连各种 host                                                                    |
-| `apps/desktop/src/main/preferences.ts` | 外观和语言:读写 `preferences.json`,启动时和改动时应用主题。不依赖 Electron                                       |
-| `apps/desktop/src/main/analytics.ts`   | 埋点的接线:匿名 id、开关、key 从哪来。事件字典和规则见 [analytics.md](analytics.md)                              |
-| `apps/desktop/src/preload/preload.ts`  | 给页面一个对象 `window.cycle`(`AppApi` 的方法加 `onEvent`),没有别的                                              |
-| `packages/ui/src/api.ts`               | main 与页面之间的契约(只有类型和方法名)                                                                          |
-| `packages/ui/src/model/`               | 会话模型:把 ACP v2 的 `session/update` 累加成对话。纯 TS,没有 React,main 也用它                                  |
-| `packages/ui/src/store/`               | 页面的状态和动作。没有 React,用假桥接测试                                                                        |
-| `packages/ui/src/react/`               | 组件(ui-sdk,Streamdown)                                                                                          |
+| 部分                                   | 作用                                                                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop/src/main/manager.ts`     | `ConnectionManager`:页面在主进程之外能调的方法(`ManagerApi`)的门面,把下面四部分接在一起。不依赖 Electron,用真 daemon 测试 |
+| `apps/desktop/src/main/runtime.ts`     | 环境列表,每个环境一个 `CycleClient`:连接、状态、重连、远端 daemon 的升级                                                  |
+| `apps/desktop/src/main/watcher.ts`     | 会话列表(以及其中值得通知的变化)和每个被观看 session 的会话                                                               |
+| `apps/desktop/src/main/pending.ts`     | agent 等人回答的权限请求和表单:挂在各自的 session 上,另按 key 建索引                                                      |
+| `apps/desktop/src/main/actions.ts`     | 页面对一个环境做的事(会话、文件、终端、agent、connector、plugin)和它们的埋点;失败作为回答返回的,走 `runAction`            |
+| `apps/desktop/src/main/app.ts`         | 窗口、安全设置、IPC;只有它知道怎么连各种 host                                                                             |
+| `apps/desktop/src/main/preferences.ts` | 外观和语言:读写 `preferences.json`,启动时和改动时应用主题。不依赖 Electron                                                |
+| `apps/desktop/src/main/analytics.ts`   | 埋点的接线:匿名 id、开关、key 从哪来。事件字典和规则见 [analytics.md](analytics.md)                                       |
+| `apps/desktop/src/preload/preload.ts`  | 给页面一个对象 `window.cycle`(`AppApi` 的方法加 `onEvent`),没有别的                                                       |
+| `packages/ui/src/api.ts`               | main 与页面之间的契约(只有类型和方法名)                                                                                   |
+| `packages/ui/src/model/`               | 会话模型:把 ACP v2 的 `session/update` 累加成对话。纯 TS,没有 React,main 也用它                                           |
+| `packages/ui/src/store/`               | 页面的状态和动作。没有 React,用假桥接测试                                                                                 |
+| `packages/ui/src/react/`               | 组件(ui-sdk,Streamdown)                                                                                                   |
 
 ## 为什么 main 持有会话状态
 
