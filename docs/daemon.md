@@ -204,7 +204,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 
 ## 配置:`<数据目录>/config.json`
 
-文件里的 `env` 是明文凭证。daemon 启动时发现它对属主以外的人可读或可写(`mode & 0o077`),就改成 `0600`,并在日志里写一条 `config_mode_tightened`(旧权限和新权限);改不了就写 `config_mode_unsafe`,daemon 照常启动。daemon 自己不写这个文件。
+文件里的 `env` 是明文凭证。daemon 启动时发现它对属主以外的人可读或可写(`mode & 0o077`),就去掉这些权限(常见的 0644 因此变成 0600;属主自己的权限位不动),并在日志里写一条 `config_mode_tightened`(带旧权限);符号链接不动;改不了就写 `config_mode_unsafe`,daemon 照常启动。daemon 自己不写这个文件。
 
 每个 agent 有自己的顶层一段，键是 agent 的 id（`claude`、`codex`、`agy`）。
 

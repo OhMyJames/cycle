@@ -48,7 +48,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   try {
     const was = await secureConfigFile(paths.config);
     if (was !== undefined)
-      log.warn("config_mode_tightened", { path: paths.config, was: was.toString(8), now: "600" });
+      log.warn("config_mode_tightened", { path: paths.config, was: was.toString(8) });
   } catch (error) {
     log.warn("config_mode_unsafe", { path: paths.config, error: errorText(error) });
   }
