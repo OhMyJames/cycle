@@ -68,7 +68,7 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
   ...(options.maxAhead !== undefined ? { maxAhead: options.maxAhead } : {}),
   ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
   ...(options.setup !== undefined ? { setup: options.setup } : {}),
-  launch: async (context = { sessionEnv: {} }) => {
+  launch: async (context = { sessionId: "", sessionEnv: {} }) => {
     const env = typeof options.env === "function" ? options.env(context) : options.env;
     const proc = Bun.spawn(options.command, {
       env,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { jsonFile, KeptEntries } from "../src/main/json-file.ts";
+import { entryIdOf, jsonFile, KeptEntries } from "../src/main/json-file.ts";
 
 let dir: string;
 beforeEach(async () => {
@@ -33,25 +33,53 @@ test("a file that is not JSON is kept beside and read as none; JSON that is not 
   expect(await jsonFile(path).read()).toEqual({});
 });
 
-test("entries it cannot read, and fields it does not know, are written back; a changed one is written as it is now", () => {
-  type Item = { id: string; n: number };
-  const entries = new KeptEntries<Item>({
+type Item = { id: string; n: number };
+const items = () =>
+  new KeptEntries<Item>({
     parse: (e) => {
       const { id, n } = (e ?? {}) as { id?: unknown; n?: unknown };
       return typeof id === "string" && typeof n === "number" ? { id, n } : undefined;
     },
     idOf: (item) => item.id,
   });
+
+test("entries it cannot read, and fields it does not know, are written back; a changed one is written as it is now", () => {
+  const entries = items();
   const withExtra = { id: "a", n: 1, extra: true };
   const values = entries.read([withExtra, { id: "b", n: "two" }, { id: "a", n: 9 }, "x"]);
   expect(values).toEqual([{ id: "a", n: 1 }]);
   // The second "a" would be two of one: the one read wins.
-  expect(entries.write(values)).toEqual([withExtra, { id: "b", n: "two" }, "x"]);
+  const first = entries.write(values);
+  expect(first.entries).toEqual([withExtra, { id: "b", n: "two" }, "x"]);
+  first.commit();
   // A value with the id of one it could not read replaces it.
   expect(
     entries.write([
       { id: "a", n: 2 },
       { id: "b", n: 2 },
-    ]),
+    ]).entries,
   ).toEqual([{ id: "a", n: 2 }, { id: "b", n: 2 }, "x"]);
+});
+
+test("a value that took the id of one it could not read replaced it for good: removing the value does not bring it back", () => {
+  const entries = items();
+  entries.read([{ id: "b", n: "two" }, "x"]);
+  entries.write([{ id: "b", n: 2 }]).commit();
+  expect(entries.write([]).entries).toEqual(["x"]);
+});
+
+test("what was not committed is not remembered: a write that failed compares the next with what the file still holds", () => {
+  const entries = items();
+  const withExtra = { id: "a", n: 1, extra: true };
+  entries.read([withExtra, { id: "b", n: "two" }]);
+  // Written, and the file never got it.
+  expect(entries.write([{ id: "b", n: 2 }]).entries).toEqual([{ id: "b", n: 2 }]);
+  expect(entries.write([{ id: "a", n: 1 }]).entries).toEqual([withExtra, { id: "b", n: "two" }]);
+});
+
+test("an entry's id is its string id, and nothing else is one", () => {
+  expect(entryIdOf({ id: "a" })).toBe("a");
+  expect(entryIdOf({ id: 1 })).toBeUndefined();
+  expect(entryIdOf("a")).toBeUndefined();
+  expect(entryIdOf(null)).toBeUndefined();
 });

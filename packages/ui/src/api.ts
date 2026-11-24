@@ -771,7 +771,7 @@ export type TrackProps = Record<string, string | number | boolean>;
 
 /**
  * Why a session's environment was not taken: the daemon's `data.reason` of its `-32602` (docs/protocol.md §6 "环境"), or
- * `missing` (it was removed meanwhile) and `invalid_environment` from main's own check. One list for main and the page.
+ * `missing` (it was removed meanwhile) and `needs_fix` (it does not pass the daemon's rules) from main's own check. One list for main and the page.
  */
 export const ENVIRONMENT_REFUSALS = [
   "reserved_variable",
@@ -779,10 +779,14 @@ export const ENVIRONMENT_REFUSALS = [
   "too_large",
   "invalid_environment",
   "missing",
+  "needs_fix",
 ] as const;
 export type EnvironmentRefusal = {
   reason: (typeof ENVIRONMENT_REFUSALS)[number];
-  /** The variable it is about, for `reserved_variable` and `invalid_variable`. Never its value. */
+  /**
+   * The variable it is about, for `reserved_variable` and `invalid_variable` (never its value); the environment's name,
+   * for `needs_fix`.
+   */
   name?: string;
 };
 

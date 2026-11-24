@@ -168,6 +168,30 @@ test("a refused environment is said in the page's words, naming the variable, an
   expect(store.drafts.get(BLANK_KEY).text).toBe("hi");
 });
 
+test("an environment main finds does not pass the daemon's rules is said as one to fix in Settings, by its name", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, environments: true },
+    environments: {
+      environments: [{ id: "env-a", name: "A", variables: [], actions: [] }],
+      defaults: { local: { "/work": "env-a" } },
+    },
+  });
+  // What the page had passed, and the file main read has changed since.
+  script.bridge.createSession = async () => ({ problem: { reason: "needs_fix", name: "A" } });
+  const store = new AppStore(script.bridge);
+  await store.start();
+  store.openBlank({ locationId: "local", cwd: "/work" });
+  await Bun.sleep(1);
+  store.drafts.setText(BLANK_KEY, "hi");
+  await store.send();
+  expect(store.getState().error).toEqual({
+    key: "blank.environment.needsFix",
+    params: { name: "A" },
+  });
+  expect(store.drafts.get(BLANK_KEY).text).toBe("hi");
+});
+
 test("an action's icon is one of a fixed set by id; any other is drawn as the terminal", () => {
   expect([...ACTION_ICONS]).toEqual([
     "terminal",
@@ -198,6 +222,9 @@ test("a workspace's default is one for its folder with or without a slash at its
   expect(workspaceKey("/repo//")).toBe("/repo");
   expect(workspaceKey("/")).toBe("/");
   expect(workspaceKey("//")).toBe("/");
+  // A folder's name may end in a space: it is another folder, and kept as it is.
+  expect(workspaceKey("/repo /")).toBe("/repo ");
+  expect(workspaceKey(" /repo")).toBe(" /repo");
   await store.setEnvironmentDefault("local", "/other/", "env-a");
   expect(store.getState().environments?.defaults.local).toEqual({
     "/repo": "env-a",

@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { LocationConfig } from "@cycle/ui";
-import { isRecord, jsonFile, KeptEntries } from "./json-file.ts";
+import { entryIdOf, isRecord, jsonFile, KeptEntries } from "./json-file.ts";
 
 export const LOCAL_LOCATION: LocationConfig = {
   id: "local",
@@ -64,10 +64,6 @@ export const locationOf = (entry: unknown): LocationConfig | undefined => {
   return undefined;
 };
 
-/** The entry's id, when it has one. */
-const idOf = (entry: unknown): string | undefined =>
-  isRecord(entry) && typeof entry.id === "string" ? entry.id : undefined;
-
 /**
  * Settings in a JSON file in the app's data directory, written whole and renamed into place (json-file.ts), mode 0600 as
  * environments.json is: it says which machines the person reaches over ssh. What this version does not understand is not
@@ -89,17 +85,22 @@ export const fileSettings = (path: string): Settings => {
       const record = (await file.read()) ?? {};
       // `locations` is the format. Older files have `environments` (the same entries, its name until 2026-11-24) or,
       // before that, `hosts`. All three are read: an older app opened on a newer file adds to `environments`, and what it
-      // added is kept, after the entries of `locations`, unless one of them has its id. None but `locations` is written.
+      // added is kept, after the entries of `locations`, unless one of them has its id. An entry with no id (damaged, or
+      // of a format this app does not know) is kept from any of them, once. None but `locations` is written.
       const lists = [record.locations, record.environments, record.hosts].map((list) =>
         Array.isArray(list) ? list : [],
       );
       const seen = new Set<string>();
       const merged: unknown[] = [];
-      for (const [at, list] of lists.entries())
+      for (const list of lists)
         for (const entry of list) {
-          const id = idOf(entry);
-          if (at > 0 && (id === undefined || seen.has(id))) continue;
-          if (id !== undefined) seen.add(id);
+          const id = entryIdOf(entry);
+          if (id !== undefined) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+          } else if (merged.some((m) => entryIdOf(m) === undefined && isDeepStrictEqual(m, entry)))
+            // The same one in two of the lists: an older app wrote back what it read.
+            continue;
           merged.push(entry);
         }
       const {
@@ -115,9 +116,10 @@ export const fileSettings = (path: string): Settings => {
         ...entries.read(merged).filter((location) => location.id !== LOCAL_LOCATION.id),
       ];
     },
-    save(locations) {
-      const saved = locations.filter((e) => e.id !== LOCAL_LOCATION.id);
-      return file.write({ ...rest, locations: entries.write(saved) });
+    async save(locations) {
+      const written = entries.write(locations.filter((e) => e.id !== LOCAL_LOCATION.id));
+      await file.write({ ...rest, locations: written.entries });
+      written.commit();
     },
   };
 };

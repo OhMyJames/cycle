@@ -720,7 +720,7 @@ export class Daemon {
         },
       },
       // Its environment's variables, for the commands it runs (docs/protocol.md §6 "环境").
-      { sessionEnv: sessionVariables(session.entry) },
+      { sessionId: session.id, sessionEnv: sessionVariables(session.entry) },
     );
     connected = link;
     session.link = link;

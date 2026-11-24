@@ -1962,6 +1962,6 @@ test("an environment in the file that the daemon would refuse is not sent: main 
   const { m } = await manager("broken", undefined, undefined, undefined, { environments });
   await m.connect("local");
   expect(await m.createSession("local", { cwd: "/tmp", environmentId: "env-twice" })).toEqual({
-    problem: { reason: "invalid_environment" },
+    problem: { reason: "needs_fix", name: "Twice" },
   });
 });

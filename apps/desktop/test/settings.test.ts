@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LocationConfig } from "@cycle/ui";
@@ -107,6 +107,42 @@ test("an older app's additions to environments, after a newer one wrote location
     far.id,
     "ssh-legacy",
   ]);
+});
+
+test("an entry with no id in an older file's environments or hosts is not shown, and is written back, once", async () => {
+  const valid = { id: "ssh-far", name: "Far", kind: "ssh", host: "far" };
+  const damaged = { name: "x", kind: "ssh" };
+  const path = await fileIn({ environments: [valid, damaged], hosts: [damaged, { kind: "ssh" }] });
+  const settings = fileSettings(path);
+  expect((await settings.load()).map((l) => l.id)).toEqual(["local", "ssh-far"]);
+  await settings.save(await settings.load());
+  const written = JSON.parse(await readFile(path, "utf8")) as { locations: unknown[] };
+  expect(written.locations.slice(1)).toEqual([damaged, { kind: "ssh" }]);
+  expect((await settings.load()).map((l) => l.id)).toEqual(["local", "ssh-far"]);
+});
+
+test("a save that fails leaves what the file holds to compare with: the next one still writes back what it did not know", async () => {
+  const noted = {
+    id: "ssh-far",
+    name: "Far",
+    kind: "remote",
+    transport: { type: "ssh", host: "far" },
+    note: "kept",
+  };
+  const path = await fileIn({ locations: [noted] });
+  const settings = fileSettings(path);
+  const [local, read] = await settings.load();
+  if (local === undefined || read === undefined) throw new Error("not read");
+  const dir = join(path, "..");
+  await chmod(dir, 0o500);
+  try {
+    await expect(settings.save([local, { ...read, name: "Renamed" }])).rejects.toThrow();
+  } finally {
+    await chmod(dir, 0o700);
+  }
+  await settings.save([local, read]);
+  const written = JSON.parse(await readFile(path, "utf8")) as { locations: unknown[] };
+  expect(written.locations).toEqual([noted]);
 });
 
 test("an entry this version does not understand is not shown, and is not lost when settings are saved", async () => {

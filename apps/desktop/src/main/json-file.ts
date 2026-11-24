@@ -66,10 +66,22 @@ export const jsonFile = (path: string, options: { mode?: number } = {}): JsonFil
   };
 };
 
+/** An entry's id, when it is an object with a string id. */
+export const entryIdOf = (entry: unknown): string | undefined =>
+  isRecord(entry) && typeof entry.id === "string" ? entry.id : undefined;
+
+/** What to write for some values, and what to remember once it is written. */
+export type KeptWrite = {
+  entries: unknown[];
+  /** Call once the file has these entries: until then the next write compares with what the file still holds. */
+  commit(): void;
+};
+
 /**
  * A list of entries this version reads some of. What it reads comes back as values; on writing, a value that has not
  * changed is written as the entry was (with the fields this version does not know), and an entry it could not read is
- * written back unless a value now has its id. Of two entries with one id, the second is one it could not read.
+ * written back unless a value now has its id: then that value took its place, for good. Of two entries with one id, the
+ * second is one it could not read.
  */
 export class KeptEntries<T> {
   readonly #parse: (entry: unknown) => T | undefined;
@@ -105,20 +117,25 @@ export class KeptEntries<T> {
     return values;
   }
 
-  /** The entries to write for these values. What is written is what the next write compares with. */
-  write(values: readonly T[]): unknown[] {
+  /** The entries to write for these values. Nothing is remembered of them until `commit`. */
+  write(values: readonly T[]): KeptWrite {
     const ids = new Set(values.map(this.#idOf));
     const known = values.map((value) => {
       const before = this.#raw.get(this.#idOf(value));
       return before !== undefined && this.#same(before, value) ? before : value;
     });
-    const entries = [
-      ...known,
-      ...this.#unknown.filter((u) => !(isRecord(u) && typeof u.id === "string" && ids.has(u.id))),
-    ];
-    this.#raw = new Map(
-      values.map((value, at) => [this.#idOf(value), known[at] as Record<string, unknown>]),
-    );
-    return entries;
+    const unknown = this.#unknown.filter((u) => {
+      const id = entryIdOf(u);
+      return id === undefined || !ids.has(id);
+    });
+    return {
+      entries: [...known, ...unknown],
+      commit: () => {
+        this.#raw = new Map(
+          values.map((value, at) => [this.#idOf(value), known[at] as Record<string, unknown>]),
+        );
+        this.#unknown = unknown;
+      },
+    };
   }
 }

@@ -26,10 +26,10 @@ export type AdapterConfig = {
    */
   env: Record<string, string>;
   /**
-   * The session's environment variables (docs/protocol.md §6 "环境"), for the commands Claude runs: given to them
-   * through CLAUDE_ENV_FILE (env-file.ts), never to the Claude process, whose environment is `env` alone.
+   * A file of the session's environment variables (docs/protocol.md §6 "环境") that the daemon wrote, given to Claude as
+   * CLAUDE_ENV_FILE so that its commands have them and the Claude process does not (env-file.ts).
    */
-  sessionEnv?: Record<string, string>;
+  sessionEnvFile?: string;
   /** The SDK's own binary is used when this is absent. */
   claudeExecutable?: string;
   /**

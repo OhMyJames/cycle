@@ -120,8 +120,11 @@ export const fileEnvironments = (path: string): EnvironmentStore => {
         const merged = { ...before, ...folders };
         if (Object.keys(merged).length > 0) defaults[locationId] = merged;
       }
+      // Remembered once the file has it: a write that fails leaves what the file still holds to compare with.
+      const written = entries.write(state.environments);
+      await file.write({ ...rest, environments: written.entries, defaults });
+      written.commit();
       rawDefaults = defaults;
-      await file.write({ ...rest, environments: entries.write(state.environments), defaults });
     },
   };
 };
@@ -178,14 +181,14 @@ export class Environments {
 
   /**
    * The environment as a session is sent it; or why it cannot be: there is none of that id (`missing`), or it does not
-   * pass the daemon's rules (`invalid_environment`: the file was written by hand or by another version; Settings says
-   * what to fix).
+   * pass the daemon's rules (`needs_fix`, with its name: the file was written by hand or by another version; Settings
+   * says what to fix). `invalid_environment` is the daemon's own word, for one it could not read.
    */
   async snapshot(environmentId: string): Promise<Environment | { problem: EnvironmentRefusal }> {
     const found = (await this.#read()).environments.find((e) => e.id === environmentId);
     if (found === undefined) return { problem: { reason: "missing" } };
     if (environmentProblem(found) !== undefined)
-      return { problem: { reason: "invalid_environment" } };
+      return { problem: { reason: "needs_fix", name: found.name } };
     return environmentSnapshot(found);
   }
 

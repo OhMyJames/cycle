@@ -312,7 +312,10 @@ export class BlankSlice {
       else
         set({
           error: {
-            key: `blank.environment.refused.${made.problem.reason}`,
+            key:
+              made.problem.reason === "needs_fix"
+                ? "blank.environment.needsFix"
+                : `blank.environment.refused.${made.problem.reason}`,
             params: { name: made.problem.name ?? "" },
           },
         });

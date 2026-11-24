@@ -41,7 +41,7 @@ test("the environment is given to every launch of the session's agent, and kept 
     _meta: { "cycle/environment": environment },
   });
   const sessionEnv = { DATABASE_URL: "postgres://u:s3cret-pass@db/app", NODE_ENV: "development" };
-  expect(fake.log.launchContexts[0]).toEqual({ sessionEnv });
+  expect(fake.log.launchContexts[0]).toEqual({ sessionId, sessionEnv });
   // The agent does not get the client's _meta: the variables reach it only through its launch.
   expect(JSON.stringify(fake.log.news[0])).not.toContain("s3cret-pass");
 
@@ -52,14 +52,14 @@ test("the environment is given to every launch of the session's agent, and kept 
     prompt: [{ type: "text", text: "again" }],
   });
   await until(() => fake.log.resumes.length === 1, "the agent to be resumed");
-  expect(fake.log.launchContexts[1]).toEqual({ sessionEnv });
+  expect(fake.log.launchContexts[1]).toEqual({ sessionId, sessionEnv });
 });
 
 test("a session without an environment launches with no variables", async () => {
   const { daemon, fake } = await start();
   const c = await connectClient(daemon);
   await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
-  expect(fake.log.launchContexts[0]).toEqual({ sessionEnv: {} });
+  expect(fake.log.launchContexts[0]).toMatchObject({ sessionEnv: {} });
   const row = (await c.agent.request(methods.agent.session.list, {})).sessions[0]?._meta ?? {};
   expect(row).not.toHaveProperty("cycle/environment");
 });
@@ -165,4 +165,76 @@ test("an environment in the index this version cannot read counts as none: the l
   expect(environmentOf(entry)).toBeUndefined();
   expect(sessionVariables(entry)).toEqual({});
   expect(environmentRowMeta(entry)).toEqual({});
+});
+
+// ---- what each harness hands its adapter ----
+
+test("each harness hands its adapter the session's variables its own way: Claude a private file, Codex the values, agy none", async () => {
+  const { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } = await import(
+    "node:fs"
+  );
+  const { claudeHarness } = await import("../src/claude-agent.ts");
+  const { codexHarness } = await import("../src/codex-agent.ts");
+  const { agyHarness } = await import("../src/agy-agent.ts");
+  const { ConfigSchema } = await import("../src/config.ts");
+  const configs = join(dir, "adapter-configs.txt");
+  const self = join(dir, "self.sh");
+  writeFileSync(self, `#!/bin/sh\nprintf '%s\\n' "$CYCLE_ADAPTER_CONFIG" >> "${configs}"\n`);
+  chmodSync(self, 0o755);
+  // A file a former daemon left: gone once Claude's definition is made.
+  mkdirSync(join(dir, "claude-env"), { recursive: true });
+  writeFileSync(join(dir, "claude-env", "old.sh"), "export OLD='x'\n");
+  const context = {
+    config: ConfigSchema.parse({}),
+    dataDir: dir,
+    inherited: { PATH: "/usr/bin:/bin", HOME: dir },
+    self: [self],
+  };
+  const sessionId = "5b0c3a3e-8a52-4d3f-9a0e-1c2d3e4f5a6b";
+  const sessionEnv = { DATABASE_URL: "postgres://db" };
+  const claude = claudeHarness.definition(context);
+  expect(existsSync(join(dir, "claude-env", "old.sh"))).toBe(false);
+  for (const definition of [
+    claude,
+    codexHarness.definition(context),
+    agyHarness.definition(context),
+  ]) {
+    const launched = await definition.launch({ sessionId, sessionEnv });
+    const before = existsSync(configs) ? readFileSync(configs, "utf8").split("\n").length : 0;
+    await until(
+      () => existsSync(configs) && readFileSync(configs, "utf8").split("\n").length > before,
+      `${definition.id}'s adapter config`,
+    );
+    launched.kill?.();
+  }
+  const [forClaude, forCodex, forAgy] = readFileSync(configs, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const file = join(dir, "claude-env", `${sessionId}.sh`);
+  expect(forClaude).toMatchObject({ sessionEnvFile: file });
+  expect(forClaude).not.toHaveProperty("sessionEnv");
+  expect(JSON.stringify(forClaude)).not.toContain("postgres://db");
+  expect(readFileSync(file, "utf8")).toBe("export DATABASE_URL='postgres://db'\n");
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expect(forCodex).toMatchObject({ sessionEnv });
+  expect(forAgy).not.toHaveProperty("sessionEnv");
+  expect(JSON.stringify(forAgy)).not.toContain("postgres://db");
+});
+
+test("an environment in the index with a name the rules refuse counts as none", async () => {
+  const { environmentOf } = await import("../src/environment.ts");
+  const entry = {
+    agent: "fake",
+    agentSessionId: "a",
+    cwd: "/tmp",
+    createdAt: new Date().toISOString(),
+    environment: { id: "e", name: "Odd", variables: [{ name: "a.b", value: "1" }], actions: [] },
+  };
+  expect(environmentOf(entry)).toBeUndefined();
+  const reserved = {
+    ...entry,
+    environment: { ...entry.environment, variables: [{ name: "HOME", value: "/x" }] },
+  };
+  expect(environmentOf(reserved)).toBeUndefined();
 });

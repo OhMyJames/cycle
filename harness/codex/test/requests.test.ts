@@ -553,7 +553,7 @@ test("the session's variables go to Codex's commands through the thread's config
     }
   };
   try {
-    await open({ DATABASE_URL: "postgres://db", MY_API_KEY: "k" });
+    await open({ DATABASE_URL: "postgres://db", MY_API_KEY: "k", "a.b": "never" });
     await open();
     const starts = (await messages()).filter((m) => m.method === "thread/start");
     // A key per variable, merged into the person's own policy rather than replacing it.

@@ -67,7 +67,10 @@ export const environmentRefusalOf = (error: unknown): EnvironmentRefusal | undef
     data?: { reason?: unknown; name?: unknown };
   };
   if (code !== -32602) return undefined;
-  const reason = ENVIRONMENT_REFUSALS.find((r) => r === data?.reason && r !== "missing");
+  // `missing` and `needs_fix` are main's own answers, never the daemon's.
+  const reason = ENVIRONMENT_REFUSALS.find(
+    (r) => r === data?.reason && r !== "missing" && r !== "needs_fix",
+  );
   if (reason === undefined) return undefined;
   return { reason, ...(typeof data?.name === "string" ? { name: data.name } : {}) };
 };

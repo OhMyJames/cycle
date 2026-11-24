@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Environment } from "@cycle/ui";
@@ -183,14 +183,42 @@ test("a session is sent the environment as it is now, without empty scripts", as
   expect(await environments.snapshot("nope")).toEqual({ problem: { reason: "missing" } });
 });
 
+test("a save that fails leaves what the file holds to compare with: fields and defaults it did not know are still kept", async () => {
+  const path = join(dir, "environments.json");
+  const withExtra = { ...NODE, note: "kept" };
+  await writeFile(
+    path,
+    JSON.stringify({ environments: [withExtra], defaults: { other: "not a map" } }),
+  );
+  const store = fileEnvironments(path);
+  const state = await store.load();
+  await chmod(dir, 0o500);
+  try {
+    await expect(
+      store.save({
+        environments: state.environments.map((e) => ({ ...e, name: "Renamed" })),
+        defaults: { other: { "/repo": NODE.id } },
+      }),
+    ).rejects.toThrow();
+  } finally {
+    await chmod(dir, 0o700);
+  }
+  await store.save(state);
+  expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+    environments: [withExtra],
+    defaults: { other: "not a map" },
+  });
+});
+
 test("one the file holds that the daemon would refuse is not sent: its action ids are empty, or one is twice", async () => {
   const action = { id: "a", name: "A", command: { default: "true" } };
   for (const actions of [[{ ...action, id: "" }], [action, { ...action, name: "B" }]]) {
     const environments = new Environments(
       memoryEnvironments({ environments: [{ ...NODE, actions }], defaults: {} }),
     );
+    // Main's own check: a fix in Settings, not the daemon's `invalid_environment` (update Cycle there).
     expect(await environments.snapshot("env-node")).toEqual({
-      problem: { reason: "invalid_environment" },
+      problem: { reason: "needs_fix", name: NODE.name },
     });
     // Nor is it saved so.
     expect(await environments.save({ ...NODE, actions })).toEqual({ problem: "action_id_invalid" });

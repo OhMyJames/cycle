@@ -234,7 +234,6 @@ export const actionIconOf = (icon: string | undefined): ActionIcon =>
  * `/repo` are one workspace.
  */
 export const workspaceKey = (cwd: string): string => {
-  const trimmed = cwd.trim();
-  const bare = trimmed.replace(/\/+$/, "");
-  return bare === "" && trimmed.startsWith("/") ? "/" : bare;
+  const bare = cwd.replace(/\/+$/, "");
+  return bare === "" && cwd.startsWith("/") ? "/" : bare;
 };

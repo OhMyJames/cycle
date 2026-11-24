@@ -655,10 +655,10 @@ export function createAdapter(config: AdapterConfig) {
       // replace the person's own (their `inherit`, `set`) for this thread, where a key per variable is merged into it.
       // Checked with 0.171.0 on thread/start and thread/resume (docs/protocol.md §6 "环境").
       ...Object.fromEntries(
-        Object.entries(sessionEnv).map(([name, value]) => [
-          `shell_environment_policy.set.${name}`,
-          value,
-        ]),
+        Object.entries(sessionEnv)
+          // A name with a dot would be a path of its own in Codex's config: the daemon sends none, and none is taken.
+          .filter(([name]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+          .map(([name, value]) => [`shell_environment_policy.set.${name}`, value]),
       ),
       ...(trusted !== undefined
         ? { projects: { [params.cwd]: { trust_level: trusted ? "trusted" : "untrusted" } } }

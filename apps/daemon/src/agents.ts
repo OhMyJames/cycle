@@ -8,7 +8,7 @@ import type { PluginProvider } from "./plugins.ts";
  * variables are what its environment sets for the commands the agent runs (docs/protocol.md §6 "环境"); never the
  * agent's own settings, which the definition keeps.
  */
-export type LaunchContext = { sessionEnv: Record<string, string> };
+export type LaunchContext = { sessionId: string; sessionEnv: Record<string, string> };
 
 /** Where an agent is reached: a stream to a process, or an app in this process (tests). */
 export type AgentTarget = { target: Stream | AgentApp; kill?: () => void };

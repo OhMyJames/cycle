@@ -1,24 +1,32 @@
 // A session's environment as the daemon keeps and uses it (docs/protocol.md §6 "环境").
 import {
+  checkEnvironment,
   environmentVariables,
   META,
   type Scripts,
   type SessionEnvironment,
-  SessionEnvironmentSchema,
   summarizeEnvironment,
 } from "@cycle/protocol";
 import type { SessionEntry } from "./index-file.ts";
 
 /**
  * The environment a session was made with, as the index keeps it. It was checked when it was taken, but the index can
- * have been written by another version or by hand: one this version cannot read counts as none, so a list, a launch
- * or a terminal never fails on it.
+ * have been written by another version or by hand: one that does not pass the same rules (its shape, names, reserved
+ * names) counts as none, so a list, a launch or a terminal never fails on it or hands an agent a name it should not.
  */
 export const environmentOf = (entry: SessionEntry): SessionEnvironment | undefined => {
-  if (entry.environment === undefined) return undefined;
-  const parsed = SessionEnvironmentSchema.safeParse(entry.environment);
-  return parsed.success ? parsed.data : undefined;
+  const kept = entry.environment;
+  if (typeof kept !== "object" || kept === null) return undefined;
+  // Checked once for each value the index holds: a list reads every row's, a launch and a terminal read it again.
+  if (!checked.has(kept)) {
+    const result = checkEnvironment(kept);
+    checked.set(kept, result.ok ? result.environment : undefined);
+  }
+  return checked.get(kept);
 };
+
+/** What the rules make of each environment the index has held (the same as when it was taken, or none). */
+const checked = new WeakMap<object, SessionEnvironment | undefined>();
 
 /** The variables a session's commands are given, by name. Empty when it has no environment. */
 export const sessionVariables = (entry: SessionEntry | undefined): Record<string, string> =>

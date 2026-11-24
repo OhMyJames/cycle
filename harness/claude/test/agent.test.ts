@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { statSync } from "node:fs";
 import { client, methods, type SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type AdapterConfig, createAgent } from "../src/index.ts";
@@ -953,16 +952,14 @@ test("the session's variables reach Claude's commands through CLAUDE_ENV_FILE, n
     undefined,
     {
       env: { CLAUDE_CONFIG_DIR: "/data/claude", SHARED: "agent" },
-      sessionEnv: { DATABASE_URL: "postgres://db", SHARED: "session" },
+      sessionEnvFile: "/data/claude-env/s.sh",
     },
   );
-  const env = fake.calls[0]?.options.env as Record<string, string>;
-  const { CLAUDE_ENV_FILE: file, ...rest } = env;
-  expect(rest).toEqual({ CLAUDE_CONFIG_DIR: "/data/claude", SHARED: "agent" });
-  expect(await Bun.file(file as string).text()).toBe(
-    "export DATABASE_URL='postgres://db'\nexport SHARED='session'\n",
-  );
-  expect((statSync(file as string).mode & 0o777).toString(8)).toBe("600");
+  expect(fake.calls[0]?.options.env).toEqual({
+    CLAUDE_CONFIG_DIR: "/data/claude",
+    SHARED: "agent",
+    CLAUDE_ENV_FILE: "/data/claude-env/s.sh",
+  });
 });
 
 test("without variables there is no CLAUDE_ENV_FILE", async () => {
