@@ -656,6 +656,9 @@
 }
 
 [data-slot="menu-group-label"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.25rem 0.5rem;
   font-family: var(--cycle-font-display);
   font-size: var(--cycle-text-meta);

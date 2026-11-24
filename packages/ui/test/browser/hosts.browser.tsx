@@ -60,14 +60,14 @@ test("the workspaces of every host are in the switcher, and one on another host 
   expect(screen.getAllByRole("option")[0]?.getAttribute("data-location")).toBe("local");
   const trigger = screen.getByRole("button", { name: /Switch workspace/ });
   // The same folder on two locations: each named after its location.
-  expect(trigger.textContent).toContain("work · This computer");
+  expect(trigger.textContent).toContain("work");
   expect(within(trigger).queryByRole("img")).toBeNull();
   await user.click(trigger);
   const remote = await screen.findByRole("menuitem", { name: /work · Build box/ });
   // The icon's name says where, and how it stands: for the tooltip and for a reader.
   expect(within(remote).getByRole("img", { name: "On Build box · Connected" })).toBeTruthy();
   // Several locations: the menu is grouped by them.
-  expect(screen.getByText(/This computer · Connected/)).toBeTruthy();
+  expect(screen.getByText(/Local · Connected/)).toBeTruthy();
   expect(screen.getByText(/Build box · Connected/)).toBeTruthy();
   await user.click(remote);
   await waitFor(() =>
@@ -285,7 +285,7 @@ test("a blank page whose location drops can be moved to one that is up", async (
   await emit({ type: "location-status", locationId: "far", state: "closed" });
   await screen.findByText("Not connected to Build box.");
   // Still there, with this computer to go to.
-  await chooseLocation(user, "This computer");
+  await chooseLocation(user, "Local");
   await waitFor(() => expect(screen.queryByText("Not connected to Build box.")).toBeNull());
   await typeFolder(user, "/srv/app");
   await sendFirst("hi");

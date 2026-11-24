@@ -55,7 +55,7 @@ test("a session of a host that is away cannot be opened unless it was already, a
   await store.selectSession("local", "s1");
   expect(store.getState().error).toEqual({
     key: "session.awayCannotOpen",
-    params: { location: "This computer" },
+    params: { location: "Local" },
   });
   expect(store.getState().selectedSession).toBeUndefined();
   expect(script.named("openSession")).toEqual([]);

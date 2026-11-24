@@ -94,7 +94,7 @@ test("an older app's additions to environments, after a newer one wrote location
   });
   const settings = fileSettings(path);
   expect((await settings.load()).map((l) => [l.id, l.name])).toEqual([
-    ["local", "This computer"],
+    ["local", "Local"],
     ["ssh-near", "Near"],
     [far.id, far.name],
     ["ssh-legacy", "Legacy"],

@@ -1836,7 +1836,7 @@ test("composer uses a single-line box by default, stays one line with several bu
     configure: (script) => {
       const session = { ...summary("s1"), config: { mode: "auto", model: "opus", effort: "high" } };
       script.bridge.locations = async () => ({
-        locations: [{ id: "local", name: "This computer", kind: "local" }],
+        locations: [{ id: "local", name: "Local", kind: "local" }],
         status: [
           {
             locationId: "local",

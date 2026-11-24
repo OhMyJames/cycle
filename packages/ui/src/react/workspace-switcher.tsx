@@ -1,5 +1,5 @@
 // The workspace switcher: which folder the sidebar shows, and what is going on in the others. A workspace is a folder on
-// one location (docs/desktop.md); a location that is not this computer shows as an icon whose name says which one.
+// one location (docs/desktop.md); every workspace shows an icon for its location (a laptop for local, a server for the others) whose name says which one.
 import {
   Menu,
   MenuContent,
@@ -12,7 +12,7 @@ import type { LocationConfig, LocationStatus } from "../api.ts";
 import type { Translator } from "../i18n.ts";
 import { type Counts, type Elsewhere, URGENCY, urgent, type Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
-import { ChevronDownIcon, ServerIcon } from "./icons.tsx";
+import { ChevronDownIcon, LaptopIcon, ServerIcon } from "./icons.tsx";
 import { LOCATION_STATE, MARK_WORD, StatusDot } from "./status.tsx";
 
 const ELSEWHERE = {
@@ -47,13 +47,13 @@ function Badge({ counts }: { counts: Counts }) {
   );
 }
 
-/** Says a workspace is on another location, with which, and how it is connected: for the eye and for the reader. */
+/** Says which location a workspace is on, and how it is connected: for the eye and for the reader. */
 export function Remote({ location, state }: { location: LocationConfig; state: string }) {
   const { t } = useI18n();
   const tip = t("workspace.onState", { location: location.name, state });
   return (
     <span data-slot="remote" role="img" aria-label={tip} title={tip}>
-      <ServerIcon size={14} />
+      {location.kind === "local" ? <LaptopIcon size={14} /> : <ServerIcon size={14} />}
     </span>
   );
 }
@@ -73,10 +73,6 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
   const locationOf = (id: string) => locations.find((h) => h.id === id);
   const stateOf = (id: string) => LOCATION_STATE[status[id]?.state ?? "closed"];
   const away = (id: string) => (status[id]?.state ?? "closed") !== "connected";
-  const remote = (id: string) => {
-    const location = locationOf(id);
-    return location !== undefined && location.kind !== "local" ? location : undefined;
-  };
   const elsewhere = elsewhereText(t, props.elsewhere.counts);
   const several = new Set(workspaces.map((w) => w.locationId)).size > 1;
   const groups = [...new Set(workspaces.map((w) => w.locationId))].map((locationId) => ({
@@ -84,7 +80,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
     items: workspaces.filter((w) => w.locationId === locationId),
   }));
   const item = (w: Workspace) => {
-    const location = remote(w.locationId);
+    const location = locationOf(w.locationId);
     return (
       <MenuItem key={w.key} value={w.key} data-away={away(w.locationId) || undefined}>
         {location !== undefined ? (
@@ -102,7 +98,7 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
       </span>
     );
   }
-  const location = remote(current.locationId);
+  const location = locationOf(current.locationId);
   return (
     <Menu onAction={(value) => props.onChoose(String(value))}>
       <MenuTrigger

@@ -60,7 +60,7 @@ test("agent defaults are saved only once they are the ones of the agent shown", 
   const saved: string[] = [];
   render(
     <AgentDefaultsForm
-      locationName="This computer"
+      locationName="Local"
       agents={agents}
       read={read}
       onSave={async (agent) => {
@@ -86,7 +86,7 @@ test("agent defaults that cannot be read are not replaced by an empty form: they
   let reads = 0;
   render(
     <AgentDefaultsForm
-      locationName="This computer"
+      locationName="Local"
       agents={agents}
       read={() => (reads++ === 0 ? Promise.reject(new Error("no")) : Promise.resolve({}))}
       onSave={async () => true}

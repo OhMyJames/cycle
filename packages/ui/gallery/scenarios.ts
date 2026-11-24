@@ -101,7 +101,7 @@ const conversationOf = (root: HTMLElement): HTMLElement => {
   return el;
 };
 const drawnIn = (el: HTMLElement): number => el.querySelectorAll('[data-slot="block"]').length;
-const LOCAL: LocationConfig = { id: "local", name: "This computer", kind: "local" };
+const LOCAL: LocationConfig = { id: "local", name: "Local", kind: "local" };
 const BUILD: LocationConfig = {
   id: "build",
   name: "build-1",

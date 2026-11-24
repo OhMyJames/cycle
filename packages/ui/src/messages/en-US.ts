@@ -931,7 +931,7 @@ export const enUS = {
   "update.install": "Update and restart",
   "update.confirmTitle": "Update to {version}?",
   "update.confirmDescription":
-    "Cycle closes and opens again as the new version. A session on This computer that is working is interrupted; sessions on other locations carry on.",
+    "Cycle closes and opens again as the new version. A session on Local that is working is interrupted; sessions on other locations carry on.",
   "update.current": "Cycle {version}",
 
   // The code colours choice

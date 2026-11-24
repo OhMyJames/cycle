@@ -115,7 +115,7 @@ test("with several locations the page says whose connectors it shows, and anothe
   const { user, page, named } = await mount({ locations: [far], connectors: [{ ...notion }] });
   // It starts on the location that is open.
   const location = await within(page).findByRole("combobox", { name: "Work in" });
-  expect(location.textContent).toContain("This computer");
+  expect(location.textContent).toContain("Local");
   await waitFor(() => expect(named("listConnectors")).toEqual([["listConnectors", "local"]]));
   await user.click(location);
   await user.click(await screen.findByRole("option", { name: "Build box" }));

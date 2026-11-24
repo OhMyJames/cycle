@@ -10,7 +10,7 @@ import type { AttentionNotice } from "../src/main/manager.ts";
 
 const notice = (over: Partial<AttentionNotice> = {}): AttentionNotice => ({
   locationId: "local",
-  locationName: "This computer",
+  locationName: "Local",
   kind: "needs-you",
   session: {
     locationId: "local",

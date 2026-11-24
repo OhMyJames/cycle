@@ -181,7 +181,7 @@ test("a location that drops says so with a way back, and the draft and its image
     state: "closed",
     error: "connection refused",
   });
-  expect(await screen.findByText("Not connected to This computer.")).toBeTruthy();
+  expect(await screen.findByText("Not connected to Local.")).toBeTruthy();
   // The draft can still be written: said here, once, and not by the box.
   expect(screen.getAllByText("You can keep editing your draft.")).toHaveLength(1);
   expect(screen.getAllByText("connection refused").length).toBeGreaterThan(0);
@@ -197,7 +197,7 @@ test("a location that drops says so with a way back, and the draft and its image
     state: "connected",
     capabilities: { queue: true, files: true, folders: true },
   });
-  await waitFor(() => expect(screen.queryByText("Not connected to This computer.")).toBeNull());
+  await waitFor(() => expect(screen.queryByText("Not connected to Local.")).toBeNull());
   expect(boxText(box)).toBe("keep this");
   expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeTruthy();
   expect(await chosenFolder()).toBe("/work");
@@ -217,7 +217,7 @@ test("with no agent the page says why once, and the box takes nothing", async ()
     };
   });
   await newSession(user);
-  expect(await screen.findByText("No agent is available on This computer.")).toBeTruthy();
+  expect(await screen.findByText("No agent is available on Local.")).toBeTruthy();
   // One reason, not a second one under it about the folder.
   expect(screen.queryByText("Choose a folder for the agent to work in.")).toBeNull();
   const box = await screen.findByRole("textbox", { name: "Message" });
@@ -305,7 +305,7 @@ test("a -32000 auth error keeps the draft, shows cycle login command, and tracks
   await ready(box);
   await write(box, "secret draft for agy");
   await press(box, "Enter");
-  expect(await screen.findByText("Antigravity is not signed in on This computer.")).toBeTruthy();
+  expect(await screen.findByText("Antigravity is not signed in on Local.")).toBeTruthy();
   expect(screen.getByText("cycle login agy")).toBeTruthy();
   await waitFor(() => expect(boxText(box)).toBe("secret draft for agy"));
   await user.click(screen.getByRole("button", { name: "Copy command" }));
@@ -351,7 +351,7 @@ test("selecting an unavailable agy agent disables sending and shows the install 
   expect(
     await screen.findByRole("button", { name: "Agent: Antigravity (not installed)" }),
   ).toBeTruthy();
-  expect(await screen.findByText("Antigravity is not available on This computer.")).toBeTruthy();
+  expect(await screen.findByText("Antigravity is not available on Local.")).toBeTruthy();
   expect(
     screen.getByText("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
   ).toBeTruthy();
