@@ -144,12 +144,18 @@ class ToolList {
     this.names = names;
   }
 
-  addAll(raw: unknown): void {
+  addAll(raw: unknown, options?: { skipDeferred?: boolean }): void {
     if (!Array.isArray(raw)) return;
+    const skipDeferred = options?.skipDeferred === true;
     for (const tool of raw) {
       if (!isJson(tool)) continue;
+      if (skipDeferred && tool.defer_loading === true) continue;
       if (tool.type === "namespace" && Array.isArray(tool.tools)) {
-        for (const inner of tool.tools) if (isJson(inner)) this.add(inner, text(tool.name));
+        for (const inner of tool.tools) {
+          if (!isJson(inner)) continue;
+          if (skipDeferred && inner.defer_loading === true) continue;
+          this.add(inner, text(tool.name));
+        }
       } else {
         this.add(tool, null);
       }
@@ -235,7 +241,8 @@ export function toContext(
 ): Translated {
   const names: ToolNames = { namespaced: new Map(), freeform: new Set(), search: null };
   const list = new ToolList(names);
-  list.addAll(request.tools);
+  // Deferred tools stay out of the prompt until `tool_search_output` surfaces them.
+  list.addAll(request.tools, { skipDeferred: true });
   const system: string[] = request.instructions ? [request.instructions] : [];
   const messages: Message[] = [];
   /** The assistant's turn being gathered: codex sends its text, thinking and calls as separate items. */

@@ -155,6 +155,65 @@ test("tools are flattened out of namespaces, free text tools take one input, oth
   expect(names.freeform.has("apply_patch")).toBe(true);
 });
 
+test("deferred tools stay out of initial tools until tool_search_output surfaces them", () => {
+  const deferredSearch = {
+    type: "tool_search",
+    description: "Search tools",
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  };
+  const deferredTool = {
+    type: "function",
+    name: "ping",
+    description: "Ping",
+    defer_loading: true,
+    parameters: { type: "object", properties: {} },
+  };
+  const initial = toContext(
+    {
+      model: "m",
+      input: [],
+      tools: [
+        { type: "function", name: "exec_command", description: "Run" },
+        { type: "function", name: "lazy_top", defer_loading: true },
+        { type: "namespace", name: "mcp__plan", tools: [deferredTool] },
+        deferredSearch,
+      ],
+    },
+    0,
+  );
+  expect(initial.context.tools?.map((tool) => tool.name)).toEqual(["exec_command", "tool_search"]);
+  expect(initial.names.search).toBe("tool_search");
+
+  const afterSearch = toContext(
+    {
+      model: "m",
+      tools: [
+        { type: "function", name: "exec_command", description: "Run" },
+        { type: "namespace", name: "mcp__plan", tools: [deferredTool] },
+        deferredSearch,
+      ],
+      input: [
+        { type: "tool_search_call", call_id: "s1", arguments: { query: "ping" } },
+        {
+          type: "tool_search_output",
+          call_id: "s1",
+          tools: [{ type: "namespace", name: "mcp__plan", tools: [deferredTool] }],
+        },
+      ],
+    },
+    0,
+  );
+  expect(afterSearch.context.tools?.map((tool) => tool.name)).toEqual([
+    "exec_command",
+    "tool_search",
+    "mcp__plan__ping",
+  ]);
+  expect(afterSearch.names.namespaced.get("mcp__plan__ping")).toEqual({
+    namespace: "mcp__plan",
+    name: "ping",
+  });
+});
+
 test("an image comes through as data, and the effort only when it is one pi-ai knows", () => {
   const request = {
     model: "m",

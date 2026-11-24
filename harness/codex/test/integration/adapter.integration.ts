@@ -404,7 +404,14 @@ test("a session that begins on one of the owner's models talks to the gateway wi
   await mkdir(cwd);
   await mkdir(home);
   let nextCommand: string | undefined;
-  const seen: { auth: string | null; model: string; effort: string | null; tools: number }[] = [];
+  const seen: {
+    auth: string | null;
+    model: string;
+    effort: string | null;
+    tools: number;
+    toolTypes: string[];
+    namespaces: string[];
+  }[] = [];
   const gateway = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -414,13 +421,17 @@ test("a session that begins on one of the owner's models talks to the gateway wi
       const body = JSON.parse(await req.text()) as {
         model: string;
         reasoning?: { effort?: string | null } | null;
-        tools?: unknown[];
+        tools?: { type?: string; name?: string }[];
       };
       seen.push({
         auth: req.headers.get("authorization"),
         model: body.model,
         effort: body.reasoning?.effort ?? null,
         tools: body.tools?.length ?? 0,
+        toolTypes: (body.tools ?? []).map((t) => t.type ?? ""),
+        namespaces: (body.tools ?? [])
+          .filter((t) => t.type === "namespace" && typeof t.name === "string")
+          .map((t) => t.name as string),
       });
       if (nextCommand !== undefined) {
         const cmd = nextCommand;
@@ -511,6 +522,9 @@ test("a session that begins on one of the owner's models talks to the gateway wi
       await waitFor(() => idle().length === 1);
       expect(idle()[0]).toMatchObject({ stopReason: "end_turn" });
       expect(seen[0]).toMatchObject({ auth: "Bearer gw-token", model: OWN.id });
+      // Deferred tools stay behind `tool_search` instead of bloating the prompt with every namespace upfront.
+      expect(seen[0]?.toolTypes).toContain("tool_search");
+      expect(seen[0]?.namespaces).not.toContain("multi_agent_v1");
       expect(updates).toContainEqual(
         expect.objectContaining({ sessionUpdate: "usage_update", size: 60_800 }),
       );
