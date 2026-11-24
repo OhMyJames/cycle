@@ -204,6 +204,8 @@ test("each harness hands its adapter the session's variables its own way: Claude
     await until(
       () => existsSync(configs) && readFileSync(configs, "utf8").split("\n").length > before,
       `${definition.id}'s adapter config`,
+      // A shell spawned on a loaded machine (CI runs the suite twice over) can take more than the default 2 s.
+      15_000,
     );
     launched.kill?.();
   }
@@ -220,7 +222,7 @@ test("each harness hands its adapter the session's variables its own way: Claude
   expect(forCodex).toMatchObject({ sessionEnv });
   expect(forAgy).not.toHaveProperty("sessionEnv");
   expect(JSON.stringify(forAgy)).not.toContain("postgres://db");
-});
+}, 60_000);
 
 test("an environment in the index with a name the rules refuse counts as none", async () => {
   const { environmentOf } = await import("../src/environment.ts");
