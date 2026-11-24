@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
 import {
   type AgentContext,
   agent,
@@ -77,6 +78,8 @@ type SessionState = {
   toolPermission: ToolPermission;
   /** Chosen during a turn: agy's worker is rebuilt with it before the next one. */
   pendingToolPermission?: ToolPermission | undefined;
+  /** A rebuild of agy's worker in progress: nothing else is sent for this session until it has settled. */
+  rebuilding?: Promise<void> | undefined;
   /** What `session/resume` needs to rebuild the worker. */
   launch: { cwd: string; mcpServers: unknown[]; additionalDirectories?: string[]; meta?: unknown };
   /** agy's update_steps calls still going: what makes its plan. */
@@ -190,7 +193,13 @@ export function createAdapter(config: AdapterConfig) {
     : config.skipPermissions === true
       ? "always-proceed"
       : DEFAULT_TOOL_PERMISSION;
-  const settingsPath = agySettingsPath(config.env.HOME as string);
+  const settingsPathOf = (): string => {
+    const home = config.env.HOME;
+    if (!home || !isAbsolute(home)) {
+      throw new RequestError(-32603, "agy needs an explicit absolute HOME");
+    }
+    return agySettingsPath(home);
+  };
 
   /**
    * Starts agy's worker for a session at `level`. agy reads `toolPermission` from settings.json only as the worker
@@ -198,9 +207,9 @@ export function createAdapter(config: AdapterConfig) {
    * The file is written every time, even for the default, so a level another session left is never inherited.
    */
   const startingWorker = <T>(level: ToolPermission, start: () => Promise<T>): Promise<T> =>
-    withSettingsLock(settingsPath, async () => {
+    withSettingsLock(settingsPathOf(), async () => {
       try {
-        await writeManagedSettings(settingsPath, { toolPermission: level });
+        await writeManagedSettings(settingsPathOf(), { toolPermission: level });
       } catch (error) {
         throw new RequestError(
           -32603,
@@ -544,7 +553,23 @@ export function createAdapter(config: AdapterConfig) {
    * the session resumed under the new level (agy keeps the conversation, not the mode, which is set again). The session
    * keeps its id. If the resume fails, the old level is resumed once more so the session is not left without a worker.
    */
-  const rebuildWorker = async (session: SessionState, level: ToolPermission): Promise<void> => {
+  const rebuildWorker = (session: SessionState, level: ToolPermission): Promise<void> => {
+    const run = async () => {
+      await session.rebuilding?.catch(() => undefined);
+      if (level === session.toolPermission) return;
+      await rebuild(session, level);
+    };
+    const task = run();
+    const tracked = task
+      .catch(() => undefined)
+      .finally(() => {
+        if (session.rebuilding === tracked) session.rebuilding = undefined;
+      });
+    session.rebuilding = tracked;
+    return task;
+  };
+
+  const rebuild = async (session: SessionState, level: ToolPermission): Promise<void> => {
     const { conn } = await ensureTransport().catch((error) => {
       throw toRequestError(error);
     });
@@ -561,32 +586,41 @@ export function createAdapter(config: AdapterConfig) {
           ...(session.launch.meta !== undefined ? { _meta: session.launch.meta } : {}),
         }),
       );
-    await conn.request("session/close", { sessionId: session.id }).catch(() => undefined);
-    let response: V1ResumeResponse;
-    try {
-      response = await resume(level);
-    } catch (error) {
-      await resume(session.toolPermission).catch(() => undefined);
-      throw toRequestError(error);
-    }
-    session.toolPermission = level;
-    session.v1ConfigOptions = response.configOptions ?? session.v1ConfigOptions;
-    if (response.models?.availableModels) session.availableModels = response.models.availableModels;
     // The resumed worker starts from agy's own defaults; put back what the session had.
-    for (const id of ["mode", "model", "thought_level"]) {
-      const wanted = currentOption(before, id)?.currentValue;
-      const now = currentOption(session.v1ConfigOptions, id);
-      if (wanted === undefined || now === undefined || now.currentValue === wanted) continue;
-      if (!(now.options ?? []).some((option) => option.value === wanted)) continue;
-      try {
-        const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
-          "session/set_config_option",
-          { sessionId: session.id, configId: now.id, value: wanted },
-        );
-        if (Array.isArray(res?.configOptions)) session.v1ConfigOptions = res.configOptions;
-      } catch {
-        // The session goes on with agy's value; the option list below says what it is.
+    const adopt = async (response: V1ResumeResponse) => {
+      session.v1ConfigOptions = response.configOptions ?? session.v1ConfigOptions;
+      if (response.models?.availableModels) {
+        session.availableModels = response.models.availableModels;
       }
+      for (const id of ["mode", "model", "thought_level"]) {
+        const wanted = currentOption(before, id)?.currentValue;
+        const now = currentOption(session.v1ConfigOptions, id);
+        if (wanted === undefined || now === undefined || now.currentValue === wanted) continue;
+        if (!(now.options ?? []).some((option) => option.value === wanted)) continue;
+        try {
+          const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
+            "session/set_config_option",
+            { sessionId: session.id, configId: now.id, value: wanted },
+          );
+          if (Array.isArray(res?.configOptions)) session.v1ConfigOptions = res.configOptions;
+        } catch {
+          // The session goes on with agy's value; the option list says what it is.
+        }
+      }
+    };
+    await conn.request("session/close", { sessionId: session.id }).catch(() => undefined);
+    try {
+      await adopt(await resume(level));
+      session.toolPermission = level;
+    } catch (error) {
+      // Not left without a worker: back to the old level, and the options say what is really running.
+      await resume(session.toolPermission).then(adopt, () => undefined);
+      session.pendingToolPermission = undefined;
+      emitUpdate(session, {
+        sessionUpdate: "config_option_update",
+        configOptions: sessionConfigOptions(session),
+      } as SessionUpdate);
+      throw toRequestError(error);
     }
   };
 
@@ -759,6 +793,8 @@ export function createAdapter(config: AdapterConfig) {
       if (params.type !== "id" || typeof params.value !== "string") {
         throw new RequestError(-32602, "Expected a string option ID");
       }
+      // agy's worker may be being rebuilt; whatever is set goes to the new one.
+      await session.rebuilding;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
@@ -855,6 +891,7 @@ export function createAdapter(config: AdapterConfig) {
       const session = sessions.get(params.sessionId);
       if (!session) throw new RequestError(-32002, `Unknown session: ${params.sessionId}`);
       validatePromptBlocks(params.prompt);
+      await session.rebuilding;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
@@ -883,6 +920,7 @@ export function createAdapter(config: AdapterConfig) {
           session.pendingToolPermission = undefined;
           await rebuildWorker(session, pending);
         }
+        if (session.turn) throw new RequestError(-32600, "A turn is already running");
         turn = {
           inFlight: 0,
           autonomous: false,

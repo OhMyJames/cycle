@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { META } from "@cycle/protocol";
 
@@ -76,6 +76,7 @@ export const writeManagedSettings = async (
   try {
     await writeFile(temp, `${JSON.stringify({ ...current, ...managed }, null, 2)}\n`, {
       mode: 0o600,
+      flush: true,
     });
     await rename(temp, path);
   } catch (error) {
@@ -84,8 +85,11 @@ export const writeManagedSettings = async (
   }
 };
 
+/** A lock nobody has touched for this long belongs to a process that died; a live holder touches it every few seconds. */
 const LOCK_STALE_MS = 30_000;
-const LOCK_WAIT_MS = 30_000;
+const LOCK_HEARTBEAT_MS = 5_000;
+/** Many sessions resuming at once queue here, each for as long as agy takes to start a worker. */
+const LOCK_WAIT_MS = 5 * 60_000;
 
 /**
  * Runs `work` holding a lock shared by every adapter process using the same agy HOME. settings.json is one file for
@@ -114,9 +118,15 @@ export const withSettingsLock = async <T>(path: string, work: () => Promise<T>):
       await Bun.sleep(25);
     }
   }
+  // Starting a worker can take longer than the stale limit (a login, a model catalog), so the holder keeps the lock fresh.
+  const heartbeat = setInterval(() => {
+    const now = new Date();
+    utimes(lock, now, now).catch(() => undefined);
+  }, LOCK_HEARTBEAT_MS);
   try {
     return await work();
   } finally {
+    clearInterval(heartbeat);
     await rm(lock, { recursive: true, force: true });
   }
 };

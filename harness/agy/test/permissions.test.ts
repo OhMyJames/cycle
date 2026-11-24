@@ -113,6 +113,26 @@ describe("withSettingsLock", () => {
     expect(existsSync(`${path}.lock`)).toBe(false);
   });
 
+  test("a holder that outlasts the stale limit keeps its lock", async () => {
+    const path = agySettingsPath(tempHome());
+    mkdirSync(dirname(path), { recursive: true });
+    const { utimesSync } = await import("node:fs");
+    let second = false;
+    const first = withSettingsLock(path, async () => {
+      // Looks abandoned (old mtime) until the holder's heartbeat touches it.
+      const old = new Date(Date.now() - 25_000);
+      utimesSync(`${path}.lock`, old, old);
+      await Bun.sleep(5_500);
+      expect(second).toBe(false);
+    });
+    await Bun.sleep(100);
+    const waiting = withSettingsLock(path, async () => {
+      second = true;
+    });
+    await Promise.all([first, waiting]);
+    expect(second).toBe(true);
+  }, 15_000);
+
   test("takes over a lock a dead process left behind", async () => {
     const path = agySettingsPath(tempHome());
     mkdirSync(`${path}.lock`, { recursive: true });
@@ -374,6 +394,109 @@ describe("a session's tool permission", () => {
           prompt: [{ type: "text", text: "again" }],
         } as never);
         expect(resumes).toEqual(["strict"]);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("a failed rebuild puts the old level and the mode back and says what is running", async () => {
+    let resumes = 0;
+    const levels: unknown[] = [];
+    const h = harness(async (method) => {
+      if (method === "initialize") return defaultInitResult("1.5.16");
+      if (method === "session/new") {
+        return { ...defaultSessionResponse("agy-1"), configOptions: modeOptions("default") };
+      }
+      if (method === "session/resume") {
+        resumes += 1;
+        levels.push((await readSettingsOrNull(h.home))?.toolPermission);
+        if (resumes === 1) throw new Error("resume failed");
+        return { ...defaultSessionResponse("agy-1"), configOptions: modeOptions("default") };
+      }
+      if (method === "session/set_config_option") return { configOptions: modeOptions("auto") };
+      return {};
+    });
+    const adapter = createAdapter(h.config);
+    const updates: { sessionUpdate?: string; configOptions?: Option[] }[] = [];
+    try {
+      await client()
+        .onNotification(methods.client.session.update, ({ params }) => {
+          updates.push(params.update as never);
+        })
+        .connectWith(adapter.app, async (agent) => {
+          await init(agent as never);
+          await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+          let caught: unknown;
+          try {
+            await agent.request(methods.agent.session.setConfigOption, {
+              sessionId: "agy-1",
+              configId: "toolPermission",
+              type: "id",
+              value: "always-proceed",
+            } as never);
+          } catch (error) {
+            caught = error;
+          }
+          expect(caught).toBeDefined();
+        });
+      expect(levels).toEqual(["always-proceed", "request-review"]);
+      const last = updates.filter((u) => u.sessionUpdate === "config_option_update").at(-1);
+      expect(optionValue(last?.configOptions ?? [], "toolPermission")).toBe("request-review");
+      expect(await readSettings(h.home)).toEqual({ toolPermission: "request-review" });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("two prompts after a pending change start one turn, not two", async () => {
+    let finishPrompt: ((value: unknown) => void) | undefined;
+    let prompts = 0;
+    const h = harness(async (method) => {
+      if (method === "initialize") return defaultInitResult("1.5.16");
+      if (method === "session/new") return defaultSessionResponse("agy-1");
+      if (method === "session/resume") {
+        await Bun.sleep(40);
+        return defaultSessionResponse("agy-1");
+      }
+      if (method === "session/prompt") {
+        prompts += 1;
+        return new Promise((resolve) => {
+          finishPrompt = resolve;
+        });
+      }
+      return {};
+    });
+    const adapter = createAdapter(h.config);
+    try {
+      await client().connectWith(adapter.app, async (agent) => {
+        await init(agent as never);
+        await agent.request(methods.agent.session.new, { cwd: "/tmp/work" } as never);
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: "agy-1",
+          prompt: [{ type: "text", text: "first" }],
+        } as never);
+        await agent.request(methods.agent.session.setConfigOption, {
+          sessionId: "agy-1",
+          configId: "toolPermission",
+          type: "id",
+          value: "strict",
+        } as never);
+        finishPrompt?.({ stopReason: "end_turn" });
+        await Bun.sleep(30);
+        const again = () =>
+          agent
+            .request(methods.agent.session.prompt, {
+              sessionId: "agy-1",
+              prompt: [{ type: "text", text: "next" }],
+            } as never)
+            .then(
+              () => "started",
+              () => "refused",
+            );
+        const results = await Promise.all([again(), again()]);
+        expect(results.sort()).toEqual(["refused", "started"]);
+        expect(prompts).toBe(2);
       });
     } finally {
       adapter.close();
