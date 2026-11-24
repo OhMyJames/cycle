@@ -211,7 +211,11 @@ describe("SettingChips picker", () => {
     };
     wrap(
       <SettingChips
-        settings={{ schema: nextTurnSchema, value: { mode: "auto", model: "default" } }}
+        settings={{
+          schema: nextTurnSchema,
+          value: { mode: "auto", model: "default" },
+          live: true,
+        }}
         disabled={false}
         onSet={() => undefined}
       />,
@@ -234,6 +238,29 @@ describe("SettingChips picker", () => {
     const models = screen.getByRole("menu", { name: "Model" });
     expect(within(models).queryByText(note)).toBeNull();
     expect(models.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  test("a session not made yet says nothing of the next turn: no turn can be running", async () => {
+    const user = userEvent.setup();
+    wrap(
+      <SettingChips
+        settings={{
+          schema: {
+            type: "object",
+            properties: {
+              mode: { ...shortSchema.properties.mode, _meta: { "cycle/nextTurn": true } },
+            },
+          },
+          value: { mode: "auto" },
+        }}
+        disabled={false}
+        onSet={() => undefined}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Permission mode: Auto" }));
+    await frame();
+    const menu = screen.getByRole("menu", { name: "Permission mode" });
+    expect(menu.querySelector('[data-slot="setting-note"]')).toBeNull();
   });
 
   test("a short menu opens on its first item with the session's choice ticked, arrows move without choosing (danger mode too), Enter and Space commit", async () => {

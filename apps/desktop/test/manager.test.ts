@@ -1587,6 +1587,11 @@ test("saving runtime settings reports behavioral analytics without config values
   const fake = fakeAgent();
   const runtimeSchema = {
     warmStart: { type: "boolean" as const, title: "Warm start", default: true },
+    skipPermissions: {
+      type: "boolean" as const,
+      title: "Skip all permission prompts",
+      default: false,
+    },
     secretLabel: {
       type: "string" as const,
       title: "Mode",
@@ -1620,7 +1625,11 @@ test("saving runtime settings reports behavioral analytics without config values
       }),
       runtimeSchema,
       runtimeSnapshot: (settings) => {
-        const defaults = { warmStart: true, secretLabel: "alpha-secret-val" };
+        const defaults = {
+          warmStart: true,
+          skipPermissions: false,
+          secretLabel: "alpha-secret-val",
+        };
         const eff = settings?.effective("claude", defaults, {}) ?? {
           values: defaults,
           overrides: [],
@@ -1681,7 +1690,7 @@ test("saving runtime settings reports behavioral analytics without config values
   );
   expect(saved).toEqual({
     saved: true,
-    values: { warmStart: false, secretLabel: "beta-secret-val" },
+    values: { warmStart: false, skipPermissions: false, secretLabel: "beta-secret-val" },
     overrides: ["secretLabel", "warmStart"],
     revision: 1,
   });
@@ -1700,9 +1709,25 @@ test("saving runtime settings reports behavioral analytics without config values
     currentRevision: 1,
   });
 
-  // Behavioral analytics only: agent + location kind, zero field names or values.
+  // The one switch that is counted: whether the save turned skipping every permission prompt on or off.
+  const skipping = await mA.setAgentRuntimeSettings(
+    "local",
+    "claude",
+    { skipPermissions: true },
+    1,
+  );
+  expect(skipping).toMatchObject({ saved: true });
+
+  // Behavioral analytics only: agent + location kind, zero field names or values but that one.
   expect(tracked).toEqual([
-    ["agent_runtime_settings_saved", { agent: "claude", location: "local" }],
+    [
+      "agent_runtime_settings_saved",
+      { agent: "claude", location: "local", skip_permissions: false },
+    ],
+    [
+      "agent_runtime_settings_saved",
+      { agent: "claude", location: "local", skip_permissions: true },
+    ],
   ]);
   expect(JSON.stringify(tracked)).not.toContain("secret");
   expect(JSON.stringify(tracked)).not.toContain("warmStart");

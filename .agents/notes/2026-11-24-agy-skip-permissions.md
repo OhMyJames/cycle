@@ -21,4 +21,4 @@ agy 的 ACP 只给四个模式(`default`、`accept-edits`、`auto`、`plan`),最
 
 ## Consequences
 
-打开后 agy 编辑文件、执行命令、调用工具都不再询问，能动到 daemon 所在用户能访问的一切，与 Claude 的 `bypassPermissions`([2026-11-19-offer-every-claude-permission-mode.md](2026-11-19-offer-every-claude-permission-mode.md))同等风险。界面除了危险标记没有额外确认，要不要加没有决定。没有在真实 agy 上验证该参数下的模式列表和 `session/request_permission` 行为，只核对了 `agy acp --help`(1.5.x)里有这个参数。
+打开后 agy 编辑文件、执行命令、调用工具都不再询问，能动到 daemon 所在用户能访问的一切，与 Claude 的 `bypassPermissions`([2026-11-19-offer-every-claude-permission-mode.md](2026-11-19-offer-every-claude-permission-mode.md))同等风险。界面除了危险标记没有额外确认，要不要加没有决定。打开后会话的模式菜单照旧列出 `default`、`accept-edits` 等，选了也不会再问，菜单不会提示它们被这个开关压过。保存运行设置时埋点 `agent_runtime_settings_saved` 带 `skip_permissions`(保存后是否开着),不记别的配置项。没有在真实 agy 上验证该参数下的模式列表和 `session/request_permission` 行为，只核对了 `agy acp --help`(1.5.x)里有这个参数。

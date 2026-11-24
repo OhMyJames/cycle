@@ -157,8 +157,16 @@ export const EVENTS = {
   session_deleted: o({}),
   session_config_changed: o({ setting: z.enum(["mode", "model", "effort", "advisor", "other"]) }),
   agent_defaults_saved: o({ agent }),
-  /** Hot-reloadable runtime settings saved for an agent (CYCL-232). Never sends setting keys or values. */
-  agent_runtime_settings_saved: o({ agent, location: location }),
+  /**
+   * Hot-reloadable runtime settings saved for an agent (CYCL-232). Never sends setting keys or values, but one:
+   * `skip_permissions`, whether after the save the agent skips every permission prompt (agy's switch), to know how
+   * many run an agent that asks nothing (.agents/notes/2026-11-24-agy-skip-permissions.md).
+   */
+  agent_runtime_settings_saved: o({
+    agent,
+    location: location,
+    skip_permissions: z.boolean(),
+  }),
   /** In-app subscription sign-in started for an agent (CYCL-233). Never sends URLs, accounts, or codes. */
   agent_auth_started: o({
     agent,

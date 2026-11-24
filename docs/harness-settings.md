@@ -284,7 +284,7 @@ Cycle 的既有架构约定是“**工作位置是客户端概念，daemon 只�
   - `agent_auth_started`: `{ agent, location, mode }`（主进程上报）
   - `agent_auth_completed`: `{ agent, location, result: z.enum(["ok", "failed", "cancelled", "disconnected"]) }`（主进程上报）
   - `agent_signed_out`: `{ agent, location, ok: z.boolean() }`（主进程上报）
-  - `agent_runtime_settings_saved`: `{ agent, location }`（主进程上报）
+  - `agent_runtime_settings_saved`: `{ agent, location, skip_permissions }`（主进程上报;`skip_permissions` 是保存后是否跳过所有权限确认）
 - **完整登录漏斗**：与现有事件串联为可观测漏斗：`agent_auth_required`（触发未登录提示）→ `harness_settings_shown`（`from: "blank"` 或 `"settings"`）→ `agent_auth_started` → `agent_auth_completed`（以及兜底路径 `agent_setup_command_copied`）。
 - **明确不上报**：email、organization、plan 原始名、文件路径、环境变量名、授权码、URL、错误信息原文。
 

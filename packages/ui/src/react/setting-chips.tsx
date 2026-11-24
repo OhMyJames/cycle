@@ -29,6 +29,8 @@ export type SettingsOf = {
   schema: Record<string, unknown>;
   /** What the session has: a setting with no value is not shown as today's default, which it may not have. */
   value: Record<string, string>;
+  /** A session that exists, not one about to be made: only then can a turn be running for a change to wait on. */
+  live?: boolean;
 };
 
 function SettingPickerChip({
@@ -206,7 +208,7 @@ export function SettingChips({
       heading: property.title ?? key,
       options,
       current: settings.value[key],
-      nextTurn: appliesNextTurn(property),
+      nextTurn: settings.live === true && appliesNextTurn(property),
     });
   }
   const modelEntry = entries.find((entry) => entry.key === "model");
