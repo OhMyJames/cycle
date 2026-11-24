@@ -47,6 +47,9 @@ export const AGY_CONFIG_SCHEMA = {
       type: "string",
       title: "Permission mode",
       default: DEFAULT_AGY_MODE,
+      // agy reads the mode when a turn starts: a change made during one asks as before until it ends (measured on
+      // agy 1.5.x with a real model, 2026-11-24).
+      _meta: { [META.nextTurn]: true },
       oneOf: AGY_MODES.map(({ value, name, ...rest }) => ({
         const: value,
         title: name,

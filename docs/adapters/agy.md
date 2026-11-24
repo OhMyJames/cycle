@@ -17,7 +17,7 @@
 
 - **不打包二进制**:`agy` 由用户按官方方式自行安装(`curl -fsSL https://antigravity.google/cli/install.sh | bash`)。未安装或版本低于 `1.5.10` 时,`_cycle/agents/list` 将 `agy` 标为 `available: false`,空白页选择它时显示安装命令和"重新检查"。
 - **查找顺序**:`config.json` 的 `agy.executable` → `~/.local/bin/agy` → `PATH` 里的 `agy`。显式配置了 `agy.executable` 但路径不存在时不回落(daemon 和适配进程都不回落,适配进程收到 `searchPath: false`)。对同一路径按 `(mtimeMs, size)` 缓存 `--version` 检查结果(在临时隔离 `HOME` 中执行),要求 `>= 1.5.10`。
-- **入口**:`apps/daemon/src/main.ts adapter agy`,配置通过环境变量 `CYCLE_ADAPTER_CONFIG`(JSON)传入:`{ env, agyExecutable, fallbackExecutables?, searchPath?, logFile?, sandbox?, agent?, telemetry? }`。
+- **入口**:`apps/daemon/src/main.ts adapter agy`,配置通过环境变量 `CYCLE_ADAPTER_CONFIG`(JSON)传入:`{ env, agyExecutable, fallbackExecutables?, searchPath?, logFile?, sandbox?, agent?, telemetry?, skipPermissions? }`。
 - **环境与目录隔离**:`agy` 进程只看到显式白名单环境变量(默认 `agy.allowEnv` 为 `PATH`、`LANG`、`LC_ALL`、`TERM`、`TMPDIR`,另加 `agy.env`;HTTP 代理等变量要自己加进 `agy.allowEnv`),绝不继承宿主 `HOME`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DBUS_SESSION_BUS_ADDRESS` 等。`HOME` 固定为 `<dataDir>/agy`(或 `agy.home`),不读取也不污染宿主 `~/.gemini`。
 - **登录**:通过 `cycle login agy` 在隔离 `HOME` 下运行 `agy acp --login`。无 macOS Keychain 的隔离 `HOME` 下,`agy` 会等待约 5 秒后自动回退到本地文件 `$HOME/.gemini/antigravity-cli/antigravity-oauth-token` 和 `cache/acp-auth-state.json`,重启后静默复用。Cycle 从不读取、解析、存储或转发 OAuth token。未登录时 `session/new` 原样透传 `-32000`,附带 `cycle login agy` 提示;桌面端保留草稿、显示复制命令按钮并上报 `agent_auth_required` / `agent_setup_command_copied`。
 - **遥测**:默认不传 `--disable-telemetry`,仅在 `config.json` 显式设 `agy.telemetry: false`(及测试环境)时追加。
@@ -32,6 +32,7 @@
 - `sandbox`:为 `true` 时传 `--sandbox`。
 - `agent`:指定 `agy` 的自定义 agent 名称(`--agent <name>`)。
 - `telemetry`:显式设为 `false` 时传 `--disable-telemetry`。
+- `skipPermissions`:为 `true` 时传 `--dangerously-skip-permissions`,所有工具调用不经询问直接执行，与会话的 `mode` 无关。也可在设置页的运行设置里打开(`agent-settings.json`,`next_idle_restart`),理由见 [2026-11-24-agy-skip-permissions.md](../../.agents/notes/2026-11-24-agy-skip-permissions.md)。
 
 ## 已做
 
@@ -55,11 +56,11 @@
 
 ## 权限模式与配置项
 
-| 键       | 取值                                                  | 说明                                                                                         |
-| -------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `mode`   | `auto`(默认、推荐)、`default`、`accept-edits`、`plan` | 与 `agy` ACP 原值一致;账号不支持 `auto` 时 `agy` 回落 `default`,桥如实回传并广播             |
-| `model`  | `default` + 实时模型目录(带 `_meta["cycle/open"]`)    | 模型列表从 `session/new` 动态写入 daemon 选项缓存,每个模型附带推导出的 `META.efforts`        |
-| `effort` | `default`、`low`、`medium`、`high`、`xhigh`           | 对应 `agy` 的 `thought_level`,**不含 `max`**;Orchestrator 等模型无思考强度选项(仅 `default`) |
+| 键       | 取值                                                  | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`   | `auto`(默认、推荐)、`default`、`accept-edits`、`plan` | 与 `agy` ACP 原值一致。`agy` 自己总把新会话开在 `default`,桥在 `session/new`(含 resume 回落到新建)后立即设成 `auto`,所以用户没存过默认值时也真的是 `auto`;`agy` 拒绝或不列出 `auto` 时保留它给的值。`agy` 在一轮开始时读取模式，一轮进行中切换要到下一轮才生效(2026-11-24 用真实模型实测：中途切到 `auto` 后同一轮的 5 条命令仍逐条询问，下一轮 0 次),所以 `configSchema` 的 `mode` 带 `cycle/nextTurn`。账号不支持 `auto` 时 `agy` 回落 `default`,桥如实回传并广播 |
+| `model`  | `default` + 实时模型目录(带 `_meta["cycle/open"]`)    | 模型列表从 `session/new` 动态写入 daemon 选项缓存,每个模型附带推导出的 `META.efforts`                                                                                                                                                                                                                                                                                                                                                                               |
+| `effort` | `default`、`low`、`medium`、`high`、`xhigh`           | 对应 `agy` 的 `thought_level`,**不含 `max`**;Orchestrator 等模型无思考强度选项(仅 `default`)                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## 未做(显式列出,不要悄悄补)
 
@@ -68,7 +69,7 @@
 - **子 agent 独立子对话与后台任务追踪**:`agy` 1.5.15 的 `invoke_subagent` / `schedule` 在 ACP v1 中仅作为普通 `tool_call` 发出,无子对话 id 或内部进度事件,不做 `subagent_update`、`_cycle/child_update`、`cycle/background`。
 - **套餐用量(`_cycle/plan_usage`)**:`_meta.antigravity.tier` 仅含订阅档位,不暴露五小时/每周额度。
 - **plugin 可装目录与源管理**:`agy plugin` CLI 无机器可读目录与源增删命令,返回 `unavailable`。
-- **跳过全部权限确认(`--dangerously-skip-permissions`)**、Remote Control / Remote Agents、语音、swarm、artifact 审阅、`/rewind`、`/fork`。
+- Remote Control / Remote Agents、语音、swarm、artifact 审阅、`/rewind`、`/fork`。
 
 ## 验证结果
 

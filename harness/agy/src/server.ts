@@ -18,6 +18,8 @@ export type AdapterConfig = {
   agent?: string;
   /** When explicitly `false`, pass `--disable-telemetry` to `agy acp`. */
   telemetry?: boolean;
+  /** Pass `--dangerously-skip-permissions` to `agy acp`: every tool call is approved without asking. */
+  skipPermissions?: boolean;
   /** Optional factory replacing the spawned child process (for in-process unit tests or alternate transports). */
   connect?: (handlers: AgyServerHandlers) => AgyTransport;
   /** Called if the underlying `agy acp` process terminates unexpectedly. */
@@ -50,6 +52,7 @@ export const buildAgyArgs = (config: AdapterConfig): string[] => {
   if (config.sandbox) args.push("--sandbox");
   if (config.agent) args.push("--agent", config.agent);
   if (config.telemetry === false) args.push("--disable-telemetry");
+  if (config.skipPermissions === true) args.push("--dangerously-skip-permissions");
   return args;
 };
 

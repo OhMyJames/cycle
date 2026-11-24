@@ -14,7 +14,13 @@ import {
   MenuTrigger,
 } from "@ui-sdk/react/menu";
 import { useEffect, useId, useRef, useState } from "react";
-import { type Option, OptionLabel, optionsOf, propertiesOf } from "./config-form.tsx";
+import {
+  appliesNextTurn,
+  type Option,
+  OptionLabel,
+  optionsOf,
+  propertiesOf,
+} from "./config-form.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ShieldAlertIcon, ShieldIcon } from "./icons.tsx";
 
@@ -33,6 +39,7 @@ function SettingPickerChip({
   valueLabel,
   compact = false,
   align = "start",
+  nextTurn = false,
   disabled,
   onSet,
 }: {
@@ -45,12 +52,15 @@ function SettingPickerChip({
   /** Compact mode omits option descriptions inside the list (the model's and the effort's: read by name). */
   compact?: boolean;
   align?: "start" | "end";
+  /** The agent takes a change only from its next turn: the menu says so under its heading. */
+  nextTurn?: boolean;
   disabled: boolean;
   onSet: SetSetting;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const headingId = useId();
+  const noteId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const chosen = current === undefined ? undefined : options.find((o) => o.value === current);
@@ -114,6 +124,7 @@ function SettingPickerChip({
         collisionPadding={12}
         finalFocus={() => triggerRef.current}
         aria-labelledby={headingId}
+        aria-describedby={nextTurn ? noteId : undefined}
         data-kind="setting"
         data-compact={compact || undefined}
       >
@@ -124,6 +135,11 @@ function SettingPickerChip({
           }}
         >
           <MenuGroupLabel id={headingId}>{heading}</MenuGroupLabel>
+          {nextTurn ? (
+            <p id={noteId} data-slot="setting-note">
+              {t("config.nextTurn")}
+            </p>
+          ) : null}
           {options.map((option) => (
             <MenuRadioItem
               key={option.value}
@@ -153,6 +169,7 @@ type ChoiceEntry = {
   heading: string;
   options: Option[];
   current: string | undefined;
+  nextTurn: boolean;
 };
 
 /** The effort Claude Code runs at when none is asked for (measured; docs/protocol.md §10). */
@@ -189,6 +206,7 @@ export function SettingChips({
       heading: property.title ?? key,
       options,
       current: settings.value[key],
+      nextTurn: appliesNextTurn(property),
     });
   }
   const modelEntry = entries.find((entry) => entry.key === "model");
@@ -258,6 +276,7 @@ export function SettingChips({
         // The model and its effort are read by name; what a level does is in its title.
         compact={isRight}
         align={side === "right" ? "end" : "start"}
+        nextTurn={entry.nextTurn}
         disabled={disabled}
         onSet={onSet}
       />

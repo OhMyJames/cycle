@@ -1158,6 +1158,12 @@ const describeRuntimeField = (
         description: t("settings.harness.runtime.field.agy.telemetry.description"),
       };
     }
+    if (key === "skipPermissions") {
+      return {
+        title: t("settings.harness.runtime.field.agy.skipPermissions.title"),
+        description: t("settings.harness.runtime.field.agy.skipPermissions.description"),
+      };
+    }
   }
   return undefined;
 };

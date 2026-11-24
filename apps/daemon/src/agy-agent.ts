@@ -154,6 +154,7 @@ export const agyHarness: Harness = {
             sandbox: runtime.sandbox,
             ...(settings.agent !== undefined ? { agent: settings.agent } : {}),
             telemetry: runtime.telemetry,
+            ...(runtime.skipPermissions ? { skipPermissions: true } : {}),
           }),
         };
       },

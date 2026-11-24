@@ -391,7 +391,9 @@ test("the real Claude and agy harnesses read the daemon's own AgentSettings: max
   };
   expect(maxAhead()).toBe(3);
   expect(await adapterConfig("claude")).toMatchObject({ warmStart: true, progressSummaries: true });
-  expect(await adapterConfig("agy")).toMatchObject({ sandbox: false, telemetry: true });
+  const agyFirst = await adapterConfig("agy");
+  expect(agyFirst).toMatchObject({ sandbox: false, telemetry: true });
+  expect(agyFirst.skipPermissions).toBeUndefined();
 
   const c = await connectClient(daemon);
   await c.agent.request(methods.agent.session.new, { cwd: dir, _meta: { [META.agent]: "claude" } });
@@ -428,10 +430,14 @@ test("the real Claude and agy harnesses read the daemon's own AgentSettings: max
 
   await c.agent.request(agentSetupSetRuntime.name, {
     agent: "agy",
-    patch: { sandbox: true, telemetry: false },
+    patch: { sandbox: true, telemetry: false, skipPermissions: true },
     expectedRevision: 0,
   });
-  expect(await adapterConfig("agy")).toMatchObject({ sandbox: true, telemetry: false });
+  expect(await adapterConfig("agy")).toMatchObject({
+    sandbox: true,
+    telemetry: false,
+    skipPermissions: true,
+  });
 });
 
 test("a session still inside session/new when a next_idle_restart setting changes is recycled once it is published", async () => {

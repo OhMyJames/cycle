@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { client, methods, type SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import {
+  client,
+  methods,
+  type SessionConfigOption,
+  type SessionUpdate,
+} from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleErrorCode, META, ToolResultSchema } from "@cycle/protocol";
 import {
   applyUpdate,
@@ -87,6 +92,12 @@ describe("version check and CLI arguments", () => {
       "--disable-telemetry",
     ]);
     expect(buildAgyArgs({ ...base, sandbox: true })).not.toContain(
+      "--dangerously-skip-permissions",
+    );
+    expect(buildAgyArgs({ ...base, skipPermissions: false })).not.toContain(
+      "--dangerously-skip-permissions",
+    );
+    expect(buildAgyArgs({ ...base, skipPermissions: true })).toContain(
       "--dangerously-skip-permissions",
     );
   });
@@ -622,7 +633,79 @@ describe("session resume and id association (CYCL-173)", () => {
           "initialize",
           "session/resume",
           "session/new",
+          "session/set_config_option",
         ]);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  const modeOf = (options: readonly SessionConfigOption[]) =>
+    (
+      options.find((o) => (o as { configId?: string }).configId === "mode") as
+        | { currentValue?: unknown }
+        | undefined
+    )?.currentValue;
+
+  test("a new session starts in auto, not agy's own default, so Cycle's shown default is the one agy runs in", async () => {
+    const { config, getFake } = baseConfig((method, params) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-auto");
+      if (method === "session/set_config_option") {
+        const p = params as { configId: string; value: string };
+        return {
+          configOptions: (defaultSessionResponse("agy-auto").configOptions ?? []).map((o) =>
+            o.id === p.configId ? { ...o, currentValue: p.value } : o,
+          ),
+        };
+      }
+      return {};
+    });
+    const adapter = createAdapter(config);
+    try {
+      await client().connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        const created = await agent.request(methods.agent.session.new, {
+          cwd: "/tmp/work",
+          mcpServers: [],
+        } as never);
+        expect(modeOf(created.configOptions ?? [])).toBe("auto");
+        expect(
+          getFake()
+            .requests.filter((r) => r.method === "session/set_config_option")
+            .map((r) => r.params),
+        ).toEqual([{ sessionId: "agy-auto", configId: "mode", value: "auto" }]);
+      });
+    } finally {
+      adapter.close();
+    }
+  });
+
+  test("a new session keeps agy's mode when agy refuses auto (an account without it)", async () => {
+    const { config } = baseConfig((method) => {
+      if (method === "initialize") return defaultInitResult("1.5.15");
+      if (method === "session/new") return defaultSessionResponse("agy-no-auto");
+      if (method === "session/set_config_option") throw new AgyRpcError(-32602, "auto unavailable");
+      return {};
+    });
+    const adapter = createAdapter(config);
+    try {
+      await client().connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "test", version: "1" },
+        });
+        const created = await agent.request(methods.agent.session.new, {
+          cwd: "/tmp/work",
+          mcpServers: [],
+        } as never);
+        expect(modeOf(created.configOptions ?? [])).toBe("default");
       });
     } finally {
       adapter.close();

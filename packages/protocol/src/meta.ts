@@ -26,6 +26,11 @@ export const META = {
   recommended: "cycle/recommended",
   /** On a choice an agent offers: true on a high-risk option (such as skipping all permission checks) that the UI should warn on. */
   danger: "cycle/danger",
+  /**
+   * On a session `configSchema` property: true when the agent takes a change only from its next turn, so a turn
+   * already running keeps what it started with (docs/protocol.md §10).
+   */
+  nextTurn: "cycle/nextTurn",
   /** On a runtime `configSchema` property: when changes take effect (docs/protocol.md §16). */
   applyScope: "cycle/applyScope",
   /** On a runtime `configSchema` property: `{ key, equals }` enabling condition (docs/protocol.md §16). */

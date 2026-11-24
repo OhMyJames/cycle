@@ -761,6 +761,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "attention.finished": "等待你的下一条消息",
   "attention.stopped": "agent 意外停止了",
 
+  "config.nextTurn": "改动从下一轮开始生效，正在进行的这一轮仍按开始时的设置。",
   "config.recommended": "推荐",
   "config.caution": "注意",
   "config.notSet": "未设置",
@@ -935,6 +936,9 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.harness.runtime.field.agy.telemetry.title": "遥测",
   "settings.harness.runtime.field.agy.telemetry.description":
     "向 Google Antigravity 发送使用遥测；关闭时 Cycle 会传入 --disable-telemetry。",
+  "settings.harness.runtime.field.agy.skipPermissions.title": "跳过所有权限确认",
+  "settings.harness.runtime.field.agy.skipPermissions.description":
+    "不管会话是什么模式，agy 编辑文件、运行命令、调用工具都不再询问。它能动到 daemon 所在用户能访问的一切。",
   "settings.harness.account.signIn": "登录",
   "settings.harness.account.signOut": "退出登录",
   "settings.harness.auth.title": "登录 {agent}",

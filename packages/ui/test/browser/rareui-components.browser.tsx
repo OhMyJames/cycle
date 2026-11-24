@@ -200,6 +200,42 @@ describe("SettingChips picker", () => {
     expect(screen.queryByRole("button", { name: /Advisor/ })).toBeNull();
   });
 
+  test("a setting the agent takes only from the next turn says so under the menu's heading, and only that one", async () => {
+    const user = userEvent.setup();
+    const nextTurnSchema = {
+      type: "object",
+      properties: {
+        mode: { ...shortSchema.properties.mode, _meta: { "cycle/nextTurn": true } },
+        ...longModelSchema.properties,
+      },
+    };
+    wrap(
+      <SettingChips
+        settings={{ schema: nextTurnSchema, value: { mode: "auto", model: "default" } }}
+        disabled={false}
+        onSet={() => undefined}
+      />,
+    );
+    const note =
+      "Changes take effect from the next turn. A turn already running keeps the setting it started with.";
+
+    await user.click(screen.getByRole("button", { name: "Permission mode: Auto" }));
+    await frame();
+    const menu = screen.getByRole("menu", { name: "Permission mode" });
+    expect(within(menu).getByText(note)).toBeTruthy();
+    expect(menu.getAttribute("aria-describedby")).toBe(within(menu).getByText(note).id);
+    // The note is no choice: the items stay the three modes.
+    expect(within(menu).getAllByRole("menuitemradio")).toHaveLength(3);
+    await user.keyboard("{Escape}");
+    await frame();
+
+    await user.click(screen.getByRole("button", { name: "Model: Default model" }));
+    await frame();
+    const models = screen.getByRole("menu", { name: "Model" });
+    expect(within(models).queryByText(note)).toBeNull();
+    expect(models.getAttribute("aria-describedby")).toBeNull();
+  });
+
   test("a short menu opens on its first item with the session's choice ticked, arrows move without choosing (danger mode too), Enter and Space commit", async () => {
     const user = userEvent.setup();
     const calls: [string, string][] = [];
