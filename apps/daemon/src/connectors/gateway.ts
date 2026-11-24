@@ -23,6 +23,15 @@ type Grant = { sessionId: string; connectors: ReadonlySet<string> };
 const plain = (status: number, text: string): Response =>
   new Response(text, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 
+/** A path segment as it was meant, or undefined when its escapes are not ones (`%E0`): no connector is named so. */
+const decoded = (segment: string): string | undefined => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+};
+
 export class McpGateway {
   readonly #server: ReturnType<typeof Bun.serve>;
   readonly #grants = new Map<string, Grant>();
@@ -91,7 +100,7 @@ export class McpGateway {
     const grant = this.#grantOf(request.headers.get("authorization"));
     if (grant === undefined) return plain(401, "Unauthorized");
     const match = new URL(request.url).pathname.match(/^\/mcp\/([^/]+)$/);
-    const connectorId = match?.[1] === undefined ? undefined : decodeURIComponent(match[1]);
+    const connectorId = match?.[1] === undefined ? undefined : decoded(match[1]);
     if (connectorId === undefined || !grant.connectors.has(connectorId)) {
       return plain(404, "Not found");
     }
