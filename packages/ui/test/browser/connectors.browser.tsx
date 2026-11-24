@@ -3,6 +3,7 @@ import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { ConnectorInfo, LocationConfig } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { findAlert } from "./alert.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
@@ -149,7 +150,7 @@ test("a list that cannot be read says why, in the system's words, and can be ask
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Connectors" }));
   await user.click(await screen.findByRole("tab", { name: "MCP servers" }));
-  const failed = await screen.findByRole("alert");
+  const failed = await findAlert();
   expect(within(failed).getByText("The connectors could not be read.")).toBeTruthy();
   expect(within(failed).getByText("Not connected")).toBeTruthy();
   script.bridge.listConnectors = listed;

@@ -6,6 +6,7 @@ import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { findAlert } from "./alert.ts";
 import { boxText, editorOf, press, ready, write } from "./box.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -50,7 +51,7 @@ test("a failed turn's message goes back in the box to be read, not sent, and is 
     tool("r", "Read", "read", "completed"),
     failed,
   );
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   await user.click(within(alert).getByRole("button", { name: "Edit message" }));
   // Back in the box, which has the focus; nothing went out, and no question was asked: nothing had changed.
   await waitFor(() => expect(boxText(box)).toBe("Fix the flaky test in queue.test.ts"));
@@ -85,7 +86,7 @@ test("a turn that had run a command says so before its message goes back, and a 
     tool("w", "Write", "edit", "pending"),
     failed,
   );
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   await user.click(within(alert).getByRole("button", { name: "Edit message" }));
   const dialog = await screen.findByRole("alertdialog");
   // The calls that began are named; the one that only waited is not.
@@ -111,9 +112,7 @@ test("cancel leaves the box as it was", async () => {
     tool("b", "Bash", "execute", "completed"),
     failed,
   );
-  await user.click(
-    within(await screen.findByRole("alert")).getByRole("button", { name: "Edit message" }),
-  );
+  await user.click(within(await findAlert()).getByRole("button", { name: "Edit message" }));
   const dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(boxText(box)).toBe("");
@@ -122,9 +121,7 @@ test("cancel leaves the box as it was", async () => {
 
 test("a message put back and then cleared away is not counted when something else is sent", async () => {
   const { user, box, tracked } = await open(you("Old words"), failed);
-  await user.click(
-    within(await screen.findByRole("alert")).getByRole("button", { name: "Edit message" }),
-  );
+  await user.click(within(await findAlert()).getByRole("button", { name: "Edit message" }));
   await waitFor(() => expect(boxText(box)).toBe("Old words"));
   // The person empties the box.
   await act(() => {
@@ -183,7 +180,7 @@ test("Try again sends the failed turn's message as it was, in one click, and the
     failed,
   );
   await write(box, "half a thought");
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   await user.click(within(alert).getByRole("button", { name: "Try again" }));
   expect(screen.queryByRole("alertdialog")).toBeNull();
   await waitFor(() => expect(script.named("prompt")).toHaveLength(1));
@@ -205,7 +202,7 @@ test("Try again on a turn that had run a command asks first, with the focus on C
     tool("b", "Bash", "execute", "completed"),
     failed,
   );
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   await user.click(within(alert).getByRole("button", { name: "Try again" }));
   let dialog = await screen.findByRole("alertdialog");
   expect(dialog.textContent).toContain("Bash");
@@ -227,7 +224,7 @@ test("Try again on a turn that had run a command asks first, with the focus on C
 
 test("Try again waits for the location and says so; Edit message still works", async () => {
   const { user, box, script } = await open(you("Old words"), failed);
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   script.emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   const again = within(alert).getByRole<HTMLButtonElement>("button", { name: "Try again" });
   await waitFor(() => expect(again.disabled).toBe(true));
@@ -239,7 +236,7 @@ test("Try again waits for the location and says so; Edit message still works", a
 
 test("Try again waits while the agent is at work again", async () => {
   await open(you("Old words"), failed, state({ state: "running" }));
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   const again = within(alert).getByRole<HTMLButtonElement>("button", { name: "Try again" });
   expect(again.disabled).toBe(true);
   expect(alert.textContent).toContain("The agent is working. Try again once it stops.");
@@ -250,8 +247,6 @@ test("a Try again that cannot go puts the message in the box", async () => {
   script.bridge.prompt = async () => {
     throw new Error("not connected");
   };
-  await user.click(
-    within(await screen.findByRole("alert")).getByRole("button", { name: "Try again" }),
-  );
+  await user.click(within(await findAlert()).getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(boxText(box)).toBe("Old words"));
 });

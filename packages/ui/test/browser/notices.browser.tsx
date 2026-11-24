@@ -5,6 +5,7 @@ import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { fakeBridge, idle, text } from "../fake-bridge.ts";
+import { findAlert, queryAlert } from "./alert.ts";
 import { press, ready, write } from "./box.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -47,13 +48,13 @@ test("what just failed is a red line under the session's title bar, and Dismiss 
   await ready(box);
   await write(box, "hi");
   await press(box, "Enter");
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   expect(alert.getAttribute("data-slot")).toBe("notice-line");
   expect(alert.getAttribute("data-tone")).toBe("error");
   expect(alert.textContent).toContain("The session is working");
   underTitleBar(alert);
   await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
-  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await waitFor(() => expect(queryAlert()).toBeNull());
 });
 
 test("a dropped connection is an amber line under the title bar, gone when it is back", async () => {

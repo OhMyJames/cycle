@@ -10,6 +10,7 @@ import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { findAlert } from "./alert.ts";
 import { renderApp } from "./render-app.tsx";
 
 /** The session these tests open, by its view key: what its display mode is kept under. */
@@ -215,7 +216,7 @@ test("a turn that failed says how, and the failed call is a row under the card, 
     ...tool("c", "Bash", "failed", { command: "make install" }),
     state({ state: "idle", stopReason: "error", error: { message: "disk full" } }),
   );
-  const alert = await screen.findByRole("alert");
+  const alert = await findAlert();
   expect(alert.textContent).toContain("The turn failed: disk full");
   const card = await screen.findByRole("button", { name: /Ran 2 commands/ });
   const row = await screen.findByRole("button", { name: /Bash.*make install/ });

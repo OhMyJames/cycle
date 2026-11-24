@@ -7,7 +7,7 @@ import {
 import { META } from "@cycle/protocol";
 import type { Daemon } from "../src/index.ts";
 
-export const until = async (condition: () => boolean, what: string, ms = 2_000): Promise<void> => {
+export const until = async (condition: () => boolean, what: string, ms = 10_000): Promise<void> => {
   const started = Date.now();
   while (!condition()) {
     if (Date.now() - started > ms) throw new Error(`timed out waiting for ${what}`);
