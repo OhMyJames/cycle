@@ -103,6 +103,7 @@ import {
 } from "./acp.ts";
 import { AgentLink } from "./agent-link.ts";
 import type { AgentDefinition } from "./agents.ts";
+import { Clients } from "./clients.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
 import {
@@ -311,7 +312,7 @@ export class Daemon {
   readonly #sessions = new Map<string, Session>();
   /** Sessions being loaded, so a second request for one waits for the first load. */
   readonly #loading = new Map<string, Promise<Session>>();
-  readonly #conns = new Set<ClientConn>();
+  readonly #clients: Clients;
   /** The latest plan usage each agent told, since the daemon started (docs/protocol.md §8 "套餐用量"). */
   readonly #planUsage = new Map<string, PlanUsage>();
   /** The same, limit by limit, with when each was told: what a newer word replaces. */
@@ -332,6 +333,7 @@ export class Daemon {
     this.#now = options.now ?? Date.now;
     this.#lastClientAt = this.#now();
     this.#log = options.log ?? silentLogger;
+    this.#clients = new Clients(this.#log);
     this.#agents = new Map(options.agents.map((a) => [a.id, a]));
     this.#store =
       options.store ??
@@ -347,12 +349,8 @@ export class Daemon {
     this.#terminals = new Terminals({
       ...(options.terminals ?? defaultTerminals(process.env)),
       log: this.#log,
-      onChanged: (sessionId, terminals) => {
-        for (const conn of this.#conns)
-          void conn
-            .notify(TERMINAL_NOTIFICATIONS.changed, { sessionId, terminals })
-            .catch(() => {});
-      },
+      onChanged: (sessionId, terminals) =>
+        this.#clients.broadcast(TERMINAL_NOTIFICATIONS.changed, { sessionId, terminals }),
     });
     const providers = new Map<string, PluginProvider>();
     for (const agent of options.agents) {
@@ -362,17 +360,9 @@ export class Daemon {
       providers,
       connectors,
       now: this.#now,
-      onChanged: (agentId) => {
-        for (const conn of this.#conns) {
-          void conn.notify(PLUGINS_CHANGED, { agentId }).catch(() => {});
-        }
-      },
+      onChanged: (agentId) => this.#clients.broadcast(PLUGINS_CHANGED, { agentId }),
     });
-    connectors.onChanged(() => {
-      for (const conn of this.#conns) {
-        void conn.notify(CONNECTORS_CHANGED, {}).catch(() => {});
-      }
-    });
+    connectors.onChanged(() => this.#clients.broadcast(CONNECTORS_CHANGED, {}));
   }
 
   /** Reads the index, and refuses to start if it is there and cannot be read. */
@@ -405,7 +395,7 @@ export class Daemon {
   ): { closed: Promise<void>; close: () => void } {
     const conn = clientConn(`c${++this.#counter}`, connection.client);
     holder.value = conn;
-    this.#conns.add(conn);
+    this.#clients.add(conn);
     this.#lastClientAt = this.#now();
     void connection.closed.then(() => this.#dropped(conn));
     return { closed: connection.closed, close: () => connection.close() };
@@ -486,7 +476,7 @@ export class Daemon {
    * enough can stop without losing anything.
    */
   idleSince(): number | undefined {
-    if (this.#closing || this.#conns.size > 0 || this.#loading.size > 0) return undefined;
+    if (this.#closing || this.#clients.size > 0 || this.#loading.size > 0) return undefined;
     if (this.activity().length > 0) return undefined;
     let since = this.#lastClientAt;
     // A queue with no turn behind it is on disk and waits for a client either way (docs/daemon.md "排队"), and a
@@ -535,7 +525,7 @@ export class Daemon {
   }
 
   #dropped(conn: ClientConn): void {
-    this.#conns.delete(conn);
+    this.#clients.delete(conn);
     this.#terminals.detachAll(conn.id);
     this.#lastClientAt = this.#now();
     for (const session of this.#sessions.values()) {
@@ -575,8 +565,7 @@ export class Daemon {
   }
 
   #changed(): void {
-    for (const conn of this.#conns)
-      void conn.notify(NOTIFICATIONS.sessionListChanged, {}).catch(() => {});
+    this.#clients.broadcast(NOTIFICATIONS.sessionListChanged, {});
   }
 
   #definition(id: string): AgentDefinition {
@@ -919,8 +908,7 @@ export class Daemon {
       at: Math.max(...kept.map((l) => l.at)),
     };
     this.#planUsage.set(agent, usage);
-    for (const conn of this.#conns)
-      void conn.notify(PLAN_USAGE_CHANGED, { agent, usage }).catch(() => {});
+    this.#clients.broadcast(PLAN_USAGE_CHANGED, { agent, usage });
   }
 
   /**
@@ -939,92 +927,92 @@ export class Daemon {
     });
   }
 
+  /**
+   * An update the agent sent of the session itself. What is not the session's (the account's plan usage, a child
+   * update an agent should not make) goes elsewhere or nowhere; what is, is kept (`#persistUpdate`), and a turn's end is
+   * acted on (`#onTurnEnd`).
+   */
   #onUpdate(session: Session, update: SessionUpdate): void {
+    const kind = (update as { sessionUpdate?: unknown }).sessionUpdate;
     // The account's, not the session's: kept for the agent and told to every client, never written to a history.
-    if ((update as { sessionUpdate?: unknown }).sessionUpdate === PLAN_USAGE_UPDATE) {
+    if (kind === PLAN_USAGE_UPDATE) {
       this.#notePlanUsage(session.entry.agent, update);
       return;
     }
     // The daemon's to make from a sub-agent's own updates: an agent does not say it for one.
-    if ((update as { sessionUpdate?: unknown }).sessionUpdate === CHILD_UPDATE) return;
+    if (kind === CHILD_UPDATE) return;
     // Known as a sub-agent even when its announce is not kept (a resume replays, say): what it says later under its own
     // id is then dropped as a sub-agent's, never written as the session's own.
-    const announced = update as { sessionUpdate?: unknown; sessionId?: unknown };
-    if (announced.sessionUpdate === "subagent_update" && typeof announced.sessionId === "string")
+    const announced = update as { sessionId?: unknown };
+    if (kind === "subagent_update" && typeof announced.sessionId === "string")
       session.noteChild(announced.sessionId);
     // Once the daemon is stopping, the turn's end is on record: what the agent says after it is not.
     if (session.resuming || session.historyError !== undefined || this.#closing) return;
     // What to say next belongs to the turn that ended: not kept once another has been taken, nor when none was wanted.
     if (
-      (update as { sessionUpdate?: unknown }).sessionUpdate === PROMPT_SUGGESTION_UPDATE &&
+      kind === PROMPT_SUGGESTION_UPDATE &&
       (session.promptSuggestions !== true ||
         session.status() !== "idle" ||
         !PromptSuggestionUpdateSchema.safeParse(update).success)
     )
       return;
-    const state = update as { sessionUpdate: string; state?: string };
-    if (state.sessionUpdate === "state_update" && typeof state.state === "string") {
-      if (
-        state.state === "running" ||
-        state.state === "idle" ||
-        state.state === "requires_action"
-      ) {
-        session.agentState = state.state;
-      }
-    }
-    if (!this.#learn(session, update)) return;
+    const state = update as { state?: unknown };
+    if (
+      kind === "state_update" &&
+      (state.state === "running" || state.state === "idle" || state.state === "requires_action")
+    )
+      session.agentState = state.state;
+    if (!this.#persistUpdate(session, update)) return;
+    const ended = turnEnd(update);
+    if (ended !== undefined) this.#onTurnEnd(session, ended);
+  }
+
+  /**
+   * Keeps an update in the session's history, with what it tells the daemon (`#learn`), and announces the list when it
+   * changes it. False for one that is not to be kept. Called in the order the updates arrive, so seq follows the
+   * agent's order.
+   */
+  #persistUpdate(session: Session, update: SessionUpdate): boolean {
+    if (!this.#learn(session, update)) return false;
+    const kind = (update as { sessionUpdate: string }).sessionUpdate;
     // What the agent was given for a mention of another session is kept as the mention, not as that session's record.
     const echo = update as { content?: unknown };
-    const content =
-      state.sessionUpdate === "user_message" ? collapseSessionMentions(echo.content) : echo.content;
+    const content = kind === "user_message" ? collapseSessionMentions(echo.content) : echo.content;
     const kept = content === echo.content ? update : { ...update, content };
-    // Called in the order the updates arrive, so seq follows the agent's order.
     // The list shows what a session is doing, not what it said: only a change of state is announced
     // (docs/protocol.md §6). Anything else that changes the list says so where it changes it.
     // Update before yielding to storage so a concurrent dismissal checks the latest agent signal.
     const backgroundChanged =
-      state.sessionUpdate === "subagent_update" &&
+      kind === "subagent_update" &&
       session.noteSubagent(update as unknown as Record<string, unknown>);
-    const announce = state.sessionUpdate === "state_update" || backgroundChanged;
+    const announce = kind === "state_update" || backgroundChanged;
     void this.#write(session, { kind: "update", data: kept }).then((written) => {
       if (written && announce) this.#changed();
       if (written && backgroundChanged) this.#restartIfStale(session);
     });
-    // A turn ended (an idle that says why, not a snapshot): the next prompt goes, or the queue is handed back.
-    const ended = update as {
-      sessionUpdate: string;
-      state?: string;
-      stopReason?: unknown;
-      error?: { code?: unknown } | null;
-    };
-    if (
-      ended.sessionUpdate === "state_update" &&
-      ended.state === "idle" &&
-      typeof ended.stopReason === "string"
-    ) {
-      const code = typeof ended.error?.code === "number" ? ended.error.code : undefined;
-      // How it ended, and the code of a failure: what the agent said about it is in the history, not here.
-      if (ended.stopReason === "error")
-        this.#log.warn("turn_ended", { session: session.id, stopReason: ended.stopReason, code });
-      else this.#log.info("turn_ended", { session: session.id, stopReason: ended.stopReason });
-    }
-    if (
-      ended.sessionUpdate === "state_update" &&
-      ended.state === "idle" &&
-      typeof ended.stopReason === "string" &&
-      session.queue.length > 0
-    ) {
-      if (ended.stopReason === "end_turn") this.#dispatchNext(session);
-      else
-        void this.#returnQueue(session, ended.stopReason === "cancelled" ? "cancelled" : "error");
-    }
+    return true;
+  }
+
+  /** A turn ended (an idle that says why, not a snapshot): it is logged, what is queued goes on, and a stale agent can go. */
+  #onTurnEnd(session: Session, ended: TurnEnd): void {
+    // How it ended, and the code of a failure: what the agent said about it is in the history, not here.
+    if (ended.stopReason === "error")
+      this.#log.warn("turn_ended", {
+        session: session.id,
+        stopReason: ended.stopReason,
+        code: ended.code,
+      });
+    else this.#log.info("turn_ended", { session: session.id, stopReason: ended.stopReason });
+    this.#queueAfterTurn(session, ended.stopReason);
     // A turn that ended with nothing behind it: an agent started with an old trust decision can go now.
-    if (
-      ended.sessionUpdate === "state_update" &&
-      ended.state === "idle" &&
-      typeof ended.stopReason === "string"
-    )
-      this.#restartIfStale(session);
+    this.#restartIfStale(session);
+  }
+
+  /** What waits goes on after a turn that ended well, and is handed back after one that did not. */
+  #queueAfterTurn(session: Session, stopReason: string): void {
+    if (session.queue.length === 0) return;
+    if (stopReason === "end_turn") this.#dispatchNext(session);
+    else this.#returnQueue(session, stopReason === "cancelled" ? "cancelled" : "error");
   }
 
   // ---- the queue (docs/protocol.md §8) ----
@@ -1298,15 +1286,7 @@ export class Daemon {
       pending.settled = true;
       session.pending.delete(pending.requestId);
       pending.resolve(pending.cancelled);
-      for (const attachment of pending.asked) {
-        void attachment.conn
-          .notify(NOTIFICATIONS.requestResolved, {
-            sessionId: session.id,
-            requestId: pending.requestId,
-            outcome: pending.cancelled,
-          })
-          .catch(() => {});
-      }
+      this.#tellResolved(session, pending, pending.cancelled);
     }
     session.agentState = "idle";
     void session.link?.agent
@@ -1319,11 +1299,8 @@ export class Daemon {
       stopReason: "error",
       error: { code: CycleErrorCode.LogUnavailable, message: HISTORY_NOT_SAVED },
     };
-    for (const attachment of session.attachments) {
-      void attachment.conn
-        .notify(SESSION_UPDATE, { sessionId: session.id, update })
-        .catch(() => {});
-    }
+    for (const attachment of session.attachments)
+      this.#clients.tell(attachment.conn, SESSION_UPDATE, { sessionId: session.id, update });
     this.#changed();
   }
 
@@ -1463,10 +1440,8 @@ export class Daemon {
     if (session.status() === before || session.closed) return;
     const update = session.snapshot();
     for (const attachment of session.attachments) {
-      if (!attachment.ready) continue;
-      void attachment.conn
-        .notify(SESSION_UPDATE, { sessionId: session.id, update })
-        .catch(() => {});
+      if (attachment.ready)
+        this.#clients.tell(attachment.conn, SESSION_UPDATE, { sessionId: session.id, update });
     }
   }
 
@@ -1606,16 +1581,7 @@ export class Daemon {
       const given = written ? outcome : pending.cancelled;
       const told = written ? shown : pending.cancelled;
       pending.resolve(given);
-      for (const other of pending.asked) {
-        if (other === by) continue;
-        void other.conn
-          .notify(NOTIFICATIONS.requestResolved, {
-            sessionId: session.id,
-            requestId: pending.requestId,
-            outcome: told,
-          })
-          .catch(() => {});
-      }
+      this.#tellResolved(session, pending, told, by);
     });
   }
 
@@ -1640,6 +1606,18 @@ export class Daemon {
     });
   }
 
+  /** The clients that were asked a request (but `by`, who answered it) are told it is settled, and how. */
+  #tellResolved(session: Session, pending: Pending, outcome: unknown, by?: Attachment): void {
+    for (const asked of pending.asked) {
+      if (asked === by) continue;
+      this.#clients.tell(asked.conn, NOTIFICATIONS.requestResolved, {
+        sessionId: session.id,
+        requestId: pending.requestId,
+        outcome,
+      });
+    }
+  }
+
   /** Every request still waiting on the owner ends unanswered: aborted on record, cancelled to the agent and the clients asked. */
   #abortPending(session: Session): Promise<unknown> {
     const writes: Promise<boolean>[] = [];
@@ -1651,15 +1629,7 @@ export class Daemon {
         this.#write(session, { kind: "aborted", data: { requestId: pending.requestId } }),
       );
       pending.resolve(pending.cancelled);
-      for (const attachment of pending.asked) {
-        void attachment.conn
-          .notify(NOTIFICATIONS.requestResolved, {
-            sessionId: session.id,
-            requestId: pending.requestId,
-            outcome: pending.cancelled,
-          })
-          .catch(() => {});
-      }
+      this.#tellResolved(session, pending, pending.cancelled);
     }
     this.#stateChanged(session, before);
     return Promise.all(writes);
@@ -2257,11 +2227,7 @@ export class Daemon {
     cycle(agentDefaultsSet, async (params) => {
       const definition = this.#definition(params.agent);
       await this.#defaults.set(params.agent, checkedConfig(definition, params.config));
-      for (const conn of this.#conns) {
-        void conn
-          .notify(NOTIFICATIONS.agentDefaultsChanged, { agent: params.agent })
-          .catch(() => {});
-      }
+      this.#clients.broadcast(NOTIFICATIONS.agentDefaultsChanged, { agent: params.agent });
       return {};
     });
 
@@ -2501,3 +2467,22 @@ export class Daemon {
 const isUserMessage = (record: LogRecord): boolean =>
   record.kind === "update" &&
   (record.data as { sessionUpdate?: unknown } | null)?.sessionUpdate === "user_message";
+
+/** How a turn ended, from an update that ends one. */
+type TurnEnd = { stopReason: string; code: number | undefined };
+
+/** The end of a turn: an idle that says why. The idle an agent sends on resume is a snapshot, and says no reason. */
+const turnEnd = (update: SessionUpdate): TurnEnd | undefined => {
+  const u = update as {
+    sessionUpdate?: unknown;
+    state?: unknown;
+    stopReason?: unknown;
+    error?: { code?: unknown } | null;
+  };
+  if (u.sessionUpdate !== "state_update" || u.state !== "idle" || typeof u.stopReason !== "string")
+    return undefined;
+  return {
+    stopReason: u.stopReason,
+    code: typeof u.error?.code === "number" ? u.error.code : undefined,
+  };
+};

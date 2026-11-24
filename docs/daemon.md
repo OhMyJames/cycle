@@ -226,7 +226,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 daemon 在后台运行,没人看它的输出,所以它把自己做了什么、哪里出了错写进 `<数据目录>/daemon.log`。`cycle status` 给出位置,`cycle logs` 打印最后几行。前台在终端里跑 `cycle serve` 时同样的内容也打到 stderr。
 
 - **一行一个事件**:时间、级别、事件名,然后 `key=value`。例如 `2026-11-20T08:00:00.000Z WARN  turn_ended session=… stopReason=error code=-32012`。
-- **记什么**:启动(版本、pid、级别)、开始监听、客户端连上和离开、收到的信号、停止(当时有几个会话在工作)、agent 进程的启动和退出码、agent 的 stderr、每个 turn 怎么结束(`stopReason`,失败时带错误码)、prompt 发不出去、历史写不进去、daemon 停止时被打断的 turn,以及没被捕获的异常和 promise(带调用栈,然后退出码 1)。`debug` 级再加上 session 的加载。启动失败(比如 `config.json` 读不了)也写进去,用默认设置。
+- **记什么**:启动(版本、pid、级别)、开始监听、客户端连上和离开、收到的信号、停止(当时有几个会话在工作)、agent 进程的启动和退出码、agent 的 stderr、每个 turn 怎么结束(`stopReason`,失败时带错误码)、prompt 发不出去、历史写不进去、daemon 停止时被打断的 turn、通知发不到某个客户端(`notify_failed`:客户端 id 和方法名)、`_cycle/*` 方法的回答不合它的 result schema(`result_invalid`:方法名和出错字段的路径,不记值),以及没被捕获的异常和 promise(带调用栈,然后退出码 1)。`debug` 级再加上 session 的加载。启动失败(比如 `config.json` 读不了)也写进去,用默认设置。
 - **不记什么**:prompt、agent 的回答和工具调用的内容、凭证。这些只在 session 自己的历史里(§12 的过滤同样适用)。日志里出现的字符串只有事件名、id、退出码和错误信息;每个值都过一遍历史用的同一个凭证过滤(`redactText`,CYCL-7),并截到 500 字符。agent 的 stderr 是它的诊断输出,不是对话,也照此过滤和截断,每个 agent 进程最多记 200 行。
 - **权限和大小**:文件 0600,所在目录 0700;已有的文件权限更宽时会收窄。超过 `maxBytes`(默认 1 MB)就轮转:`daemon.log` → `daemon.log.1` → … 保留 `files` 个(默认 3),最旧的删掉,所以总共不超过 `maxBytes × (files + 1)`(默认 4 MB)。
 - **级别**:`error`、`warn`、`info`(默认)、`debug`,在 `config.json` 的 `log.level` 设。
