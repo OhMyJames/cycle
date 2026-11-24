@@ -1,5 +1,12 @@
 export { createAdapter } from "./agent.ts";
 export {
+  AGY_ENV_FILE,
+  clearSessionEnvDirs,
+  envFileText,
+  shellWord,
+  writeSessionEnvDir,
+} from "./env-dir.ts";
+export {
   DEFAULT_TOOL_PERMISSION,
   isToolPermission,
   TOOL_PERMISSIONS,
@@ -16,7 +23,13 @@ export {
   type AgyPluginsOptions,
   type RunAgyPluginCommand,
 } from "./plugins.ts";
-export { type AdapterConfig, AgyRpcError, type AgyTransport, buildAgyArgs } from "./server.ts";
+export {
+  type AdapterConfig,
+  AgyRpcError,
+  type AgyTransport,
+  agyProcessEnv,
+  buildAgyArgs,
+} from "./server.ts";
 export {
   AGY_CONFIG_SCHEMA,
   AGY_EFFORT_LEVELS,

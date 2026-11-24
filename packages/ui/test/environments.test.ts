@@ -59,6 +59,8 @@ test("an environment the page would keep is one the daemon takes, and the other 
     },
     { ...base, actions: [{ id: "a", name: "A", command: { default: "true" } }] },
     { ...base, variables: [{ name: "CLAUDE_ENV_FILE", value: "/tmp/x" }] },
+    { ...base, variables: [{ name: "ZDOTDIR", value: "/tmp/x" }] },
+    { ...base, variables: [{ name: "BASH_ENV", value: "/tmp/x" }] },
     {
       ...base,
       variables: [

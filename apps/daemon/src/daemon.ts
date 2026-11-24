@@ -869,9 +869,12 @@ export class Daemon {
       },
     };
     // An agent already started for it (`prewarmAgent`) is taken over, not started again; one still starting is waited for,
-    // since it is that much of the way there. Only a new session: one resumed is not what it was started for.
-    if (mode === "new") await this.#standbyStarting.get(session.entry.agent);
-    const ahead = mode === "new" ? this.#takeStandby(session.entry.agent) : undefined;
+    // since it is that much of the way there. Only a new session without environment variables: one resumed, or one whose
+    // commands need per-session launch variables (e.g. agy's ZDOTDIR/BASH_ENV, CYC-314), launches with its own context.
+    const sessionEnv = commandVariables(session.entry);
+    const canTakeStandby = mode === "new" && Object.keys(sessionEnv).length === 0;
+    if (canTakeStandby) await this.#standbyStarting.get(session.entry.agent);
+    const ahead = canTakeStandby ? this.#takeStandby(session.entry.agent) : undefined;
     if (ahead !== undefined) this.#log.info("agent_standby_taken", { agent: session.entry.agent });
     const link =
       ahead ??
@@ -879,7 +882,7 @@ export class Daemon {
         definition,
         handlers,
         // Its environment's variables, for the commands it runs (docs/protocol.md §6 "环境").
-        { sessionId: session.id, sessionEnv: commandVariables(session.entry) },
+        { sessionId: session.id, sessionEnv },
       ));
     ahead?.adopt(handlers);
     connected = link;

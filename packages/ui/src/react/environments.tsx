@@ -607,13 +607,10 @@ export function EnvironmentEditor({
  */
 export function EnvironmentPicker({
   blank,
-  agentId,
   locationName,
   disabled,
 }: {
   blank: BlankConversation;
-  /** The agent the session starts: Antigravity's own commands do not have the variables. */
-  agentId: string | undefined;
   locationName: string;
   disabled: boolean;
 }) {
@@ -644,60 +641,52 @@ export function EnvironmentPicker({
   }
   const name = chosen?.name ?? t("blank.environment.none");
   const chipLabel = t("composer.setting", { setting: t("blank.environment"), value: name });
-  // agy is given no variable of the session (an explicit list only reaches agent processes): its terminals and actions
-  // are (docs/protocol.md §6 "环境").
-  const agyNote = agentId === "agy" && (chosen?.variables.length ?? 0) > 0;
   return (
-    <>
-      <Menu modal={false}>
-        <Tip label={chipLabel}>
-          <MenuTrigger
-            ref={trigger}
-            data-variant="ghost"
-            data-kind="blank-environment"
-            data-unset={chosen === undefined || undefined}
-            disabled={disabled}
-          >
-            <span data-slot="blank-agent-name">{name}</span>
-          </MenuTrigger>
-        </Tip>
-        <MenuContent
-          align="start"
-          sideOffset={6}
-          collisionPadding={12}
-          finalFocus={() => trigger.current}
-          aria-labelledby={headingId}
-          data-kind="setting"
+    <Menu modal={false}>
+      <Tip label={chipLabel}>
+        <MenuTrigger
+          ref={trigger}
+          data-variant="ghost"
+          data-kind="blank-environment"
+          data-unset={chosen === undefined || undefined}
+          disabled={disabled}
         >
-          <MenuRadioGroup
-            value={chosen?.id ?? ""}
-            onValueChange={(next) => {
-              if (typeof next !== "string") return;
-              store.chooseBlankEnvironment(next === "" ? null : next);
-            }}
-          >
-            <MenuGroupLabel id={headingId}>{t("blank.environment")}</MenuGroupLabel>
-            <MenuRadioItem value="" label={t("blank.environment.none")} closeOnSelect>
-              <span data-slot="option-name">{t("blank.environment.none")}</span>
+          <span data-slot="blank-agent-name">{name}</span>
+        </MenuTrigger>
+      </Tip>
+      <MenuContent
+        align="start"
+        sideOffset={6}
+        collisionPadding={12}
+        finalFocus={() => trigger.current}
+        aria-labelledby={headingId}
+        data-kind="setting"
+      >
+        <MenuRadioGroup
+          value={chosen?.id ?? ""}
+          onValueChange={(next) => {
+            if (typeof next !== "string") return;
+            store.chooseBlankEnvironment(next === "" ? null : next);
+          }}
+        >
+          <MenuGroupLabel id={headingId}>{t("blank.environment")}</MenuGroupLabel>
+          <MenuRadioItem value="" label={t("blank.environment.none")} closeOnSelect>
+            <span data-slot="option-name">{t("blank.environment.none")}</span>
+            <MenuItemIndicator>
+              <CheckIcon size={13} />
+            </MenuItemIndicator>
+          </MenuRadioItem>
+          {environments.map((e) => (
+            <MenuRadioItem key={e.id} value={e.id} label={e.name} closeOnSelect>
+              <span data-slot="option-name">{e.name}</span>
               <MenuItemIndicator>
                 <CheckIcon size={13} />
               </MenuItemIndicator>
             </MenuRadioItem>
-            {environments.map((e) => (
-              <MenuRadioItem key={e.id} value={e.id} label={e.name} closeOnSelect>
-                <span data-slot="option-name">{e.name}</span>
-                <MenuItemIndicator>
-                  <CheckIcon size={13} />
-                </MenuItemIndicator>
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuContent>
-      </Menu>
-      {agyNote ? (
-        <span data-slot="blank-environment-note">{t("blank.environment.agyNote")}</span>
-      ) : null}
-    </>
+          ))}
+        </MenuRadioGroup>
+      </MenuContent>
+    </Menu>
   );
 }
 

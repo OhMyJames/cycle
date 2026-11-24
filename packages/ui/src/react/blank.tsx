@@ -377,7 +377,6 @@ export function BlankConversationView({
       <WorktreePicker blank={blank} agentId={agent?.id} disabled={starting || !connected} />
       <EnvironmentPicker
         blank={blank}
-        agentId={agent?.id}
         locationName={locationName}
         disabled={starting || !connected}
       />

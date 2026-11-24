@@ -22,6 +22,8 @@ export const RESERVED_VARIABLES: readonly string[] = [
   "TERM",
   "CLAUDE_CONFIG_DIR",
   "CLAUDE_ENV_FILE",
+  "ZDOTDIR",
+  "BASH_ENV",
   "CODEX_HOME",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",

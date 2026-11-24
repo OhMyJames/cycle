@@ -132,9 +132,20 @@ rl.on("line", (line) => {
       },
     });
     pending.set(permId, (outcome) => {
+      const shell = Bun.which("zsh") ?? Bun.which("bash");
+      const cmdOut = shell
+        ? Bun.spawnSync(
+            [shell, "-c", 'printf "%s|%s|%s" "$PROBE_TOKEN" "$ZDOTDIR" "$BASH_ENV"'],
+            { env: process.env },
+          ).stdout.toString()
+        : null;
       const envSummary = JSON.stringify({
         home: process.env.HOME ?? null,
         leakedSecret: process.env.CYCLE_TEST_HOST_SECRET ?? null,
+        processProbeToken: process.env.PROBE_TOKEN ?? null,
+        hasZdotdir: Boolean(process.env.ZDOTDIR),
+        hasBashEnv: Boolean(process.env.BASH_ENV),
+        shellProbe: cmdOut,
       });
       send({
         jsonrpc: "2.0",
@@ -272,8 +283,107 @@ describe("harness/agy integration (real adapter child process over stdio)", () =
         .join("");
       expect(text).toContain(`"home":"${join(dataDir, "agy")}"`);
       expect(text).toContain('"leakedSecret":null');
+      expect(text).toContain('"processProbeToken":null');
+      expect(text).toContain('"hasZdotdir":false');
       expect(text).toContain('"optionId":"allow"');
       expect(text).not.toContain("host-secret-must-not-leak");
+    } finally {
+      clientConn.close();
+      serverConn.close();
+      await daemon.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("session environment variables reach agy shell commands via ZDOTDIR/BASH_ENV without entering agy process env (CYC-314)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cycle-agy-env-integ-"));
+    const dataDir = join(root, "data");
+    const workDir = join(root, "work");
+    const binDir = join(root, "bin");
+    mkdirSync(workDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    const fakeBin = writeFakeAgyBinary(binDir);
+
+    const config = ConfigSchema.parse({
+      agy: { executable: fakeBin, telemetry: false },
+    });
+    const daemon = await Daemon.start({
+      dataDir,
+      agents: agentsFor(
+        config,
+        dataDir,
+        {
+          PATH: process.env.PATH,
+          HOME: "/Users/should-never-reach-agy",
+          TMPDIR: process.env.TMPDIR,
+        },
+        undefined,
+        [agyHarness],
+        [process.execPath, daemonMain],
+      ),
+    });
+    const c2s = new TransformStream<Uint8Array, Uint8Array>();
+    const s2c = new TransformStream<Uint8Array, Uint8Array>();
+    const serverConn = daemon.accept(ndJsonStream(s2c.writable, c2s.readable));
+    const updates: SessionUpdate[] = [];
+    const clientConn = client()
+      .onNotification(methods.client.session.update, ({ params }) => {
+        updates.push(params.update);
+      })
+      .onRequest(methods.client.session.requestPermission, () => {
+        return { outcome: { outcome: "selected", optionId: "allow" } } as never;
+      })
+      .connect(ndJsonStream(c2s.writable, s2c.readable));
+
+    try {
+      await clientConn.agent.request(methods.agent.initialize, {
+        protocolVersion: 2,
+        capabilities: {},
+        info: { name: "agy-env-integ", version: "1" },
+      });
+      // Even with a prewarmed standby agy process, a session with variables launches fresh with its own ZDOTDIR/BASH_ENV.
+      await daemon.prewarmAgent("agy");
+      const created = (await clientConn.agent.request(methods.agent.session.new, {
+        cwd: workDir,
+        _meta: {
+          [META.agent]: "agy",
+          [META.environment]: {
+            id: "env-1",
+            name: "Cycle",
+            variables: [{ name: "PROBE_TOKEN", value: "tok-from-env" }],
+            actions: [],
+          },
+        },
+      } as never)) as { sessionId: string };
+      await clientConn.agent.request(methods.agent.session.resume, {
+        sessionId: created.sessionId,
+        cwd: workDir,
+      } as never);
+      await clientConn.agent.request(methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: "text", text: "verify session env" }],
+      } as never);
+
+      const deadline = Date.now() + 15_000;
+      while (
+        !updates.some(
+          (u) => u.sessionUpdate === "state_update" && u.state === "idle" && "stopReason" in u,
+        )
+      ) {
+        if (Date.now() > deadline) throw new Error("Timed out waiting for turn to finish");
+        await Bun.sleep(20);
+      }
+
+      const text = updates
+        .filter((u) => u.sessionUpdate === "agent_message_chunk")
+        .map((u) => (u as { content?: { text?: string } }).content?.text ?? "")
+        .join("");
+      expect(text).toContain('"processProbeToken":null');
+      expect(text).toContain('"hasZdotdir":true');
+      expect(text).toContain('"hasBashEnv":true');
+      if (Bun.which("zsh") !== null || Bun.which("bash") !== null) {
+        expect(text).toContain('"shellProbe":"tok-from-env||"');
+      }
     } finally {
       clientConn.close();
       serverConn.close();

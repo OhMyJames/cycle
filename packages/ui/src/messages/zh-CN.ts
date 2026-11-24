@@ -1288,7 +1288,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "blank.environment.none": "不用环境",
   "blank.environment.needsFix":
     "session 没有开始：环境 {name} 需要修改。到设置的环境分区里打开它，看要改什么。",
-  "blank.environment.agyNote": "Antigravity 自己运行的命令不带这些变量，终端和动作里有。",
   "settings.environments.needsFix": "需要修改：{problem}",
   "environment.problem.action_id_invalid":
     "有两个动作的 id 相同，或者有动作没有 id。把环境再保存一次，每个动作就有自己的 id。",

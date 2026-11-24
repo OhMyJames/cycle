@@ -5,7 +5,9 @@ import {
   AGY_MIN_VERSION,
   AGY_PROMPT_CAPABILITIES,
   AgyPlugins,
+  clearSessionEnvDirs,
   isVersionSupported,
+  writeSessionEnvDir,
 } from "@cycle/harness-agy";
 import { runAdapter } from "@cycle/harness-agy/run";
 import {
@@ -129,6 +131,10 @@ export const agyHarness: Harness = {
   definition: ({ config, dataDir, inherited, self, log, agentSettings }) => {
     const settings = config.agy;
     const env = agyEnv(settings, dataDir, inherited);
+    // The session's variables, for agy's shell commands only (harness/agy env-dir.ts, CYC-314). What a former daemon
+    // wrote has no process left to read it.
+    const envDirs = join(dataDir, "agy-env");
+    clearSessionEnvDirs(envDirs);
     const executable = () => findAgyExecutable(settings, inherited);
     const fallbackExecutables =
       settings.executable !== undefined
@@ -143,16 +149,17 @@ export const agyHarness: Harness = {
       promptCapabilities: AGY_PROMPT_CAPABILITIES,
       steer: true,
       // Its adapter and agy start and initialise whatever the session is: they can be up before there is one (CYC-294).
+      // Sessions with environment variables skip standby in Daemon.#startAgent so they launch with their own sessionEnvDir.
       standby: true,
       command: [...self, "adapter", "agy"],
-      // The session's variables are not given to agy: it has no way to take them for its commands alone, and they may
-      // not reach an agent's own process (AGENTS.md). Its sessions' terminals and actions have them (terminals.ts).
-      env: () => {
+      env: ({ sessionId, sessionEnv }) => {
         const runtime = agyEffectiveRuntime(settings, agentSettings).values;
+        const sessionEnvDir = writeSessionEnvDir(envDirs, sessionId, sessionEnv);
         return {
           PATH: inherited.PATH ?? "",
           CYCLE_ADAPTER_CONFIG: JSON.stringify({
             env,
+            ...(sessionEnvDir !== undefined ? { sessionEnvDir } : {}),
             agyExecutable: executable() ?? "",
             fallbackExecutables,
             ...(settings.executable !== undefined ? { searchPath: false } : {}),
