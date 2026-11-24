@@ -6,18 +6,21 @@
 
 ## 结构
 
-| 文件                             | 作用                                                                             |
-| -------------------------------- | -------------------------------------------------------------------------------- |
-| `src/log/`                       | 事件日志:接口、JSONL 实现、补发(`attach`)                                        |
-| `src/index-file.ts`              | session 索引,整体原子写入                                                        |
-| `src/agents.ts`、`agent-link.ts` | agent 的定义,以及到 agent 的 ACP 连接(daemon 是 client)                          |
-| `src/process-agent.ts`           | 把一个子进程作为 agent 启动,显式环境,不继承                                      |
-| `src/session.ts`                 | 一个已加载的 session 的状态                                                      |
-| `src/daemon.ts`                  | 面向客户端的 ACP 应用:session 的创建、列表、附着、prompt、取消、权限、归档、删除 |
-| `src/agent-setup.ts`             | 各 agent 的只读状态探测(`AgentSetupProvider`)、运行时 schema 与三家登录/登出驱动 |
-| `src/agent-settings.ts`          | `<数据目录>/agent-settings.json` 原子持久化、per-agent 乐观锁与损坏不覆写保护    |
-| `src/agent-auth.ts`              | 订阅登录/登出流程管理器(互斥锁、连接绑定、单次消费、10 分钟 TTL、断线/退出清理)  |
-| `src/logger.ts`                  | daemon 自己的运行日志:按事件记、过滤凭证、0600、按大小轮转(见"日志")             |
+| 文件                             | 作用                                                                                                                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/log/`                       | 事件日志:接口、JSONL 实现、补发(`attach`)                                                                                                                                       |
+| `src/index-file.ts`              | session 索引,整体原子写入                                                                                                                                                       |
+| `src/agents.ts`、`agent-link.ts` | agent 的定义,以及到 agent 的 ACP 连接(daemon 是 client)                                                                                                                         |
+| `src/process-agent.ts`           | 把一个子进程作为 agent 启动,显式环境,不继承                                                                                                                                     |
+| `src/session.ts`                 | 一个已加载的 session 的状态                                                                                                                                                     |
+| `src/daemon.ts`                  | `Daemon` 门面和核心:session 的加载、agent 的启停、日志写入、排队、权限请求,组装面向客户端的应用                                                                                 |
+| `src/facing/`                    | 面向客户端的 ACP 应用,按协议域一个注册模块(连接、session、附着、prompt 与排队、agent、文件与 diff、终端、信任、插件、连接器),都只通过 `core.ts` 的 `Core` 接触 daemon(CYCL-262) |
+| `src/acp.ts`                     | 和 ACP 的类型边界:客户端回答的收窄、`_cycle/*` 方法的结果按 schema 校验(CYCL-259)                                                                                               |
+| `src/clients.ts`                 | 连着的客户端;所有"告诉客户端"的通知都走这里,发不出去会记日志(CYCL-260)                                                                                                          |
+| `src/agent-setup.ts`             | 各 agent 的只读状态探测(`AgentSetupProvider`)、运行时 schema 与三家登录/登出驱动                                                                                                |
+| `src/agent-settings.ts`          | `<数据目录>/agent-settings.json` 原子持久化、per-agent 乐观锁与损坏不覆写保护                                                                                                   |
+| `src/agent-auth.ts`              | 订阅登录/登出流程管理器(互斥锁、连接绑定、单次消费、10 分钟 TTL、断线/退出清理)                                                                                                 |
+| `src/logger.ts`                  | daemon 自己的运行日志:按事件记、过滤凭证、0600、按大小轮转(见"日志")                                                                                                            |
 
 客户端看到的一切都经过 session 的日志:补发和实时是同一条路径。
 
@@ -44,7 +47,7 @@
 - **`_cycle/files/search`**(协议 §8,`src/files.ts`):只返回路径,只在 session 的 `cwd` 里;符号链接不跟随也不列出,不进 `.git` 和 `node_modules`,点开头的名字只给带点的查询,条目数和时间有上限(超了带 `truncated`)。测试:`test/files.test.ts`(含指向外面的链接)。
 - **`_cycle/fs/list`、`_cycle/fs/read`**(协议 §8"浏览和预览文件",`src/fs.ts`):Files 标签用，只读，路径相对 session 的 `cwd`;每次请求重新取真实路径，指向外面的链接只列不开。一次一层；文本每块 1 MiB(在字符边界切),图片有上限，二进制只给大小。被 git 忽略的条目只在仓库根目录被信任时标(`src/git.ts`:加固参数、白名单环境、`GIT_CEILING_DIRECTORIES`、5 秒超时)。测试:`test/fs.test.ts`、`test/fs-method.test.ts`。
 - **`_cycle/diff/status`、`_cycle/diff/file`**(协议 §8"工作区的改动",`src/diff.ts`):Diff 标签的工作区视图。session 的 `cwd` 之内，工作区对比 `HEAD`(没有提交时对比空树),路径相对 `cwd`,不做改名识别；只在仓库根目录被信任时运行 git(同 `src/git.ts` 的加固，加 `--no-ext-diff --no-textconv`、`GIT_LITERAL_PATHSPECS`、10 秒超时)。最多 1,000 个文件；一个补丁最多 1 MiB,超过就停下 git 并在行尾截断。未跟踪的文件经 `src/fs.ts` 同样的路径检查才读。测试:`test/diff.test.ts`、`test/diff-method.test.ts`;测试里的 git 用 `gitIn`(不读本机的配置、hooks 和身份)。
-- **`_cycle/terminal/*`**(协议 §8"终端",`src/terminals.ts`,决定笔记 `2026-11-22-terminals-in-the-daemon-over-l1`):用户在 session 旁边开的 shell。PTY 是 Bun 自带的(`Bun.spawn({ terminal })`),shell 以登录 shell 在 session 的 `cwd` 里启动，环境只取 `terminal.allowEnv`;每个终端一个 `@xterm/headless` 记屏幕，附着和追赶时给序列化的快照。输出约 16 ms 或 64 KiB 合一段；一个连接没写出的输出超过 1 MiB 就停发，全部写完后补一次 `reset`(`reset` 本身不计入这 1 MiB,屏幕再大也不会因它再落后);屏幕没解析完的超过 8 MiB,换一个空屏幕接着记(日志 `terminal_screen_restarted`),而不是跳过一段输出，那样会留下 shell 从没有过的状态。关闭时 PTY 先不关：在它打开期间这个 tty 设备不会给别的终端，所以 `ps -t` 找到的都是这个终端的进程(shell 和各个作业，作业各在自己的进程组里),逐个发 `SIGHUP`;2 秒后 shell 还在就 `SIGKILL` 它的进程组，最后关 PTY。shell 退出后 PTY 也不关，直到终端被关闭，最后的输出不会丢。session 归档、删除时它的终端立刻离开列表，进程在后台结束;daemon 停止时和 session 的收尾并行;终端不计入 `activity()`。实测(2026-11-22,macOS arm64,10 个终端各输出 3000 行):daemon 每个终端约 7 MB,shell 每个 2–3 MB。测试:`test/terminals.test.ts`(环境、流量控制、快照)、`test/terminal-method.test.ts`(真实 `/bin/sh`:环境、尺寸、附着、退出码和最后的输出、关闭结束前台和后台作业、上限、归档删除和停止)。
+- **`_cycle/terminal/*`**(协议 §8"终端",`src/terminals.ts`,决定笔记 `2026-11-22-terminals-in-the-daemon-over-l1`):用户在 session 旁边开的 shell。PTY 是 Bun 自带的(`Bun.spawn({ terminal })`),shell 以登录 shell 在 session 的 `cwd` 里启动，环境只取 `terminal.allowEnv`;每个终端一个 `@xterm/headless` 记屏幕，附着和追赶时给序列化的快照。输出约 16 ms 或 64 KiB 合一段；一个连接没写出的输出超过 1 MiB 就停发，全部写完后补一次 `reset`(`reset` 本身不计入这 1 MiB,屏幕再大也不会因它再落后);屏幕没解析完的超过 8 MiB,换一个空屏幕接着记(日志 `terminal_screen_restarted`),而不是跳过一段输出，那样会留下 shell 从没有过的状态。关闭时 PTY 先不关：在它打开期间这个 tty 设备不会给别的终端，所以 `ps -t` 找到的都是这个终端的进程(shell 和各个作业，作业各在自己的进程组里),逐个发 `SIGHUP`;shell 已经退出时，它留下的进程(比如 `(sleep &)`)随 shell 失去了 tty,`ps -t` 找不到，改按 shell 领的 session 找(Linux 用 `ps -s`,macOS 的 `ps` 不给 session,用 `bun:ffi` 调 `getsid`),前后各查一次 shell 的 pid 没被别的进程占用才算数，已退出的 shell 本身不再发信号;2 秒后 shell 还在就 `SIGKILL` 它的进程组，最后关 PTY。shell 退出后 PTY 也不关，直到终端被关闭，最后的输出不会丢。session 归档、删除时它的终端立刻离开列表，进程在后台结束;daemon 停止时和 session 的收尾并行;终端不计入 `activity()`。实测(2026-11-22,macOS arm64,10 个终端各输出 3000 行):daemon 每个终端约 7 MB,shell 每个 2–3 MB。测试:`test/terminals.test.ts`(环境、流量控制、快照)、`test/terminal-method.test.ts`(真实 `/bin/sh`:环境、尺寸、附着、退出码和最后的输出、关闭结束前台和后台作业、shell 退出后留下的进程、上限、归档删除和停止)。
 - **`_cycle/agent_defaults/*`**:读写都有实现,存在 `<数据目录>/agent-defaults.json`,新 session 按它开始,session 自己的配置覆盖它(此前这份文档误写成占位)。
 - **`_cycle/connectors/*`**(protocol.md §14):清单在 `<数据目录>/connectors/catalog.json`,密钥和 token 在同目录的 `credentials.json`(目录 0700,文件 0600),两个文件各在一个接口后面(`ConnectorCatalog`、`CredentialVault`),以后可以换成 cloud。任一文件读不了,daemon 拒绝启动,不覆盖它。OAuth 全在 daemon 里做(`connectors/oauth.ts`)。第一个用到 connector 的 agent 启动时,daemon 在 `127.0.0.1` 的随机端口上开 MCP 网关(`connectors/gateway.ts`),agent 只拿到网关地址和本 session 的 key;stdio 的 connector 由 daemon 启动(`connectors/stdio-bridge.ts`),环境变量只有固定白名单和它自己的值。
 - **`_cycle/plugins/*`**(protocol.md §15,`src/plugins.ts`):plugin 归各 agent。agent 的定义可以带一个 `PluginProvider`;Claude 的是 `@cycle/harness-claude` 的 `ClaudePlugins`,它运行 Claude 自己的命令行(`claude plugin … --json`),环境是 `claudeEnv` 的白名单加 `PATH`(和启动 Claude 进程时相同,不继承 daemon 的环境),配置目录是 Cycle 托管的那个,工作目录是空目录 `<数据目录>/plugins/claude`。daemon 不保存 plugin 的清单:向 agent 问一次,记 60 秒,每次改动后立即重问;同一个 agent 的改动一次只做一个。已装 plugin 声明的 http 服务器由 `ConnectorService.syncPlugins` 建成带 `origin` 的 connector(清单里多存 agent 给它起的名字和 plugin 写的请求头),启动那个 agent 时用那个名字交出网关地址,顶替 plugin 自己的。测试:`test/plugins.test.ts`(内存里的 provider)、`harness/claude/test/plugins.test.ts`(回放命令行的输出)、`harness/claude/test/integration/adapter.integration.ts` 的最后一条(真实的 Claude,隔离的配置目录)。
@@ -233,7 +236,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 daemon 在后台运行,没人看它的输出,所以它把自己做了什么、哪里出了错写进 `<数据目录>/daemon.log`。`cycle status` 给出位置,`cycle logs` 打印最后几行。前台在终端里跑 `cycle serve` 时同样的内容也打到 stderr。
 
 - **一行一个事件**:时间、级别、事件名,然后 `key=value`。例如 `2026-11-20T08:00:00.000Z WARN  turn_ended session=… stopReason=error code=-32012`。
-- **记什么**:启动(版本、pid、级别)、开始监听、客户端连上和离开、收到的信号、停止(当时有几个会话在工作)、agent 进程的启动和退出码、agent 的 stderr、每个 turn 怎么结束(`stopReason`,失败时带错误码)、prompt 发不出去、历史写不进去、daemon 停止时被打断的 turn,以及没被捕获的异常和 promise(带调用栈,然后退出码 1)。`debug` 级再加上 session 的加载。启动失败(比如 `config.json` 读不了)也写进去,用默认设置。
+- **记什么**:启动(版本、pid、级别)、开始监听、客户端连上和离开、收到的信号、停止(当时有几个会话在工作)、agent 进程的启动和退出码、agent 的 stderr、每个 turn 怎么结束(`stopReason`,失败时带错误码)、prompt 发不出去、历史写不进去、daemon 停止时被打断的 turn、通知发不到某个客户端(`notify_failed`:客户端 id 和方法名)、`_cycle/*` 方法的回答不合它的 result schema(`result_invalid`:方法名和出错字段的路径,不记值),以及没被捕获的异常和 promise(带调用栈,然后退出码 1)。`debug` 级再加上 session 的加载。启动失败(比如 `config.json` 读不了)也写进去,用默认设置。
 - **不记什么**:prompt、agent 的回答和工具调用的内容、凭证。这些只在 session 自己的历史里(§12 的过滤同样适用)。日志里出现的字符串只有事件名、id、退出码和错误信息;每个值都过一遍历史用的同一个凭证过滤(`redactText`,CYCL-7),并截到 500 字符。agent 的 stderr 是它的诊断输出,不是对话,也照此过滤和截断,每个 agent 进程最多记 200 行。
 - **权限和大小**:文件 0600,所在目录 0700;已有的文件权限更宽时会收窄。超过 `maxBytes`(默认 1 MB)就轮转:`daemon.log` → `daemon.log.1` → … 保留 `files` 个(默认 3),最旧的删掉,所以总共不超过 `maxBytes × (files + 1)`(默认 4 MB)。
 - **级别**:`error`、`warn`、`info`(默认)、`debug`,在 `config.json` 的 `log.level` 设。
