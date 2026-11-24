@@ -13,7 +13,7 @@ cycle-v1 是 ADE(agentic development environment),是 cycle 的重写。这是�
 
 ## 当前阶段
 
-设计阶段:先定协议,再写代码。协议文档在 `docs/protocol.md`,是后续实现的依据。
+v1 已可用(桌面应用加 Linux daemon),在迭代功能。协议先行:改行为先改 `docs/protocol.md`,再改实现。文档入口见 `docs/` 下的 architecture、daemon、desktop、testing。
 
 ## 架构约束
 
@@ -23,19 +23,24 @@ cycle-v1 是 ADE(agentic development environment),是 cycle 的重写。这是�
 - daemon 自己保存会话历史(JSONL),不依赖 agent 重放。只管理 Cycle 自己创建的 session。
 - session 事件日志用 JSONL,放在存储接口后面。
 - L1 事件由 L2 的 ACP 更新映射而来,不原样透传,使客户端不受 ACP 变化和具体 agent 的影响。
-- agent 是可替换的接口。现在只实现了 Claude;Codex、agy、pi 在接入中(CYCL-152、153、154)。daemon 核心之外按名字认 agent 的地方都从 `apps/daemon/src/harnesses.ts` 的清单读，不要再写死某一个 agent;加一个 agent 的步骤见 [docs/daemon.md](docs/daemon.md) 的"加一个 agent"。
+- agent 是可替换的接口。`HARNESSES` 里已有 Claude、Codex、agy;pi 仍在接入中(CYCL-154)。daemon 核心之外按名字认 agent 的地方都从 `apps/daemon/src/harnesses.ts` 的清单读，不要再写死某一个 agent;加一个 agent 的步骤见 [docs/daemon.md](docs/daemon.md) 的"加一个 agent"。
 - 协议和传输分离。远程连接走 SSH 隧道,协议本身不依赖具体传输。
 - v1 桌面端规划包括右侧面板、diff 视图、交互式终端、内置浏览器及 browser use、plugins 和 settings 页。后续设计沿用三份决定笔记：[右侧面板（CYCL-89）](.agents/notes/2026-11-19-right-panel-scope.md)、[终端（CYCL-96）](.agents/notes/2026-11-19-desktop-terminal-scope.md)、[browser use（CYCL-100）](.agents/notes/2026-11-19-browser-use-scope.md)。
 - git worktree 和独立 Web 端仍在 v1 范围外。多个 agent(以及它们各自的模型 provider)已在范围内，见上面"agent 是可替换的接口"一条和 `docs/adapters/`。
+
+## 界面
+
+改 `packages/ui` 或 `apps/desktop` 渲染进程前,先读 [DESIGN.md](DESIGN.md)(五层设计系统,令牌、材质、组件、范式的单一事实源)和 `.claude/skills/cycle-design-taste`(怎么写、怎么审)。控件工程边界见 `packages/ui/AGENTS.md`。判断标准有两条:用户的注意力应该在 agent 在做什么上;复杂留给系统,不留给用户(细则在 DESIGN.md 的"定位与原则")。
 
 ## 命令
 
 - `bun run check`:门禁,提交前必须通过(pre-commit 钩子会运行它)。依次检查边界、类型、lint、测试。
 - `bun run test:browser`(根目录):界面测试,在无界面的 Chromium 里跑(`packages/ui/test/browser`),不在门禁里(约 23 秒、2 GB),CI 的 `browser` 作业每次跑。改了界面,提交前自己跑一次。
 - `bun run format`:格式化并修复可自动修复的 lint。
-- `bun run test:integration`(根目录):集成测试,串行跑 8 个套件(Node 下的客户端、Claude、Codex 和 agy 适配、真实 ssh、整个后端、打包后的应用、浏览器里的端到端),每个套件有自己的时限。每次全跑,不按改动挑选(见 `.agents/notes/2026-11-21-integration-runs-every-suite.md`),清单在 `scripts/integration-suites.ts`。它们会启动真实进程(Claude、daemon、打包后的 Electron 应用,Linux 上在 xvfb 下,macOS 上窗口隐藏、不抢焦点;以及无界面的 Chromium),最重的约 1.5 GB,所以不在门禁里。`bun run test:integration web` 只跑名字里有 web 的。需要真实模型的运行必须显式开启:`CYCLE_REAL_MODEL_TOKEN=... bun run test:real`(在 `harness/claude` 下;daemon 层的在 `apps/daemon` 下用 `test:real:daemon`;agy 用 `CYCLE_AGY_REAL_HOME=... bun run --cwd harness/agy test:real` 或 `apps/daemon` 下的 `test:real:agy`),token/凭据目录只给对应 agent 进程,不要从环境里继承,不要进 CI。
+- `bun run test:integration`(根目录):集成测试,串行跑 8 个套件(Node 下的客户端、Claude、Codex 和 agy 适配、真实 ssh、整个后端、打包后的应用、浏览器里的端到端),每个套件有自己的时限。每次全跑,不按改动挑选(见 `.agents/notes/2026-11-21-integration-runs-every-suite.md`),清单在 `scripts/integration-suites.ts`。它们会启动真实进程(Claude、daemon、打包后的 Electron 应用,Linux 上在 xvfb 下,macOS 上窗口隐藏、不抢焦点;以及无界面的 Chromium),最重的约 1.5 GB,所以不在门禁里。`bun run test:integration web` 只跑名字里有 web 的。
+- **真实模型的运行**必须显式开启:`CYCLE_REAL_MODEL_TOKEN=... bun run test:real`(在 `harness/claude` 下;daemon 层的在 `apps/daemon` 下用 `test:real:daemon`;agy 用 `CYCLE_AGY_REAL_HOME=... bun run --cwd harness/agy test:real` 或 `apps/daemon` 下的 `test:real:agy`),token/凭据目录只给对应 agent 进程,不要从环境里继承,不要进 CI。
 - `bun run build`(根目录):构建 daemon 的单文件可执行(约 40 秒,峰值内存约 0.25 GB,产出约 480 MB)和桌面端;`bun run start` 启动桌面端。真实模型的 `test:real` 在 `apps/daemon` 和 `apps/desktop` 下也有,要先 build。
-- 目标机器是 2 核 4 GB:门禁在开发机上约 16 秒(测试用两个 worker 并行,2 核上会更慢)、各进程内存加起来峰值约 1.2 GB;不要把重的东西加进门禁,也不要并行跑集成套件。
+- 目标机器是 2 核 4 GB:门禁在开发机上十几秒(测试用两个 worker 并行,2 核上会更慢;具体数字见 `docs/testing.md`)、各进程内存加起来峰值约 1.2 GB;不要把重的东西加进门禁,也不要并行跑集成套件。
 - 测试里的等待要有上限:单个测试的超时是它该有的时间,不是"够长就行"。挂住的测试几十秒内必须失败。
 - 不要用 `--no-verify`、`@ts-ignore`、`@ts-expect-error` 或 `biome-ignore` 绕过它;修复原因,或有意改规则。
 - 测试放在各包的 `test/` 目录,与 `src/` 并列。
@@ -66,7 +71,8 @@ Bun、TypeScript、Electron,均使用最新版本。包管理和脚本都用 Bun
 
 ## 约定
 
-- 文档用中文,代码标识符、协议字段和提交信息的类型前缀用英文。
+- 文档用中文,代码标识符、协议字段和提交信息的类型前缀用英文。`AGENTS.md` 文件可以用英文(如 `packages/ui/AGENTS.md`),按所在目录已有的语言写,不为统一而翻译。
+- 问题编号:项目改名后新编号用 `CYC-`(如 CYC-273),此前的 `CYCL-` 是同一个追踪器的旧编号,保留原样、不批量改写。
 - 设计上的取舍记录成决定笔记,按 `agent-notes` 技能写(`.agents/skills/agent-notes`,`.claude/skills` 里有链接):什么情况才写、格式、怎么取代旧的。新笔记放 `.agents/notes/`,格式见它的 README。`docs/decisions/` 里已有的 0001–0014 是历史,保留原样、不改编号,新笔记不再往里加。
 - 协议变更先改 `docs/protocol.md`,再改实现。
 - 提交信息简短,说明做了什么和为什么。
