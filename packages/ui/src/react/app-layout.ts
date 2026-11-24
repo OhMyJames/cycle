@@ -85,7 +85,7 @@ export function useSessionPanel(
   const sidePanels = store.sidePanels;
   const panelKey =
     blank === undefined && session !== undefined
-      ? viewKey(session.environmentId, session.sessionId)
+      ? viewKey(session.locationId, session.sessionId)
       : undefined;
   const readPanel = () => (panelKey !== undefined ? sidePanels.get(panelKey) : undefined);
   const sidePanel = useSyncExternalStore(sidePanels.subscribe, readPanel, readPanel);
@@ -120,24 +120,22 @@ export function useSessionPanel(
   };
   // The session's terminals, once its daemon can open them: the Terminal button shows one, or opens one.
   const canOpenTerminals = useAppState((s) =>
-    session !== undefined
-      ? s.status[session.environmentId]?.capabilities?.terminal === true
-      : false,
+    session !== undefined ? s.status[session.locationId]?.capabilities?.terminal === true : false,
   );
   const terminalsConnected = useAppState((s) =>
-    session !== undefined ? s.status[session.environmentId]?.state === "connected" : false,
+    session !== undefined ? s.status[session.locationId]?.state === "connected" : false,
   );
   const sessionTerminals = useAppState((s) =>
     panelKey !== undefined ? s.terminals[panelKey] : undefined,
   );
   const terminalsOf = panelKey !== undefined ? session : undefined;
-  const terminalsEnvironment = terminalsOf?.environmentId;
+  const terminalsLocation = terminalsOf?.locationId;
   const terminalsSession = terminalsOf?.sessionId;
   useEffect(() => {
-    if (terminalsEnvironment === undefined || terminalsSession === undefined) return;
+    if (terminalsLocation === undefined || terminalsSession === undefined) return;
     if (!canOpenTerminals || !terminalsConnected) return;
-    void store.loadTerminals(terminalsEnvironment, terminalsSession);
-  }, [store, terminalsEnvironment, terminalsSession, canOpenTerminals, terminalsConnected]);
+    void store.loadTerminals(terminalsLocation, terminalsSession);
+  }, [store, terminalsLocation, terminalsSession, canOpenTerminals, terminalsConnected]);
   const terminalShown =
     sidePanel?.open === true &&
     terminalOfTab(sidePanel.active) !== undefined &&
@@ -152,11 +150,11 @@ export function useSessionPanel(
       return;
     }
     // Pressed before the list came: it is read first, so a terminal already there is shown, not another one opened.
-    await store.loadTerminals(session.environmentId, session.sessionId);
+    await store.loadTerminals(session.locationId, session.sessionId);
     const panel = sidePanels.get(panelKey);
     const tab = terminalToShow(panel, store.getState().terminals[panelKey] ?? []);
     if (tab === undefined) {
-      void store.createTerminal(session.environmentId, session.sessionId, FIRST_SIZE, "header");
+      void store.createTerminal(session.locationId, session.sessionId, FIRST_SIZE, "header");
       return;
     }
     sidePanels.show(panelKey, tab);
@@ -165,7 +163,7 @@ export function useSessionPanel(
   };
   // Files needs a daemon that reads a session's folder (docs/protocol.md §8): an older one is not offered it.
   const canShowFiles = useAppState((s) =>
-    session !== undefined ? s.status[session.environmentId]?.capabilities?.fs === true : false,
+    session !== undefined ? s.status[session.locationId]?.capabilities?.fs === true : false,
   );
   const shows = (tab: PanelTabKind) => sidePanel?.open === true && sidePanel.active === tab;
 

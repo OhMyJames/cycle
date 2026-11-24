@@ -3,6 +3,7 @@
 export const SETTINGS_SECTIONS = [
   "general",
   "appearance",
+  "locations",
   "environments",
   "shortcuts",
   "harness",

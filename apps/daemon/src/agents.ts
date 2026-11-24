@@ -3,6 +3,13 @@ import type { PromptCapabilities } from "@cycle/protocol";
 import type { AgentSetupProvider } from "./agent-setup.ts";
 import type { PluginProvider } from "./plugins.ts";
 
+/**
+ * What a launch is for: the one session the process will serve (each session has its own, decision 0014). Its
+ * variables are what its environment sets for the commands the agent runs (docs/protocol.md §6 "环境"); never the
+ * agent's own settings, which the definition keeps.
+ */
+export type LaunchContext = { sessionEnv: Record<string, string> };
+
 /** Where an agent is reached: a stream to a process, or an app in this process (tests). */
 export type AgentTarget = { target: Stream | AgentApp; kill?: () => void };
 
@@ -30,5 +37,5 @@ export type AgentDefinition = {
   plugins?: PluginProvider;
   /** Read-only status, diagnostics, auth, and runtime settings provider (docs/protocol.md §16). */
   setup?: AgentSetupProvider;
-  launch: () => Promise<AgentTarget>;
+  launch: (context?: LaunchContext) => Promise<AgentTarget>;
 };

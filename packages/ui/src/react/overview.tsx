@@ -1,5 +1,5 @@
 // The Overview tab of the right panel (CYCL-88): what the open session is doing besides its turns, read from what the
-// daemon replays, so it is the same after a restart. From where it runs to what it is doing: the environment, the goal
+// daemon replays, so it is the same after a restart. From where it runs to what it is doing: the location, the goal
 // (only when one is set), the context window, the todo list, the background, what is scheduled. A block with nothing to show
 // says why in a line; what the agent does not report is said, not made up (.agents/notes/2026-11-22-overview-sources-and-layout.md).
 import { Button } from "@ui-sdk/react/button";
@@ -98,7 +98,7 @@ const STATE: Record<BackgroundRow["state"], MessageKey> = {
   unknown: "overview.state.unknown",
 };
 
-/** The settings the environment block names, in this order. */
+/** The settings the location block names, in this order. */
 const SETTINGS = [
   ["model", "overview.model"],
   ["mode", "overview.mode"],
@@ -156,30 +156,30 @@ const Quiet = ({ children }: { children: ReactNode }) => (
 export function Overview() {
   const { t, number, date } = useI18n();
   const store = useAppStore();
-  const environmentId = useAppState((s) => s.selectedEnvironment);
+  const locationId = useAppState((s) => s.selectedLocation);
   const sessionId = useAppState((s) => s.selectedSession);
   const key =
-    environmentId !== undefined && sessionId !== undefined
-      ? viewKey(environmentId, sessionId)
+    locationId !== undefined && sessionId !== undefined
+      ? viewKey(locationId, sessionId)
       : undefined;
   const view = useAppState((s) => (key !== undefined ? s.views[key] : undefined));
   const session = useAppState((s) =>
-    environmentId !== undefined
-      ? s.sessions[environmentId]?.find((x) => x.sessionId === sessionId)
+    locationId !== undefined
+      ? s.sessions[locationId]?.find((x) => x.sessionId === sessionId)
       : undefined,
   );
-  const environment = useAppState((s) => s.environments.find((e) => e.id === environmentId));
+  const location = useAppState((s) => s.locations.find((e) => e.id === locationId));
   const state = useAppState((s) =>
-    environmentId !== undefined ? s.status[environmentId]?.state : undefined,
+    locationId !== undefined ? s.status[locationId]?.state : undefined,
   );
   const agent = useAppState((s) =>
-    environmentId !== undefined && session !== undefined
-      ? s.agents[environmentId]?.find((a) => a.id === session.agent)
+    locationId !== undefined && session !== undefined
+      ? s.agents[locationId]?.find((a) => a.id === session.agent)
       : undefined,
   );
   const planUsage = useAppState((s) =>
-    environmentId !== undefined && session !== undefined
-      ? s.planUsage[environmentId]?.[session.agent]
+    locationId !== undefined && session !== undefined
+      ? s.planUsage[locationId]?.[session.agent]
       : undefined,
   );
   const contextTitle = useId();
@@ -320,20 +320,33 @@ export function Overview() {
     <div data-slot="overview">
       {away ? (
         <p data-slot="overview-away" role="status">
-          {t("overview.away", { environment: environment?.name ?? environmentId ?? "" })}
+          {t("overview.away", { location: location?.name ?? locationId ?? "" })}
         </p>
       ) : null}
 
-      <Section title={t("overview.environment")}>
+      <Section title={t("overview.location")}>
         <dl data-slot="overview-facts-list">
           <dt>{t("overview.where")}</dt>
-          <dd>{environment?.name ?? environmentId}</dd>
+          <dd>{location?.name ?? locationId}</dd>
           <dt>{t("overview.folder")}</dt>
           <dd data-slot="overview-path" title={session?.cwd}>
             {session?.cwd ?? t("overview.unknown")}
           </dd>
           <dt>{t("overview.agent")}</dt>
           <dd>{agent?.name ?? session?.agent ?? t("overview.unknown")}</dd>
+          {/* Which environment it was made with, and the names of its variables: never their values. */}
+          {session?.environment !== undefined ? (
+            <>
+              <dt>{t("overview.environment")}</dt>
+              <dd data-slot="overview-environment">{session.environment.name}</dd>
+              <dt>{t("overview.variables")}</dt>
+              <dd data-slot="overview-variables">
+                {session.environment.variableNames.length > 0
+                  ? session.environment.variableNames.map((name) => <code key={name}>{name}</code>)
+                  : t("overview.variables.none")}
+              </dd>
+            </>
+          ) : null}
           {SETTINGS.map(([id, label]) => {
             const setting = settingOf(
               conversation.configOptions,

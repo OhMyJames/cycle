@@ -47,6 +47,7 @@ export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
           agentSetup: true,
           sessionMentions: true,
           terminal: true,
+          environments: true,
         },
       },
     };

@@ -1,6 +1,6 @@
 import { Button } from "@ui-sdk/react/button";
 import { useState } from "react";
-import type { EnvironmentStatus, SessionSummary, UpdateState } from "../api.ts";
+import type { LocationStatus, SessionSummary, UpdateState } from "../api.ts";
 import type { Translator } from "../i18n.ts";
 import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
@@ -111,30 +111,30 @@ export const workingSessions = (
     (s) => s.state === "running" || s.state === "requires_action" || (s.background ?? 0) > 0,
   );
 
-/** Whether an environment's daemon has something to say in the notices: this app cannot use it, or it can be updated. */
-export const daemonNoticed = (status: EnvironmentStatus | undefined): boolean =>
+/** Whether a location's daemon has something to say in the notices: this app cannot use it, or it can be updated. */
+export const daemonNoticed = (status: LocationStatus | undefined): boolean =>
   status?.incompatible !== undefined ||
   (status?.daemon !== undefined && status.daemon.upgrade !== undefined);
 
 /**
- * An environment whose daemon this app cannot use, or that is too old and can be updated over ssh. When that cannot be
+ * A location whose daemon this app cannot use, or that is too old and can be updated over ssh. When that cannot be
  * done the card says why and the command is there to run by hand. When sessions there are working, the confirmation
  * names them first, and the person chooses to wait for them or to interrupt them.
  */
-export function DaemonNotice({ environmentId }: { environmentId: string }) {
+export function DaemonNotice({ locationId }: { locationId: string }) {
   const store = useAppStore();
   const { t } = useI18n();
-  const daemon = useAppState((s) => s.status[environmentId]?.daemon);
-  const name = useAppState((s) => s.environments.find((e) => e.id === environmentId)?.name);
-  const incompatible = useAppState((s) => s.status[environmentId]?.incompatible);
-  const sessions = useAppState((s) => s.sessions[environmentId]);
+  const daemon = useAppState((s) => s.status[locationId]?.daemon);
+  const name = useAppState((s) => s.locations.find((e) => e.id === locationId)?.name);
+  const incompatible = useAppState((s) => s.status[locationId]?.incompatible);
+  const sessions = useAppState((s) => s.sessions[locationId]);
   const [confirming, setConfirming] = useState(false);
   const upgrade = daemon?.upgrade;
-  const environment = name ?? environmentId;
+  const location = name ?? locationId;
   if (incompatible !== undefined) {
     // The daemon speaks another protocol: nothing is connected, so there is no version to show, only why and what to do.
     const said = {
-      environment,
+      location,
       supported: incompatible.supported.join(", "),
       requested: incompatible.requested,
     };
@@ -151,7 +151,7 @@ export function DaemonNotice({ environmentId }: { environmentId: string }) {
           said,
         )}
         command={incompatible.command}
-        commandLabel={t("daemon.byHand", { environment })}
+        commandLabel={t("daemon.byHand", { location })}
       />
     );
   }
@@ -176,13 +176,13 @@ export function DaemonNotice({ environmentId }: { environmentId: string }) {
         }
         text={
           failed
-            ? t("daemon.failed", { environment, error: upgrade.error ?? "" })
+            ? t("daemon.failed", { location, error: upgrade.error ?? "" })
             : waiting
-              ? t("daemon.waiting", { environment, to: upgrade.to })
-              : t("daemon.tooOld", { environment, version: daemon.version })
+              ? t("daemon.waiting", { location, to: upgrade.to })
+              : t("daemon.tooOld", { location, version: daemon.version })
         }
         command={failed ? upgrade.command : undefined}
-        commandLabel={t("daemon.byHand", { environment })}
+        commandLabel={t("daemon.byHand", { location })}
         actions={
           <Button
             data-variant="outline"
@@ -202,11 +202,11 @@ export function DaemonNotice({ environmentId }: { environmentId: string }) {
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title={t("daemon.confirmTitle", { environment, to: upgrade.to })}
+        title={t("daemon.confirmTitle", { location, to: upgrade.to })}
         description={
           working.length > 0
             ? t("daemon.confirmBusy", { sessions: named })
-            : t("daemon.confirmBody", { environment })
+            : t("daemon.confirmBody", { location })
         }
         {...(working.length > 0
           ? waiting
@@ -214,21 +214,21 @@ export function DaemonNotice({ environmentId }: { environmentId: string }) {
                 // Already waiting for them: what is left to choose is to stop waiting.
                 confirmLabel: t("daemon.confirmNow"),
                 destructive: true,
-                onConfirm: () => store.upgradeDaemon(environmentId, "now"),
+                onConfirm: () => store.upgradeDaemon(locationId, "now"),
               }
             : {
                 confirmLabel: t("daemon.confirmLater"),
-                onConfirm: () => store.upgradeDaemon(environmentId, "later"),
+                onConfirm: () => store.upgradeDaemon(locationId, "later"),
                 alternative: {
                   label: t("daemon.confirmNow"),
                   destructive: true,
-                  onConfirm: () => store.upgradeDaemon(environmentId, "now"),
+                  onConfirm: () => store.upgradeDaemon(locationId, "now"),
                 },
               }
           : {
               confirmLabel: t("daemon.confirm"),
               // Nothing working any more while it waited: an update now interrupts nothing.
-              onConfirm: () => store.upgradeDaemon(environmentId, waiting ? "now" : undefined),
+              onConfirm: () => store.upgradeDaemon(locationId, waiting ? "now" : undefined),
             })}
       />
     </>

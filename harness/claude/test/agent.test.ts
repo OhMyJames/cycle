@@ -933,3 +933,31 @@ test("a background sub-agent's own talk and calls stay out of the session, and a
     expect(ended.every((i) => i < end)).toBe(true);
   });
 });
+
+test("the session's variables reach Claude's environment, and the agent's own settings win over them", async () => {
+  const fake = fakeQuery(() => textTurn(ID, "msg_1", "ok"));
+  await connect(
+    fake.run,
+    async ({ agent, waitForIdle }) => {
+      const created = await agent.request(methods.agent.session.new, {
+        cwd: "/work",
+        _meta: { "cycle/sessionId": ID },
+      });
+      await agent.request(methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      await waitForIdle();
+    },
+    undefined,
+    {
+      env: { CLAUDE_CONFIG_DIR: "/data/claude", SHARED: "agent" },
+      sessionEnv: { DATABASE_URL: "postgres://db", SHARED: "session" },
+    },
+  );
+  expect(fake.calls[0]?.options.env).toEqual({
+    DATABASE_URL: "postgres://db",
+    CLAUDE_CONFIG_DIR: "/data/claude",
+    SHARED: "agent",
+  });
+});

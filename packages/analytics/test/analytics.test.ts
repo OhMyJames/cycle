@@ -31,7 +31,7 @@ describe("track", () => {
     const { analytics, sent } = make();
     analytics.track("prompt_sent", {
       agent: "claude",
-      environment: "local",
+      location: "local",
       size: "short",
       images: 1,
       files: 0,
@@ -45,7 +45,7 @@ describe("track", () => {
         event: "prompt_sent",
         properties: {
           agent: "claude",
-          environment: "local",
+          location: "local",
           size: "short",
           images: 1,
           files: 0,
@@ -119,14 +119,14 @@ describe("track", () => {
     expect(
       analytics.trackUnchecked("session_created", {
         agent: "/home/me/agent",
-        environment: "local",
+        location: "local",
         configured: true,
       }),
     ).toBe(false);
     expect(
       analytics.trackUnchecked("prompt_sent", {
         agent: "claude",
-        environment: "local",
+        location: "local",
         size: "short",
         images: -1,
         mentions: 0,

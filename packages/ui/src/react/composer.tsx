@@ -60,8 +60,8 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 
 export type ComposerProps = {
-  /** The environment it is on, for what its daemon can do. */
-  environmentId: string;
+  /** The location it is on, for what its daemon can do. */
+  locationId: string;
   /** The session this box is for, as `viewKey` names it. A box is made anew for each session. */
   sessionKey: string;
   /** False when there is no session, or it is still being read. */
@@ -135,7 +135,7 @@ export const composerInput = (): HTMLElement | null =>
   document.querySelector<HTMLElement>('[data-slot="composer"] [data-slot="composer-input"]');
 
 export function Composer({
-  environmentId,
+  locationId,
   sessionKey,
   enabled,
   connected,
@@ -170,7 +170,7 @@ export function Composer({
   const permissionWaits = useAppState((s) => (s.views[sessionKey]?.permissions.length ?? 0) > 0);
   const { text, attachments, kept } = draft;
   // A daemon that has not said it queues is asked nothing it would refuse: a message waits for the turn to end.
-  const capabilities = useAppState((s) => s.status[environmentId]?.capabilities);
+  const capabilities = useAppState((s) => s.status[locationId]?.capabilities);
   const canQueue = capabilities?.queue === true;
   // While it works, Enter puts the message into the running turn where the agent and the daemon can; ⌘Enter queues it.
   const steers = working && canQueue && canSteer && capabilities?.steer === true;
@@ -179,7 +179,7 @@ export function Composer({
   // Other sessions of the same daemon, which it gives the agent as a record of what was said (docs/protocol.md §8). An
   // older daemon does not say it can: then there is no such group.
   const canMentionSessions = connected && capabilities?.sessionMentions === true;
-  const sessions = useAppState((s) => s.sessions[environmentId] ?? NONE);
+  const sessions = useAppState((s) => s.sessions[locationId] ?? NONE);
   const recalled = useRef<Recall>(NOT_RECALLING);
   const [problem, setProblem] = useState<string | undefined>();
   const [dropping, setDropping] = useState(false);
@@ -248,8 +248,8 @@ export function Composer({
           sessions,
           typed.mention,
           {
-            environmentId,
-            sessionId: blank ? undefined : sessionKey.slice(environmentId.length + 1),
+            locationId,
+            sessionId: blank ? undefined : sessionKey.slice(locationId.length + 1),
           },
           sessionTitle,
         )

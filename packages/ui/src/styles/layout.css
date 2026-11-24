@@ -11,7 +11,7 @@
 }
 
 :is(
-  [data-slot="environment-name"],
+  [data-slot="location-name"],
   [data-slot="session-title"],
   [data-slot="panel-tab-label"],
   [data-slot="workspace-name"],
@@ -422,8 +422,8 @@ html[data-platform="darwin"] [data-slot="page-header"] {
   user-select: text;
 }
 
-/* Where a remote environment is, or a connector (a host, a command): the end says the most, so it is the start that is cut. */
-[data-slot="environment-where"],
+/* Where a remote location is, or a connector (a host, a command): the end says the most, so it is the start that is cut. */
+[data-slot="location-where"],
 [data-slot="connector-where"] {
   min-width: 0;
   overflow: hidden;
@@ -578,7 +578,7 @@ html[data-platform="darwin"] [data-slot="page-header"] {
 }
 
 /* A Terminal tab (CYCL-98): the shell fills the tab, on the panel's own ground, in the code font. A line under it says
-   when the shell has exited or the environment is away. */
+   when the shell has exited or the location is away. */
 [data-slot="terminal"] {
   position: absolute;
   inset: 0;
@@ -1117,6 +1117,13 @@ button[data-slot="overview-row"]:focus-visible,
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* The names of the environment's variables: as code, as many as there are, wrapping. */
+[data-slot="overview-variables"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
 }
 
 /* A path keeps its end, where the folder's name is: cut at the start. */

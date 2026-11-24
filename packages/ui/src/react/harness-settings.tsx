@@ -28,8 +28,8 @@ import type {
   AgentInfo,
   AgentRuntimePatchValue,
   AgentSetupSnapshot,
-  EnvironmentConfig,
-  EnvironmentStatus,
+  LocationConfig,
+  LocationStatus,
 } from "../api.ts";
 import { ConfigForm, RuntimeConfigForm, type RuntimeFieldText } from "./config-form.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
@@ -47,7 +47,7 @@ export type HarnessEntry = {
   name: string;
 };
 
-/** Built-in harnesses kept in a fixed order in Settings nav regardless of environment availability. */
+/** Built-in harnesses kept in a fixed order in Settings nav regardless of location availability. */
 export const BUILTIN_HARNESSES: readonly HarnessEntry[] = [
   { id: "claude", name: "Claude" },
   { id: "codex", name: "Codex" },
@@ -78,59 +78,57 @@ const agentWord = (id: string): AgentWord =>
 export type HarnessSectionProps = {
   agentId: string;
   agentName: string;
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
   agents: Record<string, AgentInfo[]>;
-  environmentId: string | undefined;
-  onEnvironmentChange: (environmentId: string) => void;
+  locationId: string | undefined;
+  onLocationChange: (locationId: string) => void;
   from: "settings" | "blank" | "other";
-  onShowEnvironments: () => void;
+  onShowLocations: () => void;
 };
 
 export function HarnessSection({
   agentId,
   agentName,
-  environments,
+  locations,
   status,
   agents,
-  environmentId,
-  onEnvironmentChange,
+  locationId,
+  onLocationChange,
   from,
-  onShowEnvironments,
+  onShowLocations,
 }: HarnessSectionProps) {
   const { t } = useI18n();
   const store = useAppStore();
-  const connected = environments.filter((e) => status[e.id]?.state === "connected");
-  // The chosen environment stays chosen while it reconnects: swapping to another (or to none) would unmount the page
+  const connected = locations.filter((e) => status[e.id]?.state === "connected");
+  // The chosen location stays chosen while it reconnects: swapping to another (or to none) would unmount the page
   // and with it a sign-in dialog, which must say that the connection dropped and offer the command instead.
-  const chosen = environments.find((e) => e.id === environmentId);
+  const chosen = locations.find((e) => e.id === locationId);
   const holding = chosen !== undefined && status[chosen.id]?.state === "reconnecting";
-  const environment = holding
-    ? chosen
-    : (connected.find((e) => e.id === environmentId) ?? connected[0]);
-  const choices = environments.filter(
+  const location = holding ? chosen : (connected.find((e) => e.id === locationId) ?? connected[0]);
+  const choices = locations.filter(
     (e) => status[e.id]?.state === "connected" || (holding && e === chosen),
   );
   const knownSetup = useRef<Record<string, boolean>>({});
   const revision = useAppState((s) =>
-    environment !== undefined ? (s.defaultsRevision[environment.id] ?? 0) : 0,
+    location !== undefined ? (s.defaultsRevision[location.id] ?? 0) : 0,
   );
 
-  // Track which Harness sub-page is shown (behavioral words only, never environment names or paths).
+  // Track which Harness sub-page is shown (behavioral words only, never location names or paths).
   const trackedRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (environment === undefined) return;
-    const key = `${agentId}:${environment.id}:${from}`;
+    if (location === undefined) return;
+    const key = `${agentId}:${location.id}:${from}`;
     if (trackedRef.current === key) return;
     trackedRef.current = key;
     store.track("harness_settings_shown", {
       agent: agentWord(agentId),
-      environment: environment.kind,
+      location: location.kind,
       from,
     });
-  }, [store, agentId, environment, from]);
+  }, [store, agentId, location, from]);
 
-  if (environment === undefined) {
+  if (location === undefined) {
     return (
       <StateBlock
         size="inline"
@@ -138,30 +136,30 @@ export function HarnessSection({
         tone="away"
         title={t("settings.defaults.none")}
         body={t("settings.defaults.noneBody")}
-        action={{ label: t("settings.defaults.showEnvironments"), onAction: onShowEnvironments }}
+        action={{ label: t("settings.defaults.showLocations"), onAction: onShowLocations }}
       />
     );
   }
 
-  const envStatus = status[environment.id];
+  const envStatus = status[location.id];
   // What the daemon said it can do, kept through a reconnect (when it has not said again yet).
   const said = envStatus?.capabilities?.agentSetup;
-  if (said !== undefined) knownSetup.current[environment.id] = said === true;
+  if (said !== undefined) knownSetup.current[location.id] = said === true;
   const supportsSetup =
-    said === true || (said === undefined && knownSetup.current[environment.id] === true);
-  const agentInfo = (agents[environment.id] ?? []).find((a) => a.id === agentId);
+    said === true || (said === undefined && knownSetup.current[location.id] === true);
+  const agentInfo = (agents[location.id] ?? []).find((a) => a.id === agentId);
 
   return (
     <>
       {choices.length > 1 ? (
         <div data-slot="page-form">
-          <Field name="environment">
-            <FieldLabel>{t("settings.defaults.environment")}</FieldLabel>
+          <Field name="location">
+            <FieldLabel>{t("settings.defaults.location")}</FieldLabel>
             <Select
               items={choices.map((e) => ({ value: e.id, label: e.name }))}
-              value={environment.id}
+              value={location.id}
               onValueChange={(next) => {
-                if (typeof next === "string") onEnvironmentChange(next);
+                if (typeof next === "string") onLocationChange(next);
               }}
             >
               <SelectTrigger>
@@ -179,12 +177,12 @@ export function HarnessSection({
         </div>
       ) : null}
 
-      <HarnessEnvironmentBody
-        key={`${environment.id}:${agentId}:${supportsSetup ? "setup" : "legacy"}`}
+      <HarnessLocationBody
+        key={`${location.id}:${agentId}:${supportsSetup ? "setup" : "legacy"}`}
         agentId={agentId}
         agentName={agentInfo?.name ?? agentName}
         agentInfo={agentInfo}
-        environment={environment}
+        location={location}
         supportsSetup={supportsSetup}
         revision={revision}
       />
@@ -192,27 +190,25 @@ export function HarnessSection({
   );
 }
 
-function HarnessEnvironmentBody({
+function HarnessLocationBody({
   agentId,
   agentName,
   agentInfo,
-  environment,
+  location,
   supportsSetup,
   revision,
 }: {
   agentId: string;
   agentName: string;
   agentInfo: AgentInfo | undefined;
-  environment: EnvironmentConfig;
+  location: LocationConfig;
   supportsSetup: boolean;
   revision: number;
 }) {
   const { t, date } = useI18n();
   const store = useAppStore();
-  const livePlanUsage = useAppState((s) => s.planUsage[environment.id]?.[agentId]);
-  const setupRevision = useAppState(
-    (s) => s.agentSetupRevision[`${environment.id}:${agentId}`] ?? 0,
-  );
+  const livePlanUsage = useAppState((s) => s.planUsage[location.id]?.[agentId]);
+  const setupRevision = useAppState((s) => s.agentSetupRevision[`${location.id}:${agentId}`] ?? 0);
 
   const [snapshot, setSnapshot] = useState<AgentSetupSnapshot | undefined>(undefined);
   // Whether the agent is listed, not the listing itself: a new agents list (a reconnect) is not a reason to read again.
@@ -247,11 +243,11 @@ function HarnessEnvironmentBody({
       const pendingFlow = activeFlowIdRef.current;
       activeFlowIdRef.current = undefined;
       if (pendingFlow !== undefined) {
-        void store.cancelAgentAuth(environment.id, pendingFlow);
+        void store.cancelAgentAuth(location.id, pendingFlow);
       }
       clearTimeout(copyTimer.current);
     };
-  }, [store, environment.id]);
+  }, [store, location.id]);
 
   const fetchSetup = useCallback(
     async (opts: { forceRefresh?: boolean; refreshUsage?: boolean; silent?: boolean }) => {
@@ -267,7 +263,7 @@ function HarnessEnvironmentBody({
         setLoadError(undefined);
       }
       try {
-        const result = await store.readAgentSetup(environment.id, agentId, {
+        const result = await store.readAgentSetup(location.id, agentId, {
           ...(opts.forceRefresh ? { forceRefresh: true } : {}),
           ...(opts.refreshUsage ? { refreshUsage: true } : {}),
         });
@@ -289,7 +285,7 @@ function HarnessEnvironmentBody({
         }
       }
     },
-    [supportsSetup, hasAgent, store, environment.id, agentId],
+    [supportsSetup, hasAgent, store, location.id, agentId],
   );
 
   useEffect(() => {
@@ -312,7 +308,7 @@ function HarnessEnvironmentBody({
       setRuntimeProblem(undefined);
       try {
         const answer = await store.setAgentRuntimeSettings(
-          environment.id,
+          location.id,
           agentId,
           patch,
           snapshot.runtime.revision,
@@ -361,7 +357,7 @@ function HarnessEnvironmentBody({
         if (mountedRef.current) setRuntimeBusyKey(undefined);
       }
     },
-    [snapshot, runtimeBusyKey, store, environment.id, agentId],
+    [snapshot, runtimeBusyKey, store, location.id, agentId],
   );
 
   const describeRuntime = useCallback(
@@ -370,13 +366,12 @@ function HarnessEnvironmentBody({
   );
 
   const readDefaults = useCallback(
-    (id: string) => store.readAgentDefaults(environment.id, id),
-    [store, environment.id],
+    (id: string) => store.readAgentDefaults(location.id, id),
+    [store, location.id],
   );
   const saveDefaults = useCallback(
-    (id: string, config: Record<string, string>) =>
-      store.setAgentDefaults(environment.id, id, config),
-    [store, environment.id],
+    (id: string, config: Record<string, string>) => store.setAgentDefaults(location.id, id, config),
+    [store, location.id],
   );
 
   const flashCopied = (which: "login" | "path") => {
@@ -404,10 +399,10 @@ function HarnessEnvironmentBody({
     const session = ++signInSessionRef.current;
     activeFlowIdRef.current = undefined;
     setSignInDialog({ kind: "starting" });
-    const answer = await store.startAgentAuth(environment.id, agentId);
+    const answer = await store.startAgentAuth(location.id, agentId);
     if (!mountedRef.current || signInSessionRef.current !== session) {
       // Unmounted or cancelled while starting: immediately cancel on daemon so the agent isn't locked for 10 minutes.
-      if (answer.started) void store.cancelAgentAuth(environment.id, answer.flowId);
+      if (answer.started) void store.cancelAgentAuth(location.id, answer.flowId);
       return;
     }
     if (!answer.started) {
@@ -423,12 +418,12 @@ function HarnessEnvironmentBody({
       ...(answer.host !== undefined ? { host: answer.host } : {}),
       ...(answer.userCode !== undefined ? { userCode: answer.userCode } : {}),
     });
-  }, [store, environment.id, agentId]);
+  }, [store, location.id, agentId]);
 
   const activeFlowId = signInDialog?.kind === "active" ? signInDialog.flowId : undefined;
   const flowCompletion = useAppState((s) =>
     activeFlowId !== undefined
-      ? s.agentAuthCompletions[`${environment.id}:${activeFlowId}`]
+      ? s.agentAuthCompletions[`${location.id}:${activeFlowId}`]
       : undefined,
   );
 
@@ -454,7 +449,7 @@ function HarnessEnvironmentBody({
     snapshot !== undefined &&
     snapshot.binary.problem === undefined &&
     (snapshot.auth.state === "signed_out" || snapshot.auth.state === "auth_unknown") &&
-    (environment.kind === "local"
+    (location.kind === "local"
       ? snapshot.auth.signInModes.length > 0
       : snapshot.auth.signInModes.some((m) => !m.requiresLocalLoopback));
 
@@ -475,8 +470,8 @@ function HarnessEnvironmentBody({
           size="inline"
           align="start"
           tone="away"
-          title={t("settings.harness.oldDaemon", { environment: environment.name })}
-          body={t("settings.harness.oldDaemonBody", { environment: environment.name })}
+          title={t("settings.harness.oldDaemon", { location: location.name })}
+          body={t("settings.harness.oldDaemonBody", { location: location.name })}
         />
       ) : agentInfo === undefined ? (
         <StateBlock
@@ -485,7 +480,7 @@ function HarnessEnvironmentBody({
           tone="away"
           title={t("settings.harness.unavailable.notListed", {
             agent: agentName,
-            environment: environment.name,
+            location: location.name,
           })}
         />
       ) : loading && snapshot === undefined ? (
@@ -519,17 +514,17 @@ function HarnessEnvironmentBody({
                   ? t("settings.harness.unavailable.tooOld", {
                       agent: agentName,
                       version: snapshot.binary.version ?? "",
-                      environment: environment.name,
+                      location: location.name,
                       minVersion: snapshot.binary.minVersion ?? "",
                     })
                   : snapshot.binary.problem === "probe_failed"
                     ? t("settings.harness.unavailable.probeFailed", {
                         agent: agentName,
-                        environment: environment.name,
+                        location: location.name,
                       })
                     : t("settings.harness.unavailable.missing", {
                         agent: agentName,
-                        environment: environment.name,
+                        location: location.name,
                       })
               }
               reason={agentId === "agy" ? AGY_INSTALL_COMMAND : undefined}
@@ -605,19 +600,19 @@ function HarnessEnvironmentBody({
             <AgentSignInDialog
               state={signInDialog}
               agentName={agentName}
-              environmentName={environment.name}
+              locationName={location.name}
               loginCommand={snapshot.auth.loginCommand}
               copiedLogin={copiedLogin}
               onCopyLogin={() => copyLoginCommand(snapshot.auth.loginCommand)}
-              onOpenBrowser={(flowId) => store.openAgentAuthUrl(environment.id, flowId)}
-              onSubmitCode={(flowId, code) => store.submitAgentAuth(environment.id, flowId, code)}
+              onOpenBrowser={(flowId) => store.openAgentAuthUrl(location.id, flowId)}
+              onSubmitCode={(flowId, code) => store.submitAgentAuth(location.id, flowId, code)}
               onRetry={() => void beginSignIn()}
               onClose={() => {
                 signInSessionRef.current += 1;
                 const pendingFlow = activeFlowIdRef.current;
                 activeFlowIdRef.current = undefined;
                 if (pendingFlow !== undefined) {
-                  void store.cancelAgentAuth(environment.id, pendingFlow);
+                  void store.cancelAgentAuth(location.id, pendingFlow);
                 }
                 setSignInDialog(undefined);
               }}
@@ -629,12 +624,12 @@ function HarnessEnvironmentBody({
               title={t("settings.harness.auth.signOutTitle", { agent: agentName })}
               description={t("settings.harness.auth.signOutDescription", {
                 agent: agentName,
-                environment: environment.name,
+                location: location.name,
               })}
               confirmLabel={t("settings.harness.account.signOut")}
               destructive
               onConfirm={async () => {
-                const answer = await store.logoutAgent(environment.id, agentId);
+                const answer = await store.logoutAgent(location.id, agentId);
                 if (!answer.ok) return authErrorText(answer.reason, t);
                 void fetchSetup({ forceRefresh: true });
                 return undefined;
@@ -657,11 +652,11 @@ function HarnessEnvironmentBody({
           title={t("settings.harness.defaults.title")}
           lead={t("settings.harness.defaults.lead", {
             agent: agentName,
-            environment: environment.name,
+            location: location.name,
           })}
         >
           <HarnessDefaultsFields
-            key={`${environment.id}:${agentInfo.id}:${defaultsAttempt}`}
+            key={`${location.id}:${agentInfo.id}:${defaultsAttempt}`}
             agent={agentInfo}
             read={readDefaults}
             onSave={saveDefaults}
@@ -677,7 +672,7 @@ function HarnessEnvironmentBody({
         snapshot.runtime.fileError !== undefined) ? (
         <PageGroup
           title={t("settings.harness.runtime.title")}
-          lead={t("settings.harness.runtime.lead", { environment: environment.name })}
+          lead={t("settings.harness.runtime.lead", { location: location.name })}
         >
           {snapshot.runtime.fileError !== undefined ? (
             <StateBlock
@@ -787,11 +782,11 @@ function HarnessEnvironmentBody({
               }
               below={<code data-slot="reason">{snapshot.environment.configFile.path}</code>}
             >
-              {environment.kind === "local" ? (
+              {location.kind === "local" ? (
                 <Button
                   data-variant="outline"
                   disabled={!snapshot.environment.configFile.exists}
-                  onClick={() => void store.revealDaemonConfig(environment.id)}
+                  onClick={() => void store.revealDaemonConfig(location.id)}
                 >
                   {t("settings.harness.host.configFile.reveal")}
                 </Button>
@@ -864,7 +859,7 @@ const authErrorText = (reason: AgentAuthProblemReason, t: Translate): string => 
 function AgentSignInDialog({
   state,
   agentName,
-  environmentName,
+  locationName,
   loginCommand,
   copiedLogin,
   onCopyLogin,
@@ -875,7 +870,7 @@ function AgentSignInDialog({
 }: {
   state: SignInModalState | undefined;
   agentName: string;
-  environmentName: string;
+  locationName: string;
   loginCommand: string;
   copiedLogin: boolean;
   onCopyLogin: () => void;
@@ -937,7 +932,7 @@ function AgentSignInDialog({
 
           {state?.kind === "starting" ? (
             <DialogDescription>
-              {t("settings.harness.auth.starting", { environment: environmentName })}
+              {t("settings.harness.auth.starting", { location: locationName })}
             </DialogDescription>
           ) : state?.kind === "error" ? (
             <StateBlock
@@ -1053,7 +1048,7 @@ function AgentSignInDialog({
 
           <div data-slot="harness-auth-fallback">
             <p data-slot="hint">
-              {t("settings.harness.auth.fallbackLabel", { environment: environmentName })}
+              {t("settings.harness.auth.fallbackLabel", { location: locationName })}
             </p>
             <div data-slot="harness-command-row">
               <code data-slot="reason">{loginCommand}</code>

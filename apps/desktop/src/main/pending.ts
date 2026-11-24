@@ -19,7 +19,7 @@ export type Pending = {
 
 /** Where a request waiting for an answer is held. */
 type PendingAt = {
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   connection: Connection;
   watched: Watched;
@@ -32,7 +32,7 @@ const subagentOf = (request: Record<string, unknown>): { subagentId?: string } =
   return typeof id === "string" && id !== "" ? { subagentId: id } : {};
 };
 
-/** What the store needs of the runtime: to tell the page, to report, and which connection is an environment's now. */
+/** What the store needs of the runtime: to tell the page, to report, and which connection is a location's now. */
 export type PendingRuntime = Pick<Runtime, "emit" | "track" | "isCurrent">;
 
 export class PendingStore {
@@ -46,7 +46,7 @@ export class PendingStore {
 
   /** The agent asks for permission. Held until the person answers, or something closes it without an answer. */
   ask(
-    environmentId: string,
+    locationId: string,
     connection: Connection,
     sessionId: string,
     request: Record<string, unknown>,
@@ -56,7 +56,7 @@ export class PendingStore {
       resolve: (answer: ElicitationAnswer) => void;
     },
   ): Promise<PermissionAnswer> {
-    const key = `${environmentId}:${sessionId}:${requestId ?? randomUUID()}`;
+    const key = `${locationId}:${sessionId}:${requestId ?? randomUUID()}`;
     return new Promise<PermissionAnswer>((resolve) => {
       let watched = connection.watched.get(sessionId);
       if (watched === undefined) {
@@ -70,7 +70,7 @@ export class PendingStore {
       old?.answer({ outcome: "cancelled" });
       const built: PermissionRequest = {
         key,
-        environmentId,
+        locationId,
         sessionId,
         title: String(request.title ?? "Permission"),
         subject: request.subject,
@@ -86,8 +86,8 @@ export class PendingStore {
         stale: false,
       });
       // A connection replaced since cannot be answered on: its late ask must not hide the current one's.
-      if (this.#runtime.isCurrent(environmentId, connection))
-        this.#byKey.set(key, { environmentId, sessionId, connection, watched });
+      if (this.#runtime.isCurrent(locationId, connection))
+        this.#byKey.set(key, { locationId, sessionId, connection, watched });
       if (old === undefined) {
         watched.version += 1;
         this.#runtime.emit({ type: "permission", request: built, version: watched.version });
@@ -100,7 +100,7 @@ export class PendingStore {
    * daemon asking again after a reconnect work the same; anything that closes a request without an answer dismisses it.
    */
   askForm(
-    environmentId: string,
+    locationId: string,
     connection: Connection,
     sessionId: string,
     request: Record<string, unknown>,
@@ -111,7 +111,7 @@ export class PendingStore {
         message: typeof request.message === "string" ? request.message : "",
         schema: request.requestedSchema,
       };
-      void this.ask(environmentId, connection, sessionId, { title: form.message }, requestId, {
+      void this.ask(locationId, connection, sessionId, { title: form.message }, requestId, {
         form,
         resolve,
       }).then(() => resolve({ action: "cancel" }));
@@ -121,7 +121,7 @@ export class PendingStore {
   async answerForm(key: string, answer: unknown): Promise<void> {
     const found = this.#find(key);
     if (found?.pending.answerForm === undefined) return;
-    const { environmentId, sessionId, watched, pending } = found;
+    const { locationId, sessionId, watched, pending } = found;
     // Only the fields the form asked for go on.
     const checked = formAnswerOf(answer, fieldsAsked(pending.request.form?.schema));
     pending.answerForm?.(checked);
@@ -136,13 +136,13 @@ export class PendingStore {
             ? "declined"
             : "dismissed",
     });
-    this.#close(environmentId, sessionId, watched, key);
+    this.#close(locationId, sessionId, watched, key);
   }
 
   async answer(key: string, optionId: string | "cancelled"): Promise<void> {
     const found = this.#find(key);
     if (found === undefined) return;
-    const { environmentId, sessionId, watched, pending } = found;
+    const { locationId, sessionId, watched, pending } = found;
     // A form is answered with `answerForm`; here it can only be dismissed.
     if (pending.answerForm !== undefined) {
       if (optionId === "cancelled") await this.answerForm(key, { action: "cancel" });
@@ -170,17 +170,17 @@ export class PendingStore {
         remembered: kind.endsWith("_always"),
         queued: watched.pending.size - 1,
       });
-    this.#close(environmentId, sessionId, watched, key);
+    this.#close(locationId, sessionId, watched, key);
   }
 
   /** Answered somewhere else. Free this client's request, and close the dialog. */
-  resolved(environmentId: string, connection: Connection, sessionId: string, requestId: string) {
+  resolved(locationId: string, connection: Connection, sessionId: string, requestId: string) {
     const watched = connection.watched.get(sessionId);
-    const key = `${environmentId}:${sessionId}:${requestId}`;
+    const key = `${locationId}:${sessionId}:${requestId}`;
     const pending = watched?.pending.get(key);
     if (watched === undefined || pending === undefined) return;
     pending.answer({ outcome: "cancelled" });
-    this.#close(environmentId, sessionId, watched, key);
+    this.#close(locationId, sessionId, watched, key);
   }
 
   /**
@@ -189,7 +189,7 @@ export class PendingStore {
    * is closed. One asked since the loss is not touched, nor is any when the daemon does not say.
    */
   dropStale(
-    environmentId: string,
+    locationId: string,
     connection: Connection,
     sessionId: string,
     waiting: string[] | undefined,
@@ -200,7 +200,7 @@ export class PendingStore {
       if (!pending.stale || pending.requestId === undefined) continue;
       if (waiting.includes(pending.requestId)) continue;
       pending.answer({ outcome: "cancelled" });
-      this.#close(environmentId, sessionId, watched, key);
+      this.#close(locationId, sessionId, watched, key);
     }
   }
 
@@ -238,7 +238,7 @@ export class PendingStore {
     const pending = at.watched.pending.get(key);
     if (
       pending === undefined ||
-      !this.#runtime.isCurrent(at.environmentId, at.connection) ||
+      !this.#runtime.isCurrent(at.locationId, at.connection) ||
       at.connection.watched.get(at.sessionId) !== at.watched
     ) {
       this.#byKey.delete(key);
@@ -247,13 +247,13 @@ export class PendingStore {
     return { ...at, pending };
   }
 
-  #close(environmentId: string, sessionId: string, watched: Watched, key: string): void {
+  #close(locationId: string, sessionId: string, watched: Watched, key: string): void {
     watched.pending.delete(key);
     if (this.#byKey.get(key)?.watched === watched) this.#byKey.delete(key);
     watched.version += 1;
     this.#runtime.emit({
       type: "permission-closed",
-      environmentId,
+      locationId,
       sessionId,
       key,
       version: watched.version,

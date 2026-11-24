@@ -37,3 +37,4 @@ The sidebar is one flat list sorted by `cycle/lastSeq`, with a host selector on 
 
 - [old-cycle sidebar note](https://github.com/OhMyJames/old-cycle/blob/main/.agents/notes/2026-11-08-sidebar-one-project.md)
 - [protocol.md §6](../../docs/protocol.md), [desktop.md](../../docs/desktop.md)
+- Naming partly replaced by [2026-11-24-work-in-and-environments](2026-11-24-work-in-and-environments.md): what this note calls an environment is now "Work in" (code: location), and "environment" names a setup recipe. The rest of this note is unchanged.

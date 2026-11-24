@@ -11,8 +11,8 @@ import {
   API_METHODS,
   type AppEvent,
   channel,
-  type EnvironmentConfig,
   EVENT_CHANNEL,
+  type LocationConfig,
 } from "@cycle/ui/api";
 import {
   app,
@@ -33,6 +33,7 @@ import { Account, type AccountStore } from "./account.ts";
 import { type AnalyticsControl, offAnalytics } from "./analytics.ts";
 import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
+import { fileEnvironments } from "./environments.ts";
 import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
@@ -49,7 +50,7 @@ export type AppOptions = {
   /** Where the built page is: index.html, renderer.js, app.css. */
   rendererDir: string;
   preloadPath: string;
-  /** How to run `cycle proxy` for the local environment. */
+  /** How to run `cycle proxy` for this computer. */
   localCommand: string[];
   /** The whole environment of that command. Nothing is inherited from the app. */
   localEnv: Record<string, string>;
@@ -102,17 +103,17 @@ const isOpenable = (url: string): boolean => {
   }
 };
 
-/** How each kind of environment is reached. The one place that knows. */
+/** How each kind of location is reached. The one place that knows. */
 const channelFor =
   (options: AppOptions, localHandoff: () => Promise<void> | undefined) =>
-  (environment: EnvironmentConfig) =>
+  (location: LocationConfig) =>
   async () => {
-    if (environment.kind === "local") {
+    if (location.kind === "local") {
       const paused = localHandoff();
       if (paused) await paused;
       return commandChannel({ command: options.localCommand, env: options.localEnv });
     }
-    const { transport } = environment;
+    const { transport } = location;
     return sshChannel({ host: transport.host, command: transport.command ?? ["cycle", "proxy"] });
   };
 
@@ -125,12 +126,11 @@ const lastLine = (stderr: string): string =>
     .at(-1)
     ?.slice(0, 300) ?? "";
 
-/** Runs `command` on the machine of a remote environment, over ssh called as the connection calls it. */
-const runOnHost = (environment: EnvironmentConfig, command: string): Promise<void> => {
-  if (environment.kind === "local")
-    return Promise.reject(new Error("This is not a remote environment."));
+/** Runs `command` on the machine of a remote location, over ssh called as the connection calls it. */
+const runOnHost = (location: LocationConfig, command: string): Promise<void> => {
+  if (location.kind === "local") return Promise.reject(new Error("This is not a remote location."));
   const [program, ...args] = sshCommand({
-    host: environment.transport.host,
+    host: location.transport.host,
     args: ["-o", "ConnectTimeout=15"],
     command: ["sh", "-c", shellQuote(command)],
   });
@@ -192,7 +192,7 @@ export const startApp = async (options: AppOptions) => {
     if (window !== undefined && !window.isDestroyed())
       window.webContents.send(EVENT_CHANNEL, event);
   };
-  // Before anything is connected: until the person is signed in, no environment is, and no session is read.
+  // Before anything is connected: until the person is signed in, no location is, and no session is read.
   let opened = false;
   let connectWhenOpen = false;
   const account = new Account({
@@ -217,6 +217,7 @@ export const startApp = async (options: AppOptions) => {
   const manager = new ConnectionManager({
     ...(options.update !== undefined ? { appVersion: options.update.current.version } : {}),
     settings: fileSettings(join(app.getPath("userData"), "settings.json")),
+    environments: fileEnvironments(join(app.getPath("userData"), "environments.json")),
     channelFor: channelFor(options, () => handoff?.promise),
     runOnHost,
     emit,
@@ -244,9 +245,8 @@ export const startApp = async (options: AppOptions) => {
   });
   await manager.init();
   analytics.track("app_launched", {
-    remote_environments: (await manager.environments()).environments.filter(
-      (e) => e.kind === "remote",
-    ).length,
+    remote_locations: (await manager.locations()).locations.filter((e) => e.kind === "remote")
+      .length,
     first_run: usage.first,
   });
 
@@ -431,7 +431,7 @@ export const startApp = async (options: AppOptions) => {
   });
   contents.on("will-attach-webview", (event) => event.preventDefault());
   await window.loadURL(indexUrl);
-  // Every environment is connected from here, not when the person picks one: what is wrong with one is in its status.
+  // Every location is connected from here, not when the person picks one: what is wrong with one is in its status.
   // Signed out, that waits for the sign-in.
   void accountReady.then(() => {
     connectWhenOpen = true;

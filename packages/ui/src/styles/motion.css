@@ -11,7 +11,7 @@
 
   /* The end fade is not motion: it is drawn by an animation on scroll, and stays. */
   :is(
-    [data-slot="environment-name"],
+    [data-slot="location-name"],
     [data-slot="session-title"],
     [data-slot="workspace-name"],
     [data-slot="search-title"],

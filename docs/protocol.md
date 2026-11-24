@@ -207,6 +207,51 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 - `cycle/unread` 变化时发 `_cycle/session_list_changed`。
 - 不提供"标为未读":v1 不做(要做时再加,不改 `readSeq` 不倒退的规则)。
 
+### 环境(草稿,2026-11-24)
+
+状态:草稿,daemon 一侧已实现(2026-11-24),桌面端已在用(desktop.md"环境")。"环境"是客户端全局定义、按 workspace 选用的准备配置(脚本、变量、动作),不是 daemon 在哪跑(那是客户端的"工作位置")。理由见决定笔记 [2026-11-24-work-in-and-environments](../.agents/notes/2026-11-24-work-in-and-environments.md),客户端一侧见 desktop.md"工作位置与环境"。
+
+**能力**:daemon 在 `initialize` 里声明 `"environments": true` 才接受下面的字段。没声明时客户端不发,也不让人选。
+
+**创建时带上**:`session/new` 的 `_meta["cycle/environment"]`:
+
+```json
+{
+  "id": "env-…",
+  "name": "Node + Postgres",
+  "variables": [{ "name": "DATABASE_URL", "value": "postgres://…" }],
+  "actions": [{ "id": "dev", "name": "Dev server", "command": { "default": "npm run dev" } }],
+  "setup": { "default": "npm ci", "windows": "npm.cmd ci" },
+  "cleanup": { "default": "docker compose down" }
+}
+```
+
+- 是一份**快照**:daemon 校验后存进 session 的索引,和 `mcpServers` 一样**只存在索引里**(变量可能是密钥):不进 JSONL 日志,`session/list` 不返回值。agent 每次启动(新建、停止后的恢复)都用它。客户端之后改了这个环境,不影响已有的 session。
+- `session/list` 的 `_meta["cycle/environment"]` 只给 `{id, name, variableNames, actions}`(变量只有名字),给界面显示用了哪个环境和顶栏的动作。
+- 校验失败以 `-32602` 拒绝,`data.reason`:
+  - `reserved_variable`(`data.name` 是哪个):变量名是保留名。保留名是 `PATH`、`HOME`、`SHELL`、`USER`、`LOGNAME`、`TMPDIR`、`TERM`,以 `CYCLE_` 开头的,以及任何 agent 的隔离目录变量(`CLAUDE_CONFIG_DIR`、`CODEX_HOME`)和认证变量(各 agent `auth.viaEnv` 检查的那些,如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`GEMINI_API_KEY`)。这些归 daemon 的 `config.json`(§10"环境变量"),环境不能改,免得一个环境悄悄换掉 agent 的登录或计费。
+  - `invalid_variable`:名字不是 `[A-Za-z_][A-Za-z0-9_]*`、重名,或值里有 NUL。
+  - `too_large`:变量、动作、脚本合起来超过上限(暂定 64 KiB)。
+- 不带这个字段就是没有环境,和现在一样。
+
+**变量的作用范围**:session 的 agent 跑的命令、session 的终端(在 `terminal.allowEnv` 取到的之后、`TERM` 等固定项之前加上)、setup/cleanup 脚本、动作。agent 进程本身的设置不受影响。各 agent 怎么做到见下。
+
+**每个 agent 怎么带上变量**(2026-11-24 读代码并用真实会话验证:Claude 是 Cycle 自己的会话,Codex 0.171.0 app-server 和 agy 1.5.16 `acp` 用 daemon 的登录各跑了一个 turn,让 agent 执行 `env | grep ^PROBE_`):
+
+每个 Cycle session 本来就有自己的适配进程(`daemon.ts` `#startAgent` 每个 session 一个 `AgentLink`,`agent-link.ts` 调 `definition.launch()`),所以按 session 是做得到的。改法统一在 daemon:`launch()` 改为接受这个 session 的变量,放进 `CYCLE_ADAPTER_CONFIG` 的新字段 `sessionEnv`,和 agent 进程自己的 `env` 分开。走启动参数而不是 `session/new` 的 `_meta`,是因为 agy 的适配在 `initialize` 时就起了 `agy acp`,早于 `session/new`;而且 daemon 重启后 `session/resume` 也不用再带。
+
+| agent  | 适配里怎么用 `sessionEnv`                                                                                                                                   | 谁看得到                | 验证结果                                                                                                                         |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Claude | SDK `query` 的 `env` 改为 `{...sessionEnv, ...env}`(SDK 0.3.327:`env` 整个替换子进程环境)                                                                   | Claude 进程和它跑的命令 | `options.env` 里的变量(如 `config.json` 的 `GH_TOKEN`)Bash 工具里看得到;Claude 自己的 `CLAUDE_CODE_OAUTH_TOKEN` 被它从命令里去掉 |
+| Codex  | `thread/start`、`thread/resume` 的 `config` 里加 `shell_environment_policy.set`(适配已经用 `config` 传 `mcp_servers`、`projects`);app-server 自己的环境不变 | 只有命令                | start 和 resume(新进程、建时没带变量的 thread)都到了命令里;名字含 `KEY`/`TOKEN`/`SECRET` 的也在,`set` 不受默认排除影响           |
+| agy    | 并进 `agy acp` 的启动环境(ACP `session/new` 没有可用的字段,适配给 agy 的 `terminal` 能力是 `false`)                                                         | agy 进程和它跑的命令    | 有无 `--sandbox` 都原样到了命令里(含 `*_API_KEY`)                                                                                |
+
+保留名(上面 `reserved_variable`)保证这些变量换不掉任何 agent 的 `HOME`、配置目录和认证。终端在 `Terminals.create` 时把 `sessionEnv` 并进去(那里已经有 `sessionId`);它是登录 shell,用户的 profile 之后仍可能改掉同名变量。
+
+**动作**:在 session 的终端里跑。`_cycle/terminal/create` 加可选参数 `actionId`:daemon 从 session 存的快照里取这个动作的命令(按自己的系统选),用登录 shell 的 `-c` 跑,标题是动作的名字。客户端不能借这个参数跑任意命令:命令只来自 session 创建时存下的快照。`actionId` 不存在以 `-32602`、`data.reason: "unknown_action"` 拒绝。
+
+**setup 和 cleanup**:只在 daemon 为 session 新建 worktree 之后、删除之前运行。v1 没有 worktree,所以 daemon 只存不跑。有了 worktree 再定:失败时 session 建不建、输出怎么给客户端看、超时多久。
+
 ## 7. 附着、历史补发与重连
 
 这是 ACP 没有定义、由 L1 补上的部分。
@@ -689,6 +734,8 @@ session 运行中的配置变更使用 ACP 的 `session/set_config_option`,agent
 
 daemon 启动 agent 时只传入显式白名单里的环境变量,不继承自己的环境(AGENTS.md 红线)。白名单是 daemon 的配置,不通过协议修改。
 
+这是 agent **进程**的环境(登录、配置目录、API key)。session 用的环境(§6"环境")是另一件事:它的变量只给 session 跑的命令,不能覆盖这里的设置。
+
 ## 11. 错误
 
 沿用 JSON-RPC 2.0 和 ACP v2 的错误码。ACP 已占用:-32700、-32600 到 -32603、-32800(请求取消)、-32000(需要鉴权)、-32002(资源不存在)、-32022(不支持的协议版本)。
@@ -780,6 +827,7 @@ session 索引是另一个文件,记录 sessionId、agent id、agent 侧 session
 - `attentionSeq` 里"值得看"的记录是否还要包括用户取消的 turn(`stopReason: cancelled`)。现在按"都算",因为取消时用户通常在看,客户端会立刻标记已读。
 - `cycle/background` 要不要在 daemon 重启后重建:agent 进程已不在,v1 不重建。
 - connector(§14):loopback 回调的随机端口哪些授权服务器接受(没有在真实服务器上验证);agent 在云端 sandbox 时网关的地址;正在运行的 agent 要不要在 connector 变化后重启。
+- 环境(§6):有了 worktree 后 setup/cleanup 的失败处理和输出。
 - plugin(§15):项目级范围;运行中的 session 即时生效(Claude 有 `reloadPlugins`);来源自己声明要运行命令才能取到的 plugin;agent 给 plugin 服务器起的名字变了时怎么发现。
 
 ## 14. Connector

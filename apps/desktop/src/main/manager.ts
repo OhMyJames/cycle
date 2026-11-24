@@ -1,12 +1,13 @@
 import type {
   AgentRuntimePatchValue,
-  EnvironmentConfig,
+  LocationConfig,
   SessionSnapshot,
   SessionSummary,
 } from "@cycle/ui";
-import { EnvironmentActions } from "./actions.ts";
+import { LocationActions } from "./actions.ts";
 import { AgentAuthFlows } from "./agent-auth-flows.ts";
 import type { ManagerApi } from "./dispatch.ts";
+import { Environments, memoryEnvironments } from "./environments.ts";
 import { PendingStore } from "./pending.ts";
 import { type ManagerOptions, Runtime } from "./runtime.ts";
 import { SessionWatcher } from "./watcher.ts";
@@ -21,12 +22,12 @@ export type { AttentionNotice } from "./watcher.ts";
  * being watched. It is what the renderer can ask for beyond main's own methods (`ManagerApi`) and knows nothing of
  * Electron, so it is tested against a real daemon without a window.
  *
- * A facade over four parts: the connections and environments (`Runtime`, runtime.ts), the session lists and the
+ * A facade over four parts: the connections and locations (`Runtime`, runtime.ts), the session lists and the
  * sessions being watched (`SessionWatcher`, watcher.ts), what the agents wait on the person for (`PendingStore`,
- * pending.ts), and what the page asks of one environment (`EnvironmentActions`, actions.ts). Those it inherits, so the
- * page's many calls to an environment are not restated here; the rest it passes on.
+ * pending.ts), and what the page asks of one location (`LocationActions`, actions.ts). Those it inherits, so the
+ * page's many calls to a location are not restated here; the rest it passes on.
  */
-export class ConnectionManager extends EnvironmentActions implements ManagerApi {
+export class ConnectionManager extends LocationActions implements ManagerApi {
   readonly #runtime: Runtime;
   readonly #watcher: SessionWatcher;
   readonly #pending: PendingStore;
@@ -35,33 +36,39 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
   constructor(options: ManagerOptions) {
     // The runtime builds each connection and hands what happens in its sessions to the watcher and the pending store.
     const runtime: Runtime = new Runtime(options, {
-      sessionEvents: (environmentId, connection) => ({
+      sessionEvents: (locationId, connection) => ({
         update: (sessionId, update, _seq, at) =>
-          watcher.update(environmentId, connection, sessionId, update, at),
+          watcher.update(locationId, connection, sessionId, update, at),
         permission: (sessionId, request, requestId) =>
-          pending.ask(environmentId, connection, sessionId, request, requestId),
+          pending.ask(locationId, connection, sessionId, request, requestId),
         // Saying this is saying the app can show a form: the daemon then asks it the agent's questions.
         elicitation: (sessionId, request, requestId) =>
-          pending.askForm(environmentId, connection, sessionId, request, requestId),
+          pending.askForm(locationId, connection, sessionId, request, requestId),
         resolved: (sessionId, requestId) =>
-          pending.resolved(environmentId, connection, sessionId, String(requestId)),
-        gone: (sessionId) => watcher.gone(environmentId, connection, sessionId),
+          pending.resolved(locationId, connection, sessionId, String(requestId)),
+        gone: (sessionId) => watcher.gone(locationId, connection, sessionId),
         // A history that cannot be read after a reconnect: nothing more comes to it, the list row says why.
         unreadable: (sessionId) => watcher.unreadable(connection, sessionId),
         resumed: (sessionId, waiting) =>
-          pending.dropStale(environmentId, connection, sessionId, waiting),
+          pending.dropStale(locationId, connection, sessionId, waiting),
       }),
-      refresh: (environmentId, connection, afterOutage) =>
-        watcher.refresh(environmentId, connection, afterOutage),
+      refresh: (locationId, connection, afterOutage) =>
+        watcher.refresh(locationId, connection, afterOutage),
       lost: (connection) => pending.markStale(connection),
       dropped: (connection, cancel) => pending.release(connection, { cancel }),
-      authCompleted: (environmentId, completed) => auth.completed(environmentId, completed),
-      authLost: (environmentId) => auth.lost(environmentId),
+      authCompleted: (locationId, completed) => auth.completed(locationId, completed),
+      authLost: (locationId) => auth.lost(locationId),
     });
     const auth = new AgentAuthFlows(runtime);
     const pending = new PendingStore(runtime);
     const watcher = new SessionWatcher(runtime, pending);
-    super(runtime, watcher);
+    super(
+      runtime,
+      watcher,
+      new Environments(options.environments ?? memoryEnvironments(), (name, props) =>
+        options.track?.(name, props),
+      ),
+    );
     this.#runtime = runtime;
     this.#watcher = watcher;
     this.#pending = pending;
@@ -77,9 +84,9 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
     await this.#runtime.close();
   }
 
-  // ---- environments ----
+  // ---- locations ----
 
-  async environments() {
+  async locations() {
     return this.#runtime.snapshot();
   }
 
@@ -87,34 +94,34 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
     return this.#runtime.connectAll();
   }
 
-  saveEnvironment(environment: EnvironmentConfig): Promise<void> {
-    return this.#runtime.saveEnvironment(environment);
+  saveLocation(location: LocationConfig): Promise<void> {
+    return this.#runtime.saveLocation(location);
   }
 
-  removeEnvironment(environmentId: string): Promise<void> {
-    return this.#runtime.removeEnvironment(environmentId);
+  removeLocation(locationId: string): Promise<void> {
+    return this.#runtime.removeLocation(locationId);
   }
 
-  connect(environmentId: string): Promise<void> {
-    return this.#runtime.connect(environmentId);
+  connect(locationId: string): Promise<void> {
+    return this.#runtime.connect(locationId);
   }
 
-  disconnect(environmentId: string): Promise<void> {
-    return this.#runtime.disconnect(environmentId);
+  disconnect(locationId: string): Promise<void> {
+    return this.#runtime.disconnect(locationId);
   }
 
-  upgradeDaemon(environmentId: string, when?: unknown): Promise<void> {
-    return this.#runtime.upgradeDaemon(environmentId, when);
+  upgradeDaemon(locationId: string, when?: unknown): Promise<void> {
+    return this.#runtime.upgradeDaemon(locationId, when);
   }
 
   // ---- sessions ----
 
-  async sessions(environmentId: string): Promise<SessionSummary[]> {
-    return this.#watcher.refresh(environmentId, this.#runtime.connection(environmentId));
+  async sessions(locationId: string): Promise<SessionSummary[]> {
+    return this.#watcher.refresh(locationId, this.#runtime.connection(locationId));
   }
 
-  openSession(environmentId: string, sessionId: string): Promise<SessionSnapshot> {
-    return this.#watcher.open(environmentId, sessionId);
+  openSession(locationId: string, sessionId: string): Promise<SessionSnapshot> {
+    return this.#watcher.open(locationId, sessionId);
   }
 
   // ---- permissions and forms ----
@@ -130,44 +137,62 @@ export class ConnectionManager extends EnvironmentActions implements ManagerApi 
   // ---- an agent's setup and account (agent-auth-flows.ts) ----
 
   readAgentSetup(
-    environmentId: string,
+    locationId: string,
     agent: string,
     options?: { refreshUsage?: boolean; forceRefresh?: boolean },
   ) {
-    return this.#auth.readAgentSetup(environmentId, agent, options);
+    return this.#auth.readAgentSetup(locationId, agent, options);
   }
 
   setAgentRuntimeSettings(
-    environmentId: string,
+    locationId: string,
     agent: string,
     patch: Record<string, AgentRuntimePatchValue>,
     expectedRevision: number,
   ) {
-    return this.#auth.setAgentRuntimeSettings(environmentId, agent, patch, expectedRevision);
+    return this.#auth.setAgentRuntimeSettings(locationId, agent, patch, expectedRevision);
   }
 
-  revealDaemonConfig(environmentId: string) {
-    return this.#auth.revealDaemonConfig(environmentId);
+  revealDaemonConfig(locationId: string) {
+    return this.#auth.revealDaemonConfig(locationId);
   }
 
-  startAgentAuth(environmentId: string, agent: string) {
-    return this.#auth.startAgentAuth(environmentId, agent);
+  startAgentAuth(locationId: string, agent: string) {
+    return this.#auth.startAgentAuth(locationId, agent);
   }
 
-  openAgentAuthUrl(environmentId: string, flowId: string) {
-    return this.#auth.openAgentAuthUrl(environmentId, flowId);
+  openAgentAuthUrl(locationId: string, flowId: string) {
+    return this.#auth.openAgentAuthUrl(locationId, flowId);
   }
 
-  submitAgentAuth(environmentId: string, flowId: string, code: string) {
-    return this.#auth.submitAgentAuth(environmentId, flowId, code);
+  submitAgentAuth(locationId: string, flowId: string, code: string) {
+    return this.#auth.submitAgentAuth(locationId, flowId, code);
   }
 
-  cancelAgentAuth(environmentId: string, flowId: string) {
-    return this.#auth.cancelAgentAuth(environmentId, flowId);
+  cancelAgentAuth(locationId: string, flowId: string) {
+    return this.#auth.cancelAgentAuth(locationId, flowId);
   }
 
-  logoutAgent(environmentId: string, agent: string) {
-    return this.#auth.logoutAgent(environmentId, agent);
+  logoutAgent(locationId: string, agent: string) {
+    return this.#auth.logoutAgent(locationId, agent);
+  }
+
+  // ---- environments (environments.ts) ----
+
+  environments() {
+    return this.environmentStore.list();
+  }
+
+  saveEnvironment(environment: unknown) {
+    return this.environmentStore.save(environment);
+  }
+
+  removeEnvironment(environmentId: unknown) {
+    return this.environmentStore.remove(environmentId);
+  }
+
+  setEnvironmentDefault(locationId: unknown, cwd: unknown, environmentId: unknown) {
+    return this.environmentStore.setDefault(locationId, cwd, environmentId);
   }
 
   chooseDirectory(): Promise<string | undefined> {

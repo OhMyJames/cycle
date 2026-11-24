@@ -400,10 +400,17 @@ export class CycleClient {
     agent?: string;
     config?: Record<string, string>;
     mcpServers?: unknown[];
+    /** The session's environment, whole (docs/protocol.md §6 "环境"). Only to a daemon that has `environments`. */
+    environment?: unknown;
   }): Promise<string> {
     const meta: Record<string, unknown> = {};
     if (params.agent !== undefined) meta[META.agent] = params.agent;
     if (params.config !== undefined) meta[META.config] = params.config;
+    if (params.environment !== undefined) {
+      if (this.#capabilities.environments !== true)
+        throw new Error("This daemon is too old to take an environment");
+      meta[META.environment] = params.environment;
+    }
     const answer = (await this.#request(methods.agent.session.new, {
       cwd: params.cwd,
       mcpServers: params.mcpServers ?? [],
@@ -705,10 +712,21 @@ export class CycleClient {
       throw new Error("This daemon is too old to open terminals");
   }
 
-  /** Opens a shell in the session's folder; this client is attached to it. */
-  async createTerminal(sessionId: string, cols: number, rows: number): Promise<TerminalAttached> {
+  /**
+   * Opens a shell in the session's folder; this client is attached to it. `actionId`: runs that action of the session's
+   * environment in it instead (docs/protocol.md §6 "环境").
+   */
+  async createTerminal(
+    sessionId: string,
+    cols: number,
+    rows: number,
+    actionId?: string,
+  ): Promise<TerminalAttached> {
     this.#canOpenTerminals();
-    return this.#call(terminalCreate, { sessionId, cols, rows });
+    if (actionId === undefined) return this.#call(terminalCreate, { sessionId, cols, rows });
+    if (this.#capabilities.environments !== true)
+      throw new Error("This daemon is too old to run an environment's actions");
+    return this.#call(terminalCreate, { sessionId, cols, rows, actionId });
   }
 
   /** A session's terminals, oldest first. A daemon without terminals has none. */

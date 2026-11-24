@@ -155,7 +155,7 @@ export function PageGroup({
 }: {
   title?: string | undefined;
   lead?: string | undefined;
-  /** One control that acts on the group as a whole (Add environment), at the heading's end. */
+  /** One control that acts on the group as a whole (Add location), at the heading's end. */
   action?: ReactNode;
   children: ReactNode;
 }) {

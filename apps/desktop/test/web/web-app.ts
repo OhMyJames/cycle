@@ -126,8 +126,8 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
   accountOpen = (await account.start()).open;
   const manager = new ConnectionManager({
     settings: fileSettings(join(options.root, "settings.json")),
-    channelFor: (environment) => async () => {
-      if (environment.kind !== "local") throw new Error("only this computer, in a web test");
+    channelFor: (location) => async () => {
+      if (location.kind !== "local") throw new Error("only this computer, in a web test");
       return commandChannel({
         command: [
           ...options.daemon,
@@ -190,7 +190,7 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     );
     await page.addInitScript({ content: bridgeScript(API_METHODS) });
     await page.goto(`http://127.0.0.1:${server.port}/`);
-    // Every environment is connected from here, as main.ts does once the page is loaded (once signed in).
+    // Every location is connected from here, as main.ts does once the page is loaded (once signed in).
     connectWhenOpen = true;
     if (account.status().open) void manager.connectAll();
   } catch (error) {

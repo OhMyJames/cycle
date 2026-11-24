@@ -11,13 +11,13 @@ test("a failure is said at once, with the system's own words apart and a way on"
   const { container } = render(
     <StateBlock
       tone="error"
-      title="Not connected to this environment."
+      title="Not connected to this location."
       reason="ssh: connect to host build-1 port 22: Connection refused"
       action={{ label: "Connect again", onAction: () => tried++ }}
     />,
   );
   const alert = within(container).getByRole("alert");
-  expect(alert.textContent).toContain("Not connected to this environment.");
+  expect(alert.textContent).toContain("Not connected to this location.");
   // The reason is not retyped into the sentence: it is its own monospace block, to select and copy.
   const reason = alert.querySelector("code");
   expect(reason?.textContent).toBe("ssh: connect to host build-1 port 22: Connection refused");
@@ -38,7 +38,7 @@ test("loading is a polite status that says it is busy; empty is plain text", () 
   expect(within(container).getByText("There are no folders here.")).toBeTruthy();
 });
 
-test("an away environment is a status with what to do next", () => {
+test("an away location is a status with what to do next", () => {
   const { container } = render(
     <StateBlock
       tone="away"

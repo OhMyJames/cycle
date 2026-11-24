@@ -10,6 +10,7 @@ import {
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
   CycleErrorCode,
+  checkEnvironment,
   META,
   sessionArchive,
   sessionDismissBackground,
@@ -19,6 +20,7 @@ import {
   sessionUnarchive,
 } from "@cycle/protocol";
 import { mapBounded } from "../bounded.ts";
+import { environmentRowMeta } from "../environment.ts";
 import {
   INVALID_PARAMS,
   logUnavailable,
@@ -62,6 +64,7 @@ const row = async (core: Core, sessionId: string, entry: SessionEntry, onlyPromp
       ...(background > 0 ? { [META.background]: background } : {}),
       ...(session.historyError !== undefined ? { [META.historyFailed]: true } : {}),
       ...(entry.config !== undefined ? { [META.config]: entry.config } : {}),
+      ...environmentRowMeta(entry),
       ...(entry.usage !== undefined ? { [META.usage]: entry.usage } : {}),
       ...(entry.title !== undefined ? { title: entry.title } : {}),
     },
@@ -98,6 +101,7 @@ const unreadableRow = (sessionId: string, entry: SessionEntry) => {
       [META.state]: "stopped",
       [META.historyFailed]: true,
       ...(entry.config !== undefined ? { [META.config]: entry.config } : {}),
+      ...environmentRowMeta(entry),
       ...(entry.usage !== undefined ? { [META.usage]: entry.usage } : {}),
       ...(entry.title !== undefined ? { title: entry.title } : {}),
     },
@@ -119,6 +123,26 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       definition,
       meta[META.config] === undefined ? {} : meta[META.config],
     );
+    // The session's environment (docs/protocol.md §6 "环境"): checked here, before anything is made.
+    let environment: SessionEntry["environment"];
+    if (meta[META.environment] !== undefined) {
+      const checked = checkEnvironment(meta[META.environment]);
+      if (!checked.ok) {
+        const { problem } = checked;
+        throw new RpcError(
+          INVALID_PARAMS,
+          problem.reason === "reserved_variable"
+            ? `The environment may not set ${problem.name}: it is the daemon's`
+            : problem.reason === "invalid_variable"
+              ? `The environment's variable ${JSON.stringify(problem.name)} is not one a shell can take, or is there twice`
+              : problem.reason === "too_large"
+                ? `The environment is larger than ${problem.limit} bytes`
+                : `The environment is not one this daemon can read: ${problem.detail}`,
+          problem,
+        );
+      }
+      environment = checked.environment;
+    }
     // The directories are paths on THIS machine (the daemon's), not the client's. Say so up front.
     const directories = [params.cwd, ...(params.additionalDirectories ?? [])];
     for (const [index, directory] of directories.entries()) {
@@ -154,6 +178,8 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
         : {}),
       ...(params.mcpServers?.length ? { mcpServers: params.mcpServers } : {}),
       ...(params.systemPrompt != null ? { systemPrompt: params.systemPrompt } : {}),
+      // Its variables can be secrets: the index only, like the servers.
+      ...(environment !== undefined ? { environment } : {}),
     };
     const log = await core.store.open(id);
     const session = new Session(id, entry, log);

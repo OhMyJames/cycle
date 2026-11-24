@@ -7,6 +7,7 @@ import {
   attentionOf,
   type Conversation,
   emptyConversation,
+  type SessionEnvironmentSummary,
   type SessionSnapshot,
   type SessionSummary,
 } from "@cycle/ui";
@@ -15,8 +16,8 @@ import type { Connection, Runtime } from "./runtime.ts";
 
 /** What the main process is told when a session that was changing is in a state that wants the person. */
 export type AttentionNotice = {
-  environmentId: string;
-  environmentName: string;
+  locationId: string;
+  locationName: string;
   session: SessionSummary;
   kind: Attention;
 };
@@ -36,10 +37,10 @@ export const emptyWatched = (): Watched => ({
   version: 0,
 });
 
-const sessionSummary = (environmentId: string, row: SessionRow): SessionSummary => {
+const sessionSummary = (locationId: string, row: SessionRow): SessionSummary => {
   const meta = (row._meta ?? {}) as Record<string, unknown>;
   return {
-    environmentId,
+    locationId,
     sessionId: row.sessionId,
     cwd: row.cwd,
     ...(typeof meta.title === "string" ? { title: meta.title } : {}),
@@ -62,7 +63,27 @@ const sessionSummary = (environmentId: string, row: SessionRow): SessionSummary 
     ...(typeof meta["cycle/config"] === "object" && meta["cycle/config"] !== null
       ? { config: meta["cycle/config"] as Record<string, string> }
       : {}),
+    ...environmentSummaryOf(meta["cycle/environment"]),
   };
+};
+
+/** What a row says of its session's environment (docs/protocol.md §6 "环境"): names only. Anything else is not one. */
+const environmentSummaryOf = (value: unknown): { environment?: SessionEnvironmentSummary } => {
+  if (typeof value !== "object" || value === null) return {};
+  const { id, name, variableNames, actions } = value as Record<string, unknown>;
+  if (typeof id !== "string" || typeof name !== "string") return {};
+  const names = Array.isArray(variableNames)
+    ? variableNames.filter((v): v is string => typeof v === "string")
+    : [];
+  const shown = Array.isArray(actions)
+    ? actions.flatMap((a): SessionEnvironmentSummary["actions"] => {
+        if (typeof a !== "object" || a === null) return [];
+        const { id: actionId, name: actionName, icon } = a as Record<string, unknown>;
+        if (typeof actionId !== "string" || typeof actionName !== "string") return [];
+        return [{ id: actionId, name: actionName, ...(typeof icon === "string" ? { icon } : {}) }];
+      })
+    : [];
+  return { environment: { id, name, variableNames: names, actions: shown } };
 };
 
 export class SessionWatcher {
@@ -80,7 +101,7 @@ export class SessionWatcher {
    * that is asking (and is still asking) is told.
    */
   async refresh(
-    environmentId: string,
+    locationId: string,
     connection: Connection,
     afterOutage = false,
   ): Promise<SessionSummary[]> {
@@ -90,7 +111,7 @@ export class SessionWatcher {
     let pages = 0;
     for await (const page of connection.client.sessionPages()) {
       pages++;
-      for (const row of page.sessions) sessions.push(sessionSummary(environmentId, row));
+      for (const row of page.sessions) sessions.push(sessionSummary(locationId, row));
       // Only preview the first connection. Replacing a known list with a partial one would
       // briefly hide search results and could misclassify attention on a later page.
       if (
@@ -98,38 +119,38 @@ export class SessionWatcher {
         page.hasMore &&
         !connection.listed &&
         asked === connection.asked &&
-        !runtime.hasListed(environmentId) &&
-        runtime.isCurrent(environmentId, connection)
+        !runtime.hasListed(locationId) &&
+        runtime.isCurrent(locationId, connection)
       ) {
-        runtime.emit({ type: "sessions", environmentId, sessions: [...sessions] });
+        runtime.emit({ type: "sessions", locationId, sessions: [...sessions] });
       }
     }
     // An answer to an older question, arriving after the answer to a newer one, would put the list back.
     if (asked < connection.applied) return connection.sessions;
     connection.applied = asked;
-    // The environment may have been removed while the question was out: its list must not come back.
-    if (!runtime.isCurrent(environmentId, connection)) return sessions;
+    // The location may have been removed while the question was out: its list must not come back.
+    if (!runtime.isCurrent(locationId, connection)) return sessions;
     const before = new Map(connection.sessions.map((s) => [s.sessionId, s]));
     const first = !connection.listed;
     if (first) runtime.track("session_list_loaded", { pages });
     connection.listed = true;
     connection.sessions = sessions;
-    runtime.keepSessions(environmentId, sessions);
-    runtime.emit({ type: "sessions", environmentId, sessions });
-    this.#tell(environmentId, before, sessions, afterOutage, first);
+    runtime.keepSessions(locationId, sessions);
+    runtime.emit({ type: "sessions", locationId, sessions });
+    this.#tell(locationId, before, sessions, afterOutage, first);
     return sessions;
   }
 
   /** What changed since the list before is what the person may want to be told. A hook that fails must not break the list. */
   #tell(
-    environmentId: string,
+    locationId: string,
     before: ReadonlyMap<string, SessionSummary>,
     sessions: readonly SessionSummary[],
     afterOutage: boolean,
     first: boolean,
   ): void {
     const attention = this.#runtime.options.attention;
-    const environmentName = this.#runtime.nameOf(environmentId);
+    const locationName = this.#runtime.nameOf(locationId);
     for (const session of sessions) {
       // A session enters the list with its first message (docs/protocol.md §6), already at work: after the first list,
       // one that appears is taken to have been idle, so that one already waiting on the person is told; or, if a turn of
@@ -147,7 +168,7 @@ export class SessionWatcher {
       this.#runtime.track("session_attention", { kind });
       if (attention === undefined) continue;
       try {
-        attention({ environmentId, environmentName, session, kind });
+        attention({ locationId, locationName, session, kind });
       } catch {
         // A notification that cannot be shown is a notification missed, not a list that cannot be read.
       }
@@ -155,8 +176,8 @@ export class SessionWatcher {
   }
 
   /** Watches a session (once, however many ask at the same time) and gives what main holds of it. */
-  async open(environmentId: string, sessionId: string): Promise<SessionSnapshot> {
-    const connection = this.#runtime.connection(environmentId);
+  async open(locationId: string, sessionId: string): Promise<SessionSnapshot> {
+    const connection = this.#runtime.connection(locationId);
     let opening = connection.opening.get(sessionId);
     if (opening === undefined) {
       opening = this.#watch(connection, sessionId).finally(() =>
@@ -168,8 +189,8 @@ export class SessionWatcher {
     const watched = connection.watched.get(sessionId);
     if (watched === undefined) throw new Error("The session is gone");
     this.#runtime.track("session_opened", {
-      agent: this.#runtime.agentOf(environmentId, sessionId),
-      environment: this.#runtime.kindOf(environmentId),
+      agent: this.#runtime.agentOf(locationId, sessionId),
+      location: this.#runtime.kindOf(locationId),
     });
     return {
       conversation: watched.conversation,
@@ -194,7 +215,7 @@ export class SessionWatcher {
   }
 
   update(
-    environmentId: string,
+    locationId: string,
     connection: Connection,
     sessionId: string,
     update: Parameters<typeof applyUpdate>[1],
@@ -206,7 +227,7 @@ export class SessionWatcher {
     watched.version += 1;
     this.#runtime.emit({
       type: "update",
-      environmentId,
+      locationId,
       sessionId,
       update,
       ...(at !== undefined ? { at } : {}),
@@ -222,12 +243,12 @@ export class SessionWatcher {
   }
 
   /** A watched session was deleted elsewhere while the connection was away: nothing is waiting on it any more. */
-  gone(environmentId: string, connection: Connection, sessionId: string): void {
+  gone(locationId: string, connection: Connection, sessionId: string): void {
     if (!connection.watched.has(sessionId)) return;
     this.#pending.release(connection, { sessionId, cancel: true });
     connection.watched.delete(sessionId);
     // The renderer drops the view (and with it the permission dialogs), the draft and the selection.
-    this.#runtime.emit({ type: "session-gone", environmentId, sessionId });
+    this.#runtime.emit({ type: "session-gone", locationId, sessionId });
   }
 
   /** The session was deleted from here: it is not watched any more. */

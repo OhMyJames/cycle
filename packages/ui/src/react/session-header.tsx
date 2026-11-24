@@ -4,9 +4,11 @@ import type { ReactNode } from "react";
 import type { SessionSummary } from "../api.ts";
 import { sessionKey } from "../sessions.ts";
 import type { SessionPanel } from "./app-layout.ts";
+import { EnvironmentActions } from "./environments.tsx";
 import { useI18n } from "./i18n.tsx";
 import { DiffIcon, FolderIcon, MoreIcon, OverviewIcon, PanelIcon, TerminalIcon } from "./icons.tsx";
 import { SessionHeading } from "./rename-field.tsx";
+import { FIRST_SIZE } from "./side-panel.tsx";
 import { sessionTitle } from "./sidebar.tsx";
 import { useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
@@ -52,6 +54,18 @@ export function SessionHeader({
         onEditingChange={onRenaming}
       />
       <div data-slot="row">
+        <EnvironmentActions
+          locationId={session.locationId}
+          environment={session.environment}
+          onRun={(actionId) =>
+            void store.runEnvironmentAction(
+              session.locationId,
+              session.sessionId,
+              actionId,
+              FIRST_SIZE,
+            )
+          }
+        />
         <Menu
           onAction={(value) => {
             if (value === "rename") onRenaming(true);

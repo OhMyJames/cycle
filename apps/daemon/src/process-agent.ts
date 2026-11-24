@@ -1,7 +1,7 @@
 import { ndJsonStream } from "@agentclientprotocol/sdk/experimental/v2";
 import type { PromptCapabilities } from "@cycle/protocol";
 import type { AgentSetupProvider } from "./agent-setup.ts";
-import type { AgentDefinition } from "./agents.ts";
+import type { AgentDefinition, LaunchContext } from "./agents.ts";
 import type { Logger } from "./logger.ts";
 import type { PluginProvider } from "./plugins.ts";
 
@@ -16,9 +16,10 @@ export type ProcessAgentOptions = {
   command: string[];
   /**
    * The child's whole environment, or a function evaluated on every `launch()` so hot-reloaded runtime settings
-   * reach newly spawned adapter processes. Nothing is inherited from the daemon (AGENTS.md).
+   * reach newly spawned adapter processes. Nothing is inherited from the daemon (AGENTS.md). The function is given what
+   * the launch is for: the session's environment variables, which the harness hands its adapter apart from its own.
    */
-  env: Record<string, string> | (() => Record<string, string>);
+  env: Record<string, string> | ((context: LaunchContext) => Record<string, string>);
   cwd?: string;
   /** Whether it can run at all, checked when clients ask which agents there are. */
   available?: () => boolean | Promise<boolean>;
@@ -67,8 +68,8 @@ export const processAgent = (options: ProcessAgentOptions): AgentDefinition => (
   ...(options.maxAhead !== undefined ? { maxAhead: options.maxAhead } : {}),
   ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
   ...(options.setup !== undefined ? { setup: options.setup } : {}),
-  launch: async () => {
-    const env = typeof options.env === "function" ? options.env() : options.env;
+  launch: async (context = { sessionEnv: {} }) => {
+    const env = typeof options.env === "function" ? options.env(context) : options.env;
     const proc = Bun.spawn(options.command, {
       env,
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),

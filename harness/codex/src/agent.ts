@@ -648,8 +648,14 @@ export function createAdapter(config: AdapterConfig) {
       typeof params._meta?.["cycle/trusted"] === "boolean"
         ? params._meta["cycle/trusted"]
         : undefined;
+    const sessionEnv = config.sessionEnv ?? {};
     codexConfig = {
       ...(Object.keys(mcpConfig).length > 0 ? { mcp_servers: mcpConfig } : {}),
+      // The session's variables, for its commands only (`set` is not filtered by Codex's default excludes; checked
+      // with 0.171.0 on thread/start and thread/resume, docs/protocol.md §6 "环境").
+      ...(Object.keys(sessionEnv).length > 0
+        ? { shell_environment_policy: { set: sessionEnv } }
+        : {}),
       ...(trusted !== undefined
         ? { projects: { [params.cwd]: { trust_level: trusted ? "trusted" : "untrusted" } } }
         : {}),

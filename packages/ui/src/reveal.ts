@@ -3,7 +3,7 @@
 // Plain TypeScript: the conversation and the card that holds the item listen.
 
 export type RevealRequest = {
-  /** `environmentId:sessionId`. */
+  /** `locationId:sessionId`. */
   readonly sessionKey: string;
   /** The item: a tool call's id, or a plan's. */
   readonly itemId: string;

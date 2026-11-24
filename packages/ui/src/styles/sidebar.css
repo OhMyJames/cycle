@@ -15,7 +15,7 @@
   --sidebar-inset: 0.5rem;
   padding: var(--cycle-gap) var(--sidebar-inset) 0.5rem;
   background: var(--cycle-surface-sidebar);
-  /* Normally only the list scrolls. When what is fixed (several environments away, a short window) leaves the list less
+  /* Normally only the list scrolls. When what is fixed (several locations away, a short window) leaves the list less
      than its floor, the whole sidebar scrolls, so nothing is cut off and the footer can still be reached. */
   overflow-x: hidden;
   overflow-y: auto;
@@ -144,7 +144,7 @@
 }
 
 /* The switcher heads the list under it; a rule over it ends what is the whole app's. */
-[data-slot="environment-bar"] {
+[data-slot="location-bar"] {
   display: flex;
   align-items: center;
   gap: 0.25rem;
@@ -153,14 +153,14 @@
   border-top: 1px solid var(--cycle-border-subtle);
 }
 
-[data-slot="environment-bar"] > :first-child {
+[data-slot="location-bar"] > :first-child {
   flex: 1;
   min-width: 0;
 }
 
-/* An environment that is away: what and how on the first line with Retry beside it, the reason under it, whole
+/* A location that is away: what and how on the first line with Retry beside it, the reason under it, whole
    lines wide (an ssh message is long and does not fit in a third of a sidebar). */
-[data-slot="environment-state"] {
+[data-slot="location-state"] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -170,20 +170,20 @@
   color: var(--ui-muted-foreground);
 }
 
-[data-slot="environment-name"] {
+[data-slot="location-name"] {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
 
-[data-slot="environment-state"] > button {
+[data-slot="location-state"] > button {
   grid-row: 1;
   grid-column: 3;
   height: auto;
   padding-block: 0.125rem;
 }
 
-[data-slot="environment-state"] > [data-slot="hint"] {
+[data-slot="location-state"] > [data-slot="hint"] {
   grid-row: 2;
   grid-column: 2 / -1;
   display: -webkit-box;
@@ -194,11 +194,11 @@
   color: var(--ui-muted-foreground);
 }
 
-[data-slot="environment-state"][data-state="closed"] {
+[data-slot="location-state"][data-state="closed"] {
   color: var(--ui-destructive);
 }
 
-[data-slot="environment-state"][data-state="reconnecting"] {
+[data-slot="location-state"][data-state="reconnecting"] {
   color: var(--cycle-attention);
 }
 
@@ -297,7 +297,7 @@
   color: var(--cycle-ink);
 }
 
-/* Which agent a session is of, where the environment has more than one (sessions.ts `agentLabel`): its logo, before
+/* Which agent a session is of, where the location has more than one (sessions.ts `agentLabel`): its logo, before
    the title in a row and in the header. A mark without its own colour (OpenAI's) takes the quiet text colour. */
 [data-slot="agent-logo"] {
   flex: none;
@@ -363,7 +363,7 @@
   padding-inline-end: 3.5rem;
 }
 
-/* An away environment's row has only the pin: room for one. */
+/* An away location's row has only the pin: room for one. */
 [data-slot="sidebar"] [role="option"][data-away]:hover {
   padding-inline-end: 2rem;
 }

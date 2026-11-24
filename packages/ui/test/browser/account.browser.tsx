@@ -28,7 +28,7 @@ test("signed out, the sign-in page is the whole window: one button, which has th
   expect(screen.getByText(/stay as they are/)).toBeTruthy();
   // Nothing of the app is there behind it.
   expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
-  expect(named("environments")).toHaveLength(0);
+  expect(named("locations")).toHaveLength(0);
 
   // Waiting for the browser, with a way to stop.
   act(() => emit({ type: "account", account: { ...SIGNED_OUT, signingIn: true } }));
@@ -41,7 +41,7 @@ test("signed out, the sign-in page is the whole window: one button, which has th
   act(() => emit({ type: "account", account: SIGNED_OUT }));
   await user.click(screen.getByRole("button", { name: "Sign in with browser" }));
   expect(await screen.findByRole("button", { name: "New session" })).toBeTruthy();
-  expect(named("environments")).toHaveLength(1);
+  expect(named("locations")).toHaveLength(1);
 });
 
 test("the sign-in page says why it is shown, and what went wrong the last time", async () => {

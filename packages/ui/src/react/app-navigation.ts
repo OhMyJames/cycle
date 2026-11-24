@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { EnvironmentConfig, EnvironmentStatus, SessionSummary } from "../api.ts";
+import type { LocationConfig, LocationStatus, SessionSummary } from "../api.ts";
 import {
   currentWorkspace,
   elsewhere as elsewhereOf,
@@ -12,7 +12,7 @@ import { BLANK_KEY, type BlankConversation } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { useDay, useInFront } from "./in-front.ts";
 import type { Away } from "./session-list.tsx";
-import { ENVIRONMENT_STATE } from "./status.tsx";
+import { LOCATION_STATE } from "./status.tsx";
 import { useAppStore } from "./store-context.tsx";
 
 /**
@@ -20,16 +20,16 @@ import { useAppStore } from "./store-context.tsx";
  * it. The list on screen and the keys that walk it (Cmd+[ and Cmd+]) are one thing.
  */
 export function useSessionNavigation({
-  environments,
+  locations,
   status,
   sessions,
   session,
   blank,
   pinned,
 }: {
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
-  /** The sessions of every environment, in one list. */
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
+  /** The sessions of every location, in one list. */
   sessions: SessionSummary[];
   /** The session that is open. */
   session: SessionSummary | undefined;
@@ -43,45 +43,45 @@ export function useSessionNavigation({
   const [chosen, setChosen] = useState<{ workspace: string; on: string | undefined } | undefined>(
     undefined,
   );
-  // An environment that is not connected: its sessions are the last it gave, and are shown greyed.
+  // A location that is not connected: its sessions are the last it gave, and are shown greyed.
   const away = useMemo(() => {
     const map = new Map<string, Away>();
-    for (const h of environments) {
+    for (const h of locations) {
       const state = status[h.id]?.state ?? "closed";
       if (state !== "connected")
-        map.set(h.id, { name: h.name, word: t(ENVIRONMENT_STATE[state].word) });
+        map.set(h.id, { name: h.name, word: t(LOCATION_STATE[state].word) });
     }
     return map;
-  }, [environments, status, t]);
-  const environmentLabels = useMemo(
-    () => environments.map((h) => ({ id: h.id, name: h.name, local: h.kind === "local" })),
-    [environments],
+  }, [locations, status, t]);
+  const locationLabels = useMemo(
+    () => locations.map((h) => ({ id: h.id, name: h.name, local: h.kind === "local" })),
+    [locations],
   );
-  const awayEnvironments = useMemo(() => new Set(away.keys()), [away]);
+  const awayLocations = useMemo(() => new Set(away.keys()), [away]);
   const workspaces = useMemo(
     () =>
       workspacesOf(sessions, {
-        environments: environmentLabels,
-        away: awayEnvironments,
+        locations: locationLabels,
+        away: awayLocations,
         showArchived,
       }),
-    [sessions, environmentLabels, awayEnvironments, showArchived],
+    [sessions, locationLabels, awayLocations, showArchived],
   );
   // A blank conversation is open in place of a session: the sidebar shows its folder, if it has sessions there.
   const openKey =
     session !== undefined ? sessionKey(session) : blank !== undefined ? BLANK_KEY : undefined;
-  // The folders a blank conversation offers: those its environment has sessions in that are not archived, newest first,
-  // named among themselves only (one environment: no environment's name after them), whatever the sidebar shows.
-  const blankEnvironment = blank?.environmentId;
+  // The folders a blank conversation offers: those its location has sessions in that are not archived, newest first,
+  // named among themselves only (one location: no location's name after them), whatever the sidebar shows.
+  const blankLocation = blank?.locationId;
   const blankRecent = useMemo(
     () =>
-      blankEnvironment === undefined
+      blankLocation === undefined
         ? []
-        : workspacesOf(sessions.filter((s) => s.environmentId === blankEnvironment))
+        : workspacesOf(sessions.filter((s) => s.locationId === blankLocation))
             .filter((w) => w.cwd !== "")
             .slice(0, 8)
             .map((w) => ({ cwd: w.cwd, name: w.name })),
-    [sessions, blankEnvironment],
+    [sessions, blankLocation],
   );
   const current = currentWorkspace(workspaces, {
     chosen: chosen !== undefined && chosen.on === openKey ? chosen.workspace : undefined,
@@ -94,9 +94,9 @@ export function useSessionNavigation({
     setShownWorkspace(current?.key);
     if (showAll) setShowAll(false);
   }
-  // A new session starts in the workspace that is shown, if its environment can have one started.
+  // A new session starts in the workspace that is shown, if its location can have one started.
   const startOn =
-    current !== undefined && status[current.environmentId]?.state === "connected"
+    current !== undefined && status[current.locationId]?.state === "connected"
       ? current
       : undefined;
   const elsewhere = useMemo(() => elsewhereOf(workspaces, current), [workspaces, current]);
@@ -106,11 +106,11 @@ export function useSessionNavigation({
       sessionList(current?.sessions ?? [], {
         showAll,
         selected: openKey,
-        away: awayEnvironments,
+        away: awayLocations,
         pinned,
         now: new Date(day),
       }),
-    [current, showAll, openKey, awayEnvironments, pinned, day],
+    [current, showAll, openKey, awayLocations, pinned, day],
   );
 
   return {
@@ -138,27 +138,27 @@ export function useSessionNavigation({
  */
 export function useWorkspaceTrust(
   current: Workspace | undefined,
-  status: Record<string, EnvironmentStatus>,
+  status: Record<string, LocationStatus>,
   dialogOpen: boolean,
 ) {
   const store = useAppStore();
-  const trustEnvironment =
+  const trustLocation =
     current !== undefined &&
-    status[current.environmentId]?.state === "connected" &&
-    status[current.environmentId]?.capabilities?.trust === true
-      ? current.environmentId
+    status[current.locationId]?.state === "connected" &&
+    status[current.locationId]?.capabilities?.trust === true
+      ? current.locationId
       : undefined;
-  const trustCwd = trustEnvironment !== undefined ? current?.cwd : undefined;
+  const trustCwd = trustLocation !== undefined ? current?.cwd : undefined;
   const [trust, setTrust] = useState<{ key: string; trusted: boolean | null } | undefined>();
   const [trustRevision, setTrustRevision] = useState(0);
   const trustKey =
-    trustEnvironment !== undefined && trustCwd !== undefined
-      ? `${trustEnvironment}\u0000${trustCwd}\u0000${trustRevision}\u0000${!dialogOpen}`
+    trustLocation !== undefined && trustCwd !== undefined
+      ? `${trustLocation}\u0000${trustCwd}\u0000${trustRevision}\u0000${!dialogOpen}`
       : undefined;
   useEffect(() => {
-    if (trustKey === undefined || trustEnvironment === undefined || trustCwd === undefined) return;
+    if (trustKey === undefined || trustLocation === undefined || trustCwd === undefined) return;
     let live = true;
-    store.readTrust(trustEnvironment, trustCwd).then(
+    store.readTrust(trustLocation, trustCwd).then(
       (read) => {
         if (live) setTrust({ key: trustKey, trusted: read.trusted });
       },
@@ -170,16 +170,16 @@ export function useWorkspaceTrust(
     return () => {
       live = false;
     };
-  }, [store, trustKey, trustEnvironment, trustCwd]);
+  }, [store, trustKey, trustLocation, trustCwd]);
   const shownTrust = trust !== undefined && trust.key === trustKey ? trust.trusted : undefined;
   const folder =
-    trustEnvironment !== undefined && trustCwd !== undefined
-      ? { environmentId: trustEnvironment, cwd: trustCwd }
+    trustLocation !== undefined && trustCwd !== undefined
+      ? { locationId: trustLocation, cwd: trustCwd }
       : undefined;
   /** Changes the folder's trust, and reads it again. */
   const changeTrust = async (trusted: boolean) => {
     if (folder === undefined) return;
-    await store.changeTrust(folder.environmentId, folder.cwd, trusted);
+    await store.changeTrust(folder.locationId, folder.cwd, trusted);
     setTrustRevision((n) => n + 1);
   };
   return { folder, trusted: shownTrust, changeTrust };
@@ -191,7 +191,7 @@ export function useWorkspaceTrust(
  */
 export function useMarkRead(
   session: SessionSummary | undefined,
-  status: Record<string, EnvironmentStatus>,
+  status: Record<string, LocationStatus>,
 ) {
   const store = useAppStore();
   const inFront = useInFront();
@@ -200,11 +200,11 @@ export function useMarkRead(
   const told = useRef("");
   useEffect(() => {
     if (session?.unread !== true || !inFront) return;
-    if (status[session.environmentId]?.state !== "connected") return;
-    const what = `${session.environmentId}/${session.sessionId}/${session.lastSeq}`;
+    if (status[session.locationId]?.state !== "connected") return;
+    const what = `${session.locationId}/${session.sessionId}/${session.lastSeq}`;
     if (told.current === what) return;
     told.current = what;
-    void store.markRead(session.environmentId, session.sessionId);
+    void store.markRead(session.locationId, session.sessionId);
   }, [session, inFront, status, store]);
   // Leaving the app and coming back asks again.
   useEffect(() => {

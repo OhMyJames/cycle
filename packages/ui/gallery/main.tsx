@@ -26,11 +26,12 @@ const bridgeFor = (scenario: Scenario) => {
     ...(scenario.connectors ? { connectors: scenario.connectors } : {}),
     ...(scenario.plugins ? { plugins: scenario.plugins } : {}),
     ...(scenario.account ? { account: scenario.account } : {}),
+    ...(scenario.environments ? { environments: structuredClone(scenario.environments) } : {}),
   });
-  const environments = scenario.environments ?? [LOCAL];
+  const locations = scenario.locations ?? [LOCAL];
   const status =
     scenario.status ??
-    environments.map((h) =>
+    locations.map((h) =>
       scenario.trust !== undefined
         ? {
             ...UP(h.id),
@@ -40,23 +41,23 @@ const bridgeFor = (scenario: Scenario) => {
     );
   if (scenario.trust !== undefined) {
     const trusted = scenario.trust;
-    script.bridge.readTrust = async (_environment, path) => ({
+    script.bridge.readTrust = async (_location, path) => ({
       path,
       trusted,
       from: trusted === null ? null : path,
     });
   }
   const sessions = Object.fromEntries(
-    environments.map((environment) => [
-      environment.id,
-      (scenario.sessions ?? []).filter((session) => session.environmentId === environment.id),
+    locations.map((location) => [
+      location.id,
+      (scenario.sessions ?? []).filter((session) => session.locationId === location.id),
     ]),
   );
   const planUsage = scenario.planUsage ?? {};
   script.bridge.planUsage = async () => planUsage;
-  script.bridge.environments = async () => ({ environments, status, sessions });
-  script.bridge.sessions = async (environmentId) => sessions[environmentId] ?? [];
-  script.bridge.openSession = async (_environmentId, sessionId) =>
+  script.bridge.locations = async () => ({ locations, status, sessions });
+  script.bridge.sessions = async (locationId) => sessions[locationId] ?? [];
+  script.bridge.openSession = async (_locationId, sessionId) =>
     sessionSnapshotOf(scenario, sessionId);
   script.bridge.agents = async () =>
     scenario.noAgents
@@ -169,8 +170,8 @@ const bridgeFor = (scenario: Scenario) => {
         ];
   if (scenario.secondAgent) {
     const first = script.bridge.agents;
-    script.bridge.agents = async (environmentId) => [
-      ...(await first(environmentId)),
+    script.bridge.agents = async (locationId) => [
+      ...(await first(locationId)),
       { id: "codex", name: "Codex", available: true, configSchema: {} },
       { id: "agy", name: "Antigravity", available: true, configSchema: {} },
     ];
@@ -216,11 +217,11 @@ const scenario = async (key: string) => {
     (root.querySelector('[role="option"]') as HTMLElement | null)?.click();
     const first = s.sessions?.[0];
     if (s.sidePanel && first !== undefined)
-      store.sidePanels.show(viewKey(first.environmentId, first.sessionId), "overview");
+      store.sidePanels.show(viewKey(first.locationId, first.sessionId), "overview");
   }
   if (s.blank !== undefined) {
     if (s.blank.starting !== undefined) script.bridge.createSession = () => new Promise(() => {});
-    store.openBlank({ environmentId: "local", cwd: s.blank.cwd });
+    store.openBlank({ locationId: "local", cwd: s.blank.cwd });
     if (s.blank.starting !== undefined) {
       await sleep(100);
       store.drafts.setText(BLANK_KEY, s.blank.starting);
@@ -235,14 +236,14 @@ const scenario = async (key: string) => {
     };
     await sleep(200);
     if (first !== undefined) {
-      store.drafts.setText(viewKey(first.environmentId, first.sessionId), "Run the tests again");
+      store.drafts.setText(viewKey(first.locationId, first.sessionId), "Run the tests again");
       await store.send();
     }
   }
   const opened = s.sessions?.[0];
   if (s.draft !== undefined && opened !== undefined) {
     // A draft is kept in the page's storage: these scenarios' sessions have ids of their own, so it reaches no other.
-    const draftKey = viewKey(opened.environmentId, opened.sessionId);
+    const draftKey = viewKey(opened.locationId, opened.sessionId);
     store.drafts.setText(draftKey, s.draft.text);
     if (s.draft.attachments !== undefined)
       store.drafts.setAttachments(draftKey, s.draft.attachments);

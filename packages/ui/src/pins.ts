@@ -1,5 +1,5 @@
 // The sessions the person pinned to the top of the sidebar's list. A view setting, not the agent's: it is not sent to
-// the daemon, and stays on this machine, in the page's storage, by session (its `sessionKey`, environment and session).
+// the daemon, and stays on this machine, in the page's storage, by session (its `sessionKey`, location and session).
 // No React and no DOM here, so it can be tested with a fake storage.
 import type { Storage } from "./code-theme.ts";
 

@@ -167,12 +167,13 @@ export const claudeHarness: Harness = {
         locateBinary: locateClaudeBinary,
       }),
       ...(log !== undefined ? { log } : {}),
-      env: () => {
+      env: ({ sessionEnv }) => {
         const runtime = claudeEffectiveRuntime(config.claude, agentSettings).values;
         return {
           PATH: inherited.PATH ?? "",
           CYCLE_ADAPTER_CONFIG: JSON.stringify({
             env: claudeEnv(config.claude, dataDir, inherited),
+            sessionEnv,
             warmStart: runtime.warmStart,
             progressSummaries: runtime.progressSummaries,
             ...(claudeExecutable() !== undefined ? { claudeExecutable: claudeExecutable() } : {}),

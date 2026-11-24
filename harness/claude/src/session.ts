@@ -25,6 +25,11 @@ export type AdapterConfig = {
    * decides, from its allowlist, and passes it in (decision 0001).
    */
   env: Record<string, string>;
+  /**
+   * The session's environment variables (docs/protocol.md §6 "环境"), for the commands the agent runs. Never the agent's
+   * own settings: those are in `env`, which wins over these where both name a variable.
+   */
+  sessionEnv?: Record<string, string>;
   /** The SDK's own binary is used when this is absent. */
   claudeExecutable?: string;
   /**

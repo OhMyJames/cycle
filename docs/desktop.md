@@ -15,18 +15,18 @@ bun run start                          # 启动桌面端
 
 - 本地 host 通过 `cycle proxy` 连接(没有 daemon 在运行就先启动)。用哪个 daemon,取第一个存在的:`CYCLE_DAEMON_BIN`;`apps/daemon/dist` 里构建出的可执行文件;源码(`bun apps/daemon/src/main.ts`,开发时,可用 `CYCLE_BUN`、`CYCLE_DAEMON_MAIN` 覆盖)。数据目录:`CYCLE_HOME` 设了就用它;没设时,安装的应用用 daemon 的默认(`~/.cycle`),从源码运行(`bun run start`)用 `~/.cycle-dev`,所以开发时的 daemon、socket 和会话不会碰到安装版正在跑的那个。开发版因此没有稳定版的凭证配置(`config.json` 在数据目录里):要么在 `~/.cycle-dev` 里另写一份,要么显式设 `CYCLE_HOME` 指向要用的目录。
 - 在 xvfb 下用构建出的 daemon 启动过:Electron 起来,`proxy` 起 `serve`,数据目录里有 socket 和 pid。
-- 远程 host 用系统的 `ssh`(`BatchMode=yes`,没有密码提示),在远端运行 `cycle proxy`;命令可在"Add environment"里改。
-- 设置在 Electron 的 `userData` 里:环境列表在 `settings.json`,外观、语言和下一轮输入建议的开关在 `preferences.json`(`{ "theme": "system" | "light" | "dark", "language": "system" | "en-US" | "zh-CN", "promptSuggestions": boolean }`,见"设置页"),统计的开关和匿名 id 在 `analytics.json`。
+- 远程 host 用系统的 `ssh`(`BatchMode=yes`,没有密码提示),在远端运行 `cycle proxy`;命令可在"Add location"里改。
+- 设置在 Electron 的 `userData` 里:工作位置列表在 `settings.json`,外观、语言和下一轮输入建议的开关在 `preferences.json`(`{ "theme": "system" | "light" | "dark", "language": "system" | "en-US" | "zh-CN", "promptSuggestions": boolean }`,见"设置页"),统计的开关和匿名 id 在 `analytics.json`。
 
 ## 结构
 
 | 部分                                   | 作用                                                                                                                      |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `apps/desktop/src/main/manager.ts`     | `ConnectionManager`:页面在主进程之外能调的方法(`ManagerApi`)的门面,把下面四部分接在一起。不依赖 Electron,用真 daemon 测试 |
-| `apps/desktop/src/main/runtime.ts`     | 环境列表,每个环境一个 `CycleClient`:连接、状态、重连、远端 daemon 的升级                                                  |
+| `apps/desktop/src/main/runtime.ts`     | 工作位置列表,每个工作位置一个 `CycleClient`:连接、状态、重连、远端 daemon 的升级                                          |
 | `apps/desktop/src/main/watcher.ts`     | 会话列表(以及其中值得通知的变化)和每个被观看 session 的会话                                                               |
 | `apps/desktop/src/main/pending.ts`     | agent 等人回答的权限请求和表单:挂在各自的 session 上,另按 key 建索引                                                      |
-| `apps/desktop/src/main/actions.ts`     | 页面对一个环境做的事(会话、文件、终端、agent、connector、plugin)和它们的埋点;失败作为回答返回的,走 `runAction`            |
+| `apps/desktop/src/main/actions.ts`     | 页面对一个工作位置做的事(会话、文件、终端、agent、connector、plugin)和它们的埋点;失败作为回答返回的,走 `runAction`        |
 | `apps/desktop/src/main/app.ts`         | 窗口、安全设置、IPC;只有它知道怎么连各种 host                                                                             |
 | `apps/desktop/src/main/preferences.ts` | 外观和语言:读写 `preferences.json`,启动时和改动时应用主题。不依赖 Electron                                                |
 | `apps/desktop/src/main/analytics.ts`   | 埋点的接线:匿名 id、开关、key 从哪来。事件字典和规则见 [analytics.md](analytics.md)                                       |
@@ -40,17 +40,19 @@ bun run start                          # 启动桌面端
 
 页面重载后只会收到之后的更新;`CycleClient` 也按 `seq` 去重。所以 **main 为每个被观看的 session 保存会话和未回答的权限请求**,页面(重新)打开时一次拿到整个状态和一个 `version`;之后每个事件带 `version`,页面只接受 `version + 1`,更小的忽略,出现空洞就重新向 main 要。冒烟测试里重载页面后会话完整回来。
 
-## 环境、workspace 与侧栏
+## 工作位置、workspace 与侧栏
 
-状态:daemon 一侧(协议 0.2:`updatedAt`、`cycle/unread`、`cycle/background`、`mark_read`)已实现;客户端一侧(environment、一次一个 workspace 的侧栏、switcher、标记)已实现,哪些还没做见下面"现状"。代码里的名字是 environment(`EnvironmentConfig`、`environmentId`)。设计依据见决定笔记 [2026-11-18-sidebar-workspace-environment](../.agents/notes/2026-11-18-sidebar-workspace-environment.md)。
+> 2026-11-24 起,本节以前叫"环境"(environment)的东西改名为 **Work in / 工作位置**(代码里 `location`),"环境"这个词改指可复用的准备配置,见下一节和决定笔记 [2026-11-24-work-in-and-environments](../.agents/notes/2026-11-24-work-in-and-environments.md)。
 
-### 环境(environment)
+状态:daemon 一侧(协议 0.2:`updatedAt`、`cycle/unread`、`cycle/background`、`mark_read`)已实现;客户端一侧(工作位置、一次一个 workspace 的侧栏、switcher、标记)已实现,哪些还没做见下面"现状"。代码里的名字是 location(`LocationConfig`、`locationId`)。设计依据见决定笔记 [2026-11-18-sidebar-workspace-environment](../.agents/notes/2026-11-18-sidebar-workspace-environment.md)。
 
-环境是**客户端**的概念:daemon 不知道自己被当作本地还是远程(协议只看到一个连接)。
+### 工作位置(location)
+
+工作位置是**客户端**的概念:daemon 不知道自己被当作本地还是远程(协议只看到一个连接)。
 
 ```ts
-type Environment = {
-  id: string; // 客户端分配,稳定;会话在列表里的身份是 (environmentId, sessionId)
+type LocationConfig = {
+  id: string; // 客户端分配,稳定;会话在列表里的身份是 (locationId, sessionId)
   name: string;
   kind: "local" | "remote"; // 以后可能有 "cloud"
   transport: // 只有 remote 有
@@ -59,44 +61,44 @@ type Environment = {
 ```
 
 - `remote` 不等于 SSH:SSH 只是现在唯一的 `transport`。
-- 可以**同时连着多个** daemon,侧栏的会话是它们的**汇总**。每个环境有自己的连接状态。
-- 环境的能力(能做什么)来自 daemon 的 `initialize`(§3 `_meta["cycle/capabilities"]`),界面按能力开关功能,不写 `if (remote)`。
-- 一个 session 在创建时绑定到它的环境,不能换:远程的 cwd 在本机不存在。
-- **断线**:一个环境断线(含重连中)时,它的会话保留最后一次的列表,灰显,不能新建 session、不能发 prompt;连上后用新列表替换。灰显的行 hover 的 tooltip 说明是哪个环境、为什么(断开、重连中)。**只在应用的一次运行内**:最后一次的列表由主进程保存在内存里,页面重载后仍在,但重启应用后没有;启动时就连不上的环境没有"最后一次"。
+- 可以**同时连着多个** daemon,侧栏的会话是它们的**汇总**。每个工作位置有自己的连接状态。
+- 工作位置的能力(能做什么)来自 daemon 的 `initialize`(§3 `_meta["cycle/capabilities"]`),界面按能力开关功能,不写 `if (remote)`。
+- 一个 session 在创建时绑定到它的工作位置,不能换:远程的 cwd 在本机不存在。
+- **断线**:一个工作位置断线(含重连中)时,它的会话保留最后一次的列表,灰显,不能新建 session、不能发 prompt;连上后用新列表替换。灰显的行 hover 的 tooltip 说明是哪个工作位置、为什么(断开、重连中)。**只在应用的一次运行内**:最后一次的列表由主进程保存在内存里,页面重载后仍在,但重启应用后没有;启动时就连不上的工作位置没有"最后一次"。
 - **版本落后的远程 daemon** 要能用:列表里没有的字段按缺失处理(protocol.md §3、§6),界面不报错。
 
 ### 现状(哪些已经做了)
 
-代码里的名字是 environment(`EnvironmentConfig`、`environmentId`、桥上的 `environments()` 等);界面文案里写 "environment"(Add environment 等),不写 "host"(决定:保留"环境"这个词,去掉 host)。词本身可以出现;只有一个环境时,不出现按环境分组、环境标题这类让人去选的东西。
+代码里的名字是 location(`LocationConfig`、`locationId`、桥上的 `locations()` 等);界面文案里选择器和设置页分区叫 "Work in"(中文"工作位置"),句子里写 "location"(Add location 等),不写 "host"。词本身可以出现;只有一个工作位置时,不出现按工作位置分组、工作位置标题这类让人去选的东西。
 
 - 主进程在启动时连接所有 host,各自独立,连不上的不拖累别的;原因记在它的状态里,侧栏的 host 状态行里显示。
-- 会话是所有环境的一个汇总,身份是 `(environmentId, sessionId)`,按 `updatedAt` 排序;旧 daemon 的会话(没有 `updatedAt`)排在有的之后,彼此按 `lastSeq`,不同 daemon 的不混排。
+- 会话是所有工作位置的一个汇总,身份是 `(locationId, sessionId)`,按 `updatedAt` 排序;旧 daemon 的会话(没有 `updatedAt`)排在有的之后,彼此按 `lastSeq`,不同 daemon 的不混排。
 - 侧栏一次只显示一个 workspace(`sessions.ts` 的 `workspacesOf`、`currentWorkspace`)。显示哪个:switcher 里选的(只对选它时打开的那个 session 有效,打开了别的就放弃),然后是打开的 session 所在的,最后是最近有活动的。
-- Switcher 按 host 分组(本机在前,多于一个 host 时才有分组标题,标题带连接状态),组内最近有活动的在前;远程 workspace 带 server 图标,图标的可访问名和 tooltip 是"On <environment> · <state>";同名目录跨 host 时名字后带 host 名。Switcher 上的方块数字是**其他** workspace 里最紧急的一类,完整的计数在 aria-label。
+- Switcher 按 host 分组(本机在前,多于一个 host 时才有分组标题,标题带连接状态),组内最近有活动的在前;远程 workspace 带 server 图标,图标的可访问名和 tooltip 是"On <location> · <state>";同名目录跨 host 时名字后带 host 名。Switcher 上的方块数字是**其他** workspace 里最紧急的一类,完整的计数在 aria-label。
 - 当前 workspace 里的会话:Needs you、Running(包括有后台子 agent 的)、Today、Yesterday、Earlier(本地日界线)。older 的每个 workspace 先显示 20 条,有标记的和打开的永远显示。一行只有一个标记:needs-you > running > background > unread;断线 host 和已归档的会话没有标记。
 - 打开的会话有 `cycle/unread` 时,窗口在前台,就告诉 daemon 已读(`markRead`;main 用它自己最近读到的那一行的 `lastSeq`,不会超出日志;不支持的 daemon 不会被问,失败也不弹错误条)。
 - 断线的 host:会话灰显、tooltip 说明原因,不算在标记里,侧栏里有它的状态、原因和"Retry"。
-- 新建 session 打开一个**空白对话**(`blank.tsx`,store 的 `blank`),不是弹窗,也不请求 daemon:输入框上面一行是"在哪里跑"(CYCL-55):环境(只列已连接的,多于一个才有)、文件夹和 agent(多于一个才有)。文件夹是一个按钮，只显示文件夹名，提示里是完整路径;点开(或 ⌘O)是一个菜单：这个环境上有过 session 的文件夹(新的在前)、"Browse…"(本机用系统的选择器，远程用 daemon 列文件夹;都不能时没有)和 "Enter a path…"(一个输入框的表单,Enter 确定)。daemon 能说信任时，选好的文件夹还没有决定就在旁边标 "Not trusted yet",发出第一条消息时照旧会问。设置(权限、模型、effort)只在输入框下面的芯片里改，从 agent defaults 读来;空白对话不再有标题栏的 "…" 菜单和设置弹窗，没有选项的设置等 session 建好后再改。打开时焦点在输入框;没有文件夹时在文件夹按钮上。有东西挡着第一条消息时，上面只说一件事、给一个出口：环境没连上(原因原话,"Connect again";草稿和附件都留着，输入框上方说一句)、正在连接、没有可用 agent(输入框不能用,"Check again")、agent 的设置读不出来("Read settings again")。**首条消息发出时**才依次 `session/new` 和 `session/prompt`(决定笔记 `2026-11-19-session-starts-at-first-message`):这期间消息先显示在空白对话里、上面的选择锁住;建不成,消息回到输入框并显示原因;建成了而消息发不出去,打开那个 session,消息在它的输入框里。daemon 的列表只列有过用户消息的 session,所以没发过消息的不会出现在侧栏。空白对话里 @ 搜它选的文件夹(daemon 要有 `filesInFolder`);斜杠命令要等 agent 启动后才有。Agent defaults 按 host 分别设置。
-- 新建 session:默认在当前 workspace 的 host 和目录;可以选 host(只列已连接的);"Browse…"只对本机有。Agent defaults 按 host 分别设置(设置页的 Session defaults)。
-- **文件夹信任**(protocol.md §8 "信任文件夹"):空白对话发出第一条消息时、新建 session 之前,目录还没有决定(它和它的上级都没有),先弹出 "Trust this folder?":说明信任之后项目自己的设置能在这个环境里运行命令(hooks、`.mcp.json` 里的服务器和 helper),下面是目录的真实路径;按钮是 Back(回到空白对话,消息还在输入框里)、Start without trusting、Trust and start。两个 Start 都先记下决定,再新建、发出消息;记不下就说明原因,什么都不建。已经有决定的目录不问。daemon 不支持(没有 `trust` 能力)时不问。侧栏 switcher 旁的 "…" 菜单第一项是当前 workspace 的 "Trust this folder"(先确认,说明同上)或 "Stop trusting this folder"(直接生效);环境未连接或 daemon 不支持时没有这一项。
+- 新建 session 打开一个**空白对话**(`blank.tsx`,store 的 `blank`),不是弹窗,也不请求 daemon:输入框上面一行是"在哪里跑"(CYCL-55):工作位置(只列已连接的,多于一个才有)、文件夹和 agent(多于一个才有)。文件夹是一个按钮，只显示文件夹名，提示里是完整路径;点开(或 ⌘O)是一个菜单：这个工作位置上有过 session 的文件夹(新的在前)、"Browse…"(本机用系统的选择器，远程用 daemon 列文件夹;都不能时没有)和 "Enter a path…"(一个输入框的表单,Enter 确定)。daemon 能说信任时，选好的文件夹还没有决定就在旁边标 "Not trusted yet",发出第一条消息时照旧会问。设置(权限、模型、effort)只在输入框下面的芯片里改，从 agent defaults 读来;空白对话不再有标题栏的 "…" 菜单和设置弹窗，没有选项的设置等 session 建好后再改。打开时焦点在输入框;没有文件夹时在文件夹按钮上。有东西挡着第一条消息时，上面只说一件事、给一个出口：工作位置没连上(原因原话,"Connect again";草稿和附件都留着，输入框上方说一句)、正在连接、没有可用 agent(输入框不能用,"Check again")、agent 的设置读不出来("Read settings again")。**首条消息发出时**才依次 `session/new` 和 `session/prompt`(决定笔记 `2026-11-19-session-starts-at-first-message`):这期间消息先显示在空白对话里、上面的选择锁住;建不成,消息回到输入框并显示原因;建成了而消息发不出去,打开那个 session,消息在它的输入框里。daemon 的列表只列有过用户消息的 session,所以没发过消息的不会出现在侧栏。空白对话里 @ 搜它选的文件夹(daemon 要有 `filesInFolder`);斜杠命令要等 agent 启动后才有。Agent defaults 按工作位置分别设置。
+- 新建 session:默认在当前 workspace 的工作位置和目录;可以选工作位置(只列已连接的);"Browse…"只对本机有。Agent defaults 按工作位置分别设置(设置页的 Session defaults)。
+- **文件夹信任**(protocol.md §8 "信任文件夹"):空白对话发出第一条消息时、新建 session 之前,目录还没有决定(它和它的上级都没有),先弹出 "Trust this folder?":说明信任之后项目自己的设置能在这个工作位置里运行命令(hooks、`.mcp.json` 里的服务器和 helper),下面是目录的真实路径;按钮是 Back(回到空白对话,消息还在输入框里)、Start without trusting、Trust and start。两个 Start 都先记下决定,再新建、发出消息;记不下就说明原因,什么都不建。已经有决定的目录不问。daemon 不支持(没有 `trust` 能力)时不问。侧栏 switcher 旁的 "…" 菜单第一项是当前 workspace 的 "Trust this folder"(先确认,说明同上)或 "Stop trusting this folder"(直接生效);工作位置未连接或 daemon 不支持时没有这一项。
 
-设置文件 `settings.json` 是 `{ "environments": [{ id, name, kind: "local" | "remote", transport?: { type: "ssh", host, command? } }] }`。旧格式 `{ "hosts": [{ id, name, kind: "ssh", host, command? }] }` 读作 remote 加 ssh transport,id 不变(会话和草稿都按 id 认);只有保存时才写新格式;这个版本读不懂的条目(更新的版本写的)不显示,但保存时原样写回。
+设置文件 `settings.json` 是 `{ "locations": [{ id, name, kind: "local" | "remote", transport?: { type: "ssh", host, command? } }] }`。2026-11-24 以前的 `{ "environments": [...] }`(条目相同)照读;再早的 `{ "hosts": [{ id, name, kind: "ssh", host, command? }] }` 读作 remote 加 ssh transport。三个键按 `locations` → `environments` → `hosts` 取第一个存在的,id 不变(会话和草稿都按 id 认);只有保存时才写新格式,旧的两个键不再写;这个版本读不懂的条目(更新的版本写的)不显示,但保存时原样写回。
 
 ### workspace
 
-- **workspace = 环境里的一个 cwd**,即 `(environmentId, cwd)`。同一个路径在两个环境里是两个 workspace。
+- **workspace = 工作位置里的一个 cwd**,即 `(locationId, cwd)`。同一个路径在两个工作位置里是两个 workspace。
 - 不把 git 仓库的子目录或 worktree 合并成一个项目(old-cycle 是按 git 主 checkout 合并的;咱们 v1 没有 worktree,以后要合并时再决定)。
-- 远程环境的 workspace 在侧栏里带一个**图标**,hover 的 tooltip 写它属于哪个环境(名字,以及连接状态);本地的没有图标。环境名不能只靠 tooltip:图标有可访问名,里面包含环境名。不同环境里同名的目录,标题再带上环境名区分。
-- 在一个 workspace 里新建 session,就在它的环境里新建。要在别的环境里工作,就是选另一个 workspace,或者"New workspace…"时先选环境、再在那个环境的文件系统里选文件夹。
+- 远程工作位置的 workspace 在侧栏里带一个**图标**,hover 的 tooltip 写它属于哪个工作位置(名字,以及连接状态);本地的没有图标。工作位置名不能只靠 tooltip:图标有可访问名,里面包含工作位置名。不同工作位置里同名的目录,标题再带上工作位置名区分。
+- 在一个 workspace 里新建 session,就在它的工作位置里新建。要在别的工作位置里工作,就是选另一个 workspace,或者"New workspace…"时先选工作位置、再在那个工作位置的文件系统里选文件夹。
 
 ### 侧栏
 
 一次只显示一个 workspace(沿用 old-cycle 2026-11-08 的决定):
 
 - 显示哪个:你在 switcher 里选的,直到打开了别的东西;然后是当前打开的 session 或草稿所在的 workspace;最后是最近有活动的(`updatedAt` 最大的)。从列表里打开任何一行,都会放弃 switcher 的选择。
-- **Switcher** 是一个菜单,列出所有 workspace,按环境分组(本地在前;多于一个环境时才显示分组标题,标题带连接状态),组内按 `updatedAt` 倒序。只有一个环境时,没有按环境分组的标题(没有可选的东西)。
-- Switcher 上有一个方块数字徽章,数**其他 workspace**(所有环境)里最紧急的那一类;完整的计数写进 aria-label。
-- 搜索跨所有 workspace 和环境,结果按 workspace 分组。
+- **Switcher** 是一个菜单,列出所有 workspace,按工作位置分组(本地在前;多于一个工作位置时才显示分组标题,标题带连接状态),组内按 `updatedAt` 倒序。只有一个工作位置时,没有按工作位置分组的标题(没有可选的东西)。
+- Switcher 上有一个方块数字徽章,数**其他 workspace**(所有工作位置)里最紧急的那一类;完整的计数写进 aria-label。
+- 搜索跨所有 workspace 和工作位置,结果按 workspace 分组。
 - 版式(DESIGN.md §4.1):顶部是 New session、Search,其下是 switcher(它是下面会话列表的标题);只有中间的会话列表滚动;底部一行是版本、更新状态和进入设置页的按钮(见下面"设置页")。
 
 当前 workspace 里的会话分组:**Needs you**(`requires_action`)、**Running**(`running`,以及有后台子 agent 的)、然后 Today / Yesterday / Earlier,按本地日界线分,用 `updatedAt`。每个 workspace 默认显示 20 条,"Show N more";有状态的和当前打开的永远显示。
@@ -107,7 +109,82 @@ type Environment = {
 
 ### 待定
 
-- Switcher 分组:同一个 workspace 里有 session 在别的环境的情况不会出现(workspace 属于一个环境),所以不需要处理。如果以后同一个仓库要在本地和远程之间对应起来,那是另一个决定。
+- Switcher 分组:同一个 workspace 里有 session 在别的工作位置的情况不会出现(workspace 属于一个工作位置),所以不需要处理。如果以后同一个仓库要在本地和远程之间对应起来,那是另一个决定。
+
+## 工作位置与环境(草稿,2026-11-24)
+
+状态:草稿,等 owner 过目。"工作位置"一节已实现(2026-11-24 改名);"环境"一节也已实现(2026-11-24,setup/cleanup 只存不跑,见下面的"待定")。决定和理由见笔记 [2026-11-24-work-in-and-environments](../.agents/notes/2026-11-24-work-in-and-environments.md),协议见 protocol.md §6"环境"。
+
+有两个概念,以前都叫"环境":
+
+|                   | Work in / 工作位置(`location`)      | 环境(`environment`)                          |
+| ----------------- | ----------------------------------- | -------------------------------------------- |
+| 是什么            | session 在哪跑:连着的哪个 daemon    | 怎么准备和使用工作区:脚本、变量、动作        |
+| 例子              | This computer、`dev-box`(SSH)       | "Node + Postgres"、"Python 3.12"             |
+| 在哪定义          | 设置页 Work in 分区,`settings.json` | 设置页 Environments 分区,`environments.json` |
+| 和 session 的关系 | 创建时绑定,不能换                   | 创建时选一个(或不用),daemon 存一份快照       |
+
+agent 进程自己的环境变量(daemon `config.json` 的 `allowEnv`/`env`、隔离的 `HOME`/`CLAUDE_CONFIG_DIR`/`CODEX_HOME`)是第三件事,不变;设置页 Harness 里原来的 "Host configuration"(宿主配置)改叫 "Runtime"(运行信息),免得和环境混。
+
+### 工作位置
+
+状态:已实现(2026-11-24)。
+
+就是上一节的"工作位置"(以前叫"环境"),只改了名:类型 `LocationConfig`、`locationId`,会话的身份 `(locationId, sessionId)`,workspace 是 `(locationId, cwd)`。id 不变,所以按 id 存的草稿、置顶、右侧面板都不用迁移:它们在 localStorage 里的键是 `<id>:<sessionId>`,里面没有带 environment 的字段名。
+
+界面文案:新建 session 那一行的第一个选择叫 "Work in"(中文"工作位置"),选项是 "This computer" 和各远程位置的名字;设置页分区 "Environments" 改名 "Work in",按钮 "Add location"。以后有 cloud 时它是这里的又一种 `kind`。
+
+`settings.json` 写成 `{ "locations": [...] }`(条目格式不变)。读时按 `locations` → `environments` → `hosts` 取第一个存在的,和 `hosts` → `environments` 那次一样:只有保存时才写新键(旧的两个键去掉),别的键和读不懂的条目原样写回。埋点里指工作位置的事件和属性也一起改了名,见 analytics.md。降级到旧版本时旧版读不到 `locations`,看不到远程位置(文件里的数据还在)。
+
+### 环境
+
+状态:已实现(2026-11-24)。代码:主进程 `apps/desktop/src/main/environments.ts`(文件和校验)、`actions.ts`(`createSession` 带快照、`createTerminal` 带 `actionId`);页面 `packages/ui/src/environments.ts`(`.env` 读写、校验,是 `@cycle/protocol` 规则的副本,测试保证一致)、`src/store/environments.ts`、`src/react/environments.tsx`(设置分区、编辑框、空白对话的选择、顶栏动作)。和下面草稿不同或草稿没说的地方:
+
+- **桥接方法**:`environments()` 一次给出全部环境和 `defaults`(这就是"取默认");`saveEnvironment`、`removeEnvironment`、`setEnvironmentDefault(locationId, cwd, id | null)` 都回整个新状态。保存先按 daemon 的规则查(名字、重名、保留名、64 KiB,另加:环境要有名字、动作要有名字和至少一个系统的命令),不合格就回 `{problem, …}`,什么都不写。
+- **快照由主进程拼**:页面在 `createSession` 里只给 `environmentId`,主进程从 `environments.json` 取这个环境当时的样子(去掉空脚本)放进 `session/new` 的 `_meta["cycle/environment"]`。daemon 以 `-32602` 拒绝时,主进程把错误改写成 `[environment:<reason>:<名字或上限>] <daemon 原话>`,页面按 reason 换成自己的一句话(只写变量名,不写值),消息回到输入框;环境在这期间被删了是 `missing`。
+- **还没选文件夹时也能选**:那时选的是一个"待定"的选择(一开始是 "No environment",不沿用上次的:新会话从干净的状态开始,和 agent 的设置一样),换文件夹、换工作位置都保留它。选了文件夹以后,这个 workspace 记过默认就用它的默认(待定的让位);没记过就还是待定的那个,并在 session 建成时记成这个 workspace 的默认。有文件夹时再选,和以前一样立刻记成默认。daemon 没有 `environments` 能力时,按钮在但 `aria-disabled`,提示 "Cycle on {location} needs an update to use environments.",也不发环境。
+- **默认为空就是 "No environment"**;指向已删环境的默认当作没有,删环境时主进程一并删掉指向它的默认。
+- **按系统分的脚本**:一个文本框,上面一个分段选择 "All systems / macOS / Linux / Windows"(不叫 "Default":AGENTS 规定选项不写光秃秃的 Default),有内容的系统带一个点。动作的命令同样。
+- **动作的图标**:`icon` 存一个固定的 id,一共 8 个:`terminal`(默认)、`play`、`test`、`build`、`database`、`server`、`refresh`、`clean`,清单只在 `packages/ui/src/environments.ts` 的 `ACTION_ICONS` 一处,图形是 iconmcp 的 terminal、play、flask、hammer、database、server、refresh-cw、trash。编辑框里每个动作有一个 "Icon" 下拉(图标加名字)。不认识的 id(更新的版本写的)画成终端,编辑框里也显示成 Terminal,不改它就原样写回。顶栏按钮和溢出菜单都画各自的图标。
+- **顶栏**:动作不多于 3 个时都是按钮,多了显示前 2 个加一个"终端+箭头"的菜单(菜单里每项带自己的图标);窗口窄于 1000px 时只剩一个列出全部动作的菜单,给标题留地方。需要 `terminal` 和 `environments` 两个能力、且已连接,否则按钮 `aria-disabled`。
+- **在哪看用的哪个环境**:右侧面板 Overview 的 Location 一块,多两行"Environment"(名字)和"Variables"(只列名字)。
+- **埋点**:见 analytics.md:`environment_saved`、`environment_removed`、`environment_chosen`(在空白对话里选的时候,`none`)、`environment_action_run`;`terminal_opened` 的 `via` 多了 `action`,`settings_section_shown` 多了 `environments`。
+
+```ts
+type Scripts = { default?: string; macos?: string; linux?: string; windows?: string };
+
+type Environment = {
+  id: string; // 客户端分配,稳定
+  name: string;
+  setup?: Scripts; // 新建 worktree 后在 worktree 根目录跑
+  cleanup?: Scripts; // 删除 worktree 前在 worktree 根目录跑
+  variables: { name: string; value: string }[]; // 有序;名字不能重复,不能是保留名(protocol.md §6)
+  actions: { id: string; name: string; icon?: string; command: Scripts }[];
+};
+```
+
+- **全局定义**:不属于哪个工作位置,也不属于哪个项目。同一个环境在本机和 SSH 上都能用,机器不同的地方用按系统分的脚本处理;daemon 按自己的系统取 `macos`/`linux`/`windows`,没有就用 `default`,都没有就不跑。
+- **存储**:`userData/environments.json`,`{ "environments": Environment[], "defaults": { [locationId]: { [cwd]: environmentId } } }`,权限 0600(变量可能是密钥)。不和 `settings.json` 合在一起,因为 `settings.json` 里旧的 `environments` 键是工作位置。写法同其他设置文件:整个写、改名换上,读不懂的条目原样写回。
+- **选用**:每个 workspace 记一个默认环境(`defaults`)。空白对话"在哪里跑"那一行在文件夹后面多一个环境的选择:默认是这个 workspace 记的,没有就是 "No environment";选了别的就记成这个 workspace 的新默认。只有在至少定义了一个环境、且该位置的 daemon 声明了 `environments` 能力时才出现;daemon 太旧时它在,但不能选,提示说明要升级那边的 daemon。
+- **快照**:首条消息发出、`session/new` 时把选中的环境整个发给 daemon,daemon 存一份。之后改或删这个环境,不影响已有的 session,只影响新建的。会话标题的菜单里能看到它用的是哪个环境(名字;变量只列名字,不列值)。
+- **什么时候生效**:
+
+  | 部分    | 时机                                                              |
+  | ------- | ----------------------------------------------------------------- |
+  | 变量    | session 的每个 agent 进程、它跑的命令、它的终端、它的脚本和动作   |
+  | 动作    | 顶栏按钮;点了在这个 session 的一个新终端里跑(`cwd` 是 session 的) |
+  | setup   | 只在新建 worktree 后跑;不在主 checkout 里跑                       |
+  | cleanup | 只在删除 worktree 前跑                                            |
+
+  v1 没有 worktree,所以先生效的只有变量和动作;setup、cleanup 先能存、能编辑,界面上写明"在 worktree 创建时运行"。
+- **编辑**:设置页 Environments 分区,每个环境一行(名字、变量个数、动作个数),菜单里 Edit、Duplicate、Remove(先确认;正在用它的 session 不受影响)。编辑表单仿 Codex 的:名字;setup、cleanup 各一个按系统分页的文本框;变量用 `.env` 格式的文本框(一行一个 `KEY=value`,`#` 开头是注释,保存时校验名字);动作列表。
+- **埋点**:只记事件和个数(`environment_saved`:有无 setup/cleanup、变量个数、动作个数;`environment_chosen`),不记名字、变量名和值、脚本内容。以前的 `environment_saved` 指的是保存工作位置,2026-11-24 已改成 `location_saved`(见 analytics.md),这个名字从此只指环境。
+
+### 待定
+
+- 有了 worktree 之后:setup 失败时 session 还建不建、输出给谁看;cleanup 的超时。
+- 要不要支持从项目里的文件(类似 Codex 的 `.codex/`)读环境,给团队共享。
+- 网络访问控制(Claude 的 cloud environment 有)只对 cloud 有意义,本机和 SSH 不做。
 
 ## 页面的安全设置
 
@@ -134,7 +211,7 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - 门禁里(`bun run check`):会话模型、store(假桥接)、`ConnectionManager`(真 daemon)。
 - 界面(`bun run test:browser`,CI 的 `browser` 作业):页面组件和 Markdown 安全,在无界面的 Chromium 里,用真实的布局和输入事件(`packages/ui/test/browser/*.browser.tsx`,见 [testing.md](testing.md))。
 - `packages/client`:`bun run test:integration` 把客户端打成包,用 Electron 自带的 Node 跑,证明它在 Node 下能用(Bun 通过自己的测试说明不了这一点)。
-- `apps/desktop`:`bun run test:integration web`(会先 `build`)。构建出的页面在无界面的 Chromium 里,用浏览器自己的鼠标和键盘事件操作,后面是真的 `ConnectionManager`(和主进程里的同一个)、真 daemon、Claude 适配、真 SDK 和模拟 API:连上环境、点击和打字创建 session、打字和粘贴 Markdown、发消息、看到流式回答、出现权限卡片并点击 Allow(工具真的运行了)、重载页面后会话回来。页面的桥接由测试按 preload 的样子造出来(`test/web/web-app.ts`);preload 本身和页面的锁定由 `bun run test:integration package` 在打包后的应用里检查。
+- `apps/desktop`:`bun run test:integration web`(会先 `build`)。构建出的页面在无界面的 Chromium 里,用浏览器自己的鼠标和键盘事件操作,后面是真的 `ConnectionManager`(和主进程里的同一个)、真 daemon、Claude 适配、真 SDK 和模拟 API:连上工作位置、点击和打字创建 session、打字和粘贴 Markdown、发消息、看到流式回答、出现权限卡片并点击 Allow(工具真的运行了)、重载页面后会话回来。页面的桥接由测试按 preload 的样子造出来(`test/web/web-app.ts`);preload 本身和页面的锁定由 `bun run test:integration package` 在打包后的应用里检查。
 
 ## 真实模型下的窗口
 
@@ -180,9 +257,9 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - **草稿**:每个 session 一份,文字存在渲染进程的 localStorage(键含主机和 session),图片和附加的文件只在内存里;发送、删除 session 时清掉。发送失败,内容放回输入框。
 - **排队**:agent 工作时同一个框继续写,Queue、Send now、Stop 和输入在同一行,框不因按钮多而变高(CYCL-75);排队的消息列在输入框上方,可以 Edit 取回;停止或出错后 daemon 退回的消息自动放回输入框(不当作错误)。
 - **会话设置**：输入框工具条显示权限模式、模型和可用的 effort。模型和 effort 是相邻的两个芯片，各开一个菜单（芯片只有文字，不带向下箭头：工具条上一眼看得出能点）（CYCL-73 之后拆开：同一弹层里的滑杆在设置生效前显示了还没生效的档位，再选回原档位时不会发出，看起来像跳回去）。effort 菜单只列该模型支持的档位（来自模型选项的 `cycle/efforts`，protocol.md §10）；模型不支持时没有 effort 芯片，`default` 不单独成行：它是 Claude Code 在不指定时用的档位，按实测写作 `medium`，菜单里显示为 “Medium (default)”，芯片同样，选它就是发 `default` 清掉覆盖；会话明确设成 medium 时另列一行 medium，才看得见、清得掉；模型不列 `medium` 时才保留一行 “Model default”（芯片 “Default effort”）。模型菜单同理：`default` 不是单独的 “Default”，而是它实际指向的型号，如 “Opus 5.5 (default)”（agent 用 `resolvedModel` 与同型号的别名行合并；会话明确固定在那个别名上时，别名行仍单独列出；说不出是哪个型号时才保留 “Default model”），各行写版本号。新会话页换到不支持当前档位的模型时，effort 一并改回 default；已有会话由 agent 改回并回报。列表短，不带过滤；打开时焦点在列表上，↑/↓、Home/End、Enter 选择，Tab 离开并关闭，Escape 关闭并把焦点还给芯片（CYCL-73）。芯片和菜单只显示会话已有的值：选择后由 daemon 的会话列表带回新值才变。还在路上的选择是下一次选择的参照：再选它不重发，选回会话现有的值会发出，所以最后一次选择就是最终生效的；请求结束而值没变（被拒绝）时，同一个选择可以再发。会话标题菜单里的 Session settings 显示全部设置。当前值来自 daemon 会话列表的 `cycle/config`。agent 自己切换模式时，daemon 更新索引并通知客户端刷新列表，已打开的控件随之更新。重连或重新打开历史会话也从列表读取当前值，回放的 `config_option_update` 提供会话的选项。旧会话没有记录的值显示 “Not set”。
-- **上下文用量（CYCL-74）**：输入框工具条右端是用量环，显示 agent 报的已用占窗口的比例（不到 1% 写 “<1%”）。它是按钮，点开是和模型、权限同一种弹层，按 Claude Code 的 `/context` 的样子直接列数字，不写说明：第一行是 “Context window” 和 “已用 / 窗口（百分比）”；下面一条按部分分段的条；再下面每个部分一行（色块、名字、token、占窗口的比例），用到的按大小排，然后是给压缩留的、剩下的，没加载进窗口的工具定义（`deferred`）不列；最后是自动压缩点、本会话费用、完成的压缩次数。各部分来自 `usage_update` 的 `_meta["cycle/context"]`（protocol.md §8），按 `id` 用 Cycle 自己的文字，不认得的用 agent 给的名字；agent 没给就只有总数和条。只列 agent 报过的。只有三种没有数字的状态写一行字：还没有用量（环是空的）、正在压缩、压缩完成后还没有新的用量（环的底圈改成虚线、弧线变淡，条变淡，不列各部分，因为它们是压缩前的）。下面是订阅账号的 “Plan usage”：每个限额一行（5-hour limit、Weekly limit，以及按模型的周限额），写用掉的比例和多久后重置（一小时内写分钟，一天内写小时分钟，再远写星期和时间），下面一条细条；快到时（70% 或 agent 说 warning）用注意色，到了（90% 或 rejected）用危险色。数据来自 daemon 记住的该 agent 账号的最新一份（protocol.md §8 “套餐用量”），所以同一环境的会话看到的是同一份；过了重置时间的那一行不再显示；API key 登录没有这一段。点开发 `context_details_opened`，只带是哪种状态、有没有列出各部分、有没有显示套餐用量。
+- **上下文用量（CYCL-74）**：输入框工具条右端是用量环，显示 agent 报的已用占窗口的比例（不到 1% 写 “<1%”）。它是按钮，点开是和模型、权限同一种弹层，按 Claude Code 的 `/context` 的样子直接列数字，不写说明：第一行是 “Context window” 和 “已用 / 窗口（百分比）”；下面一条按部分分段的条；再下面每个部分一行（色块、名字、token、占窗口的比例），用到的按大小排，然后是给压缩留的、剩下的，没加载进窗口的工具定义（`deferred`）不列；最后是自动压缩点、本会话费用、完成的压缩次数。各部分来自 `usage_update` 的 `_meta["cycle/context"]`（protocol.md §8），按 `id` 用 Cycle 自己的文字，不认得的用 agent 给的名字；agent 没给就只有总数和条。只列 agent 报过的。只有三种没有数字的状态写一行字：还没有用量（环是空的）、正在压缩、压缩完成后还没有新的用量（环的底圈改成虚线、弧线变淡，条变淡，不列各部分，因为它们是压缩前的）。下面是订阅账号的 “Plan usage”：每个限额一行（5-hour limit、Weekly limit，以及按模型的周限额），写用掉的比例和多久后重置（一小时内写分钟，一天内写小时分钟，再远写星期和时间），下面一条细条；快到时（70% 或 agent 说 warning）用注意色，到了（90% 或 rejected）用危险色。数据来自 daemon 记住的该 agent 账号的最新一份（protocol.md §8 “套餐用量”），所以同一工作位置的会话看到的是同一份；过了重置时间的那一行不再显示；API key 登录没有这一段。点开发 `context_details_opened`，只带是哪种状态、有没有列出各部分、有没有显示套餐用量。
 - **回看**:空输入框里按 ↑ 取回上一条发过的消息(从对话里读),↓ 回来;只有光标在首块、末块时才生效。
-- **命令**:消息最开头的 `/` 列出 agent 的命令(`available_commands_update`),空格之前有效;**提及**:`@` 之后列出 session 目录里的文件和文件夹(`_cycle/files/search`),文字里写 `@路径`,发送时另附 `resource_link` 块(决策笔记 `2026-11-18-mentions-are-resource-links`)。daemon 声明 `sessionMentions` 时,菜单在文件和文件夹之后另有 **Sessions** 一组:同一 environment 里标题含所输入文字的其他 session(不含当前这个和已归档的),最近的在前,最多 6 个;两组都有时各带小标题,只有文件时和以前一样不分组。文件结果到了才一起显示,行不会在指针下移动。选中的 session 在文字里写 `@标题`(去掉 Markdown 会读成格式的符号),附一个 `cycle://session/<id>` 的 `resource_link`;daemon 发给 agent 时把它换成那个 session 的简短记录(docs/protocol.md §8,决策笔记 `2026-11-22-session-mentions-expand-in-the-daemon`)。发出的消息里 `@标题` 画成带对话图标的标签(chip),悬停显示完整标题,不显示 agent 收到的记录;输入框里仍是 `@标题` 文字。旧 daemon 没有这一组。两种菜单都以整个输入框为宽,单行时输入格很窄也不受影响(窄窗口下实测 320px 宽的主区);长文件名末尾省略,目录提示最多占一行的 40%;`@` 之后文件夹里什么都没有时写 "This folder has no files or folders."(CYCL-75)。
+- **命令**:消息最开头的 `/` 列出 agent 的命令(`available_commands_update`),空格之前有效;**提及**:`@` 之后列出 session 目录里的文件和文件夹(`_cycle/files/search`),文字里写 `@路径`,发送时另附 `resource_link` 块(决策笔记 `2026-11-18-mentions-are-resource-links`)。daemon 声明 `sessionMentions` 时,菜单在文件和文件夹之后另有 **Sessions** 一组:同一工作位置里标题含所输入文字的其他 session(不含当前这个和已归档的),最近的在前,最多 6 个;两组都有时各带小标题,只有文件时和以前一样不分组。文件结果到了才一起显示,行不会在指针下移动。选中的 session 在文字里写 `@标题`(去掉 Markdown 会读成格式的符号),附一个 `cycle://session/<id>` 的 `resource_link`;daemon 发给 agent 时把它换成那个 session 的简短记录(docs/protocol.md §8,决策笔记 `2026-11-22-session-mentions-expand-in-the-daemon`)。发出的消息里 `@标题` 画成带对话图标的标签(chip),悬停显示完整标题,不显示 agent 收到的记录;输入框里仍是 `@标题` 文字。旧 daemon 没有这一组。两种菜单都以整个输入框为宽,单行时输入格很窄也不受影响(窄窗口下实测 320px 宽的主区);长文件名末尾省略,目录提示最多占一行的 40%;`@` 之后文件夹里什么都没有时写 "This folder has no files or folders."(CYCL-75)。
 - **测试**:界面测试在真实浏览器里对输入框真的敲字和按键(`test/browser/box.ts`);粘贴在 `web` 套件里走(`web.integration.ts` 敲 `**bold**` 并检查渲染,再粘贴一段带星号的文字,检查它按原样放入)。
 - **系统输入法验证（CYCL-110，2026-11-20）**：macOS 26.5.2、Electron 45.3.4，使用独立应用数据目录、真实 composer、系统输入源和原生键盘事件。简体拼音在 `@` 后输入 `nihao`，↓ 选择候选，第一次 Enter 确认“你好”并保留草稿，第二次 Enter 选中 `你好.md`。日文罗马字输入也观察到 Enter 结束组合并保留草稿。两种输入法的候选窗均出现在输入行下方。在组合中触发 Electron 的粘贴命令，中文确认后留下 `@你好PASTE_MARK`，日文确认后也保留了组合文字和剪贴板标记。
 - **组合期间的 ⌘V（CYCL-116）**：macOS 在 Electron 的 `before-input-event` 之前便把按键交给了输入法。桌面主进程通过 AppKit 在本应用内处理按键：当前编辑器有组合文字且按下 ⌘V 时，先让应用菜单执行快捷键。用上述系统简体拼音复测，普通和组合中的 ⌘V 均只触发一次 paste。在 `@nihao` 的候选未确认时粘贴 `PASTE_MARK`，再用 ↓ 和 Enter 确认，草稿为 `@你好PASTE_MARK`。单独验证提及时，第一次 Enter 确认“你好”，第二次选择 `你好.md`，均保留在草稿中。
@@ -195,34 +272,34 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - **框架**(`page-layout.tsx`):`PageLayout`(返回、分区导航、分区内容)、`PageGroup`、`PageRows`、`PageRow`。分区导航是 SDK 的 Tabs 竖排:方向键切换,只挂载当前分区。Connectors 页(CYCL-82,见下面的 "Connector")用的是同一套。
 - **General**:界面语言(见下);版本、更新状态、"Check for updates"(开发运行不能更新时不显示按钮,只说明原因)、有新版本或安装失败时的 "Update and restart";统计开关(Usage statistics)。没有上报目标,或用环境变量 `DO_NOT_TRACK` / `CYCLE_ANALYTICS=off` 关掉时,不显示开关,规则与以前的菜单项相同(docs/analytics.md);首次启动的说明仍在会话页顶部,文字改为指向 Settings。
 - **Appearance**:主题(Match system、Light、Dark,见下)、代码配色和示例。
-- **Environments**:每个环境一行:状态(点、词)、名字、远程的 ssh 地址,断开时下面是 ssh 的原话和 "Connect again";远程环境行尾的菜单里是 Edit、Remove(先确认)。"Add environment" 在分区右上。增、改仍是原来的表单对话框,开在设置页上面。
+- **Work in**(工作位置):每个工作位置一行:状态(点、词)、名字、远程的 ssh 地址,断开时下面是 ssh 的原话和 "Connect again";远程工作位置行尾的菜单里是 Edit、Remove(先确认)。"Add location" 在分区右上。增、改仍是原来的表单对话框,开在设置页上面。
 - **Harness（Claude / Codex / Antigravity 及扩展 agent，CYCL-226）**：替代原平铺的 `Defaults` 分区，在设置导航中按 **Harness** 分组固定列出内置 agent（以及新 daemon 声明的扩展 agent），每页自上而下分为四组：
-  1. **Account & Usage**：展示订阅账号状态、套餐用量（复用 `PlanUsageBars`）、`viaEnv` 覆盖变量名（不显示值）、界面内 **Sign in**（弹窗展示白名单域名、不静默打开浏览器、永久保留可复制 `cycle login <agent>` 兜底）与 **Sign out**（`ConfirmDialog` 确认）；`ConnectionManager` 按环境 `kind`（`local` vs `remote`）与 daemon 声明的 `signInModes` 选定登录模式（Codex 本地走 `browser`、远端走 `device_code`；Claude 与 Antigravity 走 `"code"`）。
-  2. **Session defaults**：原 Agent defaults 编辑区（`_cycle/agent_defaults/*`）；连着多个环境时先选环境；旧 daemon 未声明 `agentSetup` 能力时平滑降级为只显示此区块。
+  1. **Account & Usage**：展示订阅账号状态、套餐用量（复用 `PlanUsageBars`）、`viaEnv` 覆盖变量名（不显示值）、界面内 **Sign in**（弹窗展示白名单域名、不静默打开浏览器、永久保留可复制 `cycle login <agent>` 兜底）与 **Sign out**（`ConfirmDialog` 确认）；`ConnectionManager` 按工作位置 `kind`（`local` vs `remote`）与 daemon 声明的 `signInModes` 选定登录模式（Codex 本地走 `browser`、远端走 `device_code`；Claude 与 Antigravity 走 `"code"`）。
+  2. **Session defaults**：原 Agent defaults 编辑区（`_cycle/agent_defaults/*`）；连着多个工作位置时先选工作位置(选择器叫 "Work in")；旧 daemon 未声明 `agentSetup` 能力时平滑降级为只显示此区块。
   3. **Agent settings**（`RuntimeConfigForm`）：编辑 Cycle 托管的热生效运行时开关（`boolean` 开关、有界 `integer`、封闭 `oneOf` 选择、`enabledWhen` 联动禁用、`applyScope` 生效时机、`danger` 警示、单字段 `Reset` 传 `null` 恢复继承、`revision_conflict` 重载提示、`fileError` 只读降级、未来未知类型只读展示；无属性且无 `fileError` 如 Codex 时自动隐藏）。
-  4. **Host environment**：只读展示二进制路径/版本、托管数据目录、`allowEnv` 与 `envNames` 变量名（绝不显示值）、`config.json` 路径及 `stale`/`error` 提示（本地支持在文件管理器中显示，远端支持复制路径）。空白页遇到未登录或 agent 不可用且 daemon 支持 `agentSetup` 时，提供直达对应 Harness 设置页的快捷按钮。
+  4. **Runtime**(运行信息,原 Host configuration)：只读展示二进制路径/版本、托管数据目录、`allowEnv` 与 `envNames` 变量名（绝不显示值）、`config.json` 路径及 `stale`/`error` 提示（本地支持在文件管理器中显示，远端支持复制路径）。空白页遇到未登录或 agent 不可用且 daemon 支持 `agentSetup` 时，提供直达对应 Harness 设置页的快捷按钮。
 - **Keyboard shortcuts**:只读的清单,列出全部快捷键和按键(DESIGN.md §5.4 的那一张),按"应用"和"会话中"分两组。不能改键:改键要处理冲突、输入法和原生菜单,没有排进这一轮。
 - **主题和语言(CYCL-79)**,理由见决定笔记 [`2026-11-22-appearance-and-language-preferences`](../.agents/notes/2026-11-22-appearance-and-language-preferences.md):
   - 由**主进程**保存和应用。页面经桥上的 `preferences()` 读、`setPreferences()` 改;主进程先写 `preferences.json`,写成功才生效,写不成就报错、什么都不变。读不懂的值(手改坏的、更新的版本写的)按"跟随系统"处理,文件里不认识的键原样写回。
   - **主题**用 Electron 的 `nativeTheme.themeSource`:窗口里的 `light-dark()` 和 `prefers-color-scheme`、代码配色的深浅、原生的菜单和对话框一起变,样式不用改。启动时在建窗口之前就应用,所以第一帧就是选定的主题。
   - **语言**:English 和简体中文两份目录(`packages/ui/src/messages/`),每种语言用它自己的名字列出。"Match system" 取系统首选语言:简体中文的 locale(`zh`、`zh-CN`、`zh-Hans-*`)用中文,繁体(`zh-TW`、`zh-HK`、`zh-Hant-*`)和其他语言用 English。选了立即整页切换,不用重启;页面在读到偏好之后才画第一屏,所以不会先闪一下英文。`<html lang>` 跟着变。主进程自己说的话里,系统通知跟随所选语言。
-  - **不翻译的**(decision 0012):agent 的输出、ssh 和 daemon 的原话、命令、路径、版本号、agent 给的设置名和选项名;另外主进程自己产生的报错(更新失败的原因、"Updates are for the installed app."、本机环境的名字 "This computer")目前仍是英文。
+  - **不翻译的**(decision 0012):agent 的输出、ssh 和 daemon 的原话、命令、路径、版本号、agent 给的设置名和选项名;另外主进程自己产生的报错(更新失败的原因、"Updates are for the installed app."、本机工作位置的名字 "This computer")目前仍是英文。
   - 埋点:`theme_changed`、`language_changed`(主进程发,只带选了哪一项)。
   - 中文目录的键和占位符与 en-US 一致由类型和测试保证(`test/languages.test.ts`);译文本身没有经过母语审校之外的检查,真实窗口里各处的中文版式只在画廊里看过设置页和一个对话场景。
 - **下一轮输入建议(CYCL-225)**:General 里的开关 "Suggest the next message",默认开，和主题、语言一样存在 `preferences.json`。主进程发每条 prompt 时按它带上 `_meta["cycle/promptSuggestions"]`(protocol.md §8),所以关掉之后 agent 不再做建议。agent 给的建议(`_cycle/prompt_suggestion`)在输入框空着、agent 空闲时代替原来的提示文字，样式不变;→ 或 Tab 把它变成输入内容，光标在末尾。打字时它让位，清空后再出现，下一个 turn 开始(`user_message`、`running`、`requires_action`)就作废。关掉开关时，已经收到的建议也不显示。没有建议的 agent 照旧显示原来的提示文字。埋点:`prompt_suggestions_toggled`(主进程)、`prompt_suggestion_accepted`(页面，只带按的是哪个键)。
-- **旧入口**已去掉:侧栏底部的 App settings 菜单、switcher 旁菜单里的 Add environment、Agent defaults、Edit、Remove。会话自己的设置(Session settings)仍在会话标题的菜单里,它属于会话。
-- **埋点**:打开页面是 `panel_opened` 的 `settings`(带 `via`),换分区是 `settings_section_shown`;分区里的动作沿用原有事件(`analytics_toggled`、`update_checked`、`environment_saved`、`agent_defaults_saved`、`code_theme_changed` 等)。
+- **旧入口**已去掉:侧栏底部的 App settings 菜单、switcher 旁菜单里的 Add location、Agent defaults、Edit、Remove。会话自己的设置(Session settings)仍在会话标题的菜单里,它属于会话。
+- **埋点**:打开页面是 `panel_opened` 的 `settings`(带 `via`),换分区是 `settings_section_shown`;分区里的动作沿用原有事件(`analytics_toggled`、`update_checked`、`location_saved`、`agent_defaults_saved`、`code_theme_changed` 等)。
 - **没验证**:安装版真实窗口里的拖动区域和红绿灯位置(画廊里看过版式,深浅色、1200×800 和 720×480)。
 
 ## Connector
 
-侧栏顶部的 **Connectors** 打开 **Connectors 页**(CYCL-82):和设置页一样的整窗页面(`PageLayout`,`connectors.tsx` 的 `ConnectorsPage`),管理某个环境的 daemon 替所有 agent 保管的东西。原来的对话框已去掉。
+侧栏顶部的 **Connectors** 打开 **Connectors 页**(CYCL-82):和设置页一样的整窗页面(`PageLayout`,`connectors.tsx` 的 `ConnectorsPage`),管理某个工作位置的 daemon 替所有 agent 保管的东西。原来的对话框已去掉。
 
 - **进出**:和设置页相同。页面打开时会话那一侧保持挂载、不显示(`hidden` 加 `inert`);`Esc` 或 Back 回到会话,焦点回到侧栏的 Connectors 按钮;页面上面开着表单、确认或菜单时 `Esc` 只关它们;`⌘N`、`⌘K` 仍可用,新建或选中会话就离开页面;按 `⌘,` 换到设置页。同一时间只有一个页面。再次进入回到上次的分区。没有自己的快捷键。
 - **分区**:清单在 `connectors-sections.ts` 的 `CONNECTORS_SECTIONS`(这些词也是埋点里的词),每个分区在 `connectors.tsx` 的 `SECTIONS` 里写明它需要 daemon 的哪项能力和画什么。现在有两个:**Plugins**(`plugins`,能力 `plugins` 里至少有一个 agent,protocol.md §15,CYCL-84)和 **MCP servers**(`mcp`,能力 `connectors`,protocol.md §14)。页面默认打开第一个。
-- **环境**:页面一次管理一个环境,这个选择属于整个页面,各分区共用。候选是已连接、并且至少声明了一个分区所需能力的环境;默认是当前打开的会话所在的环境。多于一个时,分区顶部有一行 Environment 选择器;换环境后分区从头读取。一个候选都没有时说明原因,并给去 Settings → Environments 的按钮。选中的环境做不了当前分区的事(daemon 太旧)时就地说明,不发请求。环境断开后它不再是候选。
+- **工作位置**:页面一次管理一个工作位置,这个选择属于整个页面,各分区共用。候选是已连接、并且至少声明了一个分区所需能力的工作位置;默认是当前打开的会话所在的工作位置。多于一个时,分区顶部有一行 Work in 选择器;换工作位置后分区从头读取。一个候选都没有时说明原因,并给去 Settings → Work in 的按钮。选中的工作位置做不了当前分区的事(daemon 太旧)时就地说明,不发请求。工作位置断开后它不再是候选。
 - **MCP servers**:一组 `PageRows`,每行是状态点和名字,下面一行是状态词(Ready、Needs sign-in、Off,出错时按 `reason` 写成固定的句子)和去哪里(http 的主机,或 stdio 的命令,等宽,放不下时保留末尾);行尾是开关(立即生效),需要登录的 OAuth 服务器有 Sign in,编辑、退出登录、删除在行尾的菜单里。某一行的操作失败,原因写在那一行下面。删除前先确认(`destructive`,焦点在 Cancel),因为它的登录和密钥会一起永久删掉。"Add connector" 在这一组的右上;一个都没有时它在空状态里。读取中、读不出来(原话加 "Try again";已读到的清单保留)各有状态块。等浏览器登录时列表上方有一行说明和 "Stop waiting"。
-- **Plugins**(`plugins.tsx`):某个环境上某个 agent 的 plugin。daemon 声明了多个有 plugin 的 agent 时,顶部多一行 Agent 选择器。三组:
+- **Plugins**(`plugins.tsx`):某个工作位置上某个 agent 的 plugin。daemon 声明了多个有 plugin 的 agent 时,顶部多一行 Agent 选择器。三组:
   - **Installed**:每行是状态点、名字、一行事实(On/Off、版本、它带了什么:几个 skill、命令、子 agent、hook、MCP 服务)和一行说明(放不下时截断);行尾是开关和菜单(Update、Uninstall)。它带的服务器还要登录或要填值时,在这一行下面逐条写明,并给 Sign in 或 Set values。卸载前确认(`destructive`),它的 MCP 服务的登录会一起删掉。
   - **Available**:搜索框(停顿 200 毫秒后查询,回车立即查)和来源选择(多于一个来源时才有);每页 30 个,下面写"Showing n of total"和 Show more。已装的标 Installed,没装的有 Install。**安装前一定确认**:对话框写明来自哪个来源,以及 plugin 可以在那台机器上运行代码(hook、命令、MCP 服务)。确认后对话框立即关上,结果写在那一行(取仓库可能要几十秒)。
   - **Sources**:来源的清单(种类是固定的词,地址等宽、保留末尾);Add source 是表单对话框,写明"来源里列的东西可以被安装并运行";Refresh lists 重新取清单;agent 自带的来源不能移除。
@@ -234,7 +311,7 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
   2. **Harness hosted-callback 一次性授权码(第二个有意例外,CYCL-226 / CYCL-233)**:在 Settings → Harness 的 `"code"` 登录模式(Claude `claude auth login --claudeai`、Antigravity `agy acp --login`)下,用户从外部浏览器粘贴的短期一次性 OAuth authorization code 经页面输入框 → 主进程 → L1(`_cycle/agent_auth/submit`)送至 daemon。与 Connector 不同,此处授权码经由页面输入框进入主进程,因此落实以下硬性缓解措施:
      - **零持久化零日志**:授权码仅驻留内存并一次性写入登录子进程 stdin,永不落盘、永不写入 session JSONL / `daemon.log` / 错误对象 / 埋点(`apps/daemon/test/agent-auth.test.ts` 与 `apps/desktop/test/manager.test.ts` 均有防泄漏断言);
      - **PKCE + 连接绑定 + 单次消费 + 10 分钟 TTL**:PKCE verifier 留在登录子进程侧,`flowId` 绑定发起连接且 `submit` 原子单次消费(`pending → submitting`),超 10 分钟或连接断开/daemon 关闭立即终止子进程;
-     - **桌面端硬编码防钓鱼白名单 + 禁止静默外链**(`apps/desktop/src/main/agent-auth-guard.ts`,`test/agent-auth-guard.test.ts`):允许的 HTTPS 域名完全硬编码在桌面主进程(`claude`:`claude.com`/`claude.ai`/`platform.claude.com`;`codex`:`auth.openai.com`;`agy`:`accounts.google.com`),绝不由 daemon 声明,同时校验 `authorizationUrl` 与 `verificationUrl` 并拒绝非标准端口、内嵌凭据或子域仿冒;只认官方 CLI 打开的那条路径(如 `claude.com/cai/oauth/authorize`、`accounts.google.com/o/oauth2/auth`、`auth.openai.com/codex/device`),带 `redirect_uri` 时它也必须回到该 agent 自己的回调(Claude 的 `platform.claude.com` 等、agy 的 `antigravity.google`、Codex 的本机回环),以免远端 daemon 递来同域名下别人应用的授权页;主进程绝不静默调用 `shell.openExternal`,仅在弹窗展示校验后的目标域名并由用户点击 `Open in browser` 时经 `openAgentAuthUrl(environmentId, flowId)` 打开;任何失败、拦截或断线均保留可复制的 `cycle login <agent>` 终端兜底命令。
+     - **桌面端硬编码防钓鱼白名单 + 禁止静默外链**(`apps/desktop/src/main/agent-auth-guard.ts`,`test/agent-auth-guard.test.ts`):允许的 HTTPS 域名完全硬编码在桌面主进程(`claude`:`claude.com`/`claude.ai`/`platform.claude.com`;`codex`:`auth.openai.com`;`agy`:`accounts.google.com`),绝不由 daemon 声明,同时校验 `authorizationUrl` 与 `verificationUrl` 并拒绝非标准端口、内嵌凭据或子域仿冒;只认官方 CLI 打开的那条路径(如 `claude.com/cai/oauth/authorize`、`accounts.google.com/o/oauth2/auth`、`auth.openai.com/codex/device`),带 `redirect_uri` 时它也必须回到该 agent 自己的回调(Claude 的 `platform.claude.com` 等、agy 的 `antigravity.google`、Codex 的本机回环),以免远端 daemon 递来同域名下别人应用的授权页;主进程绝不静默调用 `shell.openExternal`,仅在弹窗展示校验后的目标域名并由用户点击 `Open in browser` 时经 `openAgentAuthUrl(locationId, flowId)` 打开;任何失败、拦截或断线均保留可复制的 `cycle login <agent>` 终端兜底命令。
 - **错误**:daemon 的拒绝(`data.reason`)在主进程变成固定的词(`connectorProblemOf`),页面按词显示整句,并写在出问题的那一行或表单下面。
 - **plugin 的埋点**(主进程发,`test/manager-plugins.test.ts`):`plugin_installed`、`plugin_removed`、`plugin_toggled`、`plugin_updated`、`plugin_source_added`、`plugin_source_removed`、`plugin_sources_refreshed`,只有 agent 是哪一类、结果的词和个数,不发 plugin 的名字、来源地址和 agent 的原话。
 - **埋点**:`connector_added`(传输、登录方式、密钥个数)、`connector_changed`、`connector_removed`、`connector_authorized`(`ok`/`failed`/`cancelled`)、`connector_signed_out`(主进程发);打开页面是 `panel_opened` 的 `connectors`,换分区是 `connectors_section_shown`(`section` 是固定的词)。不发名字、URL、命令和密钥(`test/manager-connectors.test.ts`)。
@@ -247,9 +324,9 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - **登录**(`main/account.ts`,OIDC 在 `packages/oidc`):authentik 的公共客户端 `clawdot-team`,端点从 discovery 读(discovery 的 `issuer` 必须是请求的那个,端点只认 https)。授权码 + PKCE(S256),`state` 常量时间比较,ID token 校验 `iss`、`aud`、`exp`、`nonce`(从 token 端点经 TLS 直接拿到,不验签名,OIDC Core §3.1.3.7)。回调复用 connector 那一个(`connector-auth.ts`):`127.0.0.1` 随机端口、`/callback`、只收一次、最多十分钟、每条路径都关掉;同一时间只有一个登录在等,再点只是等它的结果。
 - **存储**(`main/account-store.ts`):安装版用 Electron 的 `safeStorage` 加密后放在 userData 的 `account.sealed`,密钥在钥匙串里(应用自己的条目,由签名约束)。钥匙串不可用时不落盘,宁可每次启动重新登录。从源码运行放 `account-dev.json`(0600),测试放 `account-test.json`;这两种都不碰钥匙串。从源码运行和安装版是 Electron 眼里的两个应用(名字、userData 都不同),各有一份登录。记的是 issuer、client、`sub`、显示名、email、最后一次 IdP 接受登录的时间和 refresh token;issuer 或 client 对不上就当作没登录。退出或被拒后只留下"是谁",没有 token,用来判断下次是不是换了人。
 - **续期**:串行,同一时刻只有一个,其余等它;新的 refresh token 先写进存储再用。access token 只在内存里,剩不到 2 分钟才续,看的是墙上时钟。续期结果的 `sub` 变了按被拒处理。`invalid_grant` 是"需要重新登录"(`reauth`),网络错误、超时、5xx 是"暂时离线"(`offline`)。一个 5 分钟的定时器只负责"看一眼":离线时重试,超过一天没续就续一次让登录保持滑动。
-- **启动闸门**:没有 refresh token、或最后一次被接受已超过 30 天,就只显示登录页,不连接任何环境、不读会话;主进程在 `dispatch` 里拒绝 manager 的所有方法,页面只拿得到账号、外观、更新这些主进程自己的方法。在宽限期内,启动时向 IdP 确认一次,最多等 5 秒:被拒进登录页,连不上照常打开(离线)。这 5 秒里窗口已经打开,显示"正在启动";页面问 `account` 时主进程等确认结束才回答。登录页显示时,`AppWindow` 根本不挂载,它的快捷键和副作用都不运行。
+- **启动闸门**:没有 refresh token、或最后一次被接受已超过 30 天,就只显示登录页,不连接任何工作位置、不读会话;主进程在 `dispatch` 里拒绝 manager 的所有方法,页面只拿得到账号、外观、更新这些主进程自己的方法。在宽限期内,启动时向 IdP 确认一次,最多等 5 秒:被拒进登录页,连不上照常打开(离线)。这 5 秒里窗口已经打开,显示"正在启动";页面问 `account` 时主进程等确认结束才回答。登录页显示时,`AppWindow` 根本不挂载,它的快捷键和副作用都不运行。
 - **开着时被拒不踢人**:正在跑的会话、打开的窗口都不动,顶部一行提示"重新登录",点一下走登录流程;下次打开才进登录页。离线时顶部一行说明在线功能暂时不可用。
-- **退出登录**(设置 → General 的 Account,先确认):先跑 `onSignOut` 注册的步骤(给 CYCL-162 清各环境的服务凭证用),然后先在本地忘掉登录、回到登录页,最后才向 revocation 端点吊销 refresh token(失败只记日志):离线时吊销要等满超时,这期间退出应用也不会留着登录。已连上的环境不断开,本地会话、设置、connector 不动。**换账号**:登录得到的 `sub` 和上一个不同,先做一遍退出的清理,再提示"已切换到 …";同一个人重新登录什么都不清,只吊销旧的 refresh token。
+- **退出登录**(设置 → General 的 Account,先确认):先跑 `onSignOut` 注册的步骤(给 CYCL-162 清各工作位置的服务凭证用),然后先在本地忘掉登录、回到登录页,最后才向 revocation 端点吊销 refresh token(失败只记日志):离线时吊销要等满超时,这期间退出应用也不会留着登录。已连上的工作位置不断开,本地会话、设置、connector 不动。**换账号**:登录得到的 `sub` 和上一个不同,先做一遍退出的清理,再提示"已切换到 …";同一个人重新登录什么都不清,只吊销旧的 refresh token。
 - **页面拿到的**只有 `AccountStatus`(状态、是否打开、是否在等浏览器、显示名和 email、原因和问题的固定词),没有任何 token;日志和报错只写发生了什么,token 和 IdP 的原话都不写(`test/account.test.ts` 把 IdP 见过的每个 token 和日志、状态、报错、埋点逐一比对)。
 - **测试**:`CYCLE_SSO_ISSUER` 把 issuer 换成测试的替身 IdP(`@cycle/oidc/mock-idp`:强制 PKCE、校验回调地址、授权码一次性、refresh token 轮换),只接受本机的 http 地址;它只换"去哪登录",并且让登录存到测试自己的文件。安装版也认它:能设这个环境变量的人本来就能读写这台机器上的本地数据,登录页不是本地数据的安全边界;它挡的是"没有 Clawdot 账号的人用产品",而指向本机替身拿到的 token 对任何真实服务都没用。打包的集成测试先写好一份已登录的记录(`test/integration/signed-in.ts`);更新测试还设 `CYCLE_USER_DATA`,让更新后重新打开的应用仍用测试的目录,而不是用户真实的 userData。
 - **埋点**:`sign_in_shown`、`signed_in`、`sign_in_required`、`offline_grace`、`signed_out`、`account_switched`(主进程发),只有固定的词和布尔,不报是谁。
@@ -264,29 +341,29 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - **关闭**:点标签上的叉,或者焦点在标签上时按 Delete 或 Backspace。关闭会结束 shell 和里面跑的东西,不再确认(删除会话才要确认)。关掉正在看的标签时,显示它前面那个。daemon 没收到关闭(连接正好断了)时,说出原因,重新读列表,shell 还在的话标签回来。
 - **显示和输入**:页面用 `@xterm/xterm` 画,只有显示着的标签附着(`attach`),切走或收起就 `detach`,不看的终端不占这边的资源。`attach` 的应答和输出走两条路,先后不定:输出先到的先存着,应答到了以后丢掉屏幕里已经有的(`seq` 不大于应答的),落后时 daemon 发 `reset` 也一样(`terminals.ts` 的 `TerminalFeed`)。按键和粘贴原样发出,大段粘贴切成小于 64 KiB 的几段。复制粘贴用的是应用菜单的复制、粘贴,xterm 自己处理,页面不需要剪贴板权限。
 - **尺寸**:跟着面板变,停下来 80 ms 后告诉 daemon;附着之后和终端拿到焦点时各告诉一次(多个客户端以最后一个为准)。daemon 给的屏幕(附着的应答、`reset`)是按 daemon 当时的尺寸画的:先按那个尺寸写进去,再缩放回面板的尺寸,行和光标才对得上。
-- **状态**:shell 退出后标签变淡,底部一行说退出码,带 **Close terminal**;环境断开时底部一行说断开了,不能输入,连回来后重新附着;连回来发现终端已经没了(daemon 停了,包括空闲退出),标签留着,说它随 daemon 停止而结束,用户关掉标签为止;附着失败时说原因,可以重试。打不开时(数量到上限、会话已归档、文件夹不在了、shell 起不来、daemon 正在停止)主进程把 daemon 的拒绝转成固定的词(`terminalProblemOf`),页面显示对应的整句。
+- **状态**:shell 退出后标签变淡,底部一行说退出码,带 **Close terminal**;工作位置断开时底部一行说断开了,不能输入,连回来后重新附着;连回来发现终端已经没了(daemon 停了,包括空闲退出),标签留着,说它随 daemon 停止而结束,用户关掉标签为止;附着失败时说原因,可以重试。打不开时(数量到上限、会话已归档、文件夹不在了、shell 起不来、daemon 正在停止)主进程把 daemon 的拒绝转成固定的词(`terminalProblemOf`),页面显示对应的整句。
 - **颜色**:底色、文字、光标、选区取 Cycle 的令牌,跟着深浅色变;16 个 ANSI 颜色是程序输出的内容,和代码配色一样用 GitHub 的配色(`terminal-theme.ts`)。
 - **键盘**:焦点在终端里时,按键先给 shell。macOS 上 ⌘ 组合键 xterm 不处理,应用的快捷键照常;其他平台上 Ctrl 组合键归 shell,面板用按钮开关。
 - **埋点**:`terminal_opened`、`terminal_closed`、`terminal_open_failed`,只有入口、状态、个数分档和原因的固定词。不发 shell、目录、输入和输出。
 - **测试**:规则在 `packages/ui/test/terminals.test.ts`;界面在 `test/browser/terminal.browser.tsx`(假的 bridge);真 daemon 和真 shell 在 `apps/desktop/test/integration/web.integration.ts` 里:打开、输入、看到输出、刷新后重画、关闭。
-- **没验证**:远端(ssh)环境上的终端,和打包后的真实窗口里的复制粘贴。
+- **没验证**:远端(ssh)工作位置上的终端,和打包后的真实窗口里的复制粘贴。
 
 ## 公共组件(CYCL-52)
 
 后面的界面(设置页、右侧面板、空 session 页)都从这些部件搭,不再各写一套。清单来自 CYCL-64 的盘点(2026-11-21),只看首批消费者:输入区(权限、模型、Effort 芯片和 context 详情)、设置(盘点时是 Agent defaults、Session settings 两个对话框和侧栏底部的 App settings 菜单;CYCL-78 起应用级的都在设置页)、右侧面板(还没有,按[右侧面板笔记](../.agents/notes/2026-11-19-right-panel-scope.md)预留)。规格在 DESIGN.md 第 3 层。
 
-| 部件                  | 盘点时的样子                                                                                                                                                                                                                                                              | 缺口                                                                      | 处理                                                                                                                                                                                                                                       |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 菜单 `Menu`           | SDK Menu 用在 7 处;输入区的三个芯片另有一套手写的 `role="menu"` 弹层,外观、键盘、对勾位置都和 SDK 的不同                                                                                                                                                                  | 两套菜单                                                                  | CYCL-65:芯片改用 SDK Menu 的单选组,全应用一种行(对勾在行尾)                                                                                                                                                                                |
-| 弹出层 `Popover`      | `anchored-popover.tsx` 手写定位、点外关闭、Esc、焦点归还                                                                                                                                                                                                                  | 重复 SDK 已有的                                                           | CYCL-65:context 详情改用 SDK Popover,删掉手写的                                                                                                                                                                                            |
-| 提示 `Tip`            | SDK Tooltip 一处没用;35 个原生 `title`,其中 10 个在只有图标的按钮上                                                                                                                                                                                                       | 原生提示慢、不跟随键盘焦点,名字写两遍                                     | CYCL-65:`tip.tsx`,只有图标的按钮由它命名;截断文字的全称仍用 `title`                                                                                                                                                                        |
-| 候选列表 `PickerMenu` | `/` 命令和 `@` 文件的候选,`role="listbox"` 加 `aria-activedescendant`,焦点留在输入框                                                                                                                                                                                      | 无:这是 combobox 的做法,SDK 的 Menu 不适用                                | 保留                                                                                                                                                                                                                                       |
-| 分栏与分隔条          | 侧栏用 SDK Resizable(键盘、上下限、折叠、记住宽度)                                                                                                                                                                                                                        | 还没有第二个面板;"双击复位"与 SDK 的"双击折叠"冲突;窄窗时覆盖还是挤压未定 | CYCL-66:`split-layout.tsx`,三栏同组,让位顺序按[右侧面板布局笔记](../.agents/notes/2026-11-21-right-panel-layout.md);双击沿用 SDK 的折叠                                                                                                    |
-| 标签页                | 没有                                                                                                                                                                                                                                                                      | 右侧面板和设置页导航要用                                                  | CYCL-66:`panel-tabs.tsx`,SDK Tabs 套 Cycle 样式;CYCL-90 接进 App(`side-panel.tsx`):按会话记住开关和标签(`side-panel.ts`,最近 200 个会话,删会话或环境时一并删),会话头部的按钮和 `⌘\` 开关,埋点 `side_panel_toggled`、`side_panel_tab_shown` |
-| 空、加载、出错、断线  | 没有公共组件:整页状态手搭 4 份(图标、标题、原话、按钮各有各的有无),文件夹和 Connectors 各有一套"加载/出错/空";"未连接 + Retry"在侧栏和主区各写一次;`hint` 一个 slot 承担空、加载、出错、状态、说明五种意思,出错时有的红有的灰;只有一处把原话等宽显示;加载只有文字没有转圈 | 一个状态块:图标 + 标题 + 说明 + 等宽原话 + 动作                           | CYCL-67:`state-block.tsx`,主区、新建会话页、会话、文件夹、Connectors、Agent defaults 已改用                                                                                                                                                |
-| 设置表单              | 两个对话框共用 `ConfigForm`;Agent defaults 读取时什么都不显示,不是 `<form>`,文案写死                                                                                                                                                                                      | 加载态、回车提交                                                          | 加载态随 CYCL-67,文案随 CYCL-68,整页随 CYCL-78                                                                                                                                                                                             |
-| 文案                  | i18n 棘轮的基线写着 53,实际 37(其中 7 个是误报);扫描器看不到单独成行的 JSX 文字、三元表达式里的文字和 store 里的报错                                                                                                                                                      | 约 40 处没进目录                                                          | CYCL-68:已迁完,只剩一条开发者才看得到的报错;扫描器能看到单独成行的文字和 `...Label`、`description` 属性,`--list` 列出全部                                                                                                                  |
-| 横幅 `Banner`         | 6 处重复同一结构,没有组件                                                                                                                                                                                                                                                 | 同上的状态块可以覆盖                                                      | 以后,不在这一轮                                                                                                                                                                                                                            |
+| 部件                  | 盘点时的样子                                                                                                                                                                                                                                                              | 缺口                                                                      | 处理                                                                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 菜单 `Menu`           | SDK Menu 用在 7 处;输入区的三个芯片另有一套手写的 `role="menu"` 弹层,外观、键盘、对勾位置都和 SDK 的不同                                                                                                                                                                  | 两套菜单                                                                  | CYCL-65:芯片改用 SDK Menu 的单选组,全应用一种行(对勾在行尾)                                                                                                                                                                                    |
+| 弹出层 `Popover`      | `anchored-popover.tsx` 手写定位、点外关闭、Esc、焦点归还                                                                                                                                                                                                                  | 重复 SDK 已有的                                                           | CYCL-65:context 详情改用 SDK Popover,删掉手写的                                                                                                                                                                                                |
+| 提示 `Tip`            | SDK Tooltip 一处没用;35 个原生 `title`,其中 10 个在只有图标的按钮上                                                                                                                                                                                                       | 原生提示慢、不跟随键盘焦点,名字写两遍                                     | CYCL-65:`tip.tsx`,只有图标的按钮由它命名;截断文字的全称仍用 `title`                                                                                                                                                                            |
+| 候选列表 `PickerMenu` | `/` 命令和 `@` 文件的候选,`role="listbox"` 加 `aria-activedescendant`,焦点留在输入框                                                                                                                                                                                      | 无:这是 combobox 的做法,SDK 的 Menu 不适用                                | 保留                                                                                                                                                                                                                                           |
+| 分栏与分隔条          | 侧栏用 SDK Resizable(键盘、上下限、折叠、记住宽度)                                                                                                                                                                                                                        | 还没有第二个面板;"双击复位"与 SDK 的"双击折叠"冲突;窄窗时覆盖还是挤压未定 | CYCL-66:`split-layout.tsx`,三栏同组,让位顺序按[右侧面板布局笔记](../.agents/notes/2026-11-21-right-panel-layout.md);双击沿用 SDK 的折叠                                                                                                        |
+| 标签页                | 没有                                                                                                                                                                                                                                                                      | 右侧面板和设置页导航要用                                                  | CYCL-66:`panel-tabs.tsx`,SDK Tabs 套 Cycle 样式;CYCL-90 接进 App(`side-panel.tsx`):按会话记住开关和标签(`side-panel.ts`,最近 200 个会话,删会话或工作位置时一并删),会话头部的按钮和 `⌘\` 开关,埋点 `side_panel_toggled`、`side_panel_tab_shown` |
+| 空、加载、出错、断线  | 没有公共组件:整页状态手搭 4 份(图标、标题、原话、按钮各有各的有无),文件夹和 Connectors 各有一套"加载/出错/空";"未连接 + Retry"在侧栏和主区各写一次;`hint` 一个 slot 承担空、加载、出错、状态、说明五种意思,出错时有的红有的灰;只有一处把原话等宽显示;加载只有文字没有转圈 | 一个状态块:图标 + 标题 + 说明 + 等宽原话 + 动作                           | CYCL-67:`state-block.tsx`,主区、新建会话页、会话、文件夹、Connectors、Agent defaults 已改用                                                                                                                                                    |
+| 设置表单              | 两个对话框共用 `ConfigForm`;Agent defaults 读取时什么都不显示,不是 `<form>`,文案写死                                                                                                                                                                                      | 加载态、回车提交                                                          | 加载态随 CYCL-67,文案随 CYCL-68,整页随 CYCL-78                                                                                                                                                                                                 |
+| 文案                  | i18n 棘轮的基线写着 53,实际 37(其中 7 个是误报);扫描器看不到单独成行的 JSX 文字、三元表达式里的文字和 store 里的报错                                                                                                                                                      | 约 40 处没进目录                                                          | CYCL-68:已迁完,只剩一条开发者才看得到的报错;扫描器能看到单独成行的文字和 `...Label`、`description` 属性,`--list` 列出全部                                                                                                                      |
+| 横幅 `Banner`         | 6 处重复同一结构,没有组件                                                                                                                                                                                                                                                 | 同上的状态块可以覆盖                                                      | 以后,不在这一轮                                                                                                                                                                                                                                |
 
 SDK 的几个坑(beta.6,写在这里免得再踩):
 
@@ -296,13 +373,13 @@ SDK 的几个坑(beta.6,写在这里免得再踩):
 
 ## 还没做
 
-- **plugin**(CYCL-57 之后):项目级范围(现在只装和启停用户级);运行中的会话即时生效(现在是下次启动 agent 时);来源要先运行自己命令的 plugin;plugin 自己的选项(Claude 的 `plugin configure`);环境的 Cycle 不支持 plugin 时页面仍默认打开 Plugins 分区(就地说明太旧)。真实登录只用 Linear 走通过(2026-11-23,经 daemon 和网关,不是在安装版窗口里点的),其他服务器没试。
+- **plugin**(CYCL-57 之后):项目级范围(现在只装和启停用户级);运行中的会话即时生效(现在是下次启动 agent 时);来源要先运行自己命令的 plugin;plugin 自己的选项(Claude 的 `plugin configure`);工作位置的 Cycle 不支持 plugin 时页面仍默认打开 Plugins 分区(就地说明太旧)。真实登录只用 Linear 走通过(2026-11-23,经 daemon 和网关,不是在安装版窗口里点的),其他服务器没试。
 - **远端 daemon 的升级**:应用只更新自己和自带的本地 daemon;远端的 daemon 由用户决定何时升。应用带一个 `MIN_DAEMON_VERSION`(`src/shared/release.ts`),**远端 daemon 低于它**才在标题栏下面出现一行提示和一个"Update to x.y.z"按钮;高于或等于它就不提示,即使比应用旧(多数版本只改界面,不动 daemon)。`dev`(从源码运行)和读不出版本的不提示,本地的也不提示。
   - **什么时候抬高它**:应用开始依赖旧 daemon 没有的东西(字段、方法、行为),而且不能像 `capabilities` 开关那样"没有就关掉那个功能"。发版时问一句:这次有没有这种改动。可以关掉的功能用 capabilities,不动它。门禁测试保证它是合法版本号且不晚于应用自己的版本。
-  - **按钮做什么**:确认后,应用用该环境同一个 ssh 主机(`BatchMode`,不交互)在远端运行 `daemonUpgradeCommand`(下载本版本的 tarball、校验、`install.sh`、`cycle stop`),`cycle stop` 让连接断开,重连时接上新的 daemon,已打开的会话原样保留。确认框里,如果该机器上有会话在工作,会列出它们,让人选"等它们结束再更新"(远端后台 `cycle stop --wait`)或"立即更新并中断"(`cycle stop --force`);没有在工作的就是普通的 `cycle stop`,它不会中断确认之后才开始工作的会话。见 [daemon.md](daemon.md)"停止和升级"。
+  - **按钮做什么**:确认后,应用用该工作位置同一个 ssh 主机(`BatchMode`,不交互)在远端运行 `daemonUpgradeCommand`(下载本版本的 tarball、校验、`install.sh`、`cycle stop`),`cycle stop` 让连接断开,重连时接上新的 daemon,已打开的会话原样保留。确认框里,如果该机器上有会话在工作,会列出它们,让人选"等它们结束再更新"(远端后台 `cycle stop --wait`)或"立即更新并中断"(`cycle stop --force`);没有在工作的就是普通的 `cycle stop`,它不会中断确认之后才开始工作的会话。见 [daemon.md](daemon.md)"停止和升级"。
   - **失败时**:那一行变成错误并附上同一条命令,让用户在那台机器上手动运行(远端连不上 GitHub、没有 `curl`/`sha256sum`、ssh 需要交互,都会走到这里)。第一版不做"应用下载再传过去"。
   - 按远端架构选用 Linux x64 或 ARM64 包。理由见 `.agents/notes/2026-11-19-daemon-minimum-version-and-upgrade-button.md`。
-  - **协议不兼容(与上面的最低版本不同)**:最低版本说的是"能不能用",而协议主版本不同时 daemon 在握手就以 `-32022` 拒绝,连接根本建立不起来(docs/protocol.md §3)。客户端把它保留成带 `supported`(daemon 说它支持的)和 `requested`(应用要的)的结构化错误,初次连接和重连都一样;重连时仍按退避继续试,换上兼容的 daemon 后自己连上。环境的状态里带 `incompatible`:`with` 说哪一边要改(daemon 的主版本低于应用的是 `daemon`,高于的是 `app`,比不出来是 `unknown`)。界面在那个环境下显示一行原因:`daemon` 时给出远端 Linux 上更新 daemon 的命令(本地 daemon 不给,它随应用更新);`app` 时只说要更新应用,**不**提示降级 daemon。普通的 ssh 或网络故障不带 `incompatible`,仍是连接错误和重连。连接成功后这行消失。目前两边的主版本都是 `0`,这条路径要等协议升主版本才会走到。
+  - **协议不兼容(与上面的最低版本不同)**:最低版本说的是"能不能用",而协议主版本不同时 daemon 在握手就以 `-32022` 拒绝,连接根本建立不起来(docs/protocol.md §3)。客户端把它保留成带 `supported`(daemon 说它支持的)和 `requested`(应用要的)的结构化错误,初次连接和重连都一样;重连时仍按退避继续试,换上兼容的 daemon 后自己连上。工作位置的状态里带 `incompatible`:`with` 说哪一边要改(daemon 的主版本低于应用的是 `daemon`,高于的是 `app`,比不出来是 `unknown`)。界面在那个工作位置下显示一行原因:`daemon` 时给出远端 Linux 上更新 daemon 的命令(本地 daemon 不给,它随应用更新);`app` 时只说要更新应用,**不**提示降级 daemon。普通的 ssh 或网络故障不带 `incompatible`,仍是连接错误和重连。连接成功后这行消失。目前两边的主版本都是 `0`,这条路径要等协议升主版本才会走到。
 - **会话内容的全文搜索**:⌘K 搜的是标题、文件夹、agent 和主机(跨已连接的主机)。对话内容的全文要在历史所在的 daemon 里做。
 - **图片和文件的发送只对声明了能力的 agent 开放**:附加的控件(按钮、粘贴、拖放)只在 `_cycle/agents/list` 里这个 agent 的 `promptCapabilities.image` 或 `embeddedContext` 存在时出现;只有 `image` 时只收图片(按钮叫 "Attach image"),有 `embeddedContext` 时还收文本文件和 PDF(按钮叫 "Attach files",选择框不限类型),其余文件就地拒绝并说原因(决策笔记 [`2026-11-22-attach-any-file`](../.agents/notes/2026-11-22-attach-any-file.md))。带附件支持的 daemon(decision 0010)上的 Claude 声明了;更早的 daemon 不报告,界面上就没有附加入口,不会发出 daemon 不认的内容。主进程这一段有测试(`apps/desktop/test/manager.test.ts`):能力被报告,图片块原样送达 agent,没有声明的 agent 拒绝图片。
 - **Claude 的 `config.json`**(`configDir`、密钥):没有 UI,因为它会把凭证放上线路。要在 daemon 所在机器上手改。CYCL-80 研究的结论是界面只显示状态(从不显示值)、修改仍在那台机器上做,见决定笔记 [`2026-11-22-claude-config-status-not-values`](../.agents/notes/2026-11-22-claude-config-status-not-values.md);还没有实现。

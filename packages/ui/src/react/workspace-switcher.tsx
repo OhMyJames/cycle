@@ -1,5 +1,5 @@
 // The workspace switcher: which folder the sidebar shows, and what is going on in the others. A workspace is a folder on
-// one environment (docs/desktop.md); an environment that is not this computer shows as an icon whose name says which one.
+// one location (docs/desktop.md); a location that is not this computer shows as an icon whose name says which one.
 import {
   Menu,
   MenuContent,
@@ -8,12 +8,12 @@ import {
   MenuItem,
   MenuTrigger,
 } from "@ui-sdk/react/menu";
-import type { EnvironmentConfig, EnvironmentStatus } from "../api.ts";
+import type { LocationConfig, LocationStatus } from "../api.ts";
 import type { Translator } from "../i18n.ts";
 import { type Counts, type Elsewhere, URGENCY, urgent, type Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronDownIcon, ServerIcon } from "./icons.tsx";
-import { ENVIRONMENT_STATE, MARK_WORD, StatusDot } from "./status.tsx";
+import { LOCATION_STATE, MARK_WORD, StatusDot } from "./status.tsx";
 
 const ELSEWHERE = {
   "needs-you": "workspace.elsewhere.needsYou",
@@ -47,10 +47,10 @@ function Badge({ counts }: { counts: Counts }) {
   );
 }
 
-/** Says a workspace is on another environment, with which, and how it is connected: for the eye and for the reader. */
-export function Remote({ environment, state }: { environment: EnvironmentConfig; state: string }) {
+/** Says a workspace is on another location, with which, and how it is connected: for the eye and for the reader. */
+export function Remote({ location, state }: { location: LocationConfig; state: string }) {
   const { t } = useI18n();
-  const tip = t("workspace.onState", { environment: environment.name, state });
+  const tip = t("workspace.onState", { location: location.name, state });
   return (
     <span data-slot="remote" role="img" aria-label={tip} title={tip}>
       <ServerIcon size={14} />
@@ -62,33 +62,33 @@ export type WorkspaceSwitcherProps = {
   workspaces: readonly Workspace[];
   current: Workspace | undefined;
   elsewhere: Elsewhere;
-  environments: readonly EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
+  locations: readonly LocationConfig[];
+  status: Record<string, LocationStatus>;
   onChoose: (workspaceKey: string) => void;
 };
 
 export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
   const { t } = useI18n();
-  const { workspaces, current, environments, status } = props;
-  const environmentOf = (id: string) => environments.find((h) => h.id === id);
-  const stateOf = (id: string) => ENVIRONMENT_STATE[status[id]?.state ?? "closed"];
+  const { workspaces, current, locations, status } = props;
+  const locationOf = (id: string) => locations.find((h) => h.id === id);
+  const stateOf = (id: string) => LOCATION_STATE[status[id]?.state ?? "closed"];
   const away = (id: string) => (status[id]?.state ?? "closed") !== "connected";
   const remote = (id: string) => {
-    const environment = environmentOf(id);
-    return environment !== undefined && environment.kind !== "local" ? environment : undefined;
+    const location = locationOf(id);
+    return location !== undefined && location.kind !== "local" ? location : undefined;
   };
   const elsewhere = elsewhereText(t, props.elsewhere.counts);
-  const several = new Set(workspaces.map((w) => w.environmentId)).size > 1;
-  const groups = [...new Set(workspaces.map((w) => w.environmentId))].map((environmentId) => ({
-    environmentId,
-    items: workspaces.filter((w) => w.environmentId === environmentId),
+  const several = new Set(workspaces.map((w) => w.locationId)).size > 1;
+  const groups = [...new Set(workspaces.map((w) => w.locationId))].map((locationId) => ({
+    locationId,
+    items: workspaces.filter((w) => w.locationId === locationId),
   }));
   const item = (w: Workspace) => {
-    const environment = remote(w.environmentId);
+    const location = remote(w.locationId);
     return (
-      <MenuItem key={w.key} value={w.key} data-away={away(w.environmentId) || undefined}>
-        {environment !== undefined ? (
-          <Remote environment={environment} state={t(stateOf(w.environmentId).word)} />
+      <MenuItem key={w.key} value={w.key} data-away={away(w.locationId) || undefined}>
+        {location !== undefined ? (
+          <Remote location={location} state={t(stateOf(w.locationId).word)} />
         ) : null}
         <span data-slot="workspace-name">{w.name}</span>
         <Badge counts={w.counts} />
@@ -102,20 +102,20 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
       </span>
     );
   }
-  const environment = remote(current.environmentId);
+  const location = remote(current.locationId);
   return (
     <Menu onAction={(value) => props.onChoose(String(value))}>
       <MenuTrigger
         data-variant="ghost"
         data-kind="workspace-switcher"
-        data-away={away(current.environmentId) || undefined}
+        data-away={away(current.locationId) || undefined}
         aria-label={[t("workspace.switch"), current.name, elsewhere]
           .filter((s) => s !== "")
           .join(". ")}
         title={t("workspace.switch")}
       >
-        {environment !== undefined ? (
-          <Remote environment={environment} state={t(stateOf(current.environmentId).word)} />
+        {location !== undefined ? (
+          <Remote location={location} state={t(stateOf(current.locationId).word)} />
         ) : null}
         <span data-slot="workspace-name">{current.name}</span>
         <Badge counts={props.elsewhere.counts} />
@@ -124,12 +124,12 @@ export function WorkspaceSwitcher(props: WorkspaceSwitcherProps) {
       <MenuContent>
         {several
           ? groups.map((g) => {
-              const how = stateOf(g.environmentId);
+              const how = stateOf(g.locationId);
               return (
-                <MenuGroup key={g.environmentId}>
+                <MenuGroup key={g.locationId}>
                   <MenuGroupLabel>
                     <StatusDot tone={how.tone} shape={how.shape} />
-                    {environmentOf(g.environmentId)?.name ?? g.environmentId} · {t(how.word)}
+                    {locationOf(g.locationId)?.name ?? g.locationId} · {t(how.word)}
                   </MenuGroupLabel>
                   {g.items.map(item)}
                 </MenuGroup>

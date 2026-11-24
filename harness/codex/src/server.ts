@@ -4,6 +4,11 @@ import { CODEX_VERSION, codexAppServerArgs } from "./protocol.ts";
 
 export type AdapterConfig = {
   env: Record<string, string>;
+  /**
+   * The session's environment variables (docs/protocol.md §6 "环境"), for the commands the agent runs. Never the agent's
+   * own settings: those are in `env`, the app-server's own, which these never reach: they go to its commands only.
+   */
+  sessionEnv?: Record<string, string>;
   codexExecutable: string;
   /** The app-server ended while its session was open: nothing more can be done with this adapter. */
   onServerExit?: () => void;

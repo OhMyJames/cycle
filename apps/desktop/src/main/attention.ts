@@ -60,7 +60,7 @@ export const notifyAttention = (deps: AttentionDeps) => (notice: AttentionNotice
   const notification = deps.create({
     title: titleOf(notice),
     // Which machine, when it is not this one: the same title may be on two.
-    ...(notice.environmentId === "local" ? {} : { subtitle: notice.environmentName }),
+    ...(notice.locationId === "local" ? {} : { subtitle: notice.locationName }),
     body: deps.translator().t(`attention.${notice.kind}`),
   });
   shown.add(notification);
@@ -77,7 +77,7 @@ export const notifyAttention = (deps: AttentionDeps) => (notice: AttentionNotice
     deps.activate();
     deps.emit({
       type: "focus-session",
-      environmentId: notice.environmentId,
+      locationId: notice.locationId,
       sessionId: notice.session.sessionId,
     });
   });

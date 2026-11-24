@@ -9,12 +9,12 @@ import {
   CommandList,
 } from "@ui-sdk/react/command";
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@ui-sdk/react/dialog";
-import type { AgentInfo, EnvironmentConfig, EnvironmentStatus, SessionSummary } from "../api.ts";
+import type { AgentInfo, LocationConfig, LocationStatus, SessionSummary } from "../api.ts";
 import { agentLabel, markOf, workspacesOf } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
 import { PlusIcon, SearchIcon } from "./icons.tsx";
 import { sessionTitle } from "./sidebar.tsx";
-import { ENVIRONMENT_STATE, MARK_STYLE, MARK_WORD, StatusDot } from "./status.tsx";
+import { LOCATION_STATE, MARK_STYLE, MARK_WORD, StatusDot } from "./status.tsx";
 import { Remote } from "./workspace-switcher.tsx";
 
 const NEW_SESSION = "action:new-session";
@@ -22,18 +22,18 @@ const NEW_SESSION = "action:new-session";
 export type SearchDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
   sessions: Record<string, SessionSummary[]>;
-  /** Each environment's agents, to say which a session is of where there is more than one. */
+  /** Each location's agents, to say which a session is of where there is more than one. */
   agents: Record<string, AgentInfo[]>;
-  onPick: (environmentId: string, sessionId: string) => void;
+  onPick: (locationId: string, sessionId: string) => void;
   onNewSession: () => void;
 };
 
 /**
- * Finds a session on any environment the app has read: by what the person remembers of it, which is what each row shows
- * (its title, its folder, its agent, its environment). The text of a conversation is not searched: the app holds only what it has
+ * Finds a session on any location the app has read: by what the person remembers of it, which is what each row shows
+ * (its title, its folder, its agent, its location). The text of a conversation is not searched: the app holds only what it has
  * opened, and a search of everything has to be done where the history is (the daemon).
  */
 export function SearchDialog(props: SearchDialogProps) {
@@ -48,14 +48,14 @@ export function SearchDialog(props: SearchDialogProps) {
       </Dialog>
     );
   }
-  // The sessions are found by workspace: a folder on one environment, as the switcher has them.
+  // The sessions are found by workspace: a folder on one location, as the switcher has them.
   const away = new Set(
-    props.environments.filter((e) => props.status[e.id]?.state !== "connected").map((e) => e.id),
+    props.locations.filter((e) => props.status[e.id]?.state !== "connected").map((e) => e.id),
   );
   const workspaces = workspacesOf(
-    props.environments.flatMap((e) => props.sessions[e.id] ?? []),
+    props.locations.flatMap((e) => props.sessions[e.id] ?? []),
     {
-      environments: props.environments.map((e) => ({
+      locations: props.locations.map((e) => ({
         id: e.id,
         name: e.name,
         local: e.kind === "local",
@@ -65,15 +65,14 @@ export function SearchDialog(props: SearchDialogProps) {
     },
   );
   // A row's value names it; what it stands for is looked up, not parsed out of the text (an id may hold any character).
-  const rowValue = (environmentId: string, sessionId: string) =>
-    `session:${environmentId}/${sessionId}`;
-  const rows = new Map<string, { environmentId: string; sessionId: string }>();
+  const rowValue = (locationId: string, sessionId: string) => `session:${locationId}/${sessionId}`;
+  const rows = new Map<string, { locationId: string; sessionId: string }>();
   for (const session of workspaces.flatMap((w) => w.sessions))
-    rows.set(rowValue(session.environmentId, session.sessionId), {
-      environmentId: session.environmentId,
+    rows.set(rowValue(session.locationId, session.sessionId), {
+      locationId: session.locationId,
       sessionId: session.sessionId,
     });
-  const canCreate = props.environments.some((h) => props.status[h.id]?.state === "connected");
+  const canCreate = props.locations.some((h) => props.status[h.id]?.state === "connected");
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogBackdrop />
@@ -84,7 +83,7 @@ export function SearchDialog(props: SearchDialogProps) {
             props.onOpenChange(false);
             if (value === NEW_SESSION) return props.onNewSession();
             const row = rows.get(value);
-            if (row !== undefined) props.onPick(row.environmentId, row.sessionId);
+            if (row !== undefined) props.onPick(row.locationId, row.sessionId);
           }}
         >
           <div data-slot="row">
@@ -94,16 +93,14 @@ export function SearchDialog(props: SearchDialogProps) {
           <CommandEmpty>{t("search.empty")}</CommandEmpty>
           <CommandList>
             {workspaces.map((workspace) => {
-              const environment = props.environments.find((e) => e.id === workspace.environmentId);
+              const location = props.locations.find((e) => e.id === workspace.locationId);
               return (
                 <CommandGroup key={workspace.key}>
                   <CommandGroupLabel>
-                    {environment !== undefined && environment.kind !== "local" ? (
+                    {location !== undefined && location.kind !== "local" ? (
                       <Remote
-                        environment={environment}
-                        state={t(
-                          ENVIRONMENT_STATE[props.status[environment.id]?.state ?? "closed"].word,
-                        )}
+                        location={location}
+                        state={t(LOCATION_STATE[props.status[location.id]?.state ?? "closed"].word)}
                       />
                     ) : null}
                     {workspace.name}
@@ -111,17 +108,17 @@ export function SearchDialog(props: SearchDialogProps) {
                   {workspace.sessions.map((session) => {
                     const mark = markOf(session, away);
                     const style = mark !== undefined ? MARK_STYLE[mark] : undefined;
-                    const agent = agentLabel(props.agents[session.environmentId], session.agent);
+                    const agent = agentLabel(props.agents[session.locationId], session.agent);
                     return (
                       <CommandItem
-                        key={rowValue(session.environmentId, session.sessionId)}
-                        value={rowValue(session.environmentId, session.sessionId)}
+                        key={rowValue(session.locationId, session.sessionId)}
+                        value={rowValue(session.locationId, session.sessionId)}
                         keywords={[
                           workspace.name,
                           workspace.cwd,
                           session.agent,
                           agent ?? "",
-                          environment?.name ?? "",
+                          location?.name ?? "",
                         ]}
                       >
                         <CommandItemIcon>

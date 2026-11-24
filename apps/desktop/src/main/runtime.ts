@@ -1,18 +1,21 @@
-// The connections to daemons: the environments there are, connecting to each, its status, and updating its daemon.
+// The connections to daemons: the locations there are, connecting to each, its status, and updating its daemon.
 // What a connection holds of its sessions is the watcher's (watcher.ts) and the pending store's (pending.ts); this
 // file only builds the connection and hands their events to them (RuntimeHooks).
 import { type AgentWord, agentOf, type EventName, type EventProps } from "@cycle/analytics/events";
 import { type Channel, type ClientEvents, CycleClient, ProtocolMismatchError } from "@cycle/client";
-import type { AppEvent, EnvironmentConfig, EnvironmentStatus, SessionSummary } from "@cycle/ui";
+import type { AppEvent, LocationConfig, LocationStatus, SessionSummary } from "@cycle/ui";
 import { type DaemonStop, daemonTooOld, daemonUpgradeCommand } from "../shared/release.ts";
 import type { OpenBrowser } from "./connector-auth.ts";
-import { environmentOf, LOCAL_ENVIRONMENT, type Settings } from "./settings.ts";
+import type { EnvironmentStore } from "./environments.ts";
+import { LOCAL_LOCATION, locationOf, type Settings } from "./settings.ts";
 import type { AttentionNotice, Watched } from "./watcher.ts";
 
 export type ManagerOptions = {
   settings: Settings;
-  /** How to reach an environment. The one place that knows about ssh, a local proxy, or a test socket. */
-  channelFor: (environment: EnvironmentConfig) => () => Promise<Channel>;
+  /** Where the environments are kept (`environments.json`). Without it, they last for this run. */
+  environments?: EnvironmentStore;
+  /** How to reach a location. The one place that knows about ssh, a local proxy, or a test socket. */
+  channelFor: (location: LocationConfig) => () => Promise<Channel>;
   emit: (event: AppEvent) => void;
   chooseDirectory?: () => Promise<string | undefined>;
   /** Shows a local file in the OS file manager (`shell.showItemInFolder`). */
@@ -23,10 +26,10 @@ export type ManagerOptions = {
   /** The Cycle protocol version asked of a daemon. Default: this build's. Another is for tests. */
   protocolVersion?: string;
   /**
-   * Runs a shell command on the machine of a remote environment (over its ssh) and resolves when it succeeded; rejects
+   * Runs a shell command on the machine of a remote location (over its ssh) and resolves when it succeeded; rejects
    * with what went wrong. Without it, a daemon cannot be updated from the app, only by hand.
    */
-  runOnHost?: (environment: EnvironmentConfig, command: string) => Promise<void>;
+  runOnHost?: (location: LocationConfig, command: string) => Promise<void>;
   /** How long after a daemon update to wait for the connection to drop and come back before giving up on it (ms). */
   settle?: number;
   /** A session changed in a way worth telling (it asks, it is done, its agent is gone). Without it, nothing is said. */
@@ -49,7 +52,7 @@ export type Tracker = <N extends EventName>(name: N, props: EventProps<N>) => vo
 
 export type Connection = {
   client: CycleClient;
-  status: EnvironmentStatus;
+  status: LocationStatus;
   sessions: SessionSummary[];
   watched: Map<string, Watched>;
   opening: Map<string, Promise<void>>;
@@ -75,10 +78,10 @@ export type SessionEvents = Pick<
 
 /** What the runtime asks of the parts that hold a connection's sessions. */
 export type RuntimeHooks = {
-  sessionEvents: (environmentId: string, connection: Connection) => SessionEvents;
+  sessionEvents: (locationId: string, connection: Connection) => SessionEvents;
   /** Reads the session list again. `afterOutage`: the connection was away (see SessionWatcher.refresh). */
   refresh: (
-    environmentId: string,
+    locationId: string,
     connection: Connection,
     afterOutage?: boolean,
   ) => Promise<SessionSummary[]>;
@@ -88,11 +91,11 @@ export type RuntimeHooks = {
   dropped: (connection: Connection, cancel: boolean) => void;
   /** A sign-in flow this connection started ended (`_cycle/agent_auth_completed`). */
   authCompleted: (
-    environmentId: string,
+    locationId: string,
     completed: Parameters<NonNullable<ClientEvents["agentAuthCompleted"]>>[0],
   ) => void;
-  /** The environment's connection dropped or closed: the sign-in flows on it end. */
-  authLost: (environmentId: string) => void;
+  /** The location's connection dropped or closed: the sign-in flows on it end. */
+  authLost: (locationId: string) => void;
 };
 
 type Upgrade = { running: true } | { error: string } | { waiting: true };
@@ -106,15 +109,15 @@ const whenOf = (stop: DaemonStop): "idle" | "now" | "later" => (stop === "ask" ?
 export class Runtime {
   readonly options: ManagerOptions;
   readonly #hooks: RuntimeHooks;
-  #environments: EnvironmentConfig[] = [LOCAL_ENVIRONMENT];
-  /** Environments whose daemon is being updated from here, and the last one's failure. */
+  #locations: LocationConfig[] = [LOCAL_LOCATION];
+  /** Locations whose daemon is being updated from here, and the last one's failure. */
   readonly #upgrading = new Map<string, Upgrade>();
   readonly #connections = new Map<string, Connection>();
-  /** The last list read from each environment, kept when its connection goes: what the interface greys out. */
+  /** The last list read from each location, kept when its connection goes: what the interface greys out. */
   readonly #lastSessions = new Map<string, SessionSummary[]>();
-  /** Why the last attempt to connect to an environment failed, for a renderer that asks after the event went by. */
+  /** Why the last attempt to connect to a location failed, for a renderer that asks after the event went by. */
   readonly #lastError = new Map<string, string>();
-  readonly #lastIncompatible = new Map<string, NonNullable<EnvironmentStatus["incompatible"]>>();
+  readonly #lastIncompatible = new Map<string, NonNullable<LocationStatus["incompatible"]>>();
 
   constructor(options: ManagerOptions, hooks: RuntimeHooks) {
     this.options = options;
@@ -122,7 +125,7 @@ export class Runtime {
   }
 
   async init(): Promise<void> {
-    this.#environments = await this.options.settings.load();
+    this.#locations = await this.options.settings.load();
   }
 
   track: Tracker = (name, props) => this.options.track?.(name, props);
@@ -131,40 +134,40 @@ export class Runtime {
     this.options.emit(event);
   }
 
-  kindOf(environmentId: string): "local" | "remote" {
-    return this.#environments.find((e) => e.id === environmentId)?.kind ?? "remote";
+  kindOf(locationId: string): "local" | "remote" {
+    return this.#locations.find((e) => e.id === locationId)?.kind ?? "remote";
   }
 
-  nameOf(environmentId: string): string {
-    return this.#environments.find((h) => h.id === environmentId)?.name ?? environmentId;
+  nameOf(locationId: string): string {
+    return this.#locations.find((h) => h.id === locationId)?.name ?? locationId;
   }
 
   /** The agent of a session, as one of the words the dictionary has. */
-  agentOf(environmentId: string, sessionId: string): AgentWord {
-    const connection = this.#connections.get(environmentId);
+  agentOf(locationId: string, sessionId: string): AgentWord {
+    const connection = this.#connections.get(locationId);
     const row = connection?.sessions.find((s) => s.sessionId === sessionId);
     return agentOf(row?.agent ?? connection?.madeAgent.get(sessionId) ?? "");
   }
 
-  connection(environmentId: string): Connection {
-    const connection = this.#connections.get(environmentId);
-    if (connection === undefined) throw new Error("Not connected to that environment");
+  connection(locationId: string): Connection {
+    const connection = this.#connections.get(locationId);
+    if (connection === undefined) throw new Error("Not connected to that location");
     return connection;
   }
 
-  /** Whether `connection` is still the one of its environment: not closed, removed or replaced since. */
-  isCurrent(environmentId: string, connection: Connection): boolean {
-    return this.#connections.get(environmentId) === connection;
+  /** Whether `connection` is still the one of its location: not closed, removed or replaced since. */
+  isCurrent(locationId: string, connection: Connection): boolean {
+    return this.#connections.get(locationId) === connection;
   }
 
-  /** Whether a list has been read from the environment, on this connection or one before. */
-  hasListed(environmentId: string): boolean {
-    return this.#lastSessions.has(environmentId);
+  /** Whether a list has been read from the location, on this connection or one before. */
+  hasListed(locationId: string): boolean {
+    return this.#lastSessions.has(locationId);
   }
 
-  /** The list just read from the environment, kept for when its connection goes. */
-  keepSessions(environmentId: string, sessions: SessionSummary[]): void {
-    this.#lastSessions.set(environmentId, sessions);
+  /** The list just read from the location, kept for when its connection goes. */
+  keepSessions(locationId: string, sessions: SessionSummary[]): void {
+    this.#lastSessions.set(locationId, sessions);
   }
 
   async close(): Promise<void> {
@@ -175,16 +178,16 @@ export class Runtime {
     this.#connections.clear();
   }
 
-  /** The environments, the status of each, and the last list read from each. */
+  /** The locations, the status of each, and the last list read from each. */
   snapshot() {
     return {
-      environments: this.#environments,
-      status: this.#environments.map((environment): EnvironmentStatus => {
-        const error = this.#lastError.get(environment.id);
-        const incompatible = this.#lastIncompatible.get(environment.id);
+      locations: this.#locations,
+      status: this.#locations.map((location): LocationStatus => {
+        const error = this.#lastError.get(location.id);
+        const incompatible = this.#lastIncompatible.get(location.id);
         return (
-          this.#connections.get(environment.id)?.status ?? {
-            environmentId: environment.id,
+          this.#connections.get(location.id)?.status ?? {
+            locationId: location.id,
             state: "closed",
             ...(error !== undefined ? { error } : {}),
             ...(incompatible !== undefined ? { incompatible } : {}),
@@ -196,15 +199,15 @@ export class Runtime {
   }
 
   /**
-   * Connects to every environment, each on its own: one that cannot be reached is closed, with why, and the others
-   * are not held up by it. What is wrong with an environment is in its status; nothing is thrown.
+   * Connects to every location, each on its own: one that cannot be reached is closed, with why, and the others
+   * are not held up by it. What is wrong with a location is in its status; nothing is thrown.
    */
   async connectAll(): Promise<void> {
-    await Promise.allSettled(this.#environments.map((environment) => this.connect(environment.id)));
+    await Promise.allSettled(this.#locations.map((location) => this.connect(location.id)));
   }
 
   /**
-   * Changes to the list of environments go one at a time: each reads the list as the one before left
+   * Changes to the list of locations go one at a time: each reads the list as the one before left
    * it, so two saves at once keep both, and a save and a removal keep what each meant.
    */
   #editing: Promise<unknown> = Promise.resolve();
@@ -214,56 +217,53 @@ export class Runtime {
     return run;
   }
 
-  async saveEnvironment(environment: EnvironmentConfig): Promise<void> {
-    if (environment.id === LOCAL_ENVIRONMENT.id)
-      throw new Error("The local daemon cannot be changed");
-    // What the page sends is not trusted: it is read as the file is, so what is not an environment this app can reach
+  async saveLocation(location: LocationConfig): Promise<void> {
+    if (location.id === LOCAL_LOCATION.id) throw new Error("The local daemon cannot be changed");
+    // What the page sends is not trusted: it is read as the file is, so what is not a location this app can reach
     // (an address ssh would read as an option, a shape it does not know) is refused, and what is kept is what was read.
-    const checked = environmentOf(environment);
-    if (checked === undefined)
-      throw new Error("That is not an environment this app can connect to");
+    const checked = locationOf(location);
+    if (checked === undefined) throw new Error("That is not a location this app can connect to");
     await this.#edit(async () => {
-      const next = [...this.#environments.filter((h) => h.id !== checked.id), checked];
+      const next = [...this.#locations.filter((h) => h.id !== checked.id), checked];
       // The list changes once it is kept: a save that fails leaves things as they were.
       await this.options.settings.save(next);
-      this.#environments = next;
-      // What it was refused for belongs to the host it was: a changed environment has not been tried yet.
+      this.#locations = next;
+      // What it was refused for belongs to the host it was: a changed location has not been tried yet.
       this.#lastIncompatible.delete(checked.id);
-      this.emit({ type: "environments", environments: this.#environments });
+      this.emit({ type: "locations", locations: this.#locations });
     });
-    this.track("environment_saved", { transport: "ssh" });
+    this.track("location_saved", { transport: "ssh" });
   }
 
-  async removeEnvironment(environmentId: string): Promise<void> {
-    if (environmentId === LOCAL_ENVIRONMENT.id)
-      throw new Error("The local daemon cannot be removed");
+  async removeLocation(locationId: string): Promise<void> {
+    if (locationId === LOCAL_LOCATION.id) throw new Error("The local daemon cannot be removed");
     // All of it in turn, the disconnecting too: a connect that comes while a removal waits its turn
-    // finds the environment still listed, and the removal then closes what it opened.
+    // finds the location still listed, and the removal then closes what it opened.
     let kind: "local" | "remote" = "remote";
     await this.#edit(async () => {
-      kind = this.kindOf(environmentId);
-      await this.disconnect(environmentId);
-      this.#lastSessions.delete(environmentId);
-      this.#lastError.delete(environmentId);
-      this.#lastIncompatible.delete(environmentId);
-      const next = this.#environments.filter((h) => h.id !== environmentId);
+      kind = this.kindOf(locationId);
+      await this.disconnect(locationId);
+      this.#lastSessions.delete(locationId);
+      this.#lastError.delete(locationId);
+      this.#lastIncompatible.delete(locationId);
+      const next = this.#locations.filter((h) => h.id !== locationId);
       await this.options.settings.save(next);
-      this.#environments = next;
-      this.emit({ type: "environments", environments: this.#environments });
+      this.#locations = next;
+      this.emit({ type: "locations", locations: this.#locations });
     });
-    this.track("environment_removed", { kind });
+    this.track("location_removed", { kind });
   }
 
-  async connect(environmentId: string): Promise<void> {
-    const existing = this.#connections.get(environmentId);
+  async connect(locationId: string): Promise<void> {
+    const existing = this.#connections.get(locationId);
     if (existing && existing.status.state !== "closed") return;
     if (existing !== undefined) this.#hooks.dropped(existing, false);
-    const environment = this.#environments.find((h) => h.id === environmentId);
-    if (environment === undefined) throw new Error(`No such environment: ${environmentId}`);
+    const location = this.#locations.find((h) => h.id === locationId);
+    if (location === undefined) throw new Error(`No such location: ${locationId}`);
 
     const connection: Connection = {
       client: undefined as unknown as CycleClient,
-      status: { environmentId, state: "connecting" },
+      status: { locationId, state: "connecting" },
       sessions: [],
       watched: new Map(),
       opening: new Map(),
@@ -274,7 +274,7 @@ export class Runtime {
       applied: 0,
     };
     connection.client = new CycleClient({
-      connect: this.options.channelFor(environment),
+      connect: this.options.channelFor(location),
       name: "cycle-desktop",
       ackReturns: true,
       ...(this.options.protocolVersion !== undefined
@@ -282,37 +282,35 @@ export class Runtime {
         : {}),
       ...(this.options.backoff !== undefined ? { backoff: this.options.backoff } : {}),
       events: {
-        ...this.#hooks.sessionEvents(environmentId, connection),
-        listChanged: () =>
-          void this.#hooks.refresh(environmentId, connection).catch(() => undefined),
-        defaultsChanged: (agent) => this.emit({ type: "agent-defaults", environmentId, agent }),
+        ...this.#hooks.sessionEvents(locationId, connection),
+        listChanged: () => void this.#hooks.refresh(locationId, connection).catch(() => undefined),
+        defaultsChanged: (agent) => this.emit({ type: "agent-defaults", locationId, agent }),
         agentSetupChanged: (agent, revision) =>
           this.emit({
             type: "agent-setup-changed",
-            environmentId,
+            locationId,
             agent,
             ...(revision !== undefined ? { revision } : {}),
           }),
-        agentAuthCompleted: (completed) => this.#hooks.authCompleted(environmentId, completed),
-        connectorsChanged: () => this.emit({ type: "connectors", environmentId }),
-        pluginsChanged: (agentId) => this.emit({ type: "plugins", environmentId, agentId }),
-        planUsage: (agent, usage) => this.emit({ type: "plan-usage", environmentId, agent, usage }),
+        agentAuthCompleted: (completed) => this.#hooks.authCompleted(locationId, completed),
+        connectorsChanged: () => this.emit({ type: "connectors", locationId }),
+        pluginsChanged: (agentId) => this.emit({ type: "plugins", locationId, agentId }),
+        planUsage: (agent, usage) => this.emit({ type: "plan-usage", locationId, agent, usage }),
         terminalsChanged: (sessionId, terminals) =>
-          this.emit({ type: "terminals", environmentId, sessionId, terminals }),
-        terminalOutput: (output) =>
-          this.emit({ type: "terminal-output", environmentId, ...output }),
-        terminalReset: (reset) => this.emit({ type: "terminal-reset", environmentId, ...reset }),
+          this.emit({ type: "terminals", locationId, sessionId, terminals }),
+        terminalOutput: (output) => this.emit({ type: "terminal-output", locationId, ...output }),
+        terminalReset: (reset) => this.emit({ type: "terminal-reset", locationId, ...reset }),
         connection: (state, error) => {
           // A connection that came back asks for the list again: it may have changed while away.
           const was = connection.status.state;
           if (state === was && error === undefined) return;
-          const incompatible = this.#incompatibleOf(error, environment);
+          const incompatible = this.#incompatibleOf(error, location);
           connection.status = {
-            environmentId,
+            locationId,
             state,
             ...(error !== undefined ? { error: messageOf(error) } : {}),
             ...(incompatible !== undefined ? { incompatible } : {}),
-            ...(state === "connected" ? this.#daemonOf(environment, connection.client) : {}),
+            ...(state === "connected" ? this.#daemonOf(location, connection.client) : {}),
             // What the daemon can do is known from the connection it said it on: a drop that comes back to the same
             // daemon does not take it away, or the box would stop queueing for as long as the line is down.
             ...(state === "connected"
@@ -321,54 +319,54 @@ export class Runtime {
                 ? { capabilities: connection.status.capabilities }
                 : {}),
           };
-          this.emit({ type: "environment-status", ...connection.status });
+          this.emit({ type: "location-status", ...connection.status });
           if (state !== "connecting")
-            this.track("environment_connection", { kind: this.kindOf(environmentId), state });
+            this.track("location_connection", { kind: this.kindOf(locationId), state });
           if (state === "reconnecting") this.#hooks.lost(connection);
-          if (state === "reconnecting" || state === "closed") this.#hooks.authLost(environmentId);
+          if (state === "reconnecting" || state === "closed") this.#hooks.authLost(locationId);
           if (state === "connected" && was === "reconnecting") {
-            void this.#hooks.refresh(environmentId, connection, true).catch(() => undefined);
+            void this.#hooks.refresh(locationId, connection, true).catch(() => undefined);
           }
         },
       },
     });
-    this.#connections.set(environmentId, connection);
-    this.emit({ type: "environment-status", ...connection.status });
+    this.#connections.set(locationId, connection);
+    this.emit({ type: "location-status", ...connection.status });
     try {
       await connection.client.start();
     } catch (error) {
       // Removed or replaced while it was starting: what is there now is not this attempt's to change.
-      if (!this.isCurrent(environmentId, connection)) throw error;
-      this.#connections.delete(environmentId);
+      if (!this.isCurrent(locationId, connection)) throw error;
+      this.#connections.delete(locationId);
       this.#hooks.dropped(connection, false);
-      this.#lastError.set(environmentId, messageOf(error));
-      const incompatible = this.#incompatibleOf(error, environment);
-      if (incompatible !== undefined) this.#lastIncompatible.set(environmentId, incompatible);
-      else this.#lastIncompatible.delete(environmentId);
+      this.#lastError.set(locationId, messageOf(error));
+      const incompatible = this.#incompatibleOf(error, location);
+      if (incompatible !== undefined) this.#lastIncompatible.set(locationId, incompatible);
+      else this.#lastIncompatible.delete(locationId);
       this.emit({
-        type: "environment-status",
-        environmentId,
+        type: "location-status",
+        locationId,
         state: "closed",
         error: messageOf(error),
         ...(incompatible !== undefined ? { incompatible } : {}),
       });
       throw error;
     }
-    this.#lastError.delete(environmentId);
-    this.#lastIncompatible.delete(environmentId);
+    this.#lastError.delete(locationId);
+    this.#lastIncompatible.delete(locationId);
     try {
-      await this.#hooks.refresh(environmentId, connection);
+      await this.#hooks.refresh(locationId, connection);
     } catch (error) {
       // A daemon that answers but cannot list is not usable: say so, instead of sitting connected with no list.
-      const current = this.isCurrent(environmentId, connection);
-      if (current) this.#connections.delete(environmentId);
+      const current = this.isCurrent(locationId, connection);
+      if (current) this.#connections.delete(locationId);
       this.#hooks.dropped(connection, false);
       await connection.client.close().catch(() => undefined);
       if (!current) throw error;
-      this.#lastError.set(environmentId, messageOf(error));
+      this.#lastError.set(locationId, messageOf(error));
       this.emit({
-        type: "environment-status",
-        environmentId,
+        type: "location-status",
+        locationId,
         state: "closed",
         error: messageOf(error),
       });
@@ -383,8 +381,8 @@ export class Runtime {
    */
   #incompatibleOf(
     error: unknown,
-    environment: EnvironmentConfig,
-  ): EnvironmentStatus["incompatible"] | undefined {
+    location: LocationConfig,
+  ): LocationStatus["incompatible"] | undefined {
     if (!(error instanceof ProtocolMismatchError)) return undefined;
     const major = (version: string) => Number.parseInt(version.split(".")[0] ?? "", 10);
     const theirs = Math.max(...error.supported.map(major));
@@ -400,24 +398,21 @@ export class Runtime {
       with: side,
       supported: error.supported,
       requested: error.requested,
-      ...(side === "daemon" && environment.kind !== "local" && appVersion !== undefined
+      ...(side === "daemon" && location.kind !== "local" && appVersion !== undefined
         ? { command: daemonUpgradeCommand(appVersion) }
         : {}),
     };
   }
 
-  /** What a connected remote environment's daemon is, and whether it is too old for this app to work with. */
-  #daemonOf(
-    environment: EnvironmentConfig,
-    client: CycleClient,
-  ): Pick<EnvironmentStatus, "daemon"> {
+  /** What a connected remote location's daemon is, and whether it is too old for this app to work with. */
+  #daemonOf(location: LocationConfig, client: CycleClient): Pick<LocationStatus, "daemon"> {
     const version = client.serverVersion;
-    if (environment.kind === "local" || version === undefined) return {};
+    if (location.kind === "local" || version === undefined) return {};
     const { appVersion } = this.options;
     const old = appVersion !== undefined && daemonTooOld(version);
     // A daemon that is no longer too old has been updated: what was said about the update is done with.
-    if (!old) this.#upgrading.delete(environment.id);
-    const doing = this.#upgrading.get(environment.id);
+    if (!old) this.#upgrading.delete(location.id);
+    const doing = this.#upgrading.get(location.id);
     return {
       daemon: {
         version,
@@ -435,7 +430,7 @@ export class Runtime {
   }
 
   /**
-   * Updates the daemon of a remote environment by running the command on its machine. The command stops the old daemon,
+   * Updates the daemon of a remote location by running the command on its machine. The command stops the old daemon,
    * so the connection drops and comes back to the new one by itself (what is open stays open). A failure is said in the
    * status, with the command left there to run by hand.
    *
@@ -443,34 +438,34 @@ export class Runtime {
    * them, `later` installs now and stops the old daemon once nothing is working, which the status says until then.
    * Without it nothing was working, and the stop refuses if something has started since.
    */
-  async upgradeDaemon(environmentId: string, when?: unknown): Promise<void> {
+  async upgradeDaemon(locationId: string, when?: unknown): Promise<void> {
     // From the page: only the words it may send.
     const stop: DaemonStop = when === "now" || when === "later" ? when : "ask";
-    const connection = this.#connections.get(environmentId);
-    const environment = this.#environments.find((e) => e.id === environmentId);
+    const connection = this.#connections.get(locationId);
+    const location = this.#locations.find((e) => e.id === locationId);
     const { runOnHost } = this.options;
     const upgrade = connection?.status.daemon?.upgrade;
-    if (connection === undefined || environment === undefined || upgrade === undefined) return;
+    if (connection === undefined || location === undefined || upgrade === undefined) return;
     // Only an update that is running holds a click back. After a failure the person tries again (the plain stop
     // refuses when sessions started working since, and they then choose); while it waits for the sessions, what is
     // left to choose is to interrupt them.
-    const doing = this.#upgrading.get(environmentId);
+    const doing = this.#upgrading.get(locationId);
     if (runOnHost === undefined || (doing !== undefined && "running" in doing)) return;
     if (doing !== undefined && "waiting" in doing && stop !== "now") return;
     // Kept here and not in the status, which every change of the connection builds anew.
     const say = (now: Upgrade | undefined) => {
-      if (now === undefined) this.#upgrading.delete(environmentId);
-      else this.#upgrading.set(environmentId, now);
-      if (!this.isCurrent(environmentId, connection)) return;
+      if (now === undefined) this.#upgrading.delete(locationId);
+      else this.#upgrading.set(locationId, now);
+      if (!this.isCurrent(locationId, connection)) return;
       connection.status = {
         ...connection.status,
-        ...this.#daemonOf(environment, connection.client),
+        ...this.#daemonOf(location, connection.client),
       };
-      this.emit({ type: "environment-status", ...connection.status });
+      this.emit({ type: "location-status", ...connection.status });
     };
     say({ running: true });
     try {
-      await runOnHost(environment, daemonUpgradeCommand(upgrade.to, stop));
+      await runOnHost(location, daemonUpgradeCommand(upgrade.to, stop));
     } catch (error) {
       this.track("daemon_upgraded", { ok: false, when: whenOf(stop) });
       say({ error: messageOf(error) });
@@ -485,22 +480,22 @@ export class Runtime {
     // Stopping the daemon drops the connection, and the status that comes with the new one has no upgrade. If it never
     // drops, the person is shown the button again after a while, not a wait without end. Not awaited: the click is done.
     setTimeout(() => {
-      if ("running" in (this.#upgrading.get(environmentId) ?? {})) say(undefined);
+      if ("running" in (this.#upgrading.get(locationId) ?? {})) say(undefined);
     }, this.options.settle ?? 15_000).unref?.();
   }
 
-  async disconnect(environmentId: string): Promise<void> {
-    const connection = this.#connections.get(environmentId);
+  async disconnect(locationId: string): Promise<void> {
+    const connection = this.#connections.get(locationId);
     if (connection === undefined) return;
-    this.#connections.delete(environmentId);
+    this.#connections.delete(locationId);
     this.#hooks.dropped(connection, true);
     await connection.client.close();
-    this.emit({ type: "environment-status", environmentId, state: "closed" });
+    this.emit({ type: "location-status", locationId, state: "closed" });
   }
 }
 
 /** What a connected daemon said it can do, as the page reads it. */
-const capabilitiesOf = (client: CycleClient): NonNullable<EnvironmentStatus["capabilities"]> => ({
+const capabilitiesOf = (client: CycleClient): NonNullable<LocationStatus["capabilities"]> => ({
   queue: client.capabilities.queue === true,
   steer: client.capabilities.steer === true,
   files: client.capabilities.files === true,
@@ -514,5 +509,6 @@ const capabilitiesOf = (client: CycleClient): NonNullable<EnvironmentStatus["cap
   fs: client.capabilities.fs === true,
   diff: client.capabilities.diff === true,
   terminal: client.capabilities.terminal === true,
+  environments: client.capabilities.environments === true,
   stopSubagent: client.canStopSubagent,
 });

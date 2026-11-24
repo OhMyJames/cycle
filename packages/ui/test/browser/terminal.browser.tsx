@@ -80,14 +80,14 @@ test("the Terminal button opens a shell in a tab of its own, with the keyboard i
   act(() => {
     script.emit({
       type: "terminal-output",
-      environmentId: "local",
+      locationId: "local",
       terminalId: "t1",
       seq: 2,
       data: "OLD",
     });
     script.emit({
       type: "terminal-output",
-      environmentId: "local",
+      locationId: "local",
       terminalId: "t1",
       seq: 4,
       data: "fresh",
@@ -167,7 +167,7 @@ test("a shell that exited says so, takes no keys, and its tab can be closed from
   act(() =>
     script.emit({
       type: "terminals",
-      environmentId: "local",
+      locationId: "local",
       sessionId: "s1",
       terminals: [running("a", { status: "exited", exitCode: 3 })],
     }),
@@ -194,24 +194,20 @@ test("terminals that went while the connection was away stay as tabs that say th
   const { user, script } = await mount({ terminals });
   await user.click(await screen.findByRole("button", { name: "Show terminal" }));
   await screen.findByRole("tab", { name: "zsh", selected: true });
-  act(() =>
-    script.emit({ type: "environment-status", environmentId: "local", state: "reconnecting" }),
-  );
-  expect(
-    await screen.findByText(/Typing works again once the environment reconnects/),
-  ).toBeDefined();
+  act(() => script.emit({ type: "location-status", locationId: "local", state: "reconnecting" }));
+  expect(await screen.findByText(/Typing works again once the location reconnects/)).toBeDefined();
   // The daemon came back without it (it stopped meanwhile).
   terminals.set("s1", []);
   act(() =>
     script.emit({
-      type: "environment-status",
-      environmentId: "local",
+      type: "location-status",
+      locationId: "local",
       state: "connected",
       capabilities: { queue: true, files: true, folders: true, terminal: true },
     }),
   );
   expect(
-    await screen.findByText("This terminal ended when the environment's daemon stopped."),
+    await screen.findByText("This terminal ended when the location's daemon stopped."),
   ).toBeDefined();
   await user.click(screen.getByRole("button", { name: "Close tab" }));
   await waitFor(() => expect(screen.queryByRole("tab", { name: "zsh" })).toBeNull());
@@ -230,7 +226,7 @@ test("when the theme turns dark, a program's red becomes GitHub Dark's", async (
     act(() =>
       script.emit({
         type: "terminal-output",
-        environmentId: "local",
+        locationId: "local",
         terminalId: "a",
         seq: 4,
         data: "\x1b[31mRED\x1b[0m",
@@ -293,7 +289,7 @@ test("in the light theme a program's red is GitHub Light's, on the panel's own g
   act(() =>
     script.emit({
       type: "terminal-output",
-      environmentId: "local",
+      locationId: "local",
       terminalId: "a",
       seq: 4,
       data: "\x1b[31mRED\x1b[0m",
@@ -361,9 +357,7 @@ test("after a reconnect, news of another terminal that comes before the list doe
   const { user, script } = await mount({ terminals });
   await user.click(await screen.findByRole("button", { name: "Show terminal" }));
   await screen.findByRole("tab", { name: "zsh", selected: true });
-  act(() =>
-    script.emit({ type: "environment-status", environmentId: "local", state: "reconnecting" }),
-  );
+  act(() => script.emit({ type: "location-status", locationId: "local", state: "reconnecting" }));
   const list = script.bridge.listTerminals;
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => {
@@ -376,8 +370,8 @@ test("after a reconnect, news of another terminal that comes before the list doe
   terminals.set("s1", [running("b", { title: "other" })]);
   act(() =>
     script.emit({
-      type: "environment-status",
-      environmentId: "local",
+      type: "location-status",
+      locationId: "local",
       state: "connected",
       capabilities: { queue: true, files: true, folders: true, terminal: true },
     }),
@@ -385,14 +379,14 @@ test("after a reconnect, news of another terminal that comes before the list doe
   act(() =>
     script.emit({
       type: "terminals",
-      environmentId: "local",
+      locationId: "local",
       sessionId: "s1",
       terminals: [running("b", { title: "other" })],
     }),
   );
   release();
   expect(
-    await screen.findByText("This terminal ended when the environment's daemon stopped."),
+    await screen.findByText("This terminal ended when the location's daemon stopped."),
   ).toBeDefined();
   expect(screen.getByRole("tab", { name: "other" })).toBeDefined();
 });

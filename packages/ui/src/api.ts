@@ -7,10 +7,10 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import type { Conversation } from "./model/index.ts";
 
 /**
- * How a remote environment is reached. SSH is one way, not what "remote" means: another transport (a WebSocket) is
+ * How a remote location is reached. SSH is one way, not what "remote" means: another transport (a WebSocket) is
  * another `type`, and nothing but the one place that opens the channel reads it.
  */
-export type EnvironmentTransport = {
+export type LocationTransport = {
   type: "ssh";
   /** What `ssh` takes: `host`, `user@host`, or an alias from ~/.ssh/config. */
   host: string;
@@ -22,18 +22,18 @@ export type EnvironmentTransport = {
  * Where sessions run: this computer, or a remote one (later also a cloud one). A client's idea, not the protocol's: the
  * daemon cannot tell. Several are connected at once and their sessions are shown together (docs/desktop.md).
  */
-export type EnvironmentConfig =
+export type LocationConfig =
   | { id: string; name: string; kind: "local" }
-  | { id: string; name: string; kind: "remote"; transport: EnvironmentTransport };
+  | { id: string; name: string; kind: "remote"; transport: LocationTransport };
 
 export type ConnectionState = "connecting" | "connected" | "reconnecting" | "closed";
 
-export type EnvironmentStatus = {
-  environmentId: string;
+export type LocationStatus = {
+  locationId: string;
   state: ConnectionState;
   error?: string;
   /**
-   * What the daemon on the environment can do beyond what every daemon does (docs/protocol.md §3). Absent until it has said: a
+   * What the daemon on the location can do beyond what every daemon does (docs/protocol.md §3). Absent until it has said: a
    * client that needs one of them waits, and does not assume.
    */
   capabilities?: {
@@ -61,9 +61,11 @@ export type EnvironmentStatus = {
     diff?: boolean;
     /** Shells can be opened beside a session, for the Terminal tabs (docs/protocol.md §8 "终端"). */
     terminal?: boolean;
+    /** A session can be made with an environment, and its actions run in a terminal (docs/protocol.md §6 "环境"). */
+    environments?: boolean;
   };
   /**
-   * The daemon on the environment speaks another major version of Cycle's protocol, so the app cannot use it
+   * The daemon on the location speaks another major version of Cycle's protocol, so the app cannot use it
    * (docs/protocol.md §3). Present while that is why the connection is not up; gone once it connects.
    */
   incompatible?: {
@@ -75,7 +77,7 @@ export type EnvironmentStatus = {
     /** What to run on that machine to put this app's daemon there, when the daemon is the older one and remote. */
     command?: string;
   };
-  /** What the daemon on the environment says it is. Not for the local one, which the app carries. */
+  /** What the daemon on the location says it is. Not for the local one, which the app carries. */
   daemon?: {
     version: string;
     /** Set when it is too old for this app (not merely older: docs/desktop.md). */
@@ -95,7 +97,7 @@ export type EnvironmentStatus = {
 };
 
 export type SessionSummary = {
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   cwd: string;
   title?: string;
@@ -115,7 +117,71 @@ export type SessionSummary = {
   updatedAt?: string;
   /** What the session was set to, by name (the agent's settings). */
   config?: Record<string, string>;
+  /** The environment it was made with, as the daemon keeps it: names only, never a variable's value. */
+  environment?: SessionEnvironmentSummary;
 };
+
+/**
+ * A command for each system, with a default for the others (docs/desktop.md "环境"). The daemon picks its own system's,
+ * else the default, else runs none.
+ */
+export type EnvironmentScripts = {
+  default?: string;
+  macos?: string;
+  linux?: string;
+  windows?: string;
+};
+
+export type EnvironmentAction = {
+  id: string;
+  name: string;
+  icon?: string;
+  command: EnvironmentScripts;
+};
+
+/**
+ * A reusable setup for sessions: scripts, variables and actions. Defined once in the app, chosen per workspace, and sent
+ * whole when a session is made (docs/desktop.md "环境"). Not where the session runs: that is its location.
+ */
+export type Environment = {
+  id: string;
+  name: string;
+  /** Runs after a worktree is made. Cycle makes none yet: kept, not run. */
+  setup?: EnvironmentScripts;
+  /** Runs before a worktree is removed. Cycle makes none yet: kept, not run. */
+  cleanup?: EnvironmentScripts;
+  /** In order; names unique, none of the daemon's own (docs/protocol.md §6). Values may be secrets. */
+  variables: { name: string; value: string }[];
+  actions: EnvironmentAction[];
+};
+
+/** The environments, and the one each workspace starts with: `defaults[locationId][cwd]` is an environment's id. */
+export type EnvironmentsState = {
+  environments: Environment[];
+  defaults: Record<string, Record<string, string>>;
+};
+
+/** What a session's list row says of its environment (`_meta["cycle/environment"]`). */
+export type SessionEnvironmentSummary = {
+  id: string;
+  name: string;
+  variableNames: string[];
+  actions: { id: string; name: string; icon?: string }[];
+};
+
+/**
+ * Why an environment cannot be saved or sent: a fixed word the page has a sentence for, with what it is about. The
+ * daemon's own words for these are `reserved_variable`, `invalid_variable` and `too_large` (docs/protocol.md §6).
+ */
+export type EnvironmentProblem =
+  | { problem: "name_missing" }
+  | { problem: "invalid_variable"; name: string }
+  | { problem: "duplicate_variable"; name: string }
+  | { problem: "reserved_variable"; name: string }
+  | { problem: "action_name_missing" }
+  | { problem: "action_command_missing"; action: string }
+  | { problem: "too_large"; limit: number }
+  | { problem: "invalid"; message: string };
 
 export type AgentInfo = {
   id: string;
@@ -256,7 +322,7 @@ export type AgentConfigFileStatus = {
   stale: boolean;
   error?: string | undefined;
 };
-export type AgentEnvironmentDiagnostics = {
+export type AgentRuntimeDiagnostics = {
   configFile: AgentConfigFileStatus;
   dataDir: string;
   customDataDir: boolean;
@@ -273,7 +339,7 @@ export type AgentSetupSnapshot = {
   planUsage?: PlanUsage | undefined;
   canRefreshUsage: boolean;
   runtime: AgentRuntimeSnapshot;
-  environment: AgentEnvironmentDiagnostics;
+  environment: AgentRuntimeDiagnostics;
 };
 
 /** What a message to an agent is made of: text, and images as ACP carries them (base64). */
@@ -362,9 +428,10 @@ export type TerminalProblem =
   | "cwd_missing"
   | "spawn_failed"
   | "daemon_stopping"
+  | "unknown_action"
   | "failed";
 
-/** What an environment's machine has in a folder: names of folders only. `path` is the real path (links resolved). */
+/** What a location's machine has in a folder: names of folders only. `path` is the real path (links resolved). */
 export type FolderListing = {
   path: string;
   parent: string | null;
@@ -374,7 +441,7 @@ export type FolderListing = {
 };
 
 /**
- * Whether a folder on an environment's machine may run the commands its own configuration names (hooks, MCP helpers).
+ * Whether a folder on a location's machine may run the commands its own configuration names (hooks, MCP helpers).
  * `trusted` is null when nobody has decided; `from` is the folder the decision is on (it or one above it).
  */
 export type FolderTrust = { path: string; trusted: boolean | null; from: string | null };
@@ -505,7 +572,7 @@ export type PluginProblem =
 /** `message`: what the agent's machinery said, for the person to read. */
 export type PluginFailure = { problem: PluginProblem; message?: string };
 
-/** Lists the folders of one environment's folder (the environment is already chosen). */
+/** Lists the folders of one location's folder (the location is already chosen). */
 export type ListFolders = (path?: string, hidden?: boolean) => Promise<FolderListing>;
 
 export type PermissionOption = { optionId: string; name: string; kind: string };
@@ -513,7 +580,7 @@ export type PermissionOption = { optionId: string; name: string; kind: string };
 /** An agent asking the user. `key` names it in this app; answer it with `answerPermission`. */
 export type PermissionRequest = {
   key: string;
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   title: string;
   /** What the agent wants to do, as ACP gives it. Shown, never trusted. */
@@ -609,12 +676,12 @@ export type AccountStatus = {
 export type AppEvent =
   /** The account's status changed. */
   | { type: "account"; account: AccountStatus }
-  | { type: "environments"; environments: EnvironmentConfig[] }
-  | ({ type: "environment-status" } & EnvironmentStatus)
-  | { type: "sessions"; environmentId: string; sessions: SessionSummary[] }
+  | { type: "locations"; locations: LocationConfig[] }
+  | ({ type: "location-status" } & LocationStatus)
+  | { type: "sessions"; locationId: string; sessions: SessionSummary[] }
   | {
       type: "update";
-      environmentId: string;
+      locationId: string;
       sessionId: string;
       update: SessionUpdate;
       /** When the daemon logged it, in milliseconds since the epoch (`cycle/ts`); absent when not known. */
@@ -625,38 +692,38 @@ export type AppEvent =
   | { type: "permission"; request: PermissionRequest; version: number }
   | {
       type: "permission-closed";
-      environmentId: string;
+      locationId: string;
       sessionId: string;
       key: string;
       version: number;
     }
-  | { type: "agent-defaults"; environmentId: string; agent: string }
+  | { type: "agent-defaults"; locationId: string; agent: string }
   /** An agent's setup snapshot changed (runtime settings saved, login, or logout). */
-  | { type: "agent-setup-changed"; environmentId: string; agent: string; revision?: number }
+  | { type: "agent-setup-changed"; locationId: string; agent: string; revision?: number }
   /** An in-app subscription sign-in flow initiated by this app finished or was interrupted. */
   | {
       type: "agent-auth-completed";
-      environmentId: string;
+      locationId: string;
       flowId: string;
       agent: string;
       ok: boolean;
       reason?: AgentAuthProblemReason | undefined;
     }
-  /** An agent on that environment told how much of its account's plan limits is used. */
-  | { type: "plan-usage"; environmentId: string; agent: string; usage: PlanUsage }
-  /** The environment's connectors changed, here or elsewhere: read them again. */
-  | { type: "connectors"; environmentId: string }
-  /** An agent's plugins on that environment changed, here or elsewhere: read them again. */
-  | { type: "plugins"; environmentId: string; agentId: string }
+  /** An agent on that location told how much of its account's plan limits is used. */
+  | { type: "plan-usage"; locationId: string; agent: string; usage: PlanUsage }
+  /** The location's connectors changed, here or elsewhere: read them again. */
+  | { type: "connectors"; locationId: string }
+  /** An agent's plugins on that location changed, here or elsewhere: read them again. */
+  | { type: "plugins"; locationId: string; agentId: string }
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */
-  | { type: "session-gone"; environmentId: string; sessionId: string }
+  | { type: "session-gone"; locationId: string; sessionId: string }
   | { type: "app-update"; state: UpdateState }
   /** A session's terminals, whole: one was opened, closed, renamed, resized or ended. */
-  | { type: "terminals"; environmentId: string; sessionId: string; terminals: TerminalInfo[] }
+  | { type: "terminals"; locationId: string; sessionId: string; terminals: TerminalInfo[] }
   /** Output of a terminal the app is attached to. Drop it if the screen in hand already holds `seq`. */
   | {
       type: "terminal-output";
-      environmentId: string;
+      locationId: string;
       terminalId: string;
       seq: number;
       data: string;
@@ -664,7 +731,7 @@ export type AppEvent =
   /** The app fell behind a terminal's output: draw it again from `screen`, then take what comes after `seq`. */
   | {
       type: "terminal-reset";
-      environmentId: string;
+      locationId: string;
       terminalId: string;
       seq: number;
       screen: string;
@@ -672,7 +739,7 @@ export type AppEvent =
       rows: number;
     }
   /** A notification was pressed: show this session. */
-  | { type: "focus-session"; environmentId: string; sessionId: string };
+  | { type: "focus-session"; locationId: string; sessionId: string };
 
 /** Whether the app reports how it is used (docs/analytics.md). `available` is false when there is nowhere to report to. */
 export type AnalyticsStatus = { available: boolean; enabled: boolean; noticed: boolean };
@@ -701,7 +768,16 @@ export type PreferencesState = Preferences & { systemLanguage: string };
 /** What the page may say about itself: numbers, booleans and words. Main checks it against its dictionary. */
 export type TrackProps = Record<string, string | number | boolean>;
 
-export type NewSession = { cwd: string; agent?: string; config?: Record<string, string> };
+/**
+ * `environmentId`: one of the app's environments, sent whole with the session (main reads it from what it keeps). Only to
+ * a daemon with `capabilities.environments`.
+ */
+export type NewSession = {
+  cwd: string;
+  agent?: string;
+  config?: Record<string, string>;
+  environmentId?: string;
+};
 
 /**
  * What sent a message: Enter, the ⌘Enter shortcut, or a button in the composer. The words of `prompt_sent.via` in
@@ -712,175 +788,170 @@ export type SendVia = "enter" | "shortcut" | "button";
 /** What the renderer asks of main. Every method can fail; the renderer shows the message. */
 export type AppApi = {
   /**
-   * Every environment, how its connection stands, and the last list of sessions main read from each: an environment that is
+   * Every location, how its connection stands, and the last list of sessions main read from each: a location that is
    * away still has its last list, which is shown greyed. Only for as long as the app runs: one that could not be
    * reached since it started has none.
    */
-  environments(): Promise<{
-    environments: EnvironmentConfig[];
-    status: EnvironmentStatus[];
+  locations(): Promise<{
+    locations: LocationConfig[];
+    status: LocationStatus[];
     sessions: Record<string, SessionSummary[]>;
   }>;
-  saveEnvironment(environment: EnvironmentConfig): Promise<void>;
-  removeEnvironment(environmentId: string): Promise<void>;
-  connect(environmentId: string): Promise<void>;
-  disconnect(environmentId: string): Promise<void>;
+  saveLocation(location: LocationConfig): Promise<void>;
+  removeLocation(locationId: string): Promise<void>;
+  connect(locationId: string): Promise<void>;
+  disconnect(locationId: string): Promise<void>;
 
-  sessions(environmentId: string): Promise<SessionSummary[]>;
-  createSession(environmentId: string, params: NewSession): Promise<string>;
+  sessions(locationId: string): Promise<SessionSummary[]>;
+  createSession(locationId: string, params: NewSession): Promise<string>;
   /** Starts watching a session and returns it whole. Call again after a reload. */
-  openSession(environmentId: string, sessionId: string): Promise<SessionSnapshot>;
+  openSession(locationId: string, sessionId: string): Promise<SessionSnapshot>;
   /**
    * A text, or blocks: text and images. `steer`: into the running turn rather than the queue. `via`: what the person
    * pressed, for the count of how messages are sent (never their content).
    */
   prompt(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     content: string | PromptBlock[],
     options?: { steer?: boolean; via?: SendVia },
   ): Promise<void>;
-  cancel(environmentId: string, sessionId: string): Promise<void>;
+  cancel(locationId: string, sessionId: string): Promise<void>;
   /**
    * Files and folders of the session's folder, on the machine of the daemon, that fit what was typed after an @. A blank
    * conversation has no session yet and gives its folder: only a daemon with `filesInFolder` takes that.
    */
   searchFiles(
-    environmentId: string,
+    locationId: string,
     where: { sessionId: string } | { cwd: string },
     query: string,
   ): Promise<FileSearch>;
   /** One folder of a session's folder, `path` relative to it. Fails with the daemon's reason, or when it is too old. */
-  listFiles(environmentId: string, sessionId: string, path: string): Promise<FileListing>;
+  listFiles(locationId: string, sessionId: string, path: string): Promise<FileListing>;
   /** A file of a session's folder, text from `offset`. Fails with the daemon's reason, or when it is too old. */
   readFile(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     path: string,
     offset?: number,
   ): Promise<FileContent>;
   /** Which files of a session's folder differ from HEAD. Fails with the daemon's reason, or when it is too old. */
-  workspaceStatus(environmentId: string, sessionId: string): Promise<WorkspaceStatus>;
+  workspaceStatus(locationId: string, sessionId: string): Promise<WorkspaceStatus>;
   /** One file's patch against HEAD. Fails with the daemon's reason, or when it is too old. */
-  workspaceFile(environmentId: string, sessionId: string, path: string): Promise<WorkspacePatch>;
+  workspaceFile(locationId: string, sessionId: string, path: string): Promise<WorkspacePatch>;
   /** A session's terminals, oldest first; none from a daemon that has none. */
-  listTerminals(environmentId: string, sessionId: string): Promise<TerminalInfo[]>;
-  /** Opens a shell in the session's folder, attached; or says why it could not. */
+  listTerminals(locationId: string, sessionId: string): Promise<TerminalInfo[]>;
+  /**
+   * Opens a shell in the session's folder, attached; or says why it could not. `actionId`: runs that action of the
+   * session's environment in it instead (a daemon with `capabilities.environments`).
+   */
   createTerminal(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     cols: number,
     rows: number,
+    actionId?: string,
   ): Promise<TerminalAttached | { problem: TerminalProblem; message?: string }>;
   /**
    * The terminal's screen now; its output comes after as `terminal-output` events, in no fixed order against this
-   * answer. A lost connection lets go of it: attach again once the environment is connected.
+   * answer. A lost connection lets go of it: attach again once the location is connected.
    */
-  attachTerminal(environmentId: string, terminalId: string): Promise<TerminalAttached>;
-  detachTerminal(environmentId: string, terminalId: string): Promise<void>;
+  attachTerminal(locationId: string, terminalId: string): Promise<TerminalAttached>;
+  detachTerminal(locationId: string, terminalId: string): Promise<void>;
   /** Keys and pastes, as they are. */
-  terminalInput(environmentId: string, terminalId: string, data: string): Promise<void>;
-  resizeTerminal(
-    environmentId: string,
-    terminalId: string,
-    cols: number,
-    rows: number,
-  ): Promise<void>;
+  terminalInput(locationId: string, terminalId: string, data: string): Promise<void>;
+  resizeTerminal(locationId: string, terminalId: string, cols: number, rows: number): Promise<void>;
   /** Ends the shell and everything running in it. */
-  closeTerminal(environmentId: string, terminalId: string): Promise<void>;
+  closeTerminal(locationId: string, terminalId: string): Promise<void>;
   /**
-   * The folders in a folder on that environment's machine, for choosing where a session works. Without a path: its
+   * The folders in a folder on that location's machine, for choosing where a session works. Without a path: its
    * home. Fails with the daemon's reason (not a folder, cannot be read) or when the daemon is too old.
    */
-  listFolders(environmentId: string, path?: string, hidden?: boolean): Promise<FolderListing>;
-  /** Whether a folder on that environment's machine is trusted. Fails when the daemon is too old. */
-  readTrust(environmentId: string, path: string): Promise<FolderTrust>;
-  /** The latest plan usage of each agent on that environment, by agent id; none from an older daemon. */
-  planUsage(environmentId: string): Promise<Record<string, PlanUsage>>;
-  /** Records whether a folder on that environment's machine is trusted; the folders under it follow. */
-  setTrust(environmentId: string, path: string, trusted: boolean): Promise<FolderTrust>;
+  listFolders(locationId: string, path?: string, hidden?: boolean): Promise<FolderListing>;
+  /** Whether a folder on that location's machine is trusted. Fails when the daemon is too old. */
+  readTrust(locationId: string, path: string): Promise<FolderTrust>;
+  /** The latest plan usage of each agent on that location, by agent id; none from an older daemon. */
+  planUsage(locationId: string): Promise<Record<string, PlanUsage>>;
+  /** Records whether a folder on that location's machine is trusted; the folders under it follow. */
+  setTrust(locationId: string, path: string, trusted: boolean): Promise<FolderTrust>;
   /** Takes a prompt back out of the queue, to be edited. Answers with its blocks; fails if it has gone. */
-  ackReturn(environmentId: string, sessionId: string, returnId: string): Promise<void>;
-  dequeue(environmentId: string, sessionId: string, queueId: string): Promise<PromptBlock[]>;
+  ackReturn(locationId: string, sessionId: string, returnId: string): Promise<void>;
+  dequeue(locationId: string, sessionId: string, queueId: string): Promise<PromptBlock[]>;
   setSessionConfig(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     configId: string,
     value: string,
   ): Promise<void>;
   /** `where`: what the title was edited in, for the usage statistics. */
   renameSession(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     title: string,
     where?: "header" | "sidebar",
   ): Promise<void>;
-  dismissBackground(environmentId: string, sessionId: string, taskIds: string[]): Promise<void>;
+  dismissBackground(locationId: string, sessionId: string, taskIds: string[]): Promise<void>;
   /**
-   * Stops one sub-agent (CYCL-143). Only on an environment whose `capabilities.stopSubagent` is true. False: there was
+   * Stops one sub-agent (CYCL-143). Only on a location whose `capabilities.stopSubagent` is true. False: there was
    * nothing to stop (the daemon's `stopping: false`).
    */
   stopSubagent(
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     childId: string,
     background: boolean,
   ): Promise<boolean>;
-  archiveSession(environmentId: string, sessionId: string, archived: boolean): Promise<void>;
+  archiveSession(locationId: string, sessionId: string, archived: boolean): Promise<void>;
   /** Says the session has been seen: its unread mark clears. Does nothing on a daemon that cannot. */
-  markRead(environmentId: string, sessionId: string): Promise<void>;
-  deleteSession(environmentId: string, sessionId: string): Promise<void>;
+  markRead(locationId: string, sessionId: string): Promise<void>;
+  deleteSession(locationId: string, sessionId: string): Promise<void>;
   answerPermission(key: string, optionId: string | "cancelled"): Promise<void>;
   answerForm(key: string, answer: FormAnswer): Promise<void>;
 
-  agents(environmentId: string): Promise<AgentInfo[]>;
-  agentDefaults(environmentId: string, agent: string): Promise<Record<string, string>>;
+  agents(locationId: string): Promise<AgentInfo[]>;
+  agentDefaults(locationId: string, agent: string): Promise<Record<string, string>>;
   setAgentDefaults(
-    environmentId: string,
+    locationId: string,
     agent: string,
     config: Record<string, string>,
   ): Promise<void>;
   /** Read-only status, auth, runtime config, and host diagnostics for one agent (docs/protocol.md §16). */
   readAgentSetup(
-    environmentId: string,
+    locationId: string,
     agent: string,
     options?: { refreshUsage?: boolean; forceRefresh?: boolean },
   ): Promise<AgentSetupSnapshot>;
   /** Patches hot-reloadable runtime settings (`null` unsets an override) with per-agent optimistic concurrency. */
   setAgentRuntimeSettings(
-    environmentId: string,
+    locationId: string,
     agent: string,
     patch: Record<string, AgentRuntimePatchValue>,
     expectedRevision: number,
   ): Promise<AgentRuntimeSaveAnswer>;
-  /** Shows the local daemon's `config.json` in the system file manager; returns false on remote environments. */
-  revealDaemonConfig(environmentId: string): Promise<boolean>;
+  /** Shows the local daemon's `config.json` in the system file manager; returns false on remote locations. */
+  revealDaemonConfig(locationId: string): Promise<boolean>;
   /** Starts an in-app subscription sign-in flow; chooses mode by transport and validates URLs against hardcoded allowlist. */
-  startAgentAuth(environmentId: string, agent: string): Promise<AgentAuthStartAnswer>;
+  startAgentAuth(locationId: string, agent: string): Promise<AgentAuthStartAnswer>;
   /** Opens the main-process-verified auth URL for `flowId` in the system browser after explicit user click. */
-  openAgentAuthUrl(environmentId: string, flowId: string): Promise<boolean>;
+  openAgentAuthUrl(locationId: string, flowId: string): Promise<boolean>;
   /** Submits a one-time hosted-callback authorization code for a `"code"` mode flow (memory-only). */
-  submitAgentAuth(
-    environmentId: string,
-    flowId: string,
-    code: string,
-  ): Promise<AgentAuthSubmitAnswer>;
+  submitAgentAuth(locationId: string, flowId: string, code: string): Promise<AgentAuthSubmitAnswer>;
   /** Cancels an active in-app sign-in flow. */
-  cancelAgentAuth(environmentId: string, flowId: string): Promise<void>;
+  cancelAgentAuth(locationId: string, flowId: string): Promise<void>;
   /** Signs out an agent's subscription on the daemon (the UI asks the person first). */
-  logoutAgent(environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer>;
+  logoutAgent(locationId: string, agent: string): Promise<AgentAuthLogoutAnswer>;
 
-  /** The environment's connectors. Fails when it is not connected or its daemon is too old. */
-  listConnectors(environmentId: string): Promise<ConnectorInfo[]>;
-  addConnector(environmentId: string, draft: ConnectorDraft): Promise<ConnectorAnswer>;
+  /** The location's connectors. Fails when it is not connected or its daemon is too old. */
+  listConnectors(locationId: string): Promise<ConnectorInfo[]>;
+  addConnector(locationId: string, draft: ConnectorDraft): Promise<ConnectorAnswer>;
   updateConnector(
-    environmentId: string,
+    locationId: string,
     id: string,
     change: ConnectorChange,
   ): Promise<ConnectorAnswer>;
   /** Removes a connector and its credentials for good. The page asks the person first. */
   removeConnector(
-    environmentId: string,
+    locationId: string,
     id: string,
   ): Promise<{ removed: true } | { problem: ConnectorProblem; message?: string }>;
   /**
@@ -888,60 +959,60 @@ export type AppApi = {
    * the browser, by `cancelConnectorAuth`, by another sign-in starting, or after ten minutes).
    */
   authorizeConnector(
-    environmentId: string,
+    locationId: string,
     id: string,
   ): Promise<ConnectorAnswer | { cancelled: true }>;
   /** Stops the sign-in that is waiting for the browser, if there is one. */
   cancelConnectorAuth(): Promise<void>;
   /** Forgets the connector's token. */
-  signOutConnector(environmentId: string, id: string): Promise<ConnectorAnswer>;
+  signOutConnector(locationId: string, id: string): Promise<ConnectorAnswer>;
   /** An agent's installed plugins and where its plugins come from. Fails when it cannot be asked. */
   listPlugins(
-    environmentId: string,
+    locationId: string,
     agentId: string,
   ): Promise<{ sources: PluginSourceInfo[]; plugins: PluginInfo[] }>;
   /** What can be installed, a page at a time (`cursor` is the answer's `nextCursor`). */
   availablePlugins(
-    environmentId: string,
+    locationId: string,
     query: { agentId: string; sourceId?: string; query?: string; cursor?: string; limit?: number },
   ): Promise<{ plugins: PluginInfo[]; nextCursor?: string | undefined; total: number }>;
-  /** Installs a plugin, which can run code on the environment's machine. The page asks the person first. */
+  /** Installs a plugin, which can run code on the location's machine. The page asks the person first. */
   installPlugin(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ plugin: PluginInfo } | PluginFailure>;
   /** Removes a plugin and what it brought, sign-ins included. The page asks the person first. */
   uninstallPlugin(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ removed: true } | PluginFailure>;
   updatePlugin(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ plugin: PluginInfo; updated: boolean } | PluginFailure>;
   setPluginEnabled(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
     enabled: boolean,
   ): Promise<{ plugin: PluginInfo } | PluginFailure>;
   /** Adds a place plugins come from. The page asks the person first. */
   addPluginSource(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     location: string,
   ): Promise<{ source: PluginSourceInfo } | PluginFailure>;
   removePluginSource(
-    environmentId: string,
+    locationId: string,
     agentId: string,
     id: string,
   ): Promise<{ removed: true } | PluginFailure>;
   /** Fetches every source's list again. */
   refreshPluginSources(
-    environmentId: string,
+    locationId: string,
     agentId: string,
   ): Promise<{ refreshed: true } | PluginFailure>;
 
@@ -966,11 +1037,26 @@ export type AppApi = {
   /** Downloads the update that was found, checks it, and restarts the app as the new version. */
   installUpdate(): Promise<void>;
   /**
-   * Updates the daemon of a remote environment by running `daemon.upgrade.command` on it over ssh. What is wrong comes
-   * back in the environment's status (`daemon.upgrade.error`), not as a throw. `when` is the person's choice when
+   * Updates the daemon of a remote location by running `daemon.upgrade.command` on it over ssh. What is wrong comes
+   * back in the location's status (`daemon.upgrade.error`), not as a throw. `when` is the person's choice when
    * sessions there are working: interrupt them `now`, or stop the old daemon `later`, once they finish.
    */
-  upgradeDaemon(environmentId: string, when?: "now" | "later"): Promise<void>;
+  upgradeDaemon(locationId: string, when?: "now" | "later"): Promise<void>;
+
+  /** The environments and each workspace's default, as main keeps them (`environments.json`). */
+  environments(): Promise<EnvironmentsState>;
+  /** Adds or replaces one, by id. Checked first: what is wrong comes back, and nothing is kept. */
+  saveEnvironment(
+    environment: Environment,
+  ): Promise<{ state: EnvironmentsState } | EnvironmentProblem>;
+  /** Removes one, and the workspace defaults that name it. Sessions made with it keep their own copy. */
+  removeEnvironment(environmentId: string): Promise<EnvironmentsState>;
+  /** The environment a workspace starts with from now on; null: none. */
+  setEnvironmentDefault(
+    locationId: string,
+    cwd: string,
+    environmentId: string | null,
+  ): Promise<EnvironmentsState>;
 
   /** How the app looks and reads, as the person chose. */
   preferences(): Promise<PreferencesState>;
@@ -1006,9 +1092,9 @@ export type CycleBridge = AppApi & { onEvent: AppEvents };
  * not there, is a type error. So the preload and main agree on the channels without a list in each.
  */
 const METHODS: { readonly [method in keyof AppApi]-?: true } = {
-  environments: true,
-  saveEnvironment: true,
-  removeEnvironment: true,
+  locations: true,
+  saveLocation: true,
+  removeLocation: true,
   connect: true,
   disconnect: true,
   sessions: true,
@@ -1078,6 +1164,10 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   checkForUpdate: true,
   installUpdate: true,
   upgradeDaemon: true,
+  environments: true,
+  saveEnvironment: true,
+  removeEnvironment: true,
+  setEnvironmentDefault: true,
   preferences: true,
   setPreferences: true,
   account: true,

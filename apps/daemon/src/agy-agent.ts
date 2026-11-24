@@ -139,12 +139,13 @@ export const agyHarness: Harness = {
       promptCapabilities: AGY_PROMPT_CAPABILITIES,
       steer: true,
       command: [...self, "adapter", "agy"],
-      env: () => {
+      env: ({ sessionEnv }) => {
         const runtime = agyEffectiveRuntime(settings, agentSettings).values;
         return {
           PATH: inherited.PATH ?? "",
           CYCLE_ADAPTER_CONFIG: JSON.stringify({
             env,
+            sessionEnv,
             agyExecutable: executable() ?? "",
             fallbackExecutables,
             ...(settings.executable !== undefined ? { searchPath: false } : {}),

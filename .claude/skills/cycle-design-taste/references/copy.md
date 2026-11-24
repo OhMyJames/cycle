@@ -5,16 +5,16 @@
 
 ## 写法
 
-- **按钮是动词加对象**:"Allow once"、"Delete session"、"Add environment"、"Remove environment"。不写 "OK"、"Submit"、"Yes"。破坏性的按钮写出被破坏的东西,确认框里的主按钮和触发它的按钮用同一个动词。
+- **按钮是动词加对象**:"Allow once"、"Delete session"、"Add location"、"Remove location"。不写 "OK"、"Submit"、"Yes"。破坏性的按钮写出被破坏的东西,确认框里的主按钮和触发它的按钮用同一个动词。
 - **状态用名词和事实**:"Reconnecting…"、"Working"、"Waiting for your answer"。不写"请稍候"之类的空话。
 - **错误写三样**:发生了什么、为什么(远端或系统原话,不改写,等宽可选)、用户能做什么。
   - 差:"Something went wrong."
-  - 好:"Not connected to this environment. `ssh: connect to host build-1 port 22: Connection refused`. Check that the environment is reachable, then Retry."
+  - 好:"Not connected to this location. `ssh: connect to host build-1 port 22: Connection refused`. Check that the location is reachable, then Retry."
 - **空状态说下一步**:"No sessions in this workspace yet." 后面要跟一个能点的 "New session",而不是只丢一句静态提示。
 - **只写真的**:不编数字、人名、时间。一个数字要么来自数据,要么不出现。
 - **一种语言,一种大小写**:现在界面是英文,句首大写,其余小写;标题不用 Title Case。加了本地化再说,不要中英混排。
 - **不自我介绍,不聊界面本身**:不写 "This screen lets you…"、"We've added…"。
-- **术语一致**:`environment`、`session`、`agent`、`turn`、`permission` 各只有一个叫法,不混用(界面里统一用 `environment`,不用 `host`/`server`/`machine` 换着说)。
+- **术语一致**:`location`、`session`、`agent`、`turn`、`permission` 各只有一个叫法,不混用(session 在哪跑,句子里统一用 `location`,选择器和设置分区的标题写 "Work in",中文"工作位置";不用 `host`/`server`/`machine` 换着说。`environment` 留给可复用的准备配置,不指 location)。
 - **句子短,不加感叹号、表情、破折号和装饰性省略号**。"Starting…"、"Connecting…" 里的省略号表示还在进行,可以;别处不用。
 
 ## 语言与 i18n
@@ -54,6 +54,6 @@
 |---|---|---|
 | 空对话 | "Nothing here yet. Say something below." | 可以,说了下一步 |
 | 空会话列表 | "No sessions in this workspace yet." | 若只有静态文字则缺下一步出口;应配能点的 "New session" |
-| 没有 agent | "No agent is available on {environment}." | 缺原因和下一步:应提示检查环境上的凭证或安装状态 |
+| 没有 agent | "No agent is available on {location}." | 缺原因和下一步:应提示检查那个工作位置上的凭证或安装状态 |
 | 设置提示 | "A change applies to the next thing the agent does." | 好,说的是后果 |
 | 加载 | "Loading the conversation…" | 可以 |

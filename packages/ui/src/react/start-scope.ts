@@ -5,4 +5,4 @@ import { useAppState } from "./store-context.tsx";
  * same turn, or agents that reuse call ids, do not share one start.
  */
 export const useStartScope = (): string =>
-  useAppState((state) => `${state.selectedEnvironment ?? ""}:${state.selectedSession ?? ""}`);
+  useAppState((state) => `${state.selectedLocation ?? ""}:${state.selectedSession ?? ""}`);

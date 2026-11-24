@@ -43,7 +43,8 @@ export const spawn = (
   const abort = new AbortController();
   const options: Options = {
     cwd: session.cwd,
-    env: config.env,
+    // The session's variables reach the commands Claude runs through its own environment; its settings win.
+    env: { ...(config.sessionEnv ?? {}), ...config.env },
     ...(session.setup.additionalDirectories.length > 0
       ? { additionalDirectories: session.setup.additionalDirectories }
       : {}),

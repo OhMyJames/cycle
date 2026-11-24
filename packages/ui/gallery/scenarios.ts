@@ -5,8 +5,9 @@ import type {
   AccountStatus,
   AppEvent,
   ConnectorInfo,
-  EnvironmentConfig,
-  EnvironmentStatus,
+  EnvironmentsState,
+  LocationConfig,
+  LocationStatus,
   PermissionRequest,
   PlanUsage,
   PluginInfo,
@@ -33,14 +34,14 @@ import { SAMPLE_PNG } from "./sample-image.ts";
 
 export type Scenario = {
   title: string;
-  environments?: EnvironmentConfig[];
-  status?: EnvironmentStatus[];
+  locations?: LocationConfig[];
+  status?: LocationStatus[];
   sessions?: SessionSummary[];
   /** The conversation of the session that is opened. Without it nothing is opened. */
   history?: SessionUpdate[];
   permissions?: PermissionRequest[];
   update?: UpdateState;
-  /** What the daemons keep as connectors (the Connectors page); the environments' `status` must say they can. */
+  /** What the daemons keep as connectors (the Connectors page); the locations' `status` must say they can. */
   connectors?: ConnectorInfo[];
   /** An agent's plugins: what can be installed (the installed ones among them), and where it comes from. */
   plugins?: { sources: PluginSourceInfo[]; all: PluginInfo[] };
@@ -50,13 +51,13 @@ export type Scenario = {
   language?: "zh-CN";
   /** The agent takes images: the composer shows how to attach them. */
   attach?: boolean;
-  /** The environment has a second agent (Codex): sessions say which agent they are of, and a new one can choose. */
+  /** The location has a second agent (Codex): sessions say which agent they are of, and a new one can choose. */
   secondAgent?: boolean;
-  /** The environment has no available agent: the blank view explains why and offers a re-check. */
+  /** The location has no available agent: the blank view explains why and offers a re-check. */
   noAgents?: boolean;
   /** Folder trust: the daemon keeps it, and this is the decision for every folder (null: nobody has decided). */
   trust?: boolean | null;
-  /** What the environment's daemon heard of each agent's plan limits (docs/protocol.md §8 "套餐用量"). */
+  /** What the location's daemon heard of each agent's plan limits (docs/protocol.md §8 "套餐用量"). */
   planUsage?: Record<string, PlanUsage>;
   /** Presses Tab this many times with real input events, so :focus-visible shows as it does for a keyboard. */
   tabs?: number;
@@ -75,6 +76,8 @@ export type Scenario = {
   fails?: string;
   /** What the open session's message box holds when it is drawn: words, and files attached to them. */
   draft?: { text: string; attachments?: Attachment[] };
+  /** The environments main keeps, and each workspace's default (docs/desktop.md "环境"). */
+  environments?: EnvironmentsState;
   /** Runs once the page has drawn: open a dialog, press a key, or send an event as the app's main process would. */
   after?: (root: HTMLElement, emit: (event: AppEvent) => void) => Promise<void>;
 };
@@ -98,17 +101,64 @@ const conversationOf = (root: HTMLElement): HTMLElement => {
   return el;
 };
 const drawnIn = (el: HTMLElement): number => el.querySelectorAll('[data-slot="block"]').length;
-const LOCAL: EnvironmentConfig = { id: "local", name: "This computer", kind: "local" };
-const BUILD: EnvironmentConfig = {
+const LOCAL: LocationConfig = { id: "local", name: "This computer", kind: "local" };
+const BUILD: LocationConfig = {
   id: "build",
   name: "build-1",
   kind: "remote",
   transport: { type: "ssh", host: "build-1" },
 };
-const UP = (environmentId: string): EnvironmentStatus => ({ environmentId, state: "connected" });
+const UP = (locationId: string): LocationStatus => ({ locationId, state: "connected" });
+
+/** Environments as a person might have them: one with variables and actions, one bare, one with a long name. */
+const ENVIRONMENTS: EnvironmentsState = {
+  environments: [
+    {
+      id: "env-node",
+      name: "Node and Postgres",
+      variables: [
+        { name: "DATABASE_URL", value: "postgres://dev:dev@localhost:5432/app" },
+        { name: "NODE_ENV", value: "development" },
+      ],
+      actions: [
+        { id: "dev", name: "Dev server", icon: "play", command: { default: "npm run dev" } },
+        { id: "test", name: "Tests", icon: "test", command: { default: "npm test" } },
+        {
+          id: "db",
+          name: "Reset database",
+          icon: "database",
+          command: { default: "npm run db:reset" },
+        },
+      ],
+      setup: { default: "npm ci", windows: "npm.cmd ci" },
+    },
+    { id: "env-py", name: "Python 3.12", variables: [], actions: [] },
+    {
+      id: "env-long",
+      name: "Billing service with the staging database, the queue and a name that goes on and on",
+      variables: [{ name: "QUEUE_URL", value: "amqp://localhost" }],
+      actions: [{ id: "worker", name: "Worker", command: { default: "make worker" } }],
+    },
+  ],
+  defaults: { local: { "/Users/me/work/app": "env-node" } },
+};
+
+/** What a page can do when its daemon takes environments: what every scenario's daemon says, and environments. */
+const WITH_ENVIRONMENTS = (locationId: string): LocationStatus => ({
+  locationId,
+  state: "connected",
+  capabilities: { queue: true, files: true, folders: true, terminal: true, environments: true },
+});
+
+/** Sets a text field's value as typing does, so that React hears it. */
+const typeInto = (field: HTMLTextAreaElement | HTMLInputElement, text: string) => {
+  const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement;
+  Object.getOwnPropertyDescriptor(proto.prototype, "value")?.set?.call(field, text);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+};
 
 const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => ({
-  environmentId: "local",
+  locationId: "local",
   sessionId: id,
   cwd: "/home/dev/cycle-v1",
   archived: false,
@@ -147,7 +197,7 @@ const idle = (extra: object = {}) => u({ sessionUpdate: "state_update", state: "
 const running = () => u({ sessionUpdate: "state_update", state: "running" });
 
 /** The local daemon, able to stop one sub-agent alone (CYCL-143): a sub-agent at work shows its Stop button. */
-const STOPS: EnvironmentStatus = {
+const STOPS: LocationStatus = {
   ...UP("local"),
   capabilities: { queue: true, files: true, folders: true, stopSubagent: true },
 };
@@ -325,7 +375,7 @@ const tryout: SessionUpdate[] = [
 
 const permission = (title: string, command: string): PermissionRequest => ({
   key: "local:s1:p1",
-  environmentId: "local",
+  locationId: "local",
   sessionId: "s1",
   title,
   subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command } } },
@@ -386,11 +436,19 @@ const clickByLabel = async (root: HTMLElement, label: string) => {
 
 /** The settings page, opened as its button does, on one of its sections. */
 const openSettings = async (root: HTMLElement, section?: string) => {
-  await until(
-    () => root.querySelector('[data-kind="settings-open"]') !== null,
-    "the settings button",
-  );
-  root.querySelector<HTMLElement>('[data-kind="settings-open"]')?.click();
+  // Settings is in the account's menu, at the sidebar's foot.
+  const accountButton = () =>
+    Array.from(root.querySelectorAll<HTMLElement>("button")).find((b) =>
+      /account and settings$/.test(nameOf(b)),
+    );
+  await until(() => accountButton() !== undefined, "the account's menu");
+  accountButton()?.click();
+  const settingsItem = () =>
+    Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => nameOf(item) === "Settings",
+    );
+  await until(() => settingsItem() !== undefined, "the settings item");
+  settingsItem()?.click();
   await until(() => root.querySelector('[data-kind="page"]') !== null, "the settings page");
   if (section !== undefined) {
     const tab = Array.from(root.querySelectorAll<HTMLElement>('[role="tab"]')).find(
@@ -414,9 +472,9 @@ const openConnectors = async (root: HTMLElement, section: "plugins" | "mcp" = "m
   if (section === "mcp") root.querySelectorAll<HTMLElement>('[data-slot="tabs-tab"]')[1]?.click();
   await new Promise((r) => setTimeout(r, 400));
 };
-/** An environment whose daemon keeps connectors. */
-const KEEPS = (environmentId: string): EnvironmentStatus => ({
-  ...UP(environmentId),
+/** A location whose daemon keeps connectors. */
+const KEEPS = (locationId: string): LocationStatus => ({
+  ...UP(locationId),
   capabilities: { queue: true, files: true, folders: true, connectors: true },
 });
 const connector = (id: string, name: string, over: Partial<ConnectorInfo> = {}): ConnectorInfo => ({
@@ -444,9 +502,9 @@ const CONNECTORS: ConnectorInfo[] = [
   connector("c4", "sentry", { enabled: false, status: { state: "disabled" } }),
 ];
 
-/** An environment whose daemon keeps connectors, and whose Claude has plugins. */
-const EXTENDS = (environmentId: string): EnvironmentStatus => ({
-  ...UP(environmentId),
+/** A location whose daemon keeps connectors, and whose Claude has plugins. */
+const EXTENDS = (locationId: string): LocationStatus => ({
+  ...UP(locationId),
   capabilities: { queue: true, files: true, folders: true, connectors: true, plugins: ["claude"] },
 });
 const PLUGIN_SOURCES: PluginSourceInfo[] = [
@@ -540,9 +598,9 @@ const PLUGIN_SERVERS: ConnectorInfo[] = [
   }),
 ];
 
-/** An item of a remote environment's menu in Settings, opened as a click would. */
-const environmentAction = async (root: HTMLElement, name: string, item: string) => {
-  await openSettings(root, "Environments");
+/** An item of a remote location's menu in Settings, opened as a click would. */
+const locationAction = async (root: HTMLElement, name: string, item: string) => {
+  await openSettings(root, "Work in");
   await clickByLabel(root, `Actions for ${name}`);
   await new Promise((r) => setTimeout(r, 200));
   await click(root.ownerDocument.body, item);
@@ -868,7 +926,7 @@ export const scenarios: Record<string, Scenario> = {
     permissions: [
       {
         key: "local:s1:f1",
-        environmentId: "local",
+        locationId: "local",
         sessionId: "s1",
         title: "Claude has some questions",
         options: [],
@@ -943,7 +1001,7 @@ export const scenarios: Record<string, Scenario> = {
           _meta: { "cycle/toolResult": { read: { startLine: 20, numLines: 40, totalLines: 212 } } },
         },
       ),
-      say("m1", "The port is a constant. I'll read it from the environment instead."),
+      say("m1", "The port is a constant. I'll read it from the location instead."),
       ...done(
         "f2",
         "Edit",
@@ -1279,7 +1337,7 @@ export const scenarios: Record<string, Scenario> = {
       const send = (update: SessionUpdate) =>
         emit({
           type: "update",
-          environmentId: "local",
+          locationId: "local",
           sessionId: "s1",
           update,
           version: ++version,
@@ -1410,7 +1468,7 @@ export const scenarios: Record<string, Scenario> = {
       "A code review the agent reported, in its order: a long one cut, one outside the folder, one with no verdict",
     status: [
       {
-        environmentId: "local",
+        locationId: "local",
         state: "connected",
         capabilities: { queue: true, files: true, folders: true, fs: true },
       },
@@ -1518,7 +1576,7 @@ export const scenarios: Record<string, Scenario> = {
       "A code review from the /code-review skill: its result's findings on the card, what it said around them above",
     status: [
       {
-        environmentId: "local",
+        locationId: "local",
         state: "connected",
         capabilities: { queue: true, files: true, folders: true, fs: true },
       },
@@ -2025,7 +2083,7 @@ export const scenarios: Record<string, Scenario> = {
       { ...permission("Allow it?", "bun test"), key: "local:s1:r1" },
       {
         key: "local:s1:r2",
-        environmentId: "local",
+        locationId: "local",
         sessionId: "s1",
         title: "Which one?",
         options: [],
@@ -2050,10 +2108,10 @@ export const scenarios: Record<string, Scenario> = {
   },
   "host-down": {
     title: "The remote host cannot be reached (its own words shown)",
-    environments: [BUILD, LOCAL],
+    locations: [BUILD, LOCAL],
     status: [
       {
-        environmentId: "build",
+        locationId: "build",
         state: "closed",
         error: "ssh: connect to host build-1 port 22: Connection refused",
       },
@@ -2063,8 +2121,8 @@ export const scenarios: Record<string, Scenario> = {
   },
   "host-reconnecting": {
     title: "The connection dropped and is being retried",
-    environments: [LOCAL],
-    status: [{ environmentId: "local", state: "reconnecting" }],
+    locations: [LOCAL],
+    status: [{ locationId: "local", state: "reconnecting" }],
     sessions: [session("s1", { title: "Fix the remote session" })],
   },
   "session-reconnecting": {
@@ -2072,7 +2130,7 @@ export const scenarios: Record<string, Scenario> = {
     sessions: [session("s1", { title: "Fix the remote session" })],
     history: conversation,
     after: async (_root, emit) => {
-      emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+      emit({ type: "location-status", locationId: "local", state: "reconnecting" });
     },
   },
   "notice-error": {
@@ -2083,15 +2141,15 @@ export const scenarios: Record<string, Scenario> = {
   },
   "notice-away": {
     title:
-      "The open session's environment went away: an amber line under the title bar, and Connect again",
-    environments: [BUILD],
+      "The open session's location went away: an amber line under the title bar, and Connect again",
+    locations: [BUILD],
     status: [UP("build")],
-    sessions: [session("s1", { environmentId: "build", title: "Fix the remote session" })],
+    sessions: [session("s1", { locationId: "build", title: "Fix the remote session" })],
     history: conversation,
     after: async (_root, emit) => {
       emit({
-        type: "environment-status",
-        environmentId: "build",
+        type: "location-status",
+        locationId: "build",
         state: "closed",
         error: "ssh: connect to host build-1 port 22: Connection refused",
       });
@@ -2105,7 +2163,7 @@ export const scenarios: Record<string, Scenario> = {
     fails:
       "session/prompt failed: the daemon closed the stream before it answered (ECONNRESET at /home/dev/.cycle/daemon/sock/7f3a9c1e-4b2d-4e8a-9f61-0c5d2b7a8e44.sock, after 30012 ms), so the message was kept in the box and not sent",
     after: async (_root, emit) => {
-      emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+      emit({ type: "location-status", locationId: "local", state: "reconnecting" });
     },
   },
   "session-groups": {
@@ -2191,7 +2249,7 @@ export const scenarios: Record<string, Scenario> = {
         throw new Error("gallery: the row did not take the focus");
       emit({
         type: "sessions",
-        environmentId: "local",
+        locationId: "local",
         sessions: [
           session("one", { title: "First", lastSeq: 3, state: "running" }),
           session("two", { title: "Second", lastSeq: 2 }),
@@ -2208,7 +2266,7 @@ export const scenarios: Record<string, Scenario> = {
   },
   "two-agents": {
     title:
-      "Several agents on the environment: each session shows its agent's logo, in the list and in its header; a mark takes the time's place",
+      "Several agents on the location: each session shows its agent's logo, in the list and in its header; a mark takes the time's place",
     secondAgent: true,
     sessions: [
       session("s1", { title: "Fix the remote session", agent: "codex" }),
@@ -2311,10 +2369,10 @@ export const scenarios: Record<string, Scenario> = {
   },
   "daemon-old": {
     title: "The remote daemon is older than the app",
-    environments: [BUILD, LOCAL],
+    locations: [BUILD, LOCAL],
     status: [
       {
-        environmentId: "build",
+        locationId: "build",
         state: "connected",
         daemon: {
           version: "0.1.0",
@@ -2330,10 +2388,10 @@ export const scenarios: Record<string, Scenario> = {
   },
   "daemon-incompatible": {
     title: "The remote daemon speaks an incompatible protocol major version",
-    environments: [BUILD, LOCAL],
+    locations: [BUILD, LOCAL],
     status: [
       {
-        environmentId: "build",
+        locationId: "build",
         state: "reconnecting",
         incompatible: {
           with: "daemon",
@@ -2444,7 +2502,7 @@ export const scenarios: Record<string, Scenario> = {
       const news = (update: SessionUpdate) =>
         emit({
           type: "update",
-          environmentId: "local",
+          locationId: "local",
           sessionId: "s1",
           update,
           version: ++version,
@@ -2509,12 +2567,12 @@ export const scenarios: Record<string, Scenario> = {
     ]),
   ),
   "menu-host": {
-    title: "A remote environment's menu is open, in Settings",
-    environments: [BUILD, LOCAL],
+    title: "A remote location's menu is open, in Settings",
+    locations: [BUILD, LOCAL],
     status: [UP("build"), UP("local")],
     sessions: [],
     after: async (root) => {
-      await openSettings(root, "Environments");
+      await openSettings(root, "Work in");
       await clickByLabel(root, "Actions for build-1");
       await new Promise((r) => setTimeout(r, 200));
     },
@@ -2547,8 +2605,8 @@ export const scenarios: Record<string, Scenario> = {
     },
   },
   "search-open": {
-    title: "The session search, opened with nothing typed (two environments, several states)",
-    environments: [LOCAL, BUILD],
+    title: "The session search, opened with nothing typed (two locations, several states)",
+    locations: [LOCAL, BUILD],
     status: [UP("local"), UP("build")],
     sessions: [
       session("s1", { title: "Fix the remote session", state: "running", lastSeq: 9 }),
@@ -2556,7 +2614,7 @@ export const scenarios: Record<string, Scenario> = {
       session("s3", { cwd: "/home/dev/docs", agent: "claude", lastSeq: 7 }),
       session("s4", { title: "Old idea", archived: true, lastSeq: 1 }),
       session("b1", {
-        environmentId: "build",
+        locationId: "build",
         title: "Nightly release",
         cwd: "/srv/release",
         lastSeq: 6,
@@ -2566,18 +2624,18 @@ export const scenarios: Record<string, Scenario> = {
   },
   "search-typed": {
     title: "The session search with a query that matches by folder and by host",
-    environments: [LOCAL, BUILD],
+    locations: [LOCAL, BUILD],
     status: [UP("local"), UP("build")],
     sessions: [
       session("s1", { title: "Fix the remote session", lastSeq: 9 }),
       session("b1", {
-        environmentId: "build",
+        locationId: "build",
         title: "Nightly release",
         cwd: "/srv/release",
         lastSeq: 6,
       }),
       session("b2", {
-        environmentId: "build",
+        locationId: "build",
         title: "Cache warm-up",
         cwd: "/srv/cache",
         lastSeq: 5,
@@ -2621,8 +2679,56 @@ export const scenarios: Record<string, Scenario> = {
     attach: true,
     blank: { cwd: "/Users/me/work/app" },
   },
+  "new-session-environment": {
+    title: "New session: the workspace's environment after its folder, and its menu",
+    sessions: [session("s1", { title: "Fix the remote session", cwd: "/Users/me/work/app" })],
+    status: [WITH_ENVIRONMENTS("local")],
+    environments: ENVIRONMENTS,
+    blank: { cwd: "/Users/me/work/app" },
+    after: async (root) => {
+      await until(
+        () => root.querySelector('[data-kind="blank-environment"]') !== null,
+        "the environment",
+      );
+      root.querySelector<HTMLElement>('[data-kind="blank-environment"]')?.click();
+      await until(() => document.querySelector('[role="menu"]') !== null, "the menu");
+      await frames(4);
+    },
+  },
+  "new-session-environment-old-daemon": {
+    title: "New session: environments exist, and this location's Cycle is too old to take one",
+    sessions: [session("s1", { title: "Fix the remote session", cwd: "/Users/me/work/app" })],
+    environments: ENVIRONMENTS,
+    blank: { cwd: "/Users/me/work/app" },
+    tabs: 3,
+  },
+  "session-environment-actions": {
+    title: "A session made with an environment: its actions in the title bar, the rest in a menu",
+    status: [WITH_ENVIRONMENTS("local")],
+    sessions: [
+      session("s1", {
+        title: "Fix the remote session",
+        environment: {
+          id: "env-node",
+          name: "Node and Postgres",
+          variableNames: ["DATABASE_URL", "NODE_ENV"],
+          actions: [
+            { id: "dev", name: "Dev server", icon: "play" },
+            { id: "test", name: "Tests", icon: "test" },
+            { id: "storybook", name: "Storybook with a long name", icon: "server" },
+            { id: "lint", name: "Lint", icon: "a-newer-icon" },
+          ],
+        },
+      }),
+    ],
+    history: [
+      you("u1", "Start the dev server and run the tests."),
+      say("a1", "Both are in the title bar."),
+    ],
+    sidePanel: true,
+  },
   "new-session-folders": {
-    title: "New session: the folder's menu, with the folders this environment has sessions in",
+    title: "New session: the folder's menu, with the folders this location has sessions in",
     sessions: [
       session("s1", { title: "Fix the remote session", cwd: "/Users/me/work/app" }),
       session("s2", {
@@ -2644,9 +2750,9 @@ export const scenarios: Record<string, Scenario> = {
       await frames(4);
     },
   },
-  "new-session-environments": {
-    title: "New session with two environments: one chip names both, and its menu offers each",
-    environments: [LOCAL, BUILD],
+  "new-session-locations": {
+    title: "New session with two locations: one chip names both, and its menu offers each",
+    locations: [LOCAL, BUILD],
     sessions: [session("s1", { title: "Fix the remote session", cwd: "/Users/me/work/app" })],
     blank: { cwd: "/Users/me/work/app" },
     after: async (root) => {
@@ -2668,15 +2774,14 @@ export const scenarios: Record<string, Scenario> = {
       until(() => root.querySelector('[data-slot="blank-trust"]') !== null, "the trust mark"),
   },
   "new-session-offline": {
-    title:
-      "New session whose environment dropped: says so once, with Connect again; the draft stays",
+    title: "New session whose location dropped: says so once, with Connect again; the draft stays",
     sessions: [session("s1", { title: "Fix the remote session", cwd: "/Users/me/work/app" })],
     blank: { cwd: "/Users/me/work/app" },
     after: async (root, emit) => {
       await until(() => root.querySelector('[data-kind="blank-folder"]') !== null, "the folder");
       emit({
-        type: "environment-status",
-        environmentId: "local",
+        type: "location-status",
+        locationId: "local",
         state: "closed",
         error: "daemon exited (code 1)",
       });
@@ -2707,7 +2812,7 @@ export const scenarios: Record<string, Scenario> = {
       ),
   },
   "menu-trust": {
-    title: "The environment menu offers to trust the shown workspace's folder",
+    title: "The location menu offers to trust the shown workspace's folder",
     sessions: [session("s1", { title: "Fix the remote session" })],
     trust: null,
     after: async (root) => {
@@ -2716,16 +2821,16 @@ export const scenarios: Record<string, Scenario> = {
     },
   },
   "dialog-add-host": {
-    title: "Add environment dialog, over Settings",
+    title: "Add location dialog, over Settings",
     sessions: [],
     after: async (root) => {
-      await openSettings(root, "Environments");
-      await click(root, "Add environment");
+      await openSettings(root, "Work in");
+      await click(root, "Add location");
     },
   },
   "connectors-page": {
-    title: "Connectors, MCP servers: two environments keep them; ready, needs sign-in, failed, off",
-    environments: [LOCAL, BUILD],
+    title: "Connectors, MCP servers: two locations keep them; ready, needs sign-in, failed, off",
+    locations: [LOCAL, BUILD],
     status: [KEEPS("local"), KEEPS("build")],
     sessions: [session("s1", { title: "Fix the remote session" })],
     connectors: CONNECTORS,
@@ -2738,7 +2843,7 @@ export const scenarios: Record<string, Scenario> = {
     after: (root) => openConnectors(root),
   },
   "connectors-none": {
-    title: "Connectors: no connected environment can keep them",
+    title: "Connectors: no connected location can keep them",
     sessions: [],
     after: (root) => openConnectors(root),
   },
@@ -2841,10 +2946,9 @@ export const scenarios: Record<string, Scenario> = {
     sessions: [],
     after: (root) => openSettings(root, "Appearance"),
   },
-  "settings-environments": {
-    title:
-      "Settings, Environments: one connected, one away with its own words, one with a long name",
-    environments: [
+  "settings-locations": {
+    title: "Settings, Locations: one connected, one away with its own words, one with a long name",
+    locations: [
       LOCAL,
       BUILD,
       {
@@ -2860,24 +2964,91 @@ export const scenarios: Record<string, Scenario> = {
     status: [
       UP("local"),
       {
-        environmentId: "build",
+        locationId: "build",
         state: "closed",
         error: "ssh: connect to host build-1 port 22: Connection refused",
       },
-      { environmentId: "long", state: "reconnecting" },
+      { locationId: "long", state: "reconnecting" },
     ],
+    sessions: [],
+    after: (root) => openSettings(root, "Work in"),
+  },
+  "settings-environments-empty": {
+    title: "Settings, Environments: none yet, and the way to add one",
     sessions: [],
     after: (root) => openSettings(root, "Environments"),
   },
+  "settings-environments": {
+    title:
+      "Settings, Environments: one row each with how many variables and actions, never a value",
+    sessions: [],
+    environments: ENVIRONMENTS,
+    after: (root) => openSettings(root, "Environments"),
+  },
+  "settings-environment-editor": {
+    title: "Settings, Environments: the editor, its variables said wrong by line after a save",
+    sessions: [],
+    environments: ENVIRONMENTS,
+    after: async (root) => {
+      await openSettings(root, "Environments");
+      await click(root, "Add environment");
+      await until(
+        () => document.querySelector('[data-kind="environment-form"]') !== null,
+        "the editor",
+      );
+      const form = document.querySelector('[data-kind="environment-form"]') as HTMLElement;
+      typeInto(form.querySelector("input") as HTMLInputElement, "Node and Postgres");
+      typeInto(
+        form.querySelector('[data-kind="environment-variables"]') as HTMLTextAreaElement,
+        "# local database\nDATABASE_URL=postgres://localhost/dev\nPATH=/opt/bin\nnot a variable",
+      );
+      await frames(2);
+      (form.querySelector('button[type="submit"]') as HTMLElement).click();
+      await until(
+        () => form.querySelector('[data-slot="environment-line-problems"]') !== null,
+        "the problems",
+      );
+      await frames(4);
+    },
+  },
+  "settings-environment-icons": {
+    title: "Settings, Environments: editing one, the icon of its first action being chosen",
+    sessions: [],
+    environments: ENVIRONMENTS,
+    after: async (root) => {
+      await openSettings(root, "Environments");
+      await clickByLabel(root, "Manage Node and Postgres");
+      await until(() => document.querySelector('[role="menu"]') !== null, "the menu");
+      await click(document.body, "Edit");
+      await until(
+        () => document.querySelector('[data-kind="environment-form"]') !== null,
+        "the editor",
+      );
+      const trigger = document.querySelector<HTMLElement>(
+        '[data-kind="environment-action-icon"] [data-slot="select-trigger"]',
+      );
+      trigger?.click();
+      await until(() => document.querySelector('[role="listbox"]') !== null, "the icons");
+      await frames(4);
+    },
+  },
+  "new-session-environment-no-folder": {
+    title:
+      "New session with no folder yet: the environment can be chosen, and waits for the folder",
+    sessions: [],
+    status: [WITH_ENVIRONMENTS("local")],
+    environments: ENVIRONMENTS,
+    after: (root) => click(root, "New session"),
+  },
   "settings-defaults": {
-    title: "Settings, Session defaults: an agent's settings on one of two environments",
-    environments: [LOCAL, BUILD],
+    title: "Settings, Session defaults: an agent's settings on one of two locations",
+    locations: [LOCAL, BUILD],
     sessions: [],
     after: (root) => openSettings(root, "Session defaults"),
   },
   "settings-defaults-away": {
-    title: "Settings, Session defaults: no environment is connected",
-    status: [{ environmentId: "local", state: "closed", error: "spawn cycle ENOENT" }],
+    title: "Settings, Session defaults: no location is connected",
+    status: [{ locationId: "local", state: "closed", error: "spawn cycle ENOENT" }],
     sessions: [],
     after: (root) => openSettings(root, "Session defaults"),
   },
@@ -2888,10 +3059,10 @@ export const scenarios: Record<string, Scenario> = {
     blank: {},
   },
   "dialog-edit-host": {
-    title: "Edit environment dialog",
-    environments: [BUILD, LOCAL],
+    title: "Edit location dialog",
+    locations: [BUILD, LOCAL],
     sessions: [],
-    after: (root) => environmentAction(root, "build-1", "Edit"),
+    after: (root) => locationAction(root, "build-1", "Edit"),
   },
   "dialog-delete-session": {
     title: "Destructive confirmation dialog for deleting a session",
@@ -2968,7 +3139,7 @@ export const scenarios: Record<string, Scenario> = {
     attach: true,
     status: [
       {
-        environmentId: "local",
+        locationId: "local",
         state: "connected",
         capabilities: { queue: true, files: true, folders: true },
       },
@@ -3080,7 +3251,7 @@ export const scenarios: Record<string, Scenario> = {
       "The composer while the agent works: one line, Enter queues, the queue key on the button",
     status: [
       {
-        environmentId: "local",
+        locationId: "local",
         state: "connected",
         capabilities: { queue: true, files: true, folders: true },
       },
@@ -3114,7 +3285,7 @@ export const scenarios: Record<string, Scenario> = {
     attach: true,
     status: [
       {
-        environmentId: "local",
+        locationId: "local",
         state: "connected",
         capabilities: { queue: true, files: true, folders: true },
       },

@@ -6,7 +6,9 @@ import type {
   ConnectionState,
   ConnectorInfo,
   CycleBridge,
-  EnvironmentConfig,
+  Environment,
+  EnvironmentsState,
+  LocationConfig,
   PlanUsage,
   PluginFailure,
   PluginInfo,
@@ -18,11 +20,12 @@ import type {
   TerminalProblem,
   UpdateState,
 } from "../src/api.ts";
+import { environmentProblem } from "../src/environments.ts";
 import { emptyConversation } from "../src/model/index.ts";
 
-export const LOCAL: EnvironmentConfig = { id: "local", name: "This computer", kind: "local" };
-export const summary = (sessionId: string, environmentId = "local"): SessionSummary => ({
-  environmentId,
+export const LOCAL: LocationConfig = { id: "local", name: "This computer", kind: "local" };
+export const summary = (sessionId: string, locationId = "local"): SessionSummary => ({
+  locationId,
   sessionId,
   cwd: "/work",
   archived: false,
@@ -30,7 +33,7 @@ export const summary = (sessionId: string, environmentId = "local"): SessionSumm
   state: "idle",
   lastSeq: 0,
   // This computer's is the newer, so that it is the workspace shown unless a test says otherwise.
-  updatedAt: environmentId === "local" ? "2020-01-02T00:00:00.000Z" : "2020-01-01T00:00:00.000Z",
+  updatedAt: locationId === "local" ? "2020-01-02T00:00:00.000Z" : "2020-01-01T00:00:00.000Z",
 });
 export const text = (t: string, id = "a") =>
   ({
@@ -75,7 +78,10 @@ export const fakeBridge = (
       diff?: boolean;
       terminal?: boolean;
       stopSubagent?: boolean;
+      environments?: boolean;
     };
+    /** The environments main keeps, and each workspace's default. Changed in place by what the page asks. */
+    environments?: EnvironmentsState;
     /** The terminals the daemon has, by session. Changed by what the page asks; a test may change it and emit. */
     terminals?: Map<string, TerminalInfo[]>;
     /** Why the next terminal cannot be opened, if it cannot. */
@@ -89,8 +95,8 @@ export const fakeBridge = (
     plugins?: { sources: PluginSourceInfo[]; all: PluginInfo[]; fail?: PluginFailure | undefined };
     /** The agent can take a message into a running turn. */
     steer?: boolean;
-    /** More environments than the local one, and how each stands (by id; the local one's is `connected`). */
-    environments?: EnvironmentConfig[];
+    /** More locations than the local one, and how each stands (by id; the local one's is `connected`). */
+    locations?: LocationConfig[];
     states?: Record<string, ConnectionState>;
     /** The look and the language chosen, and the system's language. Default: follow the system, which is en-US. */
     preferences?: Partial<Preferences> & { systemLanguage?: string };
@@ -118,6 +124,11 @@ export const fakeBridge = (
   };
   const pluginAt = (id: string): number => plugins.all.findIndex((p) => p.id === id);
   const terminals = options.terminals ?? new Map<string, TerminalInfo[]>();
+  const environments: EnvironmentsState = options.environments ?? {
+    environments: [],
+    defaults: {},
+  };
+  const environmentsNow = (): EnvironmentsState => structuredClone(environments);
   let made = 0;
   let account = options.account ?? SIGNED_IN;
   let listener: ((event: AppEvent) => void) | undefined;
@@ -134,15 +145,15 @@ export const fakeBridge = (
         listener = undefined;
       };
     },
-    environments: record("environments", async () => {
-      const environments = [LOCAL, ...(options.environments ?? [])];
+    locations: record("locations", async () => {
+      const locations = [LOCAL, ...(options.locations ?? [])];
       return {
-        environments,
-        status: environments.map((h) => {
+        locations,
+        status: locations.map((h) => {
           const state =
             options.states?.[h.id] ?? (options.connected === false ? "closed" : "connected");
           return {
-            environmentId: h.id,
+            locationId: h.id,
             state,
             ...(state === "connected"
               ? {
@@ -151,19 +162,19 @@ export const fakeBridge = (
               : {}),
           };
         }),
-        // What main has read of each environment, through the same call a test may replace to say what a list holds.
+        // What main has read of each location, through the same call a test may replace to say what a list holds.
         sessions: Object.fromEntries(
           await Promise.all(
-            environments.map(async (h) => [h.id, await bridge.sessions(h.id)] as const),
+            locations.map(async (h) => [h.id, await bridge.sessions(h.id)] as const),
           ),
         ),
       };
     }),
-    saveEnvironment: record("saveEnvironment", async () => {}),
-    removeEnvironment: record("removeEnvironment", async () => {}),
+    saveLocation: record("saveLocation", async () => {}),
+    removeLocation: record("removeLocation", async () => {}),
     connect: record("connect", async () => {}),
     disconnect: record("disconnect", async () => {}),
-    sessions: record("sessions", async (environmentId: string) => [summary("s1", environmentId)]),
+    sessions: record("sessions", async (locationId: string) => [summary("s1", locationId)]),
     createSession: record("createSession", async () => "s2"),
     openSession: record(
       "openSession",
@@ -185,16 +196,13 @@ export const fakeBridge = (
       folders: [{ name: "app" }, { name: "docs" }],
       truncated: false,
     })),
-    planUsage: record(
-      "planUsage",
-      async (_environment: string) => ({}) as Record<string, PlanUsage>,
-    ),
-    readTrust: record("readTrust", async (_environment: string, path: string) => ({
+    planUsage: record("planUsage", async (_location: string) => ({}) as Record<string, PlanUsage>),
+    readTrust: record("readTrust", async (_location: string, path: string) => ({
       path,
       trusted: true,
       from: path,
     })),
-    setTrust: record("setTrust", async (_environment: string, path: string, trusted: boolean) => ({
+    setTrust: record("setTrust", async (_location: string, path: string, trusted: boolean) => ({
       path,
       trusted,
       from: path,
@@ -226,20 +234,26 @@ export const fakeBridge = (
     ]),
     createTerminal: record(
       "createTerminal",
-      async (environmentId: string, sessionId: string, cols: number, rows: number) => {
+      async (
+        locationId: string,
+        sessionId: string,
+        cols: number,
+        rows: number,
+        actionId?: string,
+      ) => {
         if (options.terminalProblem !== undefined) return { problem: options.terminalProblem };
         made += 1;
         const terminal: TerminalInfo = {
           terminalId: `t${made}`,
           sessionId,
-          title: "zsh",
+          title: actionId ?? "zsh",
           cols,
           rows,
           status: "running",
         };
         const list = [...(terminals.get(sessionId) ?? []), terminal];
         terminals.set(sessionId, list);
-        listener?.({ type: "terminals", environmentId, sessionId, terminals: list });
+        listener?.({ type: "terminals", locationId, sessionId, terminals: list });
         return { terminal, screen: "", seq: 0 };
       },
     ),
@@ -251,12 +265,12 @@ export const fakeBridge = (
     detachTerminal: record("detachTerminal", async () => {}),
     terminalInput: record("terminalInput", async () => {}),
     resizeTerminal: record("resizeTerminal", async () => {}),
-    closeTerminal: record("closeTerminal", async (environmentId: string, terminalId: string) => {
+    closeTerminal: record("closeTerminal", async (locationId: string, terminalId: string) => {
       for (const [sessionId, list] of terminals) {
         if (!list.some((t) => t.terminalId === terminalId)) continue;
         const rest = list.filter((t) => t.terminalId !== terminalId);
         terminals.set(sessionId, rest);
-        listener?.({ type: "terminals", environmentId, sessionId, terminals: rest });
+        listener?.({ type: "terminals", locationId, sessionId, terminals: rest });
       }
     }),
     searchFiles: record("searchFiles", async () => ({
@@ -269,7 +283,7 @@ export const fakeBridge = (
     dismissBackground: record("dismissBackground", async () => {}),
     stopSubagent: record(
       "stopSubagent",
-      async (_environmentId: string, _sessionId: string, childId: string, _background: boolean) =>
+      async (_locationId: string, _sessionId: string, childId: string, _background: boolean) =>
         options.stopSubagent?.(childId) ?? true,
     ),
     archiveSession: record("archiveSession", async () => {}),
@@ -291,7 +305,7 @@ export const fakeBridge = (
     ]),
     agentDefaults: record("agentDefaults", async () => ({})),
     setAgentDefaults: record("setAgentDefaults", async () => {}),
-    readAgentSetup: record("readAgentSetup", async (_environmentId: string, agent: string) => ({
+    readAgentSetup: record("readAgentSetup", async (_locationId: string, agent: string) => ({
       agent,
       name:
         agent === "claude"
@@ -329,7 +343,7 @@ export const fakeBridge = (
     setAgentRuntimeSettings: record(
       "setAgentRuntimeSettings",
       async (
-        _environmentId: string,
+        _locationId: string,
         _agent: string,
         patch: Record<string, boolean | number | string | null>,
         expectedRevision: number,
@@ -355,7 +369,7 @@ export const fakeBridge = (
     cancelAgentAuth: record("cancelAgentAuth", async () => {}),
     logoutAgent: record("logoutAgent", async () => ({ ok: true as const })),
     listConnectors: record("listConnectors", async () => connectors.map((c) => ({ ...c }))),
-    addConnector: record("addConnector", async (_environment: string, draft) => {
+    addConnector: record("addConnector", async (_location: string, draft) => {
       const connector: ConnectorInfo = {
         id: `c${connectors.length + 1}`,
         name: draft.name,
@@ -372,7 +386,7 @@ export const fakeBridge = (
       connectors.push(connector);
       return { connector };
     }),
-    updateConnector: record("updateConnector", async (_environment: string, id: string, change) => {
+    updateConnector: record("updateConnector", async (_location: string, id: string, change) => {
       const at = connectors.findIndex((c) => c.id === id);
       const before = connectors[at];
       if (before === undefined) return { problem: "not_found" as const };
@@ -381,12 +395,12 @@ export const fakeBridge = (
       connectors[at] = connector;
       return { connector };
     }),
-    removeConnector: record("removeConnector", async (_environment: string, id: string) => {
+    removeConnector: record("removeConnector", async (_location: string, id: string) => {
       const at = connectors.findIndex((c) => c.id === id);
       if (at >= 0) connectors.splice(at, 1);
       return { removed: true as const };
     }),
-    authorizeConnector: record("authorizeConnector", async (_environment: string, id: string) => {
+    authorizeConnector: record("authorizeConnector", async (_location: string, id: string) => {
       const connector = connectors.find((c) => c.id === id);
       if (connector === undefined) return { problem: "not_found" as const };
       connector.authorized = true;
@@ -394,7 +408,7 @@ export const fakeBridge = (
       return { connector: { ...connector } };
     }),
     cancelConnectorAuth: record("cancelConnectorAuth", async () => {}),
-    signOutConnector: record("signOutConnector", async (_environment: string, id: string) => {
+    signOutConnector: record("signOutConnector", async (_location: string, id: string) => {
       const connector = connectors.find((c) => c.id === id);
       if (connector === undefined) return { problem: "not_found" as const };
       connector.authorized = false;
@@ -408,7 +422,7 @@ export const fakeBridge = (
     availablePlugins: record(
       "availablePlugins",
       async (
-        _environment: string,
+        _location: string,
         asked: { sourceId?: string; query?: string; cursor?: string; limit?: number },
       ) => {
         const query = asked.query?.toLowerCase() ?? "";
@@ -428,27 +442,25 @@ export const fakeBridge = (
         };
       },
     ),
-    installPlugin: record(
-      "installPlugin",
-      async (_environment: string, _agent: string, id: string) =>
-        pluginChange(() => {
-          const at = pluginAt(id);
-          const before = plugins.all[at];
-          if (before === undefined) return { problem: "not_found" as const };
-          const plugin: PluginInfo = {
-            contents: { skills: 1, commands: 0, agents: 0, hooks: 0, mcpServers: 0 },
-            ...before,
-            installed: true,
-            enabled: true,
-            scope: "user",
-          };
-          plugins.all[at] = plugin;
-          return { plugin: { ...plugin } };
-        }),
+    installPlugin: record("installPlugin", async (_location: string, _agent: string, id: string) =>
+      pluginChange(() => {
+        const at = pluginAt(id);
+        const before = plugins.all[at];
+        if (before === undefined) return { problem: "not_found" as const };
+        const plugin: PluginInfo = {
+          contents: { skills: 1, commands: 0, agents: 0, hooks: 0, mcpServers: 0 },
+          ...before,
+          installed: true,
+          enabled: true,
+          scope: "user",
+        };
+        plugins.all[at] = plugin;
+        return { plugin: { ...plugin } };
+      }),
     ),
     uninstallPlugin: record(
       "uninstallPlugin",
-      async (_environment: string, _agent: string, id: string) =>
+      async (_location: string, _agent: string, id: string) =>
         pluginChange(() => {
           const at = pluginAt(id);
           const before = plugins.all[at];
@@ -456,7 +468,7 @@ export const fakeBridge = (
           return { removed: true as const };
         }),
     ),
-    updatePlugin: record("updatePlugin", async (_environment: string, _agent: string, id: string) =>
+    updatePlugin: record("updatePlugin", async (_location: string, _agent: string, id: string) =>
       pluginChange(() => {
         const plugin = plugins.all[pluginAt(id)];
         if (plugin === undefined) return { problem: "not_found" as const };
@@ -465,7 +477,7 @@ export const fakeBridge = (
     ),
     setPluginEnabled: record(
       "setPluginEnabled",
-      async (_environment: string, _agent: string, id: string, enabled: boolean) =>
+      async (_location: string, _agent: string, id: string, enabled: boolean) =>
         pluginChange(() => {
           const at = pluginAt(id);
           const before = plugins.all[at];
@@ -477,7 +489,7 @@ export const fakeBridge = (
     ),
     addPluginSource: record(
       "addPluginSource",
-      async (_environment: string, agentId: string, location: string) =>
+      async (_location: string, agentId: string, location: string) =>
         pluginChange(() => {
           const source: PluginSourceInfo = {
             agentId,
@@ -493,7 +505,7 @@ export const fakeBridge = (
     ),
     removePluginSource: record(
       "removePluginSource",
-      async (_environment: string, _agent: string, id: string) =>
+      async (_location: string, _agent: string, id: string) =>
         pluginChange(() => {
           const at = plugins.sources.findIndex((s) => s.id === id);
           if (at >= 0) plugins.sources.splice(at, 1);
@@ -514,6 +526,32 @@ export const fakeBridge = (
     ),
     installUpdate: record("installUpdate", async () => {}),
     upgradeDaemon: record("upgradeDaemon", async () => {}),
+    environments: record("environments", async () => environmentsNow()),
+    saveEnvironment: record("saveEnvironment", async (environment: Environment) => {
+      const problem = environmentProblem(environment);
+      if (problem !== undefined) return problem;
+      const at = environments.environments.findIndex((e) => e.id === environment.id);
+      if (at === -1) environments.environments.push(structuredClone(environment));
+      else environments.environments[at] = structuredClone(environment);
+      return { state: environmentsNow() };
+    }),
+    removeEnvironment: record("removeEnvironment", async (environmentId: string) => {
+      environments.environments = environments.environments.filter((e) => e.id !== environmentId);
+      for (const folders of Object.values(environments.defaults))
+        for (const [cwd, id] of Object.entries(folders))
+          if (id === environmentId) delete folders[cwd];
+      return environmentsNow();
+    }),
+    setEnvironmentDefault: record(
+      "setEnvironmentDefault",
+      async (locationId: string, cwd: string, environmentId: string | null) => {
+        const folders = environments.defaults[locationId] ?? {};
+        environments.defaults[locationId] = folders;
+        if (environmentId === null) delete folders[cwd];
+        else folders[cwd] = environmentId;
+        return environmentsNow();
+      },
+    ),
     preferences: record("preferences", async () => ({ ...preferences })),
     setPreferences: record("setPreferences", async (change: Partial<Preferences>) => {
       Object.assign(preferences, change);

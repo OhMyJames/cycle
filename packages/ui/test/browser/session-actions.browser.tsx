@@ -95,7 +95,7 @@ test("pin moves the row to the top under Pinned without opening it; unpin puts i
   ]);
 });
 
-test("the row's menu archives that row's session, in its own environment", async () => {
+test("the row's menu archives that row's session, in its own location", async () => {
   const { user, script } = await mount();
   await user.hover(option("Second"));
   await user.click(within(actionsOf("Second")).getByRole("button", { name: "More actions" }));

@@ -1,5 +1,5 @@
 // The Plugins section of the Connectors page (CYCL-84, docs/protocol.md §15): what is installed for one agent on one
-// environment, what can be installed, and where that list comes from. A plugin is the agent's own; nothing here knows
+// location, what can be installed, and where that list comes from. A plugin is the agent's own; nothing here knows
 // how any agent keeps them. Installing one is agreeing to run someone else's code there, so it is always asked.
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
@@ -25,7 +25,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type {
   ConnectorInfo,
   ConnectorProblem,
-  EnvironmentConfig,
+  LocationConfig,
   PluginFailure,
   PluginInfo,
   PluginSourceInfo,
@@ -50,7 +50,7 @@ const ALL = "*";
 
 const CONTENT_KINDS = ["skills", "commands", "agents", "hooks", "mcpServers"] as const;
 
-type Words = { environment: string; agent: string };
+type Words = { location: string; agent: string };
 
 /** A failure as a sentence, and what the agent's own machinery said, kept apart: the second is its words, not ours. */
 function Failure({ failure, words }: { failure: PluginFailure; words: Words }) {
@@ -67,11 +67,11 @@ function Failure({ failure, words }: { failure: PluginFailure; words: Words }) {
   );
 }
 
-export function PluginsSection({ environment }: { environment: EnvironmentConfig }) {
+export function PluginsSection({ location }: { location: LocationConfig }) {
   const { t } = useI18n();
-  const environmentId = environment.id;
-  const agents = useAppState((s) => s.status[environmentId]?.capabilities?.plugins) ?? [];
-  const known = useAppState((s) => s.agents[environmentId]);
+  const locationId = location.id;
+  const agents = useAppState((s) => s.status[locationId]?.capabilities?.plugins) ?? [];
+  const known = useAppState((s) => s.agents[locationId]);
   const [chosen, setChosen] = useState<string | undefined>(undefined);
   const agentId = agents.find((id) => id === chosen) ?? agents[0];
   const label = useId();
@@ -112,7 +112,7 @@ export function PluginsSection({ environment }: { environment: EnvironmentConfig
       {/* Keyed by the agent: another one's plugins start from nothing. */}
       <AgentPlugins
         key={agentId}
-        environment={environment}
+        location={location}
         agentId={agentId}
         agentName={nameOf(agentId)}
       />
@@ -121,36 +121,36 @@ export function PluginsSection({ environment }: { environment: EnvironmentConfig
 }
 
 function AgentPlugins({
-  environment,
+  location,
   agentId,
   agentName,
 }: {
-  environment: EnvironmentConfig;
+  location: LocationConfig;
   agentId: string;
   agentName: string;
 }) {
   const store = useAppStore();
-  const environmentId = environment.id;
-  const read = useAppState((s) => s.plugins[pluginsKey(environmentId, agentId)]);
+  const locationId = location.id;
+  const read = useAppState((s) => s.plugins[pluginsKey(locationId, agentId)]);
   const keepsConnectors = useAppState(
-    (s) => s.status[environmentId]?.capabilities?.connectors === true,
+    (s) => s.status[locationId]?.capabilities?.connectors === true,
   );
-  const words: Words = { environment: environment.name, agent: agentName };
+  const words: Words = { location: location.name, agent: agentName };
   /** Counts what changed what is installed or listed, so the list of what can be installed is read again. */
   const [revision, setRevision] = useState(0);
   const changed = useCallback(() => setRevision((n) => n + 1), []);
 
   useEffect(() => {
-    void store.loadPlugins(environmentId, agentId);
+    void store.loadPlugins(locationId, agentId);
     // The servers plugins bring are connectors: their state says whether one still wants a sign-in.
-    if (keepsConnectors) void store.loadConnectors(environmentId);
-  }, [store, environmentId, agentId, keepsConnectors]);
+    if (keepsConnectors) void store.loadConnectors(locationId);
+  }, [store, locationId, agentId, keepsConnectors]);
 
   return (
     <>
-      <Installed environment={environment} agentId={agentId} words={words} onChanged={changed} />
+      <Installed location={location} agentId={agentId} words={words} onChanged={changed} />
       <Available
-        environment={environment}
+        location={location}
         agentId={agentId}
         words={words}
         sources={read?.sources ?? []}
@@ -160,7 +160,7 @@ function AgentPlugins({
       />
       {read?.sources !== undefined ? (
         <Sources
-          environment={environment}
+          location={location}
           agentId={agentId}
           words={words}
           sources={read.sources}
@@ -172,7 +172,7 @@ function AgentPlugins({
 }
 
 type SectionProps = {
-  environment: EnvironmentConfig;
+  location: LocationConfig;
   agentId: string;
   words: Words;
   onChanged: () => void;
@@ -194,12 +194,12 @@ const wantsOf = (
   return out;
 };
 
-function Installed({ environment, agentId, words, onChanged }: SectionProps) {
+function Installed({ location, agentId, words, onChanged }: SectionProps) {
   const { t } = useI18n();
   const store = useAppStore();
-  const environmentId = environment.id;
-  const read = useAppState((s) => s.plugins[pluginsKey(environmentId, agentId)]);
-  const connectors = useAppState((s) => s.connectors[environmentId]?.list);
+  const locationId = location.id;
+  const read = useAppState((s) => s.plugins[pluginsKey(locationId, agentId)]);
+  const connectors = useAppState((s) => s.connectors[locationId]?.list);
   const list = read?.list;
   const { busy, problems: failures, run } = useKeyedAsyncAction<PluginFailure>();
   /** What the last action came to, said once for a screen reader and the eye alike. */
@@ -227,7 +227,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
     setWaiting(connector.id);
     setRefusals(({ [connector.id]: _gone, ...rest }) => rest);
     try {
-      const answer = await store.authorizeConnector(environmentId, connector.id);
+      const answer = await store.authorizeConnector(locationId, connector.id);
       if ("problem" in answer) setRefusals((r) => ({ ...r, [connector.id]: answer }));
     } finally {
       setWaiting((w) => (w === connector.id ? undefined : w));
@@ -245,7 +245,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
           reason={read.error}
           action={{
             label: t("plugins.retry"),
-            onAction: () => void store.loadPlugins(environmentId, agentId),
+            onAction: () => void store.loadPlugins(locationId, agentId),
           }}
         />
       ) : null}
@@ -356,7 +356,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
                             {refusal !== undefined ? (
                               <p data-slot="hint" role="alert">
                                 {t(`connectors.problem.${refusal.problem}`, {
-                                  environment: environment.name,
+                                  location: location.name,
                                   reason: refusal.message ?? "",
                                 })}
                               </p>
@@ -375,7 +375,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
                   disabled={busy[plugin.id] === true}
                   onCheckedChange={(enabled) =>
                     void act(plugin, () =>
-                      store.setPluginEnabled(environmentId, agentId, plugin.id, enabled),
+                      store.setPluginEnabled(locationId, agentId, plugin.id, enabled),
                     )
                   }
                 >
@@ -386,7 +386,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
                     if (value === "remove") setRemoving(plugin);
                     else if (value === "update")
                       void act(plugin, () =>
-                        store.updatePlugin(environmentId, agentId, plugin.id),
+                        store.updatePlugin(locationId, agentId, plugin.id),
                       ).then((answer) => {
                         if ("updated" in answer)
                           setSaid(
@@ -423,7 +423,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
           confirmLabel={t("plugins.uninstallConfirm")}
           destructive
           onConfirm={async () => {
-            const answer = await store.uninstallPlugin(environmentId, agentId, removing.id);
+            const answer = await store.uninstallPlugin(locationId, agentId, removing.id);
             if ("problem" in answer) return failureText(t, answer, words);
             onChanged();
             return undefined;
@@ -432,7 +432,7 @@ function Installed({ environment, agentId, words, onChanged }: SectionProps) {
       ) : null}
       {values !== undefined ? (
         <ConnectorValuesDialog
-          environment={environment}
+          location={location}
           connector={values}
           onDone={() => setValues(undefined)}
         />
@@ -456,7 +456,7 @@ const failureText = (
 type Listing = { plugins: PluginInfo[]; nextCursor?: string | undefined; total: number };
 
 function Available({
-  environment,
+  location,
   agentId,
   words,
   sources,
@@ -470,7 +470,7 @@ function Available({
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const environmentId = environment.id;
+  const locationId = location.id;
   const [typed, setTyped] = useState("");
   const [query, setQuery] = useState("");
   const [sourceId, setSourceId] = useState(ALL);
@@ -494,7 +494,7 @@ function Available({
     async (cursor: string | undefined, onto: PluginInfo[]) => {
       const mine = ++asked.current;
       try {
-        const answer = await store.availablePlugins(environmentId, {
+        const answer = await store.availablePlugins(locationId, {
           agentId,
           limit: PAGE,
           ...(query !== "" ? { query } : {}),
@@ -509,7 +509,7 @@ function Available({
         setError(failed instanceof Error ? failed.message : String(failed));
       }
     },
-    [store, environmentId, agentId, query, sourceId],
+    [store, locationId, agentId, query, sourceId],
   );
 
   // From the top again when what is asked changes, or when something was installed, removed or refreshed.
@@ -522,7 +522,7 @@ function Available({
     setInstalling(plugin.id);
     setFailures(({ [plugin.id]: _gone, ...rest }) => rest);
     try {
-      const answer = await store.installPlugin(environmentId, agentId, plugin.id);
+      const answer = await store.installPlugin(locationId, agentId, plugin.id);
       if ("problem" in answer) {
         setFailures((f) => ({ ...f, [plugin.id]: answer }));
         return undefined;
@@ -703,7 +703,7 @@ function Available({
 }
 
 function Sources({
-  environment,
+  location,
   agentId,
   words,
   sources,
@@ -711,7 +711,7 @@ function Sources({
 }: SectionProps & { sources: PluginSourceInfo[] }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const environmentId = environment.id;
+  const locationId = location.id;
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<PluginSourceInfo | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
@@ -723,7 +723,7 @@ function Sources({
     setFailure(undefined);
     setSaid(undefined);
     try {
-      const answer = await store.refreshPluginSources(environmentId, agentId);
+      const answer = await store.refreshPluginSources(locationId, agentId);
       if ("problem" in answer) setFailure(answer);
       else {
         setSaid(t("plugins.sources.refreshed"));
@@ -787,7 +787,7 @@ function Sources({
       </PageRows>
       {adding ? (
         <SourceFormDialog
-          environment={environment}
+          location={location}
           agentId={agentId}
           words={words}
           onDone={(added) => {
@@ -805,7 +805,7 @@ function Sources({
           confirmLabel={t("plugins.sources.removeConfirm")}
           destructive
           onConfirm={async () => {
-            const answer = await store.removePluginSource(environmentId, agentId, removing.id);
+            const answer = await store.removePluginSource(locationId, agentId, removing.id);
             if ("problem" in answer) return failureText(t, answer, words);
             onChanged();
             return undefined;
@@ -818,29 +818,29 @@ function Sources({
 
 /** Where plugins come from, typed by the person: what it lists can then be installed, so the form says what that means. */
 function SourceFormDialog({
-  environment,
+  location,
   agentId,
   words,
   onDone,
 }: {
-  environment: EnvironmentConfig;
+  location: LocationConfig;
   agentId: string;
   words: Words;
   onDone: (added: boolean) => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const [location, setLocation] = useState("");
+  const [source, setSource] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<PluginFailure | undefined>(undefined);
-  const ready = location.trim() !== "";
+  const ready = source.trim() !== "";
 
   const save = async () => {
     if (!ready || busy) return;
     setBusy(true);
     setFailure(undefined);
     try {
-      const answer = await store.addPluginSource(environment.id, agentId, location.trim());
+      const answer = await store.addPluginSource(location.id, agentId, source.trim());
       if ("problem" in answer) setFailure(answer);
       else onDone(true);
     } finally {
@@ -866,8 +866,8 @@ function SourceFormDialog({
               autoFocus
               autoComplete="off"
               spellCheck={false}
-              value={location}
-              onChange={(e) => setLocation(e.currentTarget.value)}
+              value={source}
+              onChange={(e) => setSource(e.currentTarget.value)}
             />
             <FieldDescription>{t("plugins.sourceForm.hint", words)}</FieldDescription>
           </Field>

@@ -61,7 +61,7 @@ const open = async (...updates: SessionUpdate[]) => {
   const emit = (update: SessionUpdate) => {
     version += 1;
     return act(() =>
-      script.emit({ type: "update", environmentId: "local", sessionId: "s1", update, version }),
+      script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version }),
     );
   };
   const ask = (request: PermissionRequest) => {
@@ -158,7 +158,7 @@ test("the conversation has one loader: the first sub-agent at work, the others a
   // The agent asks the person: the status line speaks, and holds the loader; the cards stand still.
   await ask({
     key: "local:s1:p1",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Allow Bash?",
     subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },

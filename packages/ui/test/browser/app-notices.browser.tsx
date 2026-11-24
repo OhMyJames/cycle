@@ -96,8 +96,8 @@ test("a daemon this app cannot use: the card says what to run, the open session 
   await user.click(await screen.findByRole("option", { name: /work/ }));
   await screen.findByRole("log", { name: "Conversation" });
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "reconnecting",
     incompatible: {
       with: "daemon",
@@ -115,15 +115,15 @@ test("a daemon this app cannot use: the card says what to run, the open session 
   expect(within(line).queryByRole("button")).toBeNull();
 });
 
-test("with nothing open, an environment this app cannot use is not said to be connecting", async () => {
+test("with nothing open, a location this app cannot use is not said to be connecting", async () => {
   const { emit } = await mount();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "reconnecting",
     incompatible: { with: "app", supported: ["2.0"], requested: "1.0" },
   });
-  expect(await screen.findByText("Not connected to this environment.")).toBeTruthy();
-  expect(screen.queryByText("Connecting to this environment…")).toBeNull();
+  expect(await screen.findByText("Not connected to this location.")).toBeTruthy();
+  expect(screen.queryByText("Connecting to this location…")).toBeNull();
   expect(screen.queryByRole("button", { name: "Connect again" })).toBeNull();
 });

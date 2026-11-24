@@ -75,6 +75,8 @@ export const fakeAgent = (
     /** A cancel in a sub-agent's session (ACP v2 child, CYCL-143): its id. It is not the turn's. */
     childCancels: [] as string[],
     launches: 0,
+    /** What each launch was given (`LaunchContext`), in order. */
+    launchContexts: [] as unknown[],
     /** Launches asked for, including one still held. */
     launchRequests: 0,
     configs: [] as Record<string, unknown>[],
@@ -266,8 +268,9 @@ export const fakeAgent = (
       ? { promptCapabilities: options.promptCapabilities }
       : {}),
     ...(options.steer !== undefined ? { steer: true } : {}),
-    launch: async () => {
+    launch: async (context?: unknown) => {
       log.launchRequests++;
+      log.launchContexts.push(context);
       await control.holdLaunch;
       if (control.failLaunch) throw new Error("The agent cannot start");
       log.launches++;
