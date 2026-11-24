@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { LineJsonRpcProcess, type LineRpcOptions, RpcError } from "@cycle/line-rpc";
+import type { V1McpServer } from "./mcp.ts";
 import type { ToolPermission } from "./permissions.ts";
 
 export type AdapterConfig = {
@@ -26,6 +27,8 @@ export type AdapterConfig = {
   toolPermission?: ToolPermission;
   /** The older on/off form of `toolPermission: "always-proceed"`. */
   skipPermissions?: boolean;
+  /** Replaces reading the enabled plugins' stdio MCP servers from `agy plugin list` (for tests). */
+  pluginServers?: () => Promise<V1McpServer[]>;
   /** Optional factory replacing the spawned child process (for in-process unit tests or alternate transports). */
   connect?: (handlers: AgyServerHandlers) => AgyTransport;
   /** Called if the underlying `agy acp` process terminates unexpectedly. */

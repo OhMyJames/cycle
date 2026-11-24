@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { isAbsolute } from "node:path";
 import {
   type AgentContext,
@@ -10,7 +11,7 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleErrorCode, META } from "@cycle/protocol";
-import { translateMcpServers } from "./mcp.ts";
+import { translateMcpServers, type V1McpServer } from "./mcp.ts";
 import {
   agySettingsPath,
   DEFAULT_TOOL_PERMISSION,
@@ -20,6 +21,7 @@ import {
   writeManagedSettings,
 } from "./permissions.ts";
 import { PLAN_USAGE_UPDATE, PlanUsageReader } from "./plan-usage.ts";
+import { AgyPlugins } from "./plugins.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { DEFAULT_AGY_MODE, toV2ConfigOptions } from "./settings.ts";
 import {
@@ -165,6 +167,12 @@ const coversPrefix = (remembered: ReadonlySet<string>, prefix: string): boolean 
   remembered.has(prefix);
 
 const ALWAYS_OPTION_ID = "cycle-allow-session";
+/**
+ * MCP tools "always allow" is never offered for: ones named `apply_edits` (writes any file) or `run_checks` (runs any
+ * command), whichever server brings them, so one answer would not stand for everything the model later asks of them.
+ * By tool name only: an MCP tool that does the same under another name is still offered it.
+ */
+const NEVER_REMEMBERED_TOOL = /^mcp_.+_(apply_edits|run_checks)$/;
 
 const TURN_ACTIVITY_UPDATES = new Set([
   "agent_message_chunk",
@@ -315,6 +323,20 @@ export function createAdapter(config: AdapterConfig) {
         at: Date.now(),
       } as unknown as SessionUpdate),
   });
+  // `agy acp` does not start a plugin's own MCP servers, so the enabled plugins' stdio servers are handed over here.
+  const pluginReader = new AgyPlugins({
+    executable: () => config.agyExecutable,
+    env: config.env,
+    cwd: config.env.HOME && isAbsolute(config.env.HOME) ? config.env.HOME : tmpdir(),
+  });
+  const withPluginServers = async (given: V1McpServer[]): Promise<V1McpServer[]> => {
+    // A plugin that cannot be read brings no server; it never stops a session from starting.
+    const extra = await (config.pluginServers?.() ?? pluginReader.stdioServers()).catch(
+      (): V1McpServer[] => [],
+    );
+    const named = new Set(given.map((server) => server.name));
+    return [...given, ...extra.filter((server) => !named.has(server.name))];
+  };
   const cancelTimeoutMs = config.cancelTimeoutMs ?? 5_000;
   // agy's model call between two steps often takes longer than 1.5 s, which flickered running/idle and let a queued
   // message go while agy still worked (CYC-290). No measured spread yet: the low end of 5-10 s, as a message sent in the window is refused.
@@ -678,7 +700,10 @@ export function createAdapter(config: AdapterConfig) {
     const known = session.calls.get(req.toolCall.toolCallId);
     const name = req.toolCall.name ?? known?.name;
     if (name === undefined) return undefined;
-    if (name.startsWith("mcp_")) return { tools: [name], prefixes: [] };
+    // Writing any file or running any command: asked every time, as `run_command` is checked by its parts.
+    if (name.startsWith("mcp_")) {
+      return NEVER_REMEMBERED_TOOL.test(name) ? undefined : { tools: [name], prefixes: [] };
+    }
     if (name !== "run_command") return undefined;
     const input = (req.toolCall.rawInput ?? known?.input) as { CommandLine?: unknown } | undefined;
     const command = typeof input?.CommandLine === "string" ? input.CommandLine : undefined;
@@ -990,10 +1015,12 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.new, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
-      const mcpServers = translateMcpServers(params.mcpServers);
+      // Read beside starting agy: neither waits for the other.
+      const pluginServers = withPluginServers(translateMcpServers(params.mcpServers));
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
+      const mcpServers = await pluginServers;
       let created: V1SessionResponse;
       try {
         created = await startingWorker(initialToolPermission, () =>
@@ -1040,12 +1067,13 @@ export function createAdapter(config: AdapterConfig) {
     })
     .onRequest(methods.agent.session.resume, async ({ params, client }) => {
       const meta = systemPromptMeta(params.systemPrompt);
-      const mcpServers = translateMcpServers(params.mcpServers);
+      const pluginServers = withPluginServers(translateMcpServers(params.mcpServers));
       const hadTurn =
         (params._meta as Record<string, unknown> | undefined)?.[META.hadTurn] === true;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
+      const mcpServers = await pluginServers;
 
       let response: V1ResumeResponse;
       let resolvedId = params.sessionId;
