@@ -237,6 +237,7 @@ export const enUS = {
   "image.open": "Open image: {name}",
   "image.alt.agent": "Image from the agent",
   "image.alt.user": "Image you sent",
+  "image.alt.attached": "Image you attached",
   "image.close": "Close",
   "image.viewer.one": "{name}",
   "image.viewer.many": "{name}, {index} of {total}",

@@ -7,7 +7,7 @@ import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
-import { press, ready, write } from "./box.ts";
+import { boxText, press, ready, write } from "./box.ts";
 
 afterEach(() => {
   cleanup();
@@ -236,4 +236,54 @@ test("a message of only a picture has no empty bubble", async () => {
   const log = screen.getByRole("log", { name: "Conversation" });
   await within(log).findByRole("region", { name: "Attachments" });
   expect(log.querySelector('[data-slot="message"][data-role="user"]')).toBeNull();
+});
+
+test("an attached picture opens large from its thumbnail; Esc closes it back to the message, kept as it was, and Remove never opens it (CYCL-221)", async () => {
+  const png = (await import("../../gallery/sample-image.ts")).SAMPLE_PNG;
+  const file = (name: string) =>
+    new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], name, { type: "image/png" });
+  const { user, box, tracked, picker } = await open(both);
+  await write(box, "is this the right one");
+  await user.upload(picker(), [file("first.png"), file("second.png"), file("third.png")]);
+  const list = await screen.findByRole("list", { name: "Attachments" });
+  await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(3));
+
+  // Each thumbnail opens its own picture, one of the three.
+  await user.click(screen.getByRole("button", { name: "Open image: second.png" }));
+  const dialog = await screen.findByRole("dialog", { name: "second.png, 2 of 3" });
+  expect(dialog.querySelector<HTMLImageElement>('[data-slot="lightbox-image"]')?.src).toBe(
+    `data:image/png;base64,${png}`,
+  );
+  await user.keyboard("{ArrowRight}");
+  await screen.findByRole("dialog", { name: "third.png, 3 of 3" });
+  // Esc closes it, and the focus is back in the message, which is as it was.
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(box));
+  expect(boxText(box)).toBe("is this the right one");
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  // Where the caret was is where writing goes on.
+  await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+  await user.click(screen.getByRole("button", { name: "Open image: third.png" }));
+  await screen.findByRole("dialog", { name: "third.png, 3 of 3" });
+  await user.keyboard("{ArrowLeft}{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(box));
+  await user.keyboard("X");
+  expect(boxText(box)).toBe("is this the right Xone");
+
+  await user.click(screen.getByRole("button", { name: "Open image: first.png" }));
+  await screen.findByRole("dialog", { name: "first.png, 1 of 3" });
+  // A press on the scrim closes it too.
+  await user.click(await screen.findByRole("dialog"), { position: { x: 4, y: 4 } });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(box));
+
+  // Remove takes the picture away and opens nothing.
+  await user.click(screen.getByRole("button", { name: "Remove first.png" }));
+  await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open image: first.png" })).toBeNull();
+  // Opening a picture is not counted: what is counted is what is done with it.
+  expect(tracked().filter(([event]) => String(event).startsWith("image_"))).toEqual([]);
 });
