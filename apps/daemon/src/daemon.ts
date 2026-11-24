@@ -55,7 +55,7 @@ import {
   permissionOutcome,
 } from "./acp.ts";
 import { AgentAuthManager } from "./agent-auth.ts";
-import { AgentLink } from "./agent-link.ts";
+import { AgentLink, type LinkHandlers } from "./agent-link.ts";
 import {
   AGENT_SETTINGS_UNREADABLE,
   AgentSettings,
@@ -147,6 +147,8 @@ export type DaemonOptions = {
    * the process ends, the session stays, and its next prompt starts and resumes one. Never, when not given.
    */
   agentIdleMs?: number;
+  /** How long an agent started ahead (`prewarmAgent`) waits for a session to take it before it is let go. Default 5 minutes. */
+  standbyMs?: number;
   /** For tests: the clock idle times are measured by. */
   now?: () => number;
   /** For tests: replaces the connectors kept in `$CYCLE_HOME/connectors/` (docs/protocol.md §14). */
@@ -175,6 +177,9 @@ export const defaultTerminals = (
   max: settings.max,
   scrollback: settings.scrollback,
 });
+
+/** How long an agent started ahead of any session waits to be taken over (`Daemon.prewarmAgent`). */
+const STANDBY_MS = 5 * 60_000;
 
 const SESSION_UPDATE = methods.client.session.update;
 const REQUEST_PERMISSION = methods.client.session.requestPermission;
@@ -208,6 +213,10 @@ export class Daemon {
   readonly #plugins: PluginService;
   readonly #terminals: Terminals;
   readonly #agentIdleMs: number | undefined;
+  readonly #standbyMs: number;
+  /** Agents started ahead of any session (`prewarmAgent`): one each at most, taken over by the next session to start. */
+  readonly #standby = new Map<string, { link: AgentLink; timer: ReturnType<typeof setTimeout> }>();
+  readonly #standbyStarting = new Map<string, Promise<void>>();
   readonly #now: () => number;
   /** When the daemon started, or a client last connected or left: where an idle daemon starts counting. */
   #lastClientAt: number;
@@ -250,6 +259,7 @@ export class Daemon {
       loadedMtimeMs: captureConfigMtime(defaultConfigPath),
     };
     this.#agentIdleMs = options.agentIdleMs;
+    this.#standbyMs = options.standbyMs ?? STANDBY_MS;
     this.#now = options.now ?? Date.now;
     this.#lastClientAt = this.#now();
     this.#log = options.log ?? silentLogger;
@@ -456,6 +466,7 @@ export class Daemon {
     // Terminals do not outlive the daemon (docs/protocol.md §8 "终端"). Their shells are hung up now and given their
     // grace while the sessions stop, not before.
     const terminals = this.#terminals.closeAll();
+    for (const agentId of [...this.#standby.keys()]) this.#dropStandby(agentId);
     const authCleanup = this.#auth.close();
     for (const session of this.#sessions.values()) {
       // A turn cut short says so in the history before the agent goes (docs/protocol.md §8): it is not left running.
@@ -606,6 +617,97 @@ export class Daemon {
   }
 
   /**
+   * Starts `agentId` ahead of any session, when it can be (`AgentDefinition.standby`): the process is up and initialised
+   * by the time a session wants it, and the next session to start takes it over instead of starting one (decision 0014,
+   * CYC-294). One per agent; it is let go after `standbyMs` with no one to take it, when the agent's account or settings
+   * change, or when the daemon stops. Says nothing if it cannot: the session then starts its own, as before.
+   */
+  async prewarmAgent(agentId: string): Promise<void> {
+    const definition = this.#definition(agentId);
+    if (definition.standby !== true || this.#closing) return;
+    if (this.#standby.has(agentId)) {
+      this.#armStandby(agentId);
+      return;
+    }
+    const pending = this.#standbyStarting.get(agentId);
+    if (pending !== undefined) return pending;
+    const starting = this.#startStandby(definition).finally(() => {
+      this.#standbyStarting.delete(agentId);
+    });
+    this.#standbyStarting.set(agentId, starting);
+    return starting;
+  }
+
+  async #startStandby(definition: AgentDefinition): Promise<void> {
+    const agentId = definition.id;
+    const generation = this.#agentGeneration(agentId);
+    try {
+      if (!((await definition.available?.()) ?? true)) return;
+      let connected: AgentLink | undefined;
+      let endedEarly = false;
+      const link = await AgentLink.connect(definition, {
+        // Nothing is asked of it before a session has it: what it sends then is not anyone's.
+        update: () => {},
+        permission: async () => ({ outcome: { outcome: "cancelled" } }),
+        elicitation: async () => ({ action: "cancel" }),
+        closed: () => {
+          if (connected === undefined) endedEarly = true;
+          else if (this.#standby.get(agentId)?.link === connected) this.#forgetStandby(agentId);
+        },
+      });
+      connected = link;
+      // It ended, or its account or settings changed, while it started: it is not the one to keep.
+      if (endedEarly || this.#closing || this.#agentGeneration(agentId) !== generation) {
+        link.kill();
+        return;
+      }
+      this.#standby.set(agentId, { link, timer: this.#standbyTimer(agentId) });
+      this.#log.info("agent_standby_ready", { agent: agentId });
+    } catch (error) {
+      // An agent that cannot be started ahead is started by the session, which says why it could not.
+      this.#log.warn("agent_standby_failed", {
+        agent: agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  #standbyTimer(agentId: string): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => {
+      this.#log.info("agent_standby_expired", { agent: agentId });
+      this.#dropStandby(agentId);
+    }, this.#standbyMs);
+    timer.unref?.();
+    return timer;
+  }
+
+  /** The wait of an agent started ahead starts over: someone is still about to want it. */
+  #armStandby(agentId: string): void {
+    const held = this.#standby.get(agentId);
+    if (held === undefined) return;
+    clearTimeout(held.timer);
+    held.timer = this.#standbyTimer(agentId);
+  }
+
+  #forgetStandby(agentId: string): AgentLink | undefined {
+    const held = this.#standby.get(agentId);
+    if (held === undefined) return undefined;
+    clearTimeout(held.timer);
+    this.#standby.delete(agentId);
+    return held.link;
+  }
+
+  /** The agent started ahead, if there is one, ends. */
+  #dropStandby(agentId: string): void {
+    this.#forgetStandby(agentId)?.kill();
+  }
+
+  /** The agent started ahead, if there is one, is the caller's now: nothing else will end it. */
+  #takeStandby(agentId: string): AgentLink | undefined {
+    return this.#forgetStandby(agentId);
+  }
+
+  /**
    * Reconcile unprompted warm processes for `agentId` against its current `maxAhead` limit:
    * - `limit === 0` (e.g. `warmStart: false`) terminates all unprompted idle warm processes immediately;
    * - `limit > 0` terminates the oldest excess warm processes FIFO (keeping `keep` when given).
@@ -644,6 +746,8 @@ export class Daemon {
     const history = this.#staleHistory.get(agentId) ?? [];
     history.push(reason);
     this.#staleHistory.set(agentId, history);
+    // What was started ahead was started with what held before.
+    this.#dropStandby(agentId);
     for (const session of this.#sessions.values()) {
       if (session.entry.agent !== agentId) continue;
       if (session.link === undefined && session.starting === undefined) continue;
@@ -705,25 +809,32 @@ export class Daemon {
     // or exits at once): the end is noted, and acted on once there is a link to act on.
     let connected: AgentLink | undefined;
     let endedEarly = false;
-    const link = await AgentLink.connect(
-      definition,
-      {
-        update: (update, sessionId) => {
-          // A sub-agent it announced speaks under its own id (ACP v2): that is the sub-agent's conversation. Any other id
-          // is taken as the session's own, as before the agent named one.
-          if (session.isChild(sessionId)) this.#onChildUpdate(session, sessionId, update);
-          else this.#onUpdate(session, update);
-        },
-        permission: (params, signal) => this.#onPermission(session, params, signal),
-        elicitation: (params, signal) => this.#onElicitation(session, params, signal),
-        closed: () => {
-          if (connected === undefined) endedEarly = true;
-          else this.#onAgentClosed(session, connected);
-        },
+    const handlers: LinkHandlers = {
+      update: (update, sessionId) => {
+        // A sub-agent it announced speaks under its own id (ACP v2): that is the sub-agent's conversation. Any other id
+        // is taken as the session's own, as before the agent named one.
+        if (session.isChild(sessionId)) this.#onChildUpdate(session, sessionId, update);
+        else this.#onUpdate(session, update);
       },
-      // Its environment's variables, for the commands it runs (docs/protocol.md §6 "环境").
-      { sessionId: session.id, sessionEnv: sessionVariables(session.entry) },
-    );
+      permission: (params, signal) => this.#onPermission(session, params, signal),
+      elicitation: (params, signal) => this.#onElicitation(session, params, signal),
+      closed: () => {
+        if (connected === undefined) endedEarly = true;
+        else this.#onAgentClosed(session, connected);
+      },
+    };
+    // An agent already started for it (`prewarmAgent`) is taken over, not started again.
+    const ahead = this.#takeStandby(session.entry.agent);
+    if (ahead !== undefined) this.#log.info("agent_standby_taken", { agent: session.entry.agent });
+    const link =
+      ahead ??
+      (await AgentLink.connect(
+        definition,
+        handlers,
+        // Its environment's variables, for the commands it runs (docs/protocol.md §6 "环境").
+        { sessionId: session.id, sessionEnv: sessionVariables(session.entry) },
+      ));
+    ahead?.adopt(handlers);
     connected = link;
     session.link = link;
     if (endedEarly) this.#onAgentClosed(session, link);
@@ -2006,6 +2117,7 @@ export class Daemon {
       submitAgentAuth: (connectionId, params) => this.#submitAgentAuth(connectionId, params),
       cancelAgentAuth: (connectionId, params) => this.#cancelAgentAuth(connectionId, params),
       logoutAgent: (params) => this.#logoutAgent(params),
+      prewarmAgent: (agent) => this.prewarmAgent(agent),
     };
   }
 }

@@ -43,17 +43,28 @@ export class AgentLink {
   readonly mcpHttp: boolean;
   readonly #close: () => void;
   readonly #kill: (() => void) | undefined;
+  readonly #rebind: (handlers: LinkHandlers) => void;
 
   private constructor(
     agent: ClientContext,
     mcpHttp: boolean,
     close: () => void,
     kill: (() => void) | undefined,
+    rebind: (handlers: LinkHandlers) => void,
   ) {
     this.agent = agent;
     this.mcpHttp = mcpHttp;
     this.#close = close;
     this.#kill = kill;
+    this.#rebind = rebind;
+  }
+
+  /**
+   * Hands the link to whoever takes it over: what the agent sends from now goes to `handlers`. A link started ahead of
+   * any session (decision 0014, standby) has handlers that say nothing until then.
+   */
+  adopt(handlers: LinkHandlers): void {
+    this.#rebind(handlers);
   }
 
   static async connect(
@@ -62,21 +73,23 @@ export class AgentLink {
     context?: LaunchContext,
   ): Promise<AgentLink> {
     const launched = await definition.launch(context);
+    let current = handlers;
     const app = client({ name: "cycle" })
       .onNotification(methods.client.session.update, ({ params }) => {
-        handlers.update(params.update, params.sessionId);
+        current.update(params.update, params.sessionId);
       })
       .onRequest(methods.client.session.requestPermission, ({ params, signal }) =>
-        handlers.permission(params, signal),
+        current.permission(params, signal),
       )
       .onRequest(methods.client.elicitation.create, ({ params, signal }) =>
-        handlers.elicitation(params, signal),
+        current.elicitation(params, signal),
       );
     const connection =
       launched.target instanceof AgentApp
         ? app.connect(launched.target)
         : app.connect(launched.target as Stream);
-    void connection.closed.then(handlers.closed, handlers.closed);
+    const closed = () => current.closed();
+    void connection.closed.then(closed, closed);
     let initialized: InitializeResponse;
     try {
       initialized = await connection.agent.request(methods.agent.initialize, {
@@ -91,7 +104,15 @@ export class AgentLink {
       throw error;
     }
     const mcpHttp = initialized.capabilities?.session?.mcp?.http != null;
-    return new AgentLink(connection.agent, mcpHttp, () => connection.close(), launched.kill);
+    return new AgentLink(
+      connection.agent,
+      mcpHttp,
+      () => connection.close(),
+      launched.kill,
+      (next) => {
+        current = next;
+      },
+    );
   }
 
   kill(): void {

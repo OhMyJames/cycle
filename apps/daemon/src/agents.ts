@@ -39,6 +39,12 @@ export type AgentDefinition = {
    * (decision 0014). Counted among this agent's sessions only. No limit when absent; 0 disables warm pool retention.
    */
   maxAhead?: number | (() => number | undefined);
+  /**
+   * It can be started before any session wants it (`Daemon.prewarmAgent`): the process is up and initialised, and the
+   * first session to start takes it over. Only for an agent whose start does not depend on the session (cwd, MCP
+   * servers, environment): those come with `session/new`. None when absent.
+   */
+  standby?: boolean;
   /** Its plugins, when it has them (docs/protocol.md §15). */
   plugins?: PluginProvider;
   /** Read-only status, diagnostics, auth, and runtime settings provider (docs/protocol.md §16). */

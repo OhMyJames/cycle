@@ -175,10 +175,12 @@ type SessionState = {
   defaultEffort?: string | undefined;
   requestedModel?: string | undefined;
   requestedEffort?: string | undefined;
+  /** set_config_option requests in flight: agy's echo of them is folded into the one update they end with. */
+  configInFlight: number;
   /** agy's update_steps calls still going: what makes its plan. */
   stepsPlans: StepsPlans;
   /** What a call is, by id, until it ends: a permission request names the call but not always its input. */
-  calls: Map<string, { name?: string | undefined; input?: unknown }>;
+  calls: Map<string, { name?: string | undefined; input?: unknown; status?: string | undefined }>;
   /** "Always allow in this session", kept in memory only: MCP tool names and shell command prefixes. */
   allowedTools: Set<string>;
   allowedPrefixes: Set<string>;
@@ -458,6 +460,7 @@ export function createAdapter(config: AdapterConfig) {
     }
 
     if (update.sessionUpdate === "config_option_update") {
+      const before = JSON.stringify(sessionConfigOptions(session));
       session.v1ConfigOptions = update.configOptions as V1ConfigOption[];
       const thought = currentOption(session.v1ConfigOptions, "thought_level");
       if (
@@ -467,10 +470,14 @@ export function createAdapter(config: AdapterConfig) {
       ) {
         session.requestedEffort = "default";
       }
-      emitUpdate(session, {
-        sessionUpdate: "config_option_update",
-        configOptions: sessionConfigOptions(session),
-      } as SessionUpdate);
+      // A set_config_option of ours ends with its own update; an echo of nothing new is not said again.
+      const configOptions = sessionConfigOptions(session);
+      if (session.configInFlight === 0 && JSON.stringify(configOptions) !== before) {
+        emitUpdate(session, {
+          sessionUpdate: "config_option_update",
+          configOptions,
+        } as SessionUpdate);
+      }
       return;
     }
 
@@ -498,9 +505,16 @@ export function createAdapter(config: AdapterConfig) {
       const payload = update as V1ToolCallPayload;
       if (toolId) {
         const known = session.calls.get(toolId) ?? {};
+        // agy sends a started call back to pending while it checks it and waits to be allowed: never shown going back.
+        // A request waiting for the person is already shown on the call by the permission dialog.
+        if (status === "pending" && known.status === "in_progress") {
+          (update as { status?: string }).status = "in_progress";
+        }
+        const shownStatus = (update as { status?: string }).status;
         session.calls.set(toolId, {
           name: payload.name ?? known.name,
           input: payload.rawInput ?? known.input,
+          status: shownStatus ?? known.status,
         });
       }
       if (session.turn && toolId) {
@@ -535,8 +549,16 @@ export function createAdapter(config: AdapterConfig) {
         session.calls.delete(toolId);
       }
       if (session.turn) {
-        // Start a fresh assistant message id for any text/thought arriving after a tool call.
-        session.turn.assistantMessageId = randomUUID();
+        // A fresh assistant message id for text after a call starts or ends; progress in between keeps the one it has,
+        // or the text said meanwhile is cut into a bubble per update (CYC-292).
+        if (
+          update.sessionUpdate === "tool_call" ||
+          status === "completed" ||
+          status === "failed" ||
+          status === "cancelled"
+        ) {
+          session.turn.assistantMessageId = randomUUID();
+        }
         if (toolId) {
           if (status === "completed" || status === "failed" || status === "cancelled") {
             session.turn.openTools.delete(toolId);
@@ -613,7 +635,9 @@ export function createAdapter(config: AdapterConfig) {
       const rule = permissionRule(session, req);
       if (allowOnce !== undefined && rule !== undefined && ruleAllowed(session, rule)) {
         if (turn.autonomous) scheduleAutonomousIdle(session, turn);
-        return { outcome: { outcome: "selected", optionId: allowOnce.optionId } };
+        return {
+          outcome: { outcome: "selected", optionId: allowOnce.optionId },
+        };
       }
       // agy's own "always" option, if it ever gives one, is passed on as it is; otherwise one is added.
       const canRemember =
@@ -657,7 +681,9 @@ export function createAdapter(config: AdapterConfig) {
           )
           .catch(() => undefined);
         if (signal.aborted || !answer) return { outcome: { outcome: "cancelled" } };
-        const picked = answer as { outcome?: { outcome?: string; optionId?: string } };
+        const picked = answer as {
+          outcome?: { outcome?: string; optionId?: string };
+        };
         if (
           canRemember &&
           rule !== undefined &&
@@ -668,7 +694,9 @@ export function createAdapter(config: AdapterConfig) {
           // agy knows only its own options: it is told this once, and the session remembers the rest.
           for (const tool of rule.tools) session.allowedTools.add(tool);
           for (const prefix of rule.prefixes) session.allowedPrefixes.add(prefix);
-          return { outcome: { outcome: "selected", optionId: allowOnce.optionId } };
+          return {
+            outcome: { outcome: "selected", optionId: allowOnce.optionId },
+          };
         }
         return answer;
       } finally {
@@ -730,7 +758,10 @@ export function createAdapter(config: AdapterConfig) {
     throw new AgyRpcError(-32601, `Unsupported client request from agy: ${method}`);
   };
 
-  const ensureTransport = async (): Promise<{ conn: AgyTransport; info: V1InitializeResult }> => {
+  const ensureTransport = async (): Promise<{
+    conn: AgyTransport;
+    info: V1InitializeResult;
+  }> => {
     if (!transport || transport.closed) {
       const handlers = {
         onNotification: handleNotification,
@@ -837,6 +868,7 @@ export function createAdapter(config: AdapterConfig) {
         calls: new Map(),
         allowedTools: new Set(),
         allowedPrefixes: new Set(),
+        configInFlight: 0,
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
       };
@@ -913,6 +945,7 @@ export function createAdapter(config: AdapterConfig) {
         calls: new Map(),
         allowedTools: new Set(),
         allowedPrefixes: new Set(),
+        configInFlight: 0,
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
       };
@@ -921,7 +954,10 @@ export function createAdapter(config: AdapterConfig) {
       // ACP v2: announce current session state before returning from session/resume.
       await client.notify(methods.client.session.update, {
         sessionId: state.id,
-        update: { sessionUpdate: "state_update", state: "idle" } as SessionUpdate,
+        update: {
+          sessionUpdate: "state_update",
+          state: "idle",
+        } as SessionUpdate,
       });
 
       const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
@@ -947,81 +983,90 @@ export function createAdapter(config: AdapterConfig) {
         throw toRequestError(error);
       });
 
-      const applyV1 = async (configId: string, value: string) => {
-        try {
-          const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
-            "session/set_config_option",
-            {
+      session.configInFlight += 1;
+      const before = JSON.stringify(sessionConfigOptions(session));
+      try {
+        const applyV1 = async (configId: string, value: string) => {
+          // Already what agy has: nothing to send.
+          if (currentOption(session.v1ConfigOptions, configId)?.currentValue === value) return;
+          try {
+            const res = await conn.request<{
+              configOptions?: V1ConfigOption[];
+            }>("session/set_config_option", {
               sessionId: session.id,
               configId,
               value,
-            },
-          );
-          if (Array.isArray(res?.configOptions)) {
-            session.v1ConfigOptions = res.configOptions;
+            });
+            if (Array.isArray(res?.configOptions)) {
+              session.v1ConfigOptions = res.configOptions;
+            }
+          } catch (error) {
+            throw toRequestError(error);
           }
-        } catch (error) {
-          throw toRequestError(error);
-        }
-      };
+        };
 
-      if (params.configId === "mode") {
-        await applyV1("mode", params.value);
-      } else if (params.configId === "model") {
-        if (params.value === "default") {
-          session.requestedModel = "default";
-          const currentModel = currentOption(session.v1ConfigOptions, "model")?.currentValue;
-          if (session.defaultModel !== undefined && currentModel !== session.defaultModel) {
-            await applyV1("model", session.defaultModel);
+        if (params.configId === "mode") {
+          await applyV1("mode", params.value);
+        } else if (params.configId === "model") {
+          if (params.value === "default") {
+            session.requestedModel = "default";
+            const currentModel = currentOption(session.v1ConfigOptions, "model")?.currentValue;
+            if (session.defaultModel !== undefined && currentModel !== session.defaultModel) {
+              await applyV1("model", session.defaultModel);
+            }
+          } else {
+            await applyV1("model", params.value);
+            session.requestedModel = params.value;
           }
-        } else {
-          await applyV1("model", params.value);
-          session.requestedModel = params.value;
-        }
-        // Keep requested effort only if the newly selected model supports it; otherwise reset to default.
-        const thought = currentOption(session.v1ConfigOptions, "thought_level");
-        const supportedEfforts = (thought?.options ?? []).map((o) => o.value);
-        if (session.requestedEffort !== undefined && session.requestedEffort !== "default") {
-          if (!supportedEfforts.includes(session.requestedEffort)) {
-            session.requestedEffort = "default";
-          } else if (thought?.currentValue !== session.requestedEffort) {
-            try {
-              await applyV1("thought_level", session.requestedEffort);
-            } catch {
+          // Keep requested effort only if the newly selected model supports it; otherwise reset to default.
+          const thought = currentOption(session.v1ConfigOptions, "thought_level");
+          const supportedEfforts = (thought?.options ?? []).map((o) => o.value);
+          if (session.requestedEffort !== undefined && session.requestedEffort !== "default") {
+            if (!supportedEfforts.includes(session.requestedEffort)) {
               session.requestedEffort = "default";
+            } else if (thought?.currentValue !== session.requestedEffort) {
+              try {
+                await applyV1("thought_level", session.requestedEffort);
+              } catch {
+                session.requestedEffort = "default";
+              }
             }
           }
-        }
-      } else if (params.configId === "effort") {
-        const thought = currentOption(session.v1ConfigOptions, "thought_level");
-        if (params.value === "default") {
-          session.requestedEffort = "default";
-          if (
-            thought !== undefined &&
-            session.defaultEffort !== undefined &&
-            thought.currentValue !== session.defaultEffort &&
-            (thought.options ?? []).some((o) => o.value === session.defaultEffort)
-          ) {
-            await applyV1("thought_level", session.defaultEffort).catch(() => undefined);
+        } else if (params.configId === "effort") {
+          const thought = currentOption(session.v1ConfigOptions, "thought_level");
+          if (params.value === "default") {
+            session.requestedEffort = "default";
+            if (
+              thought !== undefined &&
+              session.defaultEffort !== undefined &&
+              thought.currentValue !== session.defaultEffort &&
+              (thought.options ?? []).some((o) => o.value === session.defaultEffort)
+            ) {
+              await applyV1("thought_level", session.defaultEffort).catch(() => undefined);
+            }
+          } else {
+            if (!thought || (thought.options ?? []).length === 0) {
+              throw new RequestError(-32602, "Current model does not support effort levels");
+            }
+            await applyV1("thought_level", params.value);
+            session.requestedEffort = params.value;
           }
+        } else if (currentOption(session.v1ConfigOptions, params.configId) !== undefined) {
+          await applyV1(params.configId, params.value);
         } else {
-          if (!thought || (thought.options ?? []).length === 0) {
-            throw new RequestError(-32602, "Current model does not support effort levels");
-          }
-          await applyV1("thought_level", params.value);
-          session.requestedEffort = params.value;
+          throw new RequestError(-32602, `Unknown agy setting: ${params.configId}`);
         }
-      } else if (currentOption(session.v1ConfigOptions, params.configId) !== undefined) {
-        await applyV1(params.configId, params.value);
-      } else {
-        throw new RequestError(-32602, `Unknown agy setting: ${params.configId}`);
+      } finally {
+        session.configInFlight -= 1;
       }
 
       const configOptions = sessionConfigOptions(session);
-      emitUpdate(session, {
-        sessionUpdate: "config_option_update",
-        configOptions,
-      } as SessionUpdate);
+      if (JSON.stringify(configOptions) !== before) {
+        emitUpdate(session, {
+          sessionUpdate: "config_option_update",
+          configOptions,
+        } as SessionUpdate);
+      }
       return { configOptions } as never;
     })
     .onRequest(methods.agent.session.prompt, async ({ params }) => {

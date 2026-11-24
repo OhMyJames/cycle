@@ -340,6 +340,49 @@ test("with a limit on agents started ahead of a prompt, a new session lets go of
   expect(fake.log.resumes.map((r) => r.sessionId).sort()).toEqual([ids[0], ids[1]].sort());
 });
 
+test("an agent started ahead is taken over by the next session instead of starting another, and only one is kept (CYC-294)", async () => {
+  const fake = fakeAgent();
+  const daemon = await Daemon.start({
+    dataDir: dir,
+    agents: [{ ...fake.definition, standby: true }],
+  });
+  open.push(daemon);
+  await Promise.all([daemon.prewarmAgent("fake"), daemon.prewarmAgent("fake")]);
+  await daemon.prewarmAgent("fake");
+  expect(fake.log.launches).toBe(1);
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  expect(fake.log.launches).toBe(1);
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("hi") });
+  await until(() => fake.log.prompts.length === 1, "the prompt to reach the agent");
+  // What was taken is not there for the next session: it starts its own.
+  await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  expect(fake.log.launches).toBe(2);
+});
+
+test("an agent started ahead that nobody takes is let go after its time, and an agent that cannot be is left alone", async () => {
+  const fake = fakeAgent();
+  const plain = fakeAgent();
+  const daemon = await Daemon.start({
+    dataDir: dir,
+    standbyMs: 30,
+    agents: [
+      { ...fake.definition, standby: true },
+      { ...plain.definition, id: "plain" },
+    ],
+  });
+  open.push(daemon);
+  await daemon.prewarmAgent("plain");
+  expect(plain.log.launches).toBe(0);
+  await daemon.prewarmAgent("fake");
+  expect(fake.log.launches).toBe(1);
+  await Bun.sleep(80);
+  const c = await connectClient(daemon);
+  await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  // The one started ahead is gone: this session started its own.
+  expect(fake.log.launches).toBe(2);
+});
+
 test("a cancel answers pending requests as cancelled and reaches the agent", async () => {
   const outcomes: unknown[] = [];
   const { daemon, fake } = await start(

@@ -124,6 +124,8 @@ export type Core = {
     overrides: string[];
     revision: number;
   }>;
+  /** Starts an agent ahead of the session that will want it, when it can be (`Daemon.prewarmAgent`). */
+  prewarmAgent(agent: string): Promise<void>;
   /** A sign-in flow, bound to the connection that starts it. */
   startAgentAuth(
     connectionId: string,

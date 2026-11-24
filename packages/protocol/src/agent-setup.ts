@@ -332,6 +332,19 @@ export const agentAuthLogout = cycleMethod(
   z.object({}),
 );
 
+/**
+ * An agent is wanted soon (the blank page chose it): start it now if it can run before a session exists, so that the
+ * session made next takes it over (docs/protocol.md §16 "提前起进程"). Always answers `{}`: an agent that cannot, or
+ * fails to start, is started by the session as before.
+ */
+export const agentPrewarm = cycleMethod(
+  "_cycle/agent_setup/prewarm",
+  z.object({
+    agent: z.string().min(1),
+  }),
+  z.object({}),
+);
+
 /** Sent ONLY to the connection that initiated the auth flow (docs/protocol.md §16). */
 export const AGENT_AUTH_COMPLETED = "_cycle/agent_auth_completed";
 export const AgentAuthCompletedSchema = z.object({
