@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { AgentApp, methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { AgentSetupSnapshotSchema, agentSetupRead, META } from "@cycle/protocol";
 import {
+  AGY_AUTH_URL_RE,
   type AgentSetupRunCommand,
   CLAUDE_AUTH_URL_RE,
   captureConfigMtime,
@@ -12,6 +13,7 @@ import {
   createCodexSetupProvider,
   extractAuthUrl,
   readConfigFileStatus,
+  runAgyAcpLogout,
   runCodexAppServerLogout,
   runCodexAppServerProbe,
   startCliCodeAuth,
@@ -676,4 +678,86 @@ for await (const chunk of Bun.stdin.stream()) {
   expect(provider.signInModes()).toEqual([{ mode: "code", requiresLocalLoopback: false }]);
   expect(provider.canSignOut()).toBe(true);
   await provider.authDriver?.logout?.();
+});
+
+test("Agy auth driver runs agy acp --login (accounts.google.com) and native agy acp logout RPC, invalidating 45s cache", async () => {
+  const fakeAgy = join(dir, "fake-agy");
+  const script = `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  process.stdout.write("1.5.15\\n");
+  process.exit(0);
+}
+if (args[0] === "acp" && args[1] === "--login") {
+  process.stdout.write("Open this link in a browser to log in with Google:\\n\\n  https://accounts.google.com/o/oauth2/auth?response_type=code&state=agy123\\n\\nThen paste the authorization code:\\n");
+  const dec = new TextDecoder();
+  let buf = "";
+  for await (const chunk of Bun.stdin.stream()) {
+    buf += dec.decode(chunk, { stream: true });
+    if (buf.includes("\\n")) {
+      process.exit(buf.trim() === "AGY-CODE-OK" ? 0 : 1);
+    }
+  }
+}
+if (args[0] === "acp") {
+  const dec = new TextDecoder();
+  let buf = "";
+  for await (const chunk of Bun.stdin.stream()) {
+    buf += dec.decode(chunk, { stream: true });
+    for (let nl = buf.indexOf("\\n"); nl !== -1; nl = buf.indexOf("\\n")) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const msg = JSON.parse(line);
+      if (msg.method === "initialize") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
+      } else if (msg.method === "logout") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+      }
+    }
+  }
+}
+`;
+  writeFileSync(fakeAgy, script, { mode: 0o755 });
+  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(dir, "agy-home") };
+
+  // 1. Login flow extracts accounts.google.com URL and delivers code via stdin.
+  const flow = await startCliCodeAuth({
+    command: [fakeAgy, "acp", "--login"],
+    env,
+    urlPattern: AGY_AUTH_URL_RE,
+  });
+  expect(flow.authorizationUrl).toBe(
+    "https://accounts.google.com/o/oauth2/auth?response_type=code&state=agy123",
+  );
+  expect(await flow.submit?.("AGY-CODE-OK")).toEqual({ ok: true });
+  expect(await flow.completed).toEqual({ ok: true });
+
+  // 2. Native agy acp logout RPC succeeds cleanly.
+  await runAgyAcpLogout({ executable: fakeAgy, env });
+
+  // 3. Provider advertises code mode, canSignOut, and invalidates 45s cache on logout/invalidateCache.
+  let modelsProbes = 0;
+  const provider = createAgySetupProvider({
+    config: ConfigSchema.parse({}).agy,
+    dataDir: dir,
+    inherited: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    env: () => ({ HOME: join(dir, "agy-home") }),
+    locateBinary: () => ({ source: "path", path: fakeAgy }),
+    runCommand: async (cmd) => {
+      if (cmd[1] === "--version") {
+        return { exitCode: 0, stdout: "1.5.15\n", stderr: "", timedOut: false };
+      }
+      modelsProbes++;
+      return { exitCode: 0, stdout: "gemini-3\n", stderr: "", timedOut: false };
+    },
+  });
+  expect(provider.signInModes()).toEqual([{ mode: "code", requiresLocalLoopback: false }]);
+  expect(provider.canSignOut()).toBe(true);
+  await provider.readAuth();
+  await provider.readAuth();
+  expect(modelsProbes).toBe(1);
+  await provider.authDriver?.logout?.();
+  await provider.readAuth();
+  expect(modelsProbes).toBe(2);
 });

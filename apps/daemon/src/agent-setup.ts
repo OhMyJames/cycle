@@ -1508,6 +1508,131 @@ export const createCodexSetupProvider = (options: CodexSetupOptions): AgentSetup
 const AGY_SIGNED_OUT_RE =
   /please sign in|not signed in|sign in to view|unauthenticated|login required/i;
 
+export type AgyLogoutOptions = {
+  executable: string;
+  env: Record<string, string>;
+  timeoutMs?: number;
+};
+
+export type RunAgyAcpLogout = (options: AgyLogoutOptions) => Promise<void>;
+
+/**
+ * Signs out of Antigravity strictly through `agy acp`'s native `logout` JSON-RPC method.
+ * Hard red line: Cycle never reads, parses, stores, or deletes agy's OAuth token files directly.
+ */
+export const runAgyAcpLogout: RunAgyAcpLogout = async ({ executable, env, timeoutMs = 15_000 }) => {
+  if (env.HOME) {
+    try {
+      mkdirSync(env.HOME, { recursive: true, mode: 0o700 });
+    } catch {
+      // ignore
+    }
+  }
+
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn([executable, "acp"], {
+      env,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    throw new AgentAuthDriverError("process_failed", "Failed to launch agy acp");
+  }
+
+  const stdin = proc.stdin as Bun.FileSink;
+  const stdout = proc.stdout as ReadableStream<Uint8Array>;
+  const reader = stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let timedOut = false;
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+  }, timeoutMs);
+
+  const send = (payload: Record<string, unknown>) => {
+    stdin.write(`${JSON.stringify(payload)}\n`);
+    stdin.flush();
+  };
+
+  const waitForId = async (targetId: number): Promise<Record<string, unknown> | undefined> => {
+    while (true) {
+      const nl = buffer.indexOf("\n");
+      if (nl !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line) as Record<string, unknown>;
+          if (msg.id === targetId) return msg;
+        } catch {
+          // ignore non-JSON chatter
+        }
+        continue;
+      }
+      const chunk = await reader.read();
+      if (chunk.done) return undefined;
+      buffer += decoder.decode(chunk.value, { stream: true });
+    }
+  };
+
+  try {
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: 1,
+        clientInfo: { name: "cycle", version: "0.2" },
+        clientCapabilities: {},
+      },
+    });
+    const init = await waitForId(1);
+    if (!init || init.error) {
+      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
+    }
+
+    send({ jsonrpc: "2.0", id: 2, method: "logout", params: {} });
+    const resp = await waitForId(2);
+    if (!resp || resp.error) {
+      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
+    }
+  } finally {
+    clearTimeout(timer);
+    try {
+      stdin.end();
+    } catch {
+      // ignore
+    }
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+    const grace = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+    }, 500);
+    await proc.exited.catch(() => {});
+    clearTimeout(grace);
+  }
+};
+
 export type AgySetupOptions = {
   config: Config["agy"];
   dataDir: string;
@@ -1515,6 +1640,8 @@ export type AgySetupOptions = {
   env: () => Record<string, string>;
   locateBinary: () => { source: AgentBinarySource; path?: string };
   runCommand?: AgentSetupRunCommand;
+  startCodeAuth?: StartCliCodeAuth;
+  logoutAcp?: RunAgyAcpLogout;
   timeoutMs?: number;
   cacheTtlMs?: number;
   now?: () => number;
@@ -1522,6 +1649,8 @@ export type AgySetupOptions = {
 
 export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProvider => {
   const run = options.runCommand ?? runIsolatedCommand;
+  const startCodeAuth = options.startCodeAuth ?? startCliCodeAuth;
+  const logoutAcp = options.logoutAcp ?? runAgyAcpLogout;
   // Probed at ~1.5s on isolated HOME when signed out, up to ~5s+ on keychain-fallback platforms.
   const timeoutMs = options.timeoutMs ?? 15_000;
   const cacheTtlMs = options.cacheTtlMs ?? 45_000;
@@ -1652,10 +1781,51 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
   return {
     probeBinary,
     readAuth,
-    signInModes: () => [],
-    canSignOut: () => false,
+    signInModes: () => [{ mode: "code", requiresLocalLoopback: false }],
+    canSignOut: () => true,
     canRefreshUsage: false,
     loginCommand: "cycle login agy",
+    authDriver: {
+      start: async (mode) => {
+        if (mode !== "code") {
+          throw new AgentAuthDriverError("process_failed", `Unsupported agy auth mode: ${mode}`);
+        }
+        const binary = await probeBinary();
+        if (binary.problem !== undefined || !binary.path) {
+          throw new AgentAuthDriverError("binary_unavailable", "agy binary is unavailable");
+        }
+        const env = minimalEnv();
+        if (env.HOME) {
+          try {
+            mkdirSync(env.HOME, { recursive: true, mode: 0o700 });
+          } catch {
+            // ignore
+          }
+        }
+        // Hard red line: drive ONLY `agy acp --login`; never touch token files directly.
+        return startCodeAuth({
+          command: [binary.path, "acp", "--login"],
+          env,
+          urlPattern: AGY_AUTH_URL_RE,
+          startTimeoutMs: Math.max(timeoutMs, 15_000),
+        });
+      },
+      logout: async () => {
+        const binary = await probeBinary();
+        if (binary.problem !== undefined || !binary.path) {
+          throw new AgentAuthDriverError("binary_unavailable", "agy binary is unavailable");
+        }
+        await logoutAcp({
+          executable: binary.path,
+          env: minimalEnv(),
+          timeoutMs,
+        });
+        cachedAuth = undefined;
+      },
+      invalidateCache: () => {
+        cachedAuth = undefined;
+      },
+    },
     diagnostics: () => ({
       dataDir: options.config.home ?? join(options.dataDir, "agy"),
       customDataDir: options.config.home !== undefined,
