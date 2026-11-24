@@ -1,8 +1,13 @@
 import {
   AgentApp,
   type ClientContext,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   client,
+  type InitializeResponse,
   methods,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
   type SessionUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
@@ -18,9 +23,15 @@ export type LinkHandlers = {
    * The agent asks the user something. Answers when someone has decided. `signal` ends when the agent takes the
    * request back (`$/cancel_request`): it is then settled as cancelled, not left waiting on the user.
    */
-  permission: (params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
+  permission: (
+    params: RequestPermissionRequest,
+    signal?: AbortSignal,
+  ) => Promise<RequestPermissionResponse>;
   /** The agent asks the user for structured input (a form). Answers when someone has, or at once if no one can. */
-  elicitation: (params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
+  elicitation: (
+    params: CreateElicitationRequest,
+    signal?: AbortSignal,
+  ) => Promise<CreateElicitationResponse>;
   /** The connection to the agent ended, however it ended. */
   closed: () => void;
 };
@@ -51,39 +62,31 @@ export class AgentLink {
       .onNotification(methods.client.session.update, ({ params }) => {
         handlers.update(params.update, params.sessionId);
       })
-      .onRequest(methods.client.session.requestPermission, async ({ params, signal }) => {
-        return (await handlers.permission(
-          params as unknown as Record<string, unknown>,
-          signal,
-        )) as never;
-      })
-      .onRequest(methods.client.elicitation.create, async ({ params, signal }) => {
-        return (await handlers.elicitation(
-          params as unknown as Record<string, unknown>,
-          signal,
-        )) as never;
-      });
+      .onRequest(methods.client.session.requestPermission, ({ params, signal }) =>
+        handlers.permission(params, signal),
+      )
+      .onRequest(methods.client.elicitation.create, ({ params, signal }) =>
+        handlers.elicitation(params, signal),
+      );
     const connection =
       launched.target instanceof AgentApp
         ? app.connect(launched.target)
         : app.connect(launched.target as Stream);
     void connection.closed.then(handlers.closed, handlers.closed);
-    let initialized: unknown;
+    let initialized: InitializeResponse;
     try {
       initialized = await connection.agent.request(methods.agent.initialize, {
         protocolVersion: 2,
         info: { name: "cycle", version: "0.0.0" },
         // Forms only: whether there is anyone to ask is the daemon's to decide, per request.
         capabilities: { elicitation: { form: {} } },
-      } as never);
+      });
     } catch (error) {
       connection.close();
       launched.kill?.();
       throw error;
     }
-    const mcpHttp =
-      (initialized as { capabilities?: { session?: { mcp?: { http?: unknown } } } } | undefined)
-        ?.capabilities?.session?.mcp?.http != null;
+    const mcpHttp = initialized.capabilities?.session?.mcp?.http != null;
     return new AgentLink(connection.agent, mcpHttp, () => connection.close(), launched.kill);
   }
 

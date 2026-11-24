@@ -35,3 +35,8 @@ export const turnLeftOpen = (records: readonly LogRecord[]): boolean => {
   }
   return open;
 };
+
+/** A record of something the person said: the agent's echo of a prompt (docs/protocol.md §8). */
+export const isUserMessage = (record: LogRecord): boolean =>
+  record.kind === "update" &&
+  (record.data as { sessionUpdate?: unknown } | null)?.sessionUpdate === "user_message";
