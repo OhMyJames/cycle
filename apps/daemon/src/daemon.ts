@@ -106,6 +106,7 @@ import {
   UNSUPPORTED_VERSION,
 } from "./errors.ts";
 import { searchFiles } from "./files.ts";
+import { firstTitle } from "./first-title.ts";
 import { listFolders } from "./folders.ts";
 import { listFolder, readFile } from "./fs.ts";
 import { ignoredNames } from "./git.ts";
@@ -2098,7 +2099,16 @@ export class Daemon {
       this.#returnStale(session);
       // Taken: from now on the session is in the list (docs/protocol.md §6), whatever the agent makes of it. Not left to
       // the agent's echo of the message, which an agent that fails, or never echoes, would not send. Announced below.
-      if (session.entry.prompted !== true) this.#remember(session, { prompted: true }, false);
+      if (session.entry.prompted !== true) {
+        // The first message names the session until the agent does (CYCL-224): as the agent's, so its own title
+        // replaces it. Not a name the person gave, and not for an entry from before `prompted` was kept (it was prompted).
+        const title =
+          session.entry.prompted === false && session.entry.title === undefined
+            ? firstTitle(params.prompt)
+            : undefined;
+        const named = title === undefined ? {} : { title, titleFromAgent: true };
+        this.#remember(session, { prompted: true, ...named }, false);
+      }
       const busy = () => session.status() !== "idle" && session.status() !== "stopped";
       const steer = (params._meta as Record<string, unknown> | null | undefined)?.[META.steer];
       if (busy() && steer === true) {

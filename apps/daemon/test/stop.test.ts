@@ -114,11 +114,12 @@ test("with a turn running and no terminal, stop lists it and does not stop", asy
   const { daemon, socket, stop } = await serving(
     fakeAgent({ onPrompt: () => new Promise(() => {}) }),
   );
-  const { sessionId } = await busy(daemon);
+  await busy(daemon);
   const d = deps(socket, stop);
   expect(await stopDaemon(d)).toBe(BUSY_EXIT);
   expect(d.signals()).toBe(0);
-  expect(d.said.join("\n")).toContain(`${sessionId}: a turn is running`);
+  // Named by its first message (CYCL-224).
+  expect(d.said.join("\n")).toContain("go: a turn is running");
   expect(d.said.join("\n")).toContain("--force");
   expect(await isListening(socket)).toBe(true);
 });
