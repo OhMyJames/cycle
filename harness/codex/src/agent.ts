@@ -454,7 +454,10 @@ export function createAdapter(config: AdapterConfig) {
         sessionUpdate: "plan_update",
         plan: {
           type: "items",
-          planId: `${plan.threadId}-${plan.turnId}`,
+          // The thread's task list, not the turn's: update_plan sends the whole list each time and the model keeps
+          // changing the same one in later turns, so it replaces the one shown, as Claude's and agy's do. Not
+          // planId(): that is plan mode's proposed plan, which this would overwrite.
+          planId: `${plan.threadId}-tasks`,
           entries: plan.plan.map((item) => ({
             content: item.step,
             priority: "medium",

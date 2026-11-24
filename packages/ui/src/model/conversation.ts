@@ -322,6 +322,11 @@ export type Conversation = {
    * message, or the agent at work. Only some agents say one.
    */
   suggestion: string | undefined;
+  /**
+   * The plan told last, by id. An agent may keep more than one (Codex: its task list and plan mode's plan), and a
+   * plan told again is updated where it first appeared, so the newest is not the last in `items`.
+   */
+  planId: string | undefined;
 };
 
 export const emptyConversation = (): Conversation => ({
@@ -341,6 +346,7 @@ export const emptyConversation = (): Conversation => ({
   goal: undefined,
   schedules: undefined,
   suggestion: undefined,
+  planId: undefined,
 });
 
 const PART_KINDS: readonly string[] = ["used", "free", "buffer", "deferred"];
@@ -504,6 +510,10 @@ const upsert = (items: Item[], next: Item): Item[] => {
   copy[at] = next;
   return copy;
 };
+
+/** The plan told last (see `planId`), wherever it sits in the conversation. */
+export const latestPlan = (c: Conversation): PlanItem | undefined =>
+  c.planId === undefined ? undefined : find(c.items, "plan", c.planId);
 
 const find = <K extends Item["kind"]>(items: Item[], kind: K, id: string) =>
   items.find((item) => item.kind === kind && item.id === id) as
@@ -892,6 +902,7 @@ const applyOne = (
       const old = find(c.items, "plan", plan.planId);
       return {
         ...c,
+        planId: plan.planId,
         items: upsert(c.items, {
           kind: "plan",
           id: plan.planId,
