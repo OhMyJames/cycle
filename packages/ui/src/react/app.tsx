@@ -847,6 +847,9 @@ function AppWindow() {
         <SplitLayout
           controller={layout}
           panelOf={panelKey}
+          onSidebarWidth={(width) =>
+            appRef.current?.style.setProperty("--cycle-sidebar-width", `${width}px`)
+          }
           panel={
             panelKey !== undefined && sidePanel?.open === true
               ? {

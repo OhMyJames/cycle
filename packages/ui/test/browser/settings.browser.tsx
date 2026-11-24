@@ -87,8 +87,7 @@ test("the environments are listed with how each stands, one that is away can be 
   );
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Environments" }));
-  const page = (await screen.findByRole("heading", { name: "Environments", level: 2 }))
-    .parentElement as HTMLElement;
+  const page = await screen.findByRole("tabpanel", { name: "Environments" });
   expect(within(page).getByText("This computer")).toBeTruthy();
   expect(within(page).getByText("Connected")).toBeTruthy();
   expect(within(page).getByText("Build box")).toBeTruthy();
@@ -178,8 +177,7 @@ test("an update that is ready can be started from Settings, after the same quest
     update: { current: "0.1.0", kind: "available", version: "0.2.0" },
   });
   await openSettings(user);
-  const page = (await screen.findByRole("heading", { name: "General", level: 2 }))
-    .parentElement as HTMLElement;
+  const page = await screen.findByRole("tabpanel", { name: "General" });
   expect(within(page).getByText("Cycle 0.1.0")).toBeTruthy();
   expect(within(page).getByText("Version 0.2.0 is available")).toBeTruthy();
   await user.click(within(page).getByRole("button", { name: "Update and restart" }));
@@ -252,8 +250,7 @@ test("the shortcuts are listed with their keys, to look up and not to change", a
   const { user } = await mount();
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Keyboard shortcuts" }));
-  const page = (await screen.findByRole("heading", { name: "Keyboard shortcuts", level: 2 }))
-    .parentElement as HTMLElement;
+  const page = await screen.findByRole("tabpanel", { name: "Keyboard shortcuts" });
   const row = within(page).getByText("Open or close Settings").closest('[data-slot="page-row"]');
   expect(Array.from(row?.querySelectorAll("kbd") ?? []).map((k) => k.textContent)).toEqual([
     /Mac/.test(navigator.userAgent) ? "⌘" : "Ctrl",

@@ -105,6 +105,7 @@ export function SplitLayout({
   main,
   panel,
   panelOf,
+  onSidebarWidth,
 }: {
   controller: ResizableController;
   sidebar: ReactNode;
@@ -116,9 +117,16 @@ export function SplitLayout({
    * another session was opened goes at once, so the last session's panel is not seen over the next one's conversation.
    */
   panelOf?: string | undefined;
+  /**
+   * Told the sidebar's width as the user left it (folded or not), when the columns attach and after each change of
+   * theirs: a page in place of the sessions takes the same width, so its edge does not move (CYCL-219).
+   */
+  onSidebarWidth?: ((width: number) => void) | undefined;
 }) {
   const { t } = useI18n();
   const groupRef = useRef<HTMLDivElement>(null);
+  const sidebarWidth = useRef(onSidebarWidth);
+  sidebarWidth.current = onSidebarWidth;
   // What the user left the sidebar and the panel at: read from the page when the columns attach (the SDK has restored
   // the saved layout by then), and from every change the user makes.
   const want = useRef<{ sidebar: number; panel: number }>({
@@ -180,6 +188,7 @@ export function SplitLayout({
       sidebarWasFolded.current = controller.isCollapsed("sidebar");
       if (!sidebarWasFolded.current && widthOf("sidebar") > 0)
         want.current.sidebar = widthOf("sidebar");
+      sidebarWidth.current?.(want.current.sidebar);
     } else {
       // The panel opened or closed: the SDK keeps a layout for each set of columns and has put back that set's
       // sidebar. The sidebar stays as the user has it now.
@@ -254,8 +263,10 @@ export function SplitLayout({
           sidebarWasFolded.current = collapsed;
           const group = groupRef.current;
           if (group === null) return;
-          if (!collapsed && widthIn(group, "sidebar") > 0)
+          if (!collapsed && widthIn(group, "sidebar") > 0) {
             want.current.sidebar = widthIn(group, "sidebar");
+            sidebarWidth.current?.(want.current.sidebar);
+          }
           if (panel !== undefined && controller.isCollapsed("panel")) panel.onClose?.();
           else if (open && widthIn(group, "panel") > 0)
             want.current.panel = widthIn(group, "panel");
