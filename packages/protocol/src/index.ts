@@ -16,3 +16,4 @@ export * from "./providers.ts";
 export * from "./queue.ts";
 export * from "./session-state.ts";
 export * from "./terminal.ts";
+export * from "./worktree.ts";

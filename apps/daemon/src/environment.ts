@@ -35,7 +35,10 @@ export const sessionVariables = (entry: SessionEntry | undefined): Record<string
 /** What a `session/list` row says of the environment: its name, its variables' names and its actions. */
 export const environmentRowMeta = (entry: SessionEntry): Record<string, unknown> => {
   const environment = environmentOf(entry);
-  return environment !== undefined ? { [META.environment]: summarizeEnvironment(environment) } : {};
+  return {
+    ...(environment !== undefined ? { [META.environment]: summarizeEnvironment(environment) } : {}),
+    ...(entry.worktree !== undefined ? { [META.worktree]: entry.worktree } : {}),
+  };
 };
 
 /** The script for this system: its own, else the default, else none (an empty one is none). */

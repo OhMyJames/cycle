@@ -69,6 +69,20 @@ test("a workspace is a folder on one host: the same folder on two locations is t
   ]);
 });
 
+test("a session in a worktree is listed under the main checkout it belongs to", () => {
+  const list = workspacesOf(
+    [
+      row("a", { cwd: "/work/app" }),
+      row("b", {
+        cwd: "/work/app/.agents/worktree/one",
+        worktree: { root: "/work/app/", path: "/work/app/.agents/worktree/one", managed: true },
+      }),
+    ],
+    { locations },
+  );
+  expect(list.map((w) => [w.cwd, w.sessions.length])).toEqual([["/work/app", 2]]);
+});
+
 test("workspaces are grouped by host, this computer first, and newest first inside a host", () => {
   const list = workspacesOf(
     [

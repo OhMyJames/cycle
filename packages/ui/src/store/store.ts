@@ -28,6 +28,7 @@ import { TerminalsSlice } from "./terminals.ts";
 export { blankEnvironmentOf, environmentDefaultOf } from "./environments.ts";
 export * from "./state.ts";
 export type { TerminalScreen } from "./terminals.ts";
+export { type BlankWorktree, blankWorktreeOf } from "./worktrees.ts";
 
 /** How long the Diff tab has to answer a request to show an edit before it lapses. */
 const REVEAL_IN_DIFF_MS = 3_000;
@@ -240,6 +241,7 @@ export class AppStore extends StoreBase {
   answerTrust = this.#blank.answerTrust;
   retryBlank = this.#blank.retry;
   chooseBlankEnvironment = this.#blank.chooseEnvironment;
+  chooseBlankWorktree = this.#blank.chooseWorktree;
 
   // ---- sessions ----
 

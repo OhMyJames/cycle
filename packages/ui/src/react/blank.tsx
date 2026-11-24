@@ -39,6 +39,7 @@ import { CheckIcon } from "./icons.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
+import { WorktreePicker } from "./worktrees.tsx";
 
 const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
 
@@ -369,6 +370,7 @@ export function BlankConversationView({
           {t("blank.untrusted")}
         </span>
       ) : null}
+      <WorktreePicker blank={blank} agentId={agent?.id} disabled={starting || !connected} />
       <EnvironmentPicker
         blank={blank}
         agentId={agent?.id}

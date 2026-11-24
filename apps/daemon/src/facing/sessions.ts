@@ -11,16 +11,20 @@ import {
 import {
   CycleErrorCode,
   checkEnvironment,
+  environmentVariables,
+  gitBranches,
   META,
+  type SessionEnvironment,
   sessionArchive,
   sessionDismissBackground,
   sessionMarkRead,
   sessionSetTitle,
   sessionStopSubagent,
   sessionUnarchive,
+  WorktreeRequestSchema,
 } from "@cycle/protocol";
 import { mapBounded } from "../bounded.ts";
-import { environmentRowMeta } from "../environment.ts";
+import { environmentOf, environmentRowMeta, scriptFor, sessionVariables } from "../environment.ts";
 import {
   INVALID_PARAMS,
   logUnavailable,
@@ -30,10 +34,19 @@ import {
 } from "../errors.ts";
 import type { SessionEntry } from "../index-file.ts";
 import { isGoneOwnModel } from "../providers.ts";
+import { CLEANUP_TIMEOUT_MS, runScript, SETUP_TIMEOUT_MS } from "../scripts.ts";
 import { HISTORY_NOT_SAVED, Session } from "../session.ts";
 import { checkedConfig, currentValues, orderedConfigEntries } from "../session-config.ts";
 import { sessionPage } from "../session-page.ts";
 import { isUserMessage } from "../turns.ts";
+import {
+  createWorktree,
+  listBranches,
+  removeWorktree,
+  unsavedIn,
+  type Worktree,
+  WorktreeError,
+} from "../worktree.ts";
 import { type Core, cycleOn } from "./core.ts";
 
 /** How many sessions a list loads at once. */
@@ -125,7 +138,7 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       meta[META.config] === undefined ? {} : meta[META.config],
     );
     // The session's environment (docs/protocol.md §6 "环境"): checked here, before anything is made.
-    let environment: SessionEntry["environment"];
+    let environment: SessionEnvironment | undefined;
     if (meta[META.environment] !== undefined) {
       const checked = checkEnvironment(meta[META.environment]);
       if (!checked.ok) {
@@ -164,11 +177,53 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
           `The ${index === 0 ? "working directory" : "directory"} ${directory} does not exist on the machine the daemon runs on`,
         );
     }
+    // A worktree is made only for a session on this machine's repository, and the session runs in it.
+    let worktree: SessionEntry["worktree"];
+    let madeHere: Worktree | undefined;
+    const requested = meta[META.worktree];
+    if (requested !== undefined && requested !== null) {
+      const asked = WorktreeRequestSchema.safeParse(requested);
+      if (!asked.success)
+        throw new RpcError(INVALID_PARAMS, "The worktree request is not one this daemon can read", {
+          reason: "invalid_name",
+        });
+      try {
+        const made = await createWorktree(params.cwd, asked.data);
+        if (made.created) madeHere = made;
+        worktree = {
+          root: made.root,
+          path: made.path,
+          managed: made.created,
+          ...(made.branch !== undefined ? { branch: made.branch } : {}),
+        };
+        // The setup script, once, in the new worktree.
+        const setup = made.created ? scriptFor(environment?.setup) : undefined;
+        if (setup !== undefined) {
+          const ran = await runScript(setup, {
+            cwd: made.path,
+            variables: environmentVariables(environment),
+            timeoutMs: SETUP_TIMEOUT_MS,
+          });
+          if (!ran.ok)
+            worktree = { ...worktree, setupFailed: ran.output || "The setup script failed" };
+        }
+      } catch (error) {
+        if (madeHere !== undefined) await removeWorktree(madeHere).catch(() => undefined);
+        if (error instanceof WorktreeError)
+          throw new RpcError(INVALID_PARAMS, error.message, {
+            reason: error.reason,
+            ...error.detail,
+          });
+        throw error;
+      }
+      params = { ...params, cwd: worktree.path };
+    }
     const id = randomUUID();
     const entry: SessionEntry = {
       agent: agentId,
       agentSessionId: id,
       cwd: params.cwd,
+      ...(worktree !== undefined ? { worktree } : {}),
       createdAt: new Date().toISOString(),
       // Not in the list until the person's first message is on record (docs/protocol.md §6).
       prompted: false,
@@ -182,7 +237,11 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       // Its variables can be secrets: the index only, like the servers.
       ...(environment !== undefined ? { environment } : {}),
     };
-    const log = await core.store.open(id);
+    const log = await core.store.open(id).catch(async (error) => {
+      // The worktree this request made goes with it: nothing was done in it.
+      if (madeHere !== undefined) await removeWorktree(madeHere).catch(() => undefined);
+      throw error;
+    });
     const session = new Session(id, entry, log);
     core.watch(session);
     try {
@@ -259,6 +318,19 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       await log.close();
       await core.index.delete(id).catch(() => undefined);
       await core.store.remove(id).catch(() => undefined);
+      // The worktree this request made goes with it: nothing was done in it.
+      if (madeHere !== undefined) await removeWorktree(madeHere).catch(() => undefined);
+      throw error;
+    }
+  });
+
+  // The branches a worktree could start from. Only for a folder on this machine; the folder is read, not trusted.
+  cycle(gitBranches, async ({ cwd }) => {
+    try {
+      return await listBranches(cwd);
+    } catch (error) {
+      if (error instanceof WorktreeError)
+        throw new RpcError(INVALID_PARAMS, error.message, { reason: error.reason });
       throw error;
     }
   });
@@ -338,6 +410,36 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
     }
     if (session.status() === "running" || session.status() === "requires_action")
       throw sessionBusy(session.id);
+    // A worktree Cycle made goes with the session, but not with work in it that nothing else holds.
+    const tree = managedWorktree(session.entry);
+    const discard =
+      (params._meta as Record<string, unknown> | null | undefined)?.[META.worktree] !== undefined &&
+      (params._meta as Record<string, { discard?: unknown }>)[META.worktree]?.discard === true;
+    let unsaved: Awaited<ReturnType<typeof unsavedIn>> | undefined;
+    if (tree !== undefined) {
+      // Fails closed: what cannot be checked is not known to be saved.
+      try {
+        unsaved = await unsavedIn(tree);
+      } catch (error) {
+        if (!discard)
+          throw new RpcError(INVALID_PARAMS, "The worktree could not be checked for unsaved work", {
+            reason: "unsaved_changes",
+            files: [],
+            commits: [],
+            detail: error instanceof Error ? error.message : String(error),
+          });
+      }
+      if (
+        unsaved !== undefined &&
+        (unsaved.files.length > 0 || unsaved.commits.length > 0) &&
+        !discard
+      )
+        throw new RpcError(INVALID_PARAMS, "The worktree holds work that is not saved elsewhere", {
+          reason: "unsaved_changes",
+          files: unsaved.files.slice(0, 50),
+          commits: unsaved.commits.slice(0, 50),
+        });
+    }
     session.closed = true;
     session.link?.kill();
     for (const attachment of session.attachments) attachment.detach();
@@ -351,6 +453,11 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       core.sessions.delete(session.id);
       await session.log.close();
       await core.store.remove(session.id);
+      if (tree !== undefined) {
+        // A check that failed and was waved through by `discard` may hide commits: the branch goes with them.
+        const discardCommits = unsaved === undefined ? discard : unsaved.commits.length > 0;
+        await endWorktree(core, session.entry, tree, discardCommits);
+      }
     } finally {
       core.changed();
     }
@@ -445,5 +552,36 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
   });
   cycle(sessionSetTitle, (params) =>
     change(async () => ({ title: params.title, titleFromAgent: false }))(params),
+  );
+};
+
+/** The worktree of a session when Cycle made it: the only kind Cycle removes. */
+const managedWorktree = (entry: SessionEntry): Worktree | undefined =>
+  entry.worktree?.managed === true
+    ? {
+        root: entry.worktree.root,
+        path: entry.worktree.path,
+        ...(entry.worktree.branch !== undefined ? { branch: entry.worktree.branch } : {}),
+      }
+    : undefined;
+
+/** Cleanup in the worktree (a failure is logged, not a reason to keep it), then the worktree itself. */
+const endWorktree = async (
+  core: Core,
+  entry: SessionEntry,
+  tree: Worktree,
+  discardCommits: boolean,
+): Promise<void> => {
+  const cleanup = scriptFor(environmentOf(entry)?.cleanup);
+  if (cleanup !== undefined) {
+    const ran = await runScript(cleanup, {
+      cwd: tree.path,
+      variables: sessionVariables(entry),
+      timeoutMs: CLEANUP_TIMEOUT_MS,
+    });
+    if (!ran.ok) core.log.warn("worktree_cleanup_failed", {});
+  }
+  await removeWorktree(tree, discardCommits).catch(() =>
+    core.log.warn("worktree_remove_failed", {}),
   );
 };

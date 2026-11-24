@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Channel, connectUnix } from "@cycle/client";
@@ -177,6 +177,7 @@ test("connects, creates a session, and lists it", async () => {
     diff: true,
     terminal: true,
     environments: true,
+    worktrees: true,
     stopSubagent: true,
   });
   expect((await m.agents("local")).map((a) => a.id)).toEqual(["fake"]);
@@ -446,6 +447,7 @@ test("a connection that drops is picked up again, and a request still open is no
     diff: true,
     terminal: true,
     environments: true,
+    worktrees: true,
     stopSubagent: true,
   });
   await until(() => of(events, "location-status").at(-1)?.state === "connected", "the reconnect");
@@ -1135,7 +1137,7 @@ test("what a person does is reported as counts and words, and never as what they
   expect(named("location_connection")).toEqual([{ kind: "local", state: "connected" }]);
   expect(named("session_list_loaded")).toEqual([{ pages: 1 }]);
   expect(named("session_created")).toEqual([
-    { agent: "other", location: "local", configured: true },
+    { agent: "other", location: "local", configured: true, worktree: false },
   ]);
   expect(named("session_opened")).toEqual([{ agent: "other", location: "local" }]);
   expect(named("prompt_sent")).toEqual([
@@ -1991,4 +1993,59 @@ test("an environment in the file that the daemon would refuse is not sent: main 
   expect(await m.createSession("local", { cwd: "/tmp", environmentId: "env-twice" })).toEqual({
     problem: { reason: "needs_fix", name: "Twice" },
   });
+});
+
+test("a session is made in a worktree from the chosen branch, listed under its main checkout, and deleting it asks before dropping unsaved work", async () => {
+  const { manager } = await setup();
+  const { m } = await manager();
+  await m.connect("local");
+  // Git names folders by their real path (/tmp is /private/tmp on macOS).
+  const repo = join(await realpath(dir), "repo");
+  await mkdir(repo);
+  const git = async (cwd: string, ...args: string[]) => {
+    const child = Bun.spawn(["git", "-C", cwd, ...args], {
+      stdout: "ignore",
+      stderr: "ignore",
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: dir,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    });
+    await child.exited;
+  };
+  await git(repo, "init", "-q", "-b", "main");
+  await Bun.write(join(repo, "a.txt"), "a");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-q", "-m", "first");
+  await git(repo, "branch", "topic");
+
+  // No repository: no branches to offer.
+  expect(await m.gitBranches("local", dir)).toBeNull();
+  const found = await m.gitBranches("local", repo);
+  expect(found?.branches.sort()).toEqual(["main", "topic"]);
+
+  const made = await m.createSession("local", { cwd: repo, worktree: { base: "topic" } });
+  if (typeof made !== "string") throw new Error("the session was not made");
+  await said(m, made);
+  const listed = (await m.sessions("local")).find((s) => s.sessionId === made);
+  expect(listed?.worktree).toMatchObject({ root: repo, managed: true });
+  expect(listed?.cwd).toBe(listed?.worktree?.path);
+  const tree = listed?.worktree?.path ?? "";
+  await Bun.write(join(tree, "unsaved.txt"), "x");
+
+  // Refused, with what would be lost; nothing is deleted.
+  const refused = await m.deleteSession("local", made);
+  expect(refused?.unsaved.files).toEqual(["unsaved.txt"]);
+  expect((await m.sessions("local")).some((s) => s.sessionId === made)).toBe(true);
+  // Said to discard: both go.
+  expect(await m.deleteSession("local", made, true)).toBeUndefined();
+  expect(await Bun.file(join(tree, "unsaved.txt")).exists()).toBe(false);
+
+  // Not in a repository: the daemon refuses, as a word the page has a sentence for.
+  const outside: unknown = await m.createSession("local", { cwd: dir, worktree: {} });
+  expect(outside).toEqual({ problem: { reason: "not_a_repository" } });
 });

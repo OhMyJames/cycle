@@ -10,6 +10,7 @@ import {
   type SessionEnvironmentSummary,
   type SessionSnapshot,
   type SessionSummary,
+  type WorktreeSummary,
 } from "@cycle/ui";
 import type { Pending, PendingStore } from "./pending.ts";
 import type { Connection, Runtime } from "./runtime.ts";
@@ -64,6 +65,23 @@ const sessionSummary = (locationId: string, row: SessionRow): SessionSummary => 
       ? { config: meta["cycle/config"] as Record<string, string> }
       : {}),
     ...environmentSummaryOf(meta["cycle/environment"]),
+    ...worktreeSummaryOf(meta["cycle/worktree"]),
+  };
+};
+
+/** What a row says of its session's worktree (docs/protocol.md §6 "Worktree"). Anything else is not one. */
+const worktreeSummaryOf = (value: unknown): { worktree?: WorktreeSummary } => {
+  if (typeof value !== "object" || value === null) return {};
+  const { root, path, branch, managed, setupFailed } = value as Record<string, unknown>;
+  if (typeof root !== "string" || typeof path !== "string") return {};
+  return {
+    worktree: {
+      root,
+      path,
+      managed: managed === true,
+      ...(typeof branch === "string" ? { branch } : {}),
+      ...(typeof setupFailed === "string" ? { setupFailed } : {}),
+    },
   };
 };
 

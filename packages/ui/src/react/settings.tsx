@@ -178,6 +178,7 @@ function GeneralSection() {
       <AccountGroup />
       <LanguageGroup />
       <SuggestionsGroup />
+      <WorktreeGroup />
       {update !== undefined ? (
         <PageGroup title={t("settings.updates")}>
           <PageRows>
@@ -316,6 +317,53 @@ function SuggestionsGroup() {
             <SwitchThumb />
           </Switch>
         </PageRow>
+      </PageRows>
+    </PageGroup>
+  );
+}
+
+/** Which agents start new sessions in a worktree (CYC-273): one switch for each agent a location has. Off until turned on. */
+function WorktreeGroup() {
+  const store = useAppStore();
+  const { t } = useI18n();
+  const preferences = useAppState((s) => s.preferences);
+  const known = useAppState((s) => s.agents);
+  const label = useId();
+  const writes = useRef<Promise<void>>(Promise.resolve());
+  if (preferences === undefined) return null;
+  const agents = new Map<string, string>();
+  for (const list of Object.values(known))
+    for (const agent of list) agents.set(agent.id, agent.name);
+  if (agents.size === 0) return null;
+  return (
+    <PageGroup>
+      <PageRows>
+        {[...agents].map(([id, name]) => {
+          const on = preferences.worktreeAgents.includes(id);
+          return (
+            <PageRow
+              key={id}
+              label={`${t("settings.worktree")}: ${name}`}
+              labelId={`${label}${id}`}
+              description={t("settings.worktree.description")}
+            >
+              <Switch
+                aria-labelledby={`${label}${id}`}
+                checked={on}
+                onCheckedChange={(checked) => {
+                  // One after another, each from what the one before left: two switches turned in a row both count.
+                  writes.current = writes.current.then(() => {
+                    const now = store.getState().preferences?.worktreeAgents ?? [];
+                    const rest = now.filter((a) => a !== id);
+                    return store.setPreferences({ worktreeAgents: checked ? [...rest, id] : rest });
+                  });
+                }}
+              >
+                <SwitchThumb />
+              </Switch>
+            </PageRow>
+          );
+        })}
       </PageRows>
     </PageGroup>
   );

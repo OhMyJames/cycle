@@ -1,4 +1,4 @@
-import { SessionUsageSchema } from "@cycle/protocol";
+import { SessionUsageSchema, WorktreeSummarySchema } from "@cycle/protocol";
 import { z } from "zod";
 import { JsonFile, readJsonFile } from "./json-file.ts";
 
@@ -26,6 +26,11 @@ export const SessionEntrySchema = z.object({
    * in the 0600 index, and not in the log. Checked when it was taken; read back as it was written.
    */
   environment: z.unknown().optional(),
+  /**
+   * The worktree the session is in (docs/protocol.md §6 "Worktree"); `cwd` is its path. `managed`: Cycle made it, so
+   * its setup ran and its cleanup runs before it goes. Cycle only ever removes a managed one.
+   */
+  worktree: WorktreeSummarySchema.optional(),
   /** The agent's latest `usage_update`: shown in the session list. */
   usage: SessionUsageSchema.optional(),
   archived: z.boolean().optional(),

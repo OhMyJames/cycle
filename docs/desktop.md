@@ -87,7 +87,7 @@ type LocationConfig = {
 ### workspace
 
 - **workspace = 工作位置里的一个 cwd**,即 `(locationId, cwd)`。同一个路径在两个工作位置里是两个 workspace。
-- 不把 git 仓库的子目录或 worktree 合并成一个项目(old-cycle 是按 git 主 checkout 合并的;咱们 v1 没有 worktree,以后要合并时再决定)。
+- 不把 git 仓库的子目录合并成一个项目。**worktree 里的 session 归到主 checkout 的 workspace 下**:侧栏按 session 行的 `cycle/worktree.root` 分组,没有这个字段就按 `cwd`(docs/protocol.md §6 "Worktree")。
 - 远程工作位置的 workspace 在侧栏里带一个**图标**,hover 的 tooltip 写它属于哪个工作位置(名字,以及连接状态);本地的没有图标。工作位置名不能只靠 tooltip:图标有可访问名,里面包含工作位置名。不同工作位置里同名的目录,标题再带上工作位置名区分。
 - 在一个 workspace 里新建 session,就在它的工作位置里新建。要在别的工作位置里工作,就是选另一个 workspace,或者"New workspace…"时先选工作位置、再在那个工作位置的文件系统里选文件夹。
 
@@ -106,6 +106,18 @@ type LocationConfig = {
 一行只带一个状态标记,优先级:`requires_action` > `running` > background(`cycle/background` > 0)> unread(`cycle/unread`)。来源都是 daemon 的列表字段。
 
 排序用 `updatedAt`,不用 `cycle/lastSeq`(后者按记录条数,不是时间)。旧 daemon 的 session 没有 `updatedAt` 时排在有的之后,彼此按 `lastSeq`。
+
+### Worktree(CYC-273)
+
+交互参考 shrimpdot-durable 的分支与 worktree 选择(它的决定笔记 `2026-10-09-branch-worktree-picker`),按 Cycle 的范围取舍。
+
+- **新会话页的两个 chip**(文件夹、权限那一行,只在本机、daemon 有 `worktrees` 能力、文件夹在 git 仓库里时出现;否则两个都不显示):
+  - **分支 chip**:始终显示一个分支名,没选时是当前检出的分支。菜单顶部是搜索框(打开就在里面,直接打字;↓ 进列表,Enter 选第一项,输入法组字中的 Enter 不算),下面是"本地分支",当前分支标"Current"、行尾打勾,远端默认分支(如果没有同名本地分支)排在最前。没有匹配时写"No matching branches"。
+  - **Worktree 开关**:一个文字加对勾的 chip(`role="switch"`),默认值来自设置里该 agent 的开关。
+  - 选当前分支以外的分支会**自动打开** Worktree,因为 Cycle 不切换用户自己的检出(shrimpdot 的"切换分支"这里不做);关掉开关,chip 回到当前分支。选当前分支且开关是关的,什么都不变。
+  - 分支只列本地的,不 fetch(远端分支、先 fetch 都留待以后)。
+- **会话里**:消息框上方一行,宽度和消息框一致,写"Worktree"(悬停是 worktree 的路径)和等宽的分支名,放不下时末尾淡出。不在 worktree 里的会话没有这一行。shrimpdot 那一行末尾的 `+N −M` 改动数没有做,Cycle 的改动入口在右侧面板。
+- 图标:分支 chip 没有图标(iconmcp 里的分支图标还没取,取到再加);搜索框用已有的 `SearchIcon`。
 
 ### 待定
 
@@ -179,13 +191,12 @@ type Environment = {
   | setup   | 只在新建 worktree 后跑;不在主 checkout 里跑                       |
   | cleanup | 只在删除 worktree 前跑                                            |
 
-  v1 没有 worktree,所以先生效的只有变量和动作;setup、cleanup 先能存、能编辑,界面上写明"在 worktree 创建时运行"。
+  setup 在 Cycle 新建 worktree 后运行一次,cleanup 在 Cycle 删除 worktree 前运行(docs/protocol.md §6 "Worktree")。setup 失败时 session 照常创建,在 session 里显示输出;cleanup 超时 60 秒,失败不阻止删除。
 - **编辑**:设置页 Environments 分区,每个环境一行(名字、变量个数、动作个数),菜单里 Edit、Duplicate、Remove(先确认;正在用它的 session 不受影响)。编辑表单仿 Codex 的:名字;setup、cleanup 各一个按系统分页的文本框;变量用 `.env` 格式的文本框(一行一个 `KEY=value`,`#` 开头是注释,保存时校验名字);动作列表。
 - **埋点**:只记事件和个数(`environment_config_saved`:有无 setup/cleanup、变量个数、动作个数;`environment_chosen`),不记名字、变量名和值、脚本内容。以前的 `environment_saved` 指的是保存工作位置,2026-11-24 已改成 `location_saved`(见 analytics.md);因为旧版本还在发它,环境的事件另起名 `environment_config_saved`、`environment_config_removed`。
 
 ### 待定
 
-- 有了 worktree 之后:setup 失败时 session 还建不建、输出给谁看;cleanup 的超时。
 - 要不要支持从项目里的文件(类似 Codex 的 `.codex/`)读环境,给团队共享。
 - 网络访问控制(Claude 的 cloud environment 有)只对 cloud 有意义,本机和 SSH 不做。
 

@@ -47,6 +47,7 @@ import {
   foldersList,
   fsList,
   fsRead,
+  gitBranches,
   META,
   type ModelProvider,
   type ModelProviderDraft,
@@ -418,6 +419,8 @@ export class CycleClient {
     mcpServers?: unknown[];
     /** The session's environment, whole (docs/protocol.md §6 "环境"). Only to a daemon that has `environments`. */
     environment?: unknown;
+    /** Make a worktree and run the session in it (docs/protocol.md §6 "Worktree"). Only to a daemon that has `worktrees`. */
+    worktree?: { base?: string; name?: string };
   }): Promise<string> {
     const meta: Record<string, unknown> = {};
     if (params.agent !== undefined) meta[META.agent] = params.agent;
@@ -426,6 +429,11 @@ export class CycleClient {
       if (this.#capabilities.environments !== true)
         throw new Error("This daemon is too old to take an environment");
       meta[META.environment] = params.environment;
+    }
+    if (params.worktree !== undefined) {
+      if (this.#capabilities.worktrees !== true)
+        throw new Error("This daemon is too old to make a worktree");
+      meta[META.worktree] = params.worktree;
     }
     const answer = (await this.#request(methods.agent.session.new, {
       cwd: params.cwd,
@@ -850,10 +858,25 @@ export class CycleClient {
     else await this.#call(sessionUnarchive, { sessionId });
   }
 
-  /** Removes a session's history for good. The caller asks the user first. */
-  async delete(sessionId: string): Promise<void> {
+  /** The branches a worktree for a session in `cwd` could start from (docs/protocol.md §6 "Worktree"). */
+  async gitBranches(cwd: string): Promise<ResultOf<typeof gitBranches>> {
+    if (this.#capabilities.worktrees !== true)
+      throw new Error("This daemon is too old to make a worktree");
+    return this.#call(gitBranches, { cwd });
+  }
+
+  /**
+   * Removes a session's history for good. The caller asks the user first. `discardWorktree`: also removes the worktree
+   * Cycle made for it when it holds work nothing else has (the daemon refuses with `unsaved_changes` otherwise).
+   */
+  async delete(sessionId: string, options: { discardWorktree?: boolean } = {}): Promise<void> {
     try {
-      await this.#request(methods.agent.session.delete, { sessionId });
+      await this.#request(methods.agent.session.delete, {
+        sessionId,
+        ...(options.discardWorktree === true
+          ? { _meta: { [META.worktree]: { discard: true } } }
+          : {}),
+      });
     } catch (error) {
       // Refused (a turn is running): the session is still there and still watched, so a reconnect
       // asks for what comes next. Only one that is not there any more is let go.

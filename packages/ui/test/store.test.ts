@@ -3,7 +3,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import type { AppEvent, PermissionRequest, SessionSnapshot } from "../src/api.ts";
 import { DraftStore } from "../src/draft.ts";
 import { applyUpdate, emptyConversation, reduce } from "../src/model/index.ts";
-import { AppStore, BLANK_KEY, viewKey } from "../src/store/index.ts";
+import { AppStore, BLANK_KEY, blankWorktreeOf, viewKey } from "../src/store/index.ts";
 
 import { fakeBridge, idle, summary as summaryOf, text } from "./fake-bridge.ts";
 
@@ -862,4 +862,70 @@ test("the blank folder's trust is read once its location says it keeps trust", a
   });
   await Bun.sleep(10);
   expect(store.getState().blank?.trust).toBe("undecided");
+});
+
+test("a worktree is offered once the folder's branches are read, follows the agent's default, and is sent from the branch shown", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, worktrees: true },
+    branches: { branches: ["main", "topic"], current: "topic", defaultBranch: "main" },
+    preferences: { worktreeAgents: ["fake"] },
+  });
+  const { store, named } = await opened(script);
+  store.openBlank({ locationId: "local", cwd: "/work" });
+  await Bun.sleep(10);
+  const blank = store.getState().blank;
+  if (blank === undefined) throw new Error("no blank conversation");
+  // On by the agent's default, from the remote's default branch.
+  expect(blankWorktreeOf(store.getState(), blank, "fake")).toMatchObject({
+    on: true,
+    base: "main",
+  });
+  // A choice of the person beats the default; another branch is the start.
+  store.chooseBlankWorktree({ on: true, base: "topic" });
+  store.drafts.setText(BLANK_KEY, "hi");
+  await store.send();
+  expect(named("createSession")[0]?.[2]).toMatchObject({
+    cwd: "/work",
+    worktree: { base: "topic" },
+  });
+});
+
+test("no worktree is offered for a folder outside a repository, nor where the daemon cannot, and none is sent", async () => {
+  const outside = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, worktrees: true },
+    branches: null,
+    preferences: { worktreeAgents: ["fake"] },
+  });
+  const a = await opened(outside);
+  a.store.openBlank({ locationId: "local", cwd: "/work" });
+  await Bun.sleep(10);
+  const blankA = a.store.getState().blank;
+  if (blankA === undefined) throw new Error("no blank conversation");
+  expect(blankWorktreeOf(a.store.getState(), blankA, "fake")).toBeUndefined();
+  a.store.drafts.setText(BLANK_KEY, "hi");
+  await a.store.send();
+  expect(a.named("createSession")[0]?.[2]).not.toHaveProperty("worktree");
+
+  // A daemon without `worktrees` is not even asked for branches.
+  const old = fakeBridge({ connected: true });
+  const b = await opened(old);
+  b.store.openBlank({ locationId: "local", cwd: "/work" });
+  await Bun.sleep(10);
+  expect(b.named("gitBranches")).toEqual([]);
+});
+
+test("deleting a session whose worktree holds unsaved work gives back what would be lost, and goes on only when told", async () => {
+  const script = fakeBridge({ connected: true });
+  const calls: boolean[] = [];
+  script.bridge.deleteSession = async (_location, _session, discard) => {
+    calls.push(discard === true);
+    return discard === true ? undefined : { unsaved: { files: ["a.txt"], commits: [] } };
+  };
+  const { store } = await opened(script);
+  expect(await store.deleteSession("s1")).toEqual({ files: ["a.txt"], commits: [] });
+  expect(store.getState().sessions.local?.some((s) => s.sessionId === "s1")).toBe(true);
+  expect(await store.deleteSession("s1", "local", true)).toBeUndefined();
+  expect(calls).toEqual([false, true]);
 });

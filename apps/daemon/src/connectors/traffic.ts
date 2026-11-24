@@ -1,4 +1,5 @@
 import type { McpServer } from "@agentclientprotocol/sdk/experimental/v2";
+import { repositoryOf } from "../git.ts";
 import { McpGateway } from "./gateway.ts";
 import { type Fetch, hold, send } from "./http-proxy.ts";
 import type { PluginConnectors } from "./plugin-connectors.ts";
@@ -7,6 +8,12 @@ import type { ConnectorSignIn } from "./sign-in.ts";
 import type { ConnectorState } from "./state.ts";
 import { type Spawn, StdioBridge } from "./stdio-bridge.ts";
 import type { CatalogEntry, Credentials } from "./store.ts";
+import {
+  handleWorktreeMcp,
+  WORKTREE_CONNECTOR_ID,
+  WORKTREE_SERVER_NAME,
+  type WorktreeHost,
+} from "./worktree-mcp.ts";
 
 /**
  * What a stdio connector's process gets of the daemon's own environment: enough to find and run a
@@ -46,6 +53,13 @@ export class ConnectorTraffic {
   /** Connectors currently updating or being removed: no new stdio process may spawn until the transition finishes. */
   readonly #stopping = new Map<string, number>();
   #gateway: McpGateway | undefined;
+  /** Cycle's own EnterWorktree and ExitWorktree, for the agents that have none of their own (worktree-mcp.ts). */
+  #worktrees: { host: WorktreeHost; agents: ReadonlySet<string> } | undefined;
+
+  /** The agents named are given Cycle's worktree tools as a server of their own, beside the connectors. */
+  useWorktrees(host: WorktreeHost, agents: Iterable<string>): void {
+    this.#worktrees = { host, agents: new Set(agents) };
+  }
 
   constructor(options: {
     state: ConnectorState;
@@ -84,7 +98,14 @@ export class ConnectorTraffic {
         (e.origin === undefined || e.origin.agentId === agentId),
     );
     this.release(sessionId);
-    if (entries.length === 0) return [];
+    const worktrees =
+      this.#worktrees !== undefined &&
+      agentId !== undefined &&
+      this.#worktrees.agents.has(agentId) &&
+      !taken.has(WORKTREE_SERVER_NAME) &&
+      // Only where there is a repository to make a worktree of.
+      (await repositoryOf(cwd)) !== undefined;
+    if (entries.length === 0 && !worktrees) return [];
     this.#gateway ??= McpGateway.start((session, connector, request) =>
       this.#forward(session, connector, request),
     );
@@ -94,20 +115,33 @@ export class ConnectorTraffic {
       starting: new Map(),
       active: true,
     });
-    const key = this.#gateway.grant(
-      sessionId,
-      entries.map((e) => e.id),
-    );
+    const key = this.#gateway.grant(sessionId, [
+      ...entries.map((e) => e.id),
+      ...(worktrees ? [WORKTREE_CONNECTOR_ID] : []),
+    ]);
     const gateway = this.#gateway;
-    return entries.map(
-      (e) =>
-        ({
-          type: "http",
-          name: nameOf(e),
-          url: gateway.endpoint(e.id),
-          headers: [{ name: "Authorization", value: `Bearer ${key}` }],
-        }) as McpServer,
-    );
+    const headers = [{ name: "Authorization", value: `Bearer ${key}` }];
+    return [
+      ...(worktrees
+        ? [
+            {
+              type: "http",
+              name: WORKTREE_SERVER_NAME,
+              url: gateway.endpoint(WORKTREE_CONNECTOR_ID),
+              headers,
+            } as McpServer,
+          ]
+        : []),
+      ...entries.map(
+        (e) =>
+          ({
+            type: "http",
+            name: nameOf(e),
+            url: gateway.endpoint(e.id),
+            headers,
+          }) as McpServer,
+      ),
+    ];
   }
 
   /** The session's agent is gone: its key stops working and its connector processes end. */
@@ -160,6 +194,8 @@ export class ConnectorTraffic {
   }
 
   async #forward(sessionId: string, connectorId: string, request: Request): Promise<Response> {
+    if (connectorId === WORKTREE_CONNECTOR_ID && this.#worktrees !== undefined)
+      return handleWorktreeMcp(this.#worktrees.host, sessionId, request);
     // Read with the entry, before anything is awaited: what this request learns is of these settings.
     const generation = this.#state.generation(connectorId);
     const entry = await this.#state.catalog.get(connectorId);

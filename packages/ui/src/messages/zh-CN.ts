@@ -1229,6 +1229,30 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "blank.environment.refused.invalid_environment":
     "session 没有开始：那个工作位置上的 Cycle 读不懂这个环境。请确认它是最新版本。",
   "blank.environment.refused.missing": "session 没有开始：那个环境已被移除。请另选一个。",
+  "blank.branch.tip": "分支：{branch}",
+  "blank.branch.label": "分支：{branch}",
+  "blank.branch.none": "无分支",
+  "blank.branch.search": "搜索分支",
+  "blank.branch.heading": "本地分支",
+  "blank.branch.current": "当前",
+  "blank.branch.empty": "没有匹配的分支",
+  "blank.branch.turnsOn": "选择其他分支会新建 worktree。",
+  "session.worktree.name": "Worktree",
+  "blank.worktree": "Worktree",
+  "blank.environment.refused.not_a_repository":
+    "session 没有开始：这个文件夹不在 git 仓库里，无法新建 worktree。请关掉 worktree，或换一个文件夹。",
+  "blank.environment.refused.invalid_name":
+    "session 没有开始：Cycle 没能给 worktree 起名。请再试一次。",
+  "blank.environment.refused.invalid_base": "session 没有开始：那个分支已经不在了。请另选一个。",
+  "session.worktree.setupFailed":
+    "这个 worktree 的 setup 脚本失败了。session 能用，但环境可能没准备好。它的输出：",
+  "session.deleteUnsaved":
+    "它的 worktree 里有别处没有的内容：下面的文件和提交。删除会话会把 worktree 和这些内容一起永久移除。",
+  "session.deleteUnsavedRefused": "worktree 里有没保存到别处的内容。再删除一次会丢弃它们。",
+  "session.deleteDiscard": "丢弃并删除",
+  "settings.worktree": "Worktree",
+  "settings.worktree.description":
+    "这些 agent 的新会话默认在自己的 worktree 里开始，起点由你选，新建会话时可以关掉。只在这台电脑、git 仓库里可用。",
   "session.environment.actions": "环境动作",
   "session.environment.more": "更多动作",
   "session.environment.run": "在新终端里运行 {name}",

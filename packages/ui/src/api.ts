@@ -65,6 +65,8 @@ export type LocationStatus = {
     terminal?: boolean;
     /** A session can be made with an environment, and its actions run in a terminal (docs/protocol.md §6 "环境"). */
     environments?: boolean;
+    /** A session can be made in a worktree, and the branches to start it from listed (docs/protocol.md §6 "Worktree"). */
+    worktrees?: boolean;
   };
   /**
    * The daemon on the location speaks another major version of Cycle's protocol, so the app cannot use it
@@ -121,7 +123,31 @@ export type SessionSummary = {
   config?: Record<string, string>;
   /** The environment it was made with, as the daemon keeps it: names only, never a variable's value. */
   environment?: SessionEnvironmentSummary;
+  /** The worktree the session is in now (`cycle/worktree`); its `root` is the workspace it is listed under. */
+  worktree?: WorktreeSummary;
 };
+
+/** Where a session's work is, apart from the main checkout (docs/protocol.md §6 "Worktree"). */
+export type WorktreeSummary = {
+  /** The main checkout it belongs to. */
+  root: string;
+  path: string;
+  branch?: string;
+  /** Cycle made it: its setup ran and its cleanup runs before it goes. */
+  managed: boolean;
+  /** What the setup script said when it failed. */
+  setupFailed?: string;
+};
+
+/** The branches a worktree could start from. */
+export type GitBranches = {
+  branches: string[];
+  current?: string | undefined;
+  defaultBranch?: string | undefined;
+};
+
+/** What a session's worktree holds that nothing else does: a delete is refused until the person says to discard it. */
+export type UnsavedWork = { files: string[]; commits: string[] };
 
 /**
  * A command for each system, with a default for the others (docs/desktop.md "环境"). The daemon picks its own system's,
@@ -833,6 +859,8 @@ export type Preferences = {
   theme: ThemeChoice;
   language: LanguageChoice;
   promptSuggestions: boolean;
+  /** The agents (by id) whose new sessions start in a worktree unless the person says otherwise. Off for all until chosen. */
+  worktreeAgents: string[];
 };
 
 /** The preferences, and the system's language as main reads it (`system` follows it). */
@@ -852,6 +880,10 @@ export const ENVIRONMENT_REFUSALS = [
   "invalid_environment",
   "missing",
   "needs_fix",
+  // A worktree that could not be made (docs/protocol.md §6 "Worktree").
+  "not_a_repository",
+  "invalid_name",
+  "invalid_base",
 ] as const;
 export type EnvironmentRefusal = {
   reason: (typeof ENVIRONMENT_REFUSALS)[number];
@@ -871,6 +903,8 @@ export type NewSession = {
   agent?: string;
   config?: Record<string, string>;
   environmentId?: string;
+  /** Make a worktree from this branch (the remote's default when absent) and run in it. Only to a local daemon with `capabilities.worktrees`. */
+  worktree?: { base?: string };
 };
 
 /**
@@ -1002,7 +1036,17 @@ export type AppApi = {
   archiveSession(locationId: string, sessionId: string, archived: boolean): Promise<void>;
   /** Says the session has been seen: its unread mark clears. Does nothing on a daemon that cannot. */
   markRead(locationId: string, sessionId: string): Promise<void>;
-  deleteSession(locationId: string, sessionId: string): Promise<void>;
+  /**
+   * Deletes a session. A worktree Cycle made for it that holds unsaved work is not removed unless `discardWorktree`:
+   * the answer is then what would be lost, for the person to confirm.
+   */
+  deleteSession(
+    locationId: string,
+    sessionId: string,
+    discardWorktree?: boolean,
+  ): Promise<{ unsaved: UnsavedWork } | undefined>;
+  /** The branches a worktree for a session in `cwd` could start from; null when `cwd` is not in a git repository. */
+  gitBranches(locationId: string, cwd: string): Promise<GitBranches | null>;
   answerPermission(key: string, optionId: string | "cancelled"): Promise<void>;
   answerForm(key: string, answer: FormAnswer): Promise<void>;
 
@@ -1241,6 +1285,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   archiveSession: true,
   markRead: true,
   deleteSession: true,
+  gitBranches: true,
   answerPermission: true,
   answerForm: true,
   agents: true,

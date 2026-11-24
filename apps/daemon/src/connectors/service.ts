@@ -19,6 +19,7 @@ import {
   FileCredentialVault,
 } from "./store.ts";
 import { ConnectorTraffic } from "./traffic.ts";
+import type { WorktreeHost } from "./worktree-mcp.ts";
 
 export type { PluginServerSpec } from "./plugin-connectors.ts";
 export { STDIO_ENV_ALLOWLIST } from "./traffic.ts";
@@ -275,6 +276,11 @@ export class ConnectorService {
     agentId?: string,
   ): Promise<McpServer[]> {
     return this.#traffic.serversFor(sessionId, cwd, taken, agentId);
+  }
+
+  /** Gives these agents Cycle's own worktree tools (worktree-mcp.ts). */
+  useWorktrees(host: WorktreeHost, agents: Iterable<string>): void {
+    this.#traffic.useWorktrees(host, agents);
   }
 
   /** The session's agent is gone: its key stops working and its connector processes end. */

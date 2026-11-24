@@ -1363,6 +1363,32 @@ export const enUS = {
     "The session was not started: Cycle on that location could not read the environment. Check that it is up to date.",
   "blank.environment.refused.missing":
     "The session was not started: that environment was removed. Choose another one.",
+  "blank.branch.tip": "Branch: {branch}",
+  "blank.branch.label": "Branch: {branch}",
+  "blank.branch.none": "No branch",
+  "blank.branch.search": "Search branches",
+  "blank.branch.heading": "Local branches",
+  "blank.branch.current": "Current",
+  "blank.branch.empty": "No matching branches",
+  "blank.branch.turnsOn": "Picking another branch starts a worktree.",
+  "session.worktree.name": "Worktree",
+  "blank.worktree": "Worktree",
+  "blank.environment.refused.not_a_repository":
+    "The session was not started: the folder is not in a git repository, so there is no worktree to make. Turn the worktree off, or choose another folder.",
+  "blank.environment.refused.invalid_name":
+    "The session was not started: Cycle could not name the worktree. Try again.",
+  "blank.environment.refused.invalid_base":
+    "The session was not started: that branch is no longer there. Choose another one.",
+  "session.worktree.setupFailed":
+    "This worktree's setup script failed. The session works, but it may not be ready. What it said:",
+  "session.deleteUnsaved":
+    "Its worktree holds work that is nowhere else: the files and commits below. Deleting the session removes the worktree and this work for good.",
+  "session.deleteUnsavedRefused":
+    "The worktree holds work that is not saved anywhere else. Delete again to discard it.",
+  "session.deleteDiscard": "Discard and delete",
+  "settings.worktree": "Worktrees",
+  "settings.worktree.description":
+    "New sessions of these agents start in a worktree of their own, from a branch you choose, unless you turn it off on the new session. Only on this computer, in a git repository.",
   "session.environment.actions": "Environment actions",
   "session.environment.more": "More actions",
   "session.environment.run": "Run {name} in a new terminal",

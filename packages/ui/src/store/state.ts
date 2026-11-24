@@ -5,6 +5,7 @@ import type {
   AnalyticsStatus,
   ConnectorInfo,
   EnvironmentsState,
+  GitBranches,
   LocationConfig,
   LocationStatus,
   PermissionRequest,
@@ -80,6 +81,10 @@ export type BlankConversation = {
    * the session starts with where the workspace has no default of its own (docs/desktop.md "环境").
    */
   environment?: string | null;
+  /** What the person chose about a worktree here; what is not chosen follows the agent's default and the repository. */
+  worktreeChoice?: { on?: boolean; base?: string };
+  /** The branches a worktree could start from in `cwd`, read when the folder is chosen; `value` null: no repository. */
+  branches?: { locationId: string; cwd: string; value: GitBranches | null };
   /** Starting a session with this agent failed with `-32000` (not signed in): prompt the user to sign in. */
   authRequired?: { agentId: string; agentName: string };
 };

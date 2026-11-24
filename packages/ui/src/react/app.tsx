@@ -1,7 +1,7 @@
 import { Button } from "@ui-sdk/react/button";
 import { ToastRegion } from "@ui-sdk/react/toast";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { AccountStatus, SessionSummary } from "../api.ts";
+import type { AccountStatus, SessionSummary, UnsavedWork } from "../api.ts";
 import { SOURCE_LOCALE } from "../i18n.ts";
 import { resolveLanguage, translatorFor } from "../languages.ts";
 import { contextOf } from "../model/conversation.ts";
@@ -35,6 +35,7 @@ import { SplitLayout } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
+import { WorktreeSetupNotice, WorktreeStrip } from "./worktrees.tsx";
 
 /** What the sign-in page shows when main has not said how the account stands (it could not be asked). */
 const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn: false };
@@ -107,6 +108,8 @@ function AppWindow() {
   const [panel, setPanel] = useState<Panel>("none");
   // The session Delete asks about: the open one from its header, or any from its row in the sidebar.
   const [deleting, setDeleting] = useState<SessionSummary | undefined>(undefined);
+  // What the session's worktree would lose, once the daemon has refused to delete it unasked.
+  const [unsaved, setUnsaved] = useState<UnsavedWork | undefined>(undefined);
   const pinned = useSyncExternalStore(pins.subscribe, pins.all, pins.all);
   // The open session whose title is being edited in the header, by its key.
   const [renaming, setRenaming] = useState<string | undefined>();
@@ -186,6 +189,7 @@ function AppWindow() {
   // The one way to the delete confirmation: it always says which session it deletes.
   const askDelete = (chosen: SessionSummary) => {
     setDeleting(chosen);
+    setUnsaved(undefined);
     open("delete");
   };
   const locationIds = useMemo(() => new Set(locations.map((h) => h.id)), [locations]);
@@ -450,6 +454,7 @@ function AppWindow() {
               ) : null}
               {/* Under whichever title bar is drawn; the blank page draws its own, with these under it. */}
               {blank === undefined ? notices : null}
+              {blank === undefined ? <WorktreeSetupNotice worktree={session?.worktree} /> : null}
               {blank !== undefined ? null : view !== undefined ? (
                 <ConversationView
                   key={viewKey(view.locationId, view.sessionId)}
@@ -478,6 +483,7 @@ function AppWindow() {
                 conversation={conversation}
                 connected={connected}
               />
+              {view !== undefined ? <WorktreeStrip worktree={session?.worktree} /> : null}
               {view !== undefined ? (
                 <Composer
                   key={`composer:${viewKey(view.locationId, view.sessionId)}`}
@@ -563,13 +569,34 @@ function AppWindow() {
           open={panel === "delete"}
           onOpenChange={(open) => !open && close()}
           title={t("session.deleteTitle")}
-          description={t("session.deleteDescription")}
-          confirmLabel={t("session.deleteConfirm")}
+          description={
+            unsaved === undefined
+              ? t("session.deleteDescription")
+              : t("session.deleteUnsaved", {
+                  files: unsaved.files.length,
+                  commits: unsaved.commits.length,
+                })
+          }
+          {...(unsaved !== undefined
+            ? { detail: [...unsaved.files.slice(0, 8), ...unsaved.commits.slice(0, 4)].join("\n") }
+            : {})}
+          confirmLabel={
+            unsaved === undefined ? t("session.deleteConfirm") : t("session.deleteDiscard")
+          }
           destructive
           onConfirm={async () => {
-            const failed = await store.deleteSession(deleting.sessionId, deleting.locationId);
-            if (failed === undefined) pins.set(sessionKey(deleting), false);
-            return failed;
+            const done = await store.deleteSession(
+              deleting.sessionId,
+              deleting.locationId,
+              unsaved !== undefined,
+            );
+            if (typeof done === "object") {
+              // Kept open: the same button now says what it will do.
+              setUnsaved(done);
+              return t("session.deleteUnsavedRefused");
+            }
+            if (done === undefined) pins.set(sessionKey(deleting), false);
+            return done;
           }}
         />
       ) : null}
