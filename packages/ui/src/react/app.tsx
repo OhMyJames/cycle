@@ -168,7 +168,6 @@ function AppWindow() {
     session,
     blank,
     pinned,
-    connectedEnvironments,
   });
   const trust = useWorkspaceTrust(nav.current, status, panel !== "none");
   useMarkRead(session, status);

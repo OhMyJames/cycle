@@ -26,7 +26,6 @@ export function useSessionNavigation({
   session,
   blank,
   pinned,
-  connectedEnvironments,
 }: {
   environments: EnvironmentConfig[];
   status: Record<string, EnvironmentStatus>;
@@ -36,7 +35,6 @@ export function useSessionNavigation({
   session: SessionSummary | undefined;
   blank: BlankConversation | undefined;
   pinned: ReadonlySet<string>;
-  connectedEnvironments: EnvironmentConfig[];
 }) {
   const { t } = useI18n();
   const [showArchived, setShowArchived] = useState(false);
@@ -98,7 +96,7 @@ export function useSessionNavigation({
   }
   // A new session starts in the workspace that is shown, if its environment can have one started.
   const startOn =
-    current !== undefined && connectedEnvironments.some((h) => h.id === current.environmentId)
+    current !== undefined && status[current.environmentId]?.state === "connected"
       ? current
       : undefined;
   const elsewhere = useMemo(() => elsewhereOf(workspaces, current), [workspaces, current]);
@@ -136,7 +134,7 @@ export function useSessionNavigation({
 
 /**
  * Whether the shown workspace's folder is trusted, when its daemon can say. Read again as a dialog closes (it may have
- * been decided there), and when `readAgain` is called.
+ * been decided there), and after `changeTrust`.
  */
 export function useWorkspaceTrust(
   current: Workspace | undefined,

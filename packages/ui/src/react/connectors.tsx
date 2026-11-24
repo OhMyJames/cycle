@@ -263,7 +263,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
   const environmentId = environment.id;
   const read = useAppState((s) => s.connectors[environmentId]);
   const list = read?.list;
-  /** What went wrong with one connector, shown under its row. */
+  /** Which connectors have an action under way, and what went wrong with each, shown under its row. */
   const { busy, problems, run } = useKeyedAsyncAction<Problem>();
   const [waiting, setWaiting] = useState<ConnectorInfo | undefined>(undefined);
   const [signedIn, setSignedIn] = useState<string | undefined>(undefined);
