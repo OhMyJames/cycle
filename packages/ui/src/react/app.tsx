@@ -488,6 +488,7 @@ function AppWindow() {
                 <Composer
                   key={`composer:${viewKey(view.locationId, view.sessionId)}`}
                   locationId={view.locationId}
+                  sessionId={view.sessionId}
                   sessionKey={viewKey(view.locationId, view.sessionId)}
                   canAttach={agent?.promptCapabilities?.image != null}
                   canAttachFiles={agent?.promptCapabilities?.embeddedContext != null}

@@ -337,6 +337,13 @@ export const EVENTS = {
     parts: z.boolean(),
     plan: z.boolean(),
   }),
+  /**
+   * The hint to carry on in a new session was shown (CYC-279). `reason`: the conversation is long (`context`), or it was
+   * left idle long enough for the cache to expire while big (`idle`). Never the session or what it holds.
+   */
+  continue_hint_shown: o({ reason: z.enum(["context", "idle"]) }),
+  /** "Continue in new session" was pressed: a blank conversation opened with the session mentioned. Same `reason`. */
+  continue_hint_used: o({ reason: z.enum(["context", "idle"]) }),
   tool_link_opened: o({}),
   /** A link in an agent's message was opened, after the person said yes to where it goes. Never which. */
   message_link_opened: o({}),
@@ -446,6 +453,8 @@ export const UI_EVENTS = [
   "subagent_task_expanded",
   "plan_opened",
   "context_details_opened",
+  "continue_hint_shown",
+  "continue_hint_used",
   "tool_link_opened",
   "message_link_opened",
   "message_copied",
