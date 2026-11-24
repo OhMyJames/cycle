@@ -10,7 +10,9 @@ import {
   createClaudeSetupProvider,
   createCodexSetupProvider,
   readConfigFileStatus,
+  runCodexAppServerLogout,
   runCodexAppServerProbe,
+  startCodexAppServerAuth,
 } from "../src/agent-setup.ts";
 import { ConfigSchema } from "../src/config.ts";
 import { Daemon } from "../src/daemon.ts";
@@ -502,4 +504,81 @@ test("Daemon advertises agentSetup capability, serves _cycle/agent_setup/read, m
     expect(rpc.code).toBe(-32602);
     expect(rpc.data?.reason).toBe("unknown_agent");
   }
+});
+
+test("Codex auth driver drives browser login, device_code login/cancel, and logout over app-server stdio without leaking secrets", async () => {
+  const logFile = join(dir, "codex-rpc.log");
+  const fakeCodex = join(dir, "fake-codex");
+  const script = `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+const logPath = ${JSON.stringify(logFile)};
+const decoder = new TextDecoder();
+let buf = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buf += decoder.decode(chunk, { stream: true });
+  for (let nl = buf.indexOf("\\n"); nl !== -1; nl = buf.indexOf("\\n")) {
+    const line = buf.slice(0, nl).trim();
+    buf = buf.slice(nl + 1);
+    if (!line) continue;
+    const msg = JSON.parse(line);
+    appendFileSync(logPath, msg.method + "\\n");
+    if (msg.method === "initialize") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { serverInfo: { name: "fake-codex" } } }) + "\\n");
+    } else if (msg.method === "account/login/start") {
+      if (msg.params?.type === "chatgpt") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { type: "chatgpt", loginId: "login-browser-1", authUrl: "https://auth.openai.com/oauth/authorize?state=1" } }) + "\\n");
+        setTimeout(() => {
+          process.stdout.write(JSON.stringify({ method: "account/login/completed", params: { loginId: "login-browser-1", success: true, error: null } }) + "\\n");
+        }, 30);
+      } else if (msg.params?.type === "chatgptDeviceCode") {
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { type: "chatgptDeviceCode", loginId: "login-dev-2", verificationUrl: "https://auth.openai.com/codex/device", userCode: "ABCD-1234" } }) + "\\n");
+      }
+    } else if (msg.method === "account/login/cancel") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { status: "canceled" } }) + "\\n");
+      process.stdout.write(JSON.stringify({ method: "account/login/completed", params: { loginId: msg.params?.loginId, success: false, error: "canceled" } }) + "\\n");
+    } else if (msg.method === "account/logout") {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+    }
+  }
+}
+`;
+  writeFileSync(fakeCodex, script, { mode: 0o755 });
+  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", CODEX_HOME: join(dir, "codex-home") };
+
+  // 1. Browser mode (chatgpt)
+  const browserHandle = await startCodexAppServerAuth({
+    executable: fakeCodex,
+    env,
+    mode: "browser",
+  });
+  expect(browserHandle.authorizationUrl).toBe("https://auth.openai.com/oauth/authorize?state=1");
+  expect(await browserHandle.completed).toEqual({ ok: true });
+
+  // 2. Device code mode (chatgptDeviceCode) + cancel
+  const deviceHandle = await startCodexAppServerAuth({
+    executable: fakeCodex,
+    env,
+    mode: "device_code",
+  });
+  expect(deviceHandle.verificationUrl).toBe("https://auth.openai.com/codex/device");
+  expect(deviceHandle.userCode).toBe("ABCD-1234");
+  await deviceHandle.cancel();
+  expect(await deviceHandle.completed).toEqual({ ok: false, reason: "cancelled" });
+
+  // 3. Logout
+  await runCodexAppServerLogout({ executable: fakeCodex, env });
+
+  // 4. Provider advertises both modes (browser loopback + device_code remote) and canSignOut.
+  const provider = createCodexSetupProvider({
+    config: ConfigSchema.parse({}).codex,
+    dataDir: dir,
+    inherited: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    env: () => ({ CODEX_HOME: join(dir, "codex-home") }),
+    locateBinary: () => ({ source: "path", path: fakeCodex }),
+  });
+  expect(provider.signInModes()).toEqual([
+    { mode: "browser", requiresLocalLoopback: true },
+    { mode: "device_code", requiresLocalLoopback: false },
+  ]);
+  expect(provider.canSignOut()).toBe(true);
 });

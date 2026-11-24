@@ -885,3 +885,104 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
   );
   expect(await screen.findByText("Not signed in")).toBeTruthy();
 });
+
+test("Codex sign-in supports browser waiting flow locally and device_code userCode + copy flow on remote environments", async () => {
+  const script = fakeBridge({
+    environments: [far],
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, agentSetup: true },
+  });
+  script.bridge.agents = async () => [
+    { id: "codex", name: "Codex", available: true, configSchema: {} },
+  ];
+  script.bridge.readAgentSetup = async () => ({
+    agent: "codex",
+    name: "Codex",
+    available: true,
+    binary: { source: "path", path: "/usr/bin/codex", version: "0.166.0" },
+    auth: {
+      state: "signed_out",
+      method: "none",
+      signInModes: [
+        { mode: "browser", requiresLocalLoopback: true },
+        { mode: "device_code", requiresLocalLoopback: false },
+      ],
+      canSignOut: true,
+      loginCommand: "cycle login codex",
+    },
+    canRefreshUsage: true,
+    runtime: {
+      schemaVersion: 1,
+      schema: { type: "object", properties: {} },
+      values: {},
+      overrides: [],
+      revision: 0,
+    },
+    environment: {
+      configFile: { path: "/tmp/config.json", exists: true, stale: false },
+      dataDir: "/tmp/codex",
+      customDataDir: false,
+      allowEnv: [],
+      envNames: [],
+    },
+  });
+  script.bridge.startAgentAuth = async (env, agent) => {
+    script.calls.push(["startAgentAuth", env, agent]);
+    if (env === "local") {
+      return {
+        started: true,
+        flowId: "codex-local-1",
+        mode: "browser",
+        expiresAt: Date.now() + 600_000,
+        host: "auth.openai.com",
+        hasUrl: true,
+      };
+    }
+    return {
+      started: true,
+      flowId: "codex-remote-1",
+      mode: "device_code",
+      expiresAt: Date.now() + 600_000,
+      host: "auth.openai.com",
+      hasUrl: true,
+      userCode: "ZNH8-01S7L",
+    };
+  };
+
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await openSettings(user);
+  await user.click(await screen.findByRole("tab", { name: "Codex" }));
+
+  // Local: browser mode shows verified host + waiting status, no auto-open.
+  await user.click(await screen.findByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText(/Continue in your browser at auth\.openai\.com/)).toBeTruthy();
+  expect(screen.getByText("Waiting for browser sign-in to finish…")).toBeTruthy();
+  expect(script.named("openAgentAuthUrl")).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(script.named("cancelAgentAuth")).toEqual([
+      ["cancelAgentAuth", "local", "codex-local-1"],
+    ]),
+  );
+
+  // Remote: device_code mode shows userCode + Copy code + verified host click-to-open.
+  await user.click(screen.getByRole("combobox", { name: "Environment" }));
+  await user.click(await screen.findByRole("option", { name: "Build box" }));
+  await user.click(await screen.findByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText("ZNH8-01S7L")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Copy code" }));
+  await waitFor(() => expect(script.named("copyText")).toContainEqual(["copyText", "ZNH8-01S7L"]));
+  await user.click(screen.getByRole("button", { name: "Open in browser" }));
+  await waitFor(() =>
+    expect(script.named("openAgentAuthUrl")).toEqual([
+      ["openAgentAuthUrl", "far", "codex-remote-1"],
+    ]),
+  );
+});

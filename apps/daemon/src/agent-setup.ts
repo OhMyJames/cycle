@@ -698,6 +698,351 @@ export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
   }
 };
 
+export type CodexAuthStartOptions = {
+  executable: string;
+  env: Record<string, string>;
+  mode: "browser" | "device_code";
+  startTimeoutMs?: number;
+};
+
+export type StartCodexAppServerAuth = (
+  options: CodexAuthStartOptions,
+) => Promise<AgentAuthFlowHandle>;
+
+export type CodexLogoutOptions = {
+  executable: string;
+  env: Record<string, string>;
+  timeoutMs?: number;
+};
+
+export type RunCodexAppServerLogout = (options: CodexLogoutOptions) => Promise<void>;
+
+/**
+ * Spawns a short-lived `codex app-server` to drive `account/login/start` (`chatgpt` or `chatgptDeviceCode`),
+ * listens for `account/login/completed`, and tears down cleanly on completion or `cancel()`.
+ * Verified against codex-cli 0.166.0 in an isolated `$CODEX_HOME` alongside a concurrent session server.
+ */
+export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
+  executable,
+  env,
+  mode,
+  startTimeoutMs = 15_000,
+}) => {
+  if (env.CODEX_HOME) {
+    try {
+      mkdirSync(env.CODEX_HOME, { recursive: true });
+    } catch {
+      // let codex report its own error
+    }
+  }
+
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn([executable, "app-server", ...CODEX_FIXED_ARGS], {
+      env,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    throw new AgentAuthDriverError("process_failed", "Failed to launch codex app-server");
+  }
+
+  const stdin = proc.stdin as Bun.FileSink;
+  const stdout = proc.stdout as ReadableStream<Uint8Array>;
+  const reader = stdout.getReader();
+  const decoder = new TextDecoder();
+
+  let seq = 1;
+  const pending = new Map<
+    number,
+    { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+  >();
+  let loginId: string | undefined;
+  let cleanedUp = false;
+  let cancelled = false;
+  let resolveCompleted!: (outcome: AgentAuthFlowOutcome) => void;
+  let settled = false;
+  const completed = new Promise<AgentAuthFlowOutcome>((resolve) => {
+    resolveCompleted = (outcome) => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+  });
+
+  const killProc = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try {
+      stdin.end();
+    } catch {
+      // ignore
+    }
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      return;
+    }
+    const grace = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }, 500);
+    await proc.exited.catch(() => {});
+    clearTimeout(grace);
+  };
+
+  const send = (payload: Record<string, unknown>) => {
+    stdin.write(`${JSON.stringify(payload)}\n`);
+    stdin.flush();
+  };
+
+  const request = (method: string, params: unknown, timeoutMs: number): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const id = seq++;
+      const timer = setTimeout(() => {
+        if (!pending.delete(id)) return;
+        reject(new AgentAuthDriverError("timeout", `Codex ${method} timed out`));
+      }, timeoutMs);
+      pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
+      try {
+        send({ jsonrpc: "2.0", id, method, params });
+      } catch (error) {
+        clearTimeout(timer);
+        pending.delete(id);
+        reject(error);
+      }
+    });
+
+  // Background NDJSON reader loop for both request responses and `account/login/completed`.
+  void (async () => {
+    let buffer = "";
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        for (let nl = buffer.indexOf("\n"); nl !== -1; nl = buffer.indexOf("\n")) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          let msg: Record<string, unknown>;
+          try {
+            msg = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          if (typeof msg.id === "number" && pending.has(msg.id)) {
+            const waiter = pending.get(msg.id);
+            pending.delete(msg.id);
+            if (msg.error !== undefined) {
+              waiter?.reject(new AgentAuthDriverError("process_failed", "Codex RPC error"));
+            } else {
+              waiter?.resolve(msg.result);
+            }
+            continue;
+          }
+          if (
+            msg.method === "account/login/completed" &&
+            typeof msg.params === "object" &&
+            msg.params !== null
+          ) {
+            const p = msg.params as { loginId?: unknown; success?: unknown };
+            if (loginId !== undefined && p.loginId !== undefined && p.loginId !== loginId) continue;
+            const ok = p.success === true;
+            resolveCompleted(
+              ok ? { ok: true } : { ok: false, reason: cancelled ? "cancelled" : "process_failed" },
+            );
+            void killProc();
+          }
+        }
+      }
+    } catch {
+      // stream cancelled or closed
+    } finally {
+      for (const [, waiter] of pending) {
+        waiter.reject(new AgentAuthDriverError("process_failed", "Codex app-server exited"));
+      }
+      pending.clear();
+      if (!settled) {
+        resolveCompleted({ ok: false, reason: cancelled ? "cancelled" : "process_failed" });
+      }
+    }
+  })();
+
+  try {
+    await request(
+      "initialize",
+      { clientInfo: { name: "cycle", version: "0.2" }, capabilities: {} },
+      startTimeoutMs,
+    );
+    send({ jsonrpc: "2.0", method: "initialized", params: {} });
+
+    const startParams = mode === "browser" ? { type: "chatgpt" } : { type: "chatgptDeviceCode" };
+    const result = (await request("account/login/start", startParams, startTimeoutMs)) as
+      | Record<string, unknown>
+      | undefined;
+
+    loginId = nonEmptyString(result?.loginId);
+    const authorizationUrl = mode === "browser" ? nonEmptyString(result?.authUrl) : undefined;
+    const verificationUrl =
+      mode === "device_code" ? nonEmptyString(result?.verificationUrl) : undefined;
+    const userCode = mode === "device_code" ? nonEmptyString(result?.userCode) : undefined;
+
+    if (
+      loginId === undefined ||
+      (mode === "browser" && authorizationUrl === undefined) ||
+      (mode === "device_code" && (verificationUrl === undefined || userCode === undefined))
+    ) {
+      throw new AgentAuthDriverError(
+        "parse_failed",
+        "Unexpected Codex account/login/start response",
+      );
+    }
+
+    return {
+      ...(authorizationUrl !== undefined ? { authorizationUrl } : {}),
+      ...(verificationUrl !== undefined ? { verificationUrl } : {}),
+      ...(userCode !== undefined ? { userCode } : {}),
+      completed,
+      cancel: async () => {
+        cancelled = true;
+        if (!cleanedUp && loginId !== undefined) {
+          await request("account/login/cancel", { loginId }, 1_500).catch(() => {});
+        }
+        await killProc();
+      },
+    };
+  } catch (error) {
+    await killProc();
+    if (error instanceof AgentAuthDriverError) throw error;
+    throw new AgentAuthDriverError("process_failed", "Failed to start Codex sign-in");
+  }
+};
+
+/** Runs `account/logout` against a short-lived `codex app-server` in the agent's isolated `$CODEX_HOME`. */
+export const runCodexAppServerLogout: RunCodexAppServerLogout = async ({
+  executable,
+  env,
+  timeoutMs = 10_000,
+}) => {
+  if (env.CODEX_HOME) {
+    try {
+      mkdirSync(env.CODEX_HOME, { recursive: true });
+    } catch {
+      // ignore
+    }
+  }
+
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn([executable, "app-server", ...CODEX_FIXED_ARGS], {
+      env,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    throw new AgentAuthDriverError("process_failed", "Failed to launch codex app-server");
+  }
+
+  const stdin = proc.stdin as Bun.FileSink;
+  const stdout = proc.stdout as ReadableStream<Uint8Array>;
+  const reader = stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let timedOut = false;
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      proc.kill();
+    } catch {
+      // ignore
+    }
+  }, timeoutMs);
+
+  const send = (payload: Record<string, unknown>) => {
+    stdin.write(`${JSON.stringify(payload)}\n`);
+    stdin.flush();
+  };
+
+  const waitForId = async (targetId: number): Promise<Record<string, unknown> | undefined> => {
+    while (true) {
+      const nl = buffer.indexOf("\n");
+      if (nl !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line) as Record<string, unknown>;
+          if (msg.id === targetId) return msg;
+        } catch {
+          // ignore
+        }
+        continue;
+      }
+      const chunk = await reader.read();
+      if (chunk.done) return undefined;
+      buffer += decoder.decode(chunk.value, { stream: true });
+    }
+  };
+
+  try {
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { clientInfo: { name: "cycle", version: "0.2" }, capabilities: {} },
+    });
+    const init = await waitForId(1);
+    if (!init || init.error) {
+      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
+    }
+    send({ jsonrpc: "2.0", method: "initialized", params: {} });
+
+    send({ jsonrpc: "2.0", id: 2, method: "account/logout", params: {} });
+    const resp = await waitForId(2);
+    if (!resp || resp.error) {
+      throw new AgentAuthDriverError(timedOut ? "timeout" : "process_failed");
+    }
+  } finally {
+    clearTimeout(timer);
+    try {
+      stdin.end();
+    } catch {
+      // ignore
+    }
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+    try {
+      proc.kill();
+    } catch {
+      // ignore
+    }
+  }
+};
+
 export type CodexSetupOptions = {
   config: Config["codex"];
   dataDir: string;
@@ -706,6 +1051,8 @@ export type CodexSetupOptions = {
   locateBinary: () => { source: AgentBinarySource; path?: string };
   runCommand?: AgentSetupRunCommand;
   probeAppServer?: RunCodexAppServerProbe;
+  startAuth?: StartCodexAppServerAuth;
+  logoutAppServer?: RunCodexAppServerLogout;
   timeoutMs?: number;
   now?: () => number;
 };
@@ -713,6 +1060,8 @@ export type CodexSetupOptions = {
 export const createCodexSetupProvider = (options: CodexSetupOptions): AgentSetupProvider => {
   const run = options.runCommand ?? runIsolatedCommand;
   const probeAppServer = options.probeAppServer ?? runCodexAppServerProbe;
+  const startAuth = options.startAuth ?? startCodexAppServerAuth;
+  const logoutAppServer = options.logoutAppServer ?? runCodexAppServerLogout;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const now = options.now ?? Date.now;
   const minimalEnv = (): Record<string, string> => ({
@@ -822,10 +1171,41 @@ export const createCodexSetupProvider = (options: CodexSetupOptions): AgentSetup
   return {
     probeBinary,
     readAuth,
-    signInModes: () => [],
-    canSignOut: () => false,
+    signInModes: () => [
+      { mode: "browser", requiresLocalLoopback: true },
+      { mode: "device_code", requiresLocalLoopback: false },
+    ],
+    canSignOut: () => true,
     canRefreshUsage: true,
     loginCommand: "cycle login codex",
+    authDriver: {
+      start: async (mode) => {
+        if (mode !== "browser" && mode !== "device_code") {
+          throw new AgentAuthDriverError("process_failed", `Unsupported Codex auth mode: ${mode}`);
+        }
+        const binary = await probeBinary();
+        if (binary.problem !== undefined || !binary.path) {
+          throw new AgentAuthDriverError("binary_unavailable", "Codex binary is unavailable");
+        }
+        return startAuth({
+          executable: binary.path,
+          env: minimalEnv(),
+          mode,
+          startTimeoutMs: timeoutMs,
+        });
+      },
+      logout: async () => {
+        const binary = await probeBinary();
+        if (binary.problem !== undefined || !binary.path) {
+          throw new AgentAuthDriverError("binary_unavailable", "Codex binary is unavailable");
+        }
+        await logoutAppServer({
+          executable: binary.path,
+          env: minimalEnv(),
+          timeoutMs,
+        });
+      },
+    },
     diagnostics: () => ({
       dataDir: options.config.configDir ?? join(options.dataDir, "codex"),
       customDataDir: options.config.configDir !== undefined,
