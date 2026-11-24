@@ -59,9 +59,20 @@ const MAX_LINE = 16 * 1024 * 1024;
 /** Messages the process said by itself while no stream was open: kept for the next one, up to this many. */
 const MAX_WAITING = 256;
 
+type Id = string | number;
+type Waiter = { id: Id; resolve: (message: unknown) => void };
+
 export class StdioBridge {
   readonly #process: Spawned;
-  readonly #pending = new Map<string, (message: unknown) => void>();
+  /**
+   * The process is asked with ids of the bridge's own, never the agent's: a reply is then for exactly one request,
+   * even one the agent gave up on and then used the id of again. Keyed by that id, as a string (a server that
+   * answers 3 as "3" is still understood).
+   */
+  readonly #pending = new Map<string, Waiter>();
+  /** The agent's id (as JSON) of each request still waiting, to the bridge's id it was sent with. */
+  readonly #sent = new Map<string, number>();
+  #next = 0;
   readonly #streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
   #waiting: unknown[] = [];
   #ended = false;
@@ -109,11 +120,14 @@ export class StdioBridge {
       return; // Not a message: a server that logs to stdout.
     }
     const m = message as Message;
-    const isReply = m.method === undefined && m.id !== undefined && m.id !== null;
-    const waiter = isReply ? this.#pending.get(JSON.stringify(m.id)) : undefined;
-    if (waiter !== undefined) {
-      this.#pending.delete(JSON.stringify(m.id));
-      waiter(message);
+    // A reply is to one of the bridge's requests: the agent's id goes back on it. One nobody waits for any more
+    // (cancelled, given up on) is for no one.
+    if (m.method === undefined && m.id !== undefined && m.id !== null) {
+      const key = String(m.id);
+      const waiter = this.#pending.get(key);
+      if (waiter === undefined) return;
+      this.#settle(key, waiter);
+      waiter.resolve({ ...(message as object), id: waiter.id });
       return;
     }
     const event = new TextEncoder().encode(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
@@ -125,26 +139,40 @@ export class StdioBridge {
     for (const stream of this.#streams) stream.enqueue(event);
   }
 
-  /** Stops waiting for a reply: it is answered as cancelled, for whoever still holds the request. */
-  #drop(key: string): void {
-    const waiter = this.#pending.get(key);
-    if (waiter === undefined) return;
+  #settle(key: string, waiter: Waiter): void {
     this.#pending.delete(key);
-    waiter({
+    this.#sent.delete(JSON.stringify(waiter.id));
+  }
+
+  /**
+   * Stops waiting for the reply to the bridge's request `ours`: it is answered as cancelled, for whoever still holds
+   * it. False when nothing waited for it any more.
+   */
+  #drop(ours: number): boolean {
+    const key = String(ours);
+    const waiter = this.#pending.get(key);
+    if (waiter === undefined) return false;
+    this.#settle(key, waiter);
+    waiter.resolve({
       jsonrpc: "2.0",
-      id: JSON.parse(key) as string | number,
+      id: waiter.id,
       error: { code: -32800, message: "Request cancelled" },
     });
+    return true;
   }
 
   #end(): void {
     if (this.#ended) return;
     this.#ended = true;
-    for (const [key, waiter] of this.#pending) {
-      const id = JSON.parse(key) as string | number;
-      waiter({ jsonrpc: "2.0", id, error: { code: -32603, message: "The connector stopped" } });
+    for (const waiter of this.#pending.values()) {
+      waiter.resolve({
+        jsonrpc: "2.0",
+        id: waiter.id,
+        error: { code: -32603, message: "The connector stopped" },
+      });
     }
     this.#pending.clear();
+    this.#sent.clear();
     for (const stream of this.#streams) {
       try {
         stream.close();
@@ -204,30 +232,64 @@ export class StdioBridge {
         error: { code: -32700, message: "Parse error" },
       });
     }
+    // It may have ended while the body was read: nothing written now would be answered.
+    if (this.#ended) return json(502, { error: "The connector stopped" });
     const batch = Array.isArray(body);
     const messages = (batch ? body : [body]) as Message[];
     const replies: Promise<unknown>[] = [];
-    const keys: string[] = [];
+    const asked: number[] = [];
     for (const message of messages) {
       if (typeof message !== "object" || message === null) continue;
+      let sent: unknown = message;
       if (message.method !== undefined && message.id !== undefined && message.id !== null) {
-        const key = JSON.stringify(message.id);
-        keys.push(key);
-        replies.push(new Promise((resolve) => this.#pending.set(key, resolve)));
+        const id = message.id;
+        const agentKey = JSON.stringify(id);
+        // An id still waiting for its answer (before, or earlier in this batch) is refused: the agent could not
+        // tell its two answers apart.
+        if (this.#sent.has(agentKey)) {
+          replies.push(
+            Promise.resolve({
+              jsonrpc: "2.0",
+              id,
+              error: { code: -32600, message: "Request id already in use" },
+            }),
+          );
+          continue;
+        }
+        const ours = ++this.#next;
+        this.#sent.set(agentKey, ours);
+        asked.push(ours);
+        replies.push(new Promise((resolve) => this.#pending.set(String(ours), { id, resolve })));
+        sent = { ...message, id: ours };
       }
-      // A cancelled request gets no answer from a server (MCP): nobody waits for one.
+      // A cancelled request gets no answer from a server (MCP): nobody waits for one. The process knows it by the
+      // bridge's id; one that waits no more is not the process's to hear of.
       if (message.method === "notifications/cancelled") {
-        const cancelled = (message as { params?: { requestId?: unknown } }).params?.requestId;
-        if (cancelled !== undefined) this.#drop(JSON.stringify(cancelled));
+        const params = (message as { params?: { requestId?: unknown } }).params;
+        const cancelled = params?.requestId;
+        if (cancelled === undefined) continue;
+        const ours = this.#sent.get(JSON.stringify(cancelled));
+        if (ours === undefined) continue;
+        this.#drop(ours);
+        sent = { ...message, params: { ...params, requestId: ours } };
       }
-      this.#process.stdin.write(`${JSON.stringify(message)}\n`);
+      this.#process.stdin.write(`${JSON.stringify(sent)}\n`);
     }
     if (replies.length === 0) return new Response(null, { status: 202 });
     // The agent gave up on the request: its waits end, whatever the process does.
+    // By the bridge's ids: the agent's may by then name another request. The process is told too, as a cancel.
     const onAbort = () => {
-      for (const key of keys) this.#drop(key);
+      for (const ours of asked) {
+        if (this.#drop(ours) && !this.#ended) {
+          this.#process.stdin.write(
+            `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: ours, reason: "The request was abandoned" } })}\n`,
+          );
+        }
+      }
     };
-    request.signal.addEventListener("abort", onAbort, { once: true });
+    // Given up on already, while its body was read: no event will come.
+    if (request.signal.aborted) onAbort();
+    else request.signal.addEventListener("abort", onAbort, { once: true });
     try {
       const answers = await Promise.all(replies);
       return json(200, batch ? answers : answers[0]);
