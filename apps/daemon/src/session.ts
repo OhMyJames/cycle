@@ -109,6 +109,12 @@ export class Session {
    * cannot be saved is not run on: the session refuses new ones, and its agent is cancelled.
    */
   historyError: string | undefined;
+  /**
+   * The last `available_commands_update` given to `#write` (as `commandsKey`), written or not, so
+   * one that says the same again is not written. Undefined until the first one comes in this run;
+   * the log knows the one on record from before (`SessionLog.lastCommands`).
+   */
+  lastCommands: string | undefined;
   /** Set when the daemon lets the session go (deleted, or the daemon stops): a log closed then is not a failed one. */
   closed = false;
   /**

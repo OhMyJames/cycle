@@ -192,6 +192,40 @@ test("every logged update carries the time it was logged, the same live and repl
   for (const r of records) expect(r.ts).toBe(lines.find((l) => l.seq === r.seq)?.ts);
 });
 
+test("a list of commands the same as the last one on record is not written, and clients are not sent it", async () => {
+  const list = (names: string[]) => ({
+    sessionUpdate: "available_commands_update",
+    availableCommands: names.map((name) => ({ type: "command", name, description: name })),
+  });
+  const sent = [list(["a"]), list(["a"]), list(["a", "b"]), list(["a", "b"])];
+  let turn = 0;
+  const { daemon } = await start(
+    fakeAgent({
+      onPrompt: async (ctx) => {
+        await ctx.say(sent[turn++] as object);
+        await ctx.say(sent[turn++] as object);
+      },
+    }),
+  );
+  const client = await connectClient(daemon);
+  const { sessionId } = await client.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  await client.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
+  await client.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("one") });
+  await until(() => client.idle() >= 2, "the first turn");
+  await client.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("two") });
+  await until(() => client.idle() >= 3, "the second turn");
+
+  const named = (updates: { update: { availableCommands?: { name: string }[] } }[]) =>
+    updates.map((s) => s.update.availableCommands?.map((c) => c.name).join());
+  const seen = client.seen.filter((s) => s.update.sessionUpdate === "available_commands_update");
+  expect(named(seen as never)).toEqual(["a", "a,b"]);
+  const lines = (await readFile(join(dir, "sessions", `${sessionId}.jsonl`), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { data: { sessionUpdate?: string } });
+  expect(lines.filter((l) => l.data.sessionUpdate === "available_commands_update")).toHaveLength(2);
+});
+
 test("a reconnecting client asks for what it missed and gets only that", async () => {
   const { daemon } = await start();
   const c = await connectClient(daemon);
@@ -1221,6 +1255,7 @@ const flaky = () => {
         sessionId: log.sessionId,
         lastSeq: () => log.lastSeq(),
         updatedAt: () => log.updatedAt(),
+        lastCommands: () => log.lastCommands(),
         read: (range) => log.read(range),
         subscribe: (listener) => log.subscribe(listener),
         close: () => log.close(),

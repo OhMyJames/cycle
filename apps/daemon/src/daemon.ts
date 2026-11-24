@@ -71,6 +71,7 @@ import {
 } from "./agent-setup.ts";
 import type { AgentDefinition } from "./agents.ts";
 import { Clients } from "./clients.ts";
+import { commandsKey, isCommandsData } from "./commands-update.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
 import {
@@ -1622,6 +1623,14 @@ export class Daemon {
     try {
       // What is kept, and so what clients see, is what has been through this (docs/protocol.md §12).
       const data = checkToolResult(record.kind, redactRecord(record.kind, record.data));
+      // The list of commands is long (15 KB on average) and agents repeat it unchanged: the same
+      // one as the last on record is not written, and clients, who have that one, are sent nothing.
+      // Nothing is awaited here, so what is written keeps the order the updates came in.
+      if (record.kind === "update" && isCommandsData(data)) {
+        const key = commandsKey(data);
+        if ((session.lastCommands ?? session.log.lastCommands()) === key) return true;
+        session.lastCommands = key;
+      }
       await session.log.append({ ...record, data });
       return true;
     } catch (error) {

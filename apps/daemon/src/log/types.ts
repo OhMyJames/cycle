@@ -5,10 +5,15 @@ export type RecordKind = "update" | "request" | "response" | "aborted" | "meta";
 export type NewRecord = { kind: RecordKind; data: unknown };
 
 export type LogRecord = NewRecord & {
-  /** 1, 2, 3, ... with no gaps. The record's line number in the file. */
+  /** Rising with no gap, except where `merged` says so: 1, 2, 3, ... in a log never compacted. */
   seq: number;
   /** ISO 8601, set by the log when the record is accepted. */
   ts: string;
+  /**
+   * Set on a record that joins this many (2 or more) records written one after another, when the
+   * log was compacted. Its seq is the last of them, so the seq before it is `seq - merged`.
+   */
+  merged?: number;
 };
 
 export type ReadRange = {
@@ -34,6 +39,8 @@ export interface SessionLog {
   lastSeq(): number;
   /** The `ts` of the last record that is not a `meta` one, or undefined if there is none. */
   updatedAt(): string | undefined;
+  /** The last `available_commands_update` written, as `commandsKey` makes it; undefined if there is none. */
+  lastCommands(): string | undefined;
   append(record: NewRecord): Promise<LogRecord>;
   /** `stored`: the records as they are kept, with what was moved out of them (images) left as references. */
   read(range?: ReadRange, options?: { stored?: boolean }): Promise<LogRecord[]>;
