@@ -18,20 +18,17 @@ import {
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
+  MenuItemIndicator,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
   MenuTrigger,
 } from "@ui-sdk/react/menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@ui-sdk/react/select";
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { EnvironmentConfig } from "../api.ts";
 import { applyUpdate, emptyConversation } from "../model/index.ts";
 import { BLANK_KEY, type BlankConversation } from "../store/index.ts";
+import { AgentLogo } from "./agent-logos.tsx";
 import { Composer, composerInput } from "./composer.tsx";
 import { propertiesOf, withEffortFor } from "./config-form.tsx";
 import { ConversationView } from "./conversation.tsx";
@@ -98,6 +95,13 @@ export function BlankConversationView({
   const agents = useAppState((s) => s.agents[blank.environmentId]);
   const allAgents = useMemo(() => agents ?? [], [agents]);
   const agent = store.blankAgent(blank);
+  // An agent as the picker names it: one that cannot run says so beside its name.
+  const agentChoice = (a: { name: string; available: boolean }) =>
+    a.available ? a.name : t("blank.agent.unavailable", { name: a.name });
+  const agentChipName = t("composer.setting", {
+    setting: t("blank.agent"),
+    value: agent === undefined ? t("config.notSet") : agentChoice(agent),
+  });
   const [copiedCommand, setCopiedCommand] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
@@ -117,6 +121,9 @@ export function BlankConversationView({
   const [answering, setAnswering] = useState(false);
   const folderTrigger = useRef<HTMLButtonElement>(null);
   const trustId = useId();
+  const agentsHeadingId = useId();
+  const agentTrigger = useRef<HTMLButtonElement>(null);
+  const [agentMenu, setAgentMenu] = useState(false);
   const answer = async (trusted: boolean | undefined) => {
     setAnswering(true);
     try {
@@ -202,6 +209,71 @@ export function BlankConversationView({
   // the box goes to the foot, where it is in a session.
   const where = (
     <fieldset data-slot="blank-where" disabled={starting} aria-label={t("blank.where")}>
+      {/* The agent first: it decides what the rest offers (the box's settings, what can be attached). It reads as the
+          folder's and the box's chips do, with the logo the sidebar shows before a session of it. A menu of radio
+          choices, as those chips' are. Only when there is a choice to make. */}
+      {allAgents.length > 1 ? (
+        // Shut while the session is being made: the menu is not in the fieldset, so its disabling does not reach it.
+        <Menu
+          modal={false}
+          open={agentMenu && !starting}
+          onOpenChange={(next) => setAgentMenu(next && !starting)}
+        >
+          <MenuTrigger
+            ref={agentTrigger}
+            data-variant="ghost"
+            data-kind="blank-agent"
+            disabled={starting}
+            aria-label={agentChipName}
+            title={agentChipName}
+          >
+            {agent !== undefined ? (
+              <>
+                <span data-slot="blank-agent-logo" aria-hidden="true">
+                  <AgentLogo agentId={agent.id} name={agent.name} quiet />
+                </span>
+                <span data-slot="blank-agent-name">{agentChoice(agent)}</span>
+              </>
+            ) : (
+              <span data-slot="blank-agent-name">{t("blank.agent")}</span>
+            )}
+          </MenuTrigger>
+          <MenuContent
+            align="start"
+            sideOffset={6}
+            collisionPadding={12}
+            finalFocus={() => agentTrigger.current}
+            aria-labelledby={agentsHeadingId}
+            data-kind="setting"
+          >
+            <MenuRadioGroup
+              value={agent?.id ?? null}
+              onValueChange={(next) => {
+                if (typeof next === "string") store.changeBlank({ agent: next });
+              }}
+            >
+              <MenuGroupLabel id={agentsHeadingId}>{t("blank.agent")}</MenuGroupLabel>
+              {allAgents.map((a) => (
+                <MenuRadioItem
+                  key={a.id}
+                  value={a.id}
+                  label={a.name}
+                  closeOnSelect
+                  data-kind="blank-agent"
+                >
+                  <span data-slot="blank-agent-logo" aria-hidden="true">
+                    <AgentLogo agentId={a.id} name={a.name} quiet />
+                  </span>
+                  <span data-slot="option-name">{agentChoice(a)}</span>
+                  <MenuItemIndicator>
+                    <CheckIcon size={13} />
+                  </MenuItemIndicator>
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuContent>
+        </Menu>
+      ) : null}
       <Menu
         modal={false}
         onAction={(value) => {
@@ -294,29 +366,6 @@ export function BlankConversationView({
         <span data-slot="blank-trust" id={trustId} title={t("blank.untrusted.hint")}>
           {t("blank.untrusted")}
         </span>
-      ) : null}
-      {allAgents.length > 1 ? (
-        <Select
-          items={allAgents.map((a) => ({
-            value: a.id,
-            label: a.available ? a.name : t("blank.agent.unavailable", { name: a.name }),
-          }))}
-          value={agent?.id ?? null}
-          onValueChange={(next) => {
-            if (typeof next === "string") store.changeBlank({ agent: next });
-          }}
-        >
-          <SelectTrigger data-kind="blank-agent" aria-label={t("blank.agent")}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {allAgents.map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                {a.available ? a.name : t("blank.agent.unavailable", { name: a.name })}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       ) : null}
     </fieldset>
   );

@@ -103,6 +103,67 @@ test("the page has no menu of its own: the settings are the box's chips", async 
   expect(screen.queryByText("The session starts when you send the first message.")).toBeNull();
 });
 
+test("the agent is chosen first, by its logo and name, as a chip like the others, on the page's one left edge (CYCL-220)", async () => {
+  const configSchema = {
+    type: "object",
+    properties: {
+      mode: { type: "string", title: "Mode", oneOf: [{ const: "auto", title: "Auto" }] },
+    },
+  };
+  const { user } = await mount((script) => {
+    script.bridge.agents = async () => [
+      { id: "claude", name: "Claude", available: true, promptCapabilities: {}, configSchema },
+      { id: "codex", name: "Codex", available: true, promptCapabilities: {}, configSchema },
+    ];
+  });
+  await newSession(user);
+  const agentChip = await screen.findByRole("button", { name: "Agent: Claude" });
+  const where = screen.getByRole("group", { name: "Where the session runs" });
+  // First in the line, before where it runs.
+  expect(where.querySelector("button")).toBe(agentChip);
+  expect(agentChip.querySelector('[data-slot="agent-logo"]')).not.toBeNull();
+  // The same chip as the folder's and the box's: no edge, the same size and colour.
+  const folder = await screen.findByRole("button", { name: /^(Folder: |Choose a folder)/ });
+  const mode = await screen.findByRole("button", { name: /^Mode: / });
+  const look = (el: Element) => {
+    const s = getComputedStyle(el);
+    return [s.fontSize, s.fontWeight, s.color, s.height, s.borderTopColor, s.backgroundColor];
+  };
+  expect(look(agentChip)).toEqual(look(folder));
+  expect(look(agentChip)).toEqual(look(mode));
+  expect(getComputedStyle(agentChip).borderTopColor).toBe("rgba(0, 0, 0, 0)");
+
+  await user.click(agentChip);
+  await user.click(await screen.findByRole("menuitemradio", { name: "Codex" }));
+  const chosen = await screen.findByRole("button", { name: "Agent: Codex" });
+  expect(chosen.textContent).toBe("Codex");
+
+  // One left edge: the box's outer border. The heading's words, the chips' contents and the bar's start on it.
+  const hero = screen.getByRole("heading", { name: "What should we work on?" });
+  const box = document.querySelector('[data-slot="composer-box"]');
+  if (box === null) throw new Error("no box");
+  const edge = box.getBoundingClientRect().left;
+  // Where an element's content starts: inside its border and padding.
+  const start = (el: Element) => {
+    const s = getComputedStyle(el);
+    return (
+      el.getBoundingClientRect().left +
+      Number.parseFloat(s.borderLeftWidth) +
+      Number.parseFloat(s.paddingLeft)
+    );
+  };
+  expect(start(hero)).toBeCloseTo(edge, 0);
+  expect(start(chosen)).toBeCloseTo(edge, 0);
+  // The bar is drawn again for the agent now chosen.
+  const bar = await screen.findByRole("button", { name: /^Mode: / });
+  expect(start(bar)).toBeCloseTo(edge, 0);
+  // The page's heading, larger than the title bar's.
+  const title = screen.getByRole("heading", { name: "New session" });
+  expect(Number.parseFloat(getComputedStyle(hero).fontSize)).toBeGreaterThan(
+    Number.parseFloat(getComputedStyle(title).fontSize),
+  );
+});
+
 test("an environment that drops says so with a way back, and the draft and its images stay", async () => {
   const { user, named, emit } = await mount((script) => {
     script.bridge.agents = async () => [
@@ -289,9 +350,14 @@ test("selecting an unavailable agy agent disables sending and shows the install 
     };
   });
   await newSession(user);
-  const select = await screen.findByRole("combobox", { name: "Agent" });
-  await user.click(select);
-  await user.click(await screen.findByRole("option", { name: "Antigravity (not installed)" }));
+  await user.click(await screen.findByRole("button", { name: "Agent: Claude Code" }));
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Antigravity (not installed)" }),
+  );
+  // The chip says what is chosen, with what stands in its way.
+  expect(
+    await screen.findByRole("button", { name: "Agent: Antigravity (not installed)" }),
+  ).toBeTruthy();
   expect(await screen.findByText("Antigravity is not available on This computer.")).toBeTruthy();
   expect(
     screen.getByText("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
