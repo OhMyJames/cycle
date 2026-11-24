@@ -8,7 +8,8 @@ import { type AppEvent, applyUpdate, emptyConversation, type LocationConfig } fr
 import { AppStore, viewKey } from "../../../packages/ui/src/store/store.ts";
 import { fakeBridge } from "../../../packages/ui/test/fake-bridge.ts";
 import { fakeAgent } from "../../daemon/test/fake-agent.ts";
-import { environmentRefusal } from "../src/main/actions.ts";
+import { environmentRefusalOf } from "../src/main/actions.ts";
+import { memoryEnvironments } from "../src/main/environments.ts";
 import {
   type AttentionNotice,
   ConnectionManager,
@@ -1893,10 +1894,12 @@ test("a session made with an environment is sent it whole, lists it by names onl
     actions: [{ id: "hello", name: "Say hello", command: { default: "echo hello" } }],
   });
   expect("state" in saved).toBe(true);
-  await expect(
-    m.createSession("local", { cwd: "/tmp", environmentId: "env-gone" }),
-  ).rejects.toThrow("[environment:missing:]");
-  const id = await m.createSession("local", { cwd: "/tmp", environmentId: "env-node" });
+  expect(await m.createSession("local", { cwd: "/tmp", environmentId: "env-gone" })).toEqual({
+    problem: { reason: "missing" },
+  });
+  const made = await m.createSession("local", { cwd: "/tmp", environmentId: "env-node" });
+  if (typeof made !== "string") throw new Error("the session was not made");
+  const id = made;
   await said(m, id);
   const row = (await m.sessions("local")).find((s) => s.sessionId === id);
   expect(row?.environment).toEqual({
@@ -1923,22 +1926,42 @@ test("a session made with an environment is sent it whole, lists it by names onl
 });
 
 test("the daemon's refusal of an environment reaches the page as its reason and the variable's name", () => {
-  const refused = environmentRefusal(
-    Object.assign(new Error("The environment may not set PATH: it is the daemon's"), {
-      code: -32602,
-      data: { reason: "reserved_variable", name: "PATH" },
-    }),
-  );
-  expect((refused as Error).message).toBe(
-    "[environment:reserved_variable:PATH] The environment may not set PATH: it is the daemon's",
-  );
-  const large = environmentRefusal(
-    Object.assign(new Error("too large"), {
-      code: -32602,
-      data: { reason: "too_large", limit: 65536 },
-    }),
-  );
-  expect((large as Error).message).toStartWith("[environment:too_large:65536]");
-  const other = Object.assign(new Error("no"), { code: -32602, data: { reason: "something" } });
-  expect(environmentRefusal(other)).toBe(other);
+  const refusal = (data: object) =>
+    environmentRefusalOf(Object.assign(new Error("refused"), { code: -32602, data }));
+  expect(refusal({ reason: "reserved_variable", name: "PATH" })).toEqual({
+    reason: "reserved_variable",
+    name: "PATH",
+  });
+  expect(refusal({ reason: "too_large", limit: 65536 })).toEqual({ reason: "too_large" });
+  expect(refusal({ reason: "something" })).toBeUndefined();
+  // Only main says an environment is missing: a daemon that said so would be saying something else.
+  expect(refusal({ reason: "missing" })).toBeUndefined();
+  expect(
+    environmentRefusalOf(
+      Object.assign(new Error("x"), { code: -32000, data: { reason: "too_large" } }),
+    ),
+  ).toBeUndefined();
+});
+
+test("an environment in the file that the daemon would refuse is not sent: main says it is to fix", async () => {
+  const { manager } = await setup();
+  const environments = memoryEnvironments({
+    environments: [
+      {
+        id: "env-twice",
+        name: "Twice",
+        variables: [],
+        actions: [
+          { id: "a", name: "One", command: { default: "true" } },
+          { id: "a", name: "Two", command: { default: "true" } },
+        ],
+      },
+    ],
+    defaults: {},
+  });
+  const { m } = await manager("broken", undefined, undefined, undefined, { environments });
+  await m.connect("local");
+  expect(await m.createSession("local", { cwd: "/tmp", environmentId: "env-twice" })).toEqual({
+    problem: { reason: "invalid_environment" },
+  });
 });

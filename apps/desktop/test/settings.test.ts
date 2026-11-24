@@ -76,18 +76,37 @@ test("saving a file read from environments writes locations, and no environments
   expect(await fileSettings(path).load()).toEqual([LOCAL_LOCATION, far as LocationConfig]);
 });
 
-test("a file with both locations and environments is read from locations", async () => {
+test("an older app's additions to environments, after a newer one wrote locations, are kept, and saved into locations", async () => {
   const near = {
     id: "ssh-near",
     name: "Near",
     kind: "remote",
     transport: { type: "ssh", host: "near" },
   };
-  const path = await fileIn({ locations: [near], environments: [far], hosts: [] });
+  // The newer app wrote `locations` with near; an older one, which reads only `environments`, then added far there,
+  // and also still has near under the same id with an older name: the one in `locations` is the one kept.
+  const oldNear = { ...near, name: "Near (old)" };
+  const hostsOnly = { id: "ssh-legacy", name: "Legacy", kind: "ssh", host: "legacy" };
+  const path = await fileIn({
+    locations: [near],
+    environments: [oldNear, far],
+    hosts: [hostsOnly],
+  });
   const settings = fileSettings(path);
-  expect(await settings.load()).toEqual([LOCAL_LOCATION, near as LocationConfig]);
+  expect((await settings.load()).map((l) => [l.id, l.name])).toEqual([
+    ["local", "This computer"],
+    ["ssh-near", "Near"],
+    [far.id, far.name],
+    ["ssh-legacy", "Legacy"],
+  ]);
   await settings.save(await settings.load());
-  expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ locations: [near] });
+  const written = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  expect(Object.keys(written)).toEqual(["locations"]);
+  expect((written.locations as { id: string }[]).map((l) => l.id)).toEqual([
+    "ssh-near",
+    far.id,
+    "ssh-legacy",
+  ]);
 });
 
 test("an entry this version does not understand is not shown, and is not lost when settings are saved", async () => {

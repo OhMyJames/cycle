@@ -63,6 +63,8 @@ export const RESERVED_VARIABLES: readonly string[] = [
   "TMPDIR",
   "TERM",
   "CLAUDE_CONFIG_DIR",
+  // How Claude is given the session's variables for its commands (harness/claude).
+  "CLAUDE_ENV_FILE",
   "CODEX_HOME",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",

@@ -421,3 +421,65 @@ test("before a folder, the environment chosen gives way to the saved default of 
   // The workspace had its own: nothing is saved over it.
   expect(script.named("setEnvironmentDefault")).toEqual([]);
 });
+
+test("with Antigravity and an environment that has variables, a quiet line says its own commands do not get them", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: ALL,
+    environments: {
+      environments: [NODE, PYTHON],
+      defaults: { local: { "/work": "env-node", "/srv/api": "env-py" } },
+    },
+  });
+  script.bridge.agents = async () => [
+    { id: "agy", name: "Antigravity", available: true, configSchema: {} },
+    { id: "claude", name: "Claude", available: true, configSchema: {} },
+  ];
+  script.bridge.sessions = async (locationId: string) => [
+    summary("s1", locationId),
+    { ...summary("s3", locationId), cwd: "/srv/api", updatedAt: "2019-12-01T00:00:00.000Z" },
+  ];
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  await newSession(user);
+  const note =
+    "Antigravity runs its own commands without these variables. Terminals and actions have them.";
+  expect(await screen.findByText(note)).toBeTruthy();
+  // An environment with no variables: nothing to say.
+  const folders = await openFolders(user);
+  await user.click(within(folders).getByRole("menuitem", { name: /^api/ }));
+  await screen.findByRole("button", { name: "Environment: Python" });
+  expect(screen.queryByText(note)).toBeNull();
+  // Claude gives them to its commands: nothing to say either.
+  const again = await openFolders(user);
+  await user.click(within(again).getByRole("menuitem", { name: /^work/ }));
+  await screen.findByText(note);
+  await user.click(screen.getByRole("button", { name: /^Agent: / }));
+  await user.click(await screen.findByRole("menuitemradio", { name: "Claude" }));
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+});
+
+test("an environment the file holds that the daemon would refuse says what to fix in its row", async () => {
+  const twice: Environment = {
+    id: "env-twice",
+    name: "Twice",
+    variables: [],
+    actions: [
+      { id: "a", name: "One", command: { default: "true" } },
+      { id: "a", name: "Two", command: { default: "true" } },
+    ],
+  };
+  const { user, named } = await mount({ environments: { environments: [twice], defaults: {} } });
+  const page = await openEnvironments(user);
+  const row = within(page).getByText("Twice").closest('[data-slot="page-row"]') as HTMLElement;
+  expect(row.textContent).toContain("Needs a fix: Two actions have the same id, or one has none.");
+  // Saving it again gives each action its own id.
+  await user.click(within(page).getByRole("button", { name: "Manage Twice" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = await screen.findByRole("dialog", { name: "Edit Twice" });
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(named("saveEnvironment")).toHaveLength(1));
+  const saved = named("saveEnvironment")[0]?.[1] as Environment;
+  expect(new Set(saved.actions.map((a) => a.id)).size).toBe(2);
+  await waitFor(() => expect(row.textContent).toContain("0 variables · 2 actions"));
+});

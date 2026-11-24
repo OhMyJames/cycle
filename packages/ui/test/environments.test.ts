@@ -18,6 +18,7 @@ import {
   parseVariables,
   RESERVED_VARIABLES,
   VARIABLE_NAME,
+  workspaceKey,
 } from "../src/environments.ts";
 import { AppStore, BLANK_KEY, environmentDefaultOf } from "../src/store/index.ts";
 import { fakeBridge } from "./fake-bridge.ts";
@@ -40,6 +41,17 @@ test("an environment the page would keep is one the daemon takes, and the other 
     { ...base, variables: [{ name: "1A", value: "1" }] },
     { ...base, variables: [{ name: "A", value: "a\0b" }] },
     { ...base, variables: [{ name: "BIG", value: "x".repeat(ENVIRONMENT_MAX_BYTES) }] },
+    { ...base, name: "" },
+    { ...base, actions: [{ id: "", name: "A", command: { default: "true" } }] },
+    {
+      ...base,
+      actions: [
+        { id: "a", name: "A", command: { default: "true" } },
+        { id: "a", name: "B", command: { default: "true" } },
+      ],
+    },
+    { ...base, actions: [{ id: "a", name: "A", command: { default: "true" } }] },
+    { ...base, variables: [{ name: "CLAUDE_ENV_FILE", value: "/tmp/x" }] },
     {
       ...base,
       variables: [
@@ -49,8 +61,8 @@ test("an environment the page would keep is one the daemon takes, and the other 
     },
   ];
   for (const environment of cases)
-    expect([environment.variables, environmentProblem(environment) === undefined]).toEqual([
-      environment.variables,
+    expect([environment, environmentProblem(environment) === undefined]).toEqual([
+      environment,
       checkEnvironment(environmentSnapshot(environment)).ok,
     ]);
 });
@@ -138,11 +150,11 @@ test("a refused environment is said in the page's words, naming the variable, an
       defaults: { local: { "/work": "env-a" } },
     },
   });
-  script.bridge.createSession = async () => {
-    throw new Error(
-      "Error invoking remote method 'cycle:createSession': Error: [environment:reserved_variable:PATH] The environment may not set PATH: it is the daemon's",
-    );
-  };
+  // Main answers a refusal with its reason and the variable's name, never as an error to read words from.
+  script.bridge.createSession = async () => ({
+    problem: { reason: "reserved_variable", name: "PATH" },
+  });
+
   const store = new AppStore(script.bridge);
   await store.start();
   store.openBlank({ locationId: "local", cwd: "/work" });
@@ -170,4 +182,58 @@ test("an action's icon is one of a fixed set by id; any other is drawn as the te
   expect(actionIconOf("database")).toBe("database");
   expect(actionIconOf(undefined)).toBe("terminal");
   expect(actionIconOf("rocket")).toBe("terminal");
+});
+
+test("a workspace's default is one for its folder with or without a slash at its end", async () => {
+  const script = fakeBridge({
+    connected: true,
+    environments: {
+      environments: [{ id: "env-a", name: "A", variables: [], actions: [] }],
+      defaults: { local: { "/repo": "env-a" } },
+    },
+  });
+  const store = new AppStore(script.bridge);
+  await store.start();
+  expect(environmentDefaultOf(store.getState(), "local", "/repo/")?.id).toBe("env-a");
+  expect(workspaceKey("/repo//")).toBe("/repo");
+  expect(workspaceKey("/")).toBe("/");
+  expect(workspaceKey("//")).toBe("/");
+  await store.setEnvironmentDefault("local", "/other/", "env-a");
+  expect(store.getState().environments?.defaults.local).toEqual({
+    "/repo": "env-a",
+    "/other": "env-a",
+  });
+});
+
+test("an environment that does not pass the daemon's rules is not sent: the person is told to fix it", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, environments: true },
+    environments: {
+      environments: [
+        {
+          id: "env-a",
+          name: "A",
+          variables: [],
+          actions: [
+            { id: "x", name: "One", command: { default: "true" } },
+            { id: "x", name: "Two", command: { default: "true" } },
+          ],
+        },
+      ],
+      defaults: { local: { "/work": "env-a" } },
+    },
+  });
+  const store = new AppStore(script.bridge);
+  await store.start();
+  store.openBlank({ locationId: "local", cwd: "/work" });
+  await Bun.sleep(1);
+  store.drafts.setText(BLANK_KEY, "hi");
+  await store.send();
+  expect(script.named("createSession")).toEqual([]);
+  expect(store.getState().error).toEqual({
+    key: "blank.environment.needsFix",
+    params: { name: "A" },
+  });
+  expect(store.drafts.get(BLANK_KEY).text).toBe("hi");
 });

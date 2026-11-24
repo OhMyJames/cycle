@@ -139,13 +139,14 @@ export const agyHarness: Harness = {
       promptCapabilities: AGY_PROMPT_CAPABILITIES,
       steer: true,
       command: [...self, "adapter", "agy"],
-      env: ({ sessionEnv }) => {
+      // The session's variables are not given to agy: it has no way to take them for its commands alone, and they may
+      // not reach an agent's own process (AGENTS.md). Its sessions' terminals and actions have them (terminals.ts).
+      env: () => {
         const runtime = agyEffectiveRuntime(settings, agentSettings).values;
         return {
           PATH: inherited.PATH ?? "",
           CYCLE_ADAPTER_CONFIG: JSON.stringify({
             env,
-            sessionEnv,
             agyExecutable: executable() ?? "",
             fallbackExecutables,
             ...(settings.executable !== undefined ? { searchPath: false } : {}),

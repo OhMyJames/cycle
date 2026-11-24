@@ -1,4 +1,5 @@
 import type { Options, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { sessionEnvFile } from "./env-file.ts";
 import type { AskingOptions } from "./permissions.ts";
 import type { AdapterConfig, Live, QueryFn, SessionState } from "./session.ts";
 import { claudeJsonPath, recordTrust } from "./trust.ts";
@@ -41,10 +42,12 @@ export const spawn = (
     }
   }
   const abort = new AbortController();
+  const envFile = sessionEnvFile(config, config.sessionEnv);
   const options: Options = {
     cwd: session.cwd,
-    // The session's variables reach the commands Claude runs through its own environment; its settings win.
-    env: { ...(config.sessionEnv ?? {}), ...config.env },
+    // The session's variables reach the commands Claude runs, through a file it sources before each, never its own
+    // environment (env-file.ts).
+    env: envFile !== undefined ? { ...config.env, CLAUDE_ENV_FILE: envFile } : config.env,
     ...(session.setup.additionalDirectories.length > 0
       ? { additionalDirectories: session.setup.additionalDirectories }
       : {}),

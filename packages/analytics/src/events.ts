@@ -109,17 +109,17 @@ export const EVENTS = {
   location_removed: o({ kind: location }),
   /**
    * An environment (a reusable setup of scripts, variables and actions, docs/desktop.md "环境") was added or changed.
-   * Until 2026-11-24 this name meant saving a location (now `location_saved`). How many variables and actions, and
+   * Not `environment_saved`: older versions still send that name for saving a location. How many variables and actions, and
    * whether it has setup and cleanup scripts: never a name, a value or a command.
    */
-  environment_saved: o({
+  environment_config_saved: o({
     has_setup: z.boolean(),
     has_cleanup: z.boolean(),
     variables: count,
     actions: count,
   }),
-  /** An environment was removed (until 2026-11-24 this name meant removing a location: now `location_removed`). */
-  environment_removed: o({}),
+  /** An environment was removed. Not `environment_removed`: older versions still send that for removing a location. */
+  environment_config_removed: o({}),
   /** The person chose a workspace's environment on the blank conversation. `none`: "No environment". */
   environment_chosen: o({ none: z.boolean() }),
   /** An action of a session's environment was run in a terminal from the session's header. Never which. */

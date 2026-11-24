@@ -371,6 +371,7 @@ export function BlankConversationView({
       ) : null}
       <EnvironmentPicker
         blank={blank}
+        agentId={agent?.id}
         locationName={locationName}
         disabled={starting || !connected}
       />

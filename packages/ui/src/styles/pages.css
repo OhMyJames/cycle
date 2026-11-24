@@ -454,3 +454,16 @@
   flex: 1;
   text-align: start;
 }
+
+/* What does not reach Antigravity's own commands: a quiet line of its own under the choices. */
+[data-slot="blank-environment-note"] {
+  flex-basis: 100%;
+  padding-inline: 0.375rem;
+  font-size: var(--cycle-text-meta);
+  color: var(--cycle-ink-muted);
+}
+
+/* An environment the file holds that the daemon would refuse: what to fix, in the attention colour. */
+[data-slot="environment-needs-fix"] {
+  color: var(--cycle-attention);
+}

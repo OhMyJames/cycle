@@ -26,8 +26,8 @@ export type AdapterConfig = {
    */
   env: Record<string, string>;
   /**
-   * The session's environment variables (docs/protocol.md §6 "环境"), for the commands the agent runs. Never the agent's
-   * own settings: those are in `env`, which wins over these where both name a variable.
+   * The session's environment variables (docs/protocol.md §6 "环境"), for the commands Claude runs: given to them
+   * through CLAUDE_ENV_FILE (env-file.ts), never to the Claude process, whose environment is `env` alone.
    */
   sessionEnv?: Record<string, string>;
   /** The SDK's own binary is used when this is absent. */

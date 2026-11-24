@@ -651,11 +651,15 @@ export function createAdapter(config: AdapterConfig) {
     const sessionEnv = config.sessionEnv ?? {};
     codexConfig = {
       ...(Object.keys(mcpConfig).length > 0 ? { mcp_servers: mcpConfig } : {}),
-      // The session's variables, for its commands only (`set` is not filtered by Codex's default excludes; checked
-      // with 0.171.0 on thread/start and thread/resume, docs/protocol.md §6 "环境").
-      ...(Object.keys(sessionEnv).length > 0
-        ? { shell_environment_policy: { set: sessionEnv } }
-        : {}),
+      // The session's variables, for its commands only, one dotted key each: a `shell_environment_policy` table would
+      // replace the person's own (their `inherit`, `set`) for this thread, where a key per variable is merged into it.
+      // Checked with 0.171.0 on thread/start and thread/resume (docs/protocol.md §6 "环境").
+      ...Object.fromEntries(
+        Object.entries(sessionEnv).map(([name, value]) => [
+          `shell_environment_policy.set.${name}`,
+          value,
+        ]),
+      ),
       ...(trusted !== undefined
         ? { projects: { [params.cwd]: { trust_level: trusted ? "trusted" : "untrusted" } } }
         : {}),

@@ -11,6 +11,7 @@ import type {
   ConnectorInfo,
   ConnectorProblem,
   Environment,
+  EnvironmentRefusal,
   FileContent,
   FileListing,
   FileSearch,
@@ -29,6 +30,7 @@ import type {
   WorkspacePatch,
   WorkspaceStatus,
 } from "@cycle/ui";
+import { ENVIRONMENT_REFUSALS } from "@cycle/ui/api";
 import { authorizeInBrowser } from "./connector-auth.ts";
 import type { Environments } from "./environments.ts";
 import { messageOf, type Runtime } from "./runtime.ts";
@@ -55,33 +57,19 @@ const TERMINAL_REASONS: readonly TerminalProblem[] = [
   "unknown_action",
 ];
 
-const ENVIRONMENT_REASONS = [
-  "reserved_variable",
-  "invalid_variable",
-  "too_large",
-  "invalid_environment",
-] as const;
-
 /**
- * The daemon's refusal of a session's environment (`-32602` with one of its reasons, docs/protocol.md §6 "环境"), as an
- * error whose message starts with what the page reads it by: `[environment:<reason>:<name or limit>]`, then the daemon's
- * own words. Anything else is left as it was.
+ * The daemon's refusal of a session's environment (`-32602` with one of its reasons, docs/protocol.md §6 "环境"), as the
+ * page is answered it: the reason, and the variable's name when it is about one. Undefined: not one of those.
  */
-export const environmentRefusal = (error: unknown): unknown => {
+export const environmentRefusalOf = (error: unknown): EnvironmentRefusal | undefined => {
   const { code, data } = (error ?? {}) as {
     code?: unknown;
-    data?: { reason?: unknown; name?: unknown; limit?: unknown };
+    data?: { reason?: unknown; name?: unknown };
   };
-  const reason = data?.reason;
-  if (code !== -32602 || !(ENVIRONMENT_REASONS as readonly unknown[]).includes(reason))
-    return error;
-  const about =
-    typeof data?.name === "string"
-      ? data.name
-      : typeof data?.limit === "number"
-        ? String(data.limit)
-        : "";
-  return new Error(`[environment:${String(reason)}:${about}] ${messageOf(error)}`);
+  if (code !== -32602) return undefined;
+  const reason = ENVIRONMENT_REFUSALS.find((r) => r === data?.reason && r !== "missing");
+  if (reason === undefined) return undefined;
+  return { reason, ...(typeof data?.name === "string" ? { name: data.name } : {}) };
 };
 
 /** Why the daemon would not open a terminal, as a word the page has a sentence for (docs/protocol.md §8 "终端"). */
@@ -182,14 +170,26 @@ export class LocationActions {
 
   // ---- sessions ----
 
-  async createSession(locationId: string, params: NewSession): Promise<string> {
+  /** Without an environment nothing can be refused: the answer is the session's id. */
+  createSession(
+    locationId: string,
+    params: NewSession & { environmentId?: undefined },
+  ): Promise<string>;
+  createSession(
+    locationId: string,
+    params: NewSession,
+  ): Promise<string | { problem: EnvironmentRefusal }>;
+  async createSession(
+    locationId: string,
+    params: NewSession,
+  ): Promise<string | { problem: EnvironmentRefusal }> {
     const connection = this.#runtime.connection(locationId);
     // The environment as it is now: a change made to it later is not this session's (docs/desktop.md "环境").
     let environment: Environment | undefined;
     if (params.environmentId !== undefined) {
-      environment = await this.environmentStore.snapshot(params.environmentId);
-      if (environment === undefined)
-        throw new Error("[environment:missing:] That environment was removed.");
+      const snapshot = await this.environmentStore.snapshot(params.environmentId);
+      if ("problem" in snapshot) return snapshot;
+      environment = snapshot;
     }
     const { environmentId: _chosen, ...rest } = params;
     let sessionId: string;
@@ -211,7 +211,9 @@ export class LocationActions {
         (authError as { code?: number }).code = -32000;
         throw authError;
       }
-      throw environmentRefusal(error);
+      const refused = environmentRefusalOf(error);
+      if (refused !== undefined) return { problem: refused };
+      throw error;
     }
     // Not in the list until its first message (docs/protocol.md §6): the daemon announces it then, and it is read again.
     connection.made.set(sessionId, params.cwd);

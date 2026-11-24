@@ -179,6 +179,7 @@ export type EnvironmentProblem =
   | { problem: "duplicate_variable"; name: string }
   | { problem: "reserved_variable"; name: string }
   | { problem: "action_name_missing" }
+  | { problem: "action_id_invalid" }
   | { problem: "action_command_missing"; action: string }
   | { problem: "too_large"; limit: number }
   | { problem: "invalid"; message: string };
@@ -769,6 +770,23 @@ export type PreferencesState = Preferences & { systemLanguage: string };
 export type TrackProps = Record<string, string | number | boolean>;
 
 /**
+ * Why a session's environment was not taken: the daemon's `data.reason` of its `-32602` (docs/protocol.md §6 "环境"), or
+ * `missing` (it was removed meanwhile) and `invalid_environment` from main's own check. One list for main and the page.
+ */
+export const ENVIRONMENT_REFUSALS = [
+  "reserved_variable",
+  "invalid_variable",
+  "too_large",
+  "invalid_environment",
+  "missing",
+] as const;
+export type EnvironmentRefusal = {
+  reason: (typeof ENVIRONMENT_REFUSALS)[number];
+  /** The variable it is about, for `reserved_variable` and `invalid_variable`. Never its value. */
+  name?: string;
+};
+
+/**
  * `environmentId`: one of the app's environments, sent whole with the session (main reads it from what it keeps). Only to
  * a daemon with `capabilities.environments`.
  */
@@ -803,7 +821,11 @@ export type AppApi = {
   disconnect(locationId: string): Promise<void>;
 
   sessions(locationId: string): Promise<SessionSummary[]>;
-  createSession(locationId: string, params: NewSession): Promise<string>;
+  /** The new session's id; or, when its environment was not taken, why (nothing was made). */
+  createSession(
+    locationId: string,
+    params: NewSession,
+  ): Promise<string | { problem: EnvironmentRefusal }>;
   /** Starts watching a session and returns it whole. Call again after a reload. */
   openSession(locationId: string, sessionId: string): Promise<SessionSnapshot>;
   /**

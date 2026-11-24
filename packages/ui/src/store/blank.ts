@@ -2,6 +2,7 @@
 import type { EventProps } from "@cycle/analytics/events";
 import type { AgentInfo } from "../api.ts";
 import { promptBlocks } from "../draft.ts";
+import { environmentProblem } from "../environments.ts";
 import { messageOf, type StoreKit } from "./core.ts";
 import { blankEnvironmentOf, environmentDefaultOf } from "./environments.ts";
 import { BLANK_KEY, type BlankConversation, viewKey } from "./state.ts";
@@ -9,29 +10,6 @@ import { BLANK_KEY, type BlankConversation, viewKey } from "./state.ts";
 /** How long a blank conversation was open before its first message, in four words: only that is reported. */
 const waitedOf = (ms: number): EventProps<"blank_sent">["waited"] =>
   ms < 10_000 ? "under_10s" : ms < 60_000 ? "under_1m" : ms < 300_000 ? "under_5m" : "longer";
-
-const REFUSALS = [
-  "reserved_variable",
-  "invalid_variable",
-  "too_large",
-  "invalid_environment",
-  "missing",
-] as const;
-
-/**
- * Why the session's environment was refused, as main words it (`[environment:<reason>:<name>]`, then the daemon's own
- * words): a sentence of the page's, naming the variable and never its value. Undefined: not a refusal of one.
- */
-const refusalOf = (message: string): RefusalError | undefined => {
-  const match = /^\[environment:([a-z_]+):([^\]]*)\]/.exec(message);
-  const reason = REFUSALS.find((r) => r === match?.[1]);
-  if (match === null || reason === undefined) return undefined;
-  return { key: `blank.environment.refused.${reason}`, params: { name: match[2] ?? "" } };
-};
-type RefusalError = {
-  key: `blank.environment.refused.${(typeof REFUSALS)[number]}`;
-  params: { name: string };
-};
 
 export class BlankSlice {
   readonly #kit: StoreKit;
@@ -303,27 +281,41 @@ export class BlankSlice {
     }
     const content = promptBlocks(drafts.get(BLANK_KEY));
     if (content === undefined) return;
+    // The workspace's environment, when its daemon takes one: sent whole, by main, as it is now. One that does not pass
+    // the daemon's rules (a file written by hand or by another version) is not sent to be refused: it is to fix first.
+    const environment =
+      state().status[locationId]?.capabilities?.environments === true
+        ? blankEnvironmentOf(state(), { ...blank, cwd })
+        : undefined;
+    if (environment !== undefined && environmentProblem(environment) !== undefined) {
+      set({ error: { key: "blank.environment.needsFix", params: { name: environment.name } } });
+      return;
+    }
     drafts.clear(BLANK_KEY);
     const { authRequired: _clearedAuth, ...baseBlank } = blank;
     const starting: BlankConversation = { ...baseBlank, cwd, starting: content };
     set({ blank: starting });
     let sessionId: string | undefined;
     let needsAuth = false;
-    // The workspace's environment, when its daemon takes one: sent whole, by main, as it is now.
-    const environment =
-      state().status[locationId]?.capabilities?.environments === true
-        ? blankEnvironmentOf(state(), { ...blank, cwd })
-        : undefined;
     // Chosen before the folder, for a workspace with no default of its own: it becomes that, once the session is made.
     const keepAsDefault =
       environment !== undefined && environmentDefaultOf(state(), locationId, cwd) === undefined;
     try {
-      sessionId = await bridge.createSession(locationId, {
+      const made = await bridge.createSession(locationId, {
         cwd,
         agent: agent.id,
         config: blank.config ?? {},
         ...(environment !== undefined ? { environmentId: environment.id } : {}),
       });
+      if (typeof made === "string") sessionId = made;
+      // A sentence of the page's, naming the variable and never its value.
+      else
+        set({
+          error: {
+            key: `blank.environment.refused.${made.problem.reason}`,
+            params: { name: made.problem.name ?? "" },
+          },
+        });
     } catch (error) {
       const msg = messageOf(error);
       if (
@@ -332,7 +324,7 @@ export class BlankSlice {
       ) {
         needsAuth = true;
       } else {
-        set({ error: refusalOf(msg) ?? msg });
+        set({ error: msg });
       }
     }
     if (sessionId !== undefined && keepAsDefault && environment !== undefined)

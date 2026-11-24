@@ -150,6 +150,7 @@ export const environmentProblemText = (problem: EnvironmentProblem, i18n: Transl
   switch (problem.problem) {
     case "name_missing":
     case "action_name_missing":
+    case "action_id_invalid":
       return t(`environment.problem.${problem.problem}`);
     case "invalid_variable":
     case "duplicate_variable":
@@ -223,10 +224,7 @@ export function EnvironmentsSection() {
             <PageRow
               key={environment.id}
               label={environment.name}
-              description={[
-                t("settings.environments.variables", { count: environment.variables.length }),
-                t("settings.environments.actions", { count: environment.actions.length }),
-              ].join(" · ")}
+              description={<EnvironmentFacts environment={environment} />}
             >
               <Menu
                 onAction={(value) => {
@@ -282,6 +280,30 @@ export function EnvironmentsSection() {
         }
       />
     </PageGroup>
+  );
+}
+
+/**
+ * A row's facts: how many variables and actions; or, for one the file holds that does not pass the daemon's rules (written
+ * by hand or by another version), what to fix: it is not sent until it is.
+ */
+function EnvironmentFacts({ environment }: { environment: Environment }) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const problem = environmentProblem(environment);
+  if (problem !== undefined)
+    return (
+      <span data-slot="environment-needs-fix">
+        {t("settings.environments.needsFix", { problem: environmentProblemText(problem, i18n) })}
+      </span>
+    );
+  return (
+    <>
+      {[
+        t("settings.environments.variables", { count: environment.variables.length }),
+        t("settings.environments.actions", { count: environment.actions.length }),
+      ].join(" · ")}
+    </>
   );
 }
 
@@ -369,7 +391,16 @@ export function EnvironmentEditor({
   const [setup, setSetup] = useState<EnvironmentScripts>(environment.setup ?? {});
   const [cleanup, setCleanup] = useState<EnvironmentScripts>(environment.cleanup ?? {});
   const [variablesText, setVariablesText] = useState(() => formatVariables(environment.variables));
-  const [actions, setActions] = useState<EnvironmentAction[]>(environment.actions);
+  // An action without an id, or with another's, is given its own: saving fixes what the daemon would refuse.
+  const [actions, setActions] = useState<EnvironmentAction[]>(() => {
+    const taken = new Set<string>();
+    return environment.actions.map((action) => {
+      const id =
+        action.id !== "" && !taken.has(action.id) ? action.id : newEnvironmentId("action", taken);
+      taken.add(id);
+      return id === action.id ? action : { ...action, id };
+    });
+  });
   // Line problems are said once a save was tried, and then follow what is typed.
   const [checked, setChecked] = useState(initialProblem !== undefined);
   const [problem, setProblem] = useState<EnvironmentProblem | undefined>(initialProblem);
@@ -567,10 +598,13 @@ export function EnvironmentEditor({
  */
 export function EnvironmentPicker({
   blank,
+  agentId,
   locationName,
   disabled,
 }: {
   blank: BlankConversation;
+  /** The agent the session starts: Antigravity's own commands do not have the variables. */
+  agentId: string | undefined;
   locationName: string;
   disabled: boolean;
 }) {
@@ -601,52 +635,60 @@ export function EnvironmentPicker({
   }
   const name = chosen?.name ?? t("blank.environment.none");
   const chipLabel = t("composer.setting", { setting: t("blank.environment"), value: name });
+  // agy is given no variable of the session (an explicit list only reaches agent processes): its terminals and actions
+  // are (docs/protocol.md §6 "环境").
+  const agyNote = agentId === "agy" && (chosen?.variables.length ?? 0) > 0;
   return (
-    <Menu modal={false}>
-      <Tip label={chipLabel}>
-        <MenuTrigger
-          ref={trigger}
-          data-variant="ghost"
-          data-kind="blank-environment"
-          data-unset={chosen === undefined || undefined}
-          disabled={disabled}
+    <>
+      <Menu modal={false}>
+        <Tip label={chipLabel}>
+          <MenuTrigger
+            ref={trigger}
+            data-variant="ghost"
+            data-kind="blank-environment"
+            data-unset={chosen === undefined || undefined}
+            disabled={disabled}
+          >
+            <span data-slot="blank-agent-name">{name}</span>
+          </MenuTrigger>
+        </Tip>
+        <MenuContent
+          align="start"
+          sideOffset={6}
+          collisionPadding={12}
+          finalFocus={() => trigger.current}
+          aria-labelledby={headingId}
+          data-kind="setting"
         >
-          <span data-slot="blank-agent-name">{name}</span>
-        </MenuTrigger>
-      </Tip>
-      <MenuContent
-        align="start"
-        sideOffset={6}
-        collisionPadding={12}
-        finalFocus={() => trigger.current}
-        aria-labelledby={headingId}
-        data-kind="setting"
-      >
-        <MenuRadioGroup
-          value={chosen?.id ?? ""}
-          onValueChange={(next) => {
-            if (typeof next !== "string") return;
-            store.chooseBlankEnvironment(next === "" ? null : next);
-          }}
-        >
-          <MenuGroupLabel id={headingId}>{t("blank.environment")}</MenuGroupLabel>
-          <MenuRadioItem value="" label={t("blank.environment.none")} closeOnSelect>
-            <span data-slot="option-name">{t("blank.environment.none")}</span>
-            <MenuItemIndicator>
-              <CheckIcon size={13} />
-            </MenuItemIndicator>
-          </MenuRadioItem>
-          {environments.map((e) => (
-            <MenuRadioItem key={e.id} value={e.id} label={e.name} closeOnSelect>
-              <span data-slot="option-name">{e.name}</span>
+          <MenuRadioGroup
+            value={chosen?.id ?? ""}
+            onValueChange={(next) => {
+              if (typeof next !== "string") return;
+              store.chooseBlankEnvironment(next === "" ? null : next);
+            }}
+          >
+            <MenuGroupLabel id={headingId}>{t("blank.environment")}</MenuGroupLabel>
+            <MenuRadioItem value="" label={t("blank.environment.none")} closeOnSelect>
+              <span data-slot="option-name">{t("blank.environment.none")}</span>
               <MenuItemIndicator>
                 <CheckIcon size={13} />
               </MenuItemIndicator>
             </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
-      </MenuContent>
-    </Menu>
+            {environments.map((e) => (
+              <MenuRadioItem key={e.id} value={e.id} label={e.name} closeOnSelect>
+                <span data-slot="option-name">{e.name}</span>
+                <MenuItemIndicator>
+                  <CheckIcon size={13} />
+                </MenuItemIndicator>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuContent>
+      </Menu>
+      {agyNote ? (
+        <span data-slot="blank-environment-note">{t("blank.environment.agyNote")}</span>
+      ) : null}
+    </>
   );
 }
 

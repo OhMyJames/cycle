@@ -16,6 +16,7 @@ export const RESERVED_VARIABLES: readonly string[] = [
   "TMPDIR",
   "TERM",
   "CLAUDE_CONFIG_DIR",
+  "CLAUDE_ENV_FILE",
   "CODEX_HOME",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -182,7 +183,12 @@ export const environmentProblem = (environment: Environment): EnvironmentProblem
     if (seen.has(name)) return { problem: "duplicate_variable", name };
     seen.add(name);
   }
+  const actionIds = new Set<string>();
   for (const action of environment.actions) {
+    // The daemon refuses an action without an id, or two with one: never one the editor makes (it gives each its own),
+    // but a file written by hand or by another version can have them.
+    if (action.id === "" || actionIds.has(action.id)) return { problem: "action_id_invalid" };
+    actionIds.add(action.id);
     if (action.name.trim() === "") return { problem: "action_name_missing" };
     if (scriptsOrNone(action.command) === undefined)
       return { problem: "action_command_missing", action: action.name };
@@ -222,3 +228,13 @@ export type ActionIcon = (typeof ACTION_ICONS)[number];
 /** The icon an action is drawn with: its own when this version knows it, else the terminal. */
 export const actionIconOf = (icon: string | undefined): ActionIcon =>
   ACTION_ICONS.find((known) => known === icon) ?? "terminal";
+
+/**
+ * A folder as a workspace's default is kept under: without the slashes at its end (but `/` itself), so that `/repo/` and
+ * `/repo` are one workspace.
+ */
+export const workspaceKey = (cwd: string): string => {
+  const trimmed = cwd.trim();
+  const bare = trimmed.replace(/\/+$/, "");
+  return bare === "" && trimmed.startsWith("/") ? "/" : bare;
+};

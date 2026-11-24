@@ -150,3 +150,19 @@ test("a script is this system's own, else the default, else none", () => {
   expect(scriptFor({}, "linux")).toBeUndefined();
   expect(scriptFor(undefined, "linux")).toBeUndefined();
 });
+
+test("an environment in the index this version cannot read counts as none: the list, a launch and a terminal still work", async () => {
+  const { environmentOf, sessionVariables, environmentRowMeta } = await import(
+    "../src/environment.ts"
+  );
+  const entry = {
+    agent: "fake",
+    agentSessionId: "a",
+    cwd: "/tmp",
+    createdAt: new Date().toISOString(),
+    environment: { id: "e", name: "Odd", variables: { NOT: "a list" } },
+  };
+  expect(environmentOf(entry)).toBeUndefined();
+  expect(sessionVariables(entry)).toEqual({});
+  expect(environmentRowMeta(entry)).toEqual({});
+});

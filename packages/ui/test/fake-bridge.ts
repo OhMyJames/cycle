@@ -20,7 +20,7 @@ import type {
   TerminalProblem,
   UpdateState,
 } from "../src/api.ts";
-import { environmentProblem } from "../src/environments.ts";
+import { environmentProblem, workspaceKey } from "../src/environments.ts";
 import { emptyConversation } from "../src/model/index.ts";
 
 export const LOCAL: LocationConfig = { id: "local", name: "This computer", kind: "local" };
@@ -547,8 +547,8 @@ export const fakeBridge = (
       async (locationId: string, cwd: string, environmentId: string | null) => {
         const folders = environments.defaults[locationId] ?? {};
         environments.defaults[locationId] = folders;
-        if (environmentId === null) delete folders[cwd];
-        else folders[cwd] = environmentId;
+        if (environmentId === null) delete folders[workspaceKey(cwd)];
+        else folders[workspaceKey(cwd)] = environmentId;
         return environmentsNow();
       },
     ),

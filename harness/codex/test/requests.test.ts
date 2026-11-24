@@ -556,8 +556,10 @@ test("the session's variables go to Codex's commands through the thread's config
     await open({ DATABASE_URL: "postgres://db", MY_API_KEY: "k" });
     await open();
     const starts = (await messages()).filter((m) => m.method === "thread/start");
+    // A key per variable, merged into the person's own policy rather than replacing it.
     expect(starts[0]?.params.config).toEqual({
-      shell_environment_policy: { set: { DATABASE_URL: "postgres://db", MY_API_KEY: "k" } },
+      "shell_environment_policy.set.DATABASE_URL": "postgres://db",
+      "shell_environment_policy.set.MY_API_KEY": "k",
     });
     expect(starts[1]?.params).not.toHaveProperty("config");
   } finally {

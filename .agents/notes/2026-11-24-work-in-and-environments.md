@@ -43,7 +43,12 @@ None of the three agents defines either concept in the layer Cycle drives: the A
   - An older app opened on a new file no longer sees remote locations, the same downgrade cost the `hosts` → `environments` change accepted.
 - Recipes go in their own file, `environments.json` (mode 0600, because variables can hold secrets). They never share a key with the old `environments` list.
 - The daemon stores a session's environment the way it stores `mcpServers`: in the index only, not in the JSONL log or `session/list`. Editing an environment changes new sessions, not running ones.
-- Every session already has its own adapter process, so variables can be passed per session for all three agents (see `docs/protocol.md` §6 "环境"). Confirmed on 2026-11-24 in real turns: Claude, Codex 0.171.0 (`shell_environment_policy.set` on `thread/start` and `thread/resume`) and agy 1.5.16 (with and without `--sandbox`) all pass the variables to their commands.
+- Variables reach the commands an agent runs, never the agent's own process, whose environment stays the daemon's explicit allowlist (AGENTS.md red line). A code review on 2026-11-24 found the first version put them into the Claude and agy processes, where a project variable such as `GOOGLE_APPLICATION_CREDENTIALS` could switch the account an agent bills. Now:
+  - Claude gets them through `CLAUDE_ENV_FILE`, a file it sources before each Bash command.
+  - Codex gets them through `shell_environment_policy.set.<NAME>` dotted keys. A whole table would replace the person's own policy.
+  - agy gets none. It has no commands-only way, so the owner chose on 2026-11-24 that agy sessions get the variables in their terminals and actions only.
+
+  All three behaviours were checked in real turns on 2026-11-24: Claude with SDK 0.3.327's binary, Codex 0.171.0 on start, resume and merging with the person's own `set`, and agy 1.5.16.
 
 ## Related
 

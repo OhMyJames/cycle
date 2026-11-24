@@ -234,17 +234,19 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
   - `too_large`:变量、动作、脚本合起来超过上限(暂定 64 KiB)。
 - 不带这个字段就是没有环境,和现在一样。
 
-**变量的作用范围**:session 的 agent 跑的命令、session 的终端(在 `terminal.allowEnv` 取到的之后、`TERM` 等固定项之前加上)、setup/cleanup 脚本、动作。agent 进程本身的设置不受影响。各 agent 怎么做到见下。
+**变量的作用范围**:session 的 agent 跑的命令(Claude、Codex;agy 没有,见下)、session 的终端(在 `terminal.allowEnv` 取到的之后、`TERM` 等固定项之前加上)、setup/cleanup 脚本、动作。agent 进程本身拿不到它们。各 agent 怎么做到见下。
 
-**每个 agent 怎么带上变量**(2026-11-24 读代码并用真实会话验证:Claude 是 Cycle 自己的会话,Codex 0.171.0 app-server 和 agy 1.5.16 `acp` 用 daemon 的登录各跑了一个 turn,让 agent 执行 `env | grep ^PROBE_`):
+**每个 agent 怎么带上变量**(2026-11-24 读代码并用真实会话验证:Claude 用 SDK 0.3.327 自带的二进制,Codex 0.171.0 app-server 和 agy 1.5.16 `acp` 用 daemon 的登录各跑了一个 turn,让 agent 执行 `env | grep ^PROBE_`)。
 
-每个 Cycle session 本来就有自己的适配进程(`daemon.ts` `#startAgent` 每个 session 一个 `AgentLink`,`agent-link.ts` 调 `definition.launch()`),所以按 session 是做得到的。改法统一在 daemon:`launch()` 改为接受这个 session 的变量,放进 `CYCLE_ADAPTER_CONFIG` 的新字段 `sessionEnv`,和 agent 进程自己的 `env` 分开。走启动参数而不是 `session/new` 的 `_meta`,是因为 agy 的适配在 `initialize` 时就起了 `agy acp`,早于 `session/new`;而且 daemon 重启后 `session/resume` 也不用再带。
+变量**只给 agent 跑的命令,不进 agent 进程本身**:agent 进程的环境仍然只有 daemon `config.json` 的显式白名单(AGENTS.md 红线)。否则一个项目环境里的 `GOOGLE_APPLICATION_CREDENTIALS`、`CLAUDE_CODE_USE_BEDROCK`、代理变量之类会悄悄换掉 agent 的账号或走向,保留名列不全。
 
-| agent  | 适配里怎么用 `sessionEnv`                                                                                                                                   | 谁看得到                | 验证结果                                                                                                                         |
-| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Claude | SDK `query` 的 `env` 改为 `{...sessionEnv, ...env}`(SDK 0.3.327:`env` 整个替换子进程环境)                                                                   | Claude 进程和它跑的命令 | `options.env` 里的变量(如 `config.json` 的 `GH_TOKEN`)Bash 工具里看得到;Claude 自己的 `CLAUDE_CODE_OAUTH_TOKEN` 被它从命令里去掉 |
-| Codex  | `thread/start`、`thread/resume` 的 `config` 里加 `shell_environment_policy.set`(适配已经用 `config` 传 `mcp_servers`、`projects`);app-server 自己的环境不变 | 只有命令                | start 和 resume(新进程、建时没带变量的 thread)都到了命令里;名字含 `KEY`/`TOKEN`/`SECRET` 的也在,`set` 不受默认排除影响           |
-| agy    | 并进 `agy acp` 的启动环境(ACP `session/new` 没有可用的字段,适配给 agy 的 `terminal` 能力是 `false`)                                                         | agy 进程和它跑的命令    | 有无 `--sandbox` 都原样到了命令里(含 `*_API_KEY`)                                                                                |
+每个 Cycle session 本来就有自己的适配进程(`daemon.ts` `#startAgent` 每个 session 一个 `AgentLink`,`agent-link.ts` 调 `definition.launch()`)。daemon 的 `launch()` 接受这个 session 的变量,harness 把它放进 `CYCLE_ADAPTER_CONFIG` 的 `sessionEnv`,和 agent 进程自己的 `env` 分开。走启动参数而不是 `session/new` 的 `_meta`:daemon 重启后 `session/resume` 不用再带。
+
+| agent  | 适配里怎么用 `sessionEnv`                                                                                                                                                                                                      | 验证结果                                                                                                                |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Claude | 写进一个私有临时目录里的 `env.sh`(0600,一行一个 `export NAME='value'`),把路径作为 `CLAUDE_ENV_FILE` 给 Claude,它在每条 Bash 命令前 source 这个文件;适配退出时删掉。文件不能放在 Claude 自己的配置目录里(Claude 拒绝那里的路径) | 命令里看得到,Claude 进程的环境里没有                                                                                    |
+| Codex  | `thread/start`、`thread/resume` 的 `config` 里每个变量一个 dotted key:`shell_environment_policy.set.<NAME>`。不用整张 `shell_environment_policy` 表:那会替换掉用户自己 `config.toml` 里的这张表                                | start 和 resume 都到了命令里;名字含 `KEY`/`TOKEN`/`SECRET` 的不被默认排除;用户自己的 `set` 项还在(整表的写法会把它丢掉) |
+| agy    | **不给**。agy 没有只给命令的办法,ACP `session/new` 也没有字段;放进 `agy acp` 的启动环境就进了 agent 进程(owner 2026-11-24 决定不这样做)。agy session 的变量只在终端和动作里                                                    | —                                                                                                                       |
 
 保留名(上面 `reserved_variable`)保证这些变量换不掉任何 agent 的 `HOME`、配置目录和认证。终端在 `Terminals.create` 时把 `sessionEnv` 并进去(那里已经有 `sessionId`);它是登录 shell,用户的 profile 之后仍可能改掉同名变量。
 

@@ -1,6 +1,7 @@
 // The environments (docs/desktop.md "环境"): what main keeps of them, the one each workspace starts with, and changing
 // them. A variable's value is the person's and may be a secret: it is never put in an error, a notice or a report.
 import type { Environment, EnvironmentProblem, EnvironmentsState } from "../api.ts";
+import { workspaceKey } from "../environments.ts";
 import { messageOf, type StoreKit } from "./core.ts";
 import type { AppState, BlankConversation } from "./state.ts";
 
@@ -13,7 +14,7 @@ export const environmentDefaultOf = (
   locationId: string,
   cwd: string,
 ): Environment | undefined => {
-  const id = state.environments?.defaults[locationId]?.[cwd];
+  const id = state.environments?.defaults[locationId]?.[workspaceKey(cwd)];
   return id === undefined ? undefined : state.environments?.environments.find((e) => e.id === id);
 };
 
@@ -92,8 +93,9 @@ export class EnvironmentsSlice {
     set((s) => {
       if (s.environments === undefined) return {};
       const folders = { ...s.environments.defaults[locationId] };
-      if (environmentId === null) delete folders[cwd];
-      else folders[cwd] = environmentId;
+      const key = workspaceKey(cwd);
+      if (environmentId === null) delete folders[key];
+      else folders[key] = environmentId;
       return {
         environments: {
           ...s.environments,

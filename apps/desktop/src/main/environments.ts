@@ -2,19 +2,19 @@
 // the one each workspace starts with. Kept in `environments.json` of the app's data, apart from `settings.json` (whose
 // old `environments` key was the list of locations), with mode 0600: variables can be secrets. Nothing here knows
 // Electron; nothing here logs or reports a name, a value or a command.
-import { chmod, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import type { EventName, EventProps } from "@cycle/analytics/events";
 import {
   type Environment,
   type EnvironmentProblem,
+  type EnvironmentRefusal,
   type EnvironmentScripts,
   type EnvironmentsState,
   environmentProblem,
   environmentSnapshot,
   SCRIPT_SYSTEMS,
+  workspaceKey,
 } from "@cycle/ui";
+import { isRecord, jsonFile, KeptEntries } from "./json-file.ts";
 
 /** What the file holds, as this app reads it, and what it does not understand, to be written back as it was. */
 export type EnvironmentsFile = EnvironmentsState;
@@ -23,9 +23,6 @@ export type EnvironmentStore = {
   load(): Promise<EnvironmentsFile>;
   save(state: EnvironmentsFile): Promise<void>;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const scriptsOf = (value: unknown): EnvironmentScripts | undefined | false => {
   if (value === undefined) return undefined;
@@ -83,91 +80,17 @@ export const environmentOf = (entry: unknown): Environment | undefined => {
  * without environments.
  */
 export const fileEnvironments = (path: string): EnvironmentStore => {
-  let unknown: unknown[] = [];
+  const file = jsonFile(path, { mode: 0o600 });
+  const entries = new KeptEntries({ parse: environmentOf, idOf: (e: Environment) => e.id });
   let rest: Record<string, unknown> = {};
   /** The defaults as they were in the file, with what is not an id among them. */
   let rawDefaults: Record<string, unknown> = {};
-  const raw = new Map<string, Record<string, unknown>>();
-  let saving: Promise<void> = Promise.resolve();
-
-  const write = async (state: EnvironmentsFile): Promise<void> => {
-    await mkdir(dirname(path), { recursive: true });
-    const temporary = `${path}.${process.pid}.tmp`;
-    const ids = new Set(state.environments.map((e) => e.id));
-    const environments = [
-      ...state.environments.map((e) => {
-        const before = raw.get(e.id);
-        return before !== undefined && isDeepStrictEqual(environmentOf(before), e) ? before : e;
-      }),
-      ...unknown.filter((u) => !(isRecord(u) && typeof u.id === "string" && ids.has(u.id))),
-    ];
-    const defaults: Record<string, unknown> = {};
-    for (const [locationId, folders] of Object.entries(rawDefaults)) {
-      // What was there and is not a map of ids: kept as it was, unless the person set one for that location now.
-      if (!isRecord(folders)) {
-        if (state.defaults[locationId] === undefined) defaults[locationId] = folders;
-        continue;
-      }
-      const kept = Object.fromEntries(
-        Object.entries(folders).filter(([, id]) => typeof id !== "string"),
-      );
-      if (Object.keys(kept).length > 0) defaults[locationId] = kept;
-    }
-    for (const [locationId, folders] of Object.entries(state.defaults)) {
-      const before = isRecord(defaults[locationId]) ? defaults[locationId] : {};
-      const merged = { ...before, ...folders };
-      if (Object.keys(merged).length > 0) defaults[locationId] = merged;
-    }
-    const text = `${JSON.stringify({ ...rest, environments, defaults }, null, 2)}\n`;
-    await writeFile(temporary, text, { mode: 0o600 });
-    // The mode a file is made with is narrowed by the umask, never widened: said again, in case it was left wider.
-    await chmod(temporary, 0o600);
-    await rename(temporary, path);
-    rawDefaults = defaults;
-    raw.clear();
-    for (const entry of environments)
-      if (isRecord(entry) && typeof entry.id === "string" && ids.has(entry.id))
-        raw.set(entry.id, entry);
-  };
-
   return {
     async load() {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(await readFile(path, "utf8"));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT")
-          return { environments: [], defaults: {} };
-        if (error instanceof SyntaxError) {
-          try {
-            await copyFile(path, `${path}.broken-${Date.now()}`);
-            unknown = [];
-            rest = {};
-            rawDefaults = {};
-            raw.clear();
-            return { environments: [], defaults: {} };
-          } catch {
-            // Falls through to the error below.
-          }
-        }
-        throw new Error(
-          `${path} cannot be read: ${error instanceof Error ? error.message : error}`,
-        );
-      }
-      const record = isRecord(parsed) ? parsed : {};
-      const { environments: entries, defaults: defaultsRead, ...others } = record;
+      const record = (await file.read()) ?? {};
+      const { environments: list, defaults: defaultsRead, ...others } = record;
       rest = others;
-      unknown = [];
-      raw.clear();
-      const environments: Environment[] = [];
-      for (const entry of Array.isArray(entries) ? entries : []) {
-        const environment = environmentOf(entry);
-        if (environment === undefined || raw.has(environment.id)) unknown.push(entry);
-        else {
-          environments.push(environment);
-          raw.set(environment.id, entry as Record<string, unknown>);
-        }
-      }
+      const environments = entries.read(Array.isArray(list) ? list : []);
       rawDefaults = isRecord(defaultsRead) ? defaultsRead : {};
       const defaults: EnvironmentsState["defaults"] = {};
       for (const [locationId, folders] of Object.entries(rawDefaults)) {
@@ -179,13 +102,26 @@ export const fileEnvironments = (path: string): EnvironmentStore => {
       }
       return { environments, defaults };
     },
-    save(state) {
-      const done = saving.then(
-        () => write(state),
-        () => write(state),
-      );
-      saving = done;
-      return done;
+    async save(state) {
+      const defaults: Record<string, unknown> = {};
+      for (const [locationId, folders] of Object.entries(rawDefaults)) {
+        // What was there and is not a map of ids: kept as it was, unless the person set one for that location now.
+        if (!isRecord(folders)) {
+          if (state.defaults[locationId] === undefined) defaults[locationId] = folders;
+          continue;
+        }
+        const kept = Object.fromEntries(
+          Object.entries(folders).filter(([, id]) => typeof id !== "string"),
+        );
+        if (Object.keys(kept).length > 0) defaults[locationId] = kept;
+      }
+      for (const [locationId, folders] of Object.entries(state.defaults)) {
+        const before = isRecord(defaults[locationId]) ? defaults[locationId] : {};
+        const merged = { ...before, ...folders };
+        if (Object.keys(merged).length > 0) defaults[locationId] = merged;
+      }
+      rawDefaults = defaults;
+      await file.write({ ...rest, environments: entries.write(state.environments), defaults });
     },
   };
 };
@@ -219,7 +155,7 @@ export class Environments {
   }
 
   #read(): Promise<EnvironmentsFile> {
-    this.#state ??= this.#store.load().catch((error: unknown) => {
+    this.#state ??= this.#store.load().then(keyedByWorkspace, (error: unknown) => {
       this.#state = undefined;
       throw error;
     });
@@ -240,10 +176,17 @@ export class Environments {
     return shown(await this.#read());
   }
 
-  /** The environment as a session is sent it, or undefined when there is none of that id. */
-  async snapshot(environmentId: string): Promise<Environment | undefined> {
+  /**
+   * The environment as a session is sent it; or why it cannot be: there is none of that id (`missing`), or it does not
+   * pass the daemon's rules (`invalid_environment`: the file was written by hand or by another version; Settings says
+   * what to fix).
+   */
+  async snapshot(environmentId: string): Promise<Environment | { problem: EnvironmentRefusal }> {
     const found = (await this.#read()).environments.find((e) => e.id === environmentId);
-    return found === undefined ? undefined : environmentSnapshot(found);
+    if (found === undefined) return { problem: { reason: "missing" } };
+    if (environmentProblem(found) !== undefined)
+      return { problem: { reason: "invalid_environment" } };
+    return environmentSnapshot(found);
   }
 
   save(value: unknown): Promise<{ state: EnvironmentsState } | EnvironmentProblem> {
@@ -263,7 +206,7 @@ export class Environments {
       await this.#store.save(next);
       this.#state = Promise.resolve(next);
       const sent = environmentSnapshot(named);
-      this.#track("environment_saved", {
+      this.#track("environment_config_saved", {
         has_setup: sent.setup !== undefined,
         has_cleanup: sent.cleanup !== undefined,
         variables: named.variables.length,
@@ -294,7 +237,7 @@ export class Environments {
       };
       await this.#store.save(next);
       this.#state = Promise.resolve(next);
-      this.#track("environment_removed", {});
+      this.#track("environment_config_removed", {});
       return shown(next);
     });
   }
@@ -312,8 +255,9 @@ export class Environments {
       if (environmentId !== null && !state.environments.some((e) => e.id === environmentId))
         throw new Error("That environment was removed");
       const folders = { ...state.defaults[locationId] };
-      if (environmentId === null) delete folders[cwd];
-      else folders[cwd] = environmentId;
+      const key = workspaceKey(cwd);
+      if (environmentId === null) delete folders[key];
+      else folders[key] = environmentId;
       const next = {
         ...state,
         defaults: withoutEmpty({ ...state.defaults, [locationId]: folders }),
@@ -325,6 +269,23 @@ export class Environments {
     });
   }
 }
+
+/**
+ * The defaults under their workspace's key (`/repo/` is `/repo`): what an older version kept under another form of the
+ * same folder is that folder's, unless the folder's own form has one.
+ */
+const keyedByWorkspace = (state: EnvironmentsFile): EnvironmentsFile => {
+  const defaults: EnvironmentsState["defaults"] = {};
+  for (const [locationId, folders] of Object.entries(state.defaults)) {
+    const keyed: Record<string, string> = {};
+    for (const [cwd, id] of Object.entries(folders)) {
+      const key = workspaceKey(cwd);
+      if (keyed[key] === undefined || key === cwd) keyed[key] = id;
+    }
+    defaults[locationId] = keyed;
+  }
+  return { ...state, defaults };
+};
 
 const withoutEmpty = (defaults: EnvironmentsState["defaults"]): EnvironmentsState["defaults"] =>
   Object.fromEntries(

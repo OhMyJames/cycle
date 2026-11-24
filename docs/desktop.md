@@ -134,21 +134,24 @@ agent 进程自己的环境变量(daemon `config.json` 的 `allowEnv`/`env`、�
 
 界面文案:新建 session 那一行的第一个选择叫 "Work in"(中文"工作位置"),选项是 "This computer" 和各远程位置的名字;设置页分区 "Environments" 改名 "Work in",按钮 "Add location"。以后有 cloud 时它是这里的又一种 `kind`。
 
-`settings.json` 写成 `{ "locations": [...] }`(条目格式不变)。读时按 `locations` → `environments` → `hosts` 取第一个存在的,和 `hosts` → `environments` 那次一样:只有保存时才写新键(旧的两个键去掉),别的键和读不懂的条目原样写回。埋点里指工作位置的事件和属性也一起改了名,见 analytics.md。降级到旧版本时旧版读不到 `locations`,看不到远程位置(文件里的数据还在)。
+`settings.json` 写成 `{ "locations": [...] }`(条目格式不变)。读时三个键都读:先是 `locations` 的条目,再是 `environments`、`hosts` 里 id 还没出现过的条目(旧版应用打开新文件后只会往 `environments` 里加,这样它加的不会丢);保存时把这些合起来写进 `locations`(旧的两个键去掉),别的键和读不懂的条目原样写回。文件的读写(整个写、改名换上、一次一个、不是 JSON 的另存为 `.broken-<时间>`、读不懂的原样写回)和 `environments.json` 共用 `apps/desktop/src/main/json-file.ts`,两个文件都是 0600(`settings.json` 里有 ssh 的地址,收紧没有坏处)。埋点里指工作位置的事件和属性也一起改了名,见 analytics.md。降级到旧版本时旧版读不到 `locations`,看不到远程位置(文件里的数据还在)。
 
 ### 环境
 
 状态:已实现(2026-11-24)。代码:主进程 `apps/desktop/src/main/environments.ts`(文件和校验)、`actions.ts`(`createSession` 带快照、`createTerminal` 带 `actionId`);页面 `packages/ui/src/environments.ts`(`.env` 读写、校验,是 `@cycle/protocol` 规则的副本,测试保证一致)、`src/store/environments.ts`、`src/react/environments.tsx`(设置分区、编辑框、空白对话的选择、顶栏动作)。和下面草稿不同或草稿没说的地方:
 
 - **桥接方法**:`environments()` 一次给出全部环境和 `defaults`(这就是"取默认");`saveEnvironment`、`removeEnvironment`、`setEnvironmentDefault(locationId, cwd, id | null)` 都回整个新状态。保存先按 daemon 的规则查(名字、重名、保留名、64 KiB,另加:环境要有名字、动作要有名字和至少一个系统的命令),不合格就回 `{problem, …}`,什么都不写。
-- **快照由主进程拼**:页面在 `createSession` 里只给 `environmentId`,主进程从 `environments.json` 取这个环境当时的样子(去掉空脚本)放进 `session/new` 的 `_meta["cycle/environment"]`。daemon 以 `-32602` 拒绝时,主进程把错误改写成 `[environment:<reason>:<名字或上限>] <daemon 原话>`,页面按 reason 换成自己的一句话(只写变量名,不写值),消息回到输入框;环境在这期间被删了是 `missing`。
+- **快照由主进程拼**:页面在 `createSession` 里只给 `environmentId`,主进程从 `environments.json` 取这个环境当时的样子(去掉空脚本)放进 `session/new` 的 `_meta["cycle/environment"]`。daemon 以 `-32602` 拒绝时,`createSession` 不抛错,而是回 `{problem: {reason, name?}}`(`reason` 的清单是 `api.ts` 的 `ENVIRONMENT_REFUSALS`,主进程和页面共用),页面按 reason 换成自己的一句话(只写变量名,不写值),消息回到输入框;环境在这期间被删了是 `missing`。
+- **和 daemon 一样的校验**:页面和主进程的校验与 daemon 的 `checkEnvironment` 一致(另加:环境和动作要有名字、动作要有命令),包括动作的 id 不能为空、不能重复。`environments.json` 里读到的环境(手写的、别的版本写的)不合格时,设置页那一行写"Needs a fix: …",不会被发出去;页面发之前先查,主进程取快照时再查(`invalid_environment`)。编辑框打开时给没有 id 或 id 重复的动作换一个新 id,再保存一次就好了。
+- **workspace 的键**:默认按 `(locationId, cwd)` 记,`cwd` 去掉末尾的斜杠(根目录 `/` 除外),所以 `/Users/me/repo/` 和 `/Users/me/repo` 是同一个;读旧文件时也这样换算。
+- **agy**:agy 自己跑的命令拿不到环境变量(只有终端和动作有,见 protocol.md §6)。空白对话的 agent 是 Antigravity、选的环境又有变量时,选择后面多一行小字:"Antigravity runs its own commands without these variables. Terminals and actions have them."
 - **还没选文件夹时也能选**:那时选的是一个"待定"的选择(一开始是 "No environment",不沿用上次的:新会话从干净的状态开始,和 agent 的设置一样),换文件夹、换工作位置都保留它。选了文件夹以后,这个 workspace 记过默认就用它的默认(待定的让位);没记过就还是待定的那个,并在 session 建成时记成这个 workspace 的默认。有文件夹时再选,和以前一样立刻记成默认。daemon 没有 `environments` 能力时,按钮在但 `aria-disabled`,提示 "Cycle on {location} needs an update to use environments.",也不发环境。
 - **默认为空就是 "No environment"**;指向已删环境的默认当作没有,删环境时主进程一并删掉指向它的默认。
 - **按系统分的脚本**:一个文本框,上面一个分段选择 "All systems / macOS / Linux / Windows"(不叫 "Default":AGENTS 规定选项不写光秃秃的 Default),有内容的系统带一个点。动作的命令同样。
 - **动作的图标**:`icon` 存一个固定的 id,一共 8 个:`terminal`(默认)、`play`、`test`、`build`、`database`、`server`、`refresh`、`clean`,清单只在 `packages/ui/src/environments.ts` 的 `ACTION_ICONS` 一处,图形是 iconmcp 的 terminal、play、flask、hammer、database、server、refresh-cw、trash。编辑框里每个动作有一个 "Icon" 下拉(图标加名字)。不认识的 id(更新的版本写的)画成终端,编辑框里也显示成 Terminal,不改它就原样写回。顶栏按钮和溢出菜单都画各自的图标。
 - **顶栏**:动作不多于 3 个时都是按钮,多了显示前 2 个加一个"终端+箭头"的菜单(菜单里每项带自己的图标);窗口窄于 1000px 时只剩一个列出全部动作的菜单,给标题留地方。需要 `terminal` 和 `environments` 两个能力、且已连接,否则按钮 `aria-disabled`。
 - **在哪看用的哪个环境**:右侧面板 Overview 的 Location 一块,多两行"Environment"(名字)和"Variables"(只列名字)。
-- **埋点**:见 analytics.md:`environment_saved`、`environment_removed`、`environment_chosen`(在空白对话里选的时候,`none`)、`environment_action_run`;`terminal_opened` 的 `via` 多了 `action`,`settings_section_shown` 多了 `environments`。
+- **埋点**:见 analytics.md:`environment_config_saved`、`environment_config_removed`、`environment_chosen`(在空白对话里选的时候,`none`)、`environment_action_run`;`terminal_opened` 的 `via` 多了 `action`,`settings_section_shown` 多了 `environments`。
 
 ```ts
 type Scripts = { default?: string; macos?: string; linux?: string; windows?: string };
@@ -178,7 +181,7 @@ type Environment = {
 
   v1 没有 worktree,所以先生效的只有变量和动作;setup、cleanup 先能存、能编辑,界面上写明"在 worktree 创建时运行"。
 - **编辑**:设置页 Environments 分区,每个环境一行(名字、变量个数、动作个数),菜单里 Edit、Duplicate、Remove(先确认;正在用它的 session 不受影响)。编辑表单仿 Codex 的:名字;setup、cleanup 各一个按系统分页的文本框;变量用 `.env` 格式的文本框(一行一个 `KEY=value`,`#` 开头是注释,保存时校验名字);动作列表。
-- **埋点**:只记事件和个数(`environment_saved`:有无 setup/cleanup、变量个数、动作个数;`environment_chosen`),不记名字、变量名和值、脚本内容。以前的 `environment_saved` 指的是保存工作位置,2026-11-24 已改成 `location_saved`(见 analytics.md),这个名字从此只指环境。
+- **埋点**:只记事件和个数(`environment_config_saved`:有无 setup/cleanup、变量个数、动作个数;`environment_chosen`),不记名字、变量名和值、脚本内容。以前的 `environment_saved` 指的是保存工作位置,2026-11-24 已改成 `location_saved`(见 analytics.md);因为旧版本还在发它,环境的事件另起名 `environment_config_saved`、`environment_config_removed`。
 
 ### 待定
 

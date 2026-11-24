@@ -1257,6 +1257,13 @@ export const enUS = {
   "environment.problem.invalid": "The environment could not be saved: {message}",
   "blank.environment": "Environment",
   "blank.environment.none": "No environment",
+  "blank.environment.needsFix":
+    "The session was not started: the environment {name} needs a fix. Open it in Settings, Environments, to see what.",
+  "blank.environment.agyNote":
+    "Antigravity runs its own commands without these variables. Terminals and actions have them.",
+  "settings.environments.needsFix": "Needs a fix: {problem}",
+  "environment.problem.action_id_invalid":
+    "Two actions have the same id, or one has none. Save the environment again to give each its own.",
   "blank.environment.oldDaemon": "Cycle on {location} needs an update to use environments.",
   "blank.environment.refused.reserved_variable":
     "The session was not started: the environment sets {name}, which Cycle sets for the agent. Remove it in Settings, Environments.",

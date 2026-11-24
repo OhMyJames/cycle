@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { statSync } from "node:fs";
 import { client, methods, type SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type AdapterConfig, createAgent } from "../src/index.ts";
@@ -934,7 +935,7 @@ test("a background sub-agent's own talk and calls stay out of the session, and a
   });
 });
 
-test("the session's variables reach Claude's environment, and the agent's own settings win over them", async () => {
+test("the session's variables reach Claude's commands through CLAUDE_ENV_FILE, never Claude's own environment", async () => {
   const fake = fakeQuery(() => textTurn(ID, "msg_1", "ok"));
   await connect(
     fake.run,
@@ -955,9 +956,27 @@ test("the session's variables reach Claude's environment, and the agent's own se
       sessionEnv: { DATABASE_URL: "postgres://db", SHARED: "session" },
     },
   );
-  expect(fake.calls[0]?.options.env).toEqual({
-    DATABASE_URL: "postgres://db",
-    CLAUDE_CONFIG_DIR: "/data/claude",
-    SHARED: "agent",
+  const env = fake.calls[0]?.options.env as Record<string, string>;
+  const { CLAUDE_ENV_FILE: file, ...rest } = env;
+  expect(rest).toEqual({ CLAUDE_CONFIG_DIR: "/data/claude", SHARED: "agent" });
+  expect(await Bun.file(file as string).text()).toBe(
+    "export DATABASE_URL='postgres://db'\nexport SHARED='session'\n",
+  );
+  expect((statSync(file as string).mode & 0o777).toString(8)).toBe("600");
+});
+
+test("without variables there is no CLAUDE_ENV_FILE", async () => {
+  const fake = fakeQuery(() => textTurn(ID, "msg_1", "ok"));
+  await connect(fake.run, async ({ agent, waitForIdle }) => {
+    const created = await agent.request(methods.agent.session.new, {
+      cwd: "/work",
+      _meta: { "cycle/sessionId": ID },
+    });
+    await agent.request(methods.agent.session.prompt, {
+      sessionId: created.sessionId,
+      prompt: [{ type: "text", text: "hi" }],
+    });
+    await waitForIdle();
   });
+  expect(fake.calls[0]?.options.env).not.toHaveProperty("CLAUDE_ENV_FILE");
 });

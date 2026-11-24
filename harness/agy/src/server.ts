@@ -4,11 +4,6 @@ import { LineJsonRpcProcess, type LineRpcOptions, RpcError } from "@cycle/line-r
 export type AdapterConfig = {
   /** Explicit environment given to `agy`; nothing is inherited from the adapter process. */
   env: Record<string, string>;
-  /**
-   * The session's environment variables (docs/protocol.md §6 "环境"), for the commands the agent runs. agy has no way to take them for its commands alone, so `agy acp` is started with them. Never the agent's
-   * own settings: those are in `env`, which wins over these where both name a variable.
-   */
-  sessionEnv?: Record<string, string>;
   /** Absolute path to the `agy` executable (if resolved at startup). */
   agyExecutable: string;
   /** Fallback absolute paths checked if `agy` is installed after the daemon starts (never inherited). */
@@ -69,7 +64,7 @@ const options = (config: AdapterConfig): LineRpcOptions => {
     executable: config.agyExecutable,
     args: buildAgyArgs(config),
     cwd: config.env.HOME,
-    env: { ...(config.sessionEnv ?? {}), ...config.env },
+    env: config.env,
     jsonrpc: true,
     timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
   };

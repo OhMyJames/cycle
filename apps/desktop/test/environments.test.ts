@@ -135,7 +135,7 @@ test("saving checks the daemon's rules first: a refused one is not kept, and not
     state: { environments: [NODE], defaults: {} },
   });
   expect(reports).toEqual([
-    ["environment_saved", { has_setup: true, has_cleanup: false, variables: 1, actions: 1 }],
+    ["environment_config_saved", { has_setup: true, has_cleanup: false, variables: 1, actions: 1 }],
   ]);
   // Never a name, a value or a command.
   const said = JSON.stringify(reports);
@@ -163,7 +163,7 @@ test("a workspace's default is kept by location and folder, and goes with its en
   ]);
   expect(await environments.remove("env-node")).toEqual({ environments: [], defaults: {} });
   expect((await store.load()).defaults).toEqual({});
-  expect(reports.at(-1)).toEqual(["environment_removed", {}]);
+  expect(reports.at(-1)).toEqual(["environment_config_removed", {}]);
 });
 
 test("a session is sent the environment as it is now, without empty scripts", async () => {
@@ -180,5 +180,36 @@ test("a session is sent the environment as it is now, without empty scripts", as
     actions: [],
     setup: { default: "npm ci", windows: "npm.cmd ci" },
   });
-  expect(await environments.snapshot("nope")).toBeUndefined();
+  expect(await environments.snapshot("nope")).toEqual({ problem: { reason: "missing" } });
+});
+
+test("one the file holds that the daemon would refuse is not sent: its action ids are empty, or one is twice", async () => {
+  const action = { id: "a", name: "A", command: { default: "true" } };
+  for (const actions of [[{ ...action, id: "" }], [action, { ...action, name: "B" }]]) {
+    const environments = new Environments(
+      memoryEnvironments({ environments: [{ ...NODE, actions }], defaults: {} }),
+    );
+    expect(await environments.snapshot("env-node")).toEqual({
+      problem: { reason: "invalid_environment" },
+    });
+    // Nor is it saved so.
+    expect(await environments.save({ ...NODE, actions })).toEqual({ problem: "action_id_invalid" });
+  }
+});
+
+test("a workspace's default is kept by its folder without the slashes at its end, also one read from the file", async () => {
+  const environments = new Environments(
+    memoryEnvironments({
+      environments: [NODE],
+      defaults: { local: { "/Users/me/repo/": "env-node", "/": "env-node" } },
+    }),
+  );
+  expect((await environments.list()).defaults).toEqual({
+    local: { "/Users/me/repo": "env-node", "/": "env-node" },
+  });
+  await environments.setDefault("local", "/Users/me/other//", "env-node");
+  await environments.setDefault("local", "/Users/me/repo/", null);
+  expect((await environments.list()).defaults).toEqual({
+    local: { "/": "env-node", "/Users/me/other": "env-node" },
+  });
 });
