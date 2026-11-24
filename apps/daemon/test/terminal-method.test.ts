@@ -92,6 +92,8 @@ test("a terminal runs a shell in the session's folder, with only the allowed env
   expect(text).toContain("30 100");
   expect(text).toContain("TERM=xterm-256color");
   expect(text).toContain("COLORTERM=truecolor");
+  expect(text).toContain("CLICOLOR=1");
+  expect(text).toContain("SHELL=/bin/sh");
   expect(text).toContain("LC_PROBE=kept");
   expect(text).not.toContain("must-not-pass");
   const seqs = c.terminal.filter((t) => t.kind === "output").map((t) => t.params.seq as number);

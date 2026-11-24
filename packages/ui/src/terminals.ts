@@ -51,6 +51,20 @@ export const neighbourOf = (
   return at <= 0 ? rest[0] : rest[Math.min(at - 1, rest.length - 1)];
 };
 
+/**
+ * What each terminal's tab says, in the strip's order: its title, and for a title another tab before it already has,
+ * its place among those (`zsh`, `zsh 2`, `zsh 3`). New shells all start with the shell's name, so without it a second
+ * terminal's tab reads as the first, and New terminal looks as if it did nothing.
+ */
+export const tabLabels = (terminals: readonly TerminalInfo[]): string[] => {
+  const seen = new Map<string, number>();
+  return terminals.map(({ title }) => {
+    const n = (seen.get(title) ?? 0) + 1;
+    seen.set(title, n);
+    return n === 1 ? title : `${title} ${n}`;
+  });
+};
+
 /** How many terminals a session has, as analytics say it: never more exactly than this. */
 export const terminalCount = (n: number): "none" | "one" | "few" | "many" =>
   n <= 0 ? "none" : n === 1 ? "one" : n <= 3 ? "few" : "many";

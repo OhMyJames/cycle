@@ -68,6 +68,13 @@ const main = async () => {
     PATH: path ?? env.PATH ?? "",
     ...(env.HOME !== undefined ? { HOME: env.HOME } : {}),
     ...(env.LANG !== undefined ? { LANG: env.LANG } : {}),
+    // Who the person is and which shell is theirs, for the terminals beside a session (CYCL-223): without SHELL they
+    // ran /bin/sh, with none of the person's prompt and rc files. Not secrets, and not on any agent's allowlist.
+    ...Object.fromEntries(
+      (["SHELL", "USER", "LOGNAME"] as const).flatMap((name) =>
+        env[name] !== undefined ? [[name, env[name]]] : [],
+      ),
+    ),
     // Where the daemon keeps its data: what the person chose, else (a run from source) a directory of its own,
     // else the daemon's default, which is the installed app's.
     ...(dataHome !== undefined ? { CYCLE_HOME: dataHome } : {}),

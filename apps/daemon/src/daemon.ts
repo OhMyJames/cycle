@@ -135,6 +135,7 @@ import {
 } from "./session-mentions.ts";
 import { sessionPage } from "./session-page.ts";
 import {
+  accountShell,
   type TerminalSink,
   Terminals,
   type TerminalsOptions,
@@ -165,8 +166,8 @@ export type DaemonOptions = {
   /** Where what it does and what goes wrong is told (docs/daemon.md "日志"): events and ids, never content. */
   log?: Logger;
   /**
-   * The terminals' shell, environment and limits (docs/protocol.md §8 "终端"). Default: the daemon's `SHELL` and the
-   * default allowlist over its environment, with the default limits.
+   * The terminals' shell, environment and limits (docs/protocol.md §8 "终端"). Default: the daemon's `SHELL`
+   * (else the account's) and the default allowlist over its environment, with the default limits.
    */
   terminals?: Omit<TerminalsOptions, "onChanged" | "log">;
 };
@@ -177,7 +178,7 @@ export const defaultTerminals = (
   settings: typeof TERMINAL_DEFAULTS = TERMINAL_DEFAULTS,
 ): Omit<TerminalsOptions, "onChanged" | "log"> => ({
   env: terminalEnv(settings.allowEnv, environment),
-  shell: terminalShell(environment.SHELL),
+  shell: terminalShell(environment.SHELL, accountShell),
   maxPerSession: settings.maxPerSession,
   max: settings.max,
   scrollback: settings.scrollback,

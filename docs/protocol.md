@@ -432,7 +432,7 @@ agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机
 
 - **只给人用**:agent 看不到终端，也收不到它的输入输出。ACP 的 `terminal/*` 客户端能力仍不支持(§3)。
 - **属于一个 session**:工作目录是 session 的 `cwd`。session 被归档或删除时，它的终端被关掉(应答不等它们的进程结束),归档的 session 不能再开终端;daemon 停止(包括空闲退出)时，所有终端被关掉。终端不算 daemon 在工作,不拖住空闲退出(docs/daemon.md"空闲退出")。
-- **shell 和环境**:daemon 的 `SHELL`(绝对路径且可执行)作为登录 shell(`-l`)启动，否则 `/bin/sh`。环境不继承 daemon 的，只取 daemon 配置 `terminal.allowEnv` 里列出的变量(以 `*` 结尾的项按前缀匹配),再设 `TERM=xterm-256color`、`COLORTERM=truecolor`。配置不经协议修改。
+- **shell 和环境**:daemon 的 `SHELL`(绝对路径且可执行)作为登录 shell(`-l`)启动;daemon 没有 `SHELL`(旧版桌面端启动的本地 daemon 就没有)或它不可用时，用账户的登录 shell(系统用户数据库里的),再不行用 `/bin/sh`。环境不继承 daemon 的，只取 daemon 配置 `terminal.allowEnv` 里列出的变量(以 `*` 结尾的项按前缀匹配),再设 `TERM=xterm-256color`、`COLORTERM=truecolor`、`SHELL`(实际启动的 shell),没有 `CLICOLOR` 时设 `CLICOLOR=1`(macOS 自带的 `ls` 等 BSD 命令据此输出颜色);在 macOS 上 `LANG`、`LC_ALL`、`LC_CTYPE` 都没有时(从访达启动的应用就没有)再设 `LANG=en_US.UTF-8`,和系统终端一样，让提示符和文件名里的非 ASCII 字符正常显示。配置不经协议修改。
 - **上限**:每个 session 的终端数(含已退出、还没关的)和整个 daemon 的终端数有上限(配置 `terminal.maxPerSession`、`terminal.max`,默认 8 和 32),超过以 `-32019`(`terminal_limit`)拒绝。
 
 **终端的信息** `TerminalInfo`:`{terminalId, sessionId, title, cols, rows, status, exitCode?}`。`status` 是 `running` 或 `exited`;`exitCode` 只在 `exited` 时有，被信号结束时为 `null`。`title` 起初是 shell 的名字，shell 用 OSC 0 或 2 设了标题就换成它。

@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { FitAddon } from "@xterm/addon-fit";
 import { afterEach, expect, test, vi } from "vitest";
-import { userEvent } from "vitest/browser";
+import { cdp, userEvent } from "vitest/browser";
 import type { TerminalInfo, TerminalProblem } from "../../src/api.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { AppStore } from "../../src/store/index.ts";
@@ -223,6 +223,74 @@ test("terminals that went while the connection was away stay as tabs that say th
   await user.click(screen.getByRole("button", { name: "Close tab" }));
   await waitFor(() => expect(screen.queryByRole("tab", { name: "zsh" })).toBeNull());
   expect(script.named("closeTerminal")).toEqual([]);
+});
+
+test("when the theme turns dark, a program's red becomes GitHub Dark's", async () => {
+  const media = (value: string) =>
+    cdp().send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-color-scheme", value }],
+    });
+  try {
+    const { user, script } = await mount({ terminals: new Map([["s1", [running("a")]]]) });
+    await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+    await waitFor(() => expect(screenText()).toContain("screen of a"));
+    act(() =>
+      script.emit({
+        type: "terminal-output",
+        environmentId: "local",
+        terminalId: "a",
+        seq: 4,
+        data: "\x1b[31mRED\x1b[0m",
+      }),
+    );
+    const red = () =>
+      [...document.querySelectorAll(".xterm-rows span")].find((el) => el.textContent === "RED");
+    await waitFor(() => expect(getComputedStyle(red() as Element).color).toBe("rgb(207, 34, 46)"));
+    await media("dark");
+    await waitFor(() =>
+      expect(getComputedStyle(red() as Element).color).toBe("rgb(255, 123, 114)"),
+    );
+  } finally {
+    await media("");
+  }
+});
+
+/** What the panel's tabs say, in order. */
+const tabNames = () => screen.getAllByRole("tab").map((tab) => tab.textContent);
+
+test("three terminals: each its own tab and screen, one closed leaves the others, and after the last another opens", async () => {
+  const { user, script } = await mount();
+  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await user.click(await screen.findByRole("button", { name: "New terminal" }));
+  await user.click(await screen.findByRole("button", { name: "New terminal" }));
+  // All three start as the shell's name: each tab still reads as its own.
+  await screen.findByRole("tab", { name: "zsh 3", selected: true });
+  expect(tabNames()).toEqual(["Overview", "zsh", "zsh 2", "zsh 3"]);
+  await waitFor(() => expect(screenText()).toContain("screen of t3"));
+  // Switching shows that terminal's own screen.
+  await user.click(screen.getByRole("tab", { name: "zsh" }));
+  await waitFor(() => expect(screenText()).toContain("screen of t1"));
+  expect(screenText()).not.toContain("screen of t3");
+  // A terminal's tab looks like the panel's other tabs.
+  const overview = getComputedStyle(screen.getByRole("tab", { name: "Overview" }));
+  const terminal = getComputedStyle(screen.getByRole("tab", { name: "zsh" }));
+  for (const property of ["height", "font-family", "font-size", "font-weight", "border-radius"])
+    expect(terminal.getPropertyValue(property)).toBe(overview.getPropertyValue(property));
+  // Closing the middle one with its cross leaves the other two (the last now second of its name, so "zsh 2").
+  const middle = screen.getByRole("tab", { name: "zsh 2" });
+  await user.hover(middle);
+  await user.click(middle.querySelector('[data-slot="panel-tab-close"]') as HTMLElement);
+  await waitFor(() => expect(tabNames()).toEqual(["Overview", "zsh", "zsh 2"]));
+  expect(script.named("closeTerminal").map((c) => c[2])).toEqual(["t2"]);
+  // The other two closed from the keyboard: a new one still opens from the strip.
+  await user.click(screen.getByRole("tab", { name: "zsh 2" }));
+  await user.keyboard("{Delete}");
+  await user.click(await screen.findByRole("tab", { name: "zsh", selected: true }));
+  await user.keyboard("{Delete}");
+  await waitFor(() => expect(tabNames()).toEqual(["Overview"]));
+  await user.click(screen.getByRole("button", { name: "New terminal" }));
+  await screen.findByRole("tab", { name: "zsh", selected: true });
+  await waitFor(() => expect(screenText()).toContain("screen of t4"));
 });
 
 test("in the light theme a program's red is GitHub Light's, on the panel's own ground", async () => {

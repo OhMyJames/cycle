@@ -7,6 +7,7 @@ import {
   neighbourOf,
   TerminalFeed,
   tabKind,
+  tabLabels,
   terminalCount,
   terminalOfTab,
   terminalTab,
@@ -20,6 +21,13 @@ const info = (terminalId: string, extra: Partial<TerminalInfo> = {}): TerminalIn
   rows: 24,
   status: "running",
   ...extra,
+});
+
+test("tabs of terminals with the same title are told apart by their place, others keep their title", () => {
+  const titles = (list: string[]) => tabLabels(list.map((title, i) => info(`t${i}`, { title })));
+  expect(titles(["zsh", "zsh", "build", "zsh"])).toEqual(["zsh", "zsh 2", "build", "zsh 3"]);
+  expect(titles(["zsh", "vim"])).toEqual(["zsh", "vim"]);
+  expect(titles([])).toEqual([]);
 });
 
 /** A feed whose screen is a list of what was drawn. */

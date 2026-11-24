@@ -64,6 +64,7 @@ Basis: CYCL-96。负责人 2026-11-22 的回答：终端跟 session 走；v1 只
 - Linux：`test/terminal-method.test.ts` 用真实的 `/bin/sh` 和 PTY，在门禁里跑，所以 CI 的 Ubuntu 上每次都会跑（CYCL-97）。
 - 每个终端的内存，CYCL-97 实测（2026-11-22，macOS arm64，10 个终端各输出 3000 行）：daemon 这边每个约 7 MB，shell 进程（zsh 或 bash）每个 2–3 MB。默认上限 32 个，最坏情况约 320 MB，比一个 Claude 进程（约 230 MB）多一些，默认值不改。
 - 在 Bun 里，PTY 的读取没法暂停，所以流量控制只能靠"无界面屏幕持续解析、连接落后就改发快照"，而不是对 shell 施加反压。
+- 桌面端启动本地 daemon 时只给 `PATH`、`HOME`、`LANG`、`CYCLE_HOME`，daemon 没有 `SHELL`，0.3.21 及之前的终端因此都是 `/bin/sh`：没有用户的 rc、提示符和别名，看起来"没有颜色"（CYCL-223）。现在桌面端把 `SHELL`、`USER`、`LOGNAME` 也传给 daemon；daemon 仍缺 `SHELL` 时（旧版应用启动、还在跑的 daemon）取账户的登录 shell（系统用户数据库）。终端里再设 `SHELL`、`CLICOLOR=1`，macOS 上没有任何 locale 时设 `LANG=en_US.UTF-8`（不用 macOS 特有的 `LC_CTYPE=UTF-8`：ssh 会把 `LC_*` 带到不认识它的服务器上）。这些都不是秘密，也不在任何 agent 的白名单里。
 
 ## Related
 
