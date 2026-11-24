@@ -20,9 +20,32 @@ export const LOG_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  * set when it is the configured name with a pid (and agy's `.<pid>` worker suffix) in it. `keep` counts the newest
  * files, the current run's among them; it is never removed.
  */
+/** Whether the file is the log of a frontend that is still running: the pid in `<stem>.<pid>…` is alive. */
+const runs = (name: string, stem: string, alive: (pid: number) => boolean = isAlive): boolean => {
+  const pid = Number(
+    new RegExp(`^${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(\\d+)\\.`).exec(name)?.[1],
+  );
+  return Number.isInteger(pid) && pid > 0 && alive(pid);
+};
+
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 export const pruneLogs = (
   logFile: string,
-  options: { current?: string; keep?: number; maxAgeMs?: number; now?: number } = {},
+  options: {
+    current?: string;
+    keep?: number;
+    maxAgeMs?: number;
+    now?: number;
+    alive?: (pid: number) => boolean;
+  } = {},
 ): string[] => {
   const dir = dirname(logFile);
   const ext = extname(logFile);
@@ -40,7 +63,10 @@ export const pruneLogs = (
     return [];
   }
   const files = names
-    .filter((name) => own.test(name) && join(dir, name) !== options.current)
+    .filter(
+      (name) =>
+        own.test(name) && join(dir, name) !== options.current && !runs(name, stem, options.alive),
+    )
     .flatMap((name) => {
       try {
         return [{ path: join(dir, name), mtime: statSync(join(dir, name)).mtimeMs }];

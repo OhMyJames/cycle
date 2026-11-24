@@ -13,8 +13,6 @@ const NETWORK = [
   /\bECONN(?:REFUSED|RESET)\b/,
   /\bETIMEDOUT\b/,
   /connection (?:refused|reset)/i,
-  /\bproxy\b/i,
-  /certificate/i,
 ];
 
 export const isNetworkError = (message: string | undefined): boolean =>

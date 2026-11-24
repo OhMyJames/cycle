@@ -72,7 +72,8 @@ export class StepsPlans {
         : [],
     );
     const key = JSON.stringify(entries);
-    if (key === sent) return { plan: true };
+    // Nothing to show yet, or nothing new.
+    if (key === sent || (entries.length === 0 && !ended)) return { plan: true };
     if (!ended) this.#sent.set(id, key);
     return {
       plan: true,

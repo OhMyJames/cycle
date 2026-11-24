@@ -48,6 +48,10 @@ test("the system proxy fills what is missing, in both spellings, and nothing els
   expect(
     systemProxyFill(allow, {}, { HTTPS_PROXY: "http://y:2" }, system).https_proxy,
   ).toBeUndefined();
+  // Only the spellings the allowlist names are filled.
+  expect(systemProxyFill(["HTTPS_PROXY"], {}, {}, system)).toEqual({
+    HTTPS_PROXY: "http://127.0.0.1:7890",
+  });
   // An allowlist that leaves the proxy out leaves it out.
   expect(systemProxyFill(["PATH"], {}, {}, system)).toEqual({});
 });

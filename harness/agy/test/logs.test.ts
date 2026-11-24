@@ -29,10 +29,13 @@ test("old logs and those past the count are removed; the current run's and other
     const current = join(dir, "agy-acp.9.log");
     writeFileSync(current, "x");
     // keep 3 counts the current one: of the fresh ones, two newest stay.
-    pruneLogs(base, { current, keep: 3, now });
+    // A frontend that is still running keeps its logs, old or not.
+    make("agy-acp.5.log", 30 * 24 * 3600 * 1000);
+    pruneLogs(base, { current, keep: 3, now, alive: (pid) => pid === 5 });
     expect(readdirSync(dir).sort()).toEqual([
       "agy-acp.1.log",
       "agy-acp.1.log.77",
+      "agy-acp.5.log",
       "agy-acp.9.log",
       "daemon.log",
     ]);

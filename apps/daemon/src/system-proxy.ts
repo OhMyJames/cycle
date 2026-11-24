@@ -102,8 +102,8 @@ export const systemProxyFill = (
   for (const name of missing) {
     const value = found[name];
     if (value === undefined) continue;
-    out[name] = value;
-    out[name.toLowerCase()] = value;
+    // Only a spelling the allowlist names: it is what an agent may see.
+    for (const spelling of spellings(name)) if (allowed.has(spelling)) out[spelling] = value;
   }
   return out;
 };
