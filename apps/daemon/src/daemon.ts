@@ -11,9 +11,15 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
+  AGENT_AUTH_COMPLETED,
   AGENT_SETUP_CHANGED,
+  type AgentAuthMode,
   type AgentRuntimePatchValue,
   type AgentSetupSnapshot,
+  agentAuthCancel,
+  agentAuthLogout,
+  agentAuthStart,
+  agentAuthSubmit,
   agentDefaultsRead,
   agentDefaultsSet,
   agentSetupRead,
@@ -85,6 +91,7 @@ import {
   trustSet,
 } from "@cycle/protocol";
 import type { z } from "zod";
+import { AgentAuthManager } from "./agent-auth.ts";
 import { AgentLink } from "./agent-link.ts";
 import {
   AgentSettings,
@@ -189,6 +196,8 @@ export type DaemonOptions = {
   configFile?: ConfigFileSnapshotOptions;
   /** Shared live per-agent runtime settings store (`<dataDir>/agent-settings.json`). */
   agentSettings?: AgentSettings;
+  /** For tests: override the 10-minute TTL on in-app agent auth flows. */
+  authFlowTtlMs?: number;
 };
 
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
@@ -316,6 +325,7 @@ export class Daemon {
   readonly #index: SessionIndex;
   readonly #defaults: AgentDefaults;
   readonly #agentSettings: AgentSettings;
+  readonly #auth: AgentAuthManager;
   readonly #optionsCache: AgentOptionsCache;
   readonly #trust: FolderTrust;
   readonly #connectors: ConnectorService;
@@ -369,6 +379,20 @@ export class Daemon {
     this.#index = index;
     this.#defaults = defaults;
     this.#agentSettings = agentSettings;
+    this.#auth = new AgentAuthManager({
+      ttlMs: options.authFlowTtlMs,
+      now: this.#now,
+      log: this.#log,
+      onCompleted: (connectionId, payload) => {
+        // Sent ONLY to the initiating connection (docs/protocol.md §16).
+        for (const conn of this.#conns) {
+          if (conn.id === connectionId) {
+            void conn.notify(AGENT_AUTH_COMPLETED, payload).catch(() => {});
+          }
+        }
+      },
+      onChanged: (agent) => this.#notifyAgentSetupChanged(agent),
+    });
     this.#optionsCache = optionsCache;
     this.#trust = trust;
     this.#connectors = connectors;
@@ -553,6 +577,7 @@ export class Daemon {
     // Terminals do not outlive the daemon (docs/protocol.md §8 "终端"). Their shells are hung up now and given their
     // grace while the sessions stop, not before.
     const terminals = this.#terminals.closeAll();
+    const authCleanup = this.#auth.close();
     for (const session of this.#sessions.values()) {
       // A turn cut short says so in the history before the agent goes (docs/protocol.md §8): it is not left running.
       if (!session.closed && this.#turnInProgress(session)) {
@@ -569,11 +594,13 @@ export class Daemon {
     await this.#index.flush();
     await this.#optionsCache.flush();
     await terminals;
+    await authCleanup;
   }
 
   #dropped(conn: ClientConn): void {
     this.#conns.delete(conn);
     this.#terminals.detachAll(conn.id);
+    this.#auth.onConnectionClosed(conn.id);
     this.#lastClientAt = this.#now();
     for (const session of this.#sessions.values()) {
       for (const attachment of [...session.attachments]) {
@@ -706,9 +733,9 @@ export class Daemon {
    * - `limit > 0` terminates the oldest excess warm processes FIFO (keeping `keep` when given).
    * Sessions remain in the index with state `stopped` and history intact.
    */
-  #reconcileWarmPool(agentId: string, keep?: Session): void {
+  #reconcileWarmPool(agentId: string, keep?: Session, overrideLimit?: number): void {
     const rawLimit = this.#agents.get(agentId)?.maxAhead;
-    const limit = typeof rawLimit === "function" ? rawLimit() : rawLimit;
+    const limit = overrideLimit ?? (typeof rawLimit === "function" ? rawLimit() : rawLimit);
     if (limit === undefined) return;
     const ahead = [...this.#sessions.values()].filter(
       (s) =>
@@ -1072,6 +1099,8 @@ export class Daemon {
 
     const planUsage = this.#planUsage.get(definition.id);
     const available = binary.problem === undefined && ((await definition.available?.()) ?? true);
+    const liveAuthState = this.#auth.stateFor(definition.id);
+    const authState = liveAuthState ?? authProbe.state;
 
     return {
       agent: definition.id,
@@ -1079,8 +1108,8 @@ export class Daemon {
       available,
       binary,
       auth: {
-        state: authProbe.state,
-        ...(authProbe.unknownReason !== undefined
+        state: authState,
+        ...(authState === "auth_unknown" && authProbe.unknownReason !== undefined
           ? { unknownReason: authProbe.unknownReason }
           : {}),
         method: authProbe.method,
@@ -1169,6 +1198,57 @@ export class Daemon {
       overrides: after.overrides,
       revision: after.revision,
     };
+  }
+
+  #setupProviderFor(agent: string) {
+    const definition = this.#agents.get(agent);
+    if (!definition) {
+      throw new RpcError(INVALID_PARAMS, `Unknown agent: ${agent}`, {
+        reason: "unknown_agent",
+        agent,
+      });
+    }
+    if (definition.setup === undefined) {
+      throw new RpcError(INVALID_PARAMS, `Setup not supported for agent: ${agent}`, {
+        reason: "unsupported_mode",
+        agent,
+      });
+    }
+    return definition.setup;
+  }
+
+  async #startAgentAuth(
+    connectionId: string,
+    params: { agent: string; mode?: AgentAuthMode | undefined },
+  ) {
+    const setup = this.#setupProviderFor(params.agent);
+    return this.#auth.start(connectionId, params.agent, params.mode, setup);
+  }
+
+  async #submitAgentAuth(connectionId: string, params: { flowId: string; code: string }) {
+    return this.#auth.submit(connectionId, params.flowId, params.code);
+  }
+
+  async #cancelAgentAuth(connectionId: string, params: { flowId: string }) {
+    await this.#auth.cancel(connectionId, params.flowId);
+    return {};
+  }
+
+  async #logoutAgent(params: { agent: string }) {
+    const setup = this.#setupProviderFor(params.agent);
+    await this.#auth.logout(params.agent, setup, () => {
+      // Sign-out lifecycle (docs/protocol.md §16):
+      // 1. Immediately terminate unprompted warm processes (sessions stay stopped with history intact).
+      // 2. Mark remaining running/starting sessions stale so idle ones recycle immediately and
+      //    active turns / background tasks are NEVER interrupted.
+      // 3. Clear cached plan usage and passively-observed tier.
+      this.#reconcileWarmPool(params.agent, undefined, 0);
+      this.#markAgentStale(params.agent, "auth");
+      this.#planUsage.delete(params.agent);
+      this.#planLimits.delete(params.agent);
+      this.#observedTier.delete(params.agent);
+    });
+    return {};
   }
 
   /**
@@ -2489,6 +2569,10 @@ export class Daemon {
     cycle(planUsageRead, () => ({ agents: Object.fromEntries(this.#planUsage) }));
     cycle(agentSetupRead, (params) => this.#readAgentSetup(params));
     cycle(agentSetupSetRuntime, (params) => this.#setAgentRuntime(params));
+    cycle(agentAuthStart, (params) => this.#startAgentAuth(me().id, params));
+    cycle(agentAuthSubmit, (params) => this.#submitAgentAuth(me().id, params));
+    cycle(agentAuthCancel, (params) => this.#cancelAgentAuth(me().id, params));
+    cycle(agentAuthLogout, (params) => this.#logoutAgent(params));
     cycle(agentDefaultsRead, (params) => {
       this.#definition(params.agent);
       return { config: this.#defaults.get(params.agent) };

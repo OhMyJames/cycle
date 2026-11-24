@@ -42,6 +42,8 @@ export const connectClient = async (
   const pluginsChanged: string[] = [];
   /** Every `_cycle/agent_setup_changed` this client was sent, in order. */
   const setupChanged: { agent: string; revision?: number }[] = [];
+  /** Every `_cycle/agent_auth_completed` this client was sent, in order. */
+  const authCompleted: { flowId: string; agent: string; ok: boolean; reason?: string }[] = [];
   const app = client({ name: "test-client" })
     .onConnect((connection) => {
       agent = connection.agent;
@@ -96,6 +98,13 @@ export const connectClient = async (
       (p: unknown) => p as { agent: string; revision?: number },
       ({ params }) => {
         setupChanged.push(params);
+      },
+    )
+    .onNotification(
+      "_cycle/agent_auth_completed",
+      (p: unknown) => p as { flowId: string; agent: string; ok: boolean; reason?: string },
+      ({ params }) => {
+        authCompleted.push(params);
       },
     )
     .onNotification(
@@ -161,6 +170,7 @@ export const connectClient = async (
     connectorsChanged: () => connectorsChanged,
     pluginsChanged,
     setupChanged,
+    authCompleted,
     /** Every `_cycle/plan_usage_changed` this client was sent, in order. */
     planUsage,
     terminal,

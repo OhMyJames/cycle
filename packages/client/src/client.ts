@@ -6,10 +6,19 @@ import {
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
+  AGENT_AUTH_COMPLETED,
   AGENT_SETUP_CHANGED,
+  type AgentAuthCompleted,
+  AgentAuthCompletedSchema,
+  type AgentAuthMode,
+  type AgentAuthStartResult,
   type AgentRuntimePatchValue,
   AgentSetupChangedSchema,
   type AgentSetupSnapshot,
+  agentAuthCancel,
+  agentAuthLogout,
+  agentAuthStart,
+  agentAuthSubmit,
   agentDefaultsRead,
   agentDefaultsSet,
   agentSetupRead,
@@ -176,6 +185,8 @@ export type ClientEvents = {
   defaultsChanged?: (agent: string) => void;
   /** An agent's setup snapshot changed (runtime settings saved, sign-in, or sign-out). */
   agentSetupChanged?: (agent: string, revision?: number) => void;
+  /** An in-app auth flow initiated by THIS connection finished (docs/protocol.md §16). */
+  agentAuthCompleted?: (completed: AgentAuthCompleted) => void;
   /** An agent told how much of its account's plan limits is used (docs/protocol.md §8 "套餐用量"). */
   planUsage?: (agent: string, usage: PlanUsage) => void;
   /**
@@ -315,6 +326,29 @@ export class CycleClient {
     expectedRevision: number,
   ): Promise<ResultOf<typeof agentSetupSetRuntime>> {
     return this.#call(agentSetupSetRuntime, { agent, patch, expectedRevision });
+  }
+
+  /** Starts an in-app subscription sign-in flow for an agent (docs/protocol.md §16). */
+  async startAgentAuth(agent: string, mode?: AgentAuthMode): Promise<AgentAuthStartResult> {
+    return this.#call(agentAuthStart, {
+      agent,
+      ...(mode !== undefined ? { mode } : {}),
+    });
+  }
+
+  /** Submits a short-lived one-time hosted-callback authorization code for a `"code"` mode flow. */
+  async submitAgentAuth(flowId: string, code: string): Promise<{ ok: true }> {
+    return this.#call(agentAuthSubmit, { flowId, code });
+  }
+
+  /** Cancels an active in-app sign-in flow initiated by this connection. */
+  async cancelAgentAuth(flowId: string): Promise<void> {
+    await this.#call(agentAuthCancel, { flowId });
+  }
+
+  /** Signs out an agent's subscription on the daemon and recycles idle/warm processes. */
+  async logoutAgent(agent: string): Promise<void> {
+    await this.#call(agentAuthLogout, { agent });
   }
 
   /**
@@ -867,6 +901,16 @@ export class CycleClient {
           const told = AgentSetupChangedSchema.safeParse(params);
           if (told.success) {
             this.#events.agentSetupChanged?.(told.data.agent, told.data.revision);
+          }
+        },
+      )
+      .onNotification(
+        AGENT_AUTH_COMPLETED,
+        (p: unknown) => p,
+        ({ params }) => {
+          const told = AgentAuthCompletedSchema.safeParse(params);
+          if (told.success) {
+            this.#events.agentAuthCompleted?.(told.data);
           }
         },
       )

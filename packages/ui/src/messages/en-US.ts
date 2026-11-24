@@ -1021,6 +1021,49 @@ export const enUS = {
   "settings.harness.runtime.field.agy.telemetry.title": "Telemetry",
   "settings.harness.runtime.field.agy.telemetry.description":
     "Send usage telemetry to Google Antigravity. When disabled, Cycle passes --disable-telemetry.",
+  "settings.harness.account.signIn": "Sign in",
+  "settings.harness.account.signOut": "Sign out",
+  "settings.harness.auth.title": "Sign in to {agent}",
+  "settings.harness.auth.starting": "Starting sign-in on {environment}…",
+  "settings.harness.auth.openHost":
+    "Continue in your browser at {host}. Cycle will never open the link until you click below.",
+  "settings.harness.auth.openBrowser": "Open in browser",
+  "settings.harness.auth.waitingBrowser": "Waiting for browser sign-in to finish…",
+  "settings.harness.auth.deviceCodeLabel": "One-time code",
+  "settings.harness.auth.copyCode": "Copy code",
+  "settings.harness.auth.waitingDevice": "Enter the code at {host}, then return here.",
+  "settings.harness.auth.codeLabel": "Authorization code",
+  "settings.harness.auth.codePlaceholder": "Paste the code from your browser",
+  "settings.harness.auth.codeHint":
+    "Sent once directly to the sign-in process and never saved or logged.",
+  "settings.harness.auth.submit": "Complete sign-in",
+  "settings.harness.auth.submitting": "Completing…",
+  "settings.harness.auth.retry": "Try again",
+  "settings.harness.auth.fallbackLabel": "Or sign in from a terminal on {environment}:",
+  "settings.harness.auth.signOutTitle": "Sign out of {agent}?",
+  "settings.harness.auth.signOutDescription":
+    "Signs out {agent} on {environment}. Running turns keep going; idle sessions restart on the next message, and saved history stays.",
+  "settings.harness.auth.error.binary_unavailable": "The agent binary is unavailable on this host.",
+  "settings.harness.auth.error.auth_in_progress":
+    "Another sign-in or sign-out is already in progress for this agent.",
+  "settings.harness.auth.error.parse_failed":
+    "Could not read the sign-in URL from the agent CLI. Use the terminal command below instead.",
+  "settings.harness.auth.error.invalid_code":
+    "The authorization code was rejected. Start sign-in again or use the terminal command below.",
+  "settings.harness.auth.error.expired": "Sign-in timed out after 10 minutes. Start sign-in again.",
+  "settings.harness.auth.error.cancelled": "Sign-in was cancelled.",
+  "settings.harness.auth.error.process_failed":
+    "The sign-in process exited unexpectedly. Try again or use the terminal command below.",
+  "settings.harness.auth.error.timeout":
+    "Sign-in timed out. Try again or use the terminal command below.",
+  "settings.harness.auth.error.unsupported_mode":
+    "In-app sign-in is not available for this environment. Use the terminal command below.",
+  "settings.harness.auth.error.untrusted_url":
+    "Blocked an unrecognized sign-in domain. Use the terminal command below instead.",
+  "settings.harness.auth.error.disconnected":
+    "Connection was interrupted. Start sign-in again, or run the command below.",
+  "settings.harness.auth.error.failed":
+    "Sign-in could not be completed. Try again or use the terminal command below.",
   "settings.language": "Language",
   "settings.language.description":
     "The language of the interface. What agents write stays in their own words.",

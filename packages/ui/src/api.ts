@@ -183,6 +183,45 @@ export type AgentAuthStatus = {
   loginCommand: string;
 };
 
+export type AgentAuthProblemReason =
+  | "binary_unavailable"
+  | "auth_in_progress"
+  | "parse_failed"
+  | "invalid_code"
+  | "expired"
+  | "cancelled"
+  | "process_failed"
+  | "timeout"
+  | "unsupported_mode"
+  | "untrusted_url"
+  | "flow_not_found"
+  | "flow_forbidden"
+  | "flow_consumed"
+  | "flow_not_active"
+  | "disconnected"
+  | "failed";
+
+export type AgentAuthStartAnswer =
+  | {
+      started: true;
+      flowId: string;
+      mode: AgentAuthMode;
+      expiresAt: number;
+      /** Verified hostname from the desktop's hardcoded allowlist, displayed in the confirmation dialog. */
+      host?: string | undefined;
+      /** True when the main process holds a verified URL ready to open on explicit user click. */
+      hasUrl: boolean;
+      userCode?: string | undefined;
+    }
+  | {
+      started: false;
+      reason: AgentAuthProblemReason;
+    };
+
+export type AgentAuthSubmitAnswer = { ok: true } | { ok: false; reason: AgentAuthProblemReason };
+
+export type AgentAuthLogoutAnswer = { ok: true } | { ok: false; reason: AgentAuthProblemReason };
+
 export type AgentRuntimeValue = boolean | number | string;
 export type AgentRuntimePatchValue = AgentRuntimeValue | null;
 export type AgentRuntimeSaveAnswer =
@@ -594,6 +633,15 @@ export type AppEvent =
   | { type: "agent-defaults"; environmentId: string; agent: string }
   /** An agent's setup snapshot changed (runtime settings saved, login, or logout). */
   | { type: "agent-setup-changed"; environmentId: string; agent: string; revision?: number }
+  /** An in-app subscription sign-in flow initiated by this app finished or was interrupted. */
+  | {
+      type: "agent-auth-completed";
+      environmentId: string;
+      flowId: string;
+      agent: string;
+      ok: boolean;
+      reason?: AgentAuthProblemReason | undefined;
+    }
   /** An agent on that environment told how much of its account's plan limits is used. */
   | { type: "plan-usage"; environmentId: string; agent: string; usage: PlanUsage }
   /** The environment's connectors changed, here or elsewhere: read them again. */
@@ -800,6 +848,20 @@ export type AppApi = {
   ): Promise<AgentRuntimeSaveAnswer>;
   /** Shows the local daemon's `config.json` in the system file manager; returns false on remote environments. */
   revealDaemonConfig(environmentId: string): Promise<boolean>;
+  /** Starts an in-app subscription sign-in flow; chooses mode by transport and validates URLs against hardcoded allowlist. */
+  startAgentAuth(environmentId: string, agent: string): Promise<AgentAuthStartAnswer>;
+  /** Opens the main-process-verified auth URL for `flowId` in the system browser after explicit user click. */
+  openAgentAuthUrl(environmentId: string, flowId: string): Promise<boolean>;
+  /** Submits a one-time hosted-callback authorization code for a `"code"` mode flow (memory-only). */
+  submitAgentAuth(
+    environmentId: string,
+    flowId: string,
+    code: string,
+  ): Promise<AgentAuthSubmitAnswer>;
+  /** Cancels an active in-app sign-in flow. */
+  cancelAgentAuth(environmentId: string, flowId: string): Promise<void>;
+  /** Signs out an agent's subscription on the daemon (the UI asks the person first). */
+  logoutAgent(environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer>;
 
   /** The environment's connectors. Fails when it is not connected or its daemon is too old. */
   listConnectors(environmentId: string): Promise<ConnectorInfo[]>;
@@ -977,6 +1039,11 @@ export const API_METHODS = [
   "readAgentSetup",
   "setAgentRuntimeSettings",
   "revealDaemonConfig",
+  "startAgentAuth",
+  "openAgentAuthUrl",
+  "submitAgentAuth",
+  "cancelAgentAuth",
+  "logoutAgent",
   "listConnectors",
   "addConnector",
   "updateConnector",

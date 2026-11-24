@@ -133,6 +133,20 @@ export const EVENTS = {
   agent_defaults_saved: o({ agent }),
   /** Hot-reloadable runtime settings saved for an agent (CYCL-232). Never sends setting keys or values. */
   agent_runtime_settings_saved: o({ agent, environment: environment }),
+  /** In-app subscription sign-in started for an agent (CYCL-233). Never sends URLs, accounts, or codes. */
+  agent_auth_started: o({
+    agent,
+    environment: environment,
+    mode: z.enum(["browser", "code", "device_code"]),
+  }),
+  /** In-app subscription sign-in finished for an agent (CYCL-233). Never sends URLs, accounts, or error text. */
+  agent_auth_completed: o({
+    agent,
+    environment: environment,
+    result: z.enum(["ok", "failed", "cancelled", "disconnected"]),
+  }),
+  /** In-app sign-out completed for an agent (CYCL-233). */
+  agent_signed_out: o({ agent, environment: environment, ok: z.boolean() }),
   /** A session that was working changed to something the person is told of: it finished, it needs them, or it stopped. */
   session_attention: o({ kind: z.enum(["finished", "needs-you", "stopped"]) }),
 

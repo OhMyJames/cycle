@@ -1657,3 +1657,169 @@ test("saving runtime settings reports behavioral analytics without config values
   expect(JSON.stringify(tracked)).not.toContain("warmStart");
   expect(JSON.stringify(tracked)).not.toContain("beta");
 });
+
+test("ConnectionManager validates auth URLs against hardcoded allowlist, never silently opens browser, handles disconnect, and tracks behavioral-only analytics", async () => {
+  const fake = fakeAgent();
+  let nextUrl = "https://evil.phishing.test/oauth?secret=bad";
+  let nextVerifyUrl: string | undefined;
+  let cancels = 0;
+  let finishFlow: ((outcome: { ok: true } | { ok: false; reason: "expired" }) => void) | undefined;
+
+  const agent: Parameters<typeof Daemon.start>[0]["agents"][number] = {
+    ...fake.definition,
+    id: "claude",
+    name: "Claude",
+    setup: {
+      probeBinary: () => ({ source: "path", path: "/usr/bin/claude", version: "2.1.0" }),
+      readAuth: async () => ({ state: "signed_out", method: "none" }),
+      signInModes: () => [{ mode: "code", requiresLocalLoopback: false }],
+      canSignOut: () => true,
+      canRefreshUsage: false,
+      loginCommand: "cycle login claude",
+      diagnostics: () => ({
+        dataDir: join(dir, "claude"),
+        customDataDir: false,
+        allowEnv: [],
+        envNames: [],
+      }),
+      runtimeSnapshot: () => ({
+        schemaVersion: 1,
+        schema: { type: "object", properties: {} },
+        values: {},
+        overrides: [],
+        revision: 0,
+      }),
+      authDriver: {
+        start: async () => {
+          const completed = new Promise<{ ok: true } | { ok: false; reason: "expired" }>(
+            (resolve) => {
+              finishFlow = resolve;
+            },
+          );
+          return {
+            authorizationUrl: nextUrl,
+            ...(nextVerifyUrl !== undefined ? { verificationUrl: nextVerifyUrl } : {}),
+            completed,
+            submit: async () => ({ ok: true }),
+            cancel: () => {
+              cancels++;
+            },
+          };
+        },
+        logout: async () => {},
+      },
+    },
+  };
+
+  const daemon = await Daemon.start({ dataDir: join(dir, "daemon-auth"), agents: [agent] });
+  const socket = join(dir, "auth.sock");
+  const server = await listenUnix({
+    path: socket,
+    onConnection: ({ stream }) => void daemon.accept(stream),
+  });
+  cleanup.push(async () => {
+    server.close();
+    await daemon.close();
+  });
+
+  const openedUrls: string[] = [];
+  const tracked: [string, unknown][] = [];
+  const events: AppEvent[] = [];
+  const channels: Channel[] = [];
+  const m = new ConnectionManager({
+    settings: fileSettings(join(dir, "settings-auth.json")),
+    channelFor: () => async () => {
+      const ch = await connectUnix(socket);
+      channels.push(ch);
+      return ch;
+    },
+    emit: (event) => events.push(event),
+    openBrowser: async (url) => {
+      openedUrls.push(url);
+    },
+    track: (name, props) => {
+      if (
+        name === "agent_auth_started" ||
+        name === "agent_auth_completed" ||
+        name === "agent_signed_out"
+      ) {
+        tracked.push([name, props]);
+      }
+    },
+    backoff: { first: 10, max: 50 },
+  });
+  await m.init();
+  cleanup.push(() => m.close());
+  await m.connect("local");
+
+  // 1. Untrusted authorizationUrl is blocked, daemon flow cancelled, openBrowser never called.
+  const blocked = await m.startAgentAuth("local", "claude");
+  expect(blocked).toEqual({ started: false, reason: "untrusted_url" });
+  await until(() => cancels === 1, "untrusted flow cancelled on daemon");
+  expect(openedUrls).toEqual([]);
+
+  // 2. Valid authorizationUrl + untrusted verificationUrl is ALSO blocked!
+  nextUrl = "https://claude.ai/oauth/authorize?state=ok";
+  nextVerifyUrl = "https://evil.example/device";
+  const blockedVerify = await m.startAgentAuth("local", "claude");
+  expect(blockedVerify).toEqual({ started: false, reason: "untrusted_url" });
+  await until(() => cancels === 2, "untrusted verificationUrl flow cancelled");
+  expect(openedUrls).toEqual([]);
+
+  // 3. Trusted URL starts cleanly WITHOUT silently calling openBrowser; explicit click opens it.
+  nextVerifyUrl = undefined;
+  const started = await m.startAgentAuth("local", "claude");
+  expect(started).toMatchObject({
+    started: true,
+    mode: "code",
+    host: "claude.ai",
+    hasUrl: true,
+  });
+  expect(openedUrls).toEqual([]);
+  if (!started.started) throw new Error("expected started");
+
+  expect(await m.openAgentAuthUrl("local", started.flowId)).toBe(true);
+  expect(openedUrls).toEqual(["https://claude.ai/oauth/authorize?state=ok"]);
+
+  const secretCode = "SUPER-SECRET-AUTH-CODE-777";
+  expect(await m.submitAgentAuth("local", started.flowId, secretCode)).toEqual({ ok: true });
+  finishFlow?.({ ok: true });
+  await until(
+    () => of(events, "agent-auth-completed").some((e) => e.flowId === started.flowId && e.ok),
+    "agent-auth-completed event",
+  );
+
+  // 4. Disconnect mid-flow emits disconnected completion event + analytics.
+  const started2 = await m.startAgentAuth("local", "claude");
+  if (!started2.started) throw new Error("expected started2");
+  for (const ch of channels.splice(0)) ch.close();
+  await until(
+    () =>
+      of(events, "agent-auth-completed").some(
+        (e) => e.flowId === started2.flowId && e.reason === "disconnected",
+      ),
+    "disconnected auth event",
+  );
+
+  // Wait for reconnect and test Sign out analytics.
+  await until(
+    () => of(events, "environment-status").at(-1)?.state === "connected",
+    "manager reconnected",
+  );
+  expect(await m.logoutAgent("local", "claude")).toEqual({ ok: true });
+
+  // Verify behavioral-only analytics: zero codes, URLs, accounts, or error strings.
+  expect(tracked).toEqual([
+    ["agent_auth_completed", { agent: "claude", environment: "local", result: "failed" }],
+    ["agent_auth_completed", { agent: "claude", environment: "local", result: "failed" }],
+    ["agent_auth_started", { agent: "claude", environment: "local", mode: "code" }],
+    ["agent_auth_completed", { agent: "claude", environment: "local", result: "ok" }],
+    ["agent_auth_started", { agent: "claude", environment: "local", mode: "code" }],
+    ["agent_auth_completed", { agent: "claude", environment: "local", result: "disconnected" }],
+    ["agent_signed_out", { agent: "claude", environment: "local", ok: true }],
+  ]);
+  const serialized = JSON.stringify(tracked);
+  expect(serialized).not.toContain(secretCode);
+  expect(serialized).not.toContain("claude.ai");
+  expect(serialized).not.toContain("phishing");
+});

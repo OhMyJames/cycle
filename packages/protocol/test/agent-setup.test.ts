@@ -1,12 +1,18 @@
 import { expect, test } from "bun:test";
 import {
   ACP_ERROR_CODES,
+  AGENT_AUTH_COMPLETED,
   AGENT_SETUP_CHANGED,
+  AgentAuthCompletedSchema,
   AgentAuthFailureReasonSchema,
   AgentSetupChangedSchema,
   AgentSetupInvalidParamReasonSchema,
   type AgentSetupSnapshot,
   AgentSetupSnapshotSchema,
+  agentAuthCancel,
+  agentAuthLogout,
+  agentAuthStart,
+  agentAuthSubmit,
   agentSetupRead,
   agentSetupSetRuntime,
   CapabilitiesSchema,
@@ -263,4 +269,51 @@ test("agentSetupSetRuntime supports partial patch, null unset, and per-agent rev
     }).success,
   ).toBe(false);
   expect(AgentSetupChangedSchema.safeParse({ agent: "claude", revision: 2 }).success).toBe(true);
+});
+
+test("agent auth methods and notification use _cycle/ namespace and validate shapes", () => {
+  expect(agentAuthStart.name).toBe("_cycle/agent_auth/start");
+  expect(agentAuthSubmit.name).toBe("_cycle/agent_auth/submit");
+  expect(agentAuthCancel.name).toBe("_cycle/agent_auth/cancel");
+  expect(agentAuthLogout.name).toBe("_cycle/agent_auth/logout");
+  expect(AGENT_AUTH_COMPLETED).toBe("_cycle/agent_auth_completed");
+
+  expect(agentAuthStart.params.safeParse({ agent: "codex", mode: "device_code" }).success).toBe(
+    true,
+  );
+  expect(agentAuthStart.params.safeParse({ agent: "codex", mode: "api_key" }).success).toBe(false);
+  expect(
+    agentAuthStart.result.safeParse({
+      flowId: "f-1",
+      mode: "device_code",
+      expiresAt: 1_800_000_000_000,
+      verificationUrl: "https://auth.openai.com/codex/device",
+      userCode: "ABCD-1234",
+    }).success,
+  ).toBe(true);
+
+  expect(agentAuthSubmit.params.safeParse({ flowId: "f-1", code: "abc" }).success).toBe(true);
+  expect(agentAuthSubmit.params.safeParse({ flowId: "f-1", code: "" }).success).toBe(false);
+  expect(agentAuthCancel.params.safeParse({ flowId: "f-1" }).success).toBe(true);
+  expect(agentAuthLogout.params.safeParse({ agent: "claude" }).success).toBe(true);
+
+  expect(
+    AgentAuthCompletedSchema.safeParse({ flowId: "f-1", agent: "claude", ok: true }).success,
+  ).toBe(true);
+  expect(
+    AgentAuthCompletedSchema.safeParse({
+      flowId: "f-1",
+      agent: "claude",
+      ok: false,
+      reason: "expired",
+    }).success,
+  ).toBe(true);
+  expect(
+    AgentAuthCompletedSchema.safeParse({
+      flowId: "f-1",
+      agent: "claude",
+      ok: false,
+      reason: "raw stderr text",
+    }).success,
+  ).toBe(false);
 });

@@ -4,7 +4,9 @@ import { AGY_MIN_VERSION, isVersionSupported } from "@cycle/harness-agy";
 import { CODEX_FIXED_ARGS, planWindowsOf, type RateLimitSnapshot } from "@cycle/harness-codex";
 import {
   type AgentAccountInfo,
+  type AgentAuthFailureReason,
   type AgentAuthMethod,
+  type AgentAuthMode,
   type AgentAuthState,
   type AgentAuthUnknownReason,
   type AgentBinarySource,
@@ -49,6 +51,37 @@ export type AgentEnvironmentDetails = {
   envNames: string[];
 };
 
+/** Structured error thrown by an agent auth driver; maps cleanly to `-32021` + fixed `data.reason`. */
+export class AgentAuthDriverError extends Error {
+  readonly reason: AgentAuthFailureReason;
+  constructor(reason: AgentAuthFailureReason, message?: string) {
+    super(message ?? `Agent auth failed: ${reason}`);
+    this.name = "AgentAuthDriverError";
+    this.reason = reason;
+  }
+}
+
+export type AgentAuthFlowOutcome = { ok: true } | { ok: false; reason: AgentAuthFailureReason };
+
+export type AgentAuthFlowHandle = {
+  authorizationUrl?: string | undefined;
+  verificationUrl?: string | undefined;
+  userCode?: string | undefined;
+  /** Resolves when the underlying login process/RPC completes or fails. */
+  completed: Promise<AgentAuthFlowOutcome>;
+  /** Submit a short-lived one-time code for `"code"` mode (memory-only, never persisted/logged). */
+  submit?: (code: string) => Promise<AgentAuthFlowOutcome>;
+  /** Terminate subprocess / cancel remote login cleanly. Must be idempotent and never throw. */
+  cancel: () => Promise<void> | void;
+};
+
+export type AgentAuthDriver = {
+  start: (mode: AgentAuthMode) => Promise<AgentAuthFlowHandle>;
+  logout?: () => Promise<void>;
+  /** Clear any short-TTL in-memory auth probe cache (e.g. agy 45s cache). */
+  invalidateCache?: () => void;
+};
+
 export type AgentSetupProvider = {
   probeBinary: () => Promise<AgentBinaryStatus> | AgentBinaryStatus;
   readAuth: (options?: {
@@ -63,6 +96,8 @@ export type AgentSetupProvider = {
   /** Closed v1 runtime property schema enforced by the daemon on `_cycle/agent_setup/set_runtime`. */
   runtimeSchema?: Record<string, RuntimeProperty>;
   runtimeSnapshot: (settings?: AgentSettings) => AgentRuntimeSnapshot;
+  /** Optional interactive login/logout driver (Phase 3). */
+  authDriver?: AgentAuthDriver;
 };
 
 export const CLAUDE_RUNTIME_DEFAULTS = {

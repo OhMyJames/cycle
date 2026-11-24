@@ -962,6 +962,26 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - **`_cycle/agent_setup_changed`**(daemon → 客户端通知):
   - 载荷:`{ agent, revision? }`,在运行时配置保存、登录完成或登出后广播给所有已连接客户端,提示刷新快照。
 
+### 订阅登录与登出(`_cycle/agent_auth/*` 与 `_cycle/agent_auth_completed`)
+
+用于桌面端在界面内发起各 agent 的订阅登录与登出,同时保证长期凭证不经过 L1、单 agent 操作串行互斥、登录流程绑定发起连接且断线即清理:
+
+| 方法 / 通知                   | 方向              | 参数 / 载荷                                              | 响应                                                                          |
+| ----------------------------- | ----------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `_cycle/agent_auth/start`     | C → D             | `{ agent, mode?: "browser" \| "code" \| "device_code" }` | `{ flowId, mode, expiresAt, authorizationUrl?, verificationUrl?, userCode? }` |
+| `_cycle/agent_auth/submit`    | C → D             | `{ flowId, code }`                                       | `{ ok: true }`                                                                |
+| `_cycle/agent_auth/cancel`    | C → D             | `{ flowId }`                                             | `{}`                                                                          |
+| `_cycle/agent_auth/logout`    | C → D             | `{ agent }`                                              | `{}`                                                                          |
+| `_cycle/agent_auth_completed` | D → C(仅发起连接) | `{ flowId, agent, ok, reason? }`                         | —                                                                             |
+
+- **模式选择与校验**:客户端按本地/远程传输从 `auth.signInModes` 过滤并选择 `mode`(远程环境跳过 `requiresLocalLoopback: true`);daemon 二次校验 `mode` 必须属于该 agent 当前允许的 `signInModes`,否则返回 `-32602`(`data.reason: "unsupported_mode"`)。若 agent 二进制不可用,返回 `-32021`(`binary_unavailable`)。
+- **单 agent 互斥**:同一 agent 同时最多运行 1 个活跃登录流或登出操作;并发调用返回 `-32021`(`auth_in_progress`),不强杀已有流程。
+- **`flowId` 连接绑定与单次消费**:`flowId`(随机 UUID)绑定 `(connectionId, agent, flowId)`,仅发起连接可调用 `submit` / `cancel`(其他连接返回 `-32602` `flow_forbidden`)。`submit` 仅适用于 `"code"` 模式,状态机单向流转 `pending → submitting | cancelled | expired → completed`,原子单次消费(重复提交返回 `-32602` `flow_consumed`,与 `cancel` 竞争失败返回 `-32602` `flow_not_active`)。
+- **一次性授权码边界**:`_cycle/agent_auth/submit` 中的 `code` 仅驻留内存并一次性送入登录子进程 stdin,绝不落盘、绝不进 session JSONL / `daemon.log` / 错误对象。
+- **TTL 与断线/退出清理**:每个登录流固定 10 分钟 TTL(`expiresAt` 为毫秒时间戳)。发起连接断开、TTL 到期或 daemon 关闭时,daemon 立即终止对应登录子进程,不留孤儿进程。
+- **完成通知范围**:`_cycle/agent_auth_completed` **仅推送给发起该流程的连接**,用于更新该客户端的登录弹窗态;全局状态刷新统一通过 `_cycle/agent_setup_changed` 广播给所有客户端。
+- **登出与会话生命周期**:`_cycle/agent_auth/logout` 不中断运行中 turn 或后台任务;立即终止该 agent 未发过 prompt 的预热进程,将已发言的运行中 session 标为 `stale` 并复用空闲重启路径(`#restartIfStale`),清空 daemon 内存中该 agent 的 `planUsage`、观测档位时间与只读探测缓存,并广播 `_cycle/agent_setup_changed`。
+
 ### 错误约定
 
 本节所有错误沿用数字 `code` + 固定词 `data.reason`,**绝不透传原始 stderr、URL、路径或授权码**:

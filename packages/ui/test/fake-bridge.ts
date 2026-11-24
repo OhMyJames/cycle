@@ -345,6 +345,14 @@ export const fakeBridge = (
       },
     ),
     revealDaemonConfig: record("revealDaemonConfig", async () => true),
+    startAgentAuth: record("startAgentAuth", async () => ({
+      started: false as const,
+      reason: "unsupported_mode" as const,
+    })),
+    openAgentAuthUrl: record("openAgentAuthUrl", async () => true),
+    submitAgentAuth: record("submitAgentAuth", async () => ({ ok: true as const })),
+    cancelAgentAuth: record("cancelAgentAuth", async () => {}),
+    logoutAgent: record("logoutAgent", async () => ({ ok: true as const })),
     listConnectors: record("listConnectors", async () => connectors.map((c) => ({ ...c }))),
     addConnector: record("addConnector", async (_environment: string, draft) => {
       const connector: ConnectorInfo = {

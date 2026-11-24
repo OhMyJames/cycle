@@ -283,3 +283,61 @@ export const AgentAuthFailureReasonSchema = z.enum([
   "timeout",
 ]);
 export type AgentAuthFailureReason = z.infer<typeof AgentAuthFailureReasonSchema>;
+
+export const AgentAuthStartResultSchema = z.object({
+  flowId: z.string().min(1),
+  mode: AgentAuthModeSchema,
+  /** Epoch milliseconds when this flow expires (fixed 10-minute TTL). */
+  expiresAt: z.number().int().nonnegative(),
+  authorizationUrl: z.string().min(1).optional(),
+  verificationUrl: z.string().min(1).optional(),
+  userCode: z.string().min(1).optional(),
+});
+export type AgentAuthStartResult = z.infer<typeof AgentAuthStartResultSchema>;
+
+export const agentAuthStart = cycleMethod(
+  "_cycle/agent_auth/start",
+  z.object({
+    agent: z.string().min(1),
+    mode: AgentAuthModeSchema.optional(),
+  }),
+  AgentAuthStartResultSchema,
+);
+
+export const agentAuthSubmit = cycleMethod(
+  "_cycle/agent_auth/submit",
+  z.object({
+    flowId: z.string().min(1),
+    /** Short-lived one-time hosted-callback authorization code; memory-only, never logged or persisted. */
+    code: z.string().min(1),
+  }),
+  z.object({
+    ok: z.literal(true),
+  }),
+);
+
+export const agentAuthCancel = cycleMethod(
+  "_cycle/agent_auth/cancel",
+  z.object({
+    flowId: z.string().min(1),
+  }),
+  z.object({}),
+);
+
+export const agentAuthLogout = cycleMethod(
+  "_cycle/agent_auth/logout",
+  z.object({
+    agent: z.string().min(1),
+  }),
+  z.object({}),
+);
+
+/** Sent ONLY to the connection that initiated the auth flow (docs/protocol.md §16). */
+export const AGENT_AUTH_COMPLETED = "_cycle/agent_auth_completed";
+export const AgentAuthCompletedSchema = z.object({
+  flowId: z.string().min(1),
+  agent: z.string().min(1),
+  ok: z.boolean(),
+  reason: AgentAuthFailureReasonSchema.optional(),
+});
+export type AgentAuthCompleted = z.infer<typeof AgentAuthCompletedSchema>;

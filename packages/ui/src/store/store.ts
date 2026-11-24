@@ -163,6 +163,8 @@ export type AppState = {
   defaultsRevision: Record<string, number>;
   /** Counts `_cycle/agent_setup_changed` notifications per `${environmentId}:${agent}` so Harness settings auto-refresh. */
   agentSetupRevision: Record<string, number>;
+  /** Latest `_cycle/agent_auth_completed` outcome per `${environmentId}:${flowId}` for active sign-in modals. */
+  agentAuthCompletions: Record<string, { ok: boolean; reason?: string | undefined }>;
   /**
    * Each environment's connectors as last read, or why they could not be. Only for an environment the page has asked
    * about; a change there (here or elsewhere) reads them again.
@@ -223,6 +225,7 @@ const initial = (): AppState => ({
   agents: {},
   defaultsRevision: {},
   agentSetupRevision: {},
+  agentAuthCompletions: {},
   connectors: {},
   plugins: {},
   planUsage: {},
@@ -479,6 +482,25 @@ export class AppStore {
             agentSetupRevision: {
               ...s.agentSetupRevision,
               [key]: (s.agentSetupRevision[key] ?? 0) + 1,
+            },
+          };
+        });
+        return;
+      case "agent-auth-completed":
+        this.#set((s) => {
+          const flowKey = `${event.environmentId}:${event.flowId}`;
+          const setupKey = `${event.environmentId}:${event.agent}`;
+          return {
+            agentAuthCompletions: {
+              ...s.agentAuthCompletions,
+              [flowKey]: {
+                ok: event.ok,
+                ...(event.reason !== undefined ? { reason: event.reason } : {}),
+              },
+            },
+            agentSetupRevision: {
+              ...s.agentSetupRevision,
+              [setupKey]: (s.agentSetupRevision[setupKey] ?? 0) + 1,
             },
           };
         });
@@ -1552,6 +1574,21 @@ export class AppStore {
   /** Shows the local daemon's `config.json` in the system file manager; false on remote environments. */
   revealDaemonConfig = (environmentId: string): Promise<boolean> =>
     this.#bridge.revealDaemonConfig(environmentId).catch(() => false);
+
+  startAgentAuth = (environmentId: string, agent: string) =>
+    this.#bridge.startAgentAuth(environmentId, agent);
+
+  openAgentAuthUrl = (environmentId: string, flowId: string): Promise<boolean> =>
+    this.#bridge.openAgentAuthUrl(environmentId, flowId).catch(() => false);
+
+  submitAgentAuth = (environmentId: string, flowId: string, code: string) =>
+    this.#bridge.submitAgentAuth(environmentId, flowId, code);
+
+  cancelAgentAuth = (environmentId: string, flowId: string): Promise<void> =>
+    this.#bridge.cancelAgentAuth(environmentId, flowId).catch(() => undefined);
+
+  logoutAgent = (environmentId: string, agent: string) =>
+    this.#bridge.logoutAgent(environmentId, agent);
 
   // ---- connectors: the page shows what went wrong itself, next to what it was about ----
 

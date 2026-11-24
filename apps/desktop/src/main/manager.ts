@@ -18,10 +18,15 @@ import {
   type SessionRow,
 } from "@cycle/client";
 import {
+  type AgentAuthLogoutAnswer,
+  type AgentAuthProblemReason,
+  type AgentAuthStartAnswer,
+  type AgentAuthSubmitAnswer,
   type AgentInfo,
   type AgentRuntimePatchValue,
   type AgentRuntimeSaveAnswer,
   type AgentSetupSnapshot,
+  type AgentSignInMode,
   type AppApi,
   type AppEvent,
   type Attention,
@@ -58,6 +63,7 @@ import {
   type WorkspaceStatus,
 } from "@cycle/ui";
 import { type DaemonStop, daemonTooOld, daemonUpgradeCommand } from "../shared/release.ts";
+import { selectAgentSignInMode, validateAgentAuthUrl } from "./agent-auth-guard.ts";
 import { authorizeInBrowser, type OpenBrowser } from "./connector-auth.ts";
 import { environmentOf, LOCAL_ENVIRONMENT, type Settings } from "./settings.ts";
 
@@ -257,6 +263,33 @@ const sessionSummary = (environmentId: string, row: SessionRow): SessionSummary 
   };
 };
 
+const AUTH_PROBLEM_REASONS = new Set<AgentAuthProblemReason>([
+  "binary_unavailable",
+  "auth_in_progress",
+  "parse_failed",
+  "invalid_code",
+  "expired",
+  "cancelled",
+  "process_failed",
+  "timeout",
+  "unsupported_mode",
+  "untrusted_url",
+  "flow_not_found",
+  "flow_forbidden",
+  "flow_consumed",
+  "flow_not_active",
+  "disconnected",
+  "failed",
+]);
+
+const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
+  const reason = (error as { data?: { reason?: unknown } } | null)?.data?.reason;
+  if (typeof reason === "string" && AUTH_PROBLEM_REASONS.has(reason as AgentAuthProblemReason)) {
+    return reason as AgentAuthProblemReason;
+  }
+  return "failed";
+};
+
 /**
  * The main process's half of the app: the connections to daemons, and the state of every session
  * being watched. It is the whole of what the renderer can ask for (`AppApi`) and knows nothing of
@@ -294,6 +327,15 @@ export class ConnectionManager
   readonly #connections = new Map<string, Connection>();
   /** The local daemon's `config.json` path last reported by `readAgentSetup`, for `revealDaemonConfig`. */
   readonly #localConfigPath = new Map<string, string>();
+  /** Latest daemon-declared `signInModes` per `${environmentId}:${agent}`, for transport-aware mode selection. */
+  readonly #signInModes = new Map<string, AgentSignInMode[]>();
+  /** Active in-app agent auth flows initiated by this desktop instance (keyed by `${environmentId}:${flowId}`). */
+  readonly #activeAuthFlows = new Map<
+    string,
+    { environmentId: string; agent: string; flowId: string; url?: string; host?: string }
+  >();
+  /** Flow IDs cancelled by desktop itself due to untrusted URL, so the daemon's cancel notification isn't double-counted. */
+  readonly #rejectedAuthFlows = new Set<string>();
   /** The last list read from each environment, kept when its connection goes: what the interface greys out. */
   readonly #lastSessions = new Map<string, SessionSummary[]>();
   /** Why the last attempt to connect to an environment failed, for a renderer that asks after the event went by. */
@@ -456,6 +498,29 @@ export class ConnectionManager
             agent,
             ...(revision !== undefined ? { revision } : {}),
           }),
+        agentAuthCompleted: (completed) => {
+          const flowKey = `${environmentId}:${completed.flowId}`;
+          if (this.#rejectedAuthFlows.delete(flowKey)) return;
+          this.#activeAuthFlows.delete(flowKey);
+          const result = completed.ok
+            ? "ok"
+            : completed.reason === "cancelled"
+              ? "cancelled"
+              : "failed";
+          this.#track("agent_auth_completed", {
+            agent: agentOf(completed.agent),
+            environment: this.#kindOf(environmentId),
+            result,
+          });
+          this.#options.emit({
+            type: "agent-auth-completed",
+            environmentId,
+            flowId: completed.flowId,
+            agent: completed.agent,
+            ok: completed.ok,
+            ...(completed.reason !== undefined ? { reason: completed.reason } : {}),
+          });
+        },
         connectorsChanged: () => this.#options.emit({ type: "connectors", environmentId }),
         pluginsChanged: (agentId) =>
           this.#options.emit({ type: "plugins", environmentId, agentId }),
@@ -514,6 +579,9 @@ export class ConnectionManager
           if (state === "reconnecting") {
             for (const watched of connection.watched.values())
               for (const pending of watched.pending.values()) pending.stale = true;
+          }
+          if (state === "reconnecting" || state === "closed") {
+            this.#failAuthFlowsOnDisconnect(environmentId);
           }
           if (state === "connected" && was === "reconnecting") {
             void this.#refreshSessions(environmentId, connection, true).catch(() => undefined);
@@ -1328,6 +1396,7 @@ export class ConnectionManager
     options?: { refreshUsage?: boolean; forceRefresh?: boolean },
   ): Promise<AgentSetupSnapshot> {
     const snapshot = await this.#connection(environmentId).client.readAgentSetup(agent, options);
+    this.#signInModes.set(`${environmentId}:${agent}`, snapshot.auth.signInModes);
     if (this.#kindOf(environmentId) === "local") {
       this.#localConfigPath.set(environmentId, snapshot.environment.configFile.path);
     }
@@ -1397,6 +1466,151 @@ export class ConnectionManager
     if (path === undefined) return false;
     this.#options.revealPath(path);
     return true;
+  }
+
+  async startAgentAuth(environmentId: string, agent: string): Promise<AgentAuthStartAnswer> {
+    const envKind = this.#kindOf(environmentId);
+    const cacheKey = `${environmentId}:${agent}`;
+    let signInModes = this.#signInModes.get(cacheKey);
+    if (signInModes === undefined) {
+      try {
+        const snapshot = await this.readAgentSetup(environmentId, agent);
+        signInModes = snapshot.auth.signInModes;
+      } catch (error) {
+        return { started: false, reason: authProblemReasonOf(error) };
+      }
+    }
+    const mode = selectAgentSignInMode(envKind, signInModes);
+    if (mode === undefined) return { started: false, reason: "unsupported_mode" };
+
+    const client = this.#connection(environmentId).client;
+    let started: Awaited<ReturnType<typeof client.startAgentAuth>>;
+    try {
+      started = await client.startAgentAuth(agent, mode);
+    } catch (error) {
+      return { started: false, reason: authProblemReasonOf(error) };
+    }
+
+    // Validate BOTH authorizationUrl and verificationUrl against the desktop's hardcoded allowlist.
+    // Never silently call openBrowser here; wait for explicit user click in the modal.
+    let verifiedAuth: { url: string; host: string } | undefined;
+    if (started.authorizationUrl !== undefined) {
+      const check = validateAgentAuthUrl(agent, started.authorizationUrl);
+      if (!check.ok) {
+        this.#rejectedAuthFlows.add(`${environmentId}:${started.flowId}`);
+        void client.cancelAgentAuth(started.flowId).catch(() => undefined);
+        this.#track("agent_auth_completed", {
+          agent: agentOf(agent),
+          environment: envKind,
+          result: "failed",
+        });
+        return { started: false, reason: "untrusted_url" };
+      }
+      verifiedAuth = { url: check.url, host: check.host };
+    }
+
+    let verifiedVerify: { url: string; host: string } | undefined;
+    if (started.verificationUrl !== undefined) {
+      const check = validateAgentAuthUrl(agent, started.verificationUrl);
+      if (!check.ok) {
+        this.#rejectedAuthFlows.add(`${environmentId}:${started.flowId}`);
+        void client.cancelAgentAuth(started.flowId).catch(() => undefined);
+        this.#track("agent_auth_completed", {
+          agent: agentOf(agent),
+          environment: envKind,
+          result: "failed",
+        });
+        return { started: false, reason: "untrusted_url" };
+      }
+      verifiedVerify = { url: check.url, host: check.host };
+    }
+
+    const primary = verifiedAuth ?? verifiedVerify;
+    this.#activeAuthFlows.set(`${environmentId}:${started.flowId}`, {
+      environmentId,
+      agent,
+      flowId: started.flowId,
+      ...(primary !== undefined ? { url: primary.url, host: primary.host } : {}),
+    });
+    this.#track("agent_auth_started", {
+      agent: agentOf(agent),
+      environment: envKind,
+      mode: started.mode,
+    });
+    return {
+      started: true,
+      flowId: started.flowId,
+      mode: started.mode,
+      expiresAt: started.expiresAt,
+      ...(primary !== undefined ? { host: primary.host } : {}),
+      hasUrl: primary !== undefined,
+      ...(started.userCode !== undefined ? { userCode: started.userCode } : {}),
+    };
+  }
+
+  async openAgentAuthUrl(environmentId: string, flowId: string): Promise<boolean> {
+    const entry = this.#activeAuthFlows.get(`${environmentId}:${flowId}`);
+    if (entry?.url === undefined || this.#options.openBrowser === undefined) return false;
+    // Re-verify allowlist on open (defense in depth).
+    const check = validateAgentAuthUrl(entry.agent, entry.url);
+    if (!check.ok) return false;
+    await this.#options.openBrowser(check.url);
+    return true;
+  }
+
+  async submitAgentAuth(
+    environmentId: string,
+    flowId: string,
+    code: string,
+  ): Promise<AgentAuthSubmitAnswer> {
+    try {
+      await this.#connection(environmentId).client.submitAgentAuth(flowId, code);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: authProblemReasonOf(error) };
+    }
+  }
+
+  async cancelAgentAuth(environmentId: string, flowId: string): Promise<void> {
+    const key = `${environmentId}:${flowId}`;
+    try {
+      await this.#connection(environmentId).client.cancelAgentAuth(flowId);
+    } catch {
+      this.#activeAuthFlows.delete(key);
+    }
+  }
+
+  async logoutAgent(environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer> {
+    const envKind = this.#kindOf(environmentId);
+    try {
+      await this.#connection(environmentId).client.logoutAgent(agent);
+      this.#track("agent_signed_out", { agent: agentOf(agent), environment: envKind, ok: true });
+      return { ok: true };
+    } catch (error) {
+      this.#track("agent_signed_out", { agent: agentOf(agent), environment: envKind, ok: false });
+      return { ok: false, reason: authProblemReasonOf(error) };
+    }
+  }
+
+  #failAuthFlowsOnDisconnect(environmentId: string): void {
+    const envKind = this.#kindOf(environmentId);
+    for (const [key, entry] of [...this.#activeAuthFlows.entries()]) {
+      if (entry.environmentId !== environmentId) continue;
+      this.#activeAuthFlows.delete(key);
+      this.#track("agent_auth_completed", {
+        agent: agentOf(entry.agent),
+        environment: envKind,
+        result: "disconnected",
+      });
+      this.#options.emit({
+        type: "agent-auth-completed",
+        environmentId,
+        flowId: entry.flowId,
+        agent: entry.agent,
+        ok: false,
+        reason: "disconnected",
+      });
+    }
   }
 
   // ---- connectors (docs/protocol.md §14) ----

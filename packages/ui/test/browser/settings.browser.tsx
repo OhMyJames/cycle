@@ -754,3 +754,134 @@ test("Harness runtime settings support boolean/integer editing, enabledWhen, res
   expect(screen.getByText("Caution")).toBeTruthy();
   agyFileError = undefined;
 });
+
+test("Harness sign-in dialog displays verified host without auto-opening browser, supports code submission, disconnect fallback, and sign-out confirmation", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, agentSetup: true },
+  });
+  script.bridge.agents = async () => [
+    { id: "claude", name: "Claude", available: true, configSchema: {} },
+  ];
+
+  let signedIn = false;
+  script.bridge.readAgentSetup = async () => ({
+    agent: "claude",
+    name: "Claude",
+    available: true,
+    binary: { source: "path", path: "/usr/bin/claude", version: "2.1.0" },
+    auth: {
+      state: signedIn ? "signed_in" : "signed_out",
+      method: signedIn ? "subscription" : "none",
+      ...(signedIn ? { account: { email: "dev@example.com" } } : {}),
+      signInModes: [{ mode: "code", requiresLocalLoopback: false }],
+      canSignOut: true,
+      loginCommand: "cycle login claude",
+    },
+    canRefreshUsage: false,
+    runtime: {
+      schemaVersion: 1,
+      schema: { type: "object", properties: {} },
+      values: {},
+      overrides: [],
+      revision: 0,
+    },
+    environment: {
+      configFile: { path: "/tmp/config.json", exists: true, stale: false },
+      dataDir: "/tmp/claude",
+      customDataDir: false,
+      allowEnv: [],
+      envNames: [],
+    },
+  });
+
+  let flowCounter = 0;
+  script.bridge.startAgentAuth = async (env, agent) => {
+    script.calls.push(["startAgentAuth", env, agent]);
+    flowCounter++;
+    return {
+      started: true,
+      flowId: `flow-${flowCounter}`,
+      mode: "code",
+      expiresAt: Date.now() + 600_000,
+      host: "claude.ai",
+      hasUrl: true,
+    };
+  };
+
+  script.bridge.logoutAgent = async (env, agent) => {
+    script.calls.push(["logoutAgent", env, agent]);
+    signedIn = false;
+    return { ok: true };
+  };
+
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await openSettings(user);
+  await user.click(await screen.findByRole("tab", { name: "Claude" }));
+
+  // 1. Click Sign in -> dialog shows verified host & fallback command; openAgentAuthUrl NOT called until user clicks.
+  await user.click(await screen.findByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText(/Continue in your browser at claude\.ai/)).toBeTruthy();
+  expect(script.named("openAgentAuthUrl")).toHaveLength(0);
+  expect(screen.getAllByText("cycle login claude").length).toBeGreaterThanOrEqual(1);
+
+  // Explicit click opens verified browser URL.
+  await user.click(screen.getByRole("button", { name: "Open in browser" }));
+  await waitFor(() =>
+    expect(script.named("openAgentAuthUrl")).toEqual([["openAgentAuthUrl", "local", "flow-1"]]),
+  );
+
+  // 2. Simulate disconnect mid-flow: shows clear disconnect message + fallback command.
+  act(() => {
+    script.emit({
+      type: "agent-auth-completed",
+      environmentId: "local",
+      flowId: "flow-1",
+      agent: "claude",
+      ok: false,
+      reason: "disconnected",
+    });
+  });
+  expect(await screen.findByText(/Connection was interrupted/)).toBeTruthy();
+
+  // 3. Retry -> submit code -> complete sign-in -> transitions to Signed in.
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  const codeInput = await screen.findByLabelText("Authorization code");
+  await user.type(codeInput, "ONE-TIME-CODE");
+  await user.click(screen.getByRole("button", { name: "Complete sign-in" }));
+  await waitFor(() =>
+    expect(script.named("submitAgentAuth")).toEqual([
+      ["submitAgentAuth", "local", "flow-2", "ONE-TIME-CODE"],
+    ]),
+  );
+
+  signedIn = true;
+  act(() => {
+    script.emit({
+      type: "agent-auth-completed",
+      environmentId: "local",
+      flowId: "flow-2",
+      agent: "claude",
+      ok: true,
+    });
+  });
+  expect(await screen.findByText("dev@example.com")).toBeTruthy();
+
+  // 4. Sign out requires ConfirmDialog confirmation before calling logoutAgent.
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByText("Sign out of Claude?")).toBeTruthy();
+  expect(script.named("logoutAgent")).toHaveLength(0);
+  const confirmButtons = screen.getAllByRole("button", { name: "Sign out" });
+  await user.click(confirmButtons[confirmButtons.length - 1] as HTMLElement);
+  await waitFor(() =>
+    expect(script.named("logoutAgent")).toEqual([["logoutAgent", "local", "claude"]]),
+  );
+  expect(await screen.findByText("Not signed in")).toBeTruthy();
+});
