@@ -1,11 +1,14 @@
 import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { AgentSettings } from "./agent-settings.ts";
 import { captureConfigMtime } from "./agent-setup.ts";
 import { type Config, ConfigSchema, loadConfig, type Paths } from "./config.ts";
 import { Daemon, defaultTerminals } from "./daemon.ts";
-import { agentsFor } from "./harnesses.ts";
+import { agentSettingsPath } from "./data-dir.ts";
+import { agentsFor, HARNESSES } from "./harnesses.ts";
 import { errorText, type FileLogger, fileLogger } from "./logger.ts";
+import { selfCommand } from "./self.ts";
 import { listenUnix } from "./transport/server.ts";
 import { VERSION } from "./version.ts";
 
@@ -53,9 +56,19 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   // never touches it. `cycle stop` gives it a moment (main.ts).
   const pidFile = join(paths.dataDir, "daemon.pid");
   try {
+    const agentSettings = await AgentSettings.load(agentSettingsPath(paths.dataDir), log);
     daemon = await Daemon.start({
       dataDir: paths.dataDir,
-      agents: agentsFor(config, paths.dataDir, process.env, log),
+      agents: agentsFor(
+        config,
+        paths.dataDir,
+        process.env,
+        log,
+        HARNESSES,
+        selfCommand(),
+        agentSettings,
+      ),
+      agentSettings,
       version: VERSION,
       log,
       terminals: defaultTerminals(process.env, config.terminal),

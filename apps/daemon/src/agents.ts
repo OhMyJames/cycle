@@ -23,9 +23,9 @@ export type AgentDefinition = {
   available?: () => boolean | Promise<boolean>;
   /**
    * How many of its sessions may hold a process that has had no prompt yet; past it the oldest such is let go
-   * (decision 0014). Counted among this agent's sessions only. No limit when absent.
+   * (decision 0014). Counted among this agent's sessions only. No limit when absent; 0 disables warm pool retention.
    */
-  maxAhead?: number;
+  maxAhead?: number | (() => number | undefined);
   /** Its plugins, when it has them (docs/protocol.md §15). */
   plugins?: PluginProvider;
   /** Read-only status, diagnostics, auth, and runtime settings provider (docs/protocol.md §16). */

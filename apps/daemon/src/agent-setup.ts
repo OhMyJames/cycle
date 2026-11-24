@@ -2,18 +2,21 @@ import { accessSync, constants, existsSync, mkdirSync, readFileSync, statSync } 
 import { join } from "node:path";
 import { AGY_MIN_VERSION, isVersionSupported } from "@cycle/harness-agy";
 import { CODEX_FIXED_ARGS, planWindowsOf, type RateLimitSnapshot } from "@cycle/harness-codex";
-import type {
-  AgentAccountInfo,
-  AgentAuthMethod,
-  AgentAuthState,
-  AgentAuthUnknownReason,
-  AgentBinarySource,
-  AgentBinaryStatus,
-  AgentConfigFileStatus,
-  AgentRuntimeSnapshot,
-  AgentSignInMode,
-  PlanUsage,
+import {
+  type AgentAccountInfo,
+  type AgentAuthMethod,
+  type AgentAuthState,
+  type AgentAuthUnknownReason,
+  type AgentBinarySource,
+  type AgentBinaryStatus,
+  type AgentConfigFileStatus,
+  type AgentRuntimeSnapshot,
+  type AgentSignInMode,
+  META,
+  type PlanUsage,
+  type RuntimeProperty,
 } from "@cycle/protocol";
+import type { AgentSettings } from "./agent-settings.ts";
 import { type Config, ConfigSchema } from "./config.ts";
 
 export type CommandResult = {
@@ -57,7 +60,93 @@ export type AgentSetupProvider = {
   canRefreshUsage: boolean;
   loginCommand: string;
   diagnostics: () => AgentEnvironmentDetails;
-  runtimeSnapshot: () => AgentRuntimeSnapshot;
+  /** Closed v1 runtime property schema enforced by the daemon on `_cycle/agent_setup/set_runtime`. */
+  runtimeSchema?: Record<string, RuntimeProperty>;
+  runtimeSnapshot: (settings?: AgentSettings) => AgentRuntimeSnapshot;
+};
+
+export const CLAUDE_RUNTIME_DEFAULTS = {
+  warmStart: true,
+  maxWarm: 3,
+  progressSummaries: true,
+};
+
+export const CLAUDE_RUNTIME_SCHEMA: Record<string, RuntimeProperty> = {
+  warmStart: {
+    type: "boolean",
+    title: "Warm start",
+    description:
+      "Start a Claude process when a new session is created so slash commands appear before the first message.",
+    default: CLAUDE_RUNTIME_DEFAULTS.warmStart,
+    _meta: { [META.applyScope]: "immediate" },
+  },
+  maxWarm: {
+    type: "integer",
+    title: "Max warm processes",
+    description: "Maximum number of unprompted sessions kept warm before the oldest is reclaimed.",
+    minimum: 1,
+    maximum: 10,
+    default: CLAUDE_RUNTIME_DEFAULTS.maxWarm,
+    _meta: {
+      [META.applyScope]: "immediate",
+      [META.enabledWhen]: { key: "warmStart", equals: true },
+    },
+  },
+  progressSummaries: {
+    type: "boolean",
+    title: "Sub-agent progress summaries",
+    description: "Ask Claude for short model-written progress lines for running sub-agents.",
+    default: CLAUDE_RUNTIME_DEFAULTS.progressSummaries,
+    _meta: { [META.applyScope]: "next_idle_restart" },
+  },
+};
+
+export const claudeEffectiveRuntime = (config: Config["claude"], settings?: AgentSettings) => {
+  const fromConfig = {
+    warmStart: config.warmStart,
+    maxWarm: Math.min(10, Math.max(1, config.maxWarm)),
+    progressSummaries: config.progressSummaries,
+  };
+  return settings !== undefined
+    ? settings.effective("claude", CLAUDE_RUNTIME_DEFAULTS, fromConfig)
+    : { values: fromConfig, overrides: [] as string[], revision: 0 };
+};
+
+export const AGY_RUNTIME_DEFAULTS = {
+  sandbox: false,
+  telemetry: true,
+};
+
+export const AGY_RUNTIME_SCHEMA: Record<string, RuntimeProperty> = {
+  sandbox: {
+    type: "boolean",
+    title: "Sandbox",
+    description: "Run agy acp with --sandbox enabled to restrict filesystem and shell access.",
+    default: AGY_RUNTIME_DEFAULTS.sandbox,
+    _meta: { [META.applyScope]: "next_idle_restart", [META.danger]: true },
+  },
+  telemetry: {
+    type: "boolean",
+    title: "Telemetry",
+    description:
+      "Send usage telemetry to Google Antigravity. When disabled, Cycle passes --disable-telemetry.",
+    default: AGY_RUNTIME_DEFAULTS.telemetry,
+    _meta: { [META.applyScope]: "next_idle_restart" },
+  },
+};
+
+export const agyEffectiveRuntime = (config: Config["agy"], settings?: AgentSettings) => {
+  const fromConfig: Partial<typeof AGY_RUNTIME_DEFAULTS> = {
+    ...(config.sandbox !== undefined ? { sandbox: config.sandbox } : {}),
+    ...(config.telemetry !== undefined ? { telemetry: config.telemetry } : {}),
+  };
+  return settings !== undefined
+    ? settings.effective("agy", AGY_RUNTIME_DEFAULTS, fromConfig)
+    : {
+        values: { ...AGY_RUNTIME_DEFAULTS, ...fromConfig },
+        overrides: [] as string[],
+        revision: 0,
+      };
 };
 
 export type ConfigFileSnapshotOptions = {
@@ -402,17 +491,19 @@ export const createClaudeSetupProvider = (options: ClaudeSetupOptions): AgentSet
       allowEnv: [...options.config.allowEnv],
       envNames: Object.keys(options.config.env).sort(),
     }),
-    runtimeSnapshot: () => ({
-      schemaVersion: 1,
-      schema: { type: "object", properties: {} },
-      values: {
-        warmStart: options.config.warmStart,
-        maxWarm: options.config.maxWarm,
-        progressSummaries: options.config.progressSummaries,
-      },
-      overrides: [],
-      revision: 0,
-    }),
+    runtimeSchema: CLAUDE_RUNTIME_SCHEMA,
+    runtimeSnapshot: (settings) => {
+      const merged = claudeEffectiveRuntime(options.config, settings);
+      const fileError = settings?.fileError();
+      return {
+        schemaVersion: 1,
+        schema: { type: "object", properties: CLAUDE_RUNTIME_SCHEMA },
+        values: merged.values,
+        overrides: merged.overrides,
+        revision: merged.revision,
+        ...(fileError !== undefined ? { fileError } : {}),
+      };
+    },
   };
 };
 
@@ -706,13 +797,18 @@ export const createCodexSetupProvider = (options: CodexSetupOptions): AgentSetup
       allowEnv: [...options.config.allowEnv],
       envNames: Object.keys(options.config.env).sort(),
     }),
-    runtimeSnapshot: () => ({
-      schemaVersion: 1,
-      schema: { type: "object", properties: {} },
-      values: {},
-      overrides: [],
-      revision: 0,
-    }),
+    runtimeSchema: {},
+    runtimeSnapshot: (settings) => {
+      const fileError = settings?.fileError();
+      return {
+        schemaVersion: 1,
+        schema: { type: "object", properties: {} },
+        values: {},
+        overrides: [],
+        revision: settings?.revisionOf("codex") ?? 0,
+        ...(fileError !== undefined ? { fileError } : {}),
+      };
+    },
   };
 };
 
@@ -873,15 +969,18 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
       allowEnv: [...options.config.allowEnv],
       envNames: Object.keys(options.config.env).sort(),
     }),
-    runtimeSnapshot: () => ({
-      schemaVersion: 1,
-      schema: { type: "object", properties: {} },
-      values: {
-        sandbox: options.config.sandbox ?? false,
-        telemetry: options.config.telemetry ?? true,
-      },
-      overrides: [],
-      revision: 0,
-    }),
+    runtimeSchema: AGY_RUNTIME_SCHEMA,
+    runtimeSnapshot: (settings) => {
+      const merged = agyEffectiveRuntime(options.config, settings);
+      const fileError = settings?.fileError();
+      return {
+        schemaVersion: 1,
+        schema: { type: "object", properties: AGY_RUNTIME_SCHEMA },
+        values: merged.values,
+        overrides: merged.overrides,
+        revision: merged.revision,
+        ...(fileError !== undefined ? { fileError } : {}),
+      };
+    },
   };
 };

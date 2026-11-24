@@ -11,7 +11,7 @@ import {
 } from "@cycle/harness-claude";
 import { runAdapter } from "@cycle/harness-claude/run";
 import { META } from "@cycle/protocol";
-import { createClaudeSetupProvider } from "./agent-setup.ts";
+import { claudeEffectiveRuntime, createClaudeSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
@@ -89,7 +89,7 @@ export const claudeHarness: Harness = {
     env: ({ config, dataDir, inherited }) => claudeEnv(config.claude, dataDir, inherited),
     login: ["auth", "login"],
   },
-  definition: ({ config, dataDir, inherited, self, log }) =>
+  definition: ({ config, dataDir, inherited, self, log, agentSettings }) =>
     processAgent({
       id: "claude",
       name: "Claude",
@@ -98,8 +98,11 @@ export const claudeHarness: Harness = {
       steer: true,
       // In the executable, the Claude binary shipped beside it must be there: say so now, not on the first prompt.
       available: () => claudeExecutable() === undefined || existsSync(claudeExecutable() as string),
-      // Each session has a process of its own once it is made (decision 0014): this many may wait for a first prompt.
-      ...(config.claude.warmStart ? { maxAhead: config.claude.maxWarm } : {}),
+      // Each session has a process of its own once it is made (decision 0014): 0 when warmStart is off (never unlimited).
+      maxAhead: () => {
+        const runtime = claudeEffectiveRuntime(config.claude, agentSettings).values;
+        return runtime.warmStart ? runtime.maxWarm : 0;
+      },
       command: [...self, "adapter", "claude"],
       // Claude's own command line, with what a Claude session gets and nothing more, in a folder that is no project.
       plugins: new ClaudePlugins({
@@ -124,14 +127,17 @@ export const claudeHarness: Harness = {
         },
       }),
       ...(log !== undefined ? { log } : {}),
-      env: {
-        PATH: inherited.PATH ?? "",
-        CYCLE_ADAPTER_CONFIG: JSON.stringify({
-          env: claudeEnv(config.claude, dataDir, inherited),
-          warmStart: config.claude.warmStart,
-          progressSummaries: config.claude.progressSummaries,
-          ...(claudeExecutable() !== undefined ? { claudeExecutable: claudeExecutable() } : {}),
-        }),
+      env: () => {
+        const runtime = claudeEffectiveRuntime(config.claude, agentSettings).values;
+        return {
+          PATH: inherited.PATH ?? "",
+          CYCLE_ADAPTER_CONFIG: JSON.stringify({
+            env: claudeEnv(config.claude, dataDir, inherited),
+            warmStart: runtime.warmStart,
+            progressSummaries: runtime.progressSummaries,
+            ...(claudeExecutable() !== undefined ? { claudeExecutable: claudeExecutable() } : {}),
+          }),
+        };
       },
     }),
 };

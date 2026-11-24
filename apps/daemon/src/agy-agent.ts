@@ -8,7 +8,7 @@ import {
   isVersionSupported,
 } from "@cycle/harness-agy";
 import { runAdapter } from "@cycle/harness-agy/run";
-import { createAgySetupProvider } from "./agent-setup.ts";
+import { agyEffectiveRuntime, createAgySetupProvider } from "./agent-setup.ts";
 import { type Config, ConfigSchema } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
@@ -112,7 +112,7 @@ export const agyHarness: Harness = {
     login: ["acp", "--login"],
     directories: ["HOME"],
   },
-  definition: ({ config, dataDir, inherited, self, log }) => {
+  definition: ({ config, dataDir, inherited, self, log, agentSettings }) => {
     const settings = config.agy;
     const env = agyEnv(settings, dataDir, inherited);
     const executable = () => findAgyExecutable(settings, inherited);
@@ -129,18 +129,21 @@ export const agyHarness: Harness = {
       promptCapabilities: AGY_PROMPT_CAPABILITIES,
       steer: true,
       command: [...self, "adapter", "agy"],
-      env: {
-        PATH: inherited.PATH ?? "",
-        CYCLE_ADAPTER_CONFIG: JSON.stringify({
-          env,
-          agyExecutable: executable() ?? "",
-          fallbackExecutables,
-          ...(settings.executable !== undefined ? { searchPath: false } : {}),
-          logFile: join(dataDir, "logs", "agy-acp.log"),
-          ...(settings.sandbox !== undefined ? { sandbox: settings.sandbox } : {}),
-          ...(settings.agent !== undefined ? { agent: settings.agent } : {}),
-          ...(settings.telemetry !== undefined ? { telemetry: settings.telemetry } : {}),
-        }),
+      env: () => {
+        const runtime = agyEffectiveRuntime(settings, agentSettings).values;
+        return {
+          PATH: inherited.PATH ?? "",
+          CYCLE_ADAPTER_CONFIG: JSON.stringify({
+            env,
+            agyExecutable: executable() ?? "",
+            fallbackExecutables,
+            ...(settings.executable !== undefined ? { searchPath: false } : {}),
+            logFile: join(dataDir, "logs", "agy-acp.log"),
+            sandbox: runtime.sandbox,
+            ...(settings.agent !== undefined ? { agent: settings.agent } : {}),
+            telemetry: runtime.telemetry,
+          }),
+        };
       },
       available: () => {
         const path = executable();

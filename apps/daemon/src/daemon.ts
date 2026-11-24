@@ -11,10 +11,13 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
+  AGENT_SETUP_CHANGED,
+  type AgentRuntimePatchValue,
   type AgentSetupSnapshot,
   agentDefaultsRead,
   agentDefaultsSet,
   agentSetupRead,
+  agentSetupSetRuntime,
   agentsList,
   CHILD_UPDATE,
   CHILD_UPDATE_KINDS,
@@ -84,6 +87,12 @@ import {
 import type { z } from "zod";
 import { AgentLink } from "./agent-link.ts";
 import {
+  AgentSettings,
+  AgentSettingsConflictError,
+  AgentSettingsCorruptError,
+  AgentSettingsValidationError,
+} from "./agent-settings.ts";
+import {
   type ConfigFileSnapshotOptions,
   captureConfigMtime,
   readConfigFileStatus,
@@ -92,6 +101,7 @@ import type { AgentDefinition } from "./agents.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
 import {
+  agentSettingsPath,
   blobsDir,
   defaultsPath,
   indexPath,
@@ -177,6 +187,8 @@ export type DaemonOptions = {
   terminals?: Omit<TerminalsOptions, "onChanged" | "log">;
   /** Host `config.json` path & startup mtime for read-only diagnostics (docs/protocol.md §16). */
   configFile?: ConfigFileSnapshotOptions;
+  /** Shared live per-agent runtime settings store (`<dataDir>/agent-settings.json`). */
+  agentSettings?: AgentSettings;
 };
 
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
@@ -303,6 +315,7 @@ export class Daemon {
   readonly #store: LogStore;
   readonly #index: SessionIndex;
   readonly #defaults: AgentDefaults;
+  readonly #agentSettings: AgentSettings;
   readonly #optionsCache: AgentOptionsCache;
   readonly #trust: FolderTrust;
   readonly #connectors: ConnectorService;
@@ -330,6 +343,7 @@ export class Daemon {
     options: DaemonOptions,
     index: SessionIndex,
     defaults: AgentDefaults,
+    agentSettings: AgentSettings,
     optionsCache: AgentOptionsCache,
     trust: FolderTrust,
     connectors: ConnectorService,
@@ -354,6 +368,7 @@ export class Daemon {
       );
     this.#index = index;
     this.#defaults = defaults;
+    this.#agentSettings = agentSettings;
     this.#optionsCache = optionsCache;
     this.#trust = trust;
     this.#connectors = connectors;
@@ -394,6 +409,8 @@ export class Daemon {
       options,
       await SessionIndex.load(indexPath(options.dataDir)),
       await AgentDefaults.load(defaultsPath(options.dataDir)),
+      options.agentSettings ??
+        (await AgentSettings.load(agentSettingsPath(options.dataDir), options.log)),
       await AgentOptionsCache.load(optionsCachePath(options.dataDir)),
       await FolderTrust.load(trustPath(options.dataDir)),
       options.connectors ?? (await ConnectorService.load(options.dataDir)),
@@ -678,8 +695,34 @@ export class Daemon {
     for (const session of running) {
       const real = reals.get(session.entry.cwd);
       if (real === undefined || !within(real, folder)) continue;
-      session.trustStale = true;
+      session.markStale("trust");
       this.#restartIfStale(session);
+    }
+  }
+
+  /**
+   * Reconcile unprompted warm processes for `agentId` against its current `maxAhead` limit:
+   * - `limit === 0` (e.g. `warmStart: false`) terminates all unprompted idle warm processes immediately;
+   * - `limit > 0` terminates the oldest excess warm processes FIFO (keeping `keep` when given).
+   * Sessions remain in the index with state `stopped` and history intact.
+   */
+  #reconcileWarmPool(agentId: string, keep?: Session): void {
+    const rawLimit = this.#agents.get(agentId)?.maxAhead;
+    const limit = typeof rawLimit === "function" ? rawLimit() : rawLimit;
+    if (limit === undefined) return;
+    const ahead = [...this.#sessions.values()].filter(
+      (s) =>
+        s.entry.agent === agentId &&
+        s.link !== undefined &&
+        s.starting === undefined &&
+        s.entry.prompted !== true &&
+        s.status() === "idle" &&
+        s.queue.length === 0,
+    );
+    const excess = Math.max(0, ahead.length - limit);
+    for (const old of ahead.slice(0, excess)) {
+      if (limit > 0 && old === keep) continue;
+      old.link?.kill();
     }
   }
 
@@ -688,34 +731,31 @@ export class Daemon {
    * `maxAhead` of them, counted among that agent's sessions, the oldest is let go (the session `keep` is the newest, and stays): its next prompt starts one again.
    */
   #letGoOfOldestAhead(keep: Session): void {
-    const limit = this.#agents.get(keep.entry.agent)?.maxAhead;
-    if (limit === undefined) return;
-    const ahead = [...this.#sessions.values()].filter(
-      (s) =>
-        s.entry.agent === keep.entry.agent &&
-        s.link !== undefined &&
-        s.starting === undefined &&
-        s.entry.prompted !== true &&
-        s.status() === "idle" &&
-        s.queue.length === 0,
-    );
-    for (const old of ahead.slice(0, Math.max(0, ahead.length - limit))) {
-      if (old !== keep) old.link?.kill();
+    this.#reconcileWarmPool(keep.entry.agent, keep);
+  }
+
+  /** Marks all running/starting sessions of `agentId` stale so idle ones recycle immediately and busy ones after their turn. */
+  #markAgentStale(agentId: string, reason: string): void {
+    for (const session of this.#sessions.values()) {
+      if (session.entry.agent !== agentId) continue;
+      if (session.link === undefined && session.starting === undefined) continue;
+      session.markStale(reason);
+      this.#restartIfStale(session);
     }
   }
 
-  /** Stops an agent started with a trust decision that has changed since, once it has nothing to do. */
+  /** Stops an agent started with a trust/runtime/auth state that has changed since, once it has nothing to do. */
   #restartIfStale(session: Session): void {
-    if (!session.trustStale) return;
+    if (!session.isStale()) return;
     if (session.link === undefined && session.starting === undefined) {
-      // No agent: the next one is started with the decision as it is then.
-      session.trustStale = false;
+      // No agent: the next one is started with the state as it is then.
+      session.clearStale();
       return;
     }
     if (session.link === undefined || session.starting !== undefined) return;
     if (session.status() !== "idle" || session.queue.length > 0) return;
     if (session.backgroundCount() > 0) return;
-    session.trustStale = false;
+    session.clearStale();
     session.link.kill();
   }
 
@@ -1052,11 +1092,82 @@ export class Daemon {
       },
       ...(planUsage !== undefined ? { planUsage } : {}),
       canRefreshUsage: setup.canRefreshUsage,
-      runtime: setup.runtimeSnapshot(),
+      runtime: setup.runtimeSnapshot(this.#agentSettings),
       environment: {
         configFile,
         ...setup.diagnostics(),
       },
+    };
+  }
+
+  #notifyAgentSetupChanged(agent: string, revision?: number): void {
+    const payload = revision !== undefined ? { agent, revision } : { agent };
+    for (const conn of this.#conns) {
+      void conn.notify(AGENT_SETUP_CHANGED, payload).catch(() => {});
+    }
+  }
+
+  async #setAgentRuntime(params: {
+    agent: string;
+    patch: Record<string, AgentRuntimePatchValue>;
+    expectedRevision: number;
+  }) {
+    const definition = this.#agents.get(params.agent);
+    if (!definition) {
+      throw new RpcError(INVALID_PARAMS, `Unknown agent: ${params.agent}`, {
+        reason: "unknown_agent",
+        agent: params.agent,
+      });
+    }
+    const setup = definition.setup;
+    const schema = setup?.runtimeSchema ?? {};
+    const before = setup?.runtimeSnapshot(this.#agentSettings).values ?? {};
+
+    try {
+      await this.#agentSettings.patch(params.agent, params.patch, params.expectedRevision, schema);
+    } catch (error) {
+      if (error instanceof AgentSettingsConflictError) {
+        throw new RpcError(INVALID_PARAMS, error.message, {
+          reason: "revision_conflict",
+          currentRevision: error.currentRevision,
+        });
+      }
+      if (error instanceof AgentSettingsCorruptError) {
+        throw new RpcError(CycleErrorCode.InvalidConfig, error.message, {
+          reason: "file_corrupt",
+        });
+      }
+      if (error instanceof AgentSettingsValidationError) {
+        throw new RpcError(CycleErrorCode.InvalidConfig, error.message, {
+          reason: error.reason,
+          ...(error.field !== undefined ? { field: error.field } : {}),
+        });
+      }
+      throw error;
+    }
+
+    const after = setup?.runtimeSnapshot(this.#agentSettings) ?? {
+      values: {} as Record<string, string | number | boolean>,
+      overrides: [] as string[],
+      revision: this.#agentSettings.revisionOf(params.agent),
+    };
+
+    let reconcileWarm = false;
+    let markStale = false;
+    for (const [key, prop] of Object.entries(schema)) {
+      if (before[key] === after.values[key]) continue;
+      const scope = prop._meta?.[META.applyScope];
+      if (scope === "immediate") reconcileWarm = true;
+      else if (scope === "next_idle_restart") markStale = true;
+    }
+    if (reconcileWarm) this.#reconcileWarmPool(params.agent);
+    if (markStale) this.#markAgentStale(params.agent, "runtime_config");
+
+    this.#notifyAgentSetupChanged(params.agent, after.revision);
+    return {
+      values: after.values,
+      overrides: after.overrides,
+      revision: after.revision,
     };
   }
 
@@ -2377,6 +2488,7 @@ export class Daemon {
     }));
     cycle(planUsageRead, () => ({ agents: Object.fromEntries(this.#planUsage) }));
     cycle(agentSetupRead, (params) => this.#readAgentSetup(params));
+    cycle(agentSetupSetRuntime, (params) => this.#setAgentRuntime(params));
     cycle(agentDefaultsRead, (params) => {
       this.#definition(params.agent);
       return { config: this.#defaults.get(params.agent) };

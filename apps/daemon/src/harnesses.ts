@@ -1,3 +1,4 @@
+import type { AgentSettings } from "./agent-settings.ts";
 import type { AgentDefinition } from "./agents.ts";
 import { agyHarness } from "./agy-agent.ts";
 import { claudeHarness } from "./claude-agent.ts";
@@ -20,7 +21,15 @@ export const agentsFor = (
   log?: Logger,
   harnesses: readonly Harness[] = HARNESSES,
   self: string[] = selfCommand(),
+  agentSettings?: AgentSettings,
 ): AgentDefinition[] =>
   harnesses.map((harness) =>
-    harness.definition({ config, dataDir, inherited, self, ...(log !== undefined ? { log } : {}) }),
+    harness.definition({
+      config,
+      dataDir,
+      inherited,
+      self,
+      ...(log !== undefined ? { log } : {}),
+      ...(agentSettings !== undefined ? { agentSettings } : {}),
+    }),
   );

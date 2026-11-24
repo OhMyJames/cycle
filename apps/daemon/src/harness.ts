@@ -1,3 +1,4 @@
+import type { AgentSettings } from "./agent-settings.ts";
 import type { AgentDefinition } from "./agents.ts";
 import type { Config } from "./config.ts";
 import type { Logger } from "./logger.ts";
@@ -11,6 +12,8 @@ export type HarnessContext = {
   /** The command that runs this program again, for `adapter <id>` (self.ts). */
   self: string[];
   log?: Logger;
+  /** Shared live per-agent runtime overrides (`<dataDir>/agent-settings.json`) for dynamic env & hot-reload. */
+  agentSettings?: AgentSettings;
 };
 
 /**
