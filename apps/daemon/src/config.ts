@@ -72,7 +72,8 @@ export const ConfigSchema = z.object({
     }),
   /**
    * Terminals the person opens beside a session (docs/protocol.md §8 "终端"). Their environment is not the daemon's:
-   * only the variables named here are passed (a name ending in `*` is a prefix), then `TERM` and `COLORTERM`.
+   * only the variables named here are passed (a name ending in `*` is a prefix), then `TERM`, `COLORTERM`, `SHELL`,
+   * `CLICOLOR` and, on a Mac with no locale, a UTF-8 `LANG`.
    */
   terminal: z
     .object({
