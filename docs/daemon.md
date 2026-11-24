@@ -14,6 +14,9 @@
 | `src/process-agent.ts`           | 把一个子进程作为 agent 启动,显式环境,不继承                                      |
 | `src/session.ts`                 | 一个已加载的 session 的状态                                                      |
 | `src/daemon.ts`                  | 面向客户端的 ACP 应用:session 的创建、列表、附着、prompt、取消、权限、归档、删除 |
+| `src/agent-setup.ts`             | 各 agent 的只读状态探测(`AgentSetupProvider`)、运行时 schema 与三家登录/登出驱动 |
+| `src/agent-settings.ts`          | `<数据目录>/agent-settings.json` 原子持久化、per-agent 乐观锁与损坏不覆写保护    |
+| `src/agent-auth.ts`              | 订阅登录/登出流程管理器(互斥锁、连接绑定、单次消费、10 分钟 TTL、断线/退出清理)  |
 | `src/logger.ts`                  | daemon 自己的运行日志:按事件记、过滤凭证、0600、按大小轮转(见"日志")             |
 
 客户端看到的一切都经过 session 的日志:补发和实时是同一条路径。
@@ -45,6 +48,10 @@
 - **`_cycle/agent_defaults/*`**:读写都有实现,存在 `<数据目录>/agent-defaults.json`,新 session 按它开始,session 自己的配置覆盖它(此前这份文档误写成占位)。
 - **`_cycle/connectors/*`**(protocol.md §14):清单在 `<数据目录>/connectors/catalog.json`,密钥和 token 在同目录的 `credentials.json`(目录 0700,文件 0600),两个文件各在一个接口后面(`ConnectorCatalog`、`CredentialVault`),以后可以换成 cloud。任一文件读不了,daemon 拒绝启动,不覆盖它。OAuth 全在 daemon 里做(`connectors/oauth.ts`)。第一个用到 connector 的 agent 启动时,daemon 在 `127.0.0.1` 的随机端口上开 MCP 网关(`connectors/gateway.ts`),agent 只拿到网关地址和本 session 的 key;stdio 的 connector 由 daemon 启动(`connectors/stdio-bridge.ts`),环境变量只有固定白名单和它自己的值。
 - **`_cycle/plugins/*`**(protocol.md §15,`src/plugins.ts`):plugin 归各 agent。agent 的定义可以带一个 `PluginProvider`;Claude 的是 `@cycle/harness-claude` 的 `ClaudePlugins`,它运行 Claude 自己的命令行(`claude plugin … --json`),环境是 `claudeEnv` 的白名单加 `PATH`(和启动 Claude 进程时相同,不继承 daemon 的环境),配置目录是 Cycle 托管的那个,工作目录是空目录 `<数据目录>/plugins/claude`。daemon 不保存 plugin 的清单:向 agent 问一次,记 60 秒,每次改动后立即重问;同一个 agent 的改动一次只做一个。已装 plugin 声明的 http 服务器由 `ConnectorService.syncPlugins` 建成带 `origin` 的 connector(清单里多存 agent 给它起的名字和 plugin 写的请求头),启动那个 agent 时用那个名字交出网关地址,顶替 plugin 自己的。测试:`test/plugins.test.ts`(内存里的 provider)、`harness/claude/test/plugins.test.ts`(回放命令行的输出)、`harness/claude/test/integration/adapter.integration.ts` 的最后一条(真实的 Claude,隔离的配置目录)。
+- **`_cycle/agent_setup/*` 与 `_cycle/agent_auth/*`**(protocol.md §16,CYCL-226,`src/agent-setup.ts`、`src/agent-settings.ts`、`src/agent-auth.ts`):
+  - **只读探测与宿主诊断**(`_cycle/agent_setup/read`):按 agent 返回二进制来源/版本、订阅登录态(无法判定时明确报 `auth_unknown` + 固定 `unknownReason`)、套餐用量(`planUsage`,Codex 支持 `refreshUsage: true` 主动查询;Antigravity 记录被动观测的 `tierObservedAt`)、`config.json` 的 `mtime` 过期提示与变量名列表(`allowEnv`/`envNames`/`viaEnv` 只含变量名,绝不含值)。`agy` 只经 `agy models`(15 秒超时 + 45 秒短 TTL 内存缓存,`forceRefresh` 绕过)探测,绝不触碰 token 文件。
+  - **热生效运行时配置**(`_cycle/agent_setup/set_runtime`):Cycle 托管的运行时覆盖存 `<数据目录>/agent-settings.json`(0600,串行写队列 + 原子 rename,per-agent 独立 `revision` 乐观锁,`null` 表示删除覆盖恢复继承,损坏或版本未知时绝不覆写并在快照带 `fileError`)。`processAgent` 的 `env` 与 `maxAhead` 按次动态求值;`warmStart`/`maxWarm` 变更立即执行 warm pool reconciliation(`#reconcileWarmPool`),`progressSummaries`/`agy.sandbox`/`agy.telemetry` 变更标记运行中 session 为 `stale` 并复用 `#restartIfStale`(空闲即回收,忙碌等 turn 与后台任务结束后回收)。
+  - **界面内订阅登录与登出**(`_cycle/agent_auth/start|submit|cancel|logout`):`AgentAuthManager` 按 agent 互斥串行(`auth_in_progress`),`flowId` 绑定 `(connectionId, agent, flowId)`,`_cycle/agent_auth_completed` 仅发给发起连接,全局刷新走 `_cycle/agent_setup_changed`。`"code"` 模式采用单向原子状态机(`pending → submitting | cancelled | expired → completed`)单次消费,一次性授权码仅存内存写入子进程 stdin,绝不落盘或进日志。固定 10 分钟 TTL,断线/超时/`daemon.close()` 立即终止登录子进程。Sign out 不中断运行中 turn,立即终止未发言预热进程、标记其余运行中 session `stale` 并清理内存缓存。测试:`test/agent-setup.test.ts`、`test/agent-settings.test.ts`、`test/runtime-hot-reload.test.ts`、`test/agent-auth.test.ts`。
 
 ## 停止和升级
 

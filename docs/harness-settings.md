@@ -1,6 +1,11 @@
 # Harness 设置与配置设计（Claude / Codex / Antigravity）
 
-状态：设计方案与实现计划（已吸收 PR #131 两轮评审并收敛协议、安全、生命周期与前置验证项），尚未开始实现。验证与调研日期：2026-11-23。
+状态：已实现（Epic `CYCL-226`，子任务 `CYCL-227`–`CYCL-237` 全部落地并通过全量验证）。设计及实测日期：2026-11-23。
+
+> **前置隔离实测结论（2026-11-23，macOS arm64，全部在独立临时目录运行、零触碰真实主目录）**：
+> 1. **Codex（`codex-cli 0.166.0`）**：同一隔离 `$CODEX_HOME` 下，长驻 session `app-server` 与短生命周期认证 `app-server` 并发执行 `account/read`、`account/rateLimits/read`、`account/logout`、`account/login/start`、`account/login/cancel` **无 SQLite / 文件锁冲突**；`account/login/start { type: "chatgptDeviceCode" }` 实测返回 `verificationUrl: "https://auth.openai.com/codex/device"`（精确匹配桌面端硬编码白名单 `auth.openai.com`），`account/login/completed` 通知载荷为 `{ loginId, success, error }`。
+> 2. **Claude（`claude` CLI）**：在隔离 `CLAUDE_CONFIG_DIR` + `HOME` 下，`claude auth status --json` 明确返回 `loggedIn: false` 且作用域严格隔离于宿主 `~/.claude`（macOS 钥匙串条目按 `CLAUDE_CONFIG_DIR` 隔离）；非 TTY 管道下 `BROWSER=/usr/bin/true claude auth login --claudeai` 稳定输出 `https://claude.com/cai/oauth/authorize?...` 与 `Paste code here if prompted > ` 提示；`claude auth logout` 干净退出（exit 0）。
+> 3. **Antigravity（`agy` CLI）**：隔离 `HOME` 未登录时 `agy models` 实测约 `1.55s`（exit 1，`Error: Please sign in to view available models...`），设置 15s 超时 + 45s 短 TTL 内存缓存（`forceRefresh` 绕过、登出/登录完成立即失效）；非 TTY 管道下 `BROWSER=/usr/bin/true agy acp --login` 稳定输出 `https://accounts.google.com/o/oauth2/auth?...` 与粘贴提示；`agy acp` 原生 `logout` RPC 返回 `{}`，全程不触碰任何 token 文件。
 
 对应决定笔记：[2026-11-23-harness-settings-account-login-and-runtime-config.md](../.agents/notes/2026-11-23-harness-settings-account-login-and-runtime-config.md)（部分取代 [2026-11-22-claude-config-status-not-values.md](../.agents/notes/2026-11-22-claude-config-status-not-values.md)，后者关于“只返回变量名、变量名不进埋点、mtime 提示、重启沿用 `--wait/--force`、拒绝 API Key 上线路”的规则继续有效）。
 
