@@ -1872,3 +1872,58 @@ test("plan limits are kept limit by limit: one process's older word of a limit d
     agents: { fake: { windows: [five(0.5), opus], at: 3_000 } },
   });
 });
+
+test("an older index's sessions are read once each to be listed, a few at a time, and not again after a restart", async () => {
+  const ids = await seedSessions(6);
+  // As an older daemon wrote it: neither `prompted` nor `turnOpen` on any entry.
+  const path = join(dir, "index.json");
+  const index = JSON.parse(await readFile(path, "utf8")) as {
+    sessions: Record<string, Record<string, unknown>>;
+  };
+  for (const entry of Object.values(index.sessions)) {
+    delete entry.prompted;
+    delete entry.turnOpen;
+  }
+  await writeFile(path, JSON.stringify(index));
+
+  const real = new JsonlLogStore({ dir: join(dir, "sessions") });
+  let reads = 0;
+  let opening = 0;
+  let mostAtOnce = 0;
+  const store: LogStore = {
+    exists: (id) => real.exists(id),
+    remove: (id) => real.remove(id),
+    open: async (id, mode) => {
+      opening++;
+      mostAtOnce = Math.max(mostAtOnce, opening);
+      // Long enough for the others to be asked for meanwhile, if they are going to be.
+      await Bun.sleep(5);
+      const log = await real.open(id, mode);
+      opening--;
+      const read = log.read.bind(log);
+      log.read = (...args) => {
+        reads++;
+        return read(...args);
+      };
+      return log;
+    },
+  };
+  const first = await startOn(store);
+  const c = await connectClient(first.daemon);
+  const listed = (await c.agent.request(methods.agent.session.list, SAID)).sessions;
+  expect(listed.map((s) => s.sessionId).sort()).toEqual([...ids].sort());
+  // Both what the index lacked came from one read of each log, beyond the one that opened it.
+  expect(reads).toBe(ids.length);
+  expect(mostAtOnce).toBeGreaterThan(1);
+  expect(mostAtOnce).toBeLessThanOrEqual(4);
+  await first.daemon.close();
+  open = [];
+
+  reads = 0;
+  const second = await startOn(store);
+  const d = await connectClient(second.daemon);
+  expect((await d.agent.request(methods.agent.session.list, SAID)).sessions).toHaveLength(
+    ids.length,
+  );
+  expect(reads).toBe(0);
+});

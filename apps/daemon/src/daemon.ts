@@ -103,6 +103,7 @@ import {
 } from "./acp.ts";
 import { AgentLink } from "./agent-link.ts";
 import type { AgentDefinition } from "./agents.ts";
+import { mapBounded } from "./bounded.ts";
 import { Clients } from "./clients.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
@@ -207,6 +208,8 @@ export const defaultTerminals = (
 });
 
 const SESSION_UPDATE = methods.client.session.update;
+/** How many sessions a list loads at once. */
+const LIST_LOADS = 4;
 const REQUEST_PERMISSION = methods.client.session.requestPermission;
 const ELICITATION = methods.client.elicitation.create;
 
@@ -597,7 +600,7 @@ export class Daemon {
       if (entry.queued === true) await this.#restoreQueue(session);
       this.#clamp(session);
       this.#watch(session);
-      await this.#endTurnLeftOpen(session);
+      await this.#backfill(session);
       this.#sessions.set(sessionId, session);
       this.#log.debug("session_loaded", { session: sessionId, queued: session.queue.length });
       return session;
@@ -1660,20 +1663,28 @@ export class Daemon {
   }
 
   /**
-   * A session loaded after a restart whose log has a turn that never ended: the daemon before this one stopped in the
-   * middle of it without saying so (it crashed, was killed, or was older than this rule). Its end is put on record now.
-   * The index says whether to look; an entry from before it said reads the log once.
+   * What a session's log says that the index may not, read once as the session loads (CYCL-261), and kept in the index
+   * so that the next load does not read for it:
+   * - a turn that never ended: the daemon before this one stopped in the middle of it without saying so (it crashed,
+   *   was killed, or was older than this rule). Its end is put on record now. The index says whether to look.
+   * - whether the person has said anything, for an entry from before the index kept it (`#prompted`).
    */
-  async #endTurnLeftOpen(session: Session): Promise<void> {
-    if (session.entry.turnOpen === false) return;
-    let open: boolean;
+  async #backfill(session: Session): Promise<void> {
+    const { turnOpen, prompted } = session.entry;
+    if (turnOpen === false && prompted !== undefined) return;
+    let records: LogRecord[];
     try {
-      open = turnLeftOpen(await session.log.read(undefined, { stored: true }));
+      // As stored: an image is not read back from its blob to find any of this out.
+      records = await session.log.read(undefined, { stored: true });
     } catch {
       // A log that cannot be read is reported where it is read; there is nothing to end here.
       return;
     }
-    if (open) await this.#interrupt(session, "Cycle stopped while this turn was running");
+    if (prompted === undefined)
+      this.#remember(session, { prompted: records.some(isUserMessage) }, false);
+    if (turnOpen === false) return;
+    if (turnLeftOpen(records))
+      await this.#interrupt(session, "Cycle stopped while this turn was running");
     else this.#remember(session, { turnOpen: false }, false);
   }
 
@@ -1762,7 +1773,8 @@ export class Daemon {
 
   /**
    * Whether the person has said anything in the session. Known from the index, or for an entry written before the index
-   * kept it, read once from the log and kept. A log that cannot be read throws, and the session is listed as unreadable.
+   * kept it, from the log as the session loaded (`#backfill`). A log that could not be read then is read again here,
+   * and if it still cannot be it throws, and the session is listed as unreadable.
    */
   async #prompted(session: Session): Promise<boolean> {
     if (session.entry.prompted !== undefined) return session.entry.prompted;
@@ -1968,24 +1980,29 @@ export class Daemon {
       // just made by finding it in the list (docs/protocol.md §6).
       const said =
         (params?._meta as Record<string, unknown> | null | undefined)?.[META.onlyPrompted] === true;
-      const rows = [];
       const page = sessionPage(this.#index, params ?? {});
-      for (const [sessionId, entry] of page.entries) {
+      // A session not loaded yet is read from disk to be listed: a few at a time, not one after another (CYCL-261), and
+      // not all at once (each read holds its whole log in memory).
+      const rows = await mapBounded(page.entries, LIST_LOADS, async ([sessionId, entry]) => {
         try {
-          const row = await this.#row(sessionId, entry, said);
-          if (row !== undefined) rows.push(row);
+          return await this.#row(sessionId, entry, said);
         } catch (error) {
           // Deleted while the list was being read.
-          if (error instanceof RpcError && error.code === RESOURCE_NOT_FOUND) continue;
+          if (error instanceof RpcError && error.code === RESOURCE_NOT_FOUND) return undefined;
           // One session whose history cannot be read is that session's problem, not the list's: it
           // is listed, marked, and says so when it is opened. Anything else is the list's.
           if (!(error instanceof RpcError) || error.code !== CycleErrorCode.LogUnavailable)
             throw error;
-          rows.push(this.#unreadableRow(sessionId, entry));
+          return this.#unreadableRow(sessionId, entry);
         }
-      }
+      });
+      // A session deleted while others were being read is left out, though its own row was read before it went.
+      const present = (row: (typeof rows)[number]): row is NonNullable<typeof row> =>
+        row !== undefined &&
+        this.#index.get(row.sessionId) !== undefined &&
+        this.#sessions.get(row.sessionId)?.closed !== true;
       return {
-        sessions: rows,
+        sessions: rows.filter(present),
         ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
       };
     });
