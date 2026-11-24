@@ -967,19 +967,6 @@ html[data-platform="darwin"] [data-slot="page-header"] {
   height: 100%;
   min-width: 0;
   background: var(--cycle-surface-sidebar);
-  /* Opened or closed by the user, it slides a little from the edge it lives on and fades (CYCL-213; the SDK's presence
-     sets the starting and ending styles, split-layout.tsx). Its column takes its width at once, not a frame at a time:
-     moving the width would reflow the conversation and resize a terminal in the panel on every frame, so only
-     transform and opacity move (motion.md). A transition, not an animation, so the panel shown again after a page
-     that hid it does not arrive again. */
-  transition:
-    opacity var(--cycle-motion-disclosure) var(--cycle-ease),
-    transform var(--cycle-motion-disclosure) var(--cycle-ease);
-}
-
-[data-slot="side-panel"]:is([data-starting-style], [data-ending-style]) {
-  opacity: 0;
-  transform: translateX(0.5rem);
 }
 
 [data-kind="panel-tabs"] {
@@ -2350,12 +2337,14 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   -webkit-app-region: no-drag;
 }
 
-/* Folding the sidebar slides it shut rather than cutting it off, so it is seen where it went (and where ⌘B brings it
-   back from). The one width that moves (motion.md), and only for the button and ⌘B (`data-animate`, set for the
-   slide): a drag or a window being resized moves it at once. Its content keeps its least width and is clipped, so the rows do not reflow as it narrows. */
+/* Folding the sidebar, or opening and closing the right panel, slides the column rather than cutting it off, so it is
+   seen where it went (and where its button or shortcut brings it back from). The one width that moves (motion.md),
+   and only for the buttons and shortcuts (`data-animate`, set for the slide by `slideColumns`, split-layout.tsx): a
+   drag or a window being resized moves it at once. The conversation's column slides with it, in step, so together
+   they always fill the window and the columns beside them keep their width. */
 [data-slot="split"][data-animate]
   > [data-slot="resizable"]:not([data-dragging])
-  > [data-slot="resizable-panel"]#sidebar {
+  > [data-slot="resizable-panel"] {
   transition: flex-basis var(--cycle-motion-disclosure) var(--cycle-ease);
 }
 
@@ -2363,9 +2352,30 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   overflow: hidden;
 }
 
-/* Its least width (SIDEBAR.min, set on the split by split-layout.tsx). */
+/* The sidebar's content keeps its least width (SIDEBAR.min, set on the split by split-layout.tsx) and is clipped, so
+   its rows do not reflow as it narrows. */
 [data-slot="resizable-panel"]#sidebar > [data-slot="sidebar"] {
   min-width: var(--cycle-sidebar-min, 200px);
+}
+
+/* While it slides, the panel's content keeps the width it has open (set on the split by split-layout.tsx) and is
+   clipped on the conversation's side, held to the window's edge as the sidebar's is to the other: nothing in it is
+   squeezed, and a terminal in it is not fitted again on every frame. */
+[data-slot="resizable-panel"]#panel {
+  display: flex;
+  justify-content: flex-end;
+  /* Not `hidden`: a file scrolled to inside it must not scroll the column sideways. */
+  overflow: clip;
+}
+
+[data-slot="resizable-panel"]#panel > [data-slot="side-panel"] {
+  flex: 1 0 0;
+  min-width: var(--cycle-panel-width, 0);
+}
+
+/* Closed, the panel's handle is not drawn at the window's edge. */
+[data-slot="split"] [data-slot="resizable-handle"][data-closed] {
+  visibility: hidden;
 }
 
 /* The room kept for the traffic lights comes and goes with the slide, not before it. */

@@ -64,7 +64,7 @@ import type { Away } from "./session-list.tsx";
 import { SettingsPage, type SettingsSection } from "./settings.tsx";
 import { FIRST_SIZE, SidePanel, terminalToShow } from "./side-panel.tsx";
 import { MOD, Sidebar, sessionTitle } from "./sidebar.tsx";
-import { SplitLayout } from "./split-layout.tsx";
+import { SplitLayout, slideColumns } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { ENVIRONMENT_STATE } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -619,8 +619,8 @@ function AppWindow() {
   const plan = view !== undefined ? currentPlan(view.conversation) : undefined;
   const firstAllow = view?.permissions[0]?.options.find((o) => o.kind === "allow_once");
 
-  // The sidebar slides only when it is folded or opened on purpose (`data-animate` on the split, for that one slide): a
-  // drag, or a window being resized, moves it at once. Taken off when the slide ends, or at once if nothing moved.
+  // The sidebar slides only when it is folded or opened on purpose (`slideColumns`, as the panel does): a drag, or a
+  // window being resized, moves it at once.
   const endSlide = useRef<(() => void) | undefined>(undefined);
   useEffect(() => () => endSlide.current?.(), []);
   const toggleSidebar = useCallback(
@@ -628,24 +628,12 @@ function AppWindow() {
       const wasCollapsed = layout.isCollapsed("sidebar") || sidebarCollapsed;
       const split = appRef.current?.querySelector<HTMLElement>('[data-slot="split"]');
       endSlide.current?.();
-      split?.setAttribute("data-animate", "");
-      const moved = wasCollapsed ? layout.expand("sidebar") : layout.collapse("sidebar");
-      if (split != null) {
-        const done = () => {
-          split.removeAttribute("data-animate");
-          split.removeEventListener("transitionend", onEnd);
-          window.clearTimeout(fallback);
+      const fold = () => (wasCollapsed ? layout.expand("sidebar") : layout.collapse("sidebar"));
+      if (split == null) fold();
+      else
+        endSlide.current = slideColumns(split, "sidebar", fold, () => {
           endSlide.current = undefined;
-        };
-        const onEnd = (event: TransitionEvent) => {
-          if ((event.target as HTMLElement).id === "sidebar" && event.propertyName === "flex-basis")
-            done();
-        };
-        // No transitionend when nothing moved, or with reduced motion: the attribute goes anyway.
-        const fallback = window.setTimeout(done, moved ? 400 : 0);
-        split.addEventListener("transitionend", onEnd);
-        endSlide.current = done;
-      }
+        });
       setSidebarCollapsed(!wasCollapsed);
       // The button moves (into the sidebar's corner, or the conversation's header): focus follows it, so a keyboard
       // user is not left on the page.

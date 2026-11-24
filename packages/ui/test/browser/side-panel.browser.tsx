@@ -144,20 +144,124 @@ test("the header's six actions sit close together, one line of 28px buttons even
   }
 });
 
-/** The presence styles the panel and its tabs' content were given, in order, while `run` ran. */
-const motions = async (run: () => Promise<void>) => {
-  const seen: string[] = [];
-  const watch = new MutationObserver((records) => {
-    for (const record of records) {
-      const target = record.target as HTMLElement;
-      if (record.attributeName === null || !target.hasAttribute(record.attributeName)) continue;
-      seen.push(`${target.dataset.slot} ${record.attributeName}`);
-    }
+const column = (id: string) =>
+  Math.round(
+    document.querySelector(`[data-slot="resizable-panel"]#${id}`)?.getBoundingClientRect().width ??
+      -1,
+  );
+const split = () => document.querySelector('[data-slot="split"]') as HTMLElement;
+
+type Frame = { sidebar: number; main: number; panel: number; content: number | undefined };
+
+/** The columns' widths on every frame drawn while `run` ran, and for `after` ms more. */
+const frames = async (run: () => Promise<void>, after = 400) => {
+  const seen: Frame[] = [];
+  let frame = 0;
+  const sample = () => {
+    const content = panel()?.getBoundingClientRect().width;
+    seen.push({
+      sidebar: column("sidebar"),
+      main: column("main"),
+      panel: column("panel"),
+      content: content === undefined ? undefined : Math.round(content),
+    });
+    frame = requestAnimationFrame(sample);
+  };
+  frame = requestAnimationFrame(sample);
+  try {
+    await run();
+    await new Promise((resolve) => setTimeout(resolve, after));
+  } finally {
+    cancelAnimationFrame(frame);
+  }
+  return seen;
+};
+
+const increasing = (xs: number[]) => xs.every((x, i) => i === 0 || x >= (xs[i - 1] ?? 0));
+
+test("the panel opens and closes as the sidebar folds: its column slides, the conversation with it, nothing squeezed", async () => {
+  const { user } = await mount(true);
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  const together = column("main") + column("panel");
+  const opening = await frames(async () => {
+    await user.click(await screen.findByRole("button", { name: "Show panel" }));
   });
-  watch.observe(document.body, {
-    subtree: true,
-    attributeFilter: ["data-starting-style", "data-ending-style"],
+  const open = column("panel");
+  expect(open).toBe(400);
+  const widths = opening.map((f) => f.panel);
+  expect(increasing(widths)).toBe(true);
+  // Frames on the way, not a jump from closed to open.
+  expect(widths.filter((w) => w > 0 && w < open).length).toBeGreaterThan(2);
+  for (const f of opening) {
+    // The sidebar stays as it is, and the conversation gives the panel exactly what it takes.
+    expect(f.sidebar).toBe(256);
+    expect(Math.abs(f.main + f.panel - together)).toBeLessThanOrEqual(1);
+    // What the panel shows is there from the first frame, at its open width: cut off, not squeezed.
+    if (f.panel > 0) expect(f.content).toBe(open);
+  }
+  // The same slide as the sidebar's, and only for it: the attribute goes when the column is open.
+  const style = getComputedStyle(document.querySelector("#panel") as Element);
+  expect(style.transitionDuration).toBe("0s");
+  expect(split().hasAttribute("data-animate")).toBe(false);
+
+  // Closing: the column slides shut, what it showed out of reach but there until it has.
+  const closing = await frames(async () => {
+    await user.click(screen.getByRole("button", { name: "Hide panel" }));
+    expect(split().hasAttribute("data-animate")).toBe(true);
+    const going = getComputedStyle(document.querySelector("#panel") as Element);
+    expect(going.transitionProperty).toBe("flex-basis");
+    expect(going.transitionDuration).toBe("0.16s");
+    expect(panel()?.closest("[inert]")).not.toBeNull();
+    const handle = document.querySelector(
+      '[data-slot="resizable-handle"][aria-label="Resize panel"]',
+    );
+    expect(handle?.hasAttribute("data-disabled")).toBe(true);
   });
+  const shutting = closing.map((f) => f.panel);
+  expect(increasing(shutting.toReversed())).toBe(true);
+  expect(shutting.filter((w) => w > 0 && w < open).length).toBeGreaterThan(2);
+  for (const f of closing) {
+    expect(f.sidebar).toBe(256);
+    expect(Math.abs(f.main + f.panel - together)).toBeLessThanOrEqual(1);
+    if (f.panel > 0) expect(f.content).toBe(open);
+  }
+  expect(column("panel")).toBe(0);
+  expect(panel()).toBeNull();
+  expect(split().hasAttribute("data-animate")).toBe(false);
+
+  // Opened again before it has gone, it stays, and is no longer going.
+  await user.click(screen.getByRole("button", { name: "Show panel" }));
+  await user.click(screen.getByRole("button", { name: "Hide panel" }));
+  await user.click(screen.getByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(column("panel")).toBe(open), { timeout: 1000 });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(panel()?.closest("[inert]")).toBeNull();
+  expect(column("panel")).toBe(open);
+});
+
+test("the sidebar's slide carries the conversation with it, and leaves an open panel as it is", async () => {
+  const { user } = await mount(true);
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(column("panel")).toBe(400), { timeout: 1000 });
+  const together = column("sidebar") + column("main");
+  const folding = await frames(async () => {
+    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+  });
+  expect(folding.filter((f) => f.sidebar > 0 && f.sidebar < 256).length).toBeGreaterThan(2);
+  for (const f of folding) {
+    expect(f.panel).toBe(400);
+    expect(Math.abs(f.sidebar + f.main - together)).toBeLessThanOrEqual(1);
+  }
+});
+
+/** Whether the columns were made to slide while `run` ran. */
+const slid = async (run: () => Promise<void>) => {
+  let seen = false;
+  const watch = new MutationObserver(() => {
+    if (split().hasAttribute("data-animate")) seen = true;
+  });
+  watch.observe(split(), { attributeFilter: ["data-animate"] });
   try {
     await run();
   } finally {
@@ -166,81 +270,90 @@ const motions = async (run: () => Promise<void>) => {
   return seen;
 };
 
-test("the panel slides in as it opens and out as it closes, its column going only when it has", async () => {
-  const { user } = await mount(true);
-  await user.click(await screen.findByRole("option", { name: /first/ }));
-  const opening = await motions(async () => {
-    await user.click(await screen.findByRole("button", { name: "Show panel" }));
-    await waitFor(() => expect(panel()).not.toBeNull());
-  });
-  expect(opening).toEqual(["side-panel data-starting-style"]);
-  const style = getComputedStyle(panel() as Element);
-  expect(style.transitionProperty).toBe("opacity, transform");
-  expect(style.transitionDuration).toBe("0.16s, 0.16s");
-  // Another tab: its content fades in.
-  const switching = await motions(async () => {
-    await user.click(screen.getByRole("button", { name: "Show changes" }));
-    await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Diff" }).getAttribute("aria-selected")).toBe("true"),
-    );
-  });
-  expect(switching).toContain("tabs-panel data-starting-style");
-  // The one it replaced is not drawn beside it while it goes.
-  const drawn = [...document.querySelectorAll('[data-slot="tabs-panel"]')].filter(
-    (x) => getComputedStyle(x).display !== "none",
-  );
-  expect(drawn).toHaveLength(1);
-  // Closing: there a moment, out of reach with its handle, then its column goes.
-  const closing = await motions(async () => {
-    await user.click(screen.getByRole("button", { name: "Hide panel" }));
-    const going = panel() as HTMLElement | null;
-    const handle = document.querySelector(
-      '[data-slot="resizable-handle"][aria-label="Resize panel"]',
-    );
-    if (going !== null) {
-      expect(going.inert).toBe(true);
-      expect(handle?.closest("[inert]")).not.toBeNull();
-    }
-    await waitFor(() => expect(panel()).toBeNull(), { timeout: 1000 });
-  });
-  expect(closing).toEqual(["side-panel data-ending-style"]);
-  // Opened again before it has gone, it stays, and is no longer going.
-  await user.click(screen.getByRole("button", { name: "Show panel" }));
-  await waitFor(() => expect(panel()).not.toBeNull());
-  await user.click(screen.getByRole("button", { name: "Hide panel" }));
-  await user.click(screen.getByRole("button", { name: "Show panel" }));
-  await waitFor(() => expect(panel()?.hasAttribute("data-ending-style")).toBe(false));
-  expect((panel() as HTMLElement).inert).toBe(false);
-});
-
 test("a panel that comes or goes with the session opened is there, or gone, at once", async () => {
   const { user, store } = await mount();
   store.sidePanels.setOpen("local:s2", true);
   await user.click(await screen.findByRole("option", { name: /first/ }));
-  const seen = await motions(async () => {
+  const seen = await slid(async () => {
     await user.click(await screen.findByRole("option", { name: /second/ }));
     await waitFor(() => expect(panel()).not.toBeNull());
+    expect(column("panel")).toBe(400);
     await user.click(await screen.findByRole("option", { name: /first/ }));
     expect(panel()).toBeNull();
+    expect(column("panel")).toBe(0);
   });
-  expect(seen).toEqual([]);
+  expect(seen).toBe(false);
 });
 
-test("with reduced motion the panel neither slides nor fades: it is there, and gone, at once", async () => {
+test("a tab chosen in the panel fades in, the one it replaced gone at once", async () => {
+  const { user } = await mount(true);
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(panel()).not.toBeNull());
+  const seen: string[] = [];
+  const watch = new MutationObserver((records) => {
+    for (const record of records) {
+      const target = record.target as HTMLElement;
+      if (record.attributeName === null || !target.hasAttribute(record.attributeName)) continue;
+      seen.push(`${target.dataset.slot} ${record.attributeName}`);
+    }
+  });
+  watch.observe(document.body, { subtree: true, attributeFilter: ["data-starting-style"] });
+  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Diff" }).getAttribute("aria-selected")).toBe("true"),
+  );
+  watch.disconnect();
+  expect(seen).toContain("tabs-panel data-starting-style");
+  const drawn = [...document.querySelectorAll('[data-slot="tabs-panel"]')].filter(
+    (x) => getComputedStyle(x).display !== "none",
+  );
+  expect(drawn).toHaveLength(1);
+});
+
+test("with reduced motion the panel does not slide: it is there, and gone, at once", async () => {
   await cdp().send("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-reduced-motion", value: "reduce" }],
   });
   try {
     const { user } = await mount();
     await user.click(await screen.findByRole("option", { name: /first/ }));
-    await user.click(await screen.findByRole("button", { name: "Show panel" }));
-    await waitFor(() => expect(panel()).not.toBeNull());
-    expect(getComputedStyle(panel() as Element).transitionDuration).toBe("0s");
-    const content = document.querySelector('[data-slot="tabs-panel"][data-selected]');
-    expect(getComputedStyle(content as Element).transitionDuration).toBe("0s");
-    await user.click(screen.getByRole("button", { name: "Hide panel" }));
-    expect(panel()).toBeNull();
+    const seen = await slid(async () => {
+      await user.click(await screen.findByRole("button", { name: "Show panel" }));
+      await waitFor(() => expect(panel()).not.toBeNull());
+      expect(column("panel")).toBe(400);
+      const content = document.querySelector('[data-slot="tabs-panel"][data-selected]');
+      expect(getComputedStyle(content as Element).transitionDuration).toBe("0s");
+      await user.click(screen.getByRole("button", { name: "Hide panel" }));
+      expect(panel()).toBeNull();
+      expect(column("panel")).toBe(0);
+    });
+    expect(seen).toBe(false);
   } finally {
     await cdp().send("Emulation.setEmulatedMedia", { features: [] });
   }
+});
+
+test("the panel opens as wide as the user left it, closed in between and after a restart", async () => {
+  const { user } = await mount();
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(column("panel")).toBe(400), { timeout: 1000 });
+  screen.getByRole("separator", { name: "Resize panel" }).focus();
+  await user.keyboard("{ArrowLeft}{ArrowLeft}");
+  const wide = column("panel");
+  expect(wide).toBeGreaterThan(400);
+  await user.click(screen.getByRole("button", { name: "Hide panel" }));
+  await waitFor(() => expect(panel()).toBeNull(), { timeout: 1000 });
+  await user.click(screen.getByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(column("panel")).toBe(wide), { timeout: 1000 });
+  await user.click(screen.getByRole("button", { name: "Hide panel" }));
+  await waitFor(() => expect(panel()).toBeNull(), { timeout: 1000 });
+  cleanup();
+  // A restart: the panel is closed, and opens as wide as it was.
+  const { user: again } = await mount();
+  await again.click(await screen.findByRole("option", { name: /first/ }));
+  expect(column("panel")).toBe(0);
+  await again.click(await screen.findByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(column("panel")).toBe(wide), { timeout: 1000 });
 });
