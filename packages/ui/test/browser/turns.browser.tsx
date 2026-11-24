@@ -219,13 +219,14 @@ test("a turn that failed says how, and the failed call is a row under the card, 
   expect(alert.textContent).toContain("The turn failed: disk full");
   const card = await screen.findByRole("button", { name: /Ran 2 commands/ });
   const row = await screen.findByRole("button", { name: /Bash.*make install/ });
-  // Outside the card (which holds the two that went well), and open: its input is on screen.
+  // Outside the card (which holds the two that went well), and closed as every row starts: its head says it failed.
   expect(card.closest('[data-kind="work"]')?.contains(row)).toBe(false);
-  expect(row.getAttribute("aria-expanded")).toBe("true");
+  expect(row.getAttribute("aria-expanded")).toBe("false");
+  expect(row.querySelector('[data-slot="tool-status"]')?.textContent).toBe("failed");
   expect(log.textContent).not.toContain("make test");
 });
 
-test("a failure that arrives while the card is on screen opens it", async () => {
+test("a failure that arrives while the card is on screen leaves it closed, and its line says so", async () => {
   const { log, emit } = await open(
     you("u1"),
     state({ state: "running" }),
@@ -242,8 +243,9 @@ test("a failure that arrives while the card is on screen opens it", async () => 
       rawInput: { command: "make test" },
     }),
   );
-  await waitFor(() => expect(card.getAttribute("aria-expanded")).toBe("true"));
-  // The other call is still going, and the card says both.
+  // The other call is still going, and the card says both; it stays as the person left it.
+  await waitFor(() => expect(log.textContent).toContain("1 failed"));
+  expect(card.getAttribute("aria-expanded")).toBe("false");
   expect(log.textContent).toContain("Running");
   expect(log.textContent).toContain("1 failed");
 });
@@ -1006,7 +1008,7 @@ test("a card of calls, closed, says on its line how long the call that is going 
 });
 
 test("a tool row is text only: no icon, dot, spinner, cross or chevron, whatever its state", async () => {
-  const { log } = await open(
+  const { user, log } = await open(
     you("u1"),
     say("m1"),
     ...finished("r", "Read", { file_path: "a.ts" }, {}),
@@ -1027,7 +1029,8 @@ test("a tool row is text only: no icon, dot, spinner, cross or chevron, whatever
     // Nor the chevron ui-sdk draws after a trigger without an icon.
     expect(getComputedStyle(row, "::after").content).toBe("none");
   }
-  // Open (a failure starts open), what it holds is text too: the end of a command is a word, not a tick or a cross.
+  // Opened, what it holds is text too: the end of a command is a word, not a tick or a cross.
+  await user.click(log.querySelector('[data-item-id="x"] > button') as HTMLElement);
   await waitFor(() =>
     expect(log.querySelector('[data-item-id="x"] [data-slot="tool-end"]')).not.toBeNull(),
   );
@@ -1136,6 +1139,8 @@ test("a command's output is drawn in its colours and copied without them; its he
     }),
     state({ state: "idle", stopReason: "end_turn" }),
   );
+  // The two are a card, closed though one failed; its rows open one by one.
+  await user.click(await screen.findByRole("button", { name: /Ran 2 commands/ }));
   await user.click(await screen.findByRole("button", { name: /Run the tests/ }));
   const output = log.querySelector('[data-kind="output"] [data-slot="tool-output"]') as HTMLElement;
   expect(output.textContent).toBe("✓ 12 passed\n✗ 1 failed");
@@ -1159,7 +1164,8 @@ test("a command's output is drawn in its colours and copied without them; its he
   expect(script.calls.filter(([name]) => name === "copyText")).toEqual([
     ["copyText", "✓ 12 passed\n✗ 1 failed"],
   ]);
-  // A failed command opens by itself, and says its code.
+  // A failed command, opened, says its code.
+  await user.click(await screen.findByRole("button", { name: /Build it/ }));
   const failed = log.querySelector('[data-item-id="f"] [data-slot="tool-end"]');
   expect(failed?.getAttribute("data-tone")).toBe("danger");
   expect(failed?.textContent).toBe("exited with code 2");
