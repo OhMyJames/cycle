@@ -47,7 +47,8 @@ const OPTIONS = [
 describe("commandPrefixes", () => {
   test("one prefix per segment of a chain", () => {
     expect(commandPrefixes("git status")).toEqual(["git status"]);
-    expect(commandPrefixes("ls -la")).toEqual(["ls"]);
+    expect(commandPrefixes("ls -la")).toEqual(["ls -la"]);
+    expect(commandPrefixes("git -C repo status")).toEqual(["git -C repo"]);
     expect(commandPrefixes("cd src && git diff | grep foo")).toEqual([
       "cd src",
       "git diff",
@@ -63,6 +64,11 @@ describe("commandPrefixes", () => {
       "bash -c 'ls'",
       "FOO=1 ls",
       "ls\nrm x",
+      "ls & rm -rf ~",
+      "(ls)",
+      "! ls",
+      "python -c 'x'",
+      "find . -exec rm {} +",
     ]) {
       expect(commandPrefixes(c)).toBeUndefined();
     }
@@ -195,7 +201,7 @@ describe("idle debounce and sub-agents (CYC-289, CYC-290)", () => {
       .map((u) => (u as { state: string }).state);
 
   test("an update inside the debounce keeps the turn running; a quiet one ends it", async () => {
-    const { config, fake } = setup({ autonomousIdleMs: 60 });
+    const { config, fake } = setup({ autonomousIdleMs: 200 });
     const adapter = createAdapter(config);
     const updates: SessionUpdate[] = [];
     const app = client().onNotification(methods.client.session.update, ({ params }) => {
@@ -215,11 +221,11 @@ describe("idle debounce and sub-agents (CYC-289, CYC-290)", () => {
             content: { type: "text", text: "x" },
           });
         chunk();
-        await Bun.sleep(40);
+        await Bun.sleep(100);
         chunk();
-        await Bun.sleep(40);
+        await Bun.sleep(100);
         chunk();
-        await Bun.sleep(40);
+        await Bun.sleep(100);
         expect(states(updates)).toEqual(["running"]);
         await waitFor(() => states(updates).includes("idle"));
         expect(states(updates)).toEqual(["running", "idle"]);
@@ -264,6 +270,7 @@ describe("idle debounce and sub-agents (CYC-289, CYC-290)", () => {
           sessionUpdate: "tool_call",
           toolCallId: "mt1",
           name: "manage_task",
+          rawInput: { Action: "status" },
           status: "completed",
         });
         await waitFor(() => states(updates).includes("idle"));

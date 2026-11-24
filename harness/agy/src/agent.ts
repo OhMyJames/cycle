@@ -102,6 +102,28 @@ const UNREMEMBERABLE_PROGRAMS = new Set([
   "ssh",
   "source",
   ".",
+  "python",
+  "python3",
+  "node",
+  "deno",
+  "bun",
+  "bunx",
+  "npx",
+  "perl",
+  "ruby",
+  "php",
+  "awk",
+  "find",
+  "curl",
+  "wget",
+  "mv",
+  "chmod",
+  "chown",
+  "kill",
+  "docker",
+  "osascript",
+  "open",
+  "tee",
 ]);
 
 /**
@@ -110,24 +132,27 @@ const UNREMEMBERABLE_PROGRAMS = new Set([
  * a substitution, a redirect, a newline or a program that runs others.
  */
 export const commandPrefixes = (command: string): string[] | undefined => {
-  if (/[`\n\r<>]|\$\(|\$\{/.test(command)) return undefined;
+  // A lone `&` (background), a group, a negation, a substitution, a redirect or a newline: not judged by segments.
+  if (/[`\n\r<>(){}!\\]|\$[({]/.test(command) || /(^|[^&])&([^&]|$)/.test(command))
+    return undefined;
   const prefixes: string[] = [];
   for (const segment of command.split(/&&|\|\||[|;]/)) {
     const words = segment.trim().split(/\s+/).filter(Boolean);
     const program = words[0];
     if (program === undefined || /^\w+=/.test(program)) return undefined;
     if (UNREMEMBERABLE_PROGRAMS.has(program.split("/").pop() ?? program)) return undefined;
-    const sub = words[1];
-    prefixes.push(sub !== undefined && /^[a-z][\w-]*$/i.test(sub) ? `${program} ${sub}` : program);
+    // The program, the flags straight after it, and the plain word that follows: `git status`, `git -C repo`.
+    // Remembered exactly, so `git -C repo` is never `git push`.
+    let end = 1;
+    while (words[end]?.startsWith("-")) end += 1;
+    if (/^[a-z][\w-]*$/i.test(words[end] ?? "")) end += 1;
+    prefixes.push(words.slice(0, end).join(" "));
   }
   return prefixes.length > 0 ? prefixes : undefined;
 };
 
-const coversPrefix = (remembered: ReadonlySet<string>, prefix: string): boolean => {
-  if (remembered.has(prefix)) return true;
-  const program = prefix.split(" ")[0] as string;
-  return remembered.has(program);
-};
+const coversPrefix = (remembered: ReadonlySet<string>, prefix: string): boolean =>
+  remembered.has(prefix);
 
 const ALWAYS_OPTION_ID = "cycle-allow-session";
 
@@ -247,8 +272,8 @@ export function createAdapter(config: AdapterConfig) {
   const sessions = new Map<string, SessionState>();
   const cancelTimeoutMs = config.cancelTimeoutMs ?? 5_000;
   // agy's model call between two steps often takes longer than 1.5 s, which flickered running/idle and let a queued
-  // message go while agy still worked (CYC-290). No measured spread yet: the middle of 5-10 s.
-  const autonomousIdleMs = config.autonomousIdleMs ?? 8_000;
+  // message go while agy still worked (CYC-290). No measured spread yet: the low end of 5-10 s, as a message sent in the window is refused.
+  const autonomousIdleMs = config.autonomousIdleMs ?? 5_000;
 
   const emitUpdate = (session: SessionState, update: SessionUpdate) => {
     void session.owner
@@ -386,6 +411,7 @@ export function createAdapter(config: AdapterConfig) {
       turn.idleTimer = undefined;
     }
     stopSubagentTicker(turn);
+    session.calls.clear();
     releaseSubagents(
       session,
       turn,
@@ -476,10 +502,6 @@ export function createAdapter(config: AdapterConfig) {
           name: payload.name ?? known.name,
           input: payload.rawInput ?? known.input,
         });
-        if (status === "completed" || status === "failed" || status === "cancelled") {
-          // A permission request for the call comes before it ends, so what it was is only needed until then.
-          setTimeout(() => session.calls.delete(toolId), 0).unref?.();
-        }
       }
       if (session.turn && toolId) {
         const turn = session.turn;
@@ -497,11 +519,20 @@ export function createAdapter(config: AdapterConfig) {
         } else if (turn.subagents.has(toolId) && (status === "failed" || status === "cancelled")) {
           releaseSubagents(session, turn, [toolId], "failed");
           syncSubagentTicker(session, turn);
-        } else if (name === TASK_TOOL && status === "completed" && turn.subagents.size > 0) {
-          // agy checking on its tasks is the one sign of a sub-agent being over.
+        } else if (
+          name === TASK_TOOL &&
+          status === "completed" &&
+          turn.subagents.size > 0 &&
+          /status/i.test(JSON.stringify(session.calls.get(toolId)?.input ?? ""))
+        ) {
+          // agy asking for the status of its tasks is the one sign of a sub-agent being over.
           releaseSubagents(session, turn, [...turn.subagents.keys()], "completed");
           syncSubagentTicker(session, turn);
         }
+      }
+      // A permission request for a call comes before it ends: what it was is only needed until then.
+      if (toolId && (status === "completed" || status === "failed" || status === "cancelled")) {
+        session.calls.delete(toolId);
       }
       if (session.turn) {
         // Start a fresh assistant message id for any text/thought arriving after a tool call.
