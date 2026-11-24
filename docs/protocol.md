@@ -94,6 +94,10 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 | `_cycle/diff/file`           | 客户端 → daemon | daemon 处理:一个文件相对 HEAD 的补丁,见 §8                                                                    |
 | `_cycle/trust/read`          | 客户端 → daemon | daemon 处理:一个文件夹是否信任,见 §8                                                                          |
 | `_cycle/trust/set`           | 客户端 → daemon | daemon 处理:记下对一个文件夹的信任决定,见 §8                                                                  |
+| `_cycle/providers/list`      | 客户端 → daemon | daemon 处理:主人的模型服务商和可选的服务种类,见 §10 "自带模型"                                                |
+| `_cycle/providers/catalog`   | 客户端 → daemon | daemon 处理:一种已知服务已知的模型                                                                            |
+| `_cycle/providers/save`      | 客户端 → daemon | daemon 处理:新增或修改一个服务商。key 只进不出                                                                |
+| `_cycle/providers/remove`    | 客户端 → daemon | daemon 处理:删除一个服务商                                                                                    |
 | `_cycle/plan_usage/read`     | 客户端 → daemon | daemon 处理:各 agent 账号的套餐用量,见 §8 "套餐用量"                                                          |
 | `_cycle/connectors/*`        | 客户端 → daemon | daemon 处理:管理 connector 和授权,见 §14                                                                      |
 | `_cycle/plugins/*`           | 客户端 → daemon | daemon 处理:浏览、安装、启停各 agent 的 plugin,见 §15                                                         |
@@ -715,6 +719,8 @@ session 里 ACP 的 `configOptions` 用 ACP 自己的字段表达同样的东西
 - **哪些模型支持**:来自 SDK 的 `ModelInfo.supportsEffort` 与 `supportedEffortLevels`,不在 Cycle 里写死。session 里 `config_option_update` 的 `model` 选项,每一项在 `_meta["cycle/efforts"]` 里带该模型可选的档位(字符串数组,不含 `default`);空数组表示该模型不支持 effort;没有这个键表示不知道。`effort` 选项的 `options` 是当前模型可选的档位加上 `default`;当前模型不支持时只有 `default`,客户端这时不显示 effort。
 - **不知道时**:进程还没报模型清单(新 session 第一个进程起来之前)、或当前模型不在清单里时,`effort` 列出全部档位,值照常交给 SDK,由它决定;清单到了之后,当前值不在当前模型的档位里,adapter 把它改回 `default` 并发 `config_option_update`。换模型时同样:旧档位新模型不支持,改回 `default`(一个值,不按模型分别记)。
 - daemon 缓存它见过的模型清单(含各模型的 `cycle/efforts`),叠加到 `_cycle/agents` 返回的 `configSchema` 的 `model.oneOf` 上(同样放在每项的 `_meta["cycle/efforts"]`),新 session 页据此在选模型时决定是否显示 effort、显示哪些档位。缓存只是提示,不做校验:真正可选的档位以 session 里 agent 报的为准。
+
+**自带模型(CYC-300,codex)。** 主人自己的模型服务商(`providers.json`,key 只在 daemon,任何答复只有 `hasKey`)的模型,id 是 `<服务商 id>/<模型 id>`。`_cycle/agents` 返回的 codex `configSchema` 的 `model.oneOf` 里,daemon 现算地追加它们,每项 `_meta["cycle/provider"] = {id, name}`,并带 `cycle/efforts`;这些项不进上面说的缓存。一个 session 要么在 agent 自己的模型上,要么在主人的模型上,由它开始时的模型决定:daemon 在发给 agent 的 `session/new`、`session/resume` 的 `_meta["cycle/model"]` 里带上这个模型。session 里 adapter 报的 `model` 选项只列同一种,另一种的 `setConfigOption` 被拒绝(`-32602`)。服务商变化时 daemon 向所有客户端发 `_cycle/providers_changed`(参数 `{}`),客户端重读 `_cycle/providers/list` 和 `_cycle/agents`。决定见 `.agents/notes/2026-11-24-codex-own-models-through-a-pi-ai-gateway.md`。
 
 agent 自己改了配置(例如 Claude 在 plan 模式里被批准后切回常规模式),通过 `config_option_update` 回报;daemon 把变化写进索引的 `config`,恢复时才不会把它改回去。
 

@@ -2,6 +2,7 @@ import type { AgentSettings } from "./agent-settings.ts";
 import type { AgentDefinition } from "./agents.ts";
 import type { Config } from "./config.ts";
 import type { Logger } from "./logger.ts";
+import type { ModelProviders } from "./providers.ts";
 
 /** What a harness is given to make its agent from: nothing of the daemon's own environment but what is named here. */
 export type HarnessContext = {
@@ -18,6 +19,8 @@ export type HarnessContext = {
    * instance it owns, so no other one can be handed in. Absent only when a test makes a definition by hand.
    */
   agentSettings?: AgentSettings;
+  /** The owner's model providers, which an agent that can serve them reads at each start. Absent in a test's hand-made definition. */
+  providers?: ModelProviders;
 };
 
 /** What a harness's own command line is given: no daemon, so no live runtime settings. */

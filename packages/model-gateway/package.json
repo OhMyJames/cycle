@@ -1,0 +1,13 @@
+{
+  "name": "@cycle/model-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cycle/protocol": "workspace:*",
+    "@earendil-works/pi-ai": "1.5.2"
+  }
+}

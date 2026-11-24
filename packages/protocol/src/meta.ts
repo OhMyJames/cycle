@@ -39,6 +39,13 @@ export const META = {
   open: "cycle/open",
   /** On a `configSchema` property: false when it is not one of the choices beside the message box, only in settings (docs/protocol.md §10). */
   composer: "cycle/composer",
+  /**
+   * On a model choice: `{ id, name }` of the owner's model provider that serves it. Absent on the agent's own models.
+   * A session keeps to one kind: the agent's own models, or the owner's (a thread stays with the provider it began on).
+   */
+  provider: "cycle/provider",
+  /** In the `session/new` and `session/resume` the daemon sends an agent: the model the session starts with, so the agent begins it on the right provider. */
+  model: "cycle/model",
   /** On a model choice: the effort levels that model takes (`[]` when it takes none); absent when not known (docs/protocol.md §10). */
   efforts: "cycle/efforts",
   /** On a `usage_update`: what the context window holds, by part (docs/protocol.md §8). */

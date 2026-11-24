@@ -190,7 +190,13 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
         data: { event: "created", agent: agentId, cwd: params.cwd },
       });
       // What the agent is given of the request: not the client's `_meta`, which is the daemon's to read.
-      const { _meta: _clientMeta, ...made } = params;
+      const { _meta: _clientMeta, ...rest } = params;
+      // The model the session starts with, told to the agent now: one that serves the owner's own models begins its
+      // conversation with the right provider, which cannot be changed once it has begun.
+      const startModel = { ...definition.newSession, ...core.defaults.get(agentId), ...overrides }
+        .model;
+      const made =
+        startModel !== undefined ? { ...rest, _meta: { [META.model]: startModel } } : rest;
       const { link, created: answer } = await core.startAgent(session, made);
       if (answer === undefined) throw new Error("The agent did not answer session/new");
       session.entry = { ...session.entry, agentSessionId: answer.sessionId };

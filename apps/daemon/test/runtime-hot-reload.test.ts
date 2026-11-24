@@ -346,7 +346,7 @@ test("the real Claude and agy harnesses read the daemon's own AgentSettings: max
   const real = new Map<string, AgentDefinition>();
   const daemon = await Daemon.start({
     dataDir: dir,
-    agents: (settings) =>
+    agents: (settings, providers) =>
       agentsFor(
         ConfigSchema.parse({}),
         dir,
@@ -354,7 +354,7 @@ test("the real Claude and agy harnesses read the daemon's own AgentSettings: max
         undefined,
         [claudeHarness, agyHarness],
         [self],
-      )(settings).map((definition) => {
+      )(settings, providers).map((definition) => {
         real.set(definition.id, definition);
         const wrapped: AgentDefinition = {
           ...definition,

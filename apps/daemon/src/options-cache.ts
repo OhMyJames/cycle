@@ -128,6 +128,8 @@ export const choicesFromConfigOptions = (
       _meta?: Record<string, unknown>;
     };
     if (c._meta?.["cycle/custom"] === true) continue;
+    // The owner's own models are the daemon's to list, as they are now; the agent's list is only its own.
+    if (c._meta?.[META.provider] !== undefined) continue;
     if (typeof c.value !== "string" || c.value === "") continue;
     const efforts = c._meta?.[META.efforts];
     out.push({

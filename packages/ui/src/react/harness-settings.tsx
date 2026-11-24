@@ -36,6 +36,7 @@ import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { PlanUsageBars, planRowsOf } from "./plan-usage-bars.tsx";
+import { ProvidersGroup } from "./providers.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { AGENT_AUTH_DOT, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -665,6 +666,9 @@ function HarnessLocationBody({
           />
         </PageGroup>
       ) : null}
+
+      {/* The owner's own models (CYC-300): Codex is the agent that can run on them. */}
+      {agentId === "codex" ? <ProvidersGroup location={location} /> : null}
 
       {supportsSetup &&
       snapshot !== undefined &&
