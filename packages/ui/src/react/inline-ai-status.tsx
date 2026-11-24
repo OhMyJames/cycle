@@ -58,7 +58,7 @@ const LOOK: Record<InlineAiStatusKind, LoaderState> = {
 };
 
 /**
- * One line, always 28px high, whatever it shows (app.css): what comes into it fades in, the mark and the words on one
+ * One line, always 28px high, whatever it shows (conversation.css): what comes into it fades in, the mark and the words on one
  * beat (`--cycle-motion-enter`), and what leaves it goes at once, so nothing below or above it moves. The mark is the
  * MorphLoader, which morphs from one state to the next rather than being swapped.
  */
@@ -67,7 +67,7 @@ export function InlineAiStatus({ kind, label, since, quiet = false }: InlineAiSt
     <div data-slot="step" data-step={kind} data-quiet={quiet || undefined}>
       {/* The time sits outside the live region so 1s ticks never spam screen readers. */}
       <div role="status" aria-live="polite" data-slot="step-live">
-        {/* Kept while quiet, out of the layout (app.css): it asks for no frames then, and morphs on from where it was
+        {/* Kept while quiet, out of the layout (conversation.css): it asks for no frames then, and morphs on from where it was
             when the line speaks again, rather than starting afresh. */}
         <span data-slot="step-icon">
           <MorphLoader state={LOOK[kind]} />

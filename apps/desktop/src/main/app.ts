@@ -380,7 +380,7 @@ export const startApp = async (options: AppOptions) => {
     minHeight: MIN_SIZE.height,
     ...(frame.fullScreen ? { fullscreen: true } : {}),
     // On a Mac the title bar is hidden; the traffic lights sit in the sidebar's corner. The close button is 14 wide,
-    // so at x 17 its centre is 24 from the edge: the centre of the sidebar's icon column (app.css), which it lines up with.
+    // so at x 17 its centre is 24 from the edge: the centre of the sidebar's icon column (sidebar.css), which it lines up with.
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 17, y: 14 } }
       : {}),

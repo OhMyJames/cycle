@@ -92,11 +92,21 @@ for await (const file of sources.scan({ cwd: root })) {
 // nothing keeps, and one that is defined and not written is a decision nobody can see.
 {
   const design = await Bun.file(`${root}DESIGN.md`).text();
-  // The stylesheet is app.css and the parts it imports (packages/ui/src/styles/*.css), not what Tailwind builds of it.
-  let css = "";
-  for await (const file of new Glob("packages/ui/src/styles/*.css").scan({ cwd: root })) {
-    if (!file.endsWith("/built.css")) css += await Bun.file(root + file).text();
+  // The stylesheet is app.css and the parts it imports (packages/ui/src/styles/), in that order; a part it does not
+  // import is in no build, and is said so.
+  const styles = `${root}packages/ui/src/styles/`;
+  const entry = await Bun.file(`${styles}app.css`).text();
+  const parts = Array.from(
+    entry.matchAll(/^@import "\.\/([\w-]+\.css)";$/gm),
+    (m) => m[1] as string,
+  );
+  for await (const file of new Glob("*.css").scan({ cwd: styles })) {
+    if (file !== "app.css" && file !== "built.css" && !parts.includes(file)) {
+      failures.push(`packages/ui/src/styles/${file} is not imported by app.css`);
+    }
   }
+  let css = entry;
+  for (const part of parts) css += await Bun.file(styles + part).text();
   const named = new Set(design.match(/--cycle-[a-z-]+/g) ?? []);
   const defined = new Set(
     Array.from(css.matchAll(/^\s*(--cycle-[a-z-]+)\s*:/gm), (m) => m[1] as string),
