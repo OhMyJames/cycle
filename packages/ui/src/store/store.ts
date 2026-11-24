@@ -13,6 +13,8 @@ import type {
   Preferences,
   SendVia,
 } from "../api.ts";
+import { MENTION_META, mentionText } from "../draft.ts";
+import { sessionLabel, sessionUri } from "../mention.ts";
 import { revealInDiff } from "../reveal.ts";
 import { BlankSlice } from "./blank.ts";
 import { ConnectorsSlice } from "./connectors.ts";
@@ -22,7 +24,7 @@ import { LocationsSlice } from "./locations.ts";
 import { PluginsSlice } from "./plugins.ts";
 import { ProvidersSlice } from "./providers.ts";
 import { SessionsSlice } from "./sessions.ts";
-import { viewKey } from "./state.ts";
+import { BLANK_KEY, viewKey } from "./state.ts";
 import { TerminalsSlice } from "./terminals.ts";
 
 export { blankEnvironmentOf, environmentDefaultOf } from "./environments.ts";
@@ -244,6 +246,39 @@ export class AppStore extends StoreBase {
   retryBlank = this.#blank.retry;
   chooseBlankEnvironment = this.#blank.chooseEnvironment;
   chooseBlankWorktree = this.#blank.chooseWorktree;
+
+  /**
+   * "Continue in a new session" (CYC-279): a new blank conversation in the same location, folder and agent, whose box
+   * holds an @ mention of this session. Nothing is sent and no model is asked: the daemon expands the mention into a
+   * record of what was said when the person sends it. Not while another blank is starting, and not for a session whose
+   * daemon does not expand mentions. Returns whether the box was opened.
+   */
+  continueInNewSession = (locationId: string, sessionId: string, title: string): boolean => {
+    const state = this.getState();
+    const session = state.sessions[locationId]?.find((s) => s.sessionId === sessionId);
+    if (session === undefined || state.blank?.starting !== undefined) return false;
+    if (state.status[locationId]?.capabilities?.sessionMentions !== true) return false;
+    this.#blank.open({ locationId, cwd: session.cwd });
+    this.#blank.change({ agent: session.agent });
+    // The folder is a worktree already: another one is not made inside it. Elsewhere the person's own default stands.
+    if (session.worktree !== undefined) this.#blank.chooseWorktree({ on: false });
+    const mention = { path: sessionLabel(title), kind: "session" as const };
+    // Pressed twice, the box holds the one mention, not two.
+    if (this.drafts.get(BLANK_KEY).mentions.some((m) => m.uri === sessionUri(sessionId)))
+      return true;
+    this.drafts.restore(BLANK_KEY, [
+      [
+        { type: "text", text: `${mentionText(mention)} ` },
+        {
+          type: "resource_link",
+          name: title,
+          uri: sessionUri(sessionId),
+          _meta: { [MENTION_META]: mention.path },
+        },
+      ],
+    ]);
+    return true;
+  };
 
   // ---- sessions ----
 

@@ -47,6 +47,7 @@ import { type PlanItem, type QueuedPrompt, textOf } from "../model/index.ts";
 import { commandText, filterCommands, slashQuery } from "../slash.ts";
 import { optionsOf, propertiesOf } from "./config-form.tsx";
 import { ContextDetails, planRowsOf } from "./context-details.tsx";
+import { ContinueRow, useContinueHint } from "./continue-hint.tsx";
 import { useI18n } from "./i18n.tsx";
 import { AttachIcon, CloseIcon, PlusIcon, SendIcon, StopIcon } from "./icons.tsx";
 import { Lightbox, type LightboxImage } from "./lightbox.tsx";
@@ -62,6 +63,8 @@ import { Tip } from "./tip.tsx";
 export type ComposerProps = {
   /** The location it is on, for what its daemon can do. */
   locationId: string;
+  /** The session's id, for the hint to carry on in a new one. Absent on the blank page. */
+  sessionId?: string | undefined;
   /** The session this box is for, as `viewKey` names it. A box is made anew for each session. */
   sessionKey: string;
   /** False when there is no session, or it is still being read. */
@@ -136,6 +139,7 @@ export const composerInput = (): HTMLElement | null =>
 
 export function Composer({
   locationId,
+  sessionId,
   sessionKey,
   enabled,
   connected,
@@ -665,9 +669,22 @@ export function Composer({
     };
   }, [attachable]);
 
+  const continueHint = useContinueHint({
+    locationId,
+    sessionId: blank ? undefined : sessionId,
+    sessionKey,
+    idle: !working,
+    connected,
+    context,
+  });
   const showBlocked = blocked !== undefined && blocked !== "" && connected;
   const hasExtensions =
-    plan !== undefined || queue.length > 0 || showBlocked || dropping || problem !== undefined;
+    plan !== undefined ||
+    queue.length > 0 ||
+    showBlocked ||
+    continueHint.reason !== undefined ||
+    dropping ||
+    problem !== undefined;
 
   const hasChoiceSettings =
     settings !== undefined &&
@@ -732,6 +749,14 @@ export function Composer({
             <div data-slot="extension-row" data-kind="hint" role="status">
               {blocked}
             </div>
+          ) : null}
+          {continueHint.reason !== undefined && sessionId !== undefined ? (
+            <ContinueRow
+              reason={continueHint.reason}
+              locationId={locationId}
+              sessionId={sessionId}
+              onDismiss={continueHint.dismiss}
+            />
           ) : null}
           {dropping ? (
             <div data-slot="extension-row" data-kind="drop">

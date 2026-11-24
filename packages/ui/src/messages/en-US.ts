@@ -262,6 +262,11 @@ export const enUS = {
   "composer.remove": "Remove {name}",
   "composer.attached": "Attachments",
   "composer.drop": "Drop images to attach them",
+  "composer.continue.context": "This conversation is long, so every reply sends all of it again.",
+  "composer.continue.idle":
+    "This session has been idle, so the next reply sends the whole conversation again at full cost.",
+  "composer.continue.action": "Continue in new session",
+  "composer.continue.dismiss": "Dismiss hint",
   "composer.dropFiles": "Drop files to attach them",
   // The agent takes images only
   "composer.problem.type": "{name} is not a PNG, JPEG, GIF or WebP image.",
