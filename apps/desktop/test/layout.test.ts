@@ -13,6 +13,7 @@ test("packaged: the bundled daemon, and never Bun or the source", () => {
     "/App/Resources/app/bin/cycle",
     "/App/Resources/app/bin/claude",
     "/App/Resources/app/bin/codex",
+    "/App/Resources/app/bin/codex-code-mode-host",
   );
   expect(
     daemonCommand({
@@ -33,6 +34,16 @@ test("packaged but missing a part: an error that names it, not a quiet fall back
   expect(() =>
     daemonCommand({ ...base, here: "/App/Resources/app/dist", env: {}, exists: noClaude }),
   ).toThrow(/missing an agent's binary: .*bin\/claude/);
+  // Codex runs without it, but every tool call in code mode fails, so no tool is ever shown.
+  const noHost = has(
+    "/App/Resources/app/build.json",
+    "/App/Resources/app/bin/cycle",
+    "/App/Resources/app/bin/claude",
+    "/App/Resources/app/bin/codex",
+  );
+  expect(() =>
+    daemonCommand({ ...base, here: "/App/Resources/app/dist", env: {}, exists: noHost }),
+  ).toThrow(/missing an agent's binary: .*bin\/codex-code-mode-host/);
 });
 
 test("in development: the named binary, then the built one, then the source with bun", () => {

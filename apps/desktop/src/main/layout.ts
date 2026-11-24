@@ -11,8 +11,11 @@ export const MAC_BUNDLE = `${APP_NAME}.app`;
 export const BUILD_FILE = "build.json";
 /** The daemon, compiled to one executable, with each agent's own binary beside it (the daemon looks there). */
 export const DAEMON_BIN = "bin/cycle";
-/** One for each agent that ships a binary: what the daemon's build makes (a test holds the two lists together). */
-export const AGENT_BINS = ["bin/claude", "bin/codex"] as const;
+/**
+ * Each agent's shipped binary and the executables it runs from beside it: what the daemon's build makes (a test holds
+ * the two lists together).
+ */
+export const AGENT_BINS = ["bin/claude", "bin/codex", "bin/codex-code-mode-host"] as const;
 /** The built main process, preload and page, laid out as `apps/desktop/dist` is. */
 export const DIST_DIR = "dist";
 export const MAIN = `${DIST_DIR}/main.mjs`;

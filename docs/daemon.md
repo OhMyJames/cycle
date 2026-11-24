@@ -158,13 +158,14 @@ bun run --cwd apps/daemon build
 - `claude`:Claude Code 的二进制(约 370 MB,取自 SDK 的平台包),放在它旁边,适配通过 `shippedExecutable("claude")` 找到它。每个带二进制的 agent 都这样放一个，清单见下面"加一个 agent"。
 
 - `codex`：内部 `cycle adapter codex` 驱动的固定版 Codex CLI。Linux 包含配套的 `codex-resources/bwrap`，安装和复制时保留整个目录。
+- `codex-code-mode-host`：Codex 的 code mode 运行工具调用的宿主(约 70 MB)。Codex 从自己旁边找它，缺了每个工具调用都在执行前失败(`failed to spawn code-mode host`),界面上就一个工具都没有。由 harness 的 `companions` 声明，构建时取自 `codex` 旁边。
 
-2026-11-23，加入 Codex 0.171.0 后的本地发行包实测（十进制 MB）：
+本地发行包实测（十进制 MB）。2026-11-23 加入 Codex 0.171.0;2026-11-24 加入 `codex-code-mode-host` 后重测了 macOS,Debian 那行还是之前的、不含它:
 
-| 平台            | cycle | claude | codex | 完整压缩包 |
-| --------------- | ----: | -----: | ----: | ---------: |
-| macOS ARM64     |    92 |    355 |   298 |        316 |
-| Debian 12 ARM64 |   112 |    372 |   309 |        347 |
+| 平台                        | cycle | claude | codex | codex-code-mode-host | 完整压缩包 |
+| --------------------------- | ----: | -----: | ----: | -------------------: | ---------: |
+| macOS ARM64(2026-11-24)     |    92 |    355 |   298 |                   71 |        342 |
+| Debian 12 ARM64(2026-11-23) |   112 |    372 |   309 |                    — |        347 |
 
 2026-11-20，GitHub 原生 Ubuntu 24.04 runner 构建同一提交并用已安装的单文件 daemon 跑通后端集成测试。耗时包含压缩，大小按十进制 MB 计算。[两种架构的构建日志](https://github.com/OhMyJames/Cycle-V1/actions/runs/44699952120)
 
@@ -196,7 +197,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 1. 在 `harness/<id>` 写适配器，导出在 stdin/stdout 上运行它的函数。
 2. 在 `apps/daemon/src` 写它的 `Harness`(`runAdapter`、`definition`,有自己命令行的加 `cli`,自带二进制的加 `binary`),加进 `HARNESSES`。清单的顺序是客户端看到的顺序，第一个是没有指名时用的。
 3. 在 `src/config.ts` 的 `ConfigSchema` 加一段，键是它的 id。agent 看到的环境只能来自这一段(`allowEnv` 点名的和 `env` 写明的),登录目录默认放在 `<数据目录>/<id>`。
-4. 自带二进制的：在 `scripts/binaries.ts` 写构建时从哪里取，在 `apps/desktop/src/main/layout.ts` 的 `AGENT_BINS` 加上 `bin/<名字>`,在 `scripts/install.sh` 的文件清单里加上它(根目录的 `scripts/agent-binaries.test.ts` 检查这三处一致)。发版流程里对二进制的运行检查(`.github/workflows/release.yml`、`daemon-linux.yml`)和 `apps/desktop/test/integration/packaged.integration.ts` 是按名字写的，没有测试看着，要手动加。
+4. 自带二进制的：在 `scripts/binaries.ts` 写构建时从哪里取，在 `apps/desktop/src/main/layout.ts` 的 `AGENT_BINS` 加上 `bin/<名字>`,在 `scripts/install.sh` 的文件清单里加上它(根目录的 `scripts/agent-binaries.test.ts` 检查这三处一致)。二进制要从自己旁边启动的其他可执行文件写进 harness 的 `companions`,这三处同样要列上。发版流程里对二进制的运行检查(`.github/workflows/release.yml`、`daemon-linux.yml`)和 `apps/desktop/test/integration/packaged.integration.ts` 是按名字写的，没有测试看着，要手动加。
 5. 埋点：在 `packages/analytics/src/events.ts` 的 `KNOWN_AGENTS` 里加它的 id(`codex`、`agy`、`pi` 已经在里面),否则它算作 `other`。
 
 `test/harnesses.test.ts` 用一个测试用的 harness(`test/fixtures/echo-harness.ts`,适配器是替身 agent)走完这条路：出现在 `_cycle/agents/list`、新建、prompt 由它自己的适配器进程回答、换一个 daemon 后恢复。理由见决定笔记 [2026-11-23-each-agent-is-a-top-level-config-section](../.agents/notes/2026-11-23-each-agent-is-a-top-level-config-section.md)。

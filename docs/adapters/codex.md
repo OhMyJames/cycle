@@ -201,7 +201,7 @@ Cycle 的包现在是压缩 222 MB、解包 484 MB(docs/daemon.md),加上 Codex 
 
 带哪一个,没定,第一个子任务要回答:
 
-- 只带 `codex` 一个文件最省事:`codex app-server`、`codex login`、`codex plugin` 都在里面,`cycle codex <参数>` 直接可用。**没验证的是它离开同目录的 `codex-code-mode-host`、`codex-exec-server`、`rg` 还缺什么**(本机是在完整目录里跑的;`features list` 里 `code_mode_host` 是 stable/true)。
+- 只带 `codex` 一个文件最省事:`codex app-server`、`codex login`、`codex plugin` 都在里面,`cycle codex <参数>` 直接可用。离开同目录的 `codex-code-mode-host` 不行:模型开 code mode 时,工具调用都经 `exec` 在这个宿主里跑,缺了它每个调用都报 `failed to spawn code-mode host`,也不会有 `commandExecution` item(2026-11-24 打包的应用里实测)。所以它和 `codex` 一起带(harness 的 `companions`)。`codex-exec-server`、`rg` 缺了还没见到问题。
 - 只带 `codex-app-server` 更小,但没有 `codex login`,登录要改走 app-server 的 `account/login/start`(见下)。
 - Linux 的资产是 musl 静态构建,x64 和 arm64 都有,所以远端机器不挑发行版。【实查资产名】发布里另有单独的 `bwrap-<target>`(Linux 沙箱用)。实现随 Linux 包带了同版本的 `codex-resources/bwrap`,系统没有 bwrap 时 Codex 用它【实测,容器里】。
 

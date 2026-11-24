@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the daemon from this folder (the one in the tarball) for the current user:
 #
-#   <prefix>/share/cycle/{cycle,claude}   the program and the agents' binaries it drives
+#   <prefix>/share/cycle/{cycle,claude,codex,codex-code-mode-host}   the program and the agents' binaries it drives
 #   <prefix>/bin/cycle                           a one-line launcher that runs it
 #
 # <prefix> is $CYCLE_PREFIX, or ~/.local. Nothing needs root, and nothing is started: the daemon
@@ -56,7 +56,7 @@ if [ "$platform" = Linux ]; then
   chmod 755 "$dest/codex-resources/.bwrap.new"
   mv -f "$dest/codex-resources/.bwrap.new" "$dest/codex-resources/bwrap"
 fi
-for file in cycle claude codex; do
+for file in cycle claude codex codex-code-mode-host; do
   [ -f "$here/$file" ] || { echo "$here/$file is missing: run this from the unpacked tarball" >&2; exit 1; }
   # Copy beside, then rename over: replacing a file a running daemon is executing would fail otherwise.
   cp "$here/$file" "$dest/.$file.new"
