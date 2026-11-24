@@ -69,6 +69,51 @@ const asText = (content: unknown): string => {
   return content === undefined ? "" : JSON.stringify(content);
 };
 
+/** The name a call to the advisor (the API's server tool, `server_tool_use` named `advisor`) is told under. */
+export const ADVISOR_TOOL = "advisor";
+
+const isAdvisorCall = (block: Block): boolean =>
+  block.type === "server_tool_use" && block.name === ADVISOR_TOOL;
+
+/** The advisor began: it takes no input, and the API runs it whole, without a stream, so it is at work from the start. */
+const advisorStarted = (block: Block): SessionUpdate =>
+  ({
+    sessionUpdate: "tool_call_update",
+    toolCallId: String(block.id),
+    name: ADVISOR_TOOL,
+    kind: "other",
+    status: "in_progress",
+    rawInput: {},
+  }) as SessionUpdate;
+
+/**
+ * How the advisor answered (`advisor_tool_result`): its advice when the API gives it in the clear (older advisor models),
+ * that it advised when the advice is encrypted (newer ones: only Claude reads it, so its blob is not passed on), or why
+ * it could not (`error_code`; Claude goes on without advice).
+ */
+const advisorEnded = (block: Block): SessionUpdate => {
+  const content = (block.content ?? {}) as Block;
+  const id = String(block.tool_use_id);
+  if (content.type === "advisor_tool_result_error") {
+    const code = typeof content.error_code === "string" ? content.error_code : "unavailable";
+    return {
+      sessionUpdate: "tool_call_update",
+      toolCallId: id,
+      status: "failed",
+      rawOutput: { type: content.type, error_code: code },
+    } as SessionUpdate;
+  }
+  const text =
+    content.type === "advisor_result" && typeof content.text === "string" ? content.text : "";
+  return {
+    sessionUpdate: "tool_call_update",
+    toolCallId: id,
+    status: "completed",
+    ...(text !== "" ? { content: [{ type: "content", content: { type: "text", text } }] } : {}),
+    rawOutput: { type: typeof content.type === "string" ? content.type : "advisor_result" },
+  } as SessionUpdate;
+};
+
 /**
  * Turns the Agent SDK's messages for one turn into ACP `session/update` payloads. It holds what it
  * has to remember between messages and nothing else, so it can be tested without a process.
@@ -81,6 +126,8 @@ export class TurnTranslator {
   #messageId: string | undefined;
   /** Tokens in context after the latest main-thread model call: what the next call will start from. */
   #contextTokens: number | undefined;
+  /** The model of the latest main-thread call: its window is the context's, not an advisor's beside it. */
+  #model: string | undefined;
   readonly #streamed = new Set<string>();
   /** Task calls waiting for their results: a created task's id is only in the result. */
   readonly #calls = new Map<string, { name: string; input: Record<string, unknown> }>();
@@ -88,6 +135,8 @@ export class TurnTranslator {
   readonly #names = new Map<string, string>();
   /** Tool calls that were shown starting and have had no result yet, in the order they started. */
   readonly #open = new Set<string>();
+  /** Advisor calls told as ended: the whole message says it again after the stream did. */
+  readonly #advised = new Set<string>();
 
   constructor(
     readonly plan: PlanState = new PlanState(),
@@ -134,6 +183,7 @@ export class TurnTranslator {
     }
     if (event.type === "content_block_start") {
       const block = event.content_block as Block;
+      if (isAdvisorCall(block) || block.type === "advisor_tool_result") return this.#advisor(block);
       if (block.type === "tool_use") {
         const name = String(block.name);
         this.#open.add(String(block.id));
@@ -167,7 +217,9 @@ export class TurnTranslator {
     const updates: SessionUpdate[] = [];
     const streamed = this.#streamed.has(message.id);
     for (const block of message.content) {
-      if (block.type === "tool_use") {
+      if (isAdvisorCall(block) || block.type === "advisor_tool_result") {
+        updates.push(...this.#advisor(block));
+      } else if (block.type === "tool_use") {
         const name = String(block.name);
         this.#open.add(String(block.id));
         this.#names.set(String(block.id), name);
@@ -254,7 +306,10 @@ export class TurnTranslator {
 
   /** The main thread's only: a sub-agent's calls have a context of their own, and `feed` drops them. */
   #noteUsage(message: SDKMessage): void {
-    const usage = (message as { message?: { usage?: Record<string, unknown> } }).message?.usage;
+    const said = (message as { message?: { usage?: Record<string, unknown>; model?: unknown } })
+      .message;
+    if (typeof said?.model === "string") this.#model = said.model;
+    const usage = said?.usage;
     if (usage === undefined) return;
     const n = (key: string) => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
     this.#contextTokens =
@@ -272,10 +327,12 @@ export class TurnTranslator {
   /** The `usage_update` that ends a turn: context used, the window it is in, and the session's cost so far. */
   usageOf(result: SDKMessage): SessionUpdate | undefined {
     if (result.type !== "result" || this.#contextTokens === undefined) return undefined;
-    const models = Object.values(
-      (result as { modelUsage?: Record<string, { contextWindow?: number }> }).modelUsage ?? {},
-    );
-    const size = Math.max(0, ...models.map((m) => m.contextWindow ?? 0));
+    const byModel =
+      (result as { modelUsage?: Record<string, { contextWindow?: number }> }).modelUsage ?? {};
+    // The main model's window. The list also has every other model the turn used (an advisor, a sub-agent's), whose
+    // window is not this context's; only when the main one is not named is the largest taken.
+    const main = this.#model !== undefined ? byModel[this.#model]?.contextWindow : undefined;
+    const size = main ?? Math.max(0, ...Object.values(byModel).map((m) => m.contextWindow ?? 0));
     if (size === 0) return undefined;
     const cost = (result as { total_cost_usd?: number }).total_cost_usd;
     return {
@@ -302,6 +359,23 @@ export class TurnTranslator {
     for (const id of this.#open) this.#names.delete(id);
     this.#open.clear();
     return updates;
+  }
+
+  /** An advisor block, once: the stream tells it, then the whole message again (a sub-agent's only the latter). */
+  #advisor(block: Block): SessionUpdate[] {
+    if (isAdvisorCall(block)) {
+      const id = String(block.id);
+      if (this.#open.has(id) || this.#advised.has(id)) return [];
+      this.#open.add(id);
+      this.#names.set(id, ADVISOR_TOOL);
+      return [advisorStarted(block)];
+    }
+    const id = String(block.tool_use_id);
+    if (this.#advised.has(id)) return [];
+    this.#advised.add(id);
+    this.#open.delete(id);
+    this.#names.delete(id);
+    return [advisorEnded(block)];
   }
 
   #toolResults(message: { content: unknown }, structured: unknown): SessionUpdate[] {

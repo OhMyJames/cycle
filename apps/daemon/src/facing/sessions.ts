@@ -194,8 +194,8 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       const { link, created: answer } = await core.startAgent(session, made);
       if (answer === undefined) throw new Error("The agent did not answer session/new");
       session.entry = { ...session.entry, agentSessionId: answer.sessionId };
-      // What the user set as the agent's defaults, then what they asked of this one.
-      const config = { ...core.defaults.get(agentId), ...overrides };
+      // Cycle's defaults for the agent, then what the user set as its defaults, then what they asked of this one.
+      const config = { ...definition.newSession, ...core.defaults.get(agentId), ...overrides };
       // What the agent says its settings are now: each change answers with the whole set.
       let options: SessionConfigOption[] = answer.configOptions ?? [];
       for (const [configId, value] of orderedConfigEntries(config)) {

@@ -6,6 +6,8 @@ export type Choices = {
   model: string | undefined;
   effort: EffortLevel | undefined;
   mode: PermissionMode;
+  /** The advisor model (`advisorModel`), or none. */
+  advisor: AdvisorModel | undefined;
 };
 
 /**
@@ -75,6 +77,38 @@ export const CLAUDE_EFFORT_LEVELS = [
 
 export type EffortOption = (typeof CLAUDE_EFFORT_LEVELS)[number]["value"];
 export const DEFAULT_EFFORT_LEVEL: EffortOption = "default";
+
+/**
+ * Who Claude may consult at hard moments: the advisor tool (`advisorModel`), a stronger model the API runs for it. Aliases,
+ * which Claude Code resolves to what is current. It has no effort of its own. An advisor that ranks below the session's
+ * model is not attached by Claude Code (a Fable session takes only a Fable advisor): the choice stays, and does nothing.
+ */
+export const CLAUDE_ADVISORS = [
+  {
+    value: "off",
+    name: "Off",
+    description: "Claude works without a second opinion.",
+  },
+  {
+    value: "opus",
+    name: "Opus",
+    description: "Consults Opus at hard moments.",
+  },
+  {
+    value: "sonnet",
+    name: "Sonnet",
+    description: "Consults Sonnet at hard moments.",
+  },
+  {
+    value: "fable",
+    name: "Fable",
+    description: "Consults Fable at hard moments.",
+  },
+] as const;
+
+export type AdvisorOption = (typeof CLAUDE_ADVISORS)[number]["value"];
+export type AdvisorModel = Exclude<AdvisorOption, "off">;
+export const ADVISOR_OPTIONS: readonly string[] = CLAUDE_ADVISORS.map((a) => a.value);
 
 /**
  * Every permission mode the SDK has, with what a person needs to choose one, the suggested one first. The values are the
@@ -280,6 +314,13 @@ export const configOptions = (
       type: "select",
       currentValue: session.effort ?? DEFAULT_EFFORT_LEVEL,
       options: effortOptions(session, discovered),
+    },
+    {
+      configId: "advisor",
+      name: "Advisor",
+      type: "select",
+      currentValue: session.advisor ?? "off",
+      options: CLAUDE_ADVISORS.map((a) => ({ ...a })),
     },
     {
       configId: "mode",

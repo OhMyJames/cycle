@@ -198,11 +198,73 @@ export const toolVerb = (
   return t(`tool.verb.${activity}.${going ? "live" : "done"}`);
 };
 
+/** A call to Claude's advisor (the API's server tool), as Claude's adapter names it. */
+const isAdvisor = (tool: ToolItem): boolean => tool.name === "advisor";
+
+/**
+ * Claude asking its advisor: one line, the verb in its tense and how long it has been asking (the API answers whole,
+ * after a pause), or that it could not answer. It opens to the advice when the API gives it in the clear, else to why
+ * there is none to read: encrypted (newer advisor models), or the error's code.
+ */
+function AdvisorCard({ tool }: { tool: ToolItem }) {
+  const { t } = useI18n();
+  const scope = useStartScope();
+  const [open, setOpen] = useState(false);
+  const status = tool.status ?? "pending";
+  const going = isLive(tool);
+  const failed = status === "failed" || status === "cancelled";
+  const raw = (tool.rawOutput ?? {}) as { type?: unknown; error_code?: unknown };
+  const code = typeof raw.error_code === "string" ? raw.error_code : undefined;
+  const advice = streamsOf(tool).out;
+  return (
+    <Collapsible
+      data-kind="tool"
+      data-status={status}
+      data-item-id={tool.id}
+      data-advisor=""
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <CollapsibleTrigger>
+        <span data-slot="tool-verb">
+          {status === "failed"
+            ? t("tool.advisor.failed")
+            : toolVerb(t, tool, going, toolFacts(tool))}
+        </span>{" "}
+        {going && status === "in_progress" ? (
+          <Elapsed since={startedAt(`${scope}:tool:${tool.id}`)} slot="tool-elapsed" />
+        ) : null}{" "}
+        <span data-slot={failed ? "tool-status" : "visually-hidden"}>{statusWord(t, status)}</span>
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        {advice !== "" ? (
+          <div data-slot="tool-plan">
+            <Markdown text={advice} />
+          </div>
+        ) : going ? null : (
+          <p data-slot="tool-note">
+            {code !== undefined
+              ? t("tool.advisor.error", { code })
+              : status === "completed"
+                ? t("tool.advisor.encrypted")
+                : statusWord(t, status)}
+          </p>
+        )}
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
+/** One call as its row: the advisor's own, or any other's. */
+export function ToolCard({ tool }: { tool: ToolItem }) {
+  return isAdvisor(tool) ? <AdvisorCard tool={tool} /> : <CallCard tool={tool} />;
+}
+
 /**
  * One call, as one quiet line: what it did and on what. The verb's tense says whether it is going; a failure says so in
  * a word as well as in red. It opens to what it was given and what came back.
  */
-export function ToolCard({ tool }: { tool: ToolItem }) {
+function CallCard({ tool }: { tool: ToolItem }) {
   const { t } = useI18n();
   const store = useAppStore();
   // A file it read or changed, inside the session's folder: it can be shown in the Files tab. Not one it deleted or moved

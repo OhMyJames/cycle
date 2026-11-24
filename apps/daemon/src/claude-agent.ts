@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  CLAUDE_ADVISORS,
   CLAUDE_EFFORT_LEVELS,
   CLAUDE_MODELS,
   CLAUDE_PERMISSION_MODES,
   CLAUDE_PROMPT_CAPABILITIES,
   ClaudePlugins,
   clearSessionEnvFiles,
-  DEFAULT_EFFORT_LEVEL,
   DEFAULT_PERMISSION_MODE,
   writeSessionEnvFile,
 } from "@cycle/harness-claude";
@@ -74,6 +74,12 @@ export const locateClaudeBinary = ():
     : { source: "missing" };
 };
 
+/**
+ * What a new Claude session is set to before the person's own defaults (agents.ts `newSession`): Sonnet at medium effort,
+ * with Opus as its advisor. The owner chose these on 2026-11-24 (.agents/notes/2026-11-24-claude-advisor.md).
+ */
+export const CLAUDE_NEW_SESSION = { model: "sonnet", effort: "medium", advisor: "opus" } as const;
+
 export const CLAUDE_CONFIG_SCHEMA = {
   type: "object",
   properties: {
@@ -98,7 +104,7 @@ export const CLAUDE_CONFIG_SCHEMA = {
       })),
       // Claude takes any model name it knows, a full id included: these are the ones offered.
       _meta: { [META.open]: true },
-      default: "default",
+      default: CLAUDE_NEW_SESSION.model,
     },
     effort: {
       type: "string",
@@ -108,7 +114,21 @@ export const CLAUDE_CONFIG_SCHEMA = {
         title: e.name,
         description: e.description,
       })),
-      default: DEFAULT_EFFORT_LEVEL,
+      default: CLAUDE_NEW_SESSION.effort,
+    },
+    advisor: {
+      type: "string",
+      title: "Advisor",
+      description:
+        "A stronger model Claude may consult at hard moments. Each consultation reads the whole conversation and is billed at the advisor's rates. An advisor must be at least as capable as the session's model: a Fable session uses only Fable.",
+      oneOf: CLAUDE_ADVISORS.map((a) => ({
+        const: a.value,
+        title: a.name,
+        description: a.description,
+      })),
+      default: CLAUDE_NEW_SESSION.advisor,
+      // Set in the agent's defaults and a session's settings, not beside the message box (the owner, 2026-11-24).
+      _meta: { [META.composer]: false },
     },
   },
 } as const;
@@ -149,6 +169,7 @@ export const claudeHarness: Harness = {
       id: "claude",
       name: "Claude",
       configSchema: CLAUDE_CONFIG_SCHEMA,
+      newSession: CLAUDE_NEW_SESSION,
       promptCapabilities: CLAUDE_PROMPT_CAPABILITIES,
       steer: true,
       // In the executable, the Claude binary shipped beside it must be there: say so now, not on the first prompt.

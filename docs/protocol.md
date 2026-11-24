@@ -680,7 +680,7 @@ daemon 原样转发(照常脱敏,§12)。客户端按 ACP 的 `diff` 和这些�
 
 `configSchema` 是 JSON Schema,客户端用它渲染配置界面,不需要认识具体 agent。候选配置项(Claude):模型、权限模式、思考强度、MCP 服务、环境变量白名单、系统提示。具体字段在 L3 文档里定义。
 
-可选值有两种写法。只有值:`enum`。值要带给人看的名字和说明:用 JSON Schema 的 `oneOf`,每项是 `{const, title, description?}`,`const` 是值(发给 agent、存进配置的就是它),`title` 是显示名,`description` 说明选了会怎样。agent 建议用的那一项带 `_meta: {"cycle/recommended": true}`,客户端在它旁边标"推荐";需要谨慎选择的高风险项(例如跳过全部权限确认)可带 `_meta: {"cycle/danger": true}`,客户端给予警示;`default` 只说明不设时取哪个值，不代表推荐，两者可以不同。客户端两种都要认:`oneOf` 显示 `title`,并显示 `description`(选项列表里,以及当前选中的那一项);只有 `enum` 时显示值本身。同一个属性不要两种都写。列出的值默认就是全部可取的值:`_cycle/agent_defaults/set` 遇到不在其中的值返回 `-32014`,`data` 里有 `configId`、`value` 和 `allowed`(可取的值),什么都不保存。agent 还接受没列出的值时(例如模型可以写完整的模型名),在这个属性上带 `_meta: {"cycle/open": true}`,列表只是菜单,daemon 不拦。
+可选值有两种写法。只有值:`enum`。值要带给人看的名字和说明:用 JSON Schema 的 `oneOf`,每项是 `{const, title, description?}`,`const` 是值(发给 agent、存进配置的就是它),`title` 是显示名,`description` 说明选了会怎样。agent 建议用的那一项带 `_meta: {"cycle/recommended": true}`,客户端在它旁边标"推荐";需要谨慎选择的高风险项(例如跳过全部权限确认)可带 `_meta: {"cycle/danger": true}`,客户端给予警示;`default` 只说明不设时取哪个值，不代表推荐，两者可以不同。客户端两种都要认:`oneOf` 显示 `title`,并显示 `description`(选项列表里,以及当前选中的那一项);只有 `enum` 时显示值本身。同一个属性不要两种都写。列出的值默认就是全部可取的值:`_cycle/agent_defaults/set` 遇到不在其中的值返回 `-32014`,`data` 里有 `configId`、`value` 和 `allowed`(可取的值),什么都不保存。agent 还接受没列出的值时(例如模型可以写完整的模型名),在这个属性上带 `_meta: {"cycle/open": true}`,列表只是菜单,daemon 不拦。属性带 `_meta: {"cycle/composer": false}` 时，客户端不把它放在输入框旁的选项里，只在 agent 的默认值和会话设置里给出(例如 Claude 的 `advisor`)。
 
 ```json
 {

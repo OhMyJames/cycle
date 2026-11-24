@@ -50,15 +50,20 @@ export class AgentOptionsCache {
     for (const [configId, choices] of Object.entries(cached)) {
       const existing = properties[configId];
       if (existing === undefined || choices.length === 0) continue;
-      nextProperties[configId] = {
-        ...existing,
-        oneOf: choices.map((c) => ({
-          const: c.const,
-          title: c.title,
-          ...(c.description !== undefined ? { description: c.description } : {}),
-          ...(c.efforts !== undefined ? { _meta: { [META.efforts]: c.efforts } } : {}),
-        })),
-      };
+      const oneOf: Record<string, unknown>[] = choices.map((c) => ({
+        const: c.const,
+        title: c.title,
+        ...(c.description !== undefined ? { description: c.description } : {}),
+        ...(c.efforts !== undefined ? { _meta: { [META.efforts]: c.efforts } } : {}),
+      }));
+      // What a new session starts with stays a choice, though the agent's list folds it into another row (Claude lists
+      // the model its `default` stands for as that row, not under its own alias): the static row for it is kept.
+      const fallback = (existing.oneOf as Record<string, unknown>[] | undefined)?.find(
+        (o) => o.const === existing.default,
+      );
+      if (fallback !== undefined && !choices.some((c) => c.const === existing.default))
+        oneOf.push(fallback);
+      nextProperties[configId] = { ...existing, oneOf };
       changed = true;
     }
     return changed ? { ...schema, properties: nextProperties } : schema;

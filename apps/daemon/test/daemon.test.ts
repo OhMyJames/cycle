@@ -592,6 +592,36 @@ test("an agent's defaults are kept, applied to new sessions, and overridden by w
   ]);
 });
 
+test("a new session starts from the agent's own defaults, under the saved ones and the session's", async () => {
+  const schema = {
+    type: "object",
+    properties: {
+      mode: { type: "string" },
+      model: { type: "string" },
+      advisor: { type: "string" },
+    },
+  };
+  const { daemon, fake } = await start(
+    fakeAgent({}, { configSchema: schema, newSession: { model: "sonnet", advisor: "opus" } }),
+  );
+  const c = await connectClient(daemon);
+  const configs = () => fake.log.configs.map((x) => [x.configId, x.value]);
+
+  await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  expect(configs()).toEqual([
+    ["model", "sonnet"],
+    ["advisor", "opus"],
+  ]);
+  // The saved defaults win over the agent's, and the session's own over both.
+  await c.agent.request("_cycle/agent_defaults/set", { agent: "fake", config: { model: "opus" } });
+  fake.log.configs.length = 0;
+  await c.agent.request(methods.agent.session.new, {
+    cwd: "/tmp",
+    _meta: { "cycle/config": { advisor: "off" } },
+  });
+  expect(Object.fromEntries(configs())).toEqual({ model: "opus", advisor: "off" });
+});
+
 test("a default value the agent does not list is refused when it is saved, and one it keeps open is not", async () => {
   const schema = {
     type: "object",

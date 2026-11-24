@@ -56,6 +56,8 @@ export const fakeAgent = (
     steer?: "take" | "refuse";
     /** The settings the agent says it has. */
     configSchema?: Record<string, unknown>;
+    /** Cycle's defaults for a new session (`AgentDefinition.newSession`). */
+    newSession?: Record<string, string>;
     /** Says it reaches MCP servers over http (`capabilities.session.mcp.http`), so it is given connectors. */
     mcpHttp?: boolean;
     /** Emits a `config_option_update` notification inside `setConfigOption` (like Claude announcing model-dependent options). */
@@ -264,6 +266,7 @@ export const fakeAgent = (
       type: "object",
       properties: { mode: { type: "string" } },
     },
+    ...(options.newSession !== undefined ? { newSession: options.newSession } : {}),
     ...(options.promptCapabilities !== undefined
       ? { promptCapabilities: options.promptCapabilities }
       : {}),

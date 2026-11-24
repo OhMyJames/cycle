@@ -32,6 +32,8 @@ export const META = {
   enabledWhen: "cycle/enabledWhen",
   /** On a `configSchema` property that lists choices: true when the agent takes values that are not listed, so the list is a menu, not a limit. */
   open: "cycle/open",
+  /** On a `configSchema` property: false when it is not one of the choices beside the message box, only in settings (docs/protocol.md §10). */
+  composer: "cycle/composer",
   /** On a model choice: the effort levels that model takes (`[]` when it takes none); absent when not known (docs/protocol.md §10). */
   efforts: "cycle/efforts",
   /** On a `usage_update`: what the context window holds, by part (docs/protocol.md §8). */

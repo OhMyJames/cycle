@@ -29,6 +29,7 @@ export type Property = {
   enum?: string[];
   oneOf?: Choice[];
   default?: string;
+  _meta?: Record<string, unknown>;
 };
 
 export type Option = {

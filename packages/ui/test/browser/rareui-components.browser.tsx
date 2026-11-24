@@ -173,6 +173,33 @@ describe("SettingChips picker", () => {
    *  its first item has both. */
   const highlighted = (menu: HTMLElement) => menu.querySelector("[data-highlighted]");
 
+  test("a setting the agent keeps to the settings pages is no chip beside the message box", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        ...shortSchema.properties,
+        advisor: {
+          type: "string",
+          title: "Advisor",
+          oneOf: [
+            { const: "off", title: "Off" },
+            { const: "opus", title: "Opus" },
+          ],
+          _meta: { "cycle/composer": false },
+        },
+      },
+    };
+    wrap(
+      <SettingChips
+        settings={{ schema, value: { mode: "auto", advisor: "opus" } }}
+        disabled={false}
+        onSet={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Permission mode: Auto" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Advisor/ })).toBeNull();
+  });
+
   test("a short menu opens on its first item with the session's choice ticked, arrows move without choosing (danger mode too), Enter and Space commit", async () => {
     const user = userEvent.setup();
     const calls: [string, string][] = [];

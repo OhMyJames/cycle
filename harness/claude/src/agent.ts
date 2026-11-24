@@ -7,6 +7,8 @@ import {
 } from "@agentclientprotocol/sdk/experimental/v2";
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import {
+  ADVISOR_OPTIONS,
+  type AdvisorModel,
   configOptions,
   DEFAULT_PERMISSION_MODE,
   effortOptions,
@@ -20,6 +22,7 @@ import { type AdapterConfig, newSession, newTurn, notify, type QueryFn } from ".
 import { NO_SETUP, setupOf } from "./setup.ts";
 
 export {
+  CLAUDE_ADVISORS,
   CLAUDE_EFFORT_LEVELS,
   CLAUDE_MODELS,
   CLAUDE_PERMISSION_MODES,
@@ -230,6 +233,12 @@ export const createAgent = (config: AdapterConfig, runQuery: QueryFn) => {
         }
         session.effort = value === "default" ? undefined : (value as EffortLevel);
         lifecycle.applyEffort(session);
+      } else if (params.configId === "advisor") {
+        if (typeof value !== "string" || !ADVISOR_OPTIONS.includes(value)) {
+          throw new RequestError(-32602, "Unknown advisor", { value });
+        }
+        session.advisor = value === "off" ? undefined : (value as AdvisorModel);
+        lifecycle.applyAdvisor(session);
       } else {
         throw new RequestError(-32602, "Unknown configuration option", {
           configId: params.configId,
