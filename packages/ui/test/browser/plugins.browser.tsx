@@ -100,8 +100,7 @@ const mount = async (
   );
   await act(() => store.start());
   await user.click(await screen.findByRole("button", { name: "Connectors" }));
-  const page = (await screen.findByRole("heading", { name: "Plugins", level: 2 }))
-    .parentElement as HTMLElement;
+  const page = await screen.findByRole("tabpanel", { name: "Plugins" });
   return { user, page, store, plugins, ...script };
 };
 
@@ -224,8 +223,7 @@ test("a plugin whose server wants a sign-in offers it on its own row; the server
 
   // Among the MCP servers it says whose it is, and is not switched, edited or removed there.
   await user.click(screen.getByRole("tab", { name: "MCP servers" }));
-  const mcp = (await screen.findByRole("heading", { name: "MCP servers", level: 2 }))
-    .parentElement as HTMLElement;
+  const mcp = await screen.findByRole("tabpanel", { name: "MCP servers" });
   expect(await within(mcp).findByText("From the tracker plugin")).toBeTruthy();
   expect(within(mcp).queryByRole("switch")).toBeNull();
   await user.click(within(mcp).getByRole("button", { name: "Actions for tracker-api" }));

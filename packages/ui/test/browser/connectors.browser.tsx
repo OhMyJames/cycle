@@ -56,8 +56,7 @@ const mount = async (
   // The page opens on its first section, Plugins (plugins.browser.tsx): these are about the second.
   await user.click(await screen.findByRole("tab", { name: "MCP servers" }));
   // The section that is shown: everything of the page that is not its navigation.
-  const page = (await screen.findByRole("heading", { name: "MCP servers", level: 2 }))
-    .parentElement as HTMLElement;
+  const page = await screen.findByRole("tabpanel", { name: "MCP servers" });
   return { user, page, store, ...script };
 };
 /** What the page reported, without the change of section `mount` itself makes. */

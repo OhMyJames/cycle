@@ -657,8 +657,9 @@ body {
   display: none;
 }
 
-/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings and Connectors. Where the sidebar was, on
-   its surface, the way back and the page's sections; beside it the section, in the conversation's column. */
+/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings and Connectors. The sessions' frame
+   (CYCL-219): where the sidebar was, as wide, on its surface and with its rule, the way back and the page's sections;
+   beside it a title bar as the session's, and under it the section, in the conversation's column. */
 [data-slot="page"],
 [data-kind="page"] {
   height: 100%;
@@ -670,13 +671,19 @@ body {
   background: var(--cycle-surface-workspace);
 }
 
+/* The sidebar's box: its padding and gap, and its width as the user left it (`--cycle-sidebar-width`, set on the app by
+   split-layout.tsx), plus the split's 1px handle drawn as the rule at its edge. On a window too narrow for that and the
+   conversation's least width (MAIN_MIN) it gives way, down to the sidebar's least (SIDEBAR.min): the nav cannot fold. */
 [data-slot="page-nav"] {
+  --sidebar-inset: 0.5rem;
+
   display: flex;
   flex: none;
   flex-direction: column;
   gap: 0.5rem;
-  width: 16rem;
-  padding: var(--cycle-gap) var(--cycle-gap) 0.5rem;
+  width: clamp(12.5rem, calc(100% - 25rem), calc(var(--cycle-sidebar-width, 16rem) + 1px));
+  padding: var(--cycle-gap) var(--sidebar-inset) 0.5rem;
+  border-right: 1px solid var(--ui-border);
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--cycle-surface-sidebar);
@@ -741,42 +748,60 @@ body {
 }
 
 [data-slot="page-main"] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The session's title bar (`session-header`): one row of 42px at the top, level with the traffic lights, the name at
+   its start in the header title's type. What the window is dragged by on a Mac. */
+[data-slot="page-header"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 2.625rem;
+  padding: 0 0.5rem 0 var(--cycle-gap);
+}
+
+html[data-platform="darwin"] [data-slot="page-header"] {
+  -webkit-app-region: drag;
+}
+
+[data-slot="page-heading"] {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+[data-slot="page-body"] {
   --cycle-column-pad: max(1.5rem, calc((100% - var(--cycle-measure)) / 2));
 
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-[data-slot="page-main"] > [data-slot="tabs-panel"] {
+[data-slot="page-body"] > [data-slot="tabs-panel"] {
   padding: 0;
   outline: none;
 }
 
+/* The first group where it was under the old in-column heading: the content does not move between the frames. */
 [data-slot="page-column"] {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  padding: 0 var(--cycle-column-pad) 2rem;
-}
-
-/* Level with the first row of the sections beside it, and what the window is dragged by on a Mac. */
-[data-slot="page-heading"] {
-  display: flex;
-  align-items: center;
-  height: 2.625rem;
-  margin: 0;
-  padding-block-start: 0.5rem;
-  font-family: var(--cycle-font-display);
-  font-size: var(--cycle-text-title);
-  font-weight: 600;
-  letter-spacing: var(--cycle-tracking-display);
-  line-height: var(--cycle-leading-title);
-}
-
-html[data-platform="darwin"] [data-slot="page-heading"] {
-  -webkit-app-region: drag;
+  padding: 1.5rem var(--cycle-column-pad) 2rem;
 }
 
 [data-slot="page-group"] {
@@ -2306,8 +2331,9 @@ html[data-platform="darwin"] [data-slot="titlebar"] {
 }
 
 /* The session sidebar's top row (every platform): as tall as the session header (2.625rem), from the sidebar's top
-   edge (its padding is --cycle-gap, the gap below it 0.5rem), so the fold button sits level with the header's. */
-html [data-slot="sidebar"] > [data-slot="titlebar"] {
+   edge (its padding is --cycle-gap, the gap below it 0.5rem), so the fold button sits level with the header's. A page's
+   nav has the same row, so what is under it starts where the sidebar's rows do. */
+html :is([data-slot="sidebar"], [data-slot="page-nav"]) > [data-slot="titlebar"] {
   display: flex;
   align-items: center;
   justify-content: flex-end;

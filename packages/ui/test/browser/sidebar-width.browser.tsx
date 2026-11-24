@@ -51,3 +51,62 @@ test("the sidebar keeps its width as the panel opens and closes, and as the wind
   widths.push(sidebarWidth());
   expect(widths).toEqual([256, 256, 256, 256, 256]);
 });
+
+const box = (selector: string) => {
+  const rect = document.querySelector(selector)?.getBoundingClientRect();
+  return rect === undefined
+    ? undefined
+    : { left: Math.round(rect.left), top: Math.round(rect.top), height: Math.round(rect.height) };
+};
+const fontSize = (selector: string) =>
+  getComputedStyle(document.querySelector(selector) as Element).fontSize;
+
+// Settings and Connectors keep the sessions' frame (CYCL-219): the sidebar's edge, its first row and the title bar stay
+// where they are going from a session to a page, and from one page to the other.
+test("a page keeps the sidebar's width as the user left it, its first row and the session's title bar", async () => {
+  await page.viewport(1400, 800);
+  const script = fakeBridge({ connected: true });
+  script.bridge.sessions = async () => [{ ...summary("s1"), title: "first" }];
+  const store = new AppStore(script.bridge);
+  render(
+    <StoreProvider store={store}>
+      <App />
+    </StoreProvider>,
+  );
+  await act(() => store.start());
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  // Not the default: a width the user moved it to, with the keyboard.
+  screen.getByRole("separator", { name: "Resize sidebar" }).focus();
+  await user.keyboard("{ArrowRight}{ArrowRight}{ArrowRight}");
+  await settle();
+  expect(sidebarWidth()).toBeGreaterThan(256);
+
+  const session = {
+    main: box('[data-slot="resizable-panel"]#main')?.left,
+    header: box('[data-slot="session-header"]'),
+    firstRow: box('[data-slot="sidebar"] [data-kind="sidebar-action"]')?.top,
+    title: fontSize('[data-slot="session-header"] h1'),
+  };
+  const shown = () => ({
+    main: box('[data-slot="page-main"]')?.left,
+    header: box('[data-slot="page-header"]'),
+    firstRow: box('[data-slot="page-nav"] [data-kind="sidebar-action"]')?.top,
+    title: fontSize('[data-slot="page-heading"]'),
+  });
+  expect(session.header?.height).toBeGreaterThan(0);
+
+  await user.click(screen.getByRole("button", { name: "Connectors" }));
+  await screen.findByRole("heading", { name: "Plugins", level: 2 });
+  expect(shown()).toEqual(session);
+
+  const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
+  await user.keyboard(`{${mod}>},{/${mod}}`);
+  await screen.findByRole("heading", { name: "General", level: 2 });
+  expect(shown()).toEqual(session);
+
+  // A window too narrow for both: the nav gives way so the section keeps the conversation's least width.
+  await page.viewport(640, 800);
+  await settle();
+  expect(box('[data-slot="page-main"]')?.left).toBe(640 - 400);
+});
