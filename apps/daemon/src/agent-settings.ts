@@ -178,7 +178,7 @@ export class AgentSettings {
     const overrides: string[] = [];
     if (entry !== undefined) {
       for (const [k, v] of Object.entries(entry.values)) {
-        if (Object.hasOwn(defaults, k)) {
+        if (Object.hasOwn(defaults, k) && typeof v === typeof defaults[k]) {
           merged[k] = v;
           overrides.push(k);
         }
@@ -218,24 +218,21 @@ export class AgentSettings {
         else nextValues[key] = value;
       }
       const nextRevision = current.revision + 1;
-      const before = new Map(this.#agents);
-      try {
-        this.#agents.set(agent, { revision: nextRevision, values: nextValues });
-        await mkdir(dirname(this.#path), { recursive: true });
-        const temporary = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
-        const body = `${JSON.stringify(
-          { version: 1, agents: Object.fromEntries(this.#agents) },
-          null,
-          2,
-        )}\n`;
-        await writeFile(temporary, body, { mode: 0o600 });
-        await chmod(temporary, 0o600);
-        await rename(temporary, this.#path);
-        return { overrides: { ...nextValues }, revision: nextRevision };
-      } catch (error) {
-        this.#agents = before;
-        throw error;
-      }
+      const nextAgents = new Map(this.#agents);
+      nextAgents.set(agent, { revision: nextRevision, values: nextValues });
+      await mkdir(dirname(this.#path), { recursive: true });
+      const temporary = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
+      const body = `${JSON.stringify(
+        { version: 1, agents: Object.fromEntries(nextAgents) },
+        null,
+        2,
+      )}\n`;
+      await writeFile(temporary, body, { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, this.#path);
+      // Commit in-memory state ONLY after atomic rename succeeds so concurrent readers never observe uncommitted state.
+      this.#agents = nextAgents;
+      return { overrides: { ...nextValues }, revision: nextRevision };
     });
     this.#queue = run.catch(() => undefined);
     return run;

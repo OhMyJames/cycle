@@ -215,19 +215,29 @@ function HarnessEnvironmentBody({
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const mountedRef = useRef(true);
   const seenSetupRevisionRef = useRef(setupRevision);
+  const fetchSeqRef = useRef(0);
+  const signInSessionRef = useRef(0);
+  const activeFlowIdRef = useRef<string | undefined>(undefined);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      signInSessionRef.current += 1;
+      const pendingFlow = activeFlowIdRef.current;
+      activeFlowIdRef.current = undefined;
+      if (pendingFlow !== undefined) {
+        void store.cancelAgentAuth(environment.id, pendingFlow);
+      }
       clearTimeout(copyTimer.current);
     };
-  }, []);
+  }, [store, environment.id]);
 
   const fetchSetup = useCallback(
     async (opts: { forceRefresh?: boolean; refreshUsage?: boolean; silent?: boolean }) => {
       if (!supportsSetup || agentInfo === undefined) return;
+      const seq = ++fetchSeqRef.current;
       if (!opts.silent) {
         if (opts.forceRefresh) setRefreshing(true);
         else setLoading(true);
@@ -238,14 +248,14 @@ function HarnessEnvironmentBody({
           ...(opts.forceRefresh ? { forceRefresh: true } : {}),
           ...(opts.refreshUsage ? { refreshUsage: true } : {}),
         });
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || seq !== fetchSeqRef.current) return;
         setSnapshot(result);
         setRuntimeProblem(undefined);
       } catch (error) {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || seq !== fetchSeqRef.current) return;
         if (!opts.silent) setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
-        if (mountedRef.current && !opts.silent) {
+        if (mountedRef.current && seq === fetchSeqRef.current && !opts.silent) {
           setLoading(false);
           setRefreshing(false);
         }
@@ -282,6 +292,8 @@ function HarnessEnvironmentBody({
         if (!mountedRef.current) return;
         if (answer === undefined) return;
         if (answer.saved) {
+          // Advance fetch sequence so any older in-flight readAgentSetup cannot clobber the newer revision.
+          fetchSeqRef.current += 1;
           setSnapshot((prev) =>
             prev === undefined
               ? prev
@@ -361,13 +373,20 @@ function HarnessEnvironmentBody({
   };
 
   const beginSignIn = useCallback(async () => {
+    const session = ++signInSessionRef.current;
+    activeFlowIdRef.current = undefined;
     setSignInDialog({ kind: "starting" });
     const answer = await store.startAgentAuth(environment.id, agentId);
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || signInSessionRef.current !== session) {
+      // Unmounted or cancelled while starting: immediately cancel on daemon so the agent isn't locked for 10 minutes.
+      if (answer.started) void store.cancelAgentAuth(environment.id, answer.flowId);
+      return;
+    }
     if (!answer.started) {
       setSignInDialog({ kind: "error", reason: answer.reason });
       return;
     }
+    activeFlowIdRef.current = answer.flowId;
     setSignInDialog({
       kind: "active",
       flowId: answer.flowId,
@@ -387,6 +406,7 @@ function HarnessEnvironmentBody({
 
   useEffect(() => {
     if (flowCompletion === undefined || activeFlowId === undefined) return;
+    if (activeFlowIdRef.current === activeFlowId) activeFlowIdRef.current = undefined;
     if (flowCompletion.ok) {
       setSignInDialog(undefined);
       void fetchSetup({ forceRefresh: true, refreshUsage: agentId === "codex" });
@@ -565,8 +585,11 @@ function HarnessEnvironmentBody({
               onSubmitCode={(flowId, code) => store.submitAgentAuth(environment.id, flowId, code)}
               onRetry={() => void beginSignIn()}
               onClose={() => {
-                if (signInDialog?.kind === "active") {
-                  void store.cancelAgentAuth(environment.id, signInDialog.flowId);
+                signInSessionRef.current += 1;
+                const pendingFlow = activeFlowIdRef.current;
+                activeFlowIdRef.current = undefined;
+                if (pendingFlow !== undefined) {
+                  void store.cancelAgentAuth(environment.id, pendingFlow);
                 }
                 setSignInDialog(undefined);
               }}
@@ -844,6 +867,8 @@ function AgentSignInDialog({
   const [copiedDeviceCode, setCopiedDeviceCode] = useState(false);
 
   const flowId = state?.kind === "active" ? state.flowId : undefined;
+  const flowIdRef = useRef(flowId);
+  flowIdRef.current = flowId;
   const stateKind = state?.kind;
   useEffect(() => {
     void flowId;
@@ -858,9 +883,11 @@ function AgentSignInDialog({
     if (state?.kind !== "active" || submitting) return;
     const trimmed = code.trim();
     if (trimmed === "") return;
+    const targetFlowId = state.flowId;
     setSubmitting(true);
     setSubmitError(undefined);
-    const answer = await onSubmitCode(state.flowId, trimmed);
+    const answer = await onSubmitCode(targetFlowId, trimmed);
+    if (flowIdRef.current !== targetFlowId) return;
     setSubmitting(false);
     if (!answer.ok) setSubmitError(answer.reason);
   };

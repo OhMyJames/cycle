@@ -901,6 +901,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.harness.runtime.scope.immediate": "立即生效",
   "settings.harness.runtime.scope.next_idle_restart": "空闲重启或新会话时生效",
   "settings.harness.runtime.scope.next_session": "新会话生效",
+  "settings.harness.runtime.scope.daemon_restart": "重启 daemon 后生效",
   "settings.harness.runtime.unsupportedField": "当前版本的 Cycle 中为只读，更新应用后可编辑。",
   "settings.harness.runtime.fileErrorTitle": "无法读取 agent-settings.json",
   "settings.harness.runtime.fileErrorBody":

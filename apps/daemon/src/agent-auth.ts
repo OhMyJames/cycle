@@ -102,6 +102,7 @@ export class AgentAuthManager {
     if (this.#closed) throw authError("cancelled", "Daemon is shutting down");
 
     const binary = await provider.probeBinary();
+    if (this.#closed) throw authError("cancelled", "Daemon is shutting down");
     if (binary.problem !== undefined) {
       throw authError("binary_unavailable", "Agent binary is unavailable");
     }
@@ -223,12 +224,15 @@ export class AgentAuthManager {
     }
 
     if (!outcome.ok) {
-      this.#finishFlow(flow, "completed", "consumed", {
-        flowId: flow.flowId,
-        agent: flow.agent,
-        ok: false,
-        reason: outcome.reason,
-      });
+      // Only finish if not already settled/detached by #onFlowSettled, #expire, disconnect, or close().
+      if (flow.state === "submitting" && this.#flowsById.get(flow.flowId) === flow) {
+        this.#finishFlow(flow, "completed", "consumed", {
+          flowId: flow.flowId,
+          agent: flow.agent,
+          ok: false,
+          reason: outcome.reason,
+        });
+      }
       await Promise.resolve(flow.handle.cancel()).catch(() => {});
       throw authError(outcome.reason, "Authorization code submission failed");
     }

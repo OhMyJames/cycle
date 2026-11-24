@@ -23,6 +23,9 @@ export type ValidatedAuthUrl =
  * per-agent allowlist. Returns the normalized URL and hostname to display in the confirmation modal.
  */
 export const validateAgentAuthUrl = (agent: string, rawUrl: string): ValidatedAuthUrl => {
+  if (!Object.hasOwn(AGENT_AUTH_ALLOWED_HOSTS, agent)) {
+    return { ok: false, reason: "untrusted_url" };
+  }
   const allowed = AGENT_AUTH_ALLOWED_HOSTS[agent];
   if (allowed === undefined || allowed.length === 0) return { ok: false, reason: "untrusted_url" };
 

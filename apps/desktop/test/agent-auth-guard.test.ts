@@ -40,6 +40,8 @@ test("hardcoded per-agent auth domain allowlist permits exact official HTTPS hos
     ["codex", "https://accounts.google.com/o/oauth2/v2/auth"],
     ["agy", "https://auth.openai.com/oauth/authorize"],
     ["unknown", "https://claude.ai/oauth"],
+    ["hasOwnProperty", "https://claude.ai/oauth"],
+    ["toString", "https://claude.ai/oauth"],
     ["claude", "not a url"],
   ];
   for (const [agent, url] of blocked) {

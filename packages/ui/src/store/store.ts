@@ -490,14 +490,19 @@ export class AppStore {
         this.#set((s) => {
           const flowKey = `${event.environmentId}:${event.flowId}`;
           const setupKey = `${event.environmentId}:${event.agent}`;
-          return {
-            agentAuthCompletions: {
-              ...s.agentAuthCompletions,
-              [flowKey]: {
-                ok: event.ok,
-                ...(event.reason !== undefined ? { reason: event.reason } : {}),
-              },
+          const nextCompletions: typeof s.agentAuthCompletions = {
+            ...s.agentAuthCompletions,
+            [flowKey]: {
+              ok: event.ok,
+              ...(event.reason !== undefined ? { reason: event.reason } : {}),
             },
+          };
+          const keys = Object.keys(nextCompletions);
+          if (keys.length > 50) {
+            for (const oldest of keys.slice(0, keys.length - 50)) delete nextCompletions[oldest];
+          }
+          return {
+            agentAuthCompletions: nextCompletions,
             agentSetupRevision: {
               ...s.agentSetupRevision,
               [setupKey]: (s.agentSetupRevision[setupKey] ?? 0) + 1,

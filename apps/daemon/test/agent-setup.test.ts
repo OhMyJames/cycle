@@ -760,4 +760,14 @@ if (args[0] === "acp") {
   await provider.authDriver?.logout?.();
   await provider.readAuth();
   expect(modelsProbes).toBe(2);
+
+  // Malformed JSON error must be sanitized so secret values near a syntax error never leak over L1.
+  const secretPath = join(dir, "secret-broken.json");
+  writeFileSync(
+    secretPath,
+    '{ "claude": { "env": { "ANTHROPIC_API_KEY": sk-ant-TOPSECRET-999 } } }',
+  );
+  const broken = readConfigFileStatus({ path: secretPath });
+  expect(broken.error).toBe("Invalid JSON syntax in config.json");
+  expect(broken.error).not.toContain("TOPSECRET");
 });

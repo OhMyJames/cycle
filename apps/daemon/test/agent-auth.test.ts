@@ -373,3 +373,50 @@ test("sign out preserves active turns, kills unprompted warm processes, recycles
   } as never);
   expect(fake.log.launches).toBe(launchesBeforeLogout + 2);
 });
+
+test("failed code submit after completed settles emits _cycle/agent_auth_completed exactly once", async () => {
+  const flowDone = deferred<AgentAuthFlowOutcome>();
+  const fake = fakeAgent();
+  const daemon = await Daemon.start({
+    dataDir: join(dir, "daemon-once"),
+    agents: [
+      {
+        ...fake.definition,
+        id: "claude",
+        name: "Claude",
+        setup: makeProvider({
+          onStart: async () => ({
+            authorizationUrl: "https://claude.ai/oauth/authorize",
+            completed: flowDone.promise,
+            submit: async () => {
+              // Mirrors startCliCodeAuth where `completed` settles right before `submit` returns `{ ok: false }`.
+              flowDone.resolve({ ok: false, reason: "invalid_code" });
+              return flowDone.promise;
+            },
+            cancel: () => {},
+          }),
+        }),
+      },
+    ],
+  });
+  cleanup.push(() => daemon.close());
+
+  const c = await connectClient(daemon);
+  const started = (await c.agent.request(agentAuthStart.name, {
+    agent: "claude",
+    mode: "code",
+  } as never)) as { flowId: string };
+  await expect(
+    c.agent.request(agentAuthSubmit.name, {
+      flowId: started.flowId,
+      code: "BAD-CODE",
+    } as never),
+  ).rejects.toMatchObject({
+    code: CycleErrorCode.AgentAuthFailed,
+    data: { reason: "invalid_code" },
+  });
+  await Bun.sleep(30);
+  expect(c.authCompleted).toEqual([
+    { flowId: started.flowId, agent: "claude", ok: false, reason: "invalid_code" },
+  ]);
+});

@@ -997,6 +997,7 @@ export const enUS = {
   "settings.harness.runtime.scope.immediate": "Takes effect immediately",
   "settings.harness.runtime.scope.next_idle_restart": "Takes effect on next idle restart",
   "settings.harness.runtime.scope.next_session": "Takes effect in new sessions",
+  "settings.harness.runtime.scope.daemon_restart": "Takes effect after daemon restart",
   "settings.harness.runtime.unsupportedField":
     "Read-only in this version of Cycle. Update the app to edit this setting.",
   "settings.harness.runtime.fileErrorTitle": "agent-settings.json could not be read",

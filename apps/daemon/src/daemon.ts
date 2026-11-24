@@ -2492,6 +2492,7 @@ export class Daemon {
         await this.#index.update(session.id, { config });
         this.#changed();
       }
+      this.#restartIfStale(session);
       return answer as never;
     });
 

@@ -336,6 +336,12 @@ export class ConnectionManager
   >();
   /** Flow IDs cancelled by desktop itself due to untrusted URL, so the daemon's cancel notification isn't double-counted. */
   readonly #rejectedAuthFlows = new Set<string>();
+  /** In-flight `startAgentAuth` calls per environment, so an immediate completion arriving in the same chunk isn't lost. */
+  readonly #startingAuthCount = new Map<string, number>();
+  readonly #earlyAuthCompleted = new Map<
+    string,
+    { agent: string; ok: boolean; reason?: AgentAuthProblemReason | undefined }
+  >();
   /** The last list read from each environment, kept when its connection goes: what the interface greys out. */
   readonly #lastSessions = new Map<string, SessionSummary[]>();
   /** Why the last attempt to connect to an environment failed, for a renderer that asks after the event went by. */
@@ -501,25 +507,24 @@ export class ConnectionManager
         agentAuthCompleted: (completed) => {
           const flowKey = `${environmentId}:${completed.flowId}`;
           if (this.#rejectedAuthFlows.delete(flowKey)) return;
-          this.#activeAuthFlows.delete(flowKey);
-          const result = completed.ok
-            ? "ok"
-            : completed.reason === "cancelled"
-              ? "cancelled"
-              : "failed";
-          this.#track("agent_auth_completed", {
-            agent: agentOf(completed.agent),
-            environment: this.#kindOf(environmentId),
-            result,
-          });
-          this.#options.emit({
-            type: "agent-auth-completed",
+          if (!this.#activeAuthFlows.delete(flowKey)) {
+            // If startAgentAuth is currently awaiting the daemon response, stash once; otherwise drop duplicate/unsolicited notifications.
+            if ((this.#startingAuthCount.get(environmentId) ?? 0) > 0) {
+              this.#earlyAuthCompleted.set(flowKey, {
+                agent: completed.agent,
+                ok: completed.ok,
+                ...(completed.reason !== undefined ? { reason: completed.reason } : {}),
+              });
+            }
+            return;
+          }
+          this.#emitAuthCompleted(
             environmentId,
-            flowId: completed.flowId,
-            agent: completed.agent,
-            ok: completed.ok,
-            ...(completed.reason !== undefined ? { reason: completed.reason } : {}),
-          });
+            completed.flowId,
+            completed.agent,
+            completed.ok,
+            completed.reason,
+          );
         },
         connectorsChanged: () => this.#options.emit({ type: "connectors", environmentId }),
         pluginsChanged: (agentId) =>
@@ -1483,60 +1488,78 @@ export class ConnectionManager
     const mode = selectAgentSignInMode(envKind, signInModes);
     if (mode === undefined) return { started: false, reason: "unsupported_mode" };
 
-    const client = this.#connection(environmentId).client;
+    let client: CycleClient;
+    try {
+      client = this.#connection(environmentId).client;
+    } catch {
+      return { started: false, reason: "disconnected" };
+    }
     let started: Awaited<ReturnType<typeof client.startAgentAuth>>;
+    this.#startingAuthCount.set(
+      environmentId,
+      (this.#startingAuthCount.get(environmentId) ?? 0) + 1,
+    );
     try {
       started = await client.startAgentAuth(agent, mode);
     } catch (error) {
       return { started: false, reason: authProblemReasonOf(error) };
+    } finally {
+      const remaining = (this.#startingAuthCount.get(environmentId) ?? 1) - 1;
+      if (remaining <= 0) this.#startingAuthCount.delete(environmentId);
+      else this.#startingAuthCount.set(environmentId, remaining);
     }
+
+    const flowKey = `${environmentId}:${started.flowId}`;
+    const rejectUntrusted = () => {
+      this.#earlyAuthCompleted.delete(flowKey);
+      this.#rejectedAuthFlows.add(flowKey);
+      if (this.#rejectedAuthFlows.size > 100) {
+        const oldest = this.#rejectedAuthFlows.values().next().value;
+        if (oldest !== undefined) this.#rejectedAuthFlows.delete(oldest);
+      }
+      void client.cancelAgentAuth(started.flowId).catch(() => undefined);
+      this.#track("agent_auth_completed", {
+        agent: agentOf(agent),
+        environment: envKind,
+        result: "failed",
+      });
+      return { started: false as const, reason: "untrusted_url" as const };
+    };
 
     // Validate BOTH authorizationUrl and verificationUrl against the desktop's hardcoded allowlist.
     // Never silently call openBrowser here; wait for explicit user click in the modal.
     let verifiedAuth: { url: string; host: string } | undefined;
     if (started.authorizationUrl !== undefined) {
       const check = validateAgentAuthUrl(agent, started.authorizationUrl);
-      if (!check.ok) {
-        this.#rejectedAuthFlows.add(`${environmentId}:${started.flowId}`);
-        void client.cancelAgentAuth(started.flowId).catch(() => undefined);
-        this.#track("agent_auth_completed", {
-          agent: agentOf(agent),
-          environment: envKind,
-          result: "failed",
-        });
-        return { started: false, reason: "untrusted_url" };
-      }
+      if (!check.ok) return rejectUntrusted();
       verifiedAuth = { url: check.url, host: check.host };
     }
 
     let verifiedVerify: { url: string; host: string } | undefined;
     if (started.verificationUrl !== undefined) {
       const check = validateAgentAuthUrl(agent, started.verificationUrl);
-      if (!check.ok) {
-        this.#rejectedAuthFlows.add(`${environmentId}:${started.flowId}`);
-        void client.cancelAgentAuth(started.flowId).catch(() => undefined);
-        this.#track("agent_auth_completed", {
-          agent: agentOf(agent),
-          environment: envKind,
-          result: "failed",
-        });
-        return { started: false, reason: "untrusted_url" };
-      }
+      if (!check.ok) return rejectUntrusted();
       verifiedVerify = { url: check.url, host: check.host };
     }
 
     const primary = verifiedAuth ?? verifiedVerify;
-    this.#activeAuthFlows.set(`${environmentId}:${started.flowId}`, {
-      environmentId,
-      agent,
-      flowId: started.flowId,
-      ...(primary !== undefined ? { url: primary.url, host: primary.host } : {}),
-    });
     this.#track("agent_auth_started", {
       agent: agentOf(agent),
       environment: envKind,
       mode: started.mode,
     });
+    const early = this.#earlyAuthCompleted.get(flowKey);
+    if (early !== undefined) {
+      this.#earlyAuthCompleted.delete(flowKey);
+      this.#emitAuthCompleted(environmentId, started.flowId, early.agent, early.ok, early.reason);
+    } else {
+      this.#activeAuthFlows.set(flowKey, {
+        environmentId,
+        agent,
+        flowId: started.flowId,
+        ...(primary !== undefined ? { url: primary.url, host: primary.host } : {}),
+      });
+    }
     return {
       started: true,
       flowId: started.flowId,
@@ -1592,8 +1615,41 @@ export class ConnectionManager
     }
   }
 
+  #emitAuthCompleted(
+    environmentId: string,
+    flowId: string,
+    agent: string,
+    ok: boolean,
+    reason?: AgentAuthProblemReason,
+  ): void {
+    const result = ok ? "ok" : reason === "cancelled" ? "cancelled" : "failed";
+    this.#track("agent_auth_completed", {
+      agent: agentOf(agent),
+      environment: this.#kindOf(environmentId),
+      result,
+    });
+    this.#options.emit({
+      type: "agent-auth-completed",
+      environmentId,
+      flowId,
+      agent,
+      ok,
+      ...(reason !== undefined ? { reason } : {}),
+    });
+  }
+
   #failAuthFlowsOnDisconnect(environmentId: string): void {
     const envKind = this.#kindOf(environmentId);
+    const prefix = `${environmentId}:`;
+    for (const key of [...this.#signInModes.keys()]) {
+      if (key.startsWith(prefix)) this.#signInModes.delete(key);
+    }
+    for (const key of [...this.#rejectedAuthFlows]) {
+      if (key.startsWith(prefix)) this.#rejectedAuthFlows.delete(key);
+    }
+    for (const key of [...this.#earlyAuthCompleted.keys()]) {
+      if (key.startsWith(prefix)) this.#earlyAuthCompleted.delete(key);
+    }
     for (const [key, entry] of [...this.#activeAuthFlows.entries()]) {
       if (entry.environmentId !== environmentId) continue;
       this.#activeAuthFlows.delete(key);

@@ -202,8 +202,31 @@ export const captureConfigMtime = (path: string): number | undefined => {
 };
 
 /**
+ * Sanitize `config.json` read/parse errors so secret values under `env` (e.g. near a syntax error)
+ * can never be echoed over L1. Reports only error category or schema field paths, never raw snippets.
+ */
+const sanitizeConfigError = (err: unknown): string => {
+  if (err instanceof SyntaxError) return "Invalid JSON syntax in config.json";
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    Array.isArray((err as { issues?: unknown }).issues)
+  ) {
+    const issues = (err as { issues: { path?: unknown }[] }).issues;
+    const paths = issues
+      .map((issue) => (Array.isArray(issue.path) ? issue.path.map(String).join(".") : ""))
+      .filter((p) => p !== "");
+    if (paths.length > 0) {
+      return `Invalid config.json fields: ${[...new Set(paths)].slice(0, 5).join(", ")}`;
+    }
+    return "Invalid config.json schema";
+  }
+  return "Could not read config.json";
+};
+
+/**
  * Inspect `config.json` strictly read-only: whether it exists, whether its mtime changed since startup (`stale`),
- * and whether its current contents fail JSON/schema validation. Never returns any env values.
+ * and whether its current contents fail JSON/schema validation. Never returns any env values or raw file snippets.
  */
 export const readConfigFileStatus = (options: ConfigFileSnapshotOptions): AgentConfigFileStatus => {
   const exists = existsSync(options.path);
@@ -220,13 +243,13 @@ export const readConfigFileStatus = (options: ConfigFileSnapshotOptions): AgentC
       ? exists
       : !exists || (currentMtimeMs !== undefined && currentMtimeMs !== options.loadedMtimeMs);
 
-  let error = options.startupError;
+  let error = options.startupError !== undefined ? "Invalid config.json at startup" : undefined;
   if (exists) {
     try {
       ConfigSchema.parse(JSON.parse(readFileSync(options.path, "utf8")));
       error = undefined;
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      error = sanitizeConfigError(err);
     }
   }
 
@@ -236,6 +259,27 @@ export const readConfigFileStatus = (options: ConfigFileSnapshotOptions): AgentC
     stale,
     ...(error !== undefined ? { error } : {}),
   };
+};
+
+/** Gracefully stops a child process via `SIGTERM`, escalating to `SIGKILL` after `graceMs`, and awaits exit. */
+const terminateProcess = async (
+  proc: ReturnType<typeof Bun.spawn>,
+  graceMs = 500,
+): Promise<void> => {
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    return;
+  }
+  const grace = setTimeout(() => {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      // already exited
+    }
+  }, graceMs);
+  await proc.exited.catch(() => {});
+  clearTimeout(grace);
 };
 
 const isExecutable = (path: string): boolean => {
@@ -266,13 +310,21 @@ export const runIsolatedCommand: AgentSetupRunCommand = async (command, { env, t
     };
   }
   let timedOut = false;
+  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
   const timer = setTimeout(() => {
     timedOut = true;
     try {
-      proc.kill();
+      proc.kill("SIGTERM");
     } catch {
-      // already exited
+      return;
     }
+    forceKillTimer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // already exited
+      }
+    }, 500);
   }, timeoutMs);
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -283,6 +335,7 @@ export const runIsolatedCommand: AgentSetupRunCommand = async (command, { env, t
     return { exitCode, stdout, stderr, timedOut };
   } finally {
     clearTimeout(timer);
+    clearTimeout(forceKillTimer);
   }
 };
 
@@ -474,7 +527,6 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
   const errReader = stderr.getReader();
 
   let combined = "";
-  let cleanedUp = false;
   let cancelled = false;
   let settled = false;
   let resolveCompleted!: (outcome: AgentAuthFlowOutcome) => void;
@@ -502,38 +554,27 @@ export const startCliCodeAuth: StartCliCodeAuth = async ({
     };
   });
 
-  const killProc = async () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    try {
-      stdin.end();
-    } catch {
-      // ignore
-    }
-    try {
-      await outReader.cancel();
-    } catch {
-      // ignore
-    }
-    try {
-      await errReader.cancel();
-    } catch {
-      // ignore
-    }
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      return;
-    }
-    const grace = setTimeout(() => {
+  let killPromise: Promise<void> | undefined;
+  const killProc = (): Promise<void> => {
+    killPromise ??= (async () => {
       try {
-        proc.kill("SIGKILL");
+        stdin.end();
       } catch {
-        // already exited
+        // ignore
       }
-    }, 500);
-    await proc.exited.catch(() => {});
-    clearTimeout(grace);
+      try {
+        await outReader.cancel();
+      } catch {
+        // ignore
+      }
+      try {
+        await errReader.cancel();
+      } catch {
+        // ignore
+      }
+      await terminateProcess(proc);
+    })();
+    return killPromise;
   };
 
   const onChunk = (text: string) => {
@@ -858,7 +899,7 @@ export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
       env,
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
@@ -873,11 +914,8 @@ export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
 
   const timer = setTimeout(() => {
     timedOut = true;
-    try {
-      proc.kill();
-    } catch {
-      // already exited
-    }
+    void reader.cancel().catch(() => {});
+    void terminateProcess(proc);
   }, timeoutMs);
 
   const send = (payload: Record<string, unknown>) => {
@@ -968,11 +1006,7 @@ export const runCodexAppServerProbe: RunCodexAppServerProbe = async ({
     } catch {
       // ignore
     }
-    try {
-      proc.kill();
-    } catch {
-      // already exited
-    }
+    await terminateProcess(proc);
   }
 };
 
@@ -1008,7 +1042,7 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
 }) => {
   if (env.CODEX_HOME) {
     try {
-      mkdirSync(env.CODEX_HOME, { recursive: true });
+      mkdirSync(env.CODEX_HOME, { recursive: true, mode: 0o700 });
     } catch {
       // let codex report its own error
     }
@@ -1020,7 +1054,7 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
       env,
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
   } catch {
     throw new AgentAuthDriverError("process_failed", "Failed to launch codex app-server");
@@ -1037,7 +1071,6 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
     { resolve: (result: unknown) => void; reject: (error: unknown) => void }
   >();
   let loginId: string | undefined;
-  let cleanedUp = false;
   let cancelled = false;
   let resolveCompleted!: (outcome: AgentAuthFlowOutcome) => void;
   let settled = false;
@@ -1049,33 +1082,22 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
     };
   });
 
-  const killProc = async () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    try {
-      stdin.end();
-    } catch {
-      // ignore
-    }
-    try {
-      await reader.cancel();
-    } catch {
-      // ignore
-    }
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      return;
-    }
-    const grace = setTimeout(() => {
+  let killPromise: Promise<void> | undefined;
+  const killProc = (): Promise<void> => {
+    killPromise ??= (async () => {
       try {
-        proc.kill("SIGKILL");
+        stdin.end();
       } catch {
-        // already exited
+        // ignore
       }
-    }, 500);
-    await proc.exited.catch(() => {});
-    clearTimeout(grace);
+      try {
+        await reader.cancel();
+      } catch {
+        // ignore
+      }
+      await terminateProcess(proc);
+    })();
+    return killPromise;
   };
 
   const send = (payload: Record<string, unknown>) => {
@@ -1202,7 +1224,7 @@ export const startCodexAppServerAuth: StartCodexAppServerAuth = async ({
       completed,
       cancel: async () => {
         cancelled = true;
-        if (!cleanedUp && loginId !== undefined) {
+        if (killPromise === undefined && loginId !== undefined) {
           await request("account/login/cancel", { loginId }, 1_500).catch(() => {});
         }
         await killProc();
@@ -1223,7 +1245,7 @@ export const runCodexAppServerLogout: RunCodexAppServerLogout = async ({
 }) => {
   if (env.CODEX_HOME) {
     try {
-      mkdirSync(env.CODEX_HOME, { recursive: true });
+      mkdirSync(env.CODEX_HOME, { recursive: true, mode: 0o700 });
     } catch {
       // ignore
     }
@@ -1235,7 +1257,7 @@ export const runCodexAppServerLogout: RunCodexAppServerLogout = async ({
       env,
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
   } catch {
     throw new AgentAuthDriverError("process_failed", "Failed to launch codex app-server");
@@ -1250,11 +1272,8 @@ export const runCodexAppServerLogout: RunCodexAppServerLogout = async ({
 
   const timer = setTimeout(() => {
     timedOut = true;
-    try {
-      proc.kill();
-    } catch {
-      // ignore
-    }
+    void reader.cancel().catch(() => {});
+    void terminateProcess(proc);
   }, timeoutMs);
 
   const send = (payload: Record<string, unknown>) => {
@@ -1313,11 +1332,7 @@ export const runCodexAppServerLogout: RunCodexAppServerLogout = async ({
     } catch {
       // ignore
     }
-    try {
-      proc.kill();
-    } catch {
-      // ignore
-    }
+    await terminateProcess(proc);
   }
 };
 
@@ -1535,7 +1550,7 @@ export const runAgyAcpLogout: RunAgyAcpLogout = async ({ executable, env, timeou
       env,
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
   } catch {
     throw new AgentAuthDriverError("process_failed", "Failed to launch agy acp");
@@ -1550,11 +1565,8 @@ export const runAgyAcpLogout: RunAgyAcpLogout = async ({ executable, env, timeou
 
   const timer = setTimeout(() => {
     timedOut = true;
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      // ignore
-    }
+    void reader.cancel().catch(() => {});
+    void terminateProcess(proc);
   }, timeoutMs);
 
   const send = (payload: Record<string, unknown>) => {
@@ -1616,20 +1628,7 @@ export const runAgyAcpLogout: RunAgyAcpLogout = async ({ executable, env, timeou
     } catch {
       // ignore
     }
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      // ignore
-    }
-    const grace = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
-    }, 500);
-    await proc.exited.catch(() => {});
-    clearTimeout(grace);
+    await terminateProcess(proc);
   }
 };
 
@@ -1657,6 +1656,7 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
   const now = options.now ?? Date.now;
 
   let cachedAuth: { at: number; result: AgentAuthProbeResult } | undefined;
+  let cacheGen = 0;
 
   const minimalEnv = (): Record<string, string> => ({
     PATH: options.inherited.PATH ?? "/usr/bin:/bin",
@@ -1728,6 +1728,7 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
     }
 
     // Hard red line: never read, stat, parse, or touch agy's OAuth token files; probe only via `agy models`.
+    const probeGen = cacheGen;
     const result = await run([binary.path, "models"], { env, timeoutMs });
     let authResult: AgentAuthProbeResult;
     if (result.timedOut) {
@@ -1768,11 +1769,13 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
       }
     }
 
-    // Cache only definitive states; transient failures should re-probe on next visit.
-    if (authResult.state === "signed_in" || authResult.state === "signed_out") {
-      cachedAuth = { at: now(), result: authResult };
-    } else {
-      cachedAuth = undefined;
+    // Cache only definitive states if no login/logout invalidated the cache while this probe was in flight.
+    if (probeGen === cacheGen) {
+      if (authResult.state === "signed_in" || authResult.state === "signed_out") {
+        cachedAuth = { at: now(), result: authResult };
+      } else {
+        cachedAuth = undefined;
+      }
     }
 
     return authResult;
@@ -1820,9 +1823,11 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
           env: minimalEnv(),
           timeoutMs,
         });
+        cacheGen += 1;
         cachedAuth = undefined;
       },
       invalidateCache: () => {
+        cacheGen += 1;
         cachedAuth = undefined;
       },
     },

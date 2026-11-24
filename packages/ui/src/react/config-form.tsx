@@ -223,6 +223,7 @@ type RuntimePropertyShape = {
   default?: unknown;
   minimum?: unknown;
   maximum?: unknown;
+  multipleOf?: unknown;
   enum?: unknown;
   oneOf?: unknown;
   _meta?: unknown;
@@ -233,7 +234,7 @@ type EnabledWhenCondition = {
   equals: AgentRuntimeValue;
 };
 
-type ApplyScope = "immediate" | "next_idle_restart" | "next_session";
+type ApplyScope = "immediate" | "next_idle_restart" | "next_session" | "daemon_restart";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -250,7 +251,14 @@ const readEnabledWhen = (
 
 const readApplyScope = (meta: Record<string, unknown> | undefined): ApplyScope | undefined => {
   const raw = meta?.[APPLY_SCOPE];
-  if (raw === "immediate" || raw === "next_idle_restart" || raw === "next_session") return raw;
+  if (
+    raw === "immediate" ||
+    raw === "next_idle_restart" ||
+    raw === "next_session" ||
+    raw === "daemon_restart"
+  ) {
+    return raw;
+  }
   return undefined;
 };
 
@@ -424,6 +432,7 @@ function RuntimeFieldRow({
             value={typeof current === "number" ? current : undefined}
             minimum={typeof prop.minimum === "number" ? prop.minimum : undefined}
             maximum={typeof prop.maximum === "number" ? prop.maximum : undefined}
+            multipleOf={typeof prop.multipleOf === "number" ? prop.multipleOf : undefined}
             disabled={controlDisabled}
             onCommit={(next) => onPatch({ [fieldKey]: next })}
           />
@@ -460,6 +469,7 @@ function RuntimeIntegerInput({
   value,
   minimum,
   maximum,
+  multipleOf,
   disabled,
   onCommit,
 }: {
@@ -467,6 +477,7 @@ function RuntimeIntegerInput({
   value: number | undefined;
   minimum: number | undefined;
   maximum: number | undefined;
+  multipleOf: number | undefined;
   disabled: boolean;
   onCommit: (next: number) => void;
 }) {
@@ -486,7 +497,8 @@ function RuntimeIntegerInput({
     const inRange =
       Number.isInteger(parsed) &&
       (minimum === undefined || parsed >= minimum) &&
-      (maximum === undefined || parsed <= maximum);
+      (maximum === undefined || parsed <= maximum) &&
+      (multipleOf === undefined || parsed % multipleOf === 0);
     if (!inRange) {
       setDraft(value !== undefined ? String(value) : "");
       return;
@@ -501,7 +513,7 @@ function RuntimeIntegerInput({
       aria-labelledby={labelId}
       min={minimum}
       max={maximum}
-      step={1}
+      step={multipleOf ?? 1}
       disabled={disabled}
       value={draft}
       onChange={(event) => setDraft(event.currentTarget.value)}
