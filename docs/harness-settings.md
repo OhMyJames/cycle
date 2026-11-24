@@ -49,7 +49,7 @@ Cycle 目前已支持 3 个 agent（`claude`、`codex`、`agy`），后续还会
 
 在严格隔离的临时目录（`env -i`，未触碰本机任何真实目录或钥匙串）、**非 TTY 管道**（`Bun.spawn` `stdin: "pipe"`, `stdout: "pipe"`, `stderr: "pipe"`）下，对仓库锁定的 3 个二进制实测结果：
 
-- **Claude**：`2.1.327`（`@anthropic-ai/claude-agent-sdk@0.3.327`）
+- **Claude**：`2.1.331`（`@anthropic-ai/claude-agent-sdk@0.3.331`；3.1 的探测用的是 2.1.327，2026-11-24 用 2.1.331 复查过 `auth status --json`、`auth logout` 不变，`auth login --claudeai` 打印的地址改为 `https://claude.ai/oauth/authorize?…`，仍在 `CLAUDE_AUTH_URL_RE` 之内）
 - **Codex**：`0.171.0`（`@openai/codex@0.171.0`）
 - **Antigravity (`agy`)**：`1.5.15`
 

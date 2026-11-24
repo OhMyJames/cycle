@@ -4,7 +4,7 @@
 
 `harness/claude`:把 Claude Agent SDK 包装成 ACP v2 agent,通过 stdio 与 daemon 通信。决策见 [0001](../decisions/0001-claude-acp-adapter.md)。
 
-验证所用版本:`@anthropic-ai/claude-agent-sdk` 0.3.327,`@agentclientprotocol/sdk` 2.7.0,Bun 1.4.4。验证先用本地模拟的 Anthropic API,之后又用真实模型验证过(见文末)。
+验证所用版本:`@anthropic-ai/claude-agent-sdk` 0.3.331(CLI 2.1.331;2026-11-24 从 0.3.327 升级,见文末),`@agentclientprotocol/sdk` 2.7.0,Bun 1.4.4。验证先用本地模拟的 Anthropic API,之后又用真实模型验证过(见文末)。
 
 ## 进程模型
 

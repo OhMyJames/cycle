@@ -3,7 +3,7 @@
 对话里会出现的每一类内容,每一层叫什么、保留了什么,现在怎么画,打算怎么画。样式规则在 [DESIGN.md](../DESIGN.md) 第 16、22、23 节;
 这里是**映射矩阵**,实现时以它为准,改了实现就改这里。
 
-基线:Claude Agent SDK **0.3.327**(`harness/claude/package.json`),类型取自它的 `sdk.d.ts` 和 `sdk-tools.d.ts`。
+基线:Claude Agent SDK **0.3.331**(`harness/claude/package.json`),类型取自它的 `sdk.d.ts` 和 `sdk-tools.d.ts`。
 "来源"一列:**类型** = 只见于 SDK 类型或文档;**测试** = 适配器或页面的测试里有;**样本** = 抓过真实会话(还没有,见文末)。
 
 ## 路径

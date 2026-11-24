@@ -603,6 +603,13 @@ test("Claude code auth driver extracts ANSI-wrapped URL, submits one-time code v
       CLAUDE_AUTH_URL_RE,
     ),
   ).toBe("https://claude.com/cai/oauth/authorize?code=true&state=abc");
+  // As CLI 2.1.331 prints it: on claude.ai, its query one opaque token.
+  expect(
+    extractAuthUrl(
+      "Opening browser to sign in…\nIf the browser didn't open, visit:\nhttps://claude.ai/oauth/authorize?z-C99cQ9yANBwHEfuh4CUA5V7TSH3\nPaste code here if prompted > ",
+      CLAUDE_AUTH_URL_RE,
+    ),
+  ).toBe("https://claude.ai/oauth/authorize?z-C99cQ9yANBwHEfuh4CUA5V7TSH3");
 
   const fakeClaude = join(dir, "fake-claude");
   const script = `#!/usr/bin/env bun
