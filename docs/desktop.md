@@ -156,6 +156,11 @@ agent 进程自己的环境变量(daemon `config.json` 的 `allowEnv`/`env`、�
 - **快照由主进程拼**:页面在 `createSession` 里只给 `environmentId`,主进程从 `environments.json` 取这个环境当时的样子(去掉空脚本)放进 `session/new` 的 `_meta["cycle/environment"]`。daemon 以 `-32602` 拒绝时,`createSession` 不抛错,而是回 `{problem: {reason, name?}}`(`reason` 的清单是 `api.ts` 的 `ENVIRONMENT_REFUSALS`,主进程和页面共用),页面按 reason 换成自己的一句话(只写变量名,不写值),消息回到输入框;环境在这期间被删了是 `missing`。`missing` 和 `needs_fix` 只由主进程给,daemon 回的这两个词不算。
 - **和 daemon 一样的校验**:页面和主进程的校验与 daemon 的 `checkEnvironment` 一致(另加:环境和动作要有名字、动作要有命令),包括动作的 id 不能为空、不能重复。`environments.json` 里读到的环境(手写的、别的版本写的)不合格时,设置页那一行写"Needs a fix: …",不会被发出去;页面发之前先查,主进程取快照时再查(回 `needs_fix` 和环境名,页面说要去设置里改;`invalid_environment` 只留给 daemon 自己读不懂的环境)。编辑框打开时给没有 id 或 id 重复的动作换一个新 id,再保存一次就好了。
 - **workspace 的键**:默认按 `(locationId, cwd)` 记,`cwd` 只去掉末尾的斜杠(根目录 `/` 除外;空格不动，文件夹名可以以空格结尾),所以 `/Users/me/repo/` 和 `/Users/me/repo` 是同一个;读旧文件时也这样换算。
+- **密钥**:变量文本框里只写一个 `NAME`(没有 `=`)的行是密钥;写成 `KEY as NAME` 则取 `secrets.env` 里 `KEY` 的值给变量 `NAME`(别名,让不同环境的 `GH_TOKEN` 取不同的 token)。值不存在 `environments.json` 里,也不发给 daemon,由 session 所在机器上 `<daemon 数据目录>/secrets.env`(默认 `~/.cycle/secrets.env`,`NAME=value` 格式)提供。只给终端和动作,agent 拿不到。那个工作位置的 `secrets.env` 里没有值,session 不开始,提示缺哪个名字。
+- **Vault(设置页分区)**:管理一个工作位置的 `secrets.env`(protocol.md §6 "保险库"),位置选择同 API keys(`LocationScope`)。一行一个键:名字,下面一行写哪些环境在用它(环境的密钥取 `from ?? name`,没有就写 "Not used by any environment");行尾的箭头打开详情。搜索框按名字过滤。**只写不读**:值不在页面、主进程和 store 里,详情里的"值"是一串固定的点(不泄露长度),替换值要重新输入。
+  - **详情**对话框:名字、值(点)、使用它的环境;左下 Remove(`destructive`,先确认,焦点在 Cancel),右下 Edit 和 Done(默认焦点)。
+  - **新建/编辑**对话框:新建时焦点在名字上,名字要是合法的变量名,已有同名时提示"保存会替换";编辑只换值(名字写成文字,不是输入框,焦点直接在值上,密码框,总是空的);回车提交。
+  - 状态:读取中、读不出(原话加 Try again,已读到的保留)、空(出口是 New item)、搜索无结果。daemon 没有 `vault` 能力时读取失败,按"读不出"显示原话。
 - **agy**:agy 自己跑的命令拿不到环境变量(只有终端和动作有,见 protocol.md §6)。空白对话的 agent 是 Antigravity、选的环境又有变量时,选择后面多一行小字:"Antigravity runs its own commands without these variables. Terminals and actions have them."
 - **还没选文件夹时也能选**:那时选的是一个"待定"的选择(一开始是 "No environment",不沿用上次的:新会话从干净的状态开始,和 agent 的设置一样),换文件夹、换工作位置都保留它。选了文件夹以后,这个 workspace 记过默认就用它的默认(待定的让位);没记过就还是待定的那个,并在 session 建成时记成这个 workspace 的默认。有文件夹时再选,和以前一样立刻记成默认。daemon 没有 `environments` 能力时,按钮在但 `aria-disabled`,提示 "Cycle on {location} needs an update to use environments.",也不发环境。
 - **默认为空就是 "No environment"**;指向已删环境的默认当作没有,删环境时主进程一并删掉指向它的默认。
@@ -184,12 +189,13 @@ type Environment = {
 - **快照**:首条消息发出、`session/new` 时把选中的环境整个发给 daemon,daemon 存一份。之后改或删这个环境,不影响已有的 session,只影响新建的。会话标题的菜单里能看到它用的是哪个环境(名字;变量只列名字,不列值)。
 - **什么时候生效**:
 
-  | 部分    | 时机                                                              |
-  | ------- | ----------------------------------------------------------------- |
-  | 变量    | session 的每个 agent 进程、它跑的命令、它的终端、它的脚本和动作   |
-  | 动作    | 顶栏按钮;点了在这个 session 的一个新终端里跑(`cwd` 是 session 的) |
-  | setup   | 只在新建 worktree 后跑;不在主 checkout 里跑                       |
-  | cleanup | 只在删除 worktree 前跑                                            |
+  | 部分    | 时机                                                                                                                       |
+  | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+  | 变量    | session 的每个 agent 进程、它跑的命令、它的终端、它的脚本和动作                                                            |
+  | 密钥    | 只有终端、动作、你开新 session 时跑的 setup;agent 的命令拿不到,agent 自己进出 worktree 时跑的 setup/cleanup 也拿不到(见下) |
+  | 动作    | 顶栏按钮;点了在这个 session 的一个新终端里跑(`cwd` 是 session 的)                                                          |
+  | setup   | 只在新建 worktree 后跑;不在主 checkout 里跑                                                                                |
+  | cleanup | 只在删除 worktree 前跑                                                                                                     |
 
   setup 在 Cycle 新建 worktree 后运行一次,cleanup 在 Cycle 删除 worktree 前运行(docs/protocol.md §6 "Worktree")。setup 失败时 session 照常创建,在 session 里显示输出;cleanup 超时 60 秒,失败不阻止删除。
 - **编辑**:设置页 Environments 分区,每个环境一行(名字、变量个数、动作个数),菜单里 Edit、Duplicate、Remove(先确认;正在用它的 session 不受影响)。编辑表单仿 Codex 的:名字;setup、cleanup 各一个按系统分页的文本框;变量用 `.env` 格式的文本框(一行一个 `KEY=value`,`#` 开头是注释,保存时校验名字);动作列表。

@@ -514,5 +514,6 @@ const capabilitiesOf = (client: CycleClient): NonNullable<LocationStatus["capabi
   terminal: client.capabilities.terminal === true,
   environments: client.capabilities.environments === true,
   worktrees: client.capabilities.worktrees === true,
+  vault: client.capabilities.vault === true,
   stopSubagent: client.canStopSubagent,
 });

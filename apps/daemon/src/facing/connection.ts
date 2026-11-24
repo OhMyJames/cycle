@@ -51,6 +51,7 @@ export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
           terminal: true,
           environments: true,
           worktrees: true,
+          vault: true,
         },
       },
     };

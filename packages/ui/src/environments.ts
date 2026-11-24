@@ -1,7 +1,12 @@
 // Environments as the page edits them (docs/desktop.md "环境"): variables written as a `.env` file, and the checks an
 // environment must pass before it is kept or sent. The page may not import `@cycle/protocol`, so the daemon's rules
 // (`VARIABLE_NAME`, `RESERVED_VARIABLES`, `ENVIRONMENT_MAX_BYTES`) are copied here, and a test holds the two together.
-import type { Environment, EnvironmentProblem, EnvironmentScripts } from "./api.ts";
+import type {
+  Environment,
+  EnvironmentProblem,
+  EnvironmentScripts,
+  EnvironmentSecret,
+} from "./api.ts";
 
 /** A name a shell can export. The daemon's `VARIABLE_NAME`. */
 export const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -53,13 +58,20 @@ const unescapeDouble = (text: string): string =>
 
 /**
  * Reads variables written as a `.env` file: one `NAME=value` a line, `#` starts a comment line, `export ` before a name
- * is allowed. A value may be quoted: `"…"` takes `\n`, `\t`, `\"` and `\\`; `'…'` is taken as it is. An unquoted value
+ * is allowed. A line that is only a name, `NAME`, is a secret: its value is not here but in `secrets.env` on the machine
+ * the session runs on, and only terminals and actions are given it, never the agent. `KEY as NAME` takes the value from
+ * the key `KEY` instead, so two environments can give the same NAME different values. A value may be quoted: `"…"` takes `\n`, `\t`, `\"` and `\\`; `'…'` is taken as it is. An unquoted value
  * is trimmed, and a ` #` in it starts a comment. What is wrong is said by line, and nothing on a wrong line is taken.
  */
 export const parseVariables = (
   text: string,
-): { variables: { name: string; value: string }[]; problems: VariableLineProblem[] } => {
+): {
+  variables: { name: string; value: string }[];
+  secrets: EnvironmentSecret[];
+  problems: VariableLineProblem[];
+} => {
   const variables: { name: string; value: string }[] = [];
+  const secrets: EnvironmentSecret[] = [];
   const problems: VariableLineProblem[] = [];
   const seen = new Map<string, number>();
   text.split(/\r?\n/).forEach((raw, index) => {
@@ -68,12 +80,14 @@ export const parseVariables = (
     if (trimmed === "" || trimmed.startsWith("#")) return;
     const body = trimmed.replace(/^export\s+/, "");
     const equals = body.indexOf("=");
-    if (equals === -1) {
+    const alias = equals === -1 ? /^(\S+)\s+as\s+(\S+)$/.exec(body) : null;
+    if (equals === -1 && alias === null && !VARIABLE_NAME.test(body)) {
       problems.push({ line, problem: "no_equals" });
       return;
     }
-    const name = body.slice(0, equals).trim();
-    let rest = body.slice(equals + 1).trim();
+    const name =
+      alias !== null ? (alias[2] as string) : equals === -1 ? body : body.slice(0, equals).trim();
+    let rest = equals === -1 ? "" : body.slice(equals + 1).trim();
     let value: string;
     const quote = rest[0];
     if (quote === '"' || quote === "'") {
@@ -114,16 +128,25 @@ export const parseVariables = (
       problems.push({ line, problem: "duplicate", name, first });
       return;
     }
+    if (alias !== null && !VARIABLE_NAME.test(alias[1] as string)) {
+      problems.push({ line, problem: "invalid_name", name: alias[1] as string });
+      return;
+    }
     seen.set(name, line);
-    variables.push({ name, value });
+    if (alias !== null) secrets.push({ name, from: alias[1] as string });
+    else if (equals === -1) secrets.push({ name });
+    else variables.push({ name, value });
   });
-  return { variables, problems };
+  return { variables, secrets, problems };
 };
 
 /** Variables as a `.env` file that reads back as the same: a value is quoted when it would not be taken as it is. */
-export const formatVariables = (variables: readonly { name: string; value: string }[]): string =>
-  variables
-    .map(({ name, value }) => {
+export const formatVariables = (
+  variables: readonly { name: string; value: string }[],
+  secrets: readonly EnvironmentSecret[] = [],
+): string =>
+  [
+    ...variables.map(({ name, value }) => {
       const safe =
         value === value.trim() &&
         !/^["']/.test(value) &&
@@ -137,8 +160,11 @@ export const formatVariables = (variables: readonly { name: string; value: strin
         .replace(/\r/g, "\\r")
         .replace(/\t/g, "\\t");
       return `${name}="${escaped}"`;
-    })
-    .join("\n");
+    }),
+    ...secrets.map(({ name, from }) =>
+      from !== undefined && from !== name ? `${from} as ${name}` : name,
+    ),
+  ].join("\n");
 
 /** The scripts with their empty systems left out; undefined when none has a command. */
 export const scriptsOrNone = (
@@ -161,6 +187,10 @@ export const environmentSnapshot = (environment: Environment): Environment => {
     id: environment.id,
     name: environment.name,
     variables: environment.variables.map(({ name, value }) => ({ name, value })),
+    secrets: environment.secrets.map(({ name, from }) => ({
+      name,
+      ...(from !== undefined ? { from } : {}),
+    })),
     actions: environment.actions.map(({ id, name, icon, command }) => ({
       id,
       name,
@@ -176,7 +206,14 @@ export const environmentSnapshot = (environment: Environment): Environment => {
 export const environmentProblem = (environment: Environment): EnvironmentProblem | undefined => {
   if (environment.name.trim() === "") return { problem: "name_missing" };
   const seen = new Set<string>();
-  for (const { name, value } of environment.variables) {
+  const named = [
+    ...environment.variables,
+    ...environment.secrets.map(({ name }) => ({ name, value: "" })),
+  ];
+  for (const { name, from } of environment.secrets)
+    if (from !== undefined && !VARIABLE_NAME.test(from))
+      return { problem: "invalid_variable", name };
+  for (const { name, value } of named) {
     if (!VARIABLE_NAME.test(name) || value.includes("\0"))
       return { problem: "invalid_variable", name };
     if (isReservedVariable(name)) return { problem: "reserved_variable", name };

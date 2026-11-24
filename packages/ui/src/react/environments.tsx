@@ -197,7 +197,13 @@ export function EnvironmentsSection() {
   const environments = state?.environments ?? [];
   const add = () =>
     setEditing({
-      environment: { id: newEnvironmentId("env"), name: "", variables: [], actions: [] },
+      environment: {
+        id: newEnvironmentId("env"),
+        name: "",
+        variables: [],
+        secrets: [],
+        actions: [],
+      },
       isNew: true,
     });
   return (
@@ -390,7 +396,9 @@ export function EnvironmentEditor({
   const [name, setName] = useState(environment.name);
   const [setup, setSetup] = useState<EnvironmentScripts>(environment.setup ?? {});
   const [cleanup, setCleanup] = useState<EnvironmentScripts>(environment.cleanup ?? {});
-  const [variablesText, setVariablesText] = useState(() => formatVariables(environment.variables));
+  const [variablesText, setVariablesText] = useState(() =>
+    formatVariables(environment.variables, environment.secrets),
+  );
   // An action without an id, or with another's, is given its own: saving fixes what the daemon would refuse.
   const [actions, setActions] = useState<EnvironmentAction[]>(() => {
     const taken = new Set<string>();
@@ -422,6 +430,7 @@ export function EnvironmentEditor({
       id: environment.id,
       name: name.trim(),
       variables: parsed.variables,
+      secrets: parsed.secrets,
       actions: actions.map((a) => ({ ...a, name: a.name.trim() })),
       ...(Object.keys(setup).length > 0 ? { setup } : {}),
       ...(Object.keys(cleanup).length > 0 ? { cleanup } : {}),

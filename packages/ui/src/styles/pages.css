@@ -199,6 +199,66 @@
 [data-kind="connector-form"],
 [data-kind="connector-values"],
 [data-kind="plugin-source-form"],
+/* The vault (Settings → Vault): an item's details and its form, in dialogs over the page. */
+[data-kind="vault-detail"],
+[data-kind="vault-form"] {
+  width: min(28rem, calc(100vw - 2rem));
+}
+
+[data-kind="vault-form"] form > [role="alert"] {
+  margin: 0;
+  color: var(--ui-destructive);
+}
+
+[data-slot="vault-fields"] {
+  margin: 0;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+}
+
+[data-slot="vault-fields"] > div {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--cycle-gap);
+  padding: 0.75rem var(--cycle-gap);
+}
+
+[data-slot="vault-fields"] > div + div {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="vault-fields"] dt {
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="vault-fields"] dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-slot="vault-name"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+[data-slot="vault-name-label"] {
+  font-weight: 500;
+}
+
+[data-slot="vault-mono"] {
+  font-family: var(--ui-font-mono);
+}
+
+/* The footer of the details: Remove at the start, the rest at the end. */
+[data-kind="vault-detail"] [data-dialog-footer] [data-slot="spacer"] {
+  flex: 1;
+}
+
 [data-kind="provider-form"] {
   width: min(36rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);

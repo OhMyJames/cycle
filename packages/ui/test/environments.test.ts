@@ -33,10 +33,17 @@ test("the page's rules for an environment are the daemon's", () => {
 });
 
 test("an environment the page would keep is one the daemon takes, and the other way round", () => {
-  const base: Environment = { id: "e", name: "E", variables: [], actions: [] };
+  const base: Environment = { id: "e", name: "E", variables: [], secrets: [], actions: [] };
   const cases: Environment[] = [
     base,
     { ...base, variables: [{ name: "A", value: "1" }] },
+    { ...base, secrets: [{ name: "TOKEN" }] },
+    { ...base, secrets: [{ name: "TOKEN", from: "WORK_GH" }] },
+    { ...base, secrets: [{ name: "TOKEN", from: "not-a-key" }] },
+    { ...base, secrets: [{ name: "PATH" }] },
+    { ...base, secrets: [{ name: "A" }, { name: "A", from: "B" }] },
+    { ...base, variables: [{ name: "A", value: "1" }], secrets: [{ name: "A" }] },
+    { ...base, secrets: [{ name: "not-a-name" }] },
     { ...base, variables: [{ name: "PATH", value: "/x" }] },
     { ...base, variables: [{ name: "1A", value: "1" }] },
     { ...base, variables: [{ name: "A", value: "a\0b" }] },
@@ -77,6 +84,9 @@ test("variables are read as a .env file: comments, export, quotes, and what is w
     'ESCAPED="line\\nnext \\"q\\""',
     "PLAIN=postgres://u@h/db # a comment",
     "EMPTY=",
+    "API_TOKEN",
+    "WORK_GH as GH_TOKEN",
+    "bad-key as OTHER",
     "no equals here",
     'OPEN="never closed',
     "HOME=/tmp",
@@ -92,12 +102,14 @@ test("variables are read as a .env file: comments, export, quotes, and what is w
       { name: "PLAIN", value: "postgres://u@h/db" },
       { name: "EMPTY", value: "" },
     ],
+    secrets: [{ name: "API_TOKEN" }, { name: "GH_TOKEN", from: "WORK_GH" }],
     problems: [
-      { line: 9, problem: "no_equals" },
-      { line: 10, problem: "unclosed_quote" },
-      { line: 11, problem: "reserved", name: "HOME" },
-      { line: 12, problem: "duplicate", name: "TOKEN", first: 3 },
-      { line: 13, problem: "invalid_name", name: "1BAD" },
+      { line: 11, problem: "invalid_name", name: "bad-key" },
+      { line: 12, problem: "no_equals" },
+      { line: 13, problem: "unclosed_quote" },
+      { line: 14, problem: "reserved", name: "HOME" },
+      { line: 15, problem: "duplicate", name: "TOKEN", first: 3 },
+      { line: 16, problem: "invalid_name", name: "1BAD" },
     ],
   });
 });
@@ -113,16 +125,24 @@ test("variables written out read back as the same", () => {
     { name: "G", value: "'leading quote" },
     { name: "H", value: "url#fragment" },
   ];
-  const text = formatVariables(variables);
+  const text = formatVariables(variables, [
+    { name: "API_TOKEN" },
+    { name: "GH_TOKEN", from: "WORK_GH" },
+  ]);
   expect(text.split("\n")[0]).toBe("A=plain");
-  expect(parseVariables(text)).toEqual({ variables, problems: [] });
+  expect(text.split("\n").slice(-2)).toEqual(["API_TOKEN", "WORK_GH as GH_TOKEN"]);
+  expect(parseVariables(text)).toEqual({
+    variables,
+    secrets: [{ name: "API_TOKEN" }, { name: "GH_TOKEN", from: "WORK_GH" }],
+    problems: [],
+  });
 });
 
 test("environments are read at start; a workspace's default is set at once and kept by main", async () => {
   const script = fakeBridge({
     connected: true,
     environments: {
-      environments: [{ id: "env-a", name: "A", variables: [], actions: [] }],
+      environments: [{ id: "env-a", name: "A", variables: [], secrets: [], actions: [] }],
       defaults: { local: { "/gone": "env-removed" } },
     },
   });
@@ -146,7 +166,7 @@ test("a refused environment is said in the page's words, naming the variable, an
     connected: true,
     capabilities: { queue: true, files: true, folders: true, environments: true },
     environments: {
-      environments: [{ id: "env-a", name: "A", variables: [], actions: [] }],
+      environments: [{ id: "env-a", name: "A", variables: [], secrets: [], actions: [] }],
       defaults: { local: { "/work": "env-a" } },
     },
   });
@@ -173,7 +193,7 @@ test("an environment main finds does not pass the daemon's rules is said as one 
     connected: true,
     capabilities: { queue: true, files: true, folders: true, environments: true },
     environments: {
-      environments: [{ id: "env-a", name: "A", variables: [], actions: [] }],
+      environments: [{ id: "env-a", name: "A", variables: [], secrets: [], actions: [] }],
       defaults: { local: { "/work": "env-a" } },
     },
   });
@@ -212,7 +232,7 @@ test("a workspace's default is one for its folder with or without a slash at its
   const script = fakeBridge({
     connected: true,
     environments: {
-      environments: [{ id: "env-a", name: "A", variables: [], actions: [] }],
+      environments: [{ id: "env-a", name: "A", variables: [], secrets: [], actions: [] }],
       defaults: { local: { "/repo": "env-a" } },
     },
   });
@@ -242,6 +262,7 @@ test("an environment that does not pass the daemon's rules is not sent: the pers
           id: "env-a",
           name: "A",
           variables: [],
+          secrets: [],
           actions: [
             { id: "x", name: "One", command: { default: "true" } },
             { id: "x", name: "Two", command: { default: "true" } },

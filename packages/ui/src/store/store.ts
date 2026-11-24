@@ -24,6 +24,7 @@ import { ProvidersSlice } from "./providers.ts";
 import { SessionsSlice } from "./sessions.ts";
 import { viewKey } from "./state.ts";
 import { TerminalsSlice } from "./terminals.ts";
+import { VaultSlice } from "./vault.ts";
 
 export { blankEnvironmentOf, environmentDefaultOf } from "./environments.ts";
 export * from "./state.ts";
@@ -68,6 +69,7 @@ export class AppStore extends StoreBase {
   );
   readonly #terminals = new TerminalsSlice(this.kit);
   readonly #connectors = new ConnectorsSlice(this.kit);
+  readonly #vault = new VaultSlice(this.kit);
   readonly #providers = new ProvidersSlice(this.kit, (locationId) =>
     this.#locations.loadAgents(locationId),
   );
@@ -306,6 +308,12 @@ export class AppStore extends StoreBase {
   providerCatalog = this.#providers.catalog;
   saveProvider = this.#providers.save;
   removeProvider = this.#providers.remove;
+
+  // ---- the vault (docs/protocol.md §6 "环境") ----
+
+  loadVault = this.#vault.load;
+  setVaultItem = this.#vault.set;
+  removeVaultItem = this.#vault.remove;
 
   // ---- plugins (docs/protocol.md §15) ----
 

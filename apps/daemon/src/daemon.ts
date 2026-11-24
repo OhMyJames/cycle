@@ -85,7 +85,7 @@ import {
   trustPath,
 } from "./data-dir.ts";
 import { AgentDefaults } from "./defaults-file.ts";
-import { sessionVariables } from "./environment.ts";
+import { commandVariables } from "./environment.ts";
 import {
   INTERNAL_ERROR,
   INVALID_PARAMS,
@@ -879,7 +879,7 @@ export class Daemon {
         definition,
         handlers,
         // Its environment's variables, for the commands it runs (docs/protocol.md §6 "环境").
-        { sessionId: session.id, sessionEnv: sessionVariables(session.entry) },
+        { sessionId: session.id, sessionEnv: commandVariables(session.entry) },
       ));
     ahead?.adopt(handlers);
     connected = link;

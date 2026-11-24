@@ -8,7 +8,7 @@ import {
   ToolRefusal,
   type WorktreeHost,
 } from "./connectors/worktree-mcp.ts";
-import { environmentOf, scriptFor, sessionVariables } from "./environment.ts";
+import { commandVariables, environmentOf, scriptFor } from "./environment.ts";
 import type { SessionEntry } from "./index-file.ts";
 import { CLEANUP_TIMEOUT_MS, runScript, SETUP_TIMEOUT_MS } from "./scripts.ts";
 import type { Session } from "./session.ts";
@@ -26,6 +26,7 @@ export type WorktreeHostDeps = {
   /** Changes the session's index entry and tells the clients. */
   remember(session: Session, patch: Partial<SessionEntry>): void;
   warn(event: string): void;
+  /** Where `secrets.env` is: the secrets a setup or cleanup script is given. */
 };
 
 const refuse = (error: unknown): never => {
@@ -68,9 +69,10 @@ const enter = async (deps: WorktreeHostDeps, sessionId: string, input: EnterInpu
       let setupFailed: string | undefined;
       const setup = made.created ? scriptFor(environment?.setup) : undefined;
       if (setup !== undefined) {
+        // The agent chose this moment and the code in the worktree: the script gets the literal variables only.
         const ran = await runScript(setup, {
           cwd: made.path,
-          variables: sessionVariables(session.entry),
+          variables: commandVariables(session.entry),
           timeoutMs: SETUP_TIMEOUT_MS,
         });
         if (!ran.ok) setupFailed = ran.output || "The setup script failed";
@@ -139,7 +141,7 @@ const exit = async (deps: WorktreeHostDeps, sessionId: string, input: ExitInput)
       if (cleanup !== undefined) {
         const ran = await runScript(cleanup, {
           cwd: tree.path,
-          variables: sessionVariables(session.entry),
+          variables: commandVariables(session.entry),
           timeoutMs: CLEANUP_TIMEOUT_MS,
         });
         if (!ran.ok) deps.warn("worktree_cleanup_failed");

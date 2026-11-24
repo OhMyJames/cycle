@@ -17,4 +17,5 @@ export * from "./queue.ts";
 export * from "./session-state.ts";
 export * from "./storage.ts";
 export * from "./terminal.ts";
+export * from "./vault.ts";
 export * from "./worktree.ts";

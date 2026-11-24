@@ -110,6 +110,9 @@ import {
   trustRead,
   trustSet,
   tsOf,
+  vaultList,
+  vaultRemove,
+  vaultSet,
 } from "@cycle/protocol";
 import type { Channel } from "./transport.ts";
 
@@ -432,6 +435,9 @@ export class CycleClient {
     if (params.environment !== undefined) {
       if (this.#capabilities.environments !== true)
         throw new Error("This daemon is too old to take an environment");
+      const secrets = (params.environment as { secrets?: unknown[] } | null)?.secrets;
+      if (Array.isArray(secrets) && secrets.length > 0 && this.#capabilities.vault !== true)
+        throw new Error("This daemon is too old to keep secrets");
       meta[META.environment] = params.environment;
     }
     if (params.worktree !== undefined) {
@@ -703,6 +709,30 @@ export class CycleClient {
 
   async removeProvider(id: string): Promise<void> {
     await this.#call(providersRemove, { id });
+  }
+
+  // ---- the vault (docs/protocol.md §6 "环境") ----
+
+  #vault(): void {
+    if (this.#capabilities.vault !== true)
+      throw new Error("This daemon is too old to keep a vault");
+  }
+
+  /** The keys the daemon's `secrets.env` has a value for. Never a value. */
+  async listVault(): Promise<string[]> {
+    this.#vault();
+    return (await this.#call(vaultList, {})).items.map((item) => item.key);
+  }
+
+  /** Adds the key or replaces its value. The value goes to the daemon and is kept nowhere else. */
+  async setVaultItem(key: string, value: string): Promise<void> {
+    this.#vault();
+    await this.#call(vaultSet, { key, value });
+  }
+
+  async removeVaultItem(key: string): Promise<void> {
+    this.#vault();
+    await this.#call(vaultRemove, { key });
   }
 
   // ---- plugins (docs/protocol.md §15) ----

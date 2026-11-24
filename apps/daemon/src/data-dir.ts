@@ -24,3 +24,5 @@ export const optionsCachePath = (dataDir: string): string => join(dataDir, "agen
 export const trustPath = (dataDir: string): string => join(dataDir, "trust.json");
 /** The owner's model providers, keys included: private to the account (docs/adapters/codex.md "自带模型"). */
 export const providersPath = (dataDir: string): string => join(dataDir, "providers.json");
+/** Values an environment's secrets name, read when they are used and never kept elsewhere (docs/protocol.md §6 "环境"). */
+export const secretsPath = (dataDir: string): string => join(dataDir, "secrets.env");

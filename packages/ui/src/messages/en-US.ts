@@ -850,6 +850,47 @@ export const enUS = {
   "attention.stopped": "The agent stopped unexpectedly",
 
   // Model providers (CYC-300): the owner's own models for Codex, on the API keys page of Settings.
+  // The vault: the keys of a location's secrets.env (Settings → Vault, docs/protocol.md §6 "环境")
+  "vault.lead":
+    "Secrets kept on {location}, in its secrets.env. An environment names one, and only its terminals and actions get the value, never the agent. A value can be replaced and is never shown.",
+  "vault.add": "New item",
+  "vault.search": "Search vault",
+  "vault.loading": "Reading the vault…",
+  "vault.unreadable": "The vault could not be read.",
+  "vault.retry": "Try again",
+  "vault.empty": "The vault is empty.",
+  "vault.emptyBody":
+    "Add a secret, then name it in an environment to give it to that environment's terminals and actions.",
+  "vault.noMatch": "No item matches that.",
+  "vault.usedBy": "Used by {names}",
+  "vault.unused": "Not used by any environment",
+  "vault.open": "Open {name}",
+  "vault.detail.name": "Name",
+  "vault.detail.value": "Value",
+  "vault.detail.hidden": "Hidden",
+  "vault.detail.usedBy": "Used by",
+  "vault.detail.remove": "Remove",
+  "vault.detail.edit": "Edit",
+  "vault.detail.done": "Done",
+  "vault.form.addTitle": "New vault item",
+  "vault.form.editTitle": "Edit {name}",
+  "vault.form.name": "Name",
+  "vault.form.namePlaceholder": "GITHUB_TOKEN",
+  "vault.form.nameHint":
+    "Letters, digits and _, not starting with a digit. An environment refers to it by this name.",
+  "vault.form.exists": "{name} is already in the vault. Saving replaces its value.",
+  "vault.form.value": "Value",
+  "vault.form.valueHint":
+    "Sent to {location} and kept only in its secrets.env. It is not shown again.",
+  "vault.form.valueReplace": "Enter the new value. The saved one is replaced and not shown.",
+  "vault.form.create": "Add item",
+  "vault.form.save": "Save item",
+  "vault.removeTitle": "Remove {name}?",
+  "vault.removeDescription":
+    "Its value is deleted from secrets.env on {location}. A session whose environment names it will not start until it is set again.",
+  "vault.removeConfirm": "Remove item",
+  "vault.problem.invalid": "{location} did not accept this: {reason}",
+  "vault.problem.failed": "The change did not reach {location}: {reason}",
   "providers.lead":
     "Models from your own accounts, for Codex sessions. Keys are kept on {location} and never shown again.",
   "providers.loading": "Reading providers…",
@@ -1299,6 +1340,7 @@ export const enUS = {
   "account.state.reauth": "Signed out by the sign-in service",
   // Environments: reusable setups of scripts, variables and actions (Settings → Environments, docs/desktop.md "环境")
   "settings.section.environments": "Environments",
+  "settings.section.vault": "Vault",
   "settings.environments.lead":
     "Variables and actions a session can start with. Choose one for a folder when you start a session in it.",
   "settings.environments.empty": "No environments yet.",
@@ -1330,7 +1372,7 @@ export const enUS = {
   "environment.system.hint": "A system with a script of its own runs that one instead.",
   "environment.variables": "Variables",
   "environment.variables.note":
-    "One NAME=value per line, as in a .env file. Lines starting with # are comments. The session's agent, terminals and actions see them.",
+    "One NAME=value per line, as in a .env file. Lines starting with # are comments. The session's agent, terminals and actions see them. A line with only a NAME is a secret: its value is read from secrets.env on the machine the session runs on, and only terminals and actions get it, never the agent.",
   "environment.variables.placeholder": "DATABASE_URL=postgres://localhost/dev",
   "environment.variables.noEquals": "Line {line}: write it as NAME=value.",
   "environment.variables.unclosedQuote": "Line {line}: the quote is not closed.",
@@ -1387,6 +1429,8 @@ export const enUS = {
     "The session was not started: the environment sets {name}, which Cycle sets for the agent. Remove it in Settings, Environments.",
   "blank.environment.refused.invalid_variable":
     "The session was not started: the environment's variable {name} is not one a shell can take. Fix it in Settings, Environments.",
+  "blank.environment.refused.missing_secret":
+    "The session was not started: the environment needs the secret {name}, and secrets.env on that location has no value for it. Add NAME=value to it, or remove the line in Settings, Environments.",
   "blank.environment.refused.too_large":
     "The session was not started: the environment is larger than Cycle on that location takes. Shorten it in Settings, Environments.",
   "blank.environment.refused.invalid_environment":

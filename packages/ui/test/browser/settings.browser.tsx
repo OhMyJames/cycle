@@ -42,6 +42,7 @@ test("Settings is a page over the sessions: its button opens it, Escape goes bac
     "Appearance",
     "Work in",
     "Environments",
+    "Vault",
     "Keyboard shortcuts",
     "Subscriptions",
     "API keys",

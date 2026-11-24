@@ -36,6 +36,8 @@ import type {
   TerminalInfo,
   TerminalProblem,
   UnsavedWork,
+  VaultAnswer,
+  VaultProblem,
   WorkspacePatch,
   WorkspaceStatus,
 } from "@cycle/ui";
@@ -132,6 +134,12 @@ export const providerProblemOf = (
   if (code === -32002) return { problem: "not_found" };
   if (code === -32602) return { problem: "invalid", message: messageOf(error) };
   return { problem: "failed", message: messageOf(error) };
+};
+
+/** Why the vault did not take it. `message` is the daemon's word for the person; it never holds a value. */
+const vaultProblemOf = (error: unknown): { problem: VaultProblem; message?: string } => {
+  const { code } = (error ?? {}) as { code?: unknown };
+  return { problem: code === -32602 ? "invalid" : "failed", message: messageOf(error) };
 };
 
 const PLUGIN_REASONS: readonly PluginProblem[] = [
@@ -634,6 +642,38 @@ export class LocationActions {
       await this.#runtime.connection(locationId).client.removeProvider(id);
       return { removed: true as const };
     }, providerProblemOf);
+  }
+
+  // ---- the vault (docs/protocol.md §6 "环境"): the value goes to the daemon and is not logged, kept or tracked here ----
+
+  async listVault(locationId: string): Promise<string[]> {
+    return this.#runtime.connection(locationId).client.listVault();
+  }
+
+  async setVaultItem(locationId: string, key: string, value: string): Promise<VaultAnswer> {
+    return runAction(
+      async () => {
+        await this.#runtime.connection(locationId).client.setVaultItem(key, value);
+        return { done: true as const };
+      },
+      vaultProblemOf,
+      (answer) => {
+        if ("done" in answer) this.#runtime.track("vault_item_saved", {});
+      },
+    );
+  }
+
+  async removeVaultItem(locationId: string, key: string): Promise<VaultAnswer> {
+    return runAction(
+      async () => {
+        await this.#runtime.connection(locationId).client.removeVaultItem(key);
+        return { done: true as const };
+      },
+      vaultProblemOf,
+      (answer) => {
+        if ("done" in answer) this.#runtime.track("vault_item_removed", {});
+      },
+    );
   }
 
   /**

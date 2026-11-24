@@ -10,7 +10,7 @@ import {
   terminalList,
   terminalResize,
 } from "@cycle/protocol";
-import { environmentOf, scriptFor, sessionVariables } from "../environment.ts";
+import { environmentOf, scriptFor, shellVariables } from "../environment.ts";
 import { INVALID_PARAMS, RpcError } from "../errors.ts";
 import type { TerminalSink } from "../terminals.ts";
 import { type Core, cycleOn, type Me } from "./core.ts";
@@ -21,7 +21,7 @@ export const registerTerminals = (app: AgentApp, core: Core, me: Me): void => {
     const conn = me();
     return { id: conn.id, send: (method, params) => conn.notify(method, params) };
   };
-  cycle(terminalCreate, (params) => {
+  cycle(terminalCreate, async (params) => {
     const cwd = core.cwdOf(params.sessionId);
     if (core.index.get(params.sessionId)?.archived === true)
       throw new RpcError(INVALID_PARAMS, "The session is archived", {
@@ -45,7 +45,7 @@ export const registerTerminals = (app: AgentApp, core: Core, me: Me): void => {
       command = { title: action.name, script };
     }
     return core.terminals.create(params.sessionId, cwd, params.cols, params.rows, sink(), {
-      env: sessionVariables(entry),
+      env: (await shellVariables(entry, core.dataDir)).variables,
       ...(command !== undefined ? { command } : {}),
     });
   });

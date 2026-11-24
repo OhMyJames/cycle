@@ -83,6 +83,7 @@ test("the list sums the environment up without a value; the values are in the in
     id: "env-1",
     name: "Node + Postgres",
     variableNames: ["DATABASE_URL", "NODE_ENV"],
+    secretNames: [],
     actions: [{ id: "dev", name: "Dev server" }],
   });
   expect(JSON.stringify(listed)).not.toContain("s3cret-pass");
@@ -152,7 +153,7 @@ test("a script is this system's own, else the default, else none", () => {
 });
 
 test("an environment in the index this version cannot read counts as none: the list, a launch and a terminal still work", async () => {
-  const { environmentOf, sessionVariables, environmentRowMeta } = await import(
+  const { environmentOf, commandVariables, environmentRowMeta } = await import(
     "../src/environment.ts"
   );
   const entry = {
@@ -163,7 +164,7 @@ test("an environment in the index this version cannot read counts as none: the l
     environment: { id: "e", name: "Odd", variables: { NOT: "a list" } },
   };
   expect(environmentOf(entry)).toBeUndefined();
-  expect(sessionVariables(entry)).toEqual({});
+  expect(commandVariables(entry)).toEqual({});
   expect(environmentRowMeta(entry)).toEqual({});
 });
 
@@ -240,4 +241,84 @@ test("an environment in the index with a name the rules refuse counts as none", 
     environment: { ...entry.environment, variables: [{ name: "HOME", value: "/x" }] },
   };
   expect(environmentOf(reserved)).toBeUndefined();
+});
+
+// ---- secrets: named in the environment, valued in this machine's secrets.env ----
+
+test("a secret is a name only: it shares the variables' rules and is summed up by name", () => {
+  const ok = checkEnvironment({
+    ...environment,
+    secrets: [{ name: "API_TOKEN" }, { name: "GH_TOKEN", from: "WORK_GH" }],
+  });
+  expect(ok).toMatchObject({
+    ok: true,
+    environment: { secrets: [{ name: "API_TOKEN" }, { name: "GH_TOKEN", from: "WORK_GH" }] },
+  });
+  expect(checkEnvironment(environment)).toMatchObject({ ok: true, environment: { secrets: [] } });
+  for (const secrets of [
+    [{ name: "HOME" }],
+    [{ name: "NOT-OK" }],
+    [{ name: "NODE_ENV" }],
+    [{ name: "A" }, { name: "A", from: "B" }],
+    [{ name: "A", from: "not-a-key" }],
+  ])
+    expect(checkEnvironment({ ...environment, secrets }).ok).toBe(false);
+});
+
+test("secrets.env is read by NAME=value, with export and quotes, and a bad line is skipped", async () => {
+  const { parseSecretsFile } = await import("@cycle/protocol");
+  expect(
+    parseSecretsFile(
+      ["# a comment", "A=1", "export B='two words'", 'C="3"', "no equals", "bad-name=x", "D="].join(
+        "\n",
+      ),
+    ),
+  ).toEqual({ A: "1", B: "two words", C: "3", D: "" });
+});
+
+test("a secret reaches a terminal and a script, and never the commands an agent runs, the index or the log", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const { commandVariables, shellVariables } = await import("../src/environment.ts");
+  await writeFile(join(dir, "secrets.env"), "API_TOKEN=tok-abc123\nWORK_GH=gh-work-777\n", {
+    mode: 0o600,
+  });
+  const { daemon } = await start();
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, {
+    cwd: "/tmp",
+    _meta: {
+      "cycle/environment": {
+        ...environment,
+        secrets: [{ name: "API_TOKEN" }, { name: "GH_TOKEN", from: "WORK_GH" }],
+      },
+    },
+  });
+  const kept = await readFile(indexPath(dir), "utf8");
+  expect(kept).not.toContain("tok-abc123");
+  const entry = JSON.parse(kept).sessions[sessionId];
+  expect(entry.environment.secrets).toHaveLength(2);
+  expect(commandVariables(entry)).not.toHaveProperty("API_TOKEN");
+  const shell = await shellVariables(entry, dir);
+  expect(shell.variables).toMatchObject({
+    API_TOKEN: "tok-abc123",
+    GH_TOKEN: "gh-work-777",
+    NODE_ENV: "development",
+  });
+  expect(shell.scrub("failed with tok-abc123 in it")).toBe("failed with *** in it");
+});
+
+test("a secret this machine has no value for is refused by name when the session is made", async () => {
+  const { daemon } = await start();
+  const c = await connectClient(daemon);
+  await expect(
+    c.agent.request(methods.agent.session.new, {
+      cwd: "/tmp",
+      _meta: {
+        "cycle/environment": {
+          ...environment,
+          secrets: [{ name: "GH_TOKEN", from: "NOT_SET_ANYWHERE" }],
+        },
+      },
+    }),
+  ).rejects.toMatchObject({ data: { reason: "missing_secret", name: "NOT_SET_ANYWHERE" } });
 });
