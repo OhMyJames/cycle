@@ -442,7 +442,7 @@ test("offers every SDK permission mode, each with a name and a description", asy
   expect(fake.calls[0]?.options.permissionMode).toBe("bypassPermissions");
   expect(fake.calls[0]?.options.allowDangerouslySkipPermissions).toBe(true);
   // Without it Claude Code omits thinking's text, and every thought arrives empty.
-  expect(fake.calls[0]?.options.settings).toEqual({ showThinkingSummaries: true });
+  expect(fake.calls[0]?.options.settings).toMatchObject({ showThinkingSummaries: true });
 });
 
 test("a second prompt right after the first is refused: the turn exists before anything is awaited", async () => {

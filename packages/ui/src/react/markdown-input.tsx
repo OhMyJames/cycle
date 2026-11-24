@@ -21,6 +21,7 @@ import {
   INSERT_LINE_BREAK_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   KEY_ARROW_DOWN_COMMAND,
+  KEY_ARROW_RIGHT_COMMAND,
   KEY_ARROW_UP_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
@@ -37,7 +38,7 @@ import {
   TRANSFORMERS_FOR_COMPOSER,
 } from "../composer-markdown.ts";
 
-export type InputKey = "enter" | "up" | "down" | "tab" | "escape";
+export type InputKey = "enter" | "up" | "down" | "right" | "tab" | "escape";
 
 /** Where the caret is, for what a key means there. */
 export type Caret = {
@@ -64,6 +65,11 @@ export type MarkdownInputProps = {
   disabled: boolean;
   label: string;
   placeholder: string;
+  /**
+   * The placeholder is a message the agent suggested (CYCL-225), which `keyShortcuts` take: said so to those who cannot
+   * see it, and marked for the eye.
+   */
+  suggested?: { keyShortcuts: string } | undefined;
   /**
    * Asked first of the keys named in `InputKey`. True: the key was used, and nothing else happens. Enter, with or without
    * a modifier, is asked too; one the parent does not use is a new line (a line break, as Shift+Enter makes in a
@@ -201,6 +207,7 @@ function Behaviour({ props }: { props: MarkdownInputProps }) {
       editor.registerCommand(KEY_ENTER_COMMAND, key("enter"), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(KEY_ARROW_UP_COMMAND, key("up"), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(KEY_ARROW_DOWN_COMMAND, key("down"), COMMAND_PRIORITY_HIGH),
+      editor.registerCommand(KEY_ARROW_RIGHT_COMMAND, key("right"), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(KEY_TAB_COMMAND, key("tab"), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(KEY_ESCAPE_COMMAND, key("escape"), COMMAND_PRIORITY_HIGH),
       editor.registerCommand(
@@ -316,9 +323,13 @@ export function MarkdownInput(props: MarkdownInputProps) {
             aria-controls={props.menu?.open ? props.menu.id : undefined}
             aria-activedescendant={props.menu?.open ? props.menu.activeId : undefined}
             aria-placeholder={props.placeholder}
+            aria-keyshortcuts={props.suggested?.keyShortcuts}
             placeholder={createElement(
               "div",
-              { "data-slot": "composer-placeholder" },
+              {
+                "data-slot": "composer-placeholder",
+                ...(props.suggested !== undefined ? { "data-suggested": "" } : {}),
+              },
               props.placeholder,
             )}
           />

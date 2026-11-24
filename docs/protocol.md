@@ -105,7 +105,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 | `elicitation/create`         | daemon → 客户端 | 转发,处理方式同 §9                                    |
 | `auth/*`                     | —               | v1 不用。agent 的登录由 agent 所在环境自己完成        |
 
-`session/update` 的变体沿用 ACP v2:`user_message(_chunk)`、`agent_message(_chunk)`、`agent_thought(_chunk)`、`state_update`、`tool_call_update`、`tool_call_content_chunk`、`terminal_update`、`terminal_output_chunk`、`plan_update`、`available_commands_update`、`config_option_update`、`session_info_update`、`usage_update`、`notice`、`compaction_update`、`compaction_summary_chunk`、`replay_complete`、`subagent_update`、`session_message(_chunk)`,以及 Cycle 自己的 `_cycle/queue_update`(§8)和 `_cycle/child_update`(子 agent 的对话,§9)。客户端遇到不认识的变体应忽略,不得报错。
+`session/update` 的变体沿用 ACP v2:`user_message(_chunk)`、`agent_message(_chunk)`、`agent_thought(_chunk)`、`state_update`、`tool_call_update`、`tool_call_content_chunk`、`terminal_update`、`terminal_output_chunk`、`plan_update`、`available_commands_update`、`config_option_update`、`session_info_update`、`usage_update`、`notice`、`compaction_update`、`compaction_summary_chunk`、`replay_complete`、`subagent_update`、`session_message(_chunk)`,以及 Cycle 自己的 `_cycle/queue_update`(§8)、`_cycle/prompt_suggestion`(下一轮输入建议,§8)和 `_cycle/child_update`(子 agent 的对话,§9)。客户端遇到不认识的变体应忽略,不得报错。
 
 v1 的 Claude 适配只需产生其中的子集,见 L3 文档(待写)。
 
@@ -343,6 +343,16 @@ session 不是 `idle` 时(`running` 或 `requires_action`),`session/prompt` 不�
 - **agent 的处理**(L2):agent 在当前 turn 收下这条 prompt,立即发它的 `user_message`(带同一个 `messageId`),然后继续这个 turn,不另起 `state_update`。turn 在 agent 处理完它之前结束的(例如 Claude 恰好已经说完),agent 让 turn 继续,把它当作同一个 turn 的后续处理,turn 只以一条 `idle` 结束。turn 被取消时还没处理的插入,agent 必须保证它不会在之后悄悄运行(Claude 适配会结束进程,下一条 prompt 启动新进程恢复会话)。
 - **历史**:插入的 `user_message` 在 agent 收下时进日志,所以它在历史里出现在 turn 中间,位置就是它被收下的时刻。
 - 插入不经过队列,也不改变队列:队列里等着的 prompt 仍在 turn 正常结束后发出。
+
+### 下一轮输入建议(`_cycle/prompt_suggestion`,CYCL-225)
+
+turn 结束后,agent 可以猜一句用户接下来可能说的话,客户端把它作为输入框空着时的提示,用户一键采用。只是提示:不会自己发出,也不改变 turn 和队列。
+
+- **要不要**:`session/prompt` 的 `_meta["cycle/promptSuggestions"]` 为 `true` 表示发这条 prompt 的客户端想要建议,`false` 表示不要(用户在设置里关了)。daemon 记住每个 session 最近一次收到的值(只在内存里),之后它交给 agent 的每条 prompt(直接发的、排队后发出的)都在 `_meta` 里带上它;没收到过的不带。agent 按它收到的最近一条 prompt 决定,没收到 `true` 就不要求、也不发建议,所以旧客户端、旧 daemon 不会多出这样的请求。
+- **agent → daemon**:turn 以 `idle` 结束之后,agent 发 `session/update`,`sessionUpdate: "_cycle/prompt_suggestion"`,`{suggestion}`(一句话,不为空)。每个 turn 最多一条,也可以没有。它属于刚结束的那个 turn:下一个 turn 已经开始(agent 收到新的 prompt、自己开始一轮)才到的,agent 不发。schema 是 `@cycle/protocol` 的 `PromptSuggestionUpdateSchema`。
+- **daemon**:session 不在空闲时(新的 prompt 已经接下)、或最近的 prompt 没要建议、或不符合 schema 的,丢掉;其余照常写日志、占序号、转发、回放。它是 agent 说的话,和 `agent_message` 一样不做 §12 的凭证过滤;不算"值得看"(§6),不改变 `cycle/state`,不发 `_cycle/session_list_changed`。
+- **客户端**:一条建议从它到达起有效,到下一个 turn 开始为止:之后的 `user_message`、`state_update` 的 `running` 或 `requires_action`、新的 `_cycle/prompt_suggestion` 都让它作废。回放即还原,所以重新打开 session 仍能看到最后一个 turn 的建议。客户端不认识它就忽略;没有它的 agent(只有 Claude 会发)照旧显示原来的提示文字。
+- **Claude 的取法**:query 的 `promptSuggestions: true`,SDK 在 `result` 之后发一条 `prompt_suggestion`,原样换成上面的更新。不要建议时用 flag 设置 `promptSuggestionEnabled: false`(新进程在 `settings` 里,运行中的进程用 `applyFlagSettings`;要的时候以 `null` 清掉覆盖,用户自己 `settings.json` 里的 `promptSuggestionEnabled: false` 仍然生效),并且丢掉这时到达的建议。SDK 在第一个 turn、API 出错之后、plan 模式里、套餐用量接近上限时不给建议。
 
 ### daemon 停止时进行中的 turn
 

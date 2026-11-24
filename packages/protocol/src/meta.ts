@@ -79,6 +79,12 @@ export const META = {
    * running instead of queueing it (docs/protocol.md §8). Ignored when the session is not busy.
    */
   steer: "cycle/steer",
+  /**
+   * On a `session/prompt` (client to daemon, and daemon to agent): whether the sender wants the agent to suggest what to
+   * say next once the turn ends (`_cycle/prompt_suggestion`, docs/protocol.md §8). The daemon keeps the last value per
+   * session and gives it with every prompt it sends; absent means none was asked for.
+   */
+  promptSuggestions: "cycle/promptSuggestions",
   /** On the answer to a `session/prompt` that the agent took into the running turn. */
   steered: "cycle/steered",
   /**

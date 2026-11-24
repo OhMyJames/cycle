@@ -1,6 +1,6 @@
-// How the app looks and reads, as the person chose: light or dark, and the language. Kept in a file of the app's own
-// data, apart from the environments (settings.json): a file that cannot be read costs a choice of colours, not the
-// list of machines. Nothing here knows Electron: what applies a theme is handed in.
+// How the app looks and reads, as the person chose: light or dark, the language, and whether the agent suggests what to
+// say next. Kept in a file of the app's own data, apart from the environments (settings.json): a file that cannot be
+// read costs a choice of colours, not the list of machines. Nothing here knows Electron: what applies a theme is handed in.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -14,7 +14,11 @@ import {
   type ThemeChoice,
 } from "@cycle/ui/api";
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "system", language: "system" };
+export const DEFAULT_PREFERENCES: Preferences = {
+  theme: "system",
+  language: "system",
+  promptSuggestions: true,
+};
 
 const isTheme = (value: unknown): value is ThemeChoice =>
   (THEME_CHOICES as readonly unknown[]).includes(value);
@@ -24,10 +28,11 @@ const isLanguage = (value: unknown): value is LanguageChoice =>
 /** What is understood of what was read or asked: a value that is not one of the choices is not taken. */
 export const preferencesOf = (value: unknown): Partial<Preferences> => {
   if (typeof value !== "object" || value === null) return {};
-  const { theme, language } = value as Record<string, unknown>;
+  const { theme, language, promptSuggestions } = value as Record<string, unknown>;
   return {
     ...(isTheme(theme) ? { theme } : {}),
     ...(isLanguage(language) ? { language } : {}),
+    ...(typeof promptSuggestions === "boolean" ? { promptSuggestions } : {}),
   };
 };
 
@@ -114,7 +119,8 @@ export const startPreferences = async (options: {
     const next = { ...current, ...preferencesOf(change) };
     const theme = next.theme !== current.theme;
     const language = next.language !== current.language;
-    if (!theme && !language) return state();
+    const suggestions = next.promptSuggestions !== current.promptSuggestions;
+    if (!theme && !language && !suggestions) return state();
     // Kept first: if it cannot be, nothing changes and the person is told, instead of a look that is gone at the next start.
     await options.store.save(next);
     current = next;
@@ -123,6 +129,8 @@ export const startPreferences = async (options: {
       options.track?.("theme_changed", { theme: next.theme });
     }
     if (language) options.track?.("language_changed", { language: next.language });
+    if (suggestions)
+      options.track?.("prompt_suggestions_toggled", { enabled: next.promptSuggestions });
     return state();
   };
   return {

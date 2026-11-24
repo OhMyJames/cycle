@@ -66,6 +66,8 @@ export const fakeAgent = (
     news: [] as Record<string, unknown>[],
     resumes: [] as Record<string, unknown>[],
     prompts: [] as string[],
+    /** The `_meta` each prompt (not taken into a running turn) came with, in the order of `prompts`. */
+    promptMetas: [] as (Record<string, unknown> | undefined)[],
     /** Prompts taken into a running turn. */
     steers: [] as string[],
     blocks: [] as unknown[][],
@@ -185,6 +187,9 @@ export const fakeAgent = (
           return { messageId: steered };
         }
         log.prompts.push(text);
+        log.promptMetas.push(
+          (params._meta as Record<string, unknown> | null | undefined) ?? undefined,
+        );
         log.blocks.push(params.prompt as unknown[]);
         const messageId = randomUUID();
         const say = (update: object, as?: string) =>
