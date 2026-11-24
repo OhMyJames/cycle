@@ -81,7 +81,8 @@ export const backgroundOf = (conversation: Conversation): BackgroundRow[] => {
     .map(({ row }) => row);
 };
 
-const KIND: Record<BackgroundRow["kind"], MessageKey> = {
+/** What each kind of background row is called, for a row with no title of its own. */
+export const BACKGROUND_KIND: Record<BackgroundRow["kind"], MessageKey> = {
   agent: "overview.kind.agent",
   shell: "overview.kind.shell",
   monitor: "overview.kind.monitor",
@@ -248,9 +249,9 @@ export function Overview() {
       <>
         <span data-slot="overview-dot" data-state={item.state} aria-hidden="true" />
         <span data-slot="overview-lines">
-          <span data-slot="overview-title">{item.title ?? t(KIND[item.kind])}</span>
+          <span data-slot="overview-title">{item.title ?? t(BACKGROUND_KIND[item.kind])}</span>
           <span data-slot="overview-facts">
-            {t(KIND[item.kind])} · {t(STATE[item.state])}
+            {t(BACKGROUND_KIND[item.kind])} · {t(STATE[item.state])}
           </span>
         </span>
       </>

@@ -43,6 +43,7 @@ import {
   QueueUpdateSchema,
   type RuntimeProperty,
   SessionUsageSchema,
+  TASK_UPDATE,
   TERMINAL_NOTIFICATIONS,
 } from "@cycle/protocol";
 import {
@@ -687,7 +688,8 @@ export class Daemon {
     }
     if (session.link === undefined || session.starting !== undefined) return;
     if (session.status() !== "idle" || session.queue.length > 0) return;
-    if (session.backgroundCount() > 0) return;
+    // A sub-agent is waited for; a task is not: a watcher may never end, and a trust or auth change must not wait on it.
+    if (session.backgroundSubagents() > 0) return;
     session.clearStale();
     session.link.kill();
   }
@@ -1223,8 +1225,9 @@ export class Daemon {
     // (docs/protocol.md §6). Anything else that changes the list says so where it changes it.
     // Update before yielding to storage so a concurrent dismissal checks the latest agent signal.
     const backgroundChanged =
-      kind === "subagent_update" &&
-      session.noteSubagent(update as unknown as Record<string, unknown>);
+      (kind === "subagent_update" &&
+        session.noteSubagent(update as unknown as Record<string, unknown>)) ||
+      (kind === TASK_UPDATE && session.noteTask(update as unknown as Record<string, unknown>));
     const announce = kind === "state_update" || backgroundChanged;
     void this.#write(session, { kind: "update", data: kept }).then((written) => {
       if (written && announce) this.#changed();

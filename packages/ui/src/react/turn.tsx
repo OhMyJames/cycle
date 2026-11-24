@@ -1,6 +1,6 @@
 import { Button } from "@ui-sdk/react/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { Translator } from "../i18n.ts";
 import {
   activityCounts,
@@ -15,12 +15,15 @@ import {
   type ToolItem,
 } from "../model/index.ts";
 import { startedAt } from "../started.ts";
+import { viewKey } from "../store/index.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, WarningIcon } from "./icons.tsx";
 import { Elapsed, InlineAiStatus } from "./inline-ai-status.tsx";
 import { useLoaderClaim } from "./loader-claim.ts";
+import { BACKGROUND_KIND, backgroundOf } from "./overview.tsx";
 import { useStartScope } from "./start-scope.ts";
+import { MARK_STYLE, StatusDot } from "./status.tsx";
 import { useSteady } from "./steady.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import {
@@ -278,9 +281,12 @@ type LineStep = Step | { kind: "replying" };
 export function StepLine({
   conversation,
   awaitingApproval,
+  sessionKey,
 }: {
   conversation: Conversation;
   awaitingApproval: boolean;
+  /** The session's key (`viewKey`), for the background line to open its Overview. */
+  sessionKey: string;
 }) {
   const { t } = useI18n();
   const session = useStartScope();
@@ -294,7 +300,9 @@ export function StepLine({
   const [step] = useSteady(wanted, wanted === undefined ? "" : stepKeyOf(wanted), urgent);
   // Speaking, the line holds the conversation's one loader before any sub-agent's card (loader-claim.ts).
   useLoaderClaim("step-line", step !== undefined && !rowAtWork(step), Number.NEGATIVE_INFINITY);
-  if (step === undefined) return null;
+  // Between turns, what still runs in the background is said in its place, so the session does not look done.
+  if (step === undefined)
+    return <BackgroundLine conversation={conversation} sessionKey={sessionKey} />;
   const quiet = rowAtWork(step);
   const label = quiet
     ? t("step.working")
@@ -325,6 +333,64 @@ export function StepLine({
       since={since}
       quiet={quiet}
     />
+  );
+}
+
+/**
+ * Between turns, while something the agent started still runs in the background (a sub-agent sent there, a command, a
+ * watcher): one quiet line where the step line was, with a slowly breathing ring (the sidebar's background mark), how
+ * many, and what they are. Not the loader and no clock: the agent is not at work on a turn, and the person may write.
+ * Clicked, it opens the Overview, where each is listed. Gone when the last one ends, or once a turn begins.
+ */
+function BackgroundLine({
+  conversation,
+  sessionKey,
+}: {
+  conversation: Conversation;
+  sessionKey: string;
+}) {
+  const { t, list } = useI18n();
+  const store = useAppStore();
+  // What the daemon counts now, so an end the history never got (the agent process died) is not said to run forever.
+  // A blank conversation, not yet a session, has no row and no Overview.
+  const live = useAppState((state) => {
+    for (const rows of Object.values(state.sessions))
+      for (const row of rows)
+        if (viewKey(row.environmentId, row.sessionId) === sessionKey) return row.background ?? 0;
+    return 0;
+  });
+  const running = useMemo(
+    () => backgroundOf(conversation).filter((row) => row.state === "running"),
+    [conversation],
+  );
+  if (live === 0 || running.length === 0) return null;
+  const label = t("step.background", { count: running.length });
+  const names = list(running.map((row) => row.title?.trim() || t(BACKGROUND_KIND[row.kind])));
+  const open = () => {
+    const panel = store.sidePanels.get(sessionKey);
+    if (panel.open && panel.active === "overview") return;
+    store.sidePanels.show(sessionKey, "overview");
+    store.track("background_shown_from_conversation", {});
+  };
+  // Not a live region: between turns the person may be writing, and a task renamed is not news to read out.
+  return (
+    <div data-slot="step" data-step="background">
+      <button
+        type="button"
+        data-slot="step-background"
+        title={t("step.backgroundOpen")}
+        onClick={open}
+      >
+        <span data-slot="step-icon">
+          <StatusDot tone={MARK_STYLE.background.tone} shape={MARK_STYLE.background.shape} />
+        </span>
+        <span data-slot="step-label">
+          {label}
+          <span data-slot="step-detail"> · {names}</span>
+          <span data-slot="visually-hidden">. {t("step.backgroundOpen")}</span>
+        </span>
+      </button>
+    </div>
   );
 }
 

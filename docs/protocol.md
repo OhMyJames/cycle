@@ -178,7 +178,7 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 - `cycle/lastSeq`:该 session 的最新序号。**只用于补发**(§7):它是每个 session 自己数的记录条数,不是时间,不能在 session 之间比较,客户端不得用它排序。
 - `cycle/unread`:布尔。有值得看的新记录晚于客户端上次标记已读的位置,见"已读"。
 - `cycle/historyFailed`:布尔,为 `true` 时这个 session 的历史不可用:写不进去了(§12“写入失败”),或读不了(日志里有损坏的整行,§12)。没有时省略。读不了的 session 照样出现在列表里,行里没有 `cycle/lastSeq` 和 `cycle/unread`(它们来自日志),`updatedAt` 是创建时间,`cycle/state` 是 `stopped`;打开它(`session/resume`)以 `-32015` 失败。一个 session 的日志读不了,不影响列表里的其他 session。
-- `cycle/background`:整数,仍在运行的后台子 agent 数(`subagent_update` 里 `_meta["cycle/subagent"].background` 为 true 且 `state` 还不是终态,见 §9)。清单里已消失、但收不到具体结束原因的任务 ID 列入 `cycle/backgroundUnknown`（字符串数组）。计数为零或数组为空时分别省略。Claude 按 SDK 的全量后台任务清单核对，不按静默时长或主 turn 的结束推断。它只记在内存里:daemon 重启后 agent 进程不在了,归 0,不写进索引。
+- `cycle/background`:整数,仍在后台运行的东西的数:后台子 agent(`subagent_update` 里 `_meta["cycle/subagent"].background` 为 true 且 `state` 还不是终态,见 §9),加上不是子 agent 的后台任务(`_cycle/task_update` 最后一条为 `running` 的,见 §9"后台任务")。定时调用不算。清单里已消失、但收不到具体结束原因的任务 ID 列入 `cycle/backgroundUnknown`（字符串数组）。计数为零或数组为空时分别省略。Claude 按 SDK 的全量后台任务清单核对，不按静默时长或主 turn 的结束推断。它只记在内存里:daemon 重启后 agent 进程不在了,归 0,不写进索引。
 - Claude 的全量清单不再列出一个曾在后台运行的任务时，以 `cycle/subagent.status = "unknown"` 更新；只知道它已不在后台清单，结束原因仍未知。后续进度可重新确认运行，终态可补全结果。用户可通过 `_cycle/session/dismiss_background {sessionId, taskIds}` 将指定的未知记录标记为已结束；只清理仍未知的项。已确认在运行的任务阻止空闲回收，已从清单消失的未知记录不单独阻止回收（CYCL-104）。
 - `cycle/usage`:最近一次 `usage_update`,`{used, size, cost?: {amount, currency}}`:已用的上下文 token、窗口大小、累计费用。daemon 存在索引里,列表不用重放日志就能显示;还没有过 `usage_update` 的 session 没有这个字段。
 
@@ -365,7 +365,7 @@ agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机
 - **什么时候写**:daemon 正常关闭时(收到 `SIGTERM`/`SIGINT`),对每个有进行中 turn 的 session 先写终态,再结束 agent;此后 agent 发来的更新不再记录。等待回答的权限请求和表单写 `aborted`,按取消回给 agent。没来得及写的(崩溃、`kill -9`、还没有这个规则的旧 daemon 停的),daemon 下一次加载这个 session 时补写(加载发生在第一次 `session/list` 或附着时)。
 - **怎么知道 turn 还开着**:按日志判断:最后一条 `user_message` 或 `running`/`requires_action` 的 `state_update` 之后没有任何 `idle`。索引里的 `turnOpen` 记着这个结论(§12),加载时只有它为 `true`(或旧索引里没有它)才读日志核对,所以重启后不必读每个 session 的日志两次。
 - **队列不丢**:终态记录不退回队列。排队的 prompt 照"排队"一节的重启规则留着,下一次有客户端附着时以 `reason: "interrupted"` 退回到输入框。
-- 后台子 agent 随 agent 进程结束,不写记录(它们不属于某个 turn,`cycle/background` 归 0)。
+- 后台子 agent 和后台任务随 agent 进程结束,不写记录(它们不属于某个 turn,`cycle/background` 归 0)。
 - **停之前先问**:`cycle stop` 先用 `session/list` 看有没有在工作的 session(`cycle/state` 为 `running` 或 `requires_action`,或 `cycle/background` 大于 0),有就列出来,由人选等待(`--wait`)或强停(`--force`),见 [daemon.md](daemon.md)。用的是已有的方法,所以新的 `cycle` 也能这样停一个旧 daemon(升级时正是这样)。daemon 里同一个判断是 `Daemon.activity()`,空闲退出(CYCL-104)只在它为空时发生。
 
 ### 提及(@)文件与文件夹
@@ -570,7 +570,7 @@ agent 在后台跑的、不是子 agent 的任务:后台命令、Monitor 之类�
 - `toolCallId`:启动它的工具调用,知道时带,客户端可以据此跳回对话里的那一行。`parentId`:由某个子 agent 启动时,那个子 agent 的 id。
 - `state`:`running`;结束时 `completed`、`failed`、`stopped`;`unknown` 表示它离开了 agent 的后台清单却没有结束的消息(和子 agent 的 `status: "unknown"` 一样,不当作成功)。结束是最后一条,之后同一个 `taskId` 再来 `running` 是它又跑了一次。
 - agent 进程退出时,还在跑的任务各发一条 `stopped`。
-- 只是通告:没有停止或打开一个任务的方法。不影响 `cycle/background` 的计数(§6),它只数子 agent。
+- 没有停止或打开一个任务的方法。`running` 的任务算进 `cycle/background`(§6),直到它的终态或 `unknown`;所以它和后台子 agent 一样挡住空闲回收(回收会结束 agent 进程,任务跟着结束;信任、运行时、账号变了之后的重启不等它),`cycle stop --wait` 也等它。一直不结束的任务(比如长期的 Monitor)会让 `--wait` 一直等,这时用 `--force`。
 
 Claude 的取法:SDK 的 `task_started`、`task_progress`、`task_updated`、`task_notification` 和 `background_tasks_changed`,`task_type` 不是 `local_agent` 的那些;`ambient`、`skip_transcript` 的(内部的整理任务、自动的监视)不发。`kind` 按 `task_type` 归类,认不出的是 `other`;Monitor 的 `task_type` 和后台命令一样是 `local_bash`,按启动它的工具调用认出 `monitor`,所以同一个任务可能先报 `shell` 再纠正为 `monitor`,客户端以最后带的 `kind` 为准。cron 和 `ScheduleWakeup` 不是后台任务,见下面"定时调用"。
 

@@ -1645,6 +1645,49 @@ button[data-slot="review-file"]:focus-visible {
   color: inherit;
 }
 
+/* Between turns, what still runs in the background (turn.tsx BackgroundLine): the sidebar's background ring breathing
+   slowly, so the session reads as alive, not at work. Muted words, not the loader's ink: the person may write. A button
+   that looks like the line, opening the Overview. */
+[data-slot="step-background"] {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cycle-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  animation: cycle-step-in var(--cycle-motion-enter) var(--cycle-ease);
+}
+
+[data-slot="step-background"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: 2px;
+}
+
+[data-slot="step"][data-step="background"] [data-slot="step-label"] {
+  font-family: inherit;
+  font-weight: var(--cycle-weight);
+  color: var(--ui-muted-foreground);
+  transition: color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+/* After the muted colour above, which it overrides: the line says it can be clicked. */
+[data-slot="step-background"]:hover [data-slot="step-label"] {
+  color: var(--cycle-ink);
+}
+
+[data-slot="step"][data-step="background"] [data-slot="dot"] {
+  animation: cycle-pulse 3.2s ease-in-out infinite;
+}
+
+[data-slot="step-detail"] {
+  color: var(--cycle-ink-muted);
+}
+
 /* The brand's loader (react/loader): 16px in the line, drawn at 24px and spilling over its box, in the text's colour. */
 [data-slot="morph-loader"] {
   display: inline-flex;

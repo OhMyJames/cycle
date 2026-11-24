@@ -89,6 +89,11 @@ export class Session {
    */
   readonly #subagents = new Map<string, boolean>();
   /**
+   * The tasks that are not sub-agents (`_cycle/task_update`: a command, a watcher) the agent said are running. In memory
+   * only, like the sub-agents: they are the agent process's, and go with it.
+   */
+  readonly #tasks = new Set<string>();
+  /**
    * Every sub-agent the agent has announced (`subagent_update`), ended or not: only those may speak as a child session
    * (docs/protocol.md §9). In memory only; a new process announces its own.
    */
@@ -156,11 +161,32 @@ export class Session {
     return (this.entry.attentionSeq ?? 0) > (this.entry.readSeq ?? 0);
   }
 
-  /** How many sub-agents run in the background. */
+  /** How many things run in the background: sub-agents sent there, and tasks that are not sub-agents. */
   backgroundCount(): number {
+    return this.backgroundSubagents() + this.#tasks.size;
+  }
+
+  /** How many sub-agents run in the background. */
+  backgroundSubagents(): number {
     let count = 0;
     for (const background of this.#subagents.values()) if (background) count += 1;
     return count;
+  }
+
+  /**
+   * Takes in a `_cycle/task_update`. A task counts from an update that says it runs until one says it ended, or that
+   * it is gone from the agent's list (`unknown`: its end is not known, and it does not hold the session as running).
+   * Returns whether the number in the background changed, which the list shows.
+   */
+  noteTask(update: Record<string, unknown>): boolean {
+    const id = update.taskId;
+    if (typeof id !== "string") return false;
+    if (update.state === "running") {
+      if (this.#tasks.has(id)) return false;
+      this.#tasks.add(id);
+      return true;
+    }
+    return this.#tasks.delete(id);
   }
 
   /**
@@ -219,9 +245,10 @@ export class Session {
     return this.#stoppable.has(id) && this.#subagents.has(id);
   }
 
-  /** The agent process is gone, and its sub-agents with it. */
+  /** The agent process is gone, and its sub-agents and tasks with it. */
   endSubagents(): void {
     this.#subagents.clear();
+    this.#tasks.clear();
     this.#children.clear();
     this.#stoppable.clear();
     this.unknownBackground.clear();
