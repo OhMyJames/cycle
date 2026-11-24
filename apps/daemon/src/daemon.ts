@@ -54,6 +54,8 @@ import {
   type PlanUsage,
   PlanUsageSchema,
   type PlanWindow,
+  PROMPT_SUGGESTION_UPDATE,
+  PromptSuggestionUpdateSchema,
   planUsageRead,
   pluginSourcesAdd,
   pluginSourcesRefresh,
@@ -130,6 +132,7 @@ import {
   UNSUPPORTED_VERSION,
 } from "./errors.ts";
 import { searchFiles } from "./files.ts";
+import { firstTitle } from "./first-title.ts";
 import { listFolders } from "./folders.ts";
 import { listFolder, readFile } from "./fs.ts";
 import { ignoredNames } from "./git.ts";
@@ -158,6 +161,7 @@ import {
 } from "./session-mentions.ts";
 import { sessionPage } from "./session-page.ts";
 import {
+  accountShell,
   type TerminalSink,
   Terminals,
   type TerminalsOptions,
@@ -188,8 +192,8 @@ export type DaemonOptions = {
   /** Where what it does and what goes wrong is told (docs/daemon.md "日志"): events and ids, never content. */
   log?: Logger;
   /**
-   * The terminals' shell, environment and limits (docs/protocol.md §8 "终端"). Default: the daemon's `SHELL` and the
-   * default allowlist over its environment, with the default limits.
+   * The terminals' shell, environment and limits (docs/protocol.md §8 "终端"). Default: the daemon's `SHELL`
+   * (else the account's) and the default allowlist over its environment, with the default limits.
    */
   terminals?: Omit<TerminalsOptions, "onChanged" | "log">;
   /** Host `config.json` path & startup mtime for read-only diagnostics (docs/protocol.md §16). */
@@ -206,7 +210,7 @@ export const defaultTerminals = (
   settings: typeof TERMINAL_DEFAULTS = TERMINAL_DEFAULTS,
 ): Omit<TerminalsOptions, "onChanged" | "log"> => ({
   env: terminalEnv(settings.allowEnv, environment),
-  shell: terminalShell(environment.SHELL),
+  shell: terminalShell(environment.SHELL, accountShell),
   maxPerSession: settings.maxPerSession,
   max: settings.max,
   scrollback: settings.scrollback,
@@ -1282,6 +1286,14 @@ export class Daemon {
       session.noteChild(announced.sessionId);
     // Once the daemon is stopping, the turn's end is on record: what the agent says after it is not.
     if (session.resuming || session.historyError !== undefined || this.#closing) return;
+    // What to say next belongs to the turn that ended: not kept once another has been taken, nor when none was wanted.
+    if (
+      (update as { sessionUpdate?: unknown }).sessionUpdate === PROMPT_SUGGESTION_UPDATE &&
+      (session.promptSuggestions !== true ||
+        session.status() !== "idle" ||
+        !PromptSuggestionUpdateSchema.safeParse(update).success)
+    )
+      return;
     const state = update as { sessionUpdate: string; state?: string };
     if (state.sessionUpdate === "state_update" && typeof state.state === "string") {
       if (
@@ -1553,6 +1565,9 @@ export class Daemon {
     return link.agent.request(methods.agent.session.prompt, {
       sessionId: session.entry.agentSessionId,
       prompt,
+      ...(session.promptSuggestions !== undefined
+        ? { _meta: { [META.promptSuggestions]: session.promptSuggestions } }
+        : {}),
     } as never);
   }
 
@@ -2423,9 +2438,22 @@ export class Daemon {
       this.#returnStale(session);
       // Taken: from now on the session is in the list (docs/protocol.md §6), whatever the agent makes of it. Not left to
       // the agent's echo of the message, which an agent that fails, or never echoes, would not send. Announced below.
-      if (session.entry.prompted !== true) this.#remember(session, { prompted: true }, false);
+      if (session.entry.prompted !== true) {
+        // The first message names the session until the agent does (CYCL-224): as the agent's, so its own title
+        // replaces it. Not a name the person gave, and not for an entry from before `prompted` was kept (it was prompted).
+        const title =
+          session.entry.prompted === false && session.entry.title === undefined
+            ? firstTitle(params.prompt)
+            : undefined;
+        const named = title === undefined ? {} : { title, titleFromAgent: true };
+        this.#remember(session, { prompted: true, ...named }, false);
+      }
       const busy = () => session.status() !== "idle" && session.status() !== "stopped";
-      const steer = (params._meta as Record<string, unknown> | null | undefined)?.[META.steer];
+      const meta = params._meta as Record<string, unknown> | null | undefined;
+      const steer = meta?.[META.steer];
+      // Whoever sent last says whether a suggestion of what to say next is wanted: it goes with every prompt from now.
+      const suggestions = meta?.[META.promptSuggestions];
+      if (typeof suggestions === "boolean") session.promptSuggestions = suggestions;
       if (busy() && steer === true) {
         // Into the running turn, where the agent can take it; otherwise it is queued as any other.
         const steered = await this.#steer(session, params.prompt);

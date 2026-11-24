@@ -52,6 +52,11 @@ export class Session {
   /** The turn in progress has a turn end on record (the agent's, or the daemon's for a failure): a second is not written. */
   turnEnded = true;
   readonly pending = new Map<string, Pending>();
+  /**
+   * Whether the last prompt that said so wants a suggestion of what to say next (`cycle/promptSuggestions`,
+   * docs/protocol.md §8). Given to the agent with every prompt; only in memory. Unknown until a prompt says.
+   */
+  promptSuggestions: boolean | undefined;
   /** Prompts sent while the agent was working, oldest first (docs/protocol.md §8). */
   queue: QueueEntry[] = [];
   /** Why the queue is being held for a client to attach, when it was to be handed back and none was there. */

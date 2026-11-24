@@ -1,5 +1,63 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import type { ThreadItem } from "./wire.generated.ts";
+import type { FileUpdateChange, ThreadItem } from "./wire.generated.ts";
+
+/**
+ * The most of a call's output, its title, or its files' diff kept in one update, as the other harnesses keep a patch
+ * to (Claude's MAX_PATCH): a build log or a generated file goes on to the daemon's log, the store and the window,
+ * every time it is told. What is cut is said in a line of its own, beyond this.
+ */
+export const MAX_OUTPUT = 100_000;
+
+/** Characters as a person counts them: an emoji is one. */
+const count = (text: string): number => {
+  let n = 0;
+  for (const _ of text) n++;
+  return n;
+};
+
+/** A long output, told by its end: where a command says what went wrong. */
+export const outputTail = (text: string): string => {
+  if (text.length <= MAX_OUTPUT) return text;
+  let cut = text.length - MAX_OUTPUT;
+  // Not in the middle of a character told in two halves (an emoji).
+  const code = text.charCodeAt(cut);
+  if (code >= 0xdc00 && code <= 0xdfff) cut++;
+  return `… ${count(text.slice(0, cut))} earlier characters not shown\n${text.slice(cut)}`;
+};
+
+/** A long result or title, told by its start: where it says what it is. */
+export const outputHead = (text: string): string => {
+  if (text.length <= MAX_OUTPUT) return text;
+  let end = MAX_OUTPUT;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end--;
+  return `${text.slice(0, end)}\n… ${count(text.slice(end))} more characters not shown`;
+};
+
+const changeWord = (change: FileUpdateChange): string =>
+  change.kind.type === "add" ? "added" : change.kind.type === "delete" ? "deleted" : "updated";
+
+/**
+ * The files' diff, a file at a time while they fit in MAX_OUTPUT: a file whose diff does not is named, with nothing
+ * of its content, and the small edits beside it are still shown. Past the limit, the files are only counted.
+ */
+export const diffOf = (changes: readonly FileUpdateChange[]): string => {
+  const parts: string[] = [];
+  let left = MAX_OUTPUT;
+  for (const [i, change] of changes.entries()) {
+    const part =
+      change.diff.length <= left
+        ? change.diff
+        : `${changeWord(change)} ${change.path} (its diff is too long to show)`;
+    if (part.length > left) {
+      parts.push(`… and ${changes.length - i} more files`);
+      break;
+    }
+    parts.push(part);
+    left -= part.length + 1;
+  }
+  return parts.join("\n");
+};
 
 export function itemUpdate(
   item: ThreadItem,
@@ -65,19 +123,21 @@ export function itemUpdate(
   switch (item.type) {
     case "commandExecution":
       name = "exec_command";
-      title = item.command;
+      title = outputHead(item.command);
       kind = "execute";
-      output = item.aggregatedOutput ?? undefined;
+      output = item.aggregatedOutput ? outputTail(item.aggregatedOutput) : undefined;
       break;
     case "mcpToolCall":
       name = `${item.server}/${item.tool}`;
       kind = "other";
-      output = completed ? JSON.stringify(item.error?.message ?? item.result?.content) : undefined;
+      output = completed
+        ? outputHead(JSON.stringify(item.error?.message ?? item.result?.content) ?? "")
+        : undefined;
       break;
     case "fileChange":
       name = "Edit files";
       kind = "edit";
-      output = item.changes.map((c) => c.diff).join("\n");
+      output = diffOf(item.changes);
       break;
     case "webSearch":
       name = "web_search";

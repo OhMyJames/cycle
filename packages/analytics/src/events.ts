@@ -77,6 +77,8 @@ export const EVENTS = {
   theme_changed: o({ theme: z.enum(["system", "light", "dark"]) }),
   /** The person chose the interface's language: one of those the app has, or the system's. */
   language_changed: o({ language: z.enum(["system", "en-US", "zh-CN"]) }),
+  /** The person turned the agent's suggestions of what to say next on or off in Settings (CYCL-225). */
+  prompt_suggestions_toggled: o({ enabled: z.boolean() }),
 
   // ---- the account (.agents/notes/2026-11-23-sso-login-desktop-must-sign-in.md): never who, only how it went ----
   /**
@@ -310,6 +312,11 @@ export const EVENTS = {
   display_mode_changed: o({ mode: z.enum(["normal", "detailed"]) }),
   code_theme_changed: o({}),
   slash_command_used: o({}),
+  /**
+   * The agent's suggestion of what to say next, shown in the empty input box, was taken as the message (CYCL-225), by
+   * the right arrow or Tab. Never the suggestion.
+   */
+  prompt_suggestion_accepted: o({ key: z.enum(["arrow", "tab"]) }),
   /** Something was picked from the @ menu: what kind of thing, never which. */
   mention_picked: o({ kind: z.enum(["file", "folder", "session"]) }),
   /**
@@ -377,6 +384,7 @@ export const UI_EVENTS = [
   "file_shown_from_conversation",
   "code_theme_changed",
   "slash_command_used",
+  "prompt_suggestion_accepted",
   "mention_picked",
   "attachment_added",
   "attachment_refused",

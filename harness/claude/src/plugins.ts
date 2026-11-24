@@ -98,6 +98,8 @@ const bunRun: RunCommand = async (command, { env, cwd, timeoutMs }) => {
   });
   let timedOut = false;
   const timer = setTimeout(() => {
+    // One that ended just before this ran was in time.
+    if (proc.exitCode !== null || proc.signalCode !== null) return;
     timedOut = true;
     proc.kill();
   }, timeoutMs);
@@ -297,6 +299,24 @@ const reasonOf = (failureCode: unknown): ClaudePluginFailureReason => {
   return "failed";
 };
 
+/** Claude's own word that a command did not do what it was asked: `{ outcome, failureCode, message }`. */
+const refusal = (said: Record<string, unknown>): ClaudePluginError =>
+  new ClaudePluginError(reasonOf(said.failureCode), text(said.message) ?? "");
+
+/**
+ * A listing that exited non-zero: Claude's refusal when its last line is one, else nothing more than that it failed.
+ * What else it printed is not passed on: a listing names paths and sources.
+ */
+const failedListing = (out: string): ClaudePluginError => {
+  try {
+    const said: unknown = JSON.parse(out.trim().split("\n").at(-1) ?? "");
+    if (isObject(said) && "outcome" in said) return refusal(said);
+  } catch {
+    // Not JSON: nothing of it is said.
+  }
+  return new ClaudePluginError("failed", "");
+};
+
 /** A plugin's id is never one Claude's command line would read as an option. */
 const named = (id: string): void => {
   if (id.startsWith("-")) throw new ClaudePluginError("not_found", "");
@@ -323,7 +343,11 @@ export class ClaudePlugins {
     this.#run = options.run ?? bunRun;
   }
 
-  async #exec(args: readonly string[], timeoutMs: number): Promise<string> {
+  /** What the command printed, and whether its exit code says it succeeded. */
+  async #exec(
+    args: readonly string[],
+    timeoutMs: number,
+  ): Promise<{ stdout: string; succeeded: boolean }> {
     if (this.#executable === undefined) throw new ClaudePluginError("unavailable", "");
     let result: Awaited<ReturnType<RunCommand>>;
     try {
@@ -337,12 +361,14 @@ export class ClaudePlugins {
       throw new ClaudePluginError("unavailable", "");
     }
     if (result.timedOut) throw new ClaudePluginError("timeout", "");
-    return result.stdout;
+    return { stdout: result.stdout, succeeded: result.code === 0 };
   }
 
   /** A listing: the whole of stdout is one JSON value. */
   async #read(args: readonly string[]): Promise<unknown> {
-    const out = await this.#exec([...args, "--json"], READ_TIMEOUT_MS);
+    const { stdout: out, succeeded } = await this.#exec([...args, "--json"], READ_TIMEOUT_MS);
+    // A command that failed is not a listing, whatever it printed.
+    if (!succeeded) throw failedListing(out);
     try {
       return JSON.parse(out);
     } catch {
@@ -356,7 +382,9 @@ export class ClaudePlugins {
     const end = args.indexOf("--");
     const asked =
       end === -1 ? [...args, "--json"] : [...args.slice(0, end), "--json", ...args.slice(end)];
-    const out = await this.#exec(asked, WRITE_TIMEOUT_MS);
+    // Its last line is Claude's own verdict, more exact than its exit code (a refusal exits non-zero too), so a
+    // change is read from that line alone.
+    const { stdout: out } = await this.#exec(asked, WRITE_TIMEOUT_MS);
     const last = out.trim().split("\n").at(-1) ?? "";
     let result: unknown;
     try {
@@ -365,9 +393,7 @@ export class ClaudePlugins {
       throw new ClaudePluginError("failed", out.trim().slice(0, 500));
     }
     if (!isObject(result)) throw new ClaudePluginError("failed", "");
-    if (result.outcome !== "ok") {
-      throw new ClaudePluginError(reasonOf(result.failureCode), text(result.message) ?? "");
-    }
+    if (result.outcome !== "ok") throw refusal(result);
     return result;
   }
 

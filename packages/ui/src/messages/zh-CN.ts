@@ -214,6 +214,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "image.open": "打开图片：{name}",
   "image.alt.agent": "agent 发来的图片",
   "image.alt.user": "你发送的图片",
+  "image.alt.attached": "你添加的图片",
   "image.close": "关闭",
   "image.viewer.one": "{name}",
   "image.viewer.many": "{name}，第 {index} 张，共 {total} 张",
@@ -984,7 +985,11 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.shortcuts.allow": "agent 请求权限时，允许一次",
   "settings.shortcuts.stop": "停止正在运行的回合",
   "settings.shortcuts.recall": "输入框为空时，取回上一条消息",
+  "settings.shortcuts.suggestion": "输入框为空时，采用建议的消息(也可以按 →)",
   "settings.updates": "更新",
+  "settings.suggestions": "建议下一条消息",
+  "settings.suggestions.description":
+    "每轮结束后，agent 在空的输入框里建议你接下来可能发的消息。按 → 或 Tab 采用。不是每个 agent 都支持。",
   "settings.privacy": "隐私",
   "settings.analytics": "使用统计",
   "settings.analytics.description":

@@ -237,6 +237,7 @@ export const enUS = {
   "image.open": "Open image: {name}",
   "image.alt.agent": "Image from the agent",
   "image.alt.user": "Image you sent",
+  "image.alt.attached": "Image you attached",
   "image.close": "Close",
   "image.viewer.one": "{name}",
   "image.viewer.many": "{name}, {index} of {total}",
@@ -1091,7 +1092,11 @@ export const enUS = {
   "settings.shortcuts.allow": "Allow once, when the agent asks for permission",
   "settings.shortcuts.stop": "Stop the turn that is running",
   "settings.shortcuts.recall": "Bring back the last message, in an empty message box",
+  "settings.shortcuts.suggestion": "Use the suggested message, in an empty message box (or →)",
   "settings.updates": "Updates",
+  "settings.suggestions": "Suggest the next message",
+  "settings.suggestions.description":
+    "When a turn ends, the agent suggests what you might send next in the empty message box. Press → or Tab to use it. Not every agent can.",
   "settings.privacy": "Privacy",
   "settings.analytics": "Usage statistics",
   "settings.analytics.description":

@@ -69,7 +69,7 @@ test("a turn running when the daemon stops ends on record as interrupted, and th
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("second") });
   await until(() => c.kinds().includes("_cycle/queue_update"), "the prompt to be queued");
   expect(first.activity()).toEqual([
-    { sessionId, turn: true, pending: 0, background: 0, queued: 1 },
+    { sessionId, title: "first", turn: true, pending: 0, background: 0, queued: 1 },
   ]);
 
   await stop(first);
@@ -175,7 +175,7 @@ test("background sub-agents count as work a stop would cut short, with no turn",
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("hi") });
   await until(() => c.ended() === 1, "the turn to end");
   expect(first.activity()).toEqual([
-    { sessionId, turn: false, pending: 0, background: 1, queued: 0 },
+    { sessionId, title: "hi", turn: false, pending: 0, background: 1, queued: 0 },
   ]);
   // No turn to end: the history is not given a false one.
   await stop(first);

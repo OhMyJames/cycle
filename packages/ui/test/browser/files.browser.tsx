@@ -167,6 +167,8 @@ test("the Files button opens the session's folder; folders open in place, a file
 test("Markdown is drawn, an image is shown, and a file with no preview says so", async () => {
   const { user, tracked } = await mount();
   await user.click(await screen.findByRole("button", { name: "Show files" }));
+  // Open, not still sliding open: till then the panel's left edge, where "Back to files" is, is cut off.
+  await waitFor(() => expect(document.querySelector("[data-slot=split][data-animate]")).toBeNull());
   const tab = within(panel());
   await user.click(await tab.findByRole("button", { name: "README.md" }));
   expect(await tab.findByRole("heading", { name: "Hello" })).toBeDefined();

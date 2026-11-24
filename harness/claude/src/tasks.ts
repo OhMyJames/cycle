@@ -1,4 +1,5 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import { type LedgerEntry, TaskLedger } from "./task-ledger.ts";
 
 /** The `sessionUpdate` of a background task that is not a sub-agent (docs/protocol.md §9, CYCL-87). */
 export const TASK_UPDATE = "_cycle/task_update";
@@ -52,7 +53,7 @@ const quiet = (task: Task) => task.ambient === true || task.skip_transcript === 
  * leaves the list with no end (`unknown`). Announcement only: nothing here stops a task.
  */
 export class BackgroundTasks {
-  readonly #known = new Map<string, { run: string | undefined; unknown: boolean }>();
+  readonly #known = new TaskLedger<LedgerEntry>();
   /** Tasks told as ended, with the run that ended: a list that lags behind the end must not bring them back. */
   readonly #ended = new Map<string, string | undefined>();
   /** The tool calls that start a task of a kind its `task_type` does not say (a Monitor), by call id. */
@@ -67,7 +68,7 @@ export class BackgroundTasks {
 
   /** A task told as running, not lost: the process must stay up for it (a command, a watcher). */
   get hasRunning(): boolean {
-    return [...this.#known.values()].some((task) => !task.unknown);
+    return this.#known.some();
   }
 
   #end(id: string, run: string | undefined): void {
@@ -75,51 +76,46 @@ export class BackgroundTasks {
     this.#ended.set(id, run);
   }
 
+  /** Whether a list entry is one of these tasks, and not one already told as ended. */
+  #accepts = (task: Task): task is Task & { task_id: string } => {
+    // Every entry of the list names its type (SDK); one that does not is not known to be ours to tell.
+    if (
+      typeof task.task_id !== "string" ||
+      task.task_type === undefined ||
+      task.task_type === "local_agent" ||
+      quiet(task)
+    )
+      return false;
+    const ended = this.#ended.get(task.task_id);
+    return !(
+      this.#ended.has(task.task_id) &&
+      (!task.run_id || ended === undefined || task.run_id <= ended)
+    );
+  };
+
   /** The SDK sends the whole list after each change. A task gone from it with no end is unknown, not finished. */
   reconcile(tasks: readonly Task[]): SessionUpdate[] {
-    const updates: SessionUpdate[] = [];
-    const live = new Set<string>();
-    for (const task of tasks) {
-      // Every entry of the list names its type (SDK); one that does not is not known to be ours to tell.
-      if (
-        typeof task.task_id !== "string" ||
-        task.task_type === undefined ||
-        task.task_type === "local_agent" ||
-        quiet(task)
-      )
-        continue;
-      const ended = this.#ended.get(task.task_id);
-      if (
-        this.#ended.has(task.task_id) &&
-        (!task.run_id || ended === undefined || task.run_id <= ended)
-      )
-        continue;
-      live.add(task.task_id);
-      const known = this.#known.get(task.task_id);
-      if (known?.run && task.run_id && task.run_id < known.run) continue;
-      if (known !== undefined && !known.unknown && (!task.run_id || known.run === task.run_id))
-        continue;
-      this.#known.set(task.task_id, { run: task.run_id ?? known?.run, unknown: false });
-      updates.push(this.#make(task.task_id, "running", task));
-    }
-    for (const [id, known] of this.#known) {
-      if (known.unknown || live.has(id)) continue;
-      known.unknown = true;
-      updates.push(this.#make(id, "unknown"));
-    }
-    return updates;
+    return this.#known.reconcile(
+      tasks,
+      this.#accepts,
+      (task) => {
+        const known = this.#known.get(task.task_id);
+        this.#known.set(task.task_id, { run: task.run_id ?? known?.run, unknown: false });
+        return this.#make(task.task_id, "running", task);
+      },
+      (id) => this.#make(id, "unknown"),
+    );
   }
 
   update(message: { subtype: string } & Record<string, unknown>): SessionUpdate | undefined {
     const task = message as Task;
     if (typeof task.task_id !== "string") return undefined;
     const id = task.task_id;
-    const known = this.#known.get(id);
-    if (known?.run && task.run_id && task.run_id < known.run) return undefined;
+    if (this.#known.stale(id, task.run_id)) return undefined;
     if (message.subtype === "task_started") {
       if (task.task_type === undefined || task.task_type === "local_agent" || quiet(task))
         return undefined;
-      this.#known.set(id, { run: task.run_id ?? known?.run, unknown: false });
+      this.#known.set(id, { run: task.run_id ?? this.#known.get(id)?.run, unknown: false });
       this.#ended.delete(id);
       if (task.tool_use_id !== undefined) {
         const name = this.#calls.get(task.tool_use_id);
@@ -128,8 +124,8 @@ export class BackgroundTasks {
       }
       return this.#make(id, "running", task);
     }
-    if (known === undefined || (known.run && task.run_id && known.run !== task.run_id))
-      return undefined;
+    const known = this.#known.ofRun(id, task.run_id);
+    if (known === undefined) return undefined;
     if (message.subtype === "task_notification") {
       const end = endOf(task.status);
       if (end === undefined) return undefined;
@@ -155,11 +151,7 @@ export class BackgroundTasks {
 
   /** The process is gone, and the tasks it ran with it. */
   endAll(): SessionUpdate[] {
-    const updates = [...this.#known.entries()]
-      .filter(([, task]) => !task.unknown)
-      .map(([id]) => this.#make(id, "stopped"));
-    this.#known.clear();
-    return updates;
+    return this.#known.endAll().map((id) => this.#make(id, "stopped"));
   }
 
   #make(taskId: string, state: State, task?: Task): SessionUpdate {

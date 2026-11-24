@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
+import { userInfo } from "node:os";
 import type { TerminalInfo } from "@cycle/protocol";
+import { defaultTerminals } from "../src/daemon.ts";
 import {
   type Pty,
   type PtySpawnOptions,
@@ -29,17 +31,50 @@ test("the shell's environment is only what is allowed, a `*` is a prefix, and TE
     LC_CTYPE: "UTF-8",
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
+    CLICOLOR: "1",
   });
   expect(typeof env.HOME).toBe("string");
   for (const name of ["LCX", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "SSH_AUTH_SOCK"])
     expect(name in env).toBe(false);
 });
 
-test("the shell is the person's when it can be run, else /bin/sh", () => {
-  expect(terminalShell("/bin/sh")).toBe("/bin/sh");
-  expect(terminalShell(undefined)).toBe("/bin/sh");
-  expect(terminalShell("zsh")).toBe("/bin/sh");
-  expect(terminalShell("/no/such/shell")).toBe("/bin/sh");
+test("on a Mac a shell from a daemon with no locale still gets UTF-8, and a locale it has is kept", () => {
+  const allow = ["PATH", "LANG", "LC_*", "CLICOLOR"];
+  // As a Finder-started app's daemon has it: no locale.
+  const bare = terminalEnv(allow, { PATH: "/bin", HOME: "/home/x" }, "darwin");
+  expect(bare.LANG).toBe("en_US.UTF-8");
+  expect("LC_CTYPE" in bare).toBe(false);
+  expect("LANG" in terminalEnv(allow, { PATH: "/bin" }, "linux")).toBe(false);
+  const chosen = terminalEnv(allow, { LANG: "zh_CN.UTF-8" }, "darwin");
+  expect(chosen.LANG).toBe("zh_CN.UTF-8");
+  expect(terminalEnv(allow, { LC_CTYPE: "UTF-8" }, "darwin").LANG).toBeUndefined();
+  // Colour can still be turned off through the allowlist.
+  expect(terminalEnv(allow, { CLICOLOR: "0" }).CLICOLOR).toBe("0");
+});
+
+test("the shell is SHELL when it can be run, else the account's login shell, else /bin/sh", () => {
+  const runnable = process.execPath;
+  let looked = 0;
+  const account = (shell: string | undefined) => () => {
+    looked++;
+    return shell;
+  };
+  expect(terminalShell("/bin/sh", account(runnable))).toBe("/bin/sh");
+  expect(looked).toBe(0);
+  // A daemon with no SHELL: the account's shell, not /bin/sh, so the person's prompt and rc files are there.
+  expect(terminalShell(undefined, account(runnable))).toBe(runnable);
+  expect(terminalShell("/no/such/shell", account(runnable))).toBe(runnable);
+  expect(terminalShell(undefined, account(undefined))).toBe("/bin/sh");
+  expect(terminalShell("zsh", account("zsh"))).toBe("/bin/sh");
+  expect(terminalShell("/no/such/shell", account("/no/such/either"))).toBe("/bin/sh");
+});
+
+test("the daemon the app starts (PATH, HOME, CYCLE_HOME and nothing else) runs the account's shell", () => {
+  const settings = defaultTerminals({ PATH: "/bin", HOME: "/home/x", CYCLE_HOME: "/data" });
+  const account = userInfo().shell;
+  const runnable = account?.startsWith("/") === true && Bun.which(account) !== null;
+  expect(settings.shell).toBe(runnable ? (account as string) : "/bin/sh");
+  expect("CYCLE_HOME" in settings.env).toBe(false);
 });
 
 /** A pseudo-terminal whose output the test makes. */
@@ -181,6 +216,22 @@ test("the screen's snapshot holds everything written before it", async () => {
   const shot = await screen.snapshot();
   expect(shot).toContain("row 29");
   expect(shot).not.toContain("row 5\r");
+  screen.dispose();
+});
+
+test("the screen's snapshot keeps the colours a program drew in, so a client attaching later sees them", async () => {
+  const screen: Screen = xtermScreen({ cols: 40, rows: 5, scrollback: 10 });
+  screen.write("\x1b[31mred\x1b[0m \x1b[1;34mblue\x1b[0m \x1b[38;5;208m256\x1b[0m", () => {});
+  const shot = await screen.snapshot();
+  /** The attributes the last SGR before a word set, as numbers (`34;1` and `1;34` are the same). */
+  const drawnIn = (word: string) => {
+    const before = shot.slice(0, shot.indexOf(word));
+    const sgr = before.slice(before.lastIndexOf("\x1b[") + 2, -1);
+    return sgr.split(";").map(Number);
+  };
+  expect(drawnIn("red")).toContain(31);
+  expect(drawnIn("blue")).toEqual(expect.arrayContaining([1, 34]));
+  expect(drawnIn("256")).toEqual([38, 5, 208]);
   screen.dispose();
 });
 

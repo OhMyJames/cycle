@@ -434,17 +434,24 @@ export class CycleClient {
 
   /**
    * Sends a prompt. While the agent works it is queued, or with `steer` put into the running turn
-   * where the agent can take it (docs/protocol.md §8); a daemon that cannot queues it.
+   * where the agent can take it (docs/protocol.md §8); a daemon that cannot queues it. `promptSuggestions`: whether the
+   * agent should suggest what to say next once the turn ends (§8); left out, the daemon keeps what was said last.
    */
   async prompt(
     sessionId: string,
     content: ContentBlock[],
-    options: { steer?: boolean } = {},
+    options: { steer?: boolean; promptSuggestions?: boolean } = {},
   ): Promise<string> {
+    const meta = {
+      ...(options.steer === true ? { [META.steer]: true } : {}),
+      ...(options.promptSuggestions !== undefined
+        ? { [META.promptSuggestions]: options.promptSuggestions }
+        : {}),
+    };
     const answer = (await this.#request(methods.agent.session.prompt, {
       sessionId,
       prompt: content,
-      ...(options.steer === true ? { _meta: { [META.steer]: true } } : {}),
+      ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
     })) as { messageId: string };
     return answer.messageId;
   }

@@ -36,7 +36,7 @@
 - **附件**(决策 0010):`session/prompt` 在启动 agent 之前按 agent 的 `promptCapabilities` 和上限(`PROMPT_LIMITS`)检查每一块,不合格整个拒绝(`-32602`,`data` 里有 `reason` 和 `index`);`_cycle/agents/list` 给出每个 agent 的 `promptCapabilities`;图片等进入日志的 `user_message`,补发时和文字一起到。
 - **创建时的配置**：先按 agent 声明的字段和封闭选项校验显式覆盖，自定义模型名可用。agent 拒绝配置时，客户端收到带字段名的 `invalid_config`，列表和磁盘上都不保留这次会话。
 - **session 的启动参数**:`additionalDirectories`、`mcpServers`、`systemPrompt` 在 `session/new` 里校验(目录必须在 daemon 的机器上存在),存进索引,每次启动或恢复 agent 时重新发送。索引文件权限 0600,MCP 的 `env`/`headers` 只在这里,不进日志,也不在 `session/list` 里。
-- **agent 自己的变化回写**:`config_option_update` 写进索引的 `config`(agent 重启后按它恢复,不会改回去);`session_info_update.title` 写进标题,但用户起的名字不被覆盖(索引里标了 `titleFromAgent` 的才是 agent 起的;没有标记的一律当作用户的,包括这个功能之前写下的)。
+- **agent 自己的变化回写**:`config_option_update` 写进索引的 `config`(agent 重启后按它恢复,不会改回去);`session_info_update.title` 写进标题,但用户起的名字不被覆盖(索引里标了 `titleFromAgent` 的才是 agent 起的;没有标记的一律当作用户的,包括这个功能之前写下的);第一条 prompt 到达、还没有标题时，先用消息开头作临时标题，同样标为 agent 的(`src/first-title.ts`,协议 §10"临时标题")。
 - **elicitation**(决策 0011):`elicitation/create` 和权限请求同一套机制(写日志、先到先得、`_cycle/request_resolved`、取消和 agent 退出时以 `cancel` 结束),但只发给在 `initialize` 里声明了 `elicitation.form` 的客户端;没有这样的客户端附着时立刻回 `{action:"cancel", _meta:{"cycle/noClient":true}}`,不挂起。
 - **附件字节落盘**(决策 0013):`BlobLogStore` 包住日志存储,`append` 把大的 base64 写到 `<数据目录>/blobs/<sessionId>/` 并在日志里留引用,`read`、`subscribe` 还原;删除 session 时整个目录一起删。daemon 其余部分和客户端不知道有这回事。
 - **用量**:`usage_update` 写进索引的 `usage`,`session/list` 的 `_meta["cycle/usage"]` 给出。
@@ -224,7 +224,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 - `configDir` 默认是 `<数据目录>/claude`,一个独立目录,里面没有登录。要用已有登录,把它**有意地**指向那个目录(比如 `~/.claude`);要新登录,用 `CLAUDE_CONFIG_DIR=<目录> claude auth login`。
 - `HOME` 默认不传(回落到 `configDir`),免得 Claude 找到没人打算共享的登录或设置。
 - `progressSummaries`(默认 `true`):让 Claude 给每个在跑的子 agent 生成一行进度摘要(`subagent_update` 的 `summary`)。子 agent 的对话有变化时约每 30 秒一次，每次是一次沿用子 agent 模型和 prompt cache 的模型调用，计入账号用量。设成 `false` 就不生成，工具行上仍有工具数、用量和最后一个工具。理由见决定笔记 [2026-11-23-subagent-progress-summaries-on-by-default](../.agents/notes/2026-11-23-subagent-progress-summaries-on-by-default.md)。
-- `terminal`(可省):`{ "allowEnv": ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"], "maxPerSession": 8, "max": 32, "scrollback": 5000 }`。终端的 shell 看到的环境只有 `allowEnv` 点名的(以 `*` 结尾的按前缀),加上 `TERM=xterm-256color`、`COLORTERM=truecolor`;没有 `HOME` 时用当前用户的家目录。和 Claude 的 `allowEnv` 分开：给终端加变量不会让 agent 看到它。
+- `terminal`(可省):`{ "allowEnv": ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"], "maxPerSession": 8, "max": 32, "scrollback": 5000 }`。终端的 shell 看到的环境只有 `allowEnv` 点名的(以 `*` 结尾的按前缀),加上 `TERM=xterm-256color`、`COLORTERM=truecolor`、`SHELL`(实际启动的 shell),没给 `CLICOLOR` 时加 `CLICOLOR=1`,macOS 上没有任何 locale 变量时再加 `LANG=en_US.UTF-8`(docs/protocol.md §8"终端");没有 `HOME` 时用当前用户的家目录。和 Claude 的 `allowEnv` 分开：给终端加变量不会让 agent 看到它。
 - `log`(可省):`{ "level": "info", "maxBytes": 1000000, "files": 3 }`,见下面"日志"。
 - `idle`(可省):`{ "agentMinutes": 10, "exitMinutes": 30 }`,空闲多久结束一个 session 的 agent、空闲多久 daemon 自己退出;`0` 关掉。见上面"空闲回收和空闲退出"。
 

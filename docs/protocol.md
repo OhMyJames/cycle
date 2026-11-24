@@ -108,7 +108,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 | `elicitation/create`         | daemon → 客户端 | 转发,处理方式同 §9                                                                                            |
 | `auth/*`                     | —               | v1 不用 ACP 原生 `auth/*`;多 agent 订阅登录走 Cycle 自有扩展 `_cycle/agent_auth/*`(§16),不改变 ACP 会话层约定 |
 
-`session/update` 的变体沿用 ACP v2:`user_message(_chunk)`、`agent_message(_chunk)`、`agent_thought(_chunk)`、`state_update`、`tool_call_update`、`tool_call_content_chunk`、`terminal_update`、`terminal_output_chunk`、`plan_update`、`available_commands_update`、`config_option_update`、`session_info_update`、`usage_update`、`notice`、`compaction_update`、`compaction_summary_chunk`、`replay_complete`、`subagent_update`、`session_message(_chunk)`,以及 Cycle 自己的 `_cycle/queue_update`(§8)和 `_cycle/child_update`(子 agent 的对话,§9)。客户端遇到不认识的变体应忽略,不得报错。
+`session/update` 的变体沿用 ACP v2:`user_message(_chunk)`、`agent_message(_chunk)`、`agent_thought(_chunk)`、`state_update`、`tool_call_update`、`tool_call_content_chunk`、`terminal_update`、`terminal_output_chunk`、`plan_update`、`available_commands_update`、`config_option_update`、`session_info_update`、`usage_update`、`notice`、`compaction_update`、`compaction_summary_chunk`、`replay_complete`、`subagent_update`、`session_message(_chunk)`,以及 Cycle 自己的 `_cycle/queue_update`(§8)、`_cycle/prompt_suggestion`(下一轮输入建议,§8)和 `_cycle/child_update`(子 agent 的对话,§9)。客户端遇到不认识的变体应忽略,不得报错。
 
 v1 的 Claude 适配只需产生其中的子集,见 L3 文档(待写)。
 
@@ -347,6 +347,16 @@ session 不是 `idle` 时(`running` 或 `requires_action`),`session/prompt` 不�
 - **历史**:插入的 `user_message` 在 agent 收下时进日志,所以它在历史里出现在 turn 中间,位置就是它被收下的时刻。
 - 插入不经过队列,也不改变队列:队列里等着的 prompt 仍在 turn 正常结束后发出。
 
+### 下一轮输入建议(`_cycle/prompt_suggestion`,CYCL-225)
+
+turn 结束后,agent 可以猜一句用户接下来可能说的话,客户端把它作为输入框空着时的提示,用户一键采用。只是提示:不会自己发出,也不改变 turn 和队列。
+
+- **要不要**:`session/prompt` 的 `_meta["cycle/promptSuggestions"]` 为 `true` 表示发这条 prompt 的客户端想要建议,`false` 表示不要(用户在设置里关了)。daemon 记住每个 session 最近一次收到的值(只在内存里),之后它交给 agent 的每条 prompt(直接发的、排队后发出的)都在 `_meta` 里带上它;没收到过的不带。agent 按它收到的最近一条 prompt 决定,没收到 `true` 就不要求、也不发建议,所以旧客户端、旧 daemon 不会多出这样的请求。
+- **agent → daemon**:turn 以 `idle` 结束之后,agent 发 `session/update`,`sessionUpdate: "_cycle/prompt_suggestion"`,`{suggestion}`(一句话,不为空)。每个 turn 最多一条,也可以没有。它属于刚结束的那个 turn:下一个 turn 已经开始(agent 收到新的 prompt、自己开始一轮)才到的,agent 不发。schema 是 `@cycle/protocol` 的 `PromptSuggestionUpdateSchema`。
+- **daemon**:session 不在空闲时(新的 prompt 已经接下)、或最近的 prompt 没要建议、或不符合 schema 的,丢掉;其余照常写日志、占序号、转发、回放。它是 agent 说的话,和 `agent_message` 一样不做 §12 的凭证过滤;不算"值得看"(§6),不改变 `cycle/state`,不发 `_cycle/session_list_changed`。
+- **客户端**:一条建议从它到达起有效,到下一个 turn 开始为止:之后的 `user_message`、`state_update` 的 `running` 或 `requires_action`、新的 `_cycle/prompt_suggestion` 都让它作废。回放即还原,所以重新打开 session 仍能看到最后一个 turn 的建议。客户端不认识它就忽略;没有它的 agent(只有 Claude 会发)照旧显示原来的提示文字。
+- **Claude 的取法**:query 的 `promptSuggestions: true`,SDK 在 `result` 之后发一条 `prompt_suggestion`,原样换成上面的更新。不要建议时用 flag 设置 `promptSuggestionEnabled: false`(新进程在 `settings` 里,运行中的进程用 `applyFlagSettings`;要的时候以 `null` 清掉覆盖,用户自己 `settings.json` 里的 `promptSuggestionEnabled: false` 仍然生效),并且丢掉这时到达的建议。SDK 在第一个 turn、API 出错之后、plan 模式里、套餐用量接近上限时不给建议。
+
 ### daemon 停止时进行中的 turn
 
 agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机器重启)时 agent 跟着结束,进行中的 turn 不会继续,重启后也不续接。历史里这个 turn 必须有一个终态,不能停在"进行中":
@@ -435,7 +445,7 @@ agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机
 
 - **只给人用**:agent 看不到终端，也收不到它的输入输出。ACP 的 `terminal/*` 客户端能力仍不支持(§3)。
 - **属于一个 session**:工作目录是 session 的 `cwd`。session 被归档或删除时，它的终端被关掉(应答不等它们的进程结束),归档的 session 不能再开终端;daemon 停止(包括空闲退出)时，所有终端被关掉。终端不算 daemon 在工作,不拖住空闲退出(docs/daemon.md"空闲退出")。
-- **shell 和环境**:daemon 的 `SHELL`(绝对路径且可执行)作为登录 shell(`-l`)启动，否则 `/bin/sh`。环境不继承 daemon 的，只取 daemon 配置 `terminal.allowEnv` 里列出的变量(以 `*` 结尾的项按前缀匹配),再设 `TERM=xterm-256color`、`COLORTERM=truecolor`。配置不经协议修改。
+- **shell 和环境**:daemon 的 `SHELL`(绝对路径且可执行)作为登录 shell(`-l`)启动;daemon 没有 `SHELL`(旧版桌面端启动的本地 daemon 就没有)或它不可用时，用账户的登录 shell(系统用户数据库里的),再不行用 `/bin/sh`。环境不继承 daemon 的，只取 daemon 配置 `terminal.allowEnv` 里列出的变量(以 `*` 结尾的项按前缀匹配),再设 `TERM=xterm-256color`、`COLORTERM=truecolor`、`SHELL`(实际启动的 shell),没有 `CLICOLOR` 时设 `CLICOLOR=1`(macOS 自带的 `ls` 等 BSD 命令据此输出颜色);在 macOS 上 `LANG`、`LC_ALL`、`LC_CTYPE` 都没有时(从访达启动的应用就没有)再设 `LANG=en_US.UTF-8`,和系统终端一样，让提示符和文件名里的非 ASCII 字符正常显示。配置不经协议修改。
 - **上限**:每个 session 的终端数(含已退出、还没关的)和整个 daemon 的终端数有上限(配置 `terminal.maxPerSession`、`terminal.max`,默认 8 和 32),超过以 `-32019`(`terminal_limit`)拒绝。
 
 **终端的信息** `TerminalInfo`:`{terminalId, sessionId, title, cols, rows, status, exitCode?}`。`status` 是 `running` 或 `exited`;`exitCode` 只在 `exited` 时有，被信号结束时为 `null`。`title` 起初是 shell 的名字，shell 用 OSC 0 或 2 设了标题就换成它。
@@ -659,6 +669,8 @@ session 里 ACP 的 `configOptions` 用 ACP 自己的字段表达同样的东西
 agent 自己改了配置(例如 Claude 在 plan 模式里被批准后切回常规模式),通过 `config_option_update` 回报;daemon 把变化写进索引的 `config`,恢复时才不会把它改回去。
 
 **标题**:agent 的 `session_info_update.title` 只在用户没有改过名的 session 上生效:`_cycle/session/set_title` 设置的标题优先,之后 agent 给的标题忽略。agent 给出的标题写入索引,`session/list` 的 `_meta.title` 反映它,并发 `_cycle/session_list_changed`。
+
+**临时标题**(CYCL-224):agent 往往在首轮结束后才给标题。session 收到第一条 `session/prompt` 时,如果还没有标题,daemon 立刻用这条消息的开头作临时标题:文字块的第一个非空行,去掉首尾空白、连续空白合成一个空格,超过 60 个字符(按字素数)截断并以 `…` 结尾;消息里没有文字(只有图片或附件)就不设。它和 agent 给的标题同等对待,agent 之后给的标题替换它;用户改过的名字不受影响,之后的 prompt 也不再设。它只写入索引,`session/list` 反映它并发 `_cycle/session_list_changed`,不进日志。标题变化不改 `updatedAt`,列表里的顺序不变。
 
 ### 默认配置
 

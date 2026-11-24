@@ -10,6 +10,7 @@ export * from "./methods.ts";
 export * from "./plan-usage.ts";
 export * from "./plugins.ts";
 export * from "./prompt.ts";
+export * from "./prompt-suggestion.ts";
 export * from "./queue.ts";
 export * from "./session-state.ts";
 export * from "./terminal.ts";

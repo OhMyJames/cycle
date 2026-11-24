@@ -27,7 +27,6 @@ import {
   type AgentRuntimeSaveAnswer,
   type AgentSetupSnapshot,
   type AgentSignInMode,
-  type AppApi,
   type AppEvent,
   type Attention,
   applyUpdate,
@@ -65,6 +64,7 @@ import {
 import { type DaemonStop, daemonTooOld, daemonUpgradeCommand } from "../shared/release.ts";
 import { selectAgentSignInMode, validateAgentAuthUrl } from "./agent-auth-guard.ts";
 import { authorizeInBrowser, type OpenBrowser } from "./connector-auth.ts";
+import type { ManagerApi } from "./dispatch.ts";
 import { environmentOf, LOCAL_ENVIRONMENT, type Settings } from "./settings.ts";
 
 export type ManagerOptions = {
@@ -95,6 +95,11 @@ export type ManagerOptions = {
   openBrowser?: OpenBrowser;
   /** How long a sign-in waits for the browser. Default ten minutes. */
   authTimeoutMs?: number;
+  /**
+   * Whether the person wants the agent to suggest what to say next (Settings, CYCL-225): said with every prompt. Without
+   * it, nothing is said, and the daemon keeps what it was told last.
+   */
+  promptSuggestions?: () => boolean;
 };
 
 /** Reports one event of the dictionary in @cycle/analytics. */
@@ -292,31 +297,10 @@ const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
 
 /**
  * The main process's half of the app: the connections to daemons, and the state of every session
- * being watched. It is the whole of what the renderer can ask for (`AppApi`) and knows nothing of
+ * being watched. It is what the renderer can ask for beyond main's own methods (`ManagerApi`) and knows nothing of
  * Electron, so it is tested against a real daemon without a window.
  */
-export class ConnectionManager
-  implements
-    Omit<
-      AppApi,
-      | "chooseDirectory"
-      | "copyText"
-      | "copyImage"
-      | "saveImage"
-      | "updateState"
-      | "checkForUpdate"
-      | "installUpdate"
-      | "track"
-      | "analytics"
-      | "setAnalytics"
-      | "preferences"
-      | "setPreferences"
-      | "account"
-      | "signIn"
-      | "cancelSignIn"
-      | "signOut"
-    >
-{
+export class ConnectionManager implements ManagerApi {
   readonly #options: ManagerOptions;
   #environments: EnvironmentConfig[] = [LOCAL_ENVIRONMENT];
   /** Environments whose daemon is being updated from here, and the last one's failure. */
@@ -979,6 +963,9 @@ export class ConnectionManager
       blocks as Parameters<CycleClient["prompt"]>[1],
       {
         ...(options.steer === true ? { steer: true } : {}),
+        ...(this.#options.promptSuggestions !== undefined
+          ? { promptSuggestions: this.#options.promptSuggestions() }
+          : {}),
       },
     );
     // How much, never what: the length in three words and the number of images, files and mentions.

@@ -1,5 +1,5 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { basename } from "node:path";
 import {
   CycleErrorCode,
@@ -95,6 +95,7 @@ export type TerminalsOptions = {
 export const terminalEnv = (
   allow: readonly string[],
   source: Record<string, string | undefined>,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(source)) {
@@ -108,18 +109,51 @@ export const terminalEnv = (
   env.HOME ??= homedir();
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";
+  // macOS's own `ls` (and the other BSD tools) draw in colour only when asked to.
+  env.CLICOLOR ??= "1";
+  // On a Mac, a daemon started from the app (Finder, launchd) has no locale: without one, a prompt's or a file name's
+  // characters past ASCII come out as `?` or escapes. What Terminal does: LANG, not macOS's own `LC_CTYPE=UTF-8`, which
+  // ssh passes on to servers that do not know it. Elsewhere the daemon is started over ssh, with the login's locale.
+  if (
+    platform === "darwin" &&
+    env.LANG === undefined &&
+    env.LC_ALL === undefined &&
+    env.LC_CTYPE === undefined
+  )
+    env.LANG = "en_US.UTF-8";
   return env;
 };
 
-/** The person's shell when it can be run, else `/bin/sh`. */
-export const terminalShell = (shell: string | undefined): string => {
-  if (shell?.startsWith("/")) {
-    try {
-      accessSync(shell, constants.X_OK);
-      return shell;
-    } catch {}
+/** The account's login shell, from the system's user database: what `SHELL` would have said. */
+export const accountShell = (): string | undefined => {
+  try {
+    return userInfo().shell ?? undefined;
+  } catch {
+    return undefined;
   }
-  return "/bin/sh";
+};
+
+const runnable = (path: string | undefined): path is string => {
+  if (!path?.startsWith("/")) return false;
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The person's shell: `SHELL` when it can be run, else the account's login shell (a daemon started by an older app has
+ * no `SHELL`: it passed only a few variables), else `/bin/sh`. The account is only looked up when `SHELL` will not do.
+ */
+export const terminalShell = (
+  shell: string | undefined,
+  account: () => string | undefined,
+): string => {
+  if (runnable(shell)) return shell;
+  const login = account();
+  return runnable(login) ? login : "/bin/sh";
 };
 
 /** `ps`, with nothing of the daemon's environment. Its output, or "" when it fails. */
@@ -242,6 +276,8 @@ const signal = (pid: number, name: NodeJS.Signals): void => {
 
 export class Terminals {
   readonly #options: TerminalsOptions;
+  /** The shells' environment, and `SHELL` naming the shell that runs: what rc files and programs read, unset by zsh. */
+  readonly #env: Record<string, string>;
   readonly #spawn: PtySpawn;
   readonly #screen: ScreenFactory;
   readonly #log: Logger;
@@ -251,6 +287,7 @@ export class Terminals {
 
   constructor(options: TerminalsOptions) {
     this.#options = options;
+    this.#env = { ...options.env, SHELL: options.shell };
     this.#spawn = options.spawn ?? bunPtySpawn;
     this.#screen = options.screen ?? xtermScreen;
     this.#log = options.log ?? silentLogger;
@@ -311,7 +348,7 @@ export class Terminals {
       pty = this.#spawn({
         argv: [this.#options.shell, "-l"],
         cwd,
-        env: this.#options.env,
+        env: this.#env,
         cols,
         rows,
         onData: (data) => (entry ? this.#onData(entry, data) : early.push(data)),

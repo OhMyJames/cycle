@@ -1,5 +1,6 @@
 // A page that takes the whole window in place of the sessions (CYCL-78): Settings (settings.tsx) and Connectors (connectors.tsx, CYCL-82).
-// On the left, where the sidebar was, the way back and the page's sections; on the right the section that is chosen.
+// It keeps the sessions' frame (CYCL-219): on the left, in the sidebar's place and as wide, the way back and the page's
+// sections; on the right the chosen section's name in the title bar, and the section under it.
 // The sections are the SDK's tabs, set upright: the arrows move and select, Home and End, and only the chosen
 // section is in the page. Escape goes back, unless something opened over the page (a dialog, a menu) is what it closes.
 import { isComposing } from "@ui-sdk/core";
@@ -71,6 +72,8 @@ export function PageLayout({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const shown = sections.find((section) => section.id === value);
+
   return (
     <div data-slot="page" ref={rootRef}>
       <Tabs
@@ -83,11 +86,13 @@ export function PageLayout({
       >
         <nav data-slot="page-nav" aria-label={title}>
           <div data-slot="titlebar" aria-hidden="true" />
-          <Button data-variant="ghost" data-kind="sidebar-action" onClick={onBack}>
-            <ChevronLeftIcon />
-            {backLabel}
-            <kbd>{ESCAPE_KEY}</kbd>
-          </Button>
+          <div data-slot="sidebar-actions">
+            <Button data-variant="ghost" data-kind="sidebar-action" onClick={onBack}>
+              <ChevronLeftIcon />
+              {backLabel}
+              <kbd>{ESCAPE_KEY}</kbd>
+            </Button>
+          </div>
           <h1 data-slot="page-title">{title}</h1>
           <TabsList aria-label={sectionsLabel}>
             {sections.map((section, index) => {
@@ -109,16 +114,20 @@ export function PageLayout({
             })}
           </TabsList>
         </nav>
+        {/* The conversation's place: the title bar with the section's name, what is wrong under it, then the section,
+            which alone scrolls. */}
         <div data-slot="page-main">
+          <header data-slot="page-header">
+            <h2 data-slot="page-heading">{shown?.heading ?? shown?.label}</h2>
+          </header>
           {banner}
-          {sections.map((section) => (
-            <TabsPanel key={section.id} value={section.id}>
-              <div data-slot="page-column">
-                <h2 data-slot="page-heading">{section.heading ?? section.label}</h2>
-                {section.content}
-              </div>
-            </TabsPanel>
-          ))}
+          <div data-slot="page-body">
+            {sections.map((section) => (
+              <TabsPanel key={section.id} value={section.id}>
+                <div data-slot="page-column">{section.content}</div>
+              </TabsPanel>
+            ))}
+          </div>
         </div>
       </Tabs>
     </div>

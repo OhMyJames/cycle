@@ -198,6 +198,8 @@ const TASK_UPDATE = "_cycle/task_update";
 const GOAL_UPDATE = "_cycle/goal_update";
 /** What is set to wake the session later (docs/protocol.md §9, CYCL-146). */
 const SCHEDULE_UPDATE = "_cycle/schedule_update";
+/** What the person may say next, guessed by the agent after a turn (docs/protocol.md §8, CYCL-225). */
+const PROMPT_SUGGESTION_UPDATE = "_cycle/prompt_suggestion";
 /** A sub-agent's conversation, carried in its parent session (docs/protocol.md §9, CYCL-134). */
 const CHILD_UPDATE = "_cycle/child_update";
 const TASK_KINDS = ["shell", "monitor", "workflow", "mcp", "other"] as const;
@@ -315,6 +317,11 @@ export type Conversation = {
   goal: Goal | null | undefined;
   /** What is set to wake the session; `undefined` when the agent never said (it may not tell). */
   schedules: Schedules | undefined;
+  /**
+   * What the agent guessed the person may say next, after the last turn ended (CYCL-225). Gone once a turn begins: a
+   * message, or the agent at work. Only some agents say one.
+   */
+  suggestion: string | undefined;
 };
 
 export const emptyConversation = (): Conversation => ({
@@ -333,6 +340,7 @@ export const emptyConversation = (): Conversation => ({
   tasks: [],
   goal: undefined,
   schedules: undefined,
+  suggestion: undefined,
 });
 
 const PART_KINDS: readonly string[] = ["used", "free", "buffer", "deferred"];
@@ -818,6 +826,24 @@ export const applyUpdate = (
   record?: { at?: number | undefined },
 ): Conversation => {
   const u = update as unknown as Fields;
+  // A turn begins (a message, or the agent at work): what was suggested for after the last one no longer fits.
+  const begins =
+    u.sessionUpdate === "user_message" ||
+    u.sessionUpdate === "user_message_chunk" ||
+    (u.sessionUpdate === "state_update" &&
+      (u.state === "running" || u.state === "requires_action"));
+  return applyOne(
+    begins && c.suggestion !== undefined ? { ...c, suggestion: undefined } : c,
+    u,
+    record,
+  );
+};
+
+const applyOne = (
+  c: Conversation,
+  u: Fields,
+  record?: { at?: number | undefined },
+): Conversation => {
   const when = timeOf(record?.at);
   switch (u.sessionUpdate) {
     case "user_message":
@@ -942,6 +968,10 @@ export const applyUpdate = (
         return job !== undefined ? [job] : [];
       });
       return { ...c, schedules: { jobs, dormant: u.dormant === true } };
+    }
+    case PROMPT_SUGGESTION_UPDATE: {
+      const suggestion = typeof u.suggestion === "string" ? u.suggestion.trim() : "";
+      return suggestion !== "" ? { ...c, suggestion } : { ...c, ignored: c.ignored + 1 };
     }
     case GOAL_UPDATE: {
       if (u.goal === null) return { ...c, goal: null };

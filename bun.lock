@@ -31,7 +31,7 @@
     },
     "apps/desktop": {
       "name": "@cycle/desktop",
-      "version": "0.3.21",
+      "version": "0.3.22",
       "dependencies": {
         "@cycle/analytics": "workspace:*",
         "@cycle/client": "workspace:*",
@@ -57,6 +57,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",
+        "@cycle/line-rpc": "workspace:*",
         "@cycle/protocol": "workspace:*",
       },
     },
@@ -74,6 +75,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",
+        "@cycle/line-rpc": "workspace:*",
         "@cycle/protocol": "workspace:*",
         "@openai/codex": "0.171.0",
       },
@@ -97,6 +99,10 @@
       "devDependencies": {
         "@cycle/daemon": "workspace:*",
       },
+    },
+    "packages/line-rpc": {
+      "name": "@cycle/line-rpc",
+      "version": "0.0.0",
     },
     "packages/oidc": {
       "name": "@cycle/oidc",
@@ -234,6 +240,8 @@
     "@cycle/harness-claude": ["@cycle/harness-claude@workspace:harness/claude"],
 
     "@cycle/harness-codex": ["@cycle/harness-codex@workspace:harness/codex"],
+
+    "@cycle/line-rpc": ["@cycle/line-rpc@workspace:packages/line-rpc"],
 
     "@cycle/oidc": ["@cycle/oidc@workspace:packages/oidc"],
 

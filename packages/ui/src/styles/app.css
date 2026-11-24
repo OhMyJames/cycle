@@ -221,7 +221,8 @@
   --cycle-focus-ring: light-dark(#6b6b75, #8e8e98);
   --cycle-focus-halo: 0 0 0 3px light-dark(rgb(0 0 0 / 7%), rgb(255 255 255 / 9%));
 
-  /* Type: four disciplined sizes (12/18, 13/20, 14/22, 16/22.4) paired with the Rare UI font trio.
+  /* Type: four disciplined sizes (12/18, 13/20, 14/22, 16/22.4) paired with the Rare UI font trio, and one display size
+     (24/30) for a page's own heading: the new session's (CYCL-220), and nothing else.
      Open Runde gives brand touchpoints, titles and buttons a rounded, approachable voice; Inter
      keeps long prose crisp; Geist Mono anchors code, commands and paths. */
   --cycle-font-display:
@@ -232,10 +233,12 @@
   --cycle-text-ui: var(--ui-font-size, 0.8125rem);
   --cycle-text-body: 0.875rem;
   --cycle-text-title: 1rem;
+  --cycle-text-display: 1.5rem;
   --cycle-leading-meta: 1.5;
   --cycle-leading-ui: 1.46;
   --cycle-leading-body: 1.5;
   --cycle-leading-title: 1.4;
+  --cycle-leading-display: 1.25;
   --cycle-weight: 420;
 
   /* Concentric rounded radii: inner = outer - padding.
@@ -536,6 +539,7 @@ summary:focus-visible {
     [data-slot="subagent-tag"],
     [data-slot="subagent-glimpse"],
     [data-slot="blank-folder-name"],
+    [data-slot="blank-agent-name"],
     [data-slot="blank-recent-name"],
     [data-slot="notice-text"],
     [data-kind="session-title"]
@@ -585,6 +589,7 @@ summary:focus-visible {
   [data-slot="subagent-tag"],
   [data-slot="subagent-glimpse"],
   [data-slot="blank-folder-name"],
+  [data-slot="blank-agent-name"],
   [data-slot="blank-recent-name"],
   [data-slot="notice-text"],
   [data-kind="session-title"]
@@ -657,8 +662,9 @@ body {
   display: none;
 }
 
-/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings and Connectors. Where the sidebar was, on
-   its surface, the way back and the page's sections; beside it the section, in the conversation's column. */
+/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings and Connectors. The sessions' frame
+   (CYCL-219): where the sidebar was, as wide, on its surface and with its rule, the way back and the page's sections;
+   beside it a title bar as the session's, and under it the section, in the conversation's column. */
 [data-slot="page"],
 [data-kind="page"] {
   height: 100%;
@@ -670,13 +676,19 @@ body {
   background: var(--cycle-surface-workspace);
 }
 
+/* The sidebar's box: its padding and gap, and its width as the user left it (`--cycle-sidebar-width`, set on the app by
+   split-layout.tsx), plus the split's 1px handle drawn as the rule at its edge. On a window too narrow for that and the
+   conversation's least width (MAIN_MIN) it gives way, down to the sidebar's least (SIDEBAR.min): the nav cannot fold. */
 [data-slot="page-nav"] {
+  --sidebar-inset: 0.5rem;
+
   display: flex;
   flex: none;
   flex-direction: column;
   gap: 0.5rem;
-  width: 16rem;
-  padding: var(--cycle-gap) var(--cycle-gap) 0.5rem;
+  width: clamp(12.5rem, calc(100% - 25rem), calc(var(--cycle-sidebar-width, 16rem) + 1px));
+  padding: var(--cycle-gap) var(--sidebar-inset) 0.5rem;
+  border-right: 1px solid var(--ui-border);
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--cycle-surface-sidebar);
@@ -827,42 +839,60 @@ body {
 }
 
 [data-slot="page-main"] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The session's title bar (`session-header`): one row of 42px at the top, level with the traffic lights, the name at
+   its start in the header title's type. What the window is dragged by on a Mac. */
+[data-slot="page-header"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 2.625rem;
+  padding: 0 0.5rem 0 var(--cycle-gap);
+}
+
+html[data-platform="darwin"] [data-slot="page-header"] {
+  -webkit-app-region: drag;
+}
+
+[data-slot="page-heading"] {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+[data-slot="page-body"] {
   --cycle-column-pad: max(1.5rem, calc((100% - var(--cycle-measure)) / 2));
 
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-[data-slot="page-main"] > [data-slot="tabs-panel"] {
+[data-slot="page-body"] > [data-slot="tabs-panel"] {
   padding: 0;
   outline: none;
 }
 
+/* The first group where it was under the old in-column heading: the content does not move between the frames. */
 [data-slot="page-column"] {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  padding: 0 var(--cycle-column-pad) 2rem;
-}
-
-/* Level with the first row of the sections beside it, and what the window is dragged by on a Mac. */
-[data-slot="page-heading"] {
-  display: flex;
-  align-items: center;
-  height: 2.625rem;
-  margin: 0;
-  padding-block-start: 0.5rem;
-  font-family: var(--cycle-font-display);
-  font-size: var(--cycle-text-title);
-  font-weight: 600;
-  letter-spacing: var(--cycle-tracking-display);
-  line-height: var(--cycle-leading-title);
-}
-
-html[data-platform="darwin"] [data-slot="page-heading"] {
-  -webkit-app-region: drag;
+  padding: 1.5rem var(--cycle-column-pad) 2rem;
 }
 
 [data-slot="page-group"] {
@@ -1023,19 +1053,6 @@ html[data-platform="darwin"] [data-slot="page-heading"] {
   height: 100%;
   min-width: 0;
   background: var(--cycle-surface-sidebar);
-  /* Opened or closed by the user, it slides a little from the edge it lives on and fades (CYCL-213; the SDK's presence
-     sets the starting and ending styles, split-layout.tsx). Its column takes its width at once, not a frame at a time:
-     moving the width would reflow the conversation and resize a terminal in the panel on every frame, so only
-     transform and opacity move (motion.md). A transition, not an animation, so the panel shown again after a page
-     that hid it does not arrive again. */
-  transition:
-    opacity var(--cycle-motion-disclosure) var(--cycle-ease),
-    transform var(--cycle-motion-disclosure) var(--cycle-ease);
-}
-
-[data-slot="side-panel"]:is([data-starting-style], [data-ending-style]) {
-  opacity: 0;
-  transform: translateX(0.5rem);
 }
 
 [data-kind="panel-tabs"] {
@@ -2392,8 +2409,9 @@ html[data-platform="darwin"] [data-slot="titlebar"] {
 }
 
 /* The session sidebar's top row (every platform): as tall as the session header (2.625rem), from the sidebar's top
-   edge (its padding is --cycle-gap, the gap below it 0.5rem), so the fold button sits level with the header's. */
-html [data-slot="sidebar"] > [data-slot="titlebar"] {
+   edge (its padding is --cycle-gap, the gap below it 0.5rem), so the fold button sits level with the header's. A page's
+   nav has the same row, so what is under it starts where the sidebar's rows do. */
+html :is([data-slot="sidebar"], [data-slot="page-nav"]) > [data-slot="titlebar"] {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -2405,12 +2423,14 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   -webkit-app-region: no-drag;
 }
 
-/* Folding the sidebar slides it shut rather than cutting it off, so it is seen where it went (and where ⌘B brings it
-   back from). The one width that moves (motion.md), and only for the button and ⌘B (`data-animate`, set for the
-   slide): a drag or a window being resized moves it at once. Its content keeps its least width and is clipped, so the rows do not reflow as it narrows. */
+/* Folding the sidebar, or opening and closing the right panel, slides the column rather than cutting it off, so it is
+   seen where it went (and where its button or shortcut brings it back from). The one width that moves (motion.md),
+   and only for the buttons and shortcuts (`data-animate`, set for the slide by `slideColumns`, split-layout.tsx): a
+   drag or a window being resized moves it at once. The conversation's column slides with it, in step, so together
+   they always fill the window and the columns beside them keep their width. */
 [data-slot="split"][data-animate]
   > [data-slot="resizable"]:not([data-dragging])
-  > [data-slot="resizable-panel"]#sidebar {
+  > [data-slot="resizable-panel"] {
   transition: flex-basis var(--cycle-motion-disclosure) var(--cycle-ease);
 }
 
@@ -2418,9 +2438,36 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   overflow: hidden;
 }
 
-/* Its least width (SIDEBAR.min, set on the split by split-layout.tsx). */
+/* The sidebar's content keeps its least width (SIDEBAR.min, set on the split by split-layout.tsx) and is clipped, so
+   its rows do not reflow as it narrows. */
 [data-slot="resizable-panel"]#sidebar > [data-slot="sidebar"] {
   min-width: var(--cycle-sidebar-min, 200px);
+}
+
+/* While it slides, the panel's content keeps the width it has open (set on the split by split-layout.tsx) and is
+   clipped on the conversation's side, held to the window's edge as the sidebar's is to the other: nothing in it is
+   squeezed, and a terminal in it is not fitted again on every frame. */
+[data-slot="resizable-panel"]#panel {
+  display: flex;
+  justify-content: flex-end;
+  /* Not `hidden`: a file scrolled to inside it must not scroll the column sideways. */
+  overflow: clip;
+}
+
+[data-slot="resizable-panel"]#panel > [data-slot="side-panel"] {
+  flex: 1 0 0;
+  min-width: var(--cycle-panel-width, 0);
+}
+
+/* Closed, the panel takes no room, even before its column is fitted on starting (the saved layout may have it open), and
+   its handle is not drawn at the window's edge. */
+[data-slot="resizable-panel"]#panel:empty {
+  max-width: 0;
+}
+
+[data-slot="split"] [data-slot="resizable-handle"][data-closed] {
+  /* Not taken out: its room coming back as the panel opens would move the columns a pixel under the slide. */
+  visibility: hidden;
 }
 
 /* The room kept for the traffic lights comes and goes with the slide, not before it. */
@@ -6134,15 +6181,18 @@ button[data-slot="review-file"]:focus-visible {
   }
 }
 
-/* Part 3: Utility bar — borderless, compact row beneath the input box. Permission left, model + effort & context ring right. */
+/* Part 3: Utility bar — borderless, compact row beneath the input box. Permission left, model + effort & context ring right.
+   The chips' icon and words start and end on the box's outer edge, the line the conversation and a new session's heading
+   keep too (CYCL-220); their pills, drawn only when hovered or open, hang out by their own padding. */
 [data-slot="composer-tools"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
   min-height: 1.5rem;
-  margin-top: 0.25rem;
-  padding: 0 0.375rem;
+  /* A chip's clear 1px border and its padding. */
+  margin: 0.25rem calc(-0.375rem - 1px) 0;
+  padding: 0;
   min-width: 0;
 }
 
@@ -6688,6 +6738,18 @@ button[data-slot="review-file"]:focus-visible {
   object-fit: cover;
 }
 
+/* An attached image is its own button, opening it large (CYCL-221); Remove sits over its corner, apart from it. */
+[data-slot="attachment-open"] {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--cycle-radius-sm) - 1px);
+  background: none;
+  cursor: zoom-in;
+}
+
 [data-slot="attachment-name"] {
   min-width: 0;
   overflow: hidden;
@@ -7047,12 +7109,15 @@ button[data-slot="review-file"]:focus-visible {
   overflow: hidden;
 }
 
+/* The page's one left edge is the box's outer border (CYCL-220): the heading, the state above, the line of choices and the
+   bar under the box start on it. A chip's words and icon sit on that edge and its pill, drawn only when hovered or open,
+   hangs out by its padding, as the bar's chips do (composer-tools). */
 [data-slot="blank-lead"] {
-  padding: 0 calc(var(--cycle-column-pad) + 0.5rem) 0.5rem;
+  padding: 0 var(--cycle-column-pad) 0.5rem;
 }
 
 /* A fieldset, so that it is one named group and is disabled whole while the session is being made. Its controls read
-   as the composer's chips do: quiet words that are buttons, the folder's name first. */
+   as the composer's chips do: quiet words that are buttons, the agent first, then where it runs. */
 [data-slot="blank-where"] {
   display: flex;
   flex-wrap: wrap;
@@ -7060,37 +7125,50 @@ button[data-slot="review-file"]:focus-visible {
   gap: 0.25rem;
   margin: 0;
   min-width: 0;
-  padding: 0 calc(var(--cycle-column-pad) + 0.25rem);
+  padding: 0 var(--cycle-column-pad);
+  /* A chip's clear 1px border and its padding: its icon and words start on the edge. */
+  padding-inline-start: calc(var(--cycle-column-pad) - 0.375rem - 1px);
   border: 0;
 }
 
-/* The agent's select, quiet like the chips. */
-[data-slot="blank-where"] [data-slot="select-trigger"] {
-  min-width: 0;
-  max-width: 20rem;
-  height: 1.625rem;
-  padding-inline: 0.5rem;
-  border-radius: var(--cycle-radius-pill);
-  font-size: var(--cycle-text-meta);
-  font-weight: 500;
-  color: var(--cycle-ink-muted);
-}
-
-/* One borderless chip for environment and folder, as the permission and model chips are: no border, no arrow. */
-[data-slot="menu-trigger"][data-kind="blank-folder"] {
+/* The agent and the folder: borderless chips with the measures of the permission and model chips (setting-chip), no
+   border, no arrow. */
+[data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"]) {
+  position: relative;
   min-width: 0;
   max-width: 24rem;
-  height: 1.625rem;
-  gap: 0.3125rem;
-  padding-inline: 0.5rem;
+  height: 1.5rem;
+  gap: 0.25rem;
+  padding-inline: 0.375rem;
   border-radius: var(--cycle-radius-pill);
   font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
   font-weight: 500;
   color: var(--cycle-ink-muted);
 }
 
-[data-slot="menu-trigger"][data-kind="blank-folder"]:is(:hover:not(:disabled), [data-open]) {
+[data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"]):is(
+  :hover:not(:disabled),
+  [data-open]
+) {
   color: var(--cycle-ink);
+}
+
+/* Drawn 24px tall, they take a press 32px tall, as the bar's chips do (measured from inside the clear 1px border). */
+[data-slot="menu-trigger"]:is([data-kind="blank-folder"], [data-kind="blank-agent"])::after {
+  content: "";
+  position: absolute;
+  inset: calc(-0.25rem - 1px) -1px;
+}
+
+/* The agent's logo is drawn as the sidebar draws it (agent-logo); the wrapper only keeps it out of the name read aloud. */
+[data-slot="blank-agent-logo"] {
+  flex: none;
+  display: inline-flex;
+}
+
+[data-slot="blank-agent-name"] {
+  min-width: 0;
 }
 
 [data-slot="menu-trigger"][data-kind="blank-folder"][data-unset] {
@@ -7107,11 +7185,14 @@ button[data-slot="review-file"]:focus-visible {
   opacity: 0.5;
 }
 
+/* The page's heading: the one display size (DESIGN.md §2.1), on the box's left edge. */
 [data-slot="blank-hero"] {
   margin: 0;
-  padding: 0 calc(var(--cycle-column-pad) + 0.75rem) 0.75rem;
+  padding: 0 var(--cycle-column-pad) 0.75rem;
   font-family: var(--cycle-font-display);
-  font-size: var(--cycle-text-title);
+  font-size: var(--cycle-text-display);
+  line-height: var(--cycle-leading-display);
+  letter-spacing: var(--cycle-tracking-display);
   font-weight: 600;
   color: var(--cycle-ink);
 }

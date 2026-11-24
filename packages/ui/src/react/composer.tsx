@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -19,6 +20,7 @@ import {
   base64Bytes,
   canAdd,
   IMAGE_TYPES,
+  isImageType,
   isPdfBytes,
   kindOf,
   textOfBytes,
@@ -47,6 +49,7 @@ import { optionsOf, propertiesOf } from "./config-form.tsx";
 import { ContextDetails, planRowsOf } from "./context-details.tsx";
 import { useI18n } from "./i18n.tsx";
 import { AttachIcon, CloseIcon, PlusIcon, SendIcon, StopIcon } from "./icons.tsx";
+import { Lightbox, type LightboxImage } from "./lightbox.tsx";
 import { type InputHandle, type InputKey, MarkdownInput } from "./markdown-input.tsx";
 import { optionId, PickerMenu, type PickerRow } from "./picker-menu.tsx";
 import { PlanStrip } from "./plan.tsx";
@@ -157,6 +160,12 @@ export function Composer({
   const working = activity !== "idle";
   const queue = useAppState((s) => s.views[sessionKey]?.conversation.queue ?? NONE);
   const commands = useAppState((s) => s.views[sessionKey]?.conversation.commands ?? NONE);
+  // What the agent guessed comes next (CYCL-225), unless the person turned that off in Settings.
+  const suggestion = useAppState((s) =>
+    s.preferences?.promptSuggestions === false
+      ? undefined
+      : s.views[sessionKey]?.conversation.suggestion,
+  );
   // A permission waiting for an answer: ⌘Enter is its "Allow once" (app.tsx), the same test as there.
   const permissionWaits = useAppState((s) => (s.views[sessionKey]?.permissions.length ?? 0) > 0);
   const { text, attachments, kept } = draft;
@@ -341,6 +350,12 @@ export function Composer({
     blocked === undefined &&
     (!working || canQueue) &&
     (text.trim() !== "" || attachments.length > 0 || kept.length > 0);
+  // In place of what the empty box says when the agent is done: → or Tab makes it the message. Typing hides it; emptying
+  // the box again shows it, until the next turn begins.
+  const offered =
+    text === "" && !working && enabled && connected && blocked === undefined
+      ? suggestion
+      : undefined;
   const placeholder =
     told ??
     (!enabled
@@ -356,7 +371,7 @@ export function Composer({
                   : "composer.placeholder.busy",
               { key: QUEUE_KEY },
             )
-          : t("composer.placeholder.idle"));
+          : (offered ?? t("composer.placeholder.idle")));
 
   // Single-line by default; once text wraps past one line, contains a newline or carries attachments, the box promotes
   // cleanly into its 3-row layout (2 lines of content + action row) without flickering
@@ -409,6 +424,30 @@ export function Composer({
     bytes < 1048576
       ? number(Math.max(1, Math.round(bytes / 1024)), { style: "unit", unit: "kilobyte" })
       : number(bytes / 1048576, { style: "unit", unit: "megabyte", maximumFractionDigits: 1 });
+  // An attached image opens large, as one of a sent message does (CYCL-221); the others attached beside it are a step away.
+  // The one last opened is kept once it closes, so that it is still what fades out.
+  const [preview, setPreview] = useState<{ id: string; open: boolean } | undefined>();
+  // Made again only when what is attached changes, not with each key: the data URLs can be megabytes.
+  const alt = t("image.alt.attached");
+  const previewable = useMemo(
+    () =>
+      attachments.flatMap((a): (LightboxImage & { id: string })[] =>
+        a.kind === "image" && isImageType(a.type)
+          ? [
+              {
+                id: a.id,
+                src: `data:${a.type};base64,${a.data}`,
+                type: a.type,
+                data: a.data,
+                name: a.name,
+                alt,
+              },
+            ]
+          : [],
+      ),
+    [attachments, alt],
+  );
+  const previewIndex = previewable.findIndex((each) => each.id === preview?.id);
   const accepts: Accepts = { images: canAttach, files: canAttachFiles };
   const attachable = canAttach || canAttachFiles;
   const say = (p: AttachmentProblem): string => {
@@ -526,6 +565,21 @@ export function Composer({
    * the queue. ⌘Enter queues. Shift+Enter (or Alt+Enter) is a new line, always. The arrows walk through what was sent.
    */
   const onKey = (key: InputKey, event: KeyboardEvent): boolean => {
+    // The suggestion in the empty box is taken as the message, the caret at its end, to send or change.
+    if (
+      (key === "right" || key === "tab") &&
+      offered !== undefined &&
+      told === undefined &&
+      !menuOpen &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey
+    ) {
+      store.drafts.setText(sessionKey, offered);
+      store.track("prompt_suggestion_accepted", { key: key === "tab" ? "tab" : "arrow" });
+      return true;
+    }
     // An open menu has the keys first: the arrows choose, Enter and Tab take, Escape closes.
     if (menuOpen) {
       if (key === "up" || key === "down") {
@@ -737,7 +791,15 @@ export function Composer({
             {attachments.map((a) => (
               <li key={a.id} data-slot="attachment" data-kind={a.kind} title={a.name}>
                 {a.kind === "image" ? (
-                  <img src={`data:${a.type};base64,${a.data}`} alt="" />
+                  // Its own button, beside Remove and not around it: removing never opens it.
+                  <button
+                    type="button"
+                    data-slot="attachment-open"
+                    aria-label={t("image.open", { name: a.name })}
+                    onClick={() => setPreview({ id: a.id, open: true })}
+                  >
+                    <img src={`data:${a.type};base64,${a.data}`} alt="" />
+                  </button>
                 ) : (
                   // A file is named and sized, never shown: its content is not drawn here.
                   <>
@@ -763,6 +825,19 @@ export function Composer({
             ))}
           </ul>
         ) : null}
+        <Lightbox
+          images={previewable}
+          index={Math.max(0, previewIndex)}
+          onIndexChange={(index) => {
+            const next = previewable[index];
+            if (next !== undefined) setPreview({ id: next.id, open: true });
+          }}
+          open={preview?.open === true && previewIndex >= 0}
+          onOpenChange={(open) => setPreview((was) => (was === undefined ? was : { ...was, open }))}
+          from="user"
+          // Back to the message, to go on writing it (the editor keeps its caret); to the thumbnail when it takes nothing now.
+          finalFocus={composerInput}
+        />
 
         <div data-slot="composer-lead">
           {attachable ? (
@@ -803,6 +878,11 @@ export function Composer({
             disabled={!enabled}
             label={t("composer.message")}
             placeholder={placeholder}
+            suggested={
+              told === undefined && offered !== undefined
+                ? { keyShortcuts: "ArrowRight Tab" }
+                : undefined
+            }
             onKey={onKey}
             pasteFiles={canAttachFiles ? "any" : "images"}
             onPasteFiles={(files) => void attach(files, "paste")}

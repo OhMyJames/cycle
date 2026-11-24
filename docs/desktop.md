@@ -16,7 +16,7 @@ bun run start                          # 启动桌面端
 - 本地 host 通过 `cycle proxy` 连接(没有 daemon 在运行就先启动)。用哪个 daemon,取第一个存在的:`CYCLE_DAEMON_BIN`;`apps/daemon/dist` 里构建出的可执行文件;源码(`bun apps/daemon/src/main.ts`,开发时,可用 `CYCLE_BUN`、`CYCLE_DAEMON_MAIN` 覆盖)。数据目录:`CYCLE_HOME` 设了就用它;没设时,安装的应用用 daemon 的默认(`~/.cycle`),从源码运行(`bun run start`)用 `~/.cycle-dev`,所以开发时的 daemon、socket 和会话不会碰到安装版正在跑的那个。开发版因此没有稳定版的凭证配置(`config.json` 在数据目录里):要么在 `~/.cycle-dev` 里另写一份,要么显式设 `CYCLE_HOME` 指向要用的目录。
 - 在 xvfb 下用构建出的 daemon 启动过:Electron 起来,`proxy` 起 `serve`,数据目录里有 socket 和 pid。
 - 远程 host 用系统的 `ssh`(`BatchMode=yes`,没有密码提示),在远端运行 `cycle proxy`;命令可在"Add environment"里改。
-- 设置在 Electron 的 `userData` 里:环境列表在 `settings.json`,外观和语言在 `preferences.json`(`{ "theme": "system" | "light" | "dark", "language": "system" | "en-US" | "zh-CN" }`,见"设置页"),统计的开关和匿名 id 在 `analytics.json`。
+- 设置在 Electron 的 `userData` 里:环境列表在 `settings.json`,外观、语言和下一轮输入建议的开关在 `preferences.json`(`{ "theme": "system" | "light" | "dark", "language": "system" | "en-US" | "zh-CN", "promptSuggestions": boolean }`,见"设置页"),统计的开关和匿名 id 在 `analytics.json`。
 
 ## 结构
 
@@ -205,6 +205,7 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
   - **不翻译的**(decision 0012):agent 的输出、ssh 和 daemon 的原话、命令、路径、版本号、agent 给的设置名和选项名;另外主进程自己产生的报错(更新失败的原因、"Updates are for the installed app."、本机环境的名字 "This computer")目前仍是英文。
   - 埋点:`theme_changed`、`language_changed`(主进程发,只带选了哪一项)。
   - 中文目录的键和占位符与 en-US 一致由类型和测试保证(`test/languages.test.ts`);译文本身没有经过母语审校之外的检查,真实窗口里各处的中文版式只在画廊里看过设置页和一个对话场景。
+- **下一轮输入建议(CYCL-225)**:General 里的开关 "Suggest the next message",默认开，和主题、语言一样存在 `preferences.json`。主进程发每条 prompt 时按它带上 `_meta["cycle/promptSuggestions"]`(protocol.md §8),所以关掉之后 agent 不再做建议。agent 给的建议(`_cycle/prompt_suggestion`)在输入框空着、agent 空闲时代替原来的提示文字，样式不变;→ 或 Tab 把它变成输入内容，光标在末尾。打字时它让位，清空后再出现，下一个 turn 开始(`user_message`、`running`、`requires_action`)就作废。关掉开关时，已经收到的建议也不显示。没有建议的 agent 照旧显示原来的提示文字。埋点:`prompt_suggestions_toggled`(主进程)、`prompt_suggestion_accepted`(页面，只带按的是哪个键)。
 - **旧入口**已去掉:侧栏底部的 App settings 菜单、switcher 旁菜单里的 Add environment、Agent defaults、Edit、Remove。会话自己的设置(Session settings)仍在会话标题的菜单里,它属于会话。
 - **埋点**:打开页面是 `panel_opened` 的 `settings`(带 `via`),换分区是 `settings_section_shown`;分区里的动作沿用原有事件(`analytics_toggled`、`update_checked`、`environment_saved`、`agent_defaults_saved`、`code_theme_changed` 等)。
 - **没验证**:安装版真实窗口里的拖动区域和红绿灯位置(画廊里看过版式,深浅色、1200×800 和 720×480)。

@@ -38,7 +38,12 @@ test("a choice is still there after the app starts again", async () => {
     systemLanguage: () => "en-GB",
     applyTheme: (theme) => applied.push(theme),
   });
-  expect(first.state()).toEqual({ theme: "system", language: "system", systemLanguage: "en-GB" });
+  expect(first.state()).toEqual({
+    theme: "system",
+    language: "system",
+    promptSuggestions: true,
+    systemLanguage: "en-GB",
+  });
   expect(await first.set({ theme: "dark" })).toMatchObject({ theme: "dark", language: "system" });
   expect(await first.set({ language: "zh-CN" })).toMatchObject({
     theme: "dark",
@@ -53,7 +58,21 @@ test("a choice is still there after the app starts again", async () => {
     systemLanguage: () => "en-GB",
     applyTheme: (theme) => again.push(theme),
   });
-  expect(second.state()).toMatchObject({ theme: "dark", language: "zh-CN" });
+  expect(second.state()).toMatchObject({
+    theme: "dark",
+    language: "zh-CN",
+    promptSuggestions: true,
+  });
+  // Suggestions of what to say next are on until turned off (CYCL-225), and stay off once they are.
+  expect(await second.set({ promptSuggestions: false })).toMatchObject({
+    promptSuggestions: false,
+  });
+  const third = await startPreferences({
+    store: filePreferencesStore(path),
+    systemLanguage: () => "en-GB",
+    applyTheme: () => {},
+  });
+  expect(third.state()).toMatchObject({ theme: "dark", promptSuggestions: false });
   // Before a window is made: the first thing drawn is already dark.
   expect(again).toEqual(["dark"]);
 });
@@ -76,6 +95,7 @@ test("a value that is not one of the choices is not taken, from the file or from
     later: { a: 1 },
     theme: "light",
     language: "tlh",
+    promptSuggestions: true,
   });
   // Once the person chooses a language here, theirs is what is kept.
   await control.set({ language: "zh-CN" });
@@ -102,16 +122,21 @@ test("a change is counted by its word, a choice that changes nothing is not, and
   await control.set({ theme: "light" });
   await control.set({ theme: "light" });
   await control.set({ language: "en-US" });
+  await control.set({ promptSuggestions: false });
+  await control.set({ promptSuggestions: "no" });
+  await control.set({ promptSuggestions: true });
   expect(events).toEqual([
     ["theme_changed", { theme: "light" }],
     ["language_changed", { language: "en-US" }],
+    ["prompt_suggestions_toggled", { enabled: false }],
+    ["prompt_suggestions_toggled", { enabled: true }],
   ]);
   fail = true;
   expect(control.set({ theme: "dark" })).rejects.toThrow("disk full");
   await Promise.resolve();
   expect(control.state()).toMatchObject({ theme: "light", language: "en-US" });
   expect(applied).toEqual(["system", "light"]);
-  expect(events).toHaveLength(2);
+  expect(events).toHaveLength(4);
 });
 
 test("two changes made at once both hold: the second starts from what the first came to", async () => {
@@ -133,7 +158,7 @@ test("two changes made at once both hold: the second starts from what the first 
     control.set({ language: "zh-CN" }),
   ]);
   expect(second).toMatchObject({ theme: "dark", language: "zh-CN" });
-  expect(await kept.load()).toEqual({ theme: "dark", language: "zh-CN" });
+  expect(await kept.load()).toEqual({ theme: "dark", language: "zh-CN", promptSuggestions: true });
   // A change that could not be kept does not stop the one after it.
   expect(applied).toEqual(["system", "dark"]);
 });

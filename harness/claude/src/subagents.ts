@@ -1,4 +1,5 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import { type LedgerEntry, TaskLedger } from "./task-ledger.ts";
 
 /** In a `subagent_update`'s `_meta`: what the SDK says of the task beyond what ACP has a field for (decision 0014). */
 export const SUBAGENT_META = "cycle/subagent";
@@ -24,6 +25,8 @@ type Task = {
 /** Tools the SDK uses inside a sub-agent that are not the agent's own work. */
 const INTERNAL_TOOLS: ReadonlySet<string> = new Set(["SubagentHandback"]);
 
+type Known = LedgerEntry & { toolCallId: string | undefined; background: boolean };
+
 type Ended = { stopReason: "end_turn" | "cancelled" } | { stopReason: "error"; error: unknown };
 
 /** How a task's end is told as a state: ACP's idle, with the reason it stopped. */
@@ -45,16 +48,8 @@ const endOf = (status: string | undefined, why: string | undefined): Ended | und
  * not a sub-agent and is left out. Progress is only for a task that was announced.
  */
 export class Subagents {
-  /** The tool call each announced task came from: later messages do not always say. */
-  readonly #known = new Map<
-    string,
-    {
-      toolCallId: string | undefined;
-      run: string | undefined;
-      background: boolean;
-      unknown: boolean;
-    }
-  >();
+  /** The tool call each announced task came from: later messages do not always say. Only a background one is listed. */
+  readonly #known = new TaskLedger<Known>((task) => task.background);
 
   /**
    * The task each Agent call began, kept after the task ends: a sub-agent's last messages can come after its end is
@@ -80,37 +75,28 @@ export class Subagents {
   }
 
   get hasBackground(): boolean {
-    return [...this.#known.values()].some((task) => task.background && !task.unknown);
+    return this.#known.some((task) => task.background);
   }
 
   /** The SDK sends a replacement list, even between prompts. Absence gives no stop reason. */
   reconcile(tasks: readonly Task[]): SessionUpdate[] {
-    const live = new Set<string>();
-    const updates: SessionUpdate[] = [];
-    for (const task of tasks) {
-      if (task.task_type !== "local_agent" || task.ambient) continue;
-      live.add(task.task_id);
-      const known = this.#known.get(task.task_id);
-      if (known?.run && task.run_id && task.run_id < known.run) continue;
-      if (known?.background && !known.unknown && (!task.run_id || known.run === task.run_id))
-        continue;
-      const update = this.update({ ...task, subtype: "task_started", is_backgrounded: true });
-      if (update) updates.push(update);
-    }
-    for (const [id, known] of this.#known) {
-      if (!known.background || known.unknown || live.has(id)) continue;
-      known.unknown = true;
-      updates.push(this.#make({ task_id: id }, undefined, undefined, "unknown"));
-    }
-    return updates;
+    return this.#known.reconcile(
+      tasks,
+      (task): task is Task =>
+        typeof task.task_id === "string" &&
+        (task as Task).task_type === "local_agent" &&
+        !(task as Task).ambient,
+      (task) => this.update({ ...task, subtype: "task_started", is_backgrounded: true }),
+      (id) => this.#make({ task_id: id }, undefined, undefined, "unknown"),
+    );
   }
 
   update(message: { subtype: string } & Record<string, unknown>): SessionUpdate | undefined {
     const task = message as unknown as Task;
     if (typeof task.task_id !== "string") return undefined;
-    const known = this.#known.get(task.task_id);
-    if (known?.run && task.run_id && task.run_id < known.run) return undefined;
+    if (this.#known.stale(task.task_id, task.run_id)) return undefined;
     if (message.subtype === "task_started") {
+      const known = this.#known.get(task.task_id);
       const agent = task.task_type === undefined || task.task_type === "local_agent";
       if (!agent || task.ambient === true || task.skip_transcript === true) return undefined;
       const previous = !task.run_id || !known?.run || known.run === task.run_id ? known : undefined;
@@ -129,7 +115,8 @@ export class Subagents {
         capabilities: { cancel: {} },
       } as SessionUpdate;
     }
-    if (!known || (known.run && task.run_id && known.run !== task.run_id)) return undefined;
+    const known = this.#known.ofRun(task.task_id, task.run_id);
+    if (known === undefined) return undefined;
     if (message.subtype === "task_progress") {
       const wasUnknown = known.unknown;
       known.unknown = false;
@@ -178,11 +165,9 @@ export class Subagents {
 
   /** The process is gone: the sub-agents that were running are over. */
   endAll(): SessionUpdate[] {
-    const updates = [...this.#known.entries()]
-      .filter(([, task]) => !task.unknown)
-      .map(([id]) => this.#make({ task_id: id }, { state: "idle", stopReason: "cancelled" }));
-    this.#known.clear();
-    return updates;
+    return this.#known
+      .endAll()
+      .map((id) => this.#make({ task_id: id }, { state: "idle", stopReason: "cancelled" }));
   }
 
   #make(task: Task, state: object | undefined, title?: string, status?: "unknown"): SessionUpdate {
