@@ -91,7 +91,11 @@ export function BlankConversationView({
   notices?: ReactNode;
   onSent: () => void;
   /** Navigates directly to Settings → Harness for this location & agent when `agentSetup` is supported. */
-  onOpenHarnessSettings?: (locationId: string, agentId: string) => void;
+  onOpenHarnessSettings?: (
+    locationId: string,
+    agentId: string,
+    section?: "harness" | "subscriptions",
+  ) => void;
 }) {
   const { t, list } = useI18n();
   const store = useAppStore();
@@ -550,8 +554,8 @@ export function BlankConversationView({
           secondaryAction={
             canOpenSettings
               ? {
-                  label: t("settings.harness.open", { agent: agentName }),
-                  onAction: () => onOpenHarnessSettings(blank.locationId, agentId),
+                  label: t("settings.subscriptions.open"),
+                  onAction: () => onOpenHarnessSettings(blank.locationId, agentId, "subscriptions"),
                 }
               : undefined
           }

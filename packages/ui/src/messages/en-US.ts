@@ -849,10 +849,9 @@ export const enUS = {
   "attention.finished": "Waiting for your next message",
   "attention.stopped": "The agent stopped unexpectedly",
 
-  // Model providers (CYC-300): the owner's own models for Codex, on the Codex page of Settings.
-  "providers.title": "Model providers",
+  // Model providers (CYC-300): the owner's own models for Codex, on the API keys page of Settings.
   "providers.lead":
-    "Run Codex on models from your own account. Keys are kept on {location} and never shown again.",
+    "Models from your own accounts, for Codex sessions. Keys are kept on {location} and never shown again.",
   "providers.loading": "Reading providers…",
   "providers.unreadable": "The providers could not be read.",
   "providers.retry": "Try again",
@@ -1010,6 +1009,12 @@ export const enUS = {
   "settings.section.shortcuts": "Keyboard shortcuts",
   "settings.section.harness": "Harness",
   "settings.harness.group": "Harness",
+  "settings.providers.group": "Model providers",
+  "settings.section.subscriptions": "Subscriptions",
+  "settings.section.apiKeys": "API keys",
+  "settings.section.team": "Team",
+  "settings.section.soon": "Soon",
+  "settings.subscriptions.open": "Open subscriptions",
   "settings.harness.open": "Open {agent} settings",
   "settings.harness.loading": "Checking {agent} status…",
   "settings.harness.loadFailed": "Could not read {agent} settings",
@@ -1022,7 +1027,6 @@ export const enUS = {
     "{agent} {version} on {location} is older than the required {minVersion}.",
   "settings.harness.unavailable.probeFailed": "{agent} on {location} could not be checked.",
   "settings.harness.unavailable.notListed": "{agent} is not enabled on {location}.",
-  "settings.harness.account.title": "Account & usage",
   "settings.harness.account.refresh": "Refresh",
   "settings.harness.account.refreshing": "Refreshing…",
   "settings.harness.account.signedIn": "Signed in",

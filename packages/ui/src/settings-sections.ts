@@ -6,6 +6,8 @@ export const SETTINGS_SECTIONS = [
   "locations",
   "environments",
   "shortcuts",
+  "subscriptions",
+  "api_keys",
   "harness",
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];

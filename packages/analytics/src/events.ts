@@ -39,6 +39,8 @@ const settingsSection = z.enum([
   "locations",
   "environments",
   "shortcuts",
+  "subscriptions",
+  "api_keys",
   "harness",
 ]);
 /** The sections of the Connectors page (CYCL-82): fixed words, as `CONNECTORS_SECTIONS` of @cycle/ui lists them. */

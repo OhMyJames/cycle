@@ -43,6 +43,9 @@ test("Settings is a page over the sessions: its button opens it, Escape goes bac
     "Work in",
     "Environments",
     "Keyboard shortcuts",
+    "Subscriptions",
+    "API keys",
+    "Team",
     "Claude",
     "Codex",
     "Antigravity",
@@ -297,7 +300,7 @@ test("leaving Settings for a new session leaves the keyboard with the new sessio
   expect(document.activeElement).not.toBe(await accountMenu());
 });
 
-test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, and local reveal vs remote copy", async () => {
+test("Harness tab shows read-only Host diagnostics, local reveal and the stale notice; Subscriptions shows each account, its usage, refresh and the sign-in command", async () => {
   const script = fakeBridge({
     connected: true,
     locations: [far],
@@ -380,40 +383,56 @@ test("Harness tab shows Account & Usage, read-only Host diagnostics, refresh, an
   await openSettings(user);
   await user.click(await screen.findByRole("tab", { name: "Claude" }));
 
-  // Account & Usage + PlanUsageBars + viaEnv variable name (never a secret value).
-  expect(await screen.findByText("dev@example.com")).toBeTruthy();
-  expect(screen.getByText(/Overridden by ANTHROPIC_API_KEY/)).toBeTruthy();
-  expect(screen.getByText("5-hour limit")).toBeTruthy();
+  // The account is not on the agent's page: it is on Subscriptions.
+  expect(await screen.findByText("HTTPS_PROXY, PATH")).toBeTruthy();
+  expect(screen.queryByText("dev@example.com")).toBeNull();
 
   // Read-only host diagnostics + local "Show in file manager".
-  expect(screen.getByText("HTTPS_PROXY, PATH")).toBeTruthy();
   expect(screen.getByText("ANTHROPIC_API_KEY")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Show in file manager" }));
   await waitFor(() =>
     expect(script.named("revealDaemonConfig")).toEqual([["revealDaemonConfig", "local"]]),
   );
 
+  // Switch to the remote location: the stale notice and the path to copy.
+  await user.click(screen.getByRole("combobox", { name: "Work in" }));
+  await user.click(await screen.findByRole("option", { name: "Build box" }));
+  expect(await screen.findByText("config.json changed since daemon startup")).toBeTruthy();
+
+  // Subscriptions, on the same remote location: signed out, with the command to copy.
+  await user.click(screen.getByRole("tab", { name: "Subscriptions" }));
+  expect((await screen.findAllByText("Not signed in")).length).toBe(2);
+  await user.click(
+    screen.getAllByRole("button", { name: "Copy sign-in command" })[0] as HTMLElement,
+  );
+  await waitFor(() =>
+    expect(tracked(script.calls)).toContainEqual([
+      "agent_setup_command_copied",
+      { agent: "claude", kind: "login" },
+    ]),
+  );
+
+  // Back on the local location: the account, what overrides it (the variable's name, never a value) and the usage.
+  await user.click(
+    within(
+      screen
+        .getAllByRole("tabpanel")
+        .find((p) => p.id.endsWith("panel-subscriptions")) as HTMLElement,
+    ).getByRole("combobox", { name: "Work in" }),
+  );
+  await user.click(await screen.findByRole("option", { name: "Local" }));
+  expect((await screen.findAllByText("dev@example.com")).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Overridden by ANTHROPIC_API_KEY/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText("5-hour limit").length).toBeGreaterThan(0);
+
   // Refresh bypasses cache and requests usage.
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await user.click(screen.getAllByRole("button", { name: "Refresh" })[0] as HTMLElement);
   await waitFor(() =>
     expect(script.named("readAgentSetup").at(-1)).toEqual([
       "readAgentSetup",
       "local",
       "claude",
       { forceRefresh: true, refreshUsage: true },
-    ]),
-  );
-
-  // Switch to remote location: shows signed out + copyable command + stale notice + Copy path.
-  await user.click(screen.getByRole("combobox", { name: "Work in" }));
-  await user.click(await screen.findByRole("option", { name: "Build box" }));
-  expect(await screen.findByText("Not signed in")).toBeTruthy();
-  expect(screen.getByText("config.json changed since daemon startup")).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Copy sign-in command" }));
-  await waitFor(() =>
-    expect(tracked(script.calls)).toContainEqual([
-      "agent_setup_command_copied",
-      { agent: "claude", kind: "login" },
     ]),
   );
   expect(tracked(script.calls)).toContainEqual([
@@ -781,7 +800,7 @@ test("Harness sign-in dialog displays verified host without auto-opening browser
   await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Claude" }));
+  await user.click(await screen.findByRole("tab", { name: "Subscriptions" }));
 
   // 1. Click Sign in -> dialog shows verified host & fallback command; openAgentAuthUrl NOT called until user clicks.
   await user.click(await screen.findByRole("button", { name: "Sign in" }));
@@ -917,7 +936,7 @@ test("Codex sign-in supports browser waiting flow locally and device_code userCo
   await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Codex" }));
+  await user.click(await screen.findByRole("tab", { name: "Subscriptions" }));
 
   // Local: browser mode shows verified host + waiting status, no auto-open.
   await user.click(await screen.findByRole("button", { name: "Sign in" }));
@@ -944,4 +963,25 @@ test("Codex sign-in supports browser waiting flow locally and device_code userCo
       ["openAgentAuthUrl", "far", "codex-remote-1"],
     ]),
   );
+});
+
+test("Model providers is a group of three: Subscriptions, API keys, and Team that is listed but cannot be chosen", async () => {
+  const { user } = await mount();
+  await openSettings(user);
+  const sections = await screen.findByRole("tablist", { name: "Settings sections" });
+  const team = within(sections).getByRole("tab", { name: /Team/ }) as HTMLButtonElement;
+  expect(team.textContent).toContain("Soon");
+  expect(team.hasAttribute("data-disabled")).toBe(true);
+  await user.click(within(sections).getByRole("tab", { name: "Subscriptions" }));
+  expect(await screen.findByRole("heading", { name: "Subscriptions", level: 2 })).toBeTruthy();
+  expect(team.getAttribute("aria-disabled")).toBe("true");
+  // No tab points at a panel that is not there.
+  const controls = team.getAttribute("aria-controls");
+  expect(controls === null || document.getElementById(controls) !== null).toBe(true);
+  // The arrows can reach it, as the tabs pattern asks, and it still does not open.
+  await user.click(within(sections).getByRole("tab", { name: "API keys" }));
+  await user.keyboard("{ArrowDown}");
+  expect(document.activeElement).toBe(team);
+  expect(screen.queryByRole("heading", { name: "Team", level: 2 })).toBeNull();
+  expect(screen.getByRole("heading", { name: "API keys", level: 2 })).toBeTruthy();
 });

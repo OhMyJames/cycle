@@ -198,6 +198,30 @@ body {
   outline-offset: -1.5px;
 }
 
+/* A section that is not there yet: listed so it is known to come, and out of the way of the keys. */
+[data-kind="page"] [data-slot="tabs-tab"][data-disabled] {
+  color: var(--ui-muted-foreground);
+  cursor: default;
+}
+
+[data-kind="page"] [data-slot="tabs-tab"][data-disabled]:hover {
+  background: transparent;
+}
+
+[data-slot="page-nav-label"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-slot="page-nav-note"] {
+  margin-inline-start: auto;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: var(--cycle-weight);
+  color: var(--ui-muted-foreground);
+}
+
 [data-slot="page-nav-group"] {
   margin-top: 0.875rem;
   padding: 0 0.5rem 0.25rem;
