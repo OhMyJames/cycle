@@ -83,6 +83,7 @@ import {
   trustPath,
 } from "./data-dir.ts";
 import { AgentDefaults } from "./defaults-file.ts";
+import { sessionVariables } from "./environment.ts";
 import {
   INTERNAL_ERROR,
   INVALID_PARAMS,
@@ -704,20 +705,25 @@ export class Daemon {
     // or exits at once): the end is noted, and acted on once there is a link to act on.
     let connected: AgentLink | undefined;
     let endedEarly = false;
-    const link = await AgentLink.connect(definition, {
-      update: (update, sessionId) => {
-        // A sub-agent it announced speaks under its own id (ACP v2): that is the sub-agent's conversation. Any other id
-        // is taken as the session's own, as before the agent named one.
-        if (session.isChild(sessionId)) this.#onChildUpdate(session, sessionId, update);
-        else this.#onUpdate(session, update);
+    const link = await AgentLink.connect(
+      definition,
+      {
+        update: (update, sessionId) => {
+          // A sub-agent it announced speaks under its own id (ACP v2): that is the sub-agent's conversation. Any other id
+          // is taken as the session's own, as before the agent named one.
+          if (session.isChild(sessionId)) this.#onChildUpdate(session, sessionId, update);
+          else this.#onUpdate(session, update);
+        },
+        permission: (params, signal) => this.#onPermission(session, params, signal),
+        elicitation: (params, signal) => this.#onElicitation(session, params, signal),
+        closed: () => {
+          if (connected === undefined) endedEarly = true;
+          else this.#onAgentClosed(session, connected);
+        },
       },
-      permission: (params, signal) => this.#onPermission(session, params, signal),
-      elicitation: (params, signal) => this.#onElicitation(session, params, signal),
-      closed: () => {
-        if (connected === undefined) endedEarly = true;
-        else this.#onAgentClosed(session, connected);
-      },
-    });
+      // Its environment's variables, for the commands it runs (docs/protocol.md §6 "环境").
+      { sessionId: session.id, sessionEnv: sessionVariables(session.entry) },
+    );
     connected = link;
     session.link = link;
     if (endedEarly) this.#onAgentClosed(session, link);

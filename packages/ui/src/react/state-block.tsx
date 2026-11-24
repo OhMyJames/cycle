@@ -1,5 +1,5 @@
 // What a page, a panel or a list shows instead of its content (CYCL-67): nothing yet, loading, failed, or the
-// environment is away. One block, so every place says it the same way: an icon only where it carries meaning, one line
+// location is away. One block, so every place says it the same way: an icon only where it carries meaning, one line
 // of what happened, a line of what to do, the system's own words in monospace (selectable, never retyped into prose),
 // and at most one action. An empty or failed state always offers a way on (DESIGN.md §4.6).
 import { Button } from "@ui-sdk/react/button";
@@ -44,7 +44,7 @@ export function StateBlock({
       data-tone={tone}
       data-size={size}
       data-align={align}
-      // A failure is said at once; loading and an away environment are said when the reader gets to them.
+      // A failure is said at once; loading and an away location are said when the reader gets to them.
       role={tone === "error" ? "alert" : tone === "empty" ? undefined : "status"}
       aria-busy={tone === "loading" || undefined}
     >

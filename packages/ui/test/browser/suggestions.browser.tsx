@@ -45,7 +45,7 @@ const open = async (updates: SessionUpdate[], preferences: Partial<Preferences> 
   const emit = (update: SessionUpdate) => {
     version += 1;
     return act(() =>
-      script.emit({ type: "update", environmentId: "local", sessionId: "s1", update, version }),
+      script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version }),
     );
   };
   const tracked = () =>

@@ -15,13 +15,13 @@ const mount = async (trusted: boolean | null) => {
     capabilities: { queue: true, files: true, folders: true, trust: true },
   });
   const decided = new Map<string, boolean>();
-  script.bridge.readTrust = async (_environment, path) => {
-    script.calls.push(["readTrust", _environment, path]);
+  script.bridge.readTrust = async (_location, path) => {
+    script.calls.push(["readTrust", _location, path]);
     const value = decided.get(path) ?? trusted;
     return { path, trusted: value, from: value === null ? null : path };
   };
-  script.bridge.setTrust = async (_environment, path, value) => {
-    script.calls.push(["setTrust", _environment, path, value]);
+  script.bridge.setTrust = async (_location, path, value) => {
+    script.calls.push(["setTrust", _location, path, value]);
     decided.set(path, value);
     return { path, trusted: value, from: path };
   };

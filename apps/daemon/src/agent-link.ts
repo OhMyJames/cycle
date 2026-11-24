@@ -11,7 +11,7 @@ import {
   type SessionUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
-import type { AgentDefinition } from "./agents.ts";
+import type { AgentDefinition, LaunchContext } from "./agents.ts";
 
 export type LinkHandlers = {
   /**
@@ -56,8 +56,12 @@ export class AgentLink {
     this.#kill = kill;
   }
 
-  static async connect(definition: AgentDefinition, handlers: LinkHandlers): Promise<AgentLink> {
-    const launched = await definition.launch();
+  static async connect(
+    definition: AgentDefinition,
+    handlers: LinkHandlers,
+    context?: LaunchContext,
+  ): Promise<AgentLink> {
+    const launched = await definition.launch(context);
     const app = client({ name: "cycle" })
       .onNotification(methods.client.session.update, ({ params }) => {
         handlers.update(params.update, params.sessionId);

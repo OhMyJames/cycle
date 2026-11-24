@@ -18,14 +18,14 @@ export const KNOWN_AGENTS = ["claude", "codex", "agy", "pi"] as const;
 const agent = z.enum([...KNOWN_AGENTS, "other"]);
 /** An agent as the dictionary says it: one of ours by name, or "other". */
 export type AgentWord = z.infer<typeof agent>;
-const environment = z.enum(["local", "remote"]);
+const location = z.enum(["local", "remote"]);
 const size = z.enum(["short", "medium", "long"]);
 const panel = z.enum([
   "search",
   "new_session",
-  "add_environment",
-  "edit_environment",
-  "remove_environment",
+  "add_location",
+  "edit_location",
+  "remove_location",
   "settings",
   "session_settings",
   "delete",
@@ -33,7 +33,14 @@ const panel = z.enum([
   "connectors",
 ]);
 /** The sections of the settings page (CYCL-78, CYCL-226): fixed words, as `SETTINGS_SECTIONS` of @cycle/ui lists them. */
-const settingsSection = z.enum(["general", "appearance", "environments", "shortcuts", "harness"]);
+const settingsSection = z.enum([
+  "general",
+  "appearance",
+  "locations",
+  "environments",
+  "shortcuts",
+  "harness",
+]);
 /** The sections of the Connectors page (CYCL-82): fixed words, as `CONNECTORS_SECTIONS` of @cycle/ui lists them. */
 const connectorsSection = z.enum(["plugins", "mcp"]);
 /** The kinds of tab in the right panel (CYCL-90): a fixed word, never a tab's title or what it shows. */
@@ -67,7 +74,7 @@ const renameWhere = z.enum(["header", "sidebar", "other"]);
 export const EVENTS = {
   // ---- the app ----
   /** The app started. */
-  app_launched: o({ remote_environments: count, first_run: z.boolean() }),
+  app_launched: o({ remote_locations: count, first_run: z.boolean() }),
   /** The person turned usage statistics on or off. Sent last when turning off, first when turning on. */
   analytics_toggled: o({ enabled: z.boolean() }),
   /** The person asked to check for an update. */
@@ -97,29 +104,46 @@ export const EVENTS = {
   /** Someone signed in where an account had been before: whether it was someone else. */
   account_switched: o({ switched: z.boolean() }),
 
-  // ---- environments ----
-  environment_saved: o({ transport: z.enum(["ssh"]) }),
-  environment_removed: o({ kind: environment }),
+  // ---- locations ----
+  location_saved: o({ transport: z.enum(["ssh"]) }),
+  location_removed: o({ kind: location }),
   /**
-   * The person had the app update the daemon of a remote environment (not the hand-run command), and it worked or not.
+   * An environment (a reusable setup of scripts, variables and actions, docs/desktop.md "环境") was added or changed.
+   * Not `environment_saved`: older versions still send that name for saving a location. How many variables and actions, and
+   * whether it has setup and cleanup scripts: never a name, a value or a command.
+   */
+  environment_config_saved: o({
+    has_setup: z.boolean(),
+    has_cleanup: z.boolean(),
+    variables: count,
+    actions: count,
+  }),
+  /** An environment was removed. Not `environment_removed`: older versions still send that for removing a location. */
+  environment_config_removed: o({}),
+  /** The person chose a workspace's environment on the blank conversation. `none`: "No environment". */
+  environment_chosen: o({ none: z.boolean() }),
+  /** An action of a session's environment was run in a terminal from the session's header. Never which. */
+  environment_action_run: o({}),
+  /**
+   * The person had the app update the daemon of a remote location (not the hand-run command), and it worked or not.
    * `when`: nothing was working there (`idle`), or sessions were and the person chose to interrupt them (`now`) or to
    * have the old daemon stop once they finish (`later`).
    */
   daemon_upgraded: o({ ok: z.boolean(), when: z.enum(["idle", "now", "later"]) }),
-  /** An environment's connection changed: it is up, it dropped and is trying again, or it is closed. */
-  environment_connection: o({
-    kind: environment,
+  /** A location's connection changed: it is up, it dropped and is trying again, or it is closed. */
+  location_connection: o({
+    kind: location,
     state: z.enum(["connected", "reconnecting", "closed"]),
   }),
 
   // ---- sessions ----
   session_list_loaded: o({ pages: z.number().int().positive() }),
-  session_created: o({ agent, environment: environment, configured: z.boolean() }),
+  session_created: o({ agent, location: location, configured: z.boolean() }),
   /** Starting a session failed because the agent is not signed in (-32000). */
-  agent_auth_required: o({ agent, environment: environment }),
+  agent_auth_required: o({ agent, location: location }),
   /** The person copied an install or sign-in command shown for an unavailable or signed-out agent. */
   agent_setup_command_copied: o({ agent, kind: z.enum(["install", "login"]) }),
-  session_opened: o({ agent, environment: environment }),
+  session_opened: o({ agent, location: location }),
   /** Never the title. `where`: in the conversation's header or on a row of the sidebar. */
   session_renamed: o({ where: renameWhere }),
   queue_return_restored: o({}),
@@ -134,21 +158,21 @@ export const EVENTS = {
   session_config_changed: o({ setting: z.enum(["mode", "model", "effort", "other"]) }),
   agent_defaults_saved: o({ agent }),
   /** Hot-reloadable runtime settings saved for an agent (CYCL-232). Never sends setting keys or values. */
-  agent_runtime_settings_saved: o({ agent, environment: environment }),
+  agent_runtime_settings_saved: o({ agent, location: location }),
   /** In-app subscription sign-in started for an agent (CYCL-233). Never sends URLs, accounts, or codes. */
   agent_auth_started: o({
     agent,
-    environment: environment,
+    location: location,
     mode: z.enum(["browser", "code", "device_code"]),
   }),
   /** In-app subscription sign-in finished for an agent (CYCL-233). Never sends URLs, accounts, or error text. */
   agent_auth_completed: o({
     agent,
-    environment: environment,
+    location: location,
     result: z.enum(["ok", "failed", "cancelled", "disconnected"]),
   }),
   /** In-app sign-out completed for an agent (CYCL-233). */
-  agent_signed_out: o({ agent, environment: environment, ok: z.boolean() }),
+  agent_signed_out: o({ agent, location: location, ok: z.boolean() }),
   /** A session that was working changed to something the person is told of: it finished, it needs them, or it stopped. */
   session_attention: o({ kind: z.enum(["finished", "needs-you", "stopped"]) }),
 
@@ -181,7 +205,7 @@ export const EVENTS = {
   // ---- the conversation ----
   prompt_sent: o({
     agent,
-    environment: environment,
+    location: location,
     size,
     images: count,
     /** Files embedded in it (text files, PDFs): how many, never which. */
@@ -209,10 +233,10 @@ export const EVENTS = {
   sidebar_toggled: o({ open: z.boolean(), via: z.enum(["click", "shortcut"]) }),
   /** Another section of the settings page was chosen (opening the page is `panel_opened` with `settings`). */
   settings_section_shown: o({ section: settingsSection }),
-  /** One Harness settings sub-page was shown (CYCL-229). Never the environment name, account, or paths. */
+  /** One Harness settings sub-page was shown (CYCL-229). Never the location name, account, or paths. */
   harness_settings_shown: o({
     agent,
-    environment: environment,
+    location: location,
     from: z.enum(["settings", "blank", "other"]),
   }),
   /** Another section of the Connectors page was shown. Opening the page is `panel_opened` with `connectors`. */
@@ -246,7 +270,7 @@ export const EVENTS = {
    * A terminal was opened beside a session (CYCL-98): from the header's Terminal button, or the panel's "New terminal".
    * `count`: how many the session has now. Never the shell, the folder, or anything typed or shown in it.
    */
-  terminal_opened: o({ via: z.enum(["header", "tab_strip"]), count: terminalCount }),
+  terminal_opened: o({ via: z.enum(["header", "tab_strip", "action"]), count: terminalCount }),
   /**
    * A terminal's tab was closed. `state`: its shell was still running (and was ended), had exited, or had already ended
    * with the daemon. `count`: how many the session has left.
@@ -354,9 +378,9 @@ export const EVENTS = {
    * the daemon's folder browser, or by typing its path. Never which folder.
    */
   blank_folder_chosen: o({ via: z.enum(["recent", "browse", "typed"]) }),
-  /** "Connect again" was pressed on a blank page whose environment was not connected. */
+  /** "Connect again" was pressed on a blank page whose location was not connected. */
   blank_connect_pressed: o({}),
-  /** "Connect again" was pressed on the line under an open session's title, its environment not connected. */
+  /** "Connect again" was pressed on the line under an open session's title, its location not connected. */
   session_connect_pressed: o({}),
   /** A blank page's first message went: how long the page was open before it, in four words. */
   blank_sent: o({ waited: z.enum(["under_10s", "under_1m", "under_5m", "longer"]) }),

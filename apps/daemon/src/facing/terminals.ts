@@ -10,6 +10,7 @@ import {
   terminalList,
   terminalResize,
 } from "@cycle/protocol";
+import { environmentOf, scriptFor, sessionVariables } from "../environment.ts";
 import { INVALID_PARAMS, RpcError } from "../errors.ts";
 import type { TerminalSink } from "../terminals.ts";
 import { type Core, cycleOn, type Me } from "./core.ts";
@@ -27,7 +28,26 @@ export const registerTerminals = (app: AgentApp, core: Core, me: Me): void => {
         sessionId: params.sessionId,
         reason: "archived",
       });
-    return core.terminals.create(params.sessionId, cwd, params.cols, params.rows, sink());
+    const entry = core.index.get(params.sessionId);
+    let command: { title: string; script: string } | undefined;
+    if (params.actionId !== undefined) {
+      // Only an action the session was made with: a client cannot have any command run this way.
+      const action = (entry !== undefined ? environmentOf(entry) : undefined)?.actions.find(
+        (a) => a.id === params.actionId,
+      );
+      const script = scriptFor(action?.command);
+      if (action === undefined || script === undefined)
+        throw new RpcError(INVALID_PARAMS, "The session's environment has no such action", {
+          sessionId: params.sessionId,
+          actionId: params.actionId,
+          reason: "unknown_action",
+        });
+      command = { title: action.name, script };
+    }
+    return core.terminals.create(params.sessionId, cwd, params.cols, params.rows, sink(), {
+      env: sessionVariables(entry),
+      ...(command !== undefined ? { command } : {}),
+    });
   });
   cycle(terminalList, (params) => {
     core.cwdOf(params.sessionId);

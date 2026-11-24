@@ -1,5 +1,5 @@
 // The values a plugin's server leaves to the person (docs/protocol.md §14 `requires`): a key the plugin's headers name
-// and nobody but the person has. They go to the environment's daemon and are never read back, so a field shows only
+// and nobody but the person has. They go to the location's daemon and are never read back, so a field shows only
 // whether it has one.
 import { Button } from "@ui-sdk/react/button";
 import {
@@ -12,16 +12,16 @@ import {
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { useState } from "react";
-import type { ConnectorInfo, ConnectorProblem, EnvironmentConfig } from "../api.ts";
+import type { ConnectorInfo, ConnectorProblem, LocationConfig } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { useAppStore } from "./store-context.tsx";
 
 export function ConnectorValuesDialog({
-  environment,
+  location,
   connector,
   onDone,
 }: {
-  environment: EnvironmentConfig;
+  location: LocationConfig;
   connector: ConnectorInfo;
   onDone: () => void;
 }) {
@@ -42,7 +42,7 @@ export function ConnectorValuesDialog({
     setBusy(true);
     setProblem(undefined);
     try {
-      const answer = await store.updateConnector(environment.id, connector.id, {
+      const answer = await store.updateConnector(location.id, connector.id, {
         secrets: { env: written },
       });
       if ("connector" in answer) onDone();
@@ -64,7 +64,7 @@ export function ConnectorValuesDialog({
             void save();
           }}
         >
-          <p data-slot="hint">{t("connectors.values.hint", { environment: environment.name })}</p>
+          <p data-slot="hint">{t("connectors.values.hint", { location: location.name })}</p>
           {names.map((name, at) => (
             <Field key={name} name={name}>
               <FieldLabel>
@@ -88,7 +88,7 @@ export function ConnectorValuesDialog({
           {problem !== undefined ? (
             <p data-slot="hint" role="alert">
               {t(`connectors.problem.${problem.problem}`, {
-                environment: environment.name,
+                location: location.name,
                 reason: problem.message ?? "",
               })}
             </p>

@@ -6,7 +6,7 @@ const row = (
   state: SessionSummary["state"],
   over: Partial<SessionSummary> = {},
 ): SessionSummary => ({
-  environmentId: "local",
+  locationId: "local",
   sessionId: "s",
   cwd: "/work",
   archived: false,

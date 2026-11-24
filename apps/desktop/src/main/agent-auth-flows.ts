@@ -49,16 +49,16 @@ export class AgentAuthFlows {
   readonly #runtime: Runtime;
   /** The local daemon's `config.json` path last reported by `readAgentSetup`, for `revealDaemonConfig`. */
   readonly #localConfigPath = new Map<string, string>();
-  /** Latest daemon-declared `signInModes` per `${environmentId}:${agent}`, for transport-aware mode selection. */
+  /** Latest daemon-declared `signInModes` per `${locationId}:${agent}`, for transport-aware mode selection. */
   readonly #signInModes = new Map<string, AgentSignInMode[]>();
-  /** Active in-app agent auth flows initiated by this desktop instance (keyed by `${environmentId}:${flowId}`). */
+  /** Active in-app agent auth flows initiated by this desktop instance (keyed by `${locationId}:${flowId}`). */
   readonly #activeAuthFlows = new Map<
     string,
-    { environmentId: string; agent: string; flowId: string; url?: string; host?: string }
+    { locationId: string; agent: string; flowId: string; url?: string; host?: string }
   >();
   /** Flow IDs cancelled by desktop itself due to untrusted URL, so the daemon's cancel notification isn't double-counted. */
   readonly #rejectedAuthFlows = new Set<string>();
-  /** In-flight `startAgentAuth` calls per environment, so an immediate completion arriving in the same chunk isn't lost. */
+  /** In-flight `startAgentAuth` calls per location, so an immediate completion arriving in the same chunk isn't lost. */
   readonly #startingAuthCount = new Map<string, number>();
   readonly #earlyAuthCompleted = new Map<
     string,
@@ -70,12 +70,12 @@ export class AgentAuthFlows {
   }
 
   /** A daemon said a flow it started for this connection ended (`_cycle/agent_auth_completed`). */
-  completed(environmentId: string, completed: AgentAuthCompleted): void {
-    const flowKey = `${environmentId}:${completed.flowId}`;
+  completed(locationId: string, completed: AgentAuthCompleted): void {
+    const flowKey = `${locationId}:${completed.flowId}`;
     if (this.#rejectedAuthFlows.delete(flowKey)) return;
     if (!this.#activeAuthFlows.delete(flowKey)) {
       // If startAgentAuth is currently awaiting the daemon response, stash once; otherwise drop duplicate/unsolicited notifications.
-      if ((this.#startingAuthCount.get(environmentId) ?? 0) > 0) {
+      if ((this.#startingAuthCount.get(locationId) ?? 0) > 0) {
         this.#earlyAuthCompleted.set(flowKey, {
           agent: completed.agent,
           ok: completed.ok,
@@ -85,7 +85,7 @@ export class AgentAuthFlows {
       return;
     }
     this.#emitAuthCompleted(
-      environmentId,
+      locationId,
       completed.flowId,
       completed.agent,
       completed.ok,
@@ -94,33 +94,33 @@ export class AgentAuthFlows {
   }
 
   async readAgentSetup(
-    environmentId: string,
+    locationId: string,
     agent: string,
     options?: { refreshUsage?: boolean; forceRefresh?: boolean },
   ): Promise<AgentSetupSnapshot> {
     const snapshot = await this.#runtime
-      .connection(environmentId)
+      .connection(locationId)
       .client.readAgentSetup(agent, options);
-    this.#signInModes.set(`${environmentId}:${agent}`, snapshot.auth.signInModes);
-    if (this.#runtime.kindOf(environmentId) === "local") {
-      this.#localConfigPath.set(environmentId, snapshot.environment.configFile.path);
+    this.#signInModes.set(`${locationId}:${agent}`, snapshot.auth.signInModes);
+    if (this.#runtime.kindOf(locationId) === "local") {
+      this.#localConfigPath.set(locationId, snapshot.environment.configFile.path);
     }
     return snapshot;
   }
 
   async setAgentRuntimeSettings(
-    environmentId: string,
+    locationId: string,
     agent: string,
     patch: Record<string, AgentRuntimePatchValue>,
     expectedRevision: number,
   ): Promise<AgentRuntimeSaveAnswer> {
     try {
       const result = await this.#runtime
-        .connection(environmentId)
+        .connection(locationId)
         .client.setAgentRuntimeSettings(agent, patch, expectedRevision);
       this.#runtime.track("agent_runtime_settings_saved", {
         agent: agentOf(agent),
-        environment: this.#runtime.kindOf(environmentId),
+        location: this.#runtime.kindOf(locationId),
       });
       return { saved: true, ...result };
     } catch (error) {
@@ -161,26 +161,26 @@ export class AgentAuthFlows {
     }
   }
 
-  async revealDaemonConfig(environmentId: string): Promise<boolean> {
+  async revealDaemonConfig(locationId: string): Promise<boolean> {
     if (
-      this.#runtime.kindOf(environmentId) !== "local" ||
+      this.#runtime.kindOf(locationId) !== "local" ||
       this.#runtime.options.revealPath === undefined
     ) {
       return false;
     }
-    const path = this.#localConfigPath.get(environmentId);
+    const path = this.#localConfigPath.get(locationId);
     if (path === undefined) return false;
     this.#runtime.options.revealPath(path);
     return true;
   }
 
-  async startAgentAuth(environmentId: string, agent: string): Promise<AgentAuthStartAnswer> {
-    const envKind = this.#runtime.kindOf(environmentId);
-    const cacheKey = `${environmentId}:${agent}`;
+  async startAgentAuth(locationId: string, agent: string): Promise<AgentAuthStartAnswer> {
+    const envKind = this.#runtime.kindOf(locationId);
+    const cacheKey = `${locationId}:${agent}`;
     let signInModes = this.#signInModes.get(cacheKey);
     if (signInModes === undefined) {
       try {
-        const snapshot = await this.readAgentSetup(environmentId, agent);
+        const snapshot = await this.readAgentSetup(locationId, agent);
         signInModes = snapshot.auth.signInModes;
       } catch (error) {
         return { started: false, reason: authProblemReasonOf(error) };
@@ -191,34 +191,31 @@ export class AgentAuthFlows {
 
     let client: CycleClient;
     try {
-      client = this.#runtime.connection(environmentId).client;
+      client = this.#runtime.connection(locationId).client;
     } catch {
       return { started: false, reason: "disconnected" };
     }
     let started: Awaited<ReturnType<typeof client.startAgentAuth>>;
-    this.#startingAuthCount.set(
-      environmentId,
-      (this.#startingAuthCount.get(environmentId) ?? 0) + 1,
-    );
+    this.#startingAuthCount.set(locationId, (this.#startingAuthCount.get(locationId) ?? 0) + 1);
     try {
       started = await client.startAgentAuth(agent, mode);
     } catch (error) {
-      this.#forgetUnclaimedCompletions(environmentId);
+      this.#forgetUnclaimedCompletions(locationId);
       return { started: false, reason: authProblemReasonOf(error) };
     } finally {
-      const remaining = (this.#startingAuthCount.get(environmentId) ?? 1) - 1;
-      if (remaining <= 0) this.#startingAuthCount.delete(environmentId);
-      else this.#startingAuthCount.set(environmentId, remaining);
+      const remaining = (this.#startingAuthCount.get(locationId) ?? 1) - 1;
+      if (remaining <= 0) this.#startingAuthCount.delete(locationId);
+      else this.#startingAuthCount.set(locationId, remaining);
     }
     // The daemon started a flow: counted before the URLs are judged, so a refused URL is a start that failed and the
     // funnel's completions never outnumber its starts.
     this.#runtime.track("agent_auth_started", {
       agent: agentOf(agent),
-      environment: envKind,
+      location: envKind,
       mode: started.mode,
     });
 
-    const flowKey = `${environmentId}:${started.flowId}`;
+    const flowKey = `${locationId}:${started.flowId}`;
     const rejectUntrusted = () => {
       this.#earlyAuthCompleted.delete(flowKey);
       this.#rejectedAuthFlows.add(flowKey);
@@ -227,10 +224,10 @@ export class AgentAuthFlows {
         if (oldest !== undefined) this.#rejectedAuthFlows.delete(oldest);
       }
       void client.cancelAgentAuth(started.flowId).catch(() => undefined);
-      this.#forgetUnclaimedCompletions(environmentId);
+      this.#forgetUnclaimedCompletions(locationId);
       this.#runtime.track("agent_auth_completed", {
         agent: agentOf(agent),
-        environment: envKind,
+        location: envKind,
         result: "failed",
       });
       return { started: false as const, reason: "untrusted_url" as const };
@@ -256,16 +253,16 @@ export class AgentAuthFlows {
     const early = this.#earlyAuthCompleted.get(flowKey);
     if (early !== undefined) {
       this.#earlyAuthCompleted.delete(flowKey);
-      this.#emitAuthCompleted(environmentId, started.flowId, early.agent, early.ok, early.reason);
+      this.#emitAuthCompleted(locationId, started.flowId, early.agent, early.ok, early.reason);
     } else {
       this.#activeAuthFlows.set(flowKey, {
-        environmentId,
+        locationId,
         agent,
         flowId: started.flowId,
         ...(primary !== undefined ? { url: primary.url, host: primary.host } : {}),
       });
     }
-    this.#forgetUnclaimedCompletions(environmentId);
+    this.#forgetUnclaimedCompletions(locationId);
     return {
       started: true,
       flowId: started.flowId,
@@ -277,8 +274,8 @@ export class AgentAuthFlows {
     };
   }
 
-  async openAgentAuthUrl(environmentId: string, flowId: string): Promise<boolean> {
-    const entry = this.#activeAuthFlows.get(`${environmentId}:${flowId}`);
+  async openAgentAuthUrl(locationId: string, flowId: string): Promise<boolean> {
+    const entry = this.#activeAuthFlows.get(`${locationId}:${flowId}`);
     if (entry?.url === undefined || this.#runtime.options.openBrowser === undefined) return false;
     // Re-verify allowlist on open (defense in depth).
     const check = validateAgentAuthUrl(entry.agent, entry.url);
@@ -288,41 +285,41 @@ export class AgentAuthFlows {
   }
 
   async submitAgentAuth(
-    environmentId: string,
+    locationId: string,
     flowId: string,
     code: string,
   ): Promise<AgentAuthSubmitAnswer> {
     try {
-      await this.#runtime.connection(environmentId).client.submitAgentAuth(flowId, code);
+      await this.#runtime.connection(locationId).client.submitAgentAuth(flowId, code);
       return { ok: true };
     } catch (error) {
       return { ok: false, reason: authProblemReasonOf(error) };
     }
   }
 
-  async cancelAgentAuth(environmentId: string, flowId: string): Promise<void> {
-    const key = `${environmentId}:${flowId}`;
+  async cancelAgentAuth(locationId: string, flowId: string): Promise<void> {
+    const key = `${locationId}:${flowId}`;
     try {
-      await this.#runtime.connection(environmentId).client.cancelAgentAuth(flowId);
+      await this.#runtime.connection(locationId).client.cancelAgentAuth(flowId);
     } catch {
       this.#activeAuthFlows.delete(key);
     }
   }
 
-  async logoutAgent(environmentId: string, agent: string): Promise<AgentAuthLogoutAnswer> {
-    const envKind = this.#runtime.kindOf(environmentId);
+  async logoutAgent(locationId: string, agent: string): Promise<AgentAuthLogoutAnswer> {
+    const envKind = this.#runtime.kindOf(locationId);
     try {
-      await this.#runtime.connection(environmentId).client.logoutAgent(agent);
+      await this.#runtime.connection(locationId).client.logoutAgent(agent);
       this.#runtime.track("agent_signed_out", {
         agent: agentOf(agent),
-        environment: envKind,
+        location: envKind,
         ok: true,
       });
       return { ok: true };
     } catch (error) {
       this.#runtime.track("agent_signed_out", {
         agent: agentOf(agent),
-        environment: envKind,
+        location: envKind,
         ok: false,
       });
       return { ok: false, reason: authProblemReasonOf(error) };
@@ -330,7 +327,7 @@ export class AgentAuthFlows {
   }
 
   #emitAuthCompleted(
-    environmentId: string,
+    locationId: string,
     flowId: string,
     agent: string,
     ok: boolean,
@@ -343,12 +340,12 @@ export class AgentAuthFlows {
         : "failed";
     this.#runtime.track("agent_auth_completed", {
       agent: agentOf(agent),
-      environment: this.#runtime.kindOf(environmentId),
+      location: this.#runtime.kindOf(locationId),
       result,
     });
     this.#runtime.options.emit({
       type: "agent-auth-completed",
-      environmentId,
+      locationId,
       flowId,
       agent,
       ok,
@@ -357,22 +354,22 @@ export class AgentAuthFlows {
   }
 
   /**
-   * A completion is kept aside only while a start on its environment awaits the daemon's answer (it may come first, in
+   * A completion is kept aside only while a start on its location awaits the daemon's answer (it may come first, in
    * the same chunk). Once no start is waiting there, what nobody claimed was not ours: dropped, so it cannot pile up.
    */
-  #forgetUnclaimedCompletions(environmentId: string): void {
-    if ((this.#startingAuthCount.get(environmentId) ?? 0) > 0) return;
-    const prefix = `${environmentId}:`;
+  #forgetUnclaimedCompletions(locationId: string): void {
+    if ((this.#startingAuthCount.get(locationId) ?? 0) > 0) return;
+    const prefix = `${locationId}:`;
     for (const key of [...this.#earlyAuthCompleted.keys()]) {
       if (key.startsWith(prefix)) this.#earlyAuthCompleted.delete(key);
     }
   }
 
-  /** The environment's connection went (dropped, or closed here): its flows end, as disconnected. */
-  lost(environmentId: string): void {
-    const envKind = this.#runtime.kindOf(environmentId);
-    const prefix = `${environmentId}:`;
-    this.#localConfigPath.delete(environmentId);
+  /** The location's connection went (dropped, or closed here): its flows end, as disconnected. */
+  lost(locationId: string): void {
+    const envKind = this.#runtime.kindOf(locationId);
+    const prefix = `${locationId}:`;
+    this.#localConfigPath.delete(locationId);
     for (const key of [...this.#signInModes.keys()]) {
       if (key.startsWith(prefix)) this.#signInModes.delete(key);
     }
@@ -383,16 +380,16 @@ export class AgentAuthFlows {
       if (key.startsWith(prefix)) this.#earlyAuthCompleted.delete(key);
     }
     for (const [key, entry] of [...this.#activeAuthFlows.entries()]) {
-      if (entry.environmentId !== environmentId) continue;
+      if (entry.locationId !== locationId) continue;
       this.#activeAuthFlows.delete(key);
       this.#runtime.track("agent_auth_completed", {
         agent: agentOf(entry.agent),
-        environment: envKind,
+        location: envKind,
         result: "disconnected",
       });
       this.#runtime.options.emit({
         type: "agent-auth-completed",
-        environmentId,
+        locationId,
         flowId: entry.flowId,
         agent: entry.agent,
         ok: false,

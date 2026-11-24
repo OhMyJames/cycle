@@ -44,8 +44,8 @@ export const browseFolders = async (user: User) => {
   await user.click(within(menu).getByRole("menuitem", { name: "Browse…" }));
 };
 
-/** Moves the blank conversation to another environment, from the same menu the folder is chosen in. */
-export const chooseEnvironment = async (user: User, name: string) => {
+/** Moves the blank conversation to another location, from the same menu the folder is chosen in. */
+export const chooseLocation = async (user: User, name: string) => {
   const menu = await openFolders(user);
   await user.click(within(menu).getByRole("menuitem", { name }));
 };

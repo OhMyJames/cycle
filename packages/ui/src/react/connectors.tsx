@@ -1,5 +1,5 @@
-// The Connectors page (CYCL-82): what an environment's daemon keeps for every agent, in one page that takes the window
-// in place of the sessions, as Settings does. Its sections share one choice, made at the top of each: which environment.
+// The Connectors page (CYCL-82): what a location's daemon keeps for every agent, in one page that takes the window
+// in place of the sessions, as Settings does. Its sections share one choice, made at the top of each: which location.
 import { Button } from "@ui-sdk/react/button";
 import {
   Dialog,
@@ -31,8 +31,8 @@ import type {
   ConnectorInfo,
   ConnectorProblem,
   ConnectorSecrets,
-  EnvironmentConfig,
-  EnvironmentStatus,
+  LocationConfig,
+  LocationStatus,
 } from "../api.ts";
 import { CONNECTORS_SECTIONS, type ConnectorsSection } from "../connectors-sections.ts";
 import { ConnectorValuesDialog } from "./connector-values.tsx";
@@ -54,17 +54,17 @@ type Answer = { connector: ConnectorInfo } | Problem | { cancelled: true };
 type Pending = Promise<Answer>;
 type Act = () => Pending;
 
-/** What a daemon says it can do (docs/protocol.md §3): what a section asks of the environment it is shown for. */
-type Capabilities = EnvironmentStatus["capabilities"];
+/** What a daemon says it can do (docs/protocol.md §3): what a section asks of the location it is shown for. */
+type Capabilities = LocationStatus["capabilities"];
 
-/** What every section of the page is given: the environment chosen at the top, whose daemon can do what it needs. */
+/** What every section of the page is given: the location chosen at the top, whose daemon can do what it needs. */
 export type ConnectorsSectionProps = {
   /** Connected, and its daemon declares the section's capability. The section is made again for another one. */
-  environment: EnvironmentConfig;
+  location: LocationConfig;
 };
 
 /**
- * Each section: what the environment's daemon must be able to do for it, and what it draws once one that can is chosen.
+ * Each section: what the location's daemon must be able to do for it, and what it draws once one that can is chosen.
  * A new section is a word in `CONNECTORS_SECTIONS` (connectors-sections.ts) and an entry here; the rest follows.
  */
 const SECTIONS: Record<
@@ -85,12 +85,12 @@ const SECTIONS: Record<
   },
 };
 
-/** The environments the page can manage: connected, and able to do what at least one of its sections needs. */
-export const connectorEnvironments = (
-  environments: EnvironmentConfig[],
-  status: Record<string, EnvironmentStatus>,
-): EnvironmentConfig[] =>
-  environments.filter(
+/** The locations the page can manage: connected, and able to do what at least one of its sections needs. */
+export const connectorLocations = (
+  locations: LocationConfig[],
+  status: Record<string, LocationStatus>,
+): LocationConfig[] =>
+  locations.filter(
     (e) =>
       status[e.id]?.state === "connected" &&
       CONNECTORS_SECTIONS.some((id) => SECTIONS[id].able(status[e.id]?.capabilities)),
@@ -102,22 +102,22 @@ export type ConnectorsPageProps = {
   onClose: () => void;
   /** What went wrong, said at the top of the page as it is at the top of the sessions. */
   banner?: ReactNode;
-  environments: EnvironmentConfig[];
-  status: Record<string, EnvironmentStatus>;
-  /** The environment to show first, when it is one the page can manage: the one that is open. */
-  environmentId?: string | undefined;
-  /** Where the environments are connected and added (Settings), for when none can be managed here. */
-  onShowEnvironments: () => void;
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
+  /** The location to show first, when it is one the page can manage: the one that is open. */
+  locationId?: string | undefined;
+  /** Where the locations are connected and added (Settings), for when none can be managed here. */
+  onShowLocations: () => void;
 };
 
-/** What the daemons keep for every agent, one environment at a time (docs/protocol.md §14). */
+/** What the daemons keep for every agent, one location at a time (docs/protocol.md §14). */
 export function ConnectorsPage(props: ConnectorsPageProps) {
   const { t } = useI18n();
-  const able = connectorEnvironments(props.environments, props.status);
-  // One choice for the whole page: another section shows the same environment.
+  const able = connectorLocations(props.locations, props.status);
+  // One choice for the whole page: another section shows the same location.
   const [chosen, setChosen] = useState<string | undefined>(undefined);
-  const environment =
-    able.find((e) => e.id === chosen) ?? able.find((e) => e.id === props.environmentId) ?? able[0];
+  const location =
+    able.find((e) => e.id === chosen) ?? able.find((e) => e.id === props.locationId) ?? able[0];
   return (
     <PageLayout
       title={t("connectors.title")}
@@ -134,7 +134,7 @@ export function ConnectorsPage(props: ConnectorsPageProps) {
         id,
         label: t(`connectors.section.${id}`),
         content:
-          environment === undefined ? (
+          location === undefined ? (
             <StateBlock
               size="inline"
               align="start"
@@ -142,28 +142,24 @@ export function ConnectorsPage(props: ConnectorsPageProps) {
               title={t("connectors.none")}
               body={t("connectors.noneBody")}
               action={{
-                label: t("settings.defaults.showEnvironments"),
-                onAction: props.onShowEnvironments,
+                label: t("settings.defaults.showLocations"),
+                onAction: props.onShowLocations,
               }}
             />
           ) : (
             <>
               {able.length > 1 ? (
-                <EnvironmentChoice
-                  environments={able}
-                  value={environment.id}
-                  onChange={setChosen}
-                />
+                <LocationChoice locations={able} value={location.id} onChange={setChosen} />
               ) : null}
-              {SECTIONS[id].able(props.status[environment.id]?.capabilities) ? (
-                // Keyed by the environment: another one's section starts from nothing, and reads its own.
-                <SectionOf key={environment.id} id={id} environment={environment} />
+              {SECTIONS[id].able(props.status[location.id]?.capabilities) ? (
+                // Keyed by the location: another one's section starts from nothing, and reads its own.
+                <SectionOf key={location.id} id={id} location={location} />
               ) : (
                 <StateBlock
                   size="inline"
                   align="start"
                   tone="away"
-                  title={t("connectors.unsupported", { environment: environment.name })}
+                  title={t("connectors.unsupported", { location: location.name })}
                   body={t(
                     able.length > 1
                       ? "connectors.unsupportedBody.choose"
@@ -178,20 +174,20 @@ export function ConnectorsPage(props: ConnectorsPageProps) {
   );
 }
 
-/** A component of its own, so a section's state belongs to the section and its environment (`key`). */
-function SectionOf({ id, environment }: { id: ConnectorsSection } & ConnectorsSectionProps) {
-  return SECTIONS[id].content({ environment });
+/** A component of its own, so a section's state belongs to the section and its location (`key`). */
+function SectionOf({ id, location }: { id: ConnectorsSection } & ConnectorsSectionProps) {
+  return SECTIONS[id].content({ location });
 }
 
-/** Which environment the page manages, when more than one can be: a row of its own above the section. */
-function EnvironmentChoice({
-  environments,
+/** Which location the page manages, when more than one can be: a row of its own above the section. */
+function LocationChoice({
+  locations,
   value,
   onChange,
 }: {
-  environments: EnvironmentConfig[];
+  locations: LocationConfig[];
   value: string;
-  onChange: (environmentId: string) => void;
+  onChange: (locationId: string) => void;
 }) {
   const { t } = useI18n();
   const label = useId();
@@ -199,12 +195,12 @@ function EnvironmentChoice({
     <PageGroup>
       <PageRows>
         <PageRow
-          label={t("connectors.environment")}
+          label={t("connectors.location")}
           labelId={label}
-          description={t("connectors.environment.description")}
+          description={t("connectors.location.description")}
         >
           <Select
-            items={environments.map((e) => ({ value: e.id, label: e.name }))}
+            items={locations.map((e) => ({ value: e.id, label: e.name }))}
             value={value}
             onValueChange={(next) => {
               if (typeof next === "string") onChange(next);
@@ -214,7 +210,7 @@ function EnvironmentChoice({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {environments.map((e) => (
+              {locations.map((e) => (
                 <SelectItem key={e.id} value={e.id}>
                   {e.name}
                 </SelectItem>
@@ -227,11 +223,11 @@ function EnvironmentChoice({
   );
 }
 
-const useProblemText = (environment: EnvironmentConfig) => {
+const useProblemText = (location: LocationConfig) => {
   const { t } = useI18n();
   return (p: Problem) =>
     t(`connectors.problem.${p.problem}`, {
-      environment: environment.name,
+      location: location.name,
       reason: p.message ?? "",
     });
 };
@@ -255,13 +251,13 @@ const STATUS_MARK: Record<ConnectorInfo["status"]["state"], { tone: Tone; shape:
   error: { tone: "danger", shape: "cross" },
 };
 
-/** The MCP servers the environment's daemon keeps for every agent: each one's state, its switch, and what can be done with it. */
-function McpSection({ environment }: ConnectorsSectionProps) {
+/** The MCP servers the location's daemon keeps for every agent: each one's state, its switch, and what can be done with it. */
+function McpSection({ location }: ConnectorsSectionProps) {
   const { t } = useI18n();
   const store = useAppStore();
-  const problemText = useProblemText(environment);
-  const environmentId = environment.id;
-  const read = useAppState((s) => s.connectors[environmentId]);
+  const problemText = useProblemText(location);
+  const locationId = location.id;
+  const read = useAppState((s) => s.connectors[locationId]);
   const list = read?.list;
   /** Which connectors have an action under way, and what went wrong with each, shown under its row. */
   const { busy, problems, run } = useKeyedAsyncAction<Problem>();
@@ -274,17 +270,15 @@ function McpSection({ environment }: ConnectorsSectionProps) {
   const [values, setValues] = useState<ConnectorInfo | undefined>(undefined);
 
   useEffect(() => {
-    void store.loadConnectors(environmentId);
-  }, [store, environmentId]);
+    void store.loadConnectors(locationId);
+  }, [store, locationId]);
 
   const act = (connector: ConnectorInfo, action: Act) => run(connector.id, action);
 
   const signIn = async (connector: ConnectorInfo) => {
     setWaiting(connector);
     setSignedIn(undefined);
-    const answer = await act(connector, () =>
-      store.authorizeConnector(environmentId, connector.id),
-    );
+    const answer = await act(connector, () => store.authorizeConnector(locationId, connector.id));
     setWaiting((w) => (w?.id === connector.id ? undefined : w));
     if ("connector" in answer) setSignedIn(connector.name);
   };
@@ -297,7 +291,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
   return (
     // With none yet, the way to add one is in what says so, not twice.
     <PageGroup
-      lead={t("connectors.lead", { environment: environment.name })}
+      lead={t("connectors.lead", { location: location.name })}
       action={list !== undefined && list.length > 0 ? add : undefined}
     >
       {read?.error !== undefined ? (
@@ -309,7 +303,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
           reason={read.error}
           action={{
             label: t("connectors.retry"),
-            onAction: () => void store.loadConnectors(environmentId),
+            onAction: () => void store.loadConnectors(locationId),
           }}
         />
       ) : null}
@@ -400,7 +394,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
                     disabled={busy[connector.id] === true}
                     onCheckedChange={(enabled) =>
                       void act(connector, () =>
-                        store.updateConnector(environmentId, connector.id, { enabled }),
+                        store.updateConnector(locationId, connector.id, { enabled }),
                       )
                     }
                   >
@@ -415,9 +409,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
                       if (value === "edit") setEditing(connector);
                       else if (value === "values") setValues(connector);
                       else if (value === "sign-out")
-                        void act(connector, () =>
-                          store.signOutConnector(environmentId, connector.id),
-                        );
+                        void act(connector, () => store.signOutConnector(locationId, connector.id));
                       else if (value === "remove") setRemoving(connector);
                     }}
                   >
@@ -451,14 +443,14 @@ function McpSection({ environment }: ConnectorsSectionProps) {
       )}
       {editing !== undefined ? (
         <ConnectorFormDialog
-          environment={environment}
+          location={location}
           editing={editing === "new" ? undefined : editing}
           onDone={() => setEditing(undefined)}
         />
       ) : null}
       {values !== undefined ? (
         <ConnectorValuesDialog
-          environment={environment}
+          location={location}
           connector={values}
           onDone={() => setValues(undefined)}
         />
@@ -473,7 +465,7 @@ function McpSection({ environment }: ConnectorsSectionProps) {
           destructive
           onConfirm={async () => {
             const target = removing;
-            const answer = await store.removeConnector(environmentId, target.id);
+            const answer = await store.removeConnector(locationId, target.id);
             if ("problem" in answer) return problemText(answer);
             return undefined;
           }}
@@ -498,13 +490,13 @@ type NewSecret = { key: number; name: string; value: string };
 
 /** One connector's fields, in a dialog over the page: mounted when it opens, so it starts from what is being edited. */
 function ConnectorFormDialog(props: {
-  environment: EnvironmentConfig;
+  location: LocationConfig;
   editing: ConnectorInfo | undefined;
   onDone: () => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const problemText = useProblemText(props.environment);
+  const problemText = useProblemText(props.location);
   const before = props.editing;
   const [name, setName] = useState(before?.name ?? "");
   const [kind, setKind] = useState<"http" | "stdio">(before?.transport.type ?? "http");
@@ -576,8 +568,8 @@ function ConnectorFormDialog(props: {
     try {
       const answer =
         before === undefined
-          ? await store.addConnector(props.environment.id, draft())
-          : await store.updateConnector(props.environment.id, before.id, draft());
+          ? await store.addConnector(props.location.id, draft())
+          : await store.updateConnector(props.location.id, before.id, draft());
       if ("connector" in answer) props.onDone();
       else setProblem(answer);
     } finally {
@@ -664,7 +656,7 @@ function ConnectorFormDialog(props: {
       <fieldset data-slot="secrets">
         <legend>{t(kind === "http" ? "connectors.form.headers" : "connectors.form.env")}</legend>
         <p data-slot="hint">
-          {t("connectors.form.secretsHint", { environment: props.environment.name })}
+          {t("connectors.form.secretsHint", { location: props.location.name })}
         </p>
         {kept.map((secret) => {
           const gone = dropped.has(secret);

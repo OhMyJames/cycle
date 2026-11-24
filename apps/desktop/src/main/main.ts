@@ -35,17 +35,12 @@ const packaged = existsSync(join(here, "..", BUILD_FILE));
 if (env.CYCLE_USER_DATA !== undefined && env.CYCLE_USER_DATA !== "")
   app.setPath("userData", env.CYCLE_USER_DATA);
 
-const run = (
-  program: string,
-  args: string[],
-  timeoutMs: number,
-  environment?: Record<string, string>,
-) =>
+const run = (program: string, args: string[], timeoutMs: number, env?: Record<string, string>) =>
   new Promise<string>((done, fail) => {
     execFile(
       program,
       args,
-      { timeout: timeoutMs, encoding: "utf8", ...(environment ? { env: environment } : {}) },
+      { timeout: timeoutMs, encoding: "utf8", ...(env ? { env } : {}) },
       (error, stdout) => (error ? fail(error) : done(stdout)),
     );
   });

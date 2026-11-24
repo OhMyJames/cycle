@@ -9,7 +9,7 @@ import { fakeBridge, idle, summary as summaryOf, text } from "./fake-bridge.ts";
 
 const update = (version: number, u: SessionUpdate, sessionId = "s1"): AppEvent => ({
   type: "update",
-  environmentId: "local",
+  locationId: "local",
   sessionId,
   update: u,
   version,
@@ -22,14 +22,14 @@ const opened = async (script = fakeBridge({ connected: true }), drafts?: DraftSt
   return { store, ...script };
 };
 
-test("starts: reads the environments and what main has of them, and the agents of those that are connected", async () => {
+test("starts: reads the locations and what main has of them, and the agents of those that are connected", async () => {
   const { bridge, named } = fakeBridge({ connected: true });
   const store = new AppStore(bridge);
   await store.start();
   const s = store.getState();
   expect(s.ready).toBe(true);
-  expect(s.selectedEnvironment).toBe("local");
-  // Main connects every environment: the page does not.
+  expect(s.selectedLocation).toBe("local");
+  // Main connects every location: the page does not.
   expect(named("connect")).toHaveLength(0);
   expect(s.sessions.local?.map((x) => x.sessionId)).toEqual(["s1"]);
   expect(s.agents.local?.map((a) => a.id)).toEqual(["fake"]);
@@ -41,7 +41,7 @@ test("the agents of a host are read when it connects, not before", async () => {
   await store.start();
   expect(store.getState().agents.local).toBeUndefined();
   expect(script.named("agents")).toEqual([]);
-  script.emit({ type: "environment-status", environmentId: "local", state: "connected" });
+  script.emit({ type: "location-status", locationId: "local", state: "connected" });
   await Bun.sleep(5);
   expect(store.getState().agents.local?.map((a) => a.id)).toEqual(["fake"]);
 });
@@ -50,21 +50,21 @@ test("a session of a host that is away cannot be opened unless it was already, a
   const script = fakeBridge({ connected: false });
   const store = new AppStore(script.bridge);
   await store.start();
-  // Its last list is there, from main, though the environment is not connected.
+  // Its last list is there, from main, though the location is not connected.
   expect(store.getState().sessions.local?.map((x) => x.sessionId)).toEqual(["s1"]);
   await store.selectSession("local", "s1");
   expect(store.getState().error).toEqual({
     key: "session.awayCannotOpen",
-    params: { environment: "This computer" },
+    params: { location: "This computer" },
   });
   expect(store.getState().selectedSession).toBeUndefined();
   expect(script.named("openSession")).toEqual([]);
 
-  // Open while it was connected, then the environment goes away: what was read can still be looked at.
+  // Open while it was connected, then the location goes away: what was read can still be looked at.
   store.dismissError();
-  script.emit({ type: "environment-status", environmentId: "local", state: "connected" });
+  script.emit({ type: "location-status", locationId: "local", state: "connected" });
   await store.selectSession("local", "s1");
-  script.emit({ type: "environment-status", environmentId: "local", state: "closed" });
+  script.emit({ type: "location-status", locationId: "local", state: "closed" });
   await store.selectSession("local", "s1");
   expect(store.getState().error).toBeUndefined();
   expect(store.getState().selectedSession).toBe("s1");
@@ -76,7 +76,7 @@ test("a host that is saved is connected, and one that is removed leaves nothing 
   const store = new AppStore(script.bridge);
   await store.start();
   await store.selectSession("local", "s1");
-  await store.saveEnvironment({
+  await store.saveLocation({
     id: "box",
     name: "Box",
     kind: "remote",
@@ -85,16 +85,16 @@ test("a host that is saved is connected, and one that is removed leaves nothing 
   expect(script.named("connect")).toEqual([["connect", "box"]]);
   script.emit({
     type: "sessions",
-    environmentId: "box",
-    sessions: [{ ...summaryOf("b1"), environmentId: "box" }],
+    locationId: "box",
+    sessions: [{ ...summaryOf("b1"), locationId: "box" }],
   });
-  script.emit({ type: "environment-status", environmentId: "box", state: "connected" });
-  await store.removeEnvironment("box");
+  script.emit({ type: "location-status", locationId: "box", state: "connected" });
+  await store.removeLocation("box");
   const s = store.getState();
   expect(s.sessions.box).toBeUndefined();
   expect(s.agents.box).toBeUndefined();
   expect(s.status.box).toBeUndefined();
-  // What was open on another environment stays open.
+  // What was open on another location stays open.
   expect(s.selectedSession).toBe("s1");
 });
 
@@ -105,7 +105,7 @@ test("a host that cannot be connected says so in its status, not in an error to 
   };
   const store = new AppStore(script.bridge);
   await store.start();
-  await store.connectEnvironment("local");
+  await store.connectLocation("local");
   expect(store.getState().error).toBeUndefined();
 });
 
@@ -209,7 +209,7 @@ test("events that come while a session is being read are applied after it, in or
 test("a permission request appears and closes", async () => {
   const request: PermissionRequest = {
     key: "local:s1:p1",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title: "Allow Bash?",
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
@@ -221,7 +221,7 @@ test("a permission request appears and closes", async () => {
   expect(named("answerPermission")).toEqual([["answerPermission", "local:s1:p1", "allow"]]);
   emit({
     type: "permission-closed",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     key: request.key,
     version: 2,
@@ -232,7 +232,7 @@ test("a permission request appears and closes", async () => {
 test("a request asked again keeps its place in the order they came", async () => {
   const ask = (key: string, title: string): PermissionRequest => ({
     key,
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     title,
     options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
@@ -312,7 +312,7 @@ test("a new session is a blank conversation until its first message, which makes
   const script = fakeBridge({ connected: true });
   script.bridge.agentDefaults = async () => ({ mode: "plan" });
   const { store, named } = await opened(script);
-  store.openBlank({ environmentId: "local", cwd: "/work" });
+  store.openBlank({ locationId: "local", cwd: "/work" });
   // Nothing is asked of the daemon to open it: it is only here until something is said.
   expect(store.getState().selectedSession).toBeUndefined();
   expect(named("createSession")).toEqual([]);
@@ -344,7 +344,7 @@ test("the first message is shown while the session is made, and comes back to th
       fail = reject;
     });
   const { store, named } = await opened(script);
-  store.openBlank({ environmentId: "local", cwd: "/work" });
+  store.openBlank({ locationId: "local", cwd: "/work" });
   await Bun.sleep(1);
   store.drafts.setText(BLANK_KEY, "hi");
   const sending = store.send();
@@ -366,7 +366,7 @@ test("a session that was made but whose first message could not go is opened, wi
     throw new Error("The agent cannot start");
   };
   const { store } = await opened(script);
-  store.openBlank({ environmentId: "local", cwd: "/work" });
+  store.openBlank({ locationId: "local", cwd: "/work" });
   await Bun.sleep(1);
   store.drafts.setText(BLANK_KEY, "hi");
   await store.send();
@@ -382,7 +382,7 @@ test("a blank conversation does not start until it has a folder and its agent's 
     throw new Error("cannot read");
   };
   const { store, named } = await opened(script);
-  store.openBlank({ environmentId: "local" });
+  store.openBlank({ locationId: "local" });
   await Bun.sleep(1);
   expect(store.getState().blank?.unreadable).toBe(true);
   store.changeBlank({ cwd: "/work" });
@@ -398,7 +398,7 @@ test("@ in a blank conversation looks in its folder, only on a daemon that can",
     capabilities: { queue: true, files: true, folders: true, filesInFolder: true },
   });
   const { store, named } = await opened(script);
-  store.openBlank({ environmentId: "local" });
+  store.openBlank({ locationId: "local" });
   // No folder yet: nothing to look in.
   expect(await store.searchFiles("a")).toBeUndefined();
   store.changeBlank({ cwd: "/work" });
@@ -407,7 +407,7 @@ test("@ in a blank conversation looks in its folder, only on a daemon that can",
 
   const old = fakeBridge({ connected: true });
   const before = await opened(old);
-  before.store.openBlank({ environmentId: "local", cwd: "/work" });
+  before.store.openBlank({ locationId: "local", cwd: "/work" });
   expect(await before.store.searchFiles("a")).toBeUndefined();
   expect(old.named("searchFiles")).toEqual([]);
   // In a session, as always.
@@ -424,7 +424,7 @@ test("leaving a blank conversation while it starts does not pull the person back
       made = resolve;
     });
   const { store, named } = await opened(script);
-  store.openBlank({ environmentId: "local", cwd: "/work" });
+  store.openBlank({ locationId: "local", cwd: "/work" });
   await Bun.sleep(1);
   store.drafts.setText(BLANK_KEY, "hi");
   const sending = store.send();
@@ -474,7 +474,7 @@ test("what the daemon hands back goes into that session's box once, even for a s
   store.drafts.setText(key, "later");
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: handBack(["one", "two"]) as never,
     version: 1,
@@ -483,7 +483,7 @@ test("what the daemon hands back goes into that session's box once, even for a s
   // Another update does not put it there again.
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     update: { sessionUpdate: "_cycle/queue_update", entries: [] } as never,
     version: 2,
@@ -520,10 +520,10 @@ test("a notification pressed shows that session, on whichever host", async () =>
   const script = fakeBridge({ connected: true });
   const store = new AppStore(script.bridge);
   await store.start();
-  script.emit({ type: "focus-session", environmentId: "local", sessionId: "s1" });
+  script.emit({ type: "focus-session", locationId: "local", sessionId: "s1" });
   // The focus is asked for without waiting (the event handler cannot); the session is opened a moment later.
   for (let i = 0; i < 100 && script.named("openSession").length === 0; i += 1) await Bun.sleep(5);
-  expect(store.getState().selectedEnvironment).toBe("local");
+  expect(store.getState().selectedLocation).toBe("local");
   expect(store.getState().selectedSession).toBe("s1");
   expect(script.named("openSession").at(-1)).toEqual(["openSession", "local", "s1"]);
 });
@@ -546,7 +546,7 @@ test("a session deleted elsewhere takes its view, its draft and its place as the
   expect(store.drafts.get(key).text).toBe("half a thought");
   expect(store.getState().selectedSession).toBe("s1");
 
-  emit({ type: "session-gone", environmentId: "local", sessionId: "s1" });
+  emit({ type: "session-gone", locationId: "local", sessionId: "s1" });
   expect(store.getState().views[key]).toBeUndefined();
   expect(store.getState().selectedSession).toBeUndefined();
   expect(store.drafts.get(key).text).toBe("");
@@ -554,7 +554,7 @@ test("a session deleted elsewhere takes its view, its draft and its place as the
 
 test("a session gone on another host does not close the one that is open here", async () => {
   const { store, emit } = await opened();
-  emit({ type: "session-gone", environmentId: "elsewhere", sessionId: "s1" });
+  emit({ type: "session-gone", locationId: "elsewhere", sessionId: "s1" });
   expect(store.getState().selectedSession).toBe("s1");
   expect(store.getState().views[viewKey("local", "s1")]).toBeDefined();
 });
@@ -564,11 +564,11 @@ test("a blank conversation follows the agent's defaults when they change, under 
   let defaults: Record<string, string> = { mode: "plan", model: "sonnet" };
   script.bridge.agentDefaults = async () => defaults;
   const { store } = await opened(script);
-  store.openBlank({ environmentId: "local", cwd: "/work" });
+  store.openBlank({ locationId: "local", cwd: "/work" });
   await Bun.sleep(1);
   store.changeBlank({ setting: { key: "model", value: "opus" } });
   defaults = { mode: "default", model: "haiku" };
-  script.emit({ type: "agent-defaults", environmentId: "local", agent: "fake" });
+  script.emit({ type: "agent-defaults", locationId: "local", agent: "fake" });
   await Bun.sleep(1);
   expect(store.getState().blank?.config).toEqual({ mode: "default", model: "opus" });
 });
@@ -584,7 +584,7 @@ test("a first message that could not go after the person left is kept in the bla
     throw new Error("The agent cannot start");
   };
   const { store } = await opened(script);
-  store.openBlank({ environmentId: "local", cwd: "/work" });
+  store.openBlank({ locationId: "local", cwd: "/work" });
   await Bun.sleep(1);
   store.drafts.setText(BLANK_KEY, "hi");
   const sending = store.send();
@@ -618,12 +618,12 @@ test("connectors: a change elsewhere is read again only where the page has asked
   const script = fakeBridge({ connected: true });
   const store = new AppStore(script.bridge, new DraftStore(undefined));
   await store.start();
-  // Nobody has asked about this environment's connectors: a change there is not read.
-  script.emit({ type: "connectors", environmentId: "local" });
+  // Nobody has asked about this location's connectors: a change there is not read.
+  script.emit({ type: "connectors", locationId: "local" });
   expect(script.named("listConnectors")).toHaveLength(0);
   await store.loadConnectors("local");
   expect(store.getState().connectors.local).toEqual({ list: [] });
-  script.emit({ type: "connectors", environmentId: "local" });
+  script.emit({ type: "connectors", locationId: "local" });
   await Bun.sleep(0);
   expect(script.named("listConnectors")).toHaveLength(2);
 
@@ -646,17 +646,17 @@ test("connectors: a change elsewhere is read again only where the page has asked
 
   // What main throws is an answer the panel shows like the daemon's own words.
   script.bridge.removeConnector = async () => {
-    throw new Error("Not connected to that environment");
+    throw new Error("Not connected to that location");
   };
   expect(await store.removeConnector("local", "c1")).toEqual({
     problem: "failed",
-    message: "Not connected to that environment",
+    message: "Not connected to that location",
   });
 });
 
-test("saveEnvironment, renameSession, and reloadAgents surface failures and refresh agents", async () => {
+test("saveLocation, renameSession, and reloadAgents surface failures and refresh agents", async () => {
   const script = fakeBridge({ connected: true });
-  script.bridge.saveEnvironment = async () => {
+  script.bridge.saveLocation = async () => {
     throw new Error("Could not write settings");
   };
   script.bridge.renameSession = async () => {
@@ -672,7 +672,7 @@ test("saveEnvironment, renameSession, and reloadAgents surface failures and refr
   expect(store.getState().agents.local?.[0]?.available).toBe(false);
 
   expect(
-    await store.saveEnvironment({
+    await store.saveLocation({
       id: "ssh-bad",
       name: "Bad",
       kind: "remote",
@@ -722,7 +722,7 @@ test("config_option_update only reloads agents when a live update introduces a n
   // Unchanged model catalog (e.g. permission mode flip) does not reload agents.
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 1,
     update: {
@@ -747,7 +747,7 @@ test("config_option_update only reloads agents when a live update introduces a n
   // A live update advertising a newly discovered model refreshes agents once.
   emit({
     type: "update",
-    environmentId: "local",
+    locationId: "local",
     sessionId: "s1",
     version: 2,
     update: {
@@ -770,18 +770,18 @@ test("config_option_update only reloads agents when a live update introduces a n
   expect(agentCalls).toBe(2);
 });
 
-test("the blank folder's trust is read once its environment says it keeps trust", async () => {
+test("the blank folder's trust is read once its location says it keeps trust", async () => {
   const script = fakeBridge({ connected: false });
-  script.bridge.readTrust = async (_environment, path) => ({ path, trusted: null, from: null });
+  script.bridge.readTrust = async (_location, path) => ({ path, trusted: null, from: null });
   const store = new AppStore(script.bridge);
   await store.start();
-  store.openBlank({ environmentId: "local", cwd: "/work" });
+  store.openBlank({ locationId: "local", cwd: "/work" });
   // Not connected: nothing can be asked yet.
   await Bun.sleep(5);
   expect(store.getState().blank?.trust).toBeUndefined();
   script.emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connected",
     capabilities: { queue: true, files: true, folders: true, trust: true },
   });

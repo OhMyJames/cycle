@@ -52,7 +52,7 @@ const groundOf = (host: HTMLElement) => {
 
 const DARK = "(prefers-color-scheme: dark)";
 
-type TerminalProps = { environmentId: string; sessionId: string; terminal: TerminalTab };
+type TerminalProps = { locationId: string; sessionId: string; terminal: TerminalTab };
 
 /** A terminal's tab. "Try again" after a failure starts its screen over, as when the tab is shown again. */
 export function TerminalView(props: TerminalProps) {
@@ -61,14 +61,14 @@ export function TerminalView(props: TerminalProps) {
 }
 
 function LiveTerminal({
-  environmentId,
+  locationId,
   sessionId,
   terminal,
   retry,
 }: TerminalProps & { retry: () => void }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const connected = useAppState((s) => s.status[environmentId]?.state === "connected");
+  const connected = useAppState((s) => s.status[locationId]?.state === "connected");
   const host = useRef<HTMLDivElement>(null);
   const xterm = useRef<{ term: Terminal; fit: FitAddon; feed: TerminalFeed } | undefined>(
     undefined,
@@ -119,7 +119,7 @@ function LiveTerminal({
     // What is typed or pasted goes as it is, in order; a paste too large for one message goes in pieces.
     const typed = term.onData((data) => {
       for (const piece of inputPieces(data))
-        void store.terminalInput(environmentId, terminalId, piece).catch(() => undefined);
+        void store.terminalInput(locationId, terminalId, piece).catch(() => undefined);
     });
 
     // The size follows the panel; the daemon is told once the panel stops moving, and again when the screen gets the
@@ -129,7 +129,7 @@ function LiveTerminal({
       if (size === told) return;
       told = size;
       void store
-        .resizeTerminal(environmentId, terminalId, term.cols, term.rows)
+        .resizeTerminal(locationId, terminalId, term.cols, term.rows)
         .catch(() => undefined);
     };
     const refit = () => {
@@ -176,7 +176,7 @@ function LiveTerminal({
       xterm.current = undefined;
       term.dispose();
     };
-  }, [environmentId, terminalId, ended, store]);
+  }, [locationId, terminalId, ended, store]);
 
   // Attached while shown and connected, and again after the connection comes back (the daemon let go of it). The output that comes before the answer is held by the feed.
   useEffect(() => {
@@ -185,8 +185,8 @@ function LiveTerminal({
     let live = true;
     view.feed.wait();
     setShown("attaching");
-    const stop = store.showTerminal(environmentId, terminalId, view.feed);
-    store.attachTerminal(environmentId, terminalId).then(
+    const stop = store.showTerminal(locationId, terminalId, view.feed);
+    store.attachTerminal(locationId, terminalId).then(
       (answer) => {
         if (!live) return;
         view.feed.screen(answer.seq, answer.screen, answer.terminal.cols, answer.terminal.rows);
@@ -199,9 +199,9 @@ function LiveTerminal({
     return () => {
       live = false;
       stop();
-      store.detachTerminal(environmentId, terminalId);
+      store.detachTerminal(locationId, terminalId);
     };
-  }, [environmentId, terminalId, connected, ended, store]);
+  }, [locationId, terminalId, connected, ended, store]);
 
   // Nothing can be typed into a shell that has exited, or one out of reach.
   useEffect(() => {
@@ -218,7 +218,7 @@ function LiveTerminal({
           title={t("terminal.ended")}
           action={{
             label: t("terminal.closeTab"),
-            onAction: () => void store.closeTerminal(environmentId, sessionId, terminalId),
+            onAction: () => void store.closeTerminal(locationId, sessionId, terminalId),
           }}
         />
       </div>
@@ -254,7 +254,7 @@ function LiveTerminal({
           </span>
           <Button
             data-variant="outline"
-            onClick={() => void store.closeTerminal(environmentId, sessionId, terminalId)}
+            onClick={() => void store.closeTerminal(locationId, sessionId, terminalId)}
           >
             {t("terminal.close")}
           </Button>

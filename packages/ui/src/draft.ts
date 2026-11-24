@@ -1,5 +1,5 @@
 // What the person has written and not sent, kept per session, and the rules around it. Plain TypeScript: no React, no
-// DOM, so that the rules can be tested. The text is kept in the renderer's localStorage by environment and session, so a
+// DOM, so that the rules can be tested. The text is kept in the renderer's localStorage by location and session, so a
 // restart finds it again. The images are not: base64 of a picture would fill the little room localStorage has.
 import type { PromptBlock } from "./api.ts";
 import {
@@ -251,7 +251,7 @@ export class DraftStore {
   readonly #handled = new Map<string, string>();
   readonly #loaded = new Set<string>();
   readonly #generations = new Map<string, number>();
-  // Per environment: a removed environment tells every read in flight for any of its sessions, also those with no count of their own yet.
+  // Per location: a removed location tells every read in flight for any of its sessions, also those with no count of their own yet.
   readonly #epochs = new Map<string, number>();
   readonly #listeners = new Set<() => void>();
 
@@ -350,8 +350,8 @@ export class DraftStore {
    * back to what the read saw cannot let it write the draft again.
    */
   generation(key: string): number {
-    const environment = key.slice(0, Math.max(0, key.indexOf(":")));
-    return (this.#generations.get(key) ?? 0) + (this.#epochs.get(environment) ?? 0);
+    const location = key.slice(0, Math.max(0, key.indexOf(":")));
+    return (this.#generations.get(key) ?? 0) + (this.#epochs.get(location) ?? 0);
   }
 
   /** Forgets everything about a session, including which hand-backs were put in its box. */
@@ -365,12 +365,12 @@ export class DraftStore {
   }
 
   /**
-   * Every draft of an environment, in memory and in storage. A session's key is its environment's id, a colon and its id, and an environment's id
+   * Every draft of a location, in memory and in storage. A session's key is its location's id, a colon and its id, and a location's id
    * has no colon (`local`, or `ssh-` and letters, digits and hyphens), so the prefix names one host's sessions only.
    */
-  forgetEnvironment(environmentId: string): void {
-    const prefix = `${environmentId}:`;
-    this.#epochs.set(environmentId, (this.#epochs.get(environmentId) ?? 0) + 1);
+  forgetLocation(locationId: string): void {
+    const prefix = `${locationId}:`;
+    this.#epochs.set(locationId, (this.#epochs.get(locationId) ?? 0) + 1);
     const keys = new Set([...this.#drafts.keys(), ...this.#handled.keys()]);
     try {
       for (let i = 0; i < (this.#storage?.length ?? 0); i += 1) {

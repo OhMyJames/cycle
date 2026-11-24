@@ -2,7 +2,7 @@
 // ordered, what each row says, and what the switcher says of the other workspaces. Pure, so the list on screen and the
 // keyboard walking it (Cmd+[ and Cmd+]) are one thing and are tested without a page. `now` is given, never read.
 //
-// A workspace is a folder on one environment: `(environmentId, cwd)` (docs/desktop.md). The sidebar shows one at a time.
+// A workspace is a folder on one location: `(locationId, cwd)` (docs/desktop.md). The sidebar shows one at a time.
 import type { AgentInfo, SessionSummary } from "./api.ts";
 import { viewKey } from "./store/store.ts";
 
@@ -37,19 +37,19 @@ export type SessionList = {
   hidden: number;
 };
 
-/** What the list needs to know of an environment. */
-export type EnvironmentLabel = { id: string; name: string; local: boolean };
+/** What the list needs to know of a location. */
+export type LocationLabel = { id: string; name: string; local: boolean };
 
-/** A session, among the sessions of every environment: the pair (environment, id) is what is unique. */
+/** A session, among the sessions of every location: the pair (location, id) is what is unique. */
 export const sessionKey = (session: SessionSummary): string =>
-  viewKey(session.environmentId, session.sessionId);
+  viewKey(session.locationId, session.sessionId);
 
 /** Where something runs: a session, or a blank conversation that has no session yet. */
-export type Place = Pick<SessionSummary, "environmentId" | "cwd">;
+export type Place = Pick<SessionSummary, "locationId" | "cwd">;
 
-/** A workspace is a folder on one environment (an environment's id has no "|" in it, so the first one ends it). */
+/** A workspace is a folder on one location (a location's id has no "|" in it, so the first one ends it). */
 export const workspaceKey = (session: Place): string =>
-  `${session.environmentId}|${folderOf(session)}`;
+  `${session.locationId}|${folderOf(session)}`;
 
 /** The folder a session works in, without a trailing slash (`/a/app` and `/a/app/` are one). */
 export const folderOf = (session: Place): string => {
@@ -63,7 +63,7 @@ const timeOf = (session: SessionSummary): number =>
   session.updatedAt === undefined ? Number.NaN : Date.parse(session.updatedAt);
 
 /**
- * Newest first. By `updatedAt`, which compares across environments. A session whose daemon does not say (an older one) comes
+ * Newest first. By `updatedAt`, which compares across locations. A session whose daemon does not say (an older one) comes
  * after those that have it, and those are ordered by `lastSeq`, which only compares within one daemon: so they stay
  * in their daemon's order, and are never mixed in with another's by a number that means something else.
  */
@@ -72,20 +72,20 @@ const younger = (a: SessionSummary, b: SessionSummary): number => {
   const right = timeOf(b);
   if (!Number.isNaN(left) && !Number.isNaN(right) && left !== right) return right - left;
   if (Number.isNaN(left) !== Number.isNaN(right)) return Number.isNaN(left) ? 1 : -1;
-  // `lastSeq` only means something within one daemon: across daemons the tie stays a tie (group by environment first).
-  return before(a.environmentId, b.environmentId) || b.lastSeq - a.lastSeq;
+  // `lastSeq` only means something within one daemon: across daemons the tie stays a tie (group by location first).
+  return before(a.locationId, b.locationId) || b.lastSeq - a.lastSeq;
 };
 
 export const newest = (a: SessionSummary, b: SessionSummary): number =>
-  younger(a, b) || before(a.environmentId, b.environmentId) || before(a.sessionId, b.sessionId);
+  younger(a, b) || before(a.locationId, b.locationId) || before(a.sessionId, b.sessionId);
 
 /**
- * What a row says of its session, one thing: waiting for the person, working, a background sub-agent working, or news
- * the person has not seen. An archived session is put away and a session of an environment that is away is the last list read:
+ * What a row says of its session, one thing: waiting for the person, working, background work running, or news
+ * the person has not seen. An archived session is put away and a session of a location that is away is the last list read:
  * neither waits for anyone nor works for anyone.
  */
 export const markOf = (session: SessionSummary, away?: ReadonlySet<string>): Mark | undefined => {
-  if (session.archived || away?.has(session.environmentId) === true) return undefined;
+  if (session.archived || away?.has(session.locationId) === true) return undefined;
   if (session.state === "requires_action") return "needs-you";
   if (session.state === "running") return "running";
   if ((session.background ?? 0) > 0) return "background";
@@ -97,9 +97,9 @@ const noCounts = (): Counts => ({ "needs-you": 0, running: 0, background: 0, unr
 
 export type Workspace = {
   key: string;
-  environmentId: string;
+  locationId: string;
   cwd: string;
-  /** The folder's name; more of the path where two on one environment would be the same, and the environment's name where two environments would. */
+  /** The folder's name; more of the path where two on one location would be the same, and the location's name where two locations would. */
   name: string;
   /** Its sessions, newest first (those that are archived only when asked for). */
   sessions: SessionSummary[];
@@ -107,17 +107,17 @@ export type Workspace = {
 };
 
 /**
- * Every workspace: grouped by environment (this computer first, then in the order the environments are listed), and inside an environment the
+ * Every workspace: grouped by location (this computer first, then in the order the locations are listed), and inside a location the
  * one with the newest session first. A workspace with only archived sessions is there only when they are asked for.
  */
 export const workspacesOf = (
   sessions: readonly SessionSummary[],
   {
-    environments = [],
+    locations = [],
     away,
     showArchived = false,
   }: {
-    environments?: readonly EnvironmentLabel[] | undefined;
+    locations?: readonly LocationLabel[] | undefined;
     away?: ReadonlySet<string> | undefined;
     showArchived?: boolean | undefined;
   } = {},
@@ -131,15 +131,15 @@ export const workspacesOf = (
   }
   const known = [...byKey].map(([key, list]) => ({
     key,
-    environmentId: list[0]?.environmentId ?? "",
+    locationId: list[0]?.locationId ?? "",
     cwd: list[0] !== undefined ? folderOf(list[0]) : "",
     sessions: list,
   }));
-  const names = namesOf(known, environments);
-  const rank = (environmentId: string): number => {
-    const at = environments.findIndex((h) => h.id === environmentId);
-    const local = environments[at]?.local === true;
-    return local ? -1 : at === -1 ? environments.length : at;
+  const names = namesOf(known, locations);
+  const rank = (locationId: string): number => {
+    const at = locations.findIndex((h) => h.id === locationId);
+    const local = locations[at]?.local === true;
+    return local ? -1 : at === -1 ? locations.length : at;
   };
   return known
     .map((w): Workspace => {
@@ -154,7 +154,7 @@ export const workspacesOf = (
       const left = a.sessions[0];
       const right = b.sessions[0];
       return (
-        rank(a.environmentId) - rank(b.environmentId) ||
+        rank(a.locationId) - rank(b.locationId) ||
         (left !== undefined && right !== undefined ? younger(left, right) : 0) ||
         before(a.key, b.key)
       );
@@ -164,12 +164,12 @@ export const workspacesOf = (
 const parts = (folder: string): string[] => folder.split("/").filter(Boolean);
 
 /**
- * The names of the workspaces: the last part of the folder, with more of it only where two on the same environment would be
- * the same; and where two on different environments would still be the same, the environment's name after it.
+ * The names of the workspaces: the last part of the folder, with more of it only where two on the same location would be
+ * the same; and where two on different locations would still be the same, the location's name after it.
  */
 const namesOf = (
-  workspaces: readonly { key: string; environmentId: string; cwd: string }[],
-  environments: readonly EnvironmentLabel[],
+  workspaces: readonly { key: string; locationId: string; cwd: string }[],
+  locations: readonly LocationLabel[],
 ): Map<string, string> => {
   const segments = new Map(workspaces.map((w) => [w.key, parts(w.cwd)]));
   const depth = new Map(workspaces.map((w) => [w.key, 1]));
@@ -182,7 +182,7 @@ const namesOf = (
   for (let round = 0; round < 64; round += 1) {
     const byLabel = new Map<string, typeof workspaces>();
     for (const w of workspaces) {
-      const same = `${w.environmentId}|${label(w)}`;
+      const same = `${w.locationId}|${label(w)}`;
       byLabel.set(same, [...(byLabel.get(same) ?? []), w]);
     }
     let grew = false;
@@ -202,11 +202,11 @@ const namesOf = (
   return new Map(
     workspaces.map((w) => {
       const name = label(w);
-      const environment = environments.find((h) => h.id === w.environmentId);
-      const clash = (taken.get(name) ?? 0) > 1 && environment !== undefined;
+      const location = locations.find((h) => h.id === w.locationId);
+      const clash = (taken.get(name) ?? 0) > 1 && location !== undefined;
       return [
         w.key,
-        name === "" ? (environment?.name ?? "") : clash ? `${name} · ${environment.name}` : name,
+        name === "" ? (location?.name ?? "") : clash ? `${name} · ${location.name}` : name,
       ];
     }),
   );
@@ -267,7 +267,7 @@ export type SessionListOptions = {
   showAll: boolean;
   /** The open session, by its `sessionKey`: shown however far down it is. */
   selected?: string | undefined;
-  /** Environments that are not connected: their sessions are the last list read, and wait for no one. */
+  /** Locations that are not connected: their sessions are the last list read, and wait for no one. */
   away?: ReadonlySet<string> | undefined;
   /** The sessions the person pinned, by `sessionKey` (pins.ts). */
   pinned?: ReadonlySet<string> | undefined;
@@ -321,10 +321,10 @@ export const sessionList = (
 };
 
 /**
- * The name of a session's agent, where saying it tells sessions apart: when its environment has more than one agent
- * to choose from, or the session is of one that is not the environment's only choice (an agent since removed).
- * Nothing while the environment's agents are not known, and nothing where there is one agent and this is its
- * session: a word on every row that is the same on every row says nothing. An agent the environment no longer lists
+ * The name of a session's agent, where saying it tells sessions apart: when its location has more than one agent
+ * to choose from, or the session is of one that is not the location's only choice (an agent since removed).
+ * Nothing while the location's agents are not known, and nothing where there is one agent and this is its
+ * session: a word on every row that is the same on every row says nothing. An agent the location no longer lists
  * is named by its id.
  */
 export const agentLabel = (

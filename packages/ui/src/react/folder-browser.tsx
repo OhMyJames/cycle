@@ -1,4 +1,4 @@
-// Choosing a folder on the machine of an environment that is not this computer: its daemon lists the folders, one level
+// Choosing a folder on the machine of a location that is not this computer: its daemon lists the folders, one level
 // at a time (docs/protocol.md §8). For this computer the system's own chooser is used.
 import { Button } from "@ui-sdk/react/button";
 import { Listbox, ListboxItem } from "@ui-sdk/react/listbox";
@@ -8,7 +8,7 @@ import { useI18n } from "./i18n.tsx";
 import { StateBlock } from "./state-block.tsx";
 
 export type FolderBrowserProps = {
-  /** Where it starts: a folder, absolute; without it (or when it cannot be read) the environment's home. */
+  /** Where it starts: a folder, absolute; without it (or when it cannot be read) the location's home. */
   start?: string | undefined;
   list: ListFolders;
   onChoose: (path: string) => void;

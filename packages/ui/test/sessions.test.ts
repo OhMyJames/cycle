@@ -13,7 +13,7 @@ import {
 } from "../src/sessions.ts";
 
 const row = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => ({
-  environmentId: "local",
+  locationId: "local",
   sessionId: id,
   cwd: "/work/app",
   archived: false,
@@ -22,15 +22,15 @@ const row = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => 
   lastSeq: 1,
   ...over,
 });
-const on = (environmentId: string, id: string, over: Partial<SessionSummary> = {}) =>
-  row(id, { environmentId, ...over });
+const on = (locationId: string, id: string, over: Partial<SessionSummary> = {}) =>
+  row(id, { locationId, ...over });
 
 // Local noon on the 18th of November: the days are the local clock's, so the times are built from local parts.
 const now = new Date(2026, 10, 18, 12, 0, 0);
 const at = (day: number, hour = 9) => new Date(2026, 10, day, hour, 0, 0).toISOString();
 const options = { showAll: false, now };
 const ids = (list: ReturnType<typeof sessionList>) => list.order.map((s) => s.sessionId);
-const environments = [
+const locations = [
   { id: "local", name: "This computer", local: true },
   { id: "far", name: "Build box", local: false },
 ];
@@ -54,16 +54,16 @@ test("an archived session, and a session of a host that is away, say nothing", (
   );
 });
 
-test("a workspace is a folder on one host: the same folder on two environments is two, and a trailing slash is nothing", () => {
+test("a workspace is a folder on one host: the same folder on two locations is two, and a trailing slash is nothing", () => {
   const list = workspacesOf(
     [
       row("a", { cwd: "/work/app/" }),
       row("b", { cwd: "/work/app" }),
       on("far", "c", { cwd: "/work/app" }),
     ],
-    { environments },
+    { locations },
   );
-  expect(list.map((w) => [w.environmentId, w.cwd, w.sessions.length])).toEqual([
+  expect(list.map((w) => [w.locationId, w.cwd, w.sessions.length])).toEqual([
     ["local", "/work/app", 2],
     ["far", "/work/app", 1],
   ]);
@@ -78,13 +78,13 @@ test("workspaces are grouped by host, this computer first, and newest first insi
       on("far", "f2", { cwd: "/srv/web", updatedAt: at(1) }),
     ],
     {
-      environments: [
-        environments[1] as (typeof environments)[number],
-        environments[0] as (typeof environments)[number],
+      locations: [
+        locations[1] as (typeof locations)[number],
+        locations[0] as (typeof locations)[number],
       ],
     },
   );
-  // The order the environments are given in does not put a remote one before this computer.
+  // The order the locations are given in does not put a remote one before this computer.
   expect(list.map((w) => w.cwd)).toEqual(["/work/new", "/work/old", "/srv/api", "/srv/web"]);
 });
 
@@ -93,14 +93,14 @@ test("a workspace with only archived sessions is there only when they are asked 
     row("a", { cwd: "/work/gone", archived: true }),
     row("b", { cwd: "/work/app" }),
   ];
-  expect(workspacesOf(sessions, { environments }).map((w) => w.cwd)).toEqual(["/work/app"]);
-  expect(workspacesOf(sessions, { environments, showArchived: true })).toHaveLength(2);
+  expect(workspacesOf(sessions, { locations }).map((w) => w.cwd)).toEqual(["/work/app"]);
+  expect(workspacesOf(sessions, { locations, showArchived: true })).toHaveLength(2);
 });
 
 test("a workspace is named by its folder, with more of the path only where two would be the same", () => {
   const list = workspacesOf(
     [row("a", { cwd: "/a/app" }), row("b", { cwd: "/b/app" }), row("c", { cwd: "/work/lib" })],
-    { environments },
+    { locations },
   );
   expect(list.map((w) => w.name).toSorted()).toEqual(["a/app", "b/app", "lib"]);
 });
@@ -109,14 +109,14 @@ test("a workspace on another host is named after the host only where the name wo
   const clash = workspacesOf(
     [row("a", { cwd: "/work/app" }), on("far", "b", { cwd: "/srv/app" })],
     {
-      environments,
+      locations,
     },
   );
   expect(clash.map((w) => w.name).toSorted()).toEqual(["app · Build box", "app · This computer"]);
   const apart = workspacesOf(
     [row("a", { cwd: "/work/app" }), on("far", "b", { cwd: "/srv/api" })],
     {
-      environments,
+      locations,
     },
   );
   expect(apart.map((w) => w.name).toSorted()).toEqual(["api", "app"]);
@@ -131,7 +131,7 @@ test("a workspace counts what is going on in it, but not in a host that is away"
     row("e", { unread: true }),
     on("far", "f", { cwd: "/srv/api", state: "requires_action" }),
   ];
-  const [app, api] = workspacesOf(sessions, { environments, away: new Set(["far"]) });
+  const [app, api] = workspacesOf(sessions, { locations, away: new Set(["far"]) });
   expect(app?.counts).toEqual({ "needs-you": 1, running: 1, background: 1, unread: 2 });
   expect(api?.counts).toEqual({ "needs-you": 0, running: 0, background: 0, unread: 0 });
 });
@@ -142,7 +142,7 @@ test("the workspace shown: the one chosen, else the one the open session is in, 
     row("b", { cwd: "/work/new", updatedAt: at(17) }),
     on("far", "c", { cwd: "/srv/api", updatedAt: at(5) }),
   ];
-  const workspaces = workspacesOf(sessions, { environments });
+  const workspaces = workspacesOf(sessions, { locations });
   const name = (w: ReturnType<typeof currentWorkspace>) => w?.cwd;
   expect(name(currentWorkspace(workspaces, {}))).toBe("/work/new");
   expect(name(currentWorkspace(workspaces, { open: sessions[2] }))).toBe("/srv/api");
@@ -161,7 +161,7 @@ test("the switcher counts the most urgent class in the other workspaces, and say
       row("c", { cwd: "/work/there2", state: "running" }),
       row("d", { cwd: "/work/there2", unread: true }),
     ],
-    { environments },
+    { locations },
   );
   const here = workspaces.find((w) => w.cwd === "/work/here");
   const other = elsewhere(workspaces, here);
@@ -277,7 +277,7 @@ test("sessions of two daemons that give no time are not mixed by numbers that me
   expect(sorted([...rows].reverse())).toEqual(sorted(rows));
 });
 
-test("a session that has a time comes before one that has none, across environments", () => {
+test("a session that has a time comes before one that has none, across locations", () => {
   const rows = [
     on("old", "x", { lastSeq: 50 }),
     on("new", "z", { updatedAt: "2020-01-01T00:00:00.000Z", lastSeq: 1 }),
@@ -307,7 +307,7 @@ test("a session's agent is named only where it tells sessions apart", () => {
   const away = info("codex", "Codex", false);
   expect(agentLabel([claude, away], "claude")).toBeUndefined();
   expect(agentLabel([claude, away], "codex")).toBe("Codex");
-  // An agent the environment no longer lists is named by its id; agents not read yet name nothing.
+  // An agent the location no longer lists is named by its id; agents not read yet name nothing.
   expect(agentLabel([claude], "gone")).toBe("gone");
   expect(agentLabel(undefined, "claude")).toBeUndefined();
   expect(agentLabel([], "claude")).toBeUndefined();

@@ -336,7 +336,7 @@ test("plugins that cannot be read say why in the system's words, and can be aske
   );
 });
 
-test("an environment whose Cycle knows no plugins says so on that section, and still keeps its connectors", async () => {
+test("a location whose Cycle knows no plugins says so on that section, and still keeps its connectors", async () => {
   const { user, page, named } = await mount({ plugins: [] });
   expect(within(page).getByText("Cycle on This computer is too old for this.")).toBeTruthy();
   expect(named("listPlugins")).toHaveLength(0);

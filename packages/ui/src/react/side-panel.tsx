@@ -40,24 +40,24 @@ const NONE: readonly TerminalTab[] = [];
 export const FIRST_SIZE = { cols: 80, rows: 24 };
 
 export function SidePanel({
-  environmentId,
+  locationId,
   sessionId,
   state,
   onShow,
 }: {
-  environmentId: string;
+  locationId: string;
   sessionId: string;
   state: SidePanelState;
   onShow: (tab: PanelTabId) => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const key = viewKey(environmentId, sessionId);
+  const key = viewKey(locationId, sessionId);
   const terminals = useAppState((s) => s.terminals[key]) ?? NONE;
   const canOpen = useAppState(
     (s) =>
-      s.status[environmentId]?.capabilities?.terminal === true &&
-      s.status[environmentId]?.state === "connected",
+      s.status[locationId]?.capabilities?.terminal === true &&
+      s.status[locationId]?.state === "connected",
   );
   const ids: PanelTabId[] = [...state.tabs, ...terminals.map((x) => terminalTab(x.terminalId))];
   const labels = tabLabels(terminals);
@@ -77,11 +77,11 @@ export function SidePanel({
           id: terminalTab(terminal.terminalId),
           label: labels[i] ?? terminal.title,
           quiet: terminal.status === "exited" || terminal.ended === true,
-          onClose: () => void store.closeTerminal(environmentId, sessionId, terminal.terminalId),
+          onClose: () => void store.closeTerminal(locationId, sessionId, terminal.terminalId),
           content: (
             <TerminalView
               key={terminal.terminalId}
-              environmentId={environmentId}
+              locationId={locationId}
               sessionId={sessionId}
               terminal={terminal}
             />
@@ -95,7 +95,7 @@ export function SidePanel({
               data-variant="ghost"
               data-kind="panel-tab-add"
               onClick={() =>
-                void store.createTerminal(environmentId, sessionId, FIRST_SIZE, "tab_strip")
+                void store.createTerminal(locationId, sessionId, FIRST_SIZE, "tab_strip")
               }
             >
               <PlusIcon />

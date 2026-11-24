@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { AgentInfo } from "../../src/api.ts";
 import { ConfirmDialog } from "../../src/react/dialogs.tsx";
-import { AgentDefaultsForm, EnvironmentDialog } from "../../src/react/index.ts";
+import { AgentDefaultsForm, LocationDialog } from "../../src/react/index.ts";
 
 afterEach(cleanup);
 
@@ -12,11 +12,11 @@ const agents: AgentInfo[] = [
   { id: "b", name: "Beta", available: true, configSchema: {} },
 ];
 
-test("an environment dialog that is opened again is empty: what was added is not added twice", async () => {
+test("a location dialog that is opened again is empty: what was added is not added twice", async () => {
   const user = userEvent.setup();
   const saved: string[] = [];
   const view = (open: boolean) => (
-    <EnvironmentDialog open={open} onOpenChange={() => {}} onSave={(e) => void saved.push(e.id)} />
+    <LocationDialog open={open} onOpenChange={() => {}} onSave={(e) => void saved.push(e.id)} />
   );
   const { rerender } = render(view(true));
   await user.type(await screen.findByLabelText("Address"), "me@box");
@@ -26,12 +26,12 @@ test("an environment dialog that is opened again is empty: what was added is not
   expect(screen.getByRole("button", { name: "Add" }).hasAttribute("disabled")).toBe(true);
 });
 
-test("an environment is not added twice by a double click", async () => {
+test("a location is not added twice by a double click", async () => {
   const user = userEvent.setup();
   let calls = 0;
   let finish: () => void = () => {};
   render(
-    <EnvironmentDialog
+    <LocationDialog
       open
       onOpenChange={() => {}}
       onSave={() => {
@@ -60,7 +60,7 @@ test("agent defaults are saved only once they are the ones of the agent shown", 
   const saved: string[] = [];
   render(
     <AgentDefaultsForm
-      environmentName="This computer"
+      locationName="This computer"
       agents={agents}
       read={read}
       onSave={async (agent) => {
@@ -86,7 +86,7 @@ test("agent defaults that cannot be read are not replaced by an empty form: they
   let reads = 0;
   render(
     <AgentDefaultsForm
-      environmentName="This computer"
+      locationName="This computer"
       agents={agents}
       read={() => (reads++ === 0 ? Promise.reject(new Error("no")) : Promise.resolve({}))}
       onSave={async () => true}
@@ -101,12 +101,12 @@ test("agent defaults that cannot be read are not replaced by an empty form: they
   );
 });
 
-test("environment dialog keeps user input on failure, avoids id collisions, and supports editing", async () => {
+test("location dialog keeps user input on failure, avoids id collisions, and supports editing", async () => {
   const user = userEvent.setup();
   const saved: { id: string; name: string; host: string }[] = [];
   let fail = true;
   render(
-    <EnvironmentDialog
+    <LocationDialog
       open
       onOpenChange={() => {}}
       existingIds={new Set(["ssh-me-box"])}
@@ -137,12 +137,12 @@ test("destructive confirm dialog uses destructive variant and stays open on fail
       }}
       title="Remove Build?"
       description="Removes settings."
-      confirmLabel="Remove environment"
+      confirmLabel="Remove location"
       destructive
       onConfirm={async () => "Still busy"}
     />,
   );
-  const button = await screen.findByRole("button", { name: "Remove environment" });
+  const button = await screen.findByRole("button", { name: "Remove location" });
   expect(button.getAttribute("data-variant")).toBe("destructive");
   await user.click(button);
   expect((await screen.findByRole("alert")).textContent).toContain("Still busy");

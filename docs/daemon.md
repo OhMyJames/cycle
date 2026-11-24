@@ -188,7 +188,7 @@ cycle claude auth status   # cycle <agent id> <参数>:用同样的环境跑那�
 
 **Codex 的登录**:`cycle login codex`(跑 `codex login`,可加 `--device-auth` 或 `--with-api-key`)和 `cycle codex <参数>`(如 `cycle codex login status`)用的是 daemon 给 Codex 的同一份环境:`CODEX_HOME` 是 `config.json` 里 `codex.configDir`,默认 `<数据目录>/codex`,`HOME` 回落到它,所以不读也不写 `~/.codex`。每条 Codex 命令和 app-server 都带 `-c cli_auth_credentials_store="file"`,登录只落在 `$CODEX_HOME/auth.json`,不进系统钥匙串。本机就在本机跑;远端在那台机器上跑(`ssh <host> cycle login codex --device-auth`,设备码登录要先在 ChatGPT 的安全设置里打开)。数据目录里还没有 `codex` 目录时先建好它(Codex 不肯在不存在的 `CODEX_HOME` 上登录)。回合因没登录失败时,错误里写明要跑 `cycle login codex`。也可以把一份已有的 `auth.json` 放进 `<数据目录>/codex/`(远端没有浏览器时常用),但同一份 ChatGPT 登录不要同时给两个 Codex 用:刷新 token 时会把另一份挤掉。2026-11-23 用真实 ChatGPT 账号验证:全新数据目录报未登录(本机 `~/.codex` 有登录也一样),放进登录后报已登录,经 daemon 新建会话完成回合(`apps/daemon` 的 `test:real:codex`)。浏览器里的 `codex login` 流程本身没有走,那是 Codex 自己的。
 
-**装到远端机器**:解开 tarball,把目录放到 `$PATH` 上(或在桌面端 "Add environment" 里把命令写成绝对路径,如 `/opt/cycle/cycle proxy`)。`<os>-<arch>` 要和那台机器一致:在哪个平台构建就产出哪个平台的;跨平台要在对应平台构建。凭证写进那台机器上的 `<数据目录>/config.json`(见下)。
+**装到远端机器**:解开 tarball,把目录放到 `$PATH` 上(或在桌面端 "Add location" 里把命令写成绝对路径,如 `/opt/cycle/cycle proxy`)。`<os>-<arch>` 要和那台机器一致:在哪个平台构建就产出哪个平台的;跨平台要在对应平台构建。凭证写进那台机器上的 `<数据目录>/config.json`(见下)。
 
 ## 加一个 agent
 

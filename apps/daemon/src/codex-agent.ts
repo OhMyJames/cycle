@@ -63,10 +63,14 @@ export const codexHarness: Harness = {
       promptCapabilities: CODEX_PROMPT_CAPABILITIES,
       steer: true,
       command: [...self, "adapter", "codex"],
-      env: {
+      env: ({ sessionEnv }) => ({
         PATH: inherited.PATH ?? "",
-        CYCLE_ADAPTER_CONFIG: JSON.stringify({ env, codexExecutable: settings.executable }),
-      },
+        CYCLE_ADAPTER_CONFIG: JSON.stringify({
+          env,
+          sessionEnv,
+          codexExecutable: settings.executable,
+        }),
+      }),
       available: () => {
         const path = executable();
         if (path === undefined) return false;

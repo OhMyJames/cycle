@@ -250,8 +250,8 @@ test("a task started by a call inside a closed card of several calls opens the c
 /** Opens the session as the daemon lists it, `background` running; the panel stays shut. */
 const openBetweenTurns = async (snapshot: SessionSnapshot, background: number | undefined) => {
   const script = fakeBridge({ connected: true, snapshot: () => snapshot });
-  script.bridge.sessions = async (environmentId: string) => [
-    { ...summary("s1", environmentId), ...(background === undefined ? {} : { background }) },
+  script.bridge.sessions = async (locationId: string) => [
+    { ...summary("s1", locationId), ...(background === undefined ? {} : { background }) },
   ];
   await renderApp(script.bridge);
   const user = userEvent.setup();

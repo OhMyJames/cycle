@@ -88,7 +88,7 @@ Cycle 目前已支持 3 个 agent（`claude`、`codex`、`agy`），后续还会
 Settings
 ├── General
 ├── Appearance
-├── Environments
+├── Work in
 ├── Shortcuts
 │
 ├── HARNESS                    ← 分组标题（非可选项）
@@ -97,19 +97,19 @@ Settings
 │   └── [Agy Logo]    Antigravity
 ```
 
-- **导航位置稳定**：内置已知 harnesses（`claude`、`codex`、`agy`，按稳定顺序）固定保留在左侧导航中，切换环境或环境断线时左侧列表不跳动、不消失；若该 agent 在当前环境未安装、旧 daemon 不支持或环境未连接，在右侧页内以 `StateBlock` 说明具体原因。若连上新版 daemon 返回了额外未知 agent（如未来接入 `pi`），则动态追加在已知项之后。
+- **导航位置稳定**：内置已知 harnesses（`claude`、`codex`、`agy`，按稳定顺序）固定保留在左侧导航中，切换工作位置或工作位置断线时左侧列表不跳动、不消失；若该 agent 在当前工作位置未安装、旧 daemon 不支持或工作位置未连接，在右侧页内以 `StateBlock` 说明具体原因。若连上新版 daemon 返回了额外未知 agent（如未来接入 `pi`），则动态追加在已知项之后。
 - 原 `Defaults` tab 移除，其内容作为每个 Harness 页的 “Session defaults” 区块。
-- 当连接了多个环境时，Harness 页顶部显示共享的 **Environment 选择器**（仅本机连接时隐藏）。
+- 当连接了多个工作位置时，Harness 页顶部显示共享的 **Work in 选择器**（仅本机连接时隐藏）。
 
 ### 4.2 单个 Harness 页布局（自上而下）
 
 ```mermaid
 flowchart TD
-    Env["Environment 选择器（仅多环境时显示）"] --> Avail["0. 可用性提示 StateBlock（仅 binary_unavailable / 离线 / 旧 daemon 时显示）"]
+    Env["Work in 选择器（仅多个工作位置时显示）"] --> Avail["0. 可用性提示 StateBlock（仅 binary_unavailable / 离线 / 旧 daemon 时显示）"]
     Avail --> Acc["1. Account & Usage（账号状态机、登录态、Sign in / Sign out、套餐用量条）"]
     Acc --> Def["2. Session defaults（可编辑：Permission mode / Model / Effort）"]
     Def --> Run["3. Agent settings（可编辑热生效：复用 configSchema 封闭子集，含生效时机与危险项警示）"]
-    Run --> Host["4. Host configuration（只读：二进制来源与版本、托管目录、allowEnv/env 变量名、config.json 状态与重启提示）"]
+    Run --> Host["4. Runtime（只读：二进制来源与版本、托管目录、allowEnv/env 变量名、config.json 状态与重启提示）"]
 ```
 
 1. **Account & Usage（第一部分）**
@@ -133,7 +133,7 @@ flowchart TD
      - **Antigravity**：`sandbox`（boolean，关掉标 `_meta["cycle/danger"]: true` 警示安全影响）、`telemetry`（boolean，默认 `true`，遵循既有决定笔记不静默关闭；关闭时传 `--disable-telemetry`）。
    - 遇到新版 daemon 返回的不认识的字段类型时，降级为只读文本展示，不报错、不丢值。
 
-4. **Host configuration（只读诊断，不经 UI 修改）**
+4. **Runtime（运行信息，原 Host configuration；只读诊断，不经 UI 修改）**
    - **Binary**：来源（Built-in / Configured in `config.json` / System PATH / Missing）、路径与版本号（`agy` 同时展示最低版本要求 `>= 1.5.10`）。
    - **Managed directory**：`<dataDir>/<id>` 或标注 `Custom (config.json)`。
    - **Environment variables**：`allowEnv` 允许透传的变量名列表；`env` 中声明的变量名列表（**仅变量名，绝不返回值**）。
@@ -163,15 +163,15 @@ flowchart TD
 
 ### 5.3 登录模式协商与职责切分（契合 Cycle 传输无关架构）
 
-Cycle 的既有架构约定是“**环境是客户端概念，daemon 只看到 unix socket 连接，不知道对面是本机还是 SSH 远端**”（见 [desktop.md](desktop.md)）。因此登录模式按三方分工协同决定：
+Cycle 的既有架构约定是“**工作位置是客户端概念，daemon 只看到 unix socket 连接，不知道对面是本机还是 SSH 远端**”（见 [desktop.md](desktop.md)）。因此登录模式按三方分工协同决定：
 
 1. **Daemon 声明能力与约束**：`_cycle/agent_setup/read` 返回 `auth.signInModes`（有序数组），每项声明 `{ mode: "browser" | "code" | "device_code", requiresLocalLoopback: boolean }`：
    - Claude：`[{ mode: "code", requiresLocalLoopback: false }]`
    - Codex：`[{ mode: "browser", requiresLocalLoopback: true }, { mode: "device_code", requiresLocalLoopback: false }]`（若未来云沙箱 daemon 显式禁用本机回环，可仅暴露 `device_code`）
    - Antigravity：`[{ mode: "code", requiresLocalLoopback: false }]`
 2. **主进程 `ConnectionManager` 按连接传输类型选模式**（而非 React UI）：
-   - `local` 环境可优先选用 `requiresLocalLoopback: true` 的模式（Codex 走浏览器自动回调）；
-   - `remote`（SSH / 未来远程传输）环境自动过滤掉 `requiresLocalLoopback: true` 的模式，优先选择 `device_code` / `code`。
+   - `local` 工作位置可优先选用 `requiresLocalLoopback: true` 的模式（Codex 走浏览器自动回调）；
+   - `remote`（SSH / 未来远程传输）工作位置自动过滤掉 `requiresLocalLoopback: true` 的模式，优先选择 `device_code` / `code`。
 3. **Daemon 二次校验**：`_cycle/agent_auth/start` 校验客户端请求的 `mode` 必须属于该 agent 当前允许的 `signInModes`，非法模式直接拒绝。
 
 ### 5.4 复用 `configSchema` 的封闭版本化 Runtime Schema
@@ -265,8 +265,8 @@ Cycle 的既有架构约定是“**环境是客户端概念，daemon 只看到 u
 ### 6.3 桌面端主进程与空白页联动
 
 - **主进程**（`apps/desktop/src/main/manager.ts` / `dispatch.ts` / `app.ts`）：
-  - 桥接全部 `agentSetup` / `agentAuth` 方法到 `AppApi`；对本地环境提供 `revealDaemonConfig()`（`shell.showItemInFolder`）。
-  - `ConnectionManager` 根据环境的 `kind`（`local` vs `remote`）与 daemon 声明的 `signInModes` 选定登录模式；主进程校验授权 URL 属于内置的 per-agent 域名白名单后，仅在用户于弹窗点击按钮时通过 `shell.openExternal` 打开。
+  - 桥接全部 `agentSetup` / `agentAuth` 方法到 `AppApi`；对本地工作位置提供 `revealDaemonConfig()`（`shell.showItemInFolder`）。
+  - `ConnectionManager` 根据工作位置的 `kind`（`local` vs `remote`）与 daemon 声明的 `signInModes` 选定登录模式；主进程校验授权 URL 属于内置的 per-agent 域名白名单后，仅在用户于弹窗点击按钮时通过 `shell.openExternal` 打开。
 - **空白页联动**（`packages/ui/src/react/blank.tsx`）：
   - 当会话因未登录（`-32000`）或 agent 不可用失败且 daemon 支持 `agentSetup` 时，除保留复制命令外，增加直达对应 Harness 设置页的操作按钮（`Open <Agent> settings`）。
 
@@ -274,17 +274,17 @@ Cycle 的既有架构约定是“**环境是客户端概念，daemon 只看到 u
 
 严格遵守“只报行为、不报内容、禁用 `z.string()`”规则（见 [analytics.md](analytics.md)），直接复用仓库既有固定枚举与映射函数：
 
-- `settingsSection` 更新为 `z.enum(["general", "appearance", "environments", "shortcuts", "harness"])`（同步 `SETTINGS_SECTIONS` 与 `apps/desktop/test/preferences.test.ts`）。
+- `settingsSection` 更新为 `z.enum(["general", "appearance", "locations", "shortcuts", "harness"])`（同步 `SETTINGS_SECTIONS` 与 `apps/desktop/test/preferences.test.ts`）。
 - 复用既有固定枚举：
   - `agent`：`z.enum(["claude", "codex", "agy", "pi", "other"])`（经 `agentOf()` 映射）
-  - `environment`：`z.enum(["local", "remote"])`（绝不上报环境名、ID、主机名或路径）
+  - `location`：`z.enum(["local", "remote"])`（绝不上报工作位置名、ID、主机名或路径；2026-11-24 以前叫 `environment`）
   - `mode`：`z.enum(["browser", "code", "device_code"])`
 - 新增事件（同步写入 `packages/analytics/src/events.ts` 与 `docs/analytics.md`）：
-  - `harness_settings_shown`: `{ agent, environment, from: z.enum(["settings", "blank", "other"]) }`（UI 事件）
-  - `agent_auth_started`: `{ agent, environment, mode }`（主进程上报）
-  - `agent_auth_completed`: `{ agent, environment, result: z.enum(["ok", "failed", "cancelled", "disconnected"]) }`（主进程上报）
-  - `agent_signed_out`: `{ agent, environment, ok: z.boolean() }`（主进程上报）
-  - `agent_runtime_settings_saved`: `{ agent, environment }`（主进程上报）
+  - `harness_settings_shown`: `{ agent, location, from: z.enum(["settings", "blank", "other"]) }`（UI 事件）
+  - `agent_auth_started`: `{ agent, location, mode }`（主进程上报）
+  - `agent_auth_completed`: `{ agent, location, result: z.enum(["ok", "failed", "cancelled", "disconnected"]) }`（主进程上报）
+  - `agent_signed_out`: `{ agent, location, ok: z.boolean() }`（主进程上报）
+  - `agent_runtime_settings_saved`: `{ agent, location }`（主进程上报）
 - **完整登录漏斗**：与现有事件串联为可观测漏斗：`agent_auth_required`（触发未登录提示）→ `harness_settings_shown`（`from: "blank"` 或 `"settings"`）→ `agent_auth_started` → `agent_auth_completed`（以及兜底路径 `agent_setup_command_copied`）。
 - **明确不上报**：email、organization、plan 原始名、文件路径、环境变量名、授权码、URL、错误信息原文。
 

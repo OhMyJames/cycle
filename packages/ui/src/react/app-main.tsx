@@ -14,21 +14,21 @@ const askerOf = (conversation: Conversation, subagentId: string): string | undef
 };
 
 /**
- * What the main column shows with no session open: a way to start one, or why the environment cannot, and what to do
+ * What the main column shows with no session open: a way to start one, or why the location cannot, and what to do
  * about it.
  */
 export function NoSession({
-  environmentId,
+  locationId,
   state,
   error,
   incompatible,
   onNewSession,
 }: {
-  environmentId: string | undefined;
+  locationId: string | undefined;
   state: ConnectionState | undefined;
   error: string | undefined;
   incompatible: boolean;
-  /** Undefined when no environment can have a session started. */
+  /** Undefined when no location can have a session started. */
   onNewSession: (() => void) | undefined;
 }) {
   const store = useAppStore();
@@ -49,21 +49,21 @@ export function NoSession({
         // Connecting again would not change it: why, and where it says what to update.
         <StateBlock
           tone="away"
-          title={t("environment.notConnected")}
-          body={t("environment.incompatible")}
+          title={t("location.notConnected")}
+          body={t("location.incompatible")}
         />
       ) : state === "connecting" || state === "reconnecting" ? (
-        <StateBlock tone="loading" title={t("environment.connecting")} />
+        <StateBlock tone="loading" title={t("location.connecting")} />
       ) : (
         <StateBlock
           tone="error"
-          title={t("environment.notConnected")}
+          title={t("location.notConnected")}
           reason={error}
           action={
-            environmentId !== undefined
+            locationId !== undefined
               ? {
-                  label: t("environment.connectAgain"),
-                  onAction: () => void store.connectEnvironment(environmentId),
+                  label: t("location.connectAgain"),
+                  onAction: () => void store.connectLocation(locationId),
                 }
               : undefined
           }

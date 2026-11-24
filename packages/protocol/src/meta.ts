@@ -17,6 +17,11 @@ export const META = {
   agent: "cycle/agent",
   /** In `session/new`: the initial configuration, checked against the agent's `configSchema`. */
   config: "cycle/config",
+  /**
+   * In `session/new`: the session's environment, `SessionEnvironmentSchema` (docs/protocol.md §6 "环境"). In a
+   * `session/list` row: its summary, `SessionEnvironmentSummarySchema`, never a variable's value.
+   */
+  environment: "cycle/environment",
   /** On a choice an agent offers (an ACP select option, a `configSchema` `oneOf` entry): true on the one it suggests. */
   recommended: "cycle/recommended",
   /** On a choice an agent offers: true on a high-risk option (such as skipping all permission checks) that the UI should warn on. */
@@ -145,6 +150,8 @@ export const CapabilitiesSchema = z.object({
   agentSetup: z.boolean().optional(),
   /** A `cycle://session/` mention in a prompt reaches the agent as that session's record (docs/protocol.md §8). */
   sessionMentions: z.boolean().optional(),
+  /** `session/new` takes `_meta["cycle/environment"]`, and `_cycle/terminal/create` an `actionId` (docs/protocol.md §6 "环境"). */
+  environments: z.boolean().optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 

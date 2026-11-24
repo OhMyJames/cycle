@@ -1,5 +1,5 @@
 // How the app looks and reads, as the person chose: light or dark, the language, and whether the agent suggests what to
-// say next. Kept in a file of the app's own data, apart from the environments (settings.json): a file that cannot be
+// say next. Kept in a file of the app's own data, apart from the locations (settings.json): a file that cannot be
 // read costs a choice of colours, not the list of machines. Nothing here knows Electron: what applies a theme is handed in.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";

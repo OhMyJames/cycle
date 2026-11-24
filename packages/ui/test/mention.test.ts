@@ -30,7 +30,7 @@ test("a file is shown by its name with its folder beside it, a folder with a sla
 });
 
 const session = (sessionId: string, title: string, extra: object = {}) => ({
-  environmentId: "local",
+  locationId: "local",
   sessionId,
   title,
   archived: false,
@@ -39,12 +39,12 @@ const session = (sessionId: string, title: string, extra: object = {}) => ({
   ...extra,
 });
 
-test("the sessions an @ may name: same environment, not this one, not archived, the most recent first", () => {
+test("the sessions an @ may name: same location, not this one, not archived, the most recent first", () => {
   const sessions = [
     session("here", "Login here"),
     session("old", "Login old", { updatedAt: "2019-01-01T00:00:00.000Z" }),
     session("new", "Login new", { updatedAt: "2021-01-01T00:00:00.000Z" }),
-    session("away", "Login away", { environmentId: "ssh-x" }),
+    session("away", "Login away", { locationId: "ssh-x" }),
     session("archived", "Login archived", { archived: true }),
     session("other", "Something else"),
   ];
@@ -52,19 +52,19 @@ test("the sessions an @ may name: same environment, not this one, not archived, 
     mentionableSessions(
       sessions,
       query,
-      { environmentId: "local", sessionId: "here" },
+      { locationId: "local", sessionId: "here" },
       (s) => s.title,
     ).map((s) => s.sessionId);
   expect(named("LOG")).toEqual(["new", "old"]);
   expect(named("")).toEqual(["new", "other", "old"]);
   // A blank conversation has no session of its own.
   expect(
-    mentionableSessions(sessions, "here", { environmentId: "local" }, (s) => s.title).map(
+    mentionableSessions(sessions, "here", { locationId: "local" }, (s) => s.title).map(
       (s) => s.sessionId,
     ),
   ).toEqual(["here"]);
   const many = Array.from({ length: 20 }, (_, i) => session(`s${i}`, `t${i}`));
-  expect(mentionableSessions(many, "", { environmentId: "local" }, (s) => s.title)).toHaveLength(
+  expect(mentionableSessions(many, "", { locationId: "local" }, (s) => s.title)).toHaveLength(
     SESSION_ROWS,
   );
 });

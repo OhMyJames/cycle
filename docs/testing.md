@@ -42,7 +42,7 @@
 1. **准备前后两个版本。** 取上一次发布和目标版本各自的 macOS CI 产物，每份都应包含原始 zip 和 `latest-darwin-arm64.json`。需要重新构建时，在两个发布提交上分别建测试分支，手动运行 `release.yml`，选 `sign=true` 和 `runner=self-hosted`。从**分支**运行只上传 artifact。从标签运行会进入发布流程。每次核对 Sign、Gatekeeper 和上传三个步骤都成功。0.3.6 和 0.3.7 的旧工作流给 macOS artifact 一律加了 `-unsigned` 后缀，下载这两个版本时按实际名称取包，下面的测试会检查包内签名。
 2. **同团队安装。** 在仓库根目录执行下面的命令，替换两个 run ID。测试从回环地址提供原始清单和 zip，验证包大小、SHA-256、Developer ID、Gatekeeper、公证票据和 Team ID，驱动旧应用发现并安装更新。通过条件包括旧应用和 daemon 均退出、新应用重启、安装后的签名仍有效，以及临时套接字上的 daemon 在更新前后分别报出两个发布版本。
 3. **异团队拒绝。** 另取一份由不同 Apple 团队签名并公证的较新 Cycle 构建，沿用旧版本，把 `CYCLE_SIGNED_TO` 指向该产物，另设 `CYCLE_EXPECT_DIFFERENT_TEAM=1` 再跑一次。应出现签名团队不匹配的错误，旧应用和原 daemon 继续运行，安装目录保留原版本，暂存目录清理完成。两张同团队证书具有相同 Team ID，只能用于同团队用例。
-4. **远端旧 daemon 横幅。** 在更新后的版本中用「Add environment」连接专用 SSH 测试环境，选择该环境的会话。使用能完成协议握手、版本低于目标版本 `MIN_DAEMON_VERSION` 的已编译 daemon（0.3.7 的下限是 0.2.1）。核对横幅中的环境名称、实际 daemon 版本，以及按钮的目标版本。换用达到下限的 daemon 后重连，横幅应消失。记录两次观察；远端协议主版本不兼容时会显示另一条提示。
+4. **远端旧 daemon 横幅。** 在更新后的版本中用「Add location」连接专用 SSH 测试机器，选择该工作位置的会话。使用能完成协议握手、版本低于目标版本 `MIN_DAEMON_VERSION` 的已编译 daemon（0.3.7 的下限是 0.2.1）。核对横幅中的工作位置名称、实际 daemon 版本，以及按钮的目标版本。换用达到下限的 daemon 后重连，横幅应消失。记录两次观察；远端协议主版本不兼容时会显示另一条提示。
 5. **记录结果。** 保留两个构建链接、版本、Team ID、清单 SHA-256、正反例的测试输出及远端横幅截图。缺少异团队产物或测试环境的用例记为待验。
 
 ```bash
@@ -64,7 +64,7 @@ mac-mini 上用同一 Developer ID 团队 `AGKXLGRXJ7` 对发布提交 0.3.6、0
 | 原版 0.3.6 → 0.3.7                             | 应用下载更新、通过团队检查并重启。旧 daemon 的 PID 已退出，五秒后临时套接字仍应答 0.3.6，已安装的二进制报告 0.3.7。旧桌面在退出前有机会自动重连，重新启动旧二进制。[复现记录](https://github.com/OhMyJames/Cycle-V1/actions/runs/44705021238)                       |
 | 带重连修复的签名 0.3.6 测试副本 → 原签名 0.3.7 | 通过。旧应用和旧 daemon 均退出；新应用重启，本地套接字应答 0.3.7，运行中的 daemon 映射到新安装包内的可执行文件。此轮读取 589,845 字节的 Range 响应后下载了一次整包。[签名回归记录](https://github.com/OhMyJames/Cycle-V1/actions/runs/44705469363/job/136187410159) |
 | 签名版 0.3.6 收到公开的 ad hoc 0.3.7           | 窗口提示签名团队不匹配；旧应用和 daemon 继续运行，暂存目录清理完成。[拒绝安装记录](https://github.com/OhMyJames/Cycle-V1/actions/runs/44705021238)                                                                                                                  |
-| 签名版 0.3.7 连接远端旧 daemon                 | 通过隔离的真实 SSH 连接 0.2.0，窗口显示环境名称、0.2.0 和「Update to 0.3.7」。切换远端二进制并重连 0.3.7 后横幅消失。[运行和截图](https://github.com/OhMyJames/Cycle-V1/actions/runs/44704590908)                                                                   |
+| 签名版 0.3.7 连接远端旧 daemon                 | 通过隔离的真实 SSH 连接 0.2.0，窗口显示工作位置名称、0.2.0 和「Update to 0.3.7」。切换远端二进制并重连 0.3.7 后横幅消失。[运行和截图](https://github.com/OhMyJames/Cycle-V1/actions/runs/44704590908)                                                               |
 | 两个不同 Developer ID 团队的 Cycle 包          | 待验。目前只有一个团队的 Cycle 产物。                                                                                                                                                                                                                               |
 
 ## 每次全跑

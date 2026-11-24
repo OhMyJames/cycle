@@ -1,22 +1,16 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { EnvironmentConfig } from "../../src/api.ts";
+import type { LocationConfig } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
-import {
-  browseFolders,
-  chooseEnvironment,
-  chosenFolder,
-  openFolders,
-  typeFolder,
-} from "./blank.ts";
+import { browseFolders, chooseLocation, chosenFolder, openFolders, typeFolder } from "./blank.ts";
 import { press, ready, sleep, write } from "./box.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
 
-const far: EnvironmentConfig = {
+const far: LocationConfig = {
   id: "far",
   name: "Build box",
   kind: "remote",
@@ -29,14 +23,14 @@ const mount = async (
 ) => {
   const script = fakeBridge({
     connected: true,
-    environments: [far],
+    locations: [far],
     states,
     ...(capabilities !== undefined ? { capabilities } : {}),
   });
   const store = await renderApp(script.bridge);
   const user = userEvent.setup();
   await screen.findAllByRole("option");
-  // An event can start a read (the agents of an environment that connected): wait for it inside act, or React warns.
+  // An event can start a read (the agents of a location that connected): wait for it inside act, or React warns.
   const emit = (event: Parameters<typeof script.emit>[0]) =>
     act(async () => {
       script.emit(event);
@@ -63,21 +57,21 @@ test("the workspaces of every host are in the switcher, and one on another host 
   const { user } = await mount();
   // One workspace is shown: the newest, on this computer.
   expect(screen.getAllByRole("option")).toHaveLength(1);
-  expect(screen.getAllByRole("option")[0]?.getAttribute("data-environment")).toBe("local");
+  expect(screen.getAllByRole("option")[0]?.getAttribute("data-location")).toBe("local");
   const trigger = screen.getByRole("button", { name: /Switch workspace/ });
-  // The same folder on two environments: each named after its environment.
+  // The same folder on two locations: each named after its location.
   expect(trigger.textContent).toContain("work · This computer");
   expect(within(trigger).queryByRole("img")).toBeNull();
   await user.click(trigger);
   const remote = await screen.findByRole("menuitem", { name: /work · Build box/ });
   // The icon's name says where, and how it stands: for the tooltip and for a reader.
   expect(within(remote).getByRole("img", { name: "On Build box · Connected" })).toBeTruthy();
-  // Several environments: the menu is grouped by them.
+  // Several locations: the menu is grouped by them.
   expect(screen.getByText(/This computer · Connected/)).toBeTruthy();
   expect(screen.getByText(/Build box · Connected/)).toBeTruthy();
   await user.click(remote);
   await waitFor(() =>
-    expect(screen.getAllByRole("option")[0]?.getAttribute("data-environment")).toBe("far"),
+    expect(screen.getAllByRole("option")[0]?.getAttribute("data-location")).toBe("far"),
   );
   // Shown, it is named by the icon in the switcher.
   expect(
@@ -93,13 +87,13 @@ test("a host that is away: its sessions stay, greyed and saying why, and it can 
   const rows = screen.getAllByRole("option");
   const greyed = rows.filter((row) => row.getAttribute("data-away") !== null);
   expect(greyed).toHaveLength(1);
-  expect(greyed[0]?.getAttribute("data-environment")).toBe("far");
+  expect(greyed[0]?.getAttribute("data-location")).toBe("far");
   expect(greyed[0]?.getAttribute("title")).toBe("Build box · Not connected");
-  // The sidebar says which environment, and how it stands, with a way to try again.
+  // The sidebar says which location, and how it stands, with a way to try again.
   const status = screen
-    .getByText("Build box · Not connected", { selector: '[data-slot="environment-name"]' })
-    .closest<HTMLElement>('[data-slot="environment-state"]');
-  if (status === null) throw new Error("no state row for the environment");
+    .getByText("Build box · Not connected", { selector: '[data-slot="location-name"]' })
+    .closest<HTMLElement>('[data-slot="location-state"]');
+  if (status === null) throw new Error("no state row for the location");
   await user.click(within(status).getByRole("button", { name: "Connect again" }));
   expect(named("connect")).toEqual([["connect", "far"]]);
 });
@@ -110,7 +104,7 @@ test("a session of a host that is away is not asked of, and opening one that was
   await user.click(
     screen
       .getAllByRole("option")
-      .find((o) => o.getAttribute("data-environment") === "far") as HTMLElement,
+      .find((o) => o.getAttribute("data-location") === "far") as HTMLElement,
   );
   expect((await screen.findByRole("alert")).textContent).toContain(
     "Build box is not connected, so this session cannot be opened.",
@@ -124,7 +118,7 @@ test("when the host comes back its rows are no longer greyed", async () => {
   expect(screen.getAllByRole("option").some((o) => o.getAttribute("data-away") !== null)).toBe(
     true,
   );
-  await emit({ type: "environment-status", environmentId: "far", state: "connected" });
+  await emit({ type: "location-status", locationId: "far", state: "connected" });
   await waitFor(() =>
     expect(screen.getAllByRole("option").every((o) => o.getAttribute("data-away") === null)).toBe(
       true,
@@ -132,14 +126,14 @@ test("when the host comes back its rows are no longer greyed", async () => {
   );
 });
 
-test("a blank conversation asks which environment when there are several, and the system's chooser is for this computer", async () => {
+test("a blank conversation asks which location when there are several, and the system's chooser is for this computer", async () => {
   const { user, named } = await mount();
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
   // It starts where the person is: this computer, which has the system's folder chooser.
   expect(within(await openFolders(user)).getByRole("menuitem", { name: "Browse…" })).toBeTruthy();
   await user.keyboard("{Escape}");
-  await chooseEnvironment(user, "Build box");
+  await chooseLocation(user, "Build box");
   await typeFolder(user, "/srv/app");
   await sendFirst("hi");
   await waitFor(() => expect(named("createSession")).toHaveLength(1));
@@ -156,7 +150,7 @@ const tree: Record<string, string[]> = {
   "/home/me": ["app", "docs"],
   "/home/me/docs": ["notes"],
 };
-const folders = (asked: (string | undefined)[]) => async (_environment: string, path?: string) => {
+const folders = (asked: (string | undefined)[]) => async (_location: string, path?: string) => {
   asked.push(path);
   const here = path ?? "/home/me";
   const names = tree[here];
@@ -171,13 +165,13 @@ const folders = (asked: (string | undefined)[]) => async (_environment: string, 
   };
 };
 
-test("on another environment the folder is chosen by browsing its machine", async () => {
+test("on another location the folder is chosen by browsing its machine", async () => {
   const { user, bridge, named } = await mount();
   const asked: (string | undefined)[] = [];
   bridge.listFolders = folders(asked);
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
-  await chooseEnvironment(user, "Build box");
+  await chooseLocation(user, "Build box");
   await browseFolders(user);
   // It opens at the machine's home, and shows the real path and the folders in it.
   expect((await screen.findByText("/home/me", { selector: "code" })).textContent).toBe("/home/me");
@@ -205,13 +199,13 @@ test("browsing stays where it is when the page around it changes, and the hidden
   bridge.listFolders = folders(asked);
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
-  await chooseEnvironment(user, "Build box");
+  await chooseLocation(user, "Build box");
   await browseFolders(user);
   await user.click(await screen.findByRole("option", { name: "docs" }));
   await screen.findByText("/home/me/docs", { selector: "code" });
   const before = asked.length;
   // Something else happens in the app: the page is drawn again, and the browser is where it was.
-  await emit({ type: "environment-status", environmentId: "far", state: "connected" });
+  await emit({ type: "location-status", locationId: "far", state: "connected" });
   await user.click(screen.getByRole("button", { name: "Show hidden folders" }));
   await waitFor(() => expect(asked.length).toBe(before + 1));
   expect(asked.at(-1)).toBe("/home/me/docs");
@@ -221,16 +215,16 @@ test("browsing stays where it is when the page around it changes, and the hidden
 test("a folder that cannot be listed can be left by going up or home", async () => {
   const { user, bridge } = await mount();
   const base = folders([]);
-  bridge.listFolders = async (environment, path) => {
+  bridge.listFolders = async (location, path) => {
     if (path === "/home/me/locked") throw new Error("The folder cannot be read");
-    const listing = await base(environment, path);
+    const listing = await base(location, path);
     return path === undefined || path === "/home/me"
       ? { ...listing, folders: [...listing.folders, { name: "locked" }] }
       : listing;
   };
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
-  await chooseEnvironment(user, "Build box");
+  await chooseLocation(user, "Build box");
   await browseFolders(user);
   await user.click(await screen.findByRole("option", { name: "locked" }));
   expect((await screen.findByRole("alert")).textContent).toContain("The folder cannot be read");
@@ -249,7 +243,7 @@ test("browsing starts from the folder that is typed, and from home when that can
   bridge.listFolders = folders(asked);
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
-  await chooseEnvironment(user, "Build box");
+  await chooseLocation(user, "Build box");
   await typeFolder(user, "/gone/for/good");
   await browseFolders(user);
   await screen.findByText("/home/me", { selector: "code" });
@@ -265,7 +259,7 @@ test("a folder that cannot be listed says why, and can be tried again", async ()
   };
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
-  await chooseEnvironment(user, "Build box");
+  await chooseLocation(user, "Build box");
   await browseFolders(user);
   expect((await screen.findByRole("alert")).textContent).toContain("The folder cannot be read");
   fail = false;
@@ -273,25 +267,25 @@ test("a folder that cannot be listed says why, and can be tried again", async ()
   await screen.findByRole("option", { name: "docs" });
 });
 
-test("an environment whose daemon cannot list folders is typed into, not browsed", async () => {
+test("a location whose daemon cannot list folders is typed into, not browsed", async () => {
   const { user } = await mount({}, { queue: true, files: true, folders: false });
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _dialog = await screen.findByRole("group", { name: "Where the session runs" });
-  await chooseEnvironment(user, "Build box");
+  await chooseLocation(user, "Build box");
   const menu = await openFolders(user);
   expect(within(menu).queryByRole("menuitem", { name: "Browse…" })).toBeNull();
   expect(within(menu).getByRole("menuitem", { name: "Enter a path…" })).toBeTruthy();
 });
 
-test("a blank page whose environment drops can be moved to one that is up", async () => {
+test("a blank page whose location drops can be moved to one that is up", async () => {
   const { user, emit, named } = await mount();
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const _where = await screen.findByRole("group", { name: "Where the session runs" });
-  await chooseEnvironment(user, "Build box");
-  await emit({ type: "environment-status", environmentId: "far", state: "closed" });
+  await chooseLocation(user, "Build box");
+  await emit({ type: "location-status", locationId: "far", state: "closed" });
   await screen.findByText("Not connected to Build box.");
   // Still there, with this computer to go to.
-  await chooseEnvironment(user, "This computer");
+  await chooseLocation(user, "This computer");
   await waitFor(() => expect(screen.queryByText("Not connected to Build box.")).toBeNull());
   await typeFolder(user, "/srv/app");
   await sendFirst("hi");
@@ -303,17 +297,17 @@ test("a host that is not connected cannot have a session started on it", async (
   const { user } = await mount({ far: "closed" });
   await user.click(await screen.findByRole("button", { name: "New session" }));
   const dialog = await screen.findByRole("group", { name: "Where the session runs" });
-  // Only the environment that is connected: nothing to choose.
+  // Only the location that is connected: nothing to choose.
   const menu = await openFolders(user);
   expect(within(menu).getByRole("menuitem", { name: "Enter a path…" })).toBeTruthy();
-  expect(within(menu).queryByText("Environment")).toBeNull();
+  expect(within(menu).queryByText("Work in")).toBeNull();
   expect(within(dialog).queryByText("Build box")).toBeNull();
 });
 
-test("a remote environment can be edited, and removing one asks for confirmation first", async () => {
+test("a remote location can be edited, and removing one asks for confirmation first", async () => {
   const { user, named } = await mount();
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Environments" }));
+  await user.click(await screen.findByRole("tab", { name: "Work in" }));
   await user.click(await screen.findByRole("button", { name: "Actions for Build box" }));
   await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
   const edit = await screen.findByRole("dialog", { name: "Edit Build box" });
@@ -321,13 +315,13 @@ test("a remote environment can be edited, and removing one asks for confirmation
   await user.clear(name);
   await user.type(name, "Build 2");
   await user.click(within(edit).getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(named("saveEnvironment")).toHaveLength(1));
-  expect(named("saveEnvironment")[0]?.[1]).toMatchObject({ id: "far", name: "Build 2" });
+  await waitFor(() => expect(named("saveLocation")).toHaveLength(1));
+  expect(named("saveLocation")[0]?.[1]).toMatchObject({ id: "far", name: "Build 2" });
 
   await user.click(await screen.findByRole("button", { name: "Actions for Build box" }));
   await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
   const confirm = await screen.findByRole("alertdialog", { name: "Remove Build box?" });
-  expect(named("removeEnvironment")).toHaveLength(0);
-  await user.click(within(confirm).getByRole("button", { name: "Remove environment" }));
-  await waitFor(() => expect(named("removeEnvironment")).toEqual([["removeEnvironment", "far"]]));
+  expect(named("removeLocation")).toHaveLength(0);
+  await user.click(within(confirm).getByRole("button", { name: "Remove location" }));
+  await waitFor(() => expect(named("removeLocation")).toEqual([["removeLocation", "far"]]));
 });

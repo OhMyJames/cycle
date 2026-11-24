@@ -12,10 +12,10 @@ export type TerminalScreen = {
 
 export class TerminalsSlice {
   readonly #kit: StoreKit;
-  /** Who draws each terminal (`environmentId:terminalId`): its output and resets go there, and nowhere else. */
+  /** Who draws each terminal (`locationId:terminalId`): its output and resets go there, and nowhere else. */
   readonly #screens = new Map<string, TerminalScreen>();
   /**
-   * Environments whose terminals are being listed again after a reconnect: until that answer, a terminal missing from
+   * Locations whose terminals are being listed again after a reconnect: until that answer, a terminal missing from
    * what the daemon tells ended while the connection was away, and keeps its tab saying so.
    */
   readonly #relisting = new Map<string, number>();
@@ -28,8 +28,8 @@ export class TerminalsSlice {
   onEvent(event: AppEvent & { type: "terminals" | "terminal-output" | "terminal-reset" }): void {
     switch (event.type) {
       case "terminals": {
-        const key = viewKey(event.environmentId, event.sessionId);
-        const gone = this.#relisting.has(event.environmentId) ? "kept" : "dropped";
+        const key = viewKey(event.locationId, event.sessionId);
+        const gone = this.#relisting.has(event.locationId) ? "kept" : "dropped";
         this.#kit.set((s) => ({
           terminals: {
             ...s.terminals,
@@ -39,13 +39,11 @@ export class TerminalsSlice {
         return;
       }
       case "terminal-output":
-        this.#screens
-          .get(`${event.environmentId}:${event.terminalId}`)
-          ?.output(event.seq, event.data);
+        this.#screens.get(`${event.locationId}:${event.terminalId}`)?.output(event.seq, event.data);
         return;
       case "terminal-reset":
         this.#screens
-          .get(`${event.environmentId}:${event.terminalId}`)
+          .get(`${event.locationId}:${event.terminalId}`)
           ?.screen(event.seq, event.screen, event.cols, event.rows);
         return;
     }
@@ -55,32 +53,32 @@ export class TerminalsSlice {
    * Asks a session's daemon for its terminals, the first time the page needs them. After that the daemon tells every
    * change, and a connection that comes back asks again (`relist`).
    */
-  load = async (environmentId: string, sessionId: string): Promise<void> => {
-    if (this.#kit.state().terminals[viewKey(environmentId, sessionId)] !== undefined) return;
-    await this.#list(environmentId, sessionId, "dropped");
+  load = async (locationId: string, sessionId: string): Promise<void> => {
+    if (this.#kit.state().terminals[viewKey(locationId, sessionId)] !== undefined) return;
+    await this.#list(locationId, sessionId, "dropped");
   };
 
   /** Terminals may have ended while the connection was away (the daemon stopped): their tabs say so. */
-  async relist(environmentId: string): Promise<void> {
-    const prefix = `${environmentId}:`;
+  async relist(locationId: string): Promise<void> {
+    const prefix = `${locationId}:`;
     const sessions = Object.keys(this.#kit.state().terminals)
       .filter((key) => key.startsWith(prefix))
       .map((key) => key.slice(prefix.length));
     if (sessions.length === 0) return;
-    const round = (this.#relisting.get(environmentId) ?? 0) + 1;
-    this.#relisting.set(environmentId, round);
+    const round = (this.#relisting.get(locationId) ?? 0) + 1;
+    this.#relisting.set(locationId, round);
     try {
-      await Promise.all(sessions.map((s) => this.#list(environmentId, s, "kept")));
+      await Promise.all(sessions.map((s) => this.#list(locationId, s, "kept")));
     } finally {
-      if (this.#relisting.get(environmentId) === round) this.#relisting.delete(environmentId);
+      if (this.#relisting.get(locationId) === round) this.#relisting.delete(locationId);
     }
   }
 
-  async #list(environmentId: string, sessionId: string, gone: "kept" | "dropped"): Promise<void> {
-    if (this.#kit.state().status[environmentId]?.capabilities?.terminal !== true) return;
-    const key = viewKey(environmentId, sessionId);
+  async #list(locationId: string, sessionId: string, gone: "kept" | "dropped"): Promise<void> {
+    if (this.#kit.state().status[locationId]?.capabilities?.terminal !== true) return;
+    const key = viewKey(locationId, sessionId);
     try {
-      const told = await this.#kit.bridge.listTerminals(environmentId, sessionId);
+      const told = await this.#kit.bridge.listTerminals(locationId, sessionId);
       this.#kit.set((s) => ({
         terminals: { ...s.terminals, [key]: mergeTerminals(s.terminals[key], told, gone) },
       }));
@@ -94,15 +92,20 @@ export class TerminalsSlice {
    * shown as any other failure, in the page's words.
    */
   create = async (
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     size: { cols: number; rows: number },
-    via: "header" | "tab_strip",
+    via: "header" | "tab_strip" | "action",
+    /** Runs this action of the session's environment in it instead of a shell. */
+    actionId?: string,
   ): Promise<TerminalAttached | undefined> => {
     const { bridge, set, track, sidePanels } = this.#kit;
     let made: Awaited<ReturnType<CycleBridge["createTerminal"]>>;
     try {
-      made = await bridge.createTerminal(environmentId, sessionId, size.cols, size.rows);
+      made =
+        actionId === undefined
+          ? await bridge.createTerminal(locationId, sessionId, size.cols, size.rows)
+          : await bridge.createTerminal(locationId, sessionId, size.cols, size.rows, actionId);
     } catch (error) {
       made = { problem: "failed", message: messageOf(error) };
     }
@@ -122,10 +125,10 @@ export class TerminalsSlice {
       });
       return undefined;
     }
-    const key = viewKey(environmentId, sessionId);
+    const key = viewKey(locationId, sessionId);
     // Opening attached this connection to it; its tab attaches when it is drawn, and a tab never drawn (the person went
     // elsewhere first) must not keep its output coming. Sent before the tab's own attach, so the daemon sees them in order.
-    this.detach(environmentId, made.terminal.terminalId);
+    this.detach(locationId, made.terminal.terminalId);
     set((s) => {
       const known = s.terminals[key] ?? [];
       const has = known.some((t) => t.terminalId === made.terminal.terminalId);
@@ -148,9 +151,9 @@ export class TerminalsSlice {
    * once, and the panel shows the tab before it if it was the one shown. If the daemon could not be told, that is shown,
    * and the list is read again: a shell still running gets its tab back.
    */
-  close = async (environmentId: string, sessionId: string, terminalId: string): Promise<void> => {
+  close = async (locationId: string, sessionId: string, terminalId: string): Promise<void> => {
     const { bridge, set, track, sidePanels } = this.#kit;
-    const key = viewKey(environmentId, sessionId);
+    const key = viewKey(locationId, sessionId);
     const known = this.#kit.state().terminals[key] ?? [];
     const was = known.find((t) => t.terminalId === terminalId);
     const panel = sidePanels.get(key);
@@ -175,10 +178,10 @@ export class TerminalsSlice {
     });
     if (was.ended === true) return;
     try {
-      await bridge.closeTerminal(environmentId, terminalId);
+      await bridge.closeTerminal(locationId, terminalId);
     } catch (error) {
       set({ error: messageOf(error) });
-      await this.#list(environmentId, sessionId, "dropped");
+      await this.#list(locationId, sessionId, "dropped");
     }
   };
 
@@ -186,8 +189,8 @@ export class TerminalsSlice {
    * Draws a terminal: from now on its output and resets go to `screen`, until the function returned is called. Call it
    * before attaching, so that output that comes before the attach's answer is not lost.
    */
-  show = (environmentId: string, terminalId: string, screen: TerminalScreen): (() => void) => {
-    const id = `${environmentId}:${terminalId}`;
+  show = (locationId: string, terminalId: string, screen: TerminalScreen): (() => void) => {
+    const id = `${locationId}:${terminalId}`;
     this.#screens.set(id, screen);
     return () => {
       if (this.#screens.get(id) === screen) this.#screens.delete(id);
@@ -195,17 +198,17 @@ export class TerminalsSlice {
   };
 
   /** The terminal's screen now. Fails as the daemon says (it has gone, the connection is down): the caller shows it. */
-  attach = (environmentId: string, terminalId: string): Promise<TerminalAttached> =>
-    this.#kit.bridge.attachTerminal(environmentId, terminalId);
+  attach = (locationId: string, terminalId: string): Promise<TerminalAttached> =>
+    this.#kit.bridge.attachTerminal(locationId, terminalId);
 
   /** Lets go of a terminal no longer drawn. Never fails: one that has gone, or a connection that has, is let go already. */
-  detach = (environmentId: string, terminalId: string): void => {
-    void this.#kit.bridge.detachTerminal(environmentId, terminalId).catch(() => undefined);
+  detach = (locationId: string, terminalId: string): void => {
+    void this.#kit.bridge.detachTerminal(locationId, terminalId).catch(() => undefined);
   };
 
-  input = (environmentId: string, terminalId: string, data: string): Promise<void> =>
-    this.#kit.bridge.terminalInput(environmentId, terminalId, data);
+  input = (locationId: string, terminalId: string, data: string): Promise<void> =>
+    this.#kit.bridge.terminalInput(locationId, terminalId, data);
 
-  resize = (environmentId: string, terminalId: string, cols: number, rows: number): Promise<void> =>
-    this.#kit.bridge.resizeTerminal(environmentId, terminalId, cols, rows);
+  resize = (locationId: string, terminalId: string, cols: number, rows: number): Promise<void> =>
+    this.#kit.bridge.resizeTerminal(locationId, terminalId, cols, rows);
 }

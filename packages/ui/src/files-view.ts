@@ -72,7 +72,7 @@ export class FilesViews {
     return () => this.#listeners.delete(listener);
   };
 
-  /** A session's tab (`environmentId:sessionId`). The same object until it changes, so that it can be watched. */
+  /** A session's tab (`locationId:sessionId`). The same object until it changes, so that it can be watched. */
   get = (key: string): FilesState => this.#states.get(key) ?? START;
 
   #put(key: string, state: FilesState): void {

@@ -1,7 +1,7 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { ConnectorInfo, EnvironmentConfig } from "../../src/api.ts";
+import type { ConnectorInfo, LocationConfig } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -18,7 +18,7 @@ const notion: ConnectorInfo = {
   status: { state: "needs_auth" },
 };
 
-const far: EnvironmentConfig = {
+const far: LocationConfig = {
   id: "far",
   name: "Build box",
   kind: "remote",
@@ -26,11 +26,7 @@ const far: EnvironmentConfig = {
 };
 
 const mount = async (
-  options: {
-    connectors?: ConnectorInfo[];
-    capable?: boolean;
-    environments?: EnvironmentConfig[];
-  } = {},
+  options: { connectors?: ConnectorInfo[]; capable?: boolean; locations?: LocationConfig[] } = {},
 ) => {
   const script = fakeBridge({
     connected: true,
@@ -41,7 +37,7 @@ const mount = async (
       connectors: options.capable !== false,
     },
     connectors: options.connectors ?? [],
-    ...(options.environments !== undefined ? { environments: options.environments } : {}),
+    ...(options.locations !== undefined ? { locations: options.locations } : {}),
   });
   const store = await renderApp(script.bridge);
   const user = userEvent.setup();
@@ -70,8 +66,8 @@ test("Connectors is a page over the sessions: its button opens it, Escape goes b
   expect(document.activeElement).toBe(within(sections).getByRole("tab", { name: "MCP servers" }));
   expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
-  // One environment can keep connectors: there is nothing to choose.
-  expect(within(page).queryByRole("combobox", { name: "Environment" })).toBeNull();
+  // One location can keep connectors: there is nothing to choose.
+  expect(within(page).queryByRole("combobox", { name: "Work in" })).toBeNull();
   // With none yet, the page says so and offers the way to add one, once.
   expect(await within(page).findByText("No connectors yet.")).toBeTruthy();
   expect(within(page).getAllByRole("button", { name: "Add connector" })).toHaveLength(1);
@@ -99,15 +95,15 @@ test("Escape closes what is open over the page first, and the settings shortcut 
   expect(screen.queryByRole("tablist", { name: "Connectors sections" })).toBeNull();
 });
 
-test("no environment that can keep connectors is said, not asked, with the way to the environments", async () => {
+test("no location that can keep connectors is said, not asked, with the way to the locations", async () => {
   const { user, page, named, calls } = await mount({ capable: false });
   expect(
-    within(page).getByText("No connected environment can keep connectors or plugins."),
+    within(page).getByText("No connected location can keep connectors or plugins."),
   ).toBeTruthy();
   expect(within(page).queryByRole("button", { name: "Add connector" })).toBeNull();
   expect(named("listConnectors")).toHaveLength(0);
-  await user.click(within(page).getByRole("button", { name: "Show environments" }));
-  expect(await screen.findByRole("heading", { name: "Environments", level: 2 })).toBeTruthy();
+  await user.click(within(page).getByRole("button", { name: "Show locations" }));
+  expect(await screen.findByRole("heading", { name: "Work in", level: 2 })).toBeTruthy();
   expect(screen.queryByRole("tablist", { name: "Connectors sections" })).toBeNull();
   expect(tracked(calls)).toEqual([
     ["panel_opened", { panel: "connectors", via: "click" }],
@@ -115,26 +111,26 @@ test("no environment that can keep connectors is said, not asked, with the way t
   ]);
 });
 
-test("with several environments the page says whose connectors it shows, and another can be chosen", async () => {
-  const { user, page, named } = await mount({ environments: [far], connectors: [{ ...notion }] });
-  // It starts on the environment that is open.
-  const environment = await within(page).findByRole("combobox", { name: "Environment" });
-  expect(environment.textContent).toContain("This computer");
+test("with several locations the page says whose connectors it shows, and another can be chosen", async () => {
+  const { user, page, named } = await mount({ locations: [far], connectors: [{ ...notion }] });
+  // It starts on the location that is open.
+  const location = await within(page).findByRole("combobox", { name: "Work in" });
+  expect(location.textContent).toContain("This computer");
   await waitFor(() => expect(named("listConnectors")).toEqual([["listConnectors", "local"]]));
-  await user.click(environment);
+  await user.click(location);
   await user.click(await screen.findByRole("option", { name: "Build box" }));
   await waitFor(() => expect(named("listConnectors").at(-1)).toEqual(["listConnectors", "far"]));
   expect(await within(page).findByText(/every agent on Build box can use/)).toBeTruthy();
 });
 
-test("an environment that goes away is no longer the one the page manages", async () => {
+test("a location that goes away is no longer the one the page manages", async () => {
   const { page, emit } = await mount({ connectors: [{ ...notion }] });
   expect(await within(page).findByText("notion")).toBeTruthy();
   await act(async () =>
-    emit({ type: "environment-status", environmentId: "local", state: "reconnecting" }),
+    emit({ type: "location-status", locationId: "local", state: "reconnecting" }),
   );
   expect(
-    await within(page).findByText("No connected environment can keep connectors or plugins."),
+    await within(page).findByText("No connected location can keep connectors or plugins."),
   ).toBeTruthy();
   expect(within(page).queryByText("notion")).toBeNull();
 });

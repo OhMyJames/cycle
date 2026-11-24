@@ -933,3 +933,47 @@ test("a background sub-agent's own talk and calls stay out of the session, and a
     expect(ended.every((i) => i < end)).toBe(true);
   });
 });
+
+test("the session's variables reach Claude's commands through CLAUDE_ENV_FILE, never Claude's own environment", async () => {
+  const fake = fakeQuery(() => textTurn(ID, "msg_1", "ok"));
+  await connect(
+    fake.run,
+    async ({ agent, waitForIdle }) => {
+      const created = await agent.request(methods.agent.session.new, {
+        cwd: "/work",
+        _meta: { "cycle/sessionId": ID },
+      });
+      await agent.request(methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      await waitForIdle();
+    },
+    undefined,
+    {
+      env: { CLAUDE_CONFIG_DIR: "/data/claude", SHARED: "agent" },
+      sessionEnvFile: "/data/claude-env/s.sh",
+    },
+  );
+  expect(fake.calls[0]?.options.env).toEqual({
+    CLAUDE_CONFIG_DIR: "/data/claude",
+    SHARED: "agent",
+    CLAUDE_ENV_FILE: "/data/claude-env/s.sh",
+  });
+});
+
+test("without variables there is no CLAUDE_ENV_FILE", async () => {
+  const fake = fakeQuery(() => textTurn(ID, "msg_1", "ok"));
+  await connect(fake.run, async ({ agent, waitForIdle }) => {
+    const created = await agent.request(methods.agent.session.new, {
+      cwd: "/work",
+      _meta: { "cycle/sessionId": ID },
+    });
+    await agent.request(methods.agent.session.prompt, {
+      sessionId: created.sessionId,
+      prompt: [{ type: "text", text: "hi" }],
+    });
+    await waitForIdle();
+  });
+  expect(fake.calls[0]?.options.env).not.toHaveProperty("CLAUDE_ENV_FILE");
+});

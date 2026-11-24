@@ -1,4 +1,4 @@
-// Each environment's connectors: the page shows what went wrong itself, next to what it was about.
+// Each location's connectors: the page shows what went wrong itself, next to what it was about.
 import type {
   ConnectorAnswer,
   ConnectorChange,
@@ -22,71 +22,71 @@ export class ConnectorsSlice {
   }
 
   /** A change there, here or elsewhere: read again, if the page has asked about them. */
-  changed(environmentId: string): void {
-    if (this.#kit.state().connectors[environmentId] !== undefined) void this.load(environmentId);
+  changed(locationId: string): void {
+    if (this.#kit.state().connectors[locationId] !== undefined) void this.load(locationId);
   }
 
-  /** Reads the environment's connectors into the state; why it could not is kept there too. */
-  load = async (environmentId: string): Promise<void> => {
+  /** Reads the location's connectors into the state; why it could not is kept there too. */
+  load = async (locationId: string): Promise<void> => {
     try {
-      const list = await this.#kit.bridge.listConnectors(environmentId);
-      this.#kit.set((s) => ({ connectors: { ...s.connectors, [environmentId]: { list } } }));
+      const list = await this.#kit.bridge.listConnectors(locationId);
+      this.#kit.set((s) => ({ connectors: { ...s.connectors, [locationId]: { list } } }));
     } catch (error) {
       this.#kit.set((s) => ({
         connectors: {
           ...s.connectors,
           // What was read before stays on screen under the error: it is still the last that is known.
-          [environmentId]: { ...s.connectors[environmentId], error: messageOf(error) },
+          [locationId]: { ...s.connectors[locationId], error: messageOf(error) },
         },
       }));
     }
   };
 
   /** One connector as an answer gave it, in place: the list is right before the change event reads it again. */
-  #put(environmentId: string, connector: ConnectorInfo): void {
+  #put(locationId: string, connector: ConnectorInfo): void {
     this.#kit.set((s) => {
-      const list = s.connectors[environmentId]?.list;
+      const list = s.connectors[locationId]?.list;
       if (list === undefined) return {};
       const at = list.findIndex((c) => c.id === connector.id);
       const next = at < 0 ? [...list, connector] : list.map((c, i) => (i === at ? connector : c));
-      return { connectors: { ...s.connectors, [environmentId]: { list: next } } };
+      return { connectors: { ...s.connectors, [locationId]: { list: next } } };
     });
   }
 
-  async #answer<T extends object>(environmentId: string, answer: Promise<T>): Promise<T | Problem> {
+  async #answer<T extends object>(locationId: string, answer: Promise<T>): Promise<T | Problem> {
     const result = await answered(answer);
-    if ("connector" in result) this.#put(environmentId, result.connector as ConnectorInfo);
+    if ("connector" in result) this.#put(locationId, result.connector as ConnectorInfo);
     return result;
   }
 
-  add = (environmentId: string, draft: ConnectorDraft): Promise<ConnectorAnswer> =>
-    this.#answer(environmentId, this.#kit.bridge.addConnector(environmentId, draft));
+  add = (locationId: string, draft: ConnectorDraft): Promise<ConnectorAnswer> =>
+    this.#answer(locationId, this.#kit.bridge.addConnector(locationId, draft));
 
-  update = (environmentId: string, id: string, change: ConnectorChange): Promise<ConnectorAnswer> =>
-    this.#answer(environmentId, this.#kit.bridge.updateConnector(environmentId, id, change));
+  update = (locationId: string, id: string, change: ConnectorChange): Promise<ConnectorAnswer> =>
+    this.#answer(locationId, this.#kit.bridge.updateConnector(locationId, id, change));
 
   /** Removes a connector and its credentials. The panel has asked the person first. */
-  remove = async (environmentId: string, id: string): Promise<{ removed: true } | Problem> => {
-    const answer = await answered(this.#kit.bridge.removeConnector(environmentId, id));
+  remove = async (locationId: string, id: string): Promise<{ removed: true } | Problem> => {
+    const answer = await answered(this.#kit.bridge.removeConnector(locationId, id));
     if ("removed" in answer)
       this.#kit.set((s) => {
-        const list = s.connectors[environmentId]?.list;
+        const list = s.connectors[locationId]?.list;
         if (list === undefined) return {};
         return {
           connectors: {
             ...s.connectors,
-            [environmentId]: { list: list.filter((c) => c.id !== id) },
+            [locationId]: { list: list.filter((c) => c.id !== id) },
           },
         };
       });
     return answer;
   };
 
-  authorize = (environmentId: string, id: string): Promise<ConnectorAnswer | { cancelled: true }> =>
-    this.#answer(environmentId, this.#kit.bridge.authorizeConnector(environmentId, id));
+  authorize = (locationId: string, id: string): Promise<ConnectorAnswer | { cancelled: true }> =>
+    this.#answer(locationId, this.#kit.bridge.authorizeConnector(locationId, id));
 
   cancelAuth = (): Promise<void> => this.#kit.bridge.cancelConnectorAuth().catch(() => undefined);
 
-  signOut = (environmentId: string, id: string): Promise<ConnectorAnswer> =>
-    this.#answer(environmentId, this.#kit.bridge.signOutConnector(environmentId, id));
+  signOut = (locationId: string, id: string): Promise<ConnectorAnswer> =>
+    this.#answer(locationId, this.#kit.bridge.signOutConnector(locationId, id));
 }

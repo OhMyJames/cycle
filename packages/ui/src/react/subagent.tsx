@@ -246,18 +246,18 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
       : undefined;
   const store = useAppStore();
   // It can be stopped alone (CYCL-143): its agent said so, it is at work (in the turn or in the background), and the
-  // environment's daemon can pass a stop on. Asked once: the card says it is stopping until its end comes. If the
+  // location's daemon can pass a stop on. Asked once: the card says it is stopping until its end comes. If the
   // daemon says there is nothing to stop (it ended while this card was behind), the button goes; if the ask fails, the
   // error is shown and it can be asked again.
-  const environmentCan = useAppState((s) =>
-    s.selectedEnvironment !== undefined
-      ? s.status[s.selectedEnvironment]?.capabilities?.stopSubagent === true
+  const locationCan = useAppState((s) =>
+    s.selectedLocation !== undefined
+      ? s.status[s.selectedLocation]?.capabilities?.stopSubagent === true
       : false,
   );
   const [asked, setAsked] = useState<"no" | "stopping" | "nothing">("no");
   const stopping = asked === "stopping" && running;
   const canStop =
-    environmentCan &&
+    locationCan &&
     asked !== "nothing" &&
     sub?.stoppable === true &&
     running &&

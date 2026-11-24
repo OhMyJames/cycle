@@ -307,3 +307,91 @@ test("archiving or deleting a session closes its terminals, and so does the daem
   open = [];
   await until(() => !alive(), "the shell to end with the daemon", 5_000);
 });
+
+// ---- the session's environment (docs/protocol.md §6 "环境") ----
+
+const withEnvironment = {
+  id: "env-1",
+  name: "Probe",
+  variables: [{ name: "PROBE_VAR", value: "from-env" }],
+  actions: [
+    { id: "show", name: "Show it", command: { default: "echo action-$((6*7)) $PROBE_VAR" } },
+    { id: "none", name: "Nothing here", command: { default: "  " } },
+  ],
+};
+
+test("a session's terminal has its environment's variables, beside the allowed ones", async () => {
+  const daemon = await start();
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, {
+    cwd: work,
+    _meta: { "cycle/environment": withEnvironment },
+  });
+  const id = (await call<Attached>(c, "_cycle/terminal/create", { sessionId, cols: 80, rows: 24 }))
+    .terminal.terminalId;
+  await call(c, "_cycle/terminal/input", {
+    terminalId: id,
+    data: "env | sort; echo done-$((40+2))\n",
+  });
+  await until(() => c.terminalText(id).includes("done-42"), "the shell's answer", 5_000);
+  const text = c.terminalText(id);
+  expect(text).toContain("PROBE_VAR=from-env");
+  expect(text).toContain("LC_PROBE=kept");
+  expect(text).not.toContain("must-not-pass");
+});
+
+test("an action runs its command in a terminal of its own, titled by its name, with the variables", async () => {
+  const daemon = await start();
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, {
+    cwd: work,
+    _meta: { "cycle/environment": withEnvironment },
+  });
+  const made = await call<Attached>(c, "_cycle/terminal/create", {
+    sessionId,
+    cols: 80,
+    rows: 24,
+    actionId: "show",
+  });
+  expect(made.terminal.title).toBe("Show it");
+  const id = made.terminal.terminalId;
+  await until(
+    () => c.terminalText(id).includes("action-42 from-env"),
+    "the action's output",
+    5_000,
+  );
+  // The command ends, and so does the terminal: it was no interactive shell.
+  await until(
+    () =>
+      c.terminal.some(
+        (t) =>
+          t.kind === "changed" &&
+          (t.params.terminals as Info[]).some((i) => i.terminalId === id && i.status === "exited"),
+      ),
+    "the action to end",
+    5_000,
+  );
+});
+
+test("an action the session's environment does not have, or one with no command for this system, is refused", async () => {
+  const daemon = await start();
+  const c = await connectClient(daemon);
+  const plain = await c.agent.request(methods.agent.session.new, { cwd: work });
+  const made = await c.agent.request(methods.agent.session.new, {
+    cwd: work,
+    _meta: { "cycle/environment": withEnvironment },
+  });
+  for (const [sessionId, actionId] of [
+    [plain.sessionId, "show"],
+    [made.sessionId, "missing"],
+    [made.sessionId, "none"],
+  ] as const) {
+    await expect(
+      call(c, "_cycle/terminal/create", { sessionId, cols: 80, rows: 24, actionId }),
+    ).rejects.toMatchObject({ code: -32602, data: { reason: "unknown_action" } });
+  }
+  expect(
+    (await call<{ terminals: Info[] }>(c, "_cycle/terminal/list", { sessionId: made.sessionId }))
+      .terminals,
+  ).toEqual([]);
+});

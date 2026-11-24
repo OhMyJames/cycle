@@ -59,7 +59,7 @@ test("what just failed is a red line under the session's title bar, and Dismiss 
 test("a dropped connection is an amber line under the title bar, gone when it is back", async () => {
   const { emit } = await mount();
   expect(lines()).toEqual([]);
-  await emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+  await emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   const [line] = lines();
   expect(line?.getAttribute("data-tone")).toBe("warning");
   expect(line?.getAttribute("role")).toBe("status");
@@ -68,13 +68,13 @@ test("a dropped connection is an amber line under the title bar, gone when it is
   expect(within(line as HTMLElement).queryByRole("button")).toBeNull();
   expect(line?.textContent).toMatch(/Connection lost/);
   underTitleBar(line as HTMLElement);
-  await emit({ type: "environment-status", environmentId: "local", state: "connected" });
+  await emit({ type: "location-status", locationId: "local", state: "connected" });
   expect(lines()).toEqual([]);
 });
 
-test("an environment that went away says what is shown, and Connect again asks for it, counted", async () => {
+test("a location that went away says what is shown, and Connect again asks for it, counted", async () => {
   const { user, emit, named } = await mount();
-  await emit({ type: "environment-status", environmentId: "local", state: "closed" });
+  await emit({ type: "location-status", locationId: "local", state: "closed" });
   const [line] = lines();
   expect(line?.textContent).toMatch(/is not connected\..*Your draft is kept\./);
   // Said once: the box under the page does not say it too.
@@ -86,7 +86,7 @@ test("an environment that went away says what is shown, and Connect again asks f
     ["track", "session_connect_pressed", {}],
   ]);
   // While it connects the line says so, with nothing to press.
-  await emit({ type: "environment-status", environmentId: "local", state: "connecting" });
+  await emit({ type: "location-status", locationId: "local", state: "connecting" });
   expect(lines()[0]?.textContent).toMatch(/Connecting to .*Your draft is kept\.$/);
   expect(within(lines()[0] as HTMLElement).queryByRole("button")).toBeNull();
 });
@@ -94,8 +94,8 @@ test("an environment that went away says what is shown, and Connect again asks f
 test("a daemon on another protocol is not offered Connect again: connecting would not change it", async () => {
   const { emit } = await mount();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "closed",
     incompatible: { with: "daemon", supported: ["0.2"], requested: "1.0" },
   });
@@ -130,7 +130,7 @@ test("a conversation read at its end stays at its end when a line comes under th
   log.scrollTop = log.scrollHeight;
   const atEnd = () => log.scrollHeight - log.scrollTop - log.clientHeight < 2;
   await waitFor(() => expect(atEnd()).toBe(true));
-  await emit({ type: "environment-status", environmentId: "local", state: "reconnecting" });
+  await emit({ type: "location-status", locationId: "local", state: "reconnecting" });
   await waitFor(() => expect(lines()).toHaveLength(1));
   await waitFor(() => expect(atEnd()).toBe(true));
 });
@@ -139,17 +139,17 @@ test("with no session open the page says how the connection stands, and no line 
   const script = fakeBridge({ connected: true });
   await renderApp(script.bridge);
   await act(() =>
-    script.emit({ type: "environment-status", environmentId: "local", state: "reconnecting" }),
+    script.emit({ type: "location-status", locationId: "local", state: "reconnecting" }),
   );
-  await screen.findByText("Connecting to this environment…");
+  await screen.findByText("Connecting to this location…");
   expect(lines()).toEqual([]);
 });
 
 test("a daemon on another protocol is not said to be connecting: that would not end", async () => {
   const { emit } = await mount();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "connecting",
     incompatible: { with: "daemon", supported: ["0.2"], requested: "1.0" },
   });
@@ -160,11 +160,11 @@ test("a daemon on another protocol is not said to be connecting: that would not 
   expect(within(away as HTMLElement).queryByRole("button")).toBeNull();
 });
 
-test("why an environment is not connected is said on its line", async () => {
+test("why a location is not connected is said on its line", async () => {
   const { emit } = await mount();
   await emit({
-    type: "environment-status",
-    environmentId: "local",
+    type: "location-status",
+    locationId: "local",
     state: "closed",
     error: "ssh: connect to host build-1 port 22: Connection refused",
   });

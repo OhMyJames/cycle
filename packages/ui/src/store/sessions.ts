@@ -68,18 +68,18 @@ export class SessionsSlice {
   }
 
   /** The session in view, if one is. */
-  #open(): { environmentId: string; sessionId: string } | undefined {
-    const { selectedEnvironment: environmentId, selectedSession: sessionId } = this.#kit.state();
-    if (environmentId === undefined || sessionId === undefined) return undefined;
-    return { environmentId, sessionId };
+  #open(): { locationId: string; sessionId: string } | undefined {
+    const { selectedLocation: locationId, selectedSession: sessionId } = this.#kit.state();
+    if (locationId === undefined || sessionId === undefined) return undefined;
+    return { locationId, sessionId };
   }
 
   /** An event of a session's view, as main told it. True when it was applied to a view that is up to date. */
   onEvent(event: SessionEvent): boolean {
     const key =
       event.type === "permission"
-        ? viewKey(event.request.environmentId, event.request.sessionId)
-        : viewKey(event.environmentId, event.sessionId);
+        ? viewKey(event.request.locationId, event.request.sessionId)
+        : viewKey(event.locationId, event.sessionId);
     const view = this.#kit.state().views[key];
     if (view === undefined) return false;
     if (view.loading) {
@@ -89,7 +89,7 @@ export class SessionsSlice {
     if (event.version <= view.version) return false;
     if (event.version > view.version + 1) {
       // One was missed. Ask main for the session again rather than show something wrong.
-      void this.#kit.attempt(() => this.#load(view.environmentId, view.sessionId));
+      void this.#kit.attempt(() => this.#load(view.locationId, view.sessionId));
       return false;
     }
     this.#setView(key, applyToView(view, event));
@@ -119,19 +119,19 @@ export class SessionsSlice {
     }
     if (returned.returnId && !this.#acks.has(returned)) {
       this.#acks.add(returned);
-      void bridge.ackReturn(view.environmentId, view.sessionId, returned.returnId).catch(() => {
+      void bridge.ackReturn(view.locationId, view.sessionId, returned.returnId).catch(() => {
         this.#acks.delete(returned);
       });
     }
   }
 
   /** Reads a session from main whole, then applies the events that came while it was being read. */
-  async #load(environmentId: string, sessionId: string): Promise<void> {
-    const key = viewKey(environmentId, sessionId);
+  async #load(locationId: string, sessionId: string): Promise<void> {
+    const key = viewKey(locationId, sessionId);
     const existing = this.#kit.state().views[key];
     this.#held.set(key, []);
     this.#setView(key, {
-      environmentId,
+      locationId,
       sessionId,
       conversation: existing?.conversation ?? emptyConversation(),
       permissions: existing?.permissions ?? [],
@@ -140,7 +140,7 @@ export class SessionsSlice {
     });
     let snapshot: SessionSnapshot;
     try {
-      snapshot = await this.#kit.bridge.openSession(environmentId, sessionId);
+      snapshot = await this.#kit.bridge.openSession(locationId, sessionId);
     } catch (error) {
       this.#held.delete(key);
       // What was read before is still what there is: a re-read that failed does not take the conversation away.
@@ -155,7 +155,7 @@ export class SessionsSlice {
       throw error;
     }
     let view: SessionView = {
-      environmentId,
+      locationId,
       sessionId,
       conversation: snapshot.conversation,
       permissions: snapshot.permissions,
@@ -169,26 +169,26 @@ export class SessionsSlice {
     this.#setView(key, view);
   }
 
-  /** Shows a session of any environment: a notification about it was pressed. */
-  focus = async (environmentId: string, sessionId: string): Promise<void> => {
-    if (!this.#kit.state().sessions[environmentId]?.some((s) => s.sessionId === sessionId)) return;
-    await this.select(environmentId, sessionId);
+  /** Shows a session of any location: a notification about it was pressed. */
+  focus = async (locationId: string, sessionId: string): Promise<void> => {
+    if (!this.#kit.state().sessions[locationId]?.some((s) => s.sessionId === sessionId)) return;
+    await this.select(locationId, sessionId);
   };
 
   /**
-   * Opens a session, on the environment it is on. An environment that is away still lists its sessions, as they were: one that was
+   * Opens a session, on the location it is on. A location that is away still lists its sessions, as they were: one that was
    * open before can be read again, as it was; one that was not has nothing to show, and the person is told why.
    */
-  select = async (environmentId: string, sessionId: string): Promise<void> => {
+  select = async (locationId: string, sessionId: string): Promise<void> => {
     const { state: now, set, attempt } = this.#kit;
-    const state = now().status[environmentId]?.state;
-    if (state !== "connected" && now().views[viewKey(environmentId, sessionId)] === undefined) {
-      const name = now().environments.find((h) => h.id === environmentId)?.name ?? environmentId;
-      set({ error: { key: "session.awayCannotOpen", params: { environment: name } } });
+    const state = now().status[locationId]?.state;
+    if (state !== "connected" && now().views[viewKey(locationId, sessionId)] === undefined) {
+      const name = now().locations.find((h) => h.id === locationId)?.name ?? locationId;
+      set({ error: { key: "session.awayCannotOpen", params: { location: name } } });
       return;
     }
-    set({ selectedEnvironment: environmentId, selectedSession: sessionId, blank: undefined });
-    if (state === "connected") await attempt(() => this.#load(environmentId, sessionId));
+    set({ selectedLocation: locationId, selectedSession: sessionId, blank: undefined });
+    if (state === "connected") await attempt(() => this.#load(locationId, sessionId));
   };
 
   /**
@@ -199,9 +199,9 @@ export class SessionsSlice {
   async send(options: { steer?: boolean; via?: SendVia } = {}): Promise<void> {
     const open = this.#open();
     if (open === undefined) return;
-    const { environmentId, sessionId } = open;
+    const { locationId, sessionId } = open;
     const { drafts, bridge, attempt, track } = this.#kit;
-    const key = viewKey(environmentId, sessionId);
+    const key = viewKey(locationId, sessionId);
     const content: PromptBlock[] | undefined = promptBlocks(drafts.get(key));
     if (content === undefined) return;
     const resending = this.#resending.get(key);
@@ -212,8 +212,8 @@ export class SessionsSlice {
         ...(options.steer === true ? { steer: true } : {}),
         ...(options.via !== undefined ? { via: options.via } : {}),
       };
-      if (Object.keys(how).length > 0) await bridge.prompt(environmentId, sessionId, content, how);
-      else await bridge.prompt(environmentId, sessionId, content);
+      if (Object.keys(how).length > 0) await bridge.prompt(locationId, sessionId, content, how);
+      else await bridge.prompt(locationId, sessionId, content);
       return true;
     });
     if (sent !== true) {
@@ -233,7 +233,7 @@ export class SessionsSlice {
     const open = this.#open();
     if (open === undefined) return;
     const { drafts, set, track } = this.#kit;
-    const key = viewKey(open.environmentId, open.sessionId);
+    const key = viewKey(open.locationId, open.sessionId);
     // Already in the box, and neither sent nor cleared away since: a second press only shows it, it does not add it again.
     if (this.#resending.get(key)?.turn !== resend.turn) {
       drafts.restore(key, resend.prompts);
@@ -252,23 +252,23 @@ export class SessionsSlice {
   /**
    * "Try again" on a turn that failed: what was said in it is sent again as it was, in one go (the person was asked
    * first if the turn had already run a command or changed a file; `changed` says so). Only for the session in view,
-   * while its environment is connected and the agent is not at work. If it cannot go, it comes back in the box, so
+   * while its location is connected and the agent is not at work. If it cannot go, it comes back in the box, so
    * nothing is lost. Resolves when the daemon has answered.
    */
   retry = async (resend: Resend): Promise<boolean> => {
     const open = this.#open();
     if (open === undefined || resend.busy) return false;
-    const { environmentId, sessionId } = open;
+    const { locationId, sessionId } = open;
     const { state, bridge, attempt, drafts, track } = this.#kit;
-    if (state().status[environmentId]?.state !== "connected") return false;
+    if (state().status[locationId]?.state !== "connected") return false;
     const content = againBlocks(resend.prompts);
     if (content === undefined) return false;
     const sent = await attempt(async () => {
-      await bridge.prompt(environmentId, sessionId, content, { via: "button" });
+      await bridge.prompt(locationId, sessionId, content, { via: "button" });
       return true;
     });
     if (sent !== true) {
-      drafts.restore(viewKey(environmentId, sessionId), [content]);
+      drafts.restore(viewKey(locationId, sessionId), [content]);
       return false;
     }
     // Counted once it went, like `turn_resent`: a retry that could not be sent is not one.
@@ -279,18 +279,18 @@ export class SessionsSlice {
   /** What fits an @ in the selected session's box. Quiet when it cannot say: a menu that is not there is enough. */
   searchFiles = async (query: string): Promise<FileSearch | undefined> => {
     const state = this.#kit.state();
-    const { selectedEnvironment: environmentId, selectedSession: sessionId, blank } = state;
+    const { selectedLocation: locationId, selectedSession: sessionId, blank } = state;
     // A blank conversation has no session yet: it looks in the folder it has chosen, if the daemon can.
     const where =
       blank !== undefined
         ? blank.cwd.trim() !== "" &&
-          state.status[blank.environmentId]?.capabilities?.filesInFolder === true
+          state.status[blank.locationId]?.capabilities?.filesInFolder === true
           ? { cwd: blank.cwd.trim() }
           : undefined
         : sessionId !== undefined
           ? { sessionId }
           : undefined;
-    const on = blank?.environmentId ?? environmentId;
+    const on = blank?.locationId ?? locationId;
     if (on === undefined || where === undefined) return undefined;
     try {
       return await this.#kit.bridge.searchFiles(on, where, query);
@@ -300,64 +300,61 @@ export class SessionsSlice {
   };
 
   /** One folder of a session's folder, for the Files tab. The caller says why it failed. */
-  listFiles = (environmentId: string, sessionId: string, path: string): Promise<FileListing> =>
-    this.#kit.bridge.listFiles(environmentId, sessionId, path);
+  listFiles = (locationId: string, sessionId: string, path: string): Promise<FileListing> =>
+    this.#kit.bridge.listFiles(locationId, sessionId, path);
 
   /** A file of a session's folder, text from `offset`. The caller says why it failed. */
   readFile = (
-    environmentId: string,
+    locationId: string,
     sessionId: string,
     path: string,
     offset?: number,
-  ): Promise<FileContent> => this.#kit.bridge.readFile(environmentId, sessionId, path, offset);
+  ): Promise<FileContent> => this.#kit.bridge.readFile(locationId, sessionId, path, offset);
 
   /** A session's folder against HEAD, for the Diff tab. The caller says why it failed. */
-  workspaceStatus = (environmentId: string, sessionId: string): Promise<WorkspaceStatus> =>
-    this.#kit.bridge.workspaceStatus(environmentId, sessionId);
+  workspaceStatus = (locationId: string, sessionId: string): Promise<WorkspaceStatus> =>
+    this.#kit.bridge.workspaceStatus(locationId, sessionId);
 
   /** One file's patch against HEAD. The caller says why it failed. */
-  workspaceFile = (
-    environmentId: string,
-    sessionId: string,
-    path: string,
-  ): Promise<WorkspacePatch> => this.#kit.bridge.workspaceFile(environmentId, sessionId, path);
+  workspaceFile = (locationId: string, sessionId: string, path: string): Promise<WorkspacePatch> =>
+    this.#kit.bridge.workspaceFile(locationId, sessionId, path);
 
   /** Takes a queued prompt back to edit it. Undefined if it had gone to the agent, or came back, meanwhile. */
   dequeue = async (queueId: string): Promise<PromptBlock[] | undefined> => {
     const open = this.#open();
     if (open === undefined) return undefined;
-    const { environmentId, sessionId } = open;
+    const { locationId, sessionId } = open;
     const blocks = await this.#kit.attempt(() =>
-      this.#kit.bridge.dequeue(environmentId, sessionId, queueId),
+      this.#kit.bridge.dequeue(locationId, sessionId, queueId),
     );
-    if (blocks !== undefined) this.#kit.drafts.restore(viewKey(environmentId, sessionId), [blocks]);
+    if (blocks !== undefined) this.#kit.drafts.restore(viewKey(locationId, sessionId), [blocks]);
     return blocks;
   };
 
   cancel = async (): Promise<void> => {
     const open = this.#open();
     if (open === undefined) return;
-    await this.#kit.attempt(() => this.#kit.bridge.cancel(open.environmentId, open.sessionId));
+    await this.#kit.attempt(() => this.#kit.bridge.cancel(open.locationId, open.sessionId));
   };
 
   setConfig = async (configId: string, value: string): Promise<void> => {
     const open = this.#open();
     if (open === undefined) return;
     await this.#kit.attempt(() =>
-      this.#kit.bridge.setSessionConfig(open.environmentId, open.sessionId, configId, value),
+      this.#kit.bridge.setSessionConfig(open.locationId, open.sessionId, configId, value),
     );
   };
 
-  /** Answers with why it failed, or nothing. A row of the sidebar names its own environment; the header is the open one's. */
+  /** Answers with why it failed, or nothing. A row of the sidebar names its own location; the header is the open one's. */
   rename = async (
     sessionId: string,
     title: string,
     where: "header" | "sidebar" = "header",
-    environmentId = this.#kit.state().selectedEnvironment,
+    locationId = this.#kit.state().selectedLocation,
   ): Promise<string | undefined> => {
-    if (environmentId === undefined) return undefined;
+    if (locationId === undefined) return undefined;
     try {
-      await this.#kit.bridge.renameSession(environmentId, sessionId, title, where);
+      await this.#kit.bridge.renameSession(locationId, sessionId, title, where);
       return undefined;
     } catch (error) {
       return messageOf(error);
@@ -368,7 +365,7 @@ export class SessionsSlice {
     const ids = session.unknownBackground;
     if (ids?.length)
       await this.#kit.attempt(() =>
-        this.#kit.bridge.dismissBackground(session.environmentId, session.sessionId, ids),
+        this.#kit.bridge.dismissBackground(session.locationId, session.sessionId, ids),
       );
   };
 
@@ -381,29 +378,27 @@ export class SessionsSlice {
     const open = this.#open();
     if (open === undefined) return undefined;
     return await this.#kit.attempt(() =>
-      this.#kit.bridge.stopSubagent(open.environmentId, open.sessionId, childId, background),
+      this.#kit.bridge.stopSubagent(open.locationId, open.sessionId, childId, background),
     );
   };
 
-  /** A session of the open one's environment, or of `environmentId`, as a row of the sidebar names its own. */
+  /** A session of the open one's location, or of `locationId`, as a row of the sidebar names its own. */
   archive = async (
     sessionId: string,
     archived: boolean,
-    environmentId = this.#kit.state().selectedEnvironment,
+    locationId = this.#kit.state().selectedLocation,
   ): Promise<void> => {
-    if (environmentId === undefined) return;
-    await this.#kit.attempt(() =>
-      this.#kit.bridge.archiveSession(environmentId, sessionId, archived),
-    );
+    if (locationId === undefined) return;
+    await this.#kit.attempt(() => this.#kit.bridge.archiveSession(locationId, sessionId, archived));
   };
 
   /**
    * The person is looking at the session: tell the daemon it has been seen. Nothing to show if it cannot be told (the
    * mark stays, and is asked again when something new comes in or the app comes back to the front): a mark is not worth an error banner.
    */
-  markRead = async (environmentId: string, sessionId: string): Promise<void> => {
+  markRead = async (locationId: string, sessionId: string): Promise<void> => {
     try {
-      await this.#kit.bridge.markRead(environmentId, sessionId);
+      await this.#kit.bridge.markRead(locationId, sessionId);
     } catch {
       // Not worth a banner.
     }
@@ -411,12 +406,12 @@ export class SessionsSlice {
 
   delete = async (
     sessionId: string,
-    environmentId = this.#kit.state().selectedEnvironment,
+    locationId = this.#kit.state().selectedLocation,
   ): Promise<string | undefined> => {
-    if (environmentId === undefined) return undefined;
+    if (locationId === undefined) return undefined;
     try {
-      await this.#kit.bridge.deleteSession(environmentId, sessionId);
-      this.forget(environmentId, sessionId);
+      await this.#kit.bridge.deleteSession(locationId, sessionId);
+      this.forget(locationId, sessionId);
       return undefined;
     } catch (error) {
       return messageOf(error);
@@ -424,8 +419,8 @@ export class SessionsSlice {
   };
 
   /** A session that no longer exists: its view, its draft and its place as the selected one go. */
-  forget(environmentId: string, sessionId: string): void {
-    const key = viewKey(environmentId, sessionId);
+  forget(locationId: string, sessionId: string): void {
+    const key = viewKey(locationId, sessionId);
     this.#kit.drafts.forget(key);
     this.#kit.sidePanels.forget(key);
     this.#kit.filesViews.forget(key);
@@ -437,7 +432,7 @@ export class SessionsSlice {
         views,
         terminals,
         selectedSession:
-          s.selectedEnvironment === environmentId && s.selectedSession === sessionId
+          s.selectedLocation === locationId && s.selectedSession === sessionId
             ? undefined
             : s.selectedSession,
       };

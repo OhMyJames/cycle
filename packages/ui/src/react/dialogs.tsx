@@ -18,7 +18,7 @@ import {
 import { Field, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { useEffect, useState } from "react";
-import type { EnvironmentConfig } from "../api.ts";
+import type { LocationConfig } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 
 type OpenProps = { open: boolean; onOpenChange: (open: boolean) => void };
@@ -117,16 +117,16 @@ export function ConfirmDialog({
   );
 }
 
-export type RemoteEnvironment = EnvironmentConfig & { kind: "remote" };
+export type RemoteLocation = LocationConfig & { kind: "remote" };
 
-export type EnvironmentDialogProps = OpenProps & {
-  editing?: RemoteEnvironment | undefined;
+export type LocationDialogProps = OpenProps & {
+  editing?: RemoteLocation | undefined;
   existingIds?: ReadonlySet<string> | undefined;
   /** Returning a non-empty error string keeps the dialog open and shows it inline. */
-  onSave: (environment: EnvironmentConfig) => unknown;
+  onSave: (location: LocationConfig) => unknown;
 };
 
-const uniqueEnvironmentId = (rawHost: string, existing?: ReadonlySet<string>): string => {
+const uniqueLocationId = (rawHost: string, existing?: ReadonlySet<string>): string => {
   const slug =
     rawHost
       .trim()
@@ -139,14 +139,14 @@ const uniqueEnvironmentId = (rawHost: string, existing?: ReadonlySet<string>): s
   return `${base}-${n}`;
 };
 
-/** A remote environment: a daemon on another machine, reached over ssh with the keys and config the user already has. */
-export function EnvironmentDialog({
+/** A remote location: a daemon on another machine, reached over ssh with the keys and config the user already has. */
+export function LocationDialog({
   open,
   onOpenChange,
   editing,
   existingIds,
   onSave,
-}: EnvironmentDialogProps) {
+}: LocationDialogProps) {
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
@@ -184,7 +184,7 @@ export function EnvironmentDialog({
     setBusy(true);
     setProblem(undefined);
     try {
-      const id = editing?.id ?? uniqueEnvironmentId(host, existingIds);
+      const id = editing?.id ?? uniqueLocationId(host, existingIds);
       const error = await onSave({
         id,
         name: name.trim() || host.trim(),
@@ -212,10 +212,10 @@ export function EnvironmentDialog({
       <DialogContent>
         <DialogTitle>
           {editing !== undefined
-            ? t("environment.editTitle", { name: editing.name })
-            : t("environment.addTitle")}
+            ? t("location.editTitle", { name: editing.name })
+            : t("location.addTitle")}
         </DialogTitle>
-        <DialogDescription>{t("environment.sshNote")}</DialogDescription>
+        <DialogDescription>{t("location.sshNote")}</DialogDescription>
         <form
           data-slot="stack"
           onSubmit={(event) => {
@@ -224,24 +224,24 @@ export function EnvironmentDialog({
           }}
         >
           <Field name="host">
-            <FieldLabel>{t("environment.address")}</FieldLabel>
+            <FieldLabel>{t("location.address")}</FieldLabel>
             <Input
               autoFocus
               value={host}
-              placeholder={t("environment.addressHint")}
+              placeholder={t("location.addressHint")}
               onChange={(e) => setHost(e.currentTarget.value)}
             />
           </Field>
           <Field name="name">
-            <FieldLabel>{t("environment.name")}</FieldLabel>
+            <FieldLabel>{t("location.name")}</FieldLabel>
             <Input
               value={name}
-              placeholder={host || t("environment.nameHint")}
+              placeholder={host || t("location.nameHint")}
               onChange={(e) => setName(e.currentTarget.value)}
             />
           </Field>
           <Field name="command">
-            <FieldLabel>{t("environment.command")}</FieldLabel>
+            <FieldLabel>{t("location.command")}</FieldLabel>
             <Input value={command} onChange={(e) => setCommand(e.currentTarget.value)} />
           </Field>
           {problem !== undefined ? (
@@ -252,7 +252,7 @@ export function EnvironmentDialog({
           <div data-slot="row" data-dialog-footer="">
             <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
             <Button type="submit" data-variant="solid" disabled={host.trim() === "" || busy}>
-              {editing !== undefined ? t("environment.save") : t("environment.addSubmit")}
+              {editing !== undefined ? t("location.save") : t("location.addSubmit")}
             </Button>
           </div>
         </form>

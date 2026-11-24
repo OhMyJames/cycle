@@ -95,17 +95,17 @@ export const validateAgentAuthUrl = (agent: string, rawUrl: string): ValidatedAu
 };
 
 /**
- * Selects the best sign-in mode for an environment's transport (`local` vs `remote`) from the
+ * Selects the best sign-in mode for a location's transport (`local` vs `remote`) from the
  * daemon's ordered `signInModes` capability list:
  * - `local`: accepts any mode (preferring daemon order, e.g. Codex `browser` first).
  * - `remote`: excludes modes requiring a local loopback callback (`requiresLocalLoopback: true`).
  */
 export const selectAgentSignInMode = (
-  environmentKind: "local" | "remote",
+  locationKind: "local" | "remote",
   signInModes: readonly AgentSignInMode[],
 ): AgentAuthMode | undefined => {
   const compatible =
-    environmentKind === "local"
+    locationKind === "local"
       ? signInModes
       : signInModes.filter((entry) => !entry.requiresLocalLoopback);
   return compatible[0]?.mode;

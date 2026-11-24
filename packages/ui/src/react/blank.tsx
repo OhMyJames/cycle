@@ -25,13 +25,14 @@ import {
   MenuTrigger,
 } from "@ui-sdk/react/menu";
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { EnvironmentConfig } from "../api.ts";
+import type { LocationConfig } from "../api.ts";
 import { applyUpdate, emptyConversation } from "../model/index.ts";
 import { BLANK_KEY, type BlankConversation } from "../store/index.ts";
 import { AgentLogo } from "./agent-logos.tsx";
 import { Composer, composerInput } from "./composer.tsx";
 import { propertiesOf, withEffortFor } from "./config-form.tsx";
 import { ConversationView } from "./conversation.tsx";
+import { EnvironmentPicker } from "./environments.tsx";
 import { FolderBrowser } from "./folder-browser.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon } from "./icons.tsx";
@@ -44,7 +45,7 @@ const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.s
 const agentWord = (id: string): AgentWord =>
   id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
-/** A folder offered on the blank page: one the environment already has sessions in, newest first. */
+/** A folder offered on the blank page: one the location already has sessions in, newest first. */
 export type RecentFolder = { cwd: string; name: string };
 
 /** The last part of a path, which is what tells folders apart; the whole path is in the control's name and title. */
@@ -67,7 +68,7 @@ const defaultsOf = (schema: Record<string, unknown>): Settings =>
 
 export function BlankConversationView({
   blank,
-  environments,
+  locations,
   recent,
   connected,
   follow,
@@ -77,25 +78,25 @@ export function BlankConversationView({
   onOpenHarnessSettings,
 }: {
   blank: BlankConversation;
-  /** The environments a session can be started on: those that are connected. */
-  environments: EnvironmentConfig[];
-  /** The folders the blank conversation's environment has sessions in, newest first. */
+  /** The locations a session can be started on: those that are connected. */
+  locations: LocationConfig[];
+  /** The folders the blank conversation's location has sessions in, newest first. */
   recent: readonly RecentFolder[];
-  /** The blank conversation's environment is connected. */
+  /** The blank conversation's location is connected. */
   connected: boolean;
   follow: number;
   sidebarToggle?: ReactNode;
   /** What is the matter with this page, under its title bar. */
   notices?: ReactNode;
   onSent: () => void;
-  /** Navigates directly to Settings → Harness for this environment & agent when `agentSetup` is supported. */
-  onOpenHarnessSettings?: (environmentId: string, agentId: string) => void;
+  /** Navigates directly to Settings → Harness for this location & agent when `agentSetup` is supported. */
+  onOpenHarnessSettings?: (locationId: string, agentId: string) => void;
 }) {
   const { t, list } = useI18n();
   const store = useAppStore();
-  const status = useAppState((s) => s.status[blank.environmentId]);
+  const status = useAppState((s) => s.status[blank.locationId]);
   // Read here so that the page draws again when they come: which agent starts depends on them.
-  const agents = useAppState((s) => s.agents[blank.environmentId]);
+  const agents = useAppState((s) => s.agents[blank.locationId]);
   const allAgents = useMemo(() => agents ?? [], [agents]);
   const agent = store.blankAgent(blank);
   // An agent as the picker names it: one that cannot run says so beside its name.
@@ -108,17 +109,17 @@ export function BlankConversationView({
   const [copiedCommand, setCopiedCommand] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
-  // The environment of the blank conversation, connected or not: its name is said when it is away.
-  const environment =
-    useAppState((s) => s.environments.find((h) => h.id === blank.environmentId)) ??
-    environments.find((h) => h.id === blank.environmentId);
-  const environmentName = environment?.name ?? blank.environmentId;
-  // Where it can be moved to: the connected environments, and its own even while that is away, so that a page whose
-  // environment dropped can go to another that is up.
+  // The location of the blank conversation, connected or not: its name is said when it is away.
+  const location =
+    useAppState((s) => s.locations.find((h) => h.id === blank.locationId)) ??
+    locations.find((h) => h.id === blank.locationId);
+  const locationName = location?.name ?? blank.locationId;
+  // Where it can be moved to: the connected locations, and its own even while that is away, so that a page whose
+  // location dropped can go to another that is up.
   const choices =
-    environment === undefined || environments.some((h) => h.id === environment.id)
-      ? environments
-      : [environment, ...environments];
+    location === undefined || locations.some((h) => h.id === location.id)
+      ? locations
+      : [location, ...locations];
   const [browsing, setBrowsing] = useState(false);
   const [typing, setTyping] = useState(false);
   const [answering, setAnswering] = useState(false);
@@ -152,7 +153,7 @@ export function BlankConversationView({
           } as never),
     [blank.starting],
   );
-  const local = environment?.kind === "local";
+  const local = location?.kind === "local";
   const canBrowse = connected && (local || status?.capabilities?.folders === true);
   const cwd = blank.cwd.trim();
   // Where the focus goes when the menu or dialog the folder was chosen in closes: with where it runs settled, what is
@@ -203,9 +204,9 @@ export function BlankConversationView({
   const folderLabel =
     cwd === "" ? t("blank.folder.choose") : t("blank.folder.named", { path: cwd });
   const hero = t("blank.hero");
-  // The environment is named in the chip when it can be changed or is not this computer; the tip then names it too.
-  const showEnvironment = choices.length > 1 || !local;
-  const chipLabel = showEnvironment ? `${folderLabel} · ${environmentName}` : folderLabel;
+  // The location is named in the chip when it can be changed or is not this computer; the tip then names it too.
+  const showLocation = choices.length > 1 || !local;
+  const chipLabel = showLocation ? `${folderLabel} · ${locationName}` : folderLabel;
 
   // Before the first message the box sits in the middle with where it runs in one line just above it (old-cycle's new
   // session): what is chosen and what is written are one thing. Once it is sent, the message shows as the conversation and
@@ -282,8 +283,8 @@ export function BlankConversationView({
         onAction={(value) => {
           if (value === "browse") void browse();
           else if (value === "type") setTyping(true);
-          else if (typeof value === "string" && value.startsWith("environment:"))
-            store.changeBlank({ environmentId: value.slice("environment:".length) });
+          else if (typeof value === "string" && value.startsWith("location:"))
+            store.changeBlank({ locationId: value.slice("location:".length) });
           else if (typeof value === "string" && value.startsWith("recent:"))
             choose(value.slice("recent:".length), "recent");
         }}
@@ -298,9 +299,9 @@ export function BlankConversationView({
             disabled={starting}
             aria-describedby={blank.trust === "undecided" ? trustId : undefined}
           >
-            {showEnvironment ? (
+            {showLocation ? (
               <>
-                <span data-slot="blank-environment-name">{environmentName}</span>
+                <span data-slot="blank-location-name">{locationName}</span>
                 <span data-slot="blank-where-dot" aria-hidden="true">
                   /
                 </span>
@@ -319,18 +320,16 @@ export function BlankConversationView({
           {choices.length > 1 ? (
             <>
               <MenuGroup>
-                <MenuGroupLabel>{t("newSession.environment")}</MenuGroupLabel>
+                <MenuGroupLabel>{t("newSession.location")}</MenuGroupLabel>
                 {choices.map((h) => (
                   <MenuItem
                     key={h.id}
-                    value={`environment:${h.id}`}
+                    value={`location:${h.id}`}
                     label={h.name}
-                    data-current={h.id === blank.environmentId || undefined}
+                    data-current={h.id === blank.locationId || undefined}
                   >
                     <span data-slot="blank-recent-name">{h.name}</span>
-                    {h.id === blank.environmentId ? (
-                      <CheckIcon size={13} aria-hidden="true" />
-                    ) : null}
+                    {h.id === blank.locationId ? <CheckIcon size={13} aria-hidden="true" /> : null}
                   </MenuItem>
                 ))}
               </MenuGroup>
@@ -370,12 +369,18 @@ export function BlankConversationView({
           {t("blank.untrusted")}
         </span>
       ) : null}
+      <EnvironmentPicker
+        blank={blank}
+        agentId={agent?.id}
+        locationName={locationName}
+        disabled={starting || !connected}
+      />
     </fieldset>
   );
   const box = (
     <Composer
       key={`composer:${BLANK_KEY}`}
-      environmentId={blank.environmentId}
+      locationId={blank.locationId}
       sessionKey={BLANK_KEY}
       blank
       canAttach={agent?.promptCapabilities?.image != null}
@@ -417,7 +422,7 @@ export function BlankConversationView({
           tone="loading"
           align="start"
           size="inline"
-          title={t("blank.connecting", { environment: environmentName })}
+          title={t("blank.connecting", { location: locationName })}
           body={starting ? undefined : t("blank.draftKept")}
         />
       );
@@ -428,21 +433,21 @@ export function BlankConversationView({
           tone="away"
           align="start"
           size="inline"
-          title={t("blank.notConnected", { environment: environmentName })}
+          title={t("blank.notConnected", { location: locationName })}
           // Only while the box takes words: not while the session is being started.
           body={starting ? undefined : t("blank.draftKept")}
           reason={status?.error}
           action={{
-            label: t("environment.connectAgain"),
+            label: t("location.connectAgain"),
             onAction: () => {
               store.track("blank_connect_pressed", {});
-              void store.connectEnvironment(blank.environmentId);
+              void store.connectLocation(blank.locationId);
             },
           }}
         />
       );
     if (noAgent) {
-      // The agents the environment has, none of which can run: named, so it is known what to install or sign in to.
+      // The agents the location has, none of which can run: named, so it is known what to install or sign in to.
       const listed = (agents ?? []).map((a) => a.name);
       const firstAgent = (agents ?? [])[0];
       const canOpenSettings =
@@ -455,24 +460,24 @@ export function BlankConversationView({
           : listed.length === 1
             ? "blank.noAgentHint.one"
             : "blank.noAgentHint.several",
-        { environment: environmentName, agents: list(listed) },
+        { location: locationName, agents: list(listed) },
       );
       return (
         <StateBlock
           tone="away"
           align="start"
           size="inline"
-          title={t("blank.noAgent", { environment: environmentName })}
+          title={t("blank.noAgent", { location: locationName })}
           body={noAgentHint}
           action={{
             label: t("blank.retryAgents"),
-            onAction: () => void store.reloadAgents(blank.environmentId),
+            onAction: () => void store.reloadAgents(blank.locationId),
           }}
           secondaryAction={
             canOpenSettings
               ? {
                   label: t("settings.harness.open", { agent: firstAgent.name }),
-                  onAction: () => onOpenHarnessSettings(blank.environmentId, firstAgent.id),
+                  onAction: () => onOpenHarnessSettings(blank.locationId, firstAgent.id),
                 }
               : undefined
           }
@@ -487,25 +492,25 @@ export function BlankConversationView({
           tone="away"
           align="start"
           size="inline"
-          title={t("blank.agentUnavailable", { agent: agent.name, environment: environmentName })}
+          title={t("blank.agentUnavailable", { agent: agent.name, location: locationName })}
           body={
             agent.id === "agy"
-              ? t("blank.agentUnavailable.agy", { environment: environmentName })
+              ? t("blank.agentUnavailable.agy", { location: locationName })
               : t("blank.agentUnavailable.body", {
                   agent: agent.name,
-                  environment: environmentName,
+                  location: locationName,
                 })
           }
           reason={agent.id === "agy" ? AGY_INSTALL_COMMAND : undefined}
           action={{
             label: t("blank.retryAgents"),
-            onAction: () => void store.reloadAgents(blank.environmentId),
+            onAction: () => void store.reloadAgents(blank.locationId),
           }}
           secondaryAction={
             canOpenSettings
               ? {
                   label: t("settings.harness.open", { agent: agent.name }),
-                  onAction: () => onOpenHarnessSettings(blank.environmentId, agent.id),
+                  onAction: () => onOpenHarnessSettings(blank.locationId, agent.id),
                 }
               : undefined
           }
@@ -522,8 +527,8 @@ export function BlankConversationView({
           tone="away"
           align="start"
           size="inline"
-          title={t("blank.authRequired", { agent: agentName, environment: environmentName })}
-          body={t("blank.authRequired.body", { environment: environmentName })}
+          title={t("blank.authRequired", { agent: agentName, location: locationName })}
+          body={t("blank.authRequired.body", { location: locationName })}
           reason={command}
           action={{
             label: copiedCommand ? t("blank.copied") : t("blank.copyCommand"),
@@ -544,7 +549,7 @@ export function BlankConversationView({
             canOpenSettings
               ? {
                   label: t("settings.harness.open", { agent: agentName }),
-                  onAction: () => onOpenHarnessSettings(blank.environmentId, agentId),
+                  onAction: () => onOpenHarnessSettings(blank.locationId, agentId),
                 }
               : undefined
           }
@@ -601,7 +606,7 @@ export function BlankConversationView({
         <DialogContent>
           <DialogTitle>{t("trust.title")}</DialogTitle>
           <DialogDescription>
-            {t("trust.description", { environment: environment?.name ?? "" })}
+            {t("trust.description", { location: location?.name ?? "" })}
           </DialogDescription>
           {blank.asking !== undefined ? (
             <code data-slot="decision-path">{blank.asking.path}</code>
@@ -633,7 +638,7 @@ export function BlankConversationView({
         <DialogContent finalFocus={afterChoosing}>
           <DialogTitle>{t("blank.folder.typeTitle")}</DialogTitle>
           <DialogDescription>
-            {t("blank.folder.typeLead", { environment: environmentName })}
+            {t("blank.folder.typeLead", { location: locationName })}
           </DialogDescription>
           {typing ? (
             <PathForm
@@ -654,7 +659,7 @@ export function BlankConversationView({
           {browsing ? (
             <FolderBrowser
               start={cwd.startsWith("/") ? cwd : undefined}
-              list={(path, hidden) => store.listFolders(blank.environmentId, path, hidden)}
+              list={(path, hidden) => store.listFolders(blank.locationId, path, hidden)}
               onChoose={(path) => {
                 setBrowsing(false);
                 choose(path, "browse");
