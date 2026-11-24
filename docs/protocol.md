@@ -700,6 +700,8 @@ daemon 原样转发(照常脱敏,§12)。客户端按 ACP 的 `diff` 和这些�
 }
 ```
 
+agent 只在下一轮开始时才采用某个设置的改动时(例如 agy 的 `mode`:实测一轮进行中切换，这一轮余下的工具调用仍按旧模式询问),在 `configSchema` 的这个属性上带 `_meta: {"cycle/nextTurn": true}`。客户端在会话里改它的地方(输入框下的设置菜单、会话设置)说明"从下一轮开始生效";新会话和默认值的表单不显示。没有这个键表示改动立即生效。
+
 session 里 ACP 的 `configOptions` 用 ACP 自己的字段表达同样的东西:`SessionConfigSelectOption` 的 `name`、`description`,推荐项同样在它的 `_meta` 里带 `cycle/recommended`。agent 两边给的名字和说明应当一致。
 
 能把 prompt 插入正在运行的 turn 的 agent 带 `steer: true`(§8 "插入"),没有就是不能。

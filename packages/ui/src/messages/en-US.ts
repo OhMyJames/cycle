@@ -847,6 +847,8 @@ export const enUS = {
   "attention.stopped": "The agent stopped unexpectedly",
 
   // A setting the agent offers: the choice it suggests, and high-risk options
+  "config.nextTurn":
+    "Changes take effect from the next turn. A turn already running keeps the setting it started with.",
   "config.recommended": "Recommended",
   "config.caution": "Caution",
   // A session's setting the daemon has no record of yet: not today's default, which it may not have
@@ -1041,6 +1043,9 @@ export const enUS = {
   "settings.harness.runtime.field.agy.telemetry.title": "Telemetry",
   "settings.harness.runtime.field.agy.telemetry.description":
     "Send usage telemetry to Google Antigravity. When disabled, Cycle passes --disable-telemetry.",
+  "settings.harness.runtime.field.agy.skipPermissions.title": "Skip all permission prompts",
+  "settings.harness.runtime.field.agy.skipPermissions.description":
+    "agy edits files, runs commands and calls tools without asking, whatever the session's mode. It can reach everything the daemon's user can.",
   "settings.harness.account.signIn": "Sign in",
   "settings.harness.account.signOut": "Sign out",
   "settings.harness.auth.title": "Sign in to {agent}",

@@ -11,7 +11,7 @@ import {
 import { CycleErrorCode, META } from "@cycle/protocol";
 import { translateMcpServers } from "./mcp.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
-import { toV2ConfigOptions } from "./settings.ts";
+import { DEFAULT_AGY_MODE, toV2ConfigOptions } from "./settings.ts";
 import {
   StepsPlans,
   toV2ToolCallUpdate,
@@ -71,6 +71,32 @@ type SessionState = {
 
 const currentOption = (opts: readonly V1ConfigOption[], id: string): V1ConfigOption | undefined =>
   opts.find((o) => o.id === id || o.category === id);
+
+/**
+ * agy starts every new session in its own `default` mode (ask before each edit and command), whatever Cycle's
+ * schema says. A new session is put in `DEFAULT_AGY_MODE` here, so the default Cycle shows is the one agy runs in
+ * even when the person never saved one. An account that cannot have it keeps what agy chose (agy refuses, or does
+ * not list it); the daemon then applies the person's own defaults on top.
+ */
+const startInDefaultMode = async (
+  conn: AgyTransport,
+  sessionId: string,
+  opts: V1ConfigOption[],
+): Promise<V1ConfigOption[]> => {
+  const mode = currentOption(opts, "mode");
+  if (mode === undefined || mode.currentValue === DEFAULT_AGY_MODE) return opts;
+  if (!(mode.options ?? []).some((o) => o.value === DEFAULT_AGY_MODE)) return opts;
+  try {
+    const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
+      "session/set_config_option",
+      { sessionId, configId: mode.id, value: DEFAULT_AGY_MODE },
+    );
+    if (Array.isArray(res?.configOptions)) return res.configOptions;
+    return opts.map((o) => (o === mode ? { ...o, currentValue: DEFAULT_AGY_MODE } : o));
+  } catch {
+    return opts;
+  }
+};
 
 const sessionConfigOptions = (session: SessionState): SessionConfigOption[] =>
   toV2ConfigOptions(session.v1ConfigOptions, session.availableModels, {
@@ -510,7 +536,7 @@ export function createAdapter(config: AdapterConfig) {
         throw toRequestError(error);
       }
 
-      const v1Opts = created.configOptions ?? [];
+      const v1Opts = await startInDefaultMode(conn, created.sessionId, created.configOptions ?? []);
       const state: SessionState = {
         id: created.sessionId,
         owner: client,
@@ -569,7 +595,14 @@ export function createAdapter(config: AdapterConfig) {
               : {}),
             ...(meta !== undefined ? { _meta: meta } : {}),
           });
-          response = created;
+          response = {
+            ...created,
+            configOptions: await startInDefaultMode(
+              conn,
+              created.sessionId,
+              created.configOptions ?? [],
+            ),
+          };
           resolvedId = created.sessionId;
         } catch (fallbackError) {
           throw toRequestError(fallbackError);

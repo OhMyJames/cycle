@@ -487,7 +487,7 @@ function AppWindow() {
                   canAttachFiles={agent?.promptCapabilities?.embeddedContext != null}
                   settings={
                     sessionSchema !== undefined && session !== undefined
-                      ? { schema: sessionSchema, value: session.config ?? {} }
+                      ? { schema: sessionSchema, value: session.config ?? {}, live: true }
                       : undefined
                   }
                   onSetting={(key, value) => store.setSessionConfig(key, value)}

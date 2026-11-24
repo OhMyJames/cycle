@@ -663,6 +663,15 @@
   color: var(--cycle-ink-muted);
 }
 
+/* Under a setting menu's heading: when a change to it takes effect, read before choosing. */
+[data-slot="menu-content"] [data-slot="setting-note"] {
+  margin: 0;
+  padding: 0 0.5rem 0.25rem;
+  font-size: var(--cycle-text-meta);
+  line-height: 1.35;
+  color: var(--cycle-ink-muted);
+}
+
 [data-slot="menu-radio-item"] [data-slot="option"] {
   flex: 1;
   min-width: 0;

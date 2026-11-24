@@ -69,6 +69,7 @@ export function SessionSettings({
             schema={schema ?? {}}
             value={session.config ?? {}}
             defaults={false}
+            live
             onChange={(next) => {
               // One setting at a time: the form hands back the whole set, and only what changed is sent.
               const before = session.config ?? {};

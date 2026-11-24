@@ -155,6 +155,7 @@ export const claudeEffectiveRuntime = (config: Config["claude"], settings?: Agen
 export const AGY_RUNTIME_DEFAULTS = {
   sandbox: false,
   telemetry: true,
+  skipPermissions: false,
 };
 
 export const AGY_RUNTIME_SCHEMA: Record<string, RuntimeProperty> = {
@@ -173,12 +174,21 @@ export const AGY_RUNTIME_SCHEMA: Record<string, RuntimeProperty> = {
     default: AGY_RUNTIME_DEFAULTS.telemetry,
     _meta: { [META.applyScope]: "next_idle_restart" },
   },
+  skipPermissions: {
+    type: "boolean",
+    title: "Skip all permission prompts",
+    description:
+      "Run agy acp with --dangerously-skip-permissions: every edit, command and tool call goes ahead without asking, whatever the session's mode.",
+    default: AGY_RUNTIME_DEFAULTS.skipPermissions,
+    _meta: { [META.applyScope]: "next_idle_restart", [META.danger]: true },
+  },
 };
 
 export const agyEffectiveRuntime = (config: Config["agy"], settings?: AgentSettings) => {
   const fromConfig: Partial<typeof AGY_RUNTIME_DEFAULTS> = {
     ...(config.sandbox !== undefined ? { sandbox: config.sandbox } : {}),
     ...(config.telemetry !== undefined ? { telemetry: config.telemetry } : {}),
+    ...(config.skipPermissions !== undefined ? { skipPermissions: config.skipPermissions } : {}),
   };
   return settings !== undefined
     ? settings.effective("agy", AGY_RUNTIME_DEFAULTS, fromConfig)

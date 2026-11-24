@@ -32,6 +32,8 @@ export const ConfigSchema = z.object({
       agent: z.string().min(1).optional(),
       /** When explicitly `false`, pass `--disable-telemetry` to `agy acp`. */
       telemetry: z.boolean().optional(),
+      /** Pass `--dangerously-skip-permissions` to `agy acp`: nothing asks before it runs. */
+      skipPermissions: z.boolean().optional(),
     })
     .prefault({}),
   codex: z

@@ -121,6 +121,7 @@ export class AgentAuthFlows {
       this.#runtime.track("agent_runtime_settings_saved", {
         agent: agentOf(agent),
         location: this.#runtime.kindOf(locationId),
+        skip_permissions: result.values.skipPermissions === true,
       });
       return { saved: true, ...result };
     } catch (error) {

@@ -45,9 +45,14 @@ export type Option = {
 /** Marks the choice the agent suggests or warns on, in `_meta`. Mirrors `META` of `@cycle/protocol`. */
 const RECOMMENDED = "cycle/recommended";
 const DANGER = "cycle/danger";
+const NEXT_TURN = "cycle/nextTurn";
 const EFFORTS = "cycle/efforts";
 const APPLY_SCOPE = "cycle/applyScope";
 const ENABLED_WHEN = "cycle/enabledWhen";
+
+/** Whether the agent takes a change to this setting only from its next turn (`cycle/nextTurn`, docs/protocol.md §10). */
+export const appliesNextTurn = (property: Property): boolean =>
+  property._meta?.[NEXT_TURN] === true;
 
 /** A property's values, with a name and a line on each when the schema gives them (`oneOf`). */
 export const optionsOf = (property: Property): Option[] | undefined => {
@@ -162,9 +167,17 @@ export type ConfigFormProps = {
    * get; false for a session that exists, whose unknown setting is not necessarily today's default.
    */
   defaults?: boolean;
+  /** The settings of a session that exists: a setting its agent takes only from the next turn says so. */
+  live?: boolean;
 };
 
-export function ConfigForm({ schema, value, onChange, defaults = true }: ConfigFormProps) {
+export function ConfigForm({
+  schema,
+  value,
+  onChange,
+  defaults = true,
+  live = false,
+}: ConfigFormProps) {
   const { t } = useI18n();
   const set = (key: string, next: string | null) => {
     const { [key]: _old, ...rest } = value;
@@ -210,6 +223,9 @@ export function ConfigForm({ schema, value, onChange, defaults = true }: ConfigF
               <FieldDescription>{property.description}</FieldDescription>
             ) : null}
             {chosen ? <FieldDescription>{chosen}</FieldDescription> : null}
+            {live && appliesNextTurn(property) ? (
+              <FieldDescription>{t("config.nextTurn")}</FieldDescription>
+            ) : null}
           </Field>
         );
       })}
