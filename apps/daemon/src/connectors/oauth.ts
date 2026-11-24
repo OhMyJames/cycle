@@ -31,6 +31,8 @@ export type AuthFlow = {
   verifier: string;
   redirectUri: string;
   expiresAt: number;
+  /** The endpoints and client registration this flow was started with. */
+  oauth: Omit<OAuthRecord, "tokens">;
 };
 
 const FLOW_LIFETIME_MS = 10 * 60 * 1000;
@@ -243,8 +245,9 @@ export class OAuthBroker {
   }
 
   /**
-   * Starts a sign-in: finds the server's authorization, registers a client when it must, and gives
-   * the URL to open. Returns the credentials to keep (the registration and endpoints, never a token).
+   * Prepares a sign-in: finds the server's authorization, registers a client when it must, and
+   * builds the URL to open. Does not install the flow yet: the caller calls `activate(flow)` once
+   * it has verified the connector did not change while discovering and registering.
    */
   async begin(options: {
     connectorId: string;
@@ -253,7 +256,7 @@ export class OAuthBroker {
     clientId?: string;
     scopes?: string[];
     credentials: Credentials;
-  }): Promise<{ flowId: string; authorizationUrl: string; credentials: Credentials }> {
+  }): Promise<{ flow: AuthFlow; authorizationUrl: string }> {
     const redirect = secureUrl(options.redirectUri);
     if (redirect === undefined || redirect.protocol !== "http:") {
       throw new RpcError(INVALID_PARAMS, "The redirect must be a loopback http address", {
@@ -281,12 +284,7 @@ export class OAuthBroker {
         reason: "no_registration",
       });
     }
-    // Only one sign-in for a connector at a time: a new one ends the one before.
-    for (const [id, flow] of this.#flows) {
-      if (flow.connectorId === options.connectorId || flow.expiresAt <= this.#now()) {
-        this.#flows.delete(id);
-      }
-    }
+    const { registrationEndpoint: _r, scopes: _s, ...endpoints } = found;
     const verifier = base64url(randomBytes(32));
     const flow: AuthFlow = {
       flowId: randomUUID(),
@@ -295,8 +293,8 @@ export class OAuthBroker {
       verifier,
       redirectUri: options.redirectUri,
       expiresAt: this.#now() + FLOW_LIFETIME_MS,
+      oauth: { ...endpoints, client },
     };
-    this.#flows.set(flow.flowId, flow);
     const url = new URL(found.authorizationEndpoint);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", client.clientId);
@@ -310,22 +308,18 @@ export class OAuthBroker {
     const scopes = options.scopes ?? found.scopes;
     if (scopes !== undefined && scopes.length > 0) url.searchParams.set("scope", scopes.join(" "));
     if (found.resource !== undefined) url.searchParams.set("resource", found.resource);
-    const { registrationEndpoint: _r, scopes: _s, ...endpoints } = found;
-    return {
-      flowId: flow.flowId,
-      authorizationUrl: url.href,
-      credentials: {
-        ...options.credentials,
-        oauth: {
-          ...endpoints,
-          client,
-          // Tokens from before stay usable until this sign-in succeeds.
-          ...(options.credentials.oauth?.tokens !== undefined
-            ? { tokens: options.credentials.oauth.tokens }
-            : {}),
-        },
-      },
-    };
+    return { flow, authorizationUrl: url.href };
+  }
+
+  /** Makes a prepared flow the active sign-in for its connector, ending any earlier one. */
+  activate(flow: AuthFlow): void {
+    // Only one sign-in for a connector at a time: a new one ends the one before.
+    for (const [id, existing] of this.#flows) {
+      if (existing.connectorId === flow.connectorId || existing.expiresAt <= this.#now()) {
+        this.#flows.delete(id);
+      }
+    }
+    this.#flows.set(flow.flowId, flow);
   }
 
   /** The flow a `finish` names, if it is still waiting. It is used once: taking it ends it. */
@@ -381,17 +375,15 @@ export class OAuthBroker {
     };
   }
 
-  /** Trades the code the browser brought back for tokens. */
-  async exchange(flow: AuthFlow, code: string, credentials: Credentials): Promise<Credentials> {
-    const oauth = credentials.oauth;
-    if (oauth === undefined) throw failed("auth_rejected", "no sign-in was started");
-    const tokens = await this.#token(oauth, {
+  /** Trades the code the browser brought back for tokens, using the endpoints and client the flow started with. */
+  async exchange(flow: AuthFlow, code: string): Promise<Credentials> {
+    const tokens = await this.#token(flow.oauth, {
       grant_type: "authorization_code",
       code,
       redirect_uri: flow.redirectUri,
       code_verifier: flow.verifier,
     });
-    return { ...credentials, oauth: { ...oauth, tokens } };
+    return { headers: {}, env: {}, oauth: { ...flow.oauth, tokens } };
   }
 
   /**
@@ -427,7 +419,7 @@ export class OAuthBroker {
       [tokens.refreshToken, "refresh_token"],
       [tokens.accessToken, "access_token"],
     ] as const) {
-      if (token === undefined) continue;
+      if (token === undefined || token === "") continue;
       const body = new URLSearchParams({
         token,
         token_type_hint: hint,

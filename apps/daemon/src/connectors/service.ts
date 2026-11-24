@@ -13,6 +13,7 @@ import { bunSpawn, type Spawn } from "./stdio-bridge.ts";
 import {
   type CatalogEntry,
   type ConnectorCatalog,
+  type Credentials,
   type CredentialVault,
   FileConnectorCatalog,
   FileCredentialVault,
@@ -64,7 +65,7 @@ export class ConnectorService {
       }),
     );
     this.#plugins = new PluginConnectors(this.#state, this.#signIn, fetcher, (entry) =>
-      this.#drop(entry),
+      this.#dropLocal(entry),
     );
     this.#traffic = new ConnectorTraffic({
       state: this.#state,
@@ -125,74 +126,114 @@ export class ConnectorService {
   }
 
   async update(params: UpdateParams): Promise<Connector> {
-    const before = await this.#state.entry(params.id);
-    if (
-      before.origin !== undefined &&
-      (params.name !== undefined ||
-        params.enabled !== undefined ||
-        params.transport !== undefined ||
-        params.auth !== undefined ||
-        params.secrets?.headers !== undefined)
-    ) {
-      throw invalid("This connector is a plugin's: only its values can be set", "managed");
-    }
-    const entry: CatalogEntry = {
-      ...before,
-      ...(params.name !== undefined ? { name: params.name } : {}),
-      ...(params.enabled !== undefined ? { enabled: params.enabled } : {}),
-      ...(params.transport !== undefined ? { transport: params.transport } : {}),
-      ...(params.auth !== undefined ? { auth: params.auth } : {}),
-    };
-    checkTransport(entry.transport, entry.auth);
-    if (params.name !== undefined) await this.#nameFree(params.name, entry.id);
-    // Refused before anything is written.
-    applySecrets({ headers: {}, env: {} }, params.secrets);
-    // A token belongs to the server it was given by: another address or another way of signing
-    // in, and it is not sent anywhere again.
-    const sameServer = serverOf(before) === serverOf(entry);
-    if (!sameServer) await this.#signIn.signOut(entry.id);
-    await this.#state.mutate(entry.id, (current) => {
-      const next = applySecrets(current, params.secrets);
-      if (sameServer) return next;
-      const { oauth: _gone, ...rest } = next;
-      return rest;
+    const { entry, revoked } = await this.#state.serial(params.id, async () => {
+      const before = await this.#state.entry(params.id);
+      if (
+        before.origin !== undefined &&
+        (params.name !== undefined ||
+          params.enabled !== undefined ||
+          params.transport !== undefined ||
+          params.auth !== undefined ||
+          params.secrets?.headers !== undefined)
+      ) {
+        throw invalid("This connector is a plugin's: only its values can be set", "managed");
+      }
+      const nextEntry: CatalogEntry = {
+        ...before,
+        ...(params.name !== undefined ? { name: params.name } : {}),
+        ...(params.enabled !== undefined ? { enabled: params.enabled } : {}),
+        ...(params.transport !== undefined ? { transport: params.transport } : {}),
+        ...(params.auth !== undefined ? { auth: params.auth } : {}),
+      };
+      checkTransport(nextEntry.transport, nextEntry.auth);
+      if (params.name !== undefined) await this.#nameFree(params.name, nextEntry.id);
+      // Refused before anything is written.
+      applySecrets({ headers: {}, env: {} }, params.secrets);
+      // A token belongs to the server it was given by: another address or another way of signing
+      // in, and it is not sent anywhere again.
+      const sameServer = serverOf(before) === serverOf(nextEntry);
+      const stopStdio =
+        (before.transport.type === "stdio" || nextEntry.transport.type === "stdio") &&
+        (!sameServer || params.secrets?.env !== undefined || !nextEntry.enabled);
+      // Hold stdio startup across the vault/catalog writes so no process spawns with a mix of old and new.
+      const releaseBridges = stopStdio ? this.#traffic.holdBridges(nextEntry.id) : undefined;
+      let releaseDetach: (() => void) | undefined;
+      let detached: Credentials | undefined;
+      try {
+        if (!sameServer) {
+          ({ revoked: detached, release: releaseDetach } = await this.#signIn.beginDetach(
+            nextEntry.id,
+            (current) => {
+              const next = applySecrets(current, params.secrets);
+              const { oauth: _gone, ...rest } = next;
+              return rest;
+            },
+          ));
+        } else if (params.secrets !== undefined) {
+          await this.#state.mutate(nextEntry.id, (current) =>
+            applySecrets(current, params.secrets),
+          );
+        }
+        if (JSON.stringify(nextEntry) !== JSON.stringify(before)) {
+          await this.#state.catalog.put(nextEntry);
+        }
+        // Another server, other keys or sign-in, or switched on again: what was last known of it (a refusal of the old
+        // key, a server that was down) is no longer said, and a plugin's server is asked afresh.
+        const secretsChanged =
+          nextEntry.transport.type === "stdio"
+            ? params.secrets?.env !== undefined
+            : params.secrets !== undefined;
+        const fresh =
+          !sameServer ||
+          params.auth !== undefined ||
+          secretsChanged ||
+          (nextEntry.enabled && !before.enabled);
+        if (fresh && nextEntry.origin !== undefined) this.#plugins.renewed(nextEntry);
+        else if (fresh) this.#state.reset(nextEntry.id);
+      } finally {
+        releaseDetach?.();
+        releaseBridges?.();
+      }
+      this.#state.changed();
+      return { entry: nextEntry, revoked: detached };
     });
-    await this.#state.catalog.put(entry);
-    // Another server, other keys or sign-in, or switched on again: what was last known of it (a refusal of the old
-    // key, a server that was down) is no longer said, and a plugin's server is asked afresh.
-    const fresh =
-      !sameServer ||
-      params.auth !== undefined ||
-      params.secrets !== undefined ||
-      (entry.enabled && !before.enabled);
-    if (fresh && entry.origin !== undefined) this.#plugins.renewed(entry);
-    else if (fresh) this.#state.reset(entry.id);
-    // A process started with the old command, values or switch does not go on with them.
-    if (!sameServer || params.secrets?.env !== undefined || !entry.enabled) {
-      this.#traffic.stopBridges(entry.id);
-    }
-    this.#state.changed();
-    return this.#state.view(entry);
+    await this.#signIn.revoke(revoked);
+    return this.#state.view((await this.#state.catalog.get(entry.id)) ?? entry);
   }
 
   async remove(id: string): Promise<void> {
-    const entry = await this.#state.entry(id);
-    if (entry.origin !== undefined) {
-      throw invalid("This connector is removed with its plugin", "managed");
-    }
-    await this.#drop(entry);
+    const revoked = await this.#state.serial(id, async () => {
+      const entry = await this.#state.entry(id);
+      if (entry.origin !== undefined) {
+        throw invalid("This connector is removed with its plugin", "managed");
+      }
+      return this.#dropLocked(entry);
+    });
     this.#state.changed();
+    await this.#signIn.revoke(revoked);
   }
 
-  async #drop(entry: CatalogEntry): Promise<void> {
+  #dropLocal(entry: CatalogEntry): Promise<Credentials | undefined> {
+    return this.#state.serial(entry.id, () => this.#dropLocked(entry));
+  }
+
+  async #dropLocked(entry: CatalogEntry): Promise<Credentials | undefined> {
     const id = entry.id;
-    this.#traffic.stopBridges(id);
-    await this.#signIn.signOut(id);
-    await this.#state.catalog.remove(entry.id);
-    // After the queued changes: none of them can write the credentials back.
-    await this.#state.settled(id);
-    await this.#state.vault.remove(entry.id);
-    this.#state.reset(id);
+    const releaseBridges = this.#traffic.holdBridges(id);
+    let releaseDetach: (() => void) | undefined;
+    try {
+      const detached = await this.#signIn.beginDetach(id);
+      releaseDetach = detached.release;
+      await this.#state.catalog.remove(entry.id);
+      // After the queued changes: none of them can write the credentials back.
+      await this.#state.settled(id);
+      await this.#state.vault.remove(entry.id);
+      this.#state.reset(id);
+      return detached.revoked;
+    } finally {
+      releaseDetach?.();
+      releaseBridges();
+    }
   }
 
   /**
