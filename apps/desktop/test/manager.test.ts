@@ -456,6 +456,43 @@ test("a connection that drops is picked up again, and a request still open is no
   expect(outcomes[0]).toMatchObject({ outcome: { optionId: "allow" } });
 });
 
+test("a request of a connection that was closed is not answered, and the one asked again after is", async () => {
+  const outcomes: unknown[] = [];
+  const { manager } = await setup(
+    fakeAgent({
+      onPrompt: async ({ ask }) => {
+        outcomes.push(await ask());
+      },
+    }),
+  );
+  const tracked: string[] = [];
+  const { m, events } = await manager("app", undefined, undefined, (name) => tracked.push(name));
+  await m.connect("local");
+  const id = await m.createSession("local", { cwd: "/tmp" });
+  await m.openSession("local", id);
+  await m.prompt("local", id, "ask");
+  await until(() => of(events, "permission").length === 1, "the request");
+  const key = first(of(events, "permission")).request.key;
+
+  await m.disconnect("local");
+  await m.answerPermission(key, "allow");
+  await m.answerForm(key, { action: "accept", content: {} });
+  expect(of(events, "permission-closed")).toEqual([]);
+  expect(tracked).not.toContain("permission_answered");
+  expect(tracked).not.toContain("form_answered");
+
+  // Connected again, the daemon asks again under the same key: that one is the new connection's, and is answered.
+  await m.connect("local");
+  await m.openSession("local", id);
+  await until(() => of(events, "permission").length === 2, "the request asked again");
+  expect(of(events, "permission").at(-1)?.request.key).toBe(key);
+  await m.answerPermission(key, "allow");
+  await until(() => outcomes.length === 1, "the agent to be answered");
+  expect(outcomes[0]).toMatchObject({ outcome: { optionId: "allow" } });
+  expect(of(events, "permission-closed").map((e) => e.key)).toEqual([key]);
+  expect(tracked.filter((name) => name === "permission_answered")).toHaveLength(1);
+});
+
 test("renames, archives and deletes a session, and the list follows", async () => {
   const { manager } = await setup();
   const { m } = await manager();

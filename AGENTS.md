@@ -46,7 +46,7 @@ cycle-v1 是 ADE(agentic development environment),是 cycle 的重写。这是�
 产品分析用 PostHog,在 Electron 主进程发送,代码在 `packages/analytics`,说明和事件字典在 [docs/analytics.md](docs/analytics.md),理由在 `.agents/notes/2026-11-19-product-analytics-posthog.md`。
 
 - **新增或修改用户能感知的功能和操作(新的按钮、面板、命令、流程、连接和会话的动作、设置),必须同时加埋点,和功能在同一次提交里。** 没有埋点的功能不算完成。纯重构、内部修复、样式微调不需要。
-- 流程:先想清楚要回答的产品问题;在 `packages/analytics/src/events.ts` 的 `EVENTS` 里加事件;在主进程知道的地方发(通常是 `ConnectionManager` 里,动作成功之后),只有页面才知道的才加进 `UI_EVENTS` 并在页面里调 `store.track`;在 `docs/analytics.md` 的字典表里加一行(门禁检查两边一致);写测试,证明事件发出了,也证明内容没有跟着发出去。具体步骤见 docs/analytics.md 的"加新功能时怎么埋点"。
+- 流程:先想清楚要回答的产品问题;在 `packages/analytics/src/events.ts` 的 `EVENTS` 里加事件;在主进程知道的地方发(通常是 `ConnectionManager` 的各部分里,多数在 `apps/desktop/src/main/actions.ts`,动作成功之后),只有页面才知道的才加进 `UI_EVENTS` 并在页面里调 `store.track`;在 `docs/analytics.md` 的字典表里加一行(门禁检查两边一致);写测试,证明事件发出了,也证明内容没有跟着发出去。具体步骤见 docs/analytics.md 的"加新功能时怎么埋点"。
 - **只报行为,不报内容。** 事件的属性只能是数字、布尔或一组固定的词。不得上报 prompt、agent 输出、路径、仓库名、标题、命令、报错信息、agent 的 id、配置值,以及任何用户或 agent 写的文字。不要在字典里用 `z.string()`;需要时把原始值变成词(像 `agentOf`、`settingOf`、`sizeOf`)。要上报自由文字,先问,再决定。
 - 不要在页面或 daemon 里引入 PostHog 或其他 SDK,不要从页面直接联网;不要打开 autocapture、会话回放、异常自动收集。页面只能导入 `@cycle/analytics/events` 的类型。
 - 测试和从源码运行不设 `CYCLE_POSTHOG_KEY`,永远不对真实的 PostHog 发送。统计默认开启,用户可在设置页(Settings → General)里关闭,首次启动有一条说明(见 `.agents/notes/2026-11-19-analytics-opt-out-restored.md`);这个开关、首次说明和环境变量 `DO_NOT_TRACK` / `CYCLE_ANALYTICS=off` 不要去掉或绕开。

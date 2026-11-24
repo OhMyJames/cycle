@@ -2,7 +2,7 @@
 // are Electron's (the window, Notification) come in as arguments, so this is tested without Electron, and the whole of what
 // it decides is the few lines below.
 import type { AppEvent, Translator } from "@cycle/ui";
-import type { AttentionNotice } from "./manager.ts";
+import type { AttentionNotice } from "./watcher.ts";
 
 /** What of a window this needs. */
 export type NotifyWindow = {
