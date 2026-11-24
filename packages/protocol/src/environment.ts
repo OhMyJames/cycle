@@ -18,6 +18,13 @@ export const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const EnvironmentVariableSchema = z.object({ name: z.string(), value: z.string() });
 export type EnvironmentVariable = z.infer<typeof EnvironmentVariableSchema>;
 
+/** A variable whose value is `secrets.env`'s `from` (else its own name): `WORK_GH as GH_TOKEN` is `{name: "GH_TOKEN", from: "WORK_GH"}`. */
+export const EnvironmentSecretSchema = z.object({ name: z.string(), from: z.string().optional() });
+export type EnvironmentSecret = z.infer<typeof EnvironmentSecretSchema>;
+
+/** The key a secret is looked up under in `secrets.env`. */
+export const secretKey = (secret: EnvironmentSecret): string => secret.from ?? secret.name;
+
 export const EnvironmentActionSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -31,6 +38,12 @@ export const SessionEnvironmentSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   variables: z.array(EnvironmentVariableSchema).default([]),
+  /**
+   * Names whose values the daemon reads from its own machine's `secrets.env` when they are used. Never a value here: not
+   * in the client's file, not on the wire, not in the index. Given to terminals, actions and setup/cleanup scripts, never
+   * to the commands an agent runs.
+   */
+  secrets: z.array(EnvironmentSecretSchema).default([]),
   actions: z.array(EnvironmentActionSchema).default([]),
   setup: ScriptsSchema.optional(),
   cleanup: ScriptsSchema.optional(),
@@ -42,6 +55,7 @@ export const SessionEnvironmentSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   variableNames: z.array(z.string()),
+  secretNames: z.array(z.string()).default([]),
   actions: z.array(z.object({ id: z.string(), name: z.string(), icon: z.string().optional() })),
 });
 export type SessionEnvironmentSummary = z.infer<typeof SessionEnvironmentSummarySchema>;
@@ -98,7 +112,16 @@ export const checkEnvironment = (
   if (new TextEncoder().encode(JSON.stringify(environment)).length > ENVIRONMENT_MAX_BYTES)
     return { ok: false, problem: { reason: "too_large", limit: ENVIRONMENT_MAX_BYTES } };
   const seen = new Set<string>();
-  for (const { name, value: text } of environment.variables) {
+  // Variables and secrets share one set of names: a name is one or the other, once.
+  const named = [
+    ...environment.variables.map(({ name, value }) => ({ name, text: value })),
+    ...environment.secrets.map(({ name }) => ({ name, text: "" })),
+  ];
+  // A key is looked up by name, so it has to be one a `secrets.env` line can have.
+  for (const { name, from } of environment.secrets)
+    if (from !== undefined && !VARIABLE_NAME.test(from))
+      return { ok: false, problem: { reason: "invalid_variable", name } };
+  for (const { name, text } of named) {
     if (!VARIABLE_NAME.test(name) || seen.has(name) || text.includes("\0"))
       return { ok: false, problem: { reason: "invalid_variable", name } };
     if (isReservedVariable(name))
@@ -129,9 +152,34 @@ export const summarizeEnvironment = (
   id: environment.id,
   name: environment.name,
   variableNames: environment.variables.map((v) => v.name),
+  secretNames: environment.secrets.map((s) => s.name),
   actions: environment.actions.map(({ id, name, icon }) => ({
     id,
     name,
     ...(icon !== undefined ? { icon } : {}),
   })),
 });
+
+/**
+ * Reads a `secrets.env`: `NAME=value` a line, `#` starts a comment line, `export ` before a name is allowed, a value may
+ * be in single or double quotes. A line that is not one of these is skipped, never reported with its text (it may be a
+ * value).
+ */
+export const parseSecretsFile = (text: string): Record<string, string> => {
+  // No prototype: a key named `constructor` is a key like any other, and absent when the file has no line for it.
+  const found: Record<string, string> = Object.create(null);
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim().replace(/^export\s+/, "");
+    if (line === "" || line.startsWith("#")) continue;
+    const equals = line.indexOf("=");
+    if (equals === -1) continue;
+    const name = line.slice(0, equals).trim();
+    if (!VARIABLE_NAME.test(name)) continue;
+    let value = line.slice(equals + 1).trim();
+    const quote = value[0];
+    if ((quote === '"' || quote === "'") && value.length >= 2 && value.endsWith(quote))
+      value = value.slice(1, -1);
+    found[name] = value;
+  }
+  return found;
+};

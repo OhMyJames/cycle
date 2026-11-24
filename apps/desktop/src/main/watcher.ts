@@ -88,10 +88,13 @@ const worktreeSummaryOf = (value: unknown): { worktree?: WorktreeSummary } => {
 /** What a row says of its session's environment (docs/protocol.md §6 "环境"): names only. Anything else is not one. */
 const environmentSummaryOf = (value: unknown): { environment?: SessionEnvironmentSummary } => {
   if (typeof value !== "object" || value === null) return {};
-  const { id, name, variableNames, actions } = value as Record<string, unknown>;
+  const { id, name, variableNames, secretNames, actions } = value as Record<string, unknown>;
   if (typeof id !== "string" || typeof name !== "string") return {};
   const names = Array.isArray(variableNames)
     ? variableNames.filter((v): v is string => typeof v === "string")
+    : [];
+  const secrets = Array.isArray(secretNames)
+    ? secretNames.filter((v): v is string => typeof v === "string")
     : [];
   const shown = Array.isArray(actions)
     ? actions.flatMap((a): SessionEnvironmentSummary["actions"] => {
@@ -101,7 +104,7 @@ const environmentSummaryOf = (value: unknown): { environment?: SessionEnvironmen
         return [{ id: actionId, name: actionName, ...(typeof icon === "string" ? { icon } : {}) }];
       })
     : [];
-  return { environment: { id, name, variableNames: names, actions: shown } };
+  return { environment: { id, name, variableNames: names, secretNames: secrets, actions: shown } };
 };
 
 export class SessionWatcher {

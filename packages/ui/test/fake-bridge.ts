@@ -105,6 +105,8 @@ export const fakeBridge = (
       kinds?: ProviderKind[];
       catalog?: Record<string, ProviderModel[]>;
     };
+    /** The keys of the location's vault. Changed in place; a value is not kept, as the daemon never gives one back. */
+    vault?: { keys: string[]; fail?: string };
     /**
      * An agent's plugins: what can be installed (the installed ones among them) and where it comes from. Changed in
      * place by what the page asks. `fail`: what the next change comes to instead of being done.
@@ -137,6 +139,7 @@ export const fakeBridge = (
   const calls: [string, ...unknown[]][] = [];
   const connectors = options.connectors ?? [];
   const providers = options.providers ?? { list: [] };
+  const vault = options.vault ?? { keys: [] };
   const storage = options.storage ?? { agents: [] };
   const plugins = options.plugins ?? { sources: [], all: [] };
   /** A change to the plugins: refused as the test said, or done. */
@@ -483,6 +486,18 @@ export const fakeBridge = (
       const at = providers.list.findIndex((p) => p.id === id);
       if (at >= 0) providers.list.splice(at, 1);
       return { removed: true as const };
+    }),
+    listVault: record("listVault", async () => {
+      if (vault.fail !== undefined) throw new Error(vault.fail);
+      return [...vault.keys];
+    }),
+    setVaultItem: record("setVaultItem", async (_location: string, key: string) => {
+      if (!vault.keys.includes(key)) vault.keys.push(key);
+      return { done: true as const };
+    }),
+    removeVaultItem: record("removeVaultItem", async (_location: string, key: string) => {
+      vault.keys = vault.keys.filter((k) => k !== key);
+      return { done: true as const };
     }),
     listPlugins: record("listPlugins", async () => ({
       sources: plugins.sources.map((s) => ({ ...s })),

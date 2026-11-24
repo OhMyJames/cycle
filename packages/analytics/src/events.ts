@@ -38,6 +38,7 @@ const settingsSection = z.enum([
   "appearance",
   "locations",
   "environments",
+  "vault",
   "shortcuts",
   "subscriptions",
   "api_keys",
@@ -130,6 +131,10 @@ export const EVENTS = {
   environment_chosen: o({ none: z.boolean() }),
   /** An action of a session's environment was run in a terminal from the session's header. Never which. */
   environment_action_run: o({}),
+  /** A secret was saved to a location's vault, new or replaced. Never its name or value. */
+  vault_item_saved: o({}),
+  /** A secret was removed from a location's vault. Never its name. */
+  vault_item_removed: o({}),
   /**
    * The person had the app update the daemon of a remote location (not the hand-run command), and it worked or not.
    * `when`: nothing was working there (`idle`), or sessions were and the person chose to interrupt them (`now`) or to

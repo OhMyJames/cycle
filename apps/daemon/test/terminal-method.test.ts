@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { realpath, rm } from "node:fs/promises";
+import { realpath, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleErrorCode } from "@cycle/protocol";
 import { Daemon } from "../src/index.ts";
@@ -394,4 +395,22 @@ test("an action the session's environment does not have, or one with no command 
     (await call<{ terminals: Info[] }>(c, "_cycle/terminal/list", { sessionId: made.sessionId }))
       .terminals,
   ).toEqual([]);
+});
+
+test("a secret named by the environment is in the session's terminal, from this machine's secrets.env", async () => {
+  await writeFile(join(dir, "secrets.env"), "PROBE_SECRET=from-secrets-file\n", { mode: 0o600 });
+  const daemon = await start();
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, {
+    cwd: work,
+    _meta: { "cycle/environment": { ...withEnvironment, secrets: [{ name: "PROBE_SECRET" }] } },
+  });
+  const id = (await call<Attached>(c, "_cycle/terminal/create", { sessionId, cols: 80, rows: 24 }))
+    .terminal.terminalId;
+  await call(c, "_cycle/terminal/input", {
+    terminalId: id,
+    data: "echo got-$PROBE_SECRET; echo done-$((40+2))\n",
+  });
+  await until(() => c.terminalText(id).includes("done-42"), "the shell's answer", 5_000);
+  expect(c.terminalText(id)).toContain("got-from-secrets-file");
 });

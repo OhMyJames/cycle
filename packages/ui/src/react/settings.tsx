@@ -47,6 +47,7 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 import { SubscriptionsSection } from "./subscriptions.tsx";
 import { Tip } from "./tip.tsx";
 import { updateLine } from "./update.tsx";
+import { VaultSection } from "./vault.tsx";
 
 export { SETTINGS_SECTIONS, type SettingsSection };
 
@@ -90,6 +91,15 @@ export function SettingsPage(props: SettingsPageProps) {
   /** What each daemon last said it can do, kept while the person moves between the pages of Settings. */
   const knownSetup = useRef<Record<string, boolean>>({});
 
+  const providersGroup = t("settings.providers.group");
+  const location = {
+    locations: props.locations,
+    status: props.status,
+    locationId: chosenEnv,
+    onLocationChange: setChosenEnv,
+    onShowLocations: () => props.onSection("locations"),
+    knownSetup,
+  };
   const topSections: PageSection[] = [
     { id: "general", label: t("settings.section.general"), content: <GeneralSection /> },
     { id: "appearance", label: t("settings.section.appearance"), content: <AppearanceSection /> },
@@ -103,18 +113,14 @@ export function SettingsPage(props: SettingsPageProps) {
       label: t("settings.section.environments"),
       content: <EnvironmentsSection />,
     },
+    {
+      id: "vault",
+      label: t("settings.section.vault"),
+      content: <VaultSection {...location} />,
+    },
     { id: "shortcuts", label: t("settings.section.shortcuts"), content: <ShortcutsSection /> },
   ];
 
-  const providersGroup = t("settings.providers.group");
-  const location = {
-    locations: props.locations,
-    status: props.status,
-    locationId: chosenEnv,
-    onLocationChange: setChosenEnv,
-    onShowLocations: () => props.onSection("locations"),
-    knownSetup,
-  };
   const providerSections: PageSection[] = [
     {
       id: "subscriptions",

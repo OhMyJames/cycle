@@ -8,6 +8,7 @@ import {
   type EnvironmentProblem,
   type EnvironmentRefusal,
   type EnvironmentScripts,
+  type EnvironmentSecret,
   type EnvironmentsState,
   environmentProblem,
   environmentSnapshot,
@@ -37,6 +38,11 @@ const scriptsOf = (value: unknown): EnvironmentScripts | undefined | false => {
   return scripts;
 };
 
+const isSecret = (value: unknown): boolean =>
+  isRecord(value) &&
+  typeof value.name === "string" &&
+  (value.from === undefined || typeof value.from === "string");
+
 /** One entry of the file as an environment, or undefined when it is not one this app understands. */
 export const environmentOf = (entry: unknown): Environment | undefined => {
   if (!isRecord(entry) || typeof entry.id !== "string" || entry.id === "") return undefined;
@@ -47,6 +53,18 @@ export const environmentOf = (entry: unknown): Environment | undefined => {
     if (!isRecord(v) || typeof v.name !== "string" || typeof v.value !== "string") return undefined;
     variables.push({ name: v.name, value: v.value });
   }
+  // A file from before secrets has none.
+  if (
+    entry.secrets !== undefined &&
+    !(Array.isArray(entry.secrets) && entry.secrets.every(isSecret))
+  )
+    return undefined;
+  const secrets = ((entry.secrets ?? []) as Record<string, unknown>[]).map(
+    (s): EnvironmentSecret => ({
+      name: s.name as string,
+      ...(typeof s.from === "string" ? { from: s.from } : {}),
+    }),
+  );
   const actions: Environment["actions"] = [];
   for (const a of entry.actions) {
     if (!isRecord(a) || typeof a.id !== "string" || typeof a.name !== "string") return undefined;
@@ -67,6 +85,7 @@ export const environmentOf = (entry: unknown): Environment | undefined => {
     id: entry.id,
     name: entry.name,
     variables,
+    secrets,
     actions,
     ...(setup !== undefined ? { setup } : {}),
     ...(cleanup !== undefined ? { cleanup } : {}),
@@ -212,7 +231,7 @@ export class Environments {
       this.#track("environment_config_saved", {
         has_setup: sent.setup !== undefined,
         has_cleanup: sent.cleanup !== undefined,
-        variables: named.variables.length,
+        variables: named.variables.length + named.secrets.length,
         actions: named.actions.length,
       });
       return { state: shown(next) };

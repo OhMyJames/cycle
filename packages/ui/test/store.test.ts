@@ -930,6 +930,42 @@ test("deleting a session whose worktree holds unsaved work gives back what would
   expect(calls).toEqual([false, true]);
 });
 
+test("vault: keys are read as names, a set key joins the list in order, a removed one leaves, and no value is kept", async () => {
+  const script = fakeBridge({ connected: true, vault: { keys: ["WORK_GH", "A_KEY"] } });
+  const store = new AppStore(script.bridge, new DraftStore(undefined));
+  await store.start();
+  await store.loadVault("local");
+  expect(store.getState().vault.local).toEqual({ keys: ["A_KEY", "WORK_GH"] });
+
+  expect(await store.setVaultItem("local", "B_KEY", "hunter2-value")).toEqual({ done: true });
+  expect(store.getState().vault.local?.keys).toEqual(["A_KEY", "B_KEY", "WORK_GH"]);
+  // Replacing a key that is there changes nothing the page holds.
+  await store.setVaultItem("local", "A_KEY", "another-value");
+  expect(store.getState().vault.local?.keys).toEqual(["A_KEY", "B_KEY", "WORK_GH"]);
+  expect(JSON.stringify(store.getState())).not.toContain("hunter2-value");
+  expect(JSON.stringify(store.getState())).not.toContain("another-value");
+
+  expect(await store.removeVaultItem("local", "A_KEY")).toEqual({ done: true });
+  expect(store.getState().vault.local?.keys).toEqual(["B_KEY", "WORK_GH"]);
+
+  // What main throws is an answer the page shows, and the list stays as it was.
+  script.bridge.setVaultItem = async () => {
+    throw new Error("The line dropped");
+  };
+  expect(await store.setVaultItem("local", "C_KEY", "x")).toEqual({
+    problem: "failed",
+    message: "The line dropped",
+  });
+  expect(store.getState().vault.local?.keys).toEqual(["B_KEY", "WORK_GH"]);
+
+  // A list that cannot be read keeps the last that was, under the reason.
+  script.bridge.listVault = async () => {
+    throw new Error("Too old");
+  };
+  await store.loadVault("local");
+  expect(store.getState().vault.local).toEqual({ keys: ["B_KEY", "WORK_GH"], error: "Too old" });
+});
+
 test("continuing in a new session opens a blank one in the same folder and agent with the old one mentioned, with no worktree made", async () => {
   const script = fakeBridge({
     connected: true,

@@ -342,8 +342,11 @@ export function Overview() {
               <dd data-slot="overview-environment">{session.environment.name}</dd>
               <dt>{t("overview.variables")}</dt>
               <dd data-slot="overview-variables">
-                {session.environment.variableNames.length > 0
-                  ? session.environment.variableNames.map((name) => <code key={name}>{name}</code>)
+                {session.environment.variableNames.length + session.environment.secretNames.length >
+                0
+                  ? [...session.environment.variableNames, ...session.environment.secretNames].map(
+                      (name) => <code key={name}>{name}</code>,
+                    )
                   : t("overview.variables.none")}
               </dd>
             </>

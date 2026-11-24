@@ -69,6 +69,8 @@ export type LocationStatus = {
     environments?: boolean;
     /** A session can be made in a worktree, and the branches to start it from listed (docs/protocol.md §6 "Worktree"). */
     worktrees?: boolean;
+    /** The vault, the keys of `secrets.env`, can be listed and changed (docs/protocol.md §6 "环境"). */
+    vault?: boolean;
   };
   /**
    * The daemon on the location speaks another major version of Cycle's protocol, so the app cannot use it
@@ -169,6 +171,9 @@ export type EnvironmentAction = {
   command: EnvironmentScripts;
 };
 
+/** A variable whose value is in `secrets.env` under `from` (else under its own name). */
+export type EnvironmentSecret = { name: string; from?: string };
+
 /**
  * A reusable setup for sessions: scripts, variables and actions. Defined once in the app, chosen per workspace, and sent
  * whole when a session is made (docs/desktop.md "环境"). Not where the session runs: that is its location.
@@ -182,6 +187,11 @@ export type Environment = {
   cleanup?: EnvironmentScripts;
   /** In order; names unique, none of the daemon's own (docs/protocol.md §6). Values may be secrets. */
   variables: { name: string; value: string }[];
+  /**
+   * Names only: the value is in `secrets.env` on the machine the session runs on. Given to terminals and actions, never to
+   * the agent (docs/protocol.md §6). Share the names of `variables`.
+   */
+  secrets: EnvironmentSecret[];
   actions: EnvironmentAction[];
 };
 
@@ -196,6 +206,7 @@ export type SessionEnvironmentSummary = {
   id: string;
   name: string;
   variableNames: string[];
+  secretNames: string[];
   actions: { id: string; name: string; icon?: string }[];
 };
 
@@ -620,6 +631,10 @@ export type ProviderAnswer =
   | { provider: ProviderInfo }
   | { problem: ProviderProblem; message?: string };
 
+/** Why a vault key could not be set or removed. `invalid`: the daemon refused what was sent (`message` says why). */
+export type VaultProblem = "invalid" | "failed";
+export type VaultAnswer = { done: true } | { problem: VaultProblem; message?: string };
+
 /** What an agent keeps in its home on a location's machine. `cache` can be cleared; `history` is only shown. */
 export type StorageItem = { id: string; kind: "cache" | "history"; bytes: number };
 export type StorageAgent = {
@@ -893,6 +908,7 @@ export type TrackProps = Record<string, string | number | boolean>;
 export const ENVIRONMENT_REFUSALS = [
   "reserved_variable",
   "invalid_variable",
+  "missing_secret",
   "too_large",
   "invalid_environment",
   "missing",
@@ -905,7 +921,7 @@ export const ENVIRONMENT_REFUSALS = [
 export type EnvironmentRefusal = {
   reason: (typeof ENVIRONMENT_REFUSALS)[number];
   /**
-   * The variable it is about, for `reserved_variable` and `invalid_variable` (never its value); the environment's name,
+   * The variable it is about, for `reserved_variable`, `invalid_variable` and `missing_secret` (never its value); the environment's name,
    * for `needs_fix`.
    */
   name?: string;
@@ -1145,6 +1161,12 @@ export type AppApi = {
     locationId: string,
     id: string,
   ): Promise<{ removed: true } | { problem: ProviderProblem; message?: string }>;
+  /** The keys the location's vault (`secrets.env`) has a value for: names, never values. Fails when it cannot be asked. */
+  listVault(locationId: string): Promise<string[]>;
+  /** Adds the key or replaces its value. The value goes to the daemon and is not kept here. */
+  setVaultItem(locationId: string, key: string, value: string): Promise<VaultAnswer>;
+  /** Removes the key and its value for good. The page asks the person first. */
+  removeVaultItem(locationId: string, key: string): Promise<VaultAnswer>;
   /** An agent's installed plugins and where its plugins come from. Fails when it cannot be asked. */
   listPlugins(
     locationId: string,
@@ -1334,6 +1356,9 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   providerCatalog: true,
   saveProvider: true,
   removeProvider: true,
+  listVault: true,
+  setVaultItem: true,
+  removeVaultItem: true,
   listPlugins: true,
   availablePlugins: true,
   installPlugin: true,

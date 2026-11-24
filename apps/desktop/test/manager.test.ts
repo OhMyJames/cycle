@@ -178,6 +178,7 @@ test("connects, creates a session, and lists it", async () => {
     diff: true,
     terminal: true,
     environments: true,
+    vault: true,
     worktrees: true,
     stopSubagent: true,
   });
@@ -449,6 +450,7 @@ test("a connection that drops is picked up again, and a request still open is no
     diff: true,
     terminal: true,
     environments: true,
+    vault: true,
     worktrees: true,
     stopSubagent: true,
   });
@@ -1937,9 +1939,10 @@ test("a session made with an environment is sent it whole, lists it by names onl
     id: "env-node",
     name: "Node",
     variableNames: ["DATABASE_URL"],
+    secretNames: [],
     actions: [{ id: "hello", name: "Say hello" }],
   });
-  expect(JSON.stringify(row)).not.toContain("secret");
+  expect(JSON.stringify(row)).not.toContain("postgres://secret");
 
   const unknown = await m.createTerminal("local", id, 80, 24, "nope");
   expect(unknown).toEqual({ problem: "unknown_action" });
@@ -1982,6 +1985,7 @@ test("an environment in the file that the daemon would refuse is not sent: main 
         id: "env-twice",
         name: "Twice",
         variables: [],
+        secrets: [],
         actions: [
           { id: "a", name: "One", command: { default: "true" } },
           { id: "a", name: "Two", command: { default: "true" } },

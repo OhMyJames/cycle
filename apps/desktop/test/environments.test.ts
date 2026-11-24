@@ -22,6 +22,7 @@ const NODE: Environment = {
   id: "env-node",
   name: "Node and Postgres",
   variables: [{ name: "DATABASE_URL", value: "postgres://secret@localhost/dev" }],
+  secrets: [],
   actions: [{ id: "dev", name: "Dev server", command: { default: "npm run dev" } }],
   setup: { default: "npm ci", windows: "npm.cmd ci" },
 };
@@ -177,6 +178,7 @@ test("a session is sent the environment as it is now, without empty scripts", as
     id: "env-node",
     name: "Node and Postgres",
     variables: NODE.variables,
+    secrets: [],
     actions: [],
     setup: { default: "npm ci", windows: "npm.cmd ci" },
   });

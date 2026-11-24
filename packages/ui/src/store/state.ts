@@ -127,6 +127,8 @@ export type AppState = {
   connectors: Record<string, { list?: ConnectorInfo[]; error?: string }>;
   /** Each location's model providers as last read, or why they could not be. As connectors: only once asked about. */
   providers: Record<string, { read?: ProvidersRead; error?: string }>;
+  /** Each location's vault keys (names only) as last read, or why they could not be. Read when the page is shown. */
+  vault: Record<string, { keys?: string[]; error?: string }>;
   /**
    * Each agent's plugins on each location as last read (by `pluginsKey`), or why they could not be. Only for what
    * the page has asked for.
@@ -174,6 +176,7 @@ export const initialState = (): AppState => ({
   agentAuthCompletions: {},
   connectors: {},
   providers: {},
+  vault: {},
   plugins: {},
   planUsage: {},
   environments: undefined,

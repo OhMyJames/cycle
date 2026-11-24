@@ -176,6 +176,8 @@ export const CapabilitiesSchema = z.object({
   sessionMentions: z.boolean().optional(),
   /** `session/new` takes `_meta["cycle/environment"]`, and `_cycle/terminal/create` an `actionId` (docs/protocol.md §6 "环境"). */
   environments: z.boolean().optional(),
+  /** `_cycle/vault/list`, `set` and `remove` are there: the keys of `secrets.env` (docs/protocol.md §6 "环境"). */
+  vault: z.boolean().optional(),
   /** `session/new` takes `_meta["cycle/worktree"]`, and `_cycle/git/branches` is there (docs/protocol.md §6 "Worktree"). */
   worktrees: z.boolean().optional(),
 });

@@ -2712,6 +2712,7 @@ export const scenarios: Record<string, Scenario> = {
           id: "env-node",
           name: "Node and Postgres",
           variableNames: ["DATABASE_URL", "NODE_ENV"],
+          secretNames: [],
           actions: [
             { id: "dev", name: "Dev server", icon: "play" },
             { id: "test", name: "Tests", icon: "test" },

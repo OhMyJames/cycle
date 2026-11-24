@@ -21,9 +21,16 @@ const NODE: Environment = {
   id: "env-node",
   name: "Node",
   variables: [{ name: "DATABASE_URL", value: "postgres://secret@db/dev" }],
+  secrets: [],
   actions: [{ id: "dev", name: "Dev server", command: { default: "npm run dev" } }],
 };
-const PYTHON: Environment = { id: "env-py", name: "Python", variables: [], actions: [] };
+const PYTHON: Environment = {
+  id: "env-py",
+  name: "Python",
+  variables: [],
+  secrets: [],
+  actions: [],
+};
 
 const ALL = {
   queue: true,
@@ -232,6 +239,7 @@ test("a session's actions are buttons in its title bar: one runs in a new termin
         id: "env-node",
         name: "Node",
         variableNames: ["DATABASE_URL"],
+        secretNames: [],
         actions: [{ id: "dev", name: "Dev server" }],
       },
     },
@@ -257,7 +265,7 @@ test("a session without an environment, or one with no actions, has no action bu
     {
       ...summary("s2"),
       title: "second",
-      environment: { id: "e", name: "E", variableNames: [], actions: [] },
+      environment: { id: "e", name: "E", variableNames: [], secretNames: [], actions: [] },
     },
   ];
   await renderApp(script.bridge);
@@ -328,6 +336,7 @@ test("the title bar draws each action's icon, and the terminal for one it does n
         id: "env-node",
         name: "Node",
         variableNames: [],
+        secretNames: [],
         actions: [
           { id: "db", name: "Database", icon: "database" },
           { id: "x", name: "Launch", icon: "rocket" },
@@ -464,6 +473,7 @@ test("an environment the file holds that the daemon would refuse says what to fi
     id: "env-twice",
     name: "Twice",
     variables: [],
+    secrets: [],
     actions: [
       { id: "a", name: "One", command: { default: "true" } },
       { id: "a", name: "Two", command: { default: "true" } },

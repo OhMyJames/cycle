@@ -11,10 +11,10 @@ import {
 import {
   CycleErrorCode,
   checkEnvironment,
-  environmentVariables,
   gitBranches,
   META,
   type SessionEnvironment,
+  secretKey,
   sessionArchive,
   sessionDismissBackground,
   sessionMarkRead,
@@ -24,7 +24,13 @@ import {
   WorktreeRequestSchema,
 } from "@cycle/protocol";
 import { mapBounded } from "../bounded.ts";
-import { environmentOf, environmentRowMeta, scriptFor, sessionVariables } from "../environment.ts";
+import {
+  environmentOf,
+  environmentRowMeta,
+  scriptFor,
+  shellVariables,
+  shellVariablesOf,
+} from "../environment.ts";
 import {
   INVALID_PARAMS,
   logUnavailable,
@@ -35,6 +41,7 @@ import {
 import type { SessionEntry } from "../index-file.ts";
 import { isGoneOwnModel } from "../providers.ts";
 import { CLEANUP_TIMEOUT_MS, runScript, SETUP_TIMEOUT_MS } from "../scripts.ts";
+import { missingSecrets } from "../secrets.ts";
 import { HISTORY_NOT_SAVED, Session } from "../session.ts";
 import { checkedConfig, currentValues, orderedConfigEntries } from "../session-config.ts";
 import { sessionPage } from "../session-page.ts";
@@ -156,6 +163,14 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
         );
       }
       environment = checked.environment;
+      // A secret this machine has no value for is said now, by name, rather than found missing in a terminal later.
+      const missing = await missingSecrets(core.dataDir, environment.secrets.map(secretKey));
+      if (missing[0] !== undefined)
+        throw new RpcError(
+          INVALID_PARAMS,
+          `The environment names the secret ${missing[0]}, and this machine's secrets.env has no value for it`,
+          { reason: "missing_secret", name: missing[0] },
+        );
     }
     // The directories are paths on THIS machine (the daemon's), not the client's. Say so up front.
     const directories = [params.cwd, ...(params.additionalDirectories ?? [])];
@@ -199,13 +214,14 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
         // The setup script, once, in the new worktree.
         const setup = made.created ? scriptFor(environment?.setup) : undefined;
         if (setup !== undefined) {
+          const { variables, scrub } = await shellVariablesOf(environment, core.dataDir);
           const ran = await runScript(setup, {
             cwd: made.path,
-            variables: environmentVariables(environment),
+            variables,
             timeoutMs: SETUP_TIMEOUT_MS,
           });
           if (!ran.ok)
-            worktree = { ...worktree, setupFailed: ran.output || "The setup script failed" };
+            worktree = { ...worktree, setupFailed: scrub(ran.output) || "The setup script failed" };
         }
       } catch (error) {
         if (madeHere !== undefined) await removeWorktree(madeHere).catch(() => undefined);
@@ -576,7 +592,7 @@ const endWorktree = async (
   if (cleanup !== undefined) {
     const ran = await runScript(cleanup, {
       cwd: tree.path,
-      variables: sessionVariables(entry),
+      variables: (await shellVariables(entry, core.dataDir)).variables,
       timeoutMs: CLEANUP_TIMEOUT_MS,
     });
     if (!ran.ok) core.log.warn("worktree_cleanup_failed", {});

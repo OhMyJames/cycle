@@ -769,6 +769,43 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "attention.stopped": "agent 意外停止了",
 
   // 模型服务商(CYC-300)
+  "vault.lead":
+    "{location} 上的密钥，存在它的 secrets.env 里。环境可以引用其中一项，只有该环境的终端和动作拿到值，agent 拿不到。值可以替换，但不会显示。",
+  "vault.add": "新建项目",
+  "vault.search": "搜索保险库",
+  "vault.loading": "正在读取保险库…",
+  "vault.unreadable": "读不出保险库。",
+  "vault.retry": "重试",
+  "vault.empty": "保险库是空的。",
+  "vault.emptyBody": "添加一个密钥，再在环境里引用它，该环境的终端和动作就能拿到它的值。",
+  "vault.noMatch": "没有匹配的项目。",
+  "vault.usedBy": "被 {names} 使用",
+  "vault.unused": "没有环境在用",
+  "vault.open": "打开 {name}",
+  "vault.detail.name": "名称",
+  "vault.detail.value": "值",
+  "vault.detail.hidden": "已隐藏",
+  "vault.detail.usedBy": "使用它的环境",
+  "vault.detail.remove": "删除",
+  "vault.detail.edit": "编辑",
+  "vault.detail.done": "完成",
+  "vault.form.addTitle": "新建保险库项目",
+  "vault.form.editTitle": "编辑 {name}",
+  "vault.form.name": "名称",
+  "vault.form.namePlaceholder": "GITHUB_TOKEN",
+  "vault.form.nameHint": "字母、数字和 _，不能以数字开头。环境用这个名称引用它。",
+  "vault.form.exists": "保险库里已有 {name}，保存会替换它的值。",
+  "vault.form.value": "值",
+  "vault.form.valueHint": "发送给 {location}，只存在它的 secrets.env 里，之后不再显示。",
+  "vault.form.valueReplace": "输入新值。已保存的值会被替换，且不会显示。",
+  "vault.form.create": "添加项目",
+  "vault.form.save": "保存项目",
+  "vault.removeTitle": "删除 {name}？",
+  "vault.removeDescription":
+    "它的值会从 {location} 的 secrets.env 里删除。环境引用它的 session 在它重新设置之前无法开始。",
+  "vault.removeConfirm": "删除项目",
+  "vault.problem.invalid": "{location} 不接受这一项：{reason}",
+  "vault.problem.failed": "这次修改没有送到 {location}：{reason}",
   "providers.lead":
     "你自己账号下的模型,给 Codex 会话使用。密钥保存在 {location} 上,之后不会再显示。",
   "providers.loading": "正在读取服务商…",
@@ -1176,6 +1213,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "account.state.reauth": "登录服务已让你退出",
   // 环境：可复用的准备配置
   "settings.section.environments": "环境",
+  "settings.section.vault": "保险库",
   "settings.environments.lead":
     "session 开始时可以带上的变量和动作。在某个文件夹里新建 session 时选用。",
   "settings.environments.empty": "还没有环境。",
@@ -1207,7 +1245,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "environment.system.hint": "有单独脚本的系统改为运行自己的那份。",
   "environment.variables": "变量",
   "environment.variables.note":
-    "一行一个 NAME=value，和 .env 文件一样；# 开头的行是注释。session 的 agent、终端和动作都能读到。",
+    "一行一个 NAME=value，和 .env 文件一样；# 开头的行是注释。session 的 agent、终端和动作都能读到。只写一个 NAME 的行是密钥：值不放在这里，由 session 所在机器上的 secrets.env 提供，只给终端和动作，agent 拿不到。",
   "environment.variables.placeholder": "DATABASE_URL=postgres://localhost/dev",
   "environment.variables.noEquals": "第 {line} 行：请写成 NAME=value。",
   "environment.variables.unclosedQuote": "第 {line} 行：引号没有闭合。",
@@ -1259,6 +1297,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
     "session 没有开始：环境设置了 {name}，它由 Cycle 为 agent 设置。请在设置的环境分区里删掉它。",
   "blank.environment.refused.invalid_variable":
     "session 没有开始：环境里的变量 {name} 不是 shell 能接受的名字。请在设置的环境分区里改正。",
+  "blank.environment.refused.missing_secret":
+    "session 没有开始：环境需要密钥 {name}，而那个工作位置的 secrets.env 里没有它的值。请在 secrets.env 里加上 NAME=value，或在设置的环境分区里删掉这一行。",
   "blank.environment.refused.too_large":
     "session 没有开始：环境超过了那个工作位置上的 Cycle 能接受的大小。请在设置的环境分区里缩短它。",
   "blank.environment.refused.invalid_environment":

@@ -16,6 +16,7 @@ import { registerSessions } from "./sessions.ts";
 import { registerStorage } from "./storage.ts";
 import { registerTerminals } from "./terminals.ts";
 import { registerTrust } from "./trust.ts";
+import { registerVault } from "./vault.ts";
 
 /** The app for one connection. `holder` gets the connection's client once it is connected. */
 export const facing = (core: Core, holder: { value?: ClientConn }): AgentApp => {
@@ -37,5 +38,6 @@ export const facing = (core: Core, holder: { value?: ClientConn }): AgentApp => 
   registerPlugins(app, core);
   registerConnectors(app, core);
   registerProviders(app, core);
+  registerVault(app, core);
   return app;
 };

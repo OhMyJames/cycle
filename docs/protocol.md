@@ -227,6 +227,7 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
   "id": "env-…",
   "name": "Node + Postgres",
   "variables": [{ "name": "DATABASE_URL", "value": "postgres://…" }],
+  "secrets": [{ "name": "STRIPE_KEY" }, { "name": "GH_TOKEN", "from": "WORK_GH" }],
   "actions": [{ "id": "dev", "name": "Dev server", "command": { "default": "npm run dev" } }],
   "setup": { "default": "npm ci", "windows": "npm.cmd ci" },
   "cleanup": { "default": "docker compose down" }
@@ -234,12 +235,22 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 ```
 
 - 是一份**快照**:daemon 校验后存进 session 的索引,和 `mcpServers` 一样**只存在索引里**(变量可能是密钥):不进 JSONL 日志,`session/list` 不返回值。agent 每次启动(新建、停止后的恢复)都用它。客户端之后改了这个环境,不影响已有的 session。
-- `session/list` 的 `_meta["cycle/environment"]` 只给 `{id, name, variableNames, actions}`(变量只有名字),给界面显示用了哪个环境和顶栏的动作。
+- **`secrets`**(可省,默认空):只有名字的变量,`{name, from?}`:值取自 `secrets.env` 里 `from` 这个键,没写 `from` 就取和 `name` 同名的键。有 `from` 是为了不同环境给同一个变量名(如 `GH_TOKEN`)配不同的值。`from` 也要是合法的键名,否则 `invalid_variable`。值不在环境里、不在线上、不在索引里,而在 daemon 所在机器的 `<数据目录>/secrets.env`(`NAME=value` 一行一个,`#` 注释,`export ` 和引号都可以;daemon 读时把别人可读的权限收回,同 `config.json`)。远程 daemon 用自己机器上的文件,密钥不经过客户端。每次用到时才读,改了文件不用重启;值不写进任何地方。名字和变量共用一套规则(保留名、格式、不重名)。`session/new` 时文件里没有某个名字的值,以 `-32602`、`data.reason: "missing_secret"`、`data.name`(缺的是 `secrets.env` 里的哪个键)拒绝;之后文件里少了,这个变量就不设。旧 daemon 会静默丢掉 `secrets` 字段。
+- `session/list` 的 `_meta["cycle/environment"]` 只给 `{id, name, variableNames, secretNames, actions}`(变量只有名字),给界面显示用了哪个环境和顶栏的动作。
 - 校验失败以 `-32602` 拒绝,`data.reason`:
   - `reserved_variable`(`data.name` 是哪个):变量名是保留名。保留名是 `PATH`、`HOME`、`SHELL`、`USER`、`LOGNAME`、`TMPDIR`、`TERM`,以 `CYCLE_` 开头的,以及任何 agent 的隔离目录变量(`CLAUDE_CONFIG_DIR`、`CODEX_HOME`)和认证变量(各 agent `auth.viaEnv` 检查的那些,如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`GEMINI_API_KEY`)。这些归 daemon 的 `config.json`(§10"环境变量"),环境不能改,免得一个环境悄悄换掉 agent 的登录或计费。
   - `invalid_variable`:名字不是 `[A-Za-z_][A-Za-z0-9_]*`、重名,或值里有 NUL。
   - `too_large`:变量、动作、脚本合起来超过上限(暂定 64 KiB)。
 - 不带这个字段就是没有环境,和现在一样。
+
+**保险库**(`initialize` 声明 `"vault": true`):`secrets.env` 的键,桌面端 Settings → Vault 用它们管理。三个方法,值只进不出:
+
+- `_cycle/vault/list` `{}` → `{ items: [{ key }] }`:只有键名。
+- `_cycle/vault/set` `{ key, value }` → `{}`:新增或替换。`key` 是 `[A-Za-z_][A-Za-z0-9_]*`(≤128),`value` 不超过 8192 字符且是一行(没有换行和 NUL);不合格以 `-32602` 拒绝。daemon 只改这一个键所在的那一行(写成 `KEY='value'`),文件里其他行(注释、手写的顺序)原样保留;同一个键重复出现的,留第一处、删掉其余;整个文件写好再改名换上,权限 0600;符号链接的文件写到它指向的地方。
+- `_cycle/vault/remove` `{ key }` → `{}`:删掉这个键的行;键不在也算成功。
+  没有任何方法返回值:想核对只能重新设置。写文件按顺序一个接一个。
+
+**密钥的作用范围**:只给 session 的终端、动作、`session/new` 时的 setup 与 session 结束时的 cleanup 脚本;**三个 agent 的命令都拿不到**,agent 自己用 EnterWorktree/ExitWorktree 触发的 setup/cleanup 也只有字面变量(那时跑的是 agent 改过的仓库代码,拿到密钥就等于给了 agent)(Claude 的 `CLAUDE_ENV_FILE`、Codex 的 `shell_environment_policy.set` 里没有,agy 本来就没有)。理由:agent 能在命令里 `env`、`echo` 出它看到的变量。setup 失败时回给客户端和 agent 的输出,先把密钥的值替换成 `***`。注意:`secrets.env` 和索引一样是 daemon 同一用户能读的文件,agent 若有读文件的权限仍能读到它;要挡住就给它加 deny-read 规则,`chmod 600` 挡不住同一用户。
 
 **变量的作用范围**:session 的 agent 跑的命令(Claude、Codex;agy 没有,见下)、session 的终端(在 `terminal.allowEnv` 取到的之后、`TERM` 等固定项之前加上)、setup/cleanup 脚本、动作。agent 进程本身拿不到它们。各 agent 怎么做到见下。
 

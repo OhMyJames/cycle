@@ -5,6 +5,7 @@ export const SETTINGS_SECTIONS = [
   "appearance",
   "locations",
   "environments",
+  "vault",
   "shortcuts",
   "subscriptions",
   "api_keys",
