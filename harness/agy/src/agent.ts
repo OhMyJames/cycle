@@ -50,7 +50,6 @@ const TURN_ACTIVITY_UPDATES = new Set([
 
 type SessionState = {
   id: string;
-  cwd: string;
   owner: AgentContext;
   turn?: ActiveTurn | undefined;
   availableModels: V1ModelInfo[];
@@ -494,7 +493,6 @@ export function createAdapter(config: AdapterConfig) {
       const v1Opts = created.configOptions ?? [];
       const state: SessionState = {
         id: created.sessionId,
-        cwd: params.cwd,
         owner: client,
         availableModels: created.models?.availableModels ?? [],
         v1ConfigOptions: v1Opts,
@@ -560,7 +558,6 @@ export function createAdapter(config: AdapterConfig) {
       const v1Opts = response.configOptions ?? [];
       const state: SessionState = {
         id: resolvedId,
-        cwd: params.cwd,
         owner: client,
         availableModels: response.models?.availableModels ?? [],
         v1ConfigOptions: v1Opts,

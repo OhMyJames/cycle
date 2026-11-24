@@ -75,7 +75,7 @@ export function itemUpdate(
           {
             content: item.text,
             priority: "medium",
-            status: completed ? "completed" : "in_progress",
+            status: "completed",
           },
         ],
       },
