@@ -276,11 +276,14 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - **General**:界面语言(见下);版本、更新状态、"Check for updates"(开发运行不能更新时不显示按钮,只说明原因)、有新版本或安装失败时的 "Update and restart";统计开关(Usage statistics)。没有上报目标,或用环境变量 `DO_NOT_TRACK` / `CYCLE_ANALYTICS=off` 关掉时,不显示开关,规则与以前的菜单项相同(docs/analytics.md);首次启动的说明仍在会话页顶部,文字改为指向 Settings。
 - **Appearance**:主题(Match system、Light、Dark,见下)、代码配色和示例。
 - **Work in**(工作位置):每个工作位置一行:状态(点、词)、名字、远程的 ssh 地址,断开时下面是 ssh 的原话和 "Connect again";远程工作位置行尾的菜单里是 Edit、Remove(先确认)。"Add location" 在分区右上。增、改仍是原来的表单对话框,开在设置页上面。
-- **Harness（Claude / Codex / Antigravity 及扩展 agent，CYCL-226）**：替代原平铺的 `Defaults` 分区，在设置导航中按 **Harness** 分组固定列出内置 agent（以及新 daemon 声明的扩展 agent），每页自上而下分为四组：
-  1. **Account & Usage**：展示订阅账号状态、套餐用量（复用 `PlanUsageBars`）、`viaEnv` 覆盖变量名（不显示值）、界面内 **Sign in**（弹窗展示白名单域名、不静默打开浏览器、永久保留可复制 `cycle login <agent>` 兜底）与 **Sign out**（`ConfirmDialog` 确认）；`ConnectionManager` 按工作位置 `kind`（`local` vs `remote`）与 daemon 声明的 `signInModes` 选定登录模式（Codex 本地走 `browser`、远端走 `device_code`；Claude 与 Antigravity 走 `"code"`）。
-  2. **Session defaults**：原 Agent defaults 编辑区（`_cycle/agent_defaults/*`）；连着多个工作位置时先选工作位置(选择器叫 "Work in")；旧 daemon 未声明 `agentSetup` 能力时平滑降级为只显示此区块。
-  3. **Agent settings**（`RuntimeConfigForm`）：编辑 Cycle 托管的热生效运行时开关（`boolean` 开关、有界 `integer`、封闭 `oneOf` 选择、`enabledWhen` 联动禁用、`applyScope` 生效时机、`danger` 警示、单字段 `Reset` 传 `null` 恢复继承、`revision_conflict` 重载提示、`fileError` 只读降级、未来未知类型只读展示；无属性且无 `fileError` 如 Codex 时自动隐藏）。
-  4. **Runtime**(运行信息,原 Host configuration)：只读展示二进制路径/版本、托管数据目录、`allowEnv` 与 `envNames` 变量名（绝不显示值）、`config.json` 路径及 `stale`/`error` 提示（本地支持在文件管理器中显示，远端支持复制路径）。空白页遇到未登录或 agent 不可用且 daemon 支持 `agentSetup` 时，提供直达对应 Harness 设置页的快捷按钮。
+- **Model providers(模型服务商,分组)**:设置导航里和 Harness 并列的一组,三项,共用一个 "Work in" 选择器(连着多个工作位置时出现)。
+  - **Subscriptions(订阅)**:Claude、Codex、Antigravity 各一组,每组一行账号:状态点、身份(邮箱 / `Signed in` / `Not signed in`)、认证方式与套餐、`viaEnv` 覆盖变量名(不显示值)、套餐用量(`PlanUsageBars`)、界面内 **Sign in**(弹窗展示白名单域名、不静默打开浏览器、永久保留可复制的 `cycle login <agent>` 兜底)与 **Sign out**(`ConfirmDialog`),各组自带 Refresh。`ConnectionManager` 按工作位置 `kind` 与 daemon 声明的 `signInModes` 选登录模式(Codex 本地 `browser`、远端 `device_code`;Claude 与 Antigravity `"code"`)。空白页遇到未登录时的 "Open subscriptions" 直达这里。
+  - **API keys**:自带模型(protocol.md §10),即原来 Codex 页里的 Model providers,内容不变,只是不再挂在某个 agent 页下。
+  - **Team(团队)**:先列出、置灰、行尾写 "Soon",不能选;键盘方向键可以走到它(标签页规范),但不会打开。以后接团队的网关。
+- **Harness（Claude / Codex / Antigravity 及扩展 agent，CYCL-226）**：替代原平铺的 `Defaults` 分区，在设置导航中按 **Harness** 分组固定列出内置 agent（以及新 daemon 声明的扩展 agent），每页自上而下分为三组(账号与套餐用量已挪到上面的 Subscriptions):
+  1. **Session defaults**：原 Agent defaults 编辑区（`_cycle/agent_defaults/*`）；连着多个工作位置时先选工作位置(选择器叫 "Work in")；旧 daemon 未声明 `agentSetup` 能力时平滑降级为只显示此区块。
+  2. **Agent settings**（`RuntimeConfigForm`）：编辑 Cycle 托管的热生效运行时开关（`boolean` 开关、有界 `integer`、封闭 `oneOf` 选择、`enabledWhen` 联动禁用、`applyScope` 生效时机、`danger` 警示、单字段 `Reset` 传 `null` 恢复继承、`revision_conflict` 重载提示、`fileError` 只读降级、未来未知类型只读展示；无属性且无 `fileError` 如 Codex 时自动隐藏）。
+  3. **Runtime**(运行信息,原 Host configuration)：只读展示二进制路径/版本、托管数据目录、`allowEnv` 与 `envNames` 变量名（绝不显示值）、`config.json` 路径及 `stale`/`error` 提示（本地支持在文件管理器中显示，远端支持复制路径）。空白页遇到 agent 不可用且 daemon 支持 `agentSetup` 时，提供直达对应 Harness 设置页的快捷按钮;二进制有问题时 Harness 页顶上仍有提示。
 - **Keyboard shortcuts**:只读的清单,列出全部快捷键和按键(DESIGN.md §5.4 的那一张),按"应用"和"会话中"分两组。不能改键:改键要处理冲突、输入法和原生菜单,没有排进这一轮。
 - **主题和语言(CYCL-79)**,理由见决定笔记 [`2026-11-22-appearance-and-language-preferences`](../.agents/notes/2026-11-22-appearance-and-language-preferences.md):
   - 由**主进程**保存和应用。页面经桥上的 `preferences()` 读、`setPreferences()` 改;主进程先写 `preferences.json`,写成功才生效,写不成就报错、什么都不变。读不懂的值(手改坏的、更新的版本写的)按"跟随系统"处理,文件里不认识的键原样写回。

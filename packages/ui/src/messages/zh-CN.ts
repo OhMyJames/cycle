@@ -765,8 +765,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "attention.stopped": "agent 意外停止了",
 
   // 模型服务商(CYC-300)
-  "providers.title": "模型服务商",
-  "providers.lead": "让 Codex 用你自己账号下的模型。密钥保存在 {location} 上,之后不会再显示。",
+  "providers.lead":
+    "你自己账号下的模型,给 Codex 会话使用。密钥保存在 {location} 上,之后不会再显示。",
   "providers.loading": "正在读取服务商…",
   "providers.unreadable": "读不出服务商。",
   "providers.retry": "重试",
@@ -910,6 +910,12 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.section.shortcuts": "键盘快捷键",
   "settings.section.harness": "Harness",
   "settings.harness.group": "Harness",
+  "settings.providers.group": "模型服务商",
+  "settings.section.subscriptions": "订阅",
+  "settings.section.apiKeys": "API key",
+  "settings.section.team": "团队",
+  "settings.section.soon": "即将推出",
+  "settings.subscriptions.open": "打开订阅",
   "settings.harness.open": "打开 {agent} 设置",
   "settings.harness.loading": "正在检查 {agent} 状态…",
   "settings.harness.loadFailed": "无法读取 {agent} 设置",

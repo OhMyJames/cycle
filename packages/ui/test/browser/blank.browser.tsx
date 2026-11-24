@@ -319,6 +319,28 @@ test("a -32000 auth error keeps the draft, shows cycle login command, and tracks
   expect(JSON.stringify(named("track"))).not.toContain("cycle login agy");
 });
 
+test("a -32000 auth error offers Subscriptions, where the agent is signed in", async () => {
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, agentSetup: true },
+  });
+  script.bridge.agents = async () => [
+    { id: "agy", name: "Antigravity", available: true, promptCapabilities: {}, configSchema: {} },
+  ];
+  script.bridge.createSession = async () => {
+    throw Object.assign(new Error("Authentication required. (-32000)"), { code: -32000 });
+  };
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  await newSession(user);
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await ready(box);
+  await write(box, "hello");
+  await press(box, "Enter");
+  await user.click(await screen.findByRole("button", { name: "Open subscriptions" }));
+  expect(await screen.findByRole("heading", { name: "Subscriptions", level: 2 })).toBeTruthy();
+});
+
 test("selecting an unavailable agy agent disables sending and shows the install command (CYCL-172)", async () => {
   let asked = 0;
   const { user } = await mount((script) => {

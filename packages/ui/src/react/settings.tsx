@@ -39,10 +39,12 @@ import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
 import { PageGroup, PageLayout, PageRow, PageRows, type PageSection } from "./page-layout.tsx";
+import { ApiKeysSection } from "./providers.tsx";
 import { MOD } from "./sidebar.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { LOCATION_STATE, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
+import { SubscriptionsSection } from "./subscriptions.tsx";
 import { Tip } from "./tip.tsx";
 import { updateLine } from "./update.tsx";
 
@@ -101,6 +103,38 @@ export function SettingsPage(props: SettingsPageProps) {
     { id: "shortcuts", label: t("settings.section.shortcuts"), content: <ShortcutsSection /> },
   ];
 
+  const providersGroup = t("settings.providers.group");
+  const location = {
+    locations: props.locations,
+    status: props.status,
+    locationId: chosenEnv,
+    onLocationChange: setChosenEnv,
+    onShowLocations: () => props.onSection("locations"),
+  };
+  const providerSections: PageSection[] = [
+    {
+      id: "subscriptions",
+      label: t("settings.section.subscriptions"),
+      group: providersGroup,
+      content: <SubscriptionsSection {...location} agents={props.agents} />,
+    },
+    {
+      id: "api_keys",
+      label: t("settings.section.apiKeys"),
+      group: providersGroup,
+      content: <ApiKeysSection {...location} />,
+    },
+    // The team's gateway comes later: listed so it is known to come, and not yet there to choose.
+    {
+      id: "team",
+      label: t("settings.section.team"),
+      group: providersGroup,
+      disabled: true,
+      note: t("settings.section.soon"),
+      content: null,
+    },
+  ];
+
   const harnessGroup = t("settings.harness.group");
   const harnessSections: PageSection[] = harnesses.map((harness) => ({
     id: `${HARNESS_TAB_PREFIX}${harness.id}`,
@@ -148,7 +182,7 @@ export function SettingsPage(props: SettingsPageProps) {
           props.onSection(id as SettingsSection);
         }
       }}
-      sections={[...topSections, ...harnessSections]}
+      sections={[...topSections, ...providerSections, ...harnessSections]}
     />
   );
 }

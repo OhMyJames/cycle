@@ -4,16 +4,7 @@
 // Degrades smoothly to Session defaults only when connected to an older daemon without `agentSetup`.
 import type { AgentWord } from "@cycle/analytics/events";
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
-import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
-import { Input } from "@ui-sdk/react/input";
+import { Field, FieldLabel } from "@ui-sdk/react/field";
 import {
   Select,
   SelectContent,
@@ -23,8 +14,6 @@ import {
 } from "@ui-sdk/react/select";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  AgentAuthMode,
-  AgentAuthProblemReason,
   AgentInfo,
   AgentRuntimePatchValue,
   AgentSetupSnapshot,
@@ -32,13 +21,9 @@ import type {
   LocationStatus,
 } from "../api.ts";
 import { ConfigForm, RuntimeConfigForm, type RuntimeFieldText } from "./config-form.tsx";
-import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
-import { PlanUsageBars, planRowsOf } from "./plan-usage-bars.tsx";
-import { ProvidersGroup } from "./providers.tsx";
 import { StateBlock } from "./state-block.tsx";
-import { AGENT_AUTH_DOT, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
@@ -206,49 +191,36 @@ function HarnessLocationBody({
   supportsSetup: boolean;
   revision: number;
 }) {
-  const { t, date } = useI18n();
+  const { t } = useI18n();
   const store = useAppStore();
-  const livePlanUsage = useAppState((s) => s.planUsage[location.id]?.[agentId]);
   const setupRevision = useAppState((s) => s.agentSetupRevision[`${location.id}:${agentId}`] ?? 0);
 
   const [snapshot, setSnapshot] = useState<AgentSetupSnapshot | undefined>(undefined);
   // Whether the agent is listed, not the listing itself: a new agents list (a reconnect) is not a reason to read again.
   const hasAgent = agentInfo !== undefined;
   const [loading, setLoading] = useState(supportsSetup && hasAgent);
-  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | undefined>(undefined);
   const [runtimeBusyKey, setRuntimeBusyKey] = useState<string | undefined>(undefined);
   const [runtimeProblem, setRuntimeProblem] = useState<
     { kind: "conflict" } | { kind: "error"; reason?: string | undefined } | undefined
   >(undefined);
-  const [copiedLogin, setCopiedLogin] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const [defaultsAttempt, setDefaultsAttempt] = useState(0);
-  const [signInDialog, setSignInDialog] = useState<SignInModalState | undefined>(undefined);
-  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const mountedRef = useRef(true);
   const seenSetupRevisionRef = useRef(setupRevision);
   const fetchSeqRef = useRef(0);
   /** The newest read (or save) whose answer is on screen: an older answer arriving later is dropped. */
   const appliedSeqRef = useRef(0);
   const pendingLoudRef = useRef(0);
-  const signInSessionRef = useRef(0);
-  const activeFlowIdRef = useRef<string | undefined>(undefined);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      signInSessionRef.current += 1;
-      const pendingFlow = activeFlowIdRef.current;
-      activeFlowIdRef.current = undefined;
-      if (pendingFlow !== undefined) {
-        void store.cancelAgentAuth(location.id, pendingFlow);
-      }
       clearTimeout(copyTimer.current);
     };
-  }, [store, location.id]);
+  }, []);
 
   const fetchSetup = useCallback(
     async (opts: { forceRefresh?: boolean; refreshUsage?: boolean; silent?: boolean }) => {
@@ -259,8 +231,7 @@ function HarnessLocationBody({
       const loud = opts.silent !== true;
       if (loud) {
         pendingLoudRef.current += 1;
-        if (opts.forceRefresh) setRefreshing(true);
-        else setLoading(true);
+        if (!opts.forceRefresh) setLoading(true);
         setLoadError(undefined);
       }
       try {
@@ -281,7 +252,6 @@ function HarnessLocationBody({
           pendingLoudRef.current -= 1;
           if (pendingLoudRef.current === 0) {
             setLoading(false);
-            setRefreshing(false);
           }
         }
       }
@@ -375,94 +345,11 @@ function HarnessLocationBody({
     [store, location.id],
   );
 
-  const flashCopied = (which: "login" | "path") => {
+  const flashCopied = () => {
     clearTimeout(copyTimer.current);
-    if (which === "login") setCopiedLogin(true);
-    else setCopiedPath(true);
-    copyTimer.current = setTimeout(() => {
-      setCopiedLogin(false);
-      setCopiedPath(false);
-    }, 1500);
+    setCopiedPath(true);
+    copyTimer.current = setTimeout(() => setCopiedPath(false), 1500);
   };
-
-  const copyLoginCommand = (command: string) => {
-    void store.copyText(command).then((ok) => {
-      if (!ok) return;
-      store.track("agent_setup_command_copied", {
-        agent: agentWord(agentId),
-        kind: "login",
-      });
-      flashCopied("login");
-    });
-  };
-
-  const beginSignIn = useCallback(async () => {
-    const session = ++signInSessionRef.current;
-    activeFlowIdRef.current = undefined;
-    setSignInDialog({ kind: "starting" });
-    const answer = await store.startAgentAuth(location.id, agentId);
-    if (!mountedRef.current || signInSessionRef.current !== session) {
-      // Unmounted or cancelled while starting: immediately cancel on daemon so the agent isn't locked for 10 minutes.
-      if (answer.started) void store.cancelAgentAuth(location.id, answer.flowId);
-      return;
-    }
-    if (!answer.started) {
-      setSignInDialog({ kind: "error", reason: answer.reason });
-      return;
-    }
-    activeFlowIdRef.current = answer.flowId;
-    setSignInDialog({
-      kind: "active",
-      flowId: answer.flowId,
-      mode: answer.mode,
-      hasUrl: answer.hasUrl,
-      ...(answer.host !== undefined ? { host: answer.host } : {}),
-      ...(answer.userCode !== undefined ? { userCode: answer.userCode } : {}),
-    });
-  }, [store, location.id, agentId]);
-
-  const activeFlowId = signInDialog?.kind === "active" ? signInDialog.flowId : undefined;
-  const flowCompletion = useAppState((s) =>
-    activeFlowId !== undefined
-      ? s.agentAuthCompletions[`${location.id}:${activeFlowId}`]
-      : undefined,
-  );
-
-  useEffect(() => {
-    if (flowCompletion === undefined || activeFlowId === undefined) return;
-    if (activeFlowIdRef.current === activeFlowId) activeFlowIdRef.current = undefined;
-    if (flowCompletion.ok) {
-      setSignInDialog(undefined);
-      void fetchSetup({ forceRefresh: true, refreshUsage: agentId === "codex" });
-      return;
-    }
-    if (flowCompletion.reason === "cancelled") {
-      setSignInDialog(undefined);
-      return;
-    }
-    setSignInDialog({
-      kind: "error",
-      reason: (flowCompletion.reason as AgentAuthProblemReason | undefined) ?? "failed",
-    });
-  }, [flowCompletion, activeFlowId, fetchSetup, agentId]);
-
-  const canInAppSignIn =
-    snapshot !== undefined &&
-    snapshot.binary.problem === undefined &&
-    (snapshot.auth.state === "signed_out" || snapshot.auth.state === "auth_unknown") &&
-    (location.kind === "local"
-      ? snapshot.auth.signInModes.length > 0
-      : snapshot.auth.signInModes.some((m) => !m.requiresLocalLoopback));
-
-  const canSignOut =
-    snapshot !== undefined &&
-    snapshot.binary.problem === undefined &&
-    snapshot.auth.state === "signed_in" &&
-    snapshot.auth.canSignOut;
-
-  const effectivePlanUsage = snapshot?.planUsage ?? livePlanUsage;
-  const now = Date.now();
-  const hasUsageBars = planRowsOf(effectivePlanUsage, now).length > 0;
 
   return (
     <>
@@ -504,148 +391,36 @@ function HarnessLocationBody({
           }}
         />
       ) : snapshot !== undefined ? (
-        <>
-          {snapshot.binary.problem !== undefined ? (
-            <StateBlock
-              size="inline"
-              align="start"
-              tone="away"
-              title={
-                snapshot.binary.problem === "version_too_old"
-                  ? t("settings.harness.unavailable.tooOld", {
+        snapshot.binary.problem !== undefined ? (
+          <StateBlock
+            size="inline"
+            align="start"
+            tone="away"
+            title={
+              snapshot.binary.problem === "version_too_old"
+                ? t("settings.harness.unavailable.tooOld", {
+                    agent: agentName,
+                    version: snapshot.binary.version ?? "",
+                    location: location.name,
+                    minVersion: snapshot.binary.minVersion ?? "",
+                  })
+                : snapshot.binary.problem === "probe_failed"
+                  ? t("settings.harness.unavailable.probeFailed", {
                       agent: agentName,
-                      version: snapshot.binary.version ?? "",
                       location: location.name,
-                      minVersion: snapshot.binary.minVersion ?? "",
                     })
-                  : snapshot.binary.problem === "probe_failed"
-                    ? t("settings.harness.unavailable.probeFailed", {
-                        agent: agentName,
-                        location: location.name,
-                      })
-                    : t("settings.harness.unavailable.missing", {
-                        agent: agentName,
-                        location: location.name,
-                      })
-              }
-              reason={agentId === "agy" ? AGY_INSTALL_COMMAND : undefined}
-              action={{
-                label: t("settings.harness.account.refresh"),
-                onAction: () => void fetchSetup({ forceRefresh: true, refreshUsage: true }),
-              }}
-            />
-          ) : null}
-
-          <PageGroup
-            title={t("settings.harness.account.title")}
-            action={
-              <Button
-                data-variant="outline"
-                disabled={refreshing}
-                onClick={() => void fetchSetup({ forceRefresh: true, refreshUsage: true })}
-              >
-                {refreshing
-                  ? t("settings.harness.account.refreshing")
-                  : t("settings.harness.account.refresh")}
-              </Button>
+                  : t("settings.harness.unavailable.missing", {
+                      agent: agentName,
+                      location: location.name,
+                    })
             }
-          >
-            <PageRows>
-              <PageRow
-                label={accountPrimaryLabel(snapshot, t)}
-                before={
-                  <StatusDot
-                    tone={AGENT_AUTH_DOT[snapshot.auth.state].tone}
-                    shape={AGENT_AUTH_DOT[snapshot.auth.state].shape}
-                  />
-                }
-                description={accountSubtitle(snapshot, t, date)}
-                below={
-                  snapshot.auth.state === "signed_out" || snapshot.auth.state === "auth_unknown" ? (
-                    <div data-slot="harness-command-row">
-                      <code data-slot="reason">{snapshot.auth.loginCommand}</code>
-                      <Button
-                        data-variant="outline"
-                        onClick={() => copyLoginCommand(snapshot.auth.loginCommand)}
-                      >
-                        {copiedLogin
-                          ? t("settings.harness.account.copied")
-                          : t("settings.harness.account.copyLogin")}
-                      </Button>
-                    </div>
-                  ) : undefined
-                }
-              >
-                {canInAppSignIn ? (
-                  <Button
-                    type="button"
-                    data-variant="solid"
-                    disabled={signInDialog?.kind === "starting"}
-                    onClick={() => void beginSignIn()}
-                  >
-                    {t("settings.harness.account.signIn")}
-                  </Button>
-                ) : null}
-                {canSignOut ? (
-                  <Button
-                    type="button"
-                    data-variant="outline"
-                    onClick={() => setConfirmSignOut(true)}
-                  >
-                    {t("settings.harness.account.signOut")}
-                  </Button>
-                ) : null}
-              </PageRow>
-            </PageRows>
-
-            <AgentSignInDialog
-              state={signInDialog}
-              agentName={agentName}
-              locationName={location.name}
-              loginCommand={snapshot.auth.loginCommand}
-              copiedLogin={copiedLogin}
-              onCopyLogin={() => copyLoginCommand(snapshot.auth.loginCommand)}
-              onOpenBrowser={(flowId) => store.openAgentAuthUrl(location.id, flowId)}
-              onSubmitCode={(flowId, code) => store.submitAgentAuth(location.id, flowId, code)}
-              onRetry={() => void beginSignIn()}
-              onClose={() => {
-                signInSessionRef.current += 1;
-                const pendingFlow = activeFlowIdRef.current;
-                activeFlowIdRef.current = undefined;
-                if (pendingFlow !== undefined) {
-                  void store.cancelAgentAuth(location.id, pendingFlow);
-                }
-                setSignInDialog(undefined);
-              }}
-            />
-
-            <ConfirmDialog
-              open={confirmSignOut}
-              onOpenChange={setConfirmSignOut}
-              title={t("settings.harness.auth.signOutTitle", { agent: agentName })}
-              description={t("settings.harness.auth.signOutDescription", {
-                agent: agentName,
-                location: location.name,
-              })}
-              confirmLabel={t("settings.harness.account.signOut")}
-              destructive
-              onConfirm={async () => {
-                const answer = await store.logoutAgent(location.id, agentId);
-                if (!answer.ok) return authErrorText(answer.reason, t);
-                void fetchSetup({ forceRefresh: true });
-                return undefined;
-              }}
-            />
-
-            {hasUsageBars ? (
-              <div data-slot="harness-usage">
-                <PlanUsageBars plan={effectivePlanUsage} showHeading={false} now={now} />
-              </div>
-            ) : snapshot.auth.state === "signed_in" && agentId === "claude" ? (
-              <p data-slot="hint">{t("settings.harness.account.usagePassiveHint")}</p>
-            ) : null}
-          </PageGroup>
-        </>
+            reason={agentId === "agy" ? AGY_INSTALL_COMMAND : undefined}
+            action={{
+              label: t("settings.harness.account.refresh"),
+              onAction: () => void fetchSetup({ forceRefresh: true, refreshUsage: true }),
+            }}
+          />
+        ) : null
       ) : null}
 
       {agentInfo !== undefined ? (
@@ -666,9 +441,6 @@ function HarnessLocationBody({
           />
         </PageGroup>
       ) : null}
-
-      {/* The owner's own models (CYC-300): Codex is the agent that can run on them. */}
-      {agentId === "codex" ? <ProvidersGroup location={location} /> : null}
 
       {supportsSetup &&
       snapshot !== undefined &&
@@ -800,7 +572,7 @@ function HarnessLocationBody({
                   onClick={() => {
                     void store
                       .copyText(snapshot.environment.configFile.path)
-                      .then((ok) => ok && flashCopied("path"));
+                      .then((ok) => ok && flashCopied());
                   }}
                 >
                   {copiedPath
@@ -817,302 +589,6 @@ function HarnessLocationBody({
 }
 
 type Translate = ReturnType<typeof useI18n>["t"];
-type FormatDate = ReturnType<typeof useI18n>["date"];
-
-type SignInModalState =
-  | { kind: "starting" }
-  | {
-      kind: "active";
-      flowId: string;
-      mode: AgentAuthMode;
-      hasUrl: boolean;
-      host?: string | undefined;
-      userCode?: string | undefined;
-    }
-  | { kind: "error"; reason: AgentAuthProblemReason };
-
-const authErrorText = (reason: AgentAuthProblemReason, t: Translate): string => {
-  switch (reason) {
-    case "binary_unavailable":
-      return t("settings.harness.auth.error.binary_unavailable");
-    case "auth_in_progress":
-      return t("settings.harness.auth.error.auth_in_progress");
-    case "parse_failed":
-      return t("settings.harness.auth.error.parse_failed");
-    case "invalid_code":
-      return t("settings.harness.auth.error.invalid_code");
-    case "expired":
-      return t("settings.harness.auth.error.expired");
-    case "cancelled":
-      return t("settings.harness.auth.error.cancelled");
-    case "process_failed":
-      return t("settings.harness.auth.error.process_failed");
-    case "timeout":
-      return t("settings.harness.auth.error.timeout");
-    case "unsupported_mode":
-      return t("settings.harness.auth.error.unsupported_mode");
-    case "untrusted_url":
-      return t("settings.harness.auth.error.untrusted_url");
-    case "disconnected":
-      return t("settings.harness.auth.error.disconnected");
-    default:
-      return t("settings.harness.auth.error.failed");
-  }
-};
-
-function AgentSignInDialog({
-  state,
-  agentName,
-  locationName,
-  loginCommand,
-  copiedLogin,
-  onCopyLogin,
-  onOpenBrowser,
-  onSubmitCode,
-  onRetry,
-  onClose,
-}: {
-  state: SignInModalState | undefined;
-  agentName: string;
-  locationName: string;
-  loginCommand: string;
-  copiedLogin: boolean;
-  onCopyLogin: () => void;
-  /** False when main had nothing to open for the flow (it ended, or was never verified): the dialog says so. */
-  onOpenBrowser: (flowId: string) => Promise<boolean>;
-  onSubmitCode: (
-    flowId: string,
-    code: string,
-  ) => Promise<{ ok: true } | { ok: false; reason: AgentAuthProblemReason }>;
-  onRetry: () => void;
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  const store = useAppStore();
-  const [code, setCode] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<AgentAuthProblemReason | undefined>(undefined);
-  const [copiedDeviceCode, setCopiedDeviceCode] = useState(false);
-  const [openFailed, setOpenFailed] = useState(false);
-
-  const flowId = state?.kind === "active" ? state.flowId : undefined;
-  const flowIdRef = useRef(flowId);
-  flowIdRef.current = flowId;
-  const stateKind = state?.kind;
-  useEffect(() => {
-    void flowId;
-    void stateKind;
-    setCode("");
-    setSubmitting(false);
-    setSubmitError(undefined);
-    setCopiedDeviceCode(false);
-    setOpenFailed(false);
-  }, [flowId, stateKind]);
-
-  const submit = async () => {
-    if (state?.kind !== "active" || submitting) return;
-    const trimmed = code.trim();
-    if (trimmed === "") return;
-    const targetFlowId = state.flowId;
-    setSubmitting(true);
-    setSubmitError(undefined);
-    const answer = await onSubmitCode(targetFlowId, trimmed);
-    if (flowIdRef.current !== targetFlowId) return;
-    setSubmitting(false);
-    if (!answer.ok) setSubmitError(answer.reason);
-  };
-
-  return (
-    <Dialog
-      open={state !== undefined}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogBackdrop />
-      <DialogContent>
-        <div data-slot="stack">
-          <DialogTitle>{t("settings.harness.auth.title", { agent: agentName })}</DialogTitle>
-
-          {state?.kind === "starting" ? (
-            <DialogDescription>
-              {t("settings.harness.auth.starting", { location: locationName })}
-            </DialogDescription>
-          ) : state?.kind === "error" ? (
-            <StateBlock
-              size="inline"
-              align="start"
-              tone="error"
-              title={authErrorText(state.reason, t)}
-              action={{ label: t("settings.harness.auth.retry"), onAction: onRetry }}
-            />
-          ) : state?.kind === "active" ? (
-            <>
-              {state.hasUrl && state.host !== undefined ? (
-                <DialogDescription>
-                  {t("settings.harness.auth.openHost", { host: state.host })}
-                </DialogDescription>
-              ) : null}
-
-              {state.mode === "device_code" && state.userCode !== undefined ? (
-                <Field name="device-code">
-                  <FieldLabel>{t("settings.harness.auth.deviceCodeLabel")}</FieldLabel>
-                  <div data-slot="harness-command-row">
-                    <code data-slot="harness-device-code">{state.userCode}</code>
-                    <Button
-                      type="button"
-                      data-variant="outline"
-                      onClick={() => {
-                        void store.copyText(state.userCode ?? "").then((ok) => {
-                          if (ok) setCopiedDeviceCode(true);
-                        });
-                      }}
-                    >
-                      {copiedDeviceCode
-                        ? t("settings.harness.account.copied")
-                        : t("settings.harness.auth.copyCode")}
-                    </Button>
-                  </div>
-                  {state.host !== undefined ? (
-                    <FieldDescription>
-                      {t("settings.harness.auth.waitingDevice", { host: state.host })}
-                    </FieldDescription>
-                  ) : null}
-                </Field>
-              ) : null}
-
-              {state.hasUrl ? (
-                <div data-slot="row">
-                  <Button
-                    type="button"
-                    data-variant="solid"
-                    onClick={() => {
-                      const target = state.flowId;
-                      setOpenFailed(false);
-                      void onOpenBrowser(target).then((opened) => {
-                        if (flowIdRef.current === target) setOpenFailed(!opened);
-                      });
-                    }}
-                  >
-                    {t("settings.harness.auth.openBrowser")}
-                  </Button>
-                </div>
-              ) : null}
-              {openFailed ? (
-                <p data-slot="hint" role="alert">
-                  {t("settings.harness.auth.openFailed")}
-                </p>
-              ) : null}
-
-              {state.mode === "browser" ? (
-                <p data-slot="hint" role="status">
-                  {t("settings.harness.auth.waitingBrowser")}
-                </p>
-              ) : null}
-
-              {state.mode === "code" ? (
-                <form
-                  data-slot="stack"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void submit();
-                  }}
-                >
-                  <Field name="auth-code">
-                    <FieldLabel>{t("settings.harness.auth.codeLabel")}</FieldLabel>
-                    <Input
-                      value={code}
-                      placeholder={t("settings.harness.auth.codePlaceholder")}
-                      autoComplete="off"
-                      disabled={submitting}
-                      onChange={(event) => setCode(event.currentTarget.value)}
-                    />
-                    <FieldDescription>{t("settings.harness.auth.codeHint")}</FieldDescription>
-                  </Field>
-                  {submitError !== undefined ? (
-                    <p data-slot="hint" role="alert">
-                      {authErrorText(submitError, t)}
-                    </p>
-                  ) : null}
-                  <div data-slot="row">
-                    <Button
-                      type="submit"
-                      data-variant="solid"
-                      disabled={submitting || code.trim() === ""}
-                    >
-                      {submitting
-                        ? t("settings.harness.auth.submitting")
-                        : t("settings.harness.auth.submit")}
-                    </Button>
-                  </div>
-                </form>
-              ) : null}
-            </>
-          ) : null}
-
-          <div data-slot="harness-auth-fallback">
-            <p data-slot="hint">
-              {t("settings.harness.auth.fallbackLabel", { location: locationName })}
-            </p>
-            <div data-slot="harness-command-row">
-              <code data-slot="reason">{loginCommand}</code>
-              <Button type="button" data-variant="outline" onClick={onCopyLogin}>
-                {copiedLogin
-                  ? t("settings.harness.account.copied")
-                  : t("settings.harness.account.copyLogin")}
-              </Button>
-            </div>
-          </div>
-        </div>
-        <div data-slot="row" data-dialog-footer="">
-          <DialogClose>{t("dialog.cancel")}</DialogClose>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-const accountPrimaryLabel = (snapshot: AgentSetupSnapshot, t: Translate): string => {
-  const { auth } = snapshot;
-  if (auth.state === "signed_in") {
-    return auth.account?.email ?? t("settings.harness.account.signedIn");
-  }
-  if (auth.state === "signed_out") return t("settings.harness.account.signedOut");
-  if (auth.state === "signing_in") return t("settings.harness.account.signingIn");
-  if (auth.state === "signing_out") return t("settings.harness.account.signingOut");
-  if (auth.state === "binary_unavailable") return t("settings.harness.account.unavailable");
-  return t("settings.harness.account.unknown");
-};
-
-const accountSubtitle = (snapshot: AgentSetupSnapshot, t: Translate, date: FormatDate): string => {
-  const { auth } = snapshot;
-  const parts: string[] = [];
-  if (auth.state === "auth_unknown" && auth.unknownReason !== undefined) {
-    parts.push(t(`settings.harness.account.unknownReason.${auth.unknownReason}`));
-  } else {
-    parts.push(t(`settings.harness.account.method.${auth.method}`));
-  }
-  if (auth.account?.plan !== undefined) parts.push(auth.account.plan);
-  if (auth.account?.organization !== undefined) parts.push(auth.account.organization);
-  if (auth.account?.expiresAt !== undefined) {
-    parts.push(
-      t("settings.harness.account.expires", {
-        when: date(auth.account.expiresAt, { dateStyle: "medium" }),
-      }),
-    );
-  }
-  if (auth.account?.tierObservedAt !== undefined) {
-    parts.push(
-      t("settings.harness.account.tierObserved", {
-        when: date(auth.account.tierObservedAt, { dateStyle: "short", timeStyle: "short" }),
-      }),
-    );
-  }
-  if (auth.viaEnv !== undefined) {
-    parts.push(t("settings.harness.account.viaEnv", { name: auth.viaEnv }));
-  }
-  return parts.join(" · ");
-};
 
 const binaryDescription = (snapshot: AgentSetupSnapshot, t: Translate): string => {
   const { binary } = snapshot;

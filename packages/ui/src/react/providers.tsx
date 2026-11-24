@@ -1,6 +1,6 @@
-// The owner's own model providers (docs/protocol.md §10 "自带模型"), on the page of the agent that runs on them: what a
-// location's daemon keeps, one location at a time, as the harness page chooses it. A key is only ever written here: the
-// daemon says there is one (`hasKey`), and no field of this page is filled from one.
+// The owner's own model providers (docs/protocol.md §10 "自带模型"), on the API keys page of Settings → Model providers:
+// what a location's daemon keeps, one location at a time. A key is only ever written here: the daemon says there is
+// one (`hasKey`), and no field of this page is filled from one.
 import { Button } from "@ui-sdk/react/button";
 import {
   Dialog,
@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CUSTOM_PROVIDER_KIND,
   type LocationConfig,
+  type LocationStatus,
   PROVIDER_APIS,
   type ProviderApi,
   type ProviderDraft,
@@ -34,6 +35,7 @@ import {
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, CloseIcon, MoreIcon, PlusIcon } from "./icons.tsx";
+import { LocationScope } from "./location-scope.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -54,8 +56,21 @@ const useProblemText = (location: LocationConfig) => {
     t(`providers.problem.${p.problem}`, { location: location.name, reason: p.message ?? "" });
 };
 
-/** The model providers of one location, as a group of the agent's page. Read when it is shown; kept up by events. */
-export function ProvidersGroup({ location }: { location: LocationConfig }) {
+/** The API keys page: the model providers of the location that is chosen. */
+export function ApiKeysSection(props: {
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
+  locationId: string | undefined;
+  onLocationChange: (locationId: string) => void;
+  onShowLocations: () => void;
+}) {
+  return (
+    <LocationScope {...props}>{(location) => <ProvidersGroup location={location} />}</LocationScope>
+  );
+}
+
+/** The model providers of one location. Read when it is shown; kept up by events. */
+function ProvidersGroup({ location }: { location: LocationConfig }) {
   const { t } = useI18n();
   const store = useAppStore();
   const problemText = useProblemText(location);
@@ -78,7 +93,6 @@ export function ProvidersGroup({ location }: { location: LocationConfig }) {
   );
   return (
     <PageGroup
-      title={t("providers.title")}
       lead={t("providers.lead", { location: location.name })}
       action={list !== undefined && list.length > 0 ? add : undefined}
     >

@@ -9,6 +9,8 @@
 
 对应决定笔记：[2026-11-23-harness-settings-account-login-and-runtime-config.md](../.agents/notes/2026-11-23-harness-settings-account-login-and-runtime-config.md)（部分取代 [2026-11-22-claude-config-status-not-values.md](../.agents/notes/2026-11-22-claude-config-status-not-values.md)，后者关于“只返回变量名、变量名不进埋点、mtime 提示、重启沿用 `--wait/--force`、拒绝 API Key 上线路”的规则继续有效）。
 
+> **2026-11-24 更新**:本文的 "Account & Usage" 一节(账号状态、登录登出、套餐用量)已从 Harness 页挪到设置页的 **Model providers → Subscriptions**(见 [desktop.md](desktop.md)),Harness 页只留可用性提示、Session defaults、Agent settings、Runtime。下文按挪动前的写法保留,行为不变。
+
 ## 1. 背景与目标
 
 Cycle 目前已支持 3 个 agent（`claude`、`codex`、`agy`），后续还会接入 `pi`。现有的 agent 配置分散在多处且存在明显断层：

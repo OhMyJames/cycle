@@ -28,14 +28,19 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setSettings(lastSection.current);
     store.track("panel_opened", { panel: "settings", via });
   };
-  // From a blank conversation whose agent cannot start: straight to that agent's Harness page, on that location.
-  const openHarnessSettings = (locationId: string, agentId: string) => {
-    lastSection.current = "harness";
+  // From a blank conversation whose agent cannot start: straight to that agent's Harness page, on that location; or,
+  // when it only needs signing in, to the Subscriptions page, which lists every agent's account.
+  const openHarnessSettings = (
+    locationId: string,
+    agentId: string,
+    section: "harness" | "subscriptions" = "harness",
+  ) => {
+    lastSection.current = section;
     setHarnessAgent(agentId);
     setHarnessLocation(locationId);
     setHarnessFrom("blank");
     setConnectors(undefined);
-    setSettings("harness");
+    setSettings(section);
     store.track("panel_opened", { panel: "settings", via: "click" });
   };
   const showHarnessAgent = (agentId: string) => {

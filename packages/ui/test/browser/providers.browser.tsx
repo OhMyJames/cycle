@@ -42,8 +42,8 @@ const mount = async (providers: ProviderInfo[] = []) => {
   const store = await renderApp(script.bridge);
   const user = userEvent.setup();
   await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Codex" }));
-  const group = (await screen.findByRole("heading", { name: "Model providers" })).closest(
+  await user.click(await screen.findByRole("tab", { name: "API keys" }));
+  const group = (await screen.findByText(/Models from your own accounts/)).closest(
     '[data-slot="page-group"]',
   ) as HTMLElement;
   return { user, store, group: within(group), ...script };

@@ -20,6 +20,10 @@ export type PageSection = {
   group?: string;
   /** Optional icon rendered before the label inside the nav tab (e.g. `<AgentLogo />`). */
   icon?: ReactNode;
+  /** Not there yet: the section is listed, with `note` beside it, and cannot be chosen. It has no content. */
+  disabled?: boolean;
+  /** A word kept at the end of the section's row (what a disabled section is waiting for). */
+  note?: string;
   /** Optional custom heading content in the right pane; defaults to `label`. */
   heading?: ReactNode;
   content: ReactNode;
@@ -114,12 +118,16 @@ export function PageLayout({
                   ) : null}
                   <TabsTab
                     value={section.id}
+                    disabled={section.disabled === true}
                     aria-describedby={
                       section.group !== undefined ? groupIdOf(section.group) : undefined
                     }
                   >
                     {section.icon}
                     <span data-slot="page-nav-label">{section.label}</span>
+                    {section.note !== undefined ? (
+                      <span data-slot="page-nav-note">{section.note}</span>
+                    ) : null}
                   </TabsTab>
                 </Fragment>
               );
@@ -134,11 +142,13 @@ export function PageLayout({
           </header>
           {banner}
           <div data-slot="page-body">
-            {sections.map((section) => (
-              <TabsPanel key={section.id} value={section.id}>
-                <div data-slot="page-column">{section.content}</div>
-              </TabsPanel>
-            ))}
+            {sections
+              .filter((section) => section.disabled !== true)
+              .map((section) => (
+                <TabsPanel key={section.id} value={section.id}>
+                  <div data-slot="page-column">{section.content}</div>
+                </TabsPanel>
+              ))}
           </div>
         </div>
       </Tabs>
