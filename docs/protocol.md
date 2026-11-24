@@ -55,6 +55,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "connectors": true,
   "plugins": ["claude"],
   "agentSetup": true,
+  "agentPrewarm": true,
   "sessionMentions": true,
   "terminal": true
 }
@@ -1036,6 +1037,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 | `_cycle/agent_auth/submit`    | C → D             | `{ flowId, code }`                                       | `{ ok: true }`                                                                |
 | `_cycle/agent_auth/cancel`    | C → D             | `{ flowId }`                                             | `{}`                                                                          |
 | `_cycle/agent_auth/logout`    | C → D             | `{ agent }`                                              | `{}`                                                                          |
+| `_cycle/agent_setup/prewarm`  | C → D             | `{ agent }`                                              | `{}`                                                                          |
 | `_cycle/agent_auth_completed` | D → C(仅发起连接) | `{ flowId, agent, ok, reason? }`                         | —                                                                             |
 
 - **模式选择与校验**:客户端按本地/远程传输从 `auth.signInModes` 过滤并选择 `mode`(远程环境跳过 `requiresLocalLoopback: true`);daemon 二次校验 `mode` 必须属于该 agent 当前允许的 `signInModes`,否则返回 `-32602`(`data.reason: "unsupported_mode"`)。若 agent 二进制不可用,返回 `-32021`(`binary_unavailable`)。
@@ -1044,6 +1046,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - **一次性授权码边界**:`_cycle/agent_auth/submit` 中的 `code` 仅驻留内存并一次性送入登录子进程 stdin,绝不落盘、绝不进 session JSONL / `daemon.log` / 错误对象。
 - **TTL 与断线/退出清理**:每个登录流固定 10 分钟 TTL(`expiresAt` 为毫秒时间戳)。发起连接断开、TTL 到期或 daemon 关闭时,daemon 立即终止对应登录子进程,不留孤儿进程。
 - **完成通知范围**:`_cycle/agent_auth_completed` **仅推送给发起该流程的连接**,用于更新该客户端的登录弹窗态;全局状态刷新统一通过 `_cycle/agent_setup_changed` 广播给所有客户端。
+- **提前起进程**(`agentPrewarm: true`):空白页选中某个 agent 时,客户端发 `_cycle/agent_setup/prewarm`。agent 的定义声明了 `standby`(进程的启动与 `initialize` 和 session 的 cwd、MCP、环境无关,目前是 agy)时,daemon 先起好并初始化一个,每个 agent 最多一个;下一个要起这个 agent 的 session 直接接手它(日志 `agent_standby_taken`),不再起新的。没人接手时 5 分钟后释放(`agent_standby_expired`);该 agent 的账号或运行时设置变了、daemon 停止时同样释放。不能提前起、起失败都回 `{}`,由 session 自己起并报原因。
 - **登出、登录与会话生命周期**:`_cycle/agent_auth/logout` 成功,或登录流以 `ok: true` 完成时,账号可能已经换了,两者走同一套处理:不中断运行中 turn 或后台任务;立即终止该 agent 未发过 prompt 的预热进程,将其余运行中或启动中的 session 标为 `stale` 并复用空闲重启路径(`#restartIfStale`;正在 `session/new` 里、还没登记的 session 在登记后立即回收);清空 daemon 内存中该 agent 的 `planUsage`、观测档位时间与只读探测缓存,向所有连接发 `_cycle/plan_usage_changed`(`windows: []`),并广播 `_cycle/agent_setup_changed`。标为 `stale`(账号原因)的旧进程在回收前报的套餐用量不再记下。
 - **断线与关闭**:发起连接在 `start` 尚未返回时断开,该 agent 的互斥锁保持到驱动的启动结束、子进程被取消之后才释放;daemon 关闭时等待进行中的启动与登出结束(有上限)。连接已断,daemon 不再发 `_cycle/agent_auth_completed`;`disconnected` 只是客户端(主进程埋点)的说法,不是协议里的 `reason`。
 

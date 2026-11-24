@@ -27,6 +27,10 @@
 - 不是子 agent 的任务不通告:后台 shell、监视器、`ambient` 或 `skip_transcript` 的任务。没通告过的任务的进度也不发。
 - 进程被释放或退出时,还在跑的子 agent 以 `cancelled` 结束,界面不会一直显示"进行中"。
 
+### 空白页的待命进程(CYC-294)
+
+空白页要到第一条消息才建 session,按 session 提前起的做法帮不上。适配进程的启动与 `initialize`(agy 前端约 126 MB)和 cwd、MCP、环境无关的 agent,在定义里声明 `standby`:客户端在空白页选中它时发 `_cycle/agent_setup/prewarm`,daemon 起好并初始化一个待命的(每个 agent 一个),下一个 session 接手,接手后的 `session/new` 照常走。5 分钟没人接手、账号或运行时设置变了、daemon 停止时释放。目前只有 agy 声明。
+
 ## 为什么不是别的
 
 - 一律提前起(不做开关):测试和没有命令补全需求的用法要为此付进程;做成开关,代价由用的人决定。

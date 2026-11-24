@@ -108,6 +108,17 @@ export class AgentAuthFlows {
     return snapshot;
   }
 
+  /** Never fails: the session starts its own agent if this did not come to anything. */
+  async prewarmAgent(locationId: string, agent: string): Promise<void> {
+    try {
+      const { client } = this.#runtime.connection(locationId);
+      if (client.capabilities.agentPrewarm !== true) return;
+      await client.prewarmAgent(agent);
+    } catch {
+      // Nothing to tell: it was only ahead of time.
+    }
+  }
+
   async setAgentRuntimeSettings(
     locationId: string,
     agent: string,

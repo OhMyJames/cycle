@@ -73,6 +73,7 @@ export const fakeBridge = (
       connectors?: boolean;
       plugins?: string[];
       agentSetup?: boolean;
+      agentPrewarm?: boolean;
       sessionMentions?: boolean;
       fs?: boolean;
       diff?: boolean;
@@ -359,6 +360,7 @@ export const fakeBridge = (
         return { saved: true as const, values, overrides, revision: expectedRevision + 1 };
       },
     ),
+    prewarmAgent: record("prewarmAgent", async () => {}),
     revealDaemonConfig: record("revealDaemonConfig", async () => true),
     startAgentAuth: record("startAgentAuth", async () => ({
       started: false as const,

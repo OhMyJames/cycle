@@ -21,6 +21,7 @@ import {
   agentAuthSubmit,
   agentDefaultsRead,
   agentDefaultsSet,
+  agentPrewarm,
   agentSetupRead,
   agentSetupSetRuntime,
   agentsList,
@@ -326,6 +327,11 @@ export class CycleClient {
     expectedRevision: number,
   ): Promise<ResultOf<typeof agentSetupSetRuntime>> {
     return this.#call(agentSetupSetRuntime, { agent, patch, expectedRevision });
+  }
+
+  /** Asks the daemon to start an agent ahead of the session that will want it (docs/protocol.md §16). */
+  async prewarmAgent(agent: string): Promise<void> {
+    await this.#call(agentPrewarm, { agent });
   }
 
   /** Starts an in-app subscription sign-in flow for an agent (docs/protocol.md §16). */

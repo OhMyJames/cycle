@@ -138,6 +138,8 @@ export const agyHarness: Harness = {
       configSchema: AGY_CONFIG_SCHEMA,
       promptCapabilities: AGY_PROMPT_CAPABILITIES,
       steer: true,
+      // Its adapter and agy start and initialise whatever the session is: they can be up before there is one (CYC-294).
+      standby: true,
       command: [...self, "adapter", "agy"],
       // The session's variables are not given to agy: it has no way to take them for its commands alone, and they may
       // not reach an agent's own process (AGENTS.md). Its sessions' terminals and actions have them (terminals.ts).
