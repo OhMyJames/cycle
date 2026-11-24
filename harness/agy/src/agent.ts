@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
 import {
   type AgentContext,
   agent,
@@ -10,6 +11,14 @@ import {
 } from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleErrorCode, META } from "@cycle/protocol";
 import { translateMcpServers } from "./mcp.ts";
+import {
+  agySettingsPath,
+  DEFAULT_TOOL_PERMISSION,
+  isToolPermission,
+  type ToolPermission,
+  withSettingsLock,
+  writeManagedSettings,
+} from "./permissions.ts";
 import { type AdapterConfig, AgyProcess, AgyRpcError, type AgyTransport } from "./server.ts";
 import { DEFAULT_AGY_MODE, toV2ConfigOptions } from "./settings.ts";
 import {
@@ -175,6 +184,14 @@ type SessionState = {
   defaultEffort?: string | undefined;
   requestedModel?: string | undefined;
   requestedEffort?: string | undefined;
+  /** The tool permission agy's worker for this session started with (agy does not report it). */
+  toolPermission: ToolPermission;
+  /** Chosen during a turn: agy's worker is rebuilt with it before the next one. */
+  pendingToolPermission?: ToolPermission | undefined;
+  /** A rebuild of agy's worker in progress: nothing else is sent for this session until it has settled. */
+  rebuilding?: Promise<void> | undefined;
+  /** What `session/resume` needs to rebuild the worker. */
+  launch: { cwd: string; mcpServers: unknown[]; additionalDirectories?: string[]; meta?: unknown };
   /** set_config_option requests in flight: agy's echo of them is folded into the one update they end with. */
   configInFlight: number;
   /** agy's update_steps calls still going: what makes its plan. */
@@ -220,6 +237,7 @@ const sessionConfigOptions = (session: SessionState): SessionConfigOption[] =>
     defaultModel: session.defaultModel,
     requestedModel: session.requestedModel,
     requestedEffort: session.requestedEffort,
+    toolPermission: session.pendingToolPermission ?? session.toolPermission,
   });
 
 const toRequestError = (error: unknown): RequestError => {
@@ -266,6 +284,19 @@ const systemPromptMeta = (
   return { antigravity: { systemPrompt: { append: text } } };
 };
 
+const launchOf = (
+  params: { cwd: string; additionalDirectories?: string[] | null | undefined },
+  mcpServers: unknown[],
+  meta: unknown,
+): SessionState["launch"] => ({
+  cwd: params.cwd,
+  mcpServers,
+  ...(params.additionalDirectories?.length
+    ? { additionalDirectories: params.additionalDirectories }
+    : {}),
+  ...(meta !== undefined ? { meta } : {}),
+});
+
 export function createAdapter(config: AdapterConfig) {
   let transport: AgyTransport | undefined;
   let initialized: Promise<V1InitializeResult> | undefined;
@@ -276,6 +307,36 @@ export function createAdapter(config: AdapterConfig) {
   // agy's model call between two steps often takes longer than 1.5 s, which flickered running/idle and let a queued
   // message go while agy still worked (CYC-290). No measured spread yet: the low end of 5-10 s, as a message sent in the window is refused.
   const autonomousIdleMs = config.autonomousIdleMs ?? 5_000;
+  const initialToolPermission: ToolPermission = isToolPermission(config.toolPermission)
+    ? config.toolPermission
+    : config.skipPermissions === true
+      ? "always-proceed"
+      : DEFAULT_TOOL_PERMISSION;
+  const settingsPathOf = (): string => {
+    const home = config.env.HOME;
+    if (!home || !isAbsolute(home)) {
+      throw new RequestError(-32603, "agy needs an explicit absolute HOME");
+    }
+    return agySettingsPath(home);
+  };
+
+  /**
+   * Starts agy's worker for a session at `level`. agy reads `toolPermission` from settings.json only as the worker
+   * starts, and the file is shared by every session, so the level is written and the worker started under one lock.
+   * The file is written every time, even for the default, so a level another session left is never inherited.
+   */
+  const startingWorker = <T>(level: ToolPermission, start: () => Promise<T>): Promise<T> =>
+    withSettingsLock(settingsPathOf(), async () => {
+      try {
+        await writeManagedSettings(settingsPathOf(), { toolPermission: level });
+      } catch (error) {
+        throw new RequestError(
+          -32603,
+          `Could not set agy's tool permission: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return start();
+    });
 
   const emitUpdate = (session: SessionState, update: SessionUpdate) => {
     void session.owner
@@ -809,6 +870,82 @@ export function createAdapter(config: AdapterConfig) {
     return { conn: transport, info };
   };
 
+  /**
+   * Changes a session's tool permission: agy reads it only when a session's worker starts, so the worker is closed and
+   * the session resumed under the new level (agy keeps the conversation, not the mode, which is set again). The session
+   * keeps its id. If the resume fails, the old level is resumed once more so the session is not left without a worker.
+   */
+  const rebuildWorker = (session: SessionState, level: ToolPermission): Promise<void> => {
+    const run = async () => {
+      await session.rebuilding?.catch(() => undefined);
+      if (level === session.toolPermission) return;
+      await rebuild(session, level);
+    };
+    const task = run();
+    const tracked = task
+      .catch(() => undefined)
+      .finally(() => {
+        if (session.rebuilding === tracked) session.rebuilding = undefined;
+      });
+    session.rebuilding = tracked;
+    return task;
+  };
+
+  const rebuild = async (session: SessionState, level: ToolPermission): Promise<void> => {
+    const { conn } = await ensureTransport().catch((error) => {
+      throw toRequestError(error);
+    });
+    const before = session.v1ConfigOptions;
+    const resume = (at: ToolPermission) =>
+      startingWorker(at, () =>
+        conn.request<V1ResumeResponse>("session/resume", {
+          sessionId: session.id,
+          cwd: session.launch.cwd,
+          mcpServers: session.launch.mcpServers,
+          ...(session.launch.additionalDirectories !== undefined
+            ? { additionalDirectories: session.launch.additionalDirectories }
+            : {}),
+          ...(session.launch.meta !== undefined ? { _meta: session.launch.meta } : {}),
+        }),
+      );
+    // The resumed worker starts from agy's own defaults; put back what the session had.
+    const adopt = async (response: V1ResumeResponse) => {
+      session.v1ConfigOptions = response.configOptions ?? session.v1ConfigOptions;
+      if (response.models?.availableModels) {
+        session.availableModels = response.models.availableModels;
+      }
+      for (const id of ["mode", "model", "thought_level"]) {
+        const wanted = currentOption(before, id)?.currentValue;
+        const now = currentOption(session.v1ConfigOptions, id);
+        if (wanted === undefined || now === undefined || now.currentValue === wanted) continue;
+        if (!(now.options ?? []).some((option) => option.value === wanted)) continue;
+        try {
+          const res = await conn.request<{ configOptions?: V1ConfigOption[] }>(
+            "session/set_config_option",
+            { sessionId: session.id, configId: now.id, value: wanted },
+          );
+          if (Array.isArray(res?.configOptions)) session.v1ConfigOptions = res.configOptions;
+        } catch {
+          // The session goes on with agy's value; the option list says what it is.
+        }
+      }
+    };
+    await conn.request("session/close", { sessionId: session.id }).catch(() => undefined);
+    try {
+      await adopt(await resume(level));
+      session.toolPermission = level;
+    } catch (error) {
+      // Not left without a worker: back to the old level, and the options say what is really running.
+      await resume(session.toolPermission).then(adopt, () => undefined);
+      session.pendingToolPermission = undefined;
+      emitUpdate(session, {
+        sessionUpdate: "config_option_update",
+        configOptions: sessionConfigOptions(session),
+      } as SessionUpdate);
+      throw toRequestError(error);
+    }
+  };
+
   const app = agent({ name: "cycle-agy-adapter" })
     .onRequest(methods.agent.initialize, async ({ params }) => {
       const caps = (params as { capabilities?: { elicitation?: { form?: unknown } } })
@@ -846,14 +983,16 @@ export function createAdapter(config: AdapterConfig) {
       });
       let created: V1SessionResponse;
       try {
-        created = await conn.request<V1SessionResponse>("session/new", {
-          cwd: params.cwd,
-          mcpServers,
-          ...(params.additionalDirectories?.length
-            ? { additionalDirectories: params.additionalDirectories }
-            : {}),
-          ...(meta !== undefined ? { _meta: meta } : {}),
-        });
+        created = await startingWorker(initialToolPermission, () =>
+          conn.request<V1SessionResponse>("session/new", {
+            cwd: params.cwd,
+            mcpServers,
+            ...(params.additionalDirectories?.length
+              ? { additionalDirectories: params.additionalDirectories }
+              : {}),
+            ...(meta !== undefined ? { _meta: meta } : {}),
+          }),
+        );
       } catch (error) {
         throw toRequestError(error);
       }
@@ -871,6 +1010,8 @@ export function createAdapter(config: AdapterConfig) {
         configInFlight: 0,
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
+        toolPermission: initialToolPermission,
+        launch: launchOf(params, mcpServers, meta),
       };
       sessions.set(state.id, state);
       const configOptions: SessionConfigOption[] = sessionConfigOptions(state);
@@ -896,15 +1037,17 @@ export function createAdapter(config: AdapterConfig) {
       let response: V1ResumeResponse;
       let resolvedId = params.sessionId;
       try {
-        response = await conn.request<V1ResumeResponse>("session/resume", {
-          sessionId: params.sessionId,
-          cwd: params.cwd,
-          mcpServers,
-          ...(params.additionalDirectories?.length
-            ? { additionalDirectories: params.additionalDirectories }
-            : {}),
-          ...(meta !== undefined ? { _meta: meta } : {}),
-        });
+        response = await startingWorker(initialToolPermission, () =>
+          conn.request<V1ResumeResponse>("session/resume", {
+            sessionId: params.sessionId,
+            cwd: params.cwd,
+            mcpServers,
+            ...(params.additionalDirectories?.length
+              ? { additionalDirectories: params.additionalDirectories }
+              : {}),
+            ...(meta !== undefined ? { _meta: meta } : {}),
+          }),
+        );
         if (typeof response.sessionId === "string" && response.sessionId.trim() !== "") {
           resolvedId = response.sessionId;
         }
@@ -913,14 +1056,16 @@ export function createAdapter(config: AdapterConfig) {
           throw toRequestError(error);
         }
         try {
-          const created = await conn.request<V1SessionResponse>("session/new", {
-            cwd: params.cwd,
-            mcpServers,
-            ...(params.additionalDirectories?.length
-              ? { additionalDirectories: params.additionalDirectories }
-              : {}),
-            ...(meta !== undefined ? { _meta: meta } : {}),
-          });
+          const created = await startingWorker(initialToolPermission, () =>
+            conn.request<V1SessionResponse>("session/new", {
+              cwd: params.cwd,
+              mcpServers,
+              ...(params.additionalDirectories?.length
+                ? { additionalDirectories: params.additionalDirectories }
+                : {}),
+              ...(meta !== undefined ? { _meta: meta } : {}),
+            }),
+          );
           response = {
             ...created,
             configOptions: await startInDefaultMode(
@@ -948,6 +1093,8 @@ export function createAdapter(config: AdapterConfig) {
         configInFlight: 0,
         defaultModel: currentOption(v1Opts, "model")?.currentValue,
         defaultEffort: currentOption(v1Opts, "thought_level")?.currentValue,
+        toolPermission: initialToolPermission,
+        launch: launchOf(params, mcpServers, meta),
       };
       sessions.set(state.id, state);
 
@@ -979,6 +1126,8 @@ export function createAdapter(config: AdapterConfig) {
       if (params.type !== "id" || typeof params.value !== "string") {
         throw new RequestError(-32602, "Expected a string option ID");
       }
+      // agy's worker may be being rebuilt; whatever is set goes to the new one.
+      await session.rebuilding;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
@@ -1007,6 +1156,17 @@ export function createAdapter(config: AdapterConfig) {
 
         if (params.configId === "mode") {
           await applyV1("mode", params.value);
+        } else if (params.configId === "toolPermission") {
+          if (!isToolPermission(params.value)) {
+            throw new RequestError(-32602, `Unknown tool permission: ${params.value}`);
+          }
+          if (session.turn) {
+            // agy's worker is rebuilt to change this, which cannot happen under a running turn.
+            session.pendingToolPermission =
+              params.value === session.toolPermission ? undefined : params.value;
+          } else if (params.value !== session.toolPermission) {
+            await rebuildWorker(session, params.value);
+          }
         } else if (params.configId === "model") {
           if (params.value === "default") {
             session.requestedModel = "default";
@@ -1073,6 +1233,7 @@ export function createAdapter(config: AdapterConfig) {
       const session = sessions.get(params.sessionId);
       if (!session) throw new RequestError(-32002, `Unknown session: ${params.sessionId}`);
       validatePromptBlocks(params.prompt);
+      await session.rebuilding;
       const { conn } = await ensureTransport().catch((error) => {
         throw toRequestError(error);
       });
@@ -1096,6 +1257,12 @@ export function createAdapter(config: AdapterConfig) {
         if (turn) {
           throw new RequestError(-32600, "A turn is already running");
         }
+        if (session.pendingToolPermission !== undefined) {
+          const pending = session.pendingToolPermission;
+          session.pendingToolPermission = undefined;
+          await rebuildWorker(session, pending);
+        }
+        if (session.turn) throw new RequestError(-32600, "A turn is already running");
         turn = newTurn(false);
         session.turn = turn;
         emitUpdate(session, {

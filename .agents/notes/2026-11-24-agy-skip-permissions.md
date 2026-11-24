@@ -1,6 +1,6 @@
 # Agent Note: Offer agy's --dangerously-skip-permissions as a runtime setting
 
-Status: accepted
+Status: superseded by [2026-11-24-agy-tool-permission-per-session.md](2026-11-24-agy-tool-permission-per-session.md)
 Date: 2026-11-24
 Basis: 用户 2026-11-24 的要求:agy 会话"一直跳弹层",问有没有更高的权限，确认后要求"两个一起修复"(新会话回到 default 的 bug,以及开放更高权限)。此前 `docs/adapters/agy.md` 把 `--dangerously-skip-permissions` 列在"未做",没有写原因。
 

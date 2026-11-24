@@ -178,7 +178,7 @@ export const AGY_RUNTIME_SCHEMA: Record<string, RuntimeProperty> = {
     type: "boolean",
     title: "Skip all permission prompts",
     description:
-      "Run agy acp with --dangerously-skip-permissions: every edit, command and tool call goes ahead without asking, whatever the session's mode.",
+      "New sessions start with agy's tool permission at always-proceed: every edit, command and tool call goes ahead without asking, whatever the session's mode. A session can still change it.",
     default: AGY_RUNTIME_DEFAULTS.skipPermissions,
     _meta: { [META.applyScope]: "next_idle_restart", [META.danger]: true },
   },

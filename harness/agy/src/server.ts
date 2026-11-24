@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { LineJsonRpcProcess, type LineRpcOptions, RpcError } from "@cycle/line-rpc";
+import type { ToolPermission } from "./permissions.ts";
 
 export type AdapterConfig = {
   /** Explicit environment given to `agy`; nothing is inherited from the adapter process. */
@@ -18,7 +19,12 @@ export type AdapterConfig = {
   agent?: string;
   /** When explicitly `false`, pass `--disable-telemetry` to `agy acp`. */
   telemetry?: boolean;
-  /** Pass `--dangerously-skip-permissions` to `agy acp`: every tool call is approved without asking. */
+  /**
+   * The tool permission a session starts with (agy's `toolPermission`, written to its settings.json as the session
+   * starts). Without it: `request-review`, or `always-proceed` when `skipPermissions` is set.
+   */
+  toolPermission?: ToolPermission;
+  /** The older on/off form of `toolPermission: "always-proceed"`. */
   skipPermissions?: boolean;
   /** Optional factory replacing the spawned child process (for in-process unit tests or alternate transports). */
   connect?: (handlers: AgyServerHandlers) => AgyTransport;
@@ -52,7 +58,6 @@ export const buildAgyArgs = (config: AdapterConfig): string[] => {
   if (config.sandbox) args.push("--sandbox");
   if (config.agent) args.push("--agent", config.agent);
   if (config.telemetry === false) args.push("--disable-telemetry");
-  if (config.skipPermissions === true) args.push("--dangerously-skip-permissions");
   return args;
 };
 
