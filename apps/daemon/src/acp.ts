@@ -52,18 +52,26 @@ export const madeWith = (
 const CANCELLED: RequestPermissionOutcome = { outcome: "cancelled" };
 
 /**
- * A client's answer to a permission request as the agent may see it: a choice of one of its options, or a cancel.
- * Anything else a client sends is a cancel: the agent is never handed what it did not offer.
+ * A client's answer to a permission request as the agent may see it: a choice of one of the options it offered, or a
+ * cancel. Anything else a client sends (an option that was not offered, another kind of outcome) is a cancel: the
+ * agent is never handed what it did not offer.
  */
-export const permissionOutcome = (response: unknown): RequestPermissionOutcome => {
-  const outcome = (response as { outcome?: unknown } | null | undefined)?.outcome as
-    | { outcome?: unknown; optionId?: unknown }
-    | null
-    | undefined;
-  if (outcome?.outcome === "selected" && typeof outcome.optionId === "string")
-    return { outcome: "selected", optionId: outcome.optionId };
-  return CANCELLED;
-};
+export const permissionOutcome =
+  (offered: readonly { optionId: string }[]) =>
+  (response: unknown): RequestPermissionOutcome => {
+    const outcome = (response as { outcome?: unknown } | null | undefined)?.outcome as
+      | { outcome?: unknown; optionId?: unknown }
+      | null
+      | undefined;
+    const optionId = outcome?.optionId;
+    if (
+      outcome?.outcome === "selected" &&
+      typeof optionId === "string" &&
+      offered.some((option) => option.optionId === optionId)
+    )
+      return { outcome: "selected", optionId };
+    return CANCELLED;
+  };
 
 export const PERMISSION_CANCELLED = CANCELLED;
 

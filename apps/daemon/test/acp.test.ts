@@ -2,11 +2,12 @@ import { expect, test } from "bun:test";
 import { agent as acpAgent, client, methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { cycleMethod } from "@cycle/protocol";
 import { z } from "zod";
-import { elicitationAnswer, onCycle, permissionOutcome } from "../src/acp.ts";
+import { elicitationAnswer, permissionOutcome as offeredOutcome, onCycle } from "../src/acp.ts";
 import { INTERNAL_ERROR } from "../src/errors.ts";
 import type { Fields, Logger } from "../src/logger.ts";
 
-test("a client's permission answer reaches the agent only as a choice or a cancel", () => {
+test("a client's permission answer reaches the agent only as a choice it offered, or a cancel", () => {
+  const permissionOutcome = offeredOutcome([{ optionId: "allow" }, { optionId: "reject" }]);
   expect(permissionOutcome({ outcome: { outcome: "selected", optionId: "allow" } })).toEqual({
     outcome: "selected",
     optionId: "allow",
@@ -23,6 +24,8 @@ test("a client's permission answer reaches the agent only as a choice or a cance
     { outcome: "selected" },
     { outcome: { outcome: "selected" } },
     { outcome: { outcome: "selected", optionId: 7 } },
+    // Not one it offered.
+    { outcome: { outcome: "selected", optionId: "allow_always" } },
     { outcome: { outcome: "_vendor/thing" } },
     { outcome: { outcome: "cancelled" } },
   ]) {

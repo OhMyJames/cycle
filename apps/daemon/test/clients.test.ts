@@ -37,6 +37,21 @@ test("a client that cannot be told does not stop the others, and is logged witho
   expect(JSON.stringify(warned)).not.toContain("content");
 });
 
+test("a client that keeps failing is logged once, not once per notification", async () => {
+  const warned: string[] = [];
+  const none = () => {};
+  const clients = new Clients({
+    error: none,
+    warn: (event) => warned.push(event),
+    info: none,
+    debug: none,
+  });
+  clients.add(conn("c1", async () => Promise.reject(new Error("gone"))));
+  for (let i = 0; i < 5; i++) clients.broadcast("_cycle/test_changed", {});
+  await Bun.sleep(0);
+  expect(warned).toEqual(["notify_failed"]);
+});
+
 test("a client that has gone is told nothing more", async () => {
   const clients = new Clients({ error() {}, warn() {}, info() {}, debug() {} });
   const told: string[] = [];

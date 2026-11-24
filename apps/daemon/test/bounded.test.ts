@@ -15,13 +15,19 @@ test("maps in order, never more than the limit at once", async () => {
   expect(most).toBe(2);
 });
 
-test("the first failure is the call's", async () => {
+test("the first failure is the call's, and nothing more is started after it", async () => {
+  const started: number[] = [];
   await expect(
-    mapBounded([1, 2, 3], 2, async (n) => {
+    mapBounded([1, 2, 3, 4, 5, 6], 2, async (n) => {
+      started.push(n);
       if (n === 2) throw new Error("two");
+      await Bun.sleep(5);
       return n;
     }),
   ).rejects.toThrow("two");
+  await Bun.sleep(20);
+  // 1 and 2 at once; 2 fails before 1 is done, so 1's worker stops once 1 is.
+  expect(started).toEqual([1, 2]);
 });
 
 test("nothing to map is nothing", async () => {

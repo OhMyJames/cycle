@@ -1378,7 +1378,7 @@ export class Daemon {
       session,
       REQUEST_PERMISSION,
       { ...params, _meta: asker !== undefined ? { ...meta, [META.subagentId]: asker } : meta },
-      { cancelled: PERMISSION_CANCELLED, answer: permissionOutcome },
+      { cancelled: PERMISSION_CANCELLED, answer: permissionOutcome(params.options) },
       signal,
     );
     return { outcome };
