@@ -506,6 +506,7 @@ const capabilitiesOf = (client: CycleClient): NonNullable<LocationStatus["capabi
   connectors: client.capabilities.connectors === true,
   plugins: client.pluginAgents,
   agentSetup: client.capabilities.agentSetup === true,
+  storage: client.capabilities.storage === true,
   agentPrewarm: client.capabilities.agentPrewarm === true,
   sessionMentions: client.capabilities.sessionMentions === true,
   fs: client.capabilities.fs === true,

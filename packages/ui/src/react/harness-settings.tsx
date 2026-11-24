@@ -21,6 +21,7 @@ import type {
   LocationStatus,
 } from "../api.ts";
 import { ConfigForm, RuntimeConfigForm, type RuntimeFieldText } from "./config-form.tsx";
+import { StorageGroup } from "./harness-storage.tsx";
 import { useI18n } from "./i18n.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -170,6 +171,7 @@ export function HarnessSection({
         agentInfo={agentInfo}
         location={location}
         supportsSetup={supportsSetup}
+        supportsStorage={envStatus?.capabilities?.storage === true}
         revision={revision}
       />
     </>
@@ -182,6 +184,7 @@ function HarnessLocationBody({
   agentInfo,
   location,
   supportsSetup,
+  supportsStorage,
   revision,
 }: {
   agentId: string;
@@ -189,6 +192,8 @@ function HarnessLocationBody({
   agentInfo: AgentInfo | undefined;
   location: LocationConfig;
   supportsSetup: boolean;
+  /** The daemon can say what the agent keeps and clear its caches. */
+  supportsStorage: boolean;
   revision: number;
 }) {
   const { t } = useI18n();
@@ -590,6 +595,14 @@ function HarnessLocationBody({
             </PageRow>
           </PageRows>
         </PageGroup>
+      ) : null}
+      {supportsStorage && hasAgent ? (
+        <StorageGroup
+          key={`${location.id}:${agentId}`}
+          location={location}
+          agentId={agentId}
+          agentName={agentName}
+        />
       ) : null}
     </>
   );

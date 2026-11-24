@@ -164,6 +164,8 @@ test.skipIf(!ready)(
           "preferences",
           "prewarmAgent",
           "listProviders",
+          "readStorage",
+          "cleanStorage",
           "providerCatalog",
           "saveProvider",
           "removeProvider",

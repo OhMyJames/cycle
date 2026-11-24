@@ -782,6 +782,32 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "providers.removeTitle": "移除 {name}?",
   "providers.removeDescription": "它的密钥会从 {location} 删除,它的模型也会从模型菜单中消失。",
   "providers.removeConfirm": "移除服务商",
+
+  // 存储(CYC-277):agent 在自己的 HOME 里留了什么,在设置的 Harness 页末尾。
+  "storage.title": "存储",
+  "storage.lead": "{agent} 在 {location} 上占用的空间。",
+  "storage.loading": "正在统计…",
+  "storage.unreadable": "无法读取占用情况。",
+  "storage.retry": "重试",
+  "storage.empty": "还没有存储内容。",
+  "storage.emptyBody": "{agent} 运行过之后,这里会显示它的缓存和会话记录。",
+  "storage.unmanaged": "它的主目录是你自己的文件夹。",
+  "storage.unmanagedBody":
+    "{location} 上的 {agent} 用的是 Cycle 数据目录之外的文件夹,不统计也不清理其中的内容。",
+  "storage.cache": "缓存",
+  "storage.cache.body": "包的下载文件,需要时会重新下载。",
+  "storage.cleared": "已清理 {size}。",
+  "storage.clear": "清理缓存",
+  "storage.history": "会话记录",
+  "storage.history.body": "用于恢复会话,这里不清理。",
+  "storage.confirmTitle": "清理 {agent} 的缓存?",
+  "storage.confirmDescription":
+    "将删除 {location} 上 {size} 的下载文件。登录状态和会话记录保留,{agent} 下次用到时会重新下载。",
+  "storage.problem.busy": "{agent} 有会话正在工作,等它结束后再清理缓存。",
+  "storage.problem.unmanaged":
+    "{location} 上的 {agent} 用的是 Cycle 数据目录之外的文件夹,没有清理。",
+  "storage.problem.unknown_agent": "{location} 上没有 {agent}。",
+  "storage.problem.failed": "缓存没能删除,请检查文件夹权限。",
   "providers.form.addTitle": "添加服务商",
   "providers.form.editTitle": "编辑 {name}",
   "providers.form.kind": "服务",

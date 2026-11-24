@@ -868,6 +868,32 @@ export const enUS = {
   "providers.removeDescription":
     "Its key is deleted from {location} and its models leave the model menu.",
   "providers.removeConfirm": "Remove provider",
+  // Storage (CYC-277): what an agent keeps in its home, at the end of its Harness page in Settings.
+  "storage.title": "Storage",
+  "storage.lead": "What {agent} keeps on {location}.",
+  "storage.loading": "Measuring…",
+  "storage.unreadable": "The sizes could not be read.",
+  "storage.retry": "Try again",
+  "storage.empty": "Nothing stored yet.",
+  "storage.emptyBody": "Caches and session records of {agent} appear here once it has run.",
+  "storage.unmanaged": "Its home is a folder of your own.",
+  "storage.unmanagedBody":
+    "{agent} on {location} uses a folder outside Cycle's data folder, so nothing in it is measured or cleared.",
+  "storage.cache": "Caches",
+  "storage.cache.body": "Package downloads. They are fetched again when needed.",
+  "storage.cleared": "Cleared {size}.",
+  "storage.clear": "Clear caches",
+  "storage.history": "Session records",
+  "storage.history.body": "Kept so sessions can resume. They are not cleared here.",
+  "storage.confirmTitle": "Clear the caches of {agent}?",
+  "storage.confirmDescription":
+    "{size} of downloads on {location} are deleted. Logins and session records stay, and the downloads come back the next time {agent} needs them.",
+  "storage.problem.busy": "A session of {agent} is working. Clear caches when it has finished.",
+  "storage.problem.unmanaged":
+    "{agent} on {location} uses a folder outside Cycle's data folder, so nothing was cleared.",
+  "storage.problem.unknown_agent": "{location} does not know {agent}.",
+  "storage.problem.failed": "The caches could not be removed. Check the folder's permissions.",
+
   "providers.form.addTitle": "Add a provider",
   "providers.form.editTitle": "Edit {name}",
   "providers.form.kind": "Service",

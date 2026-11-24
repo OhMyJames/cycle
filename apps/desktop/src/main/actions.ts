@@ -30,6 +30,8 @@ import type {
   ProviderModel,
   ProviderProblem,
   ProvidersRead,
+  StorageAgent,
+  StorageCleanAnswer,
   TerminalAttached,
   TerminalInfo,
   TerminalProblem,
@@ -593,6 +595,19 @@ export class LocationActions {
   }
 
   // ---- the owner's model providers (docs/protocol.md §10 "自带模型") ----
+
+  async readStorage(locationId: string): Promise<StorageAgent[]> {
+    return this.#runtime.connection(locationId).client.readStorage();
+  }
+
+  async cleanStorage(locationId: string, agent: string): Promise<StorageCleanAnswer> {
+    const answer = await this.#runtime.connection(locationId).client.cleanStorage(agent);
+    this.#runtime.track("storage_cleaned", {
+      agent: agentOf(agent),
+      result: answer.cleaned ? "ok" : answer.problem,
+    });
+    return answer;
+  }
 
   async listProviders(locationId: string): Promise<ProvidersRead> {
     return this.#runtime.connection(locationId).client.listProviders();
