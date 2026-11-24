@@ -79,7 +79,10 @@
 - **SSE MCP、`override` 系统提示、URL 模式 elicitation**:明确拒绝(`-32602`)或取消。
 - **子 agent 独立子对话与后台任务追踪**:`agy` 1.5.15 的 `invoke_subagent` / `schedule` 在 ACP v1 中仅作为普通 `tool_call` 发出,无子对话 id 或内部进度事件,不做 `subagent_update`、`_cycle/child_update`、`cycle/background`。
 - **套餐用量(`_cycle/plan_usage`,CYC-298)**:适配器在每个回合结束时(至少隔 5 分钟,读失败不占间隔)起一个旁路进程 `agy -p "/usage" --output-format json`,不开回合(返回的 `usage` token 全为 0,实测 agy 1.5.16 的 `/usage`、`/quota`、`/credits` 都不消耗额度),通过这个回合的 session 发 `_cycle/plan_usage`(每次读到都发,daemon 留最新的)。结构:`command.data.groups[].buckets[]`,`window` 为 `5h`/`weekly`,`remaining_fraction`(剩余比例)、`reset_time`(ISO 时间)。Gemini 组对应 `five_hour`/`seven_day`;"Claude and GPT"组对应 `five_hour_other`/`seven_day_other`。用 API key 登录(环境里有 `GEMINI_API_KEY`/`GOOGLE_API_KEY`)不读。`_meta.antigravity.tier` 仍只含订阅档位。
-- **`session/load` 补历史(CYC-298 评估,未实现)**:agy 1.5.15 起 `session/load` 先回放完全部历史再返回。Cycle 现在用 `session/resume`(不回放),本地 JSONL 缺失或损坏时无法从 agy 补回。要做需先在真实 agy 上验证回放的更新能否无损映射成 L1 事件,再决定补齐的触发条件(只在本地记录缺失时),所以这次没有改。
+- **`session/load` 补历史(CYC-298 评估,不实现)**:实测 agy 1.5.16(2026-11-24,宿主 agy,只读)。
+  - `session/load` 对 ACP 建的会话(Cycle 的会话都是)可用:先把历史回放完,再返回;回放的更新有 `user_message_chunk`、`agent_thought_chunk`、`tool_call`(带 `status: completed` 和 `rawInput`)、`agent_message_chunk`,之后是 `available_commands_update`、`usage_update`、`session_info_update`。回放不带回合的开始和结束,也没有 `messageId`。
+  - 对 agy 命令行建的会话,`session/list` 列得出,`session/load` 却返回 `-32002`(Session not found);`session/resume` 对不存在的会话也不报错,只返回一个空会话。
+  - 结论:agy 那边的确留着历史,可以取回。但 Cycle 的会话本地日志整个丢了时,`LogStore.open(…, "existing")` 就抛 `LogUnavailable`,会话根本加载不了,连"resume 时补回"的机会都没有;daemon 也在 `session.resuming` 期间丢弃 agent 的更新。补历史因此是一个单独的恢复功能(日志丢失时重建日志、把回放拆成回合再写入),不是适配器里换一个调用。需要时另开工单,上面是依据。
 - **plugin 可装目录与源管理**:`agy plugin` CLI 无机器可读目录与源增删命令,返回 `unavailable`。
 - Remote Control / Remote Agents、语音、swarm、artifact 审阅、`/rewind`、`/fork`。
 
