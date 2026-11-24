@@ -199,8 +199,9 @@ test("each harness hands its adapter the session's variables its own way: Claude
     codexHarness.definition(context),
     agyHarness.definition(context),
   ]) {
-    const launched = await definition.launch({ sessionId, sessionEnv });
+    // Counted before the launch: the adapter can write its line before launch() has returned.
     const before = existsSync(configs) ? readFileSync(configs, "utf8").split("\n").length : 0;
+    const launched = await definition.launch({ sessionId, sessionEnv });
     await until(
       () => existsSync(configs) && readFileSync(configs, "utf8").split("\n").length > before,
       `${definition.id}'s adapter config`,
