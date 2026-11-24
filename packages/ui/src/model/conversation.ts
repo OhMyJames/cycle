@@ -617,6 +617,56 @@ const toolUpdate = (c: Conversation, update: Fields, at: number | undefined): Co
 /** How many sub-agents' news may wait for their calls at once. */
 const MAX_WAITING = 16;
 
+/** Sub-agents start sub-agents only a few deep: a history that says otherwise is not followed for ever. */
+const MAX_DEPTH = 8;
+
+/** A tool call that started a sub-agent. */
+type SubagentCall = ToolItem & { subagent: Subagent };
+
+const isSubagentCall = (item: Item): item is SubagentCall =>
+  item.kind === "tool" && item.subagent !== undefined;
+
+/**
+ * Every call in `c` that started a sub-agent, and those in its sub-agents' conversations (ones a sub-agent started),
+ * each one before the ones its own sub-agent started.
+ */
+function* subagentCalls(c: Conversation, depth = 0): Generator<SubagentCall> {
+  if (depth > MAX_DEPTH) return;
+  for (const item of c.items) {
+    if (!isSubagentCall(item)) continue;
+    yield item;
+    if (item.subagent.conversation !== undefined)
+      yield* subagentCalls(item.subagent.conversation, depth + 1);
+  }
+}
+
+/**
+ * `c` with the first sub-agent that `rewrite` gives a new one for put in its place, looking where `subagentCalls` looks
+ * and, at each depth, after those, at the sub-agents waiting for their calls. Undefined when `rewrite` gives none.
+ */
+const rewriteSubagent = (
+  c: Conversation,
+  rewrite: (sub: Subagent) => Subagent | undefined,
+  depth = 0,
+): Conversation | undefined => {
+  if (depth > MAX_DEPTH) return undefined;
+  for (const item of c.items) {
+    if (!isSubagentCall(item)) continue;
+    const sub = item.subagent;
+    let next = rewrite(sub);
+    if (next === undefined && sub.conversation !== undefined) {
+      const inner = rewriteSubagent(sub.conversation, rewrite, depth + 1);
+      if (inner !== undefined) next = { ...sub, conversation: inner };
+    }
+    if (next !== undefined) return { ...c, items: upsert(c.items, { ...item, subagent: next }) };
+  }
+  for (const [callId, sub] of Object.entries(c.waiting)) {
+    const next = rewrite(sub);
+    if (next !== undefined) return { ...c, waiting: { ...c.waiting, [callId]: next } };
+  }
+  return undefined;
+};
+
 /**
  * `c` with the conversation of the sub-agent `childId` changed by `change`, wherever its call is: in `c`, waiting for its
  * call, or in another sub-agent's conversation (one started by a sub-agent). Undefined when no such sub-agent is known.
@@ -625,51 +675,19 @@ const withChild = (
   c: Conversation,
   childId: string,
   change: (conversation: Conversation) => Conversation,
-  depth = 0,
-): Conversation | undefined => {
-  // Sub-agents start sub-agents only a few deep; a history that says otherwise is not followed for ever.
-  if (depth > MAX_DEPTH) return undefined;
-  for (const item of c.items) {
-    if (item.kind !== "tool" || item.subagent === undefined) continue;
-    const sub = item.subagent;
-    if (sub.id === childId) {
-      const conversation = change(sub.conversation ?? emptyConversation());
-      return { ...c, items: upsert(c.items, { ...item, subagent: { ...sub, conversation } }) };
-    }
-    if (sub.conversation === undefined) continue;
-    const inner = withChild(sub.conversation, childId, change, depth + 1);
-    if (inner !== undefined)
-      return {
-        ...c,
-        items: upsert(c.items, { ...item, subagent: { ...sub, conversation: inner } }),
-      };
-  }
-  for (const [callId, sub] of Object.entries(c.waiting)) {
-    if (sub.id !== childId) continue;
-    const conversation = change(sub.conversation ?? emptyConversation());
-    return { ...c, waiting: { ...c.waiting, [callId]: { ...sub, conversation } } };
-  }
-  return undefined;
-};
-const MAX_DEPTH = 8;
+): Conversation | undefined =>
+  rewriteSubagent(c, (sub) =>
+    sub.id === childId
+      ? { ...sub, conversation: change(sub.conversation ?? emptyConversation()) }
+      : undefined,
+  );
 
 /**
  * The Agent call that started the sub-agent `childId`, wherever it is (in a sub-agent's conversation, for one a
  * sub-agent started). Undefined when it is not known here: a permission it asks for still says that a sub-agent asks.
  */
-export const subagentCallOf = (
-  c: Conversation,
-  childId: string,
-  depth = 0,
-): ToolItem | undefined => {
-  if (depth > MAX_DEPTH) return undefined;
-  for (const item of c.items) {
-    if (item.kind !== "tool" || item.subagent === undefined) continue;
-    if (item.subagent.id === childId) return item;
-    const inner = item.subagent.conversation;
-    const found = inner !== undefined ? subagentCallOf(inner, childId, depth + 1) : undefined;
-    if (found !== undefined) return found;
-  }
+export const subagentCallOf = (c: Conversation, childId: string): ToolItem | undefined => {
+  for (const call of subagentCalls(c)) if (call.subagent.id === childId) return call;
   return undefined;
 };
 
