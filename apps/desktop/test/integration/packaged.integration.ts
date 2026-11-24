@@ -13,6 +13,7 @@ import { mkdtemp, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { packageApp } from "../../scripts/package.ts";
+import { AGENT_BINS } from "../../src/main/layout.ts";
 import { evaluate } from "./cdp.ts";
 import { signedIn } from "./signed-in.ts";
 
@@ -40,7 +41,7 @@ test.skipIf(!ready)(
   async () => {
     const packaged = locate();
     expect(existsSync(join(packaged.appDir, "build.json"))).toBe(true);
-    expect(existsSync(join(packaged.appDir, "bin/claude"))).toBe(true);
+    for (const bin of AGENT_BINS) expect(existsSync(join(packaged.appDir, bin))).toBe(true);
 
     const data = join(root, "data");
     const port = 20000 + Math.floor(Math.random() * 20000);

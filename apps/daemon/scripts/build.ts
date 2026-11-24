@@ -1,11 +1,12 @@
 // Builds the daemon into one directory you can copy to a machine and run:
 //
 //   dist/cycle-<os>-<arch>/cycle   the daemon, one executable (Bun inside)
-//   dist/cycle-<os>-<arch>/claude  each agent's own binary that its adapter drives (src/harnesses.ts, binaries.ts)
+//   dist/cycle-<os>-<arch>/claude  each agent's own binary that its adapter drives (src/harnesses.ts, binaries.ts),
+//                                  and the executables it runs from beside it (a harness's `companions`)
 //
 // plus a .tar.gz of it. The machine needs nothing else: no Bun, no Node, no `claude` on PATH.
 import { chmod, cp, mkdir, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { vendorDirectory } from "../../../harness/codex/src/binary.ts";
 import { HARNESSES } from "../src/harnesses.ts";
 import { BINARY_SOURCES } from "./binaries.ts";
@@ -19,11 +20,23 @@ await mkdir(out, { recursive: true });
 // Found before anything is built: a binary that is not there fails in a second, not after the compile.
 const binaries: { name: string; from: string }[] = [];
 for (const harness of HARNESSES) {
-  if (harness.binary === undefined) continue;
+  if (harness.binary === undefined) {
+    // Found beside the shipped binary: with none, there is nowhere to put them.
+    if (harness.companions?.length)
+      throw new Error(`${harness.id} has companions but no binary to ship them beside`);
+    continue;
+  }
   const source = BINARY_SOURCES[harness.id];
   if (source === undefined)
     throw new Error(`scripts/binaries.ts does not say where ${harness.id}'s binary is`);
-  binaries.push({ name: harness.binary, from: await source() });
+  const from = await source();
+  binaries.push({ name: harness.binary, from });
+  for (const companion of harness.companions ?? []) {
+    const path = join(dirname(from), companion);
+    if (!(await Bun.file(path).exists()))
+      throw new Error(`${harness.id}'s ${companion} is not beside its binary, in ${dirname(from)}`);
+    binaries.push({ name: companion, from: path });
+  }
 }
 
 const version = String((await Bun.file(join(root, "../desktop/package.json")).json()).version);

@@ -29,7 +29,7 @@ export type HarnessCliContext = Omit<HarnessContext, "self" | "log" | "agentSett
  *
  * - `cycle adapter <id>` runs `runAdapter`;
  * - `cycle <id> <args>` and `cycle login <id>` run its `cli`;
- * - `scripts/build.ts` ships its `binary` beside the daemon;
+ * - `scripts/build.ts` ships its `binary` and `companions` beside the daemon;
  * - `config.json` has a section named `id` (config.ts).
  */
 export type Harness = {
@@ -40,6 +40,12 @@ export type Harness = {
   runAdapter: () => Promise<void>;
   /** The file name its own binary is shipped under, beside the daemon. Absent: it ships none. */
   binary?: string;
+  /**
+   * Executables the binary runs from its own directory, shipped beside it under the same names, taken from beside
+   * the binary's source. Codex starts `codex-code-mode-host` there for every tool call in code mode; without it each
+   * call fails before it runs. Absent: none.
+   */
+  companions?: string[];
   definition: (context: HarnessContext) => AgentDefinition;
   /** Its own command line, run with the environment the daemon gives the agent. Absent: it has none to run. */
   cli?: {

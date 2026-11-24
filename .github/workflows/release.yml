@@ -95,6 +95,7 @@ jobs:
           "$BUNDLE/bin/cycle" status --data-dir "$RUNNER_TEMP/d1"; test $? -eq 1 || exit 1
           "$BUNDLE/bin/claude" --version || exit 1
           "$BUNDLE/bin/codex" --version || exit 1
+          "$BUNDLE/bin/codex-code-mode-host" --help >/dev/null || exit 1
           test "$("$BUNDLE/bin/cycle" version)" = "$(jq -r .version apps/desktop/package.json)" || exit 1
           CYCLE_DAEMON_BIN="$PWD/$BUNDLE/bin/cycle" bun run --cwd apps/daemon test:integration
 
@@ -151,6 +152,7 @@ jobs:
           "$BUNDLE/bin/cycle" status --data-dir "$RUNNER_TEMP/d2"; test $? -eq 1 || exit 1
           "$BUNDLE/bin/claude" --version || exit 1
           "$BUNDLE/bin/codex" --version || exit 1
+          "$BUNDLE/bin/codex-code-mode-host" --help >/dev/null || exit 1
           test "$("$BUNDLE/bin/cycle" version)" = "$(jq -r .version apps/desktop/package.json)" || exit 1
           CYCLE_DAEMON_BIN="$PWD/$BUNDLE/bin/cycle" bun run --cwd apps/daemon test:integration
 

@@ -41,6 +41,7 @@ export const codexHarness: Harness = {
   id: "codex",
   name: "Codex",
   binary: "codex",
+  companions: ["codex-code-mode-host"],
   runAdapter: () => runAdapter(shippedExecutable("codex")),
   cli: {
     executable: () =>
