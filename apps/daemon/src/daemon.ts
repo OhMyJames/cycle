@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
 import {
   type AgentContext,
-  agent as acpAgent,
   type ClientApp,
   type ContentBlock,
   type CreateElicitationRequest,
@@ -15,35 +12,15 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type ResumeSessionResponse,
-  type SessionConfigOption,
   type SessionUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
 import {
-  agentDefaultsRead,
-  agentDefaultsSet,
-  agentsList,
   CHILD_UPDATE,
   CHILD_UPDATE_KINDS,
   type ChildUpdate,
   CONNECTORS_CHANGED,
-  CYCLE_PROTOCOL_VERSION,
   CycleErrorCode,
-  type CycleMethod,
-  checkPrompt,
-  connectorsAdd,
-  connectorsAuthClear,
-  connectorsAuthFinish,
-  connectorsAuthStart,
-  connectorsList,
-  connectorsRemove,
-  connectorsUpdate,
-  diffFile,
-  diffStatus,
-  filesSearch,
-  foldersList,
-  fsList,
-  fsRead,
   META,
   NOTIFICATIONS,
   PLAN_USAGE_CHANGED,
@@ -54,56 +31,23 @@ import {
   type PlanWindow,
   PROMPT_SUGGESTION_UPDATE,
   PromptSuggestionUpdateSchema,
-  planUsageRead,
-  pluginSourcesAdd,
-  pluginSourcesRefresh,
-  pluginSourcesRemove,
-  pluginsAvailable,
-  pluginsInstall,
-  pluginsList,
-  pluginsSetEnabled,
-  pluginsUninstall,
-  pluginsUpdate,
-  promptAckReturn,
-  promptDequeue,
-  QUEUE_LIMIT,
   QUEUE_UPDATE,
   type QueueEntry,
   type QueueReason,
   QueueUpdateSchema,
-  ReplayFromSeqSchema,
   SessionUsageSchema,
-  sessionArchive,
-  sessionDismissBackground,
-  sessionMarkRead,
-  sessionSetTitle,
-  sessionStopSubagent,
-  sessionUnarchive,
   TERMINAL_NOTIFICATIONS,
-  terminalAttach,
-  terminalClose,
-  terminalCreate,
-  terminalDetach,
-  terminalInput,
-  terminalList,
-  terminalResize,
-  trustRead,
-  trustSet,
 } from "@cycle/protocol";
-import type { z } from "zod";
 import {
   asPrompt,
-  type CycleHandler,
   clientConn,
   elicitationAnswer,
   madeWith,
-  onCycle,
   PERMISSION_CANCELLED,
   permissionOutcome,
 } from "./acp.ts";
 import { AgentLink } from "./agent-link.ts";
 import type { AgentDefinition } from "./agents.ts";
-import { mapBounded } from "./bounded.ts";
 import { Clients } from "./clients.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
@@ -116,27 +60,12 @@ import {
   trustPath,
 } from "./data-dir.ts";
 import { AgentDefaults } from "./defaults-file.ts";
-import { workspaceFile, workspaceStatus } from "./diff.ts";
-import {
-  INTERNAL_ERROR,
-  INVALID_PARAMS,
-  logUnavailable,
-  queueFull,
-  RESOURCE_NOT_FOUND,
-  RpcError,
-  sessionBusy,
-  sessionNotFound,
-  UNSUPPORTED_VERSION,
-} from "./errors.ts";
-import { searchFiles } from "./files.ts";
-import { firstTitle } from "./first-title.ts";
-import { listFolders } from "./folders.ts";
-import { listFolder, readFile } from "./fs.ts";
-import { ignoredNames } from "./git.ts";
+import { INTERNAL_ERROR, logUnavailable, RpcError, sessionNotFound } from "./errors.ts";
+import type { Core } from "./facing/core.ts";
+import { facing } from "./facing/index.ts";
 import { type SessionEntry, SessionIndex } from "./index-file.ts";
 import { BlobLogStore } from "./log/blobs.ts";
 import { JsonlLogStore } from "./log/jsonl.ts";
-import { attach } from "./log/replay.ts";
 import type { LogRecord, LogStore, NewRecord } from "./log/types.ts";
 import { errorText, type Logger, silentLogger } from "./logger.ts";
 import { AgentOptionsCache, choicesFromConfigOptions } from "./options-cache.ts";
@@ -150,16 +79,15 @@ import {
   Session,
   type SessionStatus,
 } from "./session.ts";
+import { currentValues, orderedConfigEntries } from "./session-config.ts";
 import {
   collapseSessionMentions,
   expandSessionMentions,
   type Mentioned,
   mentionsSession,
 } from "./session-mentions.ts";
-import { sessionPage } from "./session-page.ts";
 import {
   accountShell,
-  type TerminalSink,
   Terminals,
   type TerminalsOptions,
   terminalEnv,
@@ -167,7 +95,7 @@ import {
 } from "./terminals.ts";
 import { checkToolResult } from "./tool-result.ts";
 import { FolderTrust, realFolder, within } from "./trust-file.ts";
-import { type Activity, opensOrEndsTurn, turnLeftOpen } from "./turns.ts";
+import { type Activity, isUserMessage, opensOrEndsTurn, turnLeftOpen } from "./turns.ts";
 
 export type DaemonOptions = {
   /** Where the daemon keeps its data. Always given: nothing here guesses a home. */
@@ -208,39 +136,9 @@ export const defaultTerminals = (
 });
 
 const SESSION_UPDATE = methods.client.session.update;
-/** How many sessions a list loads at once. */
-const LIST_LOADS = 4;
 const REQUEST_PERMISSION = methods.client.session.requestPermission;
 const ELICITATION = methods.client.elicitation.create;
 
-/** The value each of an agent's `configOptions` has now, as a configuration. */
-const currentValues = (options: unknown): Record<string, string> => {
-  const config: Record<string, string> = {};
-  if (Array.isArray(options)) {
-    for (const option of options as { configId?: unknown; currentValue?: unknown }[]) {
-      if (typeof option?.configId === "string" && typeof option.currentValue === "string") {
-        config[option.configId] = option.currentValue;
-      }
-    }
-  }
-  return config;
-};
-
-/** Keeps existing config order while ensuring `model` is applied before model-dependent `effort`. */
-const orderedConfigEntries = (config: Record<string, string>): [string, string][] => {
-  const entries = Object.entries(config);
-  const effortIndex = entries.findIndex(([key]) => key === "effort");
-  const modelIndex = entries.findIndex(([key]) => key === "model");
-  if (effortIndex === -1 || modelIndex === -1 || effortIndex > modelIndex) return entries;
-  const [effort] = entries.splice(effortIndex, 1);
-  if (effort !== undefined) entries.splice(modelIndex, 0, effort);
-  return entries;
-};
-/**
- * The daemon: Cycle's side of docs/protocol.md. It owns the sessions and their history, runs the
- * agents, and serves any number of clients. A client sees a session through the session's log, so
- * replay and live updates are one path.
- */
 const withoutContent = (outcome: unknown): unknown => {
   if (typeof outcome !== "object" || outcome === null) return outcome;
   const { content: _content, ...rest } = outcome as Record<string, unknown>;
@@ -248,54 +146,11 @@ const withoutContent = (outcome: unknown): unknown => {
 };
 
 /**
- * The values a `configSchema` property allows when it lists them and takes no others: its `enum`, or
- * the `const` of each `oneOf` entry. Undefined for a property that lists none, or says it is open.
+ * The daemon: Cycle's side of docs/protocol.md. It owns the sessions and their history, runs the
+ * agents, and serves any number of clients. A client sees a session through the session's log, so
+ * replay and live updates are one path. What a client can ask of it is registered by the modules in
+ * src/facing/, one per part of the protocol; the daemon gives them its `Core` and assembles them.
  */
-const closedChoices = (property: unknown): unknown[] | undefined => {
-  if (typeof property !== "object" || property === null) return undefined;
-  const {
-    enum: values,
-    oneOf,
-    _meta,
-  } = property as {
-    enum?: unknown;
-    oneOf?: unknown;
-    _meta?: Record<string, unknown>;
-  };
-  if (_meta?.[META.open] === true) return undefined;
-  if (Array.isArray(values)) return values;
-  if (Array.isArray(oneOf)) {
-    const consts = oneOf.map((entry) => (entry as { const?: unknown } | null)?.const);
-    return consts.every((value) => value !== undefined) ? consts : undefined;
-  }
-  return undefined;
-};
-
-/** The same declared choices apply to saved defaults and explicit creation overrides. */
-const checkedConfig = (agent: AgentDefinition, raw: unknown): Record<string, string> => {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
-    throw new RpcError(CycleErrorCode.InvalidConfig, "Expected a configuration object", {
-      agent: agent.id,
-    });
-  const properties = agent.configSchema.properties as Record<string, unknown> | undefined;
-  const entries = Object.entries(raw);
-  for (const [configId, value] of entries) {
-    const field = { agent: agent.id, configId };
-    if (properties !== undefined && !Object.hasOwn(properties, configId))
-      throw new RpcError(CycleErrorCode.InvalidConfig, `Unknown setting: ${configId}`, field);
-    if (typeof value !== "string")
-      throw new RpcError(CycleErrorCode.InvalidConfig, `Expected a string for ${configId}`, field);
-    const allowed = closedChoices(properties?.[configId]);
-    if (allowed && !allowed.includes(value))
-      throw new RpcError(CycleErrorCode.InvalidConfig, `Unsupported value for ${configId}`, {
-        ...field,
-        value,
-        allowed,
-      });
-  }
-  return raw as Record<string, string>;
-};
-
 export class Daemon {
   readonly #version: string;
   readonly #agents: Map<string, AgentDefinition>;
@@ -316,6 +171,8 @@ export class Daemon {
   /** Sessions being loaded, so a second request for one waits for the first load. */
   readonly #loading = new Map<string, Promise<Session>>();
   readonly #clients: Clients;
+  /** What the client-facing modules reach of the daemon (src/facing/). */
+  readonly #core: Core;
   /** The latest plan usage each agent told, since the daemon started (docs/protocol.md §8 "套餐用量"). */
   readonly #planUsage = new Map<string, PlanUsage>();
   /** The same, limit by limit, with when each was told: what a newer word replaces. */
@@ -366,6 +223,7 @@ export class Daemon {
       onChanged: (agentId) => this.#clients.broadcast(PLUGINS_CHANGED, { agentId }),
     });
     connectors.onChanged(() => this.#clients.broadcast(CONNECTORS_CHANGED, {}));
+    this.#core = this.#makeCore();
   }
 
   /** Reads the index, and refuses to start if it is there and cannot be read. */
@@ -383,13 +241,13 @@ export class Daemon {
   /** Serves one client on a stream. */
   accept(stream: Stream): { closed: Promise<void>; close: () => void } {
     const holder: { value?: ClientConn } = {};
-    return this.#register(holder, this.#facing(holder).connect(stream));
+    return this.#register(holder, facing(this.#core, holder).connect(stream));
   }
 
   /** Serves a client app in this process, with no transport. For tests. */
   acceptApp(clientApp: ClientApp): { closed: Promise<void>; close: () => void } {
     const holder: { value?: ClientConn } = {};
-    return this.#register(holder, this.#facing(holder).connect(clientApp));
+    return this.#register(holder, facing(this.#core, holder).connect(clientApp));
   }
 
   #register(
@@ -1714,776 +1572,48 @@ export class Daemon {
 
   // ---- what a client sees ----
 
-  #deliver(session: Session, attachment: Attachment) {
-    return async (record: LogRecord) => {
-      if (record.kind === "update") {
-        const update = record.data as {
-          sessionUpdate: string;
-          entries?: QueueEntry[];
-          returnId?: string;
-        };
-        await attachment.conn.notify(SESSION_UPDATE, {
-          sessionId: session.id,
-          update:
-            update.sessionUpdate === QUEUE_UPDATE && update.returnId
-              ? { sessionUpdate: QUEUE_UPDATE, entries: update.entries }
-              : record.data,
-          // The record's own time, as the log has it: the same live and in a replay (docs/protocol.md §5).
-          _meta: { [META.seq]: record.seq, [META.ts]: record.ts },
-        });
-      } else if (record.kind === "request") {
-        const id = (record.data as { requestId: string }).requestId;
-        const pending = session.pending.get(id);
-        if (pending !== undefined) this.#offer(session, pending, attachment);
-      }
-    };
-  }
-
-  /**
-   * A session's row in the list, or undefined for one the person has not yet written to: a new session is a blank
-   * conversation in the client until its first message, and only then is it in the list (docs/protocol.md §6).
-   */
-  async #row(sessionId: string, entry: SessionEntry, onlyPrompted: boolean) {
-    const session = await this.#session(sessionId);
-    // One whose history has failed is listed whatever it holds: the list is where it is deleted from.
-    if (onlyPrompted && session.historyError === undefined && !(await this.#prompted(session)))
-      return undefined;
-    const background = session.backgroundCount();
+  /** What the registration modules reach of the daemon (src/facing/core.ts). Made once. */
+  #makeCore(): Core {
     return {
-      sessionId,
-      cwd: entry.cwd,
-      updatedAt: session.updatedAt(),
-      _meta: {
-        [META.archived]: entry.archived === true,
-        [META.agent]: entry.agent,
-        [META.state]: session.status(),
-        [META.lastSeq]: session.log.lastSeq(),
-        [META.unread]: session.unread(),
-        ...(session.unknownBackground.size
-          ? { [META.backgroundUnknown]: [...session.unknownBackground.keys()] }
-          : {}),
-        ...(background > 0 ? { [META.background]: background } : {}),
-        ...(session.historyError !== undefined ? { [META.historyFailed]: true } : {}),
-        ...(entry.config !== undefined ? { [META.config]: entry.config } : {}),
-        ...(entry.usage !== undefined ? { [META.usage]: entry.usage } : {}),
-        ...(entry.title !== undefined ? { title: entry.title } : {}),
-      },
+      version: this.#version,
+      log: this.#log,
+      agents: this.#agents,
+      store: this.#store,
+      index: this.#index,
+      sessions: this.#sessions,
+      defaults: this.#defaults,
+      optionsCache: this.#optionsCache,
+      trust: this.#trust,
+      connectors: this.#connectors,
+      plugins: this.#plugins,
+      terminals: this.#terminals,
+      clients: this.#clients,
+      planUsage: this.#planUsage,
+      now: () => this.#now(),
+      definition: (id) => this.#definition(id),
+      session: (sessionId) => this.#session(sessionId),
+      cwdOf: (sessionId) => this.#cwdOf(sessionId),
+      watch: (session) => this.#watch(session),
+      startAgent: (session, create) => this.#startAgent(session, "new", create),
+      ensureAgent: (session) => this.#ensureAgent(session),
+      letGoOfOldestAhead: (keep) => this.#letGoOfOldestAhead(keep),
+      applyTrust: (folder) => this.#applyTrust(folder),
+      write: (session, record) => this.#write(session, record),
+      remember: (session, patch, announce) => this.#remember(session, patch, announce),
+      changed: () => this.#changed(),
+      send: (session, prompt) => this.#send(session, prompt),
+      steer: (session, prompt) => this.#steer(session, prompt),
+      promptFailed: (session, error) => this.#promptFailed(session, error),
+      publishQueue: (session, back) => this.#publishQueue(session, back),
+      returnQueue: (session, reason, force) => this.#returnQueue(session, reason, force),
+      returnStale: (session) => this.#returnStale(session),
+      offerReturn: (session) => this.#offerReturn(session),
+      ackReturn: (session, conn, id) => this.#ackReturn(session, conn, id),
+      offer: (session, pending, attachment) => this.#offer(session, pending, attachment),
+      settle: (session, pending, outcome, by) => this.#settle(session, pending, outcome, by),
     };
-  }
-
-  /**
-   * Whether the person has said anything in the session. Known from the index, or for an entry written before the index
-   * kept it, from the log as the session loaded (`#backfill`). A log that could not be read then is read again here,
-   * and if it still cannot be it throws, and the session is listed as unreadable.
-   */
-  async #prompted(session: Session): Promise<boolean> {
-    if (session.entry.prompted !== undefined) return session.entry.prompted;
-    // As stored: an image is not read back from its blob to find out whether there is a message.
-    const records = await session.log.read(undefined, { stored: true });
-    const prompted = records.some(isUserMessage);
-    // A message written while the log was being read has set it already.
-    if (session.entry.prompted === undefined) this.#remember(session, { prompted }, false);
-    return session.entry.prompted ?? prompted;
-  }
-
-  /**
-   * A session whose history cannot be read, as the list shows it: what the index knows, with no
-   * `cycle/lastSeq` (that comes from the log) and no unread mark, and the marker.
-   */
-  #unreadableRow(sessionId: string, entry: SessionEntry) {
-    return {
-      sessionId,
-      cwd: entry.cwd,
-      updatedAt: entry.createdAt,
-      _meta: {
-        [META.archived]: entry.archived === true,
-        [META.agent]: entry.agent,
-        [META.state]: "stopped",
-        [META.historyFailed]: true,
-        ...(entry.config !== undefined ? { [META.config]: entry.config } : {}),
-        ...(entry.usage !== undefined ? { [META.usage]: entry.usage } : {}),
-        ...(entry.title !== undefined ? { title: entry.title } : {}),
-      },
-    };
-  }
-
-  /** The app a client talks to: this connection's view of the daemon. */
-  #facing(holder: { value?: ClientConn }) {
-    const me = (): ClientConn => {
-      if (holder.value === undefined) throw new Error("connection not ready");
-      return holder.value;
-    };
-    const app = acpAgent({ name: "cycle" });
-
-    app.onRequest(methods.agent.initialize, async ({ params }) => {
-      const requested = (params._meta as Record<string, unknown> | null | undefined)?.[
-        META.protocolVersion
-      ];
-      // Whether this client can answer a form: only then is it asked one (decision 0011).
-      me().ackReturns = params._meta?.[META.ackReturns] === true;
-      me().elicitation = params.capabilities?.elicitation?.form != null;
-      if (
-        typeof requested === "string" &&
-        requested.split(".")[0] !== CYCLE_PROTOCOL_VERSION.split(".")[0]
-      ) {
-        throw new RpcError(UNSUPPORTED_VERSION, "Unsupported Cycle protocol version", {
-          supported: [CYCLE_PROTOCOL_VERSION],
-          requested,
-        });
-      }
-      return {
-        protocolVersion: 2,
-        info: { name: "cycle", version: this.#version },
-        capabilities: { session: {} },
-        _meta: {
-          [META.protocolVersion]: CYCLE_PROTOCOL_VERSION,
-          [META.capabilities]: {
-            replay: ["start", "_cycle.seq"],
-            agents: [...this.#agents.keys()],
-            sessionListPages: true,
-            sessionOps: ["archive", "rename", "delete", "markRead", "stopSubagent"],
-            queue: true,
-            steer: true,
-            files: true,
-            folders: true,
-            filesInFolder: true,
-            fs: true,
-            diff: true,
-            trust: true,
-            connectors: true,
-            plugins: this.#plugins.agents(),
-            planUsage: true,
-            sessionMentions: true,
-            terminal: true,
-          },
-        },
-      };
-    });
-
-    app.onRequest(methods.agent.session.new, async ({ params }) => {
-      const meta = (params._meta ?? {}) as Record<string, unknown>;
-      const agentId =
-        typeof meta[META.agent] === "string"
-          ? (meta[META.agent] as string)
-          : [...this.#agents.keys()][0];
-      if (agentId === undefined)
-        throw new RpcError(CycleErrorCode.AgentUnavailable, "No agent is configured");
-      const definition = this.#definition(agentId);
-      const overrides = checkedConfig(
-        definition,
-        meta[META.config] === undefined ? {} : meta[META.config],
-      );
-      // The directories are paths on THIS machine (the daemon's), not the client's. Say so up front.
-      const directories = [params.cwd, ...(params.additionalDirectories ?? [])];
-      for (const [index, directory] of directories.entries()) {
-        if (!isAbsolute(directory)) {
-          throw new RpcError(
-            INVALID_PARAMS,
-            `The ${index === 0 ? "working directory" : "directory"} ${directory} is not an absolute path`,
-          );
-        }
-        if (
-          !(await stat(directory).then(
-            (s) => s.isDirectory(),
-            () => false,
-          ))
-        )
-          throw new RpcError(
-            INVALID_PARAMS,
-            `The ${index === 0 ? "working directory" : "directory"} ${directory} does not exist on the machine the daemon runs on`,
-          );
-      }
-      const id = randomUUID();
-      const entry: SessionEntry = {
-        agent: agentId,
-        agentSessionId: id,
-        cwd: params.cwd,
-        createdAt: new Date().toISOString(),
-        // Not in the list until the person's first message is on record (docs/protocol.md §6).
-        prompted: false,
-        turnOpen: false,
-        // Kept to send again each time the agent starts. Not in the log: that goes to every client.
-        ...(params.additionalDirectories?.length
-          ? { additionalDirectories: params.additionalDirectories }
-          : {}),
-        ...(params.mcpServers?.length ? { mcpServers: params.mcpServers } : {}),
-        ...(params.systemPrompt != null ? { systemPrompt: params.systemPrompt } : {}),
-      };
-      const log = await this.#store.open(id);
-      const session = new Session(id, entry, log);
-      this.#watch(session);
-      try {
-        await log.append({
-          kind: "meta",
-          data: { event: "created", agent: agentId, cwd: params.cwd },
-        });
-        // What the agent is given of the request: not the client's `_meta`, which is the daemon's to read.
-        const { _meta: _clientMeta, ...made } = params;
-        const { link, created: answer } = await this.#startAgent(session, "new", made);
-        if (answer === undefined) throw new Error("The agent did not answer session/new");
-        session.entry = { ...session.entry, agentSessionId: answer.sessionId };
-        // What the user set as the agent's defaults, then what they asked of this one.
-        const config = { ...this.#defaults.get(agentId), ...overrides };
-        // What the agent says its settings are now: each change answers with the whole set.
-        let options: SessionConfigOption[] = answer.configOptions ?? [];
-        for (const [configId, value] of orderedConfigEntries(config)) {
-          try {
-            const changed = await link.agent.request(methods.agent.session.setConfigOption, {
-              sessionId: session.entry.agentSessionId,
-              configId,
-              type: "id",
-              value,
-            });
-            if (changed.configOptions.length > 0) options = changed.configOptions;
-          } catch (error) {
-            throw new RpcError(
-              CycleErrorCode.InvalidConfig,
-              "The agent refused the configuration",
-              {
-                configId,
-                detail: error instanceof Error ? error.message : String(error),
-              },
-            );
-          }
-        }
-        // On record with what the agent started in, not only what was set: a resume sends it again,
-        // so a session keeps its mode even if the agent's default for new ones changes. What the
-        // agent reported meanwhile (a mode it fell back to) is newer than its first answer.
-        const recorded = {
-          ...currentValues(options),
-          ...(session.entry.config ?? {}),
-          ...config,
-        };
-        if (Object.keys(recorded).length > 0) {
-          session.entry = { ...session.entry, config: recorded };
-        }
-        // Publish the session only after every requested setting has been accepted.
-        this.#sessions.set(id, session);
-        session.lastActive = this.#now();
-        await this.#index.put(id, session.entry);
-        this.#changed();
-        this.#letGoOfOldestAhead(session);
-        return { sessionId: id, configOptions: options };
-      } catch (error) {
-        session.closed = true;
-        session.link?.kill();
-        this.#sessions.delete(id);
-        await log.close();
-        await this.#index.delete(id).catch(() => undefined);
-        await this.#store.remove(id).catch(() => undefined);
-        throw error;
-      }
-    });
-
-    app.onRequest(methods.agent.session.list, async ({ params }) => {
-      // Only a client that asks leaves out the sessions nothing has been said in: an older one opens a session it has
-      // just made by finding it in the list (docs/protocol.md §6).
-      const said =
-        (params?._meta as Record<string, unknown> | null | undefined)?.[META.onlyPrompted] === true;
-      const page = sessionPage(this.#index, params ?? {});
-      // A session not loaded yet is read from disk to be listed: a few at a time, not one after another (CYCL-261), and
-      // not all at once (each read holds its whole log in memory).
-      const rows = await mapBounded(page.entries, LIST_LOADS, async ([sessionId, entry]) => {
-        try {
-          return await this.#row(sessionId, entry, said);
-        } catch (error) {
-          // Deleted while the list was being read.
-          if (error instanceof RpcError && error.code === RESOURCE_NOT_FOUND) return undefined;
-          // One session whose history cannot be read is that session's problem, not the list's: it
-          // is listed, marked, and says so when it is opened. Anything else is the list's.
-          if (!(error instanceof RpcError) || error.code !== CycleErrorCode.LogUnavailable)
-            throw error;
-          return this.#unreadableRow(sessionId, entry);
-        }
-      });
-      // A session deleted while others were being read is left out, though its own row was read before it went.
-      const present = (row: (typeof rows)[number]): row is NonNullable<typeof row> =>
-        row !== undefined &&
-        this.#index.get(row.sessionId) !== undefined &&
-        this.#sessions.get(row.sessionId)?.closed !== true;
-      return {
-        sessions: rows.filter(present),
-        ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
-      };
-    });
-
-    app.onRequest(methods.agent.session.resume, async ({ params }) => {
-      const session = await this.#session(params.sessionId);
-      const raw = params.replayFrom as { type?: string } | null | undefined;
-      let after = session.log.lastSeq();
-      let replaying = false;
-      if (raw !== undefined && raw !== null) {
-        replaying = true;
-        if (raw.type === "start") after = 0;
-        else if (raw.type === "_cycle.seq") {
-          const parsed = ReplayFromSeqSchema.safeParse(raw);
-          if (!parsed.success)
-            throw new RpcError(INVALID_PARAMS, "Bad replayFrom", { replayFrom: raw });
-          after = parsed.data.after;
-        } else throw new RpcError(INVALID_PARAMS, "Unknown replayFrom", { replayFrom: raw });
-      }
-      const conn = me();
-      for (const old of session.attachments) {
-        if (old.conn === conn) {
-          old.detach();
-          session.attachments.delete(old);
-        }
-      }
-      const attachment: Attachment = { conn, ready: false, detach: () => {} };
-      session.attachments.add(attachment);
-      session.lastActive = this.#now();
-      const deliver = this.#deliver(session, attachment);
-      try {
-        const { detach } = await attach(session.log, after, deliver, async (replayedTo) => {
-          // ACP v2: the replay is ended by one replay_complete, then the current state.
-          if (replaying) {
-            await conn.notify(SESSION_UPDATE, {
-              sessionId: session.id,
-              update: { sessionUpdate: "replay_complete" },
-              _meta: { [META.seq]: replayedTo },
-            });
-          }
-          await conn.notify(SESSION_UPDATE, { sessionId: session.id, update: session.snapshot() });
-        });
-        attachment.detach = detach;
-      } catch (error) {
-        session.attachments.delete(attachment);
-        throw error;
-      }
-      // Requests still waiting from before are asked of this client too.
-      for (const pending of session.pending.values()) this.#offer(session, pending, attachment);
-      // A queue with no turn behind it was cut short by a restart. It is handed back now, after the
-      // replay and the snapshot, so the client that attached is told while it is listening.
-      attachment.ready = true;
-      this.#returnStale(session);
-      this.#offerReturn(session);
-      // Which they are, so a client that had one before can tell it is not among them: answered elsewhere.
-      return {
-        configOptions: [],
-        _meta: {
-          [META.pending]: [...session.pending.values()]
-            .filter((pending) => pending.asked.has(attachment))
-            .map((pending) => pending.requestId),
-        },
-      };
-    });
-
-    app.onRequest(methods.agent.session.prompt, async ({ params }) => {
-      const session = await this.#session(params.sessionId);
-      // A turn that could not be written down is not started: it would be lost on the next restart.
-      if (session.historyError !== undefined)
-        throw logUnavailable(session.id, session.historyError);
-      // Refused whole, before anything is started or written: a block is never dropped (decision 0010).
-      const problem = checkPrompt(
-        params.prompt,
-        this.#definition(session.entry.agent).promptCapabilities,
-      );
-      if (problem !== undefined)
-        throw new RpcError(INVALID_PARAMS, `The prompt cannot be sent: ${problem.reason}`, {
-          sessionId: session.id,
-          ...problem,
-        });
-      this.#returnStale(session);
-      // Taken: from now on the session is in the list (docs/protocol.md §6), whatever the agent makes of it. Not left to
-      // the agent's echo of the message, which an agent that fails, or never echoes, would not send. Announced below.
-      if (session.entry.prompted !== true) {
-        // The first message names the session until the agent does (CYCL-224): as the agent's, so its own title
-        // replaces it. Not a name the person gave, and not for an entry from before `prompted` was kept (it was prompted).
-        const title =
-          session.entry.prompted === false && session.entry.title === undefined
-            ? firstTitle(params.prompt)
-            : undefined;
-        const named = title === undefined ? {} : { title, titleFromAgent: true };
-        this.#remember(session, { prompted: true, ...named }, false);
-      }
-      const busy = () => session.status() !== "idle" && session.status() !== "stopped";
-      const meta = params._meta as Record<string, unknown> | null | undefined;
-      const steer = meta?.[META.steer];
-      // Whoever sent last says whether a suggestion of what to say next is wanted: it goes with every prompt from now.
-      const suggestions = meta?.[META.promptSuggestions];
-      if (typeof suggestions === "boolean") session.promptSuggestions = suggestions;
-      if (busy() && steer === true) {
-        // Into the running turn, where the agent can take it; otherwise it is queued as any other.
-        const steered = await this.#steer(session, params.prompt);
-        if (steered !== undefined) return steered;
-      }
-      if (busy()) {
-        // The agent is busy: the prompt waits here, and goes when the turn ends well.
-        if (session.queue.length >= QUEUE_LIMIT) throw queueFull(session.id, QUEUE_LIMIT);
-        const queueId = randomUUID();
-        const queued = { queueId, prompt: params.prompt };
-        session.queue.push(queued);
-        if (!(await this.#publishQueue(session))) {
-          // Not on record, so not taken: the sender keeps what they wrote, and the queue is as it was.
-          // (If the turn has ended meanwhile and sent it, it is gone from the queue and is not undone.)
-          const at = session.queue.indexOf(queued);
-          if (at >= 0) {
-            session.queue.splice(at, 1);
-            throw logUnavailable(session.id, session.historyError ?? HISTORY_NOT_SAVED);
-          }
-        }
-        return { messageId: queueId, _meta: { [META.queued]: true } };
-      }
-      // Marked at once: the agent's own "running" comes later, and a second prompt must not slip in.
-      session.agentState = "running";
-      session.turnEnded = false;
-      this.#changed();
-      try {
-        return await this.#send(session, params.prompt);
-      } catch (error) {
-        this.#promptFailed(session, error);
-        // The prompt never reached the agent, so no turn will end to send or return what was queued behind it.
-        this.#returnQueue(session, "error");
-        throw error;
-      }
-    });
-
-    app.onNotification(methods.agent.session.cancel, async ({ params }) => {
-      const session = this.#sessions.get(params.sessionId);
-      if (session === undefined) return;
-      // ACP: every pending permission request is answered "cancelled" when a turn is cancelled.
-      for (const pending of [...session.pending.values()])
-        this.#settle(session, pending, pending.cancelled);
-      // A stop means the person wants to change direction: what waits goes back to the input box.
-      this.#returnQueue(session, "cancelled");
-      // The agent is still starting, or a prompt is still being made ready: there is no turn to stop, so what is about to
-      // be given to it is held back.
-      if (session.starting !== undefined || session.preparing > 0) session.startingCancels++;
-      await session.link?.agent
-        .notify(methods.agent.session.cancel, { sessionId: session.entry.agentSessionId })
-        .catch(() => undefined);
-    });
-
-    app.onRequest(methods.agent.session.setConfigOption, async ({ params }) => {
-      const session = await this.#session(params.sessionId);
-      const link = await this.#ensureAgent(session);
-      const answer = await link.agent.request(methods.agent.session.setConfigOption, {
-        ...params,
-        sessionId: session.entry.agentSessionId,
-      });
-      const value = "value" in params ? params.value : undefined;
-      if (typeof value === "string") {
-        const config = { ...(session.entry.config ?? {}), [params.configId]: value };
-        session.entry = { ...session.entry, config };
-        await this.#index.update(session.id, { config });
-        this.#changed();
-      }
-      return answer;
-    });
-
-    app.onRequest(methods.agent.session.close, async ({ params }) => {
-      const session = this.#sessions.get(params.sessionId);
-      if (session !== undefined) this.#returnQueue(session, "closed");
-      session?.link?.kill();
-      return {};
-    });
-
-    app.onRequest(methods.agent.session.delete, async ({ params }) => {
-      let session: Session;
-      try {
-        session = await this.#session(params.sessionId);
-      } catch (error) {
-        // A session whose history cannot be read can still be deleted: it is the way out of it.
-        if (!(error instanceof RpcError) || error.code !== CycleErrorCode.LogUnavailable)
-          throw error;
-        try {
-          await this.#index.delete(params.sessionId);
-          await this.#store.remove(params.sessionId);
-        } finally {
-          this.#changed();
-        }
-        return {};
-      }
-      if (session.status() === "running" || session.status() === "requires_action")
-        throw sessionBusy(session.id);
-      session.closed = true;
-      session.link?.kill();
-      for (const attachment of session.attachments) attachment.detach();
-      // Gone from the list now; their processes end on their own time, not the answer's.
-      void this.#terminals.closeSession(session.id);
-      try {
-        // The index first, and the session out of the table at once: from then on nobody can load
-        // it again or get hold of it (a list that was being read, a client that was reconnecting),
-        // so none comes back from the dead while its log is being removed.
-        await this.#index.delete(session.id);
-        this.#sessions.delete(session.id);
-        await session.log.close();
-        await this.#store.remove(session.id);
-      } finally {
-        this.#changed();
-      }
-      return {};
-    });
-
-    // The handler answers what the method's result schema says: a field the schema has and the handler leaves out
-    // (or one of another shape) does not compile, and an answer the schema refuses is not sent.
-    const cycle = <P extends z.ZodType, R extends z.ZodType>(
-      method: CycleMethod<P, R>,
-      handler: CycleHandler<P, R>,
-    ) => onCycle(app, this.#log, method, handler);
-
-    cycle(agentsList, async () => ({
-      agents: await Promise.all(
-        [...this.#agents.values()].map(async (a) => ({
-          id: a.id,
-          name: a.name,
-          available: (await a.available?.()) ?? true,
-          configSchema: this.#optionsCache.apply(a.id, a.configSchema),
-          ...(a.promptCapabilities !== undefined
-            ? { promptCapabilities: a.promptCapabilities }
-            : {}),
-          ...(a.steer === true ? { steer: true } : {}),
-        })),
-      ),
-    }));
-    cycle(planUsageRead, () => ({ agents: Object.fromEntries(this.#planUsage) }));
-    cycle(agentDefaultsRead, (params) => {
-      this.#definition(params.agent);
-      return { config: this.#defaults.get(params.agent) };
-    });
-    cycle(agentDefaultsSet, async (params) => {
-      const definition = this.#definition(params.agent);
-      await this.#defaults.set(params.agent, checkedConfig(definition, params.config));
-      this.#clients.broadcast(NOTIFICATIONS.agentDefaultsChanged, { agent: params.agent });
-      return {};
-    });
-
-    const change =
-      (apply: (session: Session) => Promise<Partial<SessionEntry>>) =>
-      async (params: { sessionId: string }) => {
-        const session = await this.#session(params.sessionId);
-        const patch = await apply(session);
-        session.entry = { ...session.entry, ...patch };
-        await this.#index.update(session.id, patch);
-        this.#changed();
-        return {};
-      };
-    cycle(sessionDismissBackground, async ({ sessionId, taskIds }) => {
-      const session = await this.#session(sessionId);
-      let dismissed = 0;
-      for (const id of new Set(taskIds)) {
-        const task = session.unknownBackground.get(id);
-        if (!task || task.dismissing) continue;
-        task.dismissing = true;
-        if (
-          !(await this.#write(session, {
-            kind: "update",
-            data: {
-              sessionUpdate: "subagent_update",
-              sessionId: id,
-              _meta: { [META.subagent]: { toolCallId: task.toolCallId, status: "dismissed" } },
-            },
-          }))
-        ) {
-          task.dismissing = false;
-          throw logUnavailable(sessionId, session.historyError ?? HISTORY_NOT_SAVED);
-        }
-        if (session.unknownBackground.get(id) === task) session.unknownBackground.delete(id);
-        dismissed++;
-      }
-      if (dismissed) this.#changed();
-      return { dismissed };
-    });
-    cycle(sessionStopSubagent, async ({ sessionId, childId }) => {
-      const session = await this.#session(sessionId);
-      // Only a sub-agent the agent said can be stopped, that is running, of an agent that is there (docs/protocol.md §9).
-      const link = session.link;
-      // Never the session's own id: a cancel in it is the turn's, and a stop must not end the turn.
-      if (
-        link === undefined ||
-        childId === session.entry.agentSessionId ||
-        !session.canStop(childId)
-      )
-        return { stopping: false };
-      // ACP v2: a cancel in the child's own session stops that child, not the turn. Its end comes as its subagent_update.
-      await link.agent
-        .notify(methods.agent.session.cancel, { sessionId: childId })
-        .catch(() => undefined);
-      this.#log.info("subagent_stop_asked", { session: session.id });
-      return { stopping: true };
-    });
-    cycle(promptAckReturn, async ({ sessionId, returnId }) => {
-      return {
-        acknowledged: await this.#ackReturn(await this.#session(sessionId), me(), returnId),
-      };
-    });
-    cycle(promptDequeue, async (params) => {
-      const session = await this.#session(params.sessionId);
-      const at = session.queue.findIndex((entry) => entry.queueId === params.queueId);
-      const [entry] = at < 0 ? [] : session.queue.splice(at, 1);
-      if (entry === undefined) {
-        throw new RpcError(CycleErrorCode.NotQueued, "That prompt is not waiting", {
-          sessionId: session.id,
-          queueId: params.queueId,
-        });
-      }
-      if (!(await this.#publishQueue(session))) {
-        // Not on record: the prompt stays where it was, and the person is told it did not come back.
-        session.queue.splice(Math.min(at, session.queue.length), 0, entry);
-        throw logUnavailable(session.id, session.historyError ?? HISTORY_NOT_SAVED);
-      }
-      return { prompt: entry.prompt };
-    });
-    cycle(filesSearch, async (params) => {
-      // A conversation with no session yet looks in the folder it has chosen: the same search, the same bounds.
-      let cwd: string;
-      if (params.cwd !== undefined) {
-        if (!isAbsolute(params.cwd) || params.cwd.includes("\0"))
-          throw new RpcError(INVALID_PARAMS, "cwd must be an absolute path", { cwd: params.cwd });
-        cwd = params.cwd;
-      } else {
-        cwd = (await this.#session(params.sessionId as string)).entry.cwd;
-      }
-      const found = await searchFiles(cwd, params.query, params.limit);
-      return { root: cwd, ...found };
-    });
-    cycle(foldersList, (params) => listFolders(params.path, params.hidden === true));
-    cycle(fsList, (params) =>
-      // Git says what it ignores only for a repository the person trusts, since it reads that repository's
-      // configuration (.agents/notes/2026-11-22-files-and-diff-sources.md).
-      listFolder(this.#cwdOf(params.sessionId), params.path, (dir, names) =>
-        ignoredNames(dir, names, (repository) => this.#trust.of(repository).trusted === true),
-      ),
-    );
-    cycle(fsRead, (params) => readFile(this.#cwdOf(params.sessionId), params.path, params.offset));
-    // Git runs only for a repository the person trusts (.agents/notes/2026-11-22-files-and-diff-sources.md).
-    const trusted = (repository: string) => this.#trust.of(repository).trusted === true;
-    cycle(diffStatus, (params) => workspaceStatus(this.#cwdOf(params.sessionId), trusted));
-    cycle(diffFile, (params) => workspaceFile(this.#cwdOf(params.sessionId), params.path, trusted));
-    // Terminals (docs/protocol.md §8 "终端"): this connection is where their output goes.
-    const sink = (): TerminalSink => {
-      const conn = me();
-      return { id: conn.id, send: (method, params) => conn.notify(method, params) };
-    };
-    // From the index: a session does not have to be loaded (its history read) to have terminals.
-    cycle(terminalCreate, (params) => {
-      const cwd = this.#cwdOf(params.sessionId);
-      if (this.#index.get(params.sessionId)?.archived === true)
-        throw new RpcError(INVALID_PARAMS, "The session is archived", {
-          sessionId: params.sessionId,
-          reason: "archived",
-        });
-      return this.#terminals.create(params.sessionId, cwd, params.cols, params.rows, sink());
-    });
-    cycle(terminalList, (params) => {
-      this.#cwdOf(params.sessionId);
-      return { terminals: this.#terminals.list(params.sessionId) };
-    });
-    cycle(terminalAttach, (params) => this.#terminals.attach(params.terminalId, sink()));
-    cycle(terminalDetach, (params) => {
-      this.#terminals.detach(params.terminalId, me().id);
-      return {};
-    });
-    cycle(terminalInput, (params) => {
-      this.#terminals.input(params.terminalId, params.data);
-      return {};
-    });
-    cycle(terminalResize, (params) => {
-      this.#terminals.resize(params.terminalId, params.cols, params.rows);
-      return {};
-    });
-    cycle(terminalClose, async (params) => {
-      await this.#terminals.close(params.terminalId);
-      return {};
-    });
-    cycle(trustRead, async (params) => this.#trust.of(await realFolder(params.path)));
-    cycle(trustSet, async (params) => {
-      const real = await realFolder(params.path);
-      const trust = await this.#trust.set(real, params.trusted);
-      await this.#applyTrust(real);
-      return trust;
-    });
-    // Plugins (docs/protocol.md §15): each agent's own, done by that agent's machinery.
-    cycle(pluginsList, (params) => this.#plugins.list(params.agentId));
-    cycle(pluginsAvailable, (params) => this.#plugins.available(params));
-    cycle(pluginsInstall, async (params) => ({
-      plugin: await this.#plugins.install(params.agentId, params.id),
-    }));
-    cycle(pluginsUninstall, async (params) => {
-      await this.#plugins.uninstall(params.agentId, params.id);
-      return {};
-    });
-    cycle(pluginsUpdate, (params) => this.#plugins.update(params.agentId, params.id));
-    cycle(pluginsSetEnabled, async (params) => ({
-      plugin: await this.#plugins.setEnabled(params.agentId, params.id, params.enabled),
-    }));
-    cycle(pluginSourcesAdd, async (params) => ({
-      source: await this.#plugins.addSource(params.agentId, params.location),
-    }));
-    cycle(pluginSourcesRemove, async (params) => {
-      await this.#plugins.removeSource(params.agentId, params.id);
-      return {};
-    });
-    cycle(pluginSourcesRefresh, async (params) => {
-      await this.#plugins.refreshSource(params.agentId, params.id);
-      return {};
-    });
-    cycle(connectorsList, async () => ({ connectors: await this.#connectors.list() }));
-    cycle(connectorsAdd, async (params) => ({ connector: await this.#connectors.add(params) }));
-    cycle(connectorsUpdate, async (params) => ({
-      connector: await this.#connectors.update(params),
-    }));
-    cycle(connectorsRemove, async (params) => {
-      await this.#connectors.remove(params.id);
-      return {};
-    });
-    cycle(connectorsAuthStart, (params) =>
-      this.#connectors.authStart(params.id, params.redirectUri),
-    );
-    cycle(connectorsAuthFinish, async (params) => ({
-      connector: await this.#connectors.authFinish(params),
-    }));
-    cycle(connectorsAuthClear, async (params) => ({
-      connector: await this.#connectors.authClear(params.id),
-    }));
-    cycle(sessionArchive, (params) =>
-      change(async (session) => {
-        if (session.status() === "running" || session.status() === "requires_action")
-          throw sessionBusy(session.id);
-        return { archived: true };
-      })(params).then((done) => {
-        // An archived session's terminals go with it (docs/protocol.md §8 "终端"): off the list now, their
-        // processes ended in the background.
-        void this.#terminals.closeSession(params.sessionId);
-        return done;
-      }),
-    );
-    cycle(sessionUnarchive, (params) => change(async () => ({ archived: false }))(params));
-    cycle(sessionMarkRead, async (params) => {
-      const session = await this.#session(params.sessionId);
-      const lastSeq = session.log.lastSeq();
-      if (params.seq > lastSeq) {
-        throw new RpcError(INVALID_PARAMS, "seq is past the session's last record", {
-          sessionId: session.id,
-          seq: params.seq,
-          lastSeq,
-        });
-      }
-      const before = session.entry.readSeq ?? 0;
-      if (params.seq <= before) return {};
-      const unread = session.unread();
-      // On disk first: if that fails, what the list says and what a restart reads stay the same.
-      // Decided in the index's queue, so a lower mark that arrives meanwhile cannot undo this one.
-      await this.#index.update(session.id, (entry) => ({
-        readSeq: Math.max(entry.readSeq ?? 0, params.seq),
-      }));
-      const readSeq = this.#index.get(session.id)?.readSeq ?? params.seq;
-      session.entry = { ...session.entry, readSeq };
-      if (session.unread() !== unread) this.#changed();
-      return {};
-    });
-    cycle(sessionSetTitle, (params) =>
-      change(async () => ({ title: params.title, titleFromAgent: false }))(params),
-    );
-
-    return app;
   }
 }
-
-/** A record of something the person said: the agent's echo of a prompt (docs/protocol.md §8). */
-const isUserMessage = (record: LogRecord): boolean =>
-  record.kind === "update" &&
-  (record.data as { sessionUpdate?: unknown } | null)?.sessionUpdate === "user_message";
 
 /** How a turn ended, from an update that ends one. */
 type TurnEnd = { stopReason: string; code: number | undefined };

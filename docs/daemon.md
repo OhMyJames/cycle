@@ -6,15 +6,18 @@
 
 ## 结构
 
-| 文件                             | 作用                                                                             |
-| -------------------------------- | -------------------------------------------------------------------------------- |
-| `src/log/`                       | 事件日志:接口、JSONL 实现、补发(`attach`)                                        |
-| `src/index-file.ts`              | session 索引,整体原子写入                                                        |
-| `src/agents.ts`、`agent-link.ts` | agent 的定义,以及到 agent 的 ACP 连接(daemon 是 client)                          |
-| `src/process-agent.ts`           | 把一个子进程作为 agent 启动,显式环境,不继承                                      |
-| `src/session.ts`                 | 一个已加载的 session 的状态                                                      |
-| `src/daemon.ts`                  | 面向客户端的 ACP 应用:session 的创建、列表、附着、prompt、取消、权限、归档、删除 |
-| `src/logger.ts`                  | daemon 自己的运行日志:按事件记、过滤凭证、0600、按大小轮转(见"日志")             |
+| 文件                             | 作用                                                                                                                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/log/`                       | 事件日志:接口、JSONL 实现、补发(`attach`)                                                                                                                                       |
+| `src/index-file.ts`              | session 索引,整体原子写入                                                                                                                                                       |
+| `src/agents.ts`、`agent-link.ts` | agent 的定义,以及到 agent 的 ACP 连接(daemon 是 client)                                                                                                                         |
+| `src/process-agent.ts`           | 把一个子进程作为 agent 启动,显式环境,不继承                                                                                                                                     |
+| `src/session.ts`                 | 一个已加载的 session 的状态                                                                                                                                                     |
+| `src/daemon.ts`                  | `Daemon` 门面和核心:session 的加载、agent 的启停、日志写入、排队、权限请求,组装面向客户端的应用                                                                                 |
+| `src/facing/`                    | 面向客户端的 ACP 应用,按协议域一个注册模块(连接、session、附着、prompt 与排队、agent、文件与 diff、终端、信任、插件、连接器),都只通过 `core.ts` 的 `Core` 接触 daemon(CYCL-262) |
+| `src/acp.ts`                     | 和 ACP 的类型边界:客户端回答的收窄、`_cycle/*` 方法的结果按 schema 校验(CYCL-259)                                                                                               |
+| `src/clients.ts`                 | 连着的客户端;所有"告诉客户端"的通知都走这里,发不出去会记日志(CYCL-260)                                                                                                          |
+| `src/logger.ts`                  | daemon 自己的运行日志:按事件记、过滤凭证、0600、按大小轮转(见"日志")                                                                                                            |
 
 客户端看到的一切都经过 session 的日志:补发和实时是同一条路径。
 
