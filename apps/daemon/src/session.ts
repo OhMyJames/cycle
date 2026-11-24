@@ -110,11 +110,11 @@ export class Session {
    */
   historyError: string | undefined;
   /**
-   * The last `available_commands_update` on record, as the JSON that was written ("" if none), so
-   * one that says the same again is not written. Undefined until the first one comes, which has
-   * the log looked at; after that it is the last one given to `#write`, written or not.
+   * The last `available_commands_update` given to `#write` (as `commandsKey`), written or not, so
+   * one that says the same again is not written. Undefined until the first one comes in this run;
+   * the log knows the one on record from before (`SessionLog.lastCommands`).
    */
-  lastCommands: Promise<string> | undefined;
+  lastCommands: string | undefined;
   /** Set when the daemon lets the session go (deleted, or the daemon stops): a log closed then is not a failed one. */
   closed = false;
   /**

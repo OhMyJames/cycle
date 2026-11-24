@@ -10,7 +10,8 @@ eachTempDir((made) => {
   dir = made;
 });
 
-const store = () => new JsonlLogStore({ dir, now: () => new Date("2026-11-18T00:00:00Z") });
+const store = () =>
+  new JsonlLogStore({ dir, now: () => new Date("2026-11-18T00:00:00Z"), minSaving: 1 });
 
 test("gives records seq 1, 2, 3 and writes one line each", async () => {
   const log = await store().open("s1");
@@ -105,7 +106,11 @@ test("removes a closed log for good, and not an open one", async () => {
 test("updatedAt is the time of the last record that is not a meta one, and survives a reopen", async () => {
   let minute = 0;
   const ticking = () =>
-    new JsonlLogStore({ dir, now: () => new Date(Date.UTC(2026, 10, 18, 0, minute++)) });
+    new JsonlLogStore({
+      dir,
+      now: () => new Date(Date.UTC(2026, 10, 18, 0, minute++)),
+      minSaving: 1,
+    });
   const log = await ticking().open("s1");
   expect(log.updatedAt()).toBeUndefined();
   await log.append({ kind: "meta", data: { event: "created" } });
@@ -186,7 +191,11 @@ test("joins adjacent text chunks when an existing log is opened, keeping the las
 test("the first and last of a run keep their own ts, and updatedAt is still the last record's", async () => {
   let minute = 0;
   const ticking = () =>
-    new JsonlLogStore({ dir, now: () => new Date(Date.UTC(2026, 10, 18, 0, minute++)) });
+    new JsonlLogStore({
+      dir,
+      now: () => new Date(Date.UTC(2026, 10, 18, 0, minute++)),
+      minSaving: 1,
+    });
   const log = await ticking().open("s1");
   const a = await log.append(chunk("a"));
   for (const text of ["b", "c", "d"]) await log.append(chunk(text));
@@ -228,6 +237,23 @@ test("leaves alone the chunks at the end, other kinds of block, and chunks that 
     undefined,
     undefined,
   ]);
+  await again.close();
+});
+
+test("knows the last list of commands written, also after a reopen", async () => {
+  const commands = (name: string) => ({
+    kind: "update" as const,
+    data: { sessionUpdate: "available_commands_update", availableCommands: [{ name }] },
+  });
+  const log = await store().open("s1");
+  expect(log.lastCommands()).toBeUndefined();
+  await log.append(commands("a"));
+  await log.append(commands("b"));
+  await log.append(chunk("x"));
+  expect(log.lastCommands()).toBe(JSON.stringify(commands("b").data));
+  await log.close();
+  const again = await store().open("s1", "existing");
+  expect(again.lastCommands()).toBe(JSON.stringify(commands("b").data));
   await again.close();
 });
 

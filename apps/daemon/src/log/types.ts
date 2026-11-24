@@ -39,6 +39,8 @@ export interface SessionLog {
   lastSeq(): number;
   /** The `ts` of the last record that is not a `meta` one, or undefined if there is none. */
   updatedAt(): string | undefined;
+  /** The last `available_commands_update` written, as `commandsKey` makes it; undefined if there is none. */
+  lastCommands(): string | undefined;
   append(record: NewRecord): Promise<LogRecord>;
   /** `stored`: the records as they are kept, with what was moved out of them (images) left as references. */
   read(range?: ReadRange, options?: { stored?: boolean }): Promise<LogRecord[]>;

@@ -71,7 +71,7 @@ import {
 } from "./agent-setup.ts";
 import type { AgentDefinition } from "./agents.ts";
 import { Clients } from "./clients.ts";
-import { isCommandsUpdate, lastCommandsOf } from "./commands-update.ts";
+import { commandsKey, isCommandsData } from "./commands-update.ts";
 import { TERMINAL_DEFAULTS } from "./config.ts";
 import { ConnectorService } from "./connectors/service.ts";
 import {
@@ -1516,13 +1516,11 @@ export class Daemon {
       const data = checkToolResult(record.kind, redactRecord(record.kind, record.data));
       // The list of commands is long (15 KB on average) and agents repeat it unchanged: the same
       // one as the last on record is not written, and clients, who have that one, are sent nothing.
-      if (isCommandsUpdate(record, data)) {
-        const key = JSON.stringify(data);
-        // Taken and replaced with nothing awaited between, so writes made at once are compared in
-        // the order they were called, each with the one before it.
-        const before = session.lastCommands ?? lastCommandsOf(session.log);
-        session.lastCommands = Promise.resolve(key);
-        if ((await before) === key) return true;
+      // Nothing is awaited here, so what is written keeps the order the updates came in.
+      if (record.kind === "update" && isCommandsData(data)) {
+        const key = commandsKey(data);
+        if ((session.lastCommands ?? session.log.lastCommands()) === key) return true;
+        session.lastCommands = key;
       }
       await session.log.append({ ...record, data });
       return true;

@@ -1,5 +1,6 @@
-import { appendFile, mkdir, open, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, rename, rm, stat, truncate } from "node:fs/promises";
 import { join } from "node:path";
+import { commandsKey, isCommandsData } from "../commands-update.ts";
 import { logUnavailable } from "../errors.ts";
 import { compactChunks } from "./compact.ts";
 import type { LogRecord, LogStore, NewRecord, ReadRange, SessionLog } from "./types.ts";
@@ -10,6 +11,8 @@ export type JsonlStoreOptions = {
   /** The directory the sessions' files go in. Always given: nothing here guesses a home. */
   dir: string;
   now?: () => Date;
+  /** How many lines compaction must save for an opened log to be rewritten. Default 32. */
+  minSaving?: number;
 };
 
 const isRecord = (value: unknown): value is LogRecord =>
@@ -18,8 +21,11 @@ const isRecord = (value: unknown): value is LogRecord =>
   Number.isInteger((value as LogRecord).seq) &&
   typeof (value as LogRecord).ts === "string" &&
   typeof (value as LogRecord).kind === "string" &&
-  ((value as LogRecord).merged === undefined || ((value as LogRecord).merged as number) >= 2) &&
-  Number.isInteger((value as LogRecord).merged ?? 1);
+  isMergedField(value as LogRecord);
+
+/** `merged` is only on an update, and is a whole number of 2 or more. */
+const isMergedField = ({ merged, kind }: LogRecord): boolean =>
+  merged === undefined || (kind === "update" && Number.isInteger(merged) && merged >= 2);
 
 /**
  * Parses a file's text into records, checking that seq is 1, 2, 3, ... If there is a half line at
@@ -60,6 +66,7 @@ class JsonlSessionLog implements SessionLog {
   readonly #listeners = new Set<(record: LogRecord) => void>();
   #last: number;
   #updated: string | undefined;
+  #commands: string | undefined;
   #queue: Promise<unknown> = Promise.resolve();
   #closed = false;
 
@@ -68,13 +75,19 @@ class JsonlSessionLog implements SessionLog {
     path: string,
     last: number,
     updated: string | undefined,
+    commands: string | undefined,
     now: () => Date,
   ) {
     this.sessionId = sessionId;
     this.#path = path;
     this.#last = last;
     this.#updated = updated;
+    this.#commands = commands;
     this.#now = now;
+  }
+
+  lastCommands(): string | undefined {
+    return this.#commands;
   }
 
   lastSeq(): number {
@@ -107,6 +120,8 @@ class JsonlSessionLog implements SessionLog {
     }
     this.#last = stored.seq;
     if (stored.kind !== "meta") this.#updated = stored.ts;
+    if (stored.kind === "update" && isCommandsData(stored.data))
+      this.#commands = commandsKey(stored.data);
     for (const listener of [...this.#listeners]) listener(stored);
     return stored;
   }
@@ -138,11 +153,13 @@ class JsonlSessionLog implements SessionLog {
 export class JsonlLogStore implements LogStore {
   readonly #dir: string;
   readonly #now: () => Date;
+  readonly #minSaving: number;
   readonly #open = new Set<string>();
 
   constructor(options: JsonlStoreOptions) {
     this.#dir = options.dir;
     this.#now = options.now ?? (() => new Date());
+    this.#minSaving = options.minSaving ?? 32;
   }
 
   #path(sessionId: string): string {
@@ -189,7 +206,15 @@ export class JsonlLogStore implements LogStore {
       this.#open.delete(sessionId);
       throw error;
     }
-    const log = new JsonlSessionLog(sessionId, path, records.at(-1)?.seq ?? 0, updated, this.#now);
+    const commands = records.findLast((r) => r.kind === "update" && isCommandsData(r.data));
+    const log = new JsonlSessionLog(
+      sessionId,
+      path,
+      records.at(-1)?.seq ?? 0,
+      updated,
+      commands === undefined ? undefined : commandsKey(commands.data),
+      this.#now,
+    );
     const close = log.close.bind(log);
     log.close = async () => {
       await close();
@@ -205,10 +230,18 @@ export class JsonlLogStore implements LogStore {
    */
   async #compact(path: string, records: LogRecord[]): Promise<LogRecord[]> {
     const compacted = compactChunks(records);
-    if (compacted.length === records.length) return records;
+    // A file is not rewritten for a few lines.
+    if (records.length - compacted.length < this.#minSaving) return records;
     const temp = `${path}.compact`;
     try {
-      await writeFile(temp, compacted.map((record) => `${JSON.stringify(record)}\n`).join(""));
+      // On disk before it replaces the only copy.
+      const handle = await open(temp, "w");
+      try {
+        await handle.writeFile(compacted.map((record) => `${JSON.stringify(record)}\n`).join(""));
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
       await rename(temp, path);
       return compacted;
     } catch {

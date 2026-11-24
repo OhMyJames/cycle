@@ -1198,6 +1198,7 @@ const flaky = () => {
         sessionId: log.sessionId,
         lastSeq: () => log.lastSeq(),
         updatedAt: () => log.updatedAt(),
+        lastCommands: () => log.lastCommands(),
         read: (range) => log.read(range),
         subscribe: (listener) => log.subscribe(listener),
         close: () => log.close(),
