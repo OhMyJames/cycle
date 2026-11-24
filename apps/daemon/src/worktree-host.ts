@@ -33,8 +33,26 @@ const refuse = (error: unknown): never => {
   throw error;
 };
 
-export const worktreeHost = (deps: WorktreeHostDeps): WorktreeHost => ({
-  async enter(sessionId, input: EnterInput) {
+export const worktreeHost = (deps: WorktreeHostDeps): WorktreeHost => {
+  // One call at a time for a session: a retry of a call that is still running must not race it.
+  const tails = new Map<string, Promise<unknown>>();
+  const serial = <T>(sessionId: string, run: () => Promise<T>): Promise<T> => {
+    const result = (tails.get(sessionId) ?? Promise.resolve()).then(run, run);
+    const tail = result.catch(() => undefined);
+    tails.set(sessionId, tail);
+    void tail.then(() => {
+      if (tails.get(sessionId) === tail) tails.delete(sessionId);
+    });
+    return result;
+  };
+  return {
+    enter: (sessionId, input) => serial(sessionId, () => enter(deps, sessionId, input)),
+    exit: (sessionId, input) => serial(sessionId, () => exit(deps, sessionId, input)),
+  };
+};
+
+const enter = async (deps: WorktreeHostDeps, sessionId: string, input: EnterInput) => {
+  {
     const session = deps.session(sessionId);
     if (session === undefined) throw new ToolRefusal("This session is not running");
     if (session.entry.worktree !== undefined)
@@ -80,9 +98,11 @@ export const worktreeHost = (deps: WorktreeHostDeps): WorktreeHost => ({
     } catch (error) {
       return refuse(error);
     }
-  },
+  }
+};
 
-  async exit(sessionId, input: ExitInput) {
+const exit = async (deps: WorktreeHostDeps, sessionId: string, input: ExitInput) => {
+  {
     const session = deps.session(sessionId);
     if (session === undefined) throw new ToolRefusal("This session is not running");
     const tree = session.entry.worktree;
@@ -140,5 +160,5 @@ export const worktreeHost = (deps: WorktreeHostDeps): WorktreeHost => ({
           ? `Left the worktree at ${tree.path}; it and its branch are kept. The working directory changes from the next turn.`
           : `Removed the worktree at ${tree.path}${tree.branch !== undefined ? ` and its branch ${tree.branch}` : ""}. The working directory changes from the next turn.`,
     };
-  },
-});
+  }
+};

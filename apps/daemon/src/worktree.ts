@@ -65,10 +65,12 @@ const must = async (dir: string, args: readonly string[]): Promise<string> => {
 
 /** The main checkout of the repository `dir` is in, even from inside one of its worktrees. */
 export const mainCheckout = async (dir: string): Promise<string> => {
-  const common = await git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  if (common.code !== 0)
+  // The first entry of the list is the main working tree (right for submodules and separate git dirs too).
+  const listed = await git(dir, ["worktree", "list", "--porcelain"]);
+  const first = listed.out.split("\n").find((line) => line.startsWith("worktree "));
+  if (listed.code !== 0 || first === undefined)
     throw new WorktreeError("not_a_repository", `${dir} is not in a git repository`);
-  return dirname(common.out.trim());
+  return first.slice(9);
 };
 
 /** A worktree name checked the way Claude checks it: `/`-separated parts of letters, digits, `.`, `_`, `-`; ≤ 64. */
@@ -224,21 +226,14 @@ export const unsavedIn = async (tree: Worktree): Promise<Unsaved> => {
     .map((line) => line.slice(3));
   let commits: string[] = [];
   if (tree.branch !== undefined) {
-    const others = await must(tree.root, [
-      "for-each-ref",
-      "--format=%(refname)",
-      "refs/heads",
-      "refs/remotes",
-    ]);
-    const exclude = others
-      .split("\n")
-      .filter((ref) => ref !== "" && ref !== `refs/heads/${tree.branch}`)
-      .map((ref) => `^${ref}`);
     const log = await must(tree.root, [
       "rev-list",
       "--oneline",
       `refs/heads/${tree.branch}`,
-      ...exclude,
+      "--not",
+      `--exclude=${tree.branch}`,
+      "--branches",
+      "--remotes",
     ]);
     commits = log.split("\n").filter((line) => line !== "");
   }

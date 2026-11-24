@@ -30,6 +30,5 @@ export const WORKTREE_REASONS = [
   "invalid_base",
   "not_a_worktree",
   "unsaved_changes",
-  "remote_location",
 ] as const;
 export type WorktreeReason = (typeof WORKTREE_REASONS)[number];

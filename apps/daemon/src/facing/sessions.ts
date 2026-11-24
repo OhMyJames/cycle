@@ -207,6 +207,7 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
             worktree = { ...worktree, setupFailed: ran.output || "The setup script failed" };
         }
       } catch (error) {
+        if (madeHere !== undefined) await removeWorktree(madeHere).catch(() => undefined);
         if (error instanceof WorktreeError)
           throw new RpcError(INVALID_PARAMS, error.message, {
             reason: error.reason,
@@ -235,7 +236,11 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       // Its variables can be secrets: the index only, like the servers.
       ...(environment !== undefined ? { environment } : {}),
     };
-    const log = await core.store.open(id);
+    const log = await core.store.open(id).catch(async (error) => {
+      // The worktree this request made goes with it: nothing was done in it.
+      if (madeHere !== undefined) await removeWorktree(madeHere).catch(() => undefined);
+      throw error;
+    });
     const session = new Session(id, entry, log);
     core.watch(session);
     try {
@@ -402,7 +407,18 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       (params._meta as Record<string, { discard?: unknown }>)[META.worktree]?.discard === true;
     let unsaved: Awaited<ReturnType<typeof unsavedIn>> | undefined;
     if (tree !== undefined) {
-      unsaved = await unsavedIn(tree).catch(() => undefined);
+      // Fails closed: what cannot be checked is not known to be saved.
+      try {
+        unsaved = await unsavedIn(tree);
+      } catch (error) {
+        if (!discard)
+          throw new RpcError(INVALID_PARAMS, "The worktree could not be checked for unsaved work", {
+            reason: "unsaved_changes",
+            files: [],
+            commits: [],
+            detail: error instanceof Error ? error.message : String(error),
+          });
+      }
       if (
         unsaved !== undefined &&
         (unsaved.files.length > 0 || unsaved.commits.length > 0) &&
