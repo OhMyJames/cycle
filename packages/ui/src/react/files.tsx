@@ -403,6 +403,9 @@ const measure = (box: HTMLElement, start: number, end: number): Box | undefined 
     const first = code?.children[start - 1];
     const last = code?.children[Math.min(end, drawn) - 1];
     if (first === undefined || last === undefined) return undefined;
+    // Not drawn yet: the block is skipped while it is out of sight, as in a panel still sliding open, and the box around
+    // it has a stand-in's height, so what scrolls to the lines cannot reach them.
+    if (first.checkVisibility?.({ contentVisibilityAuto: true }) === false) return undefined;
     const from = first.getBoundingClientRect();
     const across = body.getBoundingClientRect();
     return {
