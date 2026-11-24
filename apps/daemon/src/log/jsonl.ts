@@ -1,6 +1,7 @@
-import { appendFile, mkdir, open, rm, stat, truncate } from "node:fs/promises";
+import { appendFile, mkdir, open, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { logUnavailable } from "../errors.ts";
+import { compactChunks } from "./compact.ts";
 import type { LogRecord, LogStore, NewRecord, ReadRange, SessionLog } from "./types.ts";
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -16,7 +17,9 @@ const isRecord = (value: unknown): value is LogRecord =>
   value !== null &&
   Number.isInteger((value as LogRecord).seq) &&
   typeof (value as LogRecord).ts === "string" &&
-  typeof (value as LogRecord).kind === "string";
+  typeof (value as LogRecord).kind === "string" &&
+  ((value as LogRecord).merged === undefined || ((value as LogRecord).merged as number) >= 2) &&
+  Number.isInteger((value as LogRecord).merged ?? 1);
 
 /**
  * Parses a file's text into records, checking that seq is 1, 2, 3, ... If there is a half line at
@@ -30,6 +33,7 @@ export const parseLog = (
   const records: LogRecord[] = [];
   if (end > 0) {
     const lines = text.slice(0, end - 1).split("\n");
+    let last = 0;
     for (const [index, line] of lines.entries()) {
       let parsed: unknown;
       try {
@@ -38,9 +42,11 @@ export const parseLog = (
         throw logUnavailable(sessionId, `line ${index + 1} is not JSON`);
       }
       if (!isRecord(parsed)) throw logUnavailable(sessionId, `line ${index + 1} is not a record`);
-      if (parsed.seq !== index + 1) {
+      // A compacted record stands for `merged` records, so it is that far past the one before it.
+      if (parsed.seq !== last + (parsed.merged ?? 1)) {
         throw logUnavailable(sessionId, `line ${index + 1} has seq ${parsed.seq}`);
       }
+      last = parsed.seq;
       records.push(parsed);
     }
   }
@@ -158,6 +164,7 @@ export class JsonlLogStore implements LogStore {
     this.#open.add(sessionId);
     let text: string;
     let records: LogRecord[];
+    let updated: string | undefined;
     try {
       if (mode === "create") {
         await mkdir(this.#dir, { recursive: true });
@@ -174,18 +181,40 @@ export class JsonlLogStore implements LogStore {
       // A crash can leave half a line. It is cut off now, before anything is appended: otherwise
       // the next record would be glued to it, and the damage would be in the middle of the file.
       if (parsed.validBytes < Buffer.byteLength(text)) await truncate(path, parsed.validBytes);
+      // Nothing writes to it and no client is attached yet: the time to join the text chunks.
+      // A joined record carries its first `ts`, so what `updatedAt` says is taken before.
+      updated = records.findLast((record) => record.kind !== "meta")?.ts;
+      if (mode === "existing") records = await this.#compact(path, records);
     } catch (error) {
       this.#open.delete(sessionId);
       throw error;
     }
-    const updated = records.findLast((record) => record.kind !== "meta")?.ts;
-    const log = new JsonlSessionLog(sessionId, path, records.length, updated, this.#now);
+    const log = new JsonlSessionLog(sessionId, path, records.at(-1)?.seq ?? 0, updated, this.#now);
     const close = log.close.bind(log);
     log.close = async () => {
       await close();
       this.#open.delete(sessionId);
     };
     return log;
+  }
+
+  /**
+   * Joins adjacent text chunks (`compactChunks`) and swaps the file for the result: written beside
+   * it and renamed, so a crash leaves the old file or the new one, never half. A failure leaves the
+   * old file as it was, which is still a good log.
+   */
+  async #compact(path: string, records: LogRecord[]): Promise<LogRecord[]> {
+    const compacted = compactChunks(records);
+    if (compacted.length === records.length) return records;
+    const temp = `${path}.compact`;
+    try {
+      await writeFile(temp, compacted.map((record) => `${JSON.stringify(record)}\n`).join(""));
+      await rename(temp, path);
+      return compacted;
+    } catch {
+      await rm(temp, { force: true });
+      return records;
+    }
   }
 
   async remove(sessionId: string): Promise<void> {

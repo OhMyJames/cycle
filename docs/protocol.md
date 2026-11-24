@@ -792,7 +792,9 @@ ACP 以后可能占用这个范围里的码,所以 Cycle 的码在 schema 里集
 要求:
 
 - 只追加。写入单行,崩溃留下的末尾半行在读取时丢弃。
-- `seq` 严格递增且连续。读取时发现不连续视为日志损坏,以 `-32015` 报告,不静默跳过。
+- `seq` 严格递增且连续。读取时发现不连续视为日志损坏,以 `-32015` 报告,不静默跳过。唯一的例外是压缩(下面"压缩"):带 `merged: n` 的记录代表它之前连续的 n 条,所以它的 `seq` 比上一行大 n。
+- **命令表去重。** `available_commands_update` 平均 15 KB,agent 常常原样重发。写入前与这个 session 日志里最近一条比较(过滤之后的内容逐字相同),相同就不写、不占 `seq`、不推给客户端(客户端手里已经有那一条)。daemon 进程里第一次遇到它时读一次日志取得最近一条,所以重启后 agent 重发同样的表也不会再写。
+- **压缩。** 打开已有 session 的日志时(没有写入者,也还没有客户端附着),把已结束的相邻文本块并成一条:同一个 `sessionUpdate`(`agent_message_chunk` 或 `agent_thought_chunk`)、除文字外各字段(`messageId`、`_meta`)全等、`content` 只有 `type: "text"` 和 `text` 的一连串记录,首尾两条不动,中间 ≥2 条并成一条:`seq` 取它们最后一条的,`ts` 取第一条的,`text` 依次相接,加 `merged: n`(n 是被并的条数)。首尾不动是因为客户端用第一块的时间当开始、最后一块的时间当结束(思考用时);只并中间的,时间一个都不丢。日志末尾的一串不并(消息可能还在增长)。不改 `seq` 的编号,所以 `readSeq`、`attentionSeq` 和客户端记着的位置都仍然有效;只有一个客户端恰好停在被并的那一段中间(断线后 daemon 重启)才会把那段文字再收一遍。写入是先写临时文件再改名,崩溃留下旧文件或新文件;失败就保持原样。`merged` 是日志记录的字段,不在 `data` 里,不发给客户端。
 - 日志不包含已知的凭证。写入前过滤,过滤发生在 daemon 把记录交给存储的那一处;客户端收到的是日志写下的那份,所以磁盘、实时推送和重放看到的一样。给客户端的权限请求(它不经过日志)用同一个过滤。规则刻意收得窄,因为猜错会改掉用户自己历史里的内容:
   1. **键名**:`tool_call` / `tool_call_update` 和权限请求里的工具调用(`subject.toolCall`)中,键名表示秘密的值换成 `"[redacted]"`,不论嵌套多深。键名按小写、去掉 `_ - .` 和空格后比较,以 password、passwd、passphrase、secret、apikey、accesskey、privatekey、credential、authorization、cookie 结尾(可带复数 s),或以 token 结尾(单数:`inputTokens` 这类计数不算),或恰好是 auth、bearer、pwd、pin。`{name, value}` 形式的列表(环境变量),`name` 符合上面的规则时换掉 `value`。
   2. **字符串**:工具调用里的所有字符串(命令、输出、文件内容、标题),把确定是凭证的部分换掉:常见令牌形态(`sk-ant-`、`sk-`、GitHub、Slack、AWS、Google、JWT)、私钥块、`Bearer`/`Basic` 后面又长又带数字的串(`Basic configuration` 这类文字不动)、`://用户:密码@主机` 里的密码、等号两边没有空格的赋值(全大写的 `NAME_KEY=值`,即 `cat .env` 的输出;小写的 `token=值`,如查询串)、`--token=值` 这类命令行参数、文本里 JSON 的 `"password": "值"`。等号两边有空格的(`const API_KEY = x`)、`==` 是代码,不动。
