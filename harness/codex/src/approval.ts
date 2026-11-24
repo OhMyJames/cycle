@@ -1,4 +1,5 @@
 import { type AgentContext, methods } from "@agentclientprotocol/sdk/experimental/v2";
+import { RpcError } from "@cycle/line-rpc";
 import type {
   CommandExecutionRequestApprovalParams,
   FileChangeRequestApprovalParams,
@@ -21,7 +22,7 @@ export async function approval(
   const permissions = method === "item/permissions/requestApproval";
   const files = method === "item/fileChange/requestApproval";
   if (!permissions && !files && method !== "item/commandExecution/requestApproval")
-    throw new Error("Unsupported server request");
+    throw new RpcError(-32601, `Unsupported server request: ${method}`);
   let decision: "accept" | "decline" | "cancel" = "cancel";
   // A sub-agent asks in its own thread, and on its own turns: the daemon shows it in the parent's session (ACP v2).
   const child = isChild(p.threadId);

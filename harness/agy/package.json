@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "catalog:",
+    "@cycle/line-rpc": "workspace:*",
     "@cycle/protocol": "workspace:*"
   },
   "scripts": {
