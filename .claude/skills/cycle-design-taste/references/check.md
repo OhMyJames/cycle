@@ -27,7 +27,7 @@ bun .claude/skills/cycle-design-taste/scripts/scan-copy.mjs path/a.tsx # 指定�
 
 ## 3. 状态画廊
 
-`bun packages/ui/gallery/shoot.ts` 用真实组件和假数据截图,默认覆盖浅色、深色、1200×800 和 720×480。在无界面的 Chromium 里截(Playwright,2 倍像素,不开窗口、不抢焦点;第一次运行前装一次浏览器:`bun run test:browser` 会顺带装上)。可传场景名缩小范围,改布局或交互时用两个 `--out` 目录保留同条件的前后图。打开相关截图,按改变的路径实际操作。新增界面状态在 `packages/ui/gallery/scenarios.ts` 里补场景。详见 `DESIGN.md` 附录 A。
+`bun packages/ui/gallery/shoot.ts` 用真实组件和假数据截图,默认覆盖浅色、深色、1200×800 和 720×480。在无界面的 Chromium 里截(Playwright,2 倍像素,不开窗口、不抢焦点;第一次运行前装一次浏览器:`bun run test:browser` 会顺带装上)。可传场景名缩小范围,改布局或交互时用两个 `--out` 目录保留同条件的前后图。打开相关截图,按改变的路径实际操作。新增界面状态在 `packages/ui/gallery/scenarios.ts` 里补场景。截图体积大时加 `--crop <选择器|x,y,w,h>`、`--format webp`、`--max-width 960`(输出文件名带 `.crop`)。详见 `DESIGN.md` 附录 A。
 
 画廊检查根页面的横向和纵向溢出、控制台错误和指定的键盘焦点。项目分组与大量会话场景还检查初始列表能完整显示第一条会话。消息输入框检查未聚焦边界和周围底色的对比度,最低 3:1。代码块和历史区各自的内部滚动是正常的。
 

@@ -1,33 +1,25 @@
-// Screenshots of the gallery: `bun packages/ui/gallery/shoot.ts [--out dir] [--themes light,dark] [--sizes 1200x800,720x480] [names...]`.
+// Screenshots of the gallery: `bun packages/ui/gallery/shoot.ts [--out dir] [--themes light,dark] [--sizes 1200x800,720x480] [--crop selector|x,y,w,h] [--format png|webp] [--max-width px] [names...]`.
 // Builds the gallery and opens it in headless Chromium (Playwright): no window, on any system, so it takes nobody's focus.
 // With no names, captures every scenario.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "playwright";
+import { type BrowserContext, chromium, type Page } from "playwright";
 import { serveDir } from "../../../scripts/serve-dir.ts";
 import { type Scenario, scenarios } from "./scenarios.ts";
+import { outputSize, parseShootOptions, type ShootOptions, shotFile } from "./shoot-options.ts";
 
 const here = new URL(".", import.meta.url).pathname;
 const argv = process.argv.slice(2);
-const flag = (name: string, fallback: string): string => {
-  const at = argv.indexOf(`--${name}`);
-  return at === -1 ? fallback : (argv[at + 1] ?? fallback);
-};
-const out = flag("out", join(here, "shots"));
-const themes = flag("themes", "light,dark").split(",");
-for (const theme of themes)
-  if (theme !== "light" && theme !== "dark") {
-    console.error(`--themes takes light and dark, not ${theme}`);
-    process.exit(2);
-  }
-const sizes = flag("sizes", "1200x800,720x480").split(",");
-const platform = flag("platform", "");
-const VALUE_FLAGS = new Set(["--out", "--themes", "--sizes", "--platform"]);
-const flagged = new Set(
-  argv.flatMap((a, i) => (VALUE_FLAGS.has(a) ? [i, i + 1] : a.startsWith("--") ? [i] : [])),
-);
-const named = argv.filter((_, i) => !flagged.has(i));
-const names = named.length > 0 ? named : ["tokens", ...Object.keys(scenarios)];
+let options: ShootOptions;
+try {
+  options = parseShootOptions(argv);
+} catch (error) {
+  console.error(String(error instanceof Error ? error.message : error));
+  process.exit(2);
+}
+const { themes, sizes, platform, crop, format, maxWidth } = options;
+const out = options.out ?? join(here, "shots");
+const names = options.names.length > 0 ? options.names : ["tokens", ...Object.keys(scenarios)];
 
 const build = Bun.spawn(["bun", join(here, "build.ts")], { stdout: "ignore", stderr: "inherit" });
 if ((await build.exited) !== 0) process.exit(1);
@@ -43,7 +35,10 @@ const jobs = names.flatMap((name) =>
         tabs: (scenarios as Record<string, Scenario | undefined>)[name]?.tabs ?? 0,
         width,
         height,
-        out: join(out, `${name}.${theme}.${size}.png`),
+        out: join(
+          out,
+          shotFile(name, theme, size, format, crop !== undefined || maxWidth !== undefined),
+        ),
       };
     }),
   ),
@@ -102,6 +97,64 @@ function measureLayout() {
   };
 }
 
+const DEVICE_SCALE_FACTOR = 2;
+
+/** A shot through the DevTools protocol: it can be webp, clipped to a region, and scaled down to a width. */
+async function shoot(
+  page: Page,
+  context: BrowserContext,
+  job: { out: string; width: number; height: number },
+) {
+  // What animations: "disabled" does in page.screenshot: finite ones run to their end, endless ones stop.
+  // First, so a selector is measured where the element ends up.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    for (const a of document.getAnimations()) {
+      if (a.effect?.getComputedTiming().endTime === Number.POSITIVE_INFINITY) a.cancel();
+      else a.finish();
+    }
+  });
+  let clip = { x: 0, y: 0, width: job.width, height: job.height };
+  if (crop?.kind === "rect")
+    clip = { x: crop.x, y: crop.y, width: crop.width, height: crop.height };
+  else if (crop) {
+    const box = await page.locator(crop.selector).first().boundingBox({ timeout: 5_000 });
+    if (!box) throw new Error(`--crop ${crop.selector} matches nothing visible`);
+    const scroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }));
+    clip = { x: box.x + scroll.x, y: box.y + scroll.y, width: box.width, height: box.height };
+  }
+  // Whole CSS pixels, covering the region.
+  const left = Math.floor(clip.x);
+  const top = Math.floor(clip.y);
+  clip = {
+    x: left,
+    y: top,
+    width: Math.ceil(clip.x + clip.width) - left,
+    height: Math.ceil(clip.y + clip.height) - top,
+  };
+  // Floored, so rounding in the browser never puts the width over the limit.
+  const scale = Math.floor(outputSize(clip.width, DEVICE_SCALE_FACTOR, maxWidth).scale * 1e6) / 1e6;
+  // page.screenshot hides the caret; here it is done by hand.
+  const hideCaret = await page.addStyleTag({
+    content: "* { caret-color: transparent !important; }",
+  });
+  const cdp = await context.newCDPSession(page);
+  try {
+    const { data } = await cdp.send("Page.captureScreenshot", {
+      format,
+      ...(format === "webp" ? { quality: 100 } : {}),
+      // The clip's scale is output pixels per CSS pixel: the device scale factor is not applied on top.
+      clip: { ...clip, scale: scale * DEVICE_SCALE_FACTOR },
+      // A clip past the viewport (a tall element) is still drawn whole.
+      captureBeyondViewport: true,
+    });
+    await Bun.write(job.out, Buffer.from(data, "base64"));
+  } finally {
+    await hideCaret.evaluate((el) => el.remove());
+    await cdp.detach();
+  }
+}
+
 // The built gallery, from loopback only: its module scripts do not load from a file.
 const dist = join(here, "dist");
 const server = serveDir(dist);
@@ -113,7 +166,7 @@ try {
     const context = await browser.newContext({
       viewport: { width: job.width, height: job.height },
       // At twice the pixels, as a Mac's screen shows it: a hairline and an edge's colour are what a review looks at.
-      deviceScaleFactor: 2,
+      deviceScaleFactor: DEVICE_SCALE_FACTOR,
       colorScheme: job.theme,
     });
     const page = await context.newPage();
@@ -160,7 +213,15 @@ try {
           })
         : undefined;
     // Animations at their end, not halfway: a dialog that is fading in, a ring that is still growing.
-    await page.screenshot({ path: job.out, animations: "disabled" });
+    if (format === "png" && !crop && maxWidth === undefined) {
+      await page.screenshot({ path: job.out, animations: "disabled" });
+    } else {
+      try {
+        await shoot(page, context, job);
+      } catch (error) {
+        errors.push(`screenshot: ${error}`);
+      }
+    }
     const layout = await page.evaluate(measureLayout);
     report.push({ ...job, focus, ready, ...layout, errors });
     await context.close();
@@ -194,7 +255,7 @@ for (const r of report) {
     if (ringless) problems.push("focus without a ring");
   }
   if (problems.length > 0) bad++;
-  if (problems.length > 0 || argv.includes("--all"))
+  if (problems.length > 0 || options.all)
     console.log(
       `${problems.length > 0 ? "!" : " "} ${r.out}${problems.length > 0 ? `  ${problems.join(", ")}` : ""}`,
     );
