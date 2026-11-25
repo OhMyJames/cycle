@@ -556,3 +556,171 @@ test("a session that begins on one of the owner's models talks to the gateway wi
     await rm(dir, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("the workspace profile unlocks .agents/worktree and .agents/notes in repo and worktree sessions while keeping .agents/skills, .git, .codex, and denyRead protected", async () => {
+  // Under the home directory on purpose: the sandbox leaves tmpdir writable, and this test verifies read-only rules.
+  const dir = await mkdtemp(join(homedir(), ".cycle-test-codex-agents-"));
+  const home = join(dir, "home");
+  const repo = join(dir, "repo");
+  const wt = join(repo, ".agents", "worktree", "wt-1");
+  const secretFile = join(dir, "secrets.env");
+  const missingProviders = join(dir, "providers.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(join(repo, ".git"), { recursive: true });
+  await mkdir(join(repo, ".codex"), { recursive: true });
+  await mkdir(join(repo, ".agents", "notes"), { recursive: true });
+  await mkdir(join(repo, ".agents", "skills"), { recursive: true });
+  await mkdir(join(wt, ".agents", "notes"), { recursive: true });
+  await mkdir(join(wt, ".agents", "skills"), { recursive: true });
+  await writeFile(join(wt, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "wt-1")}\n`);
+  await mkdir(join(repo, ".git", "worktrees", "wt-1"), { recursive: true });
+  await writeFile(secretFile, "VAULT_SECRET='top-secret'\n", { mode: 0o600 });
+
+  let nextCommand: string | undefined;
+  const mock = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (req) => {
+      if (!new URL(req.url).pathname.endsWith("/responses"))
+        return new Response(null, { status: 404 });
+      await req.text();
+      const cmd = nextCommand;
+      nextCommand = undefined;
+      return cmd !== undefined ? response(true, cmd) : response(false, "");
+    },
+  });
+  await writeFile(
+    join(home, "config.toml"),
+    `model="gpt-5.4"
+model_provider="mock"
+[model_providers.mock]
+name="mock"
+base_url="http://127.0.0.1:${mock.port}/v1"
+wire_api="responses"
+supports_websockets=false
+`,
+  );
+
+  const executable = process.env.CYCLE_DAEMON_BIN;
+  const entry = new URL("../../../../apps/daemon/src/main.ts", import.meta.url).pathname;
+
+  async function runCommand(sessionCwd: string, command: string) {
+    const proc = Bun.spawn(
+      [...(executable ? [executable] : [process.execPath, entry]), "adapter", "codex"],
+      {
+        cwd: sessionCwd,
+        env: {
+          PATH: "/usr/bin:/bin",
+          CYCLE_ADAPTER_CONFIG: JSON.stringify({
+            env: { HOME: home, CODEX_HOME: home, PATH: "/usr/bin:/bin" },
+            denyRead: [secretFile, missingProviders],
+          }),
+        },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      },
+    );
+    const updates: SessionUpdate[] = [];
+    const input = new WritableStream<Uint8Array>({
+      write(chunk) {
+        proc.stdin.write(chunk);
+        proc.stdin.flush();
+      },
+      close() {
+        proc.stdin.end();
+      },
+    });
+    const acp = client()
+      .onNotification(methods.client.session.update, ({ params }) => {
+        updates.push(params.update);
+      })
+      .onRequest(methods.client.session.requestPermission, () => ({
+        outcome: { outcome: "selected", optionId: "deny" },
+      }));
+    const idle = () =>
+      updates.filter(
+        (u) => u.sessionUpdate === "state_update" && "state" in u && u.state === "idle",
+      );
+    try {
+      await acp.connectWith(ndJsonStream(input, proc.stdout), async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          info: { name: "test", version: "1" },
+        });
+        const { sessionId } = await agent.request(methods.agent.session.new, { cwd: sessionCwd });
+        nextCommand = command;
+        await agent.request(methods.agent.session.prompt, {
+          sessionId,
+          prompt: [{ type: "text", text: "check sandbox" }],
+        });
+        for (let i = 0; i < 400 && idle().length === 0; i++) await Bun.sleep(25);
+        expect(idle()[0]).toMatchObject({ stopReason: "end_turn" });
+        await agent.request(methods.agent.session.close, { sessionId });
+      });
+    } finally {
+      proc.stdin.end();
+      await Promise.race([proc.exited, Bun.sleep(1500)]);
+      proc.kill();
+      await proc.exited;
+    }
+    return updates;
+  }
+
+  try {
+    // Scenario 1: cwd is the main repo.
+    const repoResult = join(repo, "result.txt");
+    await runCommand(
+      repo,
+      [
+        `{`,
+        `  touch "${join(wt, "created.txt")}" && echo wt=ALLOW || echo wt=DENY;`,
+        `  touch "${join(repo, ".agents", "notes", "n.txt")}" && echo notes=ALLOW || echo notes=DENY;`,
+        `  touch "${join(repo, ".agents", "skills", "s.txt")}" 2>/dev/null && echo skills=ALLOW || echo skills=DENY;`,
+        `  touch "${join(repo, ".git", "g.txt")}" 2>/dev/null && echo git=ALLOW || echo git=DENY;`,
+        `  touch "${join(repo, ".codex", "c.txt")}" 2>/dev/null && echo codex=ALLOW || echo codex=DENY;`,
+        `  cat "${secretFile}" >/dev/null 2>&1 && echo secret=ALLOW || echo secret=DENY;`,
+        `} > "${repoResult}"`,
+      ].join(" "),
+    );
+    expect((await readFile(repoResult, "utf8")).trim().split("\n")).toEqual([
+      "wt=ALLOW",
+      "notes=ALLOW",
+      "skills=DENY",
+      "git=DENY",
+      "codex=DENY",
+      "secret=DENY",
+    ]);
+    // On Linux bubblewrap, nonexistent denyRead entries must never be materialized as 0-byte stubs on the host.
+    expect(existsSync(missingProviders)).toBe(false);
+
+    // Scenario 2: cwd is inside `.agents/worktree/wt-1`.
+    const wtResult = join(wt, "result.txt");
+    await runCommand(
+      wt,
+      [
+        `{`,
+        `  touch "${join(wt, "code.txt")}" && echo code=ALLOW || echo code=DENY;`,
+        `  touch "${join(wt, ".agents", "notes", "wt-note.txt")}" && echo wt_notes=ALLOW || echo wt_notes=DENY;`,
+        `  touch "${join(wt, ".agents", "skills", "s.txt")}" 2>/dev/null && echo wt_skills=ALLOW || echo wt_skills=DENY;`,
+        `  touch "${join(wt, ".git")}" 2>/dev/null && echo wt_git=ALLOW || echo wt_git=DENY;`,
+        `  touch "${join(repo, ".git", "g2.txt")}" 2>/dev/null && echo repo_git=ALLOW || echo repo_git=DENY;`,
+        `  touch "${join(repo, ".codex", "c2.txt")}" 2>/dev/null && echo repo_codex=ALLOW || echo repo_codex=DENY;`,
+        `  cat "${secretFile}" >/dev/null 2>&1 && echo secret=ALLOW || echo secret=DENY;`,
+        `} > "${wtResult}"`,
+      ].join(" "),
+    );
+    expect((await readFile(wtResult, "utf8")).trim().split("\n")).toEqual([
+      "code=ALLOW",
+      "wt_notes=ALLOW",
+      "wt_skills=DENY",
+      "wt_git=DENY",
+      "repo_git=DENY",
+      "repo_codex=DENY",
+      "secret=DENY",
+    ]);
+  } finally {
+    mock.stop(true);
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 45_000);

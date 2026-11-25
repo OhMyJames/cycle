@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { client, methods, type SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { createAdapter } from "../src/agent.ts";
+import { createAdapter, cycleWritableSubpaths, effectiveDenyRead } from "../src/agent.ts";
 import { elicitationAnswer, questionAnswers, questionForm } from "../src/ask.ts";
 import { planWindowsOf } from "../src/plan-usage.ts";
 
@@ -569,6 +569,8 @@ test("the session's variables go to Codex's commands through the thread's config
 
 test("the files kept from Codex are denied in the thread's permission profile, which stands in place of a sandbox, in the modes that are workspace-write", async () => {
   const dir = await mkdtemp(join(tmpdir(), "cycle-codex-deny-"));
+  const secret = join(dir, "secrets.env");
+  await writeFile(secret, "KEY='v'\n");
   const { executable, messages } = await fake(dir, "");
   const open = async (denyRead?: string[]) => {
     const adapter = createAdapter({
@@ -592,7 +594,7 @@ test("the files kept from Codex are denied in the thread's permission profile, w
     }
   };
   try {
-    await open(["/data/secrets.env", "relative-is-dropped"]);
+    await open([secret, "relative-is-dropped"]);
     await open();
     const starts = (await messages()).filter((m) => m.method === "thread/start");
     expect(starts[0]?.params.config).toEqual({
@@ -600,7 +602,7 @@ test("the files kept from Codex are denied in the thread's permission profile, w
       permissions: {
         cycle: {
           extends: ":workspace",
-          filesystem: { "/extra": "write", "/data/secrets.env": "none" },
+          filesystem: { "/extra": "write", [secret]: "none" },
         },
       },
     });
@@ -609,6 +611,83 @@ test("the files kept from Codex are denied in the thread's permission profile, w
     expect(starts[0]?.params).toMatchObject({ approvalPolicy: "on-request" });
     expect(starts[1]?.params.sandbox).toBe("workspace-write");
     expect(starts[1]?.params).not.toHaveProperty("config");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("effectiveDenyRead keeps nonexistent paths on macOS but skips them on Linux so bubblewrap does not create empty stubs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cycle-codex-deny-linux-"));
+  const present = join(dir, "secrets.env");
+  const absent = join(dir, "providers.json");
+  await writeFile(present, "KEY='v'\n");
+  try {
+    expect(effectiveDenyRead([present, absent, "relative"], "darwin")).toEqual([present, absent]);
+    expect(effectiveDenyRead([present, absent, "relative"], "linux")).toEqual([present]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("when <cwd>/.agents exists, the workspace profile unlocks only .agents/worktree and .agents/notes and never follows symlinks", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cycle-codex-agents-"));
+  const repo = join(dir, "repo");
+  const symlinkRepo = join(dir, "symlink-repo");
+  const symlinkSub = join(dir, "symlink-sub");
+  const outside = join(dir, "outside");
+  await mkdir(join(repo, ".agents", "notes"), { recursive: true });
+  await mkdir(join(repo, ".agents", "skills"), { recursive: true });
+  await mkdir(outside, { recursive: true });
+  await mkdir(symlinkRepo, { recursive: true });
+  await symlink(outside, join(symlinkRepo, ".agents"));
+  await mkdir(join(symlinkSub, ".agents"), { recursive: true });
+  await symlink(outside, join(symlinkSub, ".agents", "worktree"));
+  const secret = join(dir, "secrets.env");
+  await writeFile(secret, "A='1'\n");
+  const { executable, messages } = await fake(dir, "");
+  try {
+    const realRepo = await realpath(repo);
+    expect(cycleWritableSubpaths(repo)).toEqual([
+      join(realRepo, ".agents", "worktree"),
+      join(realRepo, ".agents", "notes"),
+    ]);
+    // Missing or symlinked `.agents` is never unlocked; symlinked `.agents/worktree` is skipped.
+    expect(cycleWritableSubpaths(outside)).toEqual([]);
+    expect(cycleWritableSubpaths(symlinkRepo)).toEqual([]);
+    const realSymlinkSub = await realpath(symlinkSub);
+    expect(cycleWritableSubpaths(symlinkSub)).toEqual([join(realSymlinkSub, ".agents", "notes")]);
+
+    const adapter = createAdapter({
+      env: { HOME: dir, CODEX_HOME: dir },
+      denyRead: [secret],
+      codexExecutable: executable,
+    });
+    try {
+      await client().connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, { cwd: repo });
+      });
+    } finally {
+      adapter.close();
+    }
+    const start = (await messages()).find((m) => m.method === "thread/start");
+    expect(start?.params).not.toHaveProperty("sandbox");
+    expect(start?.params.config).toEqual({
+      default_permissions: "cycle",
+      permissions: {
+        cycle: {
+          extends: ":workspace",
+          filesystem: {
+            [join(realRepo, ".agents", "worktree")]: "write",
+            [join(realRepo, ".agents", "notes")]: "write",
+            [secret]: "none",
+          },
+        },
+      },
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

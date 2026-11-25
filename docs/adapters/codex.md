@@ -33,7 +33,7 @@
 | 流式回答、思考           | `item/agentMessage/delta` → `agent_message_chunk`;`item/reasoning/*Delta` → `agent_thought_chunk`;没来增量的整条在 `item/completed` 时发                                                                                           |
 | 工具                     | `commandExecution`、`fileChange`、`mcpToolCall`、`webSearch`、`collabAgentToolCall`、子 agent 的 `spawn_agent` → `tool_call_update`,按 item id 关联                                                                                |
 | 审批                     | 三种审批请求 → `session/request_permission`(允许一次、拒绝一次);拒绝回 `decline`,即使请求的 `availableDecisions` 里没有它(见下)                                                                                                    |
-| 权限模式                 | 下表;每个回合带上当前档的 `approvalPolicy`、`sandboxPolicy`                                                                                                                                                                        |
+| 权限模式                 | 下表;每个回合带上当前档的 `approvalPolicy`、`sandboxPolicy`(工作区档案见下)                                                                                                                                                        |
 | 模型和思考强度           | `model/list` → `model` 选项和每个模型的 `cycle/efforts`;Default 模型也有自己的档位(thread 打开时的模型,或清单里标默认的);每个回合都显式带 `model`、`effort`,因为 Codex 会把一个回合的选择沿用到之后                                |
 | plan 模式                | `mode: plan` → `turn/start.collaborationMode {mode: "plan", settings}`;切回其他档后下一回合发一次 `mode: "default"`。退出由客户端切档,不模拟 ExitPlanMode                                                                          |
 | 任务列表                 | `turn/plan/updated` → `plan_update`(`inProgress` → `in_progress`;`planId` 每个线程固定 `<threadId>-tasks`,后面回合的列表替换前面的,和 Claude、agy 一样;不用 plan 模式那份的 `<session>-plan`)                                      |
@@ -64,6 +64,8 @@
 | `auto-review` | Auto review                  | Let Codex review requests to go beyond the sandbox.    | `on-request`     | `workspace-write`    | `approvalsReviewer: "auto_review"` |
 | `plan`        | Plan mode                    | Create a plan and wait before making changes.          | `on-request`     | `workspace-write`    | `collaborationMode: plan`          |
 | `full-access` | Full access                  | Run without sandbox restrictions or approval prompts.  | `never`          | `danger-full-access` | `cycle/danger`                     |
+
+在 `workspace-write` 相关档位(`default`、`untrusted`、`auto-review`、`plan`)下,当 `denyRead` 非空或 `<cwd>/.agents` 为真实目录(非符号链接)时,线程通过 `config.default_permissions = "cycle"` 启用继承 `:workspace` 的权限档案(且不在线程级再传 `sandbox`,否则 Codex 会忽略该档案):仅放行 `<realpath(cwd)>/.agents/worktree` 与 `<realpath(cwd)>/.agents/notes` 的写权限(跳过符号链接),保留 `.agents/skills`、`.git`、`.codex`、`.aws` 的只读保护,并把 `denyRead`(`secrets.env`、`providers.json`)设为 `none`。Linux 下 `denyRead` 只传入已存在的文件,避免 bubblewrap 为不存在的 `none` 目标在宿主机建出 0 字节挂载点。详见 [决定笔记](../../.agents/notes/2026-11-24-codex-agents-worktree-and-notes-sandbox.md)。
 
 ### 子 agent
 

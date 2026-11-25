@@ -1,5 +1,5 @@
-import { rmSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { existsSync, lstatSync, realpathSync, rmSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   type AgentContext,
   type AvailableCommand,
@@ -70,6 +70,56 @@ const NO_CLIENT = "cycle/noClient";
 /** In a `subagent_update`'s `_meta`: what Codex says of the sub-agent beyond ACP's fields (decision 0014). */
 const SUBAGENT_META = "cycle/subagent";
 
+/**
+ * Subdirectories under `<cwd>/.agents` that Cycle owns for agent work (managed git worktrees from CYC-273 and agent
+ * decision notes). Codex 0.171.0 marks `<cwd>/.agents` read-only in `:workspace`; unlocking only these two keeps
+ * `.agents/skills`, `.git`, `.codex`, and `.aws` protected.
+ */
+const CYCLE_AGENTS_WRITABLE = ["worktree", "notes"] as const;
+
+export function cycleWritableSubpaths(cwd: string): string[] {
+  let realCwd: string;
+  try {
+    realCwd = realpathSync(cwd);
+  } catch {
+    return [];
+  }
+  const agentsDir = join(realCwd, ".agents");
+  try {
+    if (!lstatSync(agentsDir).isDirectory()) return [];
+  } catch {
+    return [];
+  }
+  const writable: string[] = [];
+  for (const sub of CYCLE_AGENTS_WRITABLE) {
+    const target = join(agentsDir, sub);
+    try {
+      // Never unlock a symlink or regular file: a symlink inside `.agents` could point outside the workspace, and
+      // Codex's Seatbelt sandbox refuses symlinked writable roots anyway.
+      if (!lstatSync(target).isDirectory()) continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue;
+    }
+    writable.push(target);
+  }
+  return writable;
+}
+
+/**
+ * Absolute paths to deny reading in Codex's permission profile. On Linux, bubblewrap implements `"none"` by
+ * bind-mounting `/dev/null` onto the path, which creates a 0-byte stub file on the host when the target does not exist
+ * yet (breaking later loads of `providers.json` with `Unexpected EOF`), so only existing paths are passed there. macOS
+ * Seatbelt matches path strings without touching the filesystem.
+ */
+export function effectiveDenyRead(
+  paths: readonly string[] | undefined,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return (paths ?? []).filter(
+    (path) => isAbsolute(path) && (platform !== "linux" || existsSync(path)),
+  );
+}
+
 /** A failed turn's message; one Codex failed for want of a login says how to sign in. */
 export function turnErrorMessage(error: TurnError | null | undefined): string | undefined {
   if (error?.codexErrorInfo === "unauthorized")
@@ -106,11 +156,14 @@ export function createAdapter(config: AdapterConfig) {
   /** Closed on purpose (session/close, the adapter's end): any other end of the app-server is its death. */
   let closing = false;
   let additionalDirectories: string[] = [];
-  /** The thread's sandbox is a permission profile that denies reading some files (see `open`), not a `sandbox` mode. */
-  let denyProfile = false;
+  /**
+   * The thread's sandbox is Cycle's `:workspace`-extending permission profile (see `open`), not a `sandbox` mode: used
+   * to unlock `.agents/{worktree,notes}` under `cwd` and/or deny reading `secrets.env` and `providers.json`.
+   */
+  let workspaceProfile = false;
   /**
    * A turn named a sandbox of its own (Read only, Full access). Codex keeps it for the turns after, and there is no way
-   * to name the profile again, so from then on every turn names its sandbox as before, without the denial.
+   * to name the profile again, so from then on every turn names its sandbox as before, without the profile's overrides.
    */
   let sandboxNamed = false;
   let developerInstructions: string | undefined;
@@ -605,8 +658,9 @@ export function createAdapter(config: AdapterConfig) {
     const turn = turnPolicy(mode, additionalDirectories);
     // The thread's own profile stands in the modes whose sandbox it is; naming one here would replace it.
     const { sandboxPolicy, ...withoutSandbox } = turn;
-    const keepsProfile = denyProfile && !sandboxNamed && sandboxPolicy.type === "workspaceWrite";
-    if (denyProfile && !keepsProfile) sandboxNamed = true;
+    const keepsProfile =
+      workspaceProfile && !sandboxNamed && sandboxPolicy.type === "workspaceWrite";
+    if (workspaceProfile && !keepsProfile) sandboxNamed = true;
     return {
       ...(keepsProfile ? withoutSandbox : turn),
       ...(chosenModel !== undefined ? { model: chosenModel } : {}),
@@ -730,13 +784,15 @@ export function createAdapter(config: AdapterConfig) {
     );
     server = child;
     // A profile and a `sandbox` on the thread cannot both be (Codex ignores the profile when `sandbox` is given: checked
-    // with 0.166.0, `activePermissionProfile` stays null), so the thread has the profile alone. Built on `:workspace` it is
-    // the same sandbox `workspace-write` gives, with the extra folders as writable entries and the files as `none`.
-    // The thread begins in the default mode, which is that sandbox. A turn in Read only or Full access still names its
-    // own sandbox below, and that one has no such denial.
-    const deny = (config.denyRead ?? []).filter((path) => isAbsolute(path));
-    denyProfile = deny.length > 0;
-    if (denyProfile)
+    // with 0.166.0 and 0.171.0, `activePermissionProfile` stays null), so the thread has the profile alone. Built on
+    // `:workspace` it gives the same sandbox `workspace-write` gives, unlocks Cycle's `.agents/{worktree,notes}` under
+    // `cwd` (leaving `.agents/skills`, `.git`, `.codex`, and `.aws` read-only), adds extra folders as writable entries,
+    // and sets `denyRead` files as `none` (last, so denials always win). A turn in Read only or Full access still names
+    // its own sandbox below.
+    const workspaceWritable = cycleWritableSubpaths(params.cwd);
+    const deny = effectiveDenyRead(config.denyRead);
+    workspaceProfile = workspaceWritable.length > 0 || deny.length > 0;
+    if (workspaceProfile)
       codexConfig = {
         ...codexConfig,
         default_permissions: "cycle",
@@ -745,6 +801,7 @@ export function createAdapter(config: AdapterConfig) {
             extends: ":workspace",
             filesystem: {
               ...Object.fromEntries(additionalDirectories.map((path) => [path, "write"])),
+              ...Object.fromEntries(workspaceWritable.map((path) => [path, "write"])),
               ...Object.fromEntries(deny.map((path) => [path, "none"])),
             },
           },
@@ -783,7 +840,7 @@ export function createAdapter(config: AdapterConfig) {
       }
       const settings = {
         cwd: params.cwd,
-        ...(denyProfile ? threadPolicy : policy(mode)),
+        ...(workspaceProfile ? threadPolicy : policy(mode)),
         ...(chosen !== undefined ? { model: chosen.id } : {}),
         ...(Object.keys(codexConfig).length > 0 ? { config: codexConfig } : {}),
         ...(developerInstructions ? { developerInstructions } : {}),
