@@ -42,9 +42,27 @@ const until = async (condition: () => boolean, what: string, ms = 30_000) => {
   }
 };
 
+/**
+ * Under Cycle's isolated agent env (`USER` and `LOGNAME` unset), Bun on macOS reports
+ * `os.userInfo().username === "unknown"`, which sshd rejects. Fall back to `id -un`.
+ */
+const currentUsername = (): string => {
+  try {
+    const name = userInfo().username;
+    if (name && name !== "unknown") return name;
+  } catch {
+    // Fall through to passwd lookup.
+  }
+  const id = Bun.spawnSync(["id", "-un"], { stdout: "pipe", stderr: "ignore" });
+  const resolved = id.exitCode === 0 ? new TextDecoder().decode(id.stdout).trim() : "";
+  if (resolved) return resolved;
+  return userInfo().username;
+};
+
 test.skipIf(!ready)(
   "over real ssh: a turn, a dropped connection that changes nothing, and a new connection with the history",
   async () => {
+    const username = currentUsername();
     const run = async (command: string[]) => {
       const p = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
       await p.exited;
@@ -70,7 +88,7 @@ test.skipIf(!ready)(
         "KbdInteractiveAuthentication no",
         "UsePAM no",
         "StrictModes no",
-        `AllowUsers ${userInfo().username}`,
+        `AllowUsers ${username}`,
       ].join("\n"),
     );
     server = Bun.spawn([sshd as string, "-D", "-e", "-f", config], {
@@ -113,7 +131,7 @@ test.skipIf(!ready)(
     );
     const connect = () =>
       sshChannel({
-        host: `${userInfo().username}@127.0.0.1`,
+        host: `${username}@127.0.0.1`,
         args: [
           "-p",
           String(port),

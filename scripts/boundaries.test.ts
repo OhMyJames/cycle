@@ -170,14 +170,17 @@ const scratch = join(root, "node_modules/.cache");
 mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(join(scratch, "boundaries-"));
 
-const typeErrors = (config: string, source: string): string => {
+const typeErrors = (config: string, source: string, extraEnv?: Record<string, string>): string => {
   const sub = mkdtempSync(join(dir, "case-"));
   writeFileSync(join(sub, "case.ts"), source);
   writeFileSync(
     join(sub, "tsconfig.json"),
     JSON.stringify({ extends: join(root, config), include: ["./case.ts"] }),
   );
-  const out = Bun.spawnSync(["bun", tsc, "-p", join(sub, "tsconfig.json")], { cwd: sub });
+  const out = Bun.spawnSync(["bun", tsc, "--pretty", "false", "-p", join(sub, "tsconfig.json")], {
+    cwd: sub,
+    ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+  });
   return new TextDecoder().decode(out.stdout);
 };
 
@@ -187,6 +190,14 @@ describe("type environments", () => {
       expect(typeErrors("tsconfig.model.json", `export const x = ${global};`)).toContain(
         "error TS",
       );
+  });
+
+  test("type diagnostics stay plain even when color output is forced", () => {
+    const out = typeErrors("tsconfig.model.json", "export const x = document.title;", {
+      FORCE_COLOR: "1",
+    });
+    expect(out).toContain("error TS");
+    expect(out).not.toContain(`${String.fromCharCode(27)}[`);
   });
 
   test("the model may use plain TypeScript and the bridge's types", () => {
