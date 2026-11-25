@@ -6,9 +6,9 @@
 
 |      | 命令                       | 时间     | 峰值内存        | 谁跑                                      |
 | ---- | -------------------------- | -------- | --------------- | ----------------------------------------- |
-| 门禁 | `bun run check`            | 约 16 秒 | 约 1.2 GB       | 每次提交(pre-commit)、每次 push 和 PR(CI) |
-| 界面 | `bun run test:browser`     | 约 23 秒 | 约 2.2 GB       | push 到 main、PR、手动(CI)                |
-| 集成 | `bun run test:integration` | 约 35 秒 | 约 1.5 GB(冒烟) | push 到 main、PR、手动(CI)                |
+| 门禁 | `bun run check`            | 约 16 秒 | 约 1.2 GB       | 每次提交(pre-commit)、每个 PR(CI) |
+| 界面 | `bun run test:browser`     | 约 23 秒 | 约 2.2 GB       | PR、手动(CI)                          |
+| 集成 | `bun run test:integration` | 约 35 秒 | 约 1.5 GB(冒烟) | PR、手动(CI)                          |
 
 门禁依次是:边界检查、Tailwind 生成 css、类型检查(约 1 秒)、lint、常规测试(约 1300 个,两个 worker 并行约 13 秒)。`check.ts` 在最后打印每一步的耗时。
 
@@ -122,8 +122,10 @@ CYCLE_CODEX_AUTH=<auth.json 的路径> bun run --cwd apps/daemon test:real:codex
 
 `.github/workflows/ci.yml`:
 
-- `check`:每次 push 和 PR。`bun install --frozen-lockfile --ignore-scripts`,然后 `bun run check`。同一个分支的新提交会取消上一次还在跑的。10 分钟上限。
-- `integration`:每次 push 到 main、每个 PR 和手动触发,全部七个套件。装 xvfb 和 Electron 需要的库,下载 Electron 二进制(bun 不跑它的 postinstall),`bun run test:integration --strict --summary`,结果表写进步骤摘要。20 分钟上限。不需要任何密钥:模型是模拟的。
+- `check`:每个 PR。`bun install --frozen-lockfile --ignore-scripts`,然后 `bun run check`。同一个分支的新提交会取消上一次还在跑的。10 分钟上限。
+- `integration`:每个 PR 和手动触发,全部七个套件。装 xvfb 和 Electron 需要的库,下载 Electron 二进制(bun 不跑它的 postinstall),`bun run test:integration --strict --summary`,结果表写进步骤摘要。20 分钟上限。不需要任何密钥:模型是模拟的。
+
+CI 不在 push 到 main 时再跑:main 受 ruleset 保护,只接受 PR 合并,合并前 `check`、`browser`、`integration` 必须通过,合并后再跑一遍是重复。
 
 PR 上两个作业并行:`check` 约 35 秒,`integration` 连安装约 55 秒,其中测试本身约 35 秒(大头是 Claude 适配器套件)。
 
