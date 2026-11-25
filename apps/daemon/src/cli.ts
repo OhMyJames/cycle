@@ -133,6 +133,7 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
     // A fresh data directory has none of the agent's yet: Codex will not sign in to a CODEX_HOME that is not there.
     for (const key of cli.directories ?? [])
       if (env[key]) await mkdir(env[key], { recursive: true, mode: 0o700 });
+    if (cli.prepare) await cli.prepare(cliContext, env);
     const child = Bun.spawn(
       [executable, ...(cli.args ?? []), ...(command === "login" ? cli.login : []), ...typed],
       {

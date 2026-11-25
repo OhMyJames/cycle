@@ -1,8 +1,9 @@
 # Agent Note: agy's isolated HOME gets its own empty-password keychain
 
-Status: accepted
+Status: superseded
 Date: 2026-11-25
 Basis: CYC-316 and CYC-327 (itsaplan); the user ran the keychain experiment by hand on 2026-11-25 and accepted the empty password ("我接受空密码"); code in `harness/agy/src/keychain.ts`, merged in PR #221.
+Superseded by: [Claude and Codex keep host HOME; agy isolates HOME with file token storage and hardened fallback keychain](2026-11-25-agent-home-and-keychain-isolation.md)
 
 ## Problem
 

@@ -69,6 +69,8 @@ export type AgyPluginsOptions = {
   env: Record<string, string>;
   /** Non-project directory used as `cwd` so no project plugins are picked up accidentally. */
   cwd: string;
+  /** Optional hook run with `env.HOME` before spawning `agy plugin ...` (e.g. macOS fallback keychain). */
+  prepareKeychain?: (home: string) => Promise<void>;
   run?: RunAgyPluginCommand;
 };
 
@@ -221,12 +223,14 @@ export class AgyPlugins {
   readonly #executable: () => string | undefined;
   readonly #env: Record<string, string>;
   readonly #cwd: string;
+  readonly #prepareKeychain: ((home: string) => Promise<void>) | undefined;
   readonly #run: RunAgyPluginCommand;
 
   constructor(options: AgyPluginsOptions) {
     this.#executable = options.executable;
     this.#env = { ...options.env };
     this.#cwd = options.cwd;
+    this.#prepareKeychain = options.prepareKeychain;
     this.#run = options.run ?? bunRun;
   }
 
@@ -238,6 +242,7 @@ export class AgyPlugins {
     mkdirSync(this.#cwd, { recursive: true });
     if (this.#env.HOME) {
       mkdirSync(this.#env.HOME, { recursive: true, mode: 0o700 });
+      await this.#prepareKeychain?.(this.#env.HOME);
     }
     let result: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
     try {

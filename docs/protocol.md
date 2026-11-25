@@ -1124,10 +1124,10 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 
 ### 本地存储(`_cycle/storage/*`,CYC-277)
 
-每个 agent 在 daemon 给它的 HOME 里会积下东西:包管理的下载缓存(`.bun/install/cache`、`.npm/_cacache`、`.npm/_npx`、`Library/Caches`、`.cache/uv`)和它自己的会话记录(`projects`、`sessions`)。尺寸和清理都在 daemon 所在的机器上,客户端按 location 显示。
+每个 agent 在 Cycle 托管的目录里会积下东西:包管理的下载缓存(`.bun/install/cache`、`.npm/_cacache`、`.npm/_npx`、`Library/Caches`、`.cache/uv`)和它自己的会话记录(`projects`、`sessions`)。尺寸和清理都在 daemon 所在的机器上,客户端按 location 显示。
 
 - **能力协商**:`initialize` 响应的 `_meta["cycle/capabilities"]` 有 `storage: true` 才有这两个方法;旧 daemon 上客户端不显示这一块。
-- **读取**(`_cycle/storage/read`,`{}` → `{agents: [{agent, name, managed, items: [{id, kind, bytes}]}]}`):`kind` 为 `cache`(要用时会再下载,清掉只多一次下载)或 `history`(会话恢复要读的记录,只显示,不提供清理)。尺寸用 `du -skP` 量,不跟链接,总共 60 秒封顶,量不到的按 0。agent 的 HOME 取各 harness 自己的 `cli.env` 里的 `HOME`(`config.json` 的覆盖也算),协议层不认具体的 agent。
+- **读取**(`_cycle/storage/read`,`{}` → `{agents: [{agent, name, managed, items: [{id, kind, bytes}]}]}`):`kind` 为 `cache`(要用时会再下载,清掉只多一次下载)或 `history`(会话恢复要读的记录,只显示,不提供清理)。尺寸用 `du -skP` 量,不跟链接,总共 60 秒封顶,量不到的按 0。各 agent 的托管目录取 harness 声明的 `storageDir`(未声明时回落到 `cli.env` 里的 `HOME`;`config.json` 的覆盖也算),因此 Claude/Codex 透传宿主 `HOME` 时仍只量各自的 `CLAUDE_CONFIG_DIR`/`CODEX_HOME`,绝不把宿主 `HOME` 当托管目录(CYC-401),协议层不认具体的 agent。
 - **只清缓存**(`_cycle/storage/clean`,`{agent}` → `{cleaned: true, freedBytes}` 或 `{cleaned: false, problem, message}`):只删上面五个缓存目录,每个先 `lstat`,是链接就跳过,路径上有链接而落到 HOME 之外也跳过。**从不**碰 HOME 整个、登录状态(`.gemini`、`auth.json`)、`.local`、`Library/Application Support`、`plugins/`、`claude-env/`、Cycle 的 sessions/blobs/JSON 存储,以及 agent 替用户写的文件(`code/`、`Desktop/`)。
 - **`problem`**:`busy`——该 agent 有会话在回合中、等待回答或有后台任务,清缓存可能把正在跑的 `bun install` 弄坏,等它结束;`unmanaged`——它的 HOME 不在 daemon 的数据目录之内(用户把 `configDir`/`home` 指到了自己的文件夹),什么都不量不删;`unknown_agent`;`failed`——有缓存要删但一个都没删成(权限之类)。清理中途该 agent 起了新回合,会在下一个目录之前停下并回 `busy`,已经删掉的不恢复。一个目录读不了或超过 30 秒没量完,只是不出现在 `items` 里,不影响别的。`read` 对这样的 agent 返回 `managed: false` 和空 `items`。
 - 客户端清理之前要让用户确认,并说明下次用到时会重新下载。

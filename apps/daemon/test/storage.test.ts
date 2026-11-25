@@ -173,10 +173,13 @@ test("through the daemon: it says it has storage, reads the sizes, clears, and r
   }
 });
 
-test("each harness's home is what its own environment says, a configured one included, so no agent is named here", () => {
+test("each harness's managed directory is what its own storageDir says, even when host HOME is inherited", () => {
   const config = ConfigSchema.parse({ codex: { configDir: "/data/mine/codex" } });
   const found = Object.fromEntries(
-    agentHomesOf(HARNESSES, config, "/data", { PATH: "/usr/bin" }).map((h) => [h.agent, h.home]),
+    agentHomesOf(HARNESSES, config, "/data", {
+      PATH: "/usr/bin",
+      HOME: "/Users/real-host-home",
+    }).map((h) => [h.agent, h.home]),
   );
   expect(found.claude).toBe("/data/claude");
   expect(found.codex).toBe("/data/mine/codex");

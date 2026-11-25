@@ -109,6 +109,9 @@ export const agyEnv = (
     if (value !== undefined) env[key] = value;
   }
   env.HOME = config.home ?? join(dataDir, "agy");
+  // agy must keep an isolated HOME (models/plugin/usage have no directory env var), so force file-based token
+  // storage to avoid macOS Keychain prompts across all agy entry points (CYC-401 / CYC-402; `agy.env` can override).
+  env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE = "1";
   // agy-fast checks GitHub for a newer release from its session hook and swaps its own files: not unasked here
   // (`agy.env` can turn it back on).
   env.AGY_FAST_AUTO_UPDATE = "off";
@@ -128,6 +131,11 @@ export const createAgyDefinition = (
   const settings = config.agy;
   const env = agyEnv(settings, dataDir, inherited);
   const prepareKeychain = options.ensureKeychain ?? ensureKeychain;
+  const ensureIsolatedKeychain = (home: string): Promise<void> =>
+    prepareKeychain(home, {
+      ...(inherited.HOME !== undefined ? { hostHome: inherited.HOME } : {}),
+      ...(log !== undefined ? { log } : {}),
+    });
   // The session's variables, for agy's shell commands only (harness/agy env-dir.ts, CYC-314). What a former daemon
   // wrote has no process left to read it.
   const envDirs = join(dataDir, "agy-env");
@@ -179,6 +187,7 @@ export const createAgyDefinition = (
       },
       env,
       cwd: join(dataDir, "plugins", "agy"),
+      prepareKeychain: ensureIsolatedKeychain,
     }),
     setup: createAgySetupProvider({
       config: settings,
@@ -186,6 +195,7 @@ export const createAgyDefinition = (
       inherited,
       env: () => agyEnv(settings, dataDir, inherited),
       agentSettings,
+      prepareKeychain: ensureIsolatedKeychain,
       locateBinary: () => {
         if (settings.executable !== undefined) {
           return { source: "configured", path: settings.executable };
@@ -200,7 +210,7 @@ export const createAgyDefinition = (
     ...base,
     launch: async (launchContext) => {
       if (env.HOME) {
-        await prepareKeychain(env.HOME, log !== undefined ? { log } : undefined);
+        await ensureIsolatedKeychain(env.HOME);
       }
       return base.launch(launchContext);
     },
@@ -211,6 +221,7 @@ export const agyHarness: Harness = {
   id: "agy",
   name: "Antigravity",
   runAdapter,
+  storageDir: ({ config, dataDir, inherited }) => agyEnv(config.agy, dataDir, inherited).HOME,
   cli: {
     executable: (context) =>
       findAgyExecutable(
@@ -220,6 +231,13 @@ export const agyHarness: Harness = {
     env: ({ config, dataDir, inherited }) => agyEnv(config.agy, dataDir, inherited),
     login: ["acp", "--login"],
     directories: ["HOME"],
+    prepare: async ({ inherited }, cliEnv) => {
+      if (cliEnv.HOME) {
+        await ensureKeychain(cliEnv.HOME, {
+          ...(inherited.HOME !== undefined ? { hostHome: inherited.HOME } : {}),
+        });
+      }
+    },
   },
   definition: (context) => createAgyDefinition(context),
 };

@@ -61,7 +61,7 @@ const withStubClaude = async (main: string, ...args: string[]) => {
   const argv = (await readFile(seen, "utf8").catch(() => "")).split("\n").slice(0, -1);
   return { code, stderr, argv };
 };
-const MAIN = new URL("../src/main.ts", import.meta.url).pathname;
+const MAIN = new URL("./fixtures/stub-cli-main.ts", import.meta.url).pathname;
 
 test("cycle claude gives the Claude binary every argument as typed", async () => {
   const ran = await withStubClaude(MAIN, "claude", "--version", "-p", "hi", "--", "--help");
@@ -106,3 +106,49 @@ test("a build's commands are its agents': one with no command line has no login,
   expect(adapter.code).toBe(2);
   expect(adapter.stderr).toContain("No adapter for claude: this build has echo.");
 }, 30_000);
+
+test("runCli runs cli.prepare after creating cli.directories and before spawning the CLI binary (CYC-401)", async () => {
+  const orderLog = join(dir, "order.log");
+  const stub = join(dir, "bin", "prep-agent");
+  await Bun.write(stub, `#!/bin/sh\necho "spawned:$HOME" >> ${JSON.stringify(orderLog)}\n`);
+  await chmod(stub, 0o755);
+  const fixture = join(dir, "prep-main.ts");
+  await Bun.write(
+    fixture,
+    `import { appendFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { runCli } from ${JSON.stringify(new URL("../src/cli.ts", import.meta.url).pathname)};
+const harness = {
+  id: "prep",
+  name: "Prep",
+  runAdapter: async () => {},
+  definition: () => { throw new Error("unused"); },
+  cli: {
+    executable: () => ${JSON.stringify(stub)},
+    env: ({ dataDir }: { dataDir: string }) => ({ HOME: join(dataDir, "prep-home") }),
+    login: ["login"],
+    directories: ["HOME"],
+    prepare: async (_ctx: unknown, env: Record<string, string>) => {
+      appendFileSync(${JSON.stringify(orderLog)}, \`prepared:\${existsSync(env.HOME ?? "")}:\${env.HOME}\\n\`);
+    },
+  },
+};
+await runCli(Bun.argv.slice(2), [harness as never]);
+`,
+  );
+  const child = Bun.spawn(
+    [process.execPath, fixture, "--data-dir", join(dir, "data"), "login", "prep"],
+    {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir },
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+  );
+  const code = await child.exited;
+  expect(code).toBe(0);
+  const lines = (await readFile(orderLog, "utf8")).trim().split("\n");
+  expect(lines).toEqual([
+    `prepared:true:${join(dir, "data", "prep-home")}`,
+    `spawned:${join(dir, "data", "prep-home")}`,
+  ]);
+}, 15_000);

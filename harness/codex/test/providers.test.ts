@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -113,16 +113,20 @@ test("a DeepSeek compact limit never exceeds the model's effective window", () =
   expect(document.models.map((model) => model.auto_compact_token_limit)).toEqual([500_000, 60_800]);
 });
 
-test("the bundled catalog is read from the pinned executable without the gateway token", async () => {
+test("the bundled catalog is read from the pinned executable in CODEX_HOME without the gateway token", async () => {
   const dir = await mkdtemp(join(tmpdir(), "cycle-codex-bundled-"));
+  const codexHome = join(dir, "codex-home");
+  await mkdir(codexHome, { recursive: true });
   const executable = join(dir, "fake-codex"),
-    token = join(dir, "token");
+    token = join(dir, "token"),
+    seenCwd = join(dir, "cwd");
   await writeFile(
     executable,
     `#!${process.execPath}
 import {writeFileSync} from "node:fs";
 if (process.argv.slice(2).join(" ") !== "debug models --bundled") process.exit(2);
 writeFileSync(${JSON.stringify(token)}, process.env.CYCLE_PROVIDER_TOKEN ?? "absent");
+writeFileSync(${JSON.stringify(seenCwd)}, process.cwd());
 console.log(JSON.stringify({models:${JSON.stringify(bundled)}}));
 `,
     { mode: 0o700 },
@@ -130,13 +134,16 @@ console.log(JSON.stringify({models:${JSON.stringify(bundled)}}));
   try {
     const models = await loadBundledModels({
       codexExecutable: executable,
-      env: { ...process.env, HOME: dir, CYCLE_PROVIDER_TOKEN: "gw-token" } as Record<
-        string,
-        string
-      >,
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: dir,
+        CODEX_HOME: codexHome,
+        CYCLE_PROVIDER_TOKEN: "gw-token",
+      },
     });
     expect(models).toEqual(bundled);
     expect(await readFile(token, "utf8")).toBe("absent");
+    expect(await realpath(await readFile(seenCwd, "utf8"))).toBe(await realpath(codexHome));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
