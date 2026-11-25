@@ -600,9 +600,42 @@ test("red CI sends failure logs back to Dev, pushes fix to the same branch, then
   expect(run?.round).toBe(1);
 });
 
-test("CI failing past retry limit ends in Blocked with failed check and log reason", async () => {
-  const redIntegration = (): CiResponse => ({
+test("red CI with no new Dev commit reruns the failed jobs and waits for the new result", async () => {
+  const red = (job: string): CiResponse => ({
     headRefOid: "abc",
+    statusCheckRollup: [
+      { name: "check", status: "COMPLETED", conclusion: "SUCCESS" },
+      { name: "browser", status: "COMPLETED", conclusion: "SUCCESS" },
+      {
+        name: "integration",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: `https://github.com/o/r/actions/runs/20/job/${job}`,
+      },
+    ],
+  });
+  const s = setup([ready()], { dev: [done(), done()], qa: [done(PASS), done(PASS)] }, {}, [], {
+    responses: [
+      red("777"),
+      // Reading it again before the rerun: still red.
+      red("777"),
+      // The rerun has not shown up yet: the old attempt must not count again.
+      red("777"),
+      greenCi("abc"),
+    ],
+  });
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  const reruns = s.world.calls.filter((c) => c.includes("gh run rerun"));
+  expect(reruns).toEqual(["gh run rerun 20 --failed"]);
+  const run = await s.store.load("CYC-1");
+  expect(run?.ciRound).toBe(1);
+  expect(run?.ciFailedSha).toBe("abc");
+});
+
+test("CI failing past retry limit ends in Blocked with failed check and log reason", async () => {
+  const redIntegration = (headRefOid: string): CiResponse => ({
+    headRefOid,
     statusCheckRollup: [
       {
         name: "check",
@@ -625,7 +658,7 @@ test("CI failing past retry limit ends in Blocked with failed check and log reas
     ],
   });
   const integrationLog = "integration web suite failed: websocket closed unexpectedly";
-  const { pipeline, tracker, store, sessions } = setup(
+  const { pipeline, tracker, store, sessions, world } = setup(
     [ready()],
     {
       dev: [done(), done(), done()],
@@ -634,10 +667,19 @@ test("CI failing past retry limit ends in Blocked with failed check and log reas
     { maxCiRetries: 2 },
     [],
     {
-      responses: [redIntegration(), redIntegration(), redIntegration()],
+      responses: [redIntegration("sha-1"), redIntegration("sha-2"), redIntegration("sha-3")],
       logs: { "777": integrationLog },
     },
   );
+
+  // Each Dev turn commits, so every red run is a new CI run for a new commit.
+  const originalTurn = sessions.turn.bind(sessions);
+  let devTurns = 0;
+  sessions.turn = async (id, prompt, ctx) => {
+    const out = await originalTurn(id, prompt, ctx);
+    if (ctx.role === "dev") world.headSha = `sha-${++devTurns}`;
+    return out;
+  };
 
   const result = await pipeline.step();
   expect(result.status).toBe("blocked");
@@ -1084,6 +1126,7 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     phase: "review",
     round: 0,
     ciRound: 0,
+    ciFailedSha: null,
     worktree: WT,
     localBranch: "worktree-auto/cyc-1",
     remoteBranch: "auto/cyc-1",

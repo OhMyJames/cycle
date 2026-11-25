@@ -404,6 +404,51 @@ export const readCiFailureLogs = async (input: {
 };
 
 /**
+ * Reruns the failed jobs of the workflow runs behind red checks (`gh run rerun <id> --failed`) using `deliverEnv`.
+ * Refused once `ciRound` is past `maxCiRetries`, so reruns never outlive the retry budget.
+ */
+export const rerunFailedCi = async (input: {
+  failed: readonly CiCheckItem[];
+  ciRound: number;
+  maxCiRetries: number;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}): Promise<{ ok: true; runIds: string[] } | { ok: false; error: string }> => {
+  if (input.ciRound > input.maxCiRetries) {
+    return { ok: false, error: `已达重试上限（${input.maxCiRetries}），不再重新运行 CI。` };
+  }
+  const runIds = [
+    ...new Set(
+      input.failed.flatMap((c) => {
+        const { runId } = parseActionsUrl(c.detailsUrl);
+        return runId === undefined ? [] : [runId];
+      }),
+    ),
+  ];
+  if (runIds.length === 0) {
+    return { ok: false, error: "失败项没有 GitHub Actions 运行链接，无法重新运行。" };
+  }
+  const env = deliverEnv(input.env);
+  for (const runId of runIds) {
+    const done = await input.exec(["gh", "run", "rerun", runId, "--failed"], {
+      cwd: input.cwd,
+      env,
+      timeoutMs: input.timeoutMs,
+    });
+    if (done.timedOut) return { ok: false, error: `gh run rerun ${runId} 超时。` };
+    if (done.code !== 0) {
+      return {
+        ok: false,
+        error: `gh run rerun ${runId} 失败（exit ${done.code}）：${done.output.trim()}`,
+      };
+    }
+  }
+  return { ok: true, runIds };
+};
+
+/**
  * Polls CI status until all required checks pass, any finishes red (and returns its failure logs), or timeout/error.
  */
 export const waitForCi = async (input: {
@@ -418,6 +463,8 @@ export const waitForCi = async (input: {
   timeoutMs: number;
   clock: Clock;
   sleep: (ms: number) => Promise<void>;
+  /** Job links of a red attempt that was just rerun: while only these are red, the new attempt has not shown up yet. */
+  staleFailedUrls?: ReadonlySet<string> | undefined;
 }): Promise<WaitForCiResult> => {
   const startedAt = input.clock.now().getTime();
   const maxPolls =
@@ -439,7 +486,12 @@ export const waitForCi = async (input: {
     if (!read.ok) return { outcome: "error", error: read.error };
     lastStatus = read.status;
     if (read.status.state === "passed") return { outcome: "passed", status: read.status };
-    if (read.status.state === "failed") {
+    const stale = input.staleFailedUrls;
+    const onlyOldAttempt =
+      stale !== undefined &&
+      read.status.state === "failed" &&
+      read.status.failed.every((c) => c.detailsUrl !== null && stale.has(c.detailsUrl));
+    if (read.status.state === "failed" && !onlyOldAttempt) {
       const logs = await readCiFailureLogs({
         failed: read.status.failed,
         exec: input.exec,

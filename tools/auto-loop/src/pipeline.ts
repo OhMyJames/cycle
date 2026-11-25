@@ -18,6 +18,7 @@ import {
   renderPr,
   renderPrTitle,
   renderReviewComment,
+  rerunFailedCi,
   validatePr,
   waitForCi,
 } from "./pr.ts";
@@ -125,6 +126,7 @@ export class Pipeline {
       phase: "claimed",
       round: 0,
       ciRound: 0,
+      ciFailedSha: null,
       worktree: null,
       localBranch: null,
       remoteBranch: branchOf(issue.number),
@@ -682,7 +684,39 @@ export class Pipeline {
     if (head.code !== 0) throw new Blocked(`读取 HEAD 提交失败：${tail(head.output)}`);
     const headSha = head.output.trim();
 
+    // No new commit since the red run: a push starts no CI, so rerun the failed jobs and wait for that result.
+    let staleFailedUrls: Set<string> | undefined;
+    if (run.ciRound > 0 && run.ciFailedSha === headSha) {
+      const read = await readCiStatus({
+        prRef: prUrl,
+        requiredChecks: config.ciChecks,
+        expectedHeadSha: headSha,
+        exec: this.#d.exec,
+        cwd: worktree,
+        env: this.#d.env,
+        timeoutMs: config.commandTimeoutMs,
+      });
+      if (!read.ok) throw new Blocked(`读取 CI 状态失败：${tail(read.error)}`);
+      if (read.status.state === "failed") {
+        const rerun = await rerunFailedCi({
+          failed: read.status.failed,
+          ciRound: run.ciRound,
+          maxCiRetries: config.maxCiRetries,
+          exec: this.#d.exec,
+          cwd: worktree,
+          env: this.#d.env,
+          timeoutMs: config.commandTimeoutMs,
+        });
+        if (!rerun.ok) throw new Blocked(`重新运行 CI 失败：${tail(rerun.error)}`);
+        await store.event(run.key, "ci_rerun", { ciRound: run.ciRound, runs: rerun.runIds.length });
+        staleFailedUrls = new Set(
+          read.status.failed.flatMap((c) => (c.detailsUrl === null ? [] : [c.detailsUrl])),
+        );
+      }
+    }
+
     const result = await waitForCi({
+      staleFailedUrls,
       prRef: prUrl,
       requiredChecks: config.ciChecks,
       expectedHeadSha: headSha,
@@ -728,6 +762,7 @@ export class Pipeline {
         phase: "dev",
         round: run.round + 1,
         ciRound: run.ciRound + 1,
+        ciFailedSha: headSha,
         findings,
       });
       return;
