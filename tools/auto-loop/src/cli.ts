@@ -4,6 +4,7 @@
 //
 // Environment: AUTO_LOOP_PLAN_KEY (required), AUTO_LOOP_PLAN_URL, AUTO_LOOP_PROJECT (default CYC),
 // AUTO_LOOP_TYPE_IDS (comma-separated issue type ids, default 20,25), AUTO_LOOP_STATE (default <dataDir>/auto-loop),
+// AUTO_LOOP_DEV_AGENT / AUTO_LOOP_QA_AGENT / AUTO_LOOP_REVIEW_AGENT (agent id of each session, default claude),
 // CYCLE_HOME / CYCLE_SOCKET for the daemon.
 
 import { homedir } from "node:os";
@@ -45,8 +46,18 @@ const allowedTypeIds =
   rawTypeIds !== undefined && rawTypeIds.trim() !== ""
     ? parseAllowedTypeIds(rawTypeIds)
     : undefined;
+const agentFromEnv = (name: string): string | undefined => {
+  const value = process.env[name]?.trim();
+  return value === undefined || value === "" ? undefined : value;
+};
+const devAgent = agentFromEnv("AUTO_LOOP_DEV_AGENT");
+const qaAgent = agentFromEnv("AUTO_LOOP_QA_AGENT");
+const reviewAgent = agentFromEnv("AUTO_LOOP_REVIEW_AGENT");
 const config = {
   ...defaultConfig({ repoRoot, stateDir }),
+  ...(devAgent !== undefined ? { devAgent } : {}),
+  ...(qaAgent !== undefined ? { qaAgent } : {}),
+  ...(reviewAgent !== undefined ? { reviewAgent } : {}),
   ...(allowedTypeIds !== undefined ? { allowedTypeIds } : {}),
   dryRun: flag("--dry-run"),
 };

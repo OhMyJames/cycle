@@ -104,7 +104,7 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   ciTimeoutMs: 30 * 60_000,
   turnTimeoutMs: 30 * 60_000,
   commandTimeoutMs: 20 * 60_000,
-  devAgent: "agy",
+  devAgent: "claude",
   qaAgent: "claude",
   reviewAgent: "claude",
   dryRun: false,

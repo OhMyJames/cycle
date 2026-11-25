@@ -14,7 +14,7 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率、介入率、返�
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
 
-可选环境变量：`AUTO_LOOP_PLAN_URL`、`AUTO_LOOP_PROJECT`（默认 CYC）、`AUTO_LOOP_TYPE_IDS`（逗号分隔的类型 id，默认 `20,25` 即 Feature/Bug）、`AUTO_LOOP_STATE`、`CYCLE_SOCKET`。
+可选环境变量：`AUTO_LOOP_PLAN_URL`、`AUTO_LOOP_PROJECT`（默认 CYC）、`AUTO_LOOP_TYPE_IDS`（逗号分隔的类型 id，默认 `20,25` 即 Feature/Bug）、`AUTO_LOOP_STATE`、`CYCLE_SOCKET`。三类会话用的 agent 默认都是 `claude`，可用 `AUTO_LOOP_DEV_AGENT`、`AUTO_LOOP_QA_AGENT`、`AUTO_LOOP_REVIEW_AGENT` 单独改（填 agent id，如 `agy`）。
 
 ## 约定
 
