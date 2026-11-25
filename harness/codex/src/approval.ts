@@ -1,5 +1,6 @@
 import { type AgentContext, methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { RpcError } from "@cycle/line-rpc";
+import { commandPrefixes } from "./prefixes.ts";
 import type {
   CommandExecutionRequestApprovalParams,
   FileChangeRequestApprovalParams,
@@ -14,6 +15,8 @@ export async function approval(
   turnId: string | undefined,
   signal: AbortSignal | undefined,
   isChild: (threadId: string) => boolean = () => false,
+  /** Command prefixes the user chose "Always allow in this session" for: the parent session's, shared by its sub-agents. */
+  remembered: Set<string> = new Set(),
 ) {
   const p = raw as
     | CommandExecutionRequestApprovalParams
@@ -36,6 +39,18 @@ export async function approval(
     const command = "command" in p ? p.command : undefined;
     const detail = command ?? ("grantRoot" in p ? p.grantRoot : undefined);
     const requested = "permissions" in p ? p.permissions : undefined;
+    // Only a plain in-sandbox command is remembered or answered from memory: a network host, a reason (Codex gives
+    // one when it asks to leave the sandbox) or another kind of action (`humanCommand`, `writeStdin`) is new to the user.
+    const cmd = p as CommandExecutionRequestApprovalParams;
+    const plain =
+      method === "item/commandExecution/requestApproval" &&
+      !!command &&
+      (cmd.kind === undefined || cmd.kind === "command") &&
+      !cmd.networkApprovalContext &&
+      !cmd.reason;
+    const rule = plain ? commandPrefixes(command) : undefined;
+    // Every segment already remembered: answered here, the client is not asked.
+    if (rule?.every((prefix) => remembered.has(prefix))) return { decision: "accept" };
     const title = [
       permissions
         ? "Grant permissions for this turn?"
@@ -68,14 +83,26 @@ export async function approval(
           },
           options: [
             { optionId: "allow", name: "Allow", kind: "allow_once" },
+            ...(rule
+              ? [
+                  {
+                    optionId: "allow_always",
+                    name: "Always allow in this session",
+                    kind: "allow_always" as const,
+                  },
+                ]
+              : []),
             { optionId: "deny", name: "Deny", kind: "reject_once" },
           ],
         },
         { cancellationSignal: signal, stopWaitingOnCancel: true },
       )
       .catch(() => undefined);
-    if (!signal.aborted && answer?.outcome.outcome === "selected")
-      decision = answer.outcome.optionId === "allow" ? "accept" : "decline";
+    if (!signal.aborted && answer?.outcome.outcome === "selected") {
+      const id = answer.outcome.optionId;
+      decision = id === "allow" || (id === "allow_always" && rule) ? "accept" : "decline";
+      if (id === "allow_always" && rule) for (const prefix of rule) remembered.add(prefix);
+    }
   }
   // A refusal is `decline` even when the request's (experimental) `availableDecisions` leaves it out, as it does for a
   // command asking to leave the sandbox: Codex takes it, the command does not run and the turn goes on (seen with a
