@@ -28,3 +28,7 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率、介入率、返�
 
 - 对真实 itsaplan 的鉴权头（目前用 `Authorization: Bearer`）和返回结构。
 - 对真实 daemon + agy/claude 的端到端一次完整运行。
+
+## 权限通知验证
+
+uname -s 的输出：Darwin
