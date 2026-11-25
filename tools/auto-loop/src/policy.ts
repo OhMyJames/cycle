@@ -7,7 +7,7 @@
 import { posix } from "node:path";
 import type { PermissionAnswer } from "@cycle/client";
 
-export type Role = "dev" | "qa";
+export type Role = "dev" | "qa" | "review";
 export type Decision = { decision: "allow" | "deny" | "ask"; reason: string };
 
 type ToolCall = { kind?: unknown; rawInput?: unknown; locations?: unknown };
@@ -183,7 +183,7 @@ export const decide = (
   const call = toolCallOf(request);
   if (call === undefined) return { decision: "ask", reason: "no tool call in the request" };
   const kind = typeof call.kind === "string" ? call.kind : "other";
-  const readOnlyRole = role === "qa";
+  const readOnlyRole = role === "qa" || role === "review";
   const other = (reason: string): Decision =>
     readOnlyRole ? { decision: "deny", reason } : { decision: "ask", reason };
 
@@ -201,7 +201,11 @@ export const decide = (
     case "edit":
     case "delete":
     case "move": {
-      if (readOnlyRole) return { decision: "deny", reason: "QA is read-only" };
+      if (readOnlyRole)
+        return {
+          decision: "deny",
+          reason: `${role === "review" ? "Review" : "QA"} is read-only`,
+        };
       const paths = pathsOf(call, worktree);
       if (paths.length === 0) return { decision: "ask", reason: "an edit that names no file" };
       if (!paths.every((path) => inside(worktree, path) && !touchesGit(worktree, path)))

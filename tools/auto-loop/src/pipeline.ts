@@ -9,7 +9,16 @@
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { testLayers } from "./layers.ts";
-import { renderPr, renderPrTitle, validatePr, waitForCi } from "./pr.ts";
+import {
+  enableAutoMerge,
+  postPrComment,
+  readCiStatus,
+  renderPr,
+  renderPrTitle,
+  renderReviewComment,
+  validatePr,
+  waitForCi,
+} from "./pr.ts";
 import { preflight, sendBackComment } from "./preflight.ts";
 import {
   continueBrief,
@@ -19,8 +28,11 @@ import {
   handoffBrief,
   listsWhatWasChecked,
   parseProgress,
+  parseReviewVerdict,
   parseVerdict,
   qaBrief,
+  type ReviewVerdict,
+  reviewBrief,
 } from "./prompts.ts";
 import { pickNext } from "./select.ts";
 import type { RunRecord, RunStore } from "./store.ts";
@@ -41,7 +53,7 @@ export type StepResult =
   | { status: "idle" }
   | { status: "rejected"; key: string; reasons: string[] }
   | { status: "would-take"; key: string; criteria: number }
-  | { status: "delivered"; key: string; prUrl: string }
+  | { status: "delivered"; key: string; prUrl: string; autoMerge: boolean }
   | { status: "blocked"; key: string; reason: string };
 
 export type Deps = {
@@ -113,6 +125,7 @@ export class Pipeline {
       remoteBranch: branchOf(issue.number),
       devSessionId: null,
       qaSessionId: null,
+      reviewSessionId: null,
       replacedSessions: [],
       blockedReason: null,
       resumeFrom: null,
@@ -170,12 +183,12 @@ export class Pipeline {
       await store.event(run.key, "recovered", { phase: run.phase });
     }
     // What the checks said is held in memory only: going on from the review or the delivery, they are run again.
-    // A human resume from `ci` also re-runs verify/QA/push in case they committed a fix locally; a crash recovery in
-    // `ci` continues polling the already-pushed PR directly.
+    // A human resume from `ci` or `review` also re-runs verify/QA/push in case they committed a fix locally; a crash
+    // recovery in `ci` or `review` continues directly from there.
     if (
       current.phase === "qa" ||
       current.phase === "delivering" ||
-      (byPerson && current.phase === "ci")
+      (byPerson && (current.phase === "ci" || current.phase === "review"))
     )
       current = await store.save({ ...current, phase: "verify" });
     return this.#drive(current, issue, book, byPerson);
@@ -217,11 +230,17 @@ export class Pipeline {
             break;
           }
           case "ci": {
-            const prUrl = await this.#ci(run, issue, save);
-            if (prUrl !== null) {
-              return { status: "delivered", key: run.key, prUrl };
-            }
+            await this.#ci(run, save);
             break;
+          }
+          case "review": {
+            const done = await this.#review(run, issue, book, save);
+            return {
+              status: "delivered",
+              key: run.key,
+              prUrl: done.prUrl,
+              autoMerge: done.autoMerge,
+            };
           }
           case "blocked":
           case "done":
@@ -591,12 +610,8 @@ export class Pipeline {
     await save({ phase: "ci", prUrl });
   }
 
-  async #ci(
-    run: RunRecord,
-    issue: Issue,
-    save: (patch: Partial<RunRecord>) => Promise<void>,
-  ): Promise<string | null> {
-    const { config, store, tracker, clock } = this.#d;
+  async #ci(run: RunRecord, save: (patch: Partial<RunRecord>) => Promise<void>): Promise<void> {
+    const { config, store, clock } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     const prUrl = this.#need(run.prUrl ?? undefined);
     const head = await this.#git(["rev-parse", "HEAD"], worktree);
@@ -650,24 +665,182 @@ export class Pipeline {
         ciRound: run.ciRound + 1,
         findings,
       });
-      return null;
+      return;
     }
 
+    this.#ciGreenSha.set(run.key, headSha);
+    await store.event(run.key, "ci_passed", { ciRound: run.ciRound });
+    await save({ phase: "review", prUrl });
+  }
+
+  async #review(
+    run: RunRecord,
+    issue: Issue,
+    book: CriteriaBook,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<{ prUrl: string; autoMerge: boolean }> {
+    const { config, store, tracker } = this.#d;
+    const worktree = this.#need(run.worktree ?? undefined);
+    const prUrl = this.#need(run.prUrl ?? undefined);
+    const head = await this.#git(["rev-parse", "HEAD"], worktree);
+    const headSha = head.code === 0 ? head.output.trim() : "";
+
+    // Confirm CI is green for this exact HEAD (re-checks via GitHub after a crash recovery).
+    let ciGreen = headSha !== "" && this.#ciGreenSha.get(run.key) === headSha;
+    let ciNotGreenReason: string | null = null;
+    if (!ciGreen) {
+      if (headSha === "") {
+        ciNotGreenReason = `读取 HEAD 提交失败：${tail(head.output)}`;
+      } else {
+        const read = await readCiStatus({
+          prRef: prUrl,
+          requiredChecks: config.ciChecks,
+          expectedHeadSha: headSha,
+          exec: this.#d.exec,
+          cwd: worktree,
+          env: this.#d.env,
+          timeoutMs: config.commandTimeoutMs,
+        });
+        if (read.ok && read.status.state === "passed") {
+          ciGreen = true;
+          this.#ciGreenSha.set(run.key, headSha);
+        } else {
+          ciNotGreenReason = read.ok
+            ? `CI 状态未全绿（当前为 ${read.status.state}）。`
+            : `读取 CI 状态失败：${tail(read.error)}`;
+        }
+      }
+    }
+
+    let reviewSessionId = run.reviewSessionId;
+    let verdict: ReviewVerdict | undefined;
+    let incompleteReason: string | null = null;
+
+    try {
+      const created = await this.#d.sessions.create({
+        role: "review",
+        agent: config.reviewAgent,
+        title: `[${run.key}] Review`,
+        cwd: config.repoRoot,
+        worktree: { base: config.baseRef, name: branchOf(issue.number) },
+      });
+      reviewSessionId = created.sessionId;
+      await save({ reviewSessionId });
+
+      const before = await this.#snapshot(worktree);
+      const diff = await this.#git(["diff", `${config.baseRef}...HEAD`], worktree);
+      const prompt = reviewBrief(issue, prUrl, book.items, diff.output, config.ciChecks);
+      const result = await this.#d.sessions.turn(reviewSessionId, prompt, {
+        role: "review",
+        worktree,
+        timeoutMs: config.turnTimeoutMs,
+      });
+      await store.event(run.key, "review_turn", { round: run.round, stop: result.stopReason });
+
+      const after = await this.#snapshot(worktree);
+      if (result.timedOut) {
+        incompleteReason = "评审会话单回合超时被取消。";
+      } else if (result.stopReason !== "end_turn") {
+        incompleteReason = `评审会话异常结束（${result.stopReason}）。`;
+      } else if (before !== after) {
+        incompleteReason = "评审会话修改了工作区，自动化不信任这次评审结果。";
+      } else {
+        const parsed = parseReviewVerdict(result.text);
+        if (parsed === undefined) {
+          incompleteReason = "评审会话未给出可解析的结构化结论。";
+        } else if (parsed.decision === "auto_merge" && !listsWhatWasChecked(result.text)) {
+          incompleteReason = "评审结论为可自动合并但未列出检查内容，不接受无依据的通过。";
+        } else {
+          verdict = parsed;
+        }
+      }
+    } catch (error) {
+      incompleteReason = `评审会话执行失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    const commentBody = renderReviewComment({
+      issueKey: run.key,
+      ciChecks: config.ciChecks,
+      ciGreen,
+      sessionId: reviewSessionId,
+      verdict,
+      incompleteReason,
+    });
+    const { writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const commentPath = join(config.stateDir, "runs", run.key, "review-comment.md");
+    await writeFile(commentPath, commentBody, { mode: 0o600 });
+
+    const commented = await postPrComment({
+      prRef: prUrl,
+      bodyPath: commentPath,
+      exec: this.#d.exec,
+      cwd: worktree,
+      env: this.#d.env,
+      timeoutMs: config.commandTimeoutMs,
+    });
+
+    if (ciGreen && verdict !== undefined && verdict.decision === "auto_merge" && commented.ok) {
+      const merged = await enableAutoMerge({
+        prRef: prUrl,
+        exec: this.#d.exec,
+        cwd: worktree,
+        env: this.#d.env,
+        timeoutMs: config.commandTimeoutMs,
+      });
+      if (merged.ok) {
+        await tracker.comment(
+          issue,
+          `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过，独立评审结论为可自动合并（${verdict.summary}），已开启 GitHub 自动合并（squash）。`,
+        );
+        await store.event(run.key, "review_done", { decision: "auto_merge", autoMerge: true });
+        await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: true });
+        await save({ phase: "done", prUrl });
+        return { prUrl, autoMerge: true };
+      }
+      await tracker.comment(
+        issue,
+        `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过且独立评审通过，但开启 GitHub 自动合并失败，需要人工参与处理：\n${tail(merged.error)}`,
+      );
+      await tracker.move(issue, "inReview");
+      await store.event(run.key, "review_done", { decision: "auto_merge", autoMerge: false });
+      await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
+      await save({ phase: "done", prUrl });
+      return { prUrl, autoMerge: false };
+    }
+
+    const reasonLines: string[] = [];
+    if (!ciGreen && ciNotGreenReason !== null) reasonLines.push(ciNotGreenReason);
+    if (incompleteReason !== null) {
+      reasonLines.push(incompleteReason);
+    } else if (verdict !== undefined && verdict.decision === "human_review") {
+      reasonLines.push(verdict.summary);
+      for (const reason of verdict.reasons) reasonLines.push(`- ${reason}`);
+    }
+    if (!commented.ok) {
+      reasonLines.push(`写入 PR 评审评论失败：${tail(commented.error)}`);
+    }
+    const decisionKind =
+      incompleteReason === null && verdict?.decision === "human_review"
+        ? "human_review"
+        : "incomplete";
     await tracker.comment(
       issue,
-      `已开 PR：${prUrl}\n验收标准全部由自动化执行验证通过，独立 QA 审查通过，CI（${config.ciChecks.join(" / ")}）全部通过（修复 ${run.round} 轮）。等待人工审阅合并。`,
+      `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）已跑完，未开启自动合并，需要人工参与：\n${reasonLines.join("\n")}`,
     );
     await tracker.move(issue, "inReview");
-    await store.event(run.key, "ci_passed", { ciRound: run.ciRound });
-    await store.event(run.key, "delivered", { prUrl, rounds: run.round });
+    await store.event(run.key, "review_done", { decision: decisionKind, autoMerge: false });
+    await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
     await save({ phase: "done", prUrl });
-    return prUrl;
+    return { prUrl, autoMerge: false };
   }
 
   // ---- helpers ----
 
   /** What the last verification ran, kept for the QA brief and the pull request. */
   readonly #checks = new Map<string, { command: string; passed: boolean }[]>();
+  /** The HEAD commit SHA whose required CI checks passed in this process. */
+  readonly #ciGreenSha = new Map<string, string>();
 
   async #nextRound(
     run: RunRecord,
@@ -717,6 +890,7 @@ const PHASE_NAMES: Record<string, string> = {
   qa: "独立审查",
   delivering: "交付",
   ci: "CI 检查",
+  review: "PR 评审",
 };
 
 const tail = (text: string, max = 800): string =>

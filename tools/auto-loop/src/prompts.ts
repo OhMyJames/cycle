@@ -137,6 +137,47 @@ End with one block and nothing after it:
 </verdict>
 "pass": true only when there is no blocker or major finding.`;
 
+/**
+ * Independent PR review prompt run after a PR is open and CI has finished (CYC-332). Read-only, references
+ * `REVIEW.md`, and requires a structured `<review>` JSON verdict (`auto_merge` or `human_review`).
+ */
+export const reviewBrief = (
+  issue: Issue,
+  prUrl: string,
+  criteria: Criterion[],
+  diff: string,
+  ciChecks: readonly string[],
+): string => `You are an independent PR reviewer for pull request ${prUrl} (${issue.key}: ${issue.title}). You did not write this change and you are not told how it was made.
+
+You are READ-ONLY. Do not edit, create, delete, commit, push, merge, or comment on GitHub yourself: the loop will post your conclusion as a PR comment and act on it. You may read files in the current directory (a git worktree holding the PR commit) and use git status, git diff, git log, rg, and ls.
+
+Read REVIEW.md and AGENTS.md in full first. Judge this PR strictly against REVIEW.md (and the rules and red lines in AGENTS.md). There is no path-based floor in code: evaluate changes to any file—including tools/auto-loop/, .github/, AGENTS.md, or REVIEW.md—on their actual risk per REVIEW.md. When in doubt, choose "human_review".
+
+The work item:
+---
+${issue.description}
+---
+
+Required CI checks that passed on this PR: ${ciChecks.length > 0 ? ciChecks.join(", ") : "(none)"}
+
+The criteria, each run by the loop, with its result:
+${criteriaTable(criteria, true)}
+
+The change (git diff against the base${diff.length > MAX_DIFF ? ", cut short" : ""}):
+\`\`\`diff
+${diff.slice(0, MAX_DIFF)}
+\`\`\`
+
+Verify before you judge; do not conclude from the diff above alone. Open the changed files and relevant callers/tests in full, confirm the change matches REVIEW.md and the work item in meaning, and decide whether it is safe to auto-merge (squash) or requires a person to review.
+
+Before your conclusion, write a short "What I checked" list: the files you opened and the commands you ran. An "auto_merge" decision without this list is not accepted.
+
+End with one structured JSON block and nothing after it:
+<review>
+{"decision": "auto_merge" | "human_review", "summary": "one-sentence conclusion", "reasons": ["concrete reason 1", "..."]}
+</review>
+Use "auto_merge" only when every requirement in REVIEW.md is satisfied and no human judgment is needed. Otherwise use "human_review" and list the concrete reasons in "reasons".`;
+
 export const parseProgress = (text: string): string | undefined => {
   const matches = Array.from(text.matchAll(/<progress>([\s\S]*?)<\/progress>/g));
   const last = matches.at(-1);
@@ -172,15 +213,33 @@ export const parseVerdict = (text: string): Verdict | undefined => {
   }
 };
 
+const ReviewVerdictSchema = z.object({
+  decision: z.enum(["auto_merge", "human_review"]),
+  summary: z.string().trim().min(1),
+  reasons: z.array(z.string().trim().min(1)).default([]),
+});
+export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
+
+/** The structured PR review conclusion, or undefined when missing or unreadable. */
+export const parseReviewVerdict = (text: string): ReviewVerdict | undefined => {
+  const last = Array.from(text.matchAll(/<review>([\s\S]*?)<\/review>/g)).at(-1);
+  if (last === undefined) return undefined;
+  try {
+    return ReviewVerdictSchema.parse(JSON.parse((last[1] as string).trim()));
+  } catch {
+    return undefined;
+  }
+};
+
 export const formatFindings = (verdict: Verdict): string =>
   verdict.findings
     .map((f, i) => `${i + 1}. [${f.severity}] ${f.where}: ${f.problem}\n   fix: ${f.fix}`)
     .join("\n");
 
-/** QA was told to list what it checked before its verdict; a verdict without that list is not taken. */
+/** QA and PR review are told to list what they checked before the verdict block; a pass without that list is not taken. */
 export const listsWhatWasChecked = (text: string): boolean => {
   const at = text.search(/what i checked/i);
   if (at === -1) return false;
-  const after = text.slice(at).split("<verdict>")[0] ?? "";
+  const after = text.slice(at).split(/<(?:verdict|review)>/)[0] ?? "";
   return /^\s*(?:[-*]|\d+[.)])\s+\S/m.test(after);
 };

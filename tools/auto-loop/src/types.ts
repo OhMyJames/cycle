@@ -79,6 +79,7 @@ export type Config = {
   commandTimeoutMs: number;
   devAgent: string;
   qaAgent: string;
+  reviewAgent: string;
   /** Read and write nothing in the tracker or the repository: print what would happen. */
   dryRun: boolean;
 };
@@ -102,6 +103,7 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   commandTimeoutMs: 20 * 60_000,
   devAgent: "agy",
   qaAgent: "claude",
+  reviewAgent: "claude",
   dryRun: false,
   ...partial,
 });
@@ -121,7 +123,7 @@ export const parseAllowedTypeIds = (raw: string): number[] => {
   });
 };
 
-export type SessionRole = "dev" | "qa";
+export type SessionRole = "dev" | "qa" | "review";
 
 export type TurnResult = {
   /** `end_turn` is the only one that is a finished turn; `cancelled`, `error`, `max_tokens`, `refusal` are not. */
