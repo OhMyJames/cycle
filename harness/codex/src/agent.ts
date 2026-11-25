@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import {
   type AgentContext,
   type AvailableCommand,
@@ -105,6 +106,13 @@ export function createAdapter(config: AdapterConfig) {
   /** Closed on purpose (session/close, the adapter's end): any other end of the app-server is its death. */
   let closing = false;
   let additionalDirectories: string[] = [];
+  /** The thread's sandbox is a permission profile that denies reading some files (see `open`), not a `sandbox` mode. */
+  let denyProfile = false;
+  /**
+   * A turn named a sandbox of its own (Read only, Full access). Codex keeps it for the turns after, and there is no way
+   * to name the profile again, so from then on every turn names its sandbox as before, without the denial.
+   */
+  let sandboxNamed = false;
   let developerInstructions: string | undefined;
   let mcpConfig: Record<string, unknown> = {};
   let trusted: boolean | undefined;
@@ -594,8 +602,13 @@ export function createAdapter(config: AdapterConfig) {
           }
         : undefined;
     if (collaborationMode) sentPlan = plan;
+    const turn = turnPolicy(mode, additionalDirectories);
+    // The thread's own profile stands in the modes whose sandbox it is; naming one here would replace it.
+    const { sandboxPolicy, ...withoutSandbox } = turn;
+    const keepsProfile = denyProfile && !sandboxNamed && sandboxPolicy.type === "workspaceWrite";
+    if (denyProfile && !keepsProfile) sandboxNamed = true;
     return {
-      ...turnPolicy(mode, additionalDirectories),
+      ...(keepsProfile ? withoutSandbox : turn),
       ...(chosenModel !== undefined ? { model: chosenModel } : {}),
       ...(chosenEffort !== null ? { effort: chosenEffort } : {}),
       ...(collaborationMode ? { collaborationMode } : {}),
@@ -610,6 +623,7 @@ export function createAdapter(config: AdapterConfig) {
     if (resume?.replayFrom) throw new RequestError(-32602, "Cycle owns the conversation replay");
     clearCatalog();
     mode = "default";
+    sandboxNamed = false;
     model = "default";
     effort = "default";
     sentPlan = false;
@@ -715,6 +729,28 @@ export function createAdapter(config: AdapterConfig) {
       serverRequest,
     );
     server = child;
+    // A profile and a `sandbox` on the thread cannot both be (Codex ignores the profile when `sandbox` is given: checked
+    // with 0.166.0, `activePermissionProfile` stays null), so the thread has the profile alone. Built on `:workspace` it is
+    // the same sandbox `workspace-write` gives, with the extra folders as writable entries and the files as `none`.
+    // The thread begins in the default mode, which is that sandbox. A turn in Read only or Full access still names its
+    // own sandbox below, and that one has no such denial.
+    const deny = (config.denyRead ?? []).filter((path) => isAbsolute(path));
+    denyProfile = deny.length > 0;
+    if (denyProfile)
+      codexConfig = {
+        ...codexConfig,
+        default_permissions: "cycle",
+        permissions: {
+          cycle: {
+            extends: ":workspace",
+            filesystem: {
+              ...Object.fromEntries(additionalDirectories.map((path) => [path, "write"])),
+              ...Object.fromEntries(deny.map((path) => [path, "none"])),
+            },
+          },
+        },
+      };
+    const { sandbox: _sandbox, ...threadPolicy } = policy(mode);
     type Thread = { thread: { id: string }; model?: string; reasoningEffort?: string | null };
     try {
       await child.initialize();
@@ -747,7 +783,7 @@ export function createAdapter(config: AdapterConfig) {
       }
       const settings = {
         cwd: params.cwd,
-        ...policy(mode),
+        ...(denyProfile ? threadPolicy : policy(mode)),
         ...(chosen !== undefined ? { model: chosen.id } : {}),
         ...(Object.keys(codexConfig).length > 0 ? { config: codexConfig } : {}),
         ...(developerInstructions ? { developerInstructions } : {}),

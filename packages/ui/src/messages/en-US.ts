@@ -857,7 +857,7 @@ export const enUS = {
   // Model providers (CYC-300): the owner's own models for Codex, on the API keys page of Settings.
   // The vault: the keys of a location's secrets.env (Settings → Vault, docs/protocol.md §6 "环境")
   "vault.lead":
-    "Secrets kept on {location}, in its secrets.env. An environment names one, and only its terminals and actions get the value, never the agent. A value can be replaced and is never shown.",
+    "Secrets kept on {location}, in its secrets.env. An environment names one, and only its terminals and actions get the value, never the agent. Claude and Codex are blocked from reading the file, except Codex in Read only or Full access; Antigravity is not. A value can be replaced and is never shown.",
   "vault.add": "New item",
   "vault.search": "Search vault",
   "vault.loading": "Reading the vault…",

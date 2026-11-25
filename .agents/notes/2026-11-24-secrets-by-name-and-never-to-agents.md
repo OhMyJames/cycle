@@ -26,7 +26,7 @@ Addendum, 2026-11-24 (owner asked for a Vault page in Settings, like a password 
 
 ## Consequences
 
-- `chmod 600` and this design do not stop an agent that runs as the same user and may read files: it can read `secrets.env` as it can the index. The daemon closes group/other access only. Keeping it out needs a deny-read rule for that file; Cycle does not add one.
+- `chmod 600` and this design do not stop an agent that runs as the same user and may read files: it can read `secrets.env` as it can the index. The daemon closes group/other access only. Keeping it out needs a deny-read rule for that file; Cycle did not add one in this note; [2026-11-24-keep-agents-from-reading-secrets-env](2026-11-24-keep-agents-from-reading-secrets-env.md) does, with its gaps.
 - A secret the agent's own tests need must stay a literal variable, which the agent can see.
 - An older daemon drops `secrets` silently (zod strips unknown keys), so the session runs without them.
 

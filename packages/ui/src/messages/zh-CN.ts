@@ -770,7 +770,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   // 模型服务商(CYC-300)
   "vault.lead":
-    "{location} 上的密钥，存在它的 secrets.env 里。环境可以引用其中一项，只有该环境的终端和动作拿到值，agent 拿不到。值可以替换，但不会显示。",
+    "{location} 上的密钥，存在它的 secrets.env 里。环境可以引用其中一项，只有该环境的终端和动作拿到值，agent 拿不到。Claude 和 Codex 读不了这个文件，但 Codex 的只读和完全访问模式除外，Antigravity 也拦不住。值可以替换，但不会显示。",
   "vault.add": "新建项目",
   "vault.search": "搜索保险库",
   "vault.loading": "正在读取保险库…",

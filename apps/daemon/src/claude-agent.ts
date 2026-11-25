@@ -17,6 +17,7 @@ import { claudeEffectiveRuntime, createClaudeSetupProvider } from "./agent-setup
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
+import { hasSecrets, protectedFiles } from "./secrets.ts";
 import { shippedExecutable } from "./self.ts";
 import { systemProxyFill } from "./system-proxy.ts";
 
@@ -203,6 +204,9 @@ export const claudeHarness: Harness = {
           CYCLE_ADAPTER_CONFIG: JSON.stringify({
             env: claudeEnv(config.claude, dataDir, inherited),
             ...(sessionEnvFile !== undefined ? { sessionEnvFile } : {}),
+            // The secrets are kept from Claude's file tools always, and from its commands when there is one to keep.
+            denyRead: protectedFiles(dataDir),
+            sandboxDenied: hasSecrets(dataDir),
             warmStart: runtime.warmStart,
             progressSummaries: runtime.progressSummaries,
             ...(claudeExecutable() !== undefined ? { claudeExecutable: claudeExecutable() } : {}),
