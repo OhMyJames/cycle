@@ -93,6 +93,8 @@ export class Pipeline {
     const { config, tracker, store } = this.#d;
     if (config.dryRun) return this.#dryRun();
 
+    await this.#cleanup();
+
     for (const run of (await store.unfinished()).sort((a, b) =>
       a.startedAt.localeCompare(b.startedAt),
     )) {
@@ -138,6 +140,8 @@ export class Pipeline {
       resumeFrom: null,
       prUrl: null,
       findings: null,
+      cleanedAt: null,
+      cleanupNote: null,
       startedAt: this.#d.clock.now().toISOString(),
       updatedAt: this.#d.clock.now().toISOString(),
     };
@@ -146,6 +150,69 @@ export class Pipeline {
     await tracker.move(issue, "inProgress");
     await store.event(issue.key, "claimed", { criteria: pre.specs.length });
     return this.#drive(run, issue, book, false);
+  }
+
+  /**
+   * Before choosing, removes the worktree and local branch of every run whose work item is Done and whose PR is
+   * merged. Anything else is left alone; a worktree with uncommitted changes is left for a person (CYC-379).
+   * A failure here never stops the loop from taking work.
+   */
+  async #cleanup(): Promise<void> {
+    const { store, log } = this.#d;
+    for (const run of await store.all()) {
+      if (run.phase !== "done" || run.cleanedAt !== null) continue;
+      if (run.prUrl === null || run.worktree === null) continue;
+      try {
+        await this.#cleanupRun(run, run.worktree);
+      } catch (error) {
+        log(
+          `cleanup of ${run.key} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  async #cleanupRun(run: RunRecord, worktree: string): Promise<void> {
+    const { config, tracker, store, clock } = this.#d;
+    const note = async (kind: string) => {
+      if (run.cleanupNote === kind) return;
+      await store.event(run.key, kind);
+      await store.save({ ...run, cleanupNote: kind });
+    };
+    // Only the work item's own worktree: `.../auto/cyc-<n>`.
+    const own = `/${branchOf(run.issueNumber)}`;
+    if (!worktree.replace(/\/+$/, "").endsWith(own)) return;
+
+    const issue = await tracker.get(run.issueNumber);
+    if (issue.columnId !== config.columns.done) return;
+    const read = await readPrState({
+      prRef: run.prUrl ?? "",
+      exec: this.#d.exec,
+      cwd: config.repoRoot,
+      env: this.#d.env,
+      timeoutMs: config.commandTimeoutMs,
+    });
+    if (!read.ok || read.state !== "MERGED") return;
+
+    const status = await this.#git(["status", "--porcelain"], worktree);
+    if (status.code !== 0) return note("cleanup_failed");
+    if (status.output.trim() !== "") return note("cleanup_skipped_dirty");
+
+    // No --force: git itself refuses a worktree with changes in it.
+    const removed = await this.#git(["worktree", "remove", worktree], config.repoRoot);
+    if (removed.code !== 0) return note("cleanup_failed");
+    for (const branch of new Set([run.localBranch, branchOf(run.issueNumber)])) {
+      if (branch === null) continue;
+      const exists = await this.#git(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+        config.repoRoot,
+      );
+      if (exists.code !== 0) continue;
+      const deleted = await this.#git(["branch", "-D", branch], config.repoRoot);
+      if (deleted.code !== 0) return note("cleanup_failed");
+    }
+    await store.event(run.key, "cleaned");
+    await store.save({ ...run, cleanedAt: clock.now().toISOString(), cleanupNote: null });
   }
 
   /** `--dry-run`: pick and check, and say what would happen. Writes nothing anywhere. */
