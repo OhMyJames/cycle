@@ -9,6 +9,15 @@ import type { Config, Issue, Priority, Stage, Tracker } from "./types.ts";
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 
+const parseOptionalInt = (value: unknown): number | null => {
+  if (typeof value === "number") return Number.isInteger(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isInteger(n) ? n : null;
+  }
+  return null;
+};
+
 export const toIssue = (raw: unknown, projectKey: string): Issue => {
   const r = asRecord(raw);
   const number = Number(r.sequenceNumber ?? r.number);
@@ -21,6 +30,13 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
       ? r.labels.map((l) => Number(asRecord(l).id ?? l))
       : [];
   const priority = typeof r.priority === "string" ? (r.priority as Priority) : null;
+  const typeId = parseOptionalInt(r.typeId ?? asRecord(r.type).id);
+  const parsedSubtaskCount = parseOptionalInt(r.subtaskCount);
+  const subtaskCount = Array.isArray(r.subtasks)
+    ? r.subtasks.filter((s) => asRecord(s).archived !== true).length
+    : parsedSubtaskCount !== null && parsedSubtaskCount >= 0
+      ? parsedSubtaskCount
+      : 0;
   return {
     id,
     number,
@@ -31,6 +47,8 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     createdAt: String(r.createdAt ?? ""),
     columnId: Number(r.columnId ?? asRecord(r.column).id),
     labelIds,
+    typeId,
+    subtaskCount,
   };
 };
 

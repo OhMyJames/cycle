@@ -9,7 +9,7 @@
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { testLayers } from "./layers.ts";
-import { renderPr } from "./pr.ts";
+import { renderPr, renderPrTitle, validatePr } from "./pr.ts";
 import { preflight, sendBackComment } from "./preflight.ts";
 import {
   continueBrief,
@@ -504,19 +504,19 @@ export class Pipeline {
       .join("\n");
     const { writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
+    const title = renderPrTitle(issue);
+    const body = renderPr({
+      issue,
+      criteria: book.items,
+      checks: this.#checks.get(run.key) ?? [],
+      rounds: run.round,
+      summary,
+      sessions: { dev: run.devSessionId, qa: run.qaSessionId },
+    });
+    const prCheck = validatePr(issue.key, title, body);
+    if (!prCheck.ok) throw new Blocked(prCheck.reason);
     const bodyPath = join(config.stateDir, "runs", run.key, "pr-body.md");
-    await writeFile(
-      bodyPath,
-      renderPr({
-        issue,
-        criteria: book.items,
-        checks: this.#checks.get(run.key) ?? [],
-        rounds: run.round,
-        summary,
-        sessions: { dev: run.devSessionId, qa: run.qaSessionId },
-      }),
-      { mode: 0o600 },
-    );
+    await writeFile(bodyPath, body, { mode: 0o600 });
     const created = await this.#d.exec(
       [
         "gh",
@@ -527,7 +527,7 @@ export class Pipeline {
         "--head",
         run.remoteBranch,
         "--title",
-        `${run.key} ${run.title}`,
+        title,
         "--body-file",
         bodyPath,
       ],

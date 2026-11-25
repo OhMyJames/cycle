@@ -10,6 +10,8 @@ export const issue = (over: Partial<Issue> = {}): Issue => ({
   createdAt: "2026-11-25T00:00:00.000Z",
   columnId: 22,
   labelIds: [11],
+  typeId: 20,
+  subtaskCount: 0,
   ...over,
 });
 

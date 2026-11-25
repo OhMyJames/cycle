@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pipeline } from "../src/pipeline.ts";
@@ -157,6 +157,10 @@ test("happy path: Dev, checks, QA, push, PR, In Review", async () => {
   expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
   expect(sessions.created).toEqual(["dev-1", "qa-2"]);
   expect(world.calls.some((c) => c.includes("push origin HEAD:refs/heads/auto/cyc-1"))).toBe(true);
+  const prCreate = world.calls.find((c) => c.includes("gh pr create"));
+  expect(prCreate).toContain("Closes CYC-1");
+  const prBody = await readFile(join(dir, "runs", "CYC-1", "pr-body.md"), "utf8");
+  expect(prBody.split("\n")[0]).toBe("Closes CYC-1");
   expect((await store.load("CYC-1"))?.phase).toBe("done");
   const criteria = await store.loadCriteria("CYC-1");
   expect(criteria.allPassed).toBe(true);
