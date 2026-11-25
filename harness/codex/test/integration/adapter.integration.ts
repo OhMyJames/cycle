@@ -389,6 +389,7 @@ const OWN = {
   efforts: [
     { id: "low", description: "" },
     { id: "high", description: "" },
+    { id: "max", description: "" },
   ],
   defaultEffort: "low",
   images: false,
@@ -403,17 +404,22 @@ test("a session that begins on one of the owner's models talks to the gateway wi
   await mkdir(cwd);
   await mkdir(home);
   let nextCommand: string | undefined;
-  const seen: { auth: string | null; model: string; tools: number }[] = [];
+  const seen: { auth: string | null; model: string; effort: string | null; tools: number }[] = [];
   const gateway = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch: async (req) => {
       if (!new URL(req.url).pathname.endsWith("/responses"))
         return new Response(null, { status: 404 });
-      const body = JSON.parse(await req.text()) as { model: string; tools?: unknown[] };
+      const body = JSON.parse(await req.text()) as {
+        model: string;
+        reasoning?: { effort?: string | null } | null;
+        tools?: unknown[];
+      };
       seen.push({
         auth: req.headers.get("authorization"),
         model: body.model,
+        effort: body.reasoning?.effort ?? null,
         tools: body.tools?.length ?? 0,
       });
       if (nextCommand !== undefined) {
@@ -487,7 +493,7 @@ test("a session that begins on one of the owner's models talks to the gateway wi
       ]);
       expect(model.options.find((o) => o.value === OWN.id)?._meta).toMatchObject({
         "cycle/provider": OWN.provider,
-        "cycle/efforts": ["low", "high"],
+        "cycle/efforts": ["low", "high", "max"],
       });
       const set = (configId: string, value: string) =>
         agent.request(methods.agent.session.setConfigOption, {
@@ -506,12 +512,16 @@ test("a session that begins on one of the owner's models talks to the gateway wi
       expect(idle()[0]).toMatchObject({ stopReason: "end_turn" });
       expect(seen[0]).toMatchObject({ auth: "Bearer gw-token", model: OWN.id });
       expect(updates).toContainEqual(
+        expect.objectContaining({ sessionUpdate: "usage_update", size: 60_800 }),
+      );
+      expect(updates).toContainEqual(
         expect.objectContaining({
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "cycle reply" },
         }),
       );
       // Codex hands its environment to the commands the agent runs: the gateway's token is not in it.
+      await set("effort", "max");
       nextCommand =
         "if env | grep -q CYCLE_PROVIDER_TOKEN; then printf leaked > marker; else printf clean > marker; fi";
       await agent.request(methods.agent.session.prompt, {
@@ -519,6 +529,7 @@ test("a session that begins on one of the owner's models talks to the gateway wi
         prompt: [{ type: "text", text: "run it" }],
       });
       await waitFor(() => idle().length === 2);
+      expect(seen.some((request) => request.effort === "max")).toBe(true);
       expect(await Bun.file(join(cwd, "marker")).text()).toBe("clean");
       await agent.request(methods.agent.session.close, { sessionId });
     });

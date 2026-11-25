@@ -24,7 +24,7 @@ export const CUSTOM_PI_PROVIDER = "cycle-custom";
 const NOT_BY_KEY = new Set(["amazon-bedrock", "github-copilot", "google-vertex", "radius"]);
 
 /** The efforts codex can ask for that pi-ai has a thinking level of the same name for. */
-const EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const;
+const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
 export function isEffort(value: unknown): value is Effort {

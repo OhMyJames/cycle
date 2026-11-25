@@ -1,4 +1,5 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import { META } from "@cycle/protocol";
 import type { FileUpdateChange, ThreadItem } from "./wire.generated.ts";
 
 /**
@@ -120,16 +121,30 @@ export function itemUpdate(
   }
   let title: string | undefined;
   let name: string, kind: "execute" | "edit" | "search" | "other", output: string | undefined;
+  let rawInput: unknown;
+  let locations: { path: string }[] | undefined;
+  let meta: Record<string, unknown> | undefined;
   switch (item.type) {
-    case "commandExecution":
+    case "commandExecution": {
       name = "exec_command";
-      title = outputHead(item.command);
+      const command = outputHead(item.command);
+      title = command;
       kind = "execute";
+      rawInput = { command, ...(item.cwd ? { cwd: item.cwd } : {}) };
       output = item.aggregatedOutput ? outputTail(item.aggregatedOutput) : undefined;
+      if (completed) {
+        const exitCode =
+          typeof item.exitCode === "number" && Number.isInteger(item.exitCode) && item.exitCode > 0
+            ? item.exitCode
+            : undefined;
+        meta = { [META.toolResult]: { run: exitCode !== undefined ? { exitCode } : {} } };
+      }
       break;
+    }
     case "mcpToolCall":
       name = `${item.server}/${item.tool}`;
       kind = "other";
+      if (item.arguments !== null && item.arguments !== undefined) rawInput = item.arguments;
       output = completed
         ? outputHead(JSON.stringify(item.error?.message ?? item.result?.content) ?? "")
         : undefined;
@@ -137,12 +152,14 @@ export function itemUpdate(
     case "fileChange":
       name = "Edit files";
       kind = "edit";
+      if (item.changes.length > 0) locations = item.changes.map((c) => ({ path: c.path }));
       output = diffOf(item.changes);
       break;
     case "webSearch":
       name = "web_search";
       title = item.query;
       kind = "search";
+      if (item.query) rawInput = { query: item.query };
       break;
     default:
       return;
@@ -155,6 +172,9 @@ export function itemUpdate(
     ...(title ? { title } : {}),
     kind,
     status: completed ? (failed ? "failed" : "completed") : "in_progress",
+    ...(rawInput !== undefined ? { rawInput } : {}),
+    ...(locations !== undefined ? { locations } : {}),
     ...(output ? { content: [{ type: "content", content: { type: "text", text: output } }] } : {}),
+    ...(meta !== undefined ? { _meta: meta } : {}),
   };
 }

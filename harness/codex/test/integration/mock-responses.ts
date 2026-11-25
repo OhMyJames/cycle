@@ -40,7 +40,12 @@ export function response(
     { type: "response.output_item.done", output_index: 0, item },
     {
       type: "response.completed",
-      response: { id: crypto.randomUUID(), status: "completed", output: [item] },
+      response: {
+        id: crypto.randomUUID(),
+        status: "completed",
+        output: [item],
+        usage: { input_tokens: 100, output_tokens: 1, total_tokens: 101 },
+      },
     },
   ];
   return new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), {

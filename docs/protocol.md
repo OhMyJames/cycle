@@ -697,6 +697,8 @@ Claude 的取法:每个 turn 结束时 Stop hook 的 `session_crons` 是进程�
 
 ### 工具调用的结果
 
+工具调用开始或更新时,agent 尽量把结构化目标放进 ACP 的标准字段:命令用 `rawInput.command`(可选 `cwd`),读写编辑用 `rawInput.file_path`/`rawInput.path` 和 `locations`,搜索与抓取用 `rawInput.query`/`rawInput.pattern`/`rawInput.url`,以便客户端无需按 agent 名称特判即可稳定展示摘要与展开详情;历史日志或仅填了 `title`/`locations` 的调用,客户端按结构化字段 → `locations` → `title` 降级读取。
+
 工具调用结束时,agent 尽量用 ACP 自己的字段说它做了什么:编辑是 `diff` 内容(`changes` 加 git 格式的 `patch`,只是这一次调用的改动;太大时 `patch` 为 `null`),
 读写的文件在 `locations`(读文件带起始行)。ACP 没有字段的数量,放在这次 `tool_call_update` 的 `_meta["cycle/toolResult"]`,是下面三种之一,只有数字和布尔,**不带内容**:
 
@@ -771,7 +773,7 @@ session 里 ACP 的 `configOptions` 用 ACP 自己的字段表达同样的东西
 - **不知道时**:进程还没报模型清单(新 session 第一个进程起来之前)、或当前模型不在清单里时,`effort` 列出全部档位,值照常交给 SDK,由它决定;清单到了之后,当前值不在当前模型的档位里,adapter 把它改回 `default` 并发 `config_option_update`。换模型时同样:旧档位新模型不支持,改回 `default`(一个值,不按模型分别记)。
 - daemon 缓存它见过的模型清单(含各模型的 `cycle/efforts`),叠加到 `_cycle/agents` 返回的 `configSchema` 的 `model.oneOf` 上(同样放在每项的 `_meta["cycle/efforts"]`),新 session 页据此在选模型时决定是否显示 effort、显示哪些档位。缓存只是提示,不做校验:真正可选的档位以 session 里 agent 报的为准。
 
-**自带模型(CYC-300,codex)。** 主人自己的模型服务商(`providers.json`,key 只在 daemon,任何答复只有 `hasKey`)的模型,id 是 `<服务商 id>/<模型 id>`。`_cycle/agents` 返回的 codex `configSchema` 的 `model.oneOf` 里,daemon 现算地追加它们,每项 `_meta["cycle/provider"] = {id, name}`,并带 `cycle/efforts`;这些项不进上面说的缓存。一个 session 要么在 agent 自己的模型上,要么在主人的模型上,由它开始时的模型决定:daemon 在发给 agent 的 `session/new`、`session/resume` 的 `_meta["cycle/model"]` 里带上这个模型。session 里 adapter 报的 `model` 选项只列同一种,另一种的 `setConfigOption` 被拒绝(`-32602`)。服务商变化时 daemon 向所有客户端发 `_cycle/providers_changed`(参数 `{}`),客户端重读 `_cycle/providers/list` 和 `_cycle/agents`。决定见 `.agents/notes/2026-11-24-codex-own-models-through-a-pi-ai-gateway.md`。
+**自带模型(CYC-300,codex)。** 主人自己的模型服务商(`providers.json`,key 只在 daemon,任何答复只有 `hasKey`)的模型,id 是 `<服务商 id>/<模型 id>`。`_cycle/agents` 返回的 codex `configSchema` 的 `model.oneOf` 里,daemon 现算地追加它们,每项 `_meta["cycle/provider"] = {id, name}`,并带 `cycle/efforts`;这些项不进上面说的缓存。一个 session 要么在 agent 自己的模型上,要么在主人的模型上,由它开始时的模型决定:daemon 在发给 agent 的 `session/new`、`session/resume` 的 `_meta["cycle/model"]` 里带上这个模型。session 里 adapter 报的 `model` 选项只列同一种,另一种的 `setConfigOption` 被拒绝(`-32602`)。每个模型的可选档位由服务商在 pi-ai 清单里的支持集合决定,含 `max` 时不丢掉;上下文窗口是该模型的真实窗口,`usage_update.size` 报 Codex 的有效窗口(真实窗口的 95%)。服务商变化时 daemon 向所有客户端发 `_cycle/providers_changed`(参数 `{}`),客户端重读 `_cycle/providers/list` 和 `_cycle/agents`。决定见 `.agents/notes/2026-11-24-codex-own-models-through-a-pi-ai-gateway.md`。
 
 agent 自己改了配置(例如 Claude 在 plan 模式里被批准后切回常规模式),通过 `config_option_update` 回报;daemon 把变化写进索引的 `config`,恢复时才不会把它改回去。
 

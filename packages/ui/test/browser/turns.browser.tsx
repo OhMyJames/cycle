@@ -1905,3 +1905,91 @@ test("two calls to the advisor in a card are counted as asking it", async () => 
   );
   await screen.findByRole("button", { name: /^Asked the advisor 2 times and ran 1 command/ });
 });
+
+test("Codex and agy consecutive command cards show every command, hide exit 0 noise, and keep failures clear", async () => {
+  const longAgyCmd = `bun test ${"packages/ui/test/".repeat(9)}blocks.test.ts`;
+  const { user, log } = await open(
+    you("u1"),
+    // Codex new shape (rawInput.command + cwd)
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "c1",
+      name: "exec_command",
+      title: "bun run check",
+      kind: "execute",
+      status: "completed",
+      rawInput: { command: "bun run check", cwd: "/repo" },
+      _meta: { "cycle/toolResult": { run: {} } },
+    }),
+    // Codex legacy log shape (title only, no rawInput)
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "c2",
+      name: "exec_command",
+      title: "/bin/zsh -lc 'git status'",
+      kind: "execute",
+      status: "completed",
+    }),
+    // agy normalized shape (long command + extra runner params + exitCode 0)
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "a1",
+      name: "run_command",
+      title: longAgyCmd,
+      kind: "execute",
+      status: "completed",
+      rawInput: { command: longAgyCmd, WaitMsBeforeAsync: 10_000, toolSummary: "Run blocks test" },
+      content: [{ type: "content", content: { type: "text", text: "ok" } }],
+      _meta: { "cycle/toolResult": { run: { exitCode: 0 } } },
+    }),
+    // agy legacy shape (PascalCase CommandLine > 120 chars)
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "a2",
+      name: "run_command",
+      title: longAgyCmd,
+      kind: "execute",
+      status: "completed",
+      rawInput: { CommandLine: longAgyCmd, WaitMsBeforeAsync: 5000 },
+    }),
+    // Failed command with non-zero exit code
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "f1",
+      name: "exec_command",
+      title: "bun run build",
+      kind: "execute",
+      status: "failed",
+      rawInput: { command: "bun run build", cwd: "/repo" },
+      content: [{ type: "content", content: { type: "text", text: "build failed" } }],
+      _meta: { "cycle/toolResult": { run: { exitCode: 2 } } },
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /Ran 5 commands/ }));
+  for (const [id, expected] of [
+    ["c1", "bun run check"],
+    ["c2", "/bin/zsh -lc 'git status'"],
+    ["a1", longAgyCmd],
+    ["a2", longAgyCmd],
+    ["f1", "bun run build"],
+  ] as const) {
+    const summary = log.querySelector(`[data-item-id="${id}"] [data-slot="tool-summary"]`);
+    expect(summary?.textContent).toBe(expected);
+  }
+  // Successful exitCode: 0 does not clutter the row with "exited with code 0".
+  expect(log.querySelector('[data-item-id="a1"] [data-slot="tool-facts"]')).toBeNull();
+  // Failed command shows its exit code and failed status.
+  expect(log.querySelector('[data-item-id="f1"] [data-slot="tool-facts"]')?.textContent).toBe(
+    "exited with code 2",
+  );
+  expect(log.querySelector('[data-item-id="f1"] [data-slot="tool-status"]')?.textContent).toBe(
+    "failed",
+  );
+  // Expanding an agy command renders the command block and does not repeat `command` in extra input JSON.
+  await user.click(log.querySelector('[data-item-id="a1"] > button') as HTMLElement);
+  const cmdBlock = log.querySelector('[data-item-id="a1"] [data-kind="command"]');
+  expect(cmdBlock?.textContent).toContain(longAgyCmd);
+  const extraInput = log.querySelector('[data-item-id="a1"] [data-slot="tool-input"]');
+  expect(extraInput?.textContent).not.toContain(longAgyCmd);
+});

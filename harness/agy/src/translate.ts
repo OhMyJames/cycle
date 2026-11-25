@@ -294,6 +294,34 @@ const toolTitle = (payload: V1ToolCallPayload, start: boolean): string | undefin
 };
 
 /**
+ * Normalize agy's PascalCase tool input keys (`CommandLine`, `Path`, `Query`, `Url`, `Pattern`, `Cwd`) into the
+ * lowercase names Cycle's L1 model reads across all agents, without duplicating the values.
+ */
+const normalizeRawInput = (rawInput: unknown): unknown => {
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) return rawInput;
+  const input = rawInput as Record<string, unknown>;
+  let out: Record<string, unknown> | undefined;
+  const copy = () => {
+    out ??= { ...input };
+    return out;
+  };
+  const rename = (from: string, to: string, keepIf: readonly string[] = [to]) => {
+    if (typeof input[from] !== "string") return;
+    if (keepIf.some((key) => input[key] !== undefined)) return;
+    const next = copy();
+    next[to] = input[from];
+    delete next[from];
+  };
+  rename("CommandLine", "command");
+  rename("Cwd", "cwd");
+  rename("Path", "file_path", ["file_path", "path"]);
+  rename("Query", "query");
+  rename("Url", "url");
+  rename("Pattern", "pattern");
+  return out ?? rawInput;
+};
+
+/**
  * A v1 `tool_call` starts the call, so what it leaves out gets a default. A v1 `tool_call_update` only
  * carries what changed (ACP v1, like v2's `tool_call_update`): a field it leaves out is left out here
  * too, so a progress or result update never resets the title, kind or status shown before.
@@ -302,6 +330,7 @@ export const toV2ToolCallUpdate = (payload: V1ToolCallPayload, start = true): Se
   const { content, editStats } = translateToolContent(payload.content);
   const meta = toolResultMeta(payload, editStats);
   const title = toolTitle(payload, start);
+  const rawInput = payload.rawInput !== undefined ? normalizeRawInput(payload.rawInput) : undefined;
   return {
     sessionUpdate: "tool_call_update",
     toolCallId: payload.toolCallId,
@@ -313,7 +342,7 @@ export const toV2ToolCallUpdate = (payload: V1ToolCallPayload, start = true): Se
       : {}),
     ...(payload.locations !== undefined ? { locations: payload.locations } : {}),
     ...(content !== undefined ? { content } : {}),
-    ...(payload.rawInput !== undefined ? { rawInput: payload.rawInput } : {}),
+    ...(rawInput !== undefined ? { rawInput } : {}),
     ...(payload.rawOutput !== undefined ? { rawOutput: payload.rawOutput } : {}),
     ...(meta !== undefined ? { _meta: meta } : {}),
   } as SessionUpdate;
