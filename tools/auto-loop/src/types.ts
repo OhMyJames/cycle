@@ -78,6 +78,10 @@ export type Config = {
   ciPollIntervalMs: number;
   /** Maximum time to wait for a single CI run to finish before blocking. */
   ciTimeoutMs: number;
+  /** How often to poll the pull request after auto-merge is enabled, to see it merge. */
+  mergePollIntervalMs: number;
+  /** Maximum time to wait for an auto-merge-enabled pull request to merge before blocking. */
+  mergeTimeoutMs: number;
   /** A turn that runs longer than this (not counting the time it waits for a person) is cancelled. */
   turnTimeoutMs: number;
   /** One verification command. */
@@ -107,6 +111,8 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   maxReviewRetries: 2,
   ciPollIntervalMs: 30_000,
   ciTimeoutMs: 30 * 60_000,
+  mergePollIntervalMs: 30_000,
+  mergeTimeoutMs: 10 * 60_000,
   turnTimeoutMs: 30 * 60_000,
   commandTimeoutMs: 20 * 60_000,
   devAgent: "claude",

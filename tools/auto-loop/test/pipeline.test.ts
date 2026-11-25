@@ -156,6 +156,9 @@ type World = {
   ciLogs: Record<string, string>;
   /** What `gh pr view --json state` says; an array is consumed one read at a time (last one sticks). */
   prState: string | string[];
+  /** What `gh pr view --json state,mergeable` says after auto-merge is enabled, as [state, mergeable] (last sticks). */
+  prMerge: [string, string][];
+  mergeTreeOutput: string;
 };
 
 const makeExec =
@@ -169,6 +172,12 @@ const makeExec =
     if (line.includes("rev-parse HEAD")) return result(`${world.headSha}\n`);
     for (const pattern of world.fail) if (line.includes(pattern)) return result("boom", 1);
     if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
+    if (line.includes("gh pr view") && line.includes("state,mergeable")) {
+      const [state, mergeable] =
+        (world.prMerge.length > 1 ? world.prMerge.shift() : world.prMerge[0]) ?? [];
+      return result(JSON.stringify({ state, mergeable }));
+    }
+    if (line.includes("merge-tree")) return result(world.mergeTreeOutput, 1);
     if (line.includes("gh pr view") && line.includes("--json state")) {
       const state = Array.isArray(world.prState)
         ? world.prState.length > 1
@@ -217,6 +226,8 @@ const setup = (
     ciResponses: [...(ci.responses ?? [])],
     ciLogs: { ...(ci.logs ?? {}) },
     prState: "OPEN",
+    prMerge: [["MERGED", "UNKNOWN"]],
+    mergeTreeOutput: "",
   };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
   const store = new RunStore(cfg.stateDir, () => clock.now());
@@ -291,6 +302,47 @@ test("happy path: Dev, checks, QA, push, PR, green CI, independent review merge,
   const criteria = await store.loadCriteria("CYC-1");
   expect(criteria.allPassed).toBe(true);
   expect(sessions.deleted).toBe(0);
+});
+
+test("auto-merge enabled but the PR conflicts with main: Blocked, comment names the conflict and files, event recorded", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
+  s.world.prMerge = [["OPEN", "CONFLICTING"]];
+  s.world.mergeTreeOutput = "deadbeef\ntools/auto-loop/test/pipeline.test.ts\n";
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:blocked");
+  const comment = s.tracker.comments.at(-1) ?? "";
+  expect(comment).toContain("冲突");
+  expect(comment).toContain("tools/auto-loop/test/pipeline.test.ts");
+  const kinds = (await s.store.events()).map((e) => e.kind);
+  expect(kinds).toContain("merge_conflict");
+  expect(kinds).toContain("blocked");
+  expect(kinds).not.toContain("delivered");
+});
+
+test("auto-merge enabled and the PR merges after a few polls: delivered as before, no extra comment", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
+  s.world.prMerge = [
+    ["OPEN", "UNKNOWN"],
+    ["OPEN", "MERGEABLE"],
+    ["MERGED", "UNKNOWN"],
+  ];
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  expect(s.tracker.moves).toEqual(["CYC-1:inProgress"]);
+  expect(s.tracker.comments.filter((c) => c.includes("已开启 GitHub 自动合并"))).toHaveLength(1);
+});
+
+test("auto-merge enabled but the PR never merges within the time limit: Blocked", async () => {
+  const s = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
+    { mergePollIntervalMs: 1000, mergeTimeoutMs: 3000 },
+  );
+  s.world.prMerge = [["OPEN", "MERGEABLE"]];
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(s.tracker.comments.at(-1)).toContain("没有合并");
 });
 
 test("QA failing sends findings back to Dev, then it passes", async () => {
@@ -476,6 +528,8 @@ test("dry run idle log reports type and leaf exclusions", async () => {
       ciResponses: [],
       ciLogs: {},
       prState: "OPEN",
+      prMerge: [["MERGED", "UNKNOWN"]],
+      mergeTreeOutput: "",
     }),
     store: new RunStore(dir, () => new Date("2026-11-25T00:00:00Z")),
     clock: { now: () => new Date("2026-11-25T00:00:00Z") },
