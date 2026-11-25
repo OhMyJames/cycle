@@ -1,18 +1,18 @@
 # Three jobs, sized for a 2-core, 4 GB machine (GitHub's standard runner is no smaller).
 #
-#  check        every push and pull request. The same `bun run check` as the pre-commit hook.
-#  browser      every push to main, every pull request and by hand: the interface's tests in headless Chromium
+#  check        every pull request. The same `bun run check` as the pre-commit hook.
+#  browser      every pull request and by hand: the interface's tests in headless Chromium
 #               (`bun run test:browser`). About 23 s of tests and 2.2 GB at its peak, which is why it is not in the gate.
-#  integration  every push to main, every pull request and by hand: all seven suites. Starts real
+#  integration  every pull request and by hand: all seven suites. Starts real
 #               processes (Claude, a daemon, Electron under xvfb, the page in headless Chromium): serial, a deadline per suite, about 1.5 GB at
 #               its peak. It needs no secrets: the model is a mock, and nothing here may read an API key from the
 #               environment. --strict: a suite that skipped itself because the runner lacks Electron, xvfb or sshd
 #               is a failure here, not an "ok".
 name: ci
 
+# No push trigger: main only takes pull requests (a ruleset requires check, browser and integration to pass first),
+# so a run after the merge would repeat what the pull request already ran.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
