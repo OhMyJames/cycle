@@ -1152,31 +1152,41 @@ test("a merged PR counts as delivered without opening another or reviewing", asy
     autoMerge: false,
   });
   expect(s.world.calls.filter((c) => c.includes("gh pr create"))).toHaveLength(1);
-  expect(s.tracker.moves.at(-1)).not.toBe("CYC-1:blocked");
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:inReview");
+  expect(s.tracker.comments.at(-1)).toContain("已在自动化之外合并");
   expect((await s.store.load("CYC-1"))?.phase).toBe("done");
 });
 
-test("an unreadable PR state blocks instead of being taken as open", async () => {
+test("an unreadable PR state blocks instead of being taken as open, after retries", async () => {
   const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
-  s.world.prState = ["OPEN", "OPEN"];
-  const base = makeExec(s.world);
-  const pipeline = new Pipeline({
-    config: config({ stateDir: dir }),
-    tracker: s.tracker,
-    sessions: s.sessions,
-    exec: async (argv, opts) =>
-      argv.includes("state") &&
-      s.world.calls.length > 0 &&
-      s.world.calls.some((c) => c.includes("gh pr create"))
-        ? { code: 1, output: "network down", timedOut: false }
-        : base(argv, opts),
-    store: s.store,
-    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
-    log: () => {},
-    env: { PATH: "/bin", GH_TOKEN: "secret" },
-    sleep: async () => {},
-  });
-  const result = await pipeline.step();
+  s.world.prState = ["OPEN", "garbage"];
+  const result = await s.pipeline.step();
   expect(result.status).toBe("blocked");
   expect(s.tracker.comments.at(-1)).toContain("读取 PR 状态失败");
+  expect(s.world.calls.filter((c) => c.includes("--json state")).length).toBeGreaterThan(3);
+  expect(s.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(0);
+});
+
+test("a transient PR state read failure is retried and the run goes on", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  s.world.prState = ["OPEN", "garbage", "OPEN"];
+  expect((await s.pipeline.step()).status).toBe("delivered");
+});
+
+test("a PR closed while the review runs blocks before any review comment or auto-merge", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  // reads: ci guard, after CI, review guard, then closed after the review turn
+  s.world.prState = ["OPEN", "OPEN", "OPEN", "CLOSED"];
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(s.tracker.comments.at(-1)).toContain("PR 已被关闭");
+  expect(s.world.calls.some((c) => c.includes("gh pr comment"))).toBe(false);
+  expect(s.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+});
+
+test("a PR closed while CI is awaited blocks before CI results are acted on", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  s.world.prState = ["OPEN", "CLOSED"]; // ci guard, then re-read after waiting
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(s.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(0);
 });

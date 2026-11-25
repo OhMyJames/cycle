@@ -11,6 +11,7 @@ import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { testLayers } from "./layers.ts";
 import {
   enableAutoMerge,
+  type PrState,
   postPrComment,
   readCiStatus,
   readPrState,
@@ -75,8 +76,7 @@ export type Deps = {
 /** A run cannot go on without a person. The message is what the person is told. */
 class Blocked extends Error {}
 
-/** Phases that push to, wait on, or review an existing pull request. */
-const PR_GUARDED_PHASES: ReadonlySet<string> = new Set(["delivering", "ci", "review"]);
+const PR_STATE_READS = 3;
 
 const branchOf = (number: number) => `auto/cyc-${number}`;
 
@@ -212,8 +212,8 @@ export class Pipeline {
     try {
       let announce = byPerson;
       for (;;) {
-        if (run.prUrl !== null && PR_GUARDED_PHASES.has(run.phase)) {
-          const settled = await this.#guardPr(run, save);
+        if (run.prUrl !== null && run.phase !== "blocked" && run.phase !== "done") {
+          const settled = await this.#guardPr(run, issue, save);
           if (settled !== undefined) return settled;
         }
         switch (run.phase) {
@@ -265,34 +265,56 @@ export class Pipeline {
     }
   }
 
+  /** Reads the PR state, retrying a failed read; an unreadable state blocks, it never counts as open. */
+  async #prState(run: RunRecord): Promise<{ prUrl: string; state: PrState }> {
+    const { config } = this.#d;
+    const prUrl = this.#need(run.prUrl ?? undefined);
+    let lastError = "";
+    for (let attempt = 0; attempt < PR_STATE_READS; attempt++) {
+      const read = await readPrState({
+        prRef: prUrl,
+        exec: this.#d.exec,
+        cwd: run.worktree ?? config.repoRoot,
+        env: this.#d.env,
+        timeoutMs: config.commandTimeoutMs,
+      });
+      if (read.ok) return { prUrl, state: read.state };
+      lastError = read.error;
+    }
+    throw new Blocked(`读取 PR 状态失败：${tail(lastError)}`);
+  }
+
+  async #closedBlock(run: RunRecord, prUrl: string): Promise<never> {
+    await this.#d.store.event(run.key, "pr_closed", { phase: run.phase });
+    throw new Blocked(
+      `PR 已被关闭（未合并），需人接手：${prUrl}。自动化不会再往该分支推送，也不会重开 PR。要继续，请先重新打开该 PR，再把工单放回 Todo。`,
+    );
+  }
+
   /**
-   * Reads the pull request's state before the loop pushes to it, waits on its CI or reviews it. Closed without merging
-   * stops the run (a person takes over); merged counts as delivered. An unreadable state blocks, never counts as open.
+   * Reads the pull request's state at the top of every step once it exists. Closed without merging stops the run (a
+   * person takes over); merged counts as delivered.
    */
   async #guardPr(
     run: RunRecord,
+    issue: Issue,
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<StepResult | undefined> {
-    const { config, store } = this.#d;
-    const prUrl = this.#need(run.prUrl ?? undefined);
-    const read = await readPrState({
-      prRef: prUrl,
-      exec: this.#d.exec,
-      cwd: run.worktree ?? config.repoRoot,
-      env: this.#d.env,
-      timeoutMs: config.commandTimeoutMs,
-    });
-    if (!read.ok) throw new Blocked(`读取 PR 状态失败：${tail(read.error)}`);
-    if (read.state === "OPEN") return undefined;
-    if (read.state === "CLOSED") {
-      await store.event(run.key, "pr_closed", { phase: run.phase });
-      throw new Blocked(
-        `PR 已被关闭（未合并），需人接手：${prUrl}。自动化不会再往该分支推送，也不会重开 PR。`,
-      );
-    }
+    const { store, tracker } = this.#d;
+    const { prUrl, state } = await this.#prState(run);
+    if (state === "OPEN") return undefined;
+    if (state === "CLOSED") return this.#closedBlock(run, prUrl);
+    await tracker.comment(issue, `PR 已在自动化之外合并：${prUrl}。按已交付处理，不再重复开 PR。`);
+    await tracker.move(issue, "inReview");
     await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
     await save({ phase: "done" });
     return { status: "delivered", key: run.key, prUrl, autoMerge: false };
+  }
+
+  /** Re-reads the state in the middle of a step, before acting on a PR that may have been closed meanwhile. */
+  async #assertNotClosed(run: RunRecord): Promise<void> {
+    const { prUrl, state } = await this.#prState(run);
+    if (state === "CLOSED") await this.#closedBlock(run, prUrl);
   }
 
   async #block(
@@ -674,6 +696,7 @@ export class Pipeline {
       sleep: this.#d.sleep ?? ((ms) => Bun.sleep(ms)),
     });
 
+    await this.#assertNotClosed(run);
     if (result.outcome === "error") {
       throw new Blocked(`读取 CI 状态失败：${tail(result.error)}`);
     }
@@ -827,6 +850,8 @@ export class Pipeline {
         await store.event(run.key, "review_retry", { round: run.round, attempt: attempt + 1 });
       }
     }
+
+    await this.#assertNotClosed(run);
 
     const writeAndPostComment = async (body: string) => {
       const { writeFile } = await import("node:fs/promises");
