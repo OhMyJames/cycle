@@ -1,3 +1,4 @@
+import { rmSync } from "node:fs";
 import {
   type AgentContext,
   type AvailableCommand,
@@ -21,7 +22,14 @@ import {
 import { itemUpdate } from "./items.ts";
 import { PLAN_USAGE_UPDATE, planWindowsOf } from "./plan-usage.ts";
 import { CODEX_NOTIFICATION_METHODS, CODEX_PROMPT_CAPABILITIES } from "./protocol.ts";
-import { PROVIDER_TOKEN_ENV, providerCatalog, providerThreadConfig } from "./providers.ts";
+import {
+  loadBundledModels,
+  PROVIDER_TOKEN_ENV,
+  providerCatalog,
+  providerCatalogDocument,
+  providerThreadConfig,
+  writeProviderCatalog,
+} from "./providers.ts";
 import { type AdapterConfig, AppServer, CodexRpcError } from "./server.ts";
 import {
   type Catalog,
@@ -101,6 +109,8 @@ export function createAdapter(config: AdapterConfig) {
   let mcpConfig: Record<string, unknown> = {};
   let trusted: boolean | undefined;
   let codexConfig: Record<string, unknown> = {};
+  /** The per-thread model catalog on disk, while a session on the owner's models is open. */
+  let catalogDir: string | undefined;
   /** The client said it can show a form (ACP `capabilities.elicitation.form`): the daemon says so for its clients. */
   let clientCanElicit = false;
   let cwd: string | undefined;
@@ -120,6 +130,17 @@ export function createAdapter(config: AdapterConfig) {
   const childAsks = new Map<string, AbortController>();
   /** Sub-agents told as ended (idle) and not running since: an end is told once. */
   const childEnded = new Set<string>();
+  /** The catalog is for one session: its instructions and metadata never outlive the thread that read it. */
+  function clearCatalog() {
+    const dir = catalogDir;
+    catalogDir = undefined;
+    if (dir === undefined) return;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best effort: the directory is private and the OS cleans it eventually.
+    }
+  }
   const childSignal = (threadId: string) => {
     let asks = childAsks.get(threadId);
     if (!asks) {
@@ -587,6 +608,7 @@ export function createAdapter(config: AdapterConfig) {
   ) {
     if (server) throw new RequestError(-32600, "This adapter already has a session");
     if (resume?.replayFrom) throw new RequestError(-32602, "Cycle owns the conversation replay");
+    clearCatalog();
     mode = "default";
     model = "default";
     effort = "default";
@@ -679,9 +701,6 @@ export function createAdapter(config: AdapterConfig) {
         `This session runs on ${wanted}, which is no longer in your model providers. Add it back to continue it.`,
       );
     onProviders = chosen !== undefined;
-    if (config.providers && chosen) {
-      codexConfig = { ...codexConfig, ...providerThreadConfig(config.providers, chosen) };
-    }
     const child = new AppServer(
       config.providers && chosen
         ? { ...config, env: { ...config.env, [PROVIDER_TOKEN_ENV]: config.providers.token } }
@@ -689,23 +708,29 @@ export function createAdapter(config: AdapterConfig) {
       event,
       (error) => {
         finish(turn?.cancelled ? "cancelled" : "error", error.message);
+        clearCatalog();
         // The session cannot go on without it: the adapter ends too, so the daemon starts a new one and resumes.
         if (session !== undefined && !closing) config.onServerExit?.();
       },
       serverRequest,
     );
     server = child;
-    const settings = {
-      cwd: params.cwd,
-      ...policy(mode),
-      ...(chosen !== undefined ? { model: chosen.id } : {}),
-      ...(Object.keys(codexConfig).length > 0 ? { config: codexConfig } : {}),
-      ...(developerInstructions ? { developerInstructions } : {}),
-    };
     type Thread = { thread: { id: string }; model?: string; reasoningEffort?: string | null };
     try {
       await child.initialize();
       if (onProviders && config.providers) {
+        const bundled = await loadBundledModels({
+          codexExecutable: config.codexExecutable,
+          env: config.env,
+        });
+        const written = await writeProviderCatalog(
+          providerCatalogDocument(config.providers.models, bundled),
+        );
+        catalogDir = written.dir;
+        codexConfig = {
+          ...codexConfig,
+          ...providerThreadConfig(config.providers, written.path),
+        };
         catalog = providerCatalog(config.providers.models);
       } else {
         try {
@@ -720,6 +745,13 @@ export function createAdapter(config: AdapterConfig) {
           catalog = [];
         }
       }
+      const settings = {
+        cwd: params.cwd,
+        ...policy(mode),
+        ...(chosen !== undefined ? { model: chosen.id } : {}),
+        ...(Object.keys(codexConfig).length > 0 ? { config: codexConfig } : {}),
+        ...(developerInstructions ? { developerInstructions } : {}),
+      };
       let result: Thread;
       if (resume) {
         try {
@@ -768,6 +800,7 @@ export function createAdapter(config: AdapterConfig) {
       };
     } catch (error) {
       child.close();
+      clearCatalog();
       server = undefined;
       throw error;
     }
@@ -913,6 +946,7 @@ export function createAdapter(config: AdapterConfig) {
       server?.close();
       server = undefined;
       session = undefined;
+      clearCatalog();
       return {};
     });
   return {
@@ -921,6 +955,7 @@ export function createAdapter(config: AdapterConfig) {
       closing = true;
       childApprovals.abort();
       server?.close();
+      clearCatalog();
     },
   };
 }

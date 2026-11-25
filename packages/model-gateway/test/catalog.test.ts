@@ -93,3 +93,23 @@ test("a session knows a provider's model by the provider's id and the model's", 
   });
   expect(splitModelRef("gpt-5")).toBeNull();
 });
+
+test("DeepSeek's own effort levels include max", () => {
+  const known = catalogModels("deepseek");
+  const flash = known.find((item) => item.id === "deepseek-flash");
+  const pro = known.find((item) => item.id === "deepseek-v4-pro");
+  if (!flash || !pro) throw new Error("DeepSeek's models are missing from the catalog");
+  const config: ProviderConfig = {
+    id: "deepseek",
+    name: "DeepSeek",
+    kind: "deepseek",
+    api: null,
+    baseUrl: null,
+    apiKey: "k",
+    models: [flash, pro],
+  };
+  expect(modelInfos(config).map((model) => model.efforts.map((effort) => effort.id))).toEqual([
+    ["low", "high", "max"],
+    ["high", "max"],
+  ]);
+});

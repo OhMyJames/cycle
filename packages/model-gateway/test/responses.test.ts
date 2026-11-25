@@ -172,6 +172,7 @@ test("an image comes through as data, and the effort only when it is one pi-ai k
   };
   const high = toContext({ ...request, reasoning: { effort: "high" } }, 0);
   expect(high.effort).toBe("high");
+  expect(toContext({ ...request, reasoning: { effort: "max" } }, 0).effort).toBe("max");
   expect(high.sessionId).toBe("thread-1");
   expect(high.context.messages[0]).toMatchObject({
     content: [
