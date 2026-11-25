@@ -3,7 +3,7 @@
 // by an explicit allowlist, and no token reaches an agent).
 
 const BASE = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "TZ"] as const;
-/** What `git push` and `gh pr create` need to authenticate, and only those two commands get it. */
+/** What `git fetch`, `git push` and `gh` commands (PR / CI) need to authenticate, and only those commands get it. */
 const DELIVER = ["SSH_AUTH_SOCK", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"] as const;
 
 const pick = (
@@ -24,7 +24,7 @@ export const verifyEnv = (source: Record<string, string | undefined>): Record<st
   CI: "1",
 });
 
-/** For `git push` and `gh pr create` only. */
+/** For `git fetch`, `git push` and `gh` commands (PR creation/update and CI status/logs) only. */
 export const deliverEnv = (source: Record<string, string | undefined>): Record<string, string> => ({
   ...pick(source, BASE),
   ...pick(source, DELIVER),

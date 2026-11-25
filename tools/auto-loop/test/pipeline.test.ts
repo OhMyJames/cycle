@@ -57,6 +57,7 @@ type Script = {
 class FakeSessions implements Sessions {
   created: string[] = [];
   turns: string[] = [];
+  prompts: { sessionId: string; role: "dev" | "qa"; prompt: string }[] = [];
   deleted = 0;
   constructor(public script: Script) {}
   async create(input: { role: "dev" | "qa"; cwd: string }) {
@@ -70,6 +71,7 @@ class FakeSessions implements Sessions {
   }
   async turn(sessionId: string, prompt: string, ctx: { role: "dev" | "qa" }) {
     this.turns.push(`${sessionId}: ${prompt.slice(0, 30)}`);
+    this.prompts.push({ sessionId, role: ctx.role, prompt });
     const next = this.script[ctx.role].shift();
     if (next === undefined) throw new Error(`no scripted ${ctx.role} turn`);
     if (next instanceof Error) throw next;
@@ -77,7 +79,51 @@ class FakeSessions implements Sessions {
   }
 }
 
-type World = { fail: Set<string>; calls: string[]; dirty: boolean; qaWrites: boolean };
+type CiCheckStub = {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  detailsUrl?: string;
+};
+
+type CiResponse = {
+  headRefOid: string;
+  statusCheckRollup: CiCheckStub[];
+};
+
+const greenCi = (headRefOid = "abc"): CiResponse => ({
+  headRefOid,
+  statusCheckRollup: [
+    {
+      name: "check",
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      detailsUrl: "https://github.com/o/r/actions/runs/10/job/101",
+    },
+    {
+      name: "browser",
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      detailsUrl: "https://github.com/o/r/actions/runs/10/job/102",
+    },
+    {
+      name: "integration",
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      detailsUrl: "https://github.com/o/r/actions/runs/10/job/103",
+    },
+  ],
+});
+
+type World = {
+  fail: Set<string>;
+  calls: string[];
+  dirty: boolean;
+  qaWrites: boolean;
+  headSha: string;
+  ciResponses: CiResponse[];
+  ciLogs: Record<string, string>;
+};
 
 const makeExec =
   (world: World): Exec =>
@@ -87,9 +133,18 @@ const makeExec =
     const result = (output: string, code = 0): ExecResult => ({ code, output, timedOut: false });
     if (line.includes("diff --name-only")) return result("packages/client/src/a.ts\n");
     if (line.includes("status --porcelain")) return result(world.dirty ? " M a.ts\n" : "");
-    if (line.includes("rev-parse HEAD")) return result("abc\n");
+    if (line.includes("rev-parse HEAD")) return result(`${world.headSha}\n`);
     for (const pattern of world.fail) if (line.includes(pattern)) return result("boom", 1);
     if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
+    if (line.includes("gh pr view") && line.includes("statusCheckRollup")) {
+      const next = world.ciResponses.shift() ?? greenCi(world.headSha);
+      return result(JSON.stringify(next));
+    }
+    if (line.includes("gh run view")) {
+      const jobIdx = argv.indexOf("--job");
+      const key = jobIdx !== -1 ? (argv[jobIdx + 1] ?? "") : (argv[3] ?? "");
+      return result(world.ciLogs[key] ?? "generic CI failure log\n");
+    }
     if (line.includes("gh pr view")) return result("https://github.com/o/r/pull/9\n");
     return result("");
   };
@@ -102,11 +157,25 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const setup = (issues: Issue[], script: Script, over = {}, fail: string[] = []) => {
+const setup = (
+  issues: Issue[],
+  script: Script,
+  over = {},
+  fail: string[] = [],
+  ci: { responses?: CiResponse[]; logs?: Record<string, string> } = {},
+) => {
   const cfg = config({ stateDir: dir, ...over });
   const tracker = new FakeTracker(issues);
   const sessions = new FakeSessions(script);
-  const world: World = { fail: new Set(fail), calls: [], dirty: false, qaWrites: false };
+  const world: World = {
+    fail: new Set(fail),
+    calls: [],
+    dirty: false,
+    qaWrites: false,
+    headSha: "abc",
+    ciResponses: [...(ci.responses ?? [])],
+    ciLogs: { ...(ci.logs ?? {}) },
+  };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
   const store = new RunStore(dir, () => clock.now());
   const pipeline = new Pipeline({
@@ -118,6 +187,7 @@ const setup = (issues: Issue[], script: Script, over = {}, fail: string[] = []) 
     clock,
     log: () => {},
     env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
+    sleep: async () => {},
   });
   return { pipeline, tracker, sessions, world, store };
 };
@@ -341,12 +411,258 @@ test("dry run idle log reports type and leaf exclusions", async () => {
     config: cfg,
     tracker,
     sessions: new FakeSessions({ dev: [], qa: [] }),
-    exec: makeExec({ fail: new Set(), calls: [], dirty: false, qaWrites: false }),
+    exec: makeExec({
+      fail: new Set(),
+      calls: [],
+      dirty: false,
+      qaWrites: false,
+      headSha: "abc",
+      ciResponses: [],
+      ciLogs: {},
+    }),
     store: new RunStore(dir, () => new Date("2026-11-25T00:00:00Z")),
     clock: { now: () => new Date("2026-11-25T00:00:00Z") },
     log: (line) => logs.push(line),
     env: { PATH: "/bin" },
+    sleep: async () => {},
   });
   expect(await pipeline.step()).toEqual({ status: "idle" });
   expect(logs[0]).toBe("dry run: 2 in Todo, 2 with auto, 1 allowed type, 0 leaf");
+});
+
+test("CI all green after polling proceeds to In Review and done", async () => {
+  const { pipeline, tracker, store, world } = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)] },
+    {},
+    [],
+    {
+      responses: [
+        {
+          headRefOid: "abc",
+          statusCheckRollup: [
+            { name: "check", status: "COMPLETED", conclusion: "SUCCESS" },
+            { name: "browser", status: "COMPLETED", conclusion: "SUCCESS" },
+            { name: "integration", status: "IN_PROGRESS", conclusion: null },
+          ],
+        },
+        greenCi("abc"),
+      ],
+    },
+  );
+  const result = await pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+  });
+  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  expect(world.calls.filter((c) => c.includes("statusCheckRollup"))).toHaveLength(2);
+  const run = await store.load("CYC-1");
+  expect(run?.phase).toBe("done");
+  expect(run?.ciRound).toBe(0);
+});
+
+test("red CI sends failure logs back to Dev, pushes fix to the same branch, then delivers when green", async () => {
+  const browserFailureLog = "FAIL packages/ui/test/browser/app.test.ts: expected button visible";
+  const s = setup([ready()], { dev: [done(), done()], qa: [done(PASS), done(PASS)] }, {}, [], {
+    responses: [
+      {
+        headRefOid: "sha-1",
+        statusCheckRollup: [
+          {
+            name: "check",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            detailsUrl: "https://github.com/o/r/actions/runs/10/job/101",
+          },
+          {
+            name: "browser",
+            status: "COMPLETED",
+            conclusion: "FAILURE",
+            detailsUrl: "https://github.com/o/r/actions/runs/10/job/555",
+          },
+          {
+            name: "integration",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            detailsUrl: "https://github.com/o/r/actions/runs/10/job/103",
+          },
+        ],
+      },
+      // Stale headRefOid immediately after pushing the fix commit: must be treated as pending.
+      {
+        headRefOid: "sha-1",
+        statusCheckRollup: [
+          { name: "check", status: "COMPLETED", conclusion: "SUCCESS" },
+          { name: "browser", status: "COMPLETED", conclusion: "FAILURE" },
+          { name: "integration", status: "COMPLETED", conclusion: "SUCCESS" },
+        ],
+      },
+      greenCi("sha-2"),
+    ],
+    logs: { "555": browserFailureLog },
+  });
+  s.world.headSha = "sha-1";
+  const originalTurn = s.sessions.turn.bind(s.sessions);
+  let devCount = 0;
+  s.sessions.turn = async (id, prompt, ctx) => {
+    const out = await originalTurn(id, prompt, ctx);
+    if (ctx.role === "dev") {
+      devCount++;
+      if (devCount === 2) s.world.headSha = "sha-2";
+    }
+    return out;
+  };
+
+  const result = await s.pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+  });
+
+  const devPrompts = s.sessions.prompts.filter((p) => p.role === "dev");
+  expect(devPrompts).toHaveLength(2);
+  expect(devPrompts[1]?.prompt).toContain("browser");
+  expect(devPrompts[1]?.prompt).toContain(browserFailureLog);
+
+  // Pushed twice to the same branch; PR created once and updated via gh pr edit on retry.
+  const pushes = s.world.calls.filter((c) => c.includes("push origin HEAD:refs/heads/auto/cyc-1"));
+  expect(pushes).toHaveLength(2);
+  expect(s.world.calls.filter((c) => c.includes("gh pr create"))).toHaveLength(1);
+  expect(s.world.calls.filter((c) => c.includes("gh pr edit"))).toHaveLength(1);
+
+  expect(s.tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  const run = await s.store.load("CYC-1");
+  expect(run?.phase).toBe("done");
+  expect(run?.ciRound).toBe(1);
+  expect(run?.round).toBe(1);
+});
+
+test("CI failing past retry limit ends in Blocked with failed check and log reason", async () => {
+  const redIntegration = (): CiResponse => ({
+    headRefOid: "abc",
+    statusCheckRollup: [
+      {
+        name: "check",
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+        detailsUrl: "https://github.com/o/r/actions/runs/20/job/201",
+      },
+      {
+        name: "browser",
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+        detailsUrl: "https://github.com/o/r/actions/runs/20/job/202",
+      },
+      {
+        name: "integration",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/o/r/actions/runs/20/job/777",
+      },
+    ],
+  });
+  const integrationLog = "integration web suite failed: websocket closed unexpectedly";
+  const { pipeline, tracker, store, sessions } = setup(
+    [ready()],
+    {
+      dev: [done(), done(), done()],
+      qa: [done(PASS), done(PASS), done(PASS)],
+    },
+    { maxCiRetries: 2 },
+    [],
+    {
+      responses: [redIntegration(), redIntegration(), redIntegration()],
+      logs: { "777": integrationLog },
+    },
+  );
+
+  const result = await pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") {
+    expect(result.reason).toContain("上限");
+    expect(result.reason).toContain("integration");
+    expect(result.reason).toContain(integrationLog);
+  }
+  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:blocked"]);
+  expect(tracker.comments.at(-1)).toContain("integration");
+  const run = await store.load("CYC-1");
+  expect(run?.phase).toBe("blocked");
+  expect(run?.resumeFrom).toBe("ci");
+  expect(run?.ciRound).toBe(2);
+  expect(run?.worktree).toBe(WT);
+  expect(sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(3);
+  expect(sessions.deleted).toBe(0);
+});
+
+test("a run crashed while waiting for CI resumes in ci phase without re-running Dev or QA", async () => {
+  const first = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const baseExec = makeExec(first.world);
+  const crashing = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: first.tracker,
+    sessions: first.sessions,
+    exec: async (argv, opts) => {
+      if (argv.some((a) => a.includes("statusCheckRollup"))) throw new Error("killed during ci");
+      return baseExec(argv, opts);
+    },
+    store: first.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin", GH_TOKEN: "secret" },
+    sleep: async () => {},
+  });
+  await expect(crashing.step()).rejects.toThrow("killed during ci");
+  expect((await first.store.load("CYC-1"))?.phase).toBe("ci");
+
+  const secondSessions = new FakeSessions({ dev: [], qa: [] });
+  const second = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: first.tracker,
+    sessions: secondSessions,
+    exec: makeExec(first.world),
+    store: first.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin", GH_TOKEN: "secret" },
+    sleep: async () => {},
+  });
+  expect(await second.step()).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+  });
+  expect(secondSessions.turns).toEqual([]);
+});
+
+test("CI polling timeout ends in Blocked with pending check names", async () => {
+  const pendingIntegration: CiResponse = {
+    headRefOid: "abc",
+    statusCheckRollup: [
+      { name: "check", status: "COMPLETED", conclusion: "SUCCESS" },
+      { name: "browser", status: "COMPLETED", conclusion: "SUCCESS" },
+      { name: "integration", status: "IN_PROGRESS", conclusion: null },
+    ],
+  };
+  const { pipeline, tracker, store } = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)] },
+    { ciPollIntervalMs: 1000, ciTimeoutMs: 2000 },
+    [],
+    {
+      responses: [pendingIntegration, pendingIntegration, pendingIntegration, pendingIntegration],
+    },
+  );
+  const result = await pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") {
+    expect(result.reason).toContain("超时");
+    expect(result.reason).toContain("integration");
+  }
+  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:blocked"]);
+  const run = await store.load("CYC-1");
+  expect(run?.phase).toBe("blocked");
+  expect(run?.resumeFrom).toBe("ci");
 });

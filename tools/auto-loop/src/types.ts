@@ -65,6 +65,14 @@ export type Config = {
   maxCriteria: number;
   /** Fix rounds after the first Dev turn. */
   maxFixRounds: number;
+  /** Required CI check names on the pull request before the work item is considered delivered. */
+  ciChecks: string[];
+  /** Maximum number of times a red CI run is sent back to Dev before blocking. */
+  maxCiRetries: number;
+  /** How often to poll GitHub CI status while waiting for checks to finish. */
+  ciPollIntervalMs: number;
+  /** Maximum time to wait for a single CI run to finish before blocking. */
+  ciTimeoutMs: number;
   /** A turn that runs longer than this (not counting the time it waits for a person) is cancelled. */
   turnTimeoutMs: number;
   /** One verification command. */
@@ -86,6 +94,10 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   allowedTypeIds: [20, 25],
   maxCriteria: 8,
   maxFixRounds: 3,
+  ciChecks: ["check", "browser", "integration"],
+  maxCiRetries: 2,
+  ciPollIntervalMs: 30_000,
+  ciTimeoutMs: 30 * 60_000,
   turnTimeoutMs: 30 * 60_000,
   commandTimeoutMs: 20 * 60_000,
   devAgent: "agy",
