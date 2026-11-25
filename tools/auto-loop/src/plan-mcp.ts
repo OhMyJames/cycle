@@ -99,7 +99,17 @@ export class PlanTracker implements Tracker {
         limit: 100,
       }),
     );
-    const rows = Array.isArray(listed.issues) ? listed.issues : Array.isArray(listed) ? listed : [];
+    const rows = Array.isArray(listed.data)
+      ? listed.data
+      : Array.isArray(asRecord(listed.data).issues)
+        ? (asRecord(listed.data).issues as unknown[])
+        : Array.isArray(listed.issues)
+          ? listed.issues
+          : Array.isArray(listed)
+            ? listed
+            : undefined;
+    if (rows === undefined)
+      throw new Error(`unrecognized list_issues reply: ${JSON.stringify(listed).slice(0, 300)}`);
     // The list may not carry the description: read each in full.
     return Promise.all(
       rows.map((row) => this.get(Number(asRecord(row).sequenceNumber ?? asRecord(row).number))),
@@ -111,7 +121,11 @@ export class PlanTracker implements Tracker {
       projectKey: this.#project,
       sequenceNumber: number,
     });
-    return toIssue(asRecord(raw).issue ?? raw, this.#project);
+    const body = asRecord(raw);
+    return toIssue(
+      asRecord(body.data).id !== undefined ? body.data : (body.issue ?? raw),
+      this.#project,
+    );
   }
 
   async move(issue: Issue, stage: Stage): Promise<void> {

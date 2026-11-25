@@ -127,8 +127,13 @@ export class Pipeline {
   /** `--dry-run`: pick and check, and say what would happen. Writes nothing anywhere. */
   async #dryRun(): Promise<StepResult> {
     const { config, tracker } = this.#d;
-    const issue = pickNext(await tracker.listTodo(), config);
-    if (issue === undefined) return { status: "idle" };
+    const todo = await tracker.listTodo();
+    const issue = pickNext(todo, config);
+    if (issue === undefined) {
+      const labeled = todo.filter((i) => i.labelIds.includes(config.autoLabelId)).length;
+      this.#d.log(`dry run: ${todo.length} in Todo, ${labeled} with the auto label`);
+      return { status: "idle" };
+    }
     const pre = preflight(issue, config);
     if (!pre.ok) return { status: "rejected", key: issue.key, reasons: pre.reasons };
     return { status: "would-take", key: issue.key, criteria: pre.specs.length };
