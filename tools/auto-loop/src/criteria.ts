@@ -24,8 +24,16 @@ export type CriterionSpec = { text: string; verify: string[][] };
 export type ParsedCriterion = { text: string; commands: string[] };
 
 const HEADING = /^(#{1,6})\s*(验收标准|验收|acceptance criteria|acceptance)(?!\w)/i;
-const ITEM = /^\s*(?:\d+[.)]|[-*+])\s+(?:\[[ xX]\]\s+)?(.+)$/;
+const ITEM = /^([ \t]*)(?:\d+[.)]|[-*+])\s+(?:\[[ xX]\]\s+)?(.+)$/;
 const MARKER = /(?:验证|verify)\s*[:：]/i;
+
+const indentOf = (prefix: string): number => {
+  let width = 0;
+  for (const ch of prefix) {
+    width = ch === "\t" ? width + 4 - (width % 4) : width + 1;
+  }
+  return width;
+};
 
 /** The criteria in the work item's description: the list items under a heading such as `## 验收标准`. */
 export const parseCriteria = (description: string): ParsedCriterion[] => {
@@ -33,12 +41,21 @@ export const parseCriteria = (description: string): ParsedCriterion[] => {
   const start = lines.findIndex((line) => HEADING.test(line.trim()));
   if (start === -1) return [];
   const items: string[] = [];
+  let baseIndent: number | undefined;
   for (const line of lines.slice(start + 1)) {
     if (/^#{1,6}\s/.test(line.trim())) break;
     const item = ITEM.exec(line);
-    if (item !== null) items.push((item[1] as string).trim());
-    else if (line.trim() !== "" && /^\s+/.test(line) && items.length > 0)
+    if (item !== null) {
+      const indent = indentOf(item[1] ?? "");
+      if (baseIndent === undefined || indent <= baseIndent) {
+        baseIndent ??= indent;
+        items.push((item[2] ?? "").trim());
+        continue;
+      }
+    }
+    if (line.trim() !== "" && /^\s+/.test(line) && items.length > 0) {
       items[items.length - 1] += ` ${line.trim()}`;
+    }
   }
   return items.map((text) => {
     const marker = MARKER.exec(text);
