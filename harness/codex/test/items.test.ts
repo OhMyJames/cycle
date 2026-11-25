@@ -101,3 +101,72 @@ test("past the limit, the rest of the files are counted", () => {
   // b's diff does not fit and neither does its name: b, c and d are counted. c would fit, but is not told after b.
   expect(diffOf(changes)).toBe(`${"+".repeat(MAX_OUTPUT - 10)}\n… and 3 more files`);
 });
+
+test("command, MCP, fileChange and webSearch items carry structured rawInput, locations and exitCode", () => {
+  const ok = itemUpdate(command("done"), true, false);
+  expect(ok).toMatchObject({
+    sessionUpdate: "tool_call_update",
+    name: "exec_command",
+    title: "make",
+    kind: "execute",
+    status: "completed",
+    rawInput: { command: "make", cwd: "/" },
+    _meta: { "cycle/toolResult": { run: {} } },
+  });
+
+  const failed = itemUpdate(
+    { ...(command("boom") as object), status: "failed", exitCode: 2 } as ThreadItem,
+    true,
+    false,
+  );
+  expect(failed).toMatchObject({
+    status: "failed",
+    rawInput: { command: "make", cwd: "/" },
+    _meta: { "cycle/toolResult": { run: { exitCode: 2 } } },
+  });
+
+  const mcp = itemUpdate(
+    {
+      type: "mcpToolCall",
+      id: "m2",
+      server: "plan",
+      tool: "get_issue",
+      status: "completed",
+      arguments: { projectKey: "CYC", sequenceNumber: 308 },
+      result: { content: [{ type: "text", text: "ok" }] },
+      error: null,
+    } as unknown as ThreadItem,
+    true,
+    false,
+  );
+  expect(mcp).toMatchObject({
+    name: "plan/get_issue",
+    rawInput: { projectKey: "CYC", sequenceNumber: 308 },
+  });
+
+  const edited = itemUpdate(
+    {
+      type: "fileChange",
+      id: "f1",
+      status: "completed",
+      changes: [change("/src/a.ts", "-a\n+b"), change("/src/b.ts", "+c", "add")],
+    } as unknown as ThreadItem,
+    true,
+    false,
+  );
+  expect(edited).toMatchObject({
+    kind: "edit",
+    locations: [{ path: "/src/a.ts" }, { path: "/src/b.ts" }],
+  });
+
+  const searched = itemUpdate(
+    { type: "webSearch", id: "w1", query: "cycle protocol" } as unknown as ThreadItem,
+    true,
+    false,
+  );
+  expect(searched).toMatchObject({
+    kind: "search",
+    title: "cycle protocol",
+    rawInput: { query: "cycle protocol" },
+  });
+});

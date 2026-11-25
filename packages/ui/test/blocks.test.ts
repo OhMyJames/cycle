@@ -7,6 +7,8 @@ import {
   type BlockCache,
   blocksOf,
   type Conversation,
+  commandLabelOf,
+  commandOf,
   earlierAnchor,
   type FoldCache,
   foldedBlocks,
@@ -448,4 +450,46 @@ test("a fold under a second does not say how long", () => {
   expect(foldedBlocks(blocksOf(c), c.stops).find((b) => b.kind === "fold")).not.toHaveProperty(
     "ms",
   );
+});
+
+test("commandOf and commandLabelOf handle canonical command, legacy CommandLine, shell wrappers, and title-only execute logs", () => {
+  const mk = (over: Partial<ToolItem>): ToolItem => ({
+    kind: "tool",
+    id: "t",
+    turn: 0,
+    content: [],
+    status: "completed",
+    toolKind: "execute",
+    ...over,
+  });
+
+  const codexWrapped = mk({
+    name: "exec_command",
+    rawInput: { command: '/bin/zsh -lc "rg -n foo src"' },
+  });
+  expect(commandOf(codexWrapped)).toBe('/bin/zsh -lc "rg -n foo src"');
+  expect(commandLabelOf(codexWrapped)).toEqual({
+    kind: "search",
+    detail: "'foo' in src",
+    count: 1,
+  });
+  expect(activityOf(codexWrapped)).toBe("search");
+
+  const codexLegacy = mk({
+    name: "exec_command",
+    title: "/bin/zsh -lc 'bun test'",
+  });
+  expect(commandOf(codexLegacy)).toBe("/bin/zsh -lc 'bun test'");
+  expect(activityOf(codexLegacy)).toBe("run");
+
+  const agyLegacy = mk({
+    name: "run_command",
+    rawInput: { CommandLine: "cat README.md" },
+  });
+  expect(commandOf(agyLegacy)).toBe("cat README.md");
+  expect(commandLabelOf(agyLegacy)).toEqual({ kind: "read", detail: "README.md", count: 1 });
+  expect(activityOf(agyLegacy)).toBe("read");
+
+  // Pending call with only a bare tool name does not fabricate a command.
+  expect(commandOf(mk({ name: "exec_command", title: "exec_command" }))).toBeUndefined();
 });

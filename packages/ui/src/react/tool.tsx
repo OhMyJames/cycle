@@ -66,6 +66,16 @@ export const clip = (text: string): string =>
     ? `${text.slice(0, MAX_SHOWN)}\n… (${text.length - MAX_SHOWN} more characters not shown)`
     : text;
 
+/** A call's locations as one short summary (`a.ts`, or `a.ts +2` when it touched several). */
+const locationsSummary = (tool: ToolItem): string | undefined => {
+  const paths = (tool.locations ?? [])
+    .map((loc) => loc.path)
+    .filter((p): p is string => typeof p === "string" && p !== "");
+  if (paths.length === 0) return undefined;
+  const unique = [...new Set(paths)];
+  return unique.length > 1 ? `${unique[0]} +${unique.length - 1}` : unique[0];
+};
+
 /** What a call acted on: its command, path, pattern, address or query. Shown, never run. */
 export const toolSummary = (tool: ToolItem): string => {
   // A command that only searches, reads or lists, with no sentence of the agent's for it: what it searched or read,
@@ -75,7 +85,23 @@ export const toolSummary = (tool: ToolItem): string => {
   if (label !== undefined) return label.detail;
   const key = summaryKey(tool);
   if (key !== undefined) return String((tool.rawInput as Record<string, unknown>)[key]);
-  return questionsOf(tool)[0] ?? firstShortText(tool) ?? "";
+  const command = commandOf(tool);
+  if (command !== undefined) return command;
+  const located = locationsSummary(tool);
+  if (located !== undefined) return located;
+  const fallback = questionsOf(tool)[0] ?? firstShortText(tool);
+  if (fallback !== undefined) return fallback;
+  // When the verb is a generic activity ("Ran", "Read", "Searched", ...), fall back to ACP's title if it says more
+  // than the bare tool name. For `other`, the verb already shows `toolName` (which is `tool.title`), so never repeat it.
+  if (
+    activityOf(tool) !== "other" &&
+    typeof tool.title === "string" &&
+    tool.title.trim() !== "" &&
+    tool.title !== tool.name &&
+    tool.title !== "Tool"
+  )
+    return tool.title;
+  return "";
 };
 
 /**
@@ -128,18 +154,48 @@ const planOf = (tool: ToolItem): string | undefined => {
   return typeof plan === "string" && plan.trim() !== "" ? plan : undefined;
 };
 
-const SUMMARY_KEYS = ["command", "file_path", "notebook_path", "path", "pattern", "url", "query"];
+const SUMMARY_KEYS = [
+  "command",
+  "CommandLine",
+  "file_path",
+  "notebook_path",
+  "path",
+  "Path",
+  "pattern",
+  "url",
+  "query",
+];
 
 /** Which field of the input the line shows. */
 const summaryKey = (tool: ToolItem): string | undefined => {
   const input = (tool.rawInput ?? {}) as Record<string, unknown>;
-  return SUMMARY_KEYS.find((key) => typeof input[key] === "string");
+  return SUMMARY_KEYS.find((key) => typeof input[key] === "string" && input[key] !== "");
 };
 
 /** Fields of a command's input the panel or the line already says: the command, what it is for, where it runs. */
-const COMMAND_SAID = new Set(["command", "description", "run_in_background", "timeout"]);
+const COMMAND_SAID = new Set([
+  "command",
+  "CommandLine",
+  "description",
+  "cwd",
+  "run_in_background",
+  "timeout",
+]);
 const saidByCommand = (tool: ToolItem): boolean =>
+  typeof tool.rawInput === "object" &&
+  tool.rawInput !== null &&
+  !Array.isArray(tool.rawInput) &&
   Object.keys(tool.rawInput as Record<string, unknown>).every((key) => COMMAND_SAID.has(key));
+
+/** Extra fields of a command call beyond what the command block already shows, so the command text is never duplicated. */
+const extraCommandInput = (rawInput: unknown): Record<string, unknown> | undefined => {
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput))
+    return undefined;
+  const rest = Object.fromEntries(
+    Object.entries(rawInput as Record<string, unknown>).filter(([key]) => !COMMAND_SAID.has(key)),
+  );
+  return Object.keys(rest).length > 0 ? rest : undefined;
+};
 
 /** An input with nothing in it the line does not already say (a Read of a path): not shown again when opened. */
 const saidByLine = (tool: ToolItem): boolean => {
@@ -325,7 +381,9 @@ function CallCard({ tool }: { tool: ToolItem }) {
     !(command !== undefined && saidByCommand(tool)) &&
     plan === undefined &&
     questions.length === 0
-      ? tool.rawInput
+      ? command !== undefined
+        ? extraCommandInput(tool.rawInput)
+        : tool.rawInput
       : undefined;
   // The tooltip names the tool, holds the whole sentence when the line cuts it, and what the call acted on.
   const tip =
@@ -486,7 +544,7 @@ function Facts({ facts }: { facts: ToolFacts }) {
     const { interrupted, timedOutMs, background, exitCode } = facts.run;
     const text = interrupted
       ? t("tool.facts.interrupted")
-      : exitCode !== undefined
+      : exitCode !== undefined && exitCode !== 0
         ? t("tool.facts.exitCode", { code: exitCode })
         : timedOutMs !== undefined
           ? t("tool.facts.timedOut", { duration: durationOf(i18n, timedOutMs) })

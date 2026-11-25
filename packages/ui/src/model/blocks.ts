@@ -60,17 +60,33 @@ const BY_KIND: Record<string, Activity> = {
   fetch: "fetch",
 };
 
-/** The command a call ran, when its input has one. */
-export const commandOf = (tool: ToolItem): string | undefined => {
-  const input = tool.rawInput;
-  if (typeof input !== "object" || input === null) return undefined;
-  const command = (input as Record<string, unknown>).command;
-  return typeof command === "string" && command !== "" ? command : undefined;
-};
-
 /** What a tool call does, by its name (Claude's own) and else by the kind ACP gives it. */
 const kindOf = (tool: ToolItem): Activity =>
   BY_NAME[tool.name ?? ""] ?? BY_KIND[tool.toolKind ?? ""] ?? "other";
+
+/** The command a call ran, from its structured input or (for older logs / title-only ACP calls) its title. */
+export const commandOf = (tool: ToolItem): string | undefined => {
+  const input = tool.rawInput;
+  if (typeof input === "object" && input !== null) {
+    const raw = input as Record<string, unknown>;
+    const command =
+      typeof raw.command === "string" && raw.command !== ""
+        ? raw.command
+        : typeof raw.CommandLine === "string" && raw.CommandLine !== ""
+          ? raw.CommandLine
+          : undefined;
+    if (command !== undefined) return command;
+  }
+  if (
+    kindOf(tool) === "run" &&
+    typeof tool.title === "string" &&
+    tool.title.trim() !== "" &&
+    tool.title !== tool.name &&
+    tool.title !== "Tool"
+  )
+    return tool.title;
+  return undefined;
+};
 
 /**
  * What a command call plainly does, from its command (`rg` searches, `cat` reads, `ls` lists), when it can be told.

@@ -695,6 +695,8 @@ Claude 的取法:每个 turn 结束时 Stop hook 的 `session_crons` 是进程�
 
 ### 工具调用的结果
 
+工具调用开始或更新时,agent 尽量把结构化目标放进 ACP 的标准字段:命令用 `rawInput.command`(可选 `cwd`),读写编辑用 `rawInput.file_path`/`rawInput.path` 和 `locations`,搜索与抓取用 `rawInput.query`/`rawInput.pattern`/`rawInput.url`,以便客户端无需按 agent 名称特判即可稳定展示摘要与展开详情;历史日志或仅填了 `title`/`locations` 的调用,客户端按结构化字段 → `locations` → `title` 降级读取。
+
 工具调用结束时,agent 尽量用 ACP 自己的字段说它做了什么:编辑是 `diff` 内容(`changes` 加 git 格式的 `patch`,只是这一次调用的改动;太大时 `patch` 为 `null`),
 读写的文件在 `locations`(读文件带起始行)。ACP 没有字段的数量,放在这次 `tool_call_update` 的 `_meta["cycle/toolResult"]`,是下面三种之一,只有数字和布尔,**不带内容**:
 
