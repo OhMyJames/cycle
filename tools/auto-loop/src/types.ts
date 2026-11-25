@@ -17,6 +17,10 @@ export type Issue = {
   createdAt: string;
   columnId: number;
   labelIds: number[];
+  /** Issue type id in the tracker (e.g. Feature, Bug, Epic), or null if unset. */
+  typeId: number | null;
+  /** Number of non-archived child issues, or null when the tracker reply omitted subtask info (fails closed). */
+  subtaskCount: number | null;
 };
 
 /** Where the loop moves a work item. The tracker maps these to the project's columns. */
@@ -55,6 +59,8 @@ export type Config = {
   baseBranch: string;
   columns: { todo: number; inProgress: number; inReview: number; blocked: number };
   autoLabelId: number;
+  /** Issue type ids the loop may take (e.g. Feature, Bug). Configured by id, never hardcoded or matched by name. */
+  allowedTypeIds: number[];
   /** A work item with more criteria than this is too big for one session: it is sent back to be split. */
   maxCriteria: number;
   /** Fix rounds after the first Dev turn. */
@@ -76,6 +82,8 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   // infra.CYC (get_project, 2026-11-25).
   columns: { todo: 22, inProgress: 23, inReview: 34, blocked: 35 },
   autoLabelId: 11,
+  // Feature (20), Bug (25).
+  allowedTypeIds: [20, 25],
   maxCriteria: 8,
   maxFixRounds: 3,
   turnTimeoutMs: 30 * 60_000,
@@ -85,6 +93,21 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   dryRun: false,
   ...partial,
 });
+
+/** Parses a comma-separated list of positive integer issue type ids (e.g. `AUTO_LOOP_TYPE_IDS=20,25`). */
+export const parseAllowedTypeIds = (raw: string): number[] => {
+  const parts = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  if (parts.length === 0) throw new Error("AUTO_LOOP_TYPE_IDS must contain at least one type id.");
+  return parts.map((part) => {
+    const id = Number(part);
+    if (!Number.isInteger(id) || id <= 0)
+      throw new Error(`invalid type id in AUTO_LOOP_TYPE_IDS: ${part}`);
+    return id;
+  });
+};
 
 export type SessionRole = "dev" | "qa";
 

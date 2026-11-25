@@ -9,7 +9,7 @@
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { testLayers } from "./layers.ts";
-import { renderPr } from "./pr.ts";
+import { renderPr, renderPrTitle, validatePr } from "./pr.ts";
 import { preflight, sendBackComment } from "./preflight.ts";
 import {
   continueBrief,
@@ -131,8 +131,14 @@ export class Pipeline {
     const todo = await tracker.listTodo();
     const issue = pickNext(todo, config);
     if (issue === undefined) {
-      const labeled = todo.filter((i) => i.labelIds.includes(config.autoLabelId)).length;
-      this.#d.log(`dry run: ${todo.length} in Todo, ${labeled} with the auto label`);
+      const labeled = todo.filter((i) => i.labelIds.includes(config.autoLabelId));
+      const rightType = labeled.filter(
+        (i) => i.typeId !== null && config.allowedTypeIds.includes(i.typeId),
+      );
+      const leaves = rightType.filter((i) => i.subtaskCount === 0);
+      this.#d.log(
+        `dry run: ${todo.length} in Todo, ${labeled.length} with auto, ${rightType.length} allowed type, ${leaves.length} leaf`,
+      );
       return { status: "idle" };
     }
     const pre = preflight(issue, config);
@@ -504,19 +510,19 @@ export class Pipeline {
       .join("\n");
     const { writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
+    const title = renderPrTitle(issue);
+    const body = renderPr({
+      issue,
+      criteria: book.items,
+      checks: this.#checks.get(run.key) ?? [],
+      rounds: run.round,
+      summary,
+      sessions: { dev: run.devSessionId, qa: run.qaSessionId },
+    });
+    const prCheck = validatePr(issue.key, title, body);
+    if (!prCheck.ok) throw new Blocked(prCheck.reason);
     const bodyPath = join(config.stateDir, "runs", run.key, "pr-body.md");
-    await writeFile(
-      bodyPath,
-      renderPr({
-        issue,
-        criteria: book.items,
-        checks: this.#checks.get(run.key) ?? [],
-        rounds: run.round,
-        summary,
-        sessions: { dev: run.devSessionId, qa: run.qaSessionId },
-      }),
-      { mode: 0o600 },
-    );
+    await writeFile(bodyPath, body, { mode: 0o600 });
     const created = await this.#d.exec(
       [
         "gh",
@@ -527,7 +533,7 @@ export class Pipeline {
         "--head",
         run.remoteBranch,
         "--title",
-        `${run.key} ${run.title}`,
+        title,
         "--body-file",
         bodyPath,
       ],
@@ -543,6 +549,11 @@ export class Pipeline {
       prUrl = findUrl(existing.output);
       if (existing.code !== 0 || prUrl === undefined)
         throw new Blocked(`gh pr create 失败：${tail(created.output)}`);
+      const edited = await this.#d.exec(
+        ["gh", "pr", "edit", run.remoteBranch, "--title", title, "--body-file", bodyPath],
+        { cwd: worktree, env, timeoutMs },
+      );
+      if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
     }
     await tracker.comment(
       issue,

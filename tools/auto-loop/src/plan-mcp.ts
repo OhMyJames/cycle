@@ -1,13 +1,23 @@
 // `Tracker` over the Itsaplan MCP endpoint (JSON-RPC `tools/call`). The key comes from the environment and goes nowhere
 // else: not into a session, not into a command's environment, not into a log line.
 //
-// Unverified against the live service: the auth header (`Authorization: Bearer`) and the shape of a returned issue.
-// `toIssue` reads the fields it needs defensively and fails loudly when one is missing.
+// `get_issue_by_number` on infra.CYC returns `typeId` and `subtasks` (`{ id, sequenceNumber, identifier, title,
+// columnId, typeId, archived }[]`). `toIssue` reads these defensively and returns `null` when missing so selection
+// fails closed rather than treating an unknown issue as an eligible leaf.
 
 import type { Config, Issue, Priority, Stage, Tracker } from "./types.ts";
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+const parseOptionalInt = (value: unknown): number | null => {
+  if (typeof value === "number") return Number.isInteger(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isInteger(n) ? n : null;
+  }
+  return null;
+};
 
 export const toIssue = (raw: unknown, projectKey: string): Issue => {
   const r = asRecord(raw);
@@ -21,6 +31,15 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
       ? r.labels.map((l) => Number(asRecord(l).id ?? l))
       : [];
   const priority = typeof r.priority === "string" ? (r.priority as Priority) : null;
+  const typeId = parseOptionalInt(r.typeId ?? asRecord(r.type).id);
+  const parsedSubtaskCount = parseOptionalInt(r.subtaskCount);
+  // Any non-archived child (including Done or Canceled) still marks the parent as a split container, not a leaf.
+  // When the payload omits both `subtasks` and `subtaskCount`, return `null` so `pickNext` fails closed.
+  const subtaskCount = Array.isArray(r.subtasks)
+    ? r.subtasks.filter((s) => asRecord(s).archived !== true).length
+    : parsedSubtaskCount !== null && parsedSubtaskCount >= 0
+      ? parsedSubtaskCount
+      : null;
   return {
     id,
     number,
@@ -31,6 +50,8 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     createdAt: String(r.createdAt ?? ""),
     columnId: Number(r.columnId ?? asRecord(r.column).id),
     labelIds,
+    typeId,
+    subtaskCount,
   };
 };
 

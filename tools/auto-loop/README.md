@@ -1,6 +1,6 @@
 # auto-loop
 
-自动化闭环（CYC-318 第一步）：从 itsaplan 的 Todo 列取一张带 `auto` 标签的工单，在 Cycle 里开 Dev 会话（独立 worktree），由代码跑验证，再开独立 QA 会话审查，通过后推分支、开 PR、把工单移到 In Review。
+自动化闭环（CYC-318 第一步）：从 itsaplan 的 Todo 列取一张带 `auto` 标签的 Feature/Bug 叶子工单（无子任务），在 Cycle 里开 Dev 会话（独立 worktree），由代码跑验证，再开独立 QA 会话审查，通过后推分支、开带 `Closes CYC-<num>` 的 PR、把工单移到 In Review。
 
 ## 运行
 
@@ -14,7 +14,7 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率、介入率、返�
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
 
-可选环境变量：`AUTO_LOOP_PLAN_URL`、`AUTO_LOOP_PROJECT`（默认 CYC）、`AUTO_LOOP_STATE`、`CYCLE_SOCKET`。
+可选环境变量：`AUTO_LOOP_PLAN_URL`、`AUTO_LOOP_PROJECT`（默认 CYC）、`AUTO_LOOP_TYPE_IDS`（逗号分隔的类型 id，默认 `20,25` 即 Feature/Bug）、`AUTO_LOOP_STATE`、`CYCLE_SOCKET`。
 
 ## 约定
 
