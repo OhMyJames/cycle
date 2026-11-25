@@ -1,12 +1,18 @@
 import { expect, test } from "bun:test";
 import type { Criterion } from "../src/criteria.ts";
 import {
+  DEFAULT_CI_CHECKS,
   hasClosingKeyword,
   MAX_PR_TITLE_LENGTH,
+  parseActionsUrl,
+  readCiFailureLogs,
+  readCiStatus,
   renderPr,
   renderPrTitle,
   validatePr,
+  waitForCi,
 } from "../src/pr.ts";
+import type { Exec, ExecResult } from "../src/types.ts";
 import { issue } from "./helpers.ts";
 
 const sampleIssue = issue({
@@ -81,4 +87,325 @@ test("validatePr accepts rendered PR title and body, and rejects missing or mism
   // Prefix collision must not match (CYC-33 must not match CYC-330).
   expect(validatePr("CYC-33", title, body).ok).toBe(false);
   expect(validatePr("CYC-331", title, body).ok).toBe(false);
+});
+
+const fullEnv = {
+  PATH: "/bin",
+  HOME: "/home/u",
+  GH_TOKEN: "gh-secret",
+  SSH_AUTH_SOCK: "/tmp/ssh.sock",
+  AUTO_LOOP_PLAN_KEY: "plan-secret",
+  ANTHROPIC_API_KEY: "model-secret",
+};
+
+const checkRun = (
+  name: string,
+  status: string,
+  conclusion: string | null,
+  extra: Record<string, unknown> = {},
+) => ({
+  __typename: "CheckRun",
+  name,
+  status,
+  conclusion,
+  detailsUrl: `https://github.com/o/r/actions/runs/100/job/${name === "check" ? "1" : name === "browser" ? "2" : "3"}`,
+  ...extra,
+});
+
+const okExec = (output: string): ExecResult => ({ code: 0, output, timedOut: false });
+
+test("readCiStatus uses gh pr view with deliverEnv and passes when check, browser, and integration are green", async () => {
+  const seen: { argv: string[]; env: Record<string, string> }[] = [];
+  const exec: Exec = async (argv, opts) => {
+    seen.push({ argv, env: opts.env });
+    return okExec(
+      JSON.stringify({
+        headRefOid: "sha-1",
+        statusCheckRollup: [
+          checkRun("check", "COMPLETED", "SUCCESS"),
+          checkRun("browser", "COMPLETED", "SUCCESS"),
+          checkRun("integration", "COMPLETED", "SUCCESS"),
+          checkRun("unrelated-bot", "COMPLETED", "FAILURE"),
+        ],
+      }),
+    );
+  };
+
+  const res = await readCiStatus({
+    prRef: "https://github.com/o/r/pull/9",
+    expectedHeadSha: "sha-1",
+    exec,
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+  });
+
+  expect(res.ok).toBe(true);
+  if (res.ok) {
+    expect(res.status.state).toBe("passed");
+    expect(res.status.checks.map((c) => c.name)).toEqual([...DEFAULT_CI_CHECKS]);
+    expect(res.status.failed).toEqual([]);
+    expect(res.status.pending).toEqual([]);
+  }
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.argv).toEqual([
+    "gh",
+    "pr",
+    "view",
+    "https://github.com/o/r/pull/9",
+    "--json",
+    "headRefOid,statusCheckRollup",
+  ]);
+  expect(seen[0]?.env.GH_TOKEN).toBe("gh-secret");
+  expect(seen[0]?.env.SSH_AUTH_SOCK).toBe("/tmp/ssh.sock");
+  expect(seen[0]?.env.AUTO_LOOP_PLAN_KEY).toBeUndefined();
+  expect(seen[0]?.env.ANTHROPIC_API_KEY).toBeUndefined();
+});
+
+test("readCiStatus detects red checks, pending/missing checks, stale headRefOid, duplicate re-runs, and errors", async () => {
+  const runWith = (result: ExecResult, expectedHeadSha?: string) =>
+    readCiStatus({
+      prRef: "auto/cyc-331",
+      expectedHeadSha,
+      exec: async () => result,
+      cwd: "/wt",
+      env: fullEnv,
+      timeoutMs: 5000,
+    });
+
+  // One check red -> failed once all three have completed.
+  const red = await runWith(
+    okExec(
+      JSON.stringify({
+        headRefOid: "sha-1",
+        statusCheckRollup: [
+          checkRun("check", "COMPLETED", "SUCCESS"),
+          checkRun("browser", "COMPLETED", "FAILURE"),
+          checkRun("integration", "COMPLETED", "SKIPPED"),
+        ],
+      }),
+    ),
+    "sha-1",
+  );
+  expect(red.ok && red.status.state).toBe("failed");
+  if (red.ok) {
+    expect(red.status.failed.map((c) => c.name)).toEqual(["browser", "integration"]);
+  }
+
+  // Pending check keeps aggregate pending even if another check already failed.
+  const pending = await runWith(
+    okExec(
+      JSON.stringify({
+        headRefOid: "sha-1",
+        statusCheckRollup: [
+          checkRun("check", "COMPLETED", "SUCCESS"),
+          checkRun("browser", "COMPLETED", "FAILURE"),
+          checkRun("integration", "IN_PROGRESS", null),
+        ],
+      }),
+    ),
+    "sha-1",
+  );
+  expect(pending.ok && pending.status.state).toBe("pending");
+
+  // Missing required check -> pending.
+  const missing = await runWith(
+    okExec(
+      JSON.stringify({
+        headRefOid: "sha-1",
+        statusCheckRollup: [checkRun("check", "COMPLETED", "SUCCESS")],
+      }),
+    ),
+    "sha-1",
+  );
+  expect(missing.ok && missing.status.state).toBe("pending");
+  if (missing.ok) {
+    expect(missing.status.pending.map((c) => c.name)).toEqual(["browser", "integration"]);
+  }
+
+  // Stale headRefOid from previous commit -> pending, not failed.
+  const stale = await runWith(
+    okExec(
+      JSON.stringify({
+        headRefOid: "sha-old",
+        statusCheckRollup: [
+          checkRun("check", "COMPLETED", "FAILURE"),
+          checkRun("browser", "COMPLETED", "FAILURE"),
+          checkRun("integration", "COMPLETED", "FAILURE"),
+        ],
+      }),
+    ),
+    "sha-new",
+  );
+  expect(stale.ok && stale.status.state).toBe("pending");
+
+  // Duplicate check runs for the same job -> latest startedAt wins.
+  const rerun = await runWith(
+    okExec(
+      JSON.stringify({
+        headRefOid: "sha-1",
+        statusCheckRollup: [
+          checkRun("check", "COMPLETED", "SUCCESS", { startedAt: "2026-11-25T00:01:00Z" }),
+          checkRun("browser", "COMPLETED", "FAILURE", { startedAt: "2026-11-25T00:01:00Z" }),
+          checkRun("browser", "COMPLETED", "SUCCESS", { startedAt: "2026-11-25T00:05:00Z" }),
+          checkRun("integration", "COMPLETED", "SUCCESS", { startedAt: "2026-11-25T00:01:00Z" }),
+        ],
+      }),
+    ),
+    "sha-1",
+  );
+  expect(rerun.ok && rerun.status.state).toBe("passed");
+
+  // Non-zero exit and malformed JSON return ok: false.
+  const failedCmd = await runWith({ code: 1, output: "auth required", timedOut: false });
+  expect(failedCmd.ok).toBe(false);
+  const badJson = await runWith(okExec("not json"));
+  expect(badJson.ok).toBe(false);
+});
+
+test("parseActionsUrl and readCiFailureLogs fetch job logs via gh run view with deliverEnv and fallback to runId", async () => {
+  expect(parseActionsUrl("https://github.com/o/r/actions/runs/12345/job/67890")).toEqual({
+    runId: "12345",
+    jobId: "67890",
+  });
+  expect(parseActionsUrl("https://github.com/o/r/actions/runs/12345")).toEqual({
+    runId: "12345",
+  });
+  expect(parseActionsUrl("https://example.com/status")).toEqual({});
+
+  const calls: { argv: string[]; env: Record<string, string> }[] = [];
+  const exec: Exec = async (argv, opts) => {
+    calls.push({ argv, env: opts.env });
+    if (argv.includes("111")) return okExec("Error: browser assertion failed\n");
+    if (argv.includes("222")) return { code: 1, output: "job log unavailable", timedOut: false };
+    if (argv.includes("999")) return okExec("Fallback run log: integration failed\n");
+    return okExec("");
+  };
+
+  const logs = await readCiFailureLogs({
+    failed: [
+      {
+        name: "browser",
+        status: "failed",
+        rawState: "FAILURE",
+        detailsUrl: "https://github.com/o/r/actions/runs/888/job/111",
+      },
+      {
+        name: "integration",
+        status: "failed",
+        rawState: "TIMED_OUT",
+        detailsUrl: "https://github.com/o/r/actions/runs/999/job/222",
+      },
+    ],
+    exec,
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+  });
+
+  expect(logs).toContain("browser");
+  expect(logs).toContain("Error: browser assertion failed");
+  expect(logs).toContain("integration");
+  expect(logs).toContain("Fallback run log: integration failed");
+  expect(calls.map((c) => c.argv)).toEqual([
+    ["gh", "run", "view", "--job", "111", "--log-failed"],
+    ["gh", "run", "view", "--job", "222", "--log-failed"],
+    ["gh", "run", "view", "999", "--log-failed"],
+  ]);
+  for (const call of calls) {
+    expect(call.env.GH_TOKEN).toBe("gh-secret");
+    expect(call.env.AUTO_LOOP_PLAN_KEY).toBeUndefined();
+    expect(call.env.ANTHROPIC_API_KEY).toBeUndefined();
+  }
+
+  // Truncates long logs to the tail and handles missing Actions URLs.
+  const longLogs = await readCiFailureLogs({
+    failed: [
+      {
+        name: "check",
+        status: "failed",
+        rawState: "FAILURE",
+        detailsUrl: "https://github.com/o/r/actions/runs/500/job/501",
+      },
+      {
+        name: "browser",
+        status: "failed",
+        rawState: "FAILURE",
+        detailsUrl: null,
+      },
+    ],
+    exec: async () => okExec(`${"x".repeat(200)}TAIL_MARKER`),
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+    maxLogChars: 40,
+  });
+  expect(longLogs).toContain("TAIL_MARKER");
+  expect(longLogs).toContain("…");
+  expect(longLogs).toContain("无法拉取日志");
+});
+
+test("waitForCi polls until green, returns logs on red, and stops on timeout", async () => {
+  // Pending -> passed.
+  const views = [
+    JSON.stringify({
+      headRefOid: "sha-1",
+      statusCheckRollup: [
+        checkRun("check", "COMPLETED", "SUCCESS"),
+        checkRun("browser", "IN_PROGRESS", null),
+        checkRun("integration", "QUEUED", null),
+      ],
+    }),
+    JSON.stringify({
+      headRefOid: "sha-1",
+      statusCheckRollup: [
+        checkRun("check", "COMPLETED", "SUCCESS"),
+        checkRun("browser", "COMPLETED", "SUCCESS"),
+        checkRun("integration", "COMPLETED", "SUCCESS"),
+      ],
+    }),
+  ];
+  let sleeps = 0;
+  let nowMs = 0;
+  const passed = await waitForCi({
+    prRef: "https://github.com/o/r/pull/9",
+    expectedHeadSha: "sha-1",
+    exec: async () => okExec(views.shift() ?? "{}"),
+    cwd: "/wt",
+    env: fullEnv,
+    commandTimeoutMs: 5000,
+    pollIntervalMs: 1000,
+    timeoutMs: 5000,
+    clock: { now: () => new Date(nowMs) },
+    sleep: async (ms) => {
+      sleeps++;
+      nowMs += ms;
+    },
+  });
+  expect(passed.outcome).toBe("passed");
+  expect(sleeps).toBe(1);
+
+  // Timeout when checks stay pending.
+  nowMs = 0;
+  const timedOut = await waitForCi({
+    prRef: "https://github.com/o/r/pull/9",
+    expectedHeadSha: "sha-1",
+    exec: async () =>
+      okExec(
+        JSON.stringify({
+          headRefOid: "sha-1",
+          statusCheckRollup: [checkRun("check", "IN_PROGRESS", null)],
+        }),
+      ),
+    cwd: "/wt",
+    env: fullEnv,
+    commandTimeoutMs: 5000,
+    pollIntervalMs: 1000,
+    timeoutMs: 2500,
+    clock: { now: () => new Date(nowMs) },
+    sleep: async (ms) => {
+      nowMs += ms;
+    },
+  });
+  expect(timedOut.outcome).toBe("timeout");
 });

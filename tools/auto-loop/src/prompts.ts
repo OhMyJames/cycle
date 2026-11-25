@@ -67,6 +67,7 @@ export const handoffBrief = (
   criteria: Criterion[],
   progress: string,
   gitLog: string,
+  findings?: string | null,
 ): string => `You take over work item ${issue.key}: ${issue.title}. The developer before you could not be continued. Work in the current directory (a git worktree that already holds their commits). Read AGENTS.md first.
 
 The work item:
@@ -81,7 +82,11 @@ What the developer reported so far:
 ${progress.trim() === "" ? "(nothing)" : progress.trim().slice(-6000)}
 
 Commits so far:
-${gitLog.trim() === "" ? "(none)" : gitLog.trim()}
+${gitLog.trim() === "" ? "(none)" : gitLog.trim()}${
+  findings != null && findings.trim() !== ""
+    ? `\n\nLatest findings to fix:\n${findings.trim()}`
+    : ""
+}
 
 Finish what is left, run \`bun run check\`, commit (do not push), and report.
 

@@ -9,7 +9,7 @@
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { testLayers } from "./layers.ts";
-import { renderPr, renderPrTitle, validatePr } from "./pr.ts";
+import { renderPr, renderPrTitle, validatePr, waitForCi } from "./pr.ts";
 import { preflight, sendBackComment } from "./preflight.ts";
 import {
   continueBrief,
@@ -54,6 +54,8 @@ export type Deps = {
   log: Logger;
   /** The loop's own environment; only the allowlisted parts of it go to the commands it runs. */
   env: Record<string, string | undefined>;
+  /** Waits between CI status polls. Defaults to `Bun.sleep`. */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 /** A run cannot go on without a person. The message is what the person is told. */
@@ -105,6 +107,7 @@ export class Pipeline {
       title: issue.title,
       phase: "claimed",
       round: 0,
+      ciRound: 0,
       worktree: null,
       localBranch: null,
       remoteBranch: branchOf(issue.number),
@@ -156,6 +159,7 @@ export class Pipeline {
         ...run,
         phase: run.resumeFrom ?? "dev",
         round: 0,
+        ciRound: 0,
         blockedReason: null,
         resumeFrom: null,
       };
@@ -166,7 +170,13 @@ export class Pipeline {
       await store.event(run.key, "recovered", { phase: run.phase });
     }
     // What the checks said is held in memory only: going on from the review or the delivery, they are run again.
-    if (current.phase === "qa" || current.phase === "delivering")
+    // A human resume from `ci` also re-runs verify/QA/push in case they committed a fix locally; a crash recovery in
+    // `ci` continues polling the already-pushed PR directly.
+    if (
+      current.phase === "qa" ||
+      current.phase === "delivering" ||
+      (byPerson && current.phase === "ci")
+    )
       current = await store.save({ ...current, phase: "verify" });
     return this.#drive(current, issue, book, byPerson);
   }
@@ -203,9 +213,15 @@ export class Pipeline {
             break;
           }
           case "delivering": {
-            const prUrl = await this.#deliver(run, issue, book);
-            await save({ phase: "done", prUrl });
-            return { status: "delivered", key: run.key, prUrl };
+            await this.#deliver(run, issue, book, save);
+            break;
+          }
+          case "ci": {
+            const prUrl = await this.#ci(run, issue, save);
+            if (prUrl !== null) {
+              return { status: "delivered", key: run.key, prUrl };
+            }
+            break;
           }
           case "blocked":
           case "done":
@@ -325,7 +341,7 @@ export class Pipeline {
       await store.event(run.key, "dev_session", { replaced: true });
       result = await this.#d.sessions.turn(
         sessionId,
-        handoffBrief(issue, book.items, progress, gitLog.output),
+        handoffBrief(issue, book.items, progress, gitLog.output, run.findings),
         { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
       );
     }
@@ -486,8 +502,13 @@ export class Pipeline {
     await save({ phase: "delivering" });
   }
 
-  async #deliver(run: RunRecord, issue: Issue, book: CriteriaBook): Promise<string> {
-    const { config, store, tracker } = this.#d;
+  async #deliver(
+    run: RunRecord,
+    issue: Issue,
+    book: CriteriaBook,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    const { config } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     const env = deliverEnv(this.#d.env);
     const timeoutMs = config.commandTimeoutMs;
@@ -523,44 +544,123 @@ export class Pipeline {
     if (!prCheck.ok) throw new Blocked(prCheck.reason);
     const bodyPath = join(config.stateDir, "runs", run.key, "pr-body.md");
     await writeFile(bodyPath, body, { mode: 0o600 });
-    const created = await this.#d.exec(
-      [
-        "gh",
-        "pr",
-        "create",
-        "--base",
-        config.baseBranch,
-        "--head",
-        run.remoteBranch,
-        "--title",
-        title,
-        "--body-file",
-        bodyPath,
-      ],
-      { cwd: worktree, env, timeoutMs },
-    );
-    let prUrl = findUrl(created.output);
-    if (created.code !== 0 || prUrl === undefined) {
-      // The pull request may already be there (a delivery that was cut off after it was made).
-      const existing = await this.#d.exec(
-        ["gh", "pr", "view", run.remoteBranch, "--json", "url", "--jq", ".url"],
-        { cwd: worktree, env, timeoutMs },
-      );
-      prUrl = findUrl(existing.output);
-      if (existing.code !== 0 || prUrl === undefined)
-        throw new Blocked(`gh pr create 失败：${tail(created.output)}`);
+
+    let prUrl: string | undefined;
+    if (run.prUrl !== null) {
+      // Pushing a CI fix to the same branch: keep the existing pull request and refresh its description.
       const edited = await this.#d.exec(
-        ["gh", "pr", "edit", run.remoteBranch, "--title", title, "--body-file", bodyPath],
+        ["gh", "pr", "edit", run.prUrl, "--title", title, "--body-file", bodyPath],
         { cwd: worktree, env, timeoutMs },
       );
       if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
+      prUrl = run.prUrl;
+    } else {
+      const created = await this.#d.exec(
+        [
+          "gh",
+          "pr",
+          "create",
+          "--base",
+          config.baseBranch,
+          "--head",
+          run.remoteBranch,
+          "--title",
+          title,
+          "--body-file",
+          bodyPath,
+        ],
+        { cwd: worktree, env, timeoutMs },
+      );
+      prUrl = findUrl(created.output);
+      if (created.code !== 0 || prUrl === undefined) {
+        // The pull request may already be there (a delivery that was cut off after it was made).
+        const existing = await this.#d.exec(
+          ["gh", "pr", "view", run.remoteBranch, "--json", "url", "--jq", ".url"],
+          { cwd: worktree, env, timeoutMs },
+        );
+        prUrl = findUrl(existing.output);
+        if (existing.code !== 0 || prUrl === undefined)
+          throw new Blocked(`gh pr create 失败：${tail(created.output)}`);
+        const edited = await this.#d.exec(
+          ["gh", "pr", "edit", run.remoteBranch, "--title", title, "--body-file", bodyPath],
+          { cwd: worktree, env, timeoutMs },
+        );
+        if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
+      }
     }
+    await save({ phase: "ci", prUrl });
+  }
+
+  async #ci(
+    run: RunRecord,
+    issue: Issue,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<string | null> {
+    const { config, store, tracker, clock } = this.#d;
+    const worktree = this.#need(run.worktree ?? undefined);
+    const prUrl = this.#need(run.prUrl ?? undefined);
+    const head = await this.#git(["rev-parse", "HEAD"], worktree);
+    if (head.code !== 0) throw new Blocked(`读取 HEAD 提交失败：${tail(head.output)}`);
+    const headSha = head.output.trim();
+
+    const result = await waitForCi({
+      prRef: prUrl,
+      requiredChecks: config.ciChecks,
+      expectedHeadSha: headSha,
+      exec: this.#d.exec,
+      cwd: worktree,
+      env: this.#d.env,
+      commandTimeoutMs: config.commandTimeoutMs,
+      pollIntervalMs: config.ciPollIntervalMs,
+      timeoutMs: config.ciTimeoutMs,
+      clock,
+      sleep: this.#d.sleep ?? ((ms) => Bun.sleep(ms)),
+    });
+
+    if (result.outcome === "error") {
+      throw new Blocked(`读取 CI 状态失败：${tail(result.error)}`);
+    }
+    if (result.outcome === "timeout") {
+      const pendingNames =
+        result.status?.pending.map((c) => c.name).join("、") || config.ciChecks.join("、");
+      const failedNames = result.status?.failed.map((c) => c.name).join("、") ?? "";
+      const detail =
+        failedNames !== ""
+          ? `未完成项：${pendingNames}；已失败项：${failedNames}`
+          : `未完成项：${pendingNames}`;
+      await store.event(run.key, "ci_timeout", { ciRound: run.ciRound });
+      throw new Blocked(`等待 CI 结果超时（${detail}）。`);
+    }
+    if (result.outcome === "failed") {
+      const failedList = result.status.failed.map((c) => c.name);
+      await store.event(run.key, "ci_failed", {
+        ciRound: run.ciRound,
+        failed: failedList.length,
+      });
+      await store.event(run.key, "round_failed", { round: run.round });
+      if (run.ciRound >= config.maxCiRetries) {
+        throw new Blocked(
+          `CI 连续失败（已重试 ${run.ciRound} 次达到上限），失败项：${failedList.join("、")}。\n${tail(result.logs, 1500)}`,
+        );
+      }
+      const findings = `CI checks failed on PR ${prUrl} (failed: ${failedList.join(", ")}). Fix the failures below, run \`bun run check\`, and commit; the loop will verify, run QA, and push to the same branch.\n\n${result.logs}`;
+      await save({
+        phase: "dev",
+        round: run.round + 1,
+        ciRound: run.ciRound + 1,
+        findings,
+      });
+      return null;
+    }
+
     await tracker.comment(
       issue,
-      `已开 PR：${prUrl}\n验收标准全部由自动化执行验证通过，独立 QA 审查通过（修复 ${run.round} 轮）。等待人工审阅合并。`,
+      `已开 PR：${prUrl}\n验收标准全部由自动化执行验证通过，独立 QA 审查通过，CI（${config.ciChecks.join(" / ")}）全部通过（修复 ${run.round} 轮）。等待人工审阅合并。`,
     );
     await tracker.move(issue, "inReview");
+    await store.event(run.key, "ci_passed", { ciRound: run.ciRound });
     await store.event(run.key, "delivered", { prUrl, rounds: run.round });
+    await save({ phase: "done", prUrl });
     return prUrl;
   }
 
@@ -616,6 +716,7 @@ const PHASE_NAMES: Record<string, string> = {
   verify: "验证",
   qa: "独立审查",
   delivering: "交付",
+  ci: "CI 检查",
 };
 
 const tail = (text: string, max = 800): string =>

@@ -11,7 +11,16 @@ import { join } from "node:path";
 import { z } from "zod";
 import { CriteriaBook } from "./criteria.ts";
 
-export const PHASES = ["claimed", "dev", "verify", "qa", "delivering", "blocked", "done"] as const;
+export const PHASES = [
+  "claimed",
+  "dev",
+  "verify",
+  "qa",
+  "delivering",
+  "ci",
+  "blocked",
+  "done",
+] as const;
 
 export const RunRecordSchema = z.object({
   key: z.string(),
@@ -21,6 +30,8 @@ export const RunRecordSchema = z.object({
   phase: z.enum(PHASES),
   /** Fix rounds used so far: Dev turns after the first. */
   round: z.number().int().min(0),
+  /** CI retry rounds used so far after a red CI run sent the ticket back to Dev. */
+  ciRound: z.number().int().min(0).default(0),
   worktree: z.string().nullable(),
   /** The branch the daemon made: `worktree-auto/cyc-318`. */
   localBranch: z.string().nullable(),

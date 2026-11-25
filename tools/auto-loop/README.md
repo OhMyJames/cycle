@@ -1,6 +1,6 @@
 # auto-loop
 
-自动化闭环（CYC-318 第一步）：从 itsaplan 的 Todo 列取一张带 `auto` 标签的 Feature/Bug 叶子工单（无子任务），在 Cycle 里开 Dev 会话（独立 worktree），由代码跑验证，再开独立 QA 会话审查，通过后推分支、开带 `Closes CYC-<num>` 的 PR、把工单移到 In Review。
+自动化闭环（CYC-318 第一步）：从 itsaplan 的 Todo 列取一张带 `auto` 标签的 Feature/Bug 叶子工单（无子任务），在 Cycle 里开 Dev 会话（独立 worktree），由代码跑验证，再开独立 QA 会话审查，通过后推分支、开带 `Closes CYC-<num>` 的 PR，等待 `check`、`browser`、`integration` 三项 CI 全绿后把工单移到 In Review；任一 CI 为红则拉取失败日志打回 Dev 修复并重推同一分支，重试超限则 Blocked。
 
 ## 运行
 
