@@ -86,6 +86,8 @@ export type Config = {
   maxCiRetries: number;
   /** Maximum number of retries when PR review fails, times out, or produces no valid conclusion. */
   maxReviewRetries: number;
+  /** Maximum number of fresh QA sessions tried after an unreadable verdict, a missing checklist, a timeout or an abnormal end. */
+  maxQaRetries: number;
   /** How often to poll GitHub CI status while waiting for checks to finish. */
   ciPollIntervalMs: number;
   /** Maximum time to wait for a single CI run to finish before blocking. */
@@ -121,6 +123,7 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   ciChecks: ["check", "browser", "integration"],
   maxCiRetries: 2,
   maxReviewRetries: 2,
+  maxQaRetries: 2,
   ciPollIntervalMs: 30_000,
   ciTimeoutMs: 30 * 60_000,
   mergePollIntervalMs: 30_000,
