@@ -9,6 +9,7 @@ import {
   postPrComment,
   readCiFailureLogs,
   readCiStatus,
+  readPrState,
   renderPr,
   renderPrTitle,
   validatePr,
@@ -479,4 +480,31 @@ test("postPrComment and enableAutoMerge invoke gh with deliverEnv and handle fai
   });
   expect(timedOutComment.ok).toBe(false);
   if (!timedOutComment.ok) expect(timedOutComment.error).toContain("超时");
+});
+
+const stateExec =
+  (result: Partial<ExecResult>): Exec =>
+  async () => ({
+    code: 0,
+    output: "",
+    timedOut: false,
+    ...result,
+  });
+const readState = (exec: Exec) =>
+  readPrState({ prRef: "u", exec, cwd: "/", env: {}, timeoutMs: 1 });
+
+test("readPrState tells OPEN, CLOSED and MERGED apart", async () => {
+  for (const state of ["OPEN", "CLOSED", "MERGED"] as const) {
+    expect(await readState(stateExec({ output: JSON.stringify({ state }) }))).toEqual({
+      ok: true,
+      state,
+    });
+  }
+});
+
+test("readPrState returns an error, not OPEN, when the read fails or is unreadable", async () => {
+  expect((await readState(stateExec({ code: 1, output: "no" }))).ok).toBe(false);
+  expect((await readState(stateExec({ timedOut: true }))).ok).toBe(false);
+  expect((await readState(stateExec({ output: "not json" }))).ok).toBe(false);
+  expect((await readState(stateExec({ output: '{"state":"DRAFT"}' }))).ok).toBe(false);
 });

@@ -13,6 +13,7 @@ import {
   enableAutoMerge,
   postPrComment,
   readCiStatus,
+  readPrState,
   renderPr,
   renderPrTitle,
   renderReviewComment,
@@ -73,6 +74,9 @@ export type Deps = {
 
 /** A run cannot go on without a person. The message is what the person is told. */
 class Blocked extends Error {}
+
+/** Phases that push to, wait on, or review an existing pull request. */
+const PR_GUARDED_PHASES: ReadonlySet<string> = new Set(["delivering", "ci", "review"]);
 
 const branchOf = (number: number) => `auto/cyc-${number}`;
 
@@ -208,6 +212,10 @@ export class Pipeline {
     try {
       let announce = byPerson;
       for (;;) {
+        if (run.prUrl !== null && PR_GUARDED_PHASES.has(run.phase)) {
+          const settled = await this.#guardPr(run, save);
+          if (settled !== undefined) return settled;
+        }
         switch (run.phase) {
           case "claimed": {
             await this.#claim(run, issue, save);
@@ -255,6 +263,36 @@ export class Pipeline {
       if (!(error instanceof Blocked)) throw error;
       return this.#block(run, issue, error.message, save);
     }
+  }
+
+  /**
+   * Reads the pull request's state before the loop pushes to it, waits on its CI or reviews it. Closed without merging
+   * stops the run (a person takes over); merged counts as delivered. An unreadable state blocks, never counts as open.
+   */
+  async #guardPr(
+    run: RunRecord,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<StepResult | undefined> {
+    const { config, store } = this.#d;
+    const prUrl = this.#need(run.prUrl ?? undefined);
+    const read = await readPrState({
+      prRef: prUrl,
+      exec: this.#d.exec,
+      cwd: run.worktree ?? config.repoRoot,
+      env: this.#d.env,
+      timeoutMs: config.commandTimeoutMs,
+    });
+    if (!read.ok) throw new Blocked(`读取 PR 状态失败：${tail(read.error)}`);
+    if (read.state === "OPEN") return undefined;
+    if (read.state === "CLOSED") {
+      await store.event(run.key, "pr_closed", { phase: run.phase });
+      throw new Blocked(
+        `PR 已被关闭（未合并），需人接手：${prUrl}。自动化不会再往该分支推送，也不会重开 PR。`,
+      );
+    }
+    await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
+    await save({ phase: "done" });
+    return { status: "delivered", key: run.key, prUrl, autoMerge: false };
   }
 
   async #block(
