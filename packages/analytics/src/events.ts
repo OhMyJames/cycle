@@ -31,6 +31,7 @@ const panel = z.enum([
   "delete",
   "trust",
   "connectors",
+  "loop",
 ]);
 /** The sections of the settings page (CYCL-78, CYCL-226): fixed words, as `SETTINGS_SECTIONS` of @cycle/ui lists them. */
 const settingsSection = z.enum([
@@ -80,6 +81,8 @@ export const EVENTS = {
   app_launched: o({ remote_locations: count, first_run: z.boolean() }),
   /** The person turned usage statistics on or off. Sent last when turning off, first when turning on. */
   analytics_toggled: o({ enabled: z.boolean() }),
+  /** The Loop page read a Project's board: how it came out, never what is on it. */
+  loop_board_read: o({ result: z.enum(["ok", "no_key", "unreachable"]) }),
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),

@@ -1131,3 +1131,38 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 - **只清缓存**(`_cycle/storage/clean`,`{agent}` → `{cleaned: true, freedBytes}` 或 `{cleaned: false, problem, message}`):只删上面五个缓存目录,每个先 `lstat`,是链接就跳过,路径上有链接而落到 HOME 之外也跳过。**从不**碰 HOME 整个、登录状态(`.gemini`、`auth.json`)、`.local`、`Library/Application Support`、`plugins/`、`claude-env/`、Cycle 的 sessions/blobs/JSON 存储,以及 agent 替用户写的文件(`code/`、`Desktop/`)。
 - **`problem`**:`busy`——该 agent 有会话在回合中、等待回答或有后台任务,清缓存可能把正在跑的 `bun install` 弄坏,等它结束;`unmanaged`——它的 HOME 不在 daemon 的数据目录之内(用户把 `configDir`/`home` 指到了自己的文件夹),什么都不量不删;`unknown_agent`;`failed`——有缓存要删但一个都没删成(权限之类)。清理中途该 agent 起了新回合,会在下一个目录之前停下并回 `busy`,已经删掉的不恢复。一个目录读不了或超过 30 秒没量完,只是不出现在 `items` 里,不影响别的。`read` 对这样的 agent 返回 `managed: false` 和空 `items`。
 - 客户端清理之前要让用户确认,并说明下次用到时会重新下载。
+
+## 17. Loop 服务
+
+Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 Project,和 daemon 在同一台机器上。桌面端像连 daemon 一样连它,但它不是 daemon,也不转发 ACP;本节只定义桌面端读它的方法。理由见决定笔记 [2026-11-25-loop-server-is-its-own-process](../.agents/notes/2026-11-25-loop-server-is-its-own-process.md)。schema 在 `@cycle/protocol` 的 `loop.ts`,桌面端只依赖这些类型,不依赖 `cloud/loop` 的代码。
+
+- **传输**:JSON-RPC 2.0,换行分隔(§2)。本地是 daemon 数据目录里的 unix socket `loop.sock`。经 SSH 连远端的 Loop 服务还没做;客户端连不上时,按"未连接"处理,不报协议错误。
+- **没有握手和鉴权**:同 §1 的 v1 约定,能连上 socket 的是本机同一用户。
+- **Project 的来源**:服务启动时读一个配置文件(模式必须是 `0600`,组或其他人可读就拒绝启动,附固定原因 `config_mode`)。里面每个 Project 有名字、`projectKey`、仓库地址、forge 类型和访问令牌。令牌只在这个文件里,**任何方法都不返回令牌**,错误对象也不带它。
+
+### 方法(客户端 → Loop 服务)
+
+| 方法            | 参数 | 响应         |
+| --------------- | ---- | ------------ |
+| `projects/list` | 无   | `{projects}` |
+
+```json
+{
+  "projects": [
+    {
+      "name": "Cycle",
+      "projectKey": "CYC",
+      "repo": { "displayName": "clawdot/cycle", "forge": "github" }
+    }
+  ]
+}
+```
+
+- `name`:配置里给的显示名。`projectKey`:itsaplan 的 Project 键(如 `CYC`),在这台服务里唯一。
+- `repo.displayName`:`owner/name` 形式,从仓库地址取,不含主机、协议和凭据。`repo.forge`:`github` 或 `gitlab`。
+- 响应里没有令牌、仓库完整地址和本地路径。以后加字段(运行状态、调度)时仍遵守这一条:能让别人拿到凭据或路径的字段不进这个方法。
+- 服务只读本进程的配置,不访问 itsaplan;看板内容由桌面端用使用者自己的账号读(见决定笔记 [2026-11-25-desktop-holds-a-personal-itsaplan-key-for-now](../.agents/notes/2026-11-25-desktop-holds-a-personal-itsaplan-key-for-now.md))。
+
+### 错误
+
+沿用 §11 的数字 `code`;`data.reason` 固定词,不透传路径或令牌。未知方法返回 `-32601`。

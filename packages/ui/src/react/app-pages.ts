@@ -17,7 +17,10 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const [harnessFrom, setHarnessFrom] = useState<"settings" | "blank" | "other">("settings");
   const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
   const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
-  const pageOpen = settings !== undefined || connectors !== undefined;
+  // The Loop page: open or not, and which Project it was left on (the Projects are its sections).
+  const [loop, setLoop] = useState<{ projectKey: string | undefined } | undefined>(undefined);
+  const lastLoopProject = useRef<string | undefined>(undefined);
+  const pageOpen = settings !== undefined || connectors !== undefined || loop !== undefined;
 
   // Settings, from wherever it is asked for: over the sessions, or in place of the Connectors page.
   const openSettings = (via: "click" | "shortcut" = "click", section?: SettingsSection) => {
@@ -25,6 +28,7 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setHarnessFrom("settings");
     setHarnessLocation(undefined);
     setConnectors(undefined);
+    setLoop(undefined);
     setSettings(lastSection.current);
     store.track("panel_opened", { panel: "settings", via });
   };
@@ -40,6 +44,7 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setHarnessLocation(locationId);
     setHarnessFrom("blank");
     setConnectors(undefined);
+    setLoop(undefined);
     setSettings(section);
     store.track("panel_opened", { panel: "settings", via: "click" });
   };
@@ -48,13 +53,29 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setHarnessFrom("settings");
   };
   const openConnectors = () => {
+    setLoop(undefined);
     setConnectors(lastConnectorsSection.current);
     store.track("panel_opened", { panel: "connectors", via: "click" });
+  };
+  const openLoop = () => {
+    setSettings(undefined);
+    setConnectors(undefined);
+    setLoop({ projectKey: lastLoopProject.current });
+    store.track("panel_opened", { panel: "loop", via: "click" });
+  };
+  const showLoopProject = (projectKey: string) => {
+    lastLoopProject.current = projectKey;
+    setLoop({ projectKey });
+  };
+  const leaveLoop = () => {
+    returnFocus.current = '[data-page-open="loop"]';
+    setLoop(undefined);
   };
   // Whichever page is over the sessions is left: they are what is asked for.
   const closePage = () => {
     setSettings(undefined);
     setConnectors(undefined);
+    setLoop(undefined);
   };
   // Left by the person (Escape, Back, the shortcut): the keyboard goes back to the button that opened the page. Left
   // for something else (a new session, a found one, a notification's), the keyboard is that thing's.
@@ -97,6 +118,10 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   return {
     settings,
     connectors,
+    loop,
+    openLoop,
+    showLoopProject,
+    leaveLoop,
     pageOpen,
     openSettings,
     openHarnessSettings,

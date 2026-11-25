@@ -1278,7 +1278,50 @@ export type AppApi = {
   analytics(): Promise<AnalyticsStatus>;
   /** The person's answer about usage statistics. It also means they have been told. */
   setAnalytics(enabled: boolean): Promise<AnalyticsStatus>;
+
+  /** The Projects the Loop server on this computer serves (docs/protocol.md §17). */
+  loopProjects(): Promise<LoopProjectsAnswer>;
+  /** One Project's itsaplan board, read with the person's own key, which stays in the main process. */
+  loopBoard(projectKey: string): Promise<LoopBoardAnswer>;
 };
+
+/** A Project of the Loop server: what `projects/list` says, and nothing secret. */
+export type LoopProjectInfo = {
+  name: string;
+  projectKey: string;
+  repo: { displayName: string; forge: "github" | "gitlab" };
+};
+
+/** `disconnected`: no Loop server answered on this computer. */
+export type LoopProjectsAnswer =
+  | { kind: "ok"; projects: LoopProjectInfo[] }
+  | { kind: "disconnected" };
+
+export type LoopTicket = {
+  /** `CYC-386`. */
+  identifier: string;
+  title: string;
+  priority: string | null;
+  /** The name of the board column it is in (In Progress, In Review, Blocked...). */
+  column: string;
+};
+
+/**
+ * The columns are chosen by the kind of state, never by name: `doing` is every started column, `todo` every unstarted
+ * one, `backlog` the backlog, `done` the completed ones (the newest few).
+ */
+export type LoopBoardAnswer =
+  | {
+      kind: "ok";
+      doing: LoopTicket[];
+      todo: LoopTicket[];
+      backlog: LoopTicket[];
+      done: LoopTicket[];
+    }
+  /** There is no key file, or it is readable by others. */
+  | { kind: "no_key" }
+  /** The tracker did not answer, or refused the key. */
+  | { kind: "unreachable" };
 
 /** What came of saving a picture: written, the person closed the dialog, or it could not be (not a picture, a disk error). */
 export type ImageSaved = "saved" | "cancelled" | "failed";
@@ -1389,6 +1432,8 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   track: true,
   analytics: true,
   setAnalytics: true,
+  loopProjects: true,
+  loopBoard: true,
 };
 
 export type ApiMethod = keyof AppApi;

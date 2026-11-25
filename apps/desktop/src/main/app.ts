@@ -35,6 +35,7 @@ import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
 import { fileEnvironments } from "./environments.ts";
 import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
+import { answerBoard, readLoopProjects } from "./loop.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
 import { fileSettings } from "./settings.ts";
@@ -65,6 +66,11 @@ export type AppOptions = {
   preferences?: PreferencesStore;
   /** Where the window's size and place are kept between runs. Without it, the window opens at the default frame. */
   windowFrame?: FrameStore;
+  /**
+   * Loop (docs/protocol.md §17): the Loop server's socket on this computer, the file holding the person's own itsaplan
+   * key (mode 0600), and the tracker's MCP address. Without it, the page says Loop is not connected.
+   */
+  loop?: { socket: string; keyFile: string; trackerUrl: string };
   /** How the app updates itself. Without it, updating is off. */
   update?: Omit<UpdaterDeps, "emit" | "quit">;
 };
@@ -302,6 +308,13 @@ export const startApp = async (options: AppOptions) => {
     cancelSignIn: () => account.cancelSignIn(),
     signOut: () => account.signOut(),
     analytics: () => usage.status(),
+    loopProjects: async () => {
+      return options.loop
+        ? await readLoopProjects(options.loop.socket)
+        : ({ kind: "disconnected" } as const);
+    },
+    loopBoard: (projectKey: unknown) =>
+      answerBoard(options.loop, projectKey, (event, props) => analytics.track(event, props)),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
     // Through main, not the page's navigator.clipboard: the page is given no permissions. Text only, of a sane size.
     copyText: (text: unknown) => {

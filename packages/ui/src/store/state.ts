@@ -22,6 +22,7 @@ import type { Params } from "../i18n.ts";
 import type { MessageKey } from "../messages/en-US.ts";
 import type { Conversation } from "../model/index.ts";
 import type { TerminalTab } from "../terminals.ts";
+import { initialLoop, type LoopState } from "./loop.ts";
 
 export const viewKey = (locationId: string, sessionId: string): string =>
   `${locationId}:${sessionId}`;
@@ -125,6 +126,8 @@ export type AppState = {
    * about; a change there (here or elsewhere) reads them again.
    */
   connectors: Record<string, { list?: ConnectorInfo[]; error?: string }>;
+  /** The Loop page (docs/protocol.md §17): the Projects and boards as last read. */
+  loop: LoopState;
   /** Each location's model providers as last read, or why they could not be. As connectors: only once asked about. */
   providers: Record<string, { read?: ProvidersRead; error?: string }>;
   /** Each location's vault keys (names only) as last read, or why they could not be. Read when the page is shown. */
@@ -175,6 +178,7 @@ export const initialState = (): AppState => ({
   agentSetupRevision: {},
   agentAuthCompletions: {},
   connectors: {},
+  loop: initialLoop(),
   providers: {},
   vault: {},
   plugins: {},
