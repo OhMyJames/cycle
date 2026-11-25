@@ -25,6 +25,46 @@ test("no heading, no criteria", () => {
   expect(parseCriteria("1. a\n2. b")).toEqual([]);
 });
 
+test("indented sub-items merge into the preceding criterion while siblings stay separate", () => {
+  const parsed = parseCriteria(
+    [
+      "## 验收标准",
+      "- [ ] 评审提示正确。验证：`bun test tools/auto-loop/test/state.test.ts`",
+      "  - 只读",
+      "    - 更深一层",
+      "  1. 编号子条目",
+      "- [ ] 第二条。验证：`bun run check`",
+    ].join("\n"),
+  );
+  expect(parsed).toHaveLength(2);
+  expect(parsed[0]?.text).toContain("评审提示正确");
+  expect(parsed[0]?.text).toContain("只读");
+  expect(parsed[0]?.text).toContain("更深一层");
+  expect(parsed[0]?.text).toContain("编号子条目");
+  expect(parsed[0]?.commands).toEqual(["bun test tools/auto-loop/test/state.test.ts"]);
+  expect(parsed[1]?.text).toContain("第二条");
+  expect(parsed[1]?.commands).toEqual(["bun run check"]);
+});
+
+test("indentation depth is measured against the first item, including tabs", () => {
+  const parsed = parseCriteria(
+    [
+      "## 验收标准",
+      "  - 第一条",
+      "    - 空格子条目",
+      "\t- tab 子条目",
+      "    - 验证：`bun test a/b.test.ts`",
+      "  - 第二条。验证：`bun run check`",
+    ].join("\n"),
+  );
+  expect(parsed).toHaveLength(2);
+  expect(parsed[0]?.text).toContain("空格子条目");
+  expect(parsed[0]?.text).toContain("tab 子条目");
+  expect(parsed[0]?.commands).toEqual(["bun test a/b.test.ts"]);
+  expect(parsed[1]?.text).toContain("第二条");
+  expect(parsed[1]?.commands).toEqual(["bun run check"]);
+});
+
 test("only a few forms of command may be run", () => {
   expect(parseVerify("bun run check")).toEqual(["bun", "run", "check"]);
   expect(parseVerify("bun run test:browser")).toEqual(["bun", "run", "test:browser"]);
