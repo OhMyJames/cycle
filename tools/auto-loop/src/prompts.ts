@@ -116,7 +116,13 @@ The change (git diff against the base${diff.length > MAX_DIFF ? ", cut short" : 
 ${diff.slice(0, MAX_DIFF)}
 \`\`\`
 
+The change is already committed, so \`git status\` showing nothing is expected; use \`git diff\` and \`git log\` against the base to see it.
+
+Verify before you judge; do not conclude from the diff above alone. Open every changed file in full, and the code it touches or is tested against (the module under test, its callers, the neighbouring tests and how they are written). Confirm for yourself that each criterion is met in meaning, not only that its command passed: for a test, that it would fail if the behavior broke; for a change, that it does what the work item says and nothing more. A pass you did not check is a failure of this review.
+
 Review adversarially. Look for what the tests do not prove: a criterion met in letter and not in meaning, a rule of AGENTS.md broken, behavior not covered, a change that is more than the work item asked.
+
+Before the verdict, write a short "What I checked" list: the files you opened and the commands you ran. A verdict with no such list is not accepted.
 
 End with one block and nothing after it:
 <verdict>
@@ -163,3 +169,11 @@ export const formatFindings = (verdict: Verdict): string =>
   verdict.findings
     .map((f, i) => `${i + 1}. [${f.severity}] ${f.where}: ${f.problem}\n   fix: ${f.fix}`)
     .join("\n");
+
+/** QA was told to list what it checked before its verdict; a verdict without that list is not taken. */
+export const listsWhatWasChecked = (text: string): boolean => {
+  const at = text.search(/what i checked/i);
+  if (at === -1) return false;
+  const after = text.slice(at).split("<verdict>")[0] ?? "";
+  return /^\s*(?:[-*]|\d+[.)])\s+\S/m.test(after);
+};

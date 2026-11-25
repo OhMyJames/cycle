@@ -17,6 +17,7 @@ import {
   fixBrief,
   formatFindings,
   handoffBrief,
+  listsWhatWasChecked,
   parseProgress,
   parseVerdict,
   qaBrief,
@@ -470,6 +471,8 @@ export class Pipeline {
 
     const verdict = parseVerdict(result.text);
     if (verdict === undefined) throw new Blocked("QA 没有给出可以读取的审查结论。");
+    if (!listsWhatWasChecked(result.text))
+      throw new Blocked("QA 没有写明它检查了什么，自动化不接受没有依据的通过。");
     if (!verdict.pass) {
       await this.#nextRound(run, `Independent review found:\n${formatFindings(verdict)}`, save);
       return;

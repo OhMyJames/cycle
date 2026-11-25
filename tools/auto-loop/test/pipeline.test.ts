@@ -17,8 +17,9 @@ import {
 import { config, issue, readyDescription } from "./helpers.ts";
 
 const WT = "/wt/auto/cyc-1";
-const PASS = `<verdict>{"pass":true,"findings":[]}</verdict>`;
-const FAIL = `<verdict>{"pass":false,"findings":[{"severity":"major","where":"a.ts","problem":"p","fix":"f"}]}</verdict>`;
+const CHECKED = "What I checked:\n- read a.ts\n- ran git diff\n";
+const PASS = `${CHECKED}<verdict>{"pass":true,"findings":[]}</verdict>`;
+const FAIL = `${CHECKED}<verdict>{"pass":false,"findings":[{"severity":"major","where":"a.ts","problem":"p","fix":"f"}]}</verdict>`;
 const done = (text = "<progress>done: x\nnext: y</progress>"): TurnResult => ({
   stopReason: "end_turn",
   text,
@@ -299,4 +300,12 @@ test("dry run picks and checks and writes nothing", async () => {
   expect(world.calls).toEqual([]);
   expect(await store.unfinished()).toEqual([]);
   expect(await store.events()).toEqual([]);
+});
+
+test("a QA pass that does not say what was checked is not accepted", async () => {
+  const { pipeline } = setup([ready()], {
+    dev: [done()],
+    qa: [done(`<verdict>{"pass":true,"findings":[]}</verdict>`)],
+  });
+  expect((await pipeline.step()).status).toBe("blocked");
 });
