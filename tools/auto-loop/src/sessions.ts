@@ -1,0 +1,174 @@
+// `Sessions` over a running Cycle daemon: the loop is one more client of it, so every session it makes is one a person
+// can open in the desktop app, read, and step into (CYC-318).
+
+import { CycleClient, connectUnix, type PermissionAnswer } from "@cycle/client";
+import { META } from "@cycle/protocol";
+import { answerFor, decide } from "./policy.ts";
+import { SessionLost, type SessionRole, type Sessions, type TurnResult } from "./types.ts";
+
+type Turn = {
+  role: SessionRole;
+  worktree: string;
+  state: "idle" | "running";
+  sawRunning: boolean;
+  text: string;
+  stop: string | undefined;
+  /** Permission requests nobody has answered yet: the time they wait does not count against the turn. */
+  waiting: number;
+  finish: () => void;
+};
+
+export class DaemonSessions implements Sessions {
+  readonly #client: CycleClient;
+  readonly #turns = new Map<string, Turn>();
+  readonly #watched = new Set<string>();
+  readonly #onWaiting: (sessionId: string, title: string) => void;
+
+  constructor(socketPath: string, onWaiting: (sessionId: string, title: string) => void) {
+    this.#onWaiting = onWaiting;
+    this.#client = new CycleClient({
+      name: "auto-loop",
+      connect: () => connectUnix(socketPath),
+      events: {
+        update: (sessionId, update) => this.#update(sessionId, update as Record<string, unknown>),
+        permission: (sessionId, request, requestId) =>
+          this.#permission(sessionId, request, requestId),
+        resolved: (_sessionId, requestId) => {
+          const waiter = this.#waiters.get(String(requestId));
+          waiter?.({ outcome: "cancelled" });
+        },
+      },
+    });
+  }
+
+  readonly #waiters = new Map<string, (answer: PermissionAnswer) => void>();
+
+  async start(): Promise<void> {
+    await this.#client.start();
+  }
+
+  async close(): Promise<void> {
+    await this.#client.close();
+  }
+
+  #update(sessionId: string, update: Record<string, unknown>): void {
+    const turn = this.#turns.get(sessionId);
+    if (turn === undefined) return;
+    if (update.sessionUpdate === "agent_message_chunk") {
+      const content = update.content as { type?: string; text?: string } | undefined;
+      if (content?.type === "text" && typeof content.text === "string") turn.text += content.text;
+    } else if (update.sessionUpdate === "state_update") {
+      const info = update.state as { state?: string; stopReason?: string } | undefined;
+      if (info?.state === "running" || info?.state === "requires_action") turn.sawRunning = true;
+      if (info?.state === "idle" && turn.sawRunning) {
+        turn.stop = info.stopReason ?? "end_turn";
+        turn.finish();
+      }
+    }
+  }
+
+  async #permission(
+    sessionId: string,
+    request: Record<string, unknown>,
+    requestId: string | undefined,
+  ): Promise<PermissionAnswer> {
+    const turn = this.#turns.get(sessionId);
+    const key = requestId ?? `${sessionId}:${Date.now()}`;
+    const wait = (counted: boolean) =>
+      new Promise<PermissionAnswer>((resolve) => {
+        if (counted && turn !== undefined) turn.waiting++;
+        this.#waiters.set(key, (a) => {
+          this.#waiters.delete(key);
+          if (counted && turn !== undefined) turn.waiting--;
+          resolve(a);
+        });
+      });
+    // No turn of the loop's is running: a person is working in this session (a blocked run they took over). Their
+    // requests are theirs; the loop does not answer them, and gives the request up when someone else does.
+    if (turn === undefined) return wait(false);
+    const verdict = decide(request, { role: turn.role, worktree: turn.worktree });
+    const answer = answerFor(request, verdict);
+    if (answer !== undefined) return answer;
+    // Not for the loop to decide: the request stays open until a person answers it in the app.
+    this.#onWaiting(sessionId, typeof request.title === "string" ? request.title : "");
+    return wait(true);
+  }
+
+  async create(input: {
+    role: SessionRole;
+    agent: string;
+    title: string;
+    cwd: string;
+    worktree?: { base: string; name: string };
+  }): Promise<{ sessionId: string; cwd: string; branch: string | null }> {
+    const sessionId = await this.#client.newSession({
+      cwd: input.cwd,
+      agent: input.agent,
+      ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
+    });
+    let cwd = input.cwd;
+    let branch: string | null = null;
+    if (input.worktree !== undefined) {
+      const row = (await this.#client.listSessions()).find((r) => r.sessionId === sessionId);
+      const info = row?._meta?.[META.worktree] as { path?: string; branch?: string } | undefined;
+      if (info?.path === undefined)
+        throw new Error("the daemon did not say where it made the worktree");
+      cwd = info.path;
+      branch = info.branch ?? null;
+    }
+    await this.#client.rename(sessionId, input.title).catch(() => {});
+    return { sessionId, cwd, branch };
+  }
+
+  async turn(
+    sessionId: string,
+    prompt: string,
+    context: { role: SessionRole; worktree: string; timeoutMs: number },
+  ): Promise<TurnResult> {
+    if (!this.#watched.has(sessionId)) {
+      try {
+        await this.#client.watch(sessionId, context.worktree);
+      } catch (error) {
+        throw new SessionLost(String(error));
+      }
+      this.#watched.add(sessionId);
+    }
+    let finish: () => void = () => {};
+    const ended = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const turn: Turn = {
+      role: context.role,
+      worktree: context.worktree,
+      state: "idle",
+      sawRunning: false,
+      text: "",
+      stop: undefined,
+      waiting: 0,
+      finish,
+    };
+    this.#turns.set(sessionId, turn);
+    let timedOut = false;
+    let elapsed = 0;
+    const timer = setInterval(() => {
+      if (turn.waiting > 0) return;
+      elapsed += 1000;
+      if (elapsed >= context.timeoutMs && !timedOut) {
+        timedOut = true;
+        void this.#client.cancel(sessionId);
+      }
+    }, 1000);
+    try {
+      try {
+        await this.#client.prompt(sessionId, [{ type: "text", text: prompt }]);
+      } catch (error) {
+        throw new SessionLost(String(error));
+      }
+      await ended;
+      return { stopReason: turn.stop ?? "error", text: turn.text, timedOut };
+    } finally {
+      clearInterval(timer);
+      this.#turns.delete(sessionId);
+    }
+  }
+}

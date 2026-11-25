@@ -1,0 +1,15 @@
+{
+  "name": "@cycle/auto-loop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Runs infra.CYC work items through Dev, independent QA and a pull request, one at a time (CYC-318).",
+  "dependencies": {
+    "@cycle/client": "workspace:*",
+    "@cycle/protocol": "workspace:*",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts"
+  }
+}
