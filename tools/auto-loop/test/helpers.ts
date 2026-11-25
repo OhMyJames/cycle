@@ -12,6 +12,7 @@ export const issue = (over: Partial<Issue> = {}): Issue => ({
   labelIds: [11],
   typeId: 20,
   subtaskCount: 0,
+  blockerColumnIds: [],
   ...over,
 });
 

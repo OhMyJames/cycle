@@ -126,6 +126,71 @@ test("toIssue parses typeId and active subtaskCount from tracker payloads", () =
   expect(untyped.subtaskCount).toBe(0);
 });
 
+test("an issue with an unfinished blocker is skipped, even at top priority", () => {
+  const low = issue({ number: 2, priority: "low" });
+  for (const col of [22, 23, 34, 35, 21]) {
+    const blocked = issue({ number: 1, priority: "urgent", blockerColumnIds: [24, col] });
+    expect(pickNext([blocked, low], cfg)?.number).toBe(2);
+  }
+  expect(pickNext([issue({ blockerColumnIds: [-1] })], cfg)).toBeUndefined();
+  expect(pickNext([issue({ blockerColumnIds: null })], cfg)).toBeUndefined();
+});
+
+test("blockers in Done or Canceled do not hold an issue back", () => {
+  const items = [
+    issue({ number: 2, priority: "low" }),
+    issue({ number: 1, priority: "urgent", blockerColumnIds: [24, 25] }),
+  ];
+  expect(pickNext(items, cfg)?.number).toBe(1);
+});
+
+test("toIssue reads blockers from links: only inward blocks count; missing links fail closed", () => {
+  const base = {
+    id: 1,
+    sequenceNumber: 354,
+    columnId: 22,
+    labelIds: [11],
+    typeId: 20,
+    subtasks: [],
+  };
+  const mixed = toIssue(
+    {
+      ...base,
+      links: [
+        { kind: "blocks", direction: "inward", columnId: 22 },
+        { kind: "blocks", direction: "inward", columnId: 24 },
+        { kind: "blocks", direction: "outward", columnId: 23 },
+        { kind: "relates", direction: "inward", columnId: 23 },
+        { kind: "relates", direction: "outward", columnId: 23 },
+      ],
+    },
+    "CYC",
+  );
+  expect(mixed.blockerColumnIds).toEqual([22, 24]);
+  expect(pickNext([mixed], cfg)).toBeUndefined();
+
+  const harmless = toIssue(
+    {
+      ...base,
+      links: [
+        { kind: "blocks", direction: "outward", columnId: 22 },
+        { kind: "relates", direction: "inward", columnId: 22 },
+        { kind: "blocks", direction: "inward", columnId: 25 },
+      ],
+    },
+    "CYC",
+  );
+  expect(pickNext([harmless], cfg)?.number).toBe(354);
+
+  const none = toIssue({ ...base, links: [] }, "CYC");
+  expect(none.blockerColumnIds).toEqual([]);
+  expect(pickNext([none], cfg)?.number).toBe(354);
+
+  const missing = toIssue(base, "CYC");
+  expect(missing.blockerColumnIds).toBeNull();
+  expect(pickNext([missing], cfg)).toBeUndefined();
+});
+
 test("parseAllowedTypeIds parses valid comma-separated ids and rejects invalid values", () => {
   expect(parseAllowedTypeIds("20, 25")).toEqual([20, 25]);
   expect(parseAllowedTypeIds("101")).toEqual([101]);
