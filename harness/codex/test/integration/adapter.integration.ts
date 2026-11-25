@@ -724,3 +724,100 @@ supports_websockets=false
     await rm(dir, { recursive: true, force: true });
   }
 }, 45_000);
+
+test("a command with more output than the adapter keeps still ends cleanly", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cycle-test-codex-large-output-"));
+  const cwd = join(dir, "project"),
+    home = join(dir, "home");
+  await mkdir(cwd);
+  await mkdir(home);
+  let nextCommand: string | undefined = "head -c 300000 /dev/zero | tr '\\0' x";
+  const mock = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (req) => {
+      if (!new URL(req.url).pathname.endsWith("/responses"))
+        return new Response(null, { status: 404 });
+      if (nextCommand !== undefined) {
+        const cmd = nextCommand;
+        nextCommand = undefined;
+        return response(true, cmd);
+      }
+      return response(false, "");
+    },
+  });
+  await writeFile(
+    join(home, "config.toml"),
+    `model="gpt-5.4"
+model_provider="mock"
+[model_providers.mock]
+name="mock"
+base_url="http://127.0.0.1:${mock.port}/v1"
+wire_api="responses"
+supports_websockets=false
+`,
+  );
+  const entry = new URL("../../../../apps/daemon/src/main.ts", import.meta.url).pathname;
+  const proc = Bun.spawn([process.execPath, entry, "adapter", "codex"], {
+    cwd,
+    env: {
+      PATH: "/usr/bin:/bin",
+      CYCLE_ADAPTER_CONFIG: JSON.stringify({
+        env: { HOME: home, CODEX_HOME: home, PATH: "/usr/bin:/bin" },
+      }),
+    },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const updates: SessionUpdate[] = [];
+  const input = new WritableStream<Uint8Array>({
+    write(chunk) {
+      proc.stdin.write(chunk);
+      proc.stdin.flush();
+    },
+    close() {
+      proc.stdin.end();
+    },
+  });
+  const acp = client().onNotification(methods.client.session.update, ({ params }) => {
+    updates.push(params.update);
+  });
+  async function waitFor(predicate: () => boolean) {
+    for (let i = 0; i < 600 && !predicate(); i++) await Bun.sleep(25);
+    if (!predicate()) throw new Error(`Timed out, ACP updates: ${JSON.stringify(updates)}`);
+  }
+  try {
+    await acp.connectWith(ndJsonStream(input, proc.stdout), async (agent) => {
+      await agent.request(methods.agent.initialize, {
+        protocolVersion: 2,
+        info: { name: "test", version: "1" },
+      });
+      const { sessionId } = await agent.request(methods.agent.session.new, { cwd });
+      await agent.request(methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "run the large command" }],
+      });
+      const idle = () =>
+        updates.filter(
+          (u) => u.sessionUpdate === "state_update" && "state" in u && u.state === "idle",
+        );
+      await waitFor(() => idle().length === 1);
+      expect(idle()[0]).toMatchObject({ stopReason: "end_turn" });
+      const completed = updates.find(
+        (u) => u.sessionUpdate === "tool_call_update" && "status" in u && u.status === "completed",
+      ) as { content?: { content?: { text?: string } }[] } | undefined;
+      const output = completed?.content?.[0]?.content?.text ?? "";
+      expect(output).toContain("earlier characters not shown");
+      expect(output.length).toBeLessThanOrEqual(100_100);
+      await agent.request(methods.agent.session.close, { sessionId });
+    });
+  } finally {
+    proc.stdin.end();
+    await Promise.race([proc.exited, Bun.sleep(1500)]);
+    proc.kill();
+    await proc.exited;
+    mock.stop(true);
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 40_000);
