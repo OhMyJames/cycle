@@ -33,6 +33,8 @@ export const RunRecordSchema = z.object({
   round: z.number().int().min(0),
   /** CI retry rounds used so far after a red CI run sent the ticket back to Dev. */
   ciRound: z.number().int().min(0).default(0),
+  /** The HEAD commit whose CI run last came back red; the same commit again means no new CI run unless the failed jobs are rerun. */
+  ciFailedSha: z.string().nullable().default(null),
   worktree: z.string().nullable(),
   /** The branch the daemon made: `worktree-auto/cyc-318`. */
   localBranch: z.string().nullable(),
