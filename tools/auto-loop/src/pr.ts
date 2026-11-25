@@ -291,6 +291,42 @@ export const readCiStatus = async (input: {
   };
 };
 
+export type PrState = "OPEN" | "CLOSED" | "MERGED";
+
+export type ReadPrStateResult = { ok: true; state: PrState } | { ok: false; error: string };
+
+const PrStateViewSchema = z.object({ state: z.enum(["OPEN", "CLOSED", "MERGED"]) });
+
+/**
+ * Reads whether a pull request is open, closed without merging, or merged, via `gh pr view --json state` using
+ * `deliverEnv`. A failed or unreadable read is an error, never taken as OPEN.
+ */
+export const readPrState = async (input: {
+  prRef: string;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}): Promise<ReadPrStateResult> => {
+  const done = await input.exec(["gh", "pr", "view", input.prRef, "--json", "state"], {
+    cwd: input.cwd,
+    env: deliverEnv(input.env),
+    timeoutMs: input.timeoutMs,
+  });
+  if (done.timedOut) return { ok: false, error: "gh pr view 超时。" };
+  if (done.code !== 0) {
+    return { ok: false, error: `gh pr view 失败（exit ${done.code}）：${done.output.trim()}` };
+  }
+  try {
+    return { ok: true, state: PrStateViewSchema.parse(JSON.parse(done.output)).state };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `gh pr view 返回无法解析的 JSON：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+};
+
 const MAX_CI_LOG_PER_CHECK = 4000;
 
 const tailLog = (text: string, max = MAX_CI_LOG_PER_CHECK): string => {

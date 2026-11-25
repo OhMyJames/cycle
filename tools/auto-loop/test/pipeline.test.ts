@@ -154,6 +154,8 @@ type World = {
   headSha: string;
   ciResponses: CiResponse[];
   ciLogs: Record<string, string>;
+  /** What `gh pr view --json state` says; an array is consumed one read at a time (last one sticks). */
+  prState: string | string[];
 };
 
 const makeExec =
@@ -167,6 +169,14 @@ const makeExec =
     if (line.includes("rev-parse HEAD")) return result(`${world.headSha}\n`);
     for (const pattern of world.fail) if (line.includes(pattern)) return result("boom", 1);
     if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
+    if (line.includes("gh pr view") && line.includes("--json state")) {
+      const state = Array.isArray(world.prState)
+        ? world.prState.length > 1
+          ? world.prState.shift()
+          : world.prState[0]
+        : world.prState;
+      return result(JSON.stringify({ state }));
+    }
     if (line.includes("gh pr view") && line.includes("statusCheckRollup")) {
       const next = world.ciResponses.shift() ?? greenCi(world.headSha);
       return result(JSON.stringify(next));
@@ -206,6 +216,7 @@ const setup = (
     headSha: "abc",
     ciResponses: [...(ci.responses ?? [])],
     ciLogs: { ...(ci.logs ?? {}) },
+    prState: "OPEN",
   };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
   const store = new RunStore(cfg.stateDir, () => clock.now());
@@ -464,6 +475,7 @@ test("dry run idle log reports type and leaf exclusions", async () => {
       headSha: "abc",
       ciResponses: [],
       ciLogs: {},
+      prState: "OPEN",
     }),
     store: new RunStore(dir, () => new Date("2026-11-25T00:00:00Z")),
     clock: { now: () => new Date("2026-11-25T00:00:00Z") },
@@ -1097,4 +1109,84 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
   expect(s.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
   expect(s.tracker.moves).toEqual(["CYC-1:inReview"]);
   expect(s.tracker.comments.at(-1)).toContain("CI 状态未全绿");
+});
+
+test("a PR closed without merging while waiting for CI blocks the work item and nothing more is pushed", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  s.world.prState = ["OPEN", "CLOSED"]; // open at delivery, closed by the time CI is read
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:blocked");
+  expect(s.tracker.comments.at(-1)).toContain("PR 已被关闭");
+  expect(s.tracker.comments.at(-1)).toContain("需人接手");
+  expect(s.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(0);
+  expect(s.world.calls.filter((c) => c.includes("push"))).toHaveLength(1);
+  expect((await s.store.load("CYC-1"))?.phase).toBe("blocked");
+});
+
+test("resuming a run whose PR was closed does not push again and blocks again", async () => {
+  const s = setup([ready()], { dev: [done(), done()], qa: [done(PASS), done(PASS)] });
+  s.world.prState = ["OPEN", "CLOSED"];
+  await s.pipeline.step();
+  const pushes = s.world.calls.filter((c) => c.includes("push")).length;
+  const issueNow = s.tracker.issues[0];
+  if (issueNow) {
+    issueNow.columnId = 22;
+    issueNow.labelIds = [11];
+  }
+  s.world.prState = "CLOSED";
+  const again = await s.pipeline.step();
+  expect(again.status).toBe("blocked");
+  expect(s.world.calls.filter((c) => c.includes("push"))).toHaveLength(pushes);
+  expect(s.world.calls.filter((c) => c.includes("gh pr create"))).toHaveLength(1);
+});
+
+test("a merged PR counts as delivered without opening another or reviewing", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  s.world.prState = ["OPEN", "MERGED"];
+  const result = await s.pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: false,
+  });
+  expect(s.world.calls.filter((c) => c.includes("gh pr create"))).toHaveLength(1);
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:inReview");
+  expect(s.tracker.comments.at(-1)).toContain("已在自动化之外合并");
+  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
+});
+
+test("an unreadable PR state blocks instead of being taken as open, after retries", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  s.world.prState = ["OPEN", "garbage"];
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(s.tracker.comments.at(-1)).toContain("读取 PR 状态失败");
+  expect(s.world.calls.filter((c) => c.includes("--json state")).length).toBeGreaterThan(3);
+  expect(s.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(0);
+});
+
+test("a transient PR state read failure is retried and the run goes on", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  s.world.prState = ["OPEN", "garbage", "OPEN"];
+  expect((await s.pipeline.step()).status).toBe("delivered");
+});
+
+test("a PR closed while the review runs blocks before any review comment or auto-merge", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  // reads: ci guard, after CI, review guard, then closed after the review turn
+  s.world.prState = ["OPEN", "OPEN", "OPEN", "CLOSED"];
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(s.tracker.comments.at(-1)).toContain("PR 已被关闭");
+  expect(s.world.calls.some((c) => c.includes("gh pr comment"))).toBe(false);
+  expect(s.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+});
+
+test("a PR closed while CI is awaited blocks before CI results are acted on", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  s.world.prState = ["OPEN", "CLOSED"]; // ci guard, then re-read after waiting
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(s.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(0);
 });
