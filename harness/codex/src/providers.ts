@@ -13,11 +13,17 @@ const CODEX_PROVIDER_ID = "cycle";
 
 /**
  * The bundled model whose instructions a provider's models use. It is one Codex already knows, so its instructions ship
- * with the same pinned binary; the model fields itself are replaced below. It is the smaller current template whose
- * tool assumptions match a provider session (no code mode, Responses Lite or multi-agent), around a thousand tokens less
- * than `gpt-5.5`'s.
+ * with the same pinned binary; the model fields itself are replaced below. It is the smaller current template, around a
+ * thousand tokens less than `gpt-5.5`'s.
  */
 const INSTRUCTIONS_MODEL = "gpt-5.6-sol";
+
+/** DeepSeek's own Codex integration names this provider; its model and tool behavior gets tuned together. */
+const DEEPSEEK_PROVIDER_ID = "deepseek";
+
+/** The most context Codex keeps before compacting a DeepSeek thread. The model reads 1M, but replaying that much through
+ * every tool turn is the expensive part. */
+const DEEPSEEK_AUTO_COMPACT_TOKEN_LIMIT = 500_000;
 
 /** What a thread of the owner's models learns about them, from the Codex binary's own bundled catalog. */
 export type BundledModel = {
@@ -79,8 +85,8 @@ const instructionsOf = (bundled: readonly BundledModel[]): string => {
  * assumes its 272K fallback and clips even `model_context_window` to it. A catalog entry carries the real window, and
  * the efforts its provider supports, and enables `supports_search_tool` (matching every bundled Codex model) so MCP,
  * sub-agent and `codex_apps` tools stay deferred behind `tool_search` instead of inflating every request by >100K
- * tokens. Everything else follows what a provider session had before the catalog existed: no code mode, Responses Lite,
- * multi-agent or `apply_patch`; the tools are Cycle's ordinary set.
+ * tokens. DeepSeek follows its own Codex catalog's parallel calls and freeform patch. Code mode was measured and made
+ * requests and context larger, so it stays on direct tools. Other providers also keep the direct tool set.
  */
 export const providerCatalogDocument = (
   models: readonly ProviderModel[],
@@ -88,52 +94,58 @@ export const providerCatalogDocument = (
 ) => {
   const instructions = instructionsOf(bundled);
   return {
-    models: models.map((model, index) => ({
-      slug: model.id,
-      display_name: model.name,
-      description: model.description,
-      default_reasoning_level: model.defaultEffort,
-      supported_reasoning_levels: model.efforts.map((effort) => ({
-        effort: effort.id,
-        description: effort.description || effort.id,
-      })),
-      shell_type: "unified_exec",
-      visibility: "none" as const,
-      supported_in_api: true,
-      priority: 99 + index,
-      additional_speed_tiers: [],
-      service_tiers: [],
-      available_access_programs: null,
-      availability_nux: null,
-      upgrade: null,
-      model_messages: { instructions_template: instructions },
-      include_skills_usage_instructions: false,
-      include_plugin_usage_instructions: false,
-      include_apps_usage_instructions: false,
-      default_reasoning_summary: "auto",
-      support_verbosity: false,
-      default_verbosity: null,
-      apply_patch_tool_type: null,
-      web_search_tool_type: "text",
-      truncation_policy: { mode: "bytes", limit: 10_000 },
-      supports_image_detail_original: false,
-      context_window: model.contextWindow,
-      max_context_window: model.contextWindow,
-      auto_compact_token_limit: null,
-      comp_hash: null,
-      effective_context_window_percent: 95,
-      experimental_supported_tools: [],
-      input_modalities: model.images ? ["text", "image"] : ["text"],
-      supports_search_tool: true,
-      supports_experimental_context: false,
-      use_responses_lite: false,
-      supports_reasoning_effort_updates: false,
-      node_repl_auto_review_required: false,
-      node_repl_disabled: false,
-      tool_mode: null,
-      multi_agent_version: null,
-      multi_agent_reasoning_effort: null,
-    })),
+    models: models.map((model, index) => {
+      const deepseek = model.provider.id === DEEPSEEK_PROVIDER_ID;
+      return {
+        slug: model.id,
+        display_name: model.name,
+        description: model.description,
+        default_reasoning_level: model.defaultEffort,
+        supported_reasoning_levels: model.efforts.map((effort) => ({
+          effort: effort.id,
+          description: effort.description || effort.id,
+        })),
+        shell_type: "unified_exec",
+        visibility: "none" as const,
+        supported_in_api: true,
+        priority: 99 + index,
+        additional_speed_tiers: [],
+        service_tiers: [],
+        available_access_programs: null,
+        availability_nux: null,
+        upgrade: null,
+        model_messages: { instructions_template: instructions },
+        include_skills_usage_instructions: false,
+        include_plugin_usage_instructions: false,
+        include_apps_usage_instructions: false,
+        default_reasoning_summary: "auto",
+        support_verbosity: deepseek,
+        default_verbosity: deepseek ? "high" : null,
+        apply_patch_tool_type: deepseek ? "freeform" : null,
+        web_search_tool_type: "text",
+        truncation_policy: { mode: "bytes", limit: 10_000 },
+        supports_image_detail_original: false,
+        context_window: model.contextWindow,
+        max_context_window: model.contextWindow,
+        auto_compact_token_limit: deepseek
+          ? Math.min(DEEPSEEK_AUTO_COMPACT_TOKEN_LIMIT, Math.floor(model.contextWindow * 0.95))
+          : null,
+        comp_hash: null,
+        effective_context_window_percent: 95,
+        experimental_supported_tools: [],
+        input_modalities: model.images ? ["text", "image"] : ["text"],
+        supports_search_tool: true,
+        supports_parallel_tool_calls: deepseek ? true : null,
+        supports_experimental_context: false,
+        use_responses_lite: false,
+        supports_reasoning_effort_updates: false,
+        node_repl_auto_review_required: false,
+        node_repl_disabled: false,
+        tool_mode: null,
+        multi_agent_version: null,
+        multi_agent_reasoning_effort: null,
+      };
+    }),
   };
 };
 

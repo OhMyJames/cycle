@@ -31,7 +31,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     asked.set(`q${msg.id}`, String(msg.id));
     send({ id: `q${msg.id}`, method: msg.params?.method, params: {} });
   } else if (msg.method === "exit") process.exit(3);
-  else if (msg.id !== undefined && msg.method === undefined) {
+  else if (msg.method === "partial") {
+    process.stdout.write('{"method":"cut","params":{"x":"');
+    process.exit(0);
+  } else if (msg.id !== undefined && msg.method === undefined) {
     const original = asked.get(msg.id);
     if (original !== undefined) send({ id: Number(original), result: msg });
   } else if (msg.method === "note") send({ method: "noted", params: msg.params });

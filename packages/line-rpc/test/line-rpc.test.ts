@@ -161,3 +161,11 @@ test("a message with a null id is neither a request nor a notification", async (
     rpc.close();
   }
 }, 10_000);
+
+test("an incomplete last line is not a parse error when the process exits", async () => {
+  const { rpc, exits } = start();
+  await expect(rpc.request("partial", {})).rejects.toThrow("peer exited (0)");
+  expect(rpc.closed).toBe(true);
+  expect(exits).toHaveLength(1);
+  expect(exits[0]?.message).toContain("peer exited (0)");
+}, 10_000);

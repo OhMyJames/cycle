@@ -10,7 +10,12 @@ import {
   writeProviderCatalog,
 } from "../src/providers.ts";
 
-const ownModel = (id: string, efforts: string[], contextWindow: number): ProviderModel => ({
+const ownModel = (
+  id: string,
+  efforts: string[],
+  contextWindow: number,
+  provider = { id: "acme", name: "Acme" },
+): ProviderModel => ({
   id,
   name: id,
   description: "Acme",
@@ -18,7 +23,7 @@ const ownModel = (id: string, efforts: string[], contextWindow: number): Provide
   defaultEffort: efforts[0] ?? null,
   images: false,
   contextWindow,
-  provider: { id: "acme", name: "Acme" },
+  provider,
 });
 
 const bundled = [
@@ -33,6 +38,10 @@ test("a provider catalog says every model's real window and efforts, and carries
     [
       ownModel("acme/fast", ["low", "high", "max"], 1_000_000),
       ownModel("acme/small", ["low"], 64_000),
+      ownModel("deepseek/deepseek-flash", ["low", "high", "max"], 1_000_000, {
+        id: "deepseek",
+        name: "DeepSeek",
+      }),
     ],
     bundled,
   );
@@ -46,9 +55,32 @@ test("a provider catalog says every model's real window and efforts, and carries
       supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }, { effort: "max" }],
       model_messages: { instructions_template: "the bundled instructions" },
     },
-    { slug: "acme/small", context_window: 64_000, max_context_window: 64_000 },
+    {
+      slug: "acme/small",
+      context_window: 64_000,
+      max_context_window: 64_000,
+      support_verbosity: false,
+      default_verbosity: null,
+      apply_patch_tool_type: null,
+      supports_parallel_tool_calls: null,
+      tool_mode: null,
+      auto_compact_token_limit: null,
+    },
+    {
+      slug: "deepseek/deepseek-flash",
+      support_verbosity: true,
+      default_verbosity: "high",
+      apply_patch_tool_type: "freeform",
+      supports_parallel_tool_calls: true,
+      tool_mode: null,
+      auto_compact_token_limit: 500_000,
+    },
   ]);
-  expect(document.models.map((model) => model.slug)).toEqual(["acme/fast", "acme/small"]);
+  expect(document.models.map((model) => model.slug)).toEqual([
+    "acme/fast",
+    "acme/small",
+    "deepseek/deepseek-flash",
+  ]);
   const config = providerThreadConfig(
     {
       url: "http://127.0.0.1:4000/v1",
@@ -62,6 +94,23 @@ test("a provider catalog says every model's real window and efforts, and carries
     "shell_environment_policy.exclude": ["CYCLE_PROVIDER_TOKEN"],
   });
   expect(JSON.stringify({ document, config })).not.toContain("gw-token");
+});
+
+test("a DeepSeek compact limit never exceeds the model's effective window", () => {
+  const document = providerCatalogDocument(
+    [
+      ownModel("deepseek/flash", ["high"], 1_000_000, {
+        id: "deepseek",
+        name: "DeepSeek",
+      }),
+      ownModel("deepseek/small", ["high"], 64_000, {
+        id: "deepseek",
+        name: "DeepSeek",
+      }),
+    ],
+    bundled,
+  );
+  expect(document.models.map((model) => model.auto_compact_token_limit)).toEqual([500_000, 60_800]);
 });
 
 test("the bundled catalog is read from the pinned executable without the gateway token", async () => {
