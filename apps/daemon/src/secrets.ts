@@ -4,7 +4,7 @@
 // care as `config.json`). Nothing here logs a name or a value.
 import { readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parseSecretsFile, VARIABLE_NAME } from "@cycle/protocol";
 import { secureConfigFile } from "./config.ts";
 import { providersPath, secretsPath } from "./data-dir.ts";
@@ -129,7 +129,12 @@ export const protectedFiles = (dataDir: string): string[] => {
     try {
       paths.add(realpathSync(path));
     } catch {
-      // Not there yet: the path itself is the rule, and stands for a file made later.
+      // Not there yet, and made later at the real place: sandboxes match that one, so its folder is resolved.
+      try {
+        paths.add(join(realpathSync(dirname(path)), basename(path)));
+      } catch {
+        // No folder either: the path itself is the rule.
+      }
     }
   }
   return [...paths];

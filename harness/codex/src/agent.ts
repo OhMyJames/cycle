@@ -100,6 +100,11 @@ export function createAdapter(config: AdapterConfig) {
   let additionalDirectories: string[] = [];
   /** The thread's sandbox is a permission profile that denies reading some files (see `open`), not a `sandbox` mode. */
   let denyProfile = false;
+  /**
+   * A turn named a sandbox of its own (Read only, Full access). Codex keeps it for the turns after, and there is no way
+   * to name the profile again, so from then on every turn names its sandbox as before, without the denial.
+   */
+  let sandboxNamed = false;
   let developerInstructions: string | undefined;
   let mcpConfig: Record<string, unknown> = {};
   let trusted: boolean | undefined;
@@ -579,8 +584,10 @@ export function createAdapter(config: AdapterConfig) {
     const turn = turnPolicy(mode, additionalDirectories);
     // The thread's own profile stands in the modes whose sandbox it is; naming one here would replace it.
     const { sandboxPolicy, ...withoutSandbox } = turn;
+    const keepsProfile = denyProfile && !sandboxNamed && sandboxPolicy.type === "workspaceWrite";
+    if (denyProfile && !keepsProfile) sandboxNamed = true;
     return {
-      ...(denyProfile && sandboxPolicy.type === "workspaceWrite" ? withoutSandbox : turn),
+      ...(keepsProfile ? withoutSandbox : turn),
       ...(chosenModel !== undefined ? { model: chosenModel } : {}),
       ...(chosenEffort !== null ? { effort: chosenEffort } : {}),
       ...(collaborationMode ? { collaborationMode } : {}),
@@ -594,6 +601,7 @@ export function createAdapter(config: AdapterConfig) {
     if (server) throw new RequestError(-32600, "This adapter already has a session");
     if (resume?.replayFrom) throw new RequestError(-32602, "Cycle owns the conversation replay");
     mode = "default";
+    sandboxNamed = false;
     model = "default";
     effort = "default";
     sentPlan = false;

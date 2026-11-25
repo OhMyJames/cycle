@@ -41,7 +41,10 @@ export const spawn = (
     }
   }
   const abort = new AbortController();
-  const denied = (config.denyRead ?? []).filter((path) => path.startsWith("/"));
+  // Absolute paths with nothing a rule reads as a pattern: a folder named "Work (old)" would make a rule that is not one.
+  const denied = (config.denyRead ?? []).filter(
+    (path) => path.startsWith("/") && !/[()*?[\]{}!]/.test(path),
+  );
   const options: Options = {
     cwd: session.cwd,
     // The session's variables reach the commands Claude runs, through a file it sources before each, never its own
@@ -63,10 +66,6 @@ export const spawn = (
     ...callbacks,
     abortController: abort,
     includePartialMessages: true,
-    // Claude Code leaves thinking's text out ("omitted") unless asked: every thought would reach the
-    // conversation empty. The setting asks for the API's summaries and leaves the kind of thinking
-    // (adaptive, a budget, none) to the model, as `thinking: { display }` would not.
-    // A path in a Read or Edit rule is absolute with a second slash ("//etc/x"): one slash is from the project's root.
     ...(denied.length > 0 && config.sandboxDenied === true
       ? {
           sandbox: {
@@ -81,9 +80,13 @@ export const spawn = (
         }
       : {}),
     settings: {
+      // A path in a Read or Edit rule is absolute with a second slash ("//etc/x"): one slash is from the project's root.
       ...(denied.length > 0
         ? { permissions: { deny: denied.flatMap((path) => [`Read(/${path})`, `Edit(/${path})`]) } }
         : {}),
+      // Claude Code leaves thinking's text out ("omitted") unless asked: every thought would reach the
+      // conversation empty. The setting asks for the API's summaries and leaves the kind of thinking
+      // (adaptive, a budget, none) to the model, as `thinking: { display }` would not.
       showThinkingSummaries: true,
       // Not asked for (yet): none is made. When asked for, the person's own settings.json may still say no.
       ...(session.suggestions ? {} : { promptSuggestionEnabled: false }),

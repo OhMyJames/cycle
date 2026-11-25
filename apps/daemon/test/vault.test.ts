@@ -76,13 +76,31 @@ test("the files kept from agents are the secrets and the provider keys, by their
   const { hasSecrets, protectedFiles } = await import("../src/secrets.ts");
   const { providersPath, secretsPath } = await import("../src/data-dir.ts");
   // Not there yet: the paths stand for files made later.
-  expect(protectedFiles(dir)).toEqual([secretsPath(dir), providersPath(dir)]);
+  const there = await (await import("node:fs/promises")).realpath(dir);
+  expect(protectedFiles(dir)).toEqual([
+    ...new Set([
+      secretsPath(dir),
+      join(there, "secrets.env"),
+      providersPath(dir),
+      join(there, "providers.json"),
+    ]),
+  ]);
   expect(hasSecrets(dir)).toBe(false);
   await mkdir(join(dir, "elsewhere"));
   const target = join(dir, "elsewhere", "real.env");
   await writeFile(target, "A_KEY='x'\n");
   await symlink(target, secretsPath(dir));
   const real = await (await import("node:fs/promises")).realpath(target);
-  expect(protectedFiles(dir)).toEqual([secretsPath(dir), real, providersPath(dir)]);
+  expect(protectedFiles(dir)).toContain(real);
+  expect(protectedFiles(dir)).toContain(secretsPath(dir));
   expect(hasSecrets(dir)).toBe(true);
+});
+
+test("a file not made yet is kept by the path its folder really has", async () => {
+  const { mkdir, symlink, realpath } = await import("node:fs/promises");
+  const { protectedFiles } = await import("../src/secrets.ts");
+  await mkdir(join(dir, "real"));
+  await symlink(join(dir, "real"), join(dir, "link"));
+  const paths = protectedFiles(join(dir, "link"));
+  expect(paths).toContain(join(await realpath(join(dir, "real")), "secrets.env"));
 });
