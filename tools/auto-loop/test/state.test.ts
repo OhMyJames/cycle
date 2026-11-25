@@ -2,9 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatFindings, parseProgress, parseVerdict } from "../src/prompts.ts";
+import { formatFindings, parseProgress, parseVerdict, qaBrief } from "../src/prompts.ts";
 import { computeStats } from "../src/stats.ts";
 import { acquireLock, type LoopEvent, RunStore } from "../src/store.ts";
+import { issue } from "./helpers.ts";
 
 const now = () => new Date("2026-11-25T00:00:00Z");
 
@@ -62,4 +63,10 @@ test("stats: rates from the event log", () => {
   expect(stats.autonomousCompletionRate).toBe(0.5);
   expect(stats.interventionRate).toBe(0.5);
   expect(stats.reworkRate).toBe(0.5);
+});
+
+test("the QA brief asks for the code-review skill, read-only", () => {
+  const brief = qaBrief(issue(), [], "diff", "checks");
+  expect(brief).toContain('skill "code-review"');
+  expect(brief).toContain("never pass --fix or --comment");
 });
