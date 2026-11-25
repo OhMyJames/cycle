@@ -1424,8 +1424,6 @@ export const enUS = {
   "blank.environment.none": "No environment",
   "blank.environment.needsFix":
     "The session was not started: the environment {name} needs a fix. Open it in Settings, Environments, to see what.",
-  "blank.environment.agyNote":
-    "Antigravity runs its own commands without these variables. Terminals and actions have them.",
   "settings.environments.needsFix": "Needs a fix: {problem}",
   "environment.problem.action_id_invalid":
     "Two actions have the same id, or one has none. Save the environment again to give each its own.",

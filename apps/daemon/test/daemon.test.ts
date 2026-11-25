@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { appendFile, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
-import { CycleErrorCode } from "@cycle/protocol";
+import { CycleErrorCode, META } from "@cycle/protocol";
 import { Daemon, JsonlLogStore, type LogStore, type SessionLog } from "../src/index.ts";
 import { connectClient, until } from "./client.ts";
 import { fakeAgent } from "./fake-agent.ts";
@@ -428,6 +428,38 @@ test("an agent started ahead that nobody takes is let go after its time, and an 
   const c = await connectClient(daemon);
   await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   // The one started ahead is gone: this session started its own.
+  expect(fake.log.launches).toBe(2);
+});
+
+test("a new session with environment variables skips a standby agent so it launches with its own variables (CYC-314)", async () => {
+  const fake = fakeAgent();
+  const daemon = await Daemon.start({
+    dataDir: dir,
+    agents: [{ ...fake.definition, standby: true }],
+  });
+  open.push(daemon);
+  await daemon.prewarmAgent("fake");
+  expect(fake.log.launches).toBe(1);
+  const c = await connectClient(daemon);
+  const withVars = await c.agent.request(methods.agent.session.new, {
+    cwd: "/tmp",
+    _meta: {
+      [META.environment]: {
+        id: "env-1",
+        name: "Dev",
+        variables: [{ name: "GH_TOKEN", value: "tok-1" }],
+        actions: [],
+      },
+    },
+  });
+  // Skipped standby and launched fresh with the session's variables.
+  expect(fake.log.launches).toBe(2);
+  expect(fake.log.launchContexts[1]).toEqual({
+    sessionId: withVars.sessionId,
+    sessionEnv: { GH_TOKEN: "tok-1" },
+  });
+  // Standby remained warm and is taken by the next session without variables.
+  await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   expect(fake.log.launches).toBe(2);
 });
 

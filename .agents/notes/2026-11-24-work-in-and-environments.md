@@ -54,3 +54,4 @@ None of the three agents defines either concept in the layer Cycle drives: the A
 
 - Partly replaces [2026-11-18-sidebar-workspace-environment](2026-11-18-sidebar-workspace-environment.md) for the name only. Everything else there still holds, renamed to location: workspaces, the one-workspace sidebar, ordering, unread and disconnected behaviour.
 - [2026-11-22-terminals-in-the-daemon-over-l1](2026-11-22-terminals-in-the-daemon-over-l1.md): actions run in the daemon's terminals.
+- Partially replaced for `agy` command variables by [2026-11-24-agy-command-environment](2026-11-24-agy-command-environment.md) (CYC-314): `agy` commands now receive session variables via `ZDOTDIR` / `BASH_ENV` while keeping them out of `agy`'s own process. Everything else in this note still holds.

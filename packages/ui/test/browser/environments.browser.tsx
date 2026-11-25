@@ -431,7 +431,7 @@ test("before a folder, the environment chosen gives way to the saved default of 
   expect(script.named("setEnvironmentDefault")).toEqual([]);
 });
 
-test("with Antigravity and an environment that has variables, a quiet line says its own commands do not get them", async () => {
+test("Antigravity uses environment variables like other agents and shows no command exclusion note (CYC-314)", async () => {
   const script = fakeBridge({
     connected: true,
     capabilities: ALL,
@@ -451,21 +451,8 @@ test("with Antigravity and an environment that has variables, a quiet line says 
   await renderApp(script.bridge);
   const user = userEvent.setup();
   await newSession(user);
-  const note =
-    "Antigravity runs its own commands without these variables. Terminals and actions have them.";
-  expect(await screen.findByText(note)).toBeTruthy();
-  // An environment with no variables: nothing to say.
-  const folders = await openFolders(user);
-  await user.click(within(folders).getByRole("menuitem", { name: /^api/ }));
-  await screen.findByRole("button", { name: "Environment: Python" });
-  expect(screen.queryByText(note)).toBeNull();
-  // Claude gives them to its commands: nothing to say either.
-  const again = await openFolders(user);
-  await user.click(within(again).getByRole("menuitem", { name: /^work/ }));
-  await screen.findByText(note);
-  await user.click(screen.getByRole("button", { name: /^Agent: / }));
-  await user.click(await screen.findByRole("menuitemradio", { name: "Claude" }));
-  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  await screen.findByRole("button", { name: "Environment: Node" });
+  expect(document.querySelector('[data-slot="blank-environment-note"]')).toBeNull();
 });
 
 test("an environment the file holds that the daemon would refuse says what to fix in its row", async () => {

@@ -1,11 +1,18 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { LineJsonRpcProcess, type LineRpcOptions, RpcError } from "@cycle/line-rpc";
+import { AGY_ENV_FILE } from "./env-dir.ts";
 import type { V1McpServer } from "./mcp.ts";
 import type { ToolPermission } from "./permissions.ts";
 
 export type AdapterConfig = {
   /** Explicit environment given to `agy`; nothing is inherited from the adapter process. */
   env: Record<string, string>;
+  /**
+   * Private directory containing `.zshenv` (0600, written by the daemon in `<dataDir>/agy-env/<sessionId>`).
+   * Handed to `agy acp` only through `ZDOTDIR` and `BASH_ENV` so shell commands source the session's variables
+   * while `agy`'s own process never receives them (CYC-314).
+   */
+  sessionEnvDir?: string;
   /** Absolute path to the `agy` executable (if resolved at startup). */
   agyExecutable: string;
   /** Fallback absolute paths checked if `agy` is installed after the daemon starts (never inherited). */
@@ -66,6 +73,16 @@ export const buildAgyArgs = (config: AdapterConfig): string[] => {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
+/** Environment handed to `agy acp`: `config.env`, plus `ZDOTDIR` / `BASH_ENV` when the session has variables. */
+export const agyProcessEnv = (config: AdapterConfig): Record<string, string> =>
+  config.sessionEnvDir !== undefined && isAbsolute(config.sessionEnvDir)
+    ? {
+        ...config.env,
+        ZDOTDIR: config.sessionEnvDir,
+        BASH_ENV: join(config.sessionEnvDir, AGY_ENV_FILE),
+      }
+    : config.env;
+
 const options = (config: AdapterConfig): LineRpcOptions => {
   if (!config.env.HOME || !isAbsolute(config.env.HOME) || !isAbsolute(config.agyExecutable)) {
     throw new Error("agy needs an explicit absolute HOME and executable");
@@ -75,7 +92,7 @@ const options = (config: AdapterConfig): LineRpcOptions => {
     executable: config.agyExecutable,
     args: buildAgyArgs(config),
     cwd: config.env.HOME,
-    env: config.env,
+    env: agyProcessEnv(config),
     jsonrpc: true,
     timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
   };

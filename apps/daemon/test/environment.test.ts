@@ -170,7 +170,7 @@ test("an environment in the index this version cannot read counts as none: the l
 
 // ---- what each harness hands its adapter ----
 
-test("each harness hands its adapter the session's variables its own way: Claude a private file, Codex the values, agy none", async () => {
+test("each harness hands its adapter the session's variables its own way: Claude and agy a private file, Codex the values", async () => {
   const { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } = await import(
     "node:fs"
   );
@@ -182,9 +182,11 @@ test("each harness hands its adapter the session's variables its own way: Claude
   const self = join(dir, "self.sh");
   writeFileSync(self, `#!/bin/sh\nprintf '%s\\n' "$CYCLE_ADAPTER_CONFIG" >> "${configs}"\n`);
   chmodSync(self, 0o755);
-  // A file a former daemon left: gone once Claude's definition is made.
+  // Files a former daemon left: gone once each harness's definition is made.
   mkdirSync(join(dir, "claude-env"), { recursive: true });
   writeFileSync(join(dir, "claude-env", "old.sh"), "export OLD='x'\n");
+  mkdirSync(join(dir, "agy-env", "old"), { recursive: true });
+  writeFileSync(join(dir, "agy-env", "old", ".zshenv"), "export OLD='x'\n");
   const context = {
     config: ConfigSchema.parse({}),
     dataDir: dir,
@@ -194,12 +196,10 @@ test("each harness hands its adapter the session's variables its own way: Claude
   const sessionId = "5b0c3a3e-8a52-4d3f-9a0e-1c2d3e4f5a6b";
   const sessionEnv = { DATABASE_URL: "postgres://db" };
   const claude = claudeHarness.definition(context);
+  const agy = agyHarness.definition(context);
   expect(existsSync(join(dir, "claude-env", "old.sh"))).toBe(false);
-  for (const definition of [
-    claude,
-    codexHarness.definition(context),
-    agyHarness.definition(context),
-  ]) {
+  expect(existsSync(join(dir, "agy-env", "old"))).toBe(false);
+  for (const definition of [claude, codexHarness.definition(context), agy]) {
     // Counted before the launch: the adapter can write its line before launch() has returned.
     const before = existsSync(configs) ? readFileSync(configs, "utf8").split("\n").length : 0;
     const launched = await definition.launch({ sessionId, sessionEnv });
@@ -222,8 +222,15 @@ test("each harness hands its adapter the session's variables its own way: Claude
   expect(readFileSync(file, "utf8")).toBe("export DATABASE_URL='postgres://db'\n");
   expect(statSync(file).mode & 0o777).toBe(0o600);
   expect(forCodex).toMatchObject({ sessionEnv });
+  const agyDir = join(dir, "agy-env", sessionId);
+  const agyFile = join(agyDir, ".zshenv");
+  expect(forAgy).toMatchObject({ sessionEnvDir: agyDir });
   expect(forAgy).not.toHaveProperty("sessionEnv");
   expect(JSON.stringify(forAgy)).not.toContain("postgres://db");
+  expect(readFileSync(agyFile, "utf8")).toContain("export DATABASE_URL='postgres://db'\n");
+  expect(readFileSync(agyFile, "utf8")).toContain("unset ZDOTDIR BASH_ENV\n");
+  expect(statSync(agyDir).mode & 0o777).toBe(0o700);
+  expect(statSync(agyFile).mode & 0o777).toBe(0o600);
 }, 60_000);
 
 test("an environment in the index with a name the rules refuse counts as none", async () => {

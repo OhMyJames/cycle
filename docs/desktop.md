@@ -161,7 +161,7 @@ agent 进程自己的环境变量(daemon `config.json` 的 `allowEnv`/`env`、�
   - **详情**对话框:名字、值(点)、使用它的环境;左下 Remove(`destructive`,先确认,焦点在 Cancel),右下 Edit 和 Done(默认焦点)。
   - **新建/编辑**对话框:新建时焦点在名字上,名字要是合法的变量名,已有同名时提示"保存会替换";编辑只换值(名字写成文字,不是输入框,焦点直接在值上,密码框,总是空的);回车提交。
   - 状态:读取中、读不出(原话加 Try again,已读到的保留)、空(出口是 New item)、搜索无结果。daemon 没有 `vault` 能力时读取失败,按"读不出"显示原话。
-- **agy**:agy 自己跑的命令拿不到环境变量(只有终端和动作有,见 protocol.md §6)。空白对话的 agent 是 Antigravity、选的环境又有变量时,选择后面多一行小字:"Antigravity runs its own commands without these variables. Terminals and actions have them."
+- **agy**:与 Claude / Codex 一样,agy 的命令也通过会话级私有脚本拿到环境的字面变量(`ZDOTDIR` / `BASH_ENV`,见 protocol.md §6,CYC-314),空白对话不再对 Antigravity 显示特殊提示。
 - **还没选文件夹时也能选**:那时选的是一个"待定"的选择(一开始是 "No environment",不沿用上次的:新会话从干净的状态开始,和 agent 的设置一样),换文件夹、换工作位置都保留它。选了文件夹以后,这个 workspace 记过默认就用它的默认(待定的让位);没记过就还是待定的那个,并在 session 建成时记成这个 workspace 的默认。有文件夹时再选,和以前一样立刻记成默认。daemon 没有 `environments` 能力时,按钮在但 `aria-disabled`,提示 "Cycle on {location} needs an update to use environments.",也不发环境。
 - **默认为空就是 "No environment"**;指向已删环境的默认当作没有,删环境时主进程一并删掉指向它的默认。
 - **按系统分的脚本**:一个文本框,上面一个分段选择 "All systems / macOS / Linux / Windows"(不叫 "Default":AGENTS 规定选项不写光秃秃的 Default),有内容的系统带一个点。动作的命令同样。
