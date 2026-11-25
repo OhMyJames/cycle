@@ -327,6 +327,56 @@ export const readPrState = async (input: {
   }
 };
 
+export type PrMergeStatus = "merged" | "mergeable" | "conflicting" | "closed" | "unknown";
+
+export type ReadPrMergeStatusResult =
+  | { ok: true; status: PrMergeStatus }
+  | { ok: false; error: string };
+
+const PrMergeViewSchema = z.object({
+  state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+  mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]),
+});
+
+/**
+ * Reads whether a pull request has merged, can merge, conflicts with its base, or is not yet known (GitHub computes
+ * mergeability lazily), via `gh pr view --json state,mergeable` using `deliverEnv`. A failed or unreadable read is an
+ * error, never taken as mergeable.
+ */
+export const readPrMergeStatus = async (input: {
+  prRef: string;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}): Promise<ReadPrMergeStatusResult> => {
+  const done = await input.exec(["gh", "pr", "view", input.prRef, "--json", "state,mergeable"], {
+    cwd: input.cwd,
+    env: deliverEnv(input.env),
+    timeoutMs: input.timeoutMs,
+  });
+  if (done.timedOut) return { ok: false, error: "gh pr view 超时。" };
+  if (done.code !== 0) {
+    return { ok: false, error: `gh pr view 失败（exit ${done.code}）：${done.output.trim()}` };
+  }
+  try {
+    const view = PrMergeViewSchema.parse(JSON.parse(done.output));
+    if (view.state === "MERGED") return { ok: true, status: "merged" };
+    if (view.state === "CLOSED") return { ok: true, status: "closed" };
+    const status = {
+      MERGEABLE: "mergeable",
+      CONFLICTING: "conflicting",
+      UNKNOWN: "unknown",
+    } as const;
+    return { ok: true, status: status[view.mergeable] };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `gh pr view 返回无法解析的 JSON：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+};
+
 const MAX_CI_LOG_PER_CHECK = 4000;
 
 const tailLog = (text: string, max = MAX_CI_LOG_PER_CHECK): string => {

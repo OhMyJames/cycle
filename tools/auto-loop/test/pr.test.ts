@@ -9,6 +9,7 @@ import {
   postPrComment,
   readCiFailureLogs,
   readCiStatus,
+  readPrMergeStatus,
   readPrState,
   renderPr,
   renderPrTitle,
@@ -508,6 +509,31 @@ test("readPrState returns an error, not OPEN, when the read fails or is unreadab
   expect((await readState(stateExec({ timedOut: true }))).ok).toBe(false);
   expect((await readState(stateExec({ output: "not json" }))).ok).toBe(false);
   expect((await readState(stateExec({ output: '{"state":"DRAFT"}' }))).ok).toBe(false);
+});
+
+test("readPrMergeStatus tells merged, mergeable, conflicting, closed and unknown apart", async () => {
+  const read = (state: string, mergeable: string) =>
+    readPrMergeStatus({
+      prRef: "u",
+      exec: stateExec({ output: JSON.stringify({ state, mergeable }) }),
+      cwd: "/",
+      env: {},
+      timeoutMs: 1,
+    });
+  expect(await read("MERGED", "UNKNOWN")).toEqual({ ok: true, status: "merged" });
+  expect(await read("OPEN", "MERGEABLE")).toEqual({ ok: true, status: "mergeable" });
+  expect(await read("OPEN", "CONFLICTING")).toEqual({ ok: true, status: "conflicting" });
+  expect(await read("OPEN", "UNKNOWN")).toEqual({ ok: true, status: "unknown" });
+  expect(await read("CLOSED", "CONFLICTING")).toEqual({ ok: true, status: "closed" });
+});
+
+test("readPrMergeStatus returns an error, not mergeable, when the read fails or is unreadable", async () => {
+  const read = (result: Partial<ExecResult>) =>
+    readPrMergeStatus({ prRef: "u", exec: stateExec(result), cwd: "/", env: {}, timeoutMs: 1 });
+  expect((await read({ code: 1, output: "no" })).ok).toBe(false);
+  expect((await read({ timedOut: true })).ok).toBe(false);
+  expect((await read({ output: "not json" })).ok).toBe(false);
+  expect((await read({ output: '{"state":"OPEN"}' })).ok).toBe(false);
 });
 
 test("rerunFailedCi reruns each failed run once with deliverEnv and respects maxCiRetries", async () => {
