@@ -7,6 +7,14 @@ export {
   writeSessionEnvDir,
 } from "./env-dir.ts";
 export {
+  type EnsureKeychainOptions,
+  ensureKeychain,
+  type KeychainCommandResult,
+  type KeychainCommandRunner,
+  type KeychainLogger,
+  keychainPathFor,
+} from "./keychain.ts";
+export {
   DEFAULT_TOOL_PERMISSION,
   isToolPermission,
   TOOL_PERMISSIONS,
