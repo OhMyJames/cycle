@@ -77,8 +77,10 @@ const instructionsOf = (bundled: readonly BundledModel[]): string => {
 /**
  * What Codex's own catalog would say of every model of the owner's. Codex does not know any of them: without this it
  * assumes its 272K fallback and clips even `model_context_window` to it. A catalog entry carries the real window, and
- * the efforts its provider supports. Everything else follows what a provider session had before the catalog existed:
- * no code mode, Responses Lite, multi-agent or `apply_patch`; the tools are Cycle's ordinary set.
+ * the efforts its provider supports, and enables `supports_search_tool` (matching every bundled Codex model) so MCP,
+ * sub-agent and `codex_apps` tools stay deferred behind `tool_search` instead of inflating every request by >100K
+ * tokens. Everything else follows what a provider session had before the catalog existed: no code mode, Responses Lite,
+ * multi-agent or `apply_patch`; the tools are Cycle's ordinary set.
  */
 export const providerCatalogDocument = (
   models: readonly ProviderModel[],
@@ -122,7 +124,7 @@ export const providerCatalogDocument = (
       effective_context_window_percent: 95,
       experimental_supported_tools: [],
       input_modalities: model.images ? ["text", "image"] : ["text"],
-      supports_search_tool: false,
+      supports_search_tool: true,
       supports_experimental_context: false,
       use_responses_lite: false,
       supports_reasoning_effort_updates: false,

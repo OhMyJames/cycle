@@ -42,6 +42,7 @@ test("a provider catalog says every model's real window and efforts, and carries
       context_window: 1_000_000,
       max_context_window: 1_000_000,
       effective_context_window_percent: 95,
+      supports_search_tool: true,
       supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }, { effort: "max" }],
       model_messages: { instructions_template: "the bundled instructions" },
     },
