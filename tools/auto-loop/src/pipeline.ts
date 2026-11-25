@@ -982,6 +982,7 @@ export class Pipeline {
           systemError: { reason, attempts },
         }),
       );
+      await store.event(run.key, "review_decided", { decision: "system_error", attempts });
       const commentErrorLine = !commented.ok
         ? `\n写入 PR 评审评论失败：${tail(commented.error)}`
         : "";
@@ -1013,6 +1014,7 @@ export class Pipeline {
           rejectLimitReached: limitReached,
         }),
       );
+      await store.event(run.key, "review_decided", { decision: "reject" });
       await store.event(run.key, "round_failed", { round: run.round });
       const formatted = formatReviewFindings(verdict);
 
@@ -1049,6 +1051,7 @@ export class Pipeline {
           verdict,
         }),
       );
+      await store.event(run.key, "review_decided", { decision: "merge" });
       if (ciGreen && commented.ok) {
         const merged = await enableAutoMerge({
           prRef: prUrl,
@@ -1102,6 +1105,7 @@ export class Pipeline {
         verdict,
       }),
     );
+    await store.event(run.key, "review_decided", { decision: "escalate" });
     const reasonLines: string[] = [verdict.summary];
     for (const reason of verdict.reasons) reasonLines.push(`- ${reason}`);
     for (const finding of verdict.findings) {

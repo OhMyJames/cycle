@@ -1156,6 +1156,57 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
   expect(s.tracker.comments.at(-1)).toContain("CI 状态未全绿");
 });
 
+// Record store events in the same timeline as exec calls so ordering can be asserted.
+const timeline = (s: ReturnType<typeof setup>) => {
+  const original = s.store.event.bind(s.store);
+  s.store.event = async (key, kind, data) => {
+    if (kind === "review_decided" || kind === "review_done") {
+      s.world.calls.push(`event:${kind}:${JSON.stringify(data)}`);
+    }
+    return original(key, kind, data);
+  };
+  return () => s.world.calls.filter((c) => c.startsWith("event:") || c.includes("gh pr merge"));
+};
+
+test("merge verdict logs review_decided before enabling auto-merge, review_done after", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
+  const order = timeline(s);
+  await s.pipeline.step();
+  const seq = order();
+  expect(seq).toHaveLength(3);
+  expect(seq[0]).toBe('event:review_decided:{"decision":"merge"}');
+  expect(seq[1]).toContain("gh pr merge");
+  expect(seq[2]).toBe('event:review_done:{"decision":"merge","autoMerge":true}');
+});
+
+test("reject verdict logs review_decided before review_done", async () => {
+  const s = setup(
+    [ready()],
+    {
+      dev: [done(), done()],
+      qa: [done(PASS), done(PASS)],
+      review: [done(REVIEW_REJECT), done(REVIEW_REJECT)],
+    },
+    { maxFixRounds: 1 },
+  );
+  const order = timeline(s);
+  await s.pipeline.step();
+  const seq = order();
+  expect(seq[0]).toBe('event:review_decided:{"decision":"reject"}');
+  expect(seq.at(-1)).toContain("event:review_done");
+  expect(seq.some((c) => c.startsWith("event:review_done"))).toBe(true);
+});
+
+test("escalate verdict logs review_decided before review_done", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_ESCALATE)] });
+  const order = timeline(s);
+  await s.pipeline.step();
+  expect(order()).toEqual([
+    'event:review_decided:{"decision":"escalate"}',
+    'event:review_done:{"decision":"escalate","autoMerge":false}',
+  ]);
+});
+
 test("a PR closed without merging while waiting for CI blocks the work item and nothing more is pushed", async () => {
   const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
   s.world.prState = ["OPEN", "CLOSED"]; // open at delivery, closed by the time CI is read
