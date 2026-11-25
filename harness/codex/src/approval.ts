@@ -39,10 +39,16 @@ export async function approval(
     const command = "command" in p ? p.command : undefined;
     const detail = command ?? ("grantRoot" in p ? p.grantRoot : undefined);
     const requested = "permissions" in p ? p.permissions : undefined;
-    const rule =
-      method === "item/commandExecution/requestApproval" && command
-        ? commandPrefixes(command)
-        : undefined;
+    // Only a plain in-sandbox command is remembered or answered from memory: a network host, a reason (Codex gives
+    // one when it asks to leave the sandbox) or another kind of action (`humanCommand`, `writeStdin`) is new to the user.
+    const cmd = p as CommandExecutionRequestApprovalParams;
+    const plain =
+      method === "item/commandExecution/requestApproval" &&
+      !!command &&
+      (cmd.kind === undefined || cmd.kind === "command") &&
+      !cmd.networkApprovalContext &&
+      !cmd.reason;
+    const rule = plain ? commandPrefixes(command) : undefined;
     // Every segment already remembered: answered here, the client is not asked.
     if (rule?.every((prefix) => remembered.has(prefix))) return { decision: "accept" };
     const title = [

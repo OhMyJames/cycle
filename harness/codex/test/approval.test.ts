@@ -130,4 +130,26 @@ describe("always allow in this session", () => {
     });
     expect(kid.seen).toHaveLength(0);
   });
+  test("an escalation, network or non-command request is neither offered nor answered from memory", async () => {
+    const remembered = new Set(["git fetch"]);
+    for (const extra of [
+      { reason: "needs to leave the sandbox" },
+      { networkApprovalContext: { host: "example.com", protocol: "https" } },
+      { kind: "writeStdin" },
+    ]) {
+      const c = clientOf("deny");
+      const out = await approval(
+        CMD,
+        { threadId: "t1", turnId: "u1", itemId: "i", command: "git fetch", ...extra },
+        c.ctx,
+        "t1",
+        "u1",
+        new AbortController().signal,
+        () => false,
+        remembered,
+      );
+      expect(out).toEqual({ decision: "decline" });
+      expect(c.seen[0]?.map((o) => o.kind)).toEqual(["allow_once", "reject_once"]);
+    }
+  });
 });

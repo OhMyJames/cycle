@@ -65,7 +65,8 @@ export const commandPrefixes = (command: string): string[] | undefined => {
     if (program === undefined || /^\w+=/.test(program)) return undefined;
     if (UNREMEMBERABLE_PROGRAMS.has(program.split("/").pop() ?? program)) return undefined;
     // The program, the flags straight after it, and the plain word that follows: `git status`, `git -C repo`.
-    // Remembered exactly, so `git -C repo` is never `git push`.
+    // Flags are part of the prefix but the word after them is not taken (`git -C repo status` and
+    // `git -C repo push` are both `git -C repo`): as wide as agy's rule, kept the same on purpose.
     let end = 1;
     while (words[end]?.startsWith("-")) end += 1;
     if (/^[a-z][\w-]*$/i.test(words[end] ?? "")) end += 1;

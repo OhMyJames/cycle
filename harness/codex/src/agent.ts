@@ -696,6 +696,7 @@ export function createAdapter(config: AdapterConfig) {
     skills = [];
     planUsage = "";
     sandboxNoticed = false;
+    allowedPrefixes.clear();
     closing = false;
     childApprovals = new AbortController();
     childAsks.clear();
