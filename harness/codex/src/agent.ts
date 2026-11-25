@@ -182,6 +182,8 @@ export function createAdapter(config: AdapterConfig) {
   /** Told already that the sandbox cannot start here. */
   let sandboxNoticed = false;
   const children = new Set<string>();
+  /** "Always allow in this session" for commands, in memory only; sub-agent threads share it. */
+  const allowedPrefixes = new Set<string>();
   const childTurns = new Map<string, string>();
   /** Items of sub-agent threads that came as deltas, for when no turn of the parent's is running. */
   const childStreamed = new Set<string>();
@@ -355,7 +357,16 @@ export function createAdapter(config: AdapterConfig) {
           : undefined,
       );
     }
-    return approval(method, raw, owner, session, turn?.id, signal, (id) => children.has(id));
+    return approval(
+      method,
+      raw,
+      owner,
+      session,
+      turn?.id,
+      signal,
+      (id) => children.has(id),
+      allowedPrefixes,
+    );
   }
   function finish(stopReason: "end_turn" | "error" | "cancelled", message?: string) {
     if (!turn) return;
