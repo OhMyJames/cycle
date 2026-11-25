@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import type { Criterion } from "../src/criteria.ts";
 import {
   DEFAULT_CI_CHECKS,
+  enableAutoMerge,
   hasClosingKeyword,
   MAX_PR_TITLE_LENGTH,
   parseActionsUrl,
+  postPrComment,
   readCiFailureLogs,
   readCiStatus,
   renderPr,
@@ -408,4 +410,73 @@ test("waitForCi polls until green, returns logs on red, and stops on timeout", a
     },
   });
   expect(timedOut.outcome).toBe("timeout");
+});
+
+test("postPrComment and enableAutoMerge invoke gh with deliverEnv and handle failures", async () => {
+  const calls: { argv: string[]; env: Record<string, string> }[] = [];
+  const exec: Exec = async (argv, opts) => {
+    calls.push({ argv, env: opts.env });
+    return okExec("");
+  };
+
+  const commented = await postPrComment({
+    prRef: "https://github.com/o/r/pull/9",
+    bodyPath: "/state/runs/CYC-332/review-comment.md",
+    exec,
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+  });
+  expect(commented).toEqual({ ok: true });
+
+  const merged = await enableAutoMerge({
+    prRef: "https://github.com/o/r/pull/9",
+    exec,
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+  });
+  expect(merged).toEqual({ ok: true });
+
+  expect(calls.map((c) => c.argv)).toEqual([
+    [
+      "gh",
+      "pr",
+      "comment",
+      "https://github.com/o/r/pull/9",
+      "--body-file",
+      "/state/runs/CYC-332/review-comment.md",
+    ],
+    ["gh", "pr", "merge", "https://github.com/o/r/pull/9", "--auto", "--squash"],
+  ]);
+  for (const call of calls) {
+    expect(call.env.GH_TOKEN).toBe("gh-secret");
+    expect(call.env.AUTO_LOOP_PLAN_KEY).toBeUndefined();
+    expect(call.env.ANTHROPIC_API_KEY).toBeUndefined();
+  }
+
+  const failedMerge = await enableAutoMerge({
+    prRef: "https://github.com/o/r/pull/9",
+    exec: async () => ({
+      code: 1,
+      output: "Pull request Auto merge is not allowed",
+      timedOut: false,
+    }),
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+  });
+  expect(failedMerge.ok).toBe(false);
+  if (!failedMerge.ok) expect(failedMerge.error).toContain("not allowed");
+
+  const timedOutComment = await postPrComment({
+    prRef: "https://github.com/o/r/pull/9",
+    bodyPath: "/state/runs/CYC-332/review-comment.md",
+    exec: async () => ({ code: 1, output: "", timedOut: true }),
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+  });
+  expect(timedOutComment.ok).toBe(false);
+  if (!timedOutComment.ok) expect(timedOutComment.error).toContain("超时");
 });

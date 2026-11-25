@@ -9,6 +9,7 @@ import {
   type ExecResult,
   type Issue,
   SessionLost,
+  type SessionRole,
   type Sessions,
   type Stage,
   type Tracker,
@@ -20,6 +21,9 @@ const WT = "/wt/auto/cyc-1";
 const CHECKED = "What I checked:\n- read a.ts\n- ran git diff\n";
 const PASS = `${CHECKED}<verdict>{"pass":true,"findings":[]}</verdict>`;
 const FAIL = `${CHECKED}<verdict>{"pass":false,"findings":[{"severity":"major","where":"a.ts","problem":"p","fix":"f"}]}</verdict>`;
+const REVIEW_MERGE = `${CHECKED}<review>{"decision":"merge","summary":"looks safe to auto-merge","reasons":["scoped to work item","tests cover the behavior"]}</review>`;
+const REVIEW_REJECT = `${CHECKED}<review>{"decision":"reject","summary":"missing edge-case handling","reasons":["empty input is not handled"],"findings":[{"severity":"major","where":"packages/client/src/a.ts","problem":"throws on empty input","fix":"return early on empty input and add a test"}]}</review>`;
+const REVIEW_ESCALATE = `${CHECKED}<review>{"decision":"escalate","summary":"needs human sign-off","reasons":["changes permission boundary","needs design confirmation"]}</review>`;
 const done = (text = "<progress>done: x\nnext: y</progress>"): TurnResult => ({
   stopReason: "end_turn",
   text,
@@ -52,15 +56,42 @@ class FakeTracker implements Tracker {
 type Script = {
   dev: (TurnResult | Error)[];
   qa: (TurnResult | Error)[];
+  review?: (TurnResult | Error)[];
+  /** Either a persistent error for every create of this role, or a per-attempt queue (null = succeed). */
+  createError?: Partial<Record<SessionRole, Error | (Error | null)[]>>;
 };
 
 class FakeSessions implements Sessions {
   created: string[] = [];
   turns: string[] = [];
-  prompts: { sessionId: string; role: "dev" | "qa"; prompt: string }[] = [];
+  prompts: { sessionId: string; role: SessionRole; prompt: string }[] = [];
   deleted = 0;
-  constructor(public script: Script) {}
-  async create(input: { role: "dev" | "qa"; cwd: string }) {
+  readonly script: {
+    dev: (TurnResult | Error)[];
+    qa: (TurnResult | Error)[];
+    review: (TurnResult | Error)[];
+    createError: Partial<Record<SessionRole, Error | (Error | null)[]>>;
+  };
+  constructor(script: Script) {
+    const createError: Partial<Record<SessionRole, Error | (Error | null)[]>> = {};
+    for (const [role, entry] of Object.entries(script.createError ?? {})) {
+      createError[role as SessionRole] = Array.isArray(entry) ? [...entry] : entry;
+    }
+    this.script = {
+      dev: [...script.dev],
+      qa: [...script.qa],
+      review: script.review !== undefined ? [...script.review] : [done(REVIEW_MERGE)],
+      createError,
+    };
+  }
+  async create(input: { role: SessionRole; cwd: string }) {
+    const err = this.script.createError[input.role];
+    if (Array.isArray(err)) {
+      const next = err.shift();
+      if (next instanceof Error) throw next;
+    } else if (err !== undefined) {
+      throw err;
+    }
     const id = `${input.role}-${this.created.length + 1}`;
     this.created.push(id);
     return {
@@ -69,7 +100,7 @@ class FakeSessions implements Sessions {
       branch: "worktree-auto/cyc-1",
     };
   }
-  async turn(sessionId: string, prompt: string, ctx: { role: "dev" | "qa" }) {
+  async turn(sessionId: string, prompt: string, ctx: { role: SessionRole }) {
     this.turns.push(`${sessionId}: ${prompt.slice(0, 30)}`);
     this.prompts.push({ sessionId, role: ctx.role, prompt });
     const next = this.script[ctx.role].shift();
@@ -177,7 +208,7 @@ const setup = (
     ciLogs: { ...(ci.logs ?? {}) },
   };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
-  const store = new RunStore(dir, () => clock.now());
+  const store = new RunStore(cfg.stateDir, () => clock.now());
   const pipeline = new Pipeline({
     config: cfg,
     tracker,
@@ -214,25 +245,38 @@ test("a work item that fails the preflight is sent back with a comment and moved
   expect(sessions.created).toEqual([]);
 });
 
-test("happy path: Dev, checks, QA, push, PR, In Review", async () => {
+test("happy path: Dev, checks, QA, push, PR, green CI, independent review merge, auto-merge (squash)", async () => {
   const { pipeline, tracker, sessions, world, store } = setup([ready()], {
     dev: [done()],
     qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
   });
   const result = await pipeline.step();
   expect(result).toEqual({
     status: "delivered",
     key: "CYC-1",
     prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: true,
   });
-  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
-  expect(sessions.created).toEqual(["dev-1", "qa-2"]);
+  expect(tracker.moves).toEqual(["CYC-1:inProgress"]);
+  expect(sessions.created).toEqual(["dev-1", "qa-2", "review-3"]);
   expect(world.calls.some((c) => c.includes("push origin HEAD:refs/heads/auto/cyc-1"))).toBe(true);
   const prCreate = world.calls.find((c) => c.includes("gh pr create"));
   expect(prCreate).toContain("Closes CYC-1");
   const prBody = await readFile(join(dir, "runs", "CYC-1", "pr-body.md"), "utf8");
   expect(prBody.split("\n")[0]).toBe("Closes CYC-1");
-  expect((await store.load("CYC-1"))?.phase).toBe("done");
+  const reviewCommentCall = world.calls.find((c) => c.includes("gh pr comment"));
+  expect(reviewCommentCall).toContain("https://github.com/o/r/pull/9");
+  const reviewComment = await readFile(join(dir, "runs", "CYC-1", "review-comment.md"), "utf8");
+  expect(reviewComment).toContain("合并（merge）");
+  expect(
+    world.calls.some((c) =>
+      c.includes("gh pr merge https://github.com/o/r/pull/9 --auto --squash"),
+    ),
+  ).toBe(true);
+  const run = await store.load("CYC-1");
+  expect(run?.phase).toBe("done");
+  expect(run?.reviewSessionId).toBe("review-3");
   const criteria = await store.loadCriteria("CYC-1");
   expect(criteria.allPassed).toBe(true);
   expect(sessions.deleted).toBe(0);
@@ -394,6 +438,7 @@ test("existing PR fallback runs gh pr edit to update title and body with Closes 
     status: "delivered",
     key: "CYC-1",
     prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: true,
   });
   const prEdit = world.calls.find((c) => c.includes("gh pr edit"));
   expect(prEdit).toContain("Closes CYC-1");
@@ -430,10 +475,10 @@ test("dry run idle log reports type and leaf exclusions", async () => {
   expect(logs[0]).toBe("dry run: 2 in Todo, 2 with auto, 1 allowed type, 0 leaf");
 });
 
-test("CI all green after polling proceeds to In Review and done", async () => {
+test("CI all green after polling proceeds to review, auto-merge, and done", async () => {
   const { pipeline, tracker, store, world } = setup(
     [ready()],
-    { dev: [done()], qa: [done(PASS)] },
+    { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
     {},
     [],
     {
@@ -455,9 +500,11 @@ test("CI all green after polling proceeds to In Review and done", async () => {
     status: "delivered",
     key: "CYC-1",
     prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: true,
   });
-  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  expect(tracker.moves).toEqual(["CYC-1:inProgress"]);
   expect(world.calls.filter((c) => c.includes("statusCheckRollup"))).toHaveLength(2);
+  expect(world.calls.some((c) => c.includes("gh pr merge"))).toBe(true);
   const run = await store.load("CYC-1");
   expect(run?.phase).toBe("done");
   expect(run?.ciRound).toBe(0);
@@ -520,6 +567,7 @@ test("red CI sends failure logs back to Dev, pushes fix to the same branch, then
     status: "delivered",
     key: "CYC-1",
     prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: true,
   });
 
   const devPrompts = s.sessions.prompts.filter((p) => p.role === "dev");
@@ -533,7 +581,7 @@ test("red CI sends failure logs back to Dev, pushes fix to the same branch, then
   expect(s.world.calls.filter((c) => c.includes("gh pr create"))).toHaveLength(1);
   expect(s.world.calls.filter((c) => c.includes("gh pr edit"))).toHaveLength(1);
 
-  expect(s.tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  expect(s.tracker.moves).toEqual(["CYC-1:inProgress"]);
   const run = await s.store.load("CYC-1");
   expect(run?.phase).toBe("done");
   expect(run?.ciRound).toBe(1);
@@ -617,7 +665,7 @@ test("a run crashed while waiting for CI resumes in ci phase without re-running 
   await expect(crashing.step()).rejects.toThrow("killed during ci");
   expect((await first.store.load("CYC-1"))?.phase).toBe("ci");
 
-  const secondSessions = new FakeSessions({ dev: [], qa: [] });
+  const secondSessions = new FakeSessions({ dev: [], qa: [], review: [done(REVIEW_MERGE)] });
   const second = new Pipeline({
     config: config({ stateDir: dir }),
     tracker: first.tracker,
@@ -633,8 +681,9 @@ test("a run crashed while waiting for CI resumes in ci phase without re-running 
     status: "delivered",
     key: "CYC-1",
     prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: true,
   });
-  expect(secondSessions.turns).toEqual([]);
+  expect(secondSessions.prompts.map((p) => p.role)).toEqual(["review"]);
 });
 
 test("CI polling timeout ends in Blocked with pending check names", async () => {
@@ -665,4 +714,387 @@ test("CI polling timeout ends in Blocked with pending check names", async () => 
   const run = await store.load("CYC-1");
   expect(run?.phase).toBe("blocked");
   expect(run?.resumeFrom).toBe("ci");
+});
+
+test("review reject sends feedback back to Dev, re-runs CI and review, then auto-merges on merge", async () => {
+  const s = setup([ready()], {
+    dev: [done(), done()],
+    qa: [done(PASS), done(PASS)],
+    review: [done(REVIEW_REJECT), done(REVIEW_MERGE)],
+  });
+  s.world.headSha = "sha-1";
+  const originalTurn = s.sessions.turn.bind(s.sessions);
+  let devCount = 0;
+  s.sessions.turn = async (id, prompt, ctx) => {
+    const out = await originalTurn(id, prompt, ctx);
+    if (ctx.role === "dev") {
+      devCount++;
+      if (devCount === 2) s.world.headSha = "sha-2";
+    }
+    return out;
+  };
+
+  const result = await s.pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: true,
+  });
+
+  // Second Dev prompt receives the PR review feedback.
+  const devPrompts = s.sessions.prompts.filter((p) => p.role === "dev");
+  expect(devPrompts).toHaveLength(2);
+  expect(devPrompts[1]?.prompt).toContain("missing edge-case handling");
+  expect(devPrompts[1]?.prompt).toContain("throws on empty input");
+  expect(devPrompts[1]?.prompt).toContain("return early on empty input and add a test");
+
+  // Two PR comments posted (reject then merge), PR created once and edited once, auto-merge enabled once.
+  expect(s.world.calls.filter((c) => c.includes("gh pr create"))).toHaveLength(1);
+  expect(s.world.calls.filter((c) => c.includes("gh pr edit"))).toHaveLength(1);
+  expect(s.world.calls.filter((c) => c.includes("gh pr comment"))).toHaveLength(2);
+  expect(s.world.calls.filter((c) => c.includes("gh pr merge"))).toHaveLength(1);
+  expect(s.tracker.moves).toEqual(["CYC-1:inProgress"]);
+  const run = await s.store.load("CYC-1");
+  expect(run?.phase).toBe("done");
+  expect(run?.round).toBe(1);
+});
+
+test("review reject past fix-round limit escalates to human (In Review) without auto-merge", async () => {
+  const { pipeline, tracker, world, store, sessions } = setup(
+    [ready()],
+    {
+      dev: [done(), done()],
+      qa: [done(PASS), done(PASS)],
+      review: [done(REVIEW_REJECT), done(REVIEW_REJECT)],
+    },
+    { maxFixRounds: 1 },
+  );
+
+  const result = await pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: false,
+  });
+  expect(world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  expect(tracker.comments.at(-1)).toContain("修复轮数上限");
+  expect(sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(2);
+  expect((await store.load("CYC-1"))?.phase).toBe("done");
+});
+
+test("review escalate skips auto-merge, posts PR comment, and moves ticket to In Review", async () => {
+  const { pipeline, tracker, world, store } = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_ESCALATE)],
+  });
+  const result = await pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: false,
+  });
+  expect(world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+  expect(world.calls.some((c) => c.includes("gh pr comment"))).toBe(true);
+  const reviewComment = await readFile(join(dir, "runs", "CYC-1", "review-comment.md"), "utf8");
+  expect(reviewComment).toContain("升级给人（escalate）");
+  expect(reviewComment).toContain("changes permission boundary");
+  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  expect(tracker.comments.at(-1)).toContain("升级给人");
+  expect(tracker.comments.at(-1)).toContain("changes permission boundary");
+  expect((await store.load("CYC-1"))?.phase).toBe("done");
+});
+
+test("review retries on session error, timeout, abnormal end, unparseable output, or missing checklist, and acts on verdict when retry succeeds", async () => {
+  // 1. Session turn throws on attempt 1, succeeds with merge on attempt 2.
+  const errThenMerge = setup(
+    [ready()],
+    {
+      dev: [done()],
+      qa: [done(PASS)],
+      review: [new Error("daemon disconnected"), done(REVIEW_MERGE)],
+    },
+    { maxReviewRetries: 2 },
+  );
+  const r1 = await errThenMerge.pipeline.step();
+  expect(r1).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: true,
+  });
+  expect(errThenMerge.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(2);
+  expect(errThenMerge.world.calls.some((c) => c.includes("gh pr merge"))).toBe(true);
+  expect((await errThenMerge.store.events()).filter((e) => e.kind === "review_retry")).toHaveLength(
+    1,
+  );
+
+  // 2. Session creation fails on attempt 1, succeeds on attempt 2 with escalate.
+  const dir2 = await mkdtemp(join(tmpdir(), "auto-loop-create-retry-"));
+  try {
+    const createRetry = setup(
+      [ready()],
+      {
+        dev: [done()],
+        qa: [done(PASS)],
+        review: [done(REVIEW_ESCALATE)],
+        createError: { review: [new Error("transient start error"), null] },
+      },
+      { stateDir: dir2, maxReviewRetries: 2 },
+    );
+    const r2 = await createRetry.pipeline.step();
+    expect(r2).toEqual({
+      status: "delivered",
+      key: "CYC-1",
+      prUrl: "https://github.com/o/r/pull/9",
+      autoMerge: false,
+    });
+    expect(createRetry.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+    expect(createRetry.tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+    expect(createRetry.tracker.comments.at(-1)).toContain("升级给人（escalate）");
+    expect(createRetry.tracker.comments.at(-1)).not.toContain("评审系统故障");
+  } finally {
+    await rm(dir2, { recursive: true, force: true });
+  }
+
+  // 3. Timeout -> unparseable -> reject (sends back to Dev) -> missing checklist -> abnormal stop -> merge.
+  const dir3 = await mkdtemp(join(tmpdir(), "auto-loop-multi-retry-"));
+  try {
+    const multiRetry = setup(
+      [ready()],
+      {
+        dev: [done(), done()],
+        qa: [done(PASS), done(PASS)],
+        review: [
+          { stopReason: "cancelled", text: "", timedOut: true },
+          done("Looks good to me without tags"),
+          done(REVIEW_REJECT),
+          done('<review>{"decision":"merge","summary":"lgtm","reasons":[]}</review>'),
+          { stopReason: "max_tokens", text: REVIEW_MERGE, timedOut: false },
+          done(REVIEW_MERGE),
+        ],
+      },
+      { stateDir: dir3, maxReviewRetries: 2 },
+    );
+    const r3 = await multiRetry.pipeline.step();
+    expect(r3).toEqual({
+      status: "delivered",
+      key: "CYC-1",
+      prUrl: "https://github.com/o/r/pull/9",
+      autoMerge: true,
+    });
+    expect(multiRetry.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(2);
+    expect(multiRetry.sessions.prompts.filter((p) => p.role === "review")).toHaveLength(6);
+    expect(multiRetry.world.calls.some((c) => c.includes("gh pr merge"))).toBe(true);
+  } finally {
+    await rm(dir3, { recursive: true, force: true });
+  }
+});
+
+test("review exhausting retries on failure, timeout, or missing conclusion escalates to In Review as a review system failure", async () => {
+  // 1. Persistent turn errors exhaust retries (1 initial + 2 retries = 3 attempts).
+  const thrown = setup(
+    [ready()],
+    {
+      dev: [done()],
+      qa: [done(PASS)],
+      review: [
+        new Error("daemon disconnected 1"),
+        new Error("daemon disconnected 2"),
+        new Error("daemon disconnected 3"),
+      ],
+    },
+    { maxReviewRetries: 2 },
+  );
+  const r1 = await thrown.pipeline.step();
+  expect(r1).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: false,
+  });
+  expect(thrown.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(3);
+  expect(thrown.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+  expect(thrown.world.calls.some((c) => c.includes("gh pr comment"))).toBe(true);
+  expect(thrown.tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  expect(thrown.tracker.comments.at(-1)).toContain("评审系统故障");
+  expect(thrown.tracker.comments.at(-1)).toContain("不是代码问题");
+  expect(thrown.tracker.comments.at(-1)).toContain("daemon disconnected 3");
+  const prComment1 = await readFile(join(dir, "runs", "CYC-1", "review-comment.md"), "utf8");
+  expect(prComment1).toContain("评审系统故障");
+  expect(prComment1).toContain("非代码问题");
+  expect(prComment1).toContain("3 次");
+
+  // 2. Persistent timeouts exhaust retries.
+  const dir2 = await mkdtemp(join(tmpdir(), "auto-loop-timeout-exhaust-"));
+  try {
+    const timedOut = setup(
+      [ready()],
+      {
+        dev: [done()],
+        qa: [done(PASS)],
+        review: [
+          { stopReason: "cancelled", text: "", timedOut: true },
+          { stopReason: "cancelled", text: "", timedOut: true },
+        ],
+      },
+      { stateDir: dir2, maxReviewRetries: 1 },
+    );
+    const r2 = await timedOut.pipeline.step();
+    expect(r2).toEqual({
+      status: "delivered",
+      key: "CYC-1",
+      prUrl: "https://github.com/o/r/pull/9",
+      autoMerge: false,
+    });
+    expect(timedOut.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(2);
+    expect(timedOut.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+    expect(timedOut.tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+    expect(timedOut.tracker.comments.at(-1)).toContain("评审系统故障");
+    expect(timedOut.tracker.comments.at(-1)).toContain("超时");
+  } finally {
+    await rm(dir2, { recursive: true, force: true });
+  }
+
+  // 3. Unparseable output and missing checklist exhaust retries.
+  const dir3 = await mkdtemp(join(tmpdir(), "auto-loop-noverdict-exhaust-"));
+  try {
+    const noVerdict = setup(
+      [ready()],
+      {
+        dev: [done()],
+        qa: [done(PASS)],
+        review: [
+          done("Looks good to me!"),
+          done('<review>{"decision":"merge","summary":"lgtm","reasons":[]}</review>'),
+        ],
+      },
+      { stateDir: dir3, maxReviewRetries: 1 },
+    );
+    const r3 = await noVerdict.pipeline.step();
+    expect(r3).toEqual({
+      status: "delivered",
+      key: "CYC-1",
+      prUrl: "https://github.com/o/r/pull/9",
+      autoMerge: false,
+    });
+    expect(noVerdict.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(2);
+    expect(noVerdict.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+    expect(noVerdict.tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+    expect(noVerdict.tracker.comments.at(-1)).toContain("评审系统故障");
+    expect(noVerdict.tracker.comments.at(-1)).toContain("不是代码问题");
+  } finally {
+    await rm(dir3, { recursive: true, force: true });
+  }
+
+  // 4. Review session modifying the worktree stops immediately and escalates without auto-merge.
+  const dir4 = await mkdtemp(join(tmpdir(), "auto-loop-dirty-review-"));
+  try {
+    const dirty = setup(
+      [ready()],
+      {
+        dev: [done()],
+        qa: [done(PASS)],
+        review: [done(REVIEW_MERGE)],
+      },
+      { stateDir: dir4, maxReviewRetries: 2 },
+    );
+    const original = dirty.sessions.turn.bind(dirty.sessions);
+    dirty.sessions.turn = async (id, prompt, ctx) => {
+      const out = await original(id, prompt, ctx);
+      if (ctx.role === "review") dirty.world.dirty = true;
+      return out;
+    };
+    const r4 = await dirty.pipeline.step();
+    expect(r4).toEqual({
+      status: "delivered",
+      key: "CYC-1",
+      prUrl: "https://github.com/o/r/pull/9",
+      autoMerge: false,
+    });
+    expect(dirty.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(1);
+    expect(dirty.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+    expect(dirty.tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+    expect(dirty.tracker.comments.at(-1)).toContain("修改了工作区");
+  } finally {
+    await rm(dir4, { recursive: true, force: true });
+  }
+});
+
+test("enabling auto-merge failing falls back to In Review needing a person", async () => {
+  const { pipeline, tracker, world } = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
+    {},
+    ["gh pr merge"],
+  );
+  const result = await pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: false,
+  });
+  expect(world.calls.some((c) => c.includes("gh pr merge"))).toBe(true);
+  expect(tracker.moves).toEqual(["CYC-1:inProgress", "CYC-1:inReview"]);
+  expect(tracker.comments.at(-1)).toContain("开启 GitHub 自动合并失败");
+});
+
+test("review crash recovery re-checks CI and refuses auto-merge if CI is not green", async () => {
+  const s = setup([ready()], { dev: [], qa: [], review: [done(REVIEW_MERGE)] }, {}, [], {
+    responses: [
+      {
+        headRefOid: "abc",
+        statusCheckRollup: [
+          { name: "check", status: "COMPLETED", conclusion: "SUCCESS" },
+          { name: "browser", status: "COMPLETED", conclusion: "FAILURE" },
+          { name: "integration", status: "COMPLETED", conclusion: "SUCCESS" },
+        ],
+      },
+    ],
+  });
+  // Persist a run stopped in the `review` phase (simulating crash recovery).
+  await s.store.saveCriteria(
+    "CYC-1",
+    (await import("../src/criteria.ts")).CriteriaBook.fromSpecs([
+      { text: "门禁通过", verify: [["bun", "run", "check"]] },
+    ]),
+  );
+  await s.store.save({
+    key: "CYC-1",
+    issueId: 1,
+    issueNumber: 1,
+    title: "title",
+    phase: "review",
+    round: 0,
+    ciRound: 0,
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "dev-1",
+    qaSessionId: "qa-2",
+    reviewSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    prUrl: "https://github.com/o/r/pull/9",
+    findings: null,
+    startedAt: "2026-11-25T00:00:00.000Z",
+    updatedAt: "2026-11-25T00:00:00.000Z",
+  });
+
+  const result = await s.pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+    autoMerge: false,
+  });
+  expect(s.world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
+  expect(s.tracker.moves).toEqual(["CYC-1:inReview"]);
+  expect(s.tracker.comments.at(-1)).toContain("CI 状态未全绿");
 });

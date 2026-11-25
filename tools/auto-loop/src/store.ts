@@ -18,6 +18,7 @@ export const PHASES = [
   "qa",
   "delivering",
   "ci",
+  "review",
   "blocked",
   "done",
 ] as const;
@@ -39,6 +40,7 @@ export const RunRecordSchema = z.object({
   remoteBranch: z.string(),
   devSessionId: z.string().nullable(),
   qaSessionId: z.string().nullable(),
+  reviewSessionId: z.string().nullable().default(null),
   /** Sessions that could not be continued and were replaced, oldest first. */
   replacedSessions: z.array(z.string()),
   blockedReason: z.string().nullable(),

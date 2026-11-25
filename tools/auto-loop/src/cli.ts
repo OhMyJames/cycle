@@ -63,7 +63,12 @@ const sessions = new DaemonSessions(
   (sessionId, title) => {
     log(`waiting for a person in session ${sessionId}: ${title}`);
     void store.unfinished().then((runs) => {
-      const run = runs.find((r) => r.devSessionId === sessionId || r.qaSessionId === sessionId);
+      const run = runs.find(
+        (r) =>
+          r.devSessionId === sessionId ||
+          r.qaSessionId === sessionId ||
+          r.reviewSessionId === sessionId,
+      );
       if (run !== undefined) return store.event(run.key, "permission_pending");
     });
   },

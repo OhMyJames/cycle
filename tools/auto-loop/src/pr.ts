@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Criterion } from "./criteria.ts";
 import { deliverEnv } from "./env.ts";
+import type { ReviewVerdict } from "./prompts.ts";
 import type { Clock, Exec, Issue } from "./types.ts";
 
 const firstLine = (text: string | null): string =>
@@ -421,4 +422,159 @@ export const waitForCi = async (input: {
   }
 
   return { outcome: "timeout", status: lastStatus };
+};
+
+/**
+ * Formats the independent PR review conclusion posted as a GitHub PR comment (CYC-332).
+ */
+export const renderReviewComment = (input: {
+  issueKey: string;
+  ciChecks: readonly string[];
+  ciGreen: boolean;
+  sessionId: string | null;
+  verdict?: ReviewVerdict | undefined;
+  rejectLimitReached?: boolean | undefined;
+  systemError?: { reason: string; attempts: number } | null | undefined;
+}): string => {
+  const ciLine = input.ciGreen
+    ? `CI（${input.ciChecks.join(" / ")}）：✅ 全绿`
+    : `CI（${input.ciChecks.join(" / ")}）：❌ 未确认全绿`;
+  const sessionLine = `评审会话：\`${input.sessionId ?? "-"}\` · 依据：\`REVIEW.md\` · 工单：${input.issueKey}`;
+
+  if (input.systemError != null) {
+    return `## 独立评审结论：⚠️ 评审系统故障（已升级给人，非代码问题）
+
+本次升级是**评审系统故障而非代码问题**。按 \`REVIEW.md\` 重试规则已尝试 ${input.systemError.attempts} 次仍未获得有效结论，未开启自动合并。
+
+- 原因：${input.systemError.reason}
+- ${ciLine}
+- 后续动作：未开启自动合并，工单移入 In Review 等待人工处理
+
+${sessionLine}
+`;
+  }
+
+  if (input.verdict?.decision === "merge" && input.ciGreen) {
+    const reasons =
+      input.verdict.reasons.length > 0
+        ? `\n### 评审说明\n\n${input.verdict.reasons.map((r) => `- ${r}`).join("\n")}\n`
+        : "";
+    return `## 独立评审结论：✅ 合并（merge）
+
+${input.verdict.summary}
+${reasons}
+- ${ciLine}
+- 后续动作：开启 GitHub 自动合并（squash）
+
+${sessionLine}
+`;
+  }
+
+  if (input.verdict?.decision === "reject") {
+    const reasonsSection =
+      input.verdict.reasons.length > 0
+        ? `\n### 评审意见\n\n${input.verdict.reasons.map((r) => `- ${r}`).join("\n")}\n`
+        : "";
+    const findingsSection =
+      input.verdict.findings.length > 0
+        ? `\n### 问题清单\n\n${input.verdict.findings
+            .map(
+              (f, i) =>
+                `${i + 1}. **[${f.severity}]** \`${f.where}\`：${f.problem}（建议：${f.fix}）`,
+            )
+            .join("\n")}\n`
+        : "";
+    const nextAction = input.rejectLimitReached
+      ? "未开启自动合并；已达修复轮数上限，升级给人并将工单移入 In Review"
+      : "未开启自动合并；已带评审意见打回 Dev 修改，修复后将重新跑 CI 和评审";
+    return `## 独立评审结论：🔁 拒绝（reject）
+
+${input.verdict.summary}
+${reasonsSection}${findingsSection}
+- ${ciLine}
+- 后续动作：${nextAction}
+
+${sessionLine}
+`;
+  }
+
+  const summary =
+    input.verdict?.summary ??
+    (input.ciGreen ? "评审要求升级给人。" : "CI 未确认全绿，不能开启自动合并。");
+  const reasonsList =
+    input.verdict !== undefined && input.verdict.reasons.length > 0
+      ? input.verdict.reasons
+      : [summary];
+  const findingsSection =
+    input.verdict !== undefined && input.verdict.findings.length > 0
+      ? `\n### 相关发现\n\n${input.verdict.findings
+          .map(
+            (f, i) =>
+              `${i + 1}. **[${f.severity}]** \`${f.where}\`：${f.problem}（建议：${f.fix}）`,
+          )
+          .join("\n")}\n`
+      : "";
+  return `## 独立评审结论：👀 升级给人（escalate）
+
+${summary}
+
+### 原因
+
+${reasonsList.map((r) => `- ${r}`).join("\n")}
+${findingsSection}
+- ${ciLine}
+- 后续动作：未开启自动合并，工单移入 In Review 等待人工审阅
+
+${sessionLine}
+`;
+};
+
+/** Posts a comment on a pull request via `gh pr comment --body-file` using `deliverEnv`. */
+export const postPrComment = async (input: {
+  prRef: string;
+  bodyPath: string;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const done = await input.exec(
+    ["gh", "pr", "comment", input.prRef, "--body-file", input.bodyPath],
+    {
+      cwd: input.cwd,
+      env: deliverEnv(input.env),
+      timeoutMs: input.timeoutMs,
+    },
+  );
+  if (done.timedOut) return { ok: false, error: "gh pr comment 超时。" };
+  if (done.code !== 0) {
+    return {
+      ok: false,
+      error: `gh pr comment 失败（exit ${done.code}）：${done.output.trim()}`,
+    };
+  }
+  return { ok: true };
+};
+
+/** Enables GitHub auto-merge (squash) on a pull request via `gh pr merge --auto --squash` using `deliverEnv`. */
+export const enableAutoMerge = async (input: {
+  prRef: string;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const done = await input.exec(["gh", "pr", "merge", input.prRef, "--auto", "--squash"], {
+    cwd: input.cwd,
+    env: deliverEnv(input.env),
+    timeoutMs: input.timeoutMs,
+  });
+  if (done.timedOut) return { ok: false, error: "gh pr merge --auto --squash 超时。" };
+  if (done.code !== 0) {
+    return {
+      ok: false,
+      error: `gh pr merge --auto --squash 失败（exit ${done.code}）：${done.output.trim()}`,
+    };
+  }
+  return { ok: true };
 };

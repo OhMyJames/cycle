@@ -2,9 +2,10 @@ import { expect, test } from "bun:test";
 import { answerFor, decide, splitCommand } from "../src/policy.ts";
 
 const W = "/repo/.agents/worktree/auto/cyc-1";
-type Ctx = { role: "dev" | "qa"; worktree: string };
+type Ctx = { role: "dev" | "qa" | "review"; worktree: string };
 const dev: Ctx = { role: "dev", worktree: W };
 const qa: Ctx = { role: "qa", worktree: W };
+const review: Ctx = { role: "review", worktree: W };
 
 const request = (toolCall: Record<string, unknown>) => ({
   sessionId: "s",
@@ -130,4 +131,14 @@ test("commands that run another program or write a file are not read-only, whate
 test("a read that names no path is not shown to be inside the worktree", () => {
   expect(d(request({ kind: "read", rawInput: { uri: "file:///etc/passwd" } }), qa)).toBe("deny");
   expect(d(request({ kind: "search", rawInput: { pattern: "/etc/*" } }))).toBe("ask");
+});
+
+test("review role is strictly read-only like QA", () => {
+  expect(d(read(`${W}/REVIEW.md`), review)).toBe("allow");
+  expect(d(run("git diff origin/main...HEAD"), review)).toBe("allow");
+  expect(d(edit(`${W}/REVIEW.md`), review)).toBe("deny");
+  expect(d(run("gh pr merge --auto --squash"), review)).toBe("deny");
+  expect(d(run("git commit -am x"), review)).toBe("deny");
+  expect(d(request({ kind: "fetch" }), review)).toBe("deny");
+  expect(d(read("/etc/passwd"), review)).toBe("deny");
 });
