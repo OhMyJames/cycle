@@ -69,6 +69,8 @@ export type Config = {
   ciChecks: string[];
   /** Maximum number of times a red CI run is sent back to Dev before blocking. */
   maxCiRetries: number;
+  /** Maximum number of retries when PR review fails, times out, or produces no valid conclusion. */
+  maxReviewRetries: number;
   /** How often to poll GitHub CI status while waiting for checks to finish. */
   ciPollIntervalMs: number;
   /** Maximum time to wait for a single CI run to finish before blocking. */
@@ -97,6 +99,7 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   maxFixRounds: 3,
   ciChecks: ["check", "browser", "integration"],
   maxCiRetries: 2,
+  maxReviewRetries: 2,
   ciPollIntervalMs: 30_000,
   ciTimeoutMs: 30 * 60_000,
   turnTimeoutMs: 30 * 60_000,

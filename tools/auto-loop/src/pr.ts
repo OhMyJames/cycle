@@ -433,31 +433,33 @@ export const renderReviewComment = (input: {
   ciGreen: boolean;
   sessionId: string | null;
   verdict?: ReviewVerdict | undefined;
-  incompleteReason?: string | null | undefined;
+  rejectLimitReached?: boolean | undefined;
+  systemError?: { reason: string; attempts: number } | null | undefined;
 }): string => {
   const ciLine = input.ciGreen
     ? `CI（${input.ciChecks.join(" / ")}）：✅ 全绿`
     : `CI（${input.ciChecks.join(" / ")}）：❌ 未确认全绿`;
   const sessionLine = `评审会话：\`${input.sessionId ?? "-"}\` · 依据：\`REVIEW.md\` · 工单：${input.issueKey}`;
 
-  if (input.incompleteReason != null && input.incompleteReason !== "") {
-    return `## 独立评审结论：👀 需要人参与（评审未完成）
+  if (input.systemError != null) {
+    return `## 独立评审结论：⚠️ 评审系统故障（已升级给人，非代码问题）
 
-按 \`REVIEW.md\` 降级规则，评审未完成一律按需要人参与处理，未开启自动合并。
+本次升级是**评审系统故障而非代码问题**。按 \`REVIEW.md\` 重试规则已尝试 ${input.systemError.attempts} 次仍未获得有效结论，未开启自动合并。
 
-- 原因：${input.incompleteReason}
+- 原因：${input.systemError.reason}
 - ${ciLine}
+- 后续动作：未开启自动合并，工单移入 In Review 等待人工处理
 
 ${sessionLine}
 `;
   }
 
-  if (input.verdict?.decision === "auto_merge" && input.ciGreen) {
+  if (input.verdict?.decision === "merge" && input.ciGreen) {
     const reasons =
       input.verdict.reasons.length > 0
         ? `\n### 评审说明\n\n${input.verdict.reasons.map((r) => `- ${r}`).join("\n")}\n`
         : "";
-    return `## 独立评审结论：✅ 可自动合并
+    return `## 独立评审结论：✅ 合并（merge）
 
 ${input.verdict.summary}
 ${reasons}
@@ -468,21 +470,58 @@ ${sessionLine}
 `;
   }
 
+  if (input.verdict?.decision === "reject") {
+    const reasonsSection =
+      input.verdict.reasons.length > 0
+        ? `\n### 评审意见\n\n${input.verdict.reasons.map((r) => `- ${r}`).join("\n")}\n`
+        : "";
+    const findingsSection =
+      input.verdict.findings.length > 0
+        ? `\n### 问题清单\n\n${input.verdict.findings
+            .map(
+              (f, i) =>
+                `${i + 1}. **[${f.severity}]** \`${f.where}\`：${f.problem}（建议：${f.fix}）`,
+            )
+            .join("\n")}\n`
+        : "";
+    const nextAction = input.rejectLimitReached
+      ? "未开启自动合并；已达修复轮数上限，升级给人并将工单移入 In Review"
+      : "未开启自动合并；已带评审意见打回 Dev 修改，修复后将重新跑 CI 和评审";
+    return `## 独立评审结论：🔁 拒绝（reject）
+
+${input.verdict.summary}
+${reasonsSection}${findingsSection}
+- ${ciLine}
+- 后续动作：${nextAction}
+
+${sessionLine}
+`;
+  }
+
   const summary =
     input.verdict?.summary ??
-    (input.ciGreen ? "评审要求人工参与。" : "CI 未确认全绿，不能开启自动合并。");
+    (input.ciGreen ? "评审要求升级给人。" : "CI 未确认全绿，不能开启自动合并。");
   const reasonsList =
     input.verdict !== undefined && input.verdict.reasons.length > 0
       ? input.verdict.reasons
       : [summary];
-  return `## 独立评审结论：👀 需要人参与
+  const findingsSection =
+    input.verdict !== undefined && input.verdict.findings.length > 0
+      ? `\n### 相关发现\n\n${input.verdict.findings
+          .map(
+            (f, i) =>
+              `${i + 1}. **[${f.severity}]** \`${f.where}\`：${f.problem}（建议：${f.fix}）`,
+          )
+          .join("\n")}\n`
+      : "";
+  return `## 独立评审结论：👀 升级给人（escalate）
 
 ${summary}
 
 ### 原因
 
 ${reasonsList.map((r) => `- ${r}`).join("\n")}
-
+${findingsSection}
 - ${ciLine}
 - 后续动作：未开启自动合并，工单移入 In Review 等待人工审阅
 

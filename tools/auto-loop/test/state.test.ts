@@ -79,7 +79,7 @@ test("the QA brief asks for the code-review skill, read-only", () => {
   expect(brief).toContain("never pass --fix or --comment");
 });
 
-test("the PR review brief is read-only, references REVIEW.md, and requires a structured conclusion", () => {
+test("the PR review brief is read-only, references REVIEW.md, and requires one of three structured conclusions", () => {
   const brief = reviewBrief(issue(), "https://github.com/o/r/pull/9", [], "diff", [
     "check",
     "browser",
@@ -90,22 +90,36 @@ test("the PR review brief is read-only, references REVIEW.md, and requires a str
   expect(brief).toContain("Do not edit, create, delete, commit, push, merge, or comment");
   // References REVIEW.md
   expect(brief).toContain("REVIEW.md");
-  // Requires structured verdict block with both outcomes and reasons
+  // Requires one of the three structured conclusions: merge, reject, or escalate
   expect(brief).toContain("<review>");
   expect(brief).toContain("</review>");
   expect(brief).toContain('"decision"');
-  expect(brief).toContain('"auto_merge"');
-  expect(brief).toContain('"human_review"');
+  expect(brief).toContain('"merge"');
+  expect(brief).toContain('"reject"');
+  expect(brief).toContain('"escalate"');
   expect(brief).toContain('"summary"');
   expect(brief).toContain('"reasons"');
+  expect(brief).toContain('"findings"');
+  expect(brief).toContain("leaving no conclusion is not allowed");
   expect(brief).toContain("What I checked");
+
+  // Retry note is included when retrying after a failed review attempt.
+  const retryBrief = reviewBrief(
+    issue(),
+    "https://github.com/o/r/pull/9",
+    [],
+    "diff",
+    ["check"],
+    "Previous review attempt #1 failed",
+  );
+  expect(retryBrief).toContain("Previous review attempt #1 failed");
 
   // Paired parsers handle <review> structured verdicts and checklist validation.
   const valid =
-    'What I checked:\n- read REVIEW.md\n<review>{"decision":"auto_merge","summary":"ok","reasons":["checked"]}</review>';
-  expect(parseReviewVerdict(valid)?.decision).toBe("auto_merge");
+    'What I checked:\n- read REVIEW.md\n<review>{"decision":"merge","summary":"ok","reasons":["checked"]}</review>';
+  expect(parseReviewVerdict(valid)?.decision).toBe("merge");
   expect(listsWhatWasChecked(valid)).toBe(true);
   expect(
-    listsWhatWasChecked('<review>{"decision":"auto_merge","summary":"ok","reasons":[]}</review>'),
+    listsWhatWasChecked('<review>{"decision":"merge","summary":"ok","reasons":[]}</review>'),
   ).toBe(false);
 });

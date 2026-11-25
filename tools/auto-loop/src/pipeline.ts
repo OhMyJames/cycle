@@ -25,6 +25,7 @@ import {
   devBrief,
   fixBrief,
   formatFindings,
+  formatReviewFindings,
   handoffBrief,
   listsWhatWasChecked,
   parseProgress,
@@ -235,12 +236,15 @@ export class Pipeline {
           }
           case "review": {
             const done = await this.#review(run, issue, book, save);
-            return {
-              status: "delivered",
-              key: run.key,
-              prUrl: done.prUrl,
-              autoMerge: done.autoMerge,
-            };
+            if (done !== undefined) {
+              return {
+                status: "delivered",
+                key: run.key,
+                prUrl: done.prUrl,
+                autoMerge: done.autoMerge,
+              };
+            }
+            break;
           }
           case "blocked":
           case "done":
@@ -678,7 +682,7 @@ export class Pipeline {
     issue: Issue,
     book: CriteriaBook,
     save: (patch: Partial<RunRecord>) => Promise<void>,
-  ): Promise<{ prUrl: string; autoMerge: boolean }> {
+  ): Promise<{ prUrl: string; autoMerge: boolean } | undefined> {
     const { config, store, tracker } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     const prUrl = this.#need(run.prUrl ?? undefined);
@@ -712,124 +716,241 @@ export class Pipeline {
       }
     }
 
+    const diff = await this.#git(["diff", `${config.baseRef}...HEAD`], worktree);
+    const maxAttempts = Math.max(1, config.maxReviewRetries + 1);
     let reviewSessionId = run.reviewSessionId;
     let verdict: ReviewVerdict | undefined;
-    let incompleteReason: string | null = null;
+    let lastFailure: string | null = null;
+    let attempts = 0;
 
-    try {
-      const created = await this.#d.sessions.create({
-        role: "review",
-        agent: config.reviewAgent,
-        title: `[${run.key}] Review`,
-        cwd: config.repoRoot,
-        worktree: { base: config.baseRef, name: branchOf(issue.number) },
-      });
-      reviewSessionId = created.sessionId;
-      await save({ reviewSessionId });
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      attempts = attempt + 1;
+      let worktreeModified = false;
+      try {
+        const created = await this.#d.sessions.create({
+          role: "review",
+          agent: config.reviewAgent,
+          title: `[${run.key}] Review`,
+          cwd: config.repoRoot,
+          worktree: { base: config.baseRef, name: branchOf(issue.number) },
+        });
+        reviewSessionId = created.sessionId;
+        await save({ reviewSessionId });
 
-      const before = await this.#snapshot(worktree);
-      const diff = await this.#git(["diff", `${config.baseRef}...HEAD`], worktree);
-      const prompt = reviewBrief(issue, prUrl, book.items, diff.output, config.ciChecks);
-      const result = await this.#d.sessions.turn(reviewSessionId, prompt, {
-        role: "review",
-        worktree,
-        timeoutMs: config.turnTimeoutMs,
-      });
-      await store.event(run.key, "review_turn", { round: run.round, stop: result.stopReason });
+        const before = await this.#snapshot(worktree);
+        const retryNote =
+          attempt > 0 && lastFailure !== null
+            ? `Previous review attempt #${attempt} failed (${lastFailure}). Make sure to include a "What I checked" list and end with a valid <review> JSON block choosing "merge", "reject", or "escalate".`
+            : undefined;
+        const prompt = reviewBrief(
+          issue,
+          prUrl,
+          book.items,
+          diff.output,
+          config.ciChecks,
+          retryNote,
+        );
+        const result = await this.#d.sessions.turn(reviewSessionId, prompt, {
+          role: "review",
+          worktree,
+          timeoutMs: config.turnTimeoutMs,
+        });
+        await store.event(run.key, "review_turn", {
+          round: run.round,
+          attempt,
+          stop: result.stopReason,
+        });
 
-      const after = await this.#snapshot(worktree);
-      if (result.timedOut) {
-        incompleteReason = "评审会话单回合超时被取消。";
-      } else if (result.stopReason !== "end_turn") {
-        incompleteReason = `评审会话异常结束（${result.stopReason}）。`;
-      } else if (before !== after) {
-        incompleteReason = "评审会话修改了工作区，自动化不信任这次评审结果。";
-      } else {
-        const parsed = parseReviewVerdict(result.text);
-        if (parsed === undefined) {
-          incompleteReason = "评审会话未给出可解析的结构化结论。";
-        } else if (parsed.decision === "auto_merge" && !listsWhatWasChecked(result.text)) {
-          incompleteReason = "评审结论为可自动合并但未列出检查内容，不接受无依据的通过。";
+        const after = await this.#snapshot(worktree);
+        if (before !== after) {
+          lastFailure = "评审会话修改了工作区，自动化不信任这次评审结果。";
+          worktreeModified = true;
+        } else if (result.timedOut) {
+          lastFailure = "评审会话单回合超时被取消。";
+        } else if (result.stopReason !== "end_turn") {
+          lastFailure = `评审会话异常结束（${result.stopReason}）。`;
         } else {
-          verdict = parsed;
+          const parsed = parseReviewVerdict(result.text);
+          if (parsed === undefined) {
+            lastFailure = "评审会话未给出可解析的结构化结论。";
+          } else if (parsed.decision === "merge" && !listsWhatWasChecked(result.text)) {
+            lastFailure = "评审结论为合并（merge）但未列出检查内容，不接受无依据的通过。";
+          } else {
+            verdict = parsed;
+            lastFailure = null;
+            break;
+          }
         }
+      } catch (error) {
+        lastFailure = `评审会话执行失败：${error instanceof Error ? error.message : String(error)}`;
       }
-    } catch (error) {
-      incompleteReason = `评审会话执行失败：${error instanceof Error ? error.message : String(error)}`;
+      if (worktreeModified) break;
+      if (attempt + 1 < maxAttempts) {
+        await store.event(run.key, "review_retry", { round: run.round, attempt: attempt + 1 });
+      }
     }
 
-    const commentBody = renderReviewComment({
-      issueKey: run.key,
-      ciChecks: config.ciChecks,
-      ciGreen,
-      sessionId: reviewSessionId,
-      verdict,
-      incompleteReason,
-    });
-    const { writeFile } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    const commentPath = join(config.stateDir, "runs", run.key, "review-comment.md");
-    await writeFile(commentPath, commentBody, { mode: 0o600 });
-
-    const commented = await postPrComment({
-      prRef: prUrl,
-      bodyPath: commentPath,
-      exec: this.#d.exec,
-      cwd: worktree,
-      env: this.#d.env,
-      timeoutMs: config.commandTimeoutMs,
-    });
-
-    if (ciGreen && verdict !== undefined && verdict.decision === "auto_merge" && commented.ok) {
-      const merged = await enableAutoMerge({
+    const writeAndPostComment = async (body: string) => {
+      const { writeFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const commentPath = join(config.stateDir, "runs", run.key, "review-comment.md");
+      await writeFile(commentPath, body, { mode: 0o600 });
+      return postPrComment({
         prRef: prUrl,
+        bodyPath: commentPath,
         exec: this.#d.exec,
         cwd: worktree,
         env: this.#d.env,
         timeoutMs: config.commandTimeoutMs,
       });
-      if (merged.ok) {
-        await tracker.comment(
-          issue,
-          `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过，独立评审结论为可自动合并（${verdict.summary}），已开启 GitHub 自动合并（squash）。`,
-        );
-        await store.event(run.key, "review_done", { decision: "auto_merge", autoMerge: true });
-        await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: true });
-        await save({ phase: "done", prUrl });
-        return { prUrl, autoMerge: true };
-      }
+    };
+
+    // No valid conclusion even after retries (or read-only violation): review system failure, not a code issue.
+    if (verdict === undefined) {
+      const reason = lastFailure ?? "评审会话未给出有效结论。";
+      const commented = await writeAndPostComment(
+        renderReviewComment({
+          issueKey: run.key,
+          ciChecks: config.ciChecks,
+          ciGreen,
+          sessionId: reviewSessionId,
+          systemError: { reason, attempts },
+        }),
+      );
+      const commentErrorLine = !commented.ok
+        ? `\n写入 PR 评审评论失败：${tail(commented.error)}`
+        : "";
       await tracker.comment(
         issue,
-        `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过且独立评审通过，但开启 GitHub 自动合并失败，需要人工参与处理：\n${tail(merged.error)}`,
+        `已开 PR：${prUrl}\n独立评审经 ${attempts} 次尝试仍未得到有效结论，已升级给人处理。注意：这是评审系统故障，不是代码问题。\n原因：${reason}${commentErrorLine}`,
       );
       await tracker.move(issue, "inReview");
-      await store.event(run.key, "review_done", { decision: "auto_merge", autoMerge: false });
+      await store.event(run.key, "review_done", {
+        decision: "system_error",
+        autoMerge: false,
+        attempts,
+      });
       await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
       await save({ phase: "done", prUrl });
       return { prUrl, autoMerge: false };
     }
 
-    const reasonLines: string[] = [];
-    if (!ciGreen && ciNotGreenReason !== null) reasonLines.push(ciNotGreenReason);
-    if (incompleteReason !== null) {
-      reasonLines.push(incompleteReason);
-    } else if (verdict !== undefined && verdict.decision === "human_review") {
-      reasonLines.push(verdict.summary);
-      for (const reason of verdict.reasons) reasonLines.push(`- ${reason}`);
+    // Reject: blocker or major issues -> send back to Dev with review feedback (or escalate if fix round limit hit).
+    if (verdict.decision === "reject") {
+      const limitReached = run.round >= config.maxFixRounds;
+      const commented = await writeAndPostComment(
+        renderReviewComment({
+          issueKey: run.key,
+          ciChecks: config.ciChecks,
+          ciGreen,
+          sessionId: reviewSessionId,
+          verdict,
+          rejectLimitReached: limitReached,
+        }),
+      );
+      await store.event(run.key, "round_failed", { round: run.round });
+      const formatted = formatReviewFindings(verdict);
+
+      if (limitReached) {
+        const commentErrorLine = !commented.ok
+          ? `\n写入 PR 评审评论失败：${tail(commented.error)}`
+          : "";
+        await tracker.comment(
+          issue,
+          `已开 PR：${prUrl}\n独立评审拒绝（reject），且已达修复轮数上限（${run.round} 轮），未开启自动合并，升级给人处理：\n${tail(formatted, 1500)}${commentErrorLine}`,
+        );
+        await tracker.move(issue, "inReview");
+        await store.event(run.key, "review_done", { decision: "reject_limit", autoMerge: false });
+        await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
+        await save({ phase: "done", prUrl });
+        return { prUrl, autoMerge: false };
+      }
+
+      this.#ciGreenSha.delete(run.key);
+      await store.event(run.key, "review_done", { decision: "reject", autoMerge: false });
+      const findings = `PR review rejected ${prUrl} (decision: reject). Fix the blocker/major issues below, run \`bun run check\`, and commit; the loop will verify, run QA, push to the same branch, wait for CI, and re-review.\n\n${formatted}`;
+      await save({ phase: "dev", round: run.round + 1, findings });
+      return undefined;
+    }
+
+    // Merge: enable squash auto-merge only when CI is green and the PR review comment succeeded.
+    if (verdict.decision === "merge") {
+      const commented = await writeAndPostComment(
+        renderReviewComment({
+          issueKey: run.key,
+          ciChecks: config.ciChecks,
+          ciGreen,
+          sessionId: reviewSessionId,
+          verdict,
+        }),
+      );
+      if (ciGreen && commented.ok) {
+        const merged = await enableAutoMerge({
+          prRef: prUrl,
+          exec: this.#d.exec,
+          cwd: worktree,
+          env: this.#d.env,
+          timeoutMs: config.commandTimeoutMs,
+        });
+        if (merged.ok) {
+          await tracker.comment(
+            issue,
+            `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过，独立评审结论为合并（merge：${verdict.summary}），已开启 GitHub 自动合并（squash）。`,
+          );
+          await store.event(run.key, "review_done", { decision: "merge", autoMerge: true });
+          await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: true });
+          await save({ phase: "done", prUrl });
+          return { prUrl, autoMerge: true };
+        }
+        await tracker.comment(
+          issue,
+          `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过且独立评审通过，但开启 GitHub 自动合并失败（这是系统/GitHub 操作故障，不是代码问题），需要人工处理：\n${tail(merged.error)}`,
+        );
+        await tracker.move(issue, "inReview");
+        await store.event(run.key, "review_done", { decision: "merge", autoMerge: false });
+        await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
+        await save({ phase: "done", prUrl });
+        return { prUrl, autoMerge: false };
+      }
+
+      const reasonLines: string[] = [];
+      if (!ciGreen && ciNotGreenReason !== null) reasonLines.push(ciNotGreenReason);
+      if (!commented.ok) reasonLines.push(`写入 PR 评审评论失败：${tail(commented.error)}`);
+      await tracker.comment(
+        issue,
+        `已开 PR：${prUrl}\n独立评审结论为合并，但未满足自动合并前置条件，未开启自动合并，需要人工处理：\n${reasonLines.join("\n")}`,
+      );
+      await tracker.move(issue, "inReview");
+      await store.event(run.key, "review_done", { decision: "system_error", autoMerge: false });
+      await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
+      await save({ phase: "done", prUrl });
+      return { prUrl, autoMerge: false };
+    }
+
+    // Escalate: needs human judgment -> post PR comment, do not enable auto-merge, move to In Review.
+    const commented = await writeAndPostComment(
+      renderReviewComment({
+        issueKey: run.key,
+        ciChecks: config.ciChecks,
+        ciGreen,
+        sessionId: reviewSessionId,
+        verdict,
+      }),
+    );
+    const reasonLines: string[] = [verdict.summary];
+    for (const reason of verdict.reasons) reasonLines.push(`- ${reason}`);
+    for (const finding of verdict.findings) {
+      reasonLines.push(`- [${finding.severity}] ${finding.where}: ${finding.problem}`);
     }
     if (!commented.ok) {
       reasonLines.push(`写入 PR 评审评论失败：${tail(commented.error)}`);
     }
-    const decisionKind =
-      incompleteReason === null && verdict?.decision === "human_review"
-        ? "human_review"
-        : "incomplete";
     await tracker.comment(
       issue,
-      `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）已跑完，未开启自动合并，需要人工参与：\n${reasonLines.join("\n")}`,
+      `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）已跑完，独立评审结论为升级给人（escalate），未开启自动合并：\n${reasonLines.join("\n")}`,
     );
     await tracker.move(issue, "inReview");
-    await store.event(run.key, "review_done", { decision: decisionKind, autoMerge: false });
+    await store.event(run.key, "review_done", { decision: "escalate", autoMerge: false });
     await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
     await save({ phase: "done", prUrl });
     return { prUrl, autoMerge: false };

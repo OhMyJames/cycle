@@ -139,7 +139,7 @@ End with one block and nothing after it:
 
 /**
  * Independent PR review prompt run after a PR is open and CI has finished (CYC-332). Read-only, references
- * `REVIEW.md`, and requires a structured `<review>` JSON verdict (`auto_merge` or `human_review`).
+ * `REVIEW.md`, and requires one of three structured `<review>` JSON conclusions (`merge`, `reject`, or `escalate`).
  */
 export const reviewBrief = (
   issue: Issue,
@@ -147,11 +147,12 @@ export const reviewBrief = (
   criteria: Criterion[],
   diff: string,
   ciChecks: readonly string[],
+  retryNote?: string,
 ): string => `You are an independent PR reviewer for pull request ${prUrl} (${issue.key}: ${issue.title}). You did not write this change and you are not told how it was made.
 
 You are READ-ONLY. Do not edit, create, delete, commit, push, merge, or comment on GitHub yourself: the loop will post your conclusion as a PR comment and act on it. You may read files in the current directory (a git worktree holding the PR commit) and use git status, git diff, git log, rg, and ls.
 
-Read REVIEW.md and AGENTS.md in full first. Judge this PR strictly against REVIEW.md (and the rules and red lines in AGENTS.md). There is no path-based floor in code: evaluate changes to any file—including tools/auto-loop/, .github/, AGENTS.md, or REVIEW.md—on their actual risk per REVIEW.md. When in doubt, choose "human_review".
+Read REVIEW.md and AGENTS.md in full first. Judge this PR strictly against REVIEW.md (and the rules and red lines in AGENTS.md). There is no path-based floor in code: evaluate changes to any file—including tools/auto-loop/, .github/, AGENTS.md, or REVIEW.md—on their actual risk per REVIEW.md.
 
 The work item:
 ---
@@ -168,15 +169,18 @@ The change (git diff against the base${diff.length > MAX_DIFF ? ", cut short" : 
 ${diff.slice(0, MAX_DIFF)}
 \`\`\`
 
-Verify before you judge; do not conclude from the diff above alone. Open the changed files and relevant callers/tests in full, confirm the change matches REVIEW.md and the work item in meaning, and decide whether it is safe to auto-merge (squash) or requires a person to review.
-
-Before your conclusion, write a short "What I checked" list: the files you opened and the commands you ran. An "auto_merge" decision without this list is not accepted.
+Verify before you judge; do not conclude from the diff above alone. Open the changed files and relevant callers/tests in full, confirm the change matches REVIEW.md and the work item in meaning, and choose exactly ONE of the three decisions:
+- "merge": every requirement in REVIEW.md is satisfied, there is no blocker or major finding, and no human judgment is needed. When CI is all green, the loop enables GitHub auto-merge (squash).
+- "reject": there is at least one blocker or major issue that Dev should fix (bugs, missing tests, broken criteria, fixable AGENTS.md violations, or out-of-scope edits). The loop posts your review and sends the work item back to Dev to fix, re-run CI, and re-review. List concrete issues in "findings" and/or "reasons".
+- "escalate": human judgment is required (weakened security/CI/review boundaries, irreversible data changes, unauthorized architectural/product trade-offs, business ambiguity, or risk that cannot be verified read-only). The loop moves the work item to In Review without enabling auto-merge. List concrete reasons in "reasons".
+${retryNote != null && retryNote.trim() !== "" ? `\nNote from previous review attempt: ${retryNote.trim()}\n` : ""}
+Before your conclusion, write a short "What I checked" list: the files you opened and the commands you ran. A "merge" decision without this list is not accepted.
 
 End with one structured JSON block and nothing after it:
 <review>
-{"decision": "auto_merge" | "human_review", "summary": "one-sentence conclusion", "reasons": ["concrete reason 1", "..."]}
+{"decision": "merge" | "reject" | "escalate", "summary": "one-sentence conclusion", "reasons": ["concrete reason 1", "..."], "findings": [{"severity": "blocker" | "major" | "minor", "where": "file or area", "problem": "what is wrong", "fix": "what to do"}]}
 </review>
-Use "auto_merge" only when every requirement in REVIEW.md is satisfied and no human judgment is needed. Otherwise use "human_review" and list the concrete reasons in "reasons".`;
+You MUST choose one of "merge", "reject", or "escalate"; leaving no conclusion is not allowed. Use "merge" only when every requirement in REVIEW.md is satisfied, there is no blocker or major finding, and no human judgment is needed.`;
 
 export const parseProgress = (text: string): string | undefined => {
   const matches = Array.from(text.matchAll(/<progress>([\s\S]*?)<\/progress>/g));
@@ -213,10 +217,18 @@ export const parseVerdict = (text: string): Verdict | undefined => {
   }
 };
 
+const ReviewFindingSchema = z.object({
+  severity: z.enum(["blocker", "major", "minor"]),
+  where: z.string().trim().min(1),
+  problem: z.string().trim().min(1),
+  fix: z.string().trim().min(1),
+});
+
 const ReviewVerdictSchema = z.object({
-  decision: z.enum(["auto_merge", "human_review"]),
+  decision: z.enum(["merge", "reject", "escalate"]),
   summary: z.string().trim().min(1),
   reasons: z.array(z.string().trim().min(1)).default([]),
+  findings: z.array(ReviewFindingSchema).default([]),
 });
 export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
 
@@ -225,7 +237,12 @@ export const parseReviewVerdict = (text: string): ReviewVerdict | undefined => {
   const last = Array.from(text.matchAll(/<review>([\s\S]*?)<\/review>/g)).at(-1);
   if (last === undefined) return undefined;
   try {
-    return ReviewVerdictSchema.parse(JSON.parse((last[1] as string).trim()));
+    const verdict = ReviewVerdictSchema.parse(JSON.parse((last[1] as string).trim()));
+    // A "merge" verdict that still carries a blocker or major finding cannot merge: treat it as "reject".
+    if (verdict.decision === "merge" && verdict.findings.some((f) => f.severity !== "minor")) {
+      return { ...verdict, decision: "reject" };
+    }
+    return verdict;
   } catch {
     return undefined;
   }
@@ -235,6 +252,23 @@ export const formatFindings = (verdict: Verdict): string =>
   verdict.findings
     .map((f, i) => `${i + 1}. [${f.severity}] ${f.where}: ${f.problem}\n   fix: ${f.fix}`)
     .join("\n");
+
+/** Formats a PR review verdict's summary, reasons, and findings for Dev feedback or comments. */
+export const formatReviewFindings = (verdict: ReviewVerdict): string => {
+  const lines: string[] = [verdict.summary];
+  if (verdict.reasons.length > 0) {
+    lines.push("", ...verdict.reasons.map((r) => `- ${r}`));
+  }
+  if (verdict.findings.length > 0) {
+    lines.push(
+      "",
+      ...verdict.findings.map(
+        (f, i) => `${i + 1}. [${f.severity}] ${f.where}: ${f.problem}\n   fix: ${f.fix}`,
+      ),
+    );
+  }
+  return lines.join("\n");
+};
 
 /** QA and PR review are told to list what they checked before the verdict block; a pass without that list is not taken. */
 export const listsWhatWasChecked = (text: string): boolean => {
