@@ -41,7 +41,7 @@ const options = (config: AdapterConfig): LineRpcOptions => {
     name: "Codex app-server",
     executable: config.codexExecutable,
     args: codexAppServerArgs(),
-    cwd: config.env.HOME,
+    cwd: config.env.CODEX_HOME,
     env: config.env,
     // The app-server's messages are JSON-RPC without the version field.
     jsonrpc: false,

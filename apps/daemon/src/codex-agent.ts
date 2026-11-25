@@ -26,8 +26,10 @@ export const codexEnv = (
   for (const key of config.allowEnv) if (inherited[key] !== undefined) env[key] = inherited[key];
   Object.assign(env, systemProxyFill(config.allowEnv, inherited, config.env), config.env);
   env.CODEX_HOME = config.configDir ?? join(dataDir, "codex");
-  // HOME is not passed on: it would let Codex find a login (~/.codex) nobody chose to share.
-  env.HOME ??= env.CODEX_HOME;
+  // Host HOME is passed through via allowEnv so macOS login.keychain-db and host dev tools (git/gh/ssh) work,
+  // while CODEX_HOME + file credential stores keep Codex isolated from ~/.codex (CYC-401).
+  // Fall back to CODEX_HOME when no non-empty HOME was inherited or configured.
+  if (!env.HOME) env.HOME = env.CODEX_HOME;
   return env;
 };
 
@@ -46,11 +48,13 @@ export const codexHarness: Harness = {
   binary: "codex",
   companions: ["codex-code-mode-host"],
   runAdapter: () => runAdapter(shippedExecutable("codex")),
+  storageDir: ({ config, dataDir, inherited }) =>
+    codexEnv(config.codex, dataDir, inherited).CODEX_HOME,
   cli: {
     executable: () =>
       shippedExecutable("codex") ?? sourceBinary() ?? Bun.which("codex") ?? undefined,
     env: ({ config, dataDir, inherited }) => codexEnv(config.codex, dataDir, inherited),
-    // The login is kept in `$CODEX_HOME/auth.json`, never the system keychain, which is not per CODEX_HOME.
+    // CLI auth and MCP OAuth credentials stay in `$CODEX_HOME` files, never the system keychain.
     args: [...CODEX_FIXED_ARGS],
     login: ["login"],
     directories: ["CODEX_HOME"],

@@ -2,10 +2,15 @@
 export const CODEX_VERSION = "0.171.0" as const;
 
 /**
- * Options every Codex command is run with, the app-server and `cycle codex <args>` alike: the login is kept in
- * `$CODEX_HOME/auth.json`, never the system keychain, whose entries are not kept apart by CODEX_HOME.
+ * Options every Codex command is run with, the app-server and `cycle codex <args>` alike: CLI auth and MCP OAuth
+ * credentials stay in `$CODEX_HOME` files, never the system keychain, whose entries are not kept apart by CODEX_HOME.
  */
-export const CODEX_FIXED_ARGS = ["-c", 'cli_auth_credentials_store="file"'] as const;
+export const CODEX_FIXED_ARGS = [
+  "-c",
+  'cli_auth_credentials_store="file"',
+  "-c",
+  'mcp_oauth_credentials_store="file"',
+] as const;
 
 /**
  * The whole command line after the executable for every `codex app-server` Cycle starts: the session's and the short

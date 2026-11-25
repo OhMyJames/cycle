@@ -7,10 +7,10 @@ import type { StorageAgent, StorageItem } from "@cycle/protocol";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 
-/** An agent's home as the daemon gives it (its `HOME`), by agent. */
+/** An agent's Cycle-managed data directory (its `storageDir`, or `HOME` fallback), by agent. */
 export type AgentHome = { agent: string; name: string; home: string };
 
-/** Each home that is made for an agent: what the harness's own environment says its `HOME` is, `config.json` overrides included. */
+/** Each managed directory made for an agent: what the harness declares as its storageDir (or its `HOME` fallback), `config.json` overrides included. */
 export const agentHomesOf = (
   harnesses: readonly Harness[],
   config: Config,
@@ -18,7 +18,11 @@ export const agentHomesOf = (
   inherited: Record<string, string | undefined>,
 ): AgentHome[] =>
   harnesses.flatMap((harness) => {
-    const home = harness.cli?.env({ config, dataDir, inherited }).HOME;
+    const context = { config, dataDir, inherited };
+    const home =
+      harness.storageDir !== undefined
+        ? harness.storageDir(context)
+        : harness.cli?.env(context).HOME;
     return home === undefined || home === ""
       ? []
       : [{ agent: harness.id, name: harness.name, home }];

@@ -50,6 +50,12 @@ export type Harness = {
    */
   companions?: string[];
   definition: (context: HarnessContext) => AgentDefinition;
+  /**
+   * The agent's own Cycle-managed data directory (for storage inspection and cache cleanup in storage.ts).
+   * Separate from `HOME` because agents like Claude and Codex keep the host `HOME` while isolating in their
+   * own config directory (CYC-401). Absent: falls back to `cli.env(...).HOME`.
+   */
+  storageDir?: (context: HarnessCliContext) => string | undefined;
   /** Its own command line, run with the environment the daemon gives the agent. Absent: it has none to run. */
   cli?: {
     /** The binary to run: the shipped one, else the machine's. */
@@ -64,5 +70,7 @@ export type Harness = {
      * Absent: none.
      */
     directories?: string[];
+    /** Optional per-invocation setup run after `directories` are created and before spawning the CLI. */
+    prepare?: (context: HarnessCliContext, env: Record<string, string>) => Promise<void>;
   };
 };

@@ -1,5 +1,6 @@
 // The owner's own models in a Codex session (docs/adapters/codex.md "自带模型"). A thread stays with the model provider
 // it began on, so a session is on Codex's own models or on the owner's, chosen when it begins and kept for its life.
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -160,8 +161,12 @@ export async function loadBundledModels(config: {
 }): Promise<BundledModel[]> {
   const env = { ...config.env };
   delete env[PROVIDER_TOKEN_ENV];
+  const cwd =
+    (env.CODEX_HOME && existsSync(env.CODEX_HOME) ? env.CODEX_HOME : undefined) ??
+    (env.HOME && existsSync(env.HOME) ? env.HOME : undefined) ??
+    process.cwd();
   const child = Bun.spawn([config.codexExecutable, "debug", "models", "--bundled"], {
-    cwd: env.HOME ?? process.cwd(),
+    cwd,
     env,
     stdin: "ignore",
     stdout: "pipe",

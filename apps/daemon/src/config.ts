@@ -6,6 +6,8 @@ import { PROXY_ENV_NAMES } from "./system-proxy.ts";
 
 /** What an agent process sees of the daemon's environment by default: where to find things, the locale, the proxy. */
 const AGENT_ENV = ["PATH", "LANG", "LC_ALL", "TERM", ...PROXY_ENV_NAMES];
+/** Claude and Codex isolate via CLAUDE_CONFIG_DIR / CODEX_HOME, so host HOME can pass through for macOS Keychain and dev tools (CYC-401). */
+const HOST_HOME_AGENT_ENV = ["HOME", ...AGENT_ENV];
 
 /** Terminals' settings when `config.json` names none. The environment is who and where, never a key. */
 export const TERMINAL_DEFAULTS = {
@@ -45,7 +47,7 @@ export const ConfigSchema = z.object({
     .object({
       configDir: z.string().startsWith("/").optional(),
       executable: z.string().startsWith("/").optional(),
-      allowEnv: z.array(z.string()).default(AGENT_ENV),
+      allowEnv: z.array(z.string()).default(HOST_HOME_AGENT_ENV),
       env: z.record(z.string(), z.string()).default({}),
     })
     .prefault({}),
@@ -57,7 +59,7 @@ export const ConfigSchema = z.object({
        */
       configDir: z.string().optional(),
       /** Names of the daemon's own variables the Claude process may see. */
-      allowEnv: z.array(z.string()).default(AGENT_ENV),
+      allowEnv: z.array(z.string()).default(HOST_HOME_AGENT_ENV),
       /** Variables set to a value, e.g. a key or a base URL. Written here, never inherited. */
       env: z.record(z.string(), z.string()).default({}),
       /**
@@ -71,7 +73,7 @@ export const ConfigSchema = z.object({
       progressSummaries: z.boolean().default(true),
     })
     .default({
-      allowEnv: AGENT_ENV,
+      allowEnv: HOST_HOME_AGENT_ENV,
       env: {},
       warmStart: true,
       maxWarm: 3,

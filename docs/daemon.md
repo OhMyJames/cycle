@@ -185,9 +185,9 @@ cycle login [agent]   # 为这个 daemon 登录一个 agent,在 daemon 所在的
 cycle claude auth status   # cycle <agent id> <参数>:用同样的环境跑那个 agent 自己的命令行
 ```
 
-**登录**:命令按 agent 走(`cycle login <agent id>`、`cycle <agent id> <参数>`),每个 agent 的登录各自隔离在数据目录里。现在只有 Claude:`login` 和 `claude` 用的环境和目录,正是 daemon 给它启动的 Claude 的那份(`config.json` 里的 `configDir`,默认 `<数据目录>/claude`;`HOME` 回落到它),所以登录落在 Claude 以后会去找的地方,不会碰 `~/.claude`。全新的数据目录里 `claude auth status` 报 `loggedIn: false`(已验证)。**登录流程本身没有验证过**:它要在浏览器里完成 OAuth,我没法替你做。验证过的做法是把 OAuth token 或 API key 写进 `config.json` 的 `claude.env`。构建目录里缺 `claude` 时,`agents/list` 里 Claude 是 `available: false`,不是等到第一个 prompt 才失败。
+**登录**:命令按 agent 走(`cycle login <agent id>`、`cycle <agent id> <参数>`),每个 agent 的登录各自隔离在数据目录里。Claude 的 `login` 和 `claude` 用的环境和目录,正是 daemon 给它启动的 Claude 的那份(`config.json` 里的 `configDir`,默认 `<数据目录>/claude`;默认透传宿主 `HOME` 以保证 macOS `login.keychain-db` 与开发工具可用,未继承时回落到 `configDir`),`CLAUDE_CONFIG_DIR` 在 macOS 上自动按路径哈希隔离钥匙串项,不会碰 `~/.claude`。全新的数据目录里 `claude auth status` 报 `loggedIn: false`(已验证)。**登录流程本身没有验证过**:它要在浏览器里完成 OAuth,我没法替你做。验证过的做法是把 OAuth token 或 API key 写进 `config.json` 的 `claude.env`。构建目录里缺 `claude` 时,`agents/list` 里 Claude 是 `available: false`,不是等到第一个 prompt 才失败。
 
-**Codex 的登录**:`cycle login codex`(跑 `codex login`,可加 `--device-auth` 或 `--with-api-key`)和 `cycle codex <参数>`(如 `cycle codex login status`)用的是 daemon 给 Codex 的同一份环境:`CODEX_HOME` 是 `config.json` 里 `codex.configDir`,默认 `<数据目录>/codex`,`HOME` 回落到它,所以不读也不写 `~/.codex`。每条 Codex 命令和 app-server 都带 `-c cli_auth_credentials_store="file"`,登录只落在 `$CODEX_HOME/auth.json`,不进系统钥匙串。本机就在本机跑;远端在那台机器上跑(`ssh <host> cycle login codex --device-auth`,设备码登录要先在 ChatGPT 的安全设置里打开)。数据目录里还没有 `codex` 目录时先建好它(Codex 不肯在不存在的 `CODEX_HOME` 上登录)。回合因没登录失败时,错误里写明要跑 `cycle login codex`。也可以把一份已有的 `auth.json` 放进 `<数据目录>/codex/`(远端没有浏览器时常用),但同一份 ChatGPT 登录不要同时给两个 Codex 用:刷新 token 时会把另一份挤掉。2026-11-23 用真实 ChatGPT 账号验证:全新数据目录报未登录(本机 `~/.codex` 有登录也一样),放进登录后报已登录,经 daemon 新建会话完成回合(`apps/daemon` 的 `test:real:codex`)。浏览器里的 `codex login` 流程本身没有走,那是 Codex 自己的。
+**Codex 的登录**:`cycle login codex`(跑 `codex login`,可加 `--device-auth` 或 `--with-api-key`)和 `cycle codex <参数>`(如 `cycle codex login status`)用的是 daemon 给 Codex 的同一份环境:`CODEX_HOME` 是 `config.json` 里 `codex.configDir`,默认 `<数据目录>/codex`;默认透传宿主 `HOME`(未继承时回落到 `CODEX_HOME`),所以不读也不写 `~/.codex`。每条 Codex 命令和 app-server 都带 `-c cli_auth_credentials_store="file"` 和 `-c mcp_oauth_credentials_store="file"`,登录与 MCP OAuth 凭证均只落在 `$CODEX_HOME` 文件里,不进系统钥匙串。本机就在本机跑;远端在那台机器上跑(`ssh <host> cycle login codex --device-auth`,设备码登录要先在 ChatGPT 的安全设置里打开)。数据目录里还没有 `codex` 目录时先建好它(Codex 不肯在不存在的 `CODEX_HOME` 上登录)。回合因没登录失败时,错误里写明要跑 `cycle login codex`。也可以把一份已有的 `auth.json` 放进 `<数据目录>/codex/`(远端没有浏览器时常用),但同一份 ChatGPT 登录不要同时给两个 Codex 用:刷新 token 时会把另一份挤掉。2026-11-23 用真实 ChatGPT 账号验证:全新数据目录报未登录(本机 `~/.codex` 有登录也一样),放进登录后报已登录,经 daemon 新建会话完成回合(`apps/daemon` 的 `test:real:codex`)。浏览器里的 `codex login` 流程本身没有走,那是 Codex 自己的。
 
 **装到远端机器**:解开 tarball,把目录放到 `$PATH` 上(或在桌面端 "Add location" 里把命令写成绝对路径,如 `/opt/cycle/cycle proxy`)。`<os>-<arch>` 要和那台机器一致:在哪个平台构建就产出哪个平台的;跨平台要在对应平台构建。凭证写进那台机器上的 `<数据目录>/config.json`(见下)。
 
@@ -213,7 +213,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 {
   "claude": {
     "configDir": "/path/to/claude-config",
-    "allowEnv": ["PATH", "LANG", "LC_ALL", "TERM"],
+    "allowEnv": ["HOME", "PATH", "LANG", "LC_ALL", "TERM"],
     "env": { "ANTHROPIC_API_KEY": "..." }
   },
   "agy": {
@@ -229,7 +229,7 @@ agent 的 id 同时是它的适配器子命令、`config.json` 里的段名和�
 
 - **Claude 进程看到的环境只有三样**:`allowEnv` 里点名的、daemon 自己环境中存在的变量;`CLAUDE_CONFIG_DIR`;`env` 里写明的值。daemon 自己的环境变量不会传下去。端到端测试里给 daemon 设了 `ANTHROPIC_API_KEY`,检查 Claude 一侧的请求里没有它。
 - `configDir` 默认是 `<数据目录>/claude`,一个独立目录,里面没有登录。要用已有登录,把它**有意地**指向那个目录(比如 `~/.claude`);要新登录,用 `CLAUDE_CONFIG_DIR=<目录> claude auth login`。
-- `HOME` 默认不传(回落到 `configDir`),免得 Claude 找到没人打算共享的登录或设置。
+- `HOME` 对 Claude 和 Codex 默认经 `allowEnv` 透传(未继承时回落到各自的 `configDir`),以便 macOS `login.keychain-db` 与会话内 `git`/`gh`/`ssh` 等工具正常可用,登录与配置仍由 `CLAUDE_CONFIG_DIR` / `CODEX_HOME` 严格隔离;`agy` 仍保持隔离 `HOME` 并默认设 `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1`(见决定笔记 [2026-11-25-agent-home-and-keychain-isolation](../.agents/notes/2026-11-25-agent-home-and-keychain-isolation.md))。
 - `progressSummaries`(默认 `true`):让 Claude 给每个在跑的子 agent 生成一行进度摘要(`subagent_update` 的 `summary`)。子 agent 的对话有变化时约每 30 秒一次，每次是一次沿用子 agent 模型和 prompt cache 的模型调用，计入账号用量。设成 `false` 就不生成，工具行上仍有工具数、用量和最后一个工具。理由见决定笔记 [2026-11-23-subagent-progress-summaries-on-by-default](../.agents/notes/2026-11-23-subagent-progress-summaries-on-by-default.md)。
 - `terminal`(可省):`{ "allowEnv": ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_*", "TMPDIR"], "maxPerSession": 8, "max": 32, "scrollback": 5000 }`。终端的 shell 看到的环境只有 `allowEnv` 点名的(以 `*` 结尾的按前缀),加上 `TERM=xterm-256color`、`COLORTERM=truecolor`、`SHELL`(实际启动的 shell),没给 `CLICOLOR` 时加 `CLICOLOR=1`,macOS 上没有任何 locale 变量时再加 `LANG=en_US.UTF-8`(docs/protocol.md §8"终端");没有 `HOME` 时用当前用户的家目录。和 Claude 的 `allowEnv` 分开：给终端加变量不会让 agent 看到它。
 - `log`(可省):`{ "level": "info", "maxBytes": 1000000, "files": 3 }`,见下面"日志"。

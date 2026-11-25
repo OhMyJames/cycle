@@ -1756,6 +1756,8 @@ export type AgySetupOptions = {
   locateBinary: LocateBinary;
   /** The daemon's runtime settings (`agent-settings.json`), so setup subprocesses honour e.g. telemetry off. */
   agentSettings?: AgentSettings | undefined;
+  /** Optional hook run with agy's isolated HOME before auth probes, sign-in, and sign-out (macOS fallback keychain). */
+  prepareKeychain?: (home: string) => Promise<void>;
   runCommand?: AgentSetupRunCommand;
   startCodeAuth?: StartCliCodeAuth;
   logoutAcp?: RunAgyAcpLogout;
@@ -1768,6 +1770,7 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
   const run = options.runCommand ?? runIsolatedCommand;
   const startCodeAuth = options.startCodeAuth ?? startCliCodeAuth;
   const logoutAcp = options.logoutAcp ?? runAgyAcpLogout;
+  const prepareKeychain = options.prepareKeychain;
   // Probed at ~1.5s on isolated HOME when signed out, up to ~5s+ on keychain-fallback platforms.
   const timeoutMs = options.timeoutMs ?? 15_000;
   const cache = authCache(options.cacheTtlMs ?? 45_000, options.now ?? Date.now);
@@ -1793,6 +1796,7 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
   const probeAuth = async (executable: string): Promise<AgentAuthProbeResult> => {
     const env = minimalEnv();
     ensurePrivateDir(env.HOME);
+    if (env.HOME) await prepareKeychain?.(env.HOME);
     // Hard red line: never read, stat, parse, or touch agy's OAuth token files; probe only via `agy models`
     // (which takes no `--disable-telemetry`: that flag is `agy acp`'s).
     const result = await run([executable, "models"], { env, timeoutMs });
@@ -1842,6 +1846,7 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
         const executable = await requireBinary();
         const env = minimalEnv();
         ensurePrivateDir(env.HOME);
+        if (env.HOME) await prepareKeychain?.(env.HOME);
         // Hard red line: drive ONLY `agy acp --login`; never touch token files directly.
         return startCodeAuth({
           command: [executable, "acp", "--login", ...acpFlags()],
@@ -1853,8 +1858,11 @@ export const createAgySetupProvider = (options: AgySetupOptions): AgentSetupProv
       },
       logout: async () => {
         const executable = await requireBinary();
+        const env = minimalEnv();
+        ensurePrivateDir(env.HOME);
+        if (env.HOME) await prepareKeychain?.(env.HOME);
         try {
-          await logoutAcp({ executable, env: minimalEnv(), timeoutMs, args: acpFlags() });
+          await logoutAcp({ executable, env, timeoutMs, args: acpFlags() });
         } finally {
           cache.invalidate();
         }

@@ -146,10 +146,18 @@ export const claudeEnv = (
     const value = inherited[name];
     if (value !== undefined) env[name] = value;
   }
-  env.CLAUDE_CONFIG_DIR = config.configDir ?? join(dataDir, "claude");
-  // HOME is not passed on: it would let Claude find a login or settings nobody chose to share.
-  env.HOME ??= env.CLAUDE_CONFIG_DIR;
-  return { ...env, ...systemProxyFill(config.allowEnv, inherited, config.env), ...config.env };
+  const configDir = config.configDir ?? join(dataDir, "claude");
+  env.CLAUDE_CONFIG_DIR = configDir;
+  const merged = {
+    ...env,
+    ...systemProxyFill(config.allowEnv, inherited, config.env),
+    ...config.env,
+  };
+  // Host HOME is passed through via allowEnv so macOS login.keychain-db and host dev tools (git/gh/ssh) work,
+  // while CLAUDE_CONFIG_DIR isolates settings, transcripts, and Claude's hashed keychain item (CYC-401).
+  // Fall back to CLAUDE_CONFIG_DIR when no non-empty HOME was inherited or configured.
+  if (!merged.HOME) merged.HOME = merged.CLAUDE_CONFIG_DIR || configDir;
+  return merged;
 };
 
 export const claudeHarness: Harness = {
@@ -157,10 +165,14 @@ export const claudeHarness: Harness = {
   name: "Claude",
   runAdapter,
   binary: BINARY,
+  storageDir: ({ config, dataDir, inherited }) =>
+    claudeEnv(config.claude, dataDir, inherited).CLAUDE_CONFIG_DIR,
   cli: {
-    executable: () => claudeExecutable() ?? Bun.which("claude") ?? undefined,
+    // Match `locateClaudeBinary()` first so `cycle login claude` and the daemon share one binary signature on macOS.
+    executable: () => claudeExecutable() ?? sdkBundledClaude() ?? Bun.which("claude") ?? undefined,
     env: ({ config, dataDir, inherited }) => claudeEnv(config.claude, dataDir, inherited),
     login: ["auth", "login"],
+    directories: ["CLAUDE_CONFIG_DIR"],
   },
   definition: ({ config, dataDir, inherited, self, log, agentSettings }) => {
     // The session's variables, for Claude's commands only (harness/claude env-file.ts). What a former daemon wrote has

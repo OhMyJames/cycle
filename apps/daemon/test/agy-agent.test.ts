@@ -43,7 +43,7 @@ afterEach(() => {
 });
 
 describe("agy daemon harness", () => {
-  test("agyEnv isolates HOME under <dataDir>/agy and never inherits host secrets or DBUS", () => {
+  test("agyEnv isolates HOME under <dataDir>/agy, forces file token storage, and never inherits host secrets or DBUS", () => {
     const config = ConfigSchema.parse({}).agy;
     const env = agyEnv(config, "/data", {
       PATH: "/usr/bin:/bin",
@@ -58,6 +58,7 @@ describe("agy daemon harness", () => {
       PATH: "/usr/bin:/bin",
       TMPDIR: "/tmp",
       HOME: "/data/agy",
+      AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
       AGY_FAST_AUTO_UPDATE: "off",
     });
   });
@@ -73,15 +74,19 @@ describe("agy daemon harness", () => {
     expect(env).toEqual({
       PATH: "/bin",
       HOME: "/custom/agy-home",
+      AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
       AGY_FAST_AUTO_UPDATE: "off",
       GEMINI_API_KEY: "explicit-key",
     });
     const optedIn = agyEnv(
-      ConfigSchema.parse({ agy: { env: { AGY_FAST_AUTO_UPDATE: "notify" } } }).agy,
+      ConfigSchema.parse({
+        agy: { env: { AGY_FAST_AUTO_UPDATE: "notify", AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "0" } },
+      }).agy,
       "/data",
       { PATH: "/bin" },
     );
     expect(optedIn.AGY_FAST_AUTO_UPDATE).toBe("notify");
+    expect(optedIn.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("0");
   });
 
   test("findAgyExecutable follows config.executable -> ~/.local/bin/agy -> PATH", () => {
@@ -198,8 +203,16 @@ describe("agy daemon harness", () => {
     ).toEqual({
       PATH: "/usr/bin",
       HOME: "/data/agy",
+      AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
       AGY_FAST_AUTO_UPDATE: "off",
     });
+    expect(
+      agyHarness.storageDir?.({
+        config,
+        dataDir: "/data",
+        inherited: { PATH: "/usr/bin", HOME: "/Users/real" },
+      }),
+    ).toBe("/data/agy");
   });
 
   test("daemon keeps Cycle sessionId distinct from agy agentSessionId across restart and maps missing hadTurn session to -32013 (CYCL-173)", async () => {

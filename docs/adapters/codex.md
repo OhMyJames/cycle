@@ -14,8 +14,8 @@
 
 ## 启动与配置
 
-- 入口 `cycle adapter codex`。配置经 `CYCLE_ADAPTER_CONFIG`:`{ env, codexExecutable? }`。`env` 是 app-server 能看到的**全部**环境,必须有绝对路径的 `HOME` 和 `CODEX_HOME`;daemon 按 `config.json` 的 `codex` 段填(白名单 `allowEnv` 加 `env`,`HOME` 不传、回落到 `CODEX_HOME`)。
-- app-server 一律带 `-c cli_auth_credentials_store="file"`(登录只在 `$CODEX_HOME/auth.json`,不进钥匙串)和 `-c check_for_update_on_startup=false`;`initialize` 声明 `experimentalApi: true`(plan 模式要用)。
+- 入口 `cycle adapter codex`。配置经 `CYCLE_ADAPTER_CONFIG`:`{ env, codexExecutable? }`。`env` 是 app-server 能看到的**全部**环境,必须有绝对路径的 `HOME` 和 `CODEX_HOME`;daemon 按 `config.json` 的 `codex` 段填(默认 `allowEnv` 含 `HOME`,透传宿主 `HOME` 以便 macOS 钥匙串与 `git`/`gh`/`ssh` 等开发工具正常工作,未继承 `HOME` 时回落到 `CODEX_HOME`;`CODEX_HOME` 始终指向 `<数据目录>/codex` 或 `codex.configDir`,不读宿主 `~/.codex`,见 [决定笔记](../../.agents/notes/2026-11-25-agent-home-and-keychain-isolation.md))。app-server 与 `debug models --bundled` 的 `cwd` 固定为 `CODEX_HOME`,不在宿主家目录启动。
+- app-server 与 `cycle codex` 一律带 `-c cli_auth_credentials_store="file"` 和 `-c mcp_oauth_credentials_store="file"`(登录与 MCP OAuth 凭证均只存在 `$CODEX_HOME` 文件里,不进系统钥匙串);app-server 另带 `-c check_for_update_on_startup=false`,`initialize` 声明 `experimentalApi: true`(plan 模式要用)。
 - Cycle 要的设置一律经 `thread/start`、`thread/resume` 的参数和 `config` 传,不写 `$CODEX_HOME/config.toml`(那个文件归用户)。
 
 ## 登录

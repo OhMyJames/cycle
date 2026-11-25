@@ -1,13 +1,16 @@
 /**
- * Dedicated macOS keychain under agy's isolated HOME (`<HOME>/Library/Keychains/login.keychain-db`, CYC-327).
+ * Dedicated macOS keychain under agy's isolated HOME (`<HOME>/Library/Keychains/login.keychain-db`, CYC-327 / CYC-401).
  *
  * When agy runs with an isolated HOME, macOS has no default keychain there and prompts "A keychain cannot be found
- * to store 'antigravity'". Before starting agy on darwin, ensure a private login keychain exists, is set as the
- * default keychain for that HOME, and is unlocked. Never touches the host HOME or host keychain, never reads or logs
- * keychain contents, and never blocks agy startup on failure.
+ * to store 'antigravity'". Although `agyEnv` also sets `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1`, this module remains
+ * defense-in-depth across all `agy` entry points for older versions, plugin keychains, and commands inside the
+ * isolated HOME. Before starting agy on darwin, ensure a private login keychain exists, has no auto-lock timeout,
+ * is in the search list and set as default for that HOME, and is unlocked. Never touches the host HOME or host
+ * keychain, never reads or logs keychain contents, deduplicates concurrent calls, and never blocks agy startup.
  */
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const SECURITY_BIN = "/usr/bin/security";
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -35,6 +38,8 @@ export type EnsureKeychainOptions = {
   run?: KeychainCommandRunner;
   /** Overrides `process.platform` (for tests). */
   platform?: NodeJS.Platform;
+  /** Host user's HOME; if `home` resolves to this path, refuse to touch the host's keychain. */
+  hostHome?: string | undefined;
   /** Optional structured logger for non-fatal warnings; never receives keychain content. */
   log?: KeychainLogger;
 };
@@ -42,6 +47,9 @@ export type EnsureKeychainOptions = {
 /** Where the isolated keychain file lives under agy's HOME. */
 export const keychainPathFor = (home: string): string =>
   join(home, "Library", "Keychains", "login.keychain-db");
+
+/** Coalesces concurrent setup calls for the same isolated keychain path within one process. */
+const inFlight = new Map<string, Promise<void>>();
 
 const defaultRunner: KeychainCommandRunner = async (command, { env }) => {
   const proc = Bun.spawn([...command], {
@@ -76,18 +84,26 @@ const parseDefaultKeychain = (stdout: string): string | undefined => {
   return unquoted === "" ? undefined : unquoted;
 };
 
-const samePath = (a: string, b: string): boolean => {
-  if (a === b) return true;
+/** Resolves symlinks on the nearest existing ancestor so aliases (e.g. `/var` vs `/private/var`) share one key. */
+const canonicalPath = (path: string): string => {
+  const abs = resolve(path);
   try {
-    return realpathSync(a) === realpathSync(b);
+    return realpathSync(abs);
   } catch {
-    return false;
+    const parent = dirname(abs);
+    if (parent === abs) return abs;
+    return join(canonicalPath(parent), abs.slice(parent.length).replace(/^[/\\]+/, ""));
   }
 };
 
+const samePath = (a: string, b: string): boolean => {
+  if (a === b || resolve(a) === resolve(b)) return true;
+  return canonicalPath(a) === canonicalPath(b);
+};
+
 /**
- * Ensures agy's isolated HOME has an unlocked default keychain on macOS.
- * No-op on non-darwin platforms; logs and returns on any failure without throwing.
+ * Ensures agy's isolated HOME has an unlocked, non-expiring default keychain on macOS.
+ * No-op on non-darwin platforms or if `home` matches `hostHome`; logs and returns on any failure without throwing.
  */
 export const ensureKeychain = async (
   home: string,
@@ -99,11 +115,32 @@ export const ensureKeychain = async (
     options.log?.warn("agy_keychain_skipped", { reason: "invalid_home" });
     return;
   }
+  const hostHome = options.hostHome ?? process.env.HOME ?? homedir();
+  if (hostHome && samePath(home, hostHome)) {
+    options.log?.warn("agy_keychain_skipped", { reason: "host_home" });
+    return;
+  }
 
+  const keychainPath = keychainPathFor(home);
+  const flightKey = keychainPathFor(canonicalPath(home));
+  const existing = inFlight.get(flightKey);
+  if (existing !== undefined) return existing;
+
+  const task = ensureKeychainImpl(home, keychainPath, options).finally(() => {
+    if (inFlight.get(flightKey) === task) inFlight.delete(flightKey);
+  });
+  inFlight.set(flightKey, task);
+  return task;
+};
+
+const ensureKeychainImpl = async (
+  home: string,
+  keychainPath: string,
+  options: EnsureKeychainOptions,
+): Promise<void> => {
   const run = options.run ?? defaultRunner;
   const env: Record<string, string> = { HOME: home, PATH: "/usr/bin:/bin" };
   const keychainsDir = join(home, "Library", "Keychains");
-  const keychainPath = keychainPathFor(home);
 
   const exec = async (
     step: string,
@@ -137,11 +174,17 @@ export const ensureKeychain = async (
     const check = await exec("default_keychain_read", ["default-keychain"]);
     if (check === undefined) return;
     const current = check.code === 0 ? parseDefaultKeychain(check.stdout) : undefined;
-    if (current !== undefined && samePath(current, keychainPath)) {
-      await runChecked("unlock_keychain", ["unlock-keychain", "-p", "", keychainPath]);
+    // Always ensure the isolated keychain is in the domain search list (idempotent; heals pre-CYC-401 keychains).
+    if (!(await runChecked("list_keychains_set", ["list-keychains", "-s", keychainPath]))) {
       return;
     }
-    if (!(await runChecked("default_keychain_set", ["default-keychain", "-s", keychainPath]))) {
+    if (current === undefined || !samePath(current, keychainPath)) {
+      if (!(await runChecked("default_keychain_set", ["default-keychain", "-s", keychainPath]))) {
+        return;
+      }
+    }
+    // Without -t/-l, clears macOS's default 5-minute auto-lock and lock-on-sleep (idempotent for existing keychains).
+    if (!(await runChecked("set_keychain_settings", ["set-keychain-settings", keychainPath]))) {
       return;
     }
     await runChecked("unlock_keychain", ["unlock-keychain", "-p", "", keychainPath]);
@@ -159,6 +202,8 @@ export const ensureKeychain = async (
   }
 
   if (!(await runChecked("create_keychain", ["create-keychain", "-p", "", keychainPath]))) return;
+  if (!(await runChecked("set_keychain_settings", ["set-keychain-settings", keychainPath]))) return;
+  if (!(await runChecked("list_keychains_set", ["list-keychains", "-s", keychainPath]))) return;
   if (!(await runChecked("default_keychain_set", ["default-keychain", "-s", keychainPath]))) return;
   await runChecked("unlock_keychain", ["unlock-keychain", "-p", "", keychainPath]);
 };
