@@ -977,3 +977,53 @@ test("without variables there is no CLAUDE_ENV_FILE", async () => {
   });
   expect(fake.calls[0]?.options.env).not.toHaveProperty("CLAUDE_ENV_FILE");
 });
+
+test("the files kept from Claude are denied to its file tools, and to its commands in a sandbox only when asked", async () => {
+  const run = async (extra: Record<string, unknown>) => {
+    const fake = fakeQuery(() => textTurn(ID, "msg_1", "ok"));
+    await connect(
+      fake.run,
+      async ({ agent, waitForIdle }) => {
+        const created = await agent.request(methods.agent.session.new, {
+          cwd: "/work",
+          _meta: { "cycle/sessionId": ID },
+        });
+        await agent.request(methods.agent.session.prompt, {
+          sessionId: created.sessionId,
+          prompt: [{ type: "text", text: "hi" }],
+        });
+        await waitForIdle();
+      },
+      undefined,
+      { env: { CLAUDE_CONFIG_DIR: "/data/claude" }, ...extra },
+    );
+    return fake.calls[0]?.options;
+  };
+  const denyRead = ["/data/secrets.env", "/real/secrets.env"];
+  const tools = await run({ denyRead });
+  // Two slashes: one is from the project's root, not the disk's.
+  expect(tools?.settings).toMatchObject({
+    permissions: {
+      deny: [
+        "Read(//data/secrets.env)",
+        "Edit(//data/secrets.env)",
+        "Read(//real/secrets.env)",
+        "Edit(//real/secrets.env)",
+      ],
+    },
+  });
+  expect(tools).not.toHaveProperty("sandbox");
+
+  const commands = await run({ denyRead, sandboxDenied: true });
+  expect(commands?.sandbox).toEqual({
+    enabled: true,
+    failIfUnavailable: false,
+    allowUnsandboxedCommands: false,
+    autoAllowBashIfSandboxed: false,
+    filesystem: { denyRead },
+  });
+
+  const none = await run({});
+  expect(none?.settings).not.toHaveProperty("permissions");
+  expect(none).not.toHaveProperty("sandbox");
+});

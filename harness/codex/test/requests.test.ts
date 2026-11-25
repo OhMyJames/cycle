@@ -566,3 +566,50 @@ test("the session's variables go to Codex's commands through the thread's config
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("the files kept from Codex are denied in the thread's permission profile, which stands in place of a sandbox, in the modes that are workspace-write", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "cycle-codex-deny-"));
+  const { executable, messages } = await fake(dir, "");
+  const open = async (denyRead?: string[]) => {
+    const adapter = createAdapter({
+      env: { HOME: dir, CODEX_HOME: dir },
+      ...(denyRead !== undefined ? { denyRead } : {}),
+      codexExecutable: executable,
+    });
+    try {
+      await client().connectWith(adapter.app, async (agent) => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: 2,
+          info: { name: "test", version: "1" },
+        });
+        await agent.request(methods.agent.session.new, {
+          cwd: dir,
+          additionalDirectories: ["/extra"],
+        });
+      });
+    } finally {
+      adapter.close();
+    }
+  };
+  try {
+    await open(["/data/secrets.env", "relative-is-dropped"]);
+    await open();
+    const starts = (await messages()).filter((m) => m.method === "thread/start");
+    expect(starts[0]?.params.config).toEqual({
+      default_permissions: "cycle",
+      permissions: {
+        cycle: {
+          extends: ":workspace",
+          filesystem: { "/extra": "write", "/data/secrets.env": "none" },
+        },
+      },
+    });
+    // Codex ignores a profile when the thread also names a sandbox.
+    expect(starts[0]?.params).not.toHaveProperty("sandbox");
+    expect(starts[0]?.params).toMatchObject({ approvalPolicy: "on-request" });
+    expect(starts[1]?.params.sandbox).toBe("workspace-write");
+    expect(starts[1]?.params).not.toHaveProperty("config");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -41,6 +41,7 @@ export const spawn = (
     }
   }
   const abort = new AbortController();
+  const denied = (config.denyRead ?? []).filter((path) => path.startsWith("/"));
   const options: Options = {
     cwd: session.cwd,
     // The session's variables reach the commands Claude runs, through a file it sources before each, never its own
@@ -65,7 +66,24 @@ export const spawn = (
     // Claude Code leaves thinking's text out ("omitted") unless asked: every thought would reach the
     // conversation empty. The setting asks for the API's summaries and leaves the kind of thinking
     // (adaptive, a budget, none) to the model, as `thinking: { display }` would not.
+    // A path in a Read or Edit rule is absolute with a second slash ("//etc/x"): one slash is from the project's root.
+    ...(denied.length > 0 && config.sandboxDenied === true
+      ? {
+          sandbox: {
+            enabled: true,
+            // Where it cannot start, commands run as before rather than the session being lost.
+            failIfUnavailable: false,
+            // A command cannot ask to run outside it, and a command in it does not ask for each step.
+            allowUnsandboxedCommands: false,
+            autoAllowBashIfSandboxed: false,
+            filesystem: { denyRead: denied },
+          },
+        }
+      : {}),
     settings: {
+      ...(denied.length > 0
+        ? { permissions: { deny: denied.flatMap((path) => [`Read(/${path})`, `Edit(/${path})`]) } }
+        : {}),
       showThinkingSummaries: true,
       // Not asked for (yet): none is made. When asked for, the person's own settings.json may still say no.
       ...(session.suggestions ? {} : { promptSuggestionEnabled: false }),

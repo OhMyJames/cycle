@@ -70,3 +70,19 @@ test("a key set in the vault is the value an environment's secret gets", async (
   );
   expect(variables).toEqual({ GH_TOKEN: "gh-work-1" });
 });
+
+test("the files kept from agents are the secrets and the provider keys, by their path and where a link leads", async () => {
+  const { mkdir, symlink } = await import("node:fs/promises");
+  const { hasSecrets, protectedFiles } = await import("../src/secrets.ts");
+  const { providersPath, secretsPath } = await import("../src/data-dir.ts");
+  // Not there yet: the paths stand for files made later.
+  expect(protectedFiles(dir)).toEqual([secretsPath(dir), providersPath(dir)]);
+  expect(hasSecrets(dir)).toBe(false);
+  await mkdir(join(dir, "elsewhere"));
+  const target = join(dir, "elsewhere", "real.env");
+  await writeFile(target, "A_KEY='x'\n");
+  await symlink(target, secretsPath(dir));
+  const real = await (await import("node:fs/promises")).realpath(target);
+  expect(protectedFiles(dir)).toEqual([secretsPath(dir), real, providersPath(dir)]);
+  expect(hasSecrets(dir)).toBe(true);
+});

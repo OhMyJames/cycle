@@ -252,6 +252,8 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 
 **密钥的作用范围**:只给 session 的终端、动作、`session/new` 时的 setup 与 session 结束时的 cleanup 脚本;**三个 agent 的命令都拿不到**,agent 自己用 EnterWorktree/ExitWorktree 触发的 setup/cleanup 也只有字面变量(那时跑的是 agent 改过的仓库代码,拿到密钥就等于给了 agent)(Claude 的 `CLAUDE_ENV_FILE`、Codex 的 `shell_environment_policy.set` 里没有,agy 本来就没有)。理由:agent 能在命令里 `env`、`echo` 出它看到的变量。setup 失败时回给客户端和 agent 的输出,先把密钥的值替换成 `***`。注意:`secrets.env` 和索引一样是 daemon 同一用户能读的文件,agent 若有读文件的权限仍能读到它;要挡住就给它加 deny-read 规则,`chmod 600` 挡不住同一用户。
 
+**不让 agent 读 `secrets.env`**:daemon 把 `secrets.env` 和 `providers.json`(含符号链接指向的真实路径)交给 agent 的 adapter(`CYCLE_ADAPTER_CONFIG.denyRead`)。Codex:线程用 `extends ":workspace"` 的权限 profile 把这些文件设为 `none`(profile 与 `sandbox` 不能同时给,所以线程不给 `sandbox`;工作区类模式的 turn 也不再给 `sandboxPolicy`);只读和完全访问模式不在内。Claude:Read/Edit 工具永远有 deny 规则;vault 里有密钥时再开 SDK sandbox 的 `filesystem.denyRead`。Antigravity 没有办法。见 `.agents/notes/2026-11-24-keep-agents-from-reading-secrets-env.md`。
+
 **变量的作用范围**:session 的 agent 跑的命令(Claude、Codex;agy 没有,见下)、session 的终端(在 `terminal.allowEnv` 取到的之后、`TERM` 等固定项之前加上)、setup/cleanup 脚本、动作。agent 进程本身拿不到它们。各 agent 怎么做到见下。
 
 **每个 agent 怎么带上变量**(2026-11-24 读代码并用真实会话验证:Claude 用 SDK 0.3.327 自带的二进制,Codex 0.171.0 app-server 和 agy 1.5.16 `acp` 用 daemon 的登录各跑了一个 turn,让 agent 执行 `env | grep ^PROBE_`)。

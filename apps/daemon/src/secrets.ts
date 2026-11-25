@@ -2,11 +2,12 @@
 // runs on, so a location reached over SSH keeps its own. Read each time they are used, so an edit applies without a
 // restart; never written to the index, the log or a reply. A file others could read is closed to them first (the same
 // care as `config.json`). Nothing here logs a name or a value.
+import { readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseSecretsFile, VARIABLE_NAME } from "@cycle/protocol";
 import { secureConfigFile } from "./config.ts";
-import { secretsPath } from "./data-dir.ts";
+import { providersPath, secretsPath } from "./data-dir.ts";
 
 /** What the file holds: nothing when there is none or it cannot be read. */
 export const readSecrets = async (dataDir: string): Promise<Record<string, string>> => {
@@ -114,4 +115,31 @@ export const setSecret = async (dataDir: string, key: string, value: string): Pr
 /** Removes the key's lines; a key that is not there leaves the file as it was. */
 export const removeSecret = async (dataDir: string, key: string): Promise<void> => {
   await edit(dataDir, (lines) => lines.filter((line) => keyOfLine(line) !== key));
+};
+
+/**
+ * The files an agent must not read: the secrets and the owner's provider keys, each by the path given and by where a
+ * symlink leads (`setSecret` writes through one). Absolute paths, for the agents' own deny rules. Specific files, not
+ * `dataDir`: Claude's home is a folder in it.
+ */
+export const protectedFiles = (dataDir: string): string[] => {
+  const paths = new Set<string>();
+  for (const path of [secretsPath(dataDir), providersPath(dataDir)]) {
+    paths.add(path);
+    try {
+      paths.add(realpathSync(path));
+    } catch {
+      // Not there yet: the path itself is the rule, and stands for a file made later.
+    }
+  }
+  return [...paths];
+};
+
+/** Whether the file holds a secret now, read at the start of a session. */
+export const hasSecrets = (dataDir: string): boolean => {
+  try {
+    return Object.keys(parseSecretsFile(readFileSync(secretsPath(dataDir), "utf8"))).length > 0;
+  } catch {
+    return false;
+  }
 };

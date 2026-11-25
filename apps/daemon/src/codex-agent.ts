@@ -12,6 +12,7 @@ import { createCodexSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
+import { protectedFiles } from "./secrets.ts";
 import { shippedExecutable } from "./self.ts";
 import { systemProxyFill } from "./system-proxy.ts";
 
@@ -74,6 +75,7 @@ export const codexHarness: Harness = {
           CYCLE_ADAPTER_CONFIG: JSON.stringify({
             env,
             sessionEnv,
+            denyRead: protectedFiles(dataDir),
             codexExecutable: settings.executable,
             ...(own !== undefined ? { providers: own } : {}),
           }),

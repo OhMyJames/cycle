@@ -30,6 +30,17 @@ export type AdapterConfig = {
    * CLAUDE_ENV_FILE so that its commands have them and the Claude process does not (env-file.ts).
    */
   sessionEnvFile?: string;
+  /**
+   * Files Claude must not read or change (the daemon's `secrets.env`, `providers.json`), as absolute paths. Always a deny
+   * rule for the Read and Edit tools. With `sandboxDenied`, also kept from the commands Claude runs.
+   */
+  denyRead?: string[];
+  /**
+   * Run Claude's commands in its sandbox with `denyRead` as denied reads. The daemon asks for it only when there is a
+   * secret to keep, as the sandbox also limits what a command may write and reach. Where the sandbox cannot start
+   * (no bubblewrap on Linux) the commands run as before: `failIfUnavailable` is off, so a session is not lost to it.
+   */
+  sandboxDenied?: boolean;
   /** The SDK's own binary is used when this is absent. */
   claudeExecutable?: string;
   /**
