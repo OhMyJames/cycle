@@ -89,9 +89,11 @@ Codex 只会说 Responses API。主人自己的模型服务(Anthropic、Google�
 - 模型叫 `<服务商 id>/<模型 id>`。daemon 把它们加进 codex 的 `model` 选项(`_meta["cycle/provider"]` 标出服务商),不进选项缓存。
 - **一个 session 要么在 Codex 自己的模型上,要么在主人的模型上**,由它开始时的模型决定:daemon 在 `session/new`、`session/resume` 的 `_meta["cycle/model"]` 里告诉适配器。适配器用线程自己的 `config` 把网关设为 model provider(不写 `config.toml`),网关令牌只在 app-server 的环境里,并用 `shell_environment_policy.exclude` 挡住命令。session 里的模型菜单只列同一种,另一种被拒绝。
 - **模型元数据走线程自己的 `model_catalog_json`。** Codex 0.171.0 对不认识的模型用 272K fallback,并且会把 `model_context_window` 也裁到 272K;只传窗口得不到 1M。适配器为这个 session 的全部主人模型写一份临时 catalog,每项带真实 `context_window`、`max_context_window`、该服务商支持的 effort,并开启 `supports_search_tool: true`(与随包模型一致,避免 Codex 把全部 MCP / `codex_apps` 工具直接铺进首轮请求导致上下文暴涨,改为按需走 `tool_search`,网关同时过滤 `request.tools` 中带 `defer_loading: true` 的工具);指令模板取自随包 Codex 的 `debug models --bundled` 里 `gpt-5.6-sol` 的条目。`effective_context_window_percent` 是 95,所以 1M 模型在状态里报 950000,64K 模型报 60800。临时目录 0700、文件 0600,随 session 关闭、打开失败或 app-server 结束删除;Codex 自己的模型不生成 catalog。
+- **DeepSeek 的 catalog 还有一组自己的优化。** 按 DeepSeek 的 Codex 集成启用 freeform `apply_patch`、verbosity 支持(默认 `high`;Codex 0.171.0 的枚举只有 `low`、`medium`、`high`)和 `supports_parallel_tool_calls: true`。自动压缩阈值是 500000,且不会超过该模型 95% 有效窗口。Codex 0.171.0 的 `debug models` 会把未知 catalog 里的 `supports_parallel_tool_calls` 读回为 null;字段先随着官方 catalog 保留,但当前版本是否真正开启并行调用还没有验证。
+- **mixed code mode 实测后不采用。** 同一组真实 DeepSeek 任务各跑 3 次:direct 平均 4 次模型请求、7 次工具调用、34822 cumulative input、3/3 成功;`code_mode` 平均 5 次模型请求、5 次工具调用、54735 cumulative input、3/3 成功。它减少了工具调用,却增加了模型往返和上下文重放,所以 DeepSeek 继续用 direct tools,也不进入 `code_mode_only`。复现脚本是 `apps/daemon/scripts/codex-deepseek-ab.ts`。
 - 网关只回答本次 daemon 启动时生成的令牌,第一次有 session 用到才起,daemon 关闭时停。
 
-没有验证:任何真实的服务商、打包后的桌面应用。已知限制:Codex 对不认识的模型不给 `apply_patch`,网页搜索和图片生成是 OpenAI 的服务端工具,都用不了;Gemini 的 thoughtSignature 只在内存里,daemon 重启后丢。
+没有验证:任何真实的服务商、打包后的桌面应用。已知限制:DeepSeek 之外不认识的模型仍拿不到 `apply_patch`;网页搜索和图片生成是 OpenAI 的服务端工具,都用不了;Gemini 的 thoughtSignature 只在内存里,daemon 重启后丢。
 
 ## 未做(显式列出,不要悄悄补)
 
