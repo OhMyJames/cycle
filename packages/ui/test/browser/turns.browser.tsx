@@ -587,12 +587,17 @@ test("the conversation fades at its top and bottom edges, and at the end the las
   expect(composer?.top).toBeCloseTo(view.bottom, 0);
   expect((last?.bottom ?? 0) + 64).toBeCloseTo(view.bottom, 0);
   // At the top, the first message starts below the top fade.
-  log.scrollTop = 0;
-  await waitFor(() => expect(log.scrollTop).toBe(0));
+  // Reaching the top draws the blocks above and keeps the reader's place, so the first block drawn is far above until
+  // the whole conversation is: scroll up until it is, then measure.
+  await waitFor(() => {
+    log.scrollTop = 0;
+    expect(log.textContent).toContain("question 0");
+    expect(log.scrollTop).toBe(0);
+  });
   const first = log
     .querySelector('[data-slot="block"], [data-slot="earlier"]')
     ?.getBoundingClientRect();
-  expect((first?.top ?? 0) - view.top).toBeGreaterThanOrEqual(16);
+  expect((first?.top ?? 0) - log.getBoundingClientRect().top).toBeGreaterThanOrEqual(16);
 });
 
 test("an empty session's message stays in the middle of the view, whatever room is kept under a last message", async () => {
