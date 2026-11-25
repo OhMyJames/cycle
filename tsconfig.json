@@ -8,6 +8,8 @@
     "harness/*/test",
     "apps/*/src",
     "apps/*/test",
+    "tools/*/src",
+    "tools/*/test",
     "scripts"
   ]
 }
