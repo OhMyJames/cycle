@@ -14,7 +14,7 @@ export type AdapterConfig = {
   /**
    * Files the agent's commands must not read (the daemon's `secrets.env`, `providers.json`). They are put in the
    * thread's permission profile as `none`, on top of the built-in workspace profile, which is what `sandbox:
-   * "workspace-write"` is. Read-only and Full access are not covered: see `denyProfile` in agent.ts.
+   * "workspace-write"` is. Read-only and Full access are not covered: see `workspaceProfile` in agent.ts.
    */
   denyRead?: string[];
   /** The owner's own models, and the gateway that serves them. Absent: there are none. */
