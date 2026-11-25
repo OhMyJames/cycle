@@ -105,6 +105,15 @@ async function shoot(
   context: BrowserContext,
   job: { out: string; width: number; height: number },
 ) {
+  // What animations: "disabled" does in page.screenshot: finite ones run to their end, endless ones stop.
+  // First, so a selector is measured where the element ends up.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    for (const a of document.getAnimations()) {
+      if (a.effect?.getComputedTiming().endTime === Number.POSITIVE_INFINITY) a.cancel();
+      else a.finish();
+    }
+  });
   let clip = { x: 0, y: 0, width: job.width, height: job.height };
   if (crop?.kind === "rect")
     clip = { x: crop.x, y: crop.y, width: crop.width, height: crop.height };
@@ -114,14 +123,20 @@ async function shoot(
     const scroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }));
     clip = { x: box.x + scroll.x, y: box.y + scroll.y, width: box.width, height: box.height };
   }
-  const { scale } = outputSize(clip.width, DEVICE_SCALE_FACTOR, maxWidth);
-  // What animations: "disabled" does in page.screenshot: finite ones run to their end, endless ones stop.
-  await page.evaluate(async () => {
-    await document.fonts.ready;
-    for (const a of document.getAnimations()) {
-      if (a.effect?.getComputedTiming().endTime === Number.POSITIVE_INFINITY) a.cancel();
-      else a.finish();
-    }
+  // Whole CSS pixels, covering the region.
+  const left = Math.floor(clip.x);
+  const top = Math.floor(clip.y);
+  clip = {
+    x: left,
+    y: top,
+    width: Math.ceil(clip.x + clip.width) - left,
+    height: Math.ceil(clip.y + clip.height) - top,
+  };
+  // Floored, so rounding in the browser never puts the width over the limit.
+  const scale = Math.floor(outputSize(clip.width, DEVICE_SCALE_FACTOR, maxWidth).scale * 1e6) / 1e6;
+  // page.screenshot hides the caret; here it is done by hand.
+  const hideCaret = await page.addStyleTag({
+    content: "* { caret-color: transparent !important; }",
   });
   const cdp = await context.newCDPSession(page);
   try {
@@ -135,6 +150,7 @@ async function shoot(
     });
     await Bun.write(job.out, Buffer.from(data, "base64"));
   } finally {
+    await hideCaret.evaluate((el) => el.remove());
     await cdp.detach();
   }
 }

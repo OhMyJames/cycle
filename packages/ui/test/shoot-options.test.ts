@@ -58,6 +58,10 @@ describe("shoot options", () => {
     expect(() => parseShootOptions(["--max-width", "--all"])).toThrow();
     expect(() => parseShootOptions(["--themes", "blue"])).toThrow();
   });
+  test("unknown flags and --name=value are errors", () => {
+    expect(() => parseShootOptions(["--crop=.x"])).toThrow();
+    expect(() => parseShootOptions(["--nope"])).toThrow();
+  });
   test("file extension follows the format", () => {
     expect(shotFile("a", "dark", "1200x800", "png")).toBe("a.dark.1200x800.png");
     expect(shotFile("a", "dark", "1200x800", "webp")).toBe("a.dark.1200x800.webp");

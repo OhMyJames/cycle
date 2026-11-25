@@ -73,6 +73,9 @@ export function parseShootOptions(argv: string[]): ShootOptions {
   for (const theme of themes)
     if (theme !== "light" && theme !== "dark")
       throw new Error(`--themes takes light and dark, not ${theme}`);
+  for (const a of argv)
+    if (a.startsWith("--") && a !== "--all" && !VALUE_FLAGS.has(a))
+      throw new Error(`unknown flag ${a} (flags take a value as "--name value")`);
   const crop = flag("crop");
   const maxWidth = flag("max-width");
   const skipped = new Set(
