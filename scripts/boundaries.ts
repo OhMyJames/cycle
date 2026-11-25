@@ -7,11 +7,13 @@
 //   renderer  the page: apps/desktop/src/renderer and all of packages/ui/src. Browser code: no Node, no
 //             Electron, no Bun, and nothing that starts or talks to the daemon directly (it goes by the bridge).
 //   preload   apps/desktop/src/preload: sandboxed. electron, and the bridge contract from @cycle/ui/api, nothing else.
+//   app       apps/desktop/src and packages/ui/src: they talk to the Loop server by the protocol in @cycle/protocol, and
+//             never import cloud/loop (docs/protocol.md §17).
 
 import { builtinModules } from "node:module";
 import { posix } from "node:path";
 
-export type Zone = "model" | "renderer" | "preload";
+export type Zone = "model" | "renderer" | "preload" | "app";
 
 export const zoneOf = (file: string): Zone[] => {
   const zones: Zone[] = [];
@@ -20,6 +22,8 @@ export const zoneOf = (file: string): Zone[] => {
   if (file.startsWith("packages/ui/src/") || file.startsWith("apps/desktop/src/renderer/"))
     zones.push("renderer");
   if (file.startsWith("apps/desktop/src/preload/")) zones.push("preload");
+  if (file.startsWith("apps/desktop/src/") || file.startsWith("packages/ui/src/"))
+    zones.push("app");
   return zones;
 };
 
@@ -171,6 +175,16 @@ const forbidden: Record<Zone, (name: string, file: string) => string | undefined
       return "the page runs in a browser: no Node, Bun or Electron module";
     if (BACKEND.test(name))
       return "the page reaches the daemon only through the bridge (@cycle/ui/api), not by importing it";
+    return undefined;
+  },
+  app: (name, file) => {
+    if (/^@cycle\/loop(?:\/|$)/.test(name))
+      return "the Loop server is reached over its protocol, not imported";
+    if (
+      isRelative(name) &&
+      posix.normalize(posix.join(posix.dirname(file), name)).startsWith("cloud/")
+    )
+      return "the Loop server is reached over its protocol, not imported";
     return undefined;
   },
   preload: (name) => {

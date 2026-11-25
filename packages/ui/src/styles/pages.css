@@ -674,3 +674,101 @@
   overflow: auto;
   white-space: pre-wrap;
 }
+
+/* The Loop page (CYC-386): a Project's board, read only. Three columns side by side; Done is under them, collapsed. */
+[data-kind="loop-board"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem var(--cycle-column-pad) 2rem;
+}
+
+[data-slot="loop-board-bar"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-columns"] {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+[data-slot="loop-column"] {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--cycle-border-subtle);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+}
+
+[data-slot="loop-column-head"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-column-title"] {
+  margin: 0;
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+}
+
+[data-slot="loop-column-count"],
+[data-slot="loop-ticket-meta"],
+[data-slot="loop-column-empty"],
+[data-slot="loop-repo"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-column-empty"] {
+  margin: 0;
+}
+
+[data-slot="loop-tickets"] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  /* A long column scrolls by itself, so the three stay side by side and Done stays within reach under them. */
+  max-height: calc(100vh - 16rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+[data-slot="loop-ticket"] {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border-radius: var(--cycle-radius-sm);
+}
+
+[data-slot="loop-ticket"]:hover {
+  background: var(--cycle-surface-hover);
+}
+
+[data-slot="loop-ticket-id"] {
+  font-family: var(--font-mono);
+  font-size: var(--cycle-text-meta);
+  color: var(--cycle-ink-secondary);
+}
+
+/* A long title is cut at its end, with the whole of it on hover. */
+[data-slot="loop-ticket-title"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--cycle-text-ui);
+}

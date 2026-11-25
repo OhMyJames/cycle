@@ -170,6 +170,8 @@ test.skipIf(!ready)(
           "saveProvider",
           "removeProvider",
           "listVault",
+          "loopBoard",
+          "loopProjects",
           "setVaultItem",
           "removeVaultItem",
           "prompt",

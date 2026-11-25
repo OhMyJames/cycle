@@ -8,7 +8,8 @@
       "packages/*",
       "harness/*",
       "apps/*",
-      "tools/*"
+      "tools/*",
+      "cloud/*"
     ],
     "catalog": {
       "@agentclientprotocol/sdk": "2.7.0",

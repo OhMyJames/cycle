@@ -1,0 +1,14 @@
+{
+  "name": "@cycle/loop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Loop server: one process for many Projects, on the same machine as the daemon (CYC-386).",
+  "dependencies": {
+    "@cycle/protocol": "workspace:*",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts"
+  }
+}

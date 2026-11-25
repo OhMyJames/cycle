@@ -74,12 +74,12 @@ describe("importsOf", () => {
 
 describe("zones", () => {
   test.each([
-    ["packages/ui/src/model/blocks.ts", ["model", "renderer"]],
-    ["packages/ui/src/api.ts", ["model", "renderer"]],
-    ["packages/ui/src/react/app.tsx", ["renderer"]],
-    ["apps/desktop/src/renderer/main.tsx", ["renderer"]],
-    ["apps/desktop/src/preload/preload.ts", ["preload"]],
-    ["apps/desktop/src/main/app.ts", []],
+    ["packages/ui/src/model/blocks.ts", ["model", "renderer", "app"]],
+    ["packages/ui/src/api.ts", ["model", "renderer", "app"]],
+    ["packages/ui/src/react/app.tsx", ["renderer", "app"]],
+    ["apps/desktop/src/renderer/main.tsx", ["renderer", "app"]],
+    ["apps/desktop/src/preload/preload.ts", ["preload", "app"]],
+    ["apps/desktop/src/main/app.ts", ["app"]],
     ["apps/daemon/src/daemon.ts", []],
     ["packages/ui/test/store.test.ts", []],
   ])("%s", (file, zones) => expect(zoneOf(file)).toEqual(zones as never));
@@ -146,6 +146,16 @@ const cases: [string, string, boolean][] = [
     'import { API_METHODS, type AppEvent } from "@cycle/ui/api";\nimport { contextBridge, ipcRenderer } from "electron";',
     false,
   ],
+  // The Loop server is reached over its protocol, never imported
+  ["apps/desktop/src/main/loop.ts", 'import { x } from "@cycle/loop";', true],
+  ["apps/desktop/src/main/loop.ts", 'import { x } from "@cycle/loop/src/config.ts";', true],
+  [
+    "apps/desktop/src/main/loop.ts",
+    'import { x } from "../../../../cloud/loop/src/config.ts";',
+    true,
+  ],
+  ["packages/ui/src/store/store.ts", 'import { x } from "@cycle/loop";', true],
+  ["apps/desktop/src/main/loop.ts", 'import { LoopProjectSchema } from "@cycle/protocol";', false],
   // Elsewhere is not these rules' business
   ["apps/desktop/src/main/app.ts", 'import { readFile } from "node:fs";', false],
   ["apps/daemon/src/daemon.ts", 'import { x } from "node:fs";', false],

@@ -10,6 +10,8 @@
     "apps/*/test",
     "tools/*/src",
     "tools/*/test",
+    "cloud/*/src",
+    "cloud/*/test",
     "scripts"
   ]
 }

@@ -117,9 +117,29 @@ const main = async () => {
     preloadPath: join(here, "preload.cjs"),
     localCommand: [...daemon, "proxy"],
     localEnv,
+    // Where the Loop server listens is where the local daemon keeps its data (docs/protocol.md §17); the person's own
+    // itsaplan key is a file they put in the app's data folder (mode 0600), not an environment variable.
+    loop: {
+      socket: join(dataHome ?? join(homedir(), ".cycle"), "loop.sock"),
+      keyFile: join(userData, "itsaplan-key"),
+      trackerUrl: trackerUrl(env.CYCLE_LOOP_PLAN_URL),
+    },
     update: updateDeps(daemon, localEnv),
     ...(hidden ? { show: false } : {}),
   });
+};
+
+/** The key goes to this address: https, or this computer (a test's stand-in); anything else is ignored. */
+const trackerUrl = (custom: string | undefined): string => {
+  const standard = "https://plan.ops.shrimpdot.ai/api/mcp";
+  if (custom === undefined) return standard;
+  try {
+    const u = new URL(custom);
+    const here = ["127.0.0.1", "localhost"].includes(u.hostname);
+    return u.protocol === "https:" || (u.protocol === "http:" && here) ? custom : standard;
+  } catch {
+    return standard;
+  }
 };
 
 /** What the build recorded about itself (`package`), or nothing in a run from source. */

@@ -38,6 +38,7 @@
         "@cycle/analytics": "workspace:*",
         "@cycle/client": "workspace:*",
         "@cycle/oidc": "workspace:*",
+        "@cycle/protocol": "workspace:*",
         "@cycle/ui": "workspace:*",
         "electron": "45.3.4",
         "react": "19.3.1",
@@ -52,6 +53,14 @@
         "@types/react-dom": "^19.3.0",
         "node-api-headers": "1.9.0",
         "playwright": "1.65.1",
+      },
+    },
+    "cloud/loop": {
+      "name": "@cycle/loop",
+      "version": "0.0.0",
+      "dependencies": {
+        "@cycle/protocol": "workspace:*",
+        "zod": "catalog:",
       },
     },
     "harness/agy": {
@@ -306,6 +315,8 @@
     "@cycle/harness-codex": ["@cycle/harness-codex@workspace:harness/codex"],
 
     "@cycle/line-rpc": ["@cycle/line-rpc@workspace:packages/line-rpc"],
+
+    "@cycle/loop": ["@cycle/loop@workspace:cloud/loop"],
 
     "@cycle/model-gateway": ["@cycle/model-gateway@workspace:packages/model-gateway"],
 

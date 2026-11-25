@@ -23,6 +23,7 @@ import { ConversationView } from "./conversation.tsx";
 import { ConfirmDialog, LocationDialog, type RemoteLocation } from "./dialogs.tsx";
 import { I18nProvider, useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, SidebarIcon } from "./icons.tsx";
+import { LoopPage } from "./loop.tsx";
 import { errorText, SessionNotices } from "./notice-line.tsx";
 import { currentPlan } from "./plan.tsx";
 import { SearchDialog } from "./search.tsx";
@@ -342,6 +343,14 @@ function AppWindow() {
           onShowLocations={() => pages.openSettings("click", "locations")}
         />
       ) : null}
+      {pages.loop !== undefined ? (
+        <LoopPage
+          projectKey={pages.loop.projectKey}
+          onProject={pages.showLoopProject}
+          onClose={pages.leaveLoop}
+          banner={errorBanner}
+        />
+      ) : null}
       {/* Under a page the sessions are kept as they are, not drawn again: what was open and half-written is there on the way back. */}
       <div data-slot="app-body" hidden={pages.pageOpen} inert={pages.pageOpen}>
         <SplitLayout
@@ -406,6 +415,7 @@ function AppWindow() {
               onNewSession={() => newSession()}
               onSearch={() => open("search")}
               onConnectors={pages.openConnectors}
+              onLoop={pages.openLoop}
               onConnectLocation={(id) => void store.connectLocation(id)}
               onToggleArchived={() => nav.setShowArchived((v) => !v)}
               onShowAll={nav.showAllSessions}

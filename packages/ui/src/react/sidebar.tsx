@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import type { LocationConfig, LocationStatus, SessionSummary } from "../api.ts";
 import type { Elsewhere, SessionList, Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
-import { MoreIcon, PlugIcon, PlusIcon, SearchIcon } from "./icons.tsx";
+import { MoreIcon, PlugIcon, PlusIcon, RefreshIcon, SearchIcon } from "./icons.tsx";
 import { type Away, type RowAction, SessionListView } from "./session-list.tsx";
 import { LOCATION_STATE, StatusDot } from "./status.tsx";
 import { Tip } from "./tip.tsx";
@@ -37,6 +37,8 @@ export type SidebarProps = {
   onSearch: () => void;
   /** Opens the Connectors page: what the daemons keep for every agent. */
   onConnectors?: () => void;
+  /** Opens the Loop page: the Projects of the Loop server and their boards. */
+  onLoop?: () => void;
   onConnectLocation: (locationId: string) => void;
   onToggleArchived: () => void;
   onShowAll: () => void;
@@ -95,6 +97,17 @@ export function Sidebar(props: SidebarProps) {
           >
             <PlugIcon />
             {t("connectors.open")}
+          </Button>
+        ) : null}
+        {props.onLoop !== undefined ? (
+          <Button
+            data-variant="ghost"
+            data-kind="sidebar-action"
+            data-page-open="loop"
+            onClick={props.onLoop}
+          >
+            <RefreshIcon />
+            {t("loop.open")}
           </Button>
         ) : null}
       </div>

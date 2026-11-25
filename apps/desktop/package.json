@@ -10,6 +10,7 @@
     "@cycle/analytics": "workspace:*",
     "@cycle/client": "workspace:*",
     "@cycle/oidc": "workspace:*",
+    "@cycle/protocol": "workspace:*",
     "@cycle/ui": "workspace:*",
     "electron": "45.3.4",
     "react": "19.3.1",

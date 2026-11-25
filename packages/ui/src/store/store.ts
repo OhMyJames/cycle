@@ -21,6 +21,7 @@ import { ConnectorsSlice } from "./connectors.ts";
 import { messageOf, StoreBase } from "./core.ts";
 import { EnvironmentsSlice } from "./environments.ts";
 import { LocationsSlice } from "./locations.ts";
+import { LoopSlice } from "./loop.ts";
 import { PluginsSlice } from "./plugins.ts";
 import { ProvidersSlice } from "./providers.ts";
 import { SessionsSlice } from "./sessions.ts";
@@ -71,6 +72,7 @@ export class AppStore extends StoreBase {
   );
   readonly #terminals = new TerminalsSlice(this.kit);
   readonly #connectors = new ConnectorsSlice(this.kit);
+  readonly #loop = new LoopSlice(this.kit);
   readonly #vault = new VaultSlice(this.kit);
   readonly #providers = new ProvidersSlice(this.kit, (locationId) =>
     this.#locations.loadAgents(locationId),
@@ -326,6 +328,11 @@ export class AppStore extends StoreBase {
   detachTerminal = this.#terminals.detach;
   terminalInput = this.#terminals.input;
   resizeTerminal = this.#terminals.resize;
+
+  // ---- loop ----
+
+  loadLoopProjects = this.#loop.loadProjects;
+  loadLoopBoard = this.#loop.loadBoard;
 
   // ---- connectors ----
 

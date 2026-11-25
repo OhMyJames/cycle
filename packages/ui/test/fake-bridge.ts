@@ -10,6 +10,8 @@ import type {
   EnvironmentsState,
   GitBranches,
   LocationConfig,
+  LoopBoardAnswer,
+  LoopProjectsAnswer,
   PlanUsage,
   PluginFailure,
   PluginInfo,
@@ -68,6 +70,8 @@ export const fakeBridge = (
     update?: UpdateState;
     /** Whether usage statistics are on. Default: nowhere to report to. */
     analytics?: AnalyticsStatus;
+    loopProjects?: LoopProjectsAnswer;
+    loopBoards?: Record<string, LoopBoardAnswer>;
     /** What the daemon says it can do. Default: all of it. */
     capabilities?: {
       queue: boolean;
@@ -659,6 +663,15 @@ export const fakeBridge = (
       enabled,
       noticed: true,
     })),
+    loopProjects: record(
+      "loopProjects",
+      async (): Promise<LoopProjectsAnswer> => options.loopProjects ?? { kind: "disconnected" },
+    ),
+    loopBoard: record(
+      "loopBoard",
+      async (projectKey: string): Promise<LoopBoardAnswer> =>
+        options.loopBoards?.[projectKey] ?? { kind: "no_key" },
+    ),
   };
   return {
     bridge,
