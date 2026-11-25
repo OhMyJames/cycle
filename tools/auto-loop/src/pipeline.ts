@@ -306,7 +306,9 @@ export class Pipeline {
         role: "dev",
         agent: config.devAgent,
         title: `[${run.key}] Dev`,
-        cwd: worktree,
+        // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
+        cwd: config.repoRoot,
+        worktree: { base: config.baseRef, name: branchOf(issue.number) },
       });
       await save({
         devSessionId: created.sessionId,
@@ -420,7 +422,9 @@ export class Pipeline {
         role: "qa",
         agent: config.qaAgent,
         title: `[${run.key}] QA`,
-        cwd: worktree,
+        // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
+        cwd: config.repoRoot,
+        worktree: { base: config.baseRef, name: branchOf(issue.number) },
       });
       await save({ qaSessionId: created.sessionId });
       run = { ...run, qaSessionId: created.sessionId };
@@ -446,7 +450,9 @@ export class Pipeline {
         role: "qa",
         agent: config.qaAgent,
         title: `[${run.key}] QA`,
-        cwd: worktree,
+        // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
+        cwd: config.repoRoot,
+        worktree: { base: config.baseRef, name: branchOf(issue.number) },
       });
       await save({ qaSessionId: created.sessionId });
       result = await this.#d.sessions.turn(created.sessionId, prompt, {
@@ -483,8 +489,16 @@ export class Pipeline {
     );
     if (pushed.code !== 0) throw new Blocked(`git push 失败：${tail(pushed.output)}`);
 
-    const progress = await store.readProgress(run.key);
-    const summary = lastDone(progress);
+    const commits = await this.#git(
+      ["log", "--reverse", "--format=%s", `${config.baseRef}..HEAD`],
+      worktree,
+    );
+    const summary = commits.output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.includes("checkpoint (auto-loop)"))
+      .map((line) => `- ${line}`)
+      .join("\n");
     const { writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const bodyPath = join(config.stateDir, "runs", run.key, "pr-body.md");
@@ -599,14 +613,5 @@ const findUrl = (text: string): string | undefined =>
     .reverse()
     .find((line) => /^https:\/\/\S+$/.test(line.trim()))
     ?.trim();
-
-/** The "done" of the last progress entry: what the change is, in Dev's words. */
-const lastDone = (progress: string): string => {
-  const entries = progress.split(/^## Turn /m).filter((entry) => entry.trim() !== "");
-  const dones = entries
-    .map((entry) => /^done:\s*([\s\S]*?)(?:\nnext:|$)/m.exec(entry)?.[1]?.trim())
-    .filter((done): done is string => done !== undefined && done !== "");
-  return dones.join("\n\n");
-};
 
 export type { Criterion };

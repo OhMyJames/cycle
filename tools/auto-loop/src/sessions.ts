@@ -1,6 +1,8 @@
 // `Sessions` over a running Cycle daemon: the loop is one more client of it, so every session it makes is one a person
 // can open in the desktop app, read, and step into (CYC-318).
 
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { CycleClient, connectUnix, type PermissionAnswer } from "@cycle/client";
 import { META } from "@cycle/protocol";
 import { answerFor, decide } from "./policy.ts";
@@ -9,8 +11,6 @@ import { SessionLost, type SessionRole, type Sessions, type TurnResult } from ".
 type Turn = {
   role: SessionRole;
   worktree: string;
-  state: "idle" | "running";
-  sawRunning: boolean;
   text: string;
   stop: string | undefined;
   /** Permission requests nobody has answered yet: the time they wait does not count against the turn. */
@@ -58,10 +58,10 @@ export class DaemonSessions implements Sessions {
       const content = update.content as { type?: string; text?: string } | undefined;
       if (content?.type === "text" && typeof content.text === "string") turn.text += content.text;
     } else if (update.sessionUpdate === "state_update") {
-      const info = update.state as { state?: string; stopReason?: string } | undefined;
-      if (info?.state === "running" || info?.state === "requires_action") turn.sawRunning = true;
-      if (info?.state === "idle" && turn.sawRunning) {
-        turn.stop = info.stopReason ?? "end_turn";
+      // `state` is a string; only an `idle` that carries a `stopReason` ends a turn (one without it is a snapshot of the
+      // state: docs/protocol.md "turn 的状态由 state_update 表达").
+      if (update.state === "idle" && typeof update.stopReason === "string") {
+        turn.stop = update.stopReason;
         turn.finish();
       }
     }
@@ -109,12 +109,29 @@ export class DaemonSessions implements Sessions {
     let cwd = input.cwd;
     let branch: string | null = null;
     if (input.worktree !== undefined) {
+      // A session nobody has prompted is not in the daemon's list yet, so its row cannot say where the worktree is.
+      // The place is fixed by the protocol (docs/protocol.md §6 "Worktree"): ask git where the main checkout is.
       const row = (await this.#client.listSessions()).find((r) => r.sessionId === sessionId);
       const info = row?._meta?.[META.worktree] as { path?: string; branch?: string } | undefined;
-      if (info?.path === undefined)
-        throw new Error("the daemon did not say where it made the worktree");
-      cwd = info.path;
-      branch = info.branch ?? null;
+      if (info?.path !== undefined) {
+        cwd = info.path;
+        branch = info.branch ?? null;
+      } else {
+        const common = Bun.spawnSync([
+          "git",
+          "-C",
+          input.cwd,
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir",
+        ]);
+        const gitDir = common.stdout.toString().trim();
+        if (common.exitCode !== 0 || gitDir === "")
+          throw new Error("could not find the main checkout");
+        cwd = join(dirname(gitDir), ".agents", "worktree", input.worktree.name);
+        branch = `worktree-${input.worktree.name}`;
+        if (!existsSync(cwd)) throw new Error(`the daemon did not make the worktree at ${cwd}`);
+      }
     }
     await this.#client.rename(sessionId, input.title).catch(() => {});
     return { sessionId, cwd, branch };
@@ -140,8 +157,6 @@ export class DaemonSessions implements Sessions {
     const turn: Turn = {
       role: context.role,
       worktree: context.worktree,
-      state: "idle",
-      sawRunning: false,
       text: "",
       stop: undefined,
       waiting: 0,
