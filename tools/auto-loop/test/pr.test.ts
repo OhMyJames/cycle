@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import type { Criterion } from "../src/criteria.ts";
-import { hasClosingKeyword, renderPr, renderPrTitle, validatePr } from "../src/pr.ts";
+import {
+  hasClosingKeyword,
+  MAX_PR_TITLE_LENGTH,
+  renderPr,
+  renderPrTitle,
+  validatePr,
+} from "../src/pr.ts";
 import { issue } from "./helpers.ts";
 
 const sampleIssue = issue({
@@ -20,11 +26,20 @@ const sampleCriteria: Criterion[] = [
   },
 ];
 
-test("PR title contains the issue key and Closes CYC-<num>", () => {
+test("PR title contains the issue key and Closes CYC-<num>, capped at 256 chars", () => {
   const title = renderPrTitle(sampleIssue);
   expect(title).toContain("CYC-330");
   expect(title).toContain("Closes CYC-330");
   expect(hasClosingKeyword(title, "CYC-330")).toBe(true);
+
+  const longTitle = renderPrTitle({ key: "CYC-330", title: "a".repeat(300) });
+  expect(longTitle.length).toBeLessThanOrEqual(MAX_PR_TITLE_LENGTH);
+  expect(longTitle.startsWith("CYC-330 ")).toBe(true);
+  expect(longTitle.endsWith(" (Closes CYC-330)")).toBe(true);
+  expect(hasClosingKeyword(longTitle, "CYC-330")).toBe(true);
+
+  const emptyTitle = renderPrTitle({ key: "CYC-330", title: "   " });
+  expect(emptyTitle).toBe("CYC-330 (Closes CYC-330)");
 });
 
 test("PR body leads with Closes CYC-<num> and includes criteria, checks, and sessions", () => {
@@ -59,7 +74,10 @@ test("validatePr accepts rendered PR title and body, and rejects missing or mism
   expect(validatePr("CYC-330", title, body)).toEqual({ ok: true });
 
   expect(validatePr("CYC-330", "CYC-330 title without keyword", body).ok).toBe(false);
+  expect(validatePr("CYC-330", `${"x".repeat(250)} (Closes CYC-330)`, body).ok).toBe(false);
   expect(validatePr("CYC-330", title, "## 目的\n\nCYC-330 title").ok).toBe(false);
+  // Keyword appearing only later in the body (e.g. inside issue title or criteria) does not satisfy the first-line rule.
+  expect(validatePr("CYC-330", title, "## 目的\n\nCloses CYC-330").ok).toBe(false);
   // Prefix collision must not match (CYC-33 must not match CYC-330).
   expect(validatePr("CYC-33", title, body).ok).toBe(false);
   expect(validatePr("CYC-331", title, body).ok).toBe(false);

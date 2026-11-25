@@ -131,8 +131,14 @@ export class Pipeline {
     const todo = await tracker.listTodo();
     const issue = pickNext(todo, config);
     if (issue === undefined) {
-      const labeled = todo.filter((i) => i.labelIds.includes(config.autoLabelId)).length;
-      this.#d.log(`dry run: ${todo.length} in Todo, ${labeled} with the auto label`);
+      const labeled = todo.filter((i) => i.labelIds.includes(config.autoLabelId));
+      const rightType = labeled.filter(
+        (i) => i.typeId !== null && config.allowedTypeIds.includes(i.typeId),
+      );
+      const leaves = rightType.filter((i) => i.subtaskCount === 0);
+      this.#d.log(
+        `dry run: ${todo.length} in Todo, ${labeled.length} with auto, ${rightType.length} allowed type, ${leaves.length} leaf`,
+      );
       return { status: "idle" };
     }
     const pre = preflight(issue, config);
@@ -543,6 +549,11 @@ export class Pipeline {
       prUrl = findUrl(existing.output);
       if (existing.code !== 0 || prUrl === undefined)
         throw new Blocked(`gh pr create 失败：${tail(created.output)}`);
+      const edited = await this.#d.exec(
+        ["gh", "pr", "edit", run.remoteBranch, "--title", title, "--body-file", bodyPath],
+        { cwd: worktree, env, timeoutMs },
+      );
+      if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
     }
     await tracker.comment(
       issue,

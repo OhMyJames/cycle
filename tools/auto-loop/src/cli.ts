@@ -3,7 +3,8 @@
 // bun tools/auto-loop/src/cli.ts stats
 //
 // Environment: AUTO_LOOP_PLAN_KEY (required), AUTO_LOOP_PLAN_URL, AUTO_LOOP_PROJECT (default CYC),
-// AUTO_LOOP_STATE (default <dataDir>/auto-loop), CYCLE_HOME / CYCLE_SOCKET for the daemon.
+// AUTO_LOOP_TYPE_IDS (comma-separated issue type ids, default 20,25), AUTO_LOOP_STATE (default <dataDir>/auto-loop),
+// CYCLE_HOME / CYCLE_SOCKET for the daemon.
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -13,7 +14,7 @@ import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
 import { computeStats } from "./stats.ts";
 import { acquireLock, RunStore } from "./store.ts";
-import { defaultConfig } from "./types.ts";
+import { defaultConfig, parseAllowedTypeIds } from "./types.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -39,7 +40,16 @@ if (key === undefined || key === "") {
   process.exit(2);
 }
 const repoRoot = resolve(import.meta.dir, "../../..");
-const config = { ...defaultConfig({ repoRoot, stateDir }), dryRun: flag("--dry-run") };
+const rawTypeIds = process.env.AUTO_LOOP_TYPE_IDS;
+const allowedTypeIds =
+  rawTypeIds !== undefined && rawTypeIds.trim() !== ""
+    ? parseAllowedTypeIds(rawTypeIds)
+    : undefined;
+const config = {
+  ...defaultConfig({ repoRoot, stateDir }),
+  ...(allowedTypeIds !== undefined ? { allowedTypeIds } : {}),
+  dryRun: flag("--dry-run"),
+};
 const tracker = new PlanTracker({
   url: process.env.AUTO_LOOP_PLAN_URL ?? "https://plan.ops.shrimpdot.ai/api/mcp",
   key,

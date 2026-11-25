@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { toIssue } from "../src/plan-mcp.ts";
 import { pickNext } from "../src/select.ts";
+import { parseAllowedTypeIds } from "../src/types.ts";
 import { config, issue } from "./helpers.ts";
 
 const cfg = config();
@@ -29,6 +30,7 @@ test("takes only Feature and Bug leaf issues; ignores Epic, Design, other types,
     issue({ number: 5, priority: "urgent", typeId: null }), // unset type
     issue({ number: 6, priority: "urgent", typeId: 20, subtaskCount: 2 }), // Feature with subtasks
     issue({ number: 7, priority: "urgent", typeId: 25, subtaskCount: 1 }), // Bug with subtasks
+    issue({ number: 12, priority: "urgent", typeId: 20, subtaskCount: null }), // unknown subtask info (fails closed)
     issue({ number: 8, priority: "urgent", columnId: 36, typeId: 20 }), // Paused
     issue({ number: 9, priority: "urgent", columnId: 21, typeId: 20 }), // Backlog
   ];
@@ -100,9 +102,9 @@ test("toIssue parses typeId and active subtaskCount from tracker payloads", () =
       labelIds: [11],
       type: { id: 17 },
       subtasks: [
-        { id: 1, archived: false },
-        { id: 2, archived: true },
-        { id: 3, archived: false },
+        { id: 1, columnId: 24, typeId: 20, archived: false },
+        { id: 2, columnId: 21, typeId: 20, archived: true },
+        { id: 3, columnId: 22, typeId: 20, archived: false },
       ],
     },
     "CYC",
@@ -110,7 +112,25 @@ test("toIssue parses typeId and active subtaskCount from tracker payloads", () =
   expect(parent.typeId).toBe(17);
   expect(parent.subtaskCount).toBe(2);
 
-  const untyped = toIssue({ id: 700, sequenceNumber: 400, columnId: 22 }, "CYC");
+  // Missing subtask info fails closed (subtaskCount: null) so pickNext refuses it.
+  const noSubtaskFields = toIssue(
+    { id: 700, sequenceNumber: 400, columnId: 22, labelIds: [11], typeId: 20 },
+    "CYC",
+  );
+  expect(noSubtaskFields.typeId).toBe(20);
+  expect(noSubtaskFields.subtaskCount).toBeNull();
+  expect(pickNext([noSubtaskFields], cfg)).toBeUndefined();
+
+  const untyped = toIssue({ id: 701, sequenceNumber: 401, columnId: 22, subtasks: [] }, "CYC");
   expect(untyped.typeId).toBeNull();
   expect(untyped.subtaskCount).toBe(0);
+});
+
+test("parseAllowedTypeIds parses valid comma-separated ids and rejects invalid values", () => {
+  expect(parseAllowedTypeIds("20, 25")).toEqual([20, 25]);
+  expect(parseAllowedTypeIds("101")).toEqual([101]);
+  expect(() => parseAllowedTypeIds("")).toThrow();
+  expect(() => parseAllowedTypeIds("20,abc")).toThrow();
+  expect(() => parseAllowedTypeIds("0")).toThrow();
+  expect(() => parseAllowedTypeIds("-5")).toThrow();
 });

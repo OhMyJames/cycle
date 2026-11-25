@@ -19,8 +19,8 @@ export type Issue = {
   labelIds: number[];
   /** Issue type id in the tracker (e.g. Feature, Bug, Epic), or null if unset. */
   typeId: number | null;
-  /** Number of active (non-archived) child issues. Only leaf work items (`0`) may be taken. */
-  subtaskCount: number;
+  /** Number of non-archived child issues, or null when the tracker reply omitted subtask info (fails closed). */
+  subtaskCount: number | null;
 };
 
 /** Where the loop moves a work item. The tracker maps these to the project's columns. */
@@ -93,6 +93,21 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   dryRun: false,
   ...partial,
 });
+
+/** Parses a comma-separated list of positive integer issue type ids (e.g. `AUTO_LOOP_TYPE_IDS=20,25`). */
+export const parseAllowedTypeIds = (raw: string): number[] => {
+  const parts = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  if (parts.length === 0) throw new Error("AUTO_LOOP_TYPE_IDS must contain at least one type id.");
+  return parts.map((part) => {
+    const id = Number(part);
+    if (!Number.isInteger(id) || id <= 0)
+      throw new Error(`invalid type id in AUTO_LOOP_TYPE_IDS: ${part}`);
+    return id;
+  });
+};
 
 export type SessionRole = "dev" | "qa";
 

@@ -88,8 +88,9 @@ const makeExec =
     if (line.includes("diff --name-only")) return result("packages/client/src/a.ts\n");
     if (line.includes("status --porcelain")) return result(world.dirty ? " M a.ts\n" : "");
     if (line.includes("rev-parse HEAD")) return result("abc\n");
-    if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
     for (const pattern of world.fail) if (line.includes(pattern)) return result("boom", 1);
+    if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
+    if (line.includes("gh pr view")) return result("https://github.com/o/r/pull/9\n");
     return result("");
   };
 
@@ -312,4 +313,40 @@ test("a QA pass that does not say what was checked is not accepted", async () =>
     qa: [done(`<verdict>{"pass":true,"findings":[]}</verdict>`)],
   });
   expect((await pipeline.step()).status).toBe("blocked");
+});
+
+test("existing PR fallback runs gh pr edit to update title and body with Closes keyword", async () => {
+  const { pipeline, world } = setup([ready()], { dev: [done()], qa: [done(PASS)] }, {}, [
+    "gh pr create",
+  ]);
+  const result = await pipeline.step();
+  expect(result).toEqual({
+    status: "delivered",
+    key: "CYC-1",
+    prUrl: "https://github.com/o/r/pull/9",
+  });
+  const prEdit = world.calls.find((c) => c.includes("gh pr edit"));
+  expect(prEdit).toContain("Closes CYC-1");
+  expect(prEdit).toContain("--body-file");
+});
+
+test("dry run idle log reports type and leaf exclusions", async () => {
+  const logs: string[] = [];
+  const cfg = config({ stateDir: dir, dryRun: true });
+  const tracker = new FakeTracker([
+    ready({ number: 1, typeId: 17 }), // Epic + auto
+    ready({ number: 2, typeId: 20, subtaskCount: 2 }), // Feature parent + auto
+  ]);
+  const pipeline = new Pipeline({
+    config: cfg,
+    tracker,
+    sessions: new FakeSessions({ dev: [], qa: [] }),
+    exec: makeExec({ fail: new Set(), calls: [], dirty: false, qaWrites: false }),
+    store: new RunStore(dir, () => new Date("2026-11-25T00:00:00Z")),
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: (line) => logs.push(line),
+    env: { PATH: "/bin" },
+  });
+  expect(await pipeline.step()).toEqual({ status: "idle" });
+  expect(logs[0]).toBe("dry run: 2 in Todo, 2 with auto, 1 allowed type, 0 leaf");
 });
