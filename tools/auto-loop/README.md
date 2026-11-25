@@ -22,6 +22,7 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率、介入率、返�
 - 验收状态只由 Loop 跑命令后设置（`criteria.json`），会话说“完成”不算数。
 - 卡住（Blocked）时保留 worktree 和会话；处理后把工单放回 Todo，会在原会话里继续（会话丢失则新开会话，凭 criteria + 进度 + git log 接手）。
 - 无人值守的权限请求：基线白名单自动放行，其余留在会话里等你在桌面端批准。
+- 清理（CYC-379）：每轮选单前检查已结束的 run；工单为 Done 且 PR 已合并时，删除它自己的 worktree 和本地分支。不强删：有未提交改动则只记 `cleanup_skipped_dirty` 事件留给人；不动会话和远端分支。
 - 状态在 `<stateDir>/runs/<KEY>/`（run.json、criteria.json、progress.md）和 `events.jsonl`，都在 worktree 之外。
 
 ## 尚未验证

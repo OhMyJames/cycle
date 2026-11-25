@@ -9,8 +9,10 @@ import {
   postPrComment,
   readCiFailureLogs,
   readCiStatus,
+  readPrState,
   renderPr,
   renderPrTitle,
+  rerunFailedCi,
   validatePr,
   waitForCi,
 } from "../src/pr.ts";
@@ -479,4 +481,75 @@ test("postPrComment and enableAutoMerge invoke gh with deliverEnv and handle fai
   });
   expect(timedOutComment.ok).toBe(false);
   if (!timedOutComment.ok) expect(timedOutComment.error).toContain("超时");
+});
+
+const stateExec =
+  (result: Partial<ExecResult>): Exec =>
+  async () => ({
+    code: 0,
+    output: "",
+    timedOut: false,
+    ...result,
+  });
+const readState = (exec: Exec) =>
+  readPrState({ prRef: "u", exec, cwd: "/", env: {}, timeoutMs: 1 });
+
+test("readPrState tells OPEN, CLOSED and MERGED apart", async () => {
+  for (const state of ["OPEN", "CLOSED", "MERGED"] as const) {
+    expect(await readState(stateExec({ output: JSON.stringify({ state }) }))).toEqual({
+      ok: true,
+      state,
+    });
+  }
+});
+
+test("readPrState returns an error, not OPEN, when the read fails or is unreadable", async () => {
+  expect((await readState(stateExec({ code: 1, output: "no" }))).ok).toBe(false);
+  expect((await readState(stateExec({ timedOut: true }))).ok).toBe(false);
+  expect((await readState(stateExec({ output: "not json" }))).ok).toBe(false);
+  expect((await readState(stateExec({ output: '{"state":"DRAFT"}' }))).ok).toBe(false);
+});
+
+test("rerunFailedCi reruns each failed run once with deliverEnv and respects maxCiRetries", async () => {
+  const calls: { argv: string[]; env: Record<string, string> }[] = [];
+  const exec: Exec = async (argv, opts) => {
+    calls.push({ argv, env: opts.env });
+    return okExec("");
+  };
+  const failed = (job: string) => ({
+    name: `job${job}`,
+    status: "failed" as const,
+    rawState: "FAILURE",
+    detailsUrl: `https://github.com/o/r/actions/runs/20/job/${job}`,
+  });
+  const base = {
+    failed: [failed("1"), failed("2")],
+    maxCiRetries: 2,
+    exec,
+    cwd: "/wt",
+    env: { ...fullEnv, ANTHROPIC_API_KEY: "sk-secret" },
+    timeoutMs: 1000,
+  };
+  const ok = await rerunFailedCi({ ...base, ciRound: 2 });
+  expect(ok).toEqual({ ok: true, runIds: ["20"] });
+  expect(calls.map((c) => c.argv)).toEqual([["gh", "run", "rerun", "20", "--failed"]]);
+  expect(calls[0]?.env.ANTHROPIC_API_KEY).toBeUndefined();
+
+  const over = await rerunFailedCi({ ...base, ciRound: 3 });
+  expect(over.ok).toBe(false);
+  expect(calls).toHaveLength(1);
+
+  const noRun = await rerunFailedCi({
+    ...base,
+    failed: [{ ...failed("1"), detailsUrl: null }],
+    ciRound: 1,
+  });
+  expect(noRun.ok).toBe(false);
+
+  const bad = await rerunFailedCi({
+    ...base,
+    ciRound: 1,
+    exec: async () => ({ code: 1, output: "nope", timedOut: false }),
+  });
+  expect(bad.ok).toBe(false);
 });

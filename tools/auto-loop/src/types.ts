@@ -57,10 +57,13 @@ export type Config = {
   baseRef: string;
   /** The branch a pull request targets. */
   baseBranch: string;
-  columns: { todo: number; inProgress: number; inReview: number; blocked: number };
+  columns: { todo: number; inProgress: number; inReview: number; blocked: number; done: number };
   autoLabelId: number;
   /** Issue type ids the loop may take (e.g. Feature, Bug). Configured by id, never hardcoded or matched by name. */
   allowedTypeIds: number[];
+  /** The tracker's Feature and Bug type ids: which required sections the preflight checks for. */
+  featureTypeId: number;
+  bugTypeId: number;
   /** A work item with more criteria than this is too big for one session: it is sent back to be split. */
   maxCriteria: number;
   /** Fix rounds after the first Dev turn. */
@@ -91,10 +94,12 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   baseRef: "origin/main",
   baseBranch: "main",
   // infra.CYC (get_project, 2026-11-25).
-  columns: { todo: 22, inProgress: 23, inReview: 34, blocked: 35 },
+  columns: { todo: 22, inProgress: 23, inReview: 34, blocked: 35, done: 24 },
   autoLabelId: 11,
   // Feature (20), Bug (25).
   allowedTypeIds: [20, 25],
+  featureTypeId: 20,
+  bugTypeId: 25,
   maxCriteria: 8,
   maxFixRounds: 3,
   ciChecks: ["check", "browser", "integration"],

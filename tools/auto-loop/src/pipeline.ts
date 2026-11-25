@@ -11,11 +11,14 @@ import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { testLayers } from "./layers.ts";
 import {
   enableAutoMerge,
+  type PrState,
   postPrComment,
   readCiStatus,
+  readPrState,
   renderPr,
   renderPrTitle,
   renderReviewComment,
+  rerunFailedCi,
   validatePr,
   waitForCi,
 } from "./pr.ts";
@@ -74,6 +77,8 @@ export type Deps = {
 /** A run cannot go on without a person. The message is what the person is told. */
 class Blocked extends Error {}
 
+const PR_STATE_READS = 3;
+
 const branchOf = (number: number) => `auto/cyc-${number}`;
 
 export class Pipeline {
@@ -87,6 +92,8 @@ export class Pipeline {
   async step(): Promise<StepResult> {
     const { config, tracker, store } = this.#d;
     if (config.dryRun) return this.#dryRun();
+
+    await this.#cleanup();
 
     for (const run of (await store.unfinished()).sort((a, b) =>
       a.startedAt.localeCompare(b.startedAt),
@@ -121,6 +128,7 @@ export class Pipeline {
       phase: "claimed",
       round: 0,
       ciRound: 0,
+      ciFailedSha: null,
       worktree: null,
       localBranch: null,
       remoteBranch: branchOf(issue.number),
@@ -132,6 +140,8 @@ export class Pipeline {
       resumeFrom: null,
       prUrl: null,
       findings: null,
+      cleanedAt: null,
+      cleanupNote: null,
       startedAt: this.#d.clock.now().toISOString(),
       updatedAt: this.#d.clock.now().toISOString(),
     };
@@ -140,6 +150,69 @@ export class Pipeline {
     await tracker.move(issue, "inProgress");
     await store.event(issue.key, "claimed", { criteria: pre.specs.length });
     return this.#drive(run, issue, book, false);
+  }
+
+  /**
+   * Before choosing, removes the worktree and local branch of every run whose work item is Done and whose PR is
+   * merged. Anything else is left alone; a worktree with uncommitted changes is left for a person (CYC-379).
+   * A failure here never stops the loop from taking work.
+   */
+  async #cleanup(): Promise<void> {
+    const { store, log } = this.#d;
+    for (const run of await store.all()) {
+      if (run.phase !== "done" || run.cleanedAt !== null) continue;
+      if (run.prUrl === null || run.worktree === null) continue;
+      try {
+        await this.#cleanupRun(run, run.worktree);
+      } catch (error) {
+        log(
+          `cleanup of ${run.key} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  async #cleanupRun(run: RunRecord, worktree: string): Promise<void> {
+    const { config, tracker, store, clock } = this.#d;
+    const note = async (kind: string) => {
+      if (run.cleanupNote === kind) return;
+      await store.event(run.key, kind);
+      await store.save({ ...run, cleanupNote: kind });
+    };
+    // Only the work item's own worktree: `.../auto/cyc-<n>`.
+    const own = `/${branchOf(run.issueNumber)}`;
+    if (!worktree.replace(/\/+$/, "").endsWith(own)) return;
+
+    const issue = await tracker.get(run.issueNumber);
+    if (issue.columnId !== config.columns.done) return;
+    const read = await readPrState({
+      prRef: run.prUrl ?? "",
+      exec: this.#d.exec,
+      cwd: config.repoRoot,
+      env: this.#d.env,
+      timeoutMs: config.commandTimeoutMs,
+    });
+    if (!read.ok || read.state !== "MERGED") return;
+
+    const status = await this.#git(["status", "--porcelain"], worktree);
+    if (status.code !== 0) return note("cleanup_failed");
+    if (status.output.trim() !== "") return note("cleanup_skipped_dirty");
+
+    // No --force: git itself refuses a worktree with changes in it.
+    const removed = await this.#git(["worktree", "remove", worktree], config.repoRoot);
+    if (removed.code !== 0) return note("cleanup_failed");
+    for (const branch of new Set([run.localBranch, branchOf(run.issueNumber)])) {
+      if (branch === null) continue;
+      const exists = await this.#git(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+        config.repoRoot,
+      );
+      if (exists.code !== 0) continue;
+      const deleted = await this.#git(["branch", "-D", branch], config.repoRoot);
+      if (deleted.code !== 0) return note("cleanup_failed");
+    }
+    await store.event(run.key, "cleaned");
+    await store.save({ ...run, cleanedAt: clock.now().toISOString(), cleanupNote: null });
   }
 
   /** `--dry-run`: pick and check, and say what would happen. Writes nothing anywhere. */
@@ -208,6 +281,10 @@ export class Pipeline {
     try {
       let announce = byPerson;
       for (;;) {
+        if (run.prUrl !== null && run.phase !== "blocked" && run.phase !== "done") {
+          const settled = await this.#guardPr(run, issue, save);
+          if (settled !== undefined) return settled;
+        }
         switch (run.phase) {
           case "claimed": {
             await this.#claim(run, issue, save);
@@ -255,6 +332,58 @@ export class Pipeline {
       if (!(error instanceof Blocked)) throw error;
       return this.#block(run, issue, error.message, save);
     }
+  }
+
+  /** Reads the PR state, retrying a failed read; an unreadable state blocks, it never counts as open. */
+  async #prState(run: RunRecord): Promise<{ prUrl: string; state: PrState }> {
+    const { config } = this.#d;
+    const prUrl = this.#need(run.prUrl ?? undefined);
+    let lastError = "";
+    for (let attempt = 0; attempt < PR_STATE_READS; attempt++) {
+      const read = await readPrState({
+        prRef: prUrl,
+        exec: this.#d.exec,
+        cwd: run.worktree ?? config.repoRoot,
+        env: this.#d.env,
+        timeoutMs: config.commandTimeoutMs,
+      });
+      if (read.ok) return { prUrl, state: read.state };
+      lastError = read.error;
+    }
+    throw new Blocked(`读取 PR 状态失败：${tail(lastError)}`);
+  }
+
+  async #closedBlock(run: RunRecord, prUrl: string): Promise<never> {
+    await this.#d.store.event(run.key, "pr_closed", { phase: run.phase });
+    throw new Blocked(
+      `PR 已被关闭（未合并），需人接手：${prUrl}。自动化不会再往该分支推送，也不会重开 PR。要继续，请先重新打开该 PR，再把工单放回 Todo。`,
+    );
+  }
+
+  /**
+   * Reads the pull request's state at the top of every step once it exists. Closed without merging stops the run (a
+   * person takes over); merged counts as delivered.
+   */
+  async #guardPr(
+    run: RunRecord,
+    issue: Issue,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<StepResult | undefined> {
+    const { store, tracker } = this.#d;
+    const { prUrl, state } = await this.#prState(run);
+    if (state === "OPEN") return undefined;
+    if (state === "CLOSED") return this.#closedBlock(run, prUrl);
+    await tracker.comment(issue, `PR 已在自动化之外合并：${prUrl}。按已交付处理，不再重复开 PR。`);
+    await tracker.move(issue, "inReview");
+    await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
+    await save({ phase: "done" });
+    return { status: "delivered", key: run.key, prUrl, autoMerge: false };
+  }
+
+  /** Re-reads the state in the middle of a step, before acting on a PR that may have been closed meanwhile. */
+  async #assertNotClosed(run: RunRecord): Promise<void> {
+    const { prUrl, state } = await this.#prState(run);
+    if (state === "CLOSED") await this.#closedBlock(run, prUrl);
   }
 
   async #block(
@@ -622,7 +751,39 @@ export class Pipeline {
     if (head.code !== 0) throw new Blocked(`读取 HEAD 提交失败：${tail(head.output)}`);
     const headSha = head.output.trim();
 
+    // No new commit since the red run: a push starts no CI, so rerun the failed jobs and wait for that result.
+    let staleFailedUrls: Set<string> | undefined;
+    if (run.ciRound > 0 && run.ciFailedSha === headSha) {
+      const read = await readCiStatus({
+        prRef: prUrl,
+        requiredChecks: config.ciChecks,
+        expectedHeadSha: headSha,
+        exec: this.#d.exec,
+        cwd: worktree,
+        env: this.#d.env,
+        timeoutMs: config.commandTimeoutMs,
+      });
+      if (!read.ok) throw new Blocked(`读取 CI 状态失败：${tail(read.error)}`);
+      if (read.status.state === "failed") {
+        const rerun = await rerunFailedCi({
+          failed: read.status.failed,
+          ciRound: run.ciRound,
+          maxCiRetries: config.maxCiRetries,
+          exec: this.#d.exec,
+          cwd: worktree,
+          env: this.#d.env,
+          timeoutMs: config.commandTimeoutMs,
+        });
+        if (!rerun.ok) throw new Blocked(`重新运行 CI 失败：${tail(rerun.error)}`);
+        await store.event(run.key, "ci_rerun", { ciRound: run.ciRound, runs: rerun.runIds.length });
+        staleFailedUrls = new Set(
+          read.status.failed.flatMap((c) => (c.detailsUrl === null ? [] : [c.detailsUrl])),
+        );
+      }
+    }
+
     const result = await waitForCi({
+      staleFailedUrls,
       prRef: prUrl,
       requiredChecks: config.ciChecks,
       expectedHeadSha: headSha,
@@ -636,6 +797,7 @@ export class Pipeline {
       sleep: this.#d.sleep ?? ((ms) => Bun.sleep(ms)),
     });
 
+    await this.#assertNotClosed(run);
     if (result.outcome === "error") {
       throw new Blocked(`读取 CI 状态失败：${tail(result.error)}`);
     }
@@ -667,6 +829,7 @@ export class Pipeline {
         phase: "dev",
         round: run.round + 1,
         ciRound: run.ciRound + 1,
+        ciFailedSha: headSha,
         findings,
       });
       return;
@@ -789,6 +952,8 @@ export class Pipeline {
         await store.event(run.key, "review_retry", { round: run.round, attempt: attempt + 1 });
       }
     }
+
+    await this.#assertNotClosed(run);
 
     const writeAndPostComment = async (body: string) => {
       const { writeFile } = await import("node:fs/promises");
