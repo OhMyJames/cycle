@@ -62,6 +62,9 @@ describe("shoot options", () => {
     expect(shotFile("a", "dark", "1200x800", "png")).toBe("a.dark.1200x800.png");
     expect(shotFile("a", "dark", "1200x800", "webp")).toBe("a.dark.1200x800.webp");
   });
+  test("a cropped or narrowed shot has its own name", () => {
+    expect(shotFile("a", "dark", "1200x800", "webp", true)).toBe("a.dark.1200x800.crop.webp");
+  });
   test("output width is capped and keeps proportion", () => {
     const s = outputSize(1200, 2, 960);
     expect(s.width).toBe(960);

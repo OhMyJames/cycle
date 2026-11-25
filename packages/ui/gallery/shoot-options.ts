@@ -91,9 +91,15 @@ export function parseShootOptions(argv: string[]): ShootOptions {
   };
 }
 
-/** The file's extension follows the format. */
-export function shotFile(name: string, theme: string, size: string, format: Format): string {
-  return `${name}.${theme}.${size}.${format}`;
+/** The file's extension follows the format. A cropped or narrowed shot says so, so it does not overwrite the full one. */
+export function shotFile(
+  name: string,
+  theme: string,
+  size: string,
+  format: Format,
+  reduced = false,
+): string {
+  return `${name}.${theme}.${size}${reduced ? ".crop" : ""}.${format}`;
 }
 
 /**

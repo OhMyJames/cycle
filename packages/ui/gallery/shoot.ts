@@ -35,7 +35,10 @@ const jobs = names.flatMap((name) =>
         tabs: (scenarios as Record<string, Scenario | undefined>)[name]?.tabs ?? 0,
         width,
         height,
-        out: join(out, shotFile(name, theme, size, format)),
+        out: join(
+          out,
+          shotFile(name, theme, size, format, crop !== undefined || maxWidth !== undefined),
+        ),
       };
     }),
   ),
@@ -112,14 +115,23 @@ async function shoot(
     clip = { x: box.x + scroll.x, y: box.y + scroll.y, width: box.width, height: box.height };
   }
   const { scale } = outputSize(clip.width, DEVICE_SCALE_FACTOR, maxWidth);
+  // What animations: "disabled" does in page.screenshot: finite ones run to their end, endless ones stop.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    for (const a of document.getAnimations()) {
+      if (a.effect?.getComputedTiming().endTime === Number.POSITIVE_INFINITY) a.cancel();
+      else a.finish();
+    }
+  });
   const cdp = await context.newCDPSession(page);
   try {
     const { data } = await cdp.send("Page.captureScreenshot", {
       format,
-      ...(format === "webp" ? { quality: 90 } : {}),
+      ...(format === "webp" ? { quality: 100 } : {}),
       // The clip's scale is output pixels per CSS pixel: the device scale factor is not applied on top.
       clip: { ...clip, scale: scale * DEVICE_SCALE_FACTOR },
-      captureBeyondViewport: false,
+      // A clip past the viewport (a tall element) is still drawn whole.
+      captureBeyondViewport: true,
     });
     await Bun.write(job.out, Buffer.from(data, "base64"));
   } finally {

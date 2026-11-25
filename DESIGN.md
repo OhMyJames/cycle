@@ -346,6 +346,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 bun packages/ui/gallery/shoot.ts                                  # 所有场景，浅色和深色，1200x800 和 720x480
 bun packages/ui/gallery/shoot.ts permission --themes dark         # 指定场景和主题
 bun packages/ui/gallery/shoot.ts --sizes 1200x800,720x480 --all   # 指定尺寸，列出每张
+bun packages/ui/gallery/shoot.ts permission --crop "[role=dialog]" --format webp --max-width 960   # 裁剪、webp、限宽(文件名带 .crop;webp 质量 100)
 ```
 
 画廊在无界面的 Chromium 中运行（Playwright，每张图一个新的浏览器上下文，2 倍像素，不开窗口、不抢焦点），检查根页面溢出、控制台错误、焦点环、列表首项可见性与输入框边界对比度。在浏览器中预览：`bun packages/ui/gallery/build.ts`，再 `bun scripts/serve-dir.ts packages/ui/gallery/dist`，打开它给出的地址（加 `?s=<场景>` 或 `?s=tokens`）；直接打开文件不行，模块脚本不从 file:// 加载。
