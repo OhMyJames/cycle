@@ -51,6 +51,10 @@ export const RunRecordSchema = z.object({
   prUrl: z.string().nullable(),
   /** What QA and the checks said last, for the Dev turn that follows. */
   findings: z.string().nullable(),
+  /** When the worktree and local branch were removed after Done and merged; null while they are still there. */
+  cleanedAt: z.string().nullable().default(null),
+  /** The last cleanup event written for this run, so a worktree left for a person is told once, not every round. */
+  cleanupNote: z.string().nullable().default(null),
   startedAt: z.string(),
   updatedAt: z.string(),
 });
@@ -101,8 +105,7 @@ export class RunStore {
     return next;
   }
 
-  /** Runs that have not ended: the loop picks these up again after a restart. */
-  async unfinished(): Promise<RunRecord[]> {
+  async all(): Promise<RunRecord[]> {
     let names: string[];
     try {
       names = await readdir(join(this.#dir, "runs"));
@@ -111,7 +114,12 @@ export class RunStore {
       throw error;
     }
     const records = await Promise.all(names.map((name) => this.load(name)));
-    return records.filter((r): r is RunRecord => r !== undefined && r.phase !== "done");
+    return records.filter((r): r is RunRecord => r !== undefined);
+  }
+
+  /** Runs that have not ended: the loop picks these up again after a restart. */
+  async unfinished(): Promise<RunRecord[]> {
+    return (await this.all()).filter((r) => r.phase !== "done");
   }
 
   async saveCriteria(key: string, book: CriteriaBook): Promise<void> {

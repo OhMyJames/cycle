@@ -1138,6 +1138,8 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     resumeFrom: null,
     prUrl: "https://github.com/o/r/pull/9",
     findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
     startedAt: "2026-11-25T00:00:00.000Z",
     updatedAt: "2026-11-25T00:00:00.000Z",
   });
@@ -1232,4 +1234,84 @@ test("a PR closed while CI is awaited blocks before CI results are acted on", as
   s.world.prState = ["OPEN", "CLOSED"]; // ci guard, then re-read after waiting
   expect((await s.pipeline.step()).status).toBe("blocked");
   expect(s.sessions.created.filter((id) => id.startsWith("review"))).toHaveLength(0);
+});
+
+// ---- cleanup after Done and merged (CYC-379) ----
+
+const doneRun = async (s: ReturnType<typeof setup>) => {
+  await s.store.save({
+    key: "CYC-1",
+    issueId: 1,
+    issueNumber: 1,
+    title: "title",
+    phase: "done",
+    round: 0,
+    ciRound: 0,
+    ciFailedSha: null,
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "dev-1",
+    qaSessionId: "qa-2",
+    reviewSessionId: "review-3",
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    prUrl: "https://github.com/o/r/pull/9",
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    startedAt: "2026-11-25T00:00:00.000Z",
+    updatedAt: "2026-11-25T00:00:00.000Z",
+  });
+};
+
+const removals = (s: ReturnType<typeof setup>) =>
+  s.world.calls.filter((c) => c.includes("worktree remove") || c.includes("branch -D"));
+
+test("a Done work item with a merged PR loses its worktree and local branches", async () => {
+  const s = setup([ready({ columnId: 24 })], { dev: [], qa: [] });
+  s.world.prState = "MERGED";
+  await doneRun(s);
+  expect((await s.pipeline.step()).status).toBe("idle");
+  expect(removals(s)).toEqual([
+    `git worktree remove ${WT}`,
+    "git branch -D worktree-auto/cyc-1",
+    "git branch -D auto/cyc-1",
+  ]);
+  expect((await s.store.load("CYC-1"))?.cleanedAt).not.toBeNull();
+  expect((await s.store.events()).map((e) => e.kind)).toContain("cleaned");
+  // Not again on the next round.
+  await s.pipeline.step();
+  expect(removals(s)).toHaveLength(3);
+});
+
+for (const [name, column, pr] of [
+  ["Blocked", 35, "MERGED"],
+  ["In Review", 34, "MERGED"],
+  ["In Progress", 23, "MERGED"],
+  ["Done but PR open", 24, "OPEN"],
+  ["Done but PR closed", 24, "CLOSED"],
+] as const) {
+  test(`nothing is cleaned for ${name}`, async () => {
+    const s = setup([ready({ columnId: column })], { dev: [], qa: [] });
+    s.world.prState = pr;
+    await doneRun(s);
+    await s.pipeline.step();
+    expect(removals(s)).toEqual([]);
+    expect((await s.store.load("CYC-1"))?.cleanedAt).toBeNull();
+  });
+}
+
+test("a worktree with uncommitted changes is kept and an event says so, once", async () => {
+  const s = setup([ready({ columnId: 24 })], { dev: [], qa: [] });
+  s.world.prState = "MERGED";
+  s.world.dirty = true;
+  await doneRun(s);
+  await s.pipeline.step();
+  await s.pipeline.step();
+  expect(removals(s)).toEqual([]);
+  const kinds = (await s.store.events()).map((e) => e.kind);
+  expect(kinds.filter((k) => k === "cleanup_skipped_dirty")).toHaveLength(1);
+  expect((await s.store.load("CYC-1"))?.cleanedAt).toBeNull();
 });
