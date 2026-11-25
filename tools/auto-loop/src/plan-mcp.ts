@@ -40,6 +40,14 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     : parsedSubtaskCount !== null && parsedSubtaskCount >= 0
       ? parsedSubtaskCount
       : null;
+  // Blockers are `blocks` links pointing inward (the other issue blocks this one); `relates` and outward links do not
+  // matter. No `links` field at all means unknown, so `null` and `pickNext` fails closed.
+  const blockerColumnIds = Array.isArray(r.links)
+    ? r.links
+        .map(asRecord)
+        .filter((l) => l.kind === "blocks" && l.direction === "inward")
+        .map((l) => parseOptionalInt(l.columnId ?? asRecord(l.issue).columnId) ?? -1)
+    : null;
   return {
     id,
     number,
@@ -52,6 +60,7 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     labelIds,
     typeId,
     subtaskCount,
+    blockerColumnIds,
   };
 };
 

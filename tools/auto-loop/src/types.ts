@@ -21,6 +21,11 @@ export type Issue = {
   typeId: number | null;
   /** Number of non-archived child issues, or null when the tracker reply omitted subtask info (fails closed). */
   subtaskCount: number | null;
+  /**
+   * The columns of the issues that block this one (`blocks` links, direction `inward`), or null when the tracker reply
+   * omitted `links` (fails closed). A blocker whose column is unknown is `-1`, which is never Done or Canceled.
+   */
+  blockerColumnIds: number[] | null;
 };
 
 /** Where the loop moves a work item. The tracker maps these to the project's columns. */
@@ -57,7 +62,14 @@ export type Config = {
   baseRef: string;
   /** The branch a pull request targets. */
   baseBranch: string;
-  columns: { todo: number; inProgress: number; inReview: number; blocked: number; done: number };
+  columns: {
+    todo: number;
+    inProgress: number;
+    inReview: number;
+    blocked: number;
+    done: number;
+    canceled: number;
+  };
   autoLabelId: number;
   /** Issue type ids the loop may take (e.g. Feature, Bug). Configured by id, never hardcoded or matched by name. */
   allowedTypeIds: number[];
@@ -98,7 +110,7 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   baseRef: "origin/main",
   baseBranch: "main",
   // infra.CYC (get_project, 2026-11-25).
-  columns: { todo: 22, inProgress: 23, inReview: 34, blocked: 35, done: 24 },
+  columns: { todo: 22, inProgress: 23, inReview: 34, blocked: 35, done: 24, canceled: 25 },
   autoLabelId: 11,
   // Feature (20), Bug (25).
   allowedTypeIds: [20, 25],
