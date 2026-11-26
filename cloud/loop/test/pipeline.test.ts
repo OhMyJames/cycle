@@ -2087,7 +2087,7 @@ const REDCI: CiResponse = {
     { name: "integration", status: "COMPLETED", conclusion: "SUCCESS" },
   ],
 };
-const IGNORED = "node_modules/\ntools/auto-loop/node_modules/\nout/\n";
+const IGNORED = "node_modules/\ncloud/loop/node_modules/\nout/\n";
 const rmCalls = (calls: string[]) => calls.filter((c) => c.startsWith("rm -rf"));
 
 test("release on: node_modules is deleted before waiting for CI, and an event is written", async () => {
@@ -2098,7 +2098,7 @@ test("release on: node_modules is deleted before waiting for CI, and an event is
   );
   s.world.ignoredDirs = IGNORED;
   expect((await s.pipeline.step()).status).toBe("delivered");
-  expect(rmCalls(s.world.calls)).toEqual(["rm -rf -- node_modules tools/auto-loop/node_modules"]);
+  expect(rmCalls(s.world.calls)).toEqual(["rm -rf -- node_modules cloud/loop/node_modules"]);
   const rm = s.world.calls.findIndex((c) => c.startsWith("rm -rf"));
   const poll = s.world.calls.findIndex((c) => c.includes("statusCheckRollup"));
   expect(rm).toBeGreaterThan(s.world.calls.findIndex((c) => c.includes("gh pr create")));
@@ -2144,7 +2144,7 @@ test("release on: red CI installs again before the Dev session starts; a failed 
     const head = [
       "bun install",
       "turn:dev",
-      "rm -rf -- node_modules tools/auto-loop/node_modules",
+      "rm -rf -- node_modules cloud/loop/node_modules",
       "bun install",
     ];
     expect(order.slice(0, 4)).toEqual(head);

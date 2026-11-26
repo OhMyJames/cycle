@@ -3,11 +3,11 @@
 Status: accepted
 Date: 2026-11-25
 Updated: 2026-11-26 (CYC-407): facts corrected to match the code; the decision is unchanged.
-Basis: CYC-318 and its parent CYC-315 (itsaplan), design discussion with the user on 2026-11-24/25; code in tools/auto-loop/.
+Basis: CYC-318 and its parent CYC-315 (itsaplan), design discussion with the user on 2026-11-24/25; code in cloud/loop/.
 
 ## Problem
 
-`tools/auto-loop` takes work items from the tracker and runs coding sessions on them with no one watching. Whoever writes a work item (or a session that drafted it) controls text the loop acts on, and the loop holds the tracker and GitHub credentials. The agent `agy` ignores `permissions.allow/ask/deny` under ACP, so the agent's own settings cannot be the boundary.
+`cloud/loop` takes work items from the tracker and runs coding sessions on them with no one watching. Whoever writes a work item (or a session that drafted it) controls text the loop acts on, and the loop holds the tracker and GitHub credentials. The agent `agy` ignores `permissions.allow/ask/deny` under ACP, so the agent's own settings cannot be the boundary.
 
 ## Decision
 

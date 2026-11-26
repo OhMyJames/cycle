@@ -231,7 +231,7 @@ Loop 的「找任务」节点在 Todo 里没有能领的单时,会自己从 Back
 | 进 Todo 和打 `auto` 必须由人确认 | 规划节点从代码上做不到;但人和其他 agent 推进时,Loop 不检查是谁推进的,全靠约定 | CYC-375 |
 | Loop 页面里整批批准待批准的工单  | 还没做,先在 itsaplan 里按 `待批准` 筛出来逐张批准                             | CYC-451 |
 
-这些改动在 `tools/auto-loop/`,属于大档,要走 intent / spec / design / plan。落地后,把对应行从这张表删掉,并改相关小节的措辞。
+这些改动在 `cloud/loop/`,属于大档,要走 intent / spec / design / plan。落地后,把对应行从这张表删掉,并改相关小节的措辞。
 
 ## 整理存量
 

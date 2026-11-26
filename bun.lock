@@ -59,8 +59,12 @@
       "name": "@cycle/loop",
       "version": "0.0.0",
       "dependencies": {
+        "@cycle/client": "workspace:*",
         "@cycle/protocol": "workspace:*",
         "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@cycle/daemon": "workspace:*",
       },
     },
     "harness/agy": {
@@ -184,18 +188,6 @@
         "vitest": "5.1.1",
       },
     },
-    "tools/auto-loop": {
-      "name": "@cycle/auto-loop",
-      "version": "0.0.0",
-      "dependencies": {
-        "@cycle/client": "workspace:*",
-        "@cycle/protocol": "workspace:*",
-        "zod": "catalog:",
-      },
-      "devDependencies": {
-        "@cycle/daemon": "workspace:*",
-      },
-    },
   },
   "trustedDependencies": [
     "electron",
@@ -302,8 +294,6 @@
     "@chevrotain/types": ["@chevrotain/types@11.1.2", "", {}, "sha512-U+HFai5+zmJCkK86QsaJtoITlboZHBqrVketcO2ROv865xfCMSFpELQoz1GkX5GzME8pTa+3kbKrZHQtI0gdbw=="],
 
     "@cycle/analytics": ["@cycle/analytics@workspace:packages/analytics"],
-
-    "@cycle/auto-loop": ["@cycle/auto-loop@workspace:tools/auto-loop"],
 
     "@cycle/client": ["@cycle/client@workspace:packages/client"],
 
