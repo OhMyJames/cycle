@@ -608,3 +608,61 @@ test("the planning tracker has no move, no generic label, type or link, and noth
     "unmarkPending",
   ]);
 });
+
+// The replies' shapes as the real itsaplan gives them (2026-11-26): the list has no version or lock, the document has.
+const listed = [
+  {
+    documentId: 43,
+    title: "[CYC-9] Intent",
+    icon: null,
+    isPrivate: false,
+    archived: false,
+    createdAt: "x",
+  },
+  {
+    documentId: 44,
+    title: "[CYC-9] Spec",
+    icon: null,
+    isPrivate: false,
+    archived: true,
+    createdAt: "x",
+  },
+];
+const doc = (id: number) => ({
+  id,
+  title: "[CYC-9] Intent",
+  isLocked: true,
+  archivedAt: null,
+  version: 3,
+  content: "# Intent",
+});
+
+test("linked documents: the list's documentId and archived, each live one's version and lock from get_document", async () => {
+  for (const catalog of ["full", "trimmed"] as const) {
+    const { t, calls } = tracker(catalog, {
+      list_issue_documents: { ok: true, data: listed },
+      get_document: (a: { documentId: number }) => ({ ok: true, data: doc(a.documentId) }),
+    });
+    expect(await t.listIssueDocuments({ id: 9 })).toEqual([
+      { id: 43, title: "[CYC-9] Intent", version: 3, locked: true, archived: false },
+      { id: 44, title: "[CYC-9] Spec", version: 0, locked: false, archived: true },
+    ]);
+    expect(
+      calls.filter((c) => c.name === "get_document").map((c) => c.arguments.documentId),
+    ).toEqual([43]);
+  }
+});
+
+test("linked documents: a reply of another shape is an error, not an unlocked or missing document", async () => {
+  const withList = (list: unknown, got: unknown = { ok: true, data: doc(43) }) =>
+    tracker("full", { list_issue_documents: { ok: true, data: list }, get_document: got }).t;
+  await expect(
+    withList([{ id: 43, title: "x", archived: false }]).listIssueDocuments({ id: 9 }),
+  ).rejects.toThrow("list_issue_documents");
+  await expect(
+    withList([{ documentId: 43, title: "x" }]).listIssueDocuments({ id: 9 }),
+  ).rejects.toThrow("list_issue_documents");
+  await expect(
+    withList([listed[0]], { ok: true, data: { id: 43, version: 3 } }).listIssueDocuments({ id: 9 }),
+  ).rejects.toThrow("get_document");
+});

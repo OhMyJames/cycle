@@ -6,6 +6,7 @@ import {
   type ExecResult,
   type Issue,
   type IssueComment,
+  type IssueDocument,
   type NewIssue,
   type Priority,
   type SessionRole,
@@ -129,6 +130,16 @@ export class FakeTracker implements Tracker {
   async setLoopPhase(i: Issue, phase: string | null, _at?: Date, _signal?: AbortSignal) {
     if (this.failPhase) throw new Error("field write failed");
     this.phases.push(`${i.key}:${phase ?? "clear"}`);
+  }
+  /** Documents linked to each issue, by key (CYC-328), and their Markdown by id. */
+  issueDocs: Record<string, IssueDocument[]> = {};
+  docContent: Record<number, string> = {};
+  async listIssueDocuments(i: Pick<Issue, "id">) {
+    const key = this.issues.find((x) => x.id === i.id)?.key ?? "";
+    return this.issueDocs[key] ?? [];
+  }
+  async getDocumentContent(docId: number) {
+    return this.docContent[docId] ?? "";
   }
   documents: DocumentEntry[] = [{ id: 10, title: "调研", parentId: null }];
   /** Every document written, with its content. */

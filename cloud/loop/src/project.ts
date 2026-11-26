@@ -7,7 +7,7 @@ import type { Config, DocumentEntry, LoopPhase } from "./types.ts";
 
 export type ProjectSetup = Pick<
   Config,
-  "columns" | "autoLabelId" | "allowedTypeIds" | "featureTypeId" | "bugTypeId"
+  "columns" | "autoLabelId" | "fullFlowLabelId" | "allowedTypeIds" | "featureTypeId" | "bugTypeId"
 >;
 
 /** What `resolveProject` finds for research (CYC-447); the rest of `Config.research` comes from the config file. */
@@ -29,6 +29,9 @@ export type PlanningNames = {
   skip: string;
   fullProcess: string;
 };
+
+/** The label that marks a work item as 大档 (CYC-328). */
+const FULL_FLOW_LABEL = "完整流程";
 
 const rec = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
@@ -106,6 +109,7 @@ export const resolveProject = (
       canceled: pick("canceled", 0, "canceled"),
     },
     autoLabelId: byName(data.labels, names.autoLabel, "label"),
+    fullFlowLabelId: optionalByName(data.labels, FULL_FLOW_LABEL),
     allowedTypeIds: [
       ...new Set([
         featureTypeId,

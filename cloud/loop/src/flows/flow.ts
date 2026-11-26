@@ -80,6 +80,8 @@ export type Accepted = Extract<Preflight, { ok: true }>;
 export type Opening = {
   /** The criteria the run is checked against; empty for a kind that has none. */
   specs: Parameters<typeof CriteriaBook.fromSpecs>[0];
+  /** 大档: the documents and versions the run starts on (CYC-328). */
+  fullFlowDocs?: { id: number; title: string; version: number }[];
   research: ResearchState | null;
   /** The data of the `claimed` event. */
   claimed: EventData;

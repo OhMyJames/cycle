@@ -35,7 +35,15 @@ export const devFlow = (host: FlowHost, steps: DevSteps): Flow => ({
   open(accepted) {
     if (accepted.kind !== "dev") throw new Error(`a ${accepted.kind} work item is not a dev run`);
     // A dev run's `claimed` event stays as it always was: no `runKind`, which `stats` reads as dev.
-    return { specs: accepted.specs, research: null, claimed: { criteria: accepted.specs.length } };
+    return {
+      specs: accepted.specs,
+      ...(accepted.docs === undefined ? {} : { fullFlowDocs: accepted.docs }),
+      research: null,
+      claimed: {
+        criteria: accepted.specs.length,
+        ...(accepted.docs === undefined ? {} : { fullFlow: true }),
+      },
+    };
   },
 
   wouldTake(issue, accepted) {

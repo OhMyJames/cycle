@@ -1,6 +1,7 @@
 // What the flows of one work item in the tracker share: dev and research runs both come from the `Todo` column, go
 // on when a person puts them back, and stop in Blocked with a comment.
 
+import { fullFlowPreflight, isFullFlow } from "../full-flow.ts";
 import { preflight, sendBackComment } from "../preflight.ts";
 import { pickNext } from "../select.ts";
 import type { RunRecord } from "../store.ts";
@@ -27,6 +28,14 @@ export const todoIntake = (host: FlowHost): Intake => ({
       const leaves = rightType.filter((i) => i.subtaskCount === 0);
       return {
         idle: `dry run: ${todo.length} in Todo, ${labeled.length} with auto, ${rightType.length} allowed type, ${leaves.length} leaf`,
+      };
+    }
+    if (isFullFlow(issue, config)) {
+      const full = await fullFlowPreflight(issue, config, tracker);
+      if (!full.ok) return { reject: issue, reasons: full.reasons };
+      return {
+        take: issue,
+        accepted: { ok: true, kind: "dev", specs: full.specs, docs: full.docs },
       };
     }
     const pre = preflight(issue, config);
