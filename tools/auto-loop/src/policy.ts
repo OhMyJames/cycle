@@ -4,12 +4,21 @@
 // `deny`: never, for this role. `ask`: anything else is left unanswered, so the session waits in `requires_action`
 // and a person answers it in the desktop app. An unrecognized request is `ask`, never `allow`.
 //
-// The research roles (CYC-447) only read, and never wait for a person: what they may not do is `deny`.
+// The research roles (CYC-447) only read, and never wait for a person: what they may not do is `deny`. The planning
+// node's roles (CYC-322: `triage`, `shape`, `shape_qa`) follow exactly the same rules.
 
 import { posix } from "node:path";
 import type { PermissionAnswer } from "@cycle/client";
 
-export type Role = "dev" | "qa" | "review" | "research" | "research_qa";
+export type Role =
+  | "dev"
+  | "qa"
+  | "review"
+  | "research"
+  | "research_qa"
+  | "triage"
+  | "shape"
+  | "shape_qa";
 export type Decision = { decision: "allow" | "deny" | "ask"; reason: string };
 
 type ToolCall = { kind?: unknown; rawInput?: unknown; locations?: unknown };
@@ -139,7 +148,15 @@ const DEV_RUN = [
 const startsWith = (words: string[], prefix: string[]): boolean =>
   prefix.every((word, index) => words[index] === word);
 
-const isResearch = (role: Role): boolean => role === "research" || role === "research_qa";
+/** The roles under the research rules: read the worktree and the read roots, nothing else, never ask. */
+const RESEARCH_RULES: ReadonlySet<Role> = new Set([
+  "research",
+  "research_qa",
+  "triage",
+  "shape",
+  "shape_qa",
+]);
+const isResearch = (role: Role): boolean => RESEARCH_RULES.has(role);
 
 const simpleAllowed = (words: string[], role: Role): boolean => {
   const [program, sub] = words;
@@ -292,7 +309,10 @@ const researchCommand = (
   return { decision: "allow", reason: "an allowlisted command" };
 };
 
-/** The research roles: read the worktree and the read roots, run read-only commands; refuse the rest outright. */
+/**
+ * The research and planning roles: read the worktree and the read roots, run read-only commands; refuse the rest
+ * outright.
+ */
 const decideResearch = (
   request: Record<string, unknown>,
   worktree: string,

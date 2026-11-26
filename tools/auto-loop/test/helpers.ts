@@ -5,7 +5,9 @@ import {
   type Exec,
   type ExecResult,
   type Issue,
+  type IssueComment,
   type NewIssue,
+  type Priority,
   type SessionRole,
   type Sessions,
   type Stage,
@@ -160,7 +162,7 @@ export class FakeTracker implements Tracker {
       key: `CYC-${number}`,
       title: input.title,
       description: input.description,
-      priority: null,
+      priority: input.priority ?? null,
       columnId: input.columnId,
       labelIds: [],
       typeId: input.typeId,
@@ -169,8 +171,38 @@ export class FakeTracker implements Tracker {
     this.issues.push(created);
     return { id: created.id, number };
   }
-  async linkIssues(i: Issue, toId: number, kind: "relates") {
+  async linkIssues(i: Issue, toId: number, kind: "relates" | "blocks") {
     this.issueLinks.push(`${i.key}:${kind}:${toId}`);
+  }
+  /** Comments by issue key, oldest first. */
+  threads: Record<string, IssueComment[]> = {};
+  async listBacklog() {
+    return this.issues.filter((i) => i.columnId === 21);
+  }
+  async listComments(i: Issue) {
+    return this.threads[i.key] ?? [];
+  }
+  #found(i: Issue): Issue {
+    const found = this.issues.find((x) => x.number === i.number);
+    if (!found) throw new Error("no issue");
+    return found;
+  }
+  async setTitle(i: Issue, title: string) {
+    this.#found(i).title = title;
+  }
+  async setType(i: Issue, typeId: number) {
+    this.#found(i).typeId = typeId;
+  }
+  async setPriority(i: Issue, priority: Priority | null) {
+    this.#found(i).priority = priority;
+  }
+  async addLabel(i: Issue, labelId: number) {
+    const found = this.#found(i);
+    if (!found.labelIds.includes(labelId)) found.labelIds = [...found.labelIds, labelId];
+  }
+  async removeLabel(i: Issue, labelId: number) {
+    const found = this.#found(i);
+    found.labelIds = found.labelIds.filter((id) => id !== labelId);
   }
 }
 
@@ -180,6 +212,9 @@ export type Script = {
   review?: (TurnResult | Error)[];
   research?: (TurnResult | Error)[];
   research_qa?: (TurnResult | Error)[];
+  triage?: (TurnResult | Error)[];
+  shape?: (TurnResult | Error)[];
+  shape_qa?: (TurnResult | Error)[];
   /** Either a persistent error for every create of this role, or a per-attempt queue (null = succeed). */
   createError?: Partial<Record<SessionRole, Error | (Error | null)[]>>;
 };
@@ -196,6 +231,9 @@ export class FakeSessions implements Sessions {
     review: (TurnResult | Error)[];
     research: (TurnResult | Error)[];
     research_qa: (TurnResult | Error)[];
+    triage: (TurnResult | Error)[];
+    shape: (TurnResult | Error)[];
+    shape_qa: (TurnResult | Error)[];
     createError: Partial<Record<SessionRole, Error | (Error | null)[]>>;
   };
   constructor(script: Script) {
@@ -209,6 +247,9 @@ export class FakeSessions implements Sessions {
       review: script.review !== undefined ? [...script.review] : [done(REVIEW_MERGE)],
       research: [...(script.research ?? [])],
       research_qa: [...(script.research_qa ?? [])],
+      triage: [...(script.triage ?? [])],
+      shape: [...(script.shape ?? [])],
+      shape_qa: [...(script.shape_qa ?? [])],
       createError,
     };
   }

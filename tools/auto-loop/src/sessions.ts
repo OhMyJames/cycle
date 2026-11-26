@@ -79,7 +79,15 @@ type Turn = {
  * the allowlist. Other agents name their modes differently and are left as they are until mapped.
  */
 const READ_ONLY_MODES: Record<string, string> = { claude: "default" };
-const READ_ONLY_ROLES: readonly SessionRole[] = ["qa", "review", "research", "research_qa"];
+const READ_ONLY_ROLES: readonly SessionRole[] = [
+  "qa",
+  "review",
+  "research",
+  "research_qa",
+  "triage",
+  "shape",
+  "shape_qa",
+];
 
 export const readOnlyMode = (role: SessionRole, agent: string): string | undefined =>
   READ_ONLY_ROLES.includes(role) ? READ_ONLY_MODES[agent] : undefined;

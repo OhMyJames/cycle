@@ -46,7 +46,7 @@ export type LoopPhase =
 /** A document in the project's tree (`list_documents`), without its content. */
 export type DocumentEntry = { id: number; title: string; parentId: number | null };
 
-/** An issue the loop creates. No labels and no priority: a person decides those. */
+/** An issue the loop creates. No labels: a person decides those. */
 export type NewIssue = {
   typeId: number;
   title: string;
@@ -54,6 +54,20 @@ export type NewIssue = {
   columnId: number;
   /** The parent issue's internal id, or null for a top-level issue. */
   parentId: number | null;
+  /** Left out by research, which leaves it to a person; the planner (CYC-322) sets one on the issues it splits off. */
+  priority?: Priority;
+};
+
+/** A comment on an issue (`list_issue_activity`). */
+export type IssueComment = {
+  id: number;
+  /** The comment it answers, or null for one at the top of a thread. */
+  replyToId: number | null;
+  authorId: string;
+  authorName: string;
+  body: string;
+  /** ISO time. */
+  createdAt: string;
 };
 
 export interface Tracker {
@@ -76,9 +90,55 @@ export interface Tracker {
   setDescription(issue: Issue, description: string): Promise<void>;
   /** Returns the new issue's internal id and its number. */
   createIssue(input: NewIssue): Promise<{ id: number; number: number }>;
-  /** A link from `from` to the issue whose internal id is `toId`. */
-  linkIssues(from: Issue, toId: number, kind: "relates"): Promise<void>;
+  /** A link from `from` to the issue whose internal id is `toId`. `blocks`: `from` blocks the other. */
+  linkIssues(from: Issue, toId: number, kind: "relates" | "blocks"): Promise<void>;
+  /** The work items in the Backlog column, read in full (CYC-322). */
+  listBacklog(): Promise<Issue[]>;
+  /** Every comment on the issue, replies included, oldest first. */
+  listComments(issue: Issue): Promise<IssueComment[]>;
+  setTitle(issue: Issue, title: string): Promise<void>;
+  setType(issue: Issue, typeId: number): Promise<void>;
+  setPriority(issue: Issue, priority: Priority | null): Promise<void>;
+  /** Adds or removes one label and keeps the others as the tracker has them now, not as `issue` had them. */
+  addLabel(issue: Issue, labelId: number): Promise<void>;
+  removeLabel(issue: Issue, labelId: number): Promise<void>;
 }
+
+/**
+ * What the planning node (CYC-322) may do in the tracker, and nothing more: no column moves, no `auto`, no label but
+ * its own two. Built from a `Tracker` by `planningTracker`, which binds the label ids, the Backlog column and the type
+ * ids, so the planner has no id to pass.
+ */
+export interface PlanningTracker {
+  get(number: number): Promise<Issue>;
+  listBacklog(): Promise<Issue[]>;
+  listTodo(): Promise<Issue[]>;
+  listComments(issue: Issue): Promise<IssueComment[]>;
+  comment(issue: Issue, text: string): Promise<void>;
+  setTitle(issue: Issue, title: string): Promise<void>;
+  setDescription(issue: Issue, description: string): Promise<void>;
+  /** The only type the planner sets on an existing issue: a work item split into children becomes their Epic. */
+  makeEpic(issue: Issue): Promise<void>;
+  setPriority(issue: Issue, priority: Priority): Promise<void>;
+  /** A new Feature or Bug in the Backlog column. */
+  createIssue(input: PlannedIssue): Promise<{ id: number; number: number }>;
+  /** `from` blocks the issue whose internal id is `toId`. */
+  linkBlocks(from: Issue, toId: number): Promise<void>;
+  markPending(issue: Issue): Promise<void>;
+  unmarkPending(issue: Issue): Promise<void>;
+  markAwaitingAnswer(issue: Issue): Promise<void>;
+  unmarkAwaitingAnswer(issue: Issue): Promise<void>;
+}
+
+/** An issue the planner splits off. Always in Backlog; its type is one of the two a work item can be. */
+export type PlannedIssue = {
+  kind: "Feature" | "Bug";
+  title: string;
+  description: string;
+  /** The parent issue's internal id, or null for a top-level issue. */
+  parentId: number | null;
+  priority: Priority;
+};
 
 export type ExecResult = { code: number; output: string; timedOut: boolean };
 
@@ -179,6 +239,24 @@ export type Config = {
     readRoots: string[];
     maxFollowups: number;
   } | null;
+  /**
+   * The planning node (CYC-322), or null when the Project has not turned it on. Label, column and type ids are
+   * resolved from the tracker at start; `templates` are the Feature and Bug issue templates' bodies, for the prompt.
+   */
+  planning: PlanningConfig | null;
+};
+
+export type PlanningConfig = {
+  labels: { pending: number; awaitingAnswer: number; skip: number };
+  backlogColumn: number;
+  epicTypeId: number;
+  templates: { feature: string; bug: string };
+  /** No new round while this many work items wait for approval. */
+  maxPending: number;
+  /** Minutes between two rounds. */
+  intervalMinutes: number;
+  /** Most issues one work item is split into. */
+  maxSplit: number;
 };
 
 /** Everything that is not per Project. `columns`, labels and type ids come from `resolveProject`, paths from the config file. */
@@ -221,10 +299,20 @@ export const defaultConfig = (
   reviewAgent: "claude",
   dryRun: false,
   research: null,
+  planning: null,
   ...partial,
 });
 
-export type SessionRole = "dev" | "qa" | "review" | "research" | "research_qa";
+/** `triage`, `shape` and `shape_qa` are the planning node's sessions (CYC-322): read-only, like research. */
+export type SessionRole =
+  | "dev"
+  | "qa"
+  | "review"
+  | "research"
+  | "research_qa"
+  | "triage"
+  | "shape"
+  | "shape_qa";
 
 export type TurnResult = {
   /** `end_turn` is the only one that is a finished turn; `cancelled`, `error`, `max_tokens`, `refusal` are not. */

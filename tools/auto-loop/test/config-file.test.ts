@@ -12,6 +12,7 @@ import {
 } from "../src/config-file.ts";
 import { resolveProject } from "../src/project.ts";
 import { acquireLock } from "../src/store.ts";
+import { config } from "./helpers.ts";
 
 const full = { repoRoot: "/r", projectKey: "CYC", stateDir: "/s", planKey: "k" };
 
@@ -155,6 +156,107 @@ test("research folder: a title used twice is resolved to the one at the top of t
     documents: [...documents, { id: 51, title: "调研", parentId: 18 }],
   });
   expect(setup.research?.folderId).toBe(10);
+});
+
+// The planning node (CYC-322).
+const planningNames = { pending: "待批准", awaitingAnswer: "待回答", skip: "Loop 跳过" };
+const withPlanning = () => {
+  const p = project(allColumns, [
+    { id: 7, name: "auto" },
+    { id: 40, name: "待批准" },
+    { id: 41, name: "待回答" },
+    { id: 42, name: "Loop 跳过" },
+  ]) as ReturnType<typeof project> & { data: { issueTemplates: Record<string, unknown>[] } };
+  p.data.issueTypes.push({ id: 17, name: "Epic" });
+  p.data.issueTemplates = [
+    { id: 1, name: "Feature", typeId: 1, descriptionTemplate: "## 验收标准\n" },
+    { id: 3, name: "Feature（完整流程）", typeId: 1, descriptionTemplate: "## 文档清单\n" },
+    { id: 2, name: "Bug", typeId: 2, descriptionTemplate: "## 现象\n" },
+    { id: 4, name: "Epic", typeId: 17, descriptionTemplate: "## 目标\n" },
+  ];
+  return p;
+};
+
+test("planning off: nothing is resolved or required, even when the project has none of it", () => {
+  const setup = resolveProject(project(allColumns), names);
+  expect(setup.planning).toBeNull();
+  expect(resolveProject(withPlanning(), names).planning).toBeNull();
+  expect(config().planning).toBeNull();
+});
+
+test("planning on: labels, the first backlog column, Epic and the Feature and Bug templates are resolved", () => {
+  const setup = resolveProject(withPlanning(), names, undefined, planningNames);
+  expect(setup.planning).toEqual({
+    labels: { pending: 40, awaitingAnswer: 41, skip: 42 },
+    backlogColumn: 30,
+    epicTypeId: 17,
+    templates: { feature: "## 验收标准\n", bug: "## 现象\n" },
+  });
+  // Planning adds no type the loop may take.
+  expect(setup.allowedTypeIds).toEqual([1, 2]);
+});
+
+test("planning on: each missing piece names the Project and what is missing", () => {
+  const on = (p: ReturnType<typeof withPlanning>) =>
+    resolveProject(p, names, undefined, planningNames);
+  for (const [label, name] of [
+    [40, "待批准"],
+    [41, "待回答"],
+    [42, "Loop 跳过"],
+  ] as const) {
+    const p = withPlanning();
+    p.data.labels = p.data.labels.filter((l) => l.id !== label);
+    expect(() => on(p)).toThrow(`project X: no label named "${name}"`);
+  }
+  const noBacklog = withPlanning();
+  noBacklog.data.columns = noBacklog.data.columns.filter((c) => c.stateType !== "backlog");
+  expect(() => on(noBacklog)).toThrow("project X: no backlog column");
+  const noEpic = withPlanning();
+  noEpic.data.issueTypes = noEpic.data.issueTypes.filter((t) => t.name !== "Epic");
+  expect(() => on(noEpic)).toThrow('project X: no issue type named "Epic"');
+  const noBug = withPlanning();
+  noBug.data.issueTemplates = noBug.data.issueTemplates.filter((t) => t.typeId !== 2);
+  expect(() => on(noBug)).toThrow('project X: no issue template for type "Bug"');
+  const noFeature = withPlanning();
+  noFeature.data.issueTemplates = noFeature.data.issueTemplates.filter((t) => t.typeId !== 1);
+  expect(() => on(noFeature)).toThrow('project X: no issue template for type "Feature"');
+  // Two Feature templates and neither named "Feature": not a guess.
+  const ambiguous = withPlanning();
+  ambiguous.data.issueTemplates = ambiguous.data.issueTemplates.filter((t) => t.id !== 1);
+  ambiguous.data.issueTemplates.push({ id: 9, name: "小档", typeId: 1, descriptionTemplate: "x" });
+  expect(() => on(ambiguous)).toThrow('project X: 2 issue templates for type "Feature"');
+  const empty = withPlanning();
+  empty.data.issueTemplates[2] = { id: 2, name: "Bug", typeId: 2, descriptionTemplate: "" };
+  expect(() => on(empty)).toThrow('project X: issue template "Bug" has no description');
+});
+
+test("planning config: absent or not enabled means off; defaults fill the rest; bad fields are named", () => {
+  expect(parseConfigFile(JSON.stringify(full)).planning).toBeUndefined();
+  const defaults = {
+    enabled: false,
+    pending: "待批准",
+    awaitingAnswer: "待回答",
+    skip: "Loop 跳过",
+    maxPending: 5,
+    intervalMinutes: 30,
+    maxSplit: 4,
+  };
+  expect(parseConfigFile(JSON.stringify({ ...full, planning: {} })).planning).toEqual(defaults);
+  expect(
+    parseConfigFile(
+      JSON.stringify({ ...full, planning: { enabled: true, pending: "approve", maxSplit: 3 } }),
+    ).planning,
+  ).toEqual({ ...defaults, enabled: true, pending: "approve", maxSplit: 3 });
+  for (const [field, bad] of [
+    ["maxPending", 0],
+    ["intervalMinutes", 1.5],
+    ["maxSplit", 1],
+    ["pending", " "],
+    ["typo", 1],
+  ] as const)
+    expect(() =>
+      parseConfigFile(JSON.stringify({ ...full, planning: { enabled: true, [field]: bad } })),
+    ).toThrow("planning");
 });
 
 test("research config: absent or not enabled means off; defaults fill the rest", () => {
