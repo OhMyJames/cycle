@@ -316,7 +316,7 @@ test("with two Projects the Loop lands on the overview, with each Project's coun
   await user.click(within(docsRow).getByRole("button", { name: "Read again Docs" }));
   // A row opens its board.
   await user.click(within(cycleRow).getByRole("button", { name: /Cycle/ }));
-  await screen.findByRole("region", { name: "Doing" });
+  await screen.findByRole("region", { name: "In Progress" });
 });
 
 test("with one Project the Loop lands on its board, and Escape goes up to the overview", async () => {
@@ -324,7 +324,7 @@ test("with one Project the Loop lands on its board, and Escape goes up to the ov
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
-  await screen.findByRole("region", { name: "Doing" });
+  await screen.findByRole("region", { name: "In Progress" });
   await user.keyboard("{Escape}");
   await screen.findByRole("region", { name: "Projects" });
 });
@@ -339,7 +339,7 @@ test("Needs you is on the overview, not on the board, and absent when empty", as
   const notices = await screen.findByRole("region", { name: "Needs you" });
   expect(within(notices).getByText("CYC-9")).toBeTruthy();
   await user.click(screen.getByRole("tab", { name: /Cycle/ }));
-  await screen.findByRole("region", { name: "Doing" });
+  await screen.findByRole("region", { name: "In Progress" });
   expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
 });
 

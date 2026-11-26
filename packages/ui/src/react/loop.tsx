@@ -8,6 +8,7 @@ import type {
   LoopActFailure,
   LoopAction,
   LoopBoardAnswer,
+  LoopBoardColumn,
   LoopChatFailure,
   LoopNotice,
   LoopProjectInfo,
@@ -557,6 +558,17 @@ function Board({
   );
 }
 
+const STATE_OF = {
+  backlog: "backlog",
+  todo: "unstarted",
+  doing: "started",
+  done: "completed",
+} as const;
+/** The tickets of every column of one kind of state, for the overview's counts. */
+const countOf = (columns: LoopBoardColumn[], c: keyof typeof STATE_OF): number =>
+  columns
+    .filter((col) => col.stateType === STATE_OF[c])
+    .reduce((n, col) => n + col.tickets.length, 0);
 const COLUMNS = ["doing", "todo", "backlog", "done"] as const;
 
 /** The Loop overview: what needs the person, then one row per Project with its tickets per column. */
@@ -609,11 +621,13 @@ function Overview({
                     <span data-slot="loop-repo">{away ? "" : t("loop.loading")}</span>
                   ) : board.kind === "ok" ? (
                     <span data-slot="loop-project-counts">
-                      {COLUMNS.filter((c) => board[c].length > 0).map((c) => (
-                        <span key={c} data-slot="loop-project-count" data-column={c}>
-                          {t(`loop.col.${c}`)} {board[c].length}
-                        </span>
-                      ))}
+                      {COLUMNS.map((c) => [c, countOf(board.columns, c)] as const)
+                        .filter(([, n]) => n > 0)
+                        .map(([c, n]) => (
+                          <span key={c} data-slot="loop-project-count" data-column={c}>
+                            {t(`loop.col.${c}`)} {n}
+                          </span>
+                        ))}
                     </span>
                   ) : null}
                 </button>
