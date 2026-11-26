@@ -1,9 +1,10 @@
 // Everything one Project owns: tracker, store, lock, daemon connection, pipeline. Shared by the CLI and the server.
 
 import { join } from "node:path";
+import { type ProjectApi, sessionOfId } from "./api.ts";
 import { type ConfigFile, readTuning } from "./config-file.ts";
 import { type ImportResult, importLegacyState, needsImport } from "./db/import.ts";
-import { openLoopStore } from "./db/store.ts";
+import { openLoopStore, SqliteStore } from "./db/store.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
@@ -32,6 +33,8 @@ export type ProjectUnit = {
   release: () => Promise<void>;
   close: () => Promise<void>;
   workers: number;
+  /** What the `loop/` methods use of this Project (CYC-482). */
+  api?: ProjectApi;
 };
 
 export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<ProjectUnit> => {
@@ -146,19 +149,39 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       plans: imported.plans,
     });
   }
+  // A session waits for a person: the run's event, and a Notice that names the session (any kind: Dev, QA, review,
+  // research, the planning node's).
+  const waiting = async (sessionId: string, title: string): Promise<void> => {
+    const runs = await store.unfinished();
+    const run = runs.find((r) => sessionOfId(r, sessionId) !== undefined);
+    if (run !== undefined) {
+      await store.event(run.key, "permission_pending");
+      const session = sessionOfId(run, sessionId);
+      if (store instanceof SqliteStore && session !== undefined)
+        store.notice(
+          run.key,
+          "permission",
+          title === "" ? `${session.kind} session is waiting for a person` : title,
+          `permission:${sessionId}:${clock.now().toISOString()}`,
+          session,
+        );
+      return;
+    }
+    const round = (await store.unfinishedPlans()).find((r) => r.triageSessionId === sessionId);
+    if (round !== undefined && store instanceof SqliteStore)
+      store.notice(
+        `plan-${round.id}`,
+        "permission",
+        title === "" ? "triage session is waiting for a person" : title,
+        `permission:${sessionId}:${clock.now().toISOString()}`,
+        { kind: "triage", id: sessionId },
+      );
+  };
   const sessions = new DaemonSessions(
     process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),
     (sessionId, title) => {
       plog(`waiting for a person in session ${sessionId}: ${title}`);
-      void store.unfinished().then((runs) => {
-        const run = runs.find(
-          (r) =>
-            r.devSessionId === sessionId ||
-            r.qaSessionId === sessionId ||
-            (r.kind === "dev" && r.dev.reviewSessionId === sessionId),
-        );
-        if (run !== undefined) return store.event(run.key, "permission_pending");
-      });
+      void waiting(sessionId, title);
     },
     (run, kind, data) => store.event(run, kind, data),
   );
@@ -189,5 +212,16 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   const workers = effectiveWorkers({ once, dryRun, flag: workersFlag, file: file.workers });
   if (workers > 4)
     plog(`warning: ${workers} workers; each one holds a session and a worktree, watch memory`);
-  return { name, pipeline, release, close, workers };
+  const api: ProjectApi = {
+    projectKey: file.projectKey,
+    tracker,
+    store,
+    labels: {
+      auto: file.autoLabel,
+      pending: file.planning?.pending ?? "待批准",
+      skip: file.planning?.skip ?? "Loop 跳过",
+    },
+    workers,
+  };
+  return { name, pipeline, release, close, workers, api };
 };

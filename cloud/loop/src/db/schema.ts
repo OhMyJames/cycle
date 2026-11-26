@@ -111,6 +111,9 @@ export const MIGRATIONS: readonly string[] = [
     checks TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
+  // CYC-482: the session a notice is about, so a client can open it without parsing the text.
+  `ALTER TABLE notices ADD COLUMN session_kind TEXT`,
+  `ALTER TABLE notices ADD COLUMN session_id TEXT`,
 ];
 
 /** The statements a migration may be made of. */

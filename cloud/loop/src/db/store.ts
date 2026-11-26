@@ -56,6 +56,9 @@ export interface Notice {
   text: string;
   dedupe: string;
   createdAt: string;
+  /** The session the notice is about (CYC-482), when it is about one. */
+  sessionKind: string | null;
+  sessionId: string | null;
 }
 export interface Action {
   id: number;
@@ -377,6 +380,11 @@ export class StoreOps {
     );
   }
 
+  /** The intents that gave up, oldest first. */
+  stuckIntents(): Intent[] {
+    return this.#intents("SELECT * FROM intents WHERE status = 'stuck' ORDER BY id");
+  }
+
   /** The intents still to do, oldest first. */
   pendingIntents(): Intent[] {
     return this.#intents("SELECT * FROM intents WHERE status = 'pending' ORDER BY id");
@@ -462,14 +470,37 @@ export class StoreOps {
   }
 
   /** Something to tell a person, once per `dedupe`: returns whether this call made it. */
-  notice(runKey: string, kind: string, text: string, dedupe: string): boolean {
+  notice(
+    runKey: string,
+    kind: string,
+    text: string,
+    dedupe: string,
+    session?: { kind: string; id: string },
+  ): boolean {
     return (
       this.db
         .query(
-          `INSERT OR IGNORE INTO notices (run_key, kind, text, dedupe, created_at) VALUES (?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO notices (run_key, kind, text, dedupe, created_at, session_kind, session_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(runKey, kind, text, dedupe, this.now().toISOString()).changes > 0
+        .run(
+          runKey,
+          kind,
+          text,
+          dedupe,
+          this.now().toISOString(),
+          session?.kind ?? null,
+          session?.id ?? null,
+        ).changes > 0
     );
+  }
+
+  /** The latest `limit` events of a run, oldest first. */
+  recentEvents(run: string, limit: number): { ts: string; kind: string }[] {
+    const rows = this.db
+      .query("SELECT ts, kind FROM events WHERE run = ? ORDER BY id DESC LIMIT ?")
+      .all(run, limit) as { ts: string; kind: string }[];
+    return rows.reverse();
   }
 
   notices(): Notice[] {
@@ -480,6 +511,8 @@ export class StoreOps {
       text: string;
       dedupe: string;
       created_at: string;
+      session_kind: string | null;
+      session_id: string | null;
     }[];
     return rows.map((r) => ({
       id: r.id,
@@ -488,6 +521,8 @@ export class StoreOps {
       text: r.text,
       dedupe: r.dedupe,
       createdAt: r.created_at,
+      sessionKind: r.session_kind,
+      sessionId: r.session_id,
     }));
   }
 
@@ -624,6 +659,9 @@ export class SqliteStore implements LoopStore {
   pendingIntents() {
     return this.#ops.pendingIntents();
   }
+  stuckIntents() {
+    return this.#ops.stuckIntents();
+  }
   markIntent(id: number, status: IntentStatus, error: string | null = null) {
     this.#ops.markIntent(id, status, error);
   }
@@ -633,8 +671,17 @@ export class SqliteStore implements LoopStore {
   heartbeats() {
     return this.#ops.heartbeats();
   }
-  notice(runKey: string, kind: string, text: string, dedupe: string) {
-    return this.#ops.notice(runKey, kind, text, dedupe);
+  notice(
+    runKey: string,
+    kind: string,
+    text: string,
+    dedupe: string,
+    session?: { kind: string; id: string },
+  ) {
+    return this.#ops.notice(runKey, kind, text, dedupe, session);
+  }
+  recentEvents(run: string, limit: number) {
+    return this.#ops.recentEvents(run, limit);
   }
   notices() {
     return this.#ops.notices();
