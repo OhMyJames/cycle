@@ -884,9 +884,19 @@ button[data-slot="loop-ticket-title"] {
 }
 
 [data-slot="loop-crumbs"] {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--cycle-space-1, 4px);
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-slot="loop-crumbs"] > [aria-hidden="true"] {
+  margin: 0 0.35em;
+}
+
+html[data-platform="darwin"] [data-slot="loop-crumb"] {
+  -webkit-app-region: no-drag;
 }
 
 [data-slot="loop-crumb"] {
@@ -907,8 +917,8 @@ button[data-slot="loop-ticket-title"] {
 [data-slot="loop-tabs"] {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--cycle-gap);
+  margin-bottom: var(--cycle-gap);
 }
 
 [data-slot="loop-tab-note"] {

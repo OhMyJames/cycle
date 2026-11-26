@@ -644,6 +644,7 @@ export const enUS = {
   "loop.sections": "Projects",
   "loop.projects": "Projects",
   "loop.overview": "Overview",
+  "loop.crumbs": "Where you are",
   "loop.tabs": "Project pages",
   "loop.tab.kanban": "Board",
   "loop.tab.overview": "Overview",

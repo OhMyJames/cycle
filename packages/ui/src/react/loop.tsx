@@ -763,7 +763,7 @@ export function LoopPage({
       note: away ? t("loop.offline.note") : p.projectKey,
       disabled: away,
       heading: (
-        <span data-slot="loop-crumbs">
+        <nav data-slot="loop-crumbs" aria-label={t("loop.crumbs")}>
           <button
             type="button"
             data-slot="loop-crumb"
@@ -778,18 +778,20 @@ export function LoopPage({
             {p.name}
           </button>
           <span aria-hidden="true">/</span>
-          <span>
+          <span aria-current="page">
             {view.at === "ticket" && view.projectKey === p.projectKey
               ? view.identifier
-              : t("loop.tab.kanban")}
+              : view.at === "project" && view.tab === "overview"
+                ? t("loop.tab.overview")
+                : t("loop.tab.kanban")}
           </span>
-        </span>
+        </nav>
       ),
       content: (
         <>
           {view.at === "project" && view.projectKey === p.projectKey ? (
             <div data-slot="loop-tabs">
-              <SegmentedControl value="kanban" aria-label={t("loop.tabs")}>
+              <SegmentedControl value={view.tab} aria-label={t("loop.tabs")}>
                 <SegmentedControlIndicator />
                 <SegmentedControlItem value="kanban">{t("loop.tab.kanban")}</SegmentedControlItem>
                 <SegmentedControlItem value="overview" disabled>

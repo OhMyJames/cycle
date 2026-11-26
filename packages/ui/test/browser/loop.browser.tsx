@@ -340,7 +340,7 @@ test("a Project opens on its board; the Overview tab is disabled and the crumbs 
     overviewTab.getAttribute("aria-disabled") ?? overviewTab.hasAttribute("disabled"),
   ).toBeTruthy();
   expect(screen.getByText("Coming later")).toBeTruthy();
-  await user.click(overviewTab, { force: true }).catch(() => {});
+  overviewTab.click();
   expect(boardTab.getAttribute("aria-checked")).toBe("true");
   expect(screen.getByRole("region", { name: "Doing" })).toBeTruthy();
   const heading = screen.getByRole("heading", { level: 2 });

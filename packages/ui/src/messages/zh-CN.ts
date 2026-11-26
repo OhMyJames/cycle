@@ -582,6 +582,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.sections": "项目",
   "loop.projects": "项目",
   "loop.overview": "概览",
+  "loop.crumbs": "面包屑",
   "loop.tabs": "Project 页面",
   "loop.tab.kanban": "看板",
   "loop.tab.overview": "概览",
