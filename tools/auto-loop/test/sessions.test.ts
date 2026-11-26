@@ -8,7 +8,7 @@ import { CycleErrorCode } from "@cycle/protocol";
 // The fake agent is the daemon's own test double; there is no package export for it, so this test reaches into
 // apps/daemon/test by path (and `@cycle/daemon` is a devDependency for the same reason).
 import { fakeAgent } from "../../../apps/daemon/test/fake-agent.ts";
-import { DaemonSessions, LeftRequests, type RecordEvent } from "../src/sessions.ts";
+import { DaemonSessions, LeftRequests, type RecordEvent, readOnlyMode } from "../src/sessions.ts";
 
 let dir: string;
 let cleanup: (() => void | Promise<void>)[] = [];
@@ -22,7 +22,14 @@ afterEach(async () => {
 });
 
 const setup = async (fake: ReturnType<typeof fakeAgent>, record?: RecordEvent) => {
-  let daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
+  let daemon = await Daemon.start({
+    dataDir: dir,
+    agents: [
+      fake.definition,
+      { ...fake.definition, id: "claude" },
+      { ...fake.definition, id: "codex" },
+    ],
+  });
   let daemonOpen = true;
   const socket = join(dir, "d.sock");
   const listen = () =>
@@ -46,7 +53,14 @@ const setup = async (fake: ReturnType<typeof fakeAgent>, record?: RecordEvent) =
     sessionId,
     socket,
     restartDaemon: async () => {
-      daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
+      daemon = await Daemon.start({
+        dataDir: dir,
+        agents: [
+          fake.definition,
+          { ...fake.definition, id: "claude" },
+          { ...fake.definition, id: "codex" },
+        ],
+      });
       daemonOpen = true;
       server = await listen();
     },
@@ -288,6 +302,37 @@ test("create sets model and effort on the new session, and only the ones given",
   fake.log.configs.length = 0;
   await made({ effort: "low" });
   expect(seen()).toEqual([["effort", "low"]]);
+});
+
+// CYC-445 pilot: in Claude's `auto` mode no request reached the policy. The read-only roles are put in `default`.
+test("create puts a Claude session of a read-only role in default mode, and leaves dev alone", async () => {
+  const fake = fakeAgent({}, { configOptions: [] });
+  const { sessions } = await setup(fake);
+  const modes = () => fake.log.configs.filter((c) => c.configId === "mode").map((c) => c.value);
+  for (const role of ["qa", "review", "research", "research_qa"] as const) {
+    fake.log.configs.length = 0;
+    await sessions.create({ role, agent: "claude", title: "t", cwd: "/tmp" });
+    expect(modes()).toEqual(["default"]);
+  }
+  fake.log.configs.length = 0;
+  await sessions.create({ role: "dev", agent: "claude", title: "t", cwd: "/tmp" });
+  await sessions.create({ role: "qa", agent: "codex", title: "t", cwd: "/tmp" });
+  expect(modes()).toEqual([]);
+});
+
+test("readOnlyMode maps only the read-only roles of a known agent", () => {
+  expect(readOnlyMode("research", "claude")).toBe("default");
+  expect(readOnlyMode("dev", "claude")).toBeUndefined();
+  expect(readOnlyMode("qa", "codex")).toBeUndefined();
+});
+
+test("create removes the new session and names the mode when it cannot be set", async () => {
+  const fake = fakeAgent({}, { configOptions: [] });
+  const { sessions } = await setup(fake);
+  fake.control.rejectConfig.add("mode");
+  await expect(
+    sessions.create({ role: "research", agent: "claude", title: "t", cwd: "/tmp" }),
+  ).rejects.toThrow("could not set mode default for the research session");
 });
 
 test("create removes the new session and names the setting when setConfig is refused", async () => {

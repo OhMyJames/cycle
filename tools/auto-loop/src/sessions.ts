@@ -69,6 +69,21 @@ type Turn = {
   finish: () => void;
 };
 
+/**
+ * The permission mode a read-only role's session is put in, by agent; undefined leaves the agent's default.
+ *
+ * A new session takes Cycle's default mode, which for Claude is `auto`: Claude Code's own classifier answers every
+ * request and none reaches `decide`, so this file's rules would never be asked (found in the CYC-445 pilot). In
+ * `default` mode what Claude Code does not allow by itself comes here, and these roles are refused without waiting.
+ * Dev stays in the agent's default on purpose: under this policy it would wait for a person at every command outside
+ * the allowlist. Other agents name their modes differently and are left as they are until mapped.
+ */
+const READ_ONLY_MODES: Record<string, string> = { claude: "default" };
+const READ_ONLY_ROLES: readonly SessionRole[] = ["qa", "review", "research", "research_qa"];
+
+export const readOnlyMode = (role: SessionRole, agent: string): string | undefined =>
+  READ_ONLY_ROLES.includes(role) ? READ_ONLY_MODES[agent] : undefined;
+
 export class DaemonSessions implements Sessions {
   readonly #client: CycleClient;
   readonly #turns = new Map<string, Turn>();
@@ -205,9 +220,11 @@ export class DaemonSessions implements Sessions {
       agent: input.agent,
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
     });
+    const mode = readOnlyMode(input.role, input.agent);
     try {
       if (input.model) await this.#client.setConfig(sessionId, "model", input.model);
       if (input.effort) await this.#client.setConfig(sessionId, "effort", input.effort);
+      if (mode !== undefined) await this.#client.setConfig(sessionId, "mode", mode);
     } catch (error) {
       // The session id is never returned, so nobody could remove it later: do it here. The worktree is kept, a
       // replacement or retry session uses the same one.
@@ -215,6 +232,7 @@ export class DaemonSessions implements Sessions {
       const what = [
         input.model ? `model ${input.model}` : "",
         input.effort ? `effort ${input.effort}` : "",
+        mode !== undefined ? `mode ${mode}` : "",
       ]
         .filter(Boolean)
         .join(", ");
