@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CriteriaBook } from "../src/criteria.ts";
 import { Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import {
@@ -33,16 +34,22 @@ const done = (text = "<progress>done: x\nnext: y</progress>"): TurnResult => ({
 class FakeTracker implements Tracker {
   moves: string[] = [];
   comments: string[] = [];
+  /** A test can hold `listTodo`, `get` and `move` open until it releases them. */
+  gates: { listTodo?: Promise<void>; get?: Promise<void>; move?: Promise<void> } = {};
   constructor(public issues: Issue[]) {}
   async listTodo() {
-    return this.issues.filter((i) => i.columnId === 22);
+    const snapshot = this.issues.filter((i) => i.columnId === 22);
+    await this.gates.listTodo;
+    return snapshot;
   }
   async get(number: number) {
+    await this.gates.get;
     const found = this.issues.find((i) => i.number === number);
     if (!found) throw new Error("no issue");
     return found;
   }
   async move(i: Issue, stage: Stage) {
+    await this.gates.move;
     this.moves.push(`${i.key}:${stage}`);
     const col = { todo: 22, inProgress: 23, inReview: 34, blocked: 35 }[stage];
     const found = this.issues.find((x) => x.number === i.number);
@@ -229,6 +236,7 @@ const setup = (
     prMerge: [["MERGED", "UNKNOWN"]],
     mergeTreeOutput: "",
   };
+  const stop = { value: false };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
   const store = new RunStore(cfg.stateDir, () => clock.now());
   const pipeline = new Pipeline({
@@ -241,8 +249,9 @@ const setup = (
     log: () => {},
     env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
     sleep: async () => {},
+    stopped: () => stop.value,
   });
-  return { pipeline, tracker, sessions, world, store };
+  return { pipeline, tracker, sessions, world, store, stop };
 };
 
 const ready = (over: Partial<Issue> = {}) => issue({ description: readyDescription, ...over });
@@ -1527,4 +1536,112 @@ test("a worktree with uncommitted changes is kept and an event says so, once", a
   const kinds = (await s.store.events()).map((e) => e.kind);
   expect(kinds.filter((k) => k === "cleanup_skipped_dirty")).toHaveLength(1);
   expect((await s.store.load("CYC-1"))?.cleanedAt).toBeNull();
+});
+
+// ---- concurrent steps (CYC-410) ----
+
+const gate = () => {
+  let open = () => {};
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+};
+const dones = (n: number) => Array.from({ length: n }, () => done());
+const passes = (n: number) => Array.from({ length: n }, () => done(PASS));
+
+test("two steps at once each take a different work item, even when the tracker is slow", async () => {
+  const s = setup([ready(), ready({ number: 2, key: "CYC-2", id: 2 })], {
+    dev: dones(4),
+    qa: passes(4),
+  });
+  const g = gate();
+  s.tracker.gates = { listTodo: g.promise, move: g.promise };
+  const a = s.pipeline.step();
+  const b = s.pipeline.step();
+  await Bun.sleep(10);
+  g.open();
+  const results = await Promise.all([a, b]);
+  expect(results.map((r) => r.status)).toEqual(["delivered", "delivered"]);
+  expect(results.map((r) => ("key" in r ? r.key : "")).sort()).toEqual(["CYC-1", "CYC-2"]);
+  expect(s.tracker.moves.filter((m) => m.endsWith(":inProgress")).sort()).toEqual([
+    "CYC-1:inProgress",
+    "CYC-2:inProgress",
+  ]);
+});
+
+test("two steps at once: only one goes on with an unfinished run", async () => {
+  const s = setup([ready()], { dev: dones(4), qa: passes(4) });
+  await s.store.saveCriteria(
+    "CYC-1",
+    CriteriaBook.fromSpecs([{ text: "works", verify: [["bun", "test"]] }]),
+  );
+  await s.store.save({
+    key: "CYC-1",
+    issueId: 1,
+    issueNumber: 1,
+    title: "t",
+    phase: "claimed",
+    round: 0,
+    ciRound: 0,
+    ciFailedSha: null,
+    worktree: null,
+    localBranch: null,
+    remoteBranch: "auto/cyc-1",
+    devSessionId: null,
+    qaSessionId: null,
+    reviewSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    prUrl: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    startedAt: "2026-11-24T00:00:00Z",
+    updatedAt: "2026-11-24T00:00:00Z",
+  });
+  (s.tracker.issues[0] as Issue).columnId = 23;
+  const g = gate();
+  s.tracker.gates = { get: g.promise };
+  const a = s.pipeline.step();
+  const b = s.pipeline.step();
+  await Bun.sleep(10);
+  g.open();
+  const results = await Promise.all([a, b]);
+  expect(results.map((r) => r.status).sort()).toEqual(["delivered", "idle"]);
+  expect((await s.store.events()).filter((e) => e.kind === "recovered").length).toBe(1);
+});
+
+test("a blocked run put back in Todo is taken up by only one of two steps", async () => {
+  const s = setup([ready()], { dev: dones(5), qa: [] }, {}, ["bun run check"]);
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  s.world.fail.clear();
+  s.sessions.script.qa.push(...passes(2));
+  (s.tracker.issues[0] as Issue).columnId = 22;
+  const g = gate();
+  s.tracker.gates = { get: g.promise, move: g.promise };
+  const a = s.pipeline.step();
+  const b = s.pipeline.step();
+  await Bun.sleep(10);
+  g.open();
+  const results = await Promise.all([a, b]);
+  expect(results.map((r) => r.status).sort()).toEqual(["delivered", "idle"]);
+  expect((await s.store.events()).filter((e) => e.kind === "resumed").length).toBe(1);
+});
+
+test("a step that throws leaves its run to be continued by the next step", async () => {
+  const s = setup([ready()], { dev: [new Error("agent crashed"), ...dones(2)], qa: passes(2) });
+  await expect(s.pipeline.step()).rejects.toThrow("agent crashed");
+  expect((await s.store.unfinished()).map((r) => r.key)).toEqual(["CYC-1"]);
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  expect((await s.store.events()).some((e) => e.kind === "recovered")).toBe(true);
+});
+
+test("when stopped, a step takes no new work item and is idle", async () => {
+  const s = setup([ready()], { dev: [], qa: [] });
+  s.stop.value = true;
+  expect((await s.pipeline.step()).status).toBe("idle");
+  expect(s.tracker.moves).toEqual([]);
+  expect(await s.store.all()).toEqual([]);
 });
