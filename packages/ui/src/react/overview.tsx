@@ -257,6 +257,11 @@ export function Overview() {
       </>
     );
     const toolCallId = item.toolCallId;
+    // A task that is not a sub-agent, gone from the agent's list: the user can say it has ended.
+    const dismissable =
+      item.state === "unknown" &&
+      item.kind !== "agent" &&
+      session?.unknownBackground?.includes(item.id) === true;
     return (
       <li key={`${item.kind}:${item.id}`} data-state={item.state}>
         {toolCallId !== undefined ? (
@@ -271,6 +276,15 @@ export function Overview() {
         ) : (
           <span data-slot="overview-row">{label}</span>
         )}
+        {dismissable && session !== undefined ? (
+          <button
+            type="button"
+            data-slot="overview-dismiss"
+            onClick={() => void store.dismissBackground(session, [item.id])}
+          >
+            {t("overview.dismiss")}
+          </button>
+        ) : null}
       </li>
     );
   };

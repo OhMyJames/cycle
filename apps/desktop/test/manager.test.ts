@@ -1573,6 +1573,40 @@ test("marking unknown background tasks as ended reports only the count and prese
   expect(reported).toEqual([{ count: 1 }]);
 });
 
+test("a background task that is not a sub-agent and went unknown is passed to dismiss too", async () => {
+  const { manager } = await setup(
+    fakeAgent({
+      onPrompt: async ({ say }) => {
+        for (const state of ["running", "unknown"])
+          await say({ sessionUpdate: "_cycle/task_update", taskId: "cmd-1", kind: "shell", state });
+        await say({
+          sessionUpdate: "_cycle/task_update",
+          taskId: "cmd-2",
+          kind: "shell",
+          state: "running",
+        });
+      },
+    }),
+  );
+  const reported: unknown[] = [];
+  const { m } = await manager("app", undefined, undefined, (name, props) => {
+    if (name === "background_dismissed") reported.push(props);
+  });
+  await m.connect("local");
+  const id = await m.createSession("local", { cwd: dir });
+  await said(m, id);
+  const deadline = Date.now() + 2000;
+  while (!first(await m.sessions("local")).unknownBackground) {
+    if (Date.now() > deadline) throw new Error("the unknown task was never listed");
+    await Bun.sleep(5);
+  }
+  expect(first(await m.sessions("local")).unknownBackground).toEqual(["cmd-1"]);
+  await m.dismissBackground("local", id, ["cmd-1", "cmd-2"]);
+  expect(first(await m.sessions("local")).unknownBackground).toBeUndefined();
+  expect(first(await m.sessions("local")).background).toBe(1);
+  expect(reported).toEqual([{ count: 1 }]);
+});
+
 test("stopping one sub-agent is counted when the daemon takes it, with whether it ran in the background and nothing of it", async () => {
   const { manager, fake } = await setup(
     fakeAgent({

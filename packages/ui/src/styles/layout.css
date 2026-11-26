@@ -1036,6 +1036,32 @@ button[data-slot="mention-chip"]:hover {
   text-align: start;
 }
 
+li:has(> [data-slot="overview-dismiss"]) {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+[data-slot="overview-dismiss"] {
+  flex: none;
+  padding: 0.25rem 0.5rem;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--ui-muted-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+[data-slot="overview-dismiss"]:hover {
+  background: var(--cycle-surface-hover);
+}
+
+[data-slot="overview-dismiss"]:focus-visible {
+  outline: 1.5px solid var(--cycle-focus-ring);
+  outline-offset: -1.5px;
+}
+
 button[data-slot="overview-row"] {
   cursor: pointer;
   transition: background-color var(--cycle-motion-state) var(--cycle-ease);

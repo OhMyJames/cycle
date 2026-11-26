@@ -4,6 +4,7 @@ import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
+import { backgroundOf } from "../../src/react/overview.tsx";
 import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -305,4 +306,41 @@ test("nothing is said between turns once the background has ended", async () => 
   const { log } = await openBetweenTurns(ended, 1);
   await within(log).findByText("Done");
   expect(log.querySelector('[data-slot="step"]')).toBeNull();
+});
+
+test("an unknown background task can be marked as ended from its row, and then it is ended", async () => {
+  const gone = history(
+    u({ sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text: "Go" }] }),
+    u({
+      sessionUpdate: "_cycle/task_update",
+      taskId: "t1",
+      kind: "shell",
+      title: "Watch the logs",
+      state: "running",
+    }),
+    u({ sessionUpdate: "_cycle/task_update", taskId: "t1", state: "unknown" }),
+    idle({ stopReason: "end_turn" }),
+  );
+  const script = fakeBridge({ connected: true, snapshot: () => gone });
+  const base = script.bridge.sessions;
+  script.bridge.sessions = async (...args) =>
+    (await base(...args)).map((s) => ({ ...s, unknownBackground: ["t1"] }));
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /work/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  const panel = await screen.findByRole("complementary", { name: "Panel" });
+  expect(panel.textContent).toContain("status unknown");
+  await user.click(await within(panel).findByRole("button", { name: "Mark as ended" }));
+  await waitFor(() =>
+    expect(script.calls.filter(([name]) => name === "dismissBackground")).toEqual([
+      ["dismissBackground", "local", "s1", ["t1"]],
+    ]),
+  );
+  // What the daemon then writes (a `stopped`) puts it among the ended.
+  const after = applyUpdate(
+    gone.conversation,
+    u({ sessionUpdate: "_cycle/task_update", taskId: "t1", state: "stopped" }),
+  );
+  expect(backgroundOf(after).map((r) => [r.id, r.state])).toEqual([["t1", "stopped"]]);
 });
