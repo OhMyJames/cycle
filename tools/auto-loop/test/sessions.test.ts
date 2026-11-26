@@ -8,7 +8,7 @@ import { CycleErrorCode } from "@cycle/protocol";
 // The fake agent is the daemon's own test double; there is no package export for it, so this test reaches into
 // apps/daemon/test by path (and `@cycle/daemon` is a devDependency for the same reason).
 import { fakeAgent } from "../../../apps/daemon/test/fake-agent.ts";
-import { DaemonSessions, type RecordEvent } from "../src/sessions.ts";
+import { DaemonSessions, LeftRequests, type RecordEvent } from "../src/sessions.ts";
 
 let dir: string;
 let cleanup: (() => void | Promise<void>)[] = [];
@@ -265,4 +265,40 @@ test("create removes the new session and names the setting when setConfig is ref
   await expect(
     sessions.create({ role: "qa", agent: "fake", effort: "bogus", title: "t", cwd: "/tmp" }),
   ).rejects.toThrow("could not set effort bogus for the qa session");
+});
+
+// The daemon may say the turn ended before it says the request was settled (CYC-446): a request left for a person is
+// kept past the end of its turn, until it is settled or the session's next turn starts.
+const asked = {
+  sessionId: "s1",
+  run: "CYC-1",
+  request: {
+    options: [
+      { optionId: "allow", kind: "allow_once" },
+      { optionId: "reject", kind: "reject_once" },
+    ],
+  },
+  data: { role: "dev", tool: "execute", command: "curl" },
+};
+
+test("an answer that is settled after its turn ended is still recorded with what was asked", () => {
+  const left = new LeftRequests();
+  left.leave("p1", asked);
+  // The turn ends here; nothing is dropped.
+  expect(left.settle("p1", { outcome: "selected", optionId: "allow" })).toEqual({
+    left: asked,
+    answer: "allow",
+  });
+  expect(left.settle("p1", { outcome: "selected", optionId: "allow" })).toBeUndefined();
+});
+
+test("a cancel is not an answer, and the next turn of the session drops what its earlier turns left", () => {
+  const left = new LeftRequests();
+  left.leave("p1", asked);
+  expect(left.settle("p1", { outcome: "cancelled" })).toBeUndefined();
+  left.leave("p2", asked);
+  left.leave("p3", { ...asked, sessionId: "s2" });
+  left.turnStarts("s1");
+  expect(left.settle("p2", { outcome: "selected", optionId: "reject" })).toBeUndefined();
+  expect(left.settle("p3", { outcome: "selected", optionId: "reject" })?.answer).toBe("deny");
 });

@@ -23,6 +23,39 @@ type Left = {
   data: Record<string, string>;
 };
 
+/**
+ * Requests left for a person, by the daemon's id, so the answer can be recorded with what was asked.
+ *
+ * The daemon's word that a request was settled and its word that the turn ended come in no fixed order: the agent goes
+ * on as soon as it has the answer, and may finish its turn before the settlement reaches the loop. So a request is not
+ * dropped when its turn ends, only when it is settled or when the session's next turn starts. A request cancelled with
+ * its turn is settled as a cancel, which is not an answer; one never settled goes when the next turn starts.
+ */
+export class LeftRequests {
+  readonly #byId = new Map<string, Left>();
+
+  leave(requestId: string, left: Left): void {
+    this.#byId.set(requestId, left);
+  }
+
+  /** The request was settled: what was asked and how a person answered, or undefined if it was not an answer. */
+  settle(
+    requestId: string,
+    outcome: unknown,
+  ): { left: Left; answer: "allow" | "deny" } | undefined {
+    const left = this.#byId.get(requestId);
+    if (left === undefined) return undefined;
+    this.#byId.delete(requestId);
+    const answer = answeredAs(left.request, outcome);
+    return answer === undefined ? undefined : { left, answer };
+  }
+
+  /** A turn of the session starts: what was left in its earlier turns can no longer be answered. */
+  turnStarts(sessionId: string): void {
+    for (const [id, left] of this.#byId) if (left.sessionId === sessionId) this.#byId.delete(id);
+  }
+}
+
 type Turn = {
   run: string;
   role: SessionRole;
@@ -41,8 +74,7 @@ export class DaemonSessions implements Sessions {
   readonly #watched = new Set<string>();
   readonly #onWaiting: (sessionId: string, title: string) => void;
   readonly #record: RecordEvent;
-  /** Requests left for a person, by the daemon's id, so the answer can be recorded with what was asked. */
-  readonly #left = new Map<string, Left>();
+  readonly #left = new LeftRequests();
 
   constructor(
     socketPath: string,
@@ -59,13 +91,12 @@ export class DaemonSessions implements Sessions {
         permission: (sessionId, request, requestId) =>
           this.#permission(sessionId, request, requestId),
         resolved: (_sessionId, requestId, outcome) => {
-          const left = this.#left.get(String(requestId));
-          if (left !== undefined) {
-            this.#left.delete(String(requestId));
-            const answer = answeredAs(left.request, outcome);
-            if (answer !== undefined)
-              this.#emit(left.run, "permission_answered", { ...left.data, answer });
-          }
+          const settled = this.#left.settle(String(requestId), outcome);
+          if (settled !== undefined)
+            this.#emit(settled.left.run, "permission_answered", {
+              ...settled.left.data,
+              answer: settled.answer,
+            });
           const waiter = this.#waiters.get(String(requestId));
           waiter?.({ outcome: "cancelled" });
         },
@@ -149,7 +180,7 @@ export class DaemonSessions implements Sessions {
       this.#emit(turn.run, "permission_requested", { ...data, decision: verdict.decision, reason });
     if (answer !== undefined) return answer;
     if (requestId !== undefined)
-      this.#left.set(requestId, { sessionId, run: turn.run, request, data });
+      this.#left.leave(requestId, { sessionId, run: turn.run, request, data });
     // Not for the loop to decide: the request stays open until a person answers it in the app.
     this.#onWaiting(sessionId, typeof request.title === "string" ? request.title : "");
     return wait(true);
@@ -261,6 +292,7 @@ export class DaemonSessions implements Sessions {
       waiting: 0,
       finish,
     };
+    this.#left.turnStarts(sessionId);
     this.#turns.set(sessionId, turn);
     let timedOut = false;
     let elapsed = 0;
@@ -292,8 +324,6 @@ export class DaemonSessions implements Sessions {
     } finally {
       clearInterval(timer);
       this.#turns.delete(sessionId);
-      // A request nobody answered before the turn ended is not answered later by anyone the Loop would credit.
-      for (const [id, left] of this.#left) if (left.sessionId === sessionId) this.#left.delete(id);
     }
   }
 }
