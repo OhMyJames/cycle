@@ -50,6 +50,7 @@ import {
   type Issue,
   type Logger,
   SessionLost,
+  type SessionRole,
   type Sessions,
   type Tracker,
   type TurnResult,
@@ -540,7 +541,7 @@ export class Pipeline {
     let sessionId = this.#need(run.devSessionId ?? undefined);
     let result: TurnResult;
     try {
-      result = await this.#d.sessions.turn(sessionId, prompt, {
+      result = await this.#turn(run.key, sessionId, prompt, {
         role: "dev",
         worktree,
         timeoutMs: config.turnTimeoutMs,
@@ -563,7 +564,8 @@ export class Pipeline {
       });
       sessionId = created.sessionId;
       await store.event(run.key, "dev_session", { replaced: true });
-      result = await this.#d.sessions.turn(
+      result = await this.#turn(
+        run.key,
         sessionId,
         handoffBrief(issue, book.items, progress, gitLog.output, run.findings),
         { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
@@ -690,7 +692,8 @@ export class Pipeline {
       const turnOptions = { role: "qa" as const, worktree, timeoutMs: config.turnTimeoutMs };
       let result: TurnResult;
       try {
-        result = await this.#d.sessions.turn(
+        result = await this.#turn(
+          run.key,
           this.#need(run.qaSessionId ?? undefined),
           prompt,
           turnOptions,
@@ -701,7 +704,7 @@ export class Pipeline {
         const created = await this.#newQaSession(run, issue);
         await save({ qaSessionId: created });
         run = { ...run, qaSessionId: created };
-        result = await this.#d.sessions.turn(created, prompt, turnOptions);
+        result = await this.#turn(run.key, created, prompt, turnOptions);
       }
       await store.event(run.key, "qa_turn", {
         round: run.round,
@@ -1003,7 +1006,7 @@ export class Pipeline {
           config.ciChecks,
           retryNote,
         );
-        const result = await this.#d.sessions.turn(reviewSessionId, prompt, {
+        const result = await this.#turn(run.key, reviewSessionId, prompt, {
           role: "review",
           worktree,
           timeoutMs: config.turnTimeoutMs,
@@ -1248,6 +1251,28 @@ export class Pipeline {
       worktree: { base: config.baseRef, name: branchOf(issue.number) },
     });
     return created.sessionId;
+  }
+
+  /**
+   * One turn. When the daemon stopped in the middle of it (an update of Cycle), the same prompt is sent again in the
+   * same session, up to `maxInterruptRetries` times; a resend takes no fix round and no review retry.
+   */
+  async #turn(
+    key: string,
+    sessionId: string,
+    prompt: string,
+    context: { role: SessionRole; worktree: string; timeoutMs: number },
+  ): Promise<TurnResult> {
+    const { config, store } = this.#d;
+    for (let resend = 0; ; resend++) {
+      const result = await this.#d.sessions.turn(sessionId, prompt, context);
+      if (result.interrupted !== true) return result;
+      if (resend >= config.maxInterruptRetries)
+        throw new Blocked(
+          `${context.role} 会话的回合被 daemon 反复中断（已重发 ${resend} 次仍被中断）。`,
+        );
+      await store.event(key, "turn_resent", { role: context.role, resend: resend + 1 });
+    }
   }
 
   #mustHaveEnded(who: string, result: TurnResult): void {

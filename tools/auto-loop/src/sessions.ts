@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CycleClient, connectUnix, type PermissionAnswer } from "@cycle/client";
-import { META } from "@cycle/protocol";
+import { CycleErrorCode, META } from "@cycle/protocol";
 import { answerFor, decide } from "./policy.ts";
 import { SessionLost, type SessionRole, type Sessions, type TurnResult } from "./types.ts";
 
@@ -13,6 +13,7 @@ type Turn = {
   worktree: string;
   text: string;
   stop: string | undefined;
+  interrupted: boolean;
   /** Permission requests nobody has answered yet: the time they wait does not count against the turn. */
   waiting: number;
   finish: () => void;
@@ -62,6 +63,8 @@ export class DaemonSessions implements Sessions {
       // state: docs/protocol.md "turn 的状态由 state_update 表达").
       if (update.state === "idle" && typeof update.stopReason === "string") {
         turn.stop = update.stopReason;
+        const error = update.error as { code?: unknown } | undefined;
+        turn.interrupted = error?.code === CycleErrorCode.DaemonStopped;
         turn.finish();
       }
     }
@@ -150,6 +153,9 @@ export class DaemonSessions implements Sessions {
       }
       this.#watched.add(sessionId);
     }
+    // After an update of Cycle the daemon is back before the client is: a prompt sent now would be lost.
+    for (let waited = 0; this.#client.state === "reconnecting" && waited < 120_000; waited += 250)
+      await new Promise((r) => setTimeout(r, 250));
     let finish: () => void = () => {};
     const ended = new Promise<void>((resolve) => {
       finish = resolve;
@@ -159,6 +165,7 @@ export class DaemonSessions implements Sessions {
       worktree: context.worktree,
       text: "",
       stop: undefined,
+      interrupted: false,
       waiting: 0,
       finish,
     };
@@ -180,7 +187,12 @@ export class DaemonSessions implements Sessions {
         throw new SessionLost(String(error));
       }
       await ended;
-      return { stopReason: turn.stop ?? "error", text: turn.text, timedOut };
+      return {
+        stopReason: turn.stop ?? "error",
+        text: turn.text,
+        timedOut,
+        ...(turn.interrupted ? { interrupted: true } : {}),
+      };
     } finally {
       clearInterval(timer);
       this.#turns.delete(sessionId);

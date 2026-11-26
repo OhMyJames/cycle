@@ -192,6 +192,9 @@
         "@cycle/protocol": "workspace:*",
         "zod": "catalog:",
       },
+      "devDependencies": {
+        "@cycle/daemon": "workspace:*",
+      },
     },
   },
   "trustedDependencies": [
