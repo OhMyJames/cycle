@@ -746,7 +746,14 @@ export type UpdateState = {
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "up-to-date"; checkedAt: number }
-  | { kind: "available"; version: string }
+  /** `source` (a release when absent): a GitHub release, or the alpha repository on this machine (then `commit` and `subject` say what it is). */
+  | {
+      kind: "available";
+      version: string;
+      source?: "release" | "local";
+      commit?: string;
+      subject?: string;
+    }
   /** `how`: only what changed since this version ("difference"), or the whole app ("whole"; also when it is not said). */
   | {
       kind: "downloading";

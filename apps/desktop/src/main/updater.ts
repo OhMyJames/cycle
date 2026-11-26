@@ -10,8 +10,8 @@
 // hash. The swap is made by a small script after this process has exited, because replacing the bundle
 // of a running Electron app under its feet can break it.
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { access, constants, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { access, constants, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -22,6 +22,7 @@ import {
   parseManifest,
   parseVersion,
   type ReleaseManifest,
+  sameVersion,
 } from "../shared/release.ts";
 import { assembleDelta, DeltaDeclined } from "./delta.ts";
 import { APP_NAME, BUILD_FILE, MAC_BUNDLE } from "./layout.ts";
@@ -29,9 +30,34 @@ import { APP_NAME, BUILD_FILE, MAC_BUNDLE } from "./layout.ts";
 export const CHECK_EVERY_MS = 60_000;
 const DEADLINE_MS = 30_000;
 
+/** The certificate the local alpha builds are signed with. */
+export const ALPHA_SIGNER = "Cycle Alpha (local)";
+
+/** Where an update comes from: a GitHub release, or the alpha repository on this machine. */
+export type UpdateSource = "release" | "local";
+
+/**
+ * The alpha repository on this machine (`<CYCLE_HOME>/alpha/`): one folder per version (`+` written `_`) holding the
+ * zip and a `manifest.json`. Passed in so the tests can give a fake one.
+ */
+export type LocalAlpha = {
+  dir: string;
+  /** The names in the repository's folder. */
+  list: () => Promise<string[]>;
+  /** The text of a file by its path under `dir`, e.g. `0.3.1-alpha.2_abc/manifest.json`. */
+  read: (path: string) => Promise<string>;
+  /** Copies a file under `dir` to `to`. */
+  copy: (path: string, to: string) => Promise<void>;
+};
+
 export type UpdaterDeps = {
   /** What is running: its version and where it was built for. */
-  current: { version: string; baseVersion?: string; platform: string; arch: string };
+  current: {
+    version: string;
+    baseVersion?: string;
+    platform: string;
+    arch: string;
+  };
   /** The installed bundle, `/Applications/Cycle.app`. */
   appPath: string;
   /** `owner/name`. */
@@ -43,8 +69,10 @@ export type UpdaterDeps = {
   fetch: typeof fetch;
   /** Unpacks a zip made by `ditto -c -k` into a folder. */
   extract: (zip: string, into: string) => Promise<void>;
-  /** Throws unless the new bundle may replace this one (the same signing team, when there is one). */
-  verifyBundle?: (newApp: string, currentApp: string) => Promise<void>;
+  /** Throws unless the new bundle may replace this one (the same signing team, when there is one; for a local alpha, the alpha certificate). */
+  verifyBundle?: (newApp: string, currentApp: string, source: UpdateSource) => Promise<void>;
+  /** The alpha repository on this machine, when there is one. */
+  localAlpha?: LocalAlpha | undefined;
   /** Stops the local daemon and starts the script that swaps the bundles once this process has exited. */
   handOff: (swap: Swap) => Promise<void>;
   /** Closes the app. */
@@ -67,8 +95,14 @@ export type Swap = { appPath: string; newApp: string; oldApp: string; staging: s
 
 type Pending = {
   version: string;
+  source: UpdateSource;
   manifest: ReleaseManifest;
-  archiveUrl: string;
+  /** Of a release: where the archive is. */
+  archiveUrl?: string | undefined;
+  /** Of a local alpha: the zip's path under the repository. */
+  archivePath?: string | undefined;
+  commit?: string | undefined;
+  subject?: string | undefined;
   /** The block pack's address, where the release has one its manifest lists. */
   packUrl?: string | undefined;
 };
@@ -156,7 +190,14 @@ export class Updater {
       this.#pending = found;
       this.#set(
         found !== undefined
-          ? { current: this.#d.current.version, kind: "available", version: found.version }
+          ? {
+              current: this.#d.current.version,
+              kind: "available",
+              version: found.version,
+              source: found.source,
+              ...(found.commit !== undefined ? { commit: found.commit } : {}),
+              ...(found.subject !== undefined ? { subject: found.subject } : {}),
+            }
           : { current: this.#d.current.version, kind: "up-to-date", checkedAt: this.#at() },
       );
     } catch (error) {
@@ -246,8 +287,75 @@ export class Updater {
     }
   }
 
-  /** The newest release that is newer than this app and has what this platform needs. */
+  /**
+   * The newest update from GitHub and from the local alpha repository, whichever is newer. One side failing
+   * does not hide the other's; when both fail, GitHub's error is the one said.
+   */
   async #find(): Promise<Pending | undefined> {
+    if (this.#d.localAlpha === undefined) return this.#findRelease();
+    const [release, local] = await Promise.allSettled([this.#findRelease(), this.#findLocal()]);
+    if (local.status === "rejected")
+      this.#d.log?.(`The local alpha repository could not be read (${errorText(local.reason)}).`);
+    const alpha = local.status === "fulfilled" ? local.value : undefined;
+    if (release.status === "rejected") {
+      if (alpha === undefined) throw release.reason;
+      return alpha;
+    }
+    const found = release.value;
+    if (found === undefined) return alpha;
+    if (alpha === undefined) return found;
+    return isNewer(alpha.version, found.version) ? alpha : found;
+  }
+
+  /** The newest alpha in the local repository that differs from, and is not older than, this app. */
+  async #findLocal(): Promise<Pending | undefined> {
+    const local = this.#d.localAlpha;
+    if (local === undefined) return undefined;
+    const { platform, arch, version: running } = this.#d.current;
+    const runningMeta = parseVersion(running)?.meta ?? "";
+    let best: { pending: Pending; builtAt: number } | undefined;
+    for (const name of await local.list()) {
+      // Half-written builds are in `.partial` folders; nothing that starts with a dot or ends in it is read.
+      if (name.startsWith(".") || name.endsWith(".partial")) continue;
+      try {
+        const text = await local.read(`${name}/manifest.json`);
+        const manifest = parseManifest(text);
+        const extra = JSON.parse(text) as Record<string, unknown>;
+        if (manifest.platform !== platform || manifest.arch !== arch) continue;
+        if (name !== manifest.version.replaceAll("+", "_")) continue;
+        const newer = isNewer(manifest.version, running);
+        const builtAt = typeof extra.builtAt === "string" ? Date.parse(extra.builtAt) || 0 : 0;
+        // The same version made again (another `+meta`) is offered as a reinstall.
+        const reinstall =
+          sameVersion(manifest.version, running) &&
+          (parseVersion(manifest.version)?.meta ?? "") !== runningMeta;
+        if (!newer && !reinstall) continue;
+        if (best !== undefined) {
+          const b = best.pending.version;
+          if (isNewer(b, manifest.version)) continue;
+          if (sameVersion(b, manifest.version) && best.builtAt >= builtAt) continue;
+        }
+        best = {
+          builtAt,
+          pending: {
+            version: manifest.version,
+            source: "local",
+            manifest,
+            archivePath: `${name}/${manifest.file}`,
+            commit: typeof extra.commit === "string" ? extra.commit : undefined,
+            subject: typeof extra.subject === "string" ? extra.subject : undefined,
+          },
+        };
+      } catch (error) {
+        // One bad folder does not hide the others.
+        this.#d.log?.(`Skipped ${name} in the local alpha repository (${errorText(error)}).`);
+      }
+    }
+    return best?.pending;
+  }
+
+  /** The newest release that is newer than this app and has what this platform needs. */
+  async #findRelease(): Promise<Pending | undefined> {
     const api = this.#d.apiBase ?? "https://api.github.com";
     const response = await this.#get(
       `${api}/repos/${this.#d.repo}/releases?per_page=20`,
@@ -327,6 +435,7 @@ export class Updater {
     }
     return {
       version: candidate.version,
+      source: "release",
       manifest,
       archiveUrl: this.#allowed(archiveUrl),
       packUrl,
@@ -380,9 +489,18 @@ export class Updater {
     };
     const check = async (newApp: string) => {
       await this.#checkBundle(newApp, manifest);
-      await this.#d.verifyBundle?.(newApp, this.#d.appPath);
+      await this.#d.verifyBundle?.(newApp, this.#d.appPath, pending.source);
       return newApp;
     };
+    if (pending.source === "local") {
+      await fresh();
+      const zip = join(staging, "update.zip");
+      await this.#copyLocal(pending, zip);
+      this.#set({ current: this.#d.current.version, kind: "installing", version: pending.version });
+      const unpacked = join(staging, "unpacked");
+      await this.#d.extract(zip, unpacked);
+      return check(join(unpacked, MAC_BUNDLE));
+    }
     if (manifest.treeProblem !== undefined)
       log(
         `The release's file table is not usable (${manifest.treeProblem}); downloading it whole.`,
@@ -391,10 +509,16 @@ export class Updater {
       log(
         `The release's block pack is not usable (${manifest.packProblem}); changed files are fetched whole.`,
       );
-    if (manifest.tree !== undefined && this.#d.delta !== false) {
+    if (
+      manifest.tree !== undefined &&
+      this.#d.delta !== false &&
+      pending.archiveUrl !== undefined
+    ) {
       await fresh();
       try {
-        return await check(await this.#byDifference(pending, manifest.tree, staging));
+        return await check(
+          await this.#byDifference(pending, pending.archiveUrl, manifest.tree, staging),
+        );
       } catch (error) {
         // What would stop the whole download as well is not a reason to start it: a limit on requests
         // from this network, or a disk with no room.
@@ -419,6 +543,7 @@ export class Updater {
 
   async #byDifference(
     pending: Pending,
+    archiveUrl: string,
     tree: NonNullable<ReleaseManifest["tree"]>,
     staging: string,
   ): Promise<string> {
@@ -430,7 +555,7 @@ export class Updater {
     const done = await assembleDelta({
       installed: this.#d.appPath,
       into: join(staging, "unpacked"),
-      archiveUrl: pending.archiveUrl,
+      archiveUrl,
       archiveSize: pending.manifest.size,
       tree,
       pack:
@@ -478,6 +603,7 @@ export class Updater {
 
   async #download(pending: Pending, to: string): Promise<void> {
     const { manifest } = pending;
+    if (pending.archiveUrl === undefined) throw new Error("The update has no address.");
     const response = await this.#get(pending.archiveUrl);
     if (!response.ok || response.body === null)
       throw new Error(`The update could not be downloaded (${response.status}).`);
@@ -506,6 +632,23 @@ export class Updater {
       throw new Error("The update does not match its checksum, so it was not installed.");
   }
 
+  /** Copies the local alpha's zip to staging, and checks its size and SHA-256 against the manifest. */
+  async #copyLocal(pending: Pending, to: string): Promise<void> {
+    const local = this.#d.localAlpha;
+    if (local === undefined || pending.archivePath === undefined)
+      throw new Error("There is no local alpha repository.");
+    const { manifest } = pending;
+    await local.copy(pending.archivePath, to);
+    if ((await stat(to)).size !== manifest.size)
+      throw new Error(
+        "The local alpha's size does not match its manifest, so it was not installed.",
+      );
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(to)) hash.update(chunk as Buffer);
+    if (hash.digest("hex") !== manifest.sha256)
+      throw new Error("The local alpha does not match its checksum, so it was not installed.");
+  }
+
   async #checkBundle(newApp: string, manifest: ReleaseManifest): Promise<void> {
     let info: Record<string, unknown>;
     try {
@@ -521,6 +664,9 @@ export class Updater {
       throw new Error("The update is not the version and platform its manifest names.");
   }
 }
+
+const errorText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 /** The team a `codesign -dv` listing names, or undefined for an ad hoc signature or none. */
 export const teamOf = (listing: string): string | undefined => {
@@ -542,6 +688,32 @@ export const verifySameTeam =
         "The update is not signed by the same team as this app, so it was not installed.",
       );
   };
+
+/**
+ * The check for a local alpha: the signature is valid and the certificate that made it is the alpha one. There is no
+ * team to compare, since a self-signed certificate has none.
+ */
+export const verifyLocalAlpha =
+  (codesign: (args: string[]) => Promise<string>) =>
+  async (newApp: string): Promise<void> => {
+    await codesign(["--verify", "--deep", "--strict", newApp]).catch(() => {
+      throw new Error("The update's signature is not valid, so it was not installed.");
+    });
+    const listing = await codesign(["-dv", "--verbose=4", newApp]).catch(() => "");
+    // The first `Authority` is the certificate that signed; the ones after it are what vouches for that.
+    if (/^Authority=(.+)$/m.exec(listing)?.[1] !== ALPHA_SIGNER)
+      throw new Error(
+        `The update is not signed with the "${ALPHA_SIGNER}" certificate, so it was not installed.`,
+      );
+  };
+
+/** What `verifyBundle` is: by where the update came from. */
+export const verifyBySource = (codesign: (args: string[]) => Promise<string>) => {
+  const team = verifySameTeam(codesign);
+  const alpha = verifyLocalAlpha(codesign);
+  return (newApp: string, currentApp: string, source: UpdateSource): Promise<void> =>
+    source === "local" ? alpha(newApp) : team(newApp, currentApp);
+};
 
 /** Leftovers of an update that was interrupted, removed at the start of the next run. */
 export const cleanStale = async (appPath: string): Promise<void> => {
