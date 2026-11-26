@@ -1,26 +1,62 @@
 import { expect, test } from "bun:test";
 import type { Criterion } from "../src/criteria.ts";
+import type { CiCheckItem } from "../src/ports/forge.ts";
+import { githubForge, parseActionsUrl } from "../src/ports/github.ts";
 import {
   DEFAULT_CI_CHECKS,
-  disableAutoMerge,
-  enableAutoMerge,
   hasClosingKeyword,
   MAX_PR_TITLE_LENGTH,
-  parseActionsUrl,
-  postPrComment,
-  readAutoMerge,
-  readCiFailureLogs,
-  readCiStatus,
-  readPrMergeStatus,
-  readPrState,
   renderPr,
   renderPrTitle,
-  rerunFailedCi,
   validatePr,
-  waitForCi,
+  waitForCi as waitForCiWith,
 } from "../src/pr.ts";
 import type { Exec, ExecResult } from "../src/types.ts";
 import { issue } from "./helpers.ts";
+
+// The readers are `github.ts`'s now; these keep the shape the tests call them with.
+type Call = {
+  prRef: string;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+};
+const at = (i: Call) => ({ cwd: i.cwd, timeoutMs: i.timeoutMs });
+const forgeOf = (i: Pick<Call, "exec" | "env">) => githubForge({ exec: i.exec, env: i.env });
+const readCiStatus = (
+  i: Call & {
+    requiredChecks?: readonly string[] | undefined;
+    expectedHeadSha?: string | undefined;
+  },
+) => forgeOf(i).ciStatus(at(i), i.prRef, i.expectedHeadSha, i.requiredChecks);
+const readPrState = (i: Call) => forgeOf(i).prState(at(i), i.prRef);
+const readPrMergeStatus = (i: Call) => forgeOf(i).prMergeStatus(at(i), i.prRef);
+const readAutoMerge = (i: Call) => forgeOf(i).autoMergeOn(at(i), i.prRef);
+const enableAutoMerge = (i: Call) => forgeOf(i).autoMerge(at(i), i.prRef, true);
+const disableAutoMerge = (i: Call) => forgeOf(i).autoMerge(at(i), i.prRef, false);
+const postPrComment = (i: Call & { bodyPath: string }) =>
+  forgeOf(i).comment(at(i), i.prRef, i.bodyPath);
+const readCiFailureLogs = (
+  i: Omit<Call, "prRef"> & { failed: readonly CiCheckItem[]; maxLogChars?: number | undefined },
+) => forgeOf(i).failedLogs(at({ ...i, prRef: "" }), i.failed, i.maxLogChars);
+const rerunFailedCi = (
+  i: Omit<Call, "prRef"> & {
+    failed: readonly CiCheckItem[];
+    ciRound: number;
+    maxCiRetries: number;
+  },
+) =>
+  forgeOf(i).rerunFailed(at({ ...i, prRef: "" }), i.failed, {
+    ciRound: i.ciRound,
+    maxCiRetries: i.maxCiRetries,
+  });
+const waitForCi = (
+  i: Omit<Parameters<typeof waitForCiWith>[0], "forge"> & {
+    exec: Exec;
+    env: Record<string, string | undefined>;
+  },
+) => waitForCiWith({ ...i, forge: forgeOf(i) });
 
 const sampleIssue = issue({
   number: 330,

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Deps, Pipeline } from "../src/pipeline.ts";
+import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import { type Issue, SessionLost } from "../src/types.ts";
 import {

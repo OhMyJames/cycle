@@ -8,7 +8,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { NOTES_HEADING, ORIGINAL_HEADING } from "../src/flows/plan.ts";
-import { type Deps, Pipeline } from "../src/pipeline.ts";
+import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { computeStats } from "../src/stats.ts";
 import { RunStore } from "../src/store.ts";
 import type { Exec, Issue, PlanningConfig } from "../src/types.ts";
