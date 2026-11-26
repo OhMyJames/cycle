@@ -1223,6 +1223,16 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - 每条事件只有 `seq`、`ts`、`run`(工单号或 `plan-<轮次>`)、`kind` 四个字段,其余字段一律不发(行里的附加字段可能含路径或地址)。响应里没有令牌、仓库完整地址和本地路径。
 - 不提供 `loop/start`、`loop/stop`;阶段显示归 CYC-442、CYC-443。
 
+### Loop 运行态(桌面端,CYC-458)
+
+页面按 Project 只读显示 Loop 的运行态,不提供启停。
+
+- **判据**:桌面端读 `runs/list`,某 Project 有 `state` 为 `active` 的记录,**且** Loop 服务答了这次读,才算"运行中";否则"未运行"。Loop 进程和 `loop.sock` 同生共死,所以异常退出后连不上服务,运行态是"未运行",不会被 `run.json` 里遗留的 `active` 骗到。`runs/list` 读失败(连不上或 `-32603`)是未知,按"未运行"显示,绝不显示成"运行中"。In Progress 列不再是判据(纠正 CYC-389 的误判)。不用 `updatedAt` 的新旧判断:一步可以很长,没有依据的阈值只会误判。
+- **实时**:桌面主进程对每个 Project 按 `afterSeq = 最后收到的 seq` 短间隔轮询 `events/list`;`hasMore` 为真时立刻再取。`seq <= 已收到的最后 seq` 的事件丢弃,同一个 `seq` 只应用一次。收到新事件后重读 `runs/list`,运行态变了才通知页面(app 事件 `loop-runs`)。页面不用手动刷新。
+- **断线重连**:连不上或读失败时保留最后收到的 `seq`,不清零;下一次轮询带着它请求。`seq_ahead`、`seq_gone`(`-32602`)时从 0 重取,已应用过的 `seq` 同样只应用一次。
+- 事件推送是否也让看板列表刷新:待确认,本单不做。
+- **埋点**:`loop_runs_read`(`result`: `ok`/`disconnected`)。
+
 ### 工单状态按钮(桌面端写 itsaplan,CYC-387)
 
 写入不经过 Loop 服务:桌面主进程用使用者自己的 key 直接写 itsaplan,审计上分得清是人批准的。页面只有三个按钮,不支持拖动:
@@ -1238,7 +1248,7 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 工单页的"与 agent 对话"按钮:桌面主进程再读一次工单,按列的状态类型决定,然后用本机 daemon 新开会话。
 
 - Backlog / Todo(`chat: "new"`;Todo 里带 `auto` 的是排给 Loop 的,Loop 会自己接手,所以为 `none`,要细化先退回 Backlog):新开 codex 会话,模型取该 agent 在设置里的默认模型;第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
-- In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话。这一列暂时被当作"Loop 正在跑"的判据;已知误差:Loop 异常退出留在 In Progress 的工单会被误判为在跑,CYC-390 用运行数据纠正。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
+- In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话,**且该工单在运行数据里有 `active` 的记录**(见下一节"Loop 运行态")。工单留在 In Progress 但没有 `active` 记录(含 Loop 服务连不上、`runs/list` 读失败)时不判为"Loop 正在跑",`chat` 为 `none`。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
 - **工作目录**:ticket 对话的会话跑在专用目录 `<Cycle 数据目录>/ticket-chat/`(安装版是 `~/.cycle/ticket-chat/`),首次使用时创建;不用用户的主目录,也没有默认回退(没配置目录就不创建会话)。
 - 会话已创建但第一条消息没发出去:失败结果带上 `sessionId`,页面给出"打开这个会话"。
 - 默认模型没设:不创建会话,返回 `needs_model`,页面提示去设置里配置,而不是创建失败。
