@@ -1340,7 +1340,12 @@ export type LoopTicket = {
    * corrects it); `none` neither.
    */
   chat: LoopChat;
+  /** Where Loop is on an In Progress ticket, and since when (ISO time): from the ticket's own fields (CYC-443). */
+  loopStage?: { stage: LoopStage; since: string };
 };
+
+/** The steps Loop goes through on a ticket, as fixed words (not the tracker's option names). */
+export type LoopStage = "develop" | "verify" | "qa" | "ci" | "review" | "merge";
 
 export type LoopChat = "new" | "watch" | "none";
 

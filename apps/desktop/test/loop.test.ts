@@ -562,3 +562,96 @@ describe("a conversation about a ticket (CYC-389)", () => {
     });
   });
 });
+
+describe("Loop's stage on In Progress cards (CYC-443)", () => {
+  const stageField = {
+    id: 90,
+    name: "Loop 阶段",
+    options: [
+      { id: 1, name: "开发" },
+      { id: 3, name: "QA" },
+    ],
+  };
+  const sinceField = { id: 91, name: "Loop 阶段开始于" };
+  const since = "2026-11-26T08:00:00.000Z";
+  const stagedBoard = (opts: { fields?: unknown[]; issue?: (id: unknown) => unknown }) => {
+    const seen: { tool: string; args: Record<string, unknown> }[] = [];
+    const fetchImpl = (async (_url: unknown, init: RequestInit) => {
+      const { params } = JSON.parse(String(init.body)) as {
+        params: { name: string; arguments: Record<string, unknown> };
+      };
+      const { name, arguments: args } = params;
+      seen.push({ tool: name, args });
+      let data: unknown;
+      if (name === "get_project")
+        data = {
+          project: {},
+          columns: boardColumns,
+          labels: [],
+          customFields: opts.fields ?? [stageField, sinceField],
+        };
+      else if (name === "get_issue") {
+        const r = opts.issue?.(args.issueId);
+        if (r instanceof Error) throw r;
+        data = r;
+      } else
+        data = [
+          {
+            ...issue(Number(args.columnId) * 10, Number(args.columnId)),
+            id: Number(args.columnId) * 100,
+          },
+        ];
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { content: [{ type: "text", text: JSON.stringify(data) }] },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    return { seen, fetchImpl };
+  };
+  const good = () => ({
+    fields: [
+      { name: "Loop 阶段", optionIds: [3] },
+      { name: "Loop 阶段开始于", value: since },
+    ],
+  });
+  const tickets = (b: Awaited<ReturnType<typeof answerBoard>>, name: string) => {
+    if (b.kind !== "ok") throw new Error("expected a board");
+    return b.columns.find((c) => c.name === name)?.tickets ?? [];
+  };
+
+  test("In Progress tickets carry the stage; other columns are not read", async () => {
+    writeKey(0o600);
+    const { seen, fetchImpl } = stagedBoard({ issue: good });
+    const board = await answerBoard(loop, "CYC", () => {}, fetchImpl);
+    expect(tickets(board, "In Progress")[0]?.loopStage).toEqual({ stage: "qa", since });
+    expect(tickets(board, "In Review")[0]).not.toHaveProperty("loopStage");
+    expect(seen.filter((s) => s.tool === "get_issue").map((s) => s.args.issueId)).toEqual([2300]);
+  });
+
+  test("a failed read, a missing field or an empty field leaves the card without a stage", async () => {
+    writeKey(0o600);
+    const failed = await answerBoard(
+      loop,
+      "CYC",
+      () => {},
+      stagedBoard({ issue: () => new Error("boom") }).fetchImpl,
+    );
+    expect(tickets(failed, "In Progress")).toHaveLength(1);
+    expect(tickets(failed, "In Progress")[0]).not.toHaveProperty("loopStage");
+    const missing = stagedBoard({ fields: [stageField], issue: good });
+    const noField = await answerBoard(loop, "CYC", () => {}, missing.fetchImpl);
+    expect(tickets(noField, "In Progress")[0]).not.toHaveProperty("loopStage");
+    expect(missing.seen.some((s) => s.tool === "get_issue")).toBe(false);
+    const empty = await answerBoard(
+      loop,
+      "CYC",
+      () => {},
+      stagedBoard({ issue: () => ({ fields: [{ name: "Loop 阶段", optionIds: [] }] }) }).fetchImpl,
+    );
+    expect(tickets(empty, "In Progress")[0]).not.toHaveProperty("loopStage");
+    expect(tickets(empty, "Todo")).toHaveLength(1);
+  });
+});

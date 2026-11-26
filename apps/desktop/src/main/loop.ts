@@ -22,6 +22,7 @@ import type {
   LoopNotice,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
+  LoopStage,
   LoopTicket,
   LoopTicketAnswer,
   LoopTicketDetail,
@@ -218,6 +219,79 @@ const columnsOf = (project: Record<string, unknown>): Column[] =>
     (c) => asRecord(c) as unknown as Column,
   );
 
+const STAGE_FIELD = "Loop 阶段";
+const STAGE_SINCE_FIELD = "Loop 阶段开始于";
+/** The options of the stage field, by the name Loop writes: the page gets fixed words, never the tracker's names. */
+const STAGE_OF_OPTION: Record<string, LoopStage> = {
+  开发: "develop",
+  验证: "verify",
+  QA: "qa",
+  "等 CI": "ci",
+  评审: "review",
+  等合并: "merge",
+};
+
+type StageFields = { stageId: unknown; options: Map<unknown, string>; sinceId: unknown };
+
+/** The two fields of a Project, found by name (ids are per Project). Undefined: it has no such fields. */
+const stageFieldsOf = async (
+  t: Tracker,
+  projectKey: string,
+  project: Record<string, unknown>,
+): Promise<StageFields | undefined> => {
+  try {
+    let defs = project.customFields ?? project.fields;
+    if (!Array.isArray(defs)) {
+      const listed = await callTool(t, "list_custom_fields", { projectKey });
+      defs = Array.isArray(listed) ? listed : (asRecord(listed).fields ?? asRecord(listed).data);
+    }
+    const all = (Array.isArray(defs) ? defs : []).map(asRecord);
+    const stage = all.find((f) => f.name === STAGE_FIELD);
+    const since = all.find((f) => f.name === STAGE_SINCE_FIELD);
+    if (stage === undefined || since === undefined) return undefined;
+    const options = new Map<unknown, string>();
+    for (const o of Array.isArray(stage.options) ? stage.options : []) {
+      const r = asRecord(o);
+      if (typeof r.name === "string") options.set(r.id, r.name);
+    }
+    return { stageId: stage.id, options, sinceId: since.id };
+  } catch {
+    return undefined;
+  }
+};
+
+/** One ticket's stage from `get_issue`; undefined for any failure or empty field (the card then shows none). */
+const readStage = async (
+  t: Tracker,
+  issueId: unknown,
+  defs: StageFields,
+): Promise<LoopTicket["loopStage"]> => {
+  try {
+    const issue = unwrap(await callTool(t, "get_issue", { issueId }));
+    const fields = (Array.isArray(issue.fields) ? issue.fields : []).map(asRecord);
+    const find = (name: string, id: unknown) =>
+      fields.find((f) => f.name === name) ??
+      fields.find((f) => id !== undefined && (f.fieldId === id || f.customFieldId === id));
+    const stageField = find(STAGE_FIELD, defs.stageId);
+    const sinceField = find(STAGE_SINCE_FIELD, defs.sinceId);
+    if (!stageField || !sinceField) return undefined;
+    const optionId = Array.isArray(stageField.optionIds) ? stageField.optionIds[0] : undefined;
+    const name =
+      optionId !== undefined
+        ? defs.options.get(optionId)
+        : typeof stageField.value === "string"
+          ? stageField.value
+          : undefined;
+    const stage = name === undefined ? undefined : STAGE_OF_OPTION[name.trim()];
+    const raw = sinceField.value ?? sinceField.dateValue;
+    if (stage === undefined || typeof raw !== "string" || Number.isNaN(Date.parse(raw)))
+      return undefined;
+    return { stage, since: new Date(raw).toISOString() };
+  } catch {
+    return undefined;
+  }
+};
+
 const DONE_SHOWN = 20;
 /** The most a list answers (the tracker's own limit): a column is shown whole, so its count is true. */
 const LIST_LIMIT = 500;
@@ -231,6 +305,9 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
     const columns = columnsOf(project);
     const autoId = autoLabelOf(project);
     if (columns.length === 0) throw new Error("no columns");
+    const stageDefs = columns.some((c) => roleOf(columns, c) === "progress")
+      ? await stageFieldsOf(t, projectKey, project)
+      : undefined;
     const ticketsOf = async (
       column: Column,
       limit: number,
@@ -239,10 +316,26 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
         await callTool(t, "list_issues", { projectKey, columnId: column.id, limit }),
       );
       const role = roleOf(columns, column);
+      // Only In Progress is read ticket by ticket (`list_issues` has no field values), a few at a time. The write does
+      // not move `updatedAt`, so nothing is cached by it.
+      const stages = new Map<unknown, NonNullable<LoopTicket["loopStage"]>>();
+      if (role === "progress" && stageDefs !== undefined) {
+        let next = 0;
+        const lane = async () => {
+          while (next < rows.length) {
+            const r = asRecord(rows[next++]);
+            const stage = await readStage(t, r.id, stageDefs);
+            if (stage !== undefined) stages.set(r, stage);
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, lane));
+      }
       return rows.map((row): LoopTicket & { at: string } => {
         const r = asRecord(row);
         const auto = autoId !== undefined && labelIdsOf(r).includes(autoId);
+        const loopStage = stages.get(r);
         return {
+          ...(loopStage ? { loopStage } : {}),
           at: String(r.updatedAt ?? ""),
           identifier: String(r.identifier ?? ""),
           title: String(r.title ?? ""),

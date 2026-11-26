@@ -482,3 +482,26 @@ test("a short title is not clipped or masked", async () => {
   expect(text.scrollHeight).toBeLessThanOrEqual(text.clientHeight);
   expect(getComputedStyle(text).maskImage).toBe("none");
 });
+
+test("an In Progress card shows Loop's stage and how long, with a nudge past 30 minutes", async () => {
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  const staged = (n: number, stage: "qa" | "ci", min: number): LoopTicket => ({
+    ...ticket(n, "In Progress"),
+    loopStage: { stage, since: ago(min) },
+  });
+  const { user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        "In Progress": [staged(1, "qa", 3), staged(2, "ci", 72), ticket(3, "In Progress")],
+        "In Review": [ticket(4, "In Review")],
+      }),
+    },
+  });
+  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
+  const quick = await screen.findByText("QA · 3 min");
+  expect(quick.getAttribute("data-slow")).toBeNull();
+  const slow = screen.getByText("Waiting for CI · 1 h 12 min");
+  expect(slow.getAttribute("data-slow")).toBe("true");
+  expect(document.querySelectorAll('[data-slot="loop-ticket-stage"]')).toHaveLength(2);
+});
