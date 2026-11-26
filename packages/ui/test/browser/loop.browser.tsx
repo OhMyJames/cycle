@@ -349,6 +349,43 @@ test("with nothing that needs a person, the section is not there", async () => {
   expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
 });
 
+test("a Project opens on its board; the Overview tab is disabled and the crumbs lead back", async () => {
+  const { user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  await screen.findByRole("region", { name: "In Progress" });
+  const tabs = screen.getByRole("radiogroup", { name: "Project pages" });
+  const boardTab = within(tabs).getByRole("radio", { name: "Board" }) as HTMLElement;
+  const overviewTab = within(tabs).getByRole("radio", { name: "Overview" }) as HTMLElement;
+  expect(boardTab.getAttribute("aria-checked")).toBe("true");
+  expect(
+    overviewTab.getAttribute("aria-disabled") ?? overviewTab.hasAttribute("disabled"),
+  ).toBeTruthy();
+  expect(screen.getByText("Coming later")).toBeTruthy();
+  overviewTab.click();
+  expect(boardTab.getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByRole("region", { name: "In Progress" })).toBeTruthy();
+  const heading = screen.getByRole("heading", { level: 2 });
+  expect(heading.textContent).toBe("Cycle/Board");
+  // The Project name leads back to the Loop overview.
+  await user.click(within(heading).getByRole("button", { name: "Cycle" }));
+  await screen.findByRole("region", { name: "Projects" });
+});
+
+test("a ticket page's title is Project / ticket, and the Project name leads to the board", async () => {
+  const { user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  await user.click(await screen.findByRole("button", { name: /Ticket 388/ }));
+  await screen.findByRole("button", { name: "Back to the board" });
+  const heading = screen.getByRole("heading", { level: 2 });
+  expect(heading.textContent).toBe("Cycle/CYC-388");
+  await user.click(within(heading).getByRole("button", { name: "Cycle" }));
+  await screen.findByRole("region", { name: "In Progress" });
+});
+
 test("the board shows the columns by name, in the order they come", async () => {
   await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });

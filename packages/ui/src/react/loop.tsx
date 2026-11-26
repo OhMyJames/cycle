@@ -3,6 +3,11 @@
 // the server away they stay listed, greyed, and say so. A ticket changes state only by a button (approve, back to
 // Backlog, back to Todo; never by dragging); which buttons it has is decided by main, and approving asks first.
 import { Button } from "@ui-sdk/react/button";
+import {
+  SegmentedControl,
+  SegmentedControlIndicator,
+  SegmentedControlItem,
+} from "@ui-sdk/react/segmented-control";
 import { type ReactNode, useEffect, useState } from "react";
 import type {
   LoopActFailure,
@@ -775,21 +780,55 @@ export function LoopPage({
       note: away ? t("loop.offline.note") : p.projectKey,
       disabled: away,
       heading: (
-        <>
-          {p.name} <span data-slot="loop-repo">{p.repo.displayName}</span>
-        </>
+        <nav data-slot="loop-crumbs" aria-label={t("loop.crumbs")}>
+          <button
+            type="button"
+            data-slot="loop-crumb"
+            onClick={() =>
+              onView(
+                view.at === "ticket"
+                  ? { at: "project", projectKey: p.projectKey, tab: "kanban" }
+                  : { at: "overview" },
+              )
+            }
+          >
+            {p.name}
+          </button>
+          <span aria-hidden="true">/</span>
+          <span aria-current="page">
+            {view.at === "ticket" && view.projectKey === p.projectKey
+              ? view.identifier
+              : view.at === "project" && view.tab === "overview"
+                ? t("loop.tab.overview")
+                : t("loop.tab.kanban")}
+          </span>
+        </nav>
       ),
       content: (
-        <Board
-          projectKey={p.projectKey}
-          answer={loop.boards[p.projectKey]}
-          openIdentifier={
-            view.at === "ticket" && view.projectKey === p.projectKey ? view.identifier : undefined
-          }
-          onOpen={(identifier) => onView({ at: "ticket", projectKey: p.projectKey, identifier })}
-          onBack={onBack}
-          onChatStarted={onClose}
-        />
+        <>
+          {view.at === "project" && view.projectKey === p.projectKey ? (
+            <div data-slot="loop-tabs">
+              <SegmentedControl value={view.tab} aria-label={t("loop.tabs")}>
+                <SegmentedControlIndicator />
+                <SegmentedControlItem value="kanban">{t("loop.tab.kanban")}</SegmentedControlItem>
+                <SegmentedControlItem value="overview" disabled>
+                  {t("loop.tab.overview")}
+                </SegmentedControlItem>
+              </SegmentedControl>
+              <span data-slot="loop-tab-note">{t("loop.tab.later")}</span>
+            </div>
+          ) : null}
+          <Board
+            projectKey={p.projectKey}
+            answer={loop.boards[p.projectKey]}
+            openIdentifier={
+              view.at === "ticket" && view.projectKey === p.projectKey ? view.identifier : undefined
+            }
+            onOpen={(identifier) => onView({ at: "ticket", projectKey: p.projectKey, identifier })}
+            onBack={onBack}
+            onChatStarted={onClose}
+          />
+        </>
       ),
     })),
   ];
