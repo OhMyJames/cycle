@@ -3,6 +3,11 @@ import { PlanTracker } from "../src/plan-mcp.ts";
 import { resolveLoopFields } from "../src/project.ts";
 import { issue } from "./helpers.ts";
 
+const fieldsOf = (reply: unknown) => {
+  const r = resolveLoopFields(reply);
+  return "fields" in r ? r.fields : null;
+};
+
 const names = ["开发", "验证", "QA", "等 CI", "评审", "等合并"];
 const fields = (over: { options?: string[]; skipStarted?: boolean } = {}) => ({
   ok: true,
@@ -18,7 +23,7 @@ const fields = (over: { options?: string[]; skipStarted?: boolean } = {}) => ({
 });
 
 test("field and option ids are resolved by name", () => {
-  expect(resolveLoopFields(fields())).toEqual({
+  expect(fieldsOf(fields())).toEqual({
     phaseFieldId: 7,
     startedFieldId: 8,
     optionIds: { dev: 100, verify: 101, qa: 102, ci: 103, review: 104, merge: 105 },
@@ -26,10 +31,10 @@ test("field and option ids are resolved by name", () => {
 });
 
 test("a missing field or option means do not write, without throwing", () => {
-  expect(resolveLoopFields(fields({ skipStarted: true }))).toBeNull();
-  expect(resolveLoopFields(fields({ options: names.slice(0, 5) }))).toBeNull();
-  expect(resolveLoopFields({ ok: true, data: [] })).toBeNull();
-  expect(resolveLoopFields("nonsense")).toBeNull();
+  expect(fieldsOf(fields({ skipStarted: true }))).toBeNull();
+  expect(fieldsOf(fields({ options: names.slice(0, 5) }))).toBeNull();
+  expect(fieldsOf({ ok: true, data: [] })).toBeNull();
+  expect(fieldsOf("nonsense")).toBeNull();
 });
 
 const realFetch = globalThis.fetch;
@@ -51,7 +56,7 @@ const tracker = () => {
 
 test("setting a phase writes the option and the time; clearing writes an empty list and null", async () => {
   const { t, calls } = tracker();
-  t.setLoopFields(resolveLoopFields(fields()));
+  t.setLoopFields(fieldsOf(fields()));
   const at = new Date("2026-11-26T01:02:03Z");
   await t.setLoopPhase(issue(), "qa", at);
   await t.setLoopPhase(issue(), null, at);
@@ -72,24 +77,26 @@ test("without resolved fields nothing is written", async () => {
 test("a field of the wrong type is not taken", () => {
   const bad = fields();
   (bad.data[1] as { fieldType: string }).fieldType = "text";
-  expect(resolveLoopFields(bad)).toBeNull();
-  expect(resolveLoopFields({ data: [{ ...bad.data[0], id: null }, bad.data[1]] })).toBeNull();
+  expect(fieldsOf(bad)).toBeNull();
+  expect(fieldsOf({ data: [{ ...bad.data[0], id: null }, bad.data[1]] })).toBeNull();
 });
 
 test("a field scoped to one issue type, or a name that matches twice, is not taken", () => {
   const scoped = fields();
   (scoped.data[1] as { issueTypeId?: number }).issueTypeId = 3;
-  expect(resolveLoopFields(scoped)).toBeNull();
+  expect(fieldsOf(scoped)).toBeNull();
   const twice = fields();
   twice.data.push({ ...(twice.data[1] as object) } as never);
-  expect(resolveLoopFields(twice)).toBeNull();
+  expect(fieldsOf(twice)).toBeNull();
 });
 
-test("an aborted write does not go on to the second field", async () => {
-  const { t, calls } = tracker();
-  t.setLoopFields(resolveLoopFields(fields()));
-  const abort = new AbortController();
-  abort.abort();
-  await expect(t.setLoopPhase(issue(), "qa", new Date(), abort.signal)).rejects.toThrow();
-  expect(calls).toEqual([]);
+test("a problem is named so the warning can say what is wrong", () => {
+  const bad = fields();
+  (bad.data[1] as { fieldType: string }).fieldType = "text";
+  expect(resolveLoopFields(bad)).toEqual({
+    problem: "「Loop 阶段开始于」 must be a datetime field",
+  });
+  expect(resolveLoopFields(fields({ options: names.slice(0, 5) }))).toEqual({
+    problem: "「Loop 阶段」 has no option 「等合并」",
+  });
 });

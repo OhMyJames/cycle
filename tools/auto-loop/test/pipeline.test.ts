@@ -1694,30 +1694,8 @@ test("a failing phase write changes nothing about the outcome", async () => {
   expect((await bad.store.events()).some((e) => e.kind === "phase_field_failed")).toBe(true);
 });
 
-test("a phase write that half-failed is written again when the same phase is resumed", async () => {
-  const w = setup([ready()], { dev: [done(), done(), done(), done()], qa: [] }, {}, [
-    "bun run check",
-  ]);
-  // Every write fails while the run goes to Blocked: the clear fails too and is kept to retry.
-  w.tracker.failPhase = true;
-  await w.pipeline.step();
-  expect(w.tracker.phases).toEqual([]);
-  w.tracker.failPhase = false;
-  w.world.fail.clear();
-  w.sessions.script.qa.push(done(PASS));
-  w.sessions.script.dev.push(done());
-  (w.tracker.issues[0] as Issue).columnId = 22;
-  await w.pipeline.step();
-  // The resumed phase is written (not skipped as "already written"); the old pending clear backs off and is dropped.
-  expect(w.tracker.phases[0]).toBe("CYC-1:verify");
-  expect(w.tracker.phases).toContain("CYC-1:verify");
-  expect(w.tracker.phases.at(-1)).toBe("CYC-1:clear");
-});
-
-test("a phase write that never answers counts as failed and the run goes on", async () => {
-  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] }, {});
-  w.tracker.setLoopPhase = () => new Promise(() => {});
-  const timed = new Pipeline({
+const withCap = (w: ReturnType<typeof setup>, mirrorCapMs: number) =>
+  new Pipeline({
     config: config({ stateDir: dir }),
     tracker: w.tracker,
     sessions: w.sessions,
@@ -1727,42 +1705,49 @@ test("a phase write that never answers counts as failed and the run goes on", as
     log: () => {},
     env: { PATH: "/bin" },
     sleep: async () => {},
-    mirrorTimeoutMs: 5,
+    mirrorCapMs,
   });
-  expect((await timed.step()).status).toBe("delivered");
-});
 
-test("a phase write that timed out is aborted and cannot land after a newer one", async () => {
-  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] }, {});
-  let release: () => void = () => {};
-  const gate = new Promise<void>((r) => {
-    release = r;
-  });
-  const late: string[] = [];
-  w.tracker.setLoopPhase = async (i, phase, _at, signal) => {
-    if (phase === "dev") {
-      await gate;
-      if (signal?.aborted) return;
-      late.push("dev landed");
-      return;
-    }
-    w.tracker.phases.push(`${i.key}:${phase ?? "clear"}`);
+test("writes for one work item land in order even when an earlier one is slow", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const landed: string[] = [];
+  w.tracker.setLoopPhase = async (i, phase) => {
+    if (phase === "dev") await Bun.sleep(30);
+    landed.push(`${i.key}:${phase ?? "clear"}`);
   };
-  const timed = new Pipeline({
-    config: config({ stateDir: dir }),
-    tracker: w.tracker,
-    sessions: w.sessions,
-    exec: makeExec(w.world),
-    store: w.store,
-    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
-    log: () => {},
-    env: { PATH: "/bin" },
-    sleep: async () => {},
-    mirrorTimeoutMs: 5,
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  await Bun.sleep(60);
+  expect(landed.slice(0, 3)).toEqual(["CYC-1:dev", "CYC-1:verify", "CYC-1:qa"]);
+  expect(landed.at(-1)).toBe("CYC-1:clear");
+});
+
+test("a write that never answers does not hold the run longer than the cap", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  w.tracker.setLoopPhase = () => new Promise(() => {});
+  const started = Date.now();
+  expect((await withCap(w, 20).step()).status).toBe("delivered");
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+test("delivery clears after a merge write that was still pending", async () => {
+  const w = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
   });
-  expect((await timed.step()).status).toBe("delivered");
-  release();
-  await Bun.sleep(5);
-  expect(late).toEqual([]);
-  expect(w.tracker.phases[0]).toBe("CYC-1:verify");
+  const landed: string[] = [];
+  w.tracker.setLoopPhase = async (_i, phase) => {
+    if (phase === "merge") await Bun.sleep(40);
+    landed.push(phase ?? "clear");
+  };
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  expect(landed.slice(-2)).toEqual(["merge", "clear"]);
+});
+
+test("a failing write is reported once per kind and the run is unaffected", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  w.tracker.failPhase = true;
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  const failures = (await w.store.events()).filter((e) => e.kind === "phase_field_failed");
+  expect(failures).toHaveLength(1);
 });

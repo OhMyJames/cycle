@@ -65,6 +65,8 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
   };
 };
 
+const FIELD_WRITE_TIMEOUT_MS = 10_000;
+
 export class PlanTracker implements Tracker {
   readonly #url: string;
   readonly #key: string;
@@ -102,21 +104,15 @@ export class PlanTracker implements Tracker {
     });
   }
 
-  async setLoopPhase(
-    issue: Issue,
-    phase: LoopPhase | null,
-    at: Date,
-    signal?: AbortSignal,
-  ): Promise<void> {
+  /** Both fields in one go, each request bounded in time so a hung tracker cannot hold the queue for long. */
+  async setLoopPhase(issue: Issue, phase: LoopPhase | null, at: Date): Promise<void> {
     const f = this.#loopFields;
     if (f === null) return;
-    // An abandoned write must not go on to its second field.
     const set = async (fieldId: number, rest: Record<string, unknown>) => {
-      signal?.throwIfAborted();
       await this.#call(
         "execute_write",
         { name: "set_issue_field_value", arguments: { issueId: issue.id, fieldId, ...rest } },
-        signal,
+        FIELD_WRITE_TIMEOUT_MS,
       );
     };
     if (phase === null) {
@@ -139,9 +135,9 @@ export class PlanTracker implements Tracker {
     return this.#call("get_project", { projectKey: this.#project });
   }
 
-  async #call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  async #call(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
     const response = await fetch(this.#url, {
-      ...(signal !== undefined ? { signal } : {}),
+      ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       method: "POST",
       headers: {
         "content-type": "application/json",

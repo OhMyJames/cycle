@@ -80,8 +80,8 @@ export type Deps = {
   sleep?: (ms: number) => Promise<void>;
   /** True once the loop has been asked to stop: no new work item is taken, runs already under way go on. */
   stopped?: () => boolean;
-  /** How long a write of the phase fields may take before it counts as failed. Defaults to 10 s. */
-  mirrorTimeoutMs?: number;
+  /** How long delivery and Blocked wait for the last phase write to land before going on. Defaults to 10 s. */
+  mirrorCapMs?: number;
 };
 
 /** A run cannot go on without a person. The message is what the person is told. */
@@ -108,16 +108,16 @@ export class Pipeline {
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
   #lock: Promise<void> = Promise.resolve();
-  /** What was last written to each work item's phase fields (null = cleared); nothing is written twice in a row. */
+  /**
+   * The phase fields are a best-effort mirror of the run record (it may be stale; the record is the truth). Writes for
+   * one run go through one queue, so they land in order; nothing waits for them except delivery and Blocked, and only
+   * for a short while.
+   */
+  readonly #queues = new Map<string, Promise<void>>();
+  /** The phase last queued for each run, so the same one is not queued twice. */
   readonly #mirrored = new Map<string, LoopPhase | null>();
-  /** When each run entered the phase last written, so a retried write keeps the original time. */
-  readonly #entered = new Map<string, { phase: LoopPhase; at: Date }>();
-  /** Runs whose clear failed: the work item may still show a phase it is no longer in. */
-  readonly #pendingClears = new Map<string, { issue: Issue; after: number }>();
-  /** The write of each work item's phase fields now under way, so a newer one can abort it. */
-  readonly #inflight = new Map<string, AbortController>();
-  /** Consecutive failed writes per run; only the first few are logged. */
-  readonly #failures = new Map<string, number>();
+  /** The kinds of failure already reported for each run: one log line and one event per kind. */
+  readonly #failed = new Map<string, Set<string>>();
 
   constructor(deps: Deps) {
     this.#d = deps;
@@ -127,10 +127,7 @@ export class Pipeline {
   async step(): Promise<StepResult> {
     if (this.#d.config.dryRun) return this.#dryRun();
 
-    const chosen = await this.#exclusive(async () => {
-      await this.#retryClears();
-      return this.#choose();
-    });
+    const chosen = await this.#exclusive(() => this.#choose());
     if ("result" in chosen) return chosen.result;
     try {
       if (chosen.resume !== undefined) {
@@ -348,72 +345,45 @@ export class Pipeline {
     return this.#drive(current, issue, book, byPerson);
   }
 
-  /**
-   * Mirrors the phase onto the work item. The write is bounded in time and a failure is logged, never raised: the run
-   * goes on. A write that times out, or is replaced by a newer one for the same work item, is aborted so it cannot
-   * land late. After a failure the next call writes again (the two field writes are not atomic), and a clear that
-   * failed is tried again at the start of a later step, backing off.
-   */
-  async #mirror(run: RunRecord, issue: Issue, phase: LoopPhase | null): Promise<void> {
+  /** Queues the write of a phase (`null` clears) and goes on. A failed write is reported once and not retried. */
+  #mirror(run: RunRecord, issue: Issue, phase: LoopPhase | null): void {
     const key = run.key;
     if (this.#mirrored.has(key) && this.#mirrored.get(key) === phase) return;
-    const entered = this.#entered.get(key);
-    const at = phase !== null && entered?.phase === phase ? entered.at : this.#d.clock.now();
-    if (phase !== null) this.#entered.set(key, { phase, at });
-    else this.#entered.delete(key);
-    this.#inflight.get(key)?.abort();
-    const abort = new AbortController();
-    this.#inflight.set(key, abort);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        this.#d.tracker.setLoopPhase(issue, phase, at, abort.signal),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("timed out")),
-            this.#d.mirrorTimeoutMs ?? 10_000,
-          );
-        }),
-      ]);
-      if (this.#inflight.get(key) === abort) {
-        this.#mirrored.set(key, phase);
-        this.#pendingClears.delete(key);
-        this.#failures.delete(key);
-      }
-    } catch (error) {
-      abort.abort();
-      // A write that was replaced by a newer one has nothing to say.
-      if (this.#inflight.get(key) !== abort) return;
-      this.#mirrored.delete(key);
-      const failures = (this.#failures.get(key) ?? 0) + 1;
-      this.#failures.set(key, failures);
-      if (phase === null) {
-        const wait = Math.min(2 ** failures * 30_000, 3_600_000);
-        this.#pendingClears.set(key, {
-          issue,
-          after: this.#d.clock.now().getTime() + wait,
-        });
-      } else this.#pendingClears.delete(key);
-      if (failures <= 3) {
+    this.#mirrored.set(key, phase);
+    const at = this.#d.clock.now();
+    const job = (this.#queues.get(key) ?? Promise.resolve())
+      .then(() => this.#d.tracker.setLoopPhase(issue, phase, at))
+      .catch(async (error) => {
+        const kind = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "error";
+        const seen = this.#failed.get(key) ?? new Set<string>();
+        this.#failed.set(key, seen);
+        if (seen.has(kind)) return;
+        seen.add(kind);
         const reason = error instanceof Error ? error.message : String(error);
-        this.#d.log(`${key}: could not write the phase field: ${reason}`);
-        await this.#d.store
-          .event(key, "phase_field_failed", { phase: phase ?? "clear" })
-          .catch(() => {});
-      }
-    } finally {
-      clearTimeout(timer);
-    }
+        this.#d.log(`${key}: could not write the phase field (${kind}): ${reason}`);
+        await this.#d.store.event(key, "phase_field_failed", { failure: kind }).catch(() => {});
+      })
+      .finally(() => {
+        if (this.#queues.get(key) === job) this.#queues.delete(key);
+      });
+    this.#queues.set(key, job);
   }
 
-  /** Called with the lock held, so no step is choosing a work item meanwhile. */
-  async #retryClears(): Promise<void> {
-    const now = this.#d.clock.now().getTime();
-    for (const [key, pending] of [...this.#pendingClears]) {
-      if (this.#active.has(key) || pending.after > now) continue;
-      this.#pendingClears.delete(key);
-      await this.#mirror({ key } as RunRecord, pending.issue, null);
-    }
+  /** Delivery or Blocked: clears the phase, waits a short while for it to land, and forgets the run. */
+  async #clear(run: RunRecord, issue: Issue): Promise<void> {
+    this.#mirror(run, issue, null);
+    const queue = this.#queues.get(run.key);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (queue !== undefined)
+      await Promise.race([
+        queue,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, this.#d.mirrorCapMs ?? 10_000);
+        }),
+      ]);
+    clearTimeout(timer);
+    this.#mirrored.delete(run.key);
+    this.#failed.delete(run.key);
   }
 
   async #drive(
@@ -432,11 +402,11 @@ export class Pipeline {
         if (run.prUrl !== null && run.phase !== "blocked" && run.phase !== "done") {
           const settled = await this.#guardPr(run, issue, save);
           if (settled !== undefined) {
-            await this.#mirror(run, issue, null);
+            await this.#clear(run, issue);
             return settled;
           }
         }
-        await this.#mirror(run, issue, PHASE_OF[run.phase]);
+        this.#mirror(run, issue, PHASE_OF[run.phase]);
         switch (run.phase) {
           case "claimed": {
             await this.#claim(run, issue, save);
@@ -466,7 +436,7 @@ export class Pipeline {
           case "review": {
             const done = await this.#review(run, issue, book, save);
             if (done !== undefined) {
-              await this.#mirror(run, issue, null);
+              await this.#clear(run, issue);
               return {
                 status: "delivered",
                 key: run.key,
@@ -483,7 +453,7 @@ export class Pipeline {
       }
     } catch (error) {
       if (!(error instanceof Blocked)) throw error;
-      await this.#mirror(run, issue, null);
+      await this.#clear(run, issue);
       return this.#block(run, issue, error.message, save);
     }
   }
@@ -1430,8 +1400,7 @@ export class Pipeline {
           timeoutMs: config.commandTimeoutMs,
         });
         if (merged.ok) {
-          // Not awaited: the merge wait does not wait for a board field. ("merge" has no RunRecord phase.)
-          void this.#mirror(run, issue, "merge");
+          this.#mirror(run, issue, "merge");
           await this.#confirmMerged(run, prUrl, worktree);
           await tracker.comment(
             issue,

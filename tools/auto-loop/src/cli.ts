@@ -11,7 +11,7 @@ import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
 import { runLoops } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
-import { resolveLoopFields, resolveProject } from "./project.ts";
+import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
 import { computeStats } from "./stats.ts";
@@ -70,17 +70,17 @@ const setUp = async (file: ConfigFile) => {
   });
   const setup = resolveProject(await tracker.getProject(), file);
   tracker.setColumns(setup.columns);
-  let loopFields: ReturnType<typeof resolveLoopFields> = null;
-  let loopFieldsError = "";
+  // The phase fields only mirror the run: if they cannot be used, say why once and do not write them.
+  let loopFields: LoopFields | null = null;
   try {
-    loopFields = resolveLoopFields(await tracker.getCustomFields());
+    const resolved = resolveLoopFields(await tracker.getCustomFields());
+    if ("fields" in resolved) loopFields = resolved.fields;
+    else plog(`warning: the phase fields are off: ${resolved.problem}`);
   } catch (error) {
-    loopFieldsError = ` (${error instanceof Error ? error.message : String(error)})`;
-  }
-  if (loopFields === null)
     plog(
-      `warning: the project has no usable 「Loop 阶段」/「Loop 阶段开始于」 fields (or an option name differs); the phase will not be written${loopFieldsError}`,
+      `warning: the phase fields are off: list_custom_fields failed: ${error instanceof Error ? error.message : String(error)}`,
     );
+  }
   tracker.setLoopFields(loopFields);
   const config = {
     ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
