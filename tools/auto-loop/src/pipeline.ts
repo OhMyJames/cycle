@@ -663,7 +663,21 @@ export class Pipeline {
       const key = argv.join(" ");
       const known = results.get(key);
       if (known !== undefined) return known;
-      const done = await this.#d.exec(argv, options);
+      let done = await this.#d.exec(argv, options);
+      // A flaky command gets re-run in place; a timed-out one does not (it would stretch the round).
+      for (
+        let attempt = 1;
+        attempt <= config.maxVerifyRetries && done.code !== 0 && !done.timedOut;
+        attempt++
+      ) {
+        done = await this.#d.exec(argv, options);
+        await store.event(run.key, "verify_retried", {
+          round: run.round,
+          command: key,
+          attempt,
+          passed: done.code === 0 && !done.timedOut,
+        });
+      }
       results.set(key, done);
       return done;
     };
