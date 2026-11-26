@@ -1,6 +1,6 @@
 # auto-loop
 
-自动化闭环（CYC-318 / CYC-331 / CYC-332）：从 itsaplan 的 Todo 列取一张带 `auto` 标签的 Feature/Bug 叶子工单（无子任务），在 Cycle 里开 Dev 会话（独立 worktree），由代码跑验证，再开独立 QA 会话审查，通过后推分支、开带 `Closes CYC-<num>` 的 PR，等待 `check`、`browser`、`integration` 三项 CI 跑完；任一 CI 为红则拉取失败日志打回 Dev 修复并重推同一分支（重试超限则 Blocked）；CI 全绿后启动独立只读评审会话按根目录 `REVIEW.md` 评审，必须给出三种结论之一并写成 PR 评论：合并（`merge`，且 CI 全绿时开启 GitHub 自动合并 squash）、拒绝（`reject`，带评审意见打回 Dev 修改并重跑 CI 与评审，超修复轮数上限则升级给人）、升级给人（`escalate`，不开自动合并并将工单移入 In Review）；若评审会话失败、超时、异常结束、输出无法解析或通过未写检查清单，先重试（有次数上限），重试用完仍无结论才升级给人并写明这是评审系统故障而非代码问题。
+自动化闭环（CYC-318 / CYC-331 / CYC-332）：从 itsaplan 的 Todo 列取一张带 `auto` 标签的 Feature/Bug 叶子工单（无子任务；开启后也取 Research 工单，见「调研工单」），在 Cycle 里开 Dev 会话（独立 worktree），由代码跑验证，再开独立 QA 会话审查，通过后推分支、开带 `Closes CYC-<num>` 的 PR，等待 `check`、`browser`、`integration` 三项 CI 跑完；任一 CI 为红则拉取失败日志打回 Dev 修复并重推同一分支（重试超限则 Blocked）；CI 全绿后启动独立只读评审会话按根目录 `REVIEW.md` 评审，必须给出三种结论之一并写成 PR 评论：合并（`merge`，且 CI 全绿时开启 GitHub 自动合并 squash）、拒绝（`reject`，带评审意见打回 Dev 修改并重跑 CI 与评审，超修复轮数上限则升级给人）、升级给人（`escalate`，不开自动合并并将工单移入 In Review）；若评审会话失败、超时、异常结束、输出无法解析或通过未写检查清单，先重试（有次数上限），重试用完仍无结论才升级给人并写明这是评审系统故障而非代码问题。
 
 ## 运行
 
@@ -14,7 +14,7 @@ bun tools/auto-loop/src/cli.ts --dry-run   # 只挑单、预检、打印，不�
 bun tools/auto-loop/src/cli.ts --once      # 处理一张
 bun tools/auto-loop/src/cli.ts --workers 2 # 每个 Project 起 2 个 worker 并发（见下）
 bun tools/auto-loop/src/cli.ts             # 常驻，空闲时每 60 秒看一次（`--interval` 或配置文件 `tuning.intervalSeconds` 改）
-bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率；`firstPassRate`（零介入零返工自动合并占比）、`reworkByStage`（`round_failed` 按紧邻前一事件归到 verify/qa/ci/review/other，含次数与 run 数）、`durationMs`（已交付 run 从 claimed 到 delivered 的中位数与 P90，nearest-rank）；另有 `permissions`：被留给人或被拒的权限请求，按「种类 + 命令前两个词」统计，列出被人允许最多的前 10 项及各自被允许、被拒绝的次数（事件 `permission_requested`、`permission_answered`，只记命令前两个词）
+bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率；`firstPassRate`（零介入零返工自动合并占比）、`reworkByStage`（`round_failed` 按紧邻前一事件归到 verify/qa/ci/review/other，含次数与 run 数）、`durationMs`（已交付 run 从 claimed 到 delivered 的中位数与 P90，nearest-rank）；以上都只算开发 run（按每个 run 第一个 `claimed` 事件的 `runKind` 分，没有的算开发），调研 run 只计 `researched`（发布并移到 Done 的个数）；另有 `permissions`（含调研会话）：被留给人或被拒的权限请求，按「种类 + 命令前两个词」统计，列出被人允许最多的前 10 项及各自被允许、被拒绝的次数（事件 `permission_requested`、`permission_answered`，只记命令前两个词）
 ```
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
@@ -70,7 +70,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 - 卡住（Blocked）时保留 worktree 和会话；处理后把工单放回 Todo，会在原会话里继续（会话丢失则新开会话，凭 criteria + 进度 + git log 接手）。
 - verify 防抖（CYC-438）：检查命令（测试层或验收命令）非超时失败时，先原地重跑该命令，最多 `maxVerifyRetries` 次（默认 1，0 为关闭），每次重跑记 `verify_retried` 事件（`round`、`command`、`attempt`、`passed`）。重跑通过则按通过处理，不记 `round_failed`、不扣修复轮数、不唤醒 Dev；重试用完仍失败才按原流程回 Dev。超时的命令不重跑。
 - 无人值守的权限请求：基线白名单自动放行，其余留在会话里等你在桌面端批准。
-- 清理（CYC-379）：每轮选单前检查已结束的 run；工单为 Done 且 PR 已合并时，删除它自己的 worktree 和本地分支。不强删：有未提交改动则只记 `cleanup_skipped_dirty` 事件留给人；不动会话和远端分支。
+- 清理（CYC-379）：每轮选单前检查已结束的 run；工单为 Done 且 PR 已合并时（调研 run 没有 PR，只看工单在 Done），删除它自己的 worktree 和本地分支。不强删：有未提交改动则只记 `cleanup_skipped_dirty` 事件留给人；不动会话和远端分支。
 - 状态在 `<stateDir>/runs/<KEY>/`（run.json、criteria.json、progress.md）和 `events.jsonl`，都在 worktree 之外。
 
 ## 并发（--workers）
@@ -84,10 +84,10 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 
 Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个自定义字段，让看板上能看出 In Progress 的工单走到了哪一步。字段由人在 itsaplan 里建（Loop 不自动建），启动时按名字解析字段 id 和选项 id（`list_custom_fields`），不写死：
 
-- 「Loop 阶段」：单选，选项 开发、验证、QA、等 CI、评审、等合并。
+- 「Loop 阶段」：单选，选项 开发、验证、QA、等 CI、评审、等合并；可选再加 调研、调研 QA（没有这两个选项时，调研的阶段不写）。
 - 「Loop 阶段开始于」：日期时间。
 
-阶段对应：`claimed`、`dev` → 开发；`verify` → 验证；`qa` → QA；`delivering`、`ci` → 等 CI；`review`（独立评审）→ 评审；评审结论为合并、开启自动合并后等合并 → 等合并；`done`、转 Blocked → 两个字段都清空。阶段没变时不重复写。
+阶段对应：`claimed`、`dev` → 开发；`verify` → 验证；`qa` → QA；`delivering`、`ci` → 等 CI；`review`（独立评审）→ 评审；评审结论为合并、开启自动合并后等合并 → 等合并；调研 run 的 `claimed`、`research` → 调研，`research_qa`、`publishing` → 调研 QA；`done`、转 Blocked → 两个字段都清空。阶段没变时不重复写。
 
 **字段是尽力而为的镜像，真实状态以 run 记录为准，字段偶尔过时是接受的**（看板上看写入时间就知道新不新）：
 
@@ -95,6 +95,44 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 - 写失败不重试，同一次运行里每种失败只记一条日志和一条 `phase_field_failed` 事件，下一次阶段变化再写。每个请求限时 10 秒。
 - 「阶段开始于」写的是写入那一刻的时间；进程重启后续跑，是续跑时的时间。「等合并」没有对应的 run 阶段，在等合并期间重启，续跑后字段会显示「评审」。
 - 启动时 `list_custom_fields` 失败，或字段有问题（缺字段、缺选项、类型不对、限定了工单类型、同名多个），打一行警告说明原因，整个运行期间不写字段，Loop 照常工作。
+
+## 调研工单（Research，CYC-447）
+
+默认关闭，关闭时 Loop 的行为和以前完全一样。
+
+**开启**：在配置文件的 Project 里写
+
+```json
+"research": { "enabled": true }
+```
+
+可选字段：`type`（类型名，默认 `Research`）、`folder`（放报告的文档目录标题，按标题精确匹配，默认 `调研`）、`readRoots`（会话除自己的 worktree 外还能读的目录，绝对路径或 `~` 开头，默认 `[repoRoot]`）、`maxFollowups`（后续工单上限，默认 5）。多写字段报错。开启后启动时解析 Research 类型、第一个 `stateType: backlog` 的列和「调研」目录，缺任何一样就拒绝启动并说明是哪个 Project 缺了什么。改了要重启。
+
+开启后，Todo 里打了 `auto` 的 Research 叶子工单和 Feature、Bug 一起排队（先优先级，再创建时间）。预检要求：「要回答的问题」是编号列表（1 到 `maxCriteria` 条）、「方法与范围」「产出形式」有内容、「结论」还没写（不存在、空、或只有「（做完后回填）」这类占位）。
+
+**流程**（run 的阶段 `claimed` → `research` → `research_qa` → `publishing` → `done`）：
+
+1. 领单：`git fetch`，让 daemon 建 worktree（`auto/cyc-<n>`，基于 `origin/main`）和调研会话「[CYC-n] Research」。不跑 `bun install`。
+2. 调研：会话最后一条回复必须带 `<summary>`、`<report>`（每个问题一节「## 问题 N」）和 0 到 `maxFollowups` 个 `<followup type="Feature|Bug" title="...">`。Loop 按规则检查（块齐全、摘要不超过 600 字、每个问题有一节、后续工单按自己的类型过预检……），不合格的作为 findings 退回同一个会话，占一个修复轮次。
+3. QA：独立的只读会话「[CYC-n] Research QA」，拿到工单、报告和后续工单草稿（拿不到调研过程），核对每个问题有回答、每条回答有依据、没证实的标了「未验证」、没超出「方法与范围」，至少亲自复查 3 条依据，先写「What I checked」再给 `<verdict>`。不通过退回调研会话，占一个修复轮次；超过 `maxFixRounds` 转 Blocked。给不出可用结论时按 `maxQaRetries` 换新会话重试。
+4. 发布（Loop 自己做，会话不碰 tracker）：
+   0. 扫一遍摘要、报告和后续工单，有凭据形状（私钥、各家 token、Bearer、URL 里的密码、`NAME_KEY=value`）就转 Blocked，评论里只写种类，什么都不发布；
+   1. 在「调研」目录下建文档「CYC-n 工单标题」，内容是报告，挂到工单上；
+   2. 重读工单：「结论」还空着就换成摘要加报告标题（文档没有网页地址，报告挂在工单上），其余各节一字不动；已经有人写过就不覆盖，把摘要发成评论；
+   3. 在 Backlog 一张一张建后续工单：Feature 或 Bug，有父级时挂在调研工单的父级下，不打标签、不设优先级，和调研工单建 `relates` 链接；
+   4. 在调研工单上评论列出报告和后续工单，清空阶段字段，移到 Done，记 `researched` 事件。
+
+   每一步做完马上写进 run 记录（`research` 子对象：文档 id、是否已挂、「结论」是否已处理、每张后续工单的 id 和是否已链接、是否已评论），重启后从没做完的那一步接着做，不重复建文档或工单。唯一的窗口：建好一张工单、还没存下它的 id 时进程被杀，重启后这张会再建一次。
+
+**Blocked 和放回 Todo**：和开发工单一样，评论里指向调研会话。放回后在原会话里接着做：卡在调研或 QA 修复轮次用完的，带着最后的 findings 回到调研；会话改了工作区的，从卡住的那一步接着做；卡在发布（凭据）的，回到调研会话，让它去掉凭据后重写（原样再发布只会再卡住）。放回时修复轮次重新计数。关掉 `research.enabled` 时，进行中的调研 run 留在 stateDir 里不动，打开后接着做。
+
+**权限边界**：两个会话（角色 `research`、`research_qa`）只读，Loop 对越界请求一律直接拒绝（deny），不停下来等人：
+
+- 能读 worktree 和 `readRoots` 里的文件，但不管在哪都不能读 `.env*`、`*.pem`、`*.key`、`id_*`、`.netrc`、`.npmrc`、`auto-loop.json`、`loop.json`、`credentials*`、`*.secret*` 和任何 `.git` 下的 `config`；
+- 命令只有原有只读命令、git 读命令，加 `du`、`find`（不带 `-exec`、`-delete`、`-fprint*` 等）、`stat`、`file`；递归 `grep`、让 `rg` 读被忽略或隐藏文件的参数、不带引号的通配符都会被拒；
+- 写、删、移动、联网、MCP 工具，一律拒绝。会话拿不到 planKey，文档和工单都由 Loop 写。
+- 调研 run 不提交、不 push、不开 PR、不跑 CI；Done 后清理时不查 PR，只删 worktree 和本地分支。
+- 已知的缺口：Claude Code 在工作目录内的读取可能不发权限请求；文件黑名单只认字面路径。所以发布前的凭据扫描是最后一道。
 
 ## 网络错误（CYC-444）
 

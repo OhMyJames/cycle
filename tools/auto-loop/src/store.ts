@@ -19,12 +19,51 @@ export const PHASES = [
   "delivering",
   "ci",
   "review",
+  "research",
+  "research_qa",
+  "publishing",
   "blocked",
   "done",
 ] as const;
 
+/** One follow-up draft being published: its issue once made, and whether it is linked to the research work item. */
+const PublishedFollowupSchema = z.object({
+  title: z.string(),
+  issueId: z.number().int().nullable(),
+  /** The new issue's number, for its key in the closing comment. */
+  number: z.number().int().nullable(),
+  linked: z.boolean(),
+});
+
+/**
+ * A research run (CYC-447): the questions, the last reply that passed the rules (what gets published), and how far
+ * the publication got. Each step of the publication is written here as soon as it is done, so a restart neither
+ * repeats nor skips one.
+ */
+const ResearchStateSchema = z.object({
+  questions: z.array(z.string()),
+  output: z
+    .object({
+      summary: z.string(),
+      report: z.string(),
+      followups: z.array(
+        z.object({ type: z.enum(["Feature", "Bug"]), title: z.string(), body: z.string() }),
+      ),
+    })
+    .nullable(),
+  docId: z.number().int().nullable(),
+  docLinked: z.boolean(),
+  conclusionDone: z.boolean(),
+  /** One entry per draft, in order, from the moment the output is saved. */
+  followups: z.array(PublishedFollowupSchema),
+  commented: z.boolean(),
+});
+export type ResearchState = z.infer<typeof ResearchStateSchema>;
+
 export const RunRecordSchema = z.object({
   key: z.string(),
+  /** What kind of work item. A record from before research runs is a dev run. */
+  kind: z.enum(["dev", "research"]).default("dev"),
   issueId: z.number().int(),
   issueNumber: z.number().int(),
   title: z.string(),
@@ -66,6 +105,8 @@ export const RunRecordSchema = z.object({
   /** The phase to go on from when a person puts a blocked work item back. */
   resumeFrom: z.enum(PHASES).nullable(),
   prUrl: z.string().nullable(),
+  /** Research runs only; null for a dev run. */
+  research: ResearchStateSchema.nullable().default(null),
   /** What QA and the checks said last, for the Dev turn that follows. */
   findings: z.string().nullable(),
   /** When the worktree and local branch were removed after Done and merged; null while they are still there. */

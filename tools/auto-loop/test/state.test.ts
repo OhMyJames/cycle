@@ -73,6 +73,8 @@ test("store: a run.json from before the conflict fields still loads, with confli
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
+    kind: "dev",
+    research: null,
     startedAt: "2026-11-25T00:00:00.000Z",
     updatedAt: "2026-11-25T00:00:00.000Z",
   });
@@ -203,13 +205,20 @@ test("the research fix and continue briefs ask for the complete blocks again", (
 });
 
 test("the research QA brief carries the report and drafts, the four checks, and the verdict block", () => {
-  const brief = researchQaBrief(researchIssue, ["a?"], {
-    summary: "能删一半。",
-    report: "## 问题 1\n答。",
-    followups: [{ type: "Feature", title: "Delete stale worktrees", body: "## 背景与证据\nx" }],
-  });
+  const brief = researchQaBrief(
+    researchIssue,
+    ["a?"],
+    {
+      summary: "能删一半。",
+      report: "## 问题 1\n答。",
+      followups: [{ type: "Feature", title: "Delete stale worktrees", body: "## 背景与证据\nx" }],
+    },
+    ["/repo", "/data/runs"],
+  );
   expect(brief).toContain("independent reviewer of the research for work item CYC-445");
   expect(brief).toContain("READ-ONLY");
+  // QA must know where it may check the evidence: it is often outside its own worktree.
+  expect(brief).toContain("- /repo\n- /data/runs");
   expect(brief).toContain("能删一半。");
   expect(brief).toContain("## 问题 1\n答。");
   expect(brief).toContain("Follow-up 1: Feature — Delete stale worktrees");
@@ -371,4 +380,47 @@ test("stats: first pass rate, rework by stage and duration percentiles", () => {
   expect(s.durationMs).toEqual({ median: 20 * min, p90: 40 * min });
   expect(computeStats([]).durationMs).toEqual({ median: null, p90: null });
   expect(computeStats([]).firstPassRate).toBe(0);
+});
+
+test("stats: research runs are counted apart and change none of the dev metrics", () => {
+  const at = (min: number) => new Date(Date.UTC(2026, 10, 25, 0, min)).toISOString();
+  const add = (
+    list: LoopEvent[],
+    run: string,
+    min: number,
+    kind: string,
+    extra: Record<string, string | number | boolean> = {},
+  ) => list.push({ ts: at(min), run, kind, ...extra });
+  // Dev runs, as written before research runs: no runKind.
+  const dev: LoopEvent[] = [];
+  add(dev, "A", 0, "claimed", { criteria: 2 });
+  add(dev, "A", 1, "verify");
+  add(dev, "A", 10, "delivered", { prUrl: "u", autoMerge: true });
+  add(dev, "B", 0, "claimed", { criteria: 1 });
+  add(dev, "B", 1, "verify");
+  add(dev, "B", 2, "round_failed");
+  add(dev, "B", 3, "blocked");
+  // R: published after a QA rejection and a block. S: still under way.
+  const research: LoopEvent[] = [];
+  add(research, "R", 0, "claimed", { runKind: "research", questions: 2 });
+  add(research, "R", 1, "qa_turn");
+  add(research, "R", 2, "round_failed");
+  add(research, "R", 3, "blocked");
+  add(research, "R", 4, "resumed");
+  add(research, "R", 50, "researched", { docId: 1000, followups: 2 });
+  add(research, "S", 0, "claimed", { runKind: "research", questions: 1 });
+  add(research, "S", 1, "permission_requested", { tool: "read", decision: "deny" });
+
+  const alone = computeStats(dev);
+  const mixed = computeStats([...research, ...dev]);
+  expect(alone.researched).toBe(0);
+  expect(mixed.researched).toBe(1);
+  const { researched: _a, permissions: _b, ...devMixed } = mixed;
+  const { researched: _c, permissions: _d, ...devAlone } = alone;
+  expect(devMixed).toEqual(devAlone);
+  expect(mixed.runs).toBe(2);
+  expect(mixed.reworkRate).toBe(0.5);
+  expect(mixed.interventionRate).toBe(0.5);
+  // The permission table is over every session, research ones included.
+  expect(mixed.permissions).toEqual([{ kind: "read", requested: 1, allowed: 0, denied: 0 }]);
 });

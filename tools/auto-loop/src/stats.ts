@@ -1,7 +1,10 @@
 import type { LoopEvent } from "./store.ts";
 
 export type Stats = {
+  /** Dev runs (Feature, Bug). Every metric below is over these alone, except `researched` and `permissions`. */
   runs: number;
+  /** Research runs that were published and moved to Done (`researched`, CYC-447). */
+  researched: number;
   /** Runs with a `delivered` event, however it was delivered: auto-merged, escalated to a person, review system failure, auto-merge failed to enable, or merged outside the Loop. */
   delivered: number;
   /** Runs where the Loop itself enabled auto-merge and confirmed the merge (`delivered` with `autoMerge: true`), whether or not a person helped. */
@@ -91,13 +94,26 @@ const INTERVENTIONS = new Set(["permission_pending", "blocked", "resumed"]);
 
 const rate = (part: number, whole: number): number => (whole === 0 ? 0 : part / whole);
 
+/**
+ * A run's kind is in its first `claimed` event, as `runKind` (`kind` is the event's own name); one from before
+ * research runs has none and is a dev run.
+ */
+const isResearch = (list: LoopEvent[]): boolean =>
+  list.find((e) => e.kind === "claimed")?.runKind === "research";
+
 /** The metrics of the initiative, from the event log (docs: tools/auto-loop/README.md). */
 export const computeStats = (events: LoopEvent[]): Stats => {
-  const byRun = new Map<string, LoopEvent[]>();
+  const all = new Map<string, LoopEvent[]>();
   for (const event of events) {
-    const list = byRun.get(event.run) ?? [];
+    const list = all.get(event.run) ?? [];
     list.push(event);
-    byRun.set(event.run, list);
+    all.set(event.run, list);
+  }
+  const byRun = new Map<string, LoopEvent[]>();
+  let researched = 0;
+  for (const [run, list] of all) {
+    if (!isResearch(list)) byRun.set(run, list);
+    else if (list.some((e) => e.kind === "researched")) researched++;
   }
   let delivered = 0;
   let autonomous = 0;
@@ -149,6 +165,7 @@ export const computeStats = (events: LoopEvent[]): Stats => {
   const sortedDurations = [...durations].sort((a, b) => a - b);
   return {
     runs,
+    researched,
     delivered,
     autoMerged,
     autonomousCompletionRate: rate(autonomous, runs),

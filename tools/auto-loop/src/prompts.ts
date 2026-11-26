@@ -321,9 +321,12 @@ export const researchQaBrief = (
   issue: Issue,
   questions: string[],
   output: ResearchOutput,
+  readRoots: string[],
 ): string => `You are an independent reviewer of the research for work item ${issue.key}: ${issue.title}. You did not do this research and you are not told how it was done.
 
-You are READ-ONLY, with the same rights as the researcher: read files in the current directory (a git worktree of the base branch) and the directories you are allowed, and run read-only commands. Do not edit, create or delete anything, do not use the network and do not use MCP tools.
+You are READ-ONLY, with the same rights as the researcher: read files in the current directory (a git worktree of the base branch) and these directories, and run read-only commands (cat, ls, rg, grep, head, tail, wc, du, find, stat, file, git status, git diff, git log, git show). The evidence may point anywhere in them:
+${readRoots.map((root) => `- ${root}`).join("\n")}
+Do not edit, create or delete anything, do not use the network and do not use MCP tools. Requests outside these bounds are refused, not asked about.
 
 The work item:
 ---
