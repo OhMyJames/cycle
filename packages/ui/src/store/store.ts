@@ -342,8 +342,8 @@ export class AppStore extends StoreBase {
   takeLoopRequest = this.#loop.takeRequest;
 
   /** Shows the Dev session of a ticket (`[CYC-1] Dev`) in place of the Loop page; false when no session has that name. */
-  joinLoopSession = (identifier: string): boolean => {
-    const wanted = `[${identifier}] Dev`;
+  joinLoopSession = (identifier: string, title?: string): boolean => {
+    const wanted = title ?? `[${identifier}] Dev`;
     const sessions = Object.entries(this.getState().sessions).flatMap(([locationId, list]) =>
       list.filter((x) => !x.archived && x.title?.trim() === wanted).map((x) => ({ locationId, x })),
     );

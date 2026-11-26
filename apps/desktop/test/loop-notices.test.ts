@@ -247,6 +247,37 @@ describe("Notices", () => {
     expect(roleOf(placed, placed[1] as never)).toBe("progress");
   });
 
+  test("an In Review ticket opens without its comments when they cannot be read", async () => {
+    const base = world(state).fetchImpl;
+    const failing = (async (u: unknown, init: RequestInit) =>
+      String(init.body).includes("execute_read")
+        ? new Response("no", { status: 500 })
+        : base(u as never, init)) as unknown as typeof fetch;
+    const answer = await answerTicket(loop, "CYC", "CYC-9", noop, failing);
+    if (answer.kind !== "ok") throw new Error("expected a ticket");
+    expect(answer.ticket.attention).toBeUndefined();
+  });
+
+  test("line endings, a leading BOM and spaces do not hide a comment; an unknown reply shape is a failure", async () => {
+    const crlf = `\uFEFF ${BLOCKED.replace(/\n/g, "\r\n")}`;
+    const { fetchImpl } = world({
+      tickets: { 35: [{ id: 7, identifier: "CYC-7", columnId: 35 }] },
+      comments: { 7: [crlf, "older"] },
+    });
+    const answer = await answerNotices(loop, "CYC", () => [], noop, fetchImpl);
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices[0]).toMatchObject({ kind: "blocked", reason: "测试一直失败" });
+    const base = world(state).fetchImpl;
+    const odd = (async (u: unknown, init: RequestInit) => {
+      if (!String(init.body).includes("execute_read")) return base(u as never, init);
+      const data = { ok: true, status: 200, data: { comments: [] } };
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    expect(await answerNotices(loop, "CYC", () => [], noop, odd)).toEqual({ kind: "unreachable" });
+  });
+
   test("an escalated review's page shows the conclusion and the PR address", async () => {
     const { fetchImpl } = world(state);
     const answer = await answerTicket(loop, "CYC", "CYC-9", noop, fetchImpl);
@@ -439,5 +470,31 @@ describe("a Notice that was not shown", () => {
     await poller.tick();
     await poller.tick();
     expect(told).toEqual(["CYC-1"]);
+  });
+});
+
+describe("a Project that is no longer listed", () => {
+  test("is forgotten, so listing it again is a first read", async () => {
+    let listed = true;
+    const told: string[] = [];
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const poller = noticePoller({
+      projects: async () =>
+        listed
+          ? [{ name: "C", projectKey: "CYC", repo: { displayName: "o/r", forge: "github" } }]
+          : [],
+      read: async () => answer,
+      alert: (_k, n) => told.push(n.identifier),
+    });
+    await poller.tick();
+    listed = false;
+    await poller.tick();
+    listed = true;
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    await poller.tick(); // first read again: what is there is not news
+    expect(told).toEqual([]);
   });
 });

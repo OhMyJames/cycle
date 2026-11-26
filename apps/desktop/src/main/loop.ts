@@ -390,7 +390,10 @@ export const answerTicket = async (
     );
     const role = roleOf(columns, column);
     const attention =
-      role === "blocked" || role === "review" ? await attentionOf(tracker, issue, role) : undefined;
+      role === "blocked" || role === "review"
+        ? // The page never needed the comments to show a ticket: without them it shows it without the reason.
+          await attentionOf(tracker, issue, role).catch(() => undefined)
+        : undefined;
     const body = typeof issue.description === "string" ? issue.description : "";
     track("loop_ticket_opened", {});
     return {
@@ -505,10 +508,12 @@ const cut = (text: string): string =>
 const commentsOf = async (t: Tracker, issueId: unknown): Promise<string[]> => {
   const answer = await callTool(t, "execute_read", {
     name: "list_issue_activity",
-    arguments: { issueId, filter: "comments", limit: 25 },
+    arguments: { issueId, filter: "comments", order: "desc", limit: 25 },
   });
   const items = unwrap(answer).items;
-  return (Array.isArray(items) ? items : [])
+  // Not a list of comments: a failure to read, never "no comments" (that would clear or invent a Notice).
+  if (!Array.isArray(items)) throw new Error("unrecognized comments");
+  return items
     .map(asRecord)
     .filter((i) => typeof i.body === "string")
     .sort(
@@ -516,12 +521,19 @@ const commentsOf = async (t: Tracker, issueId: unknown): Promise<string[]> => {
         String(y.createdAt ?? "").localeCompare(String(x.createdAt ?? "")) ||
         Number(y.id ?? 0) - Number(x.id ?? 0),
     )
-    .map((i) => i.body as string);
+    .map((i) =>
+      (i.body as string)
+        .replace(/^\uFEFF/, "")
+        .replace(/\r\n?/g, "\n")
+        .trim(),
+    );
 };
 
 /** What was read of a ticket's comments, until the ticket changes: the poll reads every Blocked and In Review ticket. */
-const commentCache = new Map<string, string[]>();
+const commentCache = new Map<string, { at: number; comments: string[] }>();
 const CACHE_MAX = 200;
+/** A cached read is used for this long at most: a comment added without the ticket's update time moving is still read. */
+const CACHE_TTL_MS = 2 * 60_000;
 const CONCURRENCY = 4;
 
 const cachedComments = async (t: Tracker, issue: Record<string, unknown>): Promise<string[]> => {
@@ -529,13 +541,13 @@ const cachedComments = async (t: Tracker, issue: Record<string, unknown>): Promi
   // Without an update time there is nothing to tell a changed ticket by: read it.
   const cacheable = typeof issue.updatedAt === "string";
   const hit = cacheable ? commentCache.get(key) : undefined;
-  if (hit !== undefined) return hit;
-  const read = await commentsOf(t, issue.id);
+  if (hit !== undefined && Date.now() - hit.at < CACHE_TTL_MS) return hit.comments;
+  const comments = await commentsOf(t, issue.id);
   if (cacheable) {
     if (commentCache.size >= CACHE_MAX) commentCache.clear();
-    commentCache.set(key, read);
+    commentCache.set(key, { at: Date.now(), comments });
   }
-  return read;
+  return comments;
 };
 
 /** Why a Blocked or In Review ticket needs a person, from Loop's newest matching comment. Undefined: not for a person. */

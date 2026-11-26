@@ -39,6 +39,9 @@ export const noticePoller = (deps: PollDeps) => {
     } catch {
       return;
     }
+    // A Project that is gone is forgotten: when it is added again, its first read is a first read.
+    const listed = new Set(projects.map((p) => p.projectKey));
+    for (const key of [...seen.keys()]) if (!listed.has(key)) seen.delete(key);
     for (const { projectKey } of projects) {
       const answer = await deps.read(projectKey).catch(() => undefined);
       if (answer?.kind !== "ok") continue;
