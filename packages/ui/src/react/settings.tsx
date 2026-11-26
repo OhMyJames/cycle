@@ -202,6 +202,11 @@ function GeneralSection() {
   const store = useAppStore();
   const { t } = useI18n();
   const update = useAppState((s) => s.update);
+  const pageVersion = useAppState((s) =>
+    s.interface !== undefined && s.interface.running !== s.interface.bundled
+      ? s.interface.running
+      : undefined,
+  );
   const analytics = useAppState((s) => s.analytics);
   const [confirming, setConfirming] = useState(false);
   const analyticsLabel = useId();
@@ -227,7 +232,12 @@ function GeneralSection() {
         <PageGroup title={t("settings.updates")}>
           <PageRows>
             <PageRow
-              label={t("update.current", { version: update.current })}
+              label={[
+                t("update.current", { version: update.current }),
+                ...(pageVersion !== undefined
+                  ? [t("interface.version", { version: pageVersion })]
+                  : []),
+              ].join(" · ")}
               description={
                 line !== "" ? (
                   <span data-update={update.kind} role="status">

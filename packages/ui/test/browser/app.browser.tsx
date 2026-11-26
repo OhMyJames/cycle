@@ -1077,6 +1077,28 @@ test("without the agent's word that it takes images, there is nothing to attach 
   expect(screen.queryByRole("button", { name: "Attach image" })).toBeNull();
 });
 
+test("a newer interface that is ready is offered with Reload, and not while the whole app has an update", async () => {
+  const { user, emit, named } = await mount();
+  await accountMenu();
+  expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
+  await emit({ type: "interface-update", state: { bundled: 100, running: 100, ready: 120 } });
+  expect(screen.getByText("The interface was updated")).toBeTruthy();
+  // The whole app has an update: it carries the newest page itself, so there is only that one to act on.
+  await emit({
+    type: "app-update",
+    state: { current: "0.1.0", kind: "available", version: "0.2.0" },
+  });
+  expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
+  await emit({ type: "app-update", state: { current: "0.1.0", kind: "up-to-date", checkedAt: 0 } });
+  await user.click(await screen.findByRole("button", { name: "Reload" }));
+  await waitFor(() => expect(named("applyInterfaceUpdate")).toHaveLength(1));
+  // Showing it: no more waiting, and the footer says which interface this is.
+  await emit({ type: "interface-update", state: { bundled: 100, running: 120 } });
+  expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
+  await user.click(await accountMenu());
+  expect(await screen.findByText(/0\.1\.0 · UI 120/)).toBeTruthy();
+});
+
 test("an update that is found is offered, asks before it restarts, and the footer can check on demand", async () => {
   const { user, emit, named } = await mount();
   await accountMenu();

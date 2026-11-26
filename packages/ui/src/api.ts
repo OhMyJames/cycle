@@ -768,6 +768,18 @@ export type UpdateState = {
   | { kind: "error"; message: string; version?: string }
 );
 
+/**
+ * Which page the app is showing and whether a newer one is waiting (docs/desktop.md, "Interface updates"). A version
+ * is the number of commits the page was built at; `bundled` is the page the app came with.
+ */
+export type InterfaceState = {
+  bundled: number;
+  /** The page that is showing: `bundled`, or the newer one taken since. */
+  running: number;
+  /** A newer page, on this computer and checked, that shows after a reload or the next start. */
+  ready?: number;
+};
+
 /** One of a subscription's usage limits (docs/protocol.md §8 "套餐用量"). */
 export type PlanWindow = {
   /** `five_hour`, `seven_day`, or another the agent names. */
@@ -856,6 +868,7 @@ export type AppEvent =
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */
   | { type: "session-gone"; locationId: string; sessionId: string }
   | { type: "app-update"; state: UpdateState }
+  | { type: "interface-update"; state: InterfaceState }
   /** A session's terminals, whole: one was opened, closed, renamed, resized or ended. */
   | { type: "terminals"; locationId: string; sessionId: string; terminals: TerminalInfo[] }
   /** Output of a terminal the app is attached to. Drop it if the screen in hand already holds `seq`. */
@@ -1246,6 +1259,12 @@ export type AppApi = {
   checkForUpdate(): Promise<UpdateState>;
   /** Downloads the update that was found, checks it, and restarts the app as the new version. */
   installUpdate(): Promise<void>;
+  /** Which page shows, and whether a newer one is waiting. */
+  interfaceState(): Promise<InterfaceState>;
+  /** The page says it has drawn itself. A page that does not say so in time is not used again (main falls back). */
+  interfaceBooted(): Promise<void>;
+  /** Shows the newer page, if there is one (the page loads again; main keeps the sessions). */
+  applyInterfaceUpdate(): Promise<void>;
   /**
    * Updates the daemon of a remote location by running `daemon.upgrade.command` on it over ssh. What is wrong comes
    * back in the location's status (`daemon.upgrade.error`), not as a throw. `when` is the person's choice when
@@ -1568,6 +1587,9 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   updateState: true,
   checkForUpdate: true,
   installUpdate: true,
+  interfaceState: true,
+  interfaceBooted: true,
+  applyInterfaceUpdate: true,
   upgradeDaemon: true,
   environments: true,
   saveEnvironment: true,

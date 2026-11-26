@@ -172,6 +172,12 @@ export function AccountMenu({ onSettings }: { onSettings: () => void }) {
   const { t } = useI18n();
   const account = useAppState((s) => s.account);
   const update = useAppState((s) => s.update);
+  // The page's own version only when it is not the one the app came with.
+  const pageVersion = useAppState((s) =>
+    s.interface !== undefined && s.interface.running !== s.interface.bundled
+      ? s.interface.running
+      : undefined,
+  );
   const deferred = useAppState((s) => s.updateDeferred);
   const [confirming, setConfirming] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -244,7 +250,13 @@ export function AccountMenu({ onSettings }: { onSettings: () => void }) {
             title={line !== "" ? line : undefined}
           >
             <span data-slot="update-line">{line !== "" ? line : t("app.checkForUpdates")}</span>
-            {update !== undefined ? <span data-slot="app-version">{update.current}</span> : null}
+            {update !== undefined ? (
+              <span data-slot="app-version">
+                {pageVersion !== undefined
+                  ? `${update.current} · ${t("interface.version", { version: pageVersion })}`
+                  : update.current}
+              </span>
+            ) : null}
           </MenuItem>
           {user !== undefined ? (
             <>
