@@ -68,10 +68,19 @@ export class DaemonSessions implements Sessions {
           }
           const waiter = this.#waiters.get(String(requestId));
           waiter?.({ outcome: "cancelled" });
+          // The answer can overtake the request on this connection: keep it, so the request is not left waiting
+          // for an answer that has already come, and the answer is still recorded.
+          if (left === undefined && waiter === undefined) {
+            this.#early.set(String(requestId), outcome);
+            if (this.#early.size > 100) this.#early.delete(this.#early.keys().next().value ?? "");
+          }
         },
       },
     });
   }
+
+  /** Outcomes of requests that were resolved before this client had seen the request. */
+  readonly #early = new Map<string, unknown>();
 
   readonly #waiters = new Map<string, (answer: PermissionAnswer) => void>();
 
@@ -148,8 +157,16 @@ export class DaemonSessions implements Sessions {
     if (verdict.decision !== "allow")
       this.#emit(turn.run, "permission_requested", { ...data, decision: verdict.decision, reason });
     if (answer !== undefined) return answer;
-    if (requestId !== undefined)
+    if (requestId !== undefined) {
+      const early = this.#early.get(requestId);
+      if (this.#early.delete(requestId)) {
+        const answered = answeredAs(request, early);
+        if (answered !== undefined)
+          this.#emit(turn.run, "permission_answered", { ...data, answer: answered });
+        return { outcome: "cancelled" };
+      }
       this.#left.set(requestId, { sessionId, run: turn.run, request, data });
+    }
     // Not for the loop to decide: the request stays open until a person answers it in the app.
     this.#onWaiting(sessionId, typeof request.title === "string" ? request.title : "");
     return wait(true);
