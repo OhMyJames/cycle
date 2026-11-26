@@ -683,6 +683,68 @@
   padding: 1.5rem var(--cycle-column-pad) 2rem;
 }
 
+[data-kind="loop-overview"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem var(--cycle-column-pad) 2rem;
+}
+
+[data-slot="loop-project-list"] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+[data-slot="loop-project-row"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: var(--cycle-radius-sm);
+}
+
+[data-slot="loop-project-row"]:hover {
+  background: var(--cycle-surface-hover);
+}
+
+[data-slot="loop-project-open"] {
+  appearance: none;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+  font-size: var(--cycle-text-ui);
+  cursor: pointer;
+}
+
+[data-slot="loop-project-name"] {
+  font-weight: 600;
+}
+
+[data-slot="loop-project-counts"] {
+  margin-inline-start: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-project-failed"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 [data-slot="loop-board-bar"] {
   display: flex;
   align-items: center;

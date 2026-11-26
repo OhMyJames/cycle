@@ -581,6 +581,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.title": "Loop",
   "loop.sections": "项目",
   "loop.projects": "项目",
+  "loop.overview": "概览",
   "loop.col.doing": "进行中",
   "loop.col.todo": "待办",
   "loop.col.backlog": "待整理",

@@ -46,7 +46,7 @@ test("the Loop page shows a Project's board in three columns, with Done collapse
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board },
   });
-  expect(await screen.findByRole("tab", { name: /Cycle/ })).toBeTruthy();
+  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
   const doing = await screen.findByRole("region", { name: "Doing" });
   expect(
     within(doing)
@@ -254,11 +254,74 @@ test("Escape on the ticket page goes back to the board, not out of the Loop", as
 test("leaving the Loop and coming back lands on the level it was left on", async () => {
   const { user } = await withTicketPage();
   await screen.findByRole("button", { name: "Back to the board" });
-  // Ticket → board → out of the Loop, one Escape each.
+  // Ticket → board → overview → out of the Loop, one Escape each.
   await user.keyboard("{Escape}");
   await screen.findByRole("button", { name: "Ticket 700" });
+  await user.keyboard("{Escape}");
+  await screen.findByRole("region", { name: "Projects" });
   await user.keyboard("{Escape}");
   await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).toBeNull());
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  await screen.findByRole("button", { name: "Ticket 700" });
+  await screen.findByRole("region", { name: "Projects" });
+});
+
+const overviewScript = (extra: Parameters<typeof fakeBridge>[0] = {}) => ({
+  loopProjects: { kind: "ok" as const, projects: [cycle, docs] },
+  loopBoards: {
+    CYC: board,
+    DOC: { kind: "unreachable" as const },
+  },
+  ...extra,
+});
+
+test("with two Projects the Loop lands on the overview, with each Project's counts", async () => {
+  const { user } = await mount(overviewScript());
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  const cycleRow = await waitFor(() => {
+    const row = projects.querySelector<HTMLElement>('[data-project="CYC"]');
+    if (row === null || !row.textContent?.includes("Doing 2")) throw new Error("not yet");
+    return row;
+  });
+  // Counts follow the board's columns; a column with none is not named.
+  expect(cycleRow.textContent).toContain("Todo 1");
+  expect(cycleRow.textContent).toContain("Done 1");
+  expect(cycleRow.textContent).not.toContain("Backlog");
+  expect(document.querySelector('[data-kind="loop-board"]')).toBeNull();
+  // The row that cannot be read says so and reads again.
+  const docsRow = projects.querySelector<HTMLElement>('[data-project="DOC"]') as HTMLElement;
+  await within(docsRow).findByText("Could not read the board");
+  await user.click(within(docsRow).getByRole("button", { name: "Read again Docs" }));
+  // A row opens its board.
+  await user.click(within(cycleRow).getByRole("button", { name: /Cycle/ }));
+  await screen.findByRole("region", { name: "Doing" });
+});
+
+test("with one Project the Loop lands on its board, and Escape goes up to the overview", async () => {
+  const { user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  await screen.findByRole("region", { name: "Doing" });
+  await user.keyboard("{Escape}");
+  await screen.findByRole("region", { name: "Projects" });
+});
+
+test("Needs you is on the overview, not on the board, and absent when empty", async () => {
+  const blocked = { kind: "blocked" as const, identifier: "CYC-9", title: "Nine", reason: "stuck" };
+  const { user } = await mount(
+    overviewScript({
+      loopNotices: { CYC: { kind: "ok", notices: [blocked] } },
+    }),
+  );
+  const notices = await screen.findByRole("region", { name: "Needs you" });
+  expect(within(notices).getByText("CYC-9")).toBeTruthy();
+  await user.click(screen.getByRole("tab", { name: /Cycle/ }));
+  await screen.findByRole("region", { name: "Doing" });
+  expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+});
+
+test("with nothing that needs a person, the section is not there", async () => {
+  await mount(overviewScript({ loopNotices: { CYC: { kind: "ok", notices: [] } } }));
+  await screen.findByRole("region", { name: "Projects" });
+  expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
 });
