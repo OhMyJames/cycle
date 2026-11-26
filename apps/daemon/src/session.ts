@@ -102,7 +102,7 @@ export class Session {
   readonly #stoppable = new Set<string>();
   readonly unknownBackground = new Map<
     string,
-    { toolCallId: string | undefined; dismissing?: boolean }
+    { toolCallId: string | undefined; dismissing?: boolean; task?: boolean }
   >();
   /**
    * Why the session's history can no longer be written, once a write has failed. A turn that
@@ -187,12 +187,23 @@ export class Session {
   noteTask(update: Record<string, unknown>): boolean {
     const id = update.taskId;
     if (typeof id !== "string") return false;
+    const toolCallId = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
+    if (update.state === "unknown") {
+      const was = this.#tasks.delete(id);
+      const known = this.unknownBackground.get(id);
+      if (known === undefined || !known.task)
+        this.unknownBackground.set(id, { toolCallId: toolCallId ?? known?.toolCallId, task: true });
+      return was || known === undefined;
+    }
+    // Any other news (running again, or an end) settles an unknown task.
+    const wasUnknown =
+      this.unknownBackground.get(id)?.task === true && this.unknownBackground.delete(id);
     if (update.state === "running") {
-      if (this.#tasks.has(id)) return false;
+      if (this.#tasks.has(id)) return wasUnknown;
       this.#tasks.add(id);
       return true;
     }
-    return this.#tasks.delete(id);
+    return this.#tasks.delete(id) || wasUnknown;
   }
 
   /**

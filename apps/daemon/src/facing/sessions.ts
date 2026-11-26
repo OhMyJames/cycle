@@ -500,12 +500,19 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       if (
         !(await core.write(session, {
           kind: "update",
-          data: {
-            sessionUpdate: "subagent_update",
-            sessionId: id,
-            _meta: { [META.subagent]: { toolCallId: task.toolCallId, status: "dismissed" } },
-          },
-        }))
+          // A task that is not a sub-agent ends with the `stopped` it already has (docs/protocol.md §9).
+          data: task.task
+            ? {
+                sessionUpdate: "_cycle/task_update",
+                taskId: id,
+                state: "stopped",
+              }
+            : {
+                sessionUpdate: "subagent_update",
+                sessionId: id,
+                _meta: { [META.subagent]: { toolCallId: task.toolCallId, status: "dismissed" } },
+              },
+        } as never))
       ) {
         task.dismissing = false;
         throw logUnavailable(sessionId, session.historyError ?? HISTORY_NOT_SAVED);

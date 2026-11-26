@@ -129,6 +129,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "overview.goal.checkedNoTime": "检查了 {count} 次，尚未达成",
   "overview.todo": "待办",
   "overview.todo.empty": "这个会话还没有待办列表",
+  "overview.dismiss": "标记为结束",
   "overview.showInConversation": "在对话中显示",
   "overview.background": "后台",
   "overview.background.running": "{count} 个在运行",

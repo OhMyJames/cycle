@@ -148,6 +148,7 @@ export const enUS = {
   },
   "overview.todo": "Todo",
   "overview.todo.empty": "No todo list in this session yet",
+  "overview.dismiss": "Mark as ended",
   "overview.showInConversation": "Show in conversation",
   "overview.background": "Background",
   "overview.background.running": { one: "{count} running", other: "{count} running" },

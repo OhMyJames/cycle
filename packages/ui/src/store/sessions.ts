@@ -362,8 +362,8 @@ export class SessionsSlice {
     }
   };
 
-  dismissBackground = async (session: SessionSummary): Promise<void> => {
-    const ids = session.unknownBackground;
+  dismissBackground = async (session: SessionSummary, only?: string[]): Promise<void> => {
+    const ids = only ?? session.unknownBackground;
     if (ids?.length)
       await this.#kit.attempt(() =>
         this.#kit.bridge.dismissBackground(session.locationId, session.sessionId, ids),
