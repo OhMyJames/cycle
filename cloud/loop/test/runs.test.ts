@@ -1,11 +1,11 @@
-import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LoopRunsListResultSchema } from "@cycle/protocol";
 import type { Config } from "../src/config.ts";
-import { runsList } from "../src/runs.ts";
+import { runsList, type StateDirOf } from "../src/runs.ts";
 import { listen } from "../src/server.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "loop-runs-"));
@@ -16,10 +16,10 @@ const REPO_URL = "https://x-access-token:abc@github.com/clawdot/cycle.git";
 const cycState = join(dir, "state-cyc");
 const docState = join(dir, "state-doc");
 
-const record = (key: string, phase: string, extra: Record<string, unknown> = {}) => {
-  mkdirSync(join(cycState, "runs", key), { recursive: true });
+const record = (state: string, key: string, phase: string, name = key) => {
+  mkdirSync(join(state, "runs", name), { recursive: true });
   writeFileSync(
-    join(cycState, "runs", key, "run.json"),
+    join(state, "runs", name, "run.json"),
     JSON.stringify({
       key,
       issueId: 1,
@@ -39,7 +39,6 @@ const record = (key: string, phase: string, extra: Record<string, unknown> = {})
       findings: null,
       startedAt: "2026-11-26T01:00:00.000Z",
       updatedAt: "2026-11-26T02:00:00.000Z",
-      ...extra,
     }),
   );
 };
@@ -51,24 +50,35 @@ const config: Config = {
       projectKey: "CYC",
       repo: { url: REPO_URL, forge: "github" },
       token: TOKEN,
-      stateDir: cycState,
     },
     {
       name: "Docs",
       projectKey: "DOC",
       repo: { url: "git@gitlab.example.com:team/docs.git", forge: "gitlab" },
       token: "glpat-OTHER",
-      stateDir: docState,
     },
   ],
 };
+const first = config.projects[0] as Config["projects"][number];
+const only: Config = { projects: [first] };
+
+const stateDirOf: StateDirOf = (key) =>
+  key === "CYC" ? cycState : key === "DOC" ? docState : undefined;
+const at =
+  (state: string): StateDirOf =>
+  () =>
+    state;
+
+beforeAll(() => {
+  record(cycState, "CYC-2", "dev");
+  record(cycState, "CYC-1", "done");
+  record(cycState, "CYC-3", "blocked");
+  mkdirSync(docState, { recursive: true });
+});
 
 describe("runs/list", () => {
   test("returns each Project's runs, and an empty list for one with none", async () => {
-    record("CYC-2", "dev");
-    record("CYC-1", "done");
-    record("CYC-3", "blocked", { blockedReason: "x" });
-    const result = LoopRunsListResultSchema.parse(await runsList(config));
+    const result = LoopRunsListResultSchema.parse(await runsList(config, stateDirOf));
     expect(result.projects.map((p) => p.projectKey)).toEqual(["CYC", "DOC"]);
     expect(result.projects[0]?.runs.map((r) => [r.key, r.state])).toEqual([
       ["CYC-1", "done"],
@@ -78,79 +88,30 @@ describe("runs/list", () => {
     expect(result.projects[1]?.runs).toEqual([]);
   });
 
-  test("a corrupt record and a stray file do not hide a valid run, and the list says so", async () => {
+  test("a corrupt record, a copied directory and a stray file are skipped, valid runs stay", async () => {
     const state = join(dir, "state-mixed");
     mkdirSync(join(state, "runs", "BAD-1"), { recursive: true });
     writeFileSync(join(state, "runs", "BAD-1", "run.json"), "{not json");
     writeFileSync(join(state, "runs", "stray.txt"), "x");
-    mkdirSync(join(state, "runs", "OK-1"), { recursive: true });
-    const good = join(cycState, "runs", "CYC-1", "run.json");
-    writeFileSync(
-      join(state, "runs", "OK-1", "run.json"),
-      readFileSync(good, "utf8").replace("CYC-1", "OK-1"),
-    );
-    const first = config.projects[0];
-    if (first === undefined) throw new Error("no project");
-    const result = await runsList({ projects: [{ ...first, stateDir: state }] });
+    record(state, "OK-1", "dev");
+    record(state, "OK-1", "dev", "COPY-1");
+    symlinkSync(join(state, "runs", "OK-1"), join(state, "runs", "LINK-1"));
+    const result = await runsList(only, at(state));
     expect(result.projects[0]?.runs.map((r) => r.key)).toEqual(["OK-1"]);
-    expect(result.projects[0]?.unavailable).toBe(true);
   });
 
-  test("a stray file beside a valid run does not make the list unavailable", async () => {
-    const state = join(dir, "state-stray");
-    mkdirSync(join(state, "runs", "OK-9"), { recursive: true });
-    mkdirSync(join(state, "runs", "OK-10"), { recursive: true });
-    const good = readFileSync(join(cycState, "runs", "CYC-1", "run.json"), "utf8");
-    for (const key of ["OK-9", "OK-10"])
-      writeFileSync(join(state, "runs", key, "run.json"), good.replace("CYC-1", key));
-    writeFileSync(join(state, "runs", ".DS_Store"), "x");
-    const first = config.projects[0];
-    if (first === undefined) throw new Error("no project");
-    const result = await runsList({ projects: [{ ...first, stateDir: state }] });
-    expect(result.projects[0]?.runs.map((r) => r.key)).toEqual(["OK-9", "OK-10"]);
-    expect(result.projects[0]?.unavailable).toBe(false);
-  });
-
-  test("a run.json that cannot be read marks the list unavailable", async () => {
-    const state = join(dir, "state-eacces");
-    const good = readFileSync(join(cycState, "runs", "CYC-1", "run.json"), "utf8");
-    for (const key of ["OK-1", "OK-2"]) {
-      mkdirSync(join(state, "runs", key), { recursive: true });
-      writeFileSync(join(state, "runs", key, "run.json"), good.replace("CYC-1", key));
-    }
-    chmodSync(join(state, "runs", "OK-2", "run.json"), 0o000);
-    try {
-      const first = config.projects[0];
-      if (first === undefined) throw new Error("no project");
-      const result = await runsList({ projects: [{ ...first, stateDir: state }] });
-      expect(result.projects[0]?.runs.map((r) => r.key)).toEqual(["OK-1"]);
-      expect(result.projects[0]?.unavailable).toBe(true);
-    } finally {
-      chmodSync(join(state, "runs", "OK-2", "run.json"), 0o600);
-    }
-  });
-
-  test("a copied directory (key differs from its name) is skipped and flagged", async () => {
-    const state = join(dir, "state-copy");
-    mkdirSync(join(state, "runs", "COPY-1"), { recursive: true });
-    const good = readFileSync(join(cycState, "runs", "CYC-1", "run.json"), "utf8");
-    writeFileSync(join(state, "runs", "COPY-1", "run.json"), good);
-    const first = config.projects[0];
-    if (first === undefined) throw new Error("no project");
-    const result = await runsList({ projects: [{ ...first, stateDir: state }] });
+  test("a state directory with no runs/ yet is an empty list", async () => {
+    const result = await runsList(only, at(docState));
     expect(result.projects[0]?.runs).toEqual([]);
-    expect(result.projects[0]?.unavailable).toBe(true);
   });
 
-  test("a Project with no stateDir gets an empty list", async () => {
-    const first = config.projects[0];
-    if (first === undefined) throw new Error("no project");
-    const result = await runsList({ projects: [{ ...first, stateDir: undefined }] });
-    expect(result.projects[0]?.runs).toEqual([]);
+  test("a missing or unknown state directory is an error, not an empty list", async () => {
+    await expect(runsList(only, at(join(dir, "nowhere")))).rejects.toThrow("state_dir_missing");
+    await expect(runsList(only, () => undefined)).rejects.toThrow("state_dir_unknown");
   });
 
   test("the serialized response holds no token, repository address or local path", async () => {
-    const raw = JSON.stringify(await runsList(config));
+    const raw = JSON.stringify(await runsList(config, stateDirOf));
     expect(raw).toContain("CYC-2");
     for (const secret of [
       TOKEN,
@@ -167,40 +128,31 @@ describe("runs/list", () => {
 });
 
 describe("over the socket", () => {
-  test("replies come back in request order, a failing read is -32603", async () => {
-    const sock = join(dir, "order.sock");
-    let calls = 0;
-    const server = await listen(config, sock, async () => {
-      calls++;
-      if (calls === 2) throw new Error(`${dir} secret`);
-      await new Promise((r) => setTimeout(r, 100));
-      return { projects: [] };
-    });
-    try {
-      const lines: string[] = await new Promise((resolve) => {
-        const socket = connect(sock);
-        let buffer = "";
-        socket.on("data", (d) => {
-          buffer += d.toString();
-          const got = buffer.split("\n").filter(Boolean);
-          if (got.length === 3) {
-            socket.end();
-            resolve(got);
-          }
-        });
-        for (const [id, method] of [
-          [1, "runs/list"],
-          [2, "projects/list"],
-          [3, "runs/list"],
-        ] as const)
-          socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method })}\n`);
+  const ask = (
+    sock: string,
+    method: string,
+  ): Promise<{ result?: unknown; error?: { code: number } }> =>
+    new Promise((resolve) => {
+      const socket = connect(sock);
+      socket.once("data", (d) => {
+        socket.end();
+        resolve(JSON.parse(d.toString()));
       });
-      const parsed = lines.map((l) => JSON.parse(l));
-      expect(parsed.map((m) => m.id)).toEqual([1, 2, 3]);
-      expect(parsed[2].error.code).toBe(-32603);
-      expect(lines[2]).not.toContain("secret");
+      socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method })}\n`);
+    });
+
+  test("runs/list answers, and -32603 when a state directory is missing", async () => {
+    const good = await listen(config, join(dir, "a.sock"), stateDirOf);
+    const bad = await listen(config, join(dir, "b.sock"), () => undefined);
+    try {
+      const ok = await ask(join(dir, "a.sock"), "runs/list");
+      expect(LoopRunsListResultSchema.parse(ok.result).projects).toHaveLength(2);
+      const err = await ask(join(dir, "b.sock"), "runs/list");
+      expect(err.error?.code).toBe(-32603);
+      expect(JSON.stringify(err)).not.toContain(dir);
     } finally {
-      server.close();
+      good.close();
+      bad.close();
     }
   });
 });

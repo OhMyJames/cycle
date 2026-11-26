@@ -49,8 +49,6 @@ export type LoopRun = z.infer<typeof LoopRunSchema>;
 export const LoopProjectRunsSchema = z.object({
   projectKey: z.string().min(1),
   runs: z.array(LoopRunSchema),
-  /** True when some of the Project's run records could not be read: `runs` may be missing some. */
-  unavailable: z.boolean(),
 });
 export type LoopProjectRuns = z.infer<typeof LoopProjectRunsSchema>;
 

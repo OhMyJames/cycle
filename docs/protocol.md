@@ -1173,7 +1173,6 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
   "projects": [
     {
       "projectKey": "CYC",
-      "unavailable": false,
       "runs": [
         {
           "key": "CYC-390",
@@ -1188,8 +1187,8 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 }
 ```
 
-- `stateDir`:服务配置里每个 Project 可选的绝对路径(同一服务内不得重复或互相嵌套,符号链接按真实路径比较),服务据此找到 `runs/`;接入引擎的配置后由它给出(CYC-389、CYC-393)。不发给客户端。
-- 每个配置里的 Project 都有一项,顺序同 `projects/list`;没有运行记录(或没配 `stateDir`)的 Project 返回 `runs: []`,不报错。`unavailable`:有记录读不出来(损坏、目录读不了)时为 `true`,此时 `runs` 可能不全,客户端不要把空列表当成"没在跑";服务只在日志里写固定原因和 Project 键,不写路径。同一连接上的请求按顺序应答;每个连接最多 32 个待处理请求,超出的请求立即得到 `-32000`(`Too many requests`)。客户端发完请求后可以半关闭,服务答完再关。`runs` 按 `key` 排序。
+- 数据位置:读 `<stateDir>/runs/<KEY>/run.json`。服务配置格式不变,不含 `stateDir`;各 Project 的 `stateDir` 由启动服务的一方提供,配置合并(CYC-455)后改读合并后的配置。不发给客户端。
+- 每个配置里的 Project 都有一项,顺序同 `projects/list`;`runs/` 下还没有记录的 Project 返回 `runs: []`。某个 `run.json` 损坏或读不出来、或键与目录名不符时,该条被跳过,服务在日志里写固定原因和 Project 键,不写路径。某个 Project 的 `stateDir` 未知、不存在或 `runs/` 读不了时,整个调用返回 `-32603`(`Internal error`),不返回空列表,客户端不要把它当成"没在跑"。`runs` 按 `key` 排序;符号链接不跟随。
 - `kind`:`dev` 或 `research`。`state`:`done`(阶段为 done)、`blocked`(阶段为 blocked)、其余为 `active`。含已结束的记录,客户端自己按 `state` 过滤。
 - **`active` 不保证进程还活着**:Loop 异常退出后 `run.json` 还在,仍是 `active`。怎样判断运行仍然活着(待确认,心跳或锁)还没定,定了再加字段;在此之前客户端用 `updatedAt` 的新旧自行判断,不要把 `active` 当成"正在跑"的证明。
 - 字段逐个挑出,不含工单标题、阶段细节、worktree、分支、会话、PR 地址和阻塞原因。响应里没有令牌、仓库完整地址和本地路径。
