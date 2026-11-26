@@ -10,7 +10,10 @@ import {
   actOnTicket,
   answerBoard,
   answerTicket,
+  loopFeed,
+  loopRpc,
   readLoopProjects,
+  readLoopRuns,
   startTicketChat,
 } from "../src/main/loop.ts";
 
@@ -151,6 +154,194 @@ describe("the board", () => {
     });
     expect(events).toEqual([]);
     expect(seen).toEqual([]);
+  });
+});
+
+type Reply = (method: string, params: Record<string, unknown>) => unknown;
+
+/** A Loop server on a unix socket: answers `runs/list` from `runs`, and `events/list` and the rest through `reply`. */
+const run = (key: string, state: "active" | "blocked" | "done") => ({
+  key,
+  kind: "dev" as const,
+  state,
+  startedAt: "2026-11-26T01:00:00.000Z",
+  updatedAt: "2026-11-26T02:00:00.000Z",
+});
+
+const loopServer = async (
+  socket: string,
+  options: { runs?: [string, ReturnType<typeof run>[]][]; reply?: Reply },
+) => {
+  const server = createServer((c) =>
+    c.on("data", (chunk) => {
+      const req = JSON.parse(chunk.toString("utf8").split("\n")[0] ?? "{}") as {
+        method: string;
+        params?: Record<string, unknown>;
+      };
+      const result =
+        req.method === "runs/list"
+          ? { projects: (options.runs ?? []).map(([projectKey, runs]) => ({ projectKey, runs })) }
+          : options.reply?.(req.method, req.params ?? {});
+      const body =
+        result && typeof result === "object" && "error" in result
+          ? { jsonrpc: "2.0", id: 1, ...result }
+          : { jsonrpc: "2.0", id: 1, result };
+      c.write(`${JSON.stringify(body)}\n`);
+    }),
+  );
+  await new Promise<void>((r) => server.listen(socket, r));
+  return server;
+};
+
+describe("where Loop is running (CYC-458)", () => {
+  test("only an active record is running, and a server that does not answer says nothing runs", async () => {
+    const socket = join(dir, "runs.sock");
+    expect(await readLoopRuns(socket)).toEqual({ kind: "disconnected" });
+    const server = await loopServer(socket, {
+      runs: [
+        ["CYC", [run("CYC-1", "active"), run("CYC-2", "done"), run("CYC-3", "blocked")]],
+        ["OPS", []],
+      ],
+    });
+    try {
+      expect(await readLoopRuns(socket)).toEqual({
+        kind: "ok",
+        running: { CYC: ["CYC-1"], OPS: [] },
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a ticket left in In Progress with no running record is not Loop running it", async () => {
+    writeKey(0o600);
+    const { fetchImpl } = tracker();
+    const socket = join(dir, "idle.sock");
+    // Loop is up, and its only record for the ticket is done: In Progress alone proves nothing.
+    const server = await loopServer(socket, { runs: [["CYC", [run("CYC-230", "done")]]] });
+    try {
+      const board = await answerBoard({ ...loop, socket }, "CYC", () => {}, fetchImpl);
+      if (board.kind !== "ok") throw new Error("expected a board");
+      const progress = board.columns.find((c) => c.name === "In Progress");
+      expect(progress?.tickets.map((t) => [t.identifier, t.chat])).toEqual([["CYC-230", "none"]]);
+    } finally {
+      server.close();
+    }
+    // And with a running record it is watched.
+    const live = join(dir, "live.sock");
+    const running = await loopServer(live, { runs: [["CYC", [run("CYC-230", "active")]]] });
+    try {
+      const board = await answerBoard({ ...loop, socket: live }, "CYC", () => {}, fetchImpl);
+      if (board.kind !== "ok") throw new Error("expected a board");
+      const progress = board.columns.find((c) => c.name === "In Progress");
+      expect(progress?.tickets.map((t) => t.chat)).toEqual(["watch"]);
+    } finally {
+      running.close();
+    }
+  });
+
+  const event = (seq: number) => ({
+    seq,
+    ts: "2026-11-26T02:00:00.000Z",
+    run: "CYC-1",
+    kind: "phase",
+  });
+
+  test("after a disconnect the next request carries the last seq, and a seq is applied once", async () => {
+    const socket = join(dir, "feed.sock");
+    const asked: unknown[] = [];
+    let active = true;
+    // The server resends seq 2 with the new one after it comes back: a client must not apply 2 a second time.
+    let pages: Record<number, ReturnType<typeof event>[]> = { 0: [event(1), event(2)] };
+    const reply: Reply = (method, params) => {
+      if (method !== "events/list") return {};
+      asked.push(params.afterSeq);
+      const after = Number(params.afterSeq);
+      const events = (pages[after] ?? []).filter((e) => e.seq > 0);
+      return {
+        projectKey: "CYC",
+        events,
+        lastSeq: events.at(-1)?.seq ?? after,
+        hasMore: false,
+      };
+    };
+    const start = () =>
+      loopServer(socket, {
+        runs: [["CYC", active ? [run("CYC-1", "active")] : [run("CYC-1", "done")]]],
+        reply,
+      });
+    let server = await start();
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: (method, params) => loopRpc(socket, method, params),
+      changed: (runs) => told.push(runs),
+    });
+    try {
+      await feed.tick(); // reads the runs, then catches up on the log
+      expect(told).toEqual([{ kind: "ok", running: { CYC: ["CYC-1"] } }]);
+      expect(feed.lastSeq("CYC")).toBe(2);
+      expect(asked).toEqual([0]);
+
+      // The server goes away: nothing is asked of it, and the last seq is kept.
+      await new Promise((r) => server.close(r));
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(2);
+
+      // It comes back: the Loop has finished meanwhile. The request carries 2; seq 2 comes back again, 3 is new.
+      active = false;
+      pages = { 2: [event(2), event(3)] };
+      server = await start();
+      await feed.tick();
+      expect(asked.slice(1)).toEqual([2]);
+      expect(feed.lastSeq("CYC")).toBe(3);
+      expect(told).toEqual([
+        { kind: "ok", running: { CYC: ["CYC-1"] } },
+        { kind: "disconnected" },
+        { kind: "ok", running: { CYC: [] } },
+      ]);
+
+      // Nothing new: only the seq is asked again, and nothing is told twice.
+      pages = { 3: [event(3)] };
+      await feed.tick();
+      expect(asked.at(-1)).toBe(3);
+      expect(told).toHaveLength(3);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a seq past the end of the log starts again from 0", async () => {
+    const socket = join(dir, "ahead.sock");
+    const asked: unknown[] = [];
+    let lines = 5;
+    const server = await loopServer(socket, {
+      runs: [["CYC", [run("CYC-1", "active")]]],
+      reply: (method, params) => {
+        if (method !== "events/list") return {};
+        const after = Number(params.afterSeq);
+        asked.push(after);
+        if (after > lines)
+          return {
+            error: { code: -32602, message: "Invalid params", data: { reason: "seq_ahead" } },
+          };
+        const events = Array.from({ length: lines - after }, (_, i) => event(after + i + 1));
+        return { projectKey: "CYC", events, lastSeq: lines, hasMore: false };
+      },
+    });
+    try {
+      const feed = loopFeed({
+        call: (method, params) => loopRpc(socket, method, params),
+        changed: () => {},
+      });
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(5);
+      lines = 2; // the log was swapped for a shorter one
+      await feed.tick();
+      expect(asked).toEqual([0, 5, 0, 2]);
+      expect(feed.lastSeq("CYC")).toBe(2);
+    } finally {
+      server.close();
+    }
   });
 });
 
@@ -460,7 +651,10 @@ describe("a conversation about a ticket (CYC-389)", () => {
     const { chatOf } = await import("../src/main/loop.ts");
     expect(chatOf("backlog")).toBe("new");
     expect(chatOf("unstarted")).toBe("new");
-    expect(chatOf("started", "progress")).toBe("watch");
+    // In Progress alone is not "running" (CYC-458): the run data has to say so.
+    expect(chatOf("started", "progress")).toBe("none");
+    expect(chatOf("started", "progress", false, true)).toBe("watch");
+    expect(chatOf("started", "review", false, true)).toBe("none");
     expect(chatOf("started", "review")).toBe("none");
     expect(chatOf("started", "blocked")).toBe("none");
     expect(chatOf("started")).toBe("none");
@@ -473,9 +667,25 @@ describe("a conversation about a ticket (CYC-389)", () => {
     const answer = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(21));
     if (answer.kind !== "ok") throw new Error("expected a ticket");
     expect(answer.ticket.chat).toBe("new");
-    const doing = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(23));
-    if (doing.kind !== "ok") throw new Error("expected a ticket");
-    expect(doing.ticket.chat).toBe("watch");
+    // Left in In Progress, with no Loop server and so no running record: not watched as running.
+    const left = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(23));
+    if (left.kind !== "ok") throw new Error("expected a ticket");
+    expect(left.ticket.chat).toBe("none");
+    const socket = join(dir, "running.sock");
+    const server = await loopServer(socket, { runs: [["CYC", [run("CYC-9", "active")]]] });
+    try {
+      const doing = await answerTicket(
+        { ...loop, socket },
+        "CYC",
+        "CYC-9",
+        () => {},
+        trackerWith(23),
+      );
+      if (doing.kind !== "ok") throw new Error("expected a ticket");
+      expect(doing.ticket.chat).toBe("watch");
+    } finally {
+      server.close();
+    }
     // In Review (34) is not Loop's running column: no note, no button.
     const review = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(34));
     if (review.kind !== "ok") throw new Error("expected a ticket");

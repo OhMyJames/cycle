@@ -178,6 +178,7 @@ test.skipIf(!ready)(
           "loopChat",
           "loopNotices",
           "loopProjects",
+          "loopRuns",
           "setVaultItem",
           "removeVaultItem",
           "prompt",

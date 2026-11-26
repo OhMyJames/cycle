@@ -165,6 +165,7 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     analytics: () => NO_ANALYTICS,
     setAnalytics: () => NO_ANALYTICS,
     loopProjects: () => ({ kind: "disconnected" }),
+    loopRuns: () => ({ kind: "disconnected" }),
     loopBoard: () => ({ kind: "no_key" }),
     loopTicket: () => ({ kind: "no_key" }),
     loopAct: () => ({ kind: "failed", reason: "no_key" }),

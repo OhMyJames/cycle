@@ -9,7 +9,14 @@ import { statSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { connect } from "node:net";
 import type { EventProps } from "@cycle/analytics/events";
-import { LOOP_PROJECTS_LIST, LoopProjectsListResultSchema } from "@cycle/protocol";
+import {
+  LOOP_EVENTS_LIST,
+  LOOP_PROJECTS_LIST,
+  LOOP_RUNS_LIST,
+  LoopEventsListResultSchema,
+  LoopProjectsListResultSchema,
+  LoopRunsListResultSchema,
+} from "@cycle/protocol";
 import type {
   LoopActFailure,
   LoopAction,
@@ -25,6 +32,7 @@ import type {
   LoopNotice,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
+  LoopRunsAnswer,
   LoopStage,
   LoopTicket,
   LoopTicketAnswer,
@@ -33,12 +41,23 @@ import type {
 
 const PROJECTS_TIMEOUT_MS = 3000;
 
-export const readLoopProjects = (socketPath: string): Promise<LoopProjectsAnswer> =>
+/** What one call to the Loop server came to: its result, an error it answered with, or no answer at all. */
+export type LoopRpcAnswer =
+  | { kind: "ok"; result: unknown }
+  | { kind: "error"; code: number; reason?: string }
+  | { kind: "disconnected" };
+
+/** One JSON-RPC call on the Loop server's socket. A socket that is not there, a timeout, or a garbled line is `disconnected`. */
+export const loopRpc = (
+  socketPath: string,
+  method: string,
+  params?: unknown,
+): Promise<LoopRpcAnswer> =>
   new Promise((resolve) => {
     const socket = connect(socketPath);
     let buffer = "";
     let settled = false;
-    const finish = (answer: LoopProjectsAnswer) => {
+    const finish = (answer: LoopRpcAnswer) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -49,25 +68,163 @@ export const readLoopProjects = (socketPath: string): Promise<LoopProjectsAnswer
     socket.on("error", () => finish({ kind: "disconnected" }));
     socket.on("close", () => finish({ kind: "disconnected" }));
     socket.on("connect", () =>
-      socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: LOOP_PROJECTS_LIST })}\n`),
+      socket.write(
+        `${JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) })}\n`,
+      ),
     );
     socket.on("data", (chunk) => {
       buffer += chunk.toString("utf8");
       const end = buffer.indexOf("\n");
       if (end === -1) return;
       try {
-        const reply = JSON.parse(buffer.slice(0, end)) as { result?: unknown };
-        const parsed = LoopProjectsListResultSchema.safeParse(reply.result);
-        finish(
-          parsed.success
-            ? { kind: "ok", projects: parsed.data.projects }
-            : { kind: "disconnected" },
-        );
+        const reply = JSON.parse(buffer.slice(0, end)) as {
+          result?: unknown;
+          error?: { code?: unknown; data?: { reason?: unknown } };
+        };
+        if (reply.error && typeof reply.error.code === "number") {
+          const reason = reply.error.data?.reason;
+          finish({
+            kind: "error",
+            code: reply.error.code,
+            ...(typeof reason === "string" ? { reason } : {}),
+          });
+        } else finish({ kind: "ok", result: reply.result });
       } catch {
         finish({ kind: "disconnected" });
       }
     });
   });
+
+export const readLoopProjects = async (socketPath: string): Promise<LoopProjectsAnswer> => {
+  const answer = await loopRpc(socketPath, LOOP_PROJECTS_LIST);
+  if (answer.kind !== "ok") return { kind: "disconnected" };
+  const parsed = LoopProjectsListResultSchema.safeParse(answer.result);
+  return parsed.success ? { kind: "ok", projects: parsed.data.projects } : { kind: "disconnected" };
+};
+
+/**
+ * Where Loop is running, by Project: the tickets that have an `active` run record. This is the whole rule (docs/protocol.md
+ * §17): a server that did not answer, or an answer that is not the protocol's, says nothing is running, because a
+ * Loop that died leaves its `run.json` behind as `active` but takes `loop.sock` with it. Never from a board column.
+ */
+export const runningOf = (answer: LoopRpcAnswer): LoopRunsAnswer => {
+  if (answer.kind !== "ok") return { kind: "disconnected" };
+  const parsed = LoopRunsListResultSchema.safeParse(answer.result);
+  if (!parsed.success) return { kind: "disconnected" };
+  return {
+    kind: "ok",
+    running: Object.fromEntries(
+      parsed.data.projects.map((p) => [
+        p.projectKey,
+        p.runs.filter((r) => r.state === "active").map((r) => r.key),
+      ]),
+    ),
+  };
+};
+
+export const readLoopRuns = async (socketPath: string): Promise<LoopRunsAnswer> =>
+  runningOf(await loopRpc(socketPath, LOOP_RUNS_LIST));
+
+/** The tickets of one Project Loop is running now: empty when it is not known. */
+const runningKeys = async (loop: LoopOptions, projectKey: string): Promise<Set<string>> => {
+  const answer = await readLoopRuns(loop.socket);
+  return new Set(answer.kind === "ok" ? (answer.running[projectKey] ?? []) : []);
+};
+
+const sameRuns = (a: LoopRunsAnswer | undefined, b: LoopRunsAnswer): boolean =>
+  a !== undefined && JSON.stringify(a) === JSON.stringify(b);
+
+export type FeedDeps = {
+  call: (method: string, params?: unknown) => Promise<LoopRpcAnswer>;
+  /** Told when the run state differs from the one told last. */
+  changed: (runs: LoopRunsAnswer) => void;
+};
+
+/** The most pages one poll of one Project takes in a row: a server that always says `hasMore` cannot keep it here. */
+const FEED_PAGES = 20;
+
+/**
+ * Keeps up with Loop's event stream (docs/protocol.md §17): per Project it asks `events/list` after the last `seq` it
+ * has, applies an event once (a `seq` it has is dropped), and reads the run state again when something new came. A call
+ * that fails leaves the last `seq` as it was, so the next one carries it: that is the whole of reconnecting.
+ */
+export const loopFeed = (deps: FeedDeps) => {
+  const last = new Map<string, number>();
+  let told: LoopRunsAnswer | undefined;
+  let busy = false;
+
+  const apply = (runs: LoopRunsAnswer, tell: boolean) => {
+    const same = sameRuns(told, runs);
+    told = runs;
+    if (tell && !same) deps.changed(runs);
+  };
+
+  /** New events of one Project since the last `seq`; true when there were some, or when it could not be asked (look at the runs). */
+  const pull = async (projectKey: string): Promise<boolean> => {
+    let fresh = false;
+    let reset = false;
+    for (let page = 0; page < FEED_PAGES; page++) {
+      const after = last.get(projectKey) ?? 0;
+      const answer = await deps.call(LOOP_EVENTS_LIST, { projectKey, afterSeq: after });
+      if (answer.kind === "error") {
+        // The `seq` is not in the file (or is past its end): start again from 0; what was applied stays applied.
+        if (!reset && (answer.reason === "seq_gone" || answer.reason === "seq_ahead")) {
+          reset = true;
+          fresh = true;
+          last.set(projectKey, 0);
+          continue;
+        }
+        return true;
+      }
+      if (answer.kind !== "ok") return true;
+      const parsed = LoopEventsListResultSchema.safeParse(answer.result);
+      if (!parsed.success) return true;
+      let top = after;
+      for (const event of parsed.data.events) {
+        if (event.seq <= top) continue;
+        top = event.seq;
+        fresh = true;
+      }
+      last.set(projectKey, Math.max(top, parsed.data.lastSeq));
+      if (!parsed.data.hasMore) return fresh;
+    }
+    return fresh;
+  };
+
+  const tick = async (): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    try {
+      let fresh = told?.kind !== "ok";
+      if (told?.kind === "ok")
+        for (const projectKey of Object.keys(told.running))
+          fresh = (await pull(projectKey)) || fresh;
+      if (!fresh) return;
+      let runs = runningOf(await deps.call(LOOP_RUNS_LIST));
+      if (runs.kind === "ok") {
+        // The first read, and the first one after the server was away, catch up on every log from the last `seq` held.
+        let more = false;
+        for (const projectKey of Object.keys(runs.running)) more = (await pull(projectKey)) || more;
+        if (more) runs = runningOf(await deps.call(LOOP_RUNS_LIST));
+      }
+      apply(runs, true);
+    } finally {
+      busy = false;
+    }
+  };
+
+  return {
+    tick,
+    /** The page asked: read now, remember it as told, and answer. */
+    async read(): Promise<LoopRunsAnswer> {
+      const runs = runningOf(await deps.call(LOOP_RUNS_LIST));
+      apply(runs, false);
+      return runs;
+    },
+    /** The last `seq` applied for a Project (for tests and for looking). */
+    lastSeq: (projectKey: string) => last.get(projectKey) ?? 0,
+  };
+};
 
 /** The key in the file, or undefined when there is none or others can read it (the same rule as the Loop server's). */
 export const readKeyFile = async (path: string): Promise<string | undefined> => {
@@ -188,18 +345,18 @@ export const actionsOf = (stateType: string, auto: boolean, role?: Role): LoopAc
 /**
  * What an agent may do with a ticket, by the kind of its column (CYC-389). Backlog and Todo: a new conversation.
  * A Todo ticket with `auto` is queued for Loop, which picks it up on its own: no conversation (send it back to Backlog
- * to refine it). In Progress (the role `progress` of the started columns): only to look, because for now that column
- * is the sign that Loop is running it; a ticket Loop left there when it died is taken for running too (CYC-390
- * corrects it with the run data). Review, Blocked (CYC-388 joins the original session) and the rest: nothing.
+ * to refine it). In Progress (the role `progress` of the started columns): only to look, and only while the run data
+ * says Loop is running the ticket (CYC-458): a ticket Loop left there when it died has no running record, so it is
+ * not taken for running. Review, Blocked (CYC-388 joins the original session) and the rest: nothing.
  */
-export const chatOf = (stateType: string, role?: Role, auto = false): LoopChat =>
+export const chatOf = (stateType: string, role?: Role, auto = false, running = false): LoopChat =>
   stateType === "backlog"
     ? "new"
     : stateType === "unstarted"
       ? auto
         ? "none"
         : "new"
-      : stateType === "started" && role === "progress"
+      : stateType === "started" && role === "progress" && running
         ? "watch"
         : "none";
 
@@ -373,7 +530,11 @@ const pendingOf = async (
 };
 
 /** Tickets by the kind of their column (never its name); read-only. */
-export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoardAnswer> => {
+export const readBoard = async (
+  t: Tracker,
+  projectKey: string,
+  running: ReadonlySet<string> = new Set(),
+): Promise<LoopBoardAnswer> => {
   try {
     // The tracker answers with the thing itself (`{project, columns, ...}`, a bare array of issues); some paths wrap it
     // as `{ok, data}`. Both are read; an answer with no columns is a failure, not an empty board.
@@ -419,7 +580,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
           priority: typeof r.priority === "string" ? r.priority : null,
           column: column.name,
           actions: actionsOf(column.stateType, auto, role),
-          chat: chatOf(column.stateType, role, auto),
+          chat: chatOf(column.stateType, role, auto, running.has(String(r.identifier ?? ""))),
         };
       });
       if (column.stateType !== "backlog" || pendingId === undefined) return tickets;
@@ -491,6 +652,7 @@ export const answerBoard = async (
     board = await readBoard(
       { url: loop.trackerUrl, key, ...(fetchImpl ? { fetch: fetchImpl } : {}) },
       projectKey,
+      await runningKeys(loop, projectKey),
     );
   track("loop_board_read", { result: board.kind });
   return board;
@@ -617,6 +779,9 @@ export const answerTicket = async (
           await attentionOf(tracker, issue, role).catch(() => undefined)
         : undefined;
     const body = typeof issue.description === "string" ? issue.description : "";
+    const running = (await runningKeys(loop, parsed.projectKey)).has(
+      String(issue.identifier ?? identifier),
+    );
     track("loop_ticket_opened", {});
     return {
       kind: "ok",
@@ -626,7 +791,7 @@ export const answerTicket = async (
         priority: typeof issue.priority === "string" ? issue.priority : null,
         column: column.name,
         actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
-        chat: chatOf(column.stateType, role, auto),
+        chat: chatOf(column.stateType, role, auto, running),
         body,
         ...(attention ? { attention } : {}),
         acceptance: acceptanceOf(body),

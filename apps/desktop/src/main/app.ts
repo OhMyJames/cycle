@@ -41,6 +41,8 @@ import {
   answerBoard,
   answerNotices,
   answerTicket,
+  loopFeed,
+  loopRpc,
   readLoopProjects,
   startTicketChat,
 } from "./loop.ts";
@@ -107,6 +109,8 @@ const updateResult = (
 
 /** How often the Loop tickets are read for a new Blocked or escalated one. */
 const NOTICE_POLL_MS = 60_000;
+/** How often Loop's event stream is asked for events after the last `seq` (docs/protocol.md §17: the client polls). */
+const LOOP_EVENTS_POLL_MS = 2_000;
 
 /**
  * What a link the page asks to open may be: a web page, or an address to write to (the mail app). The page checks the same
@@ -210,6 +214,14 @@ export const startApp = async (options: AppOptions) => {
     if (window !== undefined && !window.isDestroyed())
       window.webContents.send(EVENT_CHANNEL, event);
   };
+  // Loop's run state follows its event stream: the feed asks `events/list` after the last `seq` it has and tells the page
+  // when the run state changed. Without a Loop server on this computer there is nothing to follow.
+  const loopRuns = options.loop
+    ? loopFeed({
+        call: (method, params) => loopRpc(options.loop?.socket ?? "", method, params),
+        changed: (runs) => emit({ type: "loop-runs", runs }),
+      })
+    : undefined;
   // Before anything is connected: until the person is signed in, no location is, and no session is read.
   let opened = false;
   let connectWhenOpen = false;
@@ -329,6 +341,11 @@ export const startApp = async (options: AppOptions) => {
       return options.loop
         ? await readLoopProjects(options.loop.socket)
         : ({ kind: "disconnected" } as const);
+    },
+    loopRuns: async () => {
+      const runs = loopRuns ? await loopRuns.read() : ({ kind: "disconnected" } as const);
+      analytics.track("loop_runs_read", { result: runs.kind });
+      return runs;
     },
     loopBoard: (projectKey: unknown) =>
       answerBoard(options.loop, projectKey, (event, props) => analytics.track(event, props)),
@@ -535,7 +552,12 @@ export const startApp = async (options: AppOptions) => {
     const timer = setInterval(() => void poller.tick(), NOTICE_POLL_MS);
     timer.unref();
     void poller.tick();
-    stopNotices = () => clearInterval(timer);
+    const feedTimer = setInterval(() => void loopRuns?.tick(), LOOP_EVENTS_POLL_MS);
+    feedTimer.unref();
+    stopNotices = () => {
+      clearInterval(timer);
+      clearInterval(feedTimer);
+    };
   }
 
   app.on("window-all-closed", () => app.quit());

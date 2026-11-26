@@ -10,6 +10,7 @@ import type {
   LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectInfo,
+  LoopRunsAnswer,
   LoopTicketAnswer,
 } from "../api.ts";
 import type { StoreKit } from "./core.ts";
@@ -19,6 +20,8 @@ export type LoopState = {
   projects: LoopProjectInfo[];
   /** Whether the Loop server answered the last time it was asked. `undefined`: not asked yet. */
   connected?: boolean;
+  /** Where Loop is running, as last read or pushed. `undefined`: not read yet. */
+  runs?: LoopRunsAnswer;
   /** Each Project's board as last read; `loading` while it is being read the first time. */
   boards: Record<string, LoopBoardAnswer | "loading">;
   /** Each Project's Notices as last read. They are derived from state by main, so a read replaces the last whole. */
@@ -54,6 +57,17 @@ export class LoopSlice {
       },
     }));
   };
+
+  loadRuns = async (): Promise<void> => {
+    const answer = await this.#kit.bridge
+      .loopRuns()
+      .catch(() => ({ kind: "disconnected" }) as const);
+    // A push that came while this was being read is newer: it is kept.
+    this.#kit.set((s) => (s.loop.runs === undefined ? { loop: { ...s.loop, runs: answer } } : {}));
+  };
+
+  /** Main follows Loop's events and pushes the run state when it changes; it replaces what was held. */
+  setRuns = (runs: LoopRunsAnswer): void => this.#kit.set((s) => ({ loop: { ...s.loop, runs } }));
 
   loadBoard = async (projectKey: string): Promise<void> => {
     const had = this.#kit.state().loop.boards[projectKey];

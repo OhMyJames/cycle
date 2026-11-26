@@ -879,7 +879,9 @@ export type AppEvent =
   /** A notification was pressed: show this session. */
   | { type: "focus-session"; locationId: string; sessionId: string }
   /** A Loop notification was pressed: show this ticket on the Loop page. */
-  | { type: "open-loop-ticket"; projectKey: string; identifier: string };
+  | { type: "open-loop-ticket"; projectKey: string; identifier: string }
+  /** Loop's run state changed (the main process follows its event stream): the whole answer, replacing the last. */
+  | { type: "loop-runs"; runs: LoopRunsAnswer };
 
 /** Whether the app reports how it is used (docs/analytics.md). `available` is false when there is nowhere to report to. */
 export type AnalyticsStatus = { available: boolean; enabled: boolean; noticed: boolean };
@@ -1290,6 +1292,11 @@ export type AppApi = {
 
   /** The Projects the Loop server on this computer serves (docs/protocol.md §17). */
   loopProjects(): Promise<LoopProjectsAnswer>;
+  /**
+   * Where Loop is running now, by Project (docs/protocol.md §17, CYC-458). Read once when the page opens; after that
+   * the main process pushes `loop-runs` when it changes. Read-only: there is no start or stop.
+   */
+  loopRuns(): Promise<LoopRunsAnswer>;
   /** One Project's itsaplan board, read with the person's own key, which stays in the main process. */
   loopBoard(projectKey: string): Promise<LoopBoardAnswer>;
   /** One ticket's body, acceptance criteria and PR/MR links, read with the person's own key. */
@@ -1330,6 +1337,14 @@ export type LoopProjectInfo = {
   projectKey: string;
   repo: { displayName: string; forge: "github" | "gitlab" };
 };
+
+/**
+ * What the run data says: `running` is, per Project, the tickets with an `active` run record. `disconnected`: the Loop
+ * server did not answer, so nothing is known to run (a Loop that died leaves records behind, but takes its socket).
+ */
+export type LoopRunsAnswer =
+  | { kind: "ok"; running: Record<string, string[]> }
+  | { kind: "disconnected" };
 
 /** `disconnected`: no Loop server answered on this computer. */
 export type LoopProjectsAnswer =
@@ -1583,6 +1598,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   analytics: true,
   setAnalytics: true,
   loopProjects: true,
+  loopRuns: true,
   loopBoard: true,
   loopTicket: true,
   loopAct: true,
