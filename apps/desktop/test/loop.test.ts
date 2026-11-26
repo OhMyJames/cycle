@@ -11,6 +11,7 @@ import {
   answerBoard,
   answerRuns,
   answerTicket,
+  type LoopRpcAnswer,
   loopFeed,
   loopRpc,
   readLoopProjects,
@@ -402,6 +403,47 @@ describe("where Loop is running (CYC-458)", () => {
       ["loop_runs_read", { result: "disconnected" }],
       ["loop_runs_read", { result: "ok" }],
     ]);
+  });
+
+  test("a Loop that was away for several ticks is seen on the first tick after it is back", async () => {
+    const socket = join(dir, "back.sock");
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: (method, params) => loopRpc(socket, method, params),
+      changed: (runs) => told.push(runs),
+    });
+    for (let i = 0; i < 6; i++) await feed.tick();
+    expect(told).toEqual([{ kind: "disconnected" }]);
+    const server = await loopServer(socket, {
+      runs: [["CYC", [run("CYC-1", "active")]]],
+      reply: () => ({ projectKey: "CYC", events: [], lastSeq: 0, hasMore: false }),
+    });
+    try {
+      await feed.tick();
+      expect(told.at(-1)).toEqual({ kind: "ok", running: { CYC: ["CYC-1"] } });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("an older runs answer that arrives late is not applied over a newer one", async () => {
+    const waiting: ((value: LoopRpcAnswer) => void)[] = [];
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: () => new Promise<LoopRpcAnswer>((resolve) => waiting.push(resolve)),
+      changed: (runs) => told.push(runs),
+    });
+    const answer = (keys: string[]) => ({
+      kind: "ok" as const,
+      result: { projects: [{ projectKey: "CYC", runs: keys.map((k) => run(k, "active")) }] },
+    });
+    const older = feed.read();
+    const newer = feed.read();
+    waiting[1]?.(answer(["CYC-2"]));
+    await newer;
+    waiting[0]?.(answer([]));
+    await older;
+    expect(told).toEqual([{ kind: "ok", running: { CYC: ["CYC-2"] } }]);
   });
 
   test("a seq past the end of the log starts again from 0", async () => {

@@ -53,13 +53,13 @@ const withTickets = (tickets: Record<string, LoopTicket[]>): LoopBoardAnswer => 
 });
 
 const mount = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
-  // The script itself is kept (not copied), so a test can change what the bridge answers later.
-  script.connected ??= true;
-  const fake = fakeBridge(script);
+  // `options` stays live: a test can change what the bridge answers later.
+  const options = { connected: true, ...script };
+  const fake = fakeBridge(options);
   await renderApp(fake.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  return { user, ...fake };
+  return { user, options, ...fake };
 };
 
 test("the Loop page shows a Project's board as a row of columns, with Done collapsed", async () => {
@@ -671,13 +671,13 @@ test("a pushed run state updates the page without reading again", async () => {
 
 test("reopening the Loop page reads the run state again, and applies what changed meanwhile", async () => {
   const script = overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } });
-  const { user } = await mount(script);
+  const { user, options } = await mount(script);
   const projects = await screen.findByRole("region", { name: "Projects" });
   await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
   await user.keyboard("{Escape}");
   await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
   // Loop started while the page was closed, and nothing was pushed to it.
-  script.loopRuns = { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } };
+  options.loopRuns = { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } };
   await user.click(await screen.findByRole("button", { name: "Loop" }));
   const again = await screen.findByRole("region", { name: "Projects" });
   await waitFor(() => expect(runState(again, "CYC")).toBe("Running"));

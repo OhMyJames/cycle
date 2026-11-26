@@ -103,7 +103,6 @@ export const readLoopProjects = async (socketPath: string): Promise<LoopProjects
 };
 
 /**
- * (The `chat: "watch"` of a card or ticket is fixed when the board or ticket is read; a pushed run state does not re-read them.)
  * Where Loop is running, by Project: the tickets that have an `active` run record. This is the whole rule (docs/protocol.md
  * §17): a server that did not answer, or an answer that is not the protocol's, says nothing is running, because a
  * Loop that died leaves its `run.json` behind as `active` but takes `loop.sock` with it. Never from a board column.
@@ -166,11 +165,25 @@ export const loopFeed = (deps: FeedDeps) => {
   /** Ticks in a row that could not be answered, and the tick before which nothing is asked (a back-off). */
   let failures = 0;
   let nextAt = 0;
+  /** Each read of runs/list is numbered when it starts; an answer older than one already applied is dropped. */
+  let issued = 0;
+  let applied = 0;
+  let seededNow = false;
 
-  const apply = (runs: LoopRunsAnswer, tell: boolean) => {
+  /** Reads the runs and applies them, unless a read that began later has already been applied. Answers what stands. */
+  const readRuns = async (): Promise<LoopRunsAnswer> => {
+    const stamp = ++issued;
+    const runs = runningOf(await deps.call(LOOP_RUNS_LIST));
+    if (stamp < applied) return told ?? runs;
+    applied = stamp;
     const same = sameRuns(told, runs);
     told = runs;
-    if (tell && !same) deps.changed(runs);
+    // A page that cannot be told is not a reason to stop following.
+    if (!same)
+      try {
+        deps.changed(runs);
+      } catch {}
+    return runs;
   };
 
   /**
@@ -202,6 +215,7 @@ export const loopFeed = (deps: FeedDeps) => {
       const parsed = LoopEventsListResultSchema.safeParse(answer.result);
       if (!parsed.success) return "broken";
       const history = !seeded.has(projectKey);
+      if (history) seededNow = true;
       let top = after;
       for (const event of parsed.data.events) {
         if (event.seq <= top) continue;
@@ -227,31 +241,34 @@ export const loopFeed = (deps: FeedDeps) => {
       let read = !wasOk || recheck || ticks % RUNS_REREAD_TICKS === 0;
       let trouble = false;
       let fresh = false;
+      seededNow = false;
       if (told?.kind === "ok")
         for (const projectKey of Object.keys(told.running)) {
           const got = await pull(projectKey);
           if (got === "fresh") fresh = true;
-          else if (got === "away") read = true;
-          else if (got === "broken") trouble = true;
+          else if (got === "away") {
+            // The server is not there: the others are not asked one by one, the runs say so.
+            read = true;
+            break;
+          } else if (got === "broken") trouble = true;
         }
       if (fresh) read = true;
       if (read) {
-        let runs = runningOf(await deps.call(LOOP_RUNS_LIST));
-        if (runs.kind === "ok") {
+        let runs = await readRuns();
+        if (runs.kind === "ok" && !wasOk) {
           // A first read, or the first after the server was away: every log is read to its end from the last `seq` held.
-          if (!wasOk) {
-            let more = false;
-            for (const projectKey of Object.keys(runs.running)) {
-              const got = await pull(projectKey);
-              if (got === "fresh") more = true;
-              else if (got === "broken") trouble = true;
-            }
-            if (more) runs = runningOf(await deps.call(LOOP_RUNS_LIST));
+          let more = false;
+          for (const projectKey of Object.keys(runs.running)) {
+            const got = await pull(projectKey);
+            if (got === "fresh") more = true;
+            else if (got === "broken") trouble = true;
           }
-        } else trouble = true;
+          if (more) runs = await readRuns();
+        }
         recheck = fresh || !wasOk;
-        apply(runs, true);
       }
+      // A Project seen for the first time had its log taken as history: its runs are looked at once more.
+      if (seededNow) recheck = true;
       // A tick that could not be answered makes the next ones wait longer (1, 2, 4... ticks, at most 30), so a server
       // that keeps failing is not asked every time.
       failures = trouble ? failures + 1 : 0;
@@ -266,9 +283,8 @@ export const loopFeed = (deps: FeedDeps) => {
     /** The page asked: read now, remember it as told, and answer. */
     async read(): Promise<LoopRunsAnswer> {
       wanted = true;
-      const runs = runningOf(await deps.call(LOOP_RUNS_LIST));
-      // Pushed too (when it differs from what was told last), so a page that dropped its read for a newer push still gets it.
-      apply(runs, true);
+      // Told too (when it differs from what was told last), so a page that dropped its read for a newer push still gets it.
+      const runs = await readRuns();
       return runs;
     },
     /** The last `seq` applied for a Project (for tests and for looking). */
@@ -397,7 +413,8 @@ export const actionsOf = (stateType: string, auto: boolean, role?: Role): LoopAc
  * A Todo ticket with `auto` is queued for Loop, which picks it up on its own: no conversation (send it back to Backlog
  * to refine it). In Progress (the role `progress` of the started columns): only to look, and only while the run data
  * says Loop is running the ticket (CYC-458): a ticket Loop left there when it died has no running record, so it is
- * not taken for running. Review, Blocked (CYC-388 joins the original session) and the rest: nothing.
+ * not taken for running. The value is fixed when the board or ticket is read: the page reads them again when the run state
+ * changes. Review, Blocked (CYC-388 joins the original session) and the rest: nothing.
  */
 export const chatOf = (stateType: string, role?: Role, auto = false, running = false): LoopChat =>
   stateType === "backlog"

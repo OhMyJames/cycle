@@ -550,7 +550,7 @@ export const startApp = async (options: AppOptions) => {
     const timer = setInterval(() => void poller.tick(), NOTICE_POLL_MS);
     timer.unref();
     void poller.tick();
-    const feedTimer = setInterval(() => void loopRuns?.tick(), LOOP_EVENTS_POLL_MS);
+    const feedTimer = setInterval(() => void loopRuns?.tick().catch(() => {}), LOOP_EVENTS_POLL_MS);
     feedTimer.unref();
     stopNotices = () => {
       clearInterval(timer);

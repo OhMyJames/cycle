@@ -318,6 +318,7 @@ function TicketPage({
   );
   useEffect(() => {
     let live = true;
+    // `runKey` is not read in here: it is a dependency, so the ticket is read again when Loop's run state changes.
     void runKey;
     void store.loadLoopTicket(projectKey, identifier).then((answer) => {
       // A read again that fails leaves the ticket that was shown.
@@ -798,7 +799,7 @@ function Board({
     return (
       <TicketPage
         // A button changed a ticket: the page starts over and reads it again.
-        key={version}
+        key={`${version}:${projectKey}:${open}`}
         projectKey={projectKey}
         identifier={open}
         act={act}
