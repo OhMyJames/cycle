@@ -42,10 +42,19 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-const tracker = () => {
+// A tracker whose catalog has every tool (`full`), or only the most used, with the rest behind execute_read/write.
+const tracker = (catalog: "full" | "trimmed" = "full") => {
   const calls: { name: string; arguments: Record<string, unknown> }[] = [];
   globalThis.fetch = (async (_url: unknown, init: { body: string }) => {
-    calls.push(JSON.parse(init.body).params.arguments);
+    const { name, arguments: args } = JSON.parse(init.body).params;
+    const wrapped = name === "execute_read" || name === "execute_write";
+    if (wrapped === (catalog === "full"))
+      return new Response(
+        JSON.stringify({
+          result: { isError: true, content: [{ type: "text", text: `Unknown tool: ${name}` }] },
+        }),
+      );
+    calls.push(wrapped ? args : { name, arguments: args });
     return new Response(
       JSON.stringify({ result: { content: [{ type: "text", text: '{"ok":true}' }] } }),
     );
@@ -99,4 +108,18 @@ test("a problem is named so the warning can say what is wrong", () => {
   expect(resolveLoopFields(fields({ options: names.slice(0, 5) }))).toEqual({
     problem: "「Loop 阶段」 has no option 「等合并」",
   });
+});
+
+test("the fields are read and written by the tools' own names, or through execute_* where the catalog is trimmed", async () => {
+  for (const catalog of ["full", "trimmed"] as const) {
+    const { t, calls } = tracker(catalog);
+    await t.getCustomFields();
+    t.setLoopFields(fieldsOf(fields()));
+    await t.setLoopPhase(issue(), "dev", new Date("2026-11-26T01:02:03Z"));
+    expect(calls.map((c) => c.name)).toEqual([
+      "list_custom_fields",
+      "set_issue_field_value",
+      "set_issue_field_value",
+    ]);
+  }
 });

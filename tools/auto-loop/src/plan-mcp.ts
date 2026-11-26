@@ -98,10 +98,25 @@ export class PlanTracker implements Tracker {
 
   /** The project's custom fields (`list_custom_fields`). */
   async getCustomFields(): Promise<unknown> {
-    return this.#call("execute_read", {
-      name: "list_custom_fields",
-      arguments: { projectKey: this.#project },
-    });
+    return this.#tool("execute_read", "list_custom_fields", { projectKey: this.#project });
+  }
+
+  /**
+   * A tool by its own name. A key whose catalog lists only the most used tools reaches the rest through
+   * `execute_read` or `execute_write` instead, so an unknown name is tried once more that way.
+   */
+  async #tool(
+    via: "execute_read" | "execute_write",
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    try {
+      return await this.#call(name, args, timeoutMs);
+    } catch (error) {
+      if (!(error instanceof Error && /unknown tool/i.test(error.message))) throw error;
+      return this.#call(via, { name, arguments: args }, timeoutMs);
+    }
   }
 
   /** Both fields in one go, each request bounded in time so a hung tracker cannot hold the queue for long. */
@@ -109,9 +124,10 @@ export class PlanTracker implements Tracker {
     const f = this.#loopFields;
     if (f === null) return;
     const set = async (fieldId: number, rest: Record<string, unknown>) => {
-      await this.#call(
+      await this.#tool(
         "execute_write",
-        { name: "set_issue_field_value", arguments: { issueId: issue.id, fieldId, ...rest } },
+        "set_issue_field_value",
+        { issueId: issue.id, fieldId, ...rest },
         FIELD_WRITE_TIMEOUT_MS,
       );
     };
