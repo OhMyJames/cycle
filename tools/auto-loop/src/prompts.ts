@@ -237,7 +237,7 @@ The full report in Markdown, one section per question headed 「## 问题 N」 (
 <followup type="Feature" title="...">
 The follow-up work item's description, in Markdown.
 </followup>
-Write zero to ${maxFollowups} <followup> blocks, each once; type is "Feature" or "Bug". The report must be at most ${MAX_REPORT} characters, each follow-up at most ${MAX_FOLLOWUP_BODY}.`;
+Write zero to ${maxFollowups} <followup> blocks, each once; type is "Feature" or "Bug". Write each follow-up in Chinese, like the work items of this project: the title says the action and what it acts on (「Loop 清理已取消工单留下的 worktree」), with no type prefix and no work item number, and the description opens with two or three sentences for a person (what, why, what done looks like) before its sections. The report must be at most ${MAX_REPORT} characters, each follow-up at most ${MAX_FOLLOWUP_BODY}.`;
 
 /**
  * The research session's first turn (CYC-447). It may only read: the policy denies everything else without asking, so
