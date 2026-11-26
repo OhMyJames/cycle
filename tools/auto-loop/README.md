@@ -70,6 +70,22 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 - Ctrl-C：第一次表示「每个 worker 做完当前这步就退出」，不再领新单；第二次立刻退出（释放锁，进行中的 run 重启后接着走）。
 - 领单互斥只在进程内；一个 stateDir 只允许一个进程（锁在 `<stateDir>/loop.lock`），不要对同一个 stateDir 起第二个进程。
 
+## 工单上的 Loop 阶段字段
+
+Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个自定义字段，让看板上能看出 In Progress 的工单走到了哪一步。字段由人在 itsaplan 里建（Loop 不自动建），启动时按名字解析字段 id 和选项 id（`list_custom_fields`），不写死：
+
+- 「Loop 阶段」：单选，选项 开发、验证、QA、等 CI、评审、等合并。
+- 「Loop 阶段开始于」：日期时间。
+
+阶段对应：`claimed`、`dev` → 开发；`verify` → 验证；`qa` → QA；`delivering`、`ci` → 等 CI；`review`（独立评审）→ 评审；评审结论为合并、开启自动合并后等合并 → 等合并；`done`、转 Blocked → 两个字段都清空。阶段没变时不重复写。
+
+**字段是尽力而为的镜像，真实状态以 run 记录为准，字段偶尔过时是接受的**（看板上看写入时间就知道新不新）：
+
+- 同一张工单的写入排成一个队列，一个写完才写下一个，所以不会乱序；推进不等队列，只有交付和转 Blocked 时等清空最多 10 秒，超时就接着走。
+- 写失败不重试，同一次运行里每种失败只记一条日志和一条 `phase_field_failed` 事件，下一次阶段变化再写。每个请求限时 10 秒。
+- 「阶段开始于」写的是写入那一刻的时间；进程重启后续跑，是续跑时的时间。「等合并」没有对应的 run 阶段，在等合并期间重启，续跑后字段会显示「评审」。
+- 启动时 `list_custom_fields` 失败，或字段有问题（缺字段、缺选项、类型不对、限定了工单类型、同名多个），打一行警告说明原因，整个运行期间不写字段，Loop 照常工作。
+
 ## 网络错误（CYC-444）
 
 访问 GitHub 的命令（`git fetch`、`git push`、`gh pr create` / `edit` / `view` / `comment` / `merge`、`gh run rerun`，包括读 PR 状态、读 CI 状态和等 CI 时的每一次轮询）失败时，先按输出判断是不是网络类错误（`src/network.ts`）：`Could not resolve host`、`Connection reset` / `refused` / `timed out`、`TLS handshake timeout`、`unable to access`、`i/o timeout`、`unexpected EOF`、HTTP 502/503/504，以及命令本身超时。权限、认证（401/403/404）、HTTP 400/422/429、SSL 证书、代理错误、找不到分支、合并冲突、推送被拒绝**不算**网络错误，照旧转 Blocked。

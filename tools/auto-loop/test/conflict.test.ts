@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pipeline } from "../src/pipeline.ts";
 import { type RunRecord, RunStore } from "../src/store.ts";
-import type { Exec } from "../src/types.ts";
+import { type Exec, SessionLost } from "../src/types.ts";
 import {
   type CiResponse,
   config,
@@ -37,6 +37,12 @@ type Git = {
   conflicted: string;
   fetch: number;
   dirtyAtMerge: boolean;
+  /** Files git still lists as unmerged while a merge is open. */
+  unmerged: string;
+  markers: boolean;
+  ancestor: boolean;
+  theirs: string;
+  keepsOwn: boolean;
 };
 
 const setup = (git: Partial<Git> = {}, over = {}) => {
@@ -61,6 +67,11 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     conflicted: "",
     fetch: 0,
     dirtyAtMerge: false,
+    unmerged: git.conflicted ?? "",
+    markers: false,
+    ancestor: true,
+    keepsOwn: true,
+    theirs: "main: rename the widget\n",
     ...git,
   };
   const base = makeExec(world);
@@ -72,6 +83,7 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
       world.calls.push(line);
       if (state.conflicted !== "") {
         state.mergeHead = true;
+        state.ancestor = false;
         return { code: 1, output: "CONFLICT", timedOut: false };
       }
       // A clean merge: GitHub no longer sees a conflict.
@@ -85,7 +97,30 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     }
     if (line.includes("diff --name-only --diff-filter=U")) {
       world.calls.push(line);
-      return { code: 0, output: state.conflicted, timedOut: false };
+      return { code: 0, output: state.mergeHead ? state.unmerged : "", timedOut: false };
+    }
+    if (line.includes("merge-base --is-ancestor")) {
+      world.calls.push(line);
+      if (line.includes("is-ancestor abc "))
+        return { code: state.keepsOwn ? 0 : 1, output: "", timedOut: false };
+      return { code: state.ancestor ? 0 : 1, output: "", timedOut: false };
+    }
+    if (line.includes(" grep ")) {
+      world.calls.push(line);
+      return state.markers
+        ? { code: 0, output: "src/a.ts\n", timedOut: false }
+        : { code: 1, output: "", timedOut: false };
+    }
+    if (line.includes(" commit --no-edit")) {
+      world.calls.push(line);
+      state.mergeHead = false;
+      state.ancestor = true;
+      world.prMerge = [["MERGED", "UNKNOWN"]];
+      return { code: 0, output: "", timedOut: false };
+    }
+    if (line.includes("log --format=%s")) {
+      world.calls.push(line);
+      return { code: 0, output: state.theirs, timedOut: false };
     }
     if (line.includes(" merge --abort")) {
       world.calls.push(line);
@@ -93,6 +128,14 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
       return { code: 0, output: "", timedOut: false };
     }
     return base(argv, options);
+  };
+  // What the Dev conflict turn does to the repository: set by each test, run on every Dev turn after the first.
+  const hook: { onConflictTurn: () => void } = { onConflictTurn: () => {} };
+  const realTurn = sessions.turn.bind(sessions);
+  let devTurns = 0;
+  sessions.turn = async (id, prompt, ctx) => {
+    if (ctx.role === "dev" && ++devTurns > 1) hook.onConflictTurn();
+    return realTurn(id, prompt, ctx);
   };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
   const store = new RunStore(cfg.stateDir, () => clock.now());
@@ -108,7 +151,19 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     sleep: async () => {},
     stopped: () => false,
   });
-  return { pipeline, tracker, sessions, world, store, state, raw };
+  return {
+    pipeline,
+    tracker,
+    sessions,
+    world,
+    store,
+    state,
+    raw,
+    hook,
+    setDevTurns: (n: number) => {
+      devTurns = n;
+    },
+  };
 };
 
 const load = async (store: RunStore): Promise<RunRecord> => {
@@ -173,27 +228,6 @@ test("a clean merge sends no Dev turn and goes on through verify, QA, push and C
   expect(gitCalls(s.world.calls, "push origin").length).toBe(2);
 });
 
-test("a real conflict: merge --abort, Blocked, reason lists the --diff-filter=U files", async () => {
-  const s = setup({ conflicted: "src/a.ts\nsrc/b.ts\n" });
-  const result = await s.pipeline.step();
-  expect(result.status).toBe("blocked");
-  if (result.status === "blocked") {
-    expect(result.reason).toContain("src/a.ts");
-    expect(result.reason).toContain("src/b.ts");
-  }
-  const calls = s.world.calls;
-  expect(gitCalls(calls, "merge --abort")).toHaveLength(1);
-  expect(calls.findIndex((c) => c.includes("merge --abort"))).toBeGreaterThan(
-    calls.findIndex((c) => c.includes("--diff-filter=U")),
-  );
-  const run = await load(s.store);
-  expect(run.conflictRound).toBe(1);
-  expect(run.conflict).toBeNull();
-  expect(s.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(1);
-  const merge = (await s.store.events()).find((e) => e.kind === "conflict_merge");
-  expect(merge?.result).toBe("conflict");
-});
-
 test("at the limit a second conflict blocks at once, saying it was handled once already", async () => {
   const s = setup();
   await resumeInCi(s, { conflictRound: 1, conflict: null });
@@ -239,14 +273,241 @@ test("killed after the count was saved: the restart continues that merge, it is 
   expect(after.conflict).toBeNull();
 });
 
-test("killed in the middle of a conflicted merge: the restart reads the files, aborts and blocks", async () => {
-  const s = setup();
-  await resumeInCi(s, { conflictRound: 1, conflict: { state: "merging" } });
-  s.state.conflicted = "src/a.ts\n";
-  s.state.mergeHead = true;
+const resolve = (s: ReturnType<typeof setup>, commit: boolean) => {
+  s.hook.onConflictTurn = () => {
+    s.state.unmerged = "";
+    // GitHub no longer sees a conflict once the merge is committed.
+    s.world.prMerge = [["MERGED", "UNKNOWN"]];
+    if (commit) {
+      s.state.mergeHead = false;
+      s.state.ancestor = true;
+    }
+  };
+};
+const devPrompts = (s: ReturnType<typeof setup>) =>
+  s.sessions.prompts.filter((p) => p.role === "dev").map((p) => p.prompt);
+
+test("a real conflict goes to the Dev session: the brief names the files, the work item and main's commits", async () => {
+  const s = setup({ conflicted: "src/a.ts\nsrc/b.ts\n" });
+  s.sessions.script.dev.push(done());
+  resolve(s, true);
+  await s.pipeline.step();
+  const prompts = devPrompts(s);
+  expect(prompts).toHaveLength(2);
+  const brief = prompts[1] ?? "";
+  expect(brief).toContain("src/a.ts");
+  expect(brief).toContain("src/b.ts");
+  expect(brief).toContain("title");
+  expect(brief).toContain("## 验收标准");
+  expect(brief).toContain("main: rename the widget");
+  expect(brief).toContain("git merge --abort");
+  expect(s.sessions.prompts.filter((p) => p.role === "dev")[1]?.sessionId).toBe(
+    s.sessions.prompts[0]?.sessionId,
+  );
+  const log = gitCalls(s.world.calls, "log --format=%s")[0] ?? "";
+  expect(log).toContain("src/a.ts");
+  expect(log).toContain("abc..origin/main");
+});
+
+test("Dev resolves and commits the merge: conflict_resolved, then verify, QA and a push without --force", async () => {
+  const s = setup({ conflicted: "src/a.ts\n" });
+  s.sessions.script.dev.push(done());
+  resolve(s, true);
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  const events = await s.store.events();
+  expect(events.some((e) => e.kind === "conflict_resolved")).toBe(true);
+  expect(gitCalls(s.world.calls, "merge --abort")).toHaveLength(0);
+  expect(gitCalls(s.world.calls, "commit --no-edit")).toHaveLength(0);
+  const pushes = gitCalls(s.world.calls, "push origin");
+  expect(pushes.length).toBeGreaterThan(0);
+  for (const push of pushes) expect(push).not.toContain("--force");
+  const qa = s.sessions.prompts.filter((p) => p.role === "qa");
+  expect(qa.length).toBeGreaterThan(0);
+  expect(qa[qa.length - 1]?.prompt).toContain("src/a.ts");
+  const run = await load(s.store);
+  expect(run.conflict).toBeNull();
+  expect(run.resolvedFiles).toEqual(["src/a.ts"]);
+});
+
+test("Dev resolves but leaves the merge open: the loop finishes it with commit --no-edit before the checkpoint", async () => {
+  const s = setup({ conflicted: "src/a.ts\n" });
+  s.sessions.script.dev.push(done());
+  resolve(s, false);
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  const calls = s.world.calls;
+  const commit = calls.findIndex((c) => c.includes("commit --no-edit"));
+  expect(commit).toBeGreaterThan(-1);
+  expect(calls.findLastIndex((c) => c.includes("merge-base --is-ancestor"))).toBeGreaterThan(
+    commit,
+  );
+  expect((await s.store.events()).some((e) => e.kind === "conflict_resolved")).toBe(true);
+});
+
+const checkpoints = (calls: string[]) => gitCalls(calls, "checkpoint (auto-loop)");
+
+test("files still unmerged after the turn: abort, no checkpoint, Blocked naming the files", async () => {
+  const s = setup({ conflicted: "src/a.ts\nsrc/b.ts\n" });
+  s.sessions.script.dev.push(done());
+  s.hook.onConflictTurn = () => {
+    s.state.unmerged = "src/b.ts\n";
+    s.world.dirty = true;
+  };
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") {
+    expect(result.reason).toContain("src/a.ts");
+    expect(result.reason).toContain("src/b.ts");
+  }
+  expect(gitCalls(s.world.calls, "merge --abort")).toHaveLength(1);
+  expect(gitCalls(s.world.calls, "commit --no-edit")).toHaveLength(0);
+  expect(checkpoints(s.world.calls)).toHaveLength(0);
+  // Only the first delivery pushed; the conflict turn pushed nothing.
+  expect(gitCalls(s.world.calls, "push origin")).toHaveLength(1);
+  const run = await load(s.store);
+  expect(run.conflict).toBeNull();
+});
+
+test("conflict markers left in a file: not committed, rolled back, Blocked", async () => {
+  const s = setup({ conflicted: "src/a.ts\n", markers: true });
+  s.sessions.script.dev.push(done());
+  resolve(s, false);
   const result = await s.pipeline.step();
   expect(result.status).toBe("blocked");
   if (result.status === "blocked") expect(result.reason).toContain("src/a.ts");
-  expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
+  expect(gitCalls(s.world.calls, "commit --no-edit")).toHaveLength(0);
   expect(gitCalls(s.world.calls, "merge --abort")).toHaveLength(1);
+  expect(checkpoints(s.world.calls)).toHaveLength(0);
+});
+
+test("Dev aborted the merge itself: nothing is checkpointed, Blocked", async () => {
+  const s = setup({ conflicted: "src/a.ts\n" });
+  s.sessions.script.dev.push(done());
+  s.hook.onConflictTurn = () => {
+    s.state.mergeHead = false;
+  };
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") expect(result.reason).toContain("src/a.ts");
+  expect(checkpoints(s.world.calls)).toHaveLength(0);
+  expect(gitCalls(s.world.calls, "reset --hard abc")).toHaveLength(1);
+});
+
+test("Dev committed something that is not the merge: the branch goes back to preMergeSha", async () => {
+  const s = setup({ conflicted: "src/a.ts\n" });
+  s.sessions.script.dev.push(done());
+  s.hook.onConflictTurn = () => {
+    s.state.mergeHead = false;
+    s.world.headSha = "def";
+  };
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(gitCalls(s.world.calls, "reset --hard abc")).toHaveLength(1);
+});
+
+const inConflictTurn = {
+  phase: "dev" as const,
+  conflictRound: 1,
+  conflict: { state: "dev" as const, preMergeSha: "abc", files: ["src/a.ts"] },
+};
+
+test("a restart in the conflict turn does not merge again and sends the conflict brief", async () => {
+  const s = setup();
+  await resumeInCi(s, inConflictTurn);
+  s.state.mergeHead = true;
+  s.state.ancestor = false;
+  s.state.unmerged = "src/a.ts\n";
+  s.sessions.script.dev.push(done());
+  resolve(s, true);
+  s.setDevTurns(1);
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
+  expect(devPrompts(s).at(-1)).toContain("Conflicted files");
+  expect(devPrompts(s).at(-1)).toContain("src/a.ts");
+});
+
+test("a resend after the merge was already finished does not merge again either", async () => {
+  const s = setup();
+  await resumeInCi(s, inConflictTurn);
+  s.state.mergeHead = false;
+  s.state.ancestor = true;
+  s.sessions.script.dev.push(done());
+  s.hook.onConflictTurn = () => {
+    s.world.prMerge = [["MERGED", "UNKNOWN"]];
+  };
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
+  expect(devPrompts(s).at(-1)).toContain("Conflicted files");
+});
+
+test("a lost Dev session in the conflict turn: the new session also gets the conflict brief", async () => {
+  const s = setup({ conflicted: "src/a.ts\n" });
+  s.sessions.script.dev.push(new SessionLost("gone"), done());
+  resolve(s, true);
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  const prompts = s.sessions.prompts.filter((p) => p.role === "dev");
+  expect(prompts.at(-1)?.prompt).toContain("Conflicted files");
+  expect(prompts.at(-1)?.sessionId).not.toBe(prompts[0]?.sessionId);
+});
+
+test("a person putting the Blocked ticket back resets the conflict count and conflict", async () => {
+  const s = setup({ conflicted: "src/a.ts\n", unmerged: "src/a.ts\n" });
+  s.sessions.script.dev.push(done());
+  const first = await s.pipeline.step();
+  expect(first.status).toBe("blocked");
+  const blocked = await load(s.store);
+  await s.store.save({ ...blocked, conflict: { state: "dev", preMergeSha: "abc", files: ["x"] } });
+  s.tracker.issues[0] = issue({ description: readyDescription, columnId: 22 });
+  s.world.prMerge = [["OPEN", "MERGEABLE"]];
+  s.world.ciResponses = [];
+  s.state.mergeHead = false;
+  s.state.ancestor = true;
+  s.sessions.script.dev.push(done());
+  await s.pipeline.step();
+  const run = await load(s.store);
+  expect(run.conflictRound).toBe(0);
+  expect(run.conflict).toBeNull();
+  expect((await s.store.events()).some((e) => e.kind === "resumed")).toBe(true);
+});
+
+test("a conflict turn that blocked before judgement: the resume backs the merge out first", async () => {
+  const s = setup();
+  await resumeInCi(s, { ...inConflictTurn, phase: "blocked", resumeFrom: "dev" });
+  s.state.mergeHead = true;
+  s.tracker.issues[0] = issue({ description: readyDescription, columnId: 22 });
+  s.world.prMerge = [["OPEN", "MERGEABLE"]];
+  s.world.ciResponses = [];
+  s.sessions.script.dev.push(done());
+  await s.pipeline.step();
+  const calls = s.world.calls;
+  expect(gitCalls(calls, "merge --abort")).toHaveLength(1);
+  expect(gitCalls(calls, "reset --hard abc")).toHaveLength(1);
+  expect(calls.findIndex((c) => c.includes("merge --abort"))).toBeLessThan(
+    calls.findIndex((c) => c.includes("checkpoint (auto-loop)")) === -1
+      ? Number.MAX_SAFE_INTEGER
+      : calls.findIndex((c) => c.includes("checkpoint (auto-loop)")),
+  );
+  const run = await load(s.store);
+  expect(run.conflict).toBeNull();
+});
+
+test("a resolution fixed but not staged is staged by the loop before the unmerged check", async () => {
+  const s = setup({ conflicted: "src/a.ts\n" });
+  s.sessions.script.dev.push(done());
+  resolve(s, false);
+  await s.pipeline.step();
+  expect(gitCalls(s.world.calls, "add -A -- src/a.ts")).toHaveLength(1);
+});
+
+test("a branch that no longer holds its own commits is not resolved", async () => {
+  const s = setup({ conflicted: "src/a.ts\n", keepsOwn: false });
+  s.sessions.script.dev.push(done());
+  resolve(s, true);
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(gitCalls(s.world.calls, "reset --hard abc")).toHaveLength(1);
 });

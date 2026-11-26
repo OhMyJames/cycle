@@ -31,12 +31,19 @@ export type Issue = {
 /** Where the loop moves a work item. The tracker maps these to the project's columns. */
 export type Stage = "todo" | "inProgress" | "inReview" | "blocked";
 
+export type LoopPhase = "dev" | "verify" | "qa" | "ci" | "review" | "merge";
+
 export interface Tracker {
   /** The work items in the `Todo` column. Choosing among them is `pickNext`'s job, not the tracker's. */
   listTodo(): Promise<Issue[]>;
   get(number: number): Promise<Issue>;
   move(issue: Issue, stage: Stage): Promise<void>;
   comment(issue: Issue, text: string): Promise<void>;
+  /**
+   * Mirrors the loop's phase (and the time it began) onto the work item's custom fields; `null` clears both. A mirror
+   * only: the run record is the truth. A tracker with no such fields does nothing.
+   */
+  setLoopPhase(issue: Issue, phase: LoopPhase | null, at: Date): Promise<void>;
 }
 
 export type ExecResult = { code: number; output: string; timedOut: boolean };
