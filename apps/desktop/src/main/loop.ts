@@ -8,6 +8,7 @@
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { connect } from "node:net";
+import type { EventProps } from "@cycle/analytics/events";
 import { LOOP_PROJECTS_LIST, LoopProjectsListResultSchema } from "@cycle/protocol";
 import type {
   LoopActFailure,
@@ -116,9 +117,18 @@ const callTool = async (
   if (body.error !== undefined) throw new TrackerError(undefined);
   const result = asRecord(body.result);
   const text = (result.content as { text?: string }[] | undefined)?.[0]?.text ?? "";
-  const answer: unknown = text === "" ? undefined : JSON.parse(text);
+  // A tool's own error may be plain text: it is a refusal, never a failure to parse (which would read as offline).
+  if (result.isError === true) {
+    let status: unknown;
+    try {
+      status = asRecord(JSON.parse(text)).status;
+    } catch {}
+    throw new TrackerError(typeof status === "number" ? status : undefined);
+  }
+  // An empty answer is no answer: the reads fail on it, as they did before.
+  const answer: unknown = JSON.parse(text);
   const status = asRecord(answer).status;
-  if (result.isError === true || asRecord(answer).ok === false)
+  if (asRecord(answer).ok === false)
     throw new TrackerError(typeof status === "number" ? status : undefined);
   return answer;
 };
@@ -324,9 +334,9 @@ const readIssue = async (t: Tracker, projectKey: string, sequenceNumber: number)
   };
 };
 
-export type Track = (
-  event: "loop_ticket_opened" | "loop_ticket_acted",
-  props: Record<string, unknown>,
+export type Track = <N extends "loop_ticket_opened" | "loop_ticket_acted">(
+  event: N,
+  props: EventProps<N>,
 ) => void;
 
 const withKey = async (

@@ -3,7 +3,7 @@
 // the server away they stay listed, greyed, and say so. A ticket changes state only by a button (approve, back to
 // Backlog, back to Todo; never by dragging); which buttons it has is decided by main, and approving asks first.
 import { Button } from "@ui-sdk/react/button";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type {
   LoopActFailure,
   LoopAction,
@@ -21,6 +21,16 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 
 /** The Backlog is the longest column by far: it opens on this many and shows this many more at a time. */
 const BACKLOG_PAGE = 20;
+
+/** Items with keys that stay unique when two read the same: the text, and how many came before with it. */
+const keyedItems = (items: string[]) => {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const n = seen.get(item) ?? 0;
+    seen.set(item, n + 1);
+    return { key: `${item}#${n}`, item };
+  });
+};
 
 type Act = (
   ticket: LoopTicket,
@@ -40,6 +50,7 @@ function TicketActions({ ticket, act }: { ticket: LoopTicket; act: Act }) {
           key={action}
           data-variant="ghost"
           data-kind={`loop-${action}`}
+          aria-label={`${t(`loop.act.${action}`)} ${ticket.identifier}`}
           onClick={() => (action === "approve" ? setAsking(true) : void act(ticket, action))}
         >
           {t(`loop.act.${action}`)}
@@ -94,11 +105,13 @@ function TicketPage({
   identifier,
   act,
   onBack,
+  problem,
 }: {
   projectKey: string;
   identifier: string;
   act: Act;
   onBack: () => void;
+  problem: ReactNode;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -117,6 +130,7 @@ function TicketPage({
       <Button data-variant="ghost" onClick={onBack}>
         {t("loop.detail.back")}
       </Button>
+      {problem}
       {ticket === "loading" ? (
         <StateBlock tone="loading" title={t("loop.detail.loading")} />
       ) : ticket === "failed" ? (
@@ -141,8 +155,8 @@ function TicketPage({
               <p data-slot="loop-column-empty">{t("loop.detail.none")}</p>
             ) : (
               <ol>
-                {ticket.acceptance.map((item) => (
-                  <li key={item}>{item}</li>
+                {keyedItems(ticket.acceptance).map(({ key, item }) => (
+                  <li key={key}>{item}</li>
                 ))}
               </ol>
             )}
@@ -261,6 +275,16 @@ function Board({
     if (action !== "approve") setProblem(result.reason);
     return t(`loop.fail.${result.reason}`);
   };
+  const openTicket = (identifier: string) => {
+    setProblem(undefined);
+    setOpen(identifier);
+  };
+  const alert =
+    problem !== undefined ? (
+      <p data-slot="loop-problem" role="alert">
+        {t(`loop.fail.${problem}`)}
+      </p>
+    ) : null;
   if (answer === undefined || answer === "loading")
     return <StateBlock tone="loading" title={t("loop.loading")} />;
   if (answer.kind === "no_key")
@@ -289,7 +313,11 @@ function Board({
         projectKey={projectKey}
         identifier={open}
         act={act}
-        onBack={() => setOpen(undefined)}
+        onBack={() => {
+          setProblem(undefined);
+          setOpen(undefined);
+        }}
+        problem={alert}
       />
     );
   return (
@@ -300,25 +328,21 @@ function Board({
           {reload.label}
         </Button>
       </div>
-      {problem !== undefined ? (
-        <p data-slot="loop-problem" role="alert">
-          {t(`loop.fail.${problem}`)}
-        </p>
-      ) : null}
+      {alert}
       <div data-slot="loop-columns">
         <Column
           id="doing"
           title={t("loop.col.doing")}
           tickets={answer.doing}
           act={act}
-          onOpen={setOpen}
+          onOpen={openTicket}
         />
         <Column
           id="todo"
           title={t("loop.col.todo")}
           tickets={answer.todo}
           act={act}
-          onOpen={setOpen}
+          onOpen={openTicket}
         />
         <Column
           id="backlog"
@@ -326,7 +350,7 @@ function Board({
           tickets={answer.backlog}
           pageSize={BACKLOG_PAGE}
           act={act}
-          onOpen={setOpen}
+          onOpen={openTicket}
         />
       </div>
       <Column
@@ -335,7 +359,7 @@ function Board({
         tickets={answer.done}
         collapsible
         act={act}
-        onOpen={setOpen}
+        onOpen={openTicket}
       />
     </div>
   );

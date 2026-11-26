@@ -35,6 +35,8 @@ const issue = (n: number, columnId: number) => ({
   title: `Ticket ${n}`,
   priority: "high",
   columnId,
+  // In Progress holds Loop's ticket (auto, label 11); In Review does not.
+  labelIds: columnId === 23 ? [11] : [],
 });
 
 /** A tracker that answers like itsaplan's MCP, and remembers the headers it was called with. */
@@ -53,7 +55,7 @@ const tracker = () => {
     // The tracker's own shape: the project with its columns, and a bare array of issues.
     const data =
       name === "get_project"
-        ? { project: {}, columns }
+        ? { project: {}, columns, labels: [{ id: 11, name: "auto" }] }
         : [issue(Number(args.columnId) * 10, Number(args.columnId))];
     return new Response(
       JSON.stringify({
@@ -277,9 +279,29 @@ describe("state buttons", () => {
     const { fetchImpl } = tracker();
     const answer = await answerBoard(loop, "CYC", () => {}, fetchImpl);
     if (answer.kind !== "ok") throw new Error("expected a board");
+    // Doing: the auto one (In Progress) is Loop's and has no buttons; the other has.
+    expect(answer.doing.find((t) => t.column === "In Progress")?.actions).toEqual([]);
+    expect(answer.doing.find((t) => t.column === "In Review")?.actions).toEqual([
+      "to_backlog",
+      "to_todo",
+    ]);
     expect(answer.backlog[0]?.actions).toEqual(["approve"]);
     expect(answer.todo[0]?.actions).toEqual(["to_backlog"]);
     expect(answer.done[0]?.actions).toEqual([]);
+  });
+
+  test("a plain-text tool error is a refusal, not offline", async () => {
+    writeKey(0o600);
+    const bad = (async () =>
+      new Response(
+        JSON.stringify({
+          result: { isError: true, content: [{ type: "text", text: "Permission denied" }] },
+        }),
+      )) as unknown as typeof fetch;
+    expect(await actOnTicket(loop, "CYC", "CYC-387", "to_backlog", false, () => {}, bad)).toEqual({
+      kind: "failed",
+      reason: "refused",
+    });
   });
 
   test("failures are said in fixed words: permission, conflict, offline, no key", async () => {

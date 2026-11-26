@@ -138,7 +138,7 @@ test("Approve asks first; only the confirmation writes, and a failure is said, n
       name: /Approve|Back to/,
     }),
   ).toBeNull();
-  await user.click(within(column).getByRole("button", { name: "Approve" }));
+  await user.click(within(column).getByRole("button", { name: "Approve CYC-600" }));
   expect(fake.calls.some(([name]) => name === "loopAct")).toBe(false);
   const dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Approve" }));
@@ -146,4 +146,33 @@ test("Approve asks first; only the confirmation writes, and a failure is said, n
   expect(fake.calls.filter(([name]) => name === "loopAct")).toEqual([
     ["loopAct", "CYC", "CYC-600", "approve", true],
   ]);
+});
+
+test("a failed Back to Backlog on the ticket page is said there, and gone after going back", async () => {
+  const mine = {
+    ...ticket(602, "In Review"),
+    actions: ["to_backlog" as const, "to_todo" as const],
+  };
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: { ...board, doing: [mine] } },
+    loopTickets: {
+      "CYC-602": {
+        kind: "ok",
+        ticket: { ...mine, body: "text", acceptance: ["one"], links: [] },
+      },
+    },
+    loopAct: { kind: "failed", reason: "offline" },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 602" }));
+  await user.click(await screen.findByRole("button", { name: "Back to Backlog CYC-602" }));
+  const problem = () => document.querySelector('[data-slot="loop-problem"]');
+  await screen.findByText(/could not be reached/);
+  expect(problem()?.textContent).toMatch(/could not be reached/);
+  await user.click(screen.getByRole("button", { name: "Back to the board" }));
+  expect(problem()).toBeNull();
 });

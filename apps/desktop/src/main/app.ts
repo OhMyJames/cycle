@@ -320,11 +320,11 @@ export const startApp = async (options: AppOptions) => {
       answerBoard(options.loop, projectKey, (event, props) => analytics.track(event, props)),
     loopTicket: (projectKey: unknown, identifier: unknown) =>
       answerTicket(options.loop, projectKey, identifier, (event, props) =>
-        analytics.trackUnchecked(event, props),
+        analytics.track(event, props),
       ),
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
       actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
-        analytics.trackUnchecked(event, props),
+        analytics.track(event, props),
       ),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
     // Through main, not the page's navigator.clipboard: the page is given no permissions. Text only, of a sane size.
