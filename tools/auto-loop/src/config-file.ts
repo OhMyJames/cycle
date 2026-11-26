@@ -6,9 +6,60 @@
 import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
+import type { Config } from "./types.ts";
 
 const text = z.string().trim().min(1);
 const agent = z.string().trim().min(1);
+
+const whole = (min: number, max: number) => z.number().int().min(min).max(max);
+
+/**
+ * Counts and durations the loop uses (CYC-441). Every field is optional; one that is not written keeps its default
+ * (`defaultConfig`). The unit is in the name. A `tuning` with any bad field is not used at all.
+ */
+export const TuningSchema = z
+  .object({
+    intervalSeconds: whole(1, 3600),
+    maxCriteria: whole(1, 20),
+    maxFixRounds: whole(1, 10),
+    maxCiRetries: whole(0, 10),
+    maxReviewRetries: whole(0, 10),
+    maxInterruptRetries: whole(0, 10),
+    maxQaRetries: whole(0, 10),
+    ciPollIntervalSeconds: whole(5, 600),
+    ciTimeoutMinutes: whole(1, 240),
+    mergePollIntervalSeconds: whole(5, 600),
+    mergeTimeoutMinutes: whole(1, 240),
+    turnTimeoutMinutes: whole(1, 240),
+    commandTimeoutMinutes: whole(1, 240),
+  })
+  .partial()
+  .strict();
+export type Tuning = z.infer<typeof TuningSchema>;
+
+/** The `Config` fields a `tuning` sets; only the ones that are written. */
+export const tuningToConfig = (t: Tuning): Partial<Config> => {
+  const out: Partial<Config> = {};
+  for (const name of [
+    "maxCriteria",
+    "maxFixRounds",
+    "maxCiRetries",
+    "maxReviewRetries",
+    "maxInterruptRetries",
+    "maxQaRetries",
+  ] as const) {
+    if (t[name] !== undefined) out[name] = t[name];
+  }
+  if (t.ciPollIntervalSeconds !== undefined) out.ciPollIntervalMs = t.ciPollIntervalSeconds * 1000;
+  if (t.ciTimeoutMinutes !== undefined) out.ciTimeoutMs = t.ciTimeoutMinutes * 60_000;
+  if (t.mergePollIntervalSeconds !== undefined)
+    out.mergePollIntervalMs = t.mergePollIntervalSeconds * 1000;
+  if (t.mergeTimeoutMinutes !== undefined) out.mergeTimeoutMs = t.mergeTimeoutMinutes * 60_000;
+  if (t.turnTimeoutMinutes !== undefined) out.turnTimeoutMs = t.turnTimeoutMinutes * 60_000;
+  if (t.commandTimeoutMinutes !== undefined)
+    out.commandTimeoutMs = t.commandTimeoutMinutes * 60_000;
+  return out;
+};
 
 export const ConfigFileSchema = z.object({
   /** Absolute path of the repository the Project's work happens in. */
@@ -29,8 +80,19 @@ export const ConfigFileSchema = z.object({
   reviewAgent: agent.optional(),
   /** Workers for this Project (CYC-433); `--workers` overrides it. */
   workers: z.number().int().positive().optional(),
+  /** Counts, timeouts and the idle interval (CYC-441). Read again before every step while the loop runs. */
+  tuning: TuningSchema.optional(),
 });
 export type ConfigFile = z.infer<typeof ConfigFileSchema>;
+
+/** `invalid tuning.maxFixRounds: ...` for every bad field, so a person sees all of them at once. */
+const describeIssues = (error: z.ZodError): string =>
+  error.issues
+    .map(
+      (i) =>
+        `invalid ${["tuning", ...i.path.filter((p) => p !== "tuning")].join(".")}: ${i.message}`,
+    )
+    .join("; ");
 
 const REQUIRED = ["repoRoot", "projectKey", "stateDir", "planKey"] as const;
 
@@ -50,6 +112,7 @@ export const parseConfigFile = (raw: string, source = "config"): ConfigFile => {
   const parsed = ConfigFileSchema.safeParse(body);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
+    if (issue?.path[0] === "tuning") throw new Error(`${source}: ${describeIssues(parsed.error)}`);
     throw new Error(`${source}: invalid ${issue?.path.join(".") ?? "value"}: ${issue?.message}`);
   }
   for (const name of ["repoRoot", "stateDir"] as const) {
@@ -116,4 +179,30 @@ export const writeConfigFile = async (path: string, config: z.input<typeof Confi
   const valid = parseConfigFile(JSON.stringify(config), path);
   await writeFile(path, `${JSON.stringify(valid, null, 2)}\n`, { mode: 0o600 });
   await chmod(path, 0o600);
+};
+
+/**
+ * One Project's `tuning`, read from the file now. Only this Project's `tuning` is checked: the rest of the file is
+ * not looked at, so a change elsewhere cannot stop a running loop. Throws when the file cannot be read, the Project
+ * is not in it, or the `tuning` has a bad field (the message names the field).
+ */
+export const readTuning = async (path: string, projectKey: string): Promise<Tuning> => {
+  let json: unknown;
+  try {
+    json = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `${path}: cannot be read (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  const list = (json as { projects?: unknown } | null)?.projects;
+  const entries = list === undefined ? [json] : Array.isArray(list) ? list : [];
+  const mine = entries.find(
+    (e) => (e as { projectKey?: unknown } | null)?.projectKey === projectKey,
+  ) as { tuning?: unknown } | undefined;
+  if (mine === undefined) throw new Error(`${path}: Project ${projectKey} not found`);
+  if (mine.tuning === undefined) return {};
+  const parsed = TuningSchema.safeParse(mine.tuning);
+  if (!parsed.success) throw new Error(`${path}: ${describeIssues(parsed.error)}`);
+  return parsed.data;
 };

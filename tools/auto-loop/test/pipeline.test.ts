@@ -2,8 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Tuning } from "../src/config-file.ts";
 import { CriteriaBook } from "../src/criteria.ts";
-import { Pipeline } from "../src/pipeline.ts";
+import { type Deps, Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import { type ExecResult, type Issue, SessionLost, type TurnResult } from "../src/types.ts";
 import {
@@ -42,6 +43,7 @@ const setup = (
   over = {},
   fail: string[] = [],
   ci: { responses?: CiResponse[]; logs?: Record<string, string> } = {},
+  extra: Partial<Deps> = {},
 ) => {
   const cfg = config({ stateDir: dir, ...over });
   const tracker = new FakeTracker(issues);
@@ -72,6 +74,7 @@ const setup = (
     env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
     sleep: async () => {},
     stopped: () => stop.value,
+    ...extra,
   });
   return { pipeline, tracker, sessions, world, store, stop };
 };
@@ -1122,6 +1125,7 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     ciFailedSha: null,
     conflictRound: 0,
     conflict: null,
+    resolvedFiles: [],
     worktree: WT,
     localBranch: "worktree-auto/cyc-1",
     remoteBranch: "auto/cyc-1",
@@ -1296,6 +1300,7 @@ const doneRun = async (s: ReturnType<typeof setup>) => {
     ciFailedSha: null,
     conflictRound: 0,
     conflict: null,
+    resolvedFiles: [],
     worktree: WT,
     localBranch: "worktree-auto/cyc-1",
     remoteBranch: "auto/cyc-1",
@@ -1413,6 +1418,7 @@ test("two steps at once: only one goes on with an unfinished run", async () => {
     ciFailedSha: null,
     conflictRound: 0,
     conflict: null,
+    resolvedFiles: [],
     worktree: null,
     localBranch: null,
     remoteBranch: "auto/cyc-1",
@@ -1750,4 +1756,74 @@ test("a failing write is reported once per kind and the run is unaffected", asyn
   expect((await w.pipeline.step()).status).toBe("delivered");
   const failures = (await w.store.events()).filter((e) => e.kind === "phase_field_failed");
   expect(failures).toHaveLength(1);
+});
+
+// CYC-441: the tuning is read again before every step; a step under way keeps the values it started with.
+const rejectTwice = (): Script => ({
+  dev: Array.from({ length: 5 }, () => done()),
+  qa: Array.from({ length: 5 }, () => done(PASS)),
+  review: Array.from({ length: 5 }, () => done(REVIEW_REJECT)),
+});
+
+test("tuning changed between steps: the next step's work item runs with the new fix-round limit", async () => {
+  let current: Tuning = { maxFixRounds: 1 };
+  const s = setup(
+    [ready()],
+    rejectTwice(),
+    {},
+    [],
+    {},
+    {
+      tuning: { initial: {}, reload: async () => current },
+    },
+  );
+  // Changed by the person while this step is working: must not reach it.
+  const turn = s.sessions.turn.bind(s.sessions);
+  s.sessions.turn = async (...a: Parameters<typeof turn>) => {
+    current = { maxFixRounds: 2 };
+    return turn(...a);
+  };
+  const first = await s.pipeline.step();
+  expect(first).toMatchObject({ status: "delivered", autoMerge: false });
+  expect(s.tracker.comments.at(-1)).toContain("修复轮数上限");
+  expect(s.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(2);
+
+  // The next work item takes the value written meanwhile: 2 fix rounds, so 3 Dev turns.
+  s.tracker.issues.push(ready({ id: 2, number: 2, key: "CYC-2" }));
+  const second = await s.pipeline.step();
+  expect(second).toMatchObject({ status: "delivered", key: "CYC-2", autoMerge: false });
+  expect(s.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(5);
+});
+
+test("tuning that cannot be read or is invalid: the step goes on with the last good values and says why", async () => {
+  const logs: string[] = [];
+  let next: () => Promise<Tuning> = async () => ({ intervalSeconds: 5 });
+  const s = setup(
+    [],
+    { dev: [], qa: [] },
+    {},
+    [],
+    {},
+    {
+      log: (l: string) => logs.push(l),
+      tuning: { initial: { intervalSeconds: 30 }, reload: () => next() },
+    },
+  );
+  expect(s.pipeline.intervalSeconds).toBe(30);
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(s.pipeline.intervalSeconds).toBe(5);
+
+  next = async () => {
+    throw new Error("tuning: invalid tuning.maxFixRounds: too big");
+  };
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(s.pipeline.intervalSeconds).toBe(5);
+  const problems = logs.filter((l) => l.includes("沿用上次的值"));
+  expect(problems).toHaveLength(1);
+  expect(problems[0]).toContain("tuning.maxFixRounds");
+
+  next = async () => ({});
+  await s.pipeline.step();
+  expect(s.pipeline.intervalSeconds).toBeUndefined();
 });

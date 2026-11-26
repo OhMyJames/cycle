@@ -6,6 +6,8 @@ import {
   loadConfigFile,
   parseConfigFile,
   parseConfigFiles,
+  readTuning,
+  tuningToConfig,
   writeConfigFile,
 } from "../src/config-file.ts";
 import { resolveProject } from "../src/project.ts";
@@ -105,4 +107,51 @@ test("workers must be a positive integer, and the error names the Project's posi
         JSON.stringify({ projects: [base, { ...base, stateDir: "/t", workers: bad }] }),
       ),
     ).toThrow("projects[1]: invalid workers");
+});
+
+const base = { repoRoot: "/r", projectKey: "A", stateDir: "/s", planKey: "k" };
+
+test("tuning: written fields are used, the others stay unset so the defaults apply", () => {
+  const [file] = parseConfigFiles(
+    JSON.stringify({
+      ...base,
+      tuning: { maxFixRounds: 5, ciTimeoutMinutes: 45, intervalSeconds: 10 },
+    }),
+  );
+  expect(file?.tuning).toEqual({ maxFixRounds: 5, ciTimeoutMinutes: 45, intervalSeconds: 10 });
+  expect(tuningToConfig(file?.tuning ?? {})).toEqual({ maxFixRounds: 5, ciTimeoutMs: 45 * 60_000 });
+  expect(parseConfigFiles(JSON.stringify(base))[0]?.tuning).toBeUndefined();
+});
+
+test("tuning: out of range, wrong type or unknown fields are errors that name the field", () => {
+  const bad: [Record<string, unknown>, string][] = [
+    [{ maxFixRounds: 0 }, "tuning.maxFixRounds"],
+    [{ maxFixRounds: 11 }, "tuning.maxFixRounds"],
+    [{ turnTimeoutMinutes: 0 }, "tuning.turnTimeoutMinutes"],
+    [{ ciPollIntervalSeconds: "30" }, "tuning.ciPollIntervalSeconds"],
+    [{ maxQaRetries: 1.5 }, "tuning.maxQaRetries"],
+    [{ intervalSeconds: -1 }, "tuning.intervalSeconds"],
+    [{ ciChecks: ["x"] }, "tuning"],
+  ];
+  for (const [tuning, name] of bad)
+    expect(() => parseConfigFiles(JSON.stringify({ ...base, tuning }))).toThrow(name);
+  expect(() => parseConfigFiles(JSON.stringify({ ...base, tuning: 3 }))).toThrow("tuning");
+});
+
+test("readTuning reads one Project's tuning and throws on an unreadable file or a bad field", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "tuning-"));
+  const path = join(dir, "c.json");
+  const other = { ...base, projectKey: "B", stateDir: "/t", tuning: { maxFixRounds: 99 } };
+  await writeFile(
+    path,
+    JSON.stringify({ projects: [{ ...base, tuning: { maxCiRetries: 4 } }, other] }),
+  );
+  expect(await readTuning(path, "A")).toEqual({ maxCiRetries: 4 });
+  await expect(readTuning(path, "B")).rejects.toThrow("tuning.maxFixRounds");
+  await expect(readTuning(path, "C")).rejects.toThrow("not found");
+  await writeFile(path, JSON.stringify(base));
+  expect(await readTuning(path, "A")).toEqual({});
+  await writeFile(path, "{ nope");
+  await expect(readTuning(path, "A")).rejects.toThrow("cannot be read");
+  await expect(readTuning(join(dir, "missing.json"), "A")).rejects.toThrow("cannot be read");
 });

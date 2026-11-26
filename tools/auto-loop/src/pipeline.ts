@@ -6,6 +6,8 @@
 // This file decides; it does not touch the world. The tracker, the daemon's sessions, git and the shell are the
 // interfaces in types.ts.
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import { type Tuning, tuningToConfig } from "./config-file.ts";
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { summarizeFailure } from "./failure.ts";
@@ -27,6 +29,7 @@ import {
 } from "./pr.ts";
 import { preflight, sendBackComment } from "./preflight.ts";
 import {
+  conflictBrief,
   continueBrief,
   devBrief,
   fixBrief,
@@ -82,6 +85,11 @@ export type Deps = {
   stopped?: () => boolean;
   /** How long delivery and Blocked wait for the last phase write to land before going on. Defaults to 10 s. */
   mirrorCapMs?: number;
+  /**
+   * The Project's `tuning` (CYC-441): what it is at start, and how to read it again. `step()` reads before it takes
+   * anything; a read that throws keeps the last good value. Without it, `config` is used as it is.
+   */
+  tuning?: { initial: Tuning; reload: () => Promise<Tuning> };
 };
 
 /** A run cannot go on without a person. The message is what the person is told. */
@@ -104,7 +112,12 @@ const PHASE_OF: Record<RunRecord["phase"], LoopPhase | null> = {
 const branchOf = (number: number) => `auto/cyc-${number}`;
 
 export class Pipeline {
-  readonly #d: Deps;
+  readonly #deps: Deps;
+  /** The `tuning` in force for new steps: the last one that was read and valid. */
+  #tuning: Tuning;
+  #lastTuningProblem: string | null = null;
+  /** The config one step runs with, fixed when it starts: a change to the file does not reach a step under way. */
+  readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
   #lock: Promise<void> = Promise.resolve();
@@ -120,11 +133,47 @@ export class Pipeline {
   readonly #failed = new Map<string, Set<string>>();
 
   constructor(deps: Deps) {
-    this.#d = deps;
+    this.#deps = deps;
+    this.#tuning = deps.tuning?.initial ?? {};
+  }
+
+  /** The deps with the config of the step this code runs in. */
+  get #d(): Deps {
+    return { ...this.#deps, config: this.#stepConfig.getStore() ?? this.#configNow() };
+  }
+
+  #configNow(): Config {
+    return { ...this.#deps.config, ...tuningToConfig(this.#tuning) };
+  }
+
+  /** Seconds to wait when idle, from the `tuning` in force; undefined when it does not say. */
+  get intervalSeconds(): number | undefined {
+    return this.#tuning.intervalSeconds;
+  }
+
+  async #reloadTuning(): Promise<void> {
+    const source = this.#deps.tuning;
+    if (source === undefined) return;
+    try {
+      this.#tuning = await source.reload();
+      if (this.#lastTuningProblem !== null) this.#deps.log("tuning 恢复正常，按配置文件里的值");
+      this.#lastTuningProblem = null;
+    } catch (error) {
+      const problem = error instanceof Error ? error.message : String(error);
+      // One line per distinct problem, not one per idle poll.
+      if (problem !== this.#lastTuningProblem)
+        this.#deps.log(`tuning 读取失败，沿用上次的值：${problem}`);
+      this.#lastTuningProblem = problem;
+    }
   }
 
   /** Takes up one thing: a run to go on with, or else the next work item. Several steps may run at once. */
   async step(): Promise<StepResult> {
+    await this.#reloadTuning();
+    return this.#stepConfig.run(this.#configNow(), () => this.#step());
+  }
+
+  async #step(): Promise<StepResult> {
     if (this.#d.config.dryRun) return this.#dryRun();
 
     const chosen = await this.#exclusive(() => this.#choose());
@@ -200,6 +249,7 @@ export class Pipeline {
       ciFailedSha: null,
       conflictRound: 0,
       conflict: null,
+      resolvedFiles: [],
       worktree: null,
       localBranch: null,
       remoteBranch: branchOf(issue.number),
@@ -318,12 +368,22 @@ export class Pipeline {
     const book = await store.loadCriteria(run.key);
     let current = run;
     if (byPerson) {
+      // A conflict turn that blocked before it was judged leaves the merge open, markers and all: back it out, or the
+      // next checkpoint would commit them.
+      const saved = run.conflict;
+      if (saved?.state === "dev" && saved.preMergeSha !== undefined && run.worktree !== null) {
+        const failed = await this.#rollbackMerge(run.worktree, saved.preMergeSha);
+        if (failed !== "") throw new Error(`conflict rollback on resume failed: ${failed}`);
+      }
       // A person has been at it: the budget of fix rounds starts again, from where it stopped.
       current = {
         ...run,
         phase: run.resumeFrom ?? "dev",
         round: 0,
         ciRound: 0,
+        conflictRound: 0,
+        conflict: null,
+        resolvedFiles: [],
         blockedReason: null,
         resumeFrom: null,
       };
@@ -561,7 +621,7 @@ export class Pipeline {
 
   /**
    * The PR conflicts with the base while CI is awaited: merge the base into the branch here, once. A clean merge goes on
-   * through verify, QA, push and CI; a real conflict is backed out and blocks. Out of attempts, it blocks as before.
+   * through verify, QA, push and CI; a real conflict is handed to the Dev session, and judged from the repository after its turn. Out of attempts, it blocks as before.
    */
   async #handleConflict(
     run: RunRecord,
@@ -580,16 +640,19 @@ export class Pipeline {
         }需要人把 ${config.baseBranch} 合并进该分支并解决冲突。`,
       );
     }
-    await this.#startMerge(run, prUrl, worktree, save);
+    await this.#startMerge(run, worktree, save);
   }
 
-  /** Safe to run again at any point: after the count is saved, after a clean merge, or with a merge left open. */
+  /**
+   * Safe to run again at any point: after the count is saved, after a clean merge, or with a merge left open. A clean
+   * merge goes on to verify. A real conflict is left in the worktree and handed to the Dev session (phase `dev`).
+   * Returns the conflict, or undefined when the merge was clean.
+   */
   async #startMerge(
     run: RunRecord,
-    prUrl: string,
     worktree: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
-  ): Promise<void> {
+  ): Promise<{ files: string[]; preMergeSha: string } | undefined> {
     const { config, store } = this.#d;
     const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
     if (open.code !== 0) {
@@ -608,9 +671,19 @@ export class Pipeline {
       );
       if (fetched.code !== 0) throw new Blocked(`合并前 git fetch 失败：${tail(fetched.output)}`);
     }
+    // HEAD before the merge, saved with the count: a failed resolution goes back to it.
+    let preMergeSha = run.conflict?.preMergeSha;
+    if (preMergeSha === undefined) {
+      const head = await this.#git(["rev-parse", "HEAD"], worktree);
+      if (head.code !== 0) throw new Blocked(`读取 HEAD 提交失败：${tail(head.output)}`);
+      preMergeSha = head.output.trim();
+    }
     // The count is saved before the merge, so a kill in the middle cannot let the same attempt be taken twice.
     if (run.conflict === null)
-      await save({ conflictRound: run.conflictRound + 1, conflict: { state: "merging" } });
+      await save({
+        conflictRound: run.conflictRound + 1,
+        conflict: { state: "merging", preMergeSha },
+      });
     const attempt = run.conflict === null ? run.conflictRound + 1 : run.conflictRound;
     let merged: ExecResult | undefined;
     if (open.code !== 0) {
@@ -618,7 +691,7 @@ export class Pipeline {
       if (merged.code === 0) {
         await store.event(run.key, "conflict_merge", { result: "clean", conflictRound: attempt });
         await save({ conflict: null, phase: "verify" });
-        return;
+        return undefined;
       }
     }
     // A merge that failed without starting leaves nothing to abort: say what git said.
@@ -630,25 +703,165 @@ export class Pipeline {
         `Loop 合并 ${config.baseRef} 失败，没有开始合并：${tail(merged?.output ?? "")}`,
       );
     }
-    const listed = await this.#git(["diff", "--name-only", "--diff-filter=U"], worktree);
-    const files = listed.output
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l !== "");
-    const aborted = await this.#git(["merge", "--abort"], worktree);
+    const files = await this.#unmergedFiles(worktree);
+    if (files.length === 0) {
+      const aborted = await this.#git(["merge", "--abort"], worktree);
+      await store.event(run.key, "conflict_merge", {
+        result: "conflict",
+        conflictRound: attempt,
+        files: 0,
+      });
+      await save({ conflict: null });
+      if (aborted.code !== 0)
+        throw new Blocked(`合并冲突后撤回合并失败，工作区留在合并中：${tail(aborted.output)}`);
+      throw new Blocked(
+        `Loop 合并 ${config.baseRef} 停在合并中，但没有读到冲突文件，已撤回合并：${tail(merged?.output ?? "")}`,
+      );
+    }
     await store.event(run.key, "conflict_merge", {
       result: "conflict",
       conflictRound: attempt,
       files: files.length,
     });
-    await save({ conflict: null });
-    if (aborted.code !== 0)
-      throw new Blocked(`合并冲突后撤回合并失败，工作区留在合并中：${tail(aborted.output)}`);
-    throw new Blocked(
-      files.length > 0
-        ? `PR 与 ${config.baseBranch} 冲突：Loop 在工单工作区合并 ${config.baseRef} 后，真实冲突文件：${files.join("、")}。已撤回合并（${prUrl}）。`
-        : `Loop 合并 ${config.baseRef} 停在合并中，但没有读到冲突文件，已撤回合并：${tail(merged?.output ?? "")}`,
+    await save({ conflict: { state: "dev", preMergeSha, files }, phase: "dev" });
+    return { files, preMergeSha };
+  }
+
+  async #unmergedFiles(worktree: string): Promise<string[]> {
+    const listed = await this.#git(["diff", "--name-only", "--diff-filter=U"], worktree);
+    return listed.output
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "");
+  }
+
+  /** Titles of the commits on the base, not in the branch before the merge, that touch the conflicted files. */
+  async #theirCommits(worktree: string, preMergeSha: string, files: string[]): Promise<string[]> {
+    const log = await this.#git(
+      ["log", "--format=%s", `${preMergeSha}..${this.#d.config.baseRef}`, "--", ...files],
+      worktree,
     );
+    return log.output
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "");
+  }
+
+  /**
+   * After the conflict turn, decides from the repository whether the conflict is resolved: nothing unmerged, no
+   * conflict markers in the files, the base in HEAD's history. An open merge is finished here with `commit --no-edit`.
+   * Anything else rolls the worktree back to before the merge and blocks. Runs before the checkpoint, which would
+   * otherwise commit the conflict markers.
+   */
+  async #judgeConflict(
+    run: RunRecord,
+    conflict: { files: string[]; preMergeSha: string },
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    const { config, store } = this.#d;
+    const open = async () =>
+      (await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree)).code === 0;
+    const problems: string[] = [];
+    // Anchored at the start of a line, with the files taken literally.
+    const markers = await this.#git(
+      [
+        "--literal-pathspecs",
+        "grep",
+        "--no-index",
+        "-l",
+        "-E",
+        "-e",
+        `^(${"<".repeat(7)}|${">".repeat(7)})( |$)`,
+        "--",
+        ...conflict.files,
+      ],
+      worktree,
+    );
+    if (markers.code === 0)
+      problems.push(
+        `仍有冲突标记：${markers.output
+          .split("\n")
+          .filter((l) => l.trim() !== "")
+          .join("、")}`,
+      );
+    else if (markers.code !== 1) problems.push(`检查冲突标记失败：${tail(markers.output)}`);
+    // A file fixed but not staged still counts as unmerged: stage the files that are clean of markers.
+    if (problems.length === 0 && (await open())) {
+      await this.#git(["--literal-pathspecs", "add", "-A", "--", ...conflict.files], worktree);
+      const unmerged = await this.#unmergedFiles(worktree);
+      if (unmerged.length > 0) problems.push(`仍有未解决的文件：${unmerged.join("、")}`);
+    }
+    if (problems.length === 0 && (await open())) {
+      const committed = await this.#git(["commit", "--no-edit"], worktree);
+      if (committed.code !== 0) problems.push(`完成合并提交失败：${tail(committed.output)}`);
+    }
+    if (problems.length === 0) {
+      const ancestor = await this.#git(
+        ["merge-base", "--is-ancestor", config.baseRef, "HEAD"],
+        worktree,
+      );
+      if (ancestor.code !== 0)
+        problems.push(`${config.baseRef} 不在当前分支的历史里（合并被撤回或没有完成）`);
+      const kept = await this.#git(
+        ["merge-base", "--is-ancestor", conflict.preMergeSha, "HEAD"],
+        worktree,
+      );
+      if (kept.code !== 0) problems.push("分支原来的提交不在当前历史里（被 rebase 或重置过）");
+    }
+    if (problems.length === 0) {
+      await store.event(run.key, "conflict_resolved", { files: conflict.files.length });
+      await save({
+        conflict: null,
+        resolvedFiles: [...new Set([...run.resolvedFiles, ...conflict.files])],
+      });
+      return;
+    }
+    const rollback = await this.#rollbackMerge(worktree, conflict.preMergeSha);
+    await store.event(run.key, "conflict_unresolved", { files: conflict.files.length });
+    await save({ conflict: null });
+    throw new Blocked(
+      `PR 与 ${config.baseBranch} 冲突，Dev 没有解决：${problems.join("；")}。冲突文件：${conflict.files.join("、")}。${
+        rollback === "" ? "已撤回合并，工作区回到合并前。" : rollback
+      }`,
+    );
+  }
+
+  /** Back to before the merge: abort an open one, then reset to the commit it started from. "" when done. */
+  async #rollbackMerge(worktree: string, preMergeSha: string): Promise<string> {
+    const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
+    if (open.code === 0) {
+      const aborted = await this.#git(["merge", "--abort"], worktree);
+      if (aborted.code !== 0) return `撤回合并失败，工作区留在合并中：${tail(aborted.output)}`;
+    }
+    const reset = await this.#git(["reset", "--hard", preMergeSha], worktree);
+    return reset.code === 0 ? "" : `退回合并前的提交失败：${tail(reset.output)}`;
+  }
+
+  /**
+   * The scene for a conflict turn. A merge still open, or already finished (the base is in HEAD), is left as it is: a
+   * restart or a resend does not merge twice. Otherwise (the merge was aborted) it is made again. A merge that now
+   * comes out clean needs no turn: undefined.
+   */
+  async #conflictScene(
+    run: RunRecord,
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<{ files: string[]; preMergeSha: string } | undefined> {
+    const { config } = this.#d;
+    const saved = this.#need(run.conflict ?? undefined);
+    const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
+    const merged = await this.#git(
+      ["merge-base", "--is-ancestor", config.baseRef, "HEAD"],
+      worktree,
+    );
+    if (
+      saved.preMergeSha !== undefined &&
+      saved.files !== undefined &&
+      (open.code === 0 || merged.code === 0)
+    )
+      return { files: saved.files, preMergeSha: saved.preMergeSha };
+    return this.#startMerge(run, worktree, save);
   }
 
   /** Best effort: names the files a merge of the base into the PR head would conflict on. */
@@ -759,12 +972,29 @@ export class Pipeline {
     const { config, store } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     const progress = await store.readProgress(run.key);
+    // A conflict turn: the merge of the base is in the worktree (made again if it is not), and Dev is asked to finish it.
+    let conflict: { files: string[]; preMergeSha: string } | undefined;
+    if (run.conflict?.state === "dev") {
+      const found = await this.#conflictScene(run, worktree, save);
+      if (found === undefined) return;
+      conflict = found;
+    }
+    const conflictPrompt =
+      conflict === undefined
+        ? undefined
+        : conflictBrief(
+            issue,
+            config.baseRef,
+            conflict.files,
+            await this.#theirCommits(worktree, conflict.preMergeSha, conflict.files),
+          );
     const prompt =
-      run.findings !== null
+      conflictPrompt ??
+      (run.findings !== null
         ? fixBrief(run.round, run.findings)
         : progress !== "" || byPerson
           ? continueBrief(issue, byPerson)
-          : devBrief(issue, book.items);
+          : devBrief(issue, book.items));
 
     let sessionId = this.#need(run.devSessionId ?? undefined);
     let result: TurnResult;
@@ -795,7 +1025,7 @@ export class Pipeline {
       result = await this.#turn(
         run.key,
         sessionId,
-        handoffBrief(issue, book.items, progress, gitLog.output, run.findings),
+        conflictPrompt ?? handoffBrief(issue, book.items, progress, gitLog.output, run.findings),
         { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
       );
     }
@@ -807,6 +1037,8 @@ export class Pipeline {
       run.round,
       parseProgress(result.text) ?? "(the turn ended with no progress block)",
     );
+    // Decide first: the checkpoint below would commit conflict markers along with everything else.
+    if (conflict !== undefined) await this.#judgeConflict(run, conflict, worktree, save);
     // What is on disk is the checkpoint. Work Dev left uncommitted is committed here, so it is not lost.
     const dirty = await this.#git(["status", "--porcelain"], worktree);
     if (dirty.output.trim() !== "") {
@@ -918,7 +1150,13 @@ export class Pipeline {
     const checks = (this.#checks.get(run.key) ?? [])
       .map((c) => `- ${c.command}: ${c.passed ? "passed" : "failed"}`)
       .join("\n");
-    const prompt = qaBrief(issue, book.items, diff.output, checks === "" ? "(none)" : checks);
+    const prompt = qaBrief(
+      issue,
+      book.items,
+      diff.output,
+      checks === "" ? "(none)" : checks,
+      run.resolvedFiles,
+    );
 
     const maxAttempts = Math.max(1, config.maxQaRetries + 1);
     let verdict: Verdict | undefined;

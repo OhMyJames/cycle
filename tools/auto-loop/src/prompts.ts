@@ -52,6 +52,33 @@ ${findings}
 
 ${PROGRESS_RULE}`;
 
+export const conflictBrief = (
+  issue: Issue,
+  baseRef: string,
+  files: string[],
+  theirCommits: string[],
+): string => `The loop merged ${baseRef} into this branch and the merge stopped on a conflict. It is left open in the worktree for you to resolve. Work item ${issue.key}: ${issue.title}.
+
+The work item, so you know what this branch is for:
+---
+${issue.description}
+---
+
+Conflicted files:
+${files.map((f) => `- ${f}`).join("\n")}
+
+What changed on ${baseRef} in those files (commit titles):
+${theirCommits.length > 0 ? theirCommits.map((c) => `- ${c}`).join("\n") : "- (none found)"}
+
+How to work:
+- Resolve each conflicted file so that the intent of both sides is kept: this work item's goal and what ${baseRef} changed. Remove every conflict marker.
+- Do not run \`git merge --abort\`, do not rebase, and do not push: the loop pushes.
+- Finish the merge with a merge commit (\`git add\` the files, then \`git commit --no-edit\`).
+- Run \`bun run check\` before you finish.
+- If you cannot resolve it, say so in the progress block under "next" and stop; do not guess.
+
+${PROGRESS_RULE}`;
+
 export const continueBrief = (issue: Issue, resumedByPerson: boolean): string => `${
   resumedByPerson
     ? `A person looked at ${issue.key} and put it back: what they said is in this conversation. The work item may have changed; here it is now:\n---\n${issue.description}\n---\n`
@@ -99,6 +126,7 @@ export const qaBrief = (
   criteria: Criterion[],
   diff: string,
   checks: string,
+  conflictFiles: string[] = [],
 ): string => `You are an independent reviewer for work item ${issue.key}: ${issue.title}. You did not write this change and you are not told how it was made.
 
 You are READ-ONLY. Do not edit, create, delete or commit anything, and do not run the test suites: the loop already ran them and its results are below. You may read files in the current directory (a git worktree holding the change) and use git status, git diff, git log, rg and ls.
@@ -116,7 +144,11 @@ ${checks}
 The criteria, each run by the loop, with its result:
 ${criteriaTable(criteria, true)}
 
-The change (git diff against the base${diff.length > MAX_DIFF ? ", cut short" : ""}):
+${
+  conflictFiles.length > 0
+    ? `The branch merged the base after a merge conflict, which the developer resolved by hand in these files. Look at them with care: the resolution must keep the intent of both sides.\n${conflictFiles.map((f) => `- ${f}`).join("\n")}\n\n`
+    : ""
+}The change (git diff against the base${diff.length > MAX_DIFF ? ", cut short" : ""}):
 \`\`\`diff
 ${diff.slice(0, MAX_DIFF)}
 \`\`\`
