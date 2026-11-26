@@ -169,8 +169,23 @@ export class DaemonSessions implements Sessions {
       agent: input.agent,
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
     });
-    if (input.model) await this.#client.setConfig(sessionId, "model", input.model);
-    if (input.effort) await this.#client.setConfig(sessionId, "effort", input.effort);
+    try {
+      if (input.model) await this.#client.setConfig(sessionId, "model", input.model);
+      if (input.effort) await this.#client.setConfig(sessionId, "effort", input.effort);
+    } catch (error) {
+      // The session id is never returned, so nobody could remove it later: do it here. The worktree is kept, a
+      // replacement or retry session uses the same one.
+      await this.#client.delete(sessionId).catch(() => {});
+      const what = [
+        input.model ? `model ${input.model}` : "",
+        input.effort ? `effort ${input.effort}` : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
+      throw new Error(
+        `could not set ${what} for the ${input.role} session: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     let cwd = input.cwd;
     let branch: string | null = null;
     if (input.worktree !== undefined) {

@@ -237,20 +237,32 @@ test("a request the policy allows writes no event, and a compound command is fil
   expect(JSON.stringify(events)).not.toContain("secrets");
 }, 15_000);
 
-test("create sets model and effort on the new session, and sets nothing when they are not given", async () => {
+test("create sets model and effort on the new session, and only the ones given", async () => {
   const fake = fakeAgent({}, { configOptions: [] });
   const { sessions } = await setup(fake);
-  expect(fake.log.configs).toEqual([]);
-  await sessions.create({
-    role: "dev",
-    agent: "fake",
-    model: "opus",
-    effort: "high",
-    title: "t",
-    cwd: "/tmp",
-  });
-  expect(fake.log.configs.map((c) => [c.configId, c.value])).toEqual([
+  const made = (extra: { model?: string; effort?: string }) =>
+    sessions.create({ role: "dev", agent: "fake", title: "t", cwd: "/tmp", ...extra });
+  const seen = () => fake.log.configs.map((c) => [c.configId, c.value]);
+  await made({});
+  expect(seen()).toEqual([]);
+  await made({ model: "opus", effort: "high" });
+  expect(seen()).toEqual([
     ["model", "opus"],
     ["effort", "high"],
   ]);
+  fake.log.configs.length = 0;
+  await made({ model: "sonnet" });
+  expect(seen()).toEqual([["model", "sonnet"]]);
+  fake.log.configs.length = 0;
+  await made({ effort: "low" });
+  expect(seen()).toEqual([["effort", "low"]]);
+});
+
+test("create removes the new session and names the setting when setConfig is refused", async () => {
+  const fake = fakeAgent({}, { configOptions: [] });
+  const { sessions } = await setup(fake);
+  fake.control.rejectConfig.add("effort");
+  await expect(
+    sessions.create({ role: "qa", agent: "fake", effort: "bogus", title: "t", cwd: "/tmp" }),
+  ).rejects.toThrow("could not set effort bogus for the qa session");
 });
