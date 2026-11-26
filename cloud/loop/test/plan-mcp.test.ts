@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { isNetworkError } from "../src/network.ts";
 import { PlanTracker, planningTracker, toIssue } from "../src/plan-mcp.ts";
 import { resolveLoopFields } from "../src/project.ts";
 import type { PlanningTracker } from "../src/types.ts";
@@ -755,4 +756,28 @@ test("a column is read with at most 8 gets at once", async () => {
   expect(await t.listTodo()).toHaveLength(30);
   expect(peak).toBeLessThanOrEqual(8);
   expect(peak).toBeGreaterThan(1);
+});
+
+test("a body that drops mid-read is a network error: a read is tried again, and the message says so", async () => {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    n++;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => {
+        throw new Error("terminated");
+      },
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+  const error = await bare()
+    .get(1)
+    .catch((e) => e);
+  expect(n).toBe(3);
+  expect(isNetworkError(error.message)).toBe(true);
+});
+
+test("a persistent 500 reads as a network error", () => {
+  expect(isNetworkError("tracker get_issue_by_number: HTTP 500")).toBe(true);
+  expect(isNetworkError("tracker get_issue_by_number: HTTP 404")).toBe(false);
 });

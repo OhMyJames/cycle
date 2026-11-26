@@ -145,10 +145,16 @@ const mapLimit = async <T, R>(
 ): Promise<R[]> => {
   const out = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
   const worker = async () => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i] as T);
+      try {
+        out[i] = await fn(items[i] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
@@ -334,7 +340,19 @@ export class PlanTracker implements Tracker {
       const message = `tracker ${name}: HTTP ${response.status}`;
       throw response.status >= 500 ? new RetryableError(message) : new Error(message);
     }
-    const body = asRecord(this.#message(await response.text(), name));
+    let raw: string;
+    try {
+      raw = await response.text();
+    } catch (error) {
+      if (error instanceof Error && error.name === "TimeoutError")
+        throw new Error(
+          `tracker ${name}: operation timed out after ${Math.round(timeoutMs / 1000)}s`,
+        );
+      throw new RetryableError(
+        `tracker ${name}: error connecting to the tracker: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const body = asRecord(this.#message(raw, name));
     if (body.error !== undefined) throw new Error(`tracker ${name}: ${JSON.stringify(body.error)}`);
     const result = asRecord(body.result);
     const text = (result.content as { text?: string }[] | undefined)?.[0]?.text ?? "";

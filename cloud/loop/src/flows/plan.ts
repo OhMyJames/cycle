@@ -279,6 +279,8 @@ export class PlanFlow {
     const round = await store.loadPlan(id);
     const endedAt = clock.now().toISOString();
     if (round !== undefined && !ENDED.has(round.phase)) {
+      for (const q of round.queue)
+        if (!ITEM_DONE.has(q.state)) await this.#clearPhaseQuietly(q.key, q.number);
       let worktree = round.worktree;
       try {
         if (worktree !== null && (await this.#removeWorktree(worktree))) worktree = null;
@@ -867,14 +869,12 @@ export class PlanFlow {
             issue: item().key,
             error: errorKind(error),
           });
-          // Failed while stopping (the work item cannot be read): give it up, or the same failure repeats.
-          const failedStopping = state === "stopped" || state === "asked";
-          await save(
-            failedStopping
-              ? { state: "abandoned" }
-              : { state: "stopped", stoppedReason: "规划时出错", stopCommented: true },
-          );
-          if (!failedStopping) return;
+          // Failed while stopping itself (the comment): give up on the comment, or the same failure repeats.
+          if (state === "stopped") {
+            await save({ stopCommented: true });
+            return;
+          }
+          await save({ state: "stopped", stoppedReason: "规划时出错" });
           continue;
         }
         await save({ state: "stopped", stoppedReason: error.message });
@@ -883,6 +883,16 @@ export class PlanFlow {
           rounds: item().round,
         });
       }
+    }
+  }
+
+  /** Clears the phase field of a work item if it can still be read; a failure here is not worth another one. */
+  async #clearPhaseQuietly(key: string, number: number): Promise<void> {
+    try {
+      const issue = await this.#read(number);
+      if (issue !== undefined) await this.#host.clearPhase(key, issue);
+    } catch {
+      // best effort
     }
   }
 
@@ -1284,7 +1294,9 @@ export class PlanFlow {
     item: ShapeItem,
     save: (patch: Partial<ShapeItem>) => Promise<void>,
   ): Promise<void> {
-    const issue = await this.#tracker().get(item.number);
+    // Read quietly: a work item that was deleted, or that the tracker keeps failing on, is stopped without a word.
+    const issue = await this.#read(item.number);
+    if (issue === undefined) return;
     if (!item.stopCommented) {
       const said = item.stoppedReason ?? "";
       const leaked = findSecrets(said);

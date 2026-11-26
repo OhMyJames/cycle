@@ -375,7 +375,12 @@ export class ResearchFlow implements Flow {
         existing.length === 0
           ? new Set<number>()
           : new Set((await tracker.listIssueDocuments(issue)).map((d) => d.id));
-      const found = existing.find((d) => linked.has(d.id)) ?? existing[0];
+      // One not on this work item is used only when its text is the report: else it is some earlier run's.
+      let found = existing.find((d) => linked.has(d.id));
+      for (const d of existing) {
+        if (found !== undefined) break;
+        if ((await tracker.getDocumentContent(d.id)).trim() === output.report.trim()) found = d;
+      }
       if (found !== undefined) {
         await progress({ docId: found.id });
         await store.event(start.key, "report_reused", { docId: found.id });
