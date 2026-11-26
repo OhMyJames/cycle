@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { CriteriaBook, parseCriteria, parseVerify } from "../src/criteria.ts";
+import { CriteriaBook, parseCriteria, parseVerify, readSummary } from "../src/criteria.ts";
 import type { Exec } from "../src/types.ts";
 
 test("reads the list under the acceptance heading and the commands it names", () => {
@@ -191,4 +191,95 @@ test("short failing output is kept as is, and a passing command still keeps only
   const passed = await book.verify(1, { ...base, exec: big });
   expect(passed.evidence).not.toContain("HEAD");
   expect(passed.evidence).toContain("…xxx");
+});
+
+const outputOf =
+  (output: string): Exec =>
+  async () => ({ code: 0, output, timedOut: false });
+const bunTest = [["bun", "test", "./apps/desktop/test/integration/web.integration.ts"]];
+
+test("bun test that passed nothing is not a pass: 0 pass with skips fails and says so", async () => {
+  const book = CriteriaBook.fromSpecs([{ text: "a", verify: bunTest }]);
+  const done = await book.verify(1, {
+    ...base,
+    exec: outputOf("web.integration.ts:\n(skip) a\n(skip) b\n\n 0 pass\n 2 skip\n 0 fail\n"),
+  });
+  expect(done.status).toBe("failed");
+  expect(done.evidence).toContain("0 pass, 2 skip");
+});
+
+test("bun test with passes passes, skips or not; no summary line fails", async () => {
+  const book = CriteriaBook.fromSpecs([{ text: "a", verify: bunTest }]);
+  expect((await book.verify(1, { ...base, exec: outputOf(" 4 pass\n 0 fail\n") })).status).toBe(
+    "passed",
+  );
+  const mixed = await book.verify(1, { ...base, exec: outputOf(" 4 pass\n 1 skip\n 0 fail\n") });
+  expect(mixed.status).toBe("passed");
+  expect(mixed.evidence).toContain("4 pass, 1 skip");
+  expect((await book.verify(1, { ...base, exec: outputOf("hello\n") })).status).toBe("failed");
+  expect((await book.verify(1, { ...base, exec: outputOf("") })).status).toBe("failed");
+});
+
+test("exit code and timeout are still judged first, for bun test too", async () => {
+  const book = CriteriaBook.fromSpecs([{ text: "a", verify: bunTest }]);
+  const bad: Exec = async () => ({ code: 1, output: " 3 pass\n", timedOut: false });
+  expect((await book.verify(1, { ...base, exec: bad })).status).toBe("failed");
+  const slow: Exec = async () => ({ code: 0, output: " 3 pass\n", timedOut: true });
+  expect((await book.verify(1, { ...base, exec: slow })).status).toBe("failed");
+});
+
+test("test:integration <suite> is run with --strict; the other commands are run as written", async () => {
+  const cases: [string[], string[]][] = [
+    [
+      ["bun", "run", "test:integration", "web"],
+      ["bun", "run", "test:integration", "web", "--strict"],
+    ],
+    [
+      ["bun", "run", "test:integration"],
+      ["bun", "run", "test:integration"],
+    ],
+    [
+      ["bun", "run", "check"],
+      ["bun", "run", "check"],
+    ],
+    [
+      ["bun", "run", "test:browser"],
+      ["bun", "run", "test:browser"],
+    ],
+  ];
+  for (const [stored, ran] of cases) {
+    const book = CriteriaBook.fromSpecs([{ text: "a", verify: [stored] }]);
+    const r = run(0);
+    await book.verify(1, { ...base, exec: r.exec });
+    expect(r.calls).toEqual([ran]);
+    expect(book.items[0]?.verify).toEqual([stored]);
+  }
+});
+
+test("the summary is read as scripts/integration-suites.ts parseSummary reads it", async () => {
+  const { parseSummary } = await import("../../../scripts/integration-suites.ts");
+  const samples = [
+    " 0 pass\n 2 skip\n 0 fail\n",
+    " 12 pass\n 1 skip\n 0 fail\n",
+    "\u001b[32m 5 pass\u001b[0m\n 2 fail\n",
+    " 9 pass\n 9 pass\n 1 pass\n",
+    "3 pass in the name\n",
+    "no summary\n",
+    "",
+  ];
+  for (const sample of samples) {
+    const mine = readSummary(sample);
+    expect({ ...mine, pass: mine.pass ?? 0 }).toEqual(parseSummary(sample));
+  }
+});
+
+test("the allow-list is unchanged: ./ paths pass; test:real, test:ui and --strict are refused", () => {
+  expect(parseVerify("bun test ./apps/desktop/test/integration/web.integration.ts")).toBeDefined();
+  for (const bad of [
+    "bun run test:real",
+    "bun run test:ui",
+    "bun run test:integration web --strict",
+  ]) {
+    expect(parseVerify(bad)).toBeUndefined();
+  }
 });

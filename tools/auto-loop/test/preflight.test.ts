@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { conclusionIsEmpty, preflight, sendBackComment } from "../src/preflight.ts";
+import {
+  ALLOWED_COMMANDS,
+  conclusionIsEmpty,
+  preflight,
+  sendBackComment,
+  UI_CRITERIA_GUIDE,
+} from "../src/preflight.ts";
 import { config, fullBug, issue, readyDescription } from "./helpers.ts";
 
 const cfg = config({ maxCriteria: 3 });
@@ -192,4 +198,24 @@ test("a 「结论」 that is one bracketed note is empty; text outside it, or a 
     "（做完后回填：对每个问题的回答和依据。未完成时留空）",
   );
   expect(preflight(issue({ description: template, typeId: RESEARCH }), research).ok).toBe(true);
+});
+
+test("UI_CRITERIA_GUIDE names the three ways, the ./ rule and test:real; ALLOWED_COMMANDS lists every form", () => {
+  for (const word of [
+    "bun run test:integration web",
+    "bun run test:browser",
+    "bun test ./",
+    "`./`",
+    "test:real",
+  ]) {
+    expect(UI_CRITERIA_GUIDE).toContain(word);
+  }
+  for (const form of [
+    "bun run check",
+    "bun run test:browser",
+    "bun run test:integration [suite]",
+    "bun test <path>",
+  ]) {
+    expect(ALLOWED_COMMANDS).toContain(form);
+  }
 });

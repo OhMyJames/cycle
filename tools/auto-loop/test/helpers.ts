@@ -351,5 +351,7 @@ export const makeExec =
       return result(world.ciLogs[key] ?? "generic CI failure log\n");
     }
     if (line.includes("gh pr view")) return result("https://github.com/o/r/pull/9\n");
+    // `bun test <path>` is judged on its summary line too, so the fake prints a real one.
+    if (argv[0] === "bun" && argv[1] === "test") return result(" 3 pass\n 0 fail\n");
     return result("");
   };
