@@ -1759,8 +1759,28 @@ test("timed-out commands and maxVerifyRetries 0 are not re-run", async () => {
       timedOut: timedOut && n === 1,
     }));
     await pipeline.step();
-    expect(counts.check).toBeLessThanOrEqual(2);
+    // Round 1 runs the command once and fails; round 2 runs it once and passes.
+    // The criterion with the same command reuses that result. A stray retry would make this 3 or hide the failure.
+    expect(counts.check).toBe(2);
+    expect(s.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(2);
     expect((await s.store.events()).some((e) => e.kind === "verify_retried")).toBe(false);
     expect((await s.store.events()).some((e) => e.kind === "round_failed")).toBe(true);
   }
+});
+
+test("a command in both testLayers and criteria, retried to a pass, is not executed again", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const { pipeline, counts } = verifyPipeline(s, {}, (n) => ({
+    code: n === 1 ? 1 : 0,
+    output: "flaky",
+    timedOut: false,
+  }));
+  await pipeline.step();
+  const events = await s.store.events();
+  // `bun run check` is both the test layer and the second criterion: first run fails, retry passes, criterion reuses it.
+  expect(counts.check).toBe(2);
+  const retried = events.filter((e) => e.kind === "verify_retried");
+  expect(retried).toHaveLength(1);
+  expect(retried[0]).toMatchObject({ passed: true, attempt: 1 });
+  expect(events.some((e) => e.kind === "round_failed")).toBe(false);
 });
