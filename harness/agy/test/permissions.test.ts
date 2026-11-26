@@ -120,9 +120,9 @@ describe("withSettingsLock", () => {
     let second = false;
     const first = withSettingsLock(path, async () => {
       // Looks abandoned (old mtime) until the holder's heartbeat touches it.
-      const old = new Date(Date.now() - 25_000);
+      const old = new Date(Date.now() - 22_000);
       utimesSync(`${path}.lock`, old, old);
-      await Bun.sleep(5_500);
+      await Bun.sleep(9_000);
       expect(second).toBe(false);
     });
     await Bun.sleep(100);
