@@ -4,7 +4,13 @@
 import { type AgentWord, agentOf, type EventName, type EventProps } from "@cycle/analytics/events";
 import { type Channel, type ClientEvents, CycleClient, ProtocolMismatchError } from "@cycle/client";
 import type { AppEvent, LocationConfig, LocationStatus, SessionSummary } from "@cycle/ui";
-import { type DaemonStop, daemonTooOld, daemonUpgradeCommand } from "../shared/release.ts";
+import {
+  baseRelease,
+  type DaemonStop,
+  daemonTooOld,
+  daemonUpgradeCommand,
+  parseVersion,
+} from "../shared/release.ts";
 import type { OpenBrowser } from "./connector-auth.ts";
 import type { EnvironmentStore } from "./environments.ts";
 import { LOCAL_LOCATION, locationOf, type Settings } from "./settings.ts";
@@ -23,6 +29,8 @@ export type ManagerOptions = {
   backoff?: { first: number; max: number };
   /** The version of this app: the one an update of a daemon puts there. Without it, nothing is said. */
   appVersion?: string;
+  /** The release an alpha app was cut from (build.json `baseVersion`): what a remote daemon is updated to then. */
+  appBaseVersion?: string;
   /** The Cycle protocol version asked of a daemon. Default: this build's. Another is for tests. */
   protocolVersion?: string;
   /**
@@ -400,9 +408,15 @@ export class Runtime {
       supported: error.supported,
       requested: error.requested,
       ...(side === "daemon" && location.kind !== "local" && appVersion !== undefined
-        ? { command: daemonUpgradeCommand(appVersion) }
+        ? { command: daemonUpgradeCommand(this.#daemonTarget(appVersion)) }
         : {}),
     };
+  }
+
+  /** The version a remote daemon is updated to: the app's, or for an alpha (which has no release) its base release. */
+  #daemonTarget(appVersion: string): string {
+    if (parseVersion(appVersion)?.alpha === undefined) return appVersion;
+    return this.options.appBaseVersion ?? baseRelease(appVersion) ?? appVersion;
   }
 
   /** What a connected remote location's daemon is, and whether it is too old for this app to work with. */
@@ -420,8 +434,8 @@ export class Runtime {
         ...(old
           ? {
               upgrade: {
-                to: appVersion,
-                command: daemonUpgradeCommand(appVersion),
+                to: this.#daemonTarget(appVersion),
+                command: daemonUpgradeCommand(this.#daemonTarget(appVersion)),
                 ...(doing !== undefined ? doing : {}),
               },
             }

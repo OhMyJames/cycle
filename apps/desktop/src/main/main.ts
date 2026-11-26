@@ -160,6 +160,7 @@ const updateDeps = (daemon: string[], localEnv: Record<string, string>) => {
   const info = packaged
     ? (JSON.parse(readFileSync(join(here, "..", BUILD_FILE), "utf8")) as {
         version: string;
+        baseVersion?: string;
         platform: string;
         arch: string;
       })

@@ -172,6 +172,14 @@ test("a release that is not newer, or whose tag is not a version, is no update",
   expect((await updater.check(false)).kind).toBe("up-to-date");
 });
 
+test("a tag with a `-` is never chosen, and the release beside it is", async () => {
+  publish("0.9.0-alpha.5");
+  publish("0.8.0-beta");
+  publish("0.1.5");
+  const { updater } = make();
+  expect(await updater.check(false)).toMatchObject({ kind: "available", version: "0.1.5" });
+});
+
 test("a check that fails on the timer says nothing, and one the user asked for says why", async () => {
   github.status = 403;
   const { updater, states } = make();

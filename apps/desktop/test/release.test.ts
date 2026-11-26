@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   archiveName,
+  baseRelease,
   daemonTooOld,
   daemonUpgradeCommand,
   isNewer,
@@ -12,6 +13,8 @@ import {
   parsePack,
   parseTree,
   parseVersion,
+  plistVersions,
+  sameVersion,
   shellQuote,
   type TreeEntry,
 } from "../src/shared/release.ts";
@@ -215,4 +218,52 @@ test("a block pack that is not whole is refused, and costs only itself", () => {
   expect(read.tree).toEqual(PACK_TREE);
   expect(read.pack).toBeUndefined();
   expect(read.packProblem).toMatch(/no size/);
+});
+
+test("alpha versions order by semver, and +meta is not part of the order", () => {
+  const order = [
+    "0.3.31",
+    "0.3.32-alpha.1200+abc1234",
+    "0.3.32-alpha.1234+abc1234.dirty",
+    "0.3.32",
+    "0.3.33-alpha.1250",
+  ];
+  for (let i = 0; i < order.length; i += 1) {
+    for (let j = 0; j < order.length; j += 1) {
+      expect(isNewer(order[i] as string, order[j] as string)).toBe(i > j);
+    }
+  }
+  expect(isNewer("0.3.32-alpha.9", "0.3.32-alpha.10")).toBe(false);
+  expect(sameVersion("0.3.32-alpha.1+aaa", "0.3.32-alpha.1+bbb.dirty")).toBe(true);
+  expect(sameVersion("0.3.32-alpha.1", "0.3.32-alpha.2")).toBe(false);
+  expect(isNewer("0.3.32-alpha.1+aaa", "0.3.32-alpha.1+bbb")).toBe(false);
+});
+
+test("only alpha is a pre-release identifier", () => {
+  for (const text of [
+    "0.3.32-beta",
+    "0.3.32-rc.1",
+    "0.3.32-beta.1",
+    "0.3.32-alpha",
+    "0.3.32-alpha.x",
+  ])
+    expect(parseVersion(text)).toBeUndefined();
+  expect(parseVersion("0.3.32-alpha.7+abc.dirty")).toMatchObject({
+    patch: 32,
+    alpha: 7,
+    meta: "abc.dirty",
+  });
+  expect(baseRelease("0.3.32-alpha.7+abc")).toBe("0.3.32");
+  expect(baseRelease("0.3.32-rc.1")).toBeUndefined();
+});
+
+test("a version becomes the two numbers Info.plist can hold", () => {
+  expect(plistVersions("0.3.32-alpha.1234+abc.dirty")).toEqual({
+    CFBundleShortVersionString: "0.3.32",
+    CFBundleVersion: "1234",
+  });
+  expect(plistVersions("0.3.32")).toEqual({
+    CFBundleShortVersionString: "0.3.32",
+    CFBundleVersion: "0.3.32",
+  });
 });

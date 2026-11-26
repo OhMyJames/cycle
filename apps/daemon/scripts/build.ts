@@ -39,7 +39,10 @@ for (const harness of HARNESSES) {
   }
 }
 
-const version = String((await Bun.file(join(root, "../desktop/package.json")).json()).version);
+// `CYCLE_VERSION` names an alpha's version without touching package.json.
+const version =
+  process.env.CYCLE_VERSION ||
+  String((await Bun.file(join(root, "../desktop/package.json")).json()).version);
 
 const result = await Bun.build({
   entrypoints: [join(root, "src/main.ts")],
