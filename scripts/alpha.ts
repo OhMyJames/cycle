@@ -9,7 +9,7 @@
 // reads that folder (apps/desktop/src/main/updater.ts). Git, the build, signing and the certificate are passed
 // in (`Deps`), so the tests run none of them.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -120,11 +120,15 @@ const newestFirst = (a: string, b: string): number =>
   isNewer(a, b) ? -1 : isNewer(b, a) ? 1 : b.localeCompare(a);
 
 /** Keeps the newest `KEEP` and the installed one; returns what it removed. */
-export const prune = (repo: string, installed: string | undefined): string[] => {
+export const prune = (
+  repo: string,
+  installed: string | undefined,
+  justBuilt?: string,
+): string[] => {
   const removed: string[] = [];
   const all = versionsIn(repo).sort(newestFirst);
   for (const [i, version] of all.entries()) {
-    if (i < KEEP || version === installed) continue;
+    if (i < KEEP || version === installed || version === justBuilt) continue;
     rmSync(join(repo, folderOf(version)), { recursive: true, force: true });
     removed.push(version);
   }
@@ -141,10 +145,18 @@ const lock = (d: Deps): boolean => {
     try {
       writeFileSync(path, String(d.pid), { flag: "wx" });
       return true;
-    } catch {
-      const holder = Number(readFileSync(path, "utf8").trim());
-      if (Number.isInteger(holder) && holder > 0 && d.isAlive(holder)) {
-        d.log(`Another alpha build is running (pid ${holder}); not building.`);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      let text: string;
+      try {
+        text = readFileSync(path, "utf8").trim();
+      } catch {
+        continue; // released between the two calls
+      }
+      const holder = Number(text);
+      // An empty file is a lock being written: treat it as held.
+      if (text === "" || (Number.isInteger(holder) && holder > 0 && d.isAlive(holder))) {
+        d.log(`Another alpha build is running${text ? ` (pid ${holder})` : ""}; not building.`);
         return false;
       }
       rmSync(path, { force: true });
@@ -202,7 +214,7 @@ export const buildNow = async (d: Deps): Promise<ManualResult> => {
     if (installed && !isNewer(version, installed)) {
       d.log(`It is the version installed (${installed}): reinstall it from Cycle's update menu.`);
     }
-    for (const v of prune(d.repo, installed)) d.log(`Removed ${v}.`);
+    for (const v of prune(d.repo, installed, version)) d.log(`Removed ${v}.`);
     return "built";
   } catch (e) {
     d.log(`Build failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -233,7 +245,7 @@ export const watchOnce = async (d: Deps): Promise<string[]> => {
       await make(d, dir, info, commit, version);
       built.push(version);
       d.log(`Built ${version}.`);
-      for (const v of prune(d.repo, d.installed())) d.log(`Removed ${v}.`);
+      for (const v of prune(d.repo, d.installed(), version)) d.log(`Removed ${v}.`);
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       recordFailure(d, commit, version, error);
@@ -289,12 +301,14 @@ export const ensureCert = (
   const key = join(dir, "key.pem");
   const cert = join(dir, "cert.pem");
   const p12 = join(dir, "cert.p12");
-  const password = createHash("sha256").update(`${Math.random()}${Date.now()}`).digest("hex");
+  const passFile = join(dir, "pass");
+  const password = randomBytes(24).toString("hex");
   const step = (command: string, args: string[]) => {
     const r = run(command, args);
     if (r.code !== 0) throw new Error(`${command} ${args[0]} failed: ${r.out}`);
   };
   try {
+    writeFileSync(passFile, password, { mode: 0o600 });
     step("/usr/bin/openssl", [
       "req",
       "-x509",
@@ -317,7 +331,6 @@ export const ensureCert = (
     step("/usr/bin/openssl", [
       "pkcs12",
       "-export",
-      "-legacy",
       "-inkey",
       key,
       "-in",
@@ -327,7 +340,7 @@ export const ensureCert = (
       "-name",
       CERT_NAME,
       "-passout",
-      `pass:${password}`,
+      `file:${passFile}`,
     ]);
     step("/usr/bin/security", [
       "import",
@@ -446,12 +459,14 @@ const realDeps = (root: string): Deps => {
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  const root = join(import.meta.dir, "..");
   const deps = realDeps(root);
   try {
     if (args.includes("--watch")) {
       const i = args.indexOf("--interval");
       const seconds = i >= 0 ? Number(args[i + 1]) : WATCH_INTERVAL_MS / 1000;
+      if (!Number.isFinite(seconds) || seconds < 1)
+        throw new Error("--interval needs seconds, 1 or more.");
       deps.log(`Watching origin/main every ${seconds}s.`);
       await watch(deps, () => false, seconds * 1000);
     } else {

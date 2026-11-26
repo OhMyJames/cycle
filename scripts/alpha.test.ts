@@ -133,6 +133,20 @@ describe("repository", () => {
     );
   });
 
+  test("the version just built is kept even when not among the newest 3", async () => {
+    const d = fake();
+    for (const n of [200, 201, 202]) seed(d.repo, `0.3.32-alpha.${n}+x`);
+    expect(await buildNow(d)).toBe("built");
+    expect(versionsIn(d.repo)).toContain("0.3.32-alpha.50+c50");
+  });
+
+  test("an empty lock file counts as held", async () => {
+    const d = fake();
+    mkdirSync(d.repo, { recursive: true });
+    writeFileSync(join(d.repo, ".lock"), "");
+    expect(await buildNow(d)).toBe("locked");
+  });
+
   test("a stale .partial is swept", async () => {
     const d = fake();
     mkdirSync(join(d.repo, "old.partial"), { recursive: true });
@@ -259,7 +273,7 @@ describe("certificate", () => {
     const req = calls[1]?.join(" ") ?? "";
     expect(req).toContain(`/CN=${CERT_NAME}`);
     expect(req).toContain("extendedKeyUsage=critical,codeSigning");
-    expect(calls[2]).toContain("-legacy");
+    expect(calls[2]).not.toContain("-legacy");
     const imp = calls[3] ?? [];
     expect(imp.join(" ")).toContain("-T /usr/bin/codesign");
     expect(imp).toContain("/home/x/Library/Keychains/login.keychain-db");
