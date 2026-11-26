@@ -9,6 +9,7 @@ import type {
   LoopAction,
   LoopBoardAnswer,
   LoopChatFailure,
+  LoopNotice,
   LoopTicket,
   LoopTicketDetail,
 } from "../api.ts";
@@ -22,6 +23,9 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 
 /** The Backlog is the longest column by far: it opens on this many and shows this many more at a time. */
 const BACKLOG_PAGE = 20;
+
+/** How often the Notices are read again while the page is open. */
+const NOTICES_REFRESH_MS = 30_000;
 
 /** Items with keys that stay unique when two read the same: the text, and how many came before with it. */
 const keyedItems = (items: string[]) => {
@@ -170,6 +174,67 @@ function TicketChat({
   );
 }
 
+/** What needs a person, most urgent first. Each opens its ticket's page, where the session is joined. */
+function Notices({
+  notices,
+  onOpen,
+}: {
+  notices: LoopNotice[];
+  onOpen: (notice: LoopNotice) => void;
+}) {
+  const { t } = useI18n();
+  if (notices.length === 0) return null;
+  return (
+    <section data-slot="loop-notices" data-kind="loop-notices" aria-label={t("loop.notices")}>
+      <h3 data-slot="loop-column-title">{t("loop.notices")}</h3>
+      <ul data-slot="loop-tickets">
+        {notices.map((notice) => (
+          <li
+            key={`${notice.kind}:${notice.identifier}`}
+            data-slot="loop-notice"
+            data-notice={notice.kind}
+          >
+            <span data-slot="loop-ticket-id">{notice.identifier}</span>
+            <button type="button" data-slot="loop-ticket-title" onClick={() => onOpen(notice)}>
+              {t(`loop.notice.${notice.kind}`)}
+              {notice.kind === "blocked" && notice.reason !== "" ? `: ${notice.reason}` : ""}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Opens the ticket's Dev session (`[CYC-1] Dev`) to answer it or give it instructions; says so when it is not there. */
+function JoinSession({
+  identifier,
+  session,
+}: {
+  identifier: string;
+  session?: string | undefined;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const [missing, setMissing] = useState(false);
+  return (
+    <span data-slot="loop-join">
+      <Button
+        data-variant="ghost"
+        data-kind="loop-join"
+        onClick={() => setMissing(!store.joinLoopSession(identifier, session))}
+      >
+        {t("loop.join")}
+      </Button>
+      {missing ? (
+        <span role="alert" data-slot="loop-problem">
+          {t("loop.join.missing")}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function TicketPage({
   projectKey,
   identifier,
@@ -188,6 +253,15 @@ function TicketPage({
   const { t } = useI18n();
   const store = useAppStore();
   const [ticket, setTicket] = useState<LoopTicketDetail | "loading" | "failed">("loading");
+  // Titles of the sessions waiting on an answer: a ticket Loop works on has none to join unless one asks.
+  const waitingTitles = useAppState((s) =>
+    Object.values(s.sessions)
+      .flat()
+      .filter((x) => x.state === "requires_action")
+      .map((x) => x.title?.trim() ?? "")
+      .join("\n"),
+  );
+  const waitingOn = (id: string) => waitingTitles.split("\n").includes(`[${id}] Dev`);
   useEffect(() => {
     let live = true;
     void store.loadLoopTicket(projectKey, identifier).then((answer) => {
@@ -218,6 +292,20 @@ function TicketPage({
           </span>
           <TicketActions ticket={ticket} act={act} />
           <TicketChat projectKey={projectKey} ticket={ticket} onStarted={onChatStarted} />
+          {ticket.attention !== undefined || waitingOn(ticket.identifier) ? (
+            <JoinSession identifier={ticket.identifier} session={ticket.attention?.session} />
+          ) : null}
+          {ticket.attention !== undefined ? (
+            <section data-slot="loop-detail-section" data-attention={ticket.attention.kind}>
+              <h4>{t(`loop.attention.${ticket.attention.kind}`)}</h4>
+              {ticket.attention.text !== "" ? (
+                <pre data-slot="loop-detail-body">{ticket.attention.text}</pre>
+              ) : null}
+              {ticket.attention.prUrl !== undefined && ticket.attention.prUrl !== "" ? (
+                <AgentLink href={ticket.attention.prUrl}>{ticket.attention.prUrl}</AgentLink>
+              ) : null}
+            </section>
+          ) : null}
           <section data-slot="loop-detail-section">
             <h4>{t("loop.detail.body")}</h4>
             <pre data-slot="loop-detail-body">{ticket.body}</pre>
@@ -335,8 +423,22 @@ function Board({
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const reload = { label: t("loop.reload"), onAction: () => void store.loadLoopBoard(projectKey) };
+  const reload = {
+    label: t("loop.reload"),
+    onAction: () => {
+      void store.loadLoopBoard(projectKey);
+      void store.loadLoopNotices(projectKey);
+    },
+  };
+  const notices = useAppState((s) => s.loop.notices[projectKey]);
+  const request = useAppState((s) => s.loop.request);
   const [open, setOpen] = useState<string | undefined>();
+  // A pressed notification asks for its ticket once: it is taken (cleared) here, so reopening the page does not repeat it.
+  useEffect(() => {
+    if (request === undefined || request.projectKey !== projectKey) return;
+    setOpen(request.identifier);
+    store.takeLoopRequest(request.n);
+  }, [request, projectKey, store]);
   const [problem, setProblem] = useState<LoopActFailure | undefined>();
   const [version, setVersion] = useState(0);
   // Returns the words of a failure (the approve dialog shows them inline); the other buttons show them on the board.
@@ -405,6 +507,15 @@ function Board({
         </Button>
       </div>
       {alert}
+      {notices?.kind === "ok" ? (
+        <Notices
+          notices={notices.notices}
+          onOpen={(notice) => {
+            store.track("loop_notice_opened", { kind: notice.kind });
+            openTicket(notice.identifier);
+          }}
+        />
+      ) : null}
       <div data-slot="loop-columns">
         <Column
           id="doing"
@@ -467,6 +578,38 @@ export function LoopPage({
   useEffect(() => {
     if (chosenKey !== undefined && connected === true) void store.loadLoopBoard(chosenKey);
   }, [store, chosenKey, connected]);
+
+  // Sessions that wait on an answer are part of the Notices: they are read again when that set changes.
+  const waiting = useAppState((s) =>
+    Object.values(s.sessions)
+      .flat()
+      .filter((x) => x.state === "requires_action")
+      .map((x) => x.sessionId)
+      .sort()
+      .join(),
+  );
+  useEffect(() => {
+    if (chosenKey !== undefined && connected === true) void store.loadLoopNotices(chosenKey);
+    void waiting;
+  }, [store, chosenKey, connected, waiting]);
+  // A new Blocked or escalated ticket shows while the page is open, not only after Read again.
+  useEffect(() => {
+    if (chosenKey === undefined || connected !== true) return;
+    const timer = setInterval(() => void store.loadLoopNotices(chosenKey), NOTICES_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [store, chosenKey, connected]);
+  // A notification asked for a Project the server does not have, or whose board cannot be read: no Board will take
+  // the request, and it would open an old ticket on a later visit, so it is dropped.
+  const request = useAppState((s) => s.loop.request);
+  const requestedBoard = useAppState((s) =>
+    request === undefined ? undefined : s.loop.boards[request.projectKey],
+  );
+  useEffect(() => {
+    if (request === undefined || connected !== true) return;
+    const unknown = !projects.some((p) => p.projectKey === request.projectKey);
+    const failed = typeof requestedBoard === "object" && requestedBoard.kind !== "ok";
+    if (unknown || failed) store.takeLoopRequest(request.n);
+  }, [store, request, requestedBoard, connected, projects]);
 
   const away = connected === false;
   const sections: PageSection[] =

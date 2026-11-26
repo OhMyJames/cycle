@@ -25,6 +25,7 @@ export const MAIN_METHODS = [
   "loopTicket",
   "loopAct",
   "loopChat",
+  "loopNotices",
 ] as const satisfies readonly ApiMethod[];
 
 export type MainMethod = (typeof MAIN_METHODS)[number];

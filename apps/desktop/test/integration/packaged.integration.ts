@@ -174,6 +174,7 @@ test.skipIf(!ready)(
           "loopTicket",
           "loopAct",
           "loopChat",
+          "loopNotices",
           "loopProjects",
           "setVaultItem",
           "removeVaultItem",

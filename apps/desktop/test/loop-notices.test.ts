@@ -1,0 +1,599 @@
+import { afterAll, describe, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { LoopNotice, LoopNoticesAnswer } from "@cycle/ui/api";
+import { actionsOf, actOnTicket, answerNotices, answerTicket, roleOf } from "../src/main/loop.ts";
+import { type Alertable, newAlerts, noticePoller, showAlert } from "../src/main/loop-alerts.ts";
+
+const dir = mkdtempSync(join(tmpdir(), "desktop-notices-"));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+const keyFile = join(dir, "key");
+writeFileSync(keyFile, "secret-key\n");
+chmodSync(keyFile, 0o600);
+const loop = { socket: join(dir, "x.sock"), keyFile, trackerUrl: "https://tracker.invalid/mcp" };
+
+const columns = [
+  { id: 22, name: "Todo", stateType: "unstarted", position: 2 },
+  { id: 23, name: "In Progress", stateType: "started", position: 3 },
+  { id: 34, name: "In Review", stateType: "started", position: 4 },
+  { id: 35, name: "Blocked", stateType: "started", position: 5 },
+  { id: 24, name: "Done", stateType: "completed", position: 6 },
+];
+const BLOCKED =
+  "自动化在「开发」卡住了：测试一直失败\n\n现场已保留：Dev 会话「[CYC-7] Dev」可在 Cycle 桌面端打开接管。";
+const REVIEW =
+  "已开 PR：https://github.com/o/r/pull/9\nCI 已跑完，独立评审结论为升级给人（escalate），未开启自动合并：\n- 动了评审边界";
+
+/** A tracker with tickets by column, and comments by ticket id. */
+const world = (state: {
+  tickets: Record<number, { id: number; identifier: string; columnId: number }[]>;
+  comments: Record<number, string[]>;
+}) => {
+  const writes: Record<string, unknown>[] = [];
+  const fetchImpl = (async (_u: unknown, init: RequestInit) => {
+    const { name, arguments: args } = (
+      JSON.parse(String(init.body)) as {
+        params: { name: string; arguments: Record<string, unknown> };
+      }
+    ).params;
+    let data: unknown;
+    if (name === "get_project") data = { columns, labels: [{ id: 11, name: "auto" }] };
+    else if (name === "list_issues")
+      data = (state.tickets[Number(args.columnId)] ?? []).map((t) => ({
+        ...t,
+        title: `T${t.id}`,
+        labelIds: [11],
+      }));
+    else if (name === "get_issue_by_number") {
+      const all = Object.values(state.tickets).flat();
+      const t = all.find((x) => x.identifier === `CYC-${args.sequenceNumber}`);
+      data = { ...t, title: "T", labelIds: [11], description: "" };
+    } else if (name === "execute_read")
+      data = {
+        ok: true,
+        status: 200,
+        data: {
+          items: (
+            state.comments[Number((args.arguments as { issueId: number }).issueId)] ?? []
+          ).map((body) => ({ kind: "comment", body })),
+        },
+      };
+    else {
+      writes.push(args);
+      data = {};
+    }
+    return new Response(
+      JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+    );
+  }) as unknown as typeof fetch;
+  return { fetchImpl, writes };
+};
+
+const noop = () => {};
+const sessions = (...rows: { title: string; state: string }[]) =>
+  rows.map((r, i) => ({ locationId: "local", sessionId: `s${i}`, archived: false, ...r }));
+
+describe("Notices", () => {
+  const state = {
+    tickets: {
+      35: [{ id: 7, identifier: "CYC-7", columnId: 35 }],
+      34: [
+        { id: 9, identifier: "CYC-9", columnId: 34 },
+        { id: 10, identifier: "CYC-10", columnId: 34 },
+      ],
+    },
+    comments: {
+      7: [BLOCKED],
+      9: ["x", REVIEW],
+      10: ["PR 已在自动化之外合并：https://github.com/o/r/pull/3。"],
+    },
+  };
+
+  test("a Blocked ticket, a waiting session and an escalated review each make one, most urgent first", async () => {
+    const { fetchImpl } = world(state);
+    const events: unknown[] = [];
+    const answer = await answerNotices(
+      loop,
+      "CYC",
+      () =>
+        sessions(
+          { title: "[CYC-5] Dev", state: "requires_action" },
+          { title: "[CYC-6] Dev", state: "running" },
+        ),
+      (_e, p) => events.push(p),
+      fetchImpl,
+    );
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices.map((n) => [n.kind, n.identifier])).toEqual([
+      ["permission", "CYC-5"],
+      ["blocked", "CYC-7"],
+      ["review", "CYC-9"],
+    ]);
+    expect(answer.notices[1]).toMatchObject({ reason: "测试一直失败" });
+    // An In Review ticket merged outside the loop (CYC-10) is not for a person to decide: no Notice.
+    // Only counts are reported, never text.
+    expect(events).toEqual([{ permission: 1, blocked: 1, review: 1 }]);
+  });
+
+  test("they are gone when their cause is: moved out, or the session answered", async () => {
+    const { fetchImpl } = world({ tickets: {}, comments: {} });
+    const answer = await answerNotices(
+      loop,
+      "CYC",
+      () => sessions({ title: "[CYC-5] Dev", state: "idle" }),
+      noop,
+      fetchImpl,
+    );
+    expect(answer).toEqual({ kind: "ok", notices: [] });
+  });
+
+  test("a session of another Project, or not a Dev session, is not a Notice", async () => {
+    const { fetchImpl } = world({ tickets: {}, comments: {} });
+    const answer = await answerNotices(
+      loop,
+      "CYC",
+      () =>
+        sessions(
+          { title: "[OTHER-1] Dev", state: "requires_action" },
+          { title: "scratch", state: "requires_action" },
+        ),
+      noop,
+      fetchImpl,
+    );
+    expect(answer).toEqual({ kind: "ok", notices: [] });
+  });
+
+  test("an unreadable comment does not hide a Blocked ticket", async () => {
+    const base = world(state).fetchImpl;
+    const failing = (async (u: unknown, init: RequestInit) =>
+      String(init.body).includes("execute_read")
+        ? new Response("no", { status: 500 })
+        : base(u as never, init)) as unknown as typeof fetch;
+    const onlyBlocked = world({ tickets: { 35: state.tickets[35] }, comments: {} }).fetchImpl;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, (async (
+      u: unknown,
+      init: RequestInit,
+    ) =>
+      String(init.body).includes("execute_read")
+        ? new Response("no", { status: 500 })
+        : onlyBlocked(u as never, init)) as unknown as typeof fetch);
+    void failing;
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices.find((n) => n.kind === "blocked")).toMatchObject({ reason: "" });
+  });
+
+  test("the ticket page of a Blocked ticket has the reason and the session, and its buttons work despite `auto`", async () => {
+    const { fetchImpl, writes } = world(state);
+    const answer = await answerTicket(loop, "CYC", "CYC-7", noop, fetchImpl);
+    if (answer.kind !== "ok") throw new Error("expected a ticket");
+    expect(answer.ticket.attention).toEqual({
+      kind: "blocked",
+      text: "测试一直失败",
+      session: "[CYC-7] Dev",
+    });
+    expect(answer.ticket.actions).toEqual(["to_backlog", "to_todo"]);
+    const acted = await actOnTicket(loop, "CYC", "CYC-7", "to_todo", false, noop, fetchImpl);
+    expect(acted).toEqual({ kind: "ok" });
+    // Back in Todo with its labels untouched, so Loop takes it up again.
+    expect(writes[0]?.columnId).toBe(22);
+    expect(writes[0]).not.toHaveProperty("labelIds");
+  });
+
+  test("a review needs a person on either wording, and only the newest PR comment decides", async () => {
+    const manual =
+      "已开 PR：https://github.com/o/r/pull/9\n独立评审结论为合并，但未满足自动合并前置条件，需要人工处理：\nCI 未全绿";
+    const passed =
+      "已开 PR：https://github.com/o/r/pull/9\nCI 全部通过，独立评审结论为合并，已开启 GitHub 自动合并（squash）。";
+    const { fetchImpl } = world({
+      tickets: {
+        34: [
+          { id: 1, identifier: "CYC-1", columnId: 34 },
+          { id: 2, identifier: "CYC-2", columnId: 34 },
+        ],
+      },
+      // Newest first: ticket 2 was escalated once, then a later round passed.
+      comments: { 1: [manual], 2: [passed, REVIEW] },
+    });
+    const answer = await answerNotices(loop, "CYC", () => [], noop, fetchImpl);
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices.map((n) => n.identifier)).toEqual(["CYC-1"]);
+  });
+
+  test("only the header line counts, not the review's own sentence, and the API's order is not relied on", async () => {
+    const merged =
+      "已开 PR：https://github.com/o/r/pull/9\nCI（check）全部通过，独立评审结论为合并（merge：不需要升级给人，也不需要人工处理），已开启 GitHub 自动合并（squash）。";
+    const base = world({
+      tickets: { 34: [{ id: 1, identifier: "CYC-1", columnId: 34 }] },
+      comments: {},
+    }).fetchImpl;
+    // The tracker answers oldest first here: the newest (merge) is last.
+    const oldestFirst = (async (u: unknown, init: RequestInit) => {
+      if (!String(init.body).includes("execute_read")) return base(u as never, init);
+      const items = [
+        { id: 1, kind: "comment", createdAt: "2026-01-01T00:00:00Z", body: REVIEW },
+        { id: 2, kind: "comment", createdAt: "2026-01-02T00:00:00Z", body: merged },
+      ];
+      const data = { ok: true, status: 200, data: { items } };
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, oldestFirst);
+    expect(answer).toEqual({ kind: "ok", notices: [] });
+  });
+
+  test("comments that cannot be read make the read fail, not an escalation of every In Review ticket", async () => {
+    const base = world(state).fetchImpl;
+    const failing = (async (u: unknown, init: RequestInit) =>
+      String(init.body).includes("execute_read")
+        ? new Response("no", { status: 500 })
+        : base(u as never, init)) as unknown as typeof fetch;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, failing);
+    expect(answer).toEqual({ kind: "unreachable" });
+  });
+
+  test("roles go by position only when every started column has one", () => {
+    const c = (id: number, position?: number) => ({
+      id,
+      name: String(id),
+      stateType: "started",
+      ...(position === undefined ? {} : { position }),
+    });
+    // Array order is progress, review, blocked; one position alone must not reorder them.
+    const mixed = [c(1), c(2, 1), c(3)];
+    expect(roleOf(mixed, mixed[1] as never)).toBe("review");
+    const placed = [c(1, 9), c(2, 1), c(3, 5)];
+    expect(roleOf(placed, placed[1] as never)).toBe("progress");
+  });
+
+  test("an In Review ticket opens without its comments when they cannot be read", async () => {
+    const base = world(state).fetchImpl;
+    const failing = (async (u: unknown, init: RequestInit) =>
+      String(init.body).includes("execute_read")
+        ? new Response("no", { status: 500 })
+        : base(u as never, init)) as unknown as typeof fetch;
+    const answer = await answerTicket(loop, "CYC", "CYC-9", noop, failing);
+    if (answer.kind !== "ok") throw new Error("expected a ticket");
+    expect(answer.ticket.attention).toBeUndefined();
+  });
+
+  test("line endings, a leading BOM and spaces do not hide a comment; an unknown reply shape is a failure", async () => {
+    const crlf = `\uFEFF ${BLOCKED.replace(/\n/g, "\r\n")}`;
+    const { fetchImpl } = world({
+      tickets: { 35: [{ id: 7, identifier: "CYC-7", columnId: 35 }] },
+      comments: { 7: [crlf, "older"] },
+    });
+    const answer = await answerNotices(loop, "CYC", () => [], noop, fetchImpl);
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices[0]).toMatchObject({ kind: "blocked", reason: "测试一直失败" });
+    const base = world(state).fetchImpl;
+    const odd = (async (u: unknown, init: RequestInit) => {
+      if (!String(init.body).includes("execute_read")) return base(u as never, init);
+      const data = { ok: true, status: 200, data: { comments: [] } };
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    expect(await answerNotices(loop, "CYC", () => [], noop, odd)).toEqual({ kind: "unreachable" });
+  });
+
+  test("an escalated review's page shows the conclusion and the PR address", async () => {
+    const { fetchImpl } = world(state);
+    const answer = await answerTicket(loop, "CYC", "CYC-9", noop, fetchImpl);
+    if (answer.kind !== "ok") throw new Error("expected a ticket");
+    expect(answer.ticket.attention).toMatchObject({
+      kind: "review",
+      prUrl: "https://github.com/o/r/pull/9",
+    });
+    expect(answer.ticket.attention?.text).toContain("动了评审边界");
+  });
+
+  test("a ticket in Doing that Loop is working on still has no buttons", () => {
+    expect(actionsOf("started", true, "progress")).toEqual([]);
+    expect(actionsOf("started", true, "review")).toEqual([]);
+    expect(actionsOf("started", true, "blocked")).toEqual(["to_backlog", "to_todo"]);
+  });
+});
+
+describe("system notifications", () => {
+  const blocked = (id: string): Alertable => ({
+    kind: "blocked",
+    identifier: id,
+    title: "",
+    reason: "",
+  });
+  const review = (id: string): Alertable => ({
+    kind: "review",
+    identifier: id,
+    title: "",
+    conclusion: "",
+  });
+  const permission = (id: string): LoopNotice => ({
+    kind: "permission",
+    identifier: id,
+    locationId: "local",
+    sessionId: "s",
+  });
+
+  test("the first read says nothing; a new Blocked or escalated one is told once", () => {
+    expect(newAlerts(undefined, [blocked("CYC-1")])).toEqual([]);
+    const before = new Set(["blocked:CYC-1"]);
+    expect(newAlerts(before, [blocked("CYC-1"), blocked("CYC-2"), review("CYC-3")])).toEqual([
+      blocked("CYC-2"),
+      review("CYC-3"),
+    ]);
+  });
+
+  test("a session waiting on a permission is never told here", () => {
+    expect(newAlerts(new Set(), [permission("CYC-4")])).toEqual([]);
+  });
+
+  test("the poller tells a new one once, not again while it stays, and again if it returns", async () => {
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const told: Alertable[] = [];
+    const poller = noticePoller({
+      projects: async () => [
+        { name: "C", projectKey: "CYC", repo: { displayName: "o/r", forge: "github" } },
+      ],
+      read: async () => answer,
+      alert: (_k, n) => told.push(n),
+    });
+    await poller.tick(); // first read: nothing
+    answer = { kind: "ok", notices: [blocked("CYC-1"), permission("CYC-2")] };
+    await poller.tick();
+    await poller.tick();
+    expect(told.map((n) => n.identifier)).toEqual(["CYC-1"]);
+    answer = { kind: "unreachable" }; // a failed read changes nothing
+    await poller.tick();
+    answer = { kind: "ok", notices: [blocked("CYC-1")] };
+    await poller.tick();
+    expect(told).toHaveLength(1);
+    answer = { kind: "ok", notices: [] };
+    await poller.tick();
+    answer = { kind: "ok", notices: [blocked("CYC-1")] };
+    await poller.tick();
+    expect(told).toHaveLength(2);
+  });
+});
+
+describe("the notification itself", () => {
+  const make = (focused: boolean) => {
+    const shown: { title: string; body: string }[] = [];
+    const opened: string[] = [];
+    const tracked: string[] = [];
+    let click = () => {};
+    const win = {
+      isFocused: () => focused,
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      restore: noop,
+      show: noop,
+      focus: noop,
+    };
+    const alert = showAlert({
+      window: () => win,
+      supported: () => true,
+      create: (o) => {
+        shown.push(o);
+        return {
+          show: noop,
+          on: (e, l) => {
+            if (e === "click") click = l;
+          },
+        };
+      },
+      activate: noop,
+      say: (k) => `say ${k}`,
+      open: (_p, id) => opened.push(id),
+      track: (k) => tracked.push(k),
+    });
+    return { alert, shown, opened, tracked, click: () => click() };
+  };
+  const notice: Alertable = {
+    kind: "blocked",
+    identifier: "CYC-1",
+    title: "Fix it",
+    reason: "secret reason",
+  };
+
+  test("shown while the window is not in front; pressing it opens the ticket; only the kind is reported", () => {
+    const m = make(false);
+    m.alert("CYC", notice);
+    expect(m.shown).toEqual([{ title: "CYC-1 Fix it", body: "say blocked" }]);
+    m.click();
+    expect(m.opened).toEqual(["CYC-1"]);
+    expect(m.tracked).toEqual(["blocked"]);
+    expect(JSON.stringify(m.tracked)).not.toContain("secret");
+  });
+
+  test("not shown while the window is in front", () => {
+    const m = make(true);
+    m.alert("CYC", notice);
+    expect(m.shown).toEqual([]);
+  });
+});
+
+describe("overlapping ticks", () => {
+  test("a tick that finds the last still reading does nothing, so a new Notice is told once", async () => {
+    let release = () => {};
+    let calls = 0;
+    const told: string[] = [];
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const poller = noticePoller({
+      projects: async () => [
+        { name: "C", projectKey: "CYC", repo: { displayName: "o/r", forge: "github" } },
+      ],
+      read: async () => {
+        calls += 1;
+        if (calls === 2) await new Promise<void>((r) => (release = r));
+        return answer;
+      },
+      alert: (_k, n) => told.push(n.identifier),
+    });
+    await poller.tick();
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    const slow = poller.tick();
+    await poller.tick();
+    release();
+    await slow;
+    expect(told).toEqual(["CYC-1"]);
+  });
+});
+
+describe("a Notice that was not shown", () => {
+  test("is offered again until it is shown, then not again", async () => {
+    let shown = false;
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const told: string[] = [];
+    const poller = noticePoller({
+      projects: async () => [
+        { name: "C", projectKey: "CYC", repo: { displayName: "o/r", forge: "github" } },
+      ],
+      read: async () => answer,
+      alert: (_k, n) => {
+        if (!shown) return false; // the window is in front
+        told.push(n.identifier);
+        return true;
+      },
+    });
+    await poller.tick();
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    await poller.tick();
+    shown = true;
+    await poller.tick();
+    await poller.tick();
+    expect(told).toEqual(["CYC-1"]);
+  });
+});
+
+describe("a Project that is no longer listed", () => {
+  test("is forgotten, so listing it again is a first read", async () => {
+    let listed = true;
+    const told: string[] = [];
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const poller = noticePoller({
+      projects: async () =>
+        listed
+          ? [{ name: "C", projectKey: "CYC", repo: { displayName: "o/r", forge: "github" } }]
+          : [],
+      read: async () => answer,
+      alert: (_k, n) => told.push(n.identifier),
+    });
+    await poller.tick();
+    listed = false;
+    await poller.tick();
+    listed = true;
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    await poller.tick(); // first read again: what is there is not news
+    expect(told).toEqual([]);
+  });
+});
+
+describe("round 3 rules", () => {
+  const project = {
+    name: "C",
+    projectKey: "CYC",
+    repo: { displayName: "o/r", forge: "github" as const },
+  };
+
+  test("a Loop server that does not answer forgets nothing: what appeared meanwhile is told", async () => {
+    let up = true;
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const told: string[] = [];
+    const poller = noticePoller({
+      projects: async () => {
+        if (!up) throw new Error("no answer");
+        return [project];
+      },
+      read: async () => answer,
+      alert: (_k, n) => told.push(n.identifier),
+    });
+    await poller.tick();
+    up = false;
+    await poller.tick();
+    up = true;
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    await poller.tick();
+    expect(told).toEqual(["CYC-1"]);
+  });
+
+  test("a Notice withheld while the window is in front is offered twice at most", async () => {
+    let offers = 0;
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const poller = noticePoller({
+      projects: async () => [project],
+      read: async () => answer,
+      alert: () => {
+        offers += 1;
+        return false;
+      },
+    });
+    await poller.tick();
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    for (let i = 0; i < 5; i++) await poller.tick();
+    expect(offers).toBe(2);
+  });
+
+  test("a newest PR comment with no header is not an escalation, and does not fall back to an older one", async () => {
+    const { fetchImpl } = world({
+      tickets: { 34: [{ id: 1, identifier: "CYC-1", columnId: 34 }] },
+      comments: { 1: ["已开 PR：https://github.com/o/r/pull/9", REVIEW] },
+    });
+    expect(await answerNotices(loop, "CYC", () => [], noop, fetchImpl)).toEqual({
+      kind: "ok",
+      notices: [],
+    });
+  });
+
+  test("a Blocked reason older than the move into Blocked is not shown as this one's", async () => {
+    const base = world({
+      tickets: { 35: [{ id: 7, identifier: "CYC-7", columnId: 35 }] },
+      comments: {},
+    }).fetchImpl;
+    const old = (async (u: unknown, init: RequestInit) => {
+      const body = String(init.body);
+      if (body.includes("list_issues")) {
+        const data = [
+          {
+            id: 7,
+            identifier: "CYC-7",
+            title: "T",
+            columnId: 35,
+            statusSince: "2026-03-01T00:00:00Z",
+          },
+        ];
+        return new Response(
+          JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+        );
+      }
+      if (!body.includes("execute_read")) return base(u as never, init);
+      const data = {
+        ok: true,
+        status: 200,
+        data: { items: [{ id: 1, createdAt: "2026-01-01T00:00:00Z", body: BLOCKED }] },
+      };
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, old);
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices[0]).toMatchObject({ kind: "blocked", reason: "" });
+  });
+});

@@ -18,9 +18,12 @@ import type {
   LoopChat,
   LoopChatFailure,
   LoopChatResult,
+  LoopNotice,
+  LoopNoticesAnswer,
   LoopProjectsAnswer,
   LoopTicket,
   LoopTicketAnswer,
+  LoopTicketDetail,
 } from "@cycle/ui/api";
 
 const PROJECTS_TIMEOUT_MS = 3000;
@@ -151,13 +154,29 @@ const rowsOf = (value: unknown): unknown[] => {
   throw new Error("unrecognized list");
 };
 
-type Column = { id: number; name: string; stateType: string };
+type Column = { id: number; name: string; stateType: string; position?: number };
 
-/** The buttons a ticket gets: Done has none, and in Doing a ticket with `auto` is Loop's, so it has none either. */
-export const actionsOf = (stateType: string, auto: boolean): LoopAction[] => {
+/** What a started column is for. Loop's own convention (tools/auto-loop/src/project.ts): the 1st is In Progress, the 2nd In Review, the 3rd Blocked, in board order. */
+export type Role = "progress" | "review" | "blocked";
+
+export const roleOf = (columns: Column[], column: Column): Role | undefined => {
+  const started = columns.filter((c) => c.stateType === "started");
+  // By `position` only when every one has it: a mix of positions and array order could swap two roles.
+  const ordered = started.every((c) => typeof c.position === "number")
+    ? [...started].sort((a, b) => Number(a.position) - Number(b.position))
+    : started;
+  const nth = ordered.findIndex((c) => c.id === column.id);
+  return nth === 0 ? "progress" : nth === 1 ? "review" : nth === 2 ? "blocked" : undefined;
+};
+
+/**
+ * The buttons a ticket gets: Done has none, and in Doing a ticket with `auto` is Loop's, so it has none either. The
+ * exception is Blocked: Loop has stopped there and waits for a person, who puts it back to Todo (or Backlog).
+ */
+export const actionsOf = (stateType: string, auto: boolean, role?: Role): LoopAction[] => {
   if (stateType === "backlog") return ["approve"];
   if (stateType === "unstarted") return ["to_backlog"];
-  if (stateType === "started") return auto ? [] : ["to_backlog", "to_todo"];
+  if (stateType === "started") return auto && role !== "blocked" ? [] : ["to_backlog", "to_todo"];
   return [];
 };
 
@@ -228,7 +247,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
               title: String(r.title ?? ""),
               priority: typeof r.priority === "string" ? r.priority : null,
               column: column.name,
-              actions: actionsOf(column.stateType, auto),
+              actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
               chat: chatOf(column.stateType),
             };
           });
@@ -386,11 +405,17 @@ export const answerTicket = async (
   const tracker = await withKey(loop, fetchImpl);
   if (!tracker) return { kind: "no_key" };
   try {
-    const { issue, column, auto } = await readIssue(
+    const { issue, column, columns, auto } = await readIssue(
       tracker,
       parsed.projectKey,
       parsed.sequenceNumber,
     );
+    const role = roleOf(columns, column);
+    const attention =
+      role === "blocked" || role === "review"
+        ? // The page never needed the comments to show a ticket: without them it shows it without the reason.
+          await attentionOf(tracker, issue, role).catch(() => undefined)
+        : undefined;
     const body = typeof issue.description === "string" ? issue.description : "";
     track("loop_ticket_opened", {});
     return {
@@ -400,9 +425,10 @@ export const answerTicket = async (
         title: String(issue.title ?? ""),
         priority: typeof issue.priority === "string" ? issue.priority : null,
         column: column.name,
-        actions: actionsOf(column.stateType, auto),
+        actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
         chat: chatOf(column.stateType),
         body,
+        ...(attention ? { attention } : {}),
         acceptance: acceptanceOf(body),
         links: linksOf(issue, body),
       },
@@ -448,7 +474,7 @@ export const actOnTicket = async (
       parsed.projectKey,
       parsed.sequenceNumber,
     );
-    if (!actionsOf(column.stateType, auto).includes(action))
+    if (!actionsOf(column.stateType, auto, roleOf(columns, column)).includes(action))
       return done({ kind: "failed", reason: "not_allowed" }, action);
     // The first column of the kind, in the board's own order: Paused is also unstarted but is not where Todo is.
     const first = (type: string) =>
@@ -555,4 +581,248 @@ export const startTicketChat = async (
     return { kind: "failed", reason: "offline", sessionId: made, locationId: deps.locationId };
   }
   return done("started", { kind: "started", locationId: deps.locationId, sessionId: made });
+};
+
+// ---- Notices: what needs a person (docs/protocol.md §17) ----
+
+/** What Loop's `#block` writes: `自动化在「<阶段>」卡住了：<原因>`, then the Dev session's name in `「[<工单号>] Dev」`. */
+const BLOCKED_COMMENT =
+  /^自动化在「[^」]*」卡住了：([\s\S]*?)(?:\n\n现场已保留：Dev 会话「([^」]+)」|$)/;
+/** How Loop's comments say a person must decide: the review escalated, hit its round limit, failed, or auto-merge could not be turned on. */
+const ESCALATED = ["升级给人", "需要人工处理"];
+
+/**
+ * Loop writes a fixed header line after the PR line; the words are looked for there only. The line of a merged review
+ * carries the review's own sentence (`merge：<summary>`), which is free text and says nothing of a person.
+ */
+const escalated = (afterPrLine: string): boolean => {
+  const header = afterPrLine.split("\n", 1)[0] ?? "";
+  return !/结论为合并（merge：/.test(header) && ESCALATED.some((w) => header.includes(w));
+};
+const REVIEW_COMMENT = /^已开 PR：(\S+)(?:\n([\s\S]*))?$/;
+/** The longest reason or conclusion kept: they are comments, and may be long. */
+const TEXT_MAX = 1500;
+
+type Attention = NonNullable<LoopTicketDetail["attention"]>;
+
+const cut = (text: string): string =>
+  text.length > TEXT_MAX ? `${text.slice(0, TEXT_MAX - 1)}…` : text;
+
+/**
+ * The comments of a ticket, newest first by time (then id): the order the tracker answers in is not relied on.
+ * `list_issue_activity` is not a listed tool: it goes through `execute_read`.
+ */
+type Comment = { body: string; at: number | undefined };
+
+const commentsOf = async (t: Tracker, issueId: unknown): Promise<Comment[]> => {
+  const answer = await callTool(t, "execute_read", {
+    name: "list_issue_activity",
+    arguments: { issueId, filter: "comments", order: "desc", limit: 25 },
+  });
+  const items = unwrap(answer).items;
+  // Not a list of comments: a failure to read, never "no comments" (that would clear or invent a Notice).
+  if (!Array.isArray(items)) throw new Error("unrecognized comments");
+  return items
+    .map(asRecord)
+    .filter((i) => typeof i.body === "string")
+    .sort(
+      (x, y) =>
+        String(y.createdAt ?? "").localeCompare(String(x.createdAt ?? "")) ||
+        Number(y.id ?? 0) - Number(x.id ?? 0),
+    )
+    .map((i) => {
+      const at = Date.parse(String(i.createdAt ?? ""));
+      return {
+        body: (i.body as string)
+          .replace(/^\uFEFF/, "")
+          .replace(/\r\n?/g, "\n")
+          .trim(),
+        at: Number.isNaN(at) ? undefined : at,
+      };
+    });
+};
+
+/** What was read of a ticket's comments, until the ticket changes: the poll reads every Blocked and In Review ticket. */
+const commentCache = new Map<string, { at: number; comments: Comment[] }>();
+const CACHE_MAX = 200;
+/** A cached read is used for this long at most: a comment added without the ticket's update time moving is still read. */
+const CACHE_TTL_MS = 2 * 60_000;
+const CONCURRENCY = 4;
+/** How long before the ticket's move into Blocked Loop's own comment may have been written. */
+const BLOCK_COMMENT_SLACK_MS = 2 * 60_000;
+
+const cachedComments = async (t: Tracker, issue: Record<string, unknown>): Promise<Comment[]> => {
+  const key = `${t.url}#${String(issue.id)}#${String(issue.columnId)}#${String(issue.updatedAt ?? "")}`;
+  // Without an update time there is nothing to tell a changed ticket by: read it.
+  const cacheable = typeof issue.updatedAt === "string";
+  const hit = cacheable ? commentCache.get(key) : undefined;
+  if (hit !== undefined && Date.now() - hit.at < CACHE_TTL_MS) return hit.comments;
+  const comments = await commentsOf(t, issue.id);
+  if (cacheable) {
+    if (commentCache.size >= CACHE_MAX) commentCache.clear();
+    commentCache.set(key, { at: Date.now(), comments });
+  }
+  return comments;
+};
+
+/** Why a Blocked or In Review ticket needs a person, from Loop's newest matching comment. Undefined: not for a person. */
+export const attentionOf = async (
+  t: Tracker,
+  issue: Record<string, unknown>,
+  role: "blocked" | "review",
+): Promise<Attention | undefined> => {
+  if (role === "blocked") {
+    let comments: Comment[] = [];
+    try {
+      comments = await cachedComments(t, issue);
+    } catch {
+      // A comment that cannot be read does not hide a Blocked ticket: it waits for a person, reason or not.
+    }
+    // Loop comments, then moves the ticket: a comment from well before the ticket came to Blocked is an old reason
+    // (a person moved it here by hand), and is not shown as this one's.
+    const since = Date.parse(String(issue.statusSince ?? ""));
+    for (const { body, at } of comments) {
+      const m = BLOCKED_COMMENT.exec(body);
+      if (m && at !== undefined && !Number.isNaN(since) && at < since - BLOCK_COMMENT_SLACK_MS)
+        break;
+      if (m)
+        return {
+          kind: "blocked",
+          text: cut((m[1] ?? "").trim()),
+          ...(m[2] ? { session: m[2] } : {}),
+        };
+    }
+    return { kind: "blocked", text: "" };
+  }
+  // Whether a review needs a person is only known from the comments: a read that fails throws, so that no In Review
+  // ticket is taken for an escalation on a guess (the caller reports the read as failed and keeps what it knew).
+  const comments = await cachedComments(t, issue);
+  // Only the newest `已开 PR：` comment counts: an older escalation is stale once a later round has passed.
+  for (const { body } of comments) {
+    const m = REVIEW_COMMENT.exec(body);
+    if (!m) continue;
+    return escalated(m[2] ?? "")
+      ? { kind: "review", text: cut((m[2] ?? "").trim()), prUrl: m[1] ?? "" }
+      : undefined;
+  }
+  // In Review for another reason (a PR merged outside the loop): nothing for a person to decide.
+  return undefined;
+};
+
+const TITLE_OF_DEV = /^\[([A-Za-z0-9_-]+-\d+)\] Dev$/;
+
+/** The ticket a Dev session belongs to, from its title `[CYC-1] Dev`. */
+export const ticketOfSession = (
+  title: string | undefined,
+  projectKey: string,
+): string | undefined => {
+  const id = TITLE_OF_DEV.exec((title ?? "").trim())?.[1];
+  return id?.startsWith(`${projectKey}-`) ? id : undefined;
+};
+
+export type SessionLike = {
+  locationId: string;
+  sessionId: string;
+  title?: string;
+  state: string;
+  archived: boolean;
+};
+
+const URGENCY = { permission: 0, blocked: 1, review: 2 } as const;
+
+/**
+ * The Notices of a Project, most urgent first: a session waiting on an answer (it is stuck right now), then Blocked,
+ * then escalated reviews. A Notice is derived from state, never stored: it is gone when its cause is.
+ */
+export const noticesOf = (
+  tickets: Extract<LoopNotice, { kind: "blocked" | "review" }>[],
+  sessions: readonly SessionLike[],
+  projectKey: string,
+): LoopNotice[] => {
+  const waiting: LoopNotice[] = [];
+  const seen = new Set<string>();
+  for (const s of sessions) {
+    if (s.state !== "requires_action" || s.archived) continue;
+    const identifier = ticketOfSession(s.title, projectKey);
+    if (identifier === undefined || seen.has(identifier)) continue;
+    seen.add(identifier);
+    waiting.push({
+      kind: "permission",
+      identifier,
+      locationId: s.locationId,
+      sessionId: s.sessionId,
+    });
+  }
+  const rank = (n: LoopNotice) => URGENCY[n.kind];
+  return [...waiting, ...tickets].sort((a, b) => rank(a) - rank(b));
+};
+
+/** The Blocked and escalated tickets of a Project (not the sessions: those are the daemon's). */
+export const readTicketNotices = async (
+  t: Tracker,
+  projectKey: string,
+): Promise<Extract<LoopNotice, { kind: "blocked" | "review" }>[]> => {
+  const project = unwrap(await callTool(t, "get_project", { projectKey }));
+  const columns = columnsOf(project);
+  if (columns.length === 0) throw new Error("no columns");
+  const out: Extract<LoopNotice, { kind: "blocked" | "review" }>[] = [];
+  for (const column of columns) {
+    const role = roleOf(columns, column);
+    if (role !== "blocked" && role !== "review") continue;
+    const rows = rowsOf(
+      await callTool(t, "list_issues", { projectKey, columnId: column.id, limit: LIST_LIMIT }),
+    );
+    const read: { r: Record<string, unknown>; attention: Attention | undefined }[] = [];
+    let next = 0;
+    // A few at a time: a column can be long, and a rate-limited tracker fails the whole read.
+    const lane = async () => {
+      while (next < rows.length) {
+        const r = asRecord(rows[next++]);
+        read.push({ r, attention: await attentionOf(t, r, role) });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, lane));
+    // The lanes finish in any order; the page's order is the tracker's.
+    read.sort((x, y) => rows.indexOf(x.r) - rows.indexOf(y.r));
+    for (const { r, attention } of read) {
+      if (attention === undefined) continue;
+      const base = { identifier: String(r.identifier ?? ""), title: String(r.title ?? "") };
+      out.push(
+        role === "blocked"
+          ? { kind: "blocked", ...base, reason: attention.text }
+          : { kind: "review", ...base, conclusion: attention.text },
+      );
+    }
+  }
+  return out;
+};
+
+/** The page asked for the Notices: the key is read, the tickets are read, the sessions come from main's own lists. */
+export const answerNotices = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  sessions: () => Promise<readonly SessionLike[]> | readonly SessionLike[],
+  track: (
+    event: "loop_notices_read",
+    props: { permission: number; blocked: number; review: number },
+  ) => void,
+  fetchImpl?: typeof fetch,
+): Promise<LoopNoticesAnswer> => {
+  if (typeof projectKey !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(projectKey))
+    return { kind: "unreachable" };
+  const tracker = await withKey(loop, fetchImpl);
+  if (!tracker) return { kind: "no_key" };
+  try {
+    const tickets = await readTicketNotices(tracker, projectKey);
+    const notices = noticesOf(tickets, await sessions(), projectKey);
+    const count = (kind: LoopNotice["kind"]) => notices.filter((n) => n.kind === kind).length;
+    track("loop_notices_read", {
+      permission: count("permission"),
+      blocked: count("blocked"),
+      review: count("review"),
+    });
+    return { kind: "ok", notices };
+  } catch {
+    return { kind: "unreachable" };
+  }
 };

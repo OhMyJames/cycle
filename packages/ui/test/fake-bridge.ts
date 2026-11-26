@@ -14,6 +14,7 @@ import type {
   LoopActResult,
   LoopBoardAnswer,
   LoopChatResult,
+  LoopNoticesAnswer,
   LoopProjectsAnswer,
   LoopTicketAnswer,
   PlanUsage,
@@ -81,6 +82,7 @@ export const fakeBridge = (
     loopAct?: LoopActResult;
     /** What starting a conversation about a ticket comes to. Default: it started. */
     loopChat?: LoopChatResult;
+    loopNotices?: Record<string, LoopNoticesAnswer>;
     /** What the daemon says it can do. Default: all of it. */
     capabilities?: {
       queue: boolean;
@@ -690,6 +692,11 @@ export const fakeBridge = (
       "loopChat",
       async (_projectKey: string, _identifier: string): Promise<LoopChatResult> =>
         options.loopChat ?? { kind: "started", locationId: "local", sessionId: "chat-1" },
+    ),
+    loopNotices: record(
+      "loopNotices",
+      async (projectKey: string): Promise<LoopNoticesAnswer> =>
+        options.loopNotices?.[projectKey] ?? { kind: "no_key" },
     ),
     loopAct: record(
       "loopAct",
