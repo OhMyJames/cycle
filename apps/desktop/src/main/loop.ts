@@ -255,7 +255,8 @@ const pendingOf = async (
   projectKey: string,
   row: Record<string, unknown>,
 ): Promise<NonNullable<LoopTicket["pending"]>> => {
-  let criteria = typeof row.description === "string" ? acceptanceOf(row.description).length : 0;
+  let criteria: number | undefined =
+    typeof row.description === "string" ? acceptanceOf(row.description).length : undefined;
   try {
     if (typeof row.description !== "string") {
       const parsed = parseIdentifier(projectKey, row.identifier);
@@ -266,9 +267,9 @@ const pendingOf = async (
       ).length;
     }
     const reason = reasonOf(await cachedComments(t, row)) ?? "";
-    return { reason, criteria };
+    return criteria === undefined ? { reason } : { reason, criteria };
   } catch {
-    return { reason: "", criteria };
+    return criteria === undefined ? { reason: "" } : { reason: "", criteria };
   }
 };
 
@@ -587,7 +588,8 @@ const MANY_MAX = 100;
 const REASON_COMMENT_MAX = 2000;
 
 /**
- * A batch over the tickets waiting for approval (CYC-451). Nothing is written without `confirmed`. Each ticket is read
+ * A batch over the tickets waiting for approval (CYC-451). The analytics event counts batches that were carried out
+ * (a refusal before any write, such as no confirmation, is not one). Nothing is written without `confirmed`. Each ticket is read
  * again just before its write and is only touched while it still is in Backlog with `待批准` (else `skipped`); one that
  * fails does not stop the others. `labelIds` replaces all labels, so it is built from the fresh ones.
  */

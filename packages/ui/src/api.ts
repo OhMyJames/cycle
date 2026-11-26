@@ -1354,9 +1354,9 @@ export type LoopTicket = {
   /**
    * A Backlog ticket the planning node shaped and left for a person to approve (it has the `待批准` label). `reason` is
    * the summary of Loop's newest `Loop 规划` comment, empty when it could not be read; `criteria` how many acceptance
-   * criteria the body has.
+   * criteria the body has (absent when the body could not be read).
    */
-  pending?: { reason: string; criteria: number };
+  pending?: { reason: string; criteria?: number };
 };
 
 export type LoopChat = "new" | "watch" | "none";

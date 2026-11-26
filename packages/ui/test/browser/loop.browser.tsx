@@ -561,3 +561,28 @@ test("with nothing waiting for approval there is no group", async () => {
   await screen.findByRole("region", { name: "Backlog" });
   expect(screen.queryByRole("region", { name: "Awaiting approval" })).toBeNull();
 });
+
+test("a batch return that fails is said in the group, and the picks stay", async () => {
+  const { user, calls } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Backlog: [waiting(720, "high", "Why")] }) },
+    loopActMany: { kind: "failed", reason: "offline" },
+  });
+  const group = await screen.findByRole("region", { name: "Awaiting approval" });
+  await user.click(within(group).getByRole("checkbox", { name: "Select CYC-720" }));
+  await user.click(within(group).getByRole("button", { name: "Return selected" }));
+  expect(await within(group).findByRole("alert")).toBeTruthy();
+  expect(calls.filter(([name]) => name === "loopActMany")).toHaveLength(1);
+  expect(
+    (within(group).getByRole("checkbox", { name: "Select CYC-720" }) as HTMLInputElement).checked,
+  ).toBe(true);
+});
+
+test("a Backlog of only waiting tickets does not say it is empty", async () => {
+  await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Backlog: [waiting(730, "high", "Why")] }) },
+  });
+  const column = await screen.findByRole("region", { name: "Backlog" });
+  expect(within(column).queryByText("Nothing here")).toBeNull();
+});

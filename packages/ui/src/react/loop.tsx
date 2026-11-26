@@ -6,8 +6,9 @@
 // The board's layout (CYC-431) follows SakaniUI's KanbanBoardBlock (https://www.sakaniui.com/docs/blocks/kanban-board,
 // MIT, samzydd/Sakaniui): equal columns side by side, a head of dot + name + count, cards of id and priority, a title,
 // and the buttons at the foot. Only the layout is borrowed: nothing of it is imported or copied, and none of its
-// dragging, "Move to" menu, arrow-key moves or multi-select is here, as they would move a ticket without the
-// confirmation CYC-387 asks for. The columns are itsaplan's own, in its order.
+// dragging, "Move to" menu or arrow-key moves is here, as they would move a ticket without the confirmation CYC-387
+// asks for. The one multi-select is the group of tickets waiting for approval (CYC-451): approving a batch asks first and
+// lists the titles; returning a batch is the way to say no, and only takes labels off and puts Loop 跳过 on. The columns are itsaplan's own, in its order.
 import { Button } from "@ui-sdk/react/button";
 import { Input } from "@ui-sdk/react/input";
 import {
@@ -385,6 +386,7 @@ function PendingGroup({
   const [why, setWhy] = useState("");
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<LoopManyResult | undefined>();
+  const [problem, setProblem] = useState<string | undefined>();
   // Stable by priority, then as the tracker lists them.
   const sorted = [...tickets].sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
   // A ticket gone from the group (the board was read again) is not still chosen.
@@ -399,6 +401,7 @@ function PendingGroup({
   const run = async (action: "approve_many" | "return_many"): Promise<string | undefined> => {
     setBusy(true);
     setOutcome(undefined);
+    setProblem(undefined);
     const result = await store.actOnLoopMany(
       projectKey,
       action,
@@ -407,7 +410,11 @@ function PendingGroup({
       action === "return_many" ? why : undefined,
     );
     setBusy(false);
-    if (result.kind === "failed") return t(`loop.fail.${result.reason}`);
+    if (result.kind === "failed") {
+      const words = t(`loop.fail.${result.reason}`);
+      setProblem(words);
+      return words;
+    }
     setOutcome(result);
     setPicked(new Set());
     if (action === "return_many") setWhy("");
@@ -445,7 +452,9 @@ function PendingGroup({
                 <span data-slot="loop-ticket-priority">{ticket.priority}</span>
               ) : null}
               <span data-slot="loop-ticket-meta">
-                {t("loop.pending.criteria", { count: ticket.pending?.criteria ?? 0 })}
+                {ticket.pending?.criteria !== undefined
+                  ? t("loop.pending.criteria", { count: ticket.pending.criteria })
+                  : null}
               </span>
             </span>
             <button
@@ -485,6 +494,11 @@ function PendingGroup({
           {t("loop.pending.approve")}
         </Button>
       </div>
+      {problem !== undefined ? (
+        <p data-slot="loop-problem" role="alert">
+          {problem}
+        </p>
+      ) : null}
       {outcome?.kind === "done" ? (
         <p data-slot="loop-problem" role="status">
           {t("loop.pending.done", {
@@ -584,7 +598,9 @@ function Column({
       ) : null}
       {open ? (
         tickets.length === 0 ? (
-          <p data-slot="loop-column-empty">{t("loop.column.empty")}</p>
+          (pending?.length ?? 0) > 0 ? null : (
+            <p data-slot="loop-column-empty">{t("loop.column.empty")}</p>
+          )
         ) : (
           <ul data-slot="loop-tickets">
             {visible.map((ticket) => (
