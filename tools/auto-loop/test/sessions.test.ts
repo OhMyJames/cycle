@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Daemon, listenUnix } from "@cycle/daemon";
 import { CycleErrorCode } from "@cycle/protocol";
+// The fake agent is the daemon's own test double; there is no package export for it, so this test reaches into
+// apps/daemon/test by path (and `@cycle/daemon` is a devDependency for the same reason).
 import { fakeAgent } from "../../../apps/daemon/test/fake-agent.ts";
 import { DaemonSessions } from "../src/sessions.ts";
 
@@ -19,13 +21,12 @@ afterEach(async () => {
 });
 
 const setup = async (fake: ReturnType<typeof fakeAgent>) => {
-  const daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
+  let daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
   let daemonOpen = true;
   const socket = join(dir, "d.sock");
-  const server = await listenUnix({
-    path: socket,
-    onConnection: ({ stream }) => void daemon.accept(stream),
-  });
+  const listen = () =>
+    listenUnix({ path: socket, onConnection: ({ stream }) => void daemon.accept(stream) });
+  let server = await listen();
   const sessions = new DaemonSessions(socket, () => {});
   await sessions.start();
   cleanup.push(async () => {
@@ -42,8 +43,15 @@ const setup = async (fake: ReturnType<typeof fakeAgent>) => {
   return {
     sessions,
     sessionId,
+    restartDaemon: async () => {
+      daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
+      daemonOpen = true;
+      server = await listen();
+    },
     stopDaemon: async () => {
       daemonOpen = false;
+      // No socket while the daemon is down, as when Cycle is being updated.
+      server.close();
       await daemon.close();
     },
   };
@@ -56,7 +64,7 @@ test("a turn the daemon's stop ended is marked interrupted", async () => {
   const running = new Promise<void>((r) => {
     started = r;
   });
-  const { sessions, sessionId, stopDaemon } = await setup(
+  const { sessions, sessionId, stopDaemon, restartDaemon } = await setup(
     fakeAgent({
       onPrompt: async () => {
         started();
@@ -67,6 +75,7 @@ test("a turn the daemon's stop ended is marked interrupted", async () => {
   const turn = sessions.turn(sessionId, "work", context);
   await running;
   await stopDaemon();
+  await restartDaemon();
   const result = await turn;
   expect(result.stopReason).toBe("error");
   expect(result.interrupted).toBe(true);
@@ -90,3 +99,36 @@ test("an error that is not the daemon's stop is not marked", async () => {
   expect(result.stopReason).toBe("error");
   expect(result.interrupted).toBeUndefined();
 }, 15_000);
+
+test("after the daemon stops and comes back, the same session takes the turn again", async () => {
+  let prompts = 0;
+  let started!: () => void;
+  const running = new Promise<void>((r) => {
+    started = r;
+  });
+  const { sessions, sessionId, stopDaemon, restartDaemon } = await setup(
+    fakeAgent({
+      onPrompt: async ({ say }) => {
+        prompts++;
+        if (prompts === 1) {
+          started();
+          return new Promise(() => {});
+        }
+        await say({
+          sessionUpdate: "agent_message_chunk",
+          messageId: "a1",
+          content: { type: "text", text: "again" },
+        });
+        return undefined;
+      },
+    }),
+  );
+  const first = sessions.turn(sessionId, "work", context);
+  await running;
+  await stopDaemon();
+  await restartDaemon();
+  expect((await first).interrupted).toBe(true);
+  const second = await sessions.turn(sessionId, "work", context);
+  expect(second.stopReason).toBe("end_turn");
+  expect(second.text).toContain("again");
+}, 20_000);

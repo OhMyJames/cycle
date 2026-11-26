@@ -140,11 +140,28 @@ export class DaemonSessions implements Sessions {
     return { sessionId, cwd, branch };
   }
 
+  async #connected(limitMs = 120_000): Promise<void> {
+    for (let waited = 0; this.#client.state !== "connected"; waited += 250) {
+      if (this.#client.state === "closed" || waited >= limitMs)
+        throw new Error("daemon unavailable: the connection did not come back");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+
+  /** Waits for the connection to drop (briefly: it may already have) and to come back. */
+  async #reconnected(): Promise<void> {
+    for (let waited = 0; this.#client.state === "connected" && waited < 5_000; waited += 50)
+      await new Promise((r) => setTimeout(r, 50));
+    await this.#connected();
+  }
+
   async turn(
     sessionId: string,
     prompt: string,
     context: { role: SessionRole; worktree: string; timeoutMs: number },
   ): Promise<TurnResult> {
+    // After an update of Cycle the connection is down or coming back: a prompt sent now would be lost.
+    await this.#connected();
     if (!this.#watched.has(sessionId)) {
       try {
         await this.#client.watch(sessionId, context.worktree);
@@ -153,9 +170,6 @@ export class DaemonSessions implements Sessions {
       }
       this.#watched.add(sessionId);
     }
-    // After an update of Cycle the daemon is back before the client is: a prompt sent now would be lost.
-    for (let waited = 0; this.#client.state === "reconnecting" && waited < 120_000; waited += 250)
-      await new Promise((r) => setTimeout(r, 250));
     let finish: () => void = () => {};
     const ended = new Promise<void>((resolve) => {
       finish = resolve;
@@ -177,7 +191,7 @@ export class DaemonSessions implements Sessions {
       elapsed += 1000;
       if (elapsed >= context.timeoutMs && !timedOut) {
         timedOut = true;
-        void this.#client.cancel(sessionId);
+        void this.#client.cancel(sessionId).catch(() => {});
       }
     }, 1000);
     try {
@@ -187,6 +201,10 @@ export class DaemonSessions implements Sessions {
         throw new SessionLost(String(error));
       }
       await ended;
+      // The daemon's stop is on record before the client sees the socket close. Let the connection go and come back
+      // first, or the resend goes over a dying connection and fails as a lost session.
+      clearInterval(timer);
+      if (turn.interrupted) await this.#reconnected();
       return {
         stopReason: turn.stop ?? "error",
         text: turn.text,

@@ -1266,7 +1266,7 @@ export class Pipeline {
     const { config, store } = this.#d;
     for (let resend = 0; ; resend++) {
       const result = await this.#d.sessions.turn(sessionId, prompt, context);
-      if (result.interrupted !== true) return result;
+      if (result.interrupted !== true || result.timedOut) return result;
       if (resend >= config.maxInterruptRetries)
         throw new Blocked(
           `${context.role} 会话的回合被 daemon 反复中断（已重发 ${resend} 次仍被中断）。`,
