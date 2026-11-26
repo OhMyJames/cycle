@@ -154,6 +154,7 @@ export class Pipeline {
   /** The `tuning` in force for new steps: the last one that was read and valid. */
   #tuning: Tuning;
   #lastTuningProblem: string | null = null;
+  #keptNoted = new Set<string>();
   /** The config one step runs with, fixed when it starts: a change to the file does not reach a step under way. */
   readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
@@ -1172,8 +1173,23 @@ export class Pipeline {
     worktree: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<void> {
-    const { config, store } = this.#d;
+    const { config, store: runStore } = this.#d;
     if (!config.releaseNodeModules || run.nodeModulesReleased) return;
+    // The same reason is written once per run, not on every re-entry of the CI wait.
+    const store = {
+      event: async (
+        key: string,
+        kind: string,
+        data?: Record<string, string | number | boolean>,
+      ) => {
+        if (kind === "node_modules_kept") {
+          const id = `${key}:${String(data?.reason)}`;
+          if (this.#keptNoted.has(id)) return;
+          this.#keptNoted.add(id);
+        }
+        await runStore.event(key, kind, data);
+      },
+    };
     const status = await this.#git(["status", "--porcelain"], worktree);
     if (status.code !== 0) {
       await store.event(run.key, "node_modules_kept", { reason: "status_failed" });
@@ -1184,7 +1200,7 @@ export class Pipeline {
       return;
     }
     const listed = await this.#git(
-      ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+      ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
       worktree,
     );
     if (listed.code !== 0) {
@@ -1192,7 +1208,7 @@ export class Pipeline {
       return;
     }
     const dirs = listed.output
-      .split("\n")
+      .split("\0")
       .map((l) => l.trim().replace(/\/+$/, ""))
       .filter(
         (d) =>
@@ -1581,7 +1597,9 @@ export class Pipeline {
     const { config, store } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     // Released while waiting for CI or the merge: installed again before the session starts.
-    await this.#restoreNodeModules(run, worktree, save);
+    // Not in the middle of a conflict merge: an install could fail on a conflicted manifest or rewrite bun.lock.
+    // The restore in #verify installs once the merge is resolved.
+    if (run.conflict?.state !== "dev") await this.#restoreNodeModules(run, worktree, save);
     const progress = await store.readProgress(run.key);
     // A conflict turn: the merge of the base is in the worktree (made again if it is not), and Dev is asked to finish it.
     let conflict: { files: string[]; preMergeSha: string } | undefined;
@@ -2326,7 +2344,6 @@ export class Pipeline {
         );
         if (merged.ok) {
           this.#mirror(run, issue, "merge");
-          await this.#releaseNodeModules(run, worktree, save);
           const outcome = await this.#confirmMerged(run, prUrl, worktree);
           if (outcome === "conflict") {
             // Not delivered: merge the base in (auto-merge is turned off first), then CI and review run again.

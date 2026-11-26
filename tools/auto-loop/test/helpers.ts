@@ -309,7 +309,8 @@ export const makeExec =
     const result = (output: string, code = 0): ExecResult => ({ code, output, timedOut: false });
     if (line.includes("diff --name-only")) return result("packages/client/src/a.ts\n");
     if (line.includes("status --porcelain")) return result(world.dirty ? " M a.ts\n" : "");
-    if (line.includes("ls-files --others --ignored")) return result(world.ignoredDirs);
+    if (line.includes("ls-files -z --others --ignored"))
+      return result(world.ignoredDirs.split("\n").filter(Boolean).join("\0"));
     if (line.includes("rev-parse HEAD")) return result(`${world.headSha}\n`);
     if (world.fetchLog && / fetch /.test(` ${line} `)) {
       world.fetchLog.push("start");
