@@ -12,6 +12,8 @@
 
 门禁依次是:边界检查、Tailwind 生成 css、类型检查(约 1 秒)、lint、常规测试(约 1300 个,两个 worker 并行约 13 秒)。`check.ts` 在最后打印每一步的耗时。
 
+迭代期可以用 `bun run check:changed`:按当前分支相对 main 的 merge-base 的改动加上未提交的改动,只跑受影响的包(含依赖它们的包)的测试;改了根 `package.json`、`bun.lock`、根 `tsconfig*.json`、`biome.json`、`bunfig.toml`、`.github/**`、`scripts/check*`、`scripts/boundaries.ts` 时跑全部测试,只改 `docs/` 之类不属于任何包的文件时什么都不跑。选包逻辑在 `scripts/changed.ts`。它不取代门禁,提交前仍跑 `bun run check`。
+
 测试用 `bun test --parallel=2`:2026-11-23 量,一个进程跑约 24 秒、峰值约 0.63 GB,两个 worker 约 13 秒、各进程加起来约 1.2 GB。测试大多在等 I/O 和子进程,2 核上也能并起来;不要再往上加 worker,4 GB 的机器要留给编辑器和应用本身。
 
 **界面测试在真实浏览器里跑**(`packages/ui/test/browser/*.browser.tsx`,约 200 个):Vitest 的浏览器模式,经 Playwright 启动无界面的 Chromium,不开窗口、不抢焦点。页面加载应用自己的样式表,窗口 1200×800(和桌面端一样),所以布局、可见性、焦点、选区都是真的。点击和按键用 `vitest/browser` 的 `userEvent`,是浏览器自己的输入事件:点击前等元素可见、可用、静止,和人一样点不到被盖住或已禁用的按钮;输入框(Lexical)是真的敲字和按键,不再走编辑器的命令。Motion 的动画跳过,CSS 的过渡照常跑。第一次运行时 `test:browser` 会自己下载 Chromium(约 100 MB,之后只检查一下,约半秒)。失败时 `packages/ui/.vitest/` 里有那一刻的截图,CI 会上传它。
