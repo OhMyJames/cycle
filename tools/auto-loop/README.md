@@ -53,6 +53,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 | `turnTimeoutMinutes`                                     | 30         | 1–240  |
 | `commandTimeoutMinutes`                                  | 20         | 1–240  |
 | `releaseNodeModules`（布尔，见下）                       | false      | —      |
+| `blockedReminderDays`（Blocked 多少天后提醒，0 为关闭）  | 7          | 0–365  |
 
 除 `networkRetryDelaysSeconds`（整数数组）和 `releaseNodeModules`（布尔）外全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
 
@@ -73,7 +74,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 - 卡住（Blocked）时保留 worktree 和会话；处理后把工单放回 Todo，会在原会话里继续（会话丢失则新开会话，凭 criteria + 进度 + git log 接手）。
 - verify 防抖（CYC-438）：检查命令（测试层或验收命令）非超时失败时，先原地重跑该命令，最多 `maxVerifyRetries` 次（默认 1，0 为关闭），每次重跑记 `verify_retried` 事件（`round`、`command`、`attempt`、`passed`）。重跑通过则按通过处理，不记 `round_failed`、不扣修复轮数、不唤醒 Dev；重试用完仍失败才按原流程回 Dev。超时的命令不重跑。
 - 无人值守的权限请求：基线白名单自动放行，其余留在会话里等你在桌面端批准。
-- 清理（CYC-379）：每轮选单前检查已结束的 run；工单为 Done 且 PR 已合并时（调研 run 没有 PR，只看工单在 Done），删除它自己的 worktree 和本地分支。不强删：有未提交改动则只记 `cleanup_skipped_dirty` 事件留给人；不动会话和远端分支。
+- 清理（CYC-379、CYC-449）：每轮选单前检查 Done 和 Blocked 的 run（正在被某个 step 处理的不动）。工单为 Done 且 PR 已合并（调研 run 没有 PR，只看工单在 Done），或工单在 Canceled 时，删除它自己的 worktree 和本地分支。不强删：有未提交改动则只记一次 `cleanup_skipped_dirty` 事件留给人；不动会话和远端分支，不动人手工开的 worktree。Done 但 PR 被关闭未合并：记一次 `cleanup_skipped_unmerged`，不删。Blocked 超过 `blockedReminderDays`（按最后一次写 run 的时间算）：记一次 `blocked_stale` 事件，只提醒不删；放回 Todo 后重新计时。
 - 状态在 `<stateDir>/runs/<KEY>/`（run.json、criteria.json、progress.md）和 `events.jsonl`，都在 worktree 之外。
 
 ## 并发（--workers）
