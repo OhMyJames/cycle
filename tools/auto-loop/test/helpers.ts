@@ -137,6 +137,7 @@ export type Script = {
 
 export class FakeSessions implements Sessions {
   created: string[] = [];
+  inputs: { role: SessionRole; model: string | undefined; effort: string | undefined }[] = [];
   turns: string[] = [];
   prompts: { sessionId: string; role: SessionRole; prompt: string }[] = [];
   deleted = 0;
@@ -158,7 +159,8 @@ export class FakeSessions implements Sessions {
       createError,
     };
   }
-  async create(input: { role: SessionRole; cwd: string }) {
+  async create(input: { role: SessionRole; cwd: string; model?: string; effort?: string }) {
+    this.inputs.push({ role: input.role, model: input.model, effort: input.effort });
     const err = this.script.createError[input.role];
     if (Array.isArray(err)) {
       const next = err.shift();
@@ -235,6 +237,8 @@ export type World = {
   mergeTreeOutput: string;
   /** When set, every `git fetch` logs start/end here and takes a few ms. */
   fetchLog?: string[];
+  /** Whether auto-merge is on for the PR (`--json autoMergeRequest`); `--auto` turns it on, `--disable-auto` off. */
+  autoMerge?: boolean;
 };
 
 export const makeExec =
@@ -253,6 +257,13 @@ export const makeExec =
       return result("");
     }
     for (const pattern of world.fail) if (line.includes(pattern)) return result("boom", 1);
+    if (line.includes("gh pr merge") && line.includes("--disable-auto")) world.autoMerge = false;
+    if (line.includes("gh pr merge") && line.includes("--auto")) world.autoMerge = true;
+    if (line.includes("gh pr view") && line.includes("autoMergeRequest")) {
+      return result(
+        JSON.stringify({ autoMergeRequest: world.autoMerge ? { mergeMethod: "SQUASH" } : null }),
+      );
+    }
     if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
     if (line.includes("gh pr view") && line.includes("state,mergeable")) {
       const [state, mergeable] =

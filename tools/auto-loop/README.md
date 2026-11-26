@@ -19,29 +19,41 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
 
-配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
+配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。`devModel`、`qaModel`、`reviewModel`、`devEffort`、`qaEffort`、`reviewEffort`（可选，非空字符串）：按角色指定会话的模型和思考强度，创建会话后通过 `setConfig` 设置；省略表示沿用 agent 默认配置，空白串校验失败。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
+
+## 冲突处理（CYC-411）
+
+PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
+
+- 触发点：等 CI 时读到冲突；开启自动合并后等合并时读到冲突。两处都先把 main 合并进分支（不 rebase、不强推）；干净就继续验证、QA、推送；真有冲突就交给原 Dev 会话解决，按仓库状态判定是否解决。
+- 处理任何冲突之前，先读 PR 是否开着自动合并（`gh pr view --json autoMergeRequest`），开着就关（`gh pr merge <pr> --disable-auto`）。原因：GitHub 文档说，有写权限的人往开了自动合并的 PR 推送，自动合并不会被关掉；Loop 的 token 有写权限，不先关，解决冲突的提交会在 CI 变绿后绕过重新评审直接合并。因 `merge_timeout` 转 Blocked 后被人放回的工单自动合并可能仍开着，所以每个触发点都检查。
+- 之后重新等 CI、重新评审；评审再次为 merge 才重新开启自动合并，确认合并后才记 `delivered`。
+- 转 Blocked 的条件：读不到或关不掉自动合并（不推送）；已处理过 1 次又冲突（原因写明冲突文件和次数）；合并、解决失败。
+- PR 描述的提交列表不列合并提交（`git log --no-merges`）。
 
 ## 调参（tuning，CYC-441）
 
 每个 Project 可选写一个 `tuning` 对象，字段都可不写，不写就用默认值；单位写在字段名里。
 
-| 字段                                      | 默认 | 范围   |
-| ----------------------------------------- | ---- | ------ |
-| `intervalSeconds`（空闲时查 Todo 的间隔） | 60   | 1–3600 |
-| `maxCriteria`                             | 8    | 1–20   |
-| `maxFixRounds`                            | 3    | 1–10   |
-| `maxCiRetries`                            | 2    | 0–10   |
-| `maxReviewRetries`                        | 2    | 0–10   |
-| `maxInterruptRetries`                     | 3    | 0–10   |
-| `maxQaRetries`                            | 2    | 0–10   |
-| `ciPollIntervalSeconds`                   | 30   | 5–600  |
-| `ciTimeoutMinutes`                        | 30   | 1–240  |
-| `mergePollIntervalSeconds`                | 30   | 5–600  |
-| `mergeTimeoutMinutes`                     | 10   | 1–240  |
-| `turnTimeoutMinutes`                      | 30   | 1–240  |
-| `commandTimeoutMinutes`                   | 20   | 1–240  |
+| 字段                                                     | 默认       | 范围   |
+| -------------------------------------------------------- | ---------- | ------ |
+| `intervalSeconds`（空闲时查 Todo 的间隔）                | 60         | 1–3600 |
+| `maxCriteria`                                            | 8          | 1–20   |
+| `maxFixRounds`                                           | 3          | 1–10   |
+| `maxCiRetries`                                           | 2          | 0–10   |
+| `maxReviewRetries`                                       | 2          | 0–10   |
+| `maxInterruptRetries`                                    | 3          | 0–10   |
+| `maxQaRetries`                                           | 2          | 0–10   |
+| `maxNetworkRetries`                                      | 3          | 0–10   |
+| `networkRetryDelaysSeconds`（数组，1–10 项，每项 1–600） | 10, 30, 60 | —      |
+| `ciPollIntervalSeconds`                                  | 30         | 5–600  |
+| `ciTimeoutMinutes`                                       | 30         | 1–240  |
+| `mergePollIntervalSeconds`                               | 30         | 5–600  |
+| `mergeTimeoutMinutes`                                    | 10         | 1–240  |
+| `turnTimeoutMinutes`                                     | 30         | 1–240  |
+| `commandTimeoutMinutes`                                  | 20         | 1–240  |
 
-全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
+除 `networkRetryDelaysSeconds`（整数数组）外全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
 
 - 启动时 `tuning` 不合法：报错并以退出码 2 退出。
 - 运行中：每次 `step()` 开始、领单之前重新读一次配置文件里本 Project 的 `tuning`，不用重启。合法就用新值；不合法或读不到，沿用上次的值，打一行日志（同一个问题只打一次），Loop 不停。
@@ -83,3 +95,12 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 - 写失败不重试，同一次运行里每种失败只记一条日志和一条 `phase_field_failed` 事件，下一次阶段变化再写。每个请求限时 10 秒。
 - 「阶段开始于」写的是写入那一刻的时间；进程重启后续跑，是续跑时的时间。「等合并」没有对应的 run 阶段，在等合并期间重启，续跑后字段会显示「评审」。
 - 启动时 `list_custom_fields` 失败，或字段有问题（缺字段、缺选项、类型不对、限定了工单类型、同名多个），打一行警告说明原因，整个运行期间不写字段，Loop 照常工作。
+
+## 网络错误（CYC-444）
+
+访问 GitHub 的命令（`git fetch`、`git push`、`gh pr create` / `edit` / `view` / `comment` / `merge`、`gh run rerun`，包括读 PR 状态、读 CI 状态和等 CI 时的每一次轮询）失败时，先按输出判断是不是网络类错误（`src/network.ts`）：`Could not resolve host`、`Connection reset` / `refused` / `timed out`、`TLS handshake timeout`、`unable to access`、`i/o timeout`、`unexpected EOF`、HTTP 502/503/504，以及命令本身超时。权限、认证（401/403/404）、HTTP 400/422/429、SSL 证书、代理错误、找不到分支、合并冲突、推送被拒绝**不算**网络错误，照旧转 Blocked。
+
+- 网络类错误：原地重试，最多 3 次（`maxNetworkRetries`），间隔 10、30、60 秒（`networkRetryDelaysSeconds`），都可在 `tuning` 里调。每次重试记一条 `network_retry` 事件（命令名、第几次、这次是否不再是网络错误），不记命令输出。等 CI 时只重试那一次轮询，不重置 CI 超时。`gh run rerun` 不原地重试（怕重复触发），遇网络错误直接等待，下一步重新读 CI 状态后再决定。
+- 重试用完仍是网络错误：不转 Blocked、不评论、不移列，这次 `step()` 返回 `network_wait`，记一条 `network_down` 事件。run 留在原阶段，Loop 等一个间隔（`--interval`）后再 `step()`；续跑规则会先接着做这张单。网络一直不通时每个间隔都会记一条 `network_down`，没有上限。
+- 已知的取舍：交付阶段（`delivering`）等待后按续跑规则回到 verify 再走 QA；评审阶段等待后评审会重来；`--workers N` 时等待期间别的 worker 仍可领新单；`--once` 遇到 `network_wait` 就以该结果结束。
+- itsaplan 调用和 agent 会话的断连不在这里处理。

@@ -2,11 +2,13 @@ import { expect, test } from "bun:test";
 import type { Criterion } from "../src/criteria.ts";
 import {
   DEFAULT_CI_CHECKS,
+  disableAutoMerge,
   enableAutoMerge,
   hasClosingKeyword,
   MAX_PR_TITLE_LENGTH,
   parseActionsUrl,
   postPrComment,
+  readAutoMerge,
   readCiFailureLogs,
   readCiStatus,
   readPrMergeStatus,
@@ -619,4 +621,58 @@ test("rerunFailedCi reruns each failed run once with deliverEnv and respects max
     exec: async () => ({ code: 1, output: "nope", timedOut: false }),
   });
   expect(bad.ok).toBe(false);
+});
+
+test("readAutoMerge and disableAutoMerge use gh with deliverEnv; failures and timeouts are errors", async () => {
+  const calls: { argv: string[]; env: Record<string, string> }[] = [];
+  const reply: { next: ExecResult } = {
+    next: okExec('{"autoMergeRequest":{"mergeMethod":"SQUASH"}}'),
+  };
+  const exec: Exec = async (argv, opts) => {
+    calls.push({ argv, env: opts.env });
+    return reply.next;
+  };
+  const input = {
+    prRef: "https://github.com/o/r/pull/9",
+    exec,
+    cwd: "/wt",
+    env: fullEnv,
+    timeoutMs: 5000,
+  };
+  expect(await readAutoMerge(input)).toEqual({ ok: true, enabled: true });
+  reply.next = okExec('{"autoMergeRequest":null}');
+  expect(await readAutoMerge(input)).toEqual({ ok: true, enabled: false });
+  reply.next = okExec("not json");
+  expect((await readAutoMerge(input)).ok).toBe(false);
+  reply.next = { code: 1, output: "nope", timedOut: false };
+  expect((await readAutoMerge(input)).ok).toBe(false);
+  reply.next = { code: 0, output: "", timedOut: true };
+  expect((await readAutoMerge(input)).ok).toBe(false);
+
+  reply.next = okExec("");
+  expect(await disableAutoMerge(input)).toEqual({ ok: true });
+  reply.next = { code: 1, output: "nope", timedOut: false };
+  expect((await disableAutoMerge(input)).ok).toBe(false);
+  reply.next = { code: 0, output: "", timedOut: true };
+  expect((await disableAutoMerge(input)).ok).toBe(false);
+
+  expect(calls[0]?.argv).toEqual([
+    "gh",
+    "pr",
+    "view",
+    "https://github.com/o/r/pull/9",
+    "--json",
+    "autoMergeRequest",
+  ]);
+  expect(calls[5]?.argv).toEqual([
+    "gh",
+    "pr",
+    "merge",
+    "https://github.com/o/r/pull/9",
+    "--disable-auto",
+  ]);
+  for (const c of calls) {
+    expect(c.env.GH_TOKEN).toBeDefined();
+    expect(c.env.OPENAI_API_KEY).toBeUndefined();
+  }
 });

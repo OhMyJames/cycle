@@ -180,6 +180,7 @@ export const reviewBrief = (
   diff: string,
   ciChecks: readonly string[],
   retryNote?: string,
+  resolvedFiles: readonly string[] = [],
 ): string => `You are an independent PR reviewer for pull request ${prUrl} (${issue.key}: ${issue.title}). You did not write this change and you are not told how it was made.
 
 You are READ-ONLY. Do not edit, create, delete, commit, push, merge, or comment on GitHub yourself: the loop will post your conclusion as a PR comment and act on it. You may read files in the current directory (a git worktree holding the PR commit) and use git status, git diff, git log, rg, and ls.
@@ -192,7 +193,7 @@ ${issue.description}
 ---
 
 Required CI checks that passed on this PR: ${ciChecks.length > 0 ? ciChecks.join(", ") : "(none)"}
-
+${resolvedFiles.length > 0 ? `\nThe base branch was merged into this branch and the loop's Dev resolved conflicts in: ${resolvedFiles.join(", ")}. The merge commit is not a change of the work item: read how each of those files was resolved (both sides kept where they should be, nothing of the base or of the work item lost) and judge the merged result.\n` : ""}
 The criteria, each run by the loop, with its result:
 ${criteriaTable(criteria, true)}
 

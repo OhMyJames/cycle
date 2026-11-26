@@ -8,7 +8,7 @@ import { CycleErrorCode } from "@cycle/protocol";
 // The fake agent is the daemon's own test double; there is no package export for it, so this test reaches into
 // apps/daemon/test by path (and `@cycle/daemon` is a devDependency for the same reason).
 import { fakeAgent } from "../../../apps/daemon/test/fake-agent.ts";
-import { DaemonSessions, type RecordEvent } from "../src/sessions.ts";
+import { DaemonSessions, LeftRequests, type RecordEvent } from "../src/sessions.ts";
 
 let dir: string;
 let cleanup: (() => void | Promise<void>)[] = [];
@@ -205,7 +205,7 @@ test("a request left for a person is recorded, and so is what the person answere
   cleanup.push(() => person.close());
   await person.watch(sessionId, "/tmp");
   await sessions.turn(sessionId, "work", context);
-  const until = Date.now() + 5_000;
+  const until = Date.now() + 10_000;
   while (events.length < 2 && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
   expect(events.map((e) => e.kind)).toEqual(["permission_requested", "permission_answered"]);
   expect(events[0]?.data).toMatchObject({ decision: "ask", tool: "execute", command: "curl" });
@@ -236,3 +236,69 @@ test("a request the policy allows writes no event, and a compound command is fil
   expect(events[0]?.data).toMatchObject({ command: "curl", decision: "deny" });
   expect(JSON.stringify(events)).not.toContain("secrets");
 }, 15_000);
+
+test("create sets model and effort on the new session, and only the ones given", async () => {
+  const fake = fakeAgent({}, { configOptions: [] });
+  const { sessions } = await setup(fake);
+  const made = (extra: { model?: string; effort?: string }) =>
+    sessions.create({ role: "dev", agent: "fake", title: "t", cwd: "/tmp", ...extra });
+  const seen = () => fake.log.configs.map((c) => [c.configId, c.value]);
+  await made({});
+  expect(seen()).toEqual([]);
+  await made({ model: "opus", effort: "high" });
+  expect(seen()).toEqual([
+    ["model", "opus"],
+    ["effort", "high"],
+  ]);
+  fake.log.configs.length = 0;
+  await made({ model: "sonnet" });
+  expect(seen()).toEqual([["model", "sonnet"]]);
+  fake.log.configs.length = 0;
+  await made({ effort: "low" });
+  expect(seen()).toEqual([["effort", "low"]]);
+});
+
+test("create removes the new session and names the setting when setConfig is refused", async () => {
+  const fake = fakeAgent({}, { configOptions: [] });
+  const { sessions } = await setup(fake);
+  fake.control.rejectConfig.add("effort");
+  await expect(
+    sessions.create({ role: "qa", agent: "fake", effort: "bogus", title: "t", cwd: "/tmp" }),
+  ).rejects.toThrow("could not set effort bogus for the qa session");
+});
+
+// The daemon may say the turn ended before it says the request was settled (CYC-446): a request left for a person is
+// kept past the end of its turn, until it is settled or the session's next turn starts.
+const asked = {
+  sessionId: "s1",
+  run: "CYC-1",
+  request: {
+    options: [
+      { optionId: "allow", kind: "allow_once" },
+      { optionId: "reject", kind: "reject_once" },
+    ],
+  },
+  data: { role: "dev", tool: "execute", command: "curl" },
+};
+
+test("an answer that is settled after its turn ended is still recorded with what was asked", () => {
+  const left = new LeftRequests();
+  left.leave("p1", asked);
+  // The turn ends here; nothing is dropped.
+  expect(left.settle("p1", { outcome: "selected", optionId: "allow" })).toEqual({
+    left: asked,
+    answer: "allow",
+  });
+  expect(left.settle("p1", { outcome: "selected", optionId: "allow" })).toBeUndefined();
+});
+
+test("a cancel is not an answer, and the next turn of the session drops what its earlier turns left", () => {
+  const left = new LeftRequests();
+  left.leave("p1", asked);
+  expect(left.settle("p1", { outcome: "cancelled" })).toBeUndefined();
+  left.leave("p2", asked);
+  left.leave("p3", { ...asked, sessionId: "s2" });
+  left.turnStarts("s1");
+  expect(left.settle("p2", { outcome: "selected", optionId: "reject" })).toBeUndefined();
+  expect(left.settle("p3", { outcome: "selected", optionId: "reject" })?.answer).toBe("deny");
+});

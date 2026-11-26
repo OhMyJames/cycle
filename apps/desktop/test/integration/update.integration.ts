@@ -186,7 +186,13 @@ test.skipIf(!ready)(
       // What `open` starts does not get this process's environment; launchd's is where it can be set.
       putBack = setLaunchdEnv((args) => run(["/bin/launchctl", ...args]), environment);
       old = Bun.spawn(
-        [exe, "--disable-gpu", `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`],
+        [
+          exe,
+          "--disable-gpu",
+          "--use-mock-keychain",
+          `--remote-debugging-port=${port}`,
+          `--user-data-dir=${userData}`,
+        ],
         {
           // The packaged app carries the real project key: a test must say that nothing is to be reported.
           env: { PATH: "/usr/bin:/bin", HOME: root, ...environment },

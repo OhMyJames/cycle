@@ -14,6 +14,7 @@ import {
   issue,
   makeExec,
   PASS,
+  REVIEW_MERGE,
   readyDescription,
   type World,
 } from "./helpers.ts";
@@ -510,4 +511,97 @@ test("a branch that no longer holds its own commits is not resolved", async () =
   const result = await s.pipeline.step();
   expect(result.status).toBe("blocked");
   expect(gitCalls(s.world.calls, "reset --hard abc")).toHaveLength(1);
+});
+
+/** A run whose review said merge and turned auto-merge on, and then GitHub reports a conflict. */
+const mergeSetup = (git: Partial<Git> = {}, over = {}) => {
+  const s = setup(git, over);
+  s.sessions.script.review = [done(REVIEW_MERGE), done(REVIEW_MERGE)];
+  s.sessions.script.qa = [done(PASS), done(PASS), done(PASS)];
+  s.world.ciResponses = [];
+  s.world.prMerge = [["OPEN", "CONFLICTING"]];
+  return s;
+};
+
+const index = (calls: string[], what: string) => calls.findIndex((c) => c.includes(what));
+
+test("a conflict found after auto-merge is on: auto-merge off first, then main merged, not delivered; review merge turns it on again and delivers", async () => {
+  const s = mergeSetup();
+  // After the merge the PR merges once auto-merge is on again.
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  const calls = s.world.calls;
+  const off = index(calls, "--disable-auto");
+  const merge = index(calls, "merge --no-edit origin/main");
+  expect(off).toBeGreaterThan(-1);
+  expect(merge).toBeGreaterThan(off);
+  const enables = calls.filter((c) => c.includes("--auto --squash"));
+  expect(enables).toHaveLength(2);
+  expect(calls.lastIndexOf(enables[1] ?? "")).toBeGreaterThan(merge);
+  const events = (await s.store.events()).map((e) => e.kind);
+  expect(events.filter((k) => k === "delivered")).toHaveLength(1);
+  expect(events).toContain("auto_merge_disabled");
+  const run = await load(s.store);
+  expect(run.conflictRound).toBe(1);
+  expect(s.world.autoMerge).toBe(true);
+});
+
+test("a conflict while waiting for CI with auto-merge still on: it is turned off before the merge", async () => {
+  const s = setup();
+  s.world.autoMerge = true;
+  await s.pipeline.step();
+  expect(s.world.calls.some((c) => c.includes("--disable-auto"))).toBe(true);
+  expect(index(s.world.calls, "--disable-auto")).toBeLessThan(
+    index(s.world.calls, "merge --no-edit origin/main"),
+  );
+});
+
+test("auto-merge off already: nothing is disabled", async () => {
+  const s = setup();
+  await s.pipeline.step();
+  expect(s.world.calls.some((c) => c.includes("--disable-auto"))).toBe(false);
+  expect(s.world.calls.some((c) => c.includes("--json autoMergeRequest"))).toBe(true);
+});
+
+test("auto-merge cannot be read: Blocked, no merge, no push", async () => {
+  const s = setup();
+  await resumeInCi(s, { conflictRound: 0, conflict: null });
+  s.world.fail.add("autoMergeRequest");
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
+  expect(gitCalls(s.world.calls, "push origin")).toHaveLength(0);
+});
+
+test("auto-merge cannot be turned off: Blocked, no merge, no push", async () => {
+  const s = setup();
+  await resumeInCi(s, { conflictRound: 0, conflict: null });
+  s.world.autoMerge = true;
+  s.world.fail.add("--disable-auto");
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") expect(result.reason).toContain("关闭自动合并失败");
+  expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
+  expect(gitCalls(s.world.calls, "push origin")).toHaveLength(0);
+});
+
+test("a second conflict while waiting for the merge: Blocked naming the files and the one earlier attempt", async () => {
+  const s = mergeSetup();
+  await s.pipeline.step();
+  const run = await load(s.store);
+  await s.store.save({ ...run, phase: "review", blockedReason: null, resumeFrom: null });
+  s.tracker.issues[0] = issue({ description: readyDescription, columnId: 23 });
+  s.world.calls.length = 0;
+  s.world.autoMerge = false;
+  s.world.mergeTreeOutput = "deadbeef\nsrc/a.ts\n";
+  s.world.prMerge = [["OPEN", "CONFLICTING"]];
+  s.sessions.script.review = [done(REVIEW_MERGE)];
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") {
+    expect(result.reason).toContain("已自动处理过 1 次");
+    expect(result.reason).toContain("src/a.ts");
+  }
+  expect(s.world.calls.some((c) => c.includes("--disable-auto"))).toBe(true);
+  expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
 });

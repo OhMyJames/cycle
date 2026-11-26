@@ -155,3 +155,42 @@ test("readTuning reads one Project's tuning and throws on an unreadable file or 
   await expect(readTuning(path, "A")).rejects.toThrow("cannot be read");
   await expect(readTuning(join(dir, "missing.json"), "A")).rejects.toThrow("cannot be read");
 });
+
+test("the network retry values are tunable and become milliseconds", () => {
+  const t = parseConfigFiles(
+    JSON.stringify({
+      ...base,
+      tuning: { maxNetworkRetries: 2, networkRetryDelaysSeconds: [5, 20] },
+    }),
+  );
+  expect(JSON.stringify(t)).toContain("networkRetryDelaysSeconds");
+  expect(tuningToConfig({ maxNetworkRetries: 2, networkRetryDelaysSeconds: [5, 20] })).toEqual({
+    maxNetworkRetries: 2,
+    networkRetryDelaysMs: [5000, 20000],
+  });
+  expect(() =>
+    parseConfigFiles(JSON.stringify({ ...base, tuning: { networkRetryDelaysSeconds: [] } })),
+  ).toThrow("networkRetryDelaysSeconds");
+});
+
+test("model and effort per role are optional, and a blank one is refused", () => {
+  const plain = parseConfigFile(JSON.stringify(full));
+  expect(plain.devModel).toBeUndefined();
+  expect(plain.reviewEffort).toBeUndefined();
+  const set = parseConfigFile(
+    JSON.stringify({ ...full, devModel: "opus", qaEffort: "high", reviewModel: "sonnet" }),
+  );
+  expect([set.devModel, set.qaEffort, set.reviewModel]).toEqual(["opus", "high", "sonnet"]);
+  for (const name of [
+    "devModel",
+    "qaModel",
+    "reviewModel",
+    "devEffort",
+    "qaEffort",
+    "reviewEffort",
+  ])
+    for (const value of ["", "  "])
+      expect(() => parseConfigFile(JSON.stringify({ ...full, [name]: value }))).toThrow(
+        `invalid ${name}`,
+      );
+});
