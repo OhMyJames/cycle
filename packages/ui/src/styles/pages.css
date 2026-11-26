@@ -873,6 +873,16 @@
   gap: 0.5rem;
 }
 
+[data-slot="loop-ticket-stage"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+/* Long on one step: a nudge, not an error. */
+[data-slot="loop-ticket-stage"][data-slow="true"] {
+  color: var(--cycle-attention);
+}
+
 [data-slot="loop-ticket-id"] {
   font-family: var(--font-mono);
   font-size: var(--cycle-text-meta);

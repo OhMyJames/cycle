@@ -12,6 +12,7 @@ import type {
   DocumentEntry,
   Issue,
   IssueComment,
+  IssueDocument,
   LoopPhase,
   NewIssue,
   PlanningConfig,
@@ -385,6 +386,66 @@ export class PlanTracker implements Tracker {
         ? []
         : [{ id, title: String(d.title ?? ""), parentId: parseOptionalInt(d.parentId) }];
     });
+  }
+
+  /**
+   * list_issue_documents gives each linked document's `documentId`, `title` and `archived` only; its version and lock
+   * are on the document itself, so each one not archived is read with get_document. A reply of another shape is an
+   * error, never "no documents" or "unlocked", which would send every 完整流程 work item to Blocked for nothing.
+   */
+  async listIssueDocuments(issue: Pick<Issue, "id">): Promise<IssueDocument[]> {
+    const raw = payload(
+      await this.#tool("execute_read", "list_issue_documents", {
+        projectKey: this.#project,
+        issueId: issue.id,
+      }),
+    );
+    const unrecognized = (what: string, reply: unknown) =>
+      new Error(`unrecognized ${what} reply: ${JSON.stringify(reply).slice(0, 300)}`);
+    if (!Array.isArray(raw)) throw unrecognized("list_issue_documents", raw);
+    const docs: IssueDocument[] = [];
+    for (const d of raw.map(asRecord)) {
+      const id = parseOptionalInt(d.documentId);
+      if (id === null || typeof d.archived !== "boolean" || typeof d.title !== "string")
+        throw unrecognized("list_issue_documents", d);
+      if (d.archived) {
+        docs.push({ id, title: d.title, version: 0, locked: false, archived: true });
+        continue;
+      }
+      const full = asRecord(
+        payload(
+          await this.#tool("execute_read", "get_document", {
+            projectKey: this.#project,
+            documentId: id,
+          }),
+        ),
+      );
+      const version = parseOptionalInt(full.version);
+      if (version === null || typeof full.isLocked !== "boolean")
+        throw unrecognized("get_document", { ...full, content: undefined, contentJson: undefined });
+      docs.push({
+        id,
+        title: d.title,
+        version,
+        locked: full.isLocked,
+        archived: full.archivedAt != null,
+      });
+    }
+    return docs;
+  }
+
+  async getDocumentContent(docId: number): Promise<string> {
+    const raw = asRecord(
+      payload(
+        await this.#tool("execute_read", "get_document", {
+          projectKey: this.#project,
+          documentId: docId,
+        }),
+      ),
+    );
+    if (typeof raw.content !== "string")
+      throw new Error(`tracker get_document: no content for ${docId}`);
+    return raw.content;
   }
 
   async createDocument(parentId: number, title: string, content: string): Promise<{ id: number }> {

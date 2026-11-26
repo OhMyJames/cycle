@@ -34,6 +34,7 @@ import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronDownIcon, ChevronRightIcon } from "./icons.tsx";
 import { type LoopView, viewProject } from "./loop-nav.ts";
+import { useNow } from "./now.ts";
 import { PageLayout, type PageSection } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -93,6 +94,29 @@ function TicketActions({ ticket, act }: { ticket: LoopTicket; act: Act }) {
   );
 }
 
+/** Longer than this on one step, and the stage line asks to be looked at. */
+const STAGE_SLOW_MS = 30 * 60_000;
+
+/** Where Loop is on an In Progress ticket and for how long: "QA · 3 min". */
+function TicketStage({ stage }: { stage: NonNullable<LoopTicket["loopStage"]> }) {
+  const { t } = useI18n();
+  const now = useNow();
+  const since = Date.parse(stage.since);
+  if (Number.isNaN(since)) return null;
+  const ms = Math.max(0, now - since);
+  const minutes = Math.floor(ms / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const length =
+    hours > 0
+      ? t("loop.stage.hoursMinutes", { hours, minutes: minutes % 60 })
+      : t("loop.stage.minutes", { minutes });
+  return (
+    <span data-slot="loop-ticket-stage" data-slow={ms > STAGE_SLOW_MS ? "true" : undefined}>
+      {t("loop.stage.line", { stage: t(`loop.stage.${stage.stage}`), length })}
+    </span>
+  );
+}
+
 function Ticket({
   ticket,
   act,
@@ -120,6 +144,7 @@ function Ticket({
       >
         <span data-slot="loop-ticket-text">{ticket.title}</span>
       </button>
+      {ticket.loopStage ? <TicketStage stage={ticket.loopStage} /> : null}
       <TicketActions ticket={ticket} act={act} />
     </li>
   );

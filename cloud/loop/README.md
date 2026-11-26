@@ -10,11 +10,11 @@
 # 多个 Project：{ "projects": [ {上面的字段}, {…} ] }，一个进程各跑各的循环，一个卡住不影响另一个；
 #   每个 Project 的 stateDir 必须不同（相同则启动报错），锁各在自己的 <stateDir>/loop.lock
 # planKey 只给 Loop 本身，不会传给任何会话或命令
-bun tools/auto-loop/src/cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西
-bun tools/auto-loop/src/cli.ts --once      # 处理一张
-bun tools/auto-loop/src/cli.ts --workers 2 # 每个 Project 起 2 个 worker 并发（见下）
-bun tools/auto-loop/src/cli.ts             # 常驻，空闲时每 60 秒看一次（`--interval` 或配置文件 `tuning.intervalSeconds` 改）
-bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率；`firstPassRate`（零介入零返工自动合并占比）、`reworkByStage`（`round_failed` 按紧邻前一事件归到 verify/qa/ci/review/other，含次数与 run 数）、`durationMs`（已交付 run 从 claimed 到 delivered 的中位数与 P90，nearest-rank）；以上都只算开发 run（按每个 run 第一个 `claimed` 事件的 `runKind` 分，没有的算开发），调研 run 只计 `researched`（发布并移到 Done 的个数）；另有 `permissions`（含调研会话）：被留给人或被拒的权限请求，按「种类 + 命令前两个词」统计，列出被人允许最多的前 10 项及各自被允许、被拒绝的次数（事件 `permission_requested`、`permission_answered`，只记命令前两个词）
+bun cloud/loop/src/pipeline-cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西
+bun cloud/loop/src/pipeline-cli.ts --once      # 处理一张
+bun cloud/loop/src/pipeline-cli.ts --workers 2 # 每个 Project 起 2 个 worker 并发（见下）
+bun cloud/loop/src/pipeline-cli.ts             # 常驻，空闲时每 60 秒看一次（`--interval` 或配置文件 `tuning.intervalSeconds` 改）
+bun cloud/loop/src/pipeline-cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率；`firstPassRate`（零介入零返工自动合并占比）、`reworkByStage`（`round_failed` 按紧邻前一事件归到 verify/qa/ci/review/other，含次数与 run 数）、`durationMs`（已交付 run 从 claimed 到 delivered 的中位数与 P90，nearest-rank）；以上都只算开发 run（按每个 run 第一个 `claimed` 事件的 `runKind` 分，没有的算开发），调研 run 只计 `researched`（发布并移到 Done 的个数）；另有 `permissions`（含调研会话）：被留给人或被拒的权限请求，按「种类 + 命令前两个词」统计，列出被人允许最多的前 10 项及各自被允许、被拒绝的次数（事件 `permission_requested`、`permission_answered`，只记命令前两个词）
 ```
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
@@ -70,6 +70,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 ## 约定
 
 - 工单必须有「验收标准」列表，每条带 `验证：\`命令\``，命令只能是白名单形式；否则留言写明原因，并把工单移到 Blocked。
+- 大档（CYC-328）：带 `完整流程` 标签的工单不看描述，看它关联的四份文档，标题须为 `[CYC-<num>] Intent`、`Spec`、`Design`、`Plan`，每份恰好一份、未归档、已锁定（锁定即已采纳）；验收标准取自 Spec 的「验收标准」列表（规则同描述）。缺一份、未锁定、标题前缀不符或 Spec 的标准不合格：不领单，留言以 `[Blocked:需规格]` 开头，工单转 Blocked。领单时把四份文档的 version 记进 run.json（`fullFlowDocs`）；运行中每个阶段开始前重读，version 变了、被取消锁定或不再关联，转 Blocked（同样标 `[Blocked:需规格]`）。人确认后把文档重新锁定并放回 Todo，Loop 以当时的版本为新基线（事件 `docs_rebaselined`）继续。不带标签的工单行为不变。
 - 验收状态只由 Loop 跑命令后设置（`criteria.json`），会话说“完成”不算数。
 - 卡住（Blocked）时保留 worktree 和会话；处理后把工单放回 Todo，会在原会话里继续（会话丢失则新开会话，凭 criteria + 进度 + git log 接手）。
 - verify 防抖（CYC-438）：检查命令（测试层或验收命令）非超时失败时，先原地重跑该命令，最多 `maxVerifyRetries` 次（默认 1，0 为关闭），每次重跑记 `verify_retried` 事件（`round`、`command`、`attempt`、`passed`）。重跑通过则按通过处理，不记 `round_failed`、不扣修复轮数、不唤醒 Dev；重试用完仍失败才按原流程回 Dev。超时的命令不重跑。

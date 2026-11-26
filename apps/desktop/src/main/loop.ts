@@ -25,6 +25,7 @@ import type {
   LoopNotice,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
+  LoopStage,
   LoopTicket,
   LoopTicketAnswer,
   LoopTicketDetail,
@@ -160,7 +161,7 @@ const rowsOf = (value: unknown): unknown[] => {
 
 type Column = { id: number; name: string; stateType: string; position?: number };
 
-/** What a started column is for. Loop's own convention (tools/auto-loop/src/project.ts): the 1st is In Progress, the 2nd In Review, the 3rd Blocked, in board order. */
+/** What a started column is for. Loop's own convention (cloud/loop/src/project.ts): the 1st is In Progress, the 2nd In Review, the 3rd Blocked, in board order. */
 export type Role = "progress" | "review" | "blocked";
 
 export const roleOf = (columns: Column[], column: Column): Role | undefined => {
@@ -228,6 +229,103 @@ const columnsOf = (project: Record<string, unknown>): Column[] =>
     (c) => asRecord(c) as unknown as Column,
   );
 
+const STAGE_FIELD = "Loop 阶段";
+const STAGE_SINCE_FIELD = "Loop 阶段开始于";
+/** The option names Loop writes (cloud/loop/src/project.ts), as the page's fixed words: never the tracker's text. */
+const STAGE_OF_OPTION = new Map<string, LoopStage>([
+  ["开发", "develop"],
+  ["验证", "verify"],
+  ["QA", "qa"],
+  ["等 CI", "ci"],
+  ["评审", "review"],
+  ["等合并", "merge"],
+  ["调研", "research"],
+  ["调研 QA", "researchQa"],
+  ["规划", "plan"],
+  ["规划 QA", "planQa"],
+]);
+
+type StageFields = { options: Map<unknown, string> };
+
+/** `list_custom_fields` is not a listed tool on every key: when the direct call fails it goes through `execute_read`. */
+const customFieldsOf = async (t: Tracker, projectKey: string): Promise<unknown> => {
+  try {
+    return await callTool(t, "list_custom_fields", { projectKey });
+  } catch {
+    return await callTool(t, "execute_read", {
+      name: "list_custom_fields",
+      arguments: { projectKey },
+    });
+  }
+};
+
+/** The stage field's options of a Project, found by field name. Undefined: it has no such fields. */
+const stageFieldsOf = async (t: Tracker, projectKey: string): Promise<StageFields | undefined> => {
+  try {
+    const listed = await customFieldsOf(t, projectKey);
+    const defs = Array.isArray(listed)
+      ? listed
+      : (asRecord(listed).data ?? asRecord(listed).fields);
+    const all = (Array.isArray(defs) ? defs : []).map(asRecord);
+    const stage = all.find((f) => f.name === STAGE_FIELD);
+    if (stage === undefined || !all.some((f) => f.name === STAGE_SINCE_FIELD)) return undefined;
+    // A select option's label is its `value` (what the writer matches on); `name` is read too.
+    const options = new Map<unknown, string>();
+    for (const o of Array.isArray(stage.options) ? stage.options : []) {
+      const r = asRecord(o);
+      const label = r.value ?? r.name;
+      if (typeof label === "string") options.set(r.id, label);
+    }
+    return { options };
+  } catch {
+    return undefined;
+  }
+};
+
+/** The last good stage of a ticket, kept briefly so that one failed read does not blank the card. */
+const stageCache = new Map<string, { at: number; stage: LoopTicket["loopStage"] }>();
+const STAGE_CACHE_TTL_MS = 2 * 60_000;
+
+/** One ticket's stage from `get_issue`. Throws when the ticket cannot be read; undefined when the fields say nothing. */
+const readStage = async (
+  t: Tracker,
+  issueId: unknown,
+  defs: StageFields,
+): Promise<LoopTicket["loopStage"]> => {
+  const issue = unwrap(await callTool(t, "get_issue", { issueId }));
+  const fields = (Array.isArray(issue.fields) ? issue.fields : []).map(asRecord);
+  const stageField = fields.find((f) => f.name === STAGE_FIELD);
+  const sinceField = fields.find((f) => f.name === STAGE_SINCE_FIELD);
+  if (!stageField || !sinceField) return undefined;
+  const optionId = Array.isArray(stageField.optionIds) ? stageField.optionIds[0] : undefined;
+  const label = optionId === undefined ? undefined : defs.options.get(optionId);
+  const stage = label === undefined ? undefined : STAGE_OF_OPTION.get(label.trim());
+  const raw = sinceField.value;
+  if (stage === undefined || typeof raw !== "string" || Number.isNaN(Date.parse(raw)))
+    return undefined;
+  return { stage, since: new Date(raw).toISOString() };
+};
+
+const readStageOrCached = async (
+  t: Tracker,
+  issueId: unknown,
+  defs: StageFields,
+): Promise<LoopTicket["loopStage"]> => {
+  const key = `${t.url}#${String(issueId)}`;
+  try {
+    const stage = await readStage(t, issueId, defs);
+    if (stage === undefined) stageCache.delete(key);
+    else {
+      if (stageCache.size >= CACHE_MAX) stageCache.clear();
+      stageCache.set(key, { at: Date.now(), stage });
+    }
+    return stage;
+  } catch {
+    const hit = stageCache.get(key);
+    return hit !== undefined && Date.now() - hit.at < STAGE_CACHE_TTL_MS ? hit.stage : undefined;
+  }
+};
+
 const DONE_SHOWN = 20;
 /** The most a list answers (the tracker's own limit): a column is shown whole, so its count is true. */
 const LIST_LIMIT = 500;
@@ -284,6 +382,9 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
     const autoId = autoLabelOf(project);
     const pendingId = labelOf(project, PENDING);
     if (columns.length === 0) throw new Error("no columns");
+    const stageDefs = columns.some((c) => roleOf(columns, c) === "progress")
+      ? await stageFieldsOf(t, projectKey)
+      : undefined;
     const ticketsOf = async (
       column: Column,
       limit: number,
@@ -292,10 +393,26 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
         await callTool(t, "list_issues", { projectKey, columnId: column.id, limit }),
       );
       const role = roleOf(columns, column);
+      // Only In Progress is read ticket by ticket (`list_issues` has no field values), a few at a time. The write does
+      // not move `updatedAt`, so nothing is cached by it.
+      const stages = new Map<unknown, NonNullable<LoopTicket["loopStage"]>>();
+      if (role === "progress" && stageDefs !== undefined) {
+        let next = 0;
+        const lane = async () => {
+          while (next < rows.length) {
+            const r = asRecord(rows[next++]);
+            const stage = await readStageOrCached(t, r.id, stageDefs);
+            if (stage !== undefined) stages.set(r, stage);
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, lane));
+      }
       const tickets = rows.map((row): LoopTicket & { at: string } => {
         const r = asRecord(row);
         const auto = autoId !== undefined && labelIdsOf(r).includes(autoId);
+        const loopStage = stages.get(r);
         return {
+          ...(loopStage ? { loopStage } : {}),
           at: String(r.updatedAt ?? ""),
           identifier: String(r.identifier ?? ""),
           title: String(r.title ?? ""),

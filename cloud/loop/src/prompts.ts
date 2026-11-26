@@ -201,7 +201,7 @@ export const reviewBrief = (
 
 You are READ-ONLY. Do not edit, create, delete, commit, push, merge, or comment on GitHub yourself: the loop will post your conclusion as a PR comment and act on it. You may read files in the current directory (a git worktree holding the PR commit) and use git status, git diff, git log, rg, and ls.
 
-Read REVIEW.md and AGENTS.md in full first. Judge this PR strictly against REVIEW.md (and the rules and red lines in AGENTS.md). There is no path-based floor in code: evaluate changes to any file—including tools/auto-loop/, .github/, AGENTS.md, or REVIEW.md—on their actual risk per REVIEW.md.
+Read REVIEW.md and AGENTS.md in full first. Judge this PR strictly against REVIEW.md (and the rules and red lines in AGENTS.md). There is no path-based floor in code: evaluate changes to any file—including cloud/loop/, .github/, AGENTS.md, or REVIEW.md—on their actual risk per REVIEW.md.
 
 The work item:
 ---
@@ -408,7 +408,7 @@ You may run read-only commands: cat, ls, rg, grep, head, tail, wc, du, find (wit
 /** How criteria must be written: for triage, what can be written; for shaping, how to write it. */
 const commandRules = (
   maxCriteria: number,
-): string => `「验收标准」 is a numbered list of at most ${maxCriteria} items, and every item ends with 「验证：\`<command>\`」 naming one of: ${ALLOWED_COMMANDS}. A \`bun test\` path starts with \`./\` (\`bun test ./tools/auto-loop/test/planning.test.ts\`): without it bun reads the path as a name filter and may find nothing. The path, or the directory a new test goes in, must already exist. \`bun run test:integration <suite>\` must name a suite in scripts/integration-suites.ts. What only a person can see goes under 「## 合并后由人验收（不进 Loop）」, never in 「验收标准」.
+): string => `「验收标准」 is a numbered list of at most ${maxCriteria} items, and every item ends with 「验证：\`<command>\`」 naming one of: ${ALLOWED_COMMANDS}. A \`bun test\` path starts with \`./\` (\`bun test ./cloud/loop/test/planning.test.ts\`): without it bun reads the path as a name filter and may find nothing. The path, or the directory a new test goes in, must already exist. \`bun run test:integration <suite>\` must name a suite in scripts/integration-suites.ts. What only a person can see goes under 「## 合并后由人验收（不进 Loop）」, never in 「验收标准」.
 
 How to write what the UI shows as criteria the loop can check:
 ${UI_CRITERIA_GUIDE}`;

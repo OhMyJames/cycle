@@ -2,7 +2,13 @@ import { type CriterionSpec, listUnder, parseCriteria, verifyArgv } from "./crit
 import type { Config, Issue } from "./types.ts";
 
 export type Preflight =
-  | { ok: true; kind: "dev"; specs: CriterionSpec[] }
+  | {
+      ok: true;
+      kind: "dev";
+      specs: CriterionSpec[];
+      /** 大档 (CYC-328): the documents and versions the run starts on; absent for a small one. */
+      docs?: { id: number; title: string; version: number }[];
+    }
   | { ok: true; kind: "research"; questions: string[] }
   | { ok: false; reasons: string[] };
 

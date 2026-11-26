@@ -77,7 +77,21 @@ export type IssueComment = {
   createdAt: string;
 };
 
+/** A document linked to a work item (`list_issue_documents`), without its content. */
+export type IssueDocument = {
+  id: number;
+  title: string;
+  version: number;
+  /** 已锁定: the convention for 已采纳 (CYC-328). */
+  locked: boolean;
+  archived: boolean;
+};
+
 export interface Tracker {
+  /** The documents linked to the work item. */
+  listIssueDocuments(issue: Pick<Issue, "id">): Promise<IssueDocument[]>;
+  /** One document's Markdown. */
+  getDocumentContent(docId: number): Promise<string>;
   /** The work items in the `Todo` column. Choosing among them is `pickNext`'s job, not the tracker's. */
   listTodo(): Promise<Issue[]>;
   get(number: number): Promise<Issue>;
@@ -185,6 +199,8 @@ export type Config = {
     canceled: number;
   };
   autoLabelId: number;
+  /** The 「完整流程」 label (CYC-328): a work item with it needs its Intent / Spec / Design / Plan documents. Null: the project has none. */
+  fullFlowLabelId: number | null;
   /** Issue type ids the loop may take (e.g. Feature, Bug). Configured by id, never hardcoded or matched by name. */
   allowedTypeIds: number[];
   /** The tracker's Feature and Bug type ids: which required sections the preflight checks for. */
@@ -336,6 +352,7 @@ export const defaultConfig = (
   qaAgent: "claude",
   reviewAgent: "claude",
   dryRun: false,
+  fullFlowLabelId: null,
   research: null,
   planning: null,
   ...partial,

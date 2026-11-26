@@ -6,6 +6,7 @@ import {
   type ExecResult,
   type Issue,
   type IssueComment,
+  type IssueDocument,
   type NewIssue,
   type Priority,
   type SessionRole,
@@ -66,7 +67,7 @@ x
 
 ## 验收标准
 
-1. 开关可用。验证：\`bun test tools/auto-loop/test/a.test.ts\`
+1. 开关可用。验证：\`bun test cloud/loop/test/a.test.ts\`
 2. 门禁通过。验证：\`bun run check\`
 `;
 
@@ -129,6 +130,16 @@ export class FakeTracker implements Tracker {
   async setLoopPhase(i: Issue, phase: string | null, _at?: Date, _signal?: AbortSignal) {
     if (this.failPhase) throw new Error("field write failed");
     this.phases.push(`${i.key}:${phase ?? "clear"}`);
+  }
+  /** Documents linked to each issue, by key (CYC-328), and their Markdown by id. */
+  issueDocs: Record<string, IssueDocument[]> = {};
+  docContent: Record<number, string> = {};
+  async listIssueDocuments(i: Pick<Issue, "id">) {
+    const key = this.issues.find((x) => x.id === i.id)?.key ?? "";
+    return this.issueDocs[key] ?? [];
+  }
+  async getDocumentContent(docId: number) {
+    return this.docContent[docId] ?? "";
   }
   documents: DocumentEntry[] = [{ id: 10, title: "调研", parentId: null }];
   /** Every document written, with its content. */
@@ -247,6 +258,12 @@ export type Script = {
 export class FakeSessions implements Sessions {
   created: string[] = [];
   inputs: { role: SessionRole; model: string | undefined; effort: string | undefined }[] = [];
+  /** Where each session was asked to run: `cwd`, and the `worktree` the daemon was asked to make or find. */
+  places: {
+    role: SessionRole;
+    cwd: string;
+    worktree: { base: string; name: string } | undefined;
+  }[] = [];
   turns: string[] = [];
   prompts: { sessionId: string; role: SessionRole; prompt: string; readRoots?: string[] }[] = [];
   deleted = 0;
@@ -278,8 +295,15 @@ export class FakeSessions implements Sessions {
       createError,
     };
   }
-  async create(input: { role: SessionRole; cwd: string; model?: string; effort?: string }) {
+  async create(input: {
+    role: SessionRole;
+    cwd: string;
+    model?: string;
+    effort?: string;
+    worktree?: { base: string; name: string };
+  }) {
     this.inputs.push({ role: input.role, model: input.model, effort: input.effort });
+    this.places.push({ role: input.role, cwd: input.cwd, worktree: input.worktree });
     const err = this.script.createError[input.role];
     if (Array.isArray(err)) {
       const next = err.shift();

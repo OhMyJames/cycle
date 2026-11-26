@@ -40,8 +40,8 @@ const FAIL = `${CHECKED}<verdict>{"pass":false,"findings":[{"severity":"major","
 /** A body that passes the same preflight as a work item the loop takes, with a `bun test ./…` path in the worktree. */
 const good = (lead: string) =>
   `${lead}：给人看的开头一段，说明做什么、为什么、做完是什么样。\n\n${readyDescription.replace(
-    "bun test tools/",
-    "bun test ./tools/",
+    "bun test cloud/",
+    "bun test ./cloud/",
   )}`;
 
 const triageReply = (lines: Record<string, unknown>[], order: string[]) =>
@@ -161,8 +161,8 @@ const setup = (
     if (at !== -1 && argv[at + 1] === "add") {
       w.calls.push(argv.filter((a) => a !== "-c" && !a.startsWith("core.")).join(" "));
       const path = argv[argv.length - 2] as string;
-      await mkdir(join(path, "tools/auto-loop/test"), { recursive: true });
-      await writeFile(join(path, "tools/auto-loop/test/a.test.ts"), "");
+      await mkdir(join(path, "cloud/loop/test"), { recursive: true });
+      await writeFile(join(path, "cloud/loop/test/a.test.ts"), "");
       await mkdir(join(path, ".claude/skills/cycle-workflow"), { recursive: true });
       await copyFile(join(REPO, SKILL), join(path, SKILL));
       return { code: 0, output: "", timedOut: false };
@@ -324,6 +324,13 @@ test("a round end to end: priority with a comment, 要问 with 待回答, a rewr
   // The round's own writes do not count as a change: the next step has nothing to do.
   expect(await s.pipeline.step()).toEqual({ status: "idle" });
   expect(s.sessions.created).toHaveLength(3);
+  // Every planning session is asked for by worktree name (CYC-459), never by a `cwd` of its own: a session whose cwd is
+  // the round's directory shows in the desktop as a workspace of its own.
+  expect(s.sessions.places.length).toBe(3);
+  for (const input of s.sessions.places) {
+    expect(input.cwd).toBe(join(dir, "repo"));
+    expect(input.worktree?.name).toBe("plan-2026-11-26T10-00-00-000Z");
+  }
   const round = (await s.store.plans())[0];
   expect(round).toMatchObject({ phase: "finished", worktree: null });
   expect(existsSync(join(dir, "repo/.agents/worktree/plan-2026-11-26T10-00-00-000Z"))).toBe(false);
@@ -444,7 +451,7 @@ test("the loop's own checks send a reply back: a bun test path without ./ is a f
   const s = setup(
     {
       triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
-      shape: [done(rewrite("标题", good("x").replace("./tools/", "tools/"))), done(rewrite())],
+      shape: [done(rewrite("标题", good("x").replace("./cloud/", "cloud/"))), done(rewrite())],
       shape_qa: [done(PASS)],
     },
     [backlogItem(1)],

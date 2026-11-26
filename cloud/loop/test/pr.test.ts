@@ -32,7 +32,7 @@ const sampleCriteria: Criterion[] = [
   {
     id: 1,
     text: "选单只取 Feature/Bug 叶子",
-    verify: [["bun", "test", "tools/auto-loop/test/select.test.ts"]],
+    verify: [["bun", "test", "cloud/loop/test/select.test.ts"]],
     status: "passed",
     evidence: "5 pass\n0 fail",
     checkedAt: "2026-11-25T00:00:00.000Z",

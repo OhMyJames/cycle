@@ -157,7 +157,7 @@ const rate = (part: number, whole: number): number => (whole === 0 ? 0 : part / 
 const isResearch = (list: LoopEvent[]): boolean =>
   list.find((e) => e.kind === "claimed")?.runKind === "research";
 
-/** The metrics of the initiative, from the event log (docs: tools/auto-loop/README.md). */
+/** The metrics of the initiative, from the event log (docs: cloud/loop/README.md). */
 export const computeStats = (events: LoopEvent[]): Stats => {
   const all = new Map<string, LoopEvent[]>();
   for (const event of events) {

@@ -351,7 +351,7 @@ test("an order with a non-candidate, a repeat, a 要问 or 不适合, or a 能�
 // Shaping
 
 const featureBody = (
-  criteria = "1. 开关可用。验证：`bun test ./tools/auto-loop/test/planning.test.ts`\n2. 门禁通过。验证：`bun run check`",
+  criteria = "1. 开关可用。验证：`bun test ./cloud/loop/test/planning.test.ts`\n2. 门禁通过。验证：`bun run check`",
 ): string => `Loop 在空闲时整理 Backlog。做完后待批准里有可以批的工单。
 
 ## 背景与证据
@@ -374,8 +374,8 @@ const bugBody = `设置页打开时闪一下。修好后不再闪。\n\n${fullBu
 const epicBody = "把 Backlog 整理成可批准的工单。\n\n## 目标\nx\n\n## 完成标准\nx\n";
 
 const files = new Set([
-  "tools/auto-loop/test/planning.test.ts",
-  "tools/auto-loop/test",
+  "cloud/loop/test/planning.test.ts",
+  "cloud/loop/test",
   "apps/desktop/test",
   "package.json",
 ]);
@@ -502,12 +502,12 @@ test("a description that fails the preflight of its type is a finding, labelled"
 test("a bun test path must start with ./ and exist, or its directory must (not the root)", () => {
   const withTest = (path: string) =>
     shapeText(rewrite(undefined, featureBody(`1. x。验证：\`bun test ${path}\``)));
-  expect(withTest("./tools/auto-loop/test/planning.test.ts")).toBe("");
+  expect(withTest("./cloud/loop/test/planning.test.ts")).toBe("");
   // A new test in a directory that exists.
-  expect(withTest("./tools/auto-loop/test/new.test.ts")).toBe("");
+  expect(withTest("./cloud/loop/test/new.test.ts")).toBe("");
   expect(withTest("./apps/desktop/test")).toBe("");
-  expect(withTest("tools/auto-loop/test/planning.test.ts")).toBe(
-    "The rewrite: `bun test tools/auto-loop/test/planning.test.ts` must start the path with ./ (`bun test ./tools/auto-loop/test/planning.test.ts`): without it, bun takes it as a name filter.",
+  expect(withTest("cloud/loop/test/planning.test.ts")).toBe(
+    "The rewrite: `bun test cloud/loop/test/planning.test.ts` must start the path with ./ (`bun test ./cloud/loop/test/planning.test.ts`): without it, bun takes it as a name filter.",
   );
   expect(withTest("./tools/nowhere/x.test.ts")).toBe(
     "The rewrite: `bun test ./tools/nowhere/x.test.ts`: neither the path nor its directory is in the repository.",
