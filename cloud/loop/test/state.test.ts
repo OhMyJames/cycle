@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openDb } from "../src/db/db.ts";
+import { SqliteStore } from "../src/db/store.ts";
 import {
   formatFindings,
   listsWhatWasChecked,
@@ -19,6 +21,7 @@ import { computeStats } from "../src/stats.ts";
 import {
   acquireLock,
   type LoopEvent,
+  type LoopStore,
   type PlanRoundInput,
   planRoundId,
   RunStore,
@@ -26,6 +29,11 @@ import {
 import { issue } from "./helpers.ts";
 
 const now = () => new Date("2026-11-25T00:00:00Z");
+
+// The store tests run on both ways of keeping the state (CYC-475): the files and `loop.db`.
+const KINDS = ["files", "sqlite"] as const;
+const make = (kind: (typeof KINDS)[number], dir: string): LoopStore =>
+  kind === "sqlite" ? SqliteStore.open(dir, now) : new RunStore(dir, now);
 
 test("progress: the last block wins", () => {
   expect(parseProgress("a <progress>one</progress> b <progress>two</progress>")).toBe("two");
@@ -42,153 +50,180 @@ test("verdict: a pass with a non-minor finding is not a pass; junk is unreadable
   expect(major === undefined ? "" : formatFindings(major)).toContain("[major] a: p");
 });
 
-test("store: events and progress append; unfinished lists runs not done", async () => {
-  const store = new RunStore(await mkdtemp(join(tmpdir(), "al-")), now);
-  await store.event("CYC-1", "claimed", { n: 1 });
-  expect((await store.events()).map((e) => e.kind)).toEqual(["claimed"]);
-  await store.appendProgress("CYC-1", 0, "did x");
-  expect(await store.readProgress("CYC-1")).toContain("did x");
-  expect(await store.unfinished()).toEqual([]);
-});
-
-test("store: a run.json from before the conflict fields still loads, with conflictRound 0 and conflict null", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "al-"));
-  const store = new RunStore(dir, now);
-  const saved = await store.save({
-    key: "CYC-1",
-    issueId: 1,
-    issueNumber: 1,
-    title: "t",
-    phase: "ci",
-    round: 0,
-    ciRound: 0,
-    ciFailedSha: null,
-    nodeModulesReleased: false,
-    fullFlowDocs: [],
-    conflictRound: 0,
-    conflict: null,
-    resolvedFiles: [],
-    worktree: "/wt",
-    localBranch: "b",
-    remoteBranch: "auto/cyc-1",
-    devSessionId: "d",
-    qaSessionId: null,
-    reviewSessionId: null,
-    replacedSessions: [],
-    blockedReason: null,
-    resumeFrom: null,
-    prUrl: null,
-    findings: null,
-    cleanedAt: null,
-    cleanupNote: null,
-    kind: "dev",
-    research: null,
-    startedAt: "2026-11-25T00:00:00.000Z",
-    updatedAt: "2026-11-25T00:00:00.000Z",
+for (const kind of KINDS) {
+  test(`${kind} store: events and progress append; unfinished lists runs not done`, async () => {
+    const store = make(kind, await mkdtemp(join(tmpdir(), "al-")));
+    await store.event("CYC-1", "claimed", { n: 1 });
+    expect((await store.events()).map((e) => e.kind)).toEqual(["claimed"]);
+    await store.appendProgress("CYC-1", 0, "did x");
+    expect(await store.readProgress("CYC-1")).toContain("did x");
+    expect(await store.unfinished()).toEqual([]);
   });
-  const { conflictRound: _a, conflict: _b, ...old } = saved;
-  await writeFile(join(dir, "runs", "CYC-1", "run.json"), JSON.stringify(old));
-  const loaded = await store.load("CYC-1");
-  expect(loaded?.conflictRound).toBe(0);
-  expect(loaded?.conflict).toBeNull();
-});
 
-// The planning node's rounds (CYC-322) live in `plans/`, apart from the work item runs.
-const round = (startedAt: Date, over: Partial<PlanRoundInput> = {}): PlanRoundInput => ({
-  id: planRoundId(startedAt),
-  startedAt: startedAt.toISOString(),
-  updatedAt: startedAt.toISOString(),
-  phase: "shaping",
-  worktree: "/repo/.agents/worktree/plan-x",
-  triageSessionId: "triage-1",
-  candidates: ["CYC-5", "CYC-6"],
-  triage: {
-    categories: { "CYC-5": "shape", "CYC-6": "unfit" },
-    priorities: { "CYC-5": "high" },
-    order: ["CYC-5"],
-  },
-  queue: [
-    {
-      key: "CYC-5",
-      issueId: 505,
-      number: 5,
-      hash: "abc",
-      state: "writing",
-      round: 1,
-      shapeSessionId: "shape-2",
-      qaSessionId: "shape_qa-3",
-      stoppedReason: null,
-      originalCommented: true,
-      rewritten: false,
-      created: [7, 8],
-      pendingCreate: { index: 2, title: "third" },
-      linked: false,
-      notesCommented: false,
-      labelled: false,
+  test(`${kind} store: a run.json from before the conflict fields still loads, with conflictRound 0 and conflict null`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "al-"));
+    const store = make(kind, dir);
+    const saved = await store.save({
+      key: "CYC-1",
+      issueId: 1,
+      issueNumber: 1,
+      title: "t",
+      phase: "ci",
+      round: 0,
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      fullFlowDocs: [],
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      worktree: "/wt",
+      localBranch: "b",
+      remoteBranch: "auto/cyc-1",
+      devSessionId: "d",
+      qaSessionId: null,
+      reviewSessionId: null,
+      replacedSessions: [],
+      blockedReason: null,
+      resumeFrom: null,
+      prUrl: null,
+      findings: null,
+      cleanedAt: null,
+      cleanupNote: null,
+      kind: "dev",
+      research: null,
+      startedAt: "2026-11-25T00:00:00.000Z",
+      updatedAt: "2026-11-25T00:00:00.000Z",
+    });
+    const { conflictRound: _a, conflict: _b, ...old } = saved;
+    if (kind === "files") {
+      await writeFile(join(dir, "runs", "CYC-1", "run.json"), JSON.stringify(old));
+    } else {
+      // The same record as an older loop wrote it: the fields it did not know are not in `state`.
+      const db = openDb(dir);
+      const {
+        key: _k,
+        kind: _kind,
+        phase: _p,
+        round: _r,
+        issueId: _i,
+        issueNumber: _n,
+        title: _t,
+        worktree: _w,
+        blockedReason: _b,
+        resumeFrom: _f,
+        prUrl: _u,
+        startedAt: _s,
+        updatedAt: _a2,
+        ...state
+      } = old;
+      db.run("UPDATE runs SET state = ? WHERE key = 'CYC-1'", [JSON.stringify(state)]);
+      db.close();
+    }
+    const loaded = await store.load("CYC-1");
+    expect(loaded?.conflictRound).toBe(0);
+    expect(loaded?.conflict).toBeNull();
+  });
+
+  // The planning node's rounds (CYC-322) live in `plans/`, apart from the work item runs.
+  const round = (startedAt: Date, over: Partial<PlanRoundInput> = {}): PlanRoundInput => ({
+    id: planRoundId(startedAt),
+    startedAt: startedAt.toISOString(),
+    updatedAt: startedAt.toISOString(),
+    phase: "shaping",
+    worktree: "/repo/.agents/worktree/plan-x",
+    triageSessionId: "triage-1",
+    candidates: ["CYC-5", "CYC-6"],
+    triage: {
+      categories: { "CYC-5": "shape", "CYC-6": "unfit" },
+      priorities: { "CYC-5": "high" },
+      order: ["CYC-5"],
     },
-  ],
-  ...over,
-});
+    queue: [
+      {
+        key: "CYC-5",
+        issueId: 505,
+        number: 5,
+        hash: "abc",
+        state: "writing",
+        round: 1,
+        shapeSessionId: "shape-2",
+        qaSessionId: "shape_qa-3",
+        stoppedReason: null,
+        originalCommented: true,
+        rewritten: false,
+        created: [7, 8],
+        pendingCreate: { index: 2, title: "third" },
+        linked: false,
+        notesCommented: false,
+        labelled: false,
+      },
+    ],
+    ...over,
+  });
 
-test("store: a planning round round-trips under plans/<id>/ with its bodies directory, apart from the runs", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "al-"));
-  const store = new RunStore(dir, now);
-  const startedAt = new Date("2026-11-26T15:30:00.123Z");
-  expect(planRoundId(startedAt)).toBe("2026-11-26T15-30-00-123Z");
-  const saved = await store.savePlan(round(startedAt));
-  expect(saved.updatedAt).toBe(now().toISOString());
-  expect(await store.loadPlan(saved.id)).toEqual(saved);
-  const bodies = store.planBodiesDir(saved.id);
-  expect(bodies).toBe(join(dir, "plans", "2026-11-26T15-30-00-123Z", "bodies"));
-  expect((await stat(bodies)).isDirectory()).toBe(true);
-  expect((await readdir(join(dir, "plans", saved.id))).sort()).toEqual(["bodies", "run.json"]);
-  // The dev and research runs do not see it, and events still go to the one log.
-  expect(await store.all()).toEqual([]);
-  expect(await store.unfinished()).toEqual([]);
-  await store.event(`plan-${saved.id}`, "plan_started");
-  expect((await store.events()).map((e) => e.run)).toEqual([`plan-${saved.id}`]);
-  expect(await store.loadPlan("2026-01-01T00-00-00-000Z")).toBeUndefined();
-});
+  test(`${kind} store: a planning round round-trips under plans/<id>/ with its bodies directory, apart from the runs`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "al-"));
+    const store = make(kind, dir);
+    const startedAt = new Date("2026-11-26T15:30:00.123Z");
+    expect(planRoundId(startedAt)).toBe("2026-11-26T15-30-00-123Z");
+    const saved = await store.savePlan(round(startedAt));
+    expect(saved.updatedAt).toBe(now().toISOString());
+    expect(await store.loadPlan(saved.id)).toEqual(saved);
+    const bodies = store.planBodiesDir(saved.id);
+    expect(bodies).toBe(join(dir, "plans", "2026-11-26T15-30-00-123Z", "bodies"));
+    expect((await stat(bodies)).isDirectory()).toBe(true);
+    expect((await readdir(join(dir, "plans", saved.id))).sort()).toEqual(
+      kind === "files" ? ["bodies", "run.json"] : ["bodies"],
+    );
+    // The dev and research runs do not see it, and events still go to the one log.
+    expect(await store.all()).toEqual([]);
+    expect(await store.unfinished()).toEqual([]);
+    await store.event(`plan-${saved.id}`, "plan_started");
+    expect((await store.events()).map((e) => e.run)).toEqual([`plan-${saved.id}`]);
+    expect(await store.loadPlan("2026-01-01T00-00-00-000Z")).toBeUndefined();
+  });
 
-test("store: unfinished rounds are the ones not finished or abandoned, oldest first; a bad id is refused", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "al-"));
-  const store = new RunStore(dir, now);
-  expect(await store.unfinishedPlans()).toEqual([]);
-  await store.savePlan(round(new Date("2026-11-26T12:00:00Z"), { phase: "triage" }));
-  await store.savePlan(round(new Date("2026-11-26T10:00:00Z")));
-  await store.savePlan(round(new Date("2026-11-26T09:00:00Z"), { phase: "finished" }));
-  await store.savePlan(round(new Date("2026-11-26T08:00:00Z"), { phase: "abandoned" }));
-  // memory.json beside the rounds is not one.
-  await store.savePlanMemory({});
-  expect((await store.unfinishedPlans()).map((r) => [r.id, r.phase])).toEqual([
-    ["2026-11-26T10-00-00-000Z", "shaping"],
-    ["2026-11-26T12-00-00-000Z", "triage"],
-  ]);
-  expect(() => store.planBodiesDir("../runs")).toThrow("not a planning round id");
-  await expect(store.loadPlan("../../etc")).rejects.toThrow("not a planning round id");
-  await expect(
-    store.savePlan({ ...round(new Date("2026-11-26T12:00:00Z")), id: "../x" }),
-  ).rejects.toThrow("not a planning round id");
-});
+  test(`${kind} store: unfinished rounds are the ones not finished or abandoned, oldest first; a bad id is refused`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "al-"));
+    const store = make(kind, dir);
+    expect(await store.unfinishedPlans()).toEqual([]);
+    await store.savePlan(round(new Date("2026-11-26T12:00:00Z"), { phase: "triage" }));
+    await store.savePlan(round(new Date("2026-11-26T10:00:00Z")));
+    await store.savePlan(round(new Date("2026-11-26T09:00:00Z"), { phase: "finished" }));
+    await store.savePlan(round(new Date("2026-11-26T08:00:00Z"), { phase: "abandoned" }));
+    // memory.json beside the rounds is not one.
+    await store.savePlanMemory({});
+    expect((await store.unfinishedPlans()).map((r) => [r.id, r.phase])).toEqual([
+      ["2026-11-26T10-00-00-000Z", "shaping"],
+      ["2026-11-26T12-00-00-000Z", "triage"],
+    ]);
+    expect(() => store.planBodiesDir("../runs")).toThrow("not a planning round id");
+    await expect(store.loadPlan("../../etc")).rejects.toThrow("not a planning round id");
+    await expect(
+      store.savePlan({ ...round(new Date("2026-11-26T12:00:00Z")), id: "../x" }),
+    ).rejects.toThrow("not a planning round id");
+  });
 
-test("store: the planning memory is empty at first and round-trips", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "al-"));
-  const store = new RunStore(dir, now);
-  expect(await store.loadPlanMemory()).toEqual({});
-  const memory = {
-    "CYC-5": {
-      category: "unfit",
-      bodyHash: "abc",
-      lastCommentAt: "2026-11-25T01:00:00.000Z",
-      stopped: false,
-    },
-    "CYC-6": { category: null, bodyHash: "def", lastCommentAt: null, stopped: true },
-  };
-  await store.savePlanMemory(memory);
-  expect(await store.loadPlanMemory()).toEqual(memory);
-  expect(await readdir(join(dir, "plans"))).toEqual(["memory.json"]);
-  expect(await store.unfinishedPlans()).toEqual([]);
-});
+  test(`${kind} store: the planning memory is empty at first and round-trips`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "al-"));
+    const store = make(kind, dir);
+    expect(await store.loadPlanMemory()).toEqual({});
+    const memory = {
+      "CYC-5": {
+        category: "unfit",
+        bodyHash: "abc",
+        lastCommentAt: "2026-11-25T01:00:00.000Z",
+        stopped: false,
+      },
+      "CYC-6": { category: null, bodyHash: "def", lastCommentAt: null, stopped: true },
+    };
+    await store.savePlanMemory(memory);
+    expect(await store.loadPlanMemory()).toEqual(memory);
+    if (kind === "files") expect(await readdir(join(dir, "plans"))).toEqual(["memory.json"]);
+    expect(await store.unfinishedPlans()).toEqual([]);
+  });
+}
 
 test("lock: a live holder refuses, a dead one is taken over", async () => {
   const dir = await mkdtemp(join(tmpdir(), "al-"));

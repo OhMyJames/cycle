@@ -2,6 +2,7 @@
 
 import { join } from "node:path";
 import { type ConfigFile, readTuning } from "./config-file.ts";
+import { openStore } from "./db/store.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
@@ -9,7 +10,7 @@ import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
-import { acquireLock, RunStore } from "./store.ts";
+import { acquireLock } from "./store.ts";
 import { DEFAULT_CHECK_MINUTES, DEFAULT_MAX_ASK, defaultConfig } from "./types.ts";
 
 export type SetUpOptions = {
@@ -108,7 +109,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     initial: file.tuning ?? {},
     reload: () => readTuning(configPath, file.projectKey),
   };
-  const store = new RunStore(stateDir, clock.now);
+  const store = openStore(stateDir, clock.now);
   const release = dryRun ? async () => {} : await acquireLock(stateDir);
   const sessions = new DaemonSessions(
     process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),

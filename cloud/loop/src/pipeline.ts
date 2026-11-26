@@ -74,7 +74,7 @@ import {
   reviewBrief,
   type Verdict,
 } from "./prompts.ts";
-import type { RunRecord, RunStore } from "./store.ts";
+import type { LoopStore, RunRecord } from "./store.ts";
 import {
   type Clock,
   type Config,
@@ -119,7 +119,7 @@ export type Deps = {
   tracker: Tracker;
   sessions: Sessions;
   exec: Exec;
-  store: RunStore;
+  store: LoopStore;
   clock: Clock;
   log: Logger;
   /** The loop's own environment; only the allowlisted parts of it go to the commands it runs. */
