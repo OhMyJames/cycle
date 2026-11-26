@@ -60,6 +60,7 @@ type Turn = {
   run: string;
   role: SessionRole;
   worktree: string;
+  readRoots: string[] | undefined;
   text: string;
   stop: string | undefined;
   interrupted: boolean;
@@ -161,7 +162,11 @@ export class DaemonSessions implements Sessions {
     // No turn of the loop's is running: a person is working in this session (a blocked run they took over). Their
     // requests are theirs; the loop does not answer them, and gives the request up when someone else does.
     if (turn === undefined) return wait(false);
-    const verdict = decide(request, { role: turn.role, worktree: turn.worktree });
+    const verdict = decide(request, {
+      role: turn.role,
+      worktree: turn.worktree,
+      ...(turn.readRoots !== undefined ? { readRoots: turn.readRoots } : {}),
+    });
     const answer = answerFor(request, verdict);
     const command = commandPrefix(request, turn.role);
     const data = {
@@ -266,7 +271,13 @@ export class DaemonSessions implements Sessions {
   async turn(
     sessionId: string,
     prompt: string,
-    context: { run: string; role: SessionRole; worktree: string; timeoutMs: number },
+    context: {
+      run: string;
+      role: SessionRole;
+      worktree: string;
+      timeoutMs: number;
+      readRoots?: string[];
+    },
   ): Promise<TurnResult> {
     // After an update of Cycle the connection is down or coming back: a prompt sent now would be lost.
     await this.#connected();
@@ -286,6 +297,7 @@ export class DaemonSessions implements Sessions {
       run: context.run,
       role: context.role,
       worktree: context.worktree,
+      readRoots: context.readRoots,
       text: "",
       stop: undefined,
       interrupted: false,

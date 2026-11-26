@@ -184,7 +184,7 @@ export const defaultConfig = (
   ...partial,
 });
 
-export type SessionRole = "dev" | "qa" | "review";
+export type SessionRole = "dev" | "qa" | "review" | "research" | "research_qa";
 
 export type TurnResult = {
   /** `end_turn` is the only one that is a finished turn; `cancelled`, `error`, `max_tokens`, `refusal` are not. */
@@ -214,10 +214,19 @@ export interface Sessions {
     cwd: string;
     worktree?: { base: string; name: string };
   }): Promise<{ sessionId: string; cwd: string; branch: string | null }>;
-  /** One turn: send `prompt`, answer what the agent asks by the role's policy, return when it ends. */
+  /**
+   * One turn: send `prompt`, answer what the agent asks by the role's policy, return when it ends. `readRoots` are the
+   * directories besides the worktree that a research role may read.
+   */
   turn(
     sessionId: string,
     prompt: string,
-    context: { run: string; role: SessionRole; worktree: string; timeoutMs: number },
+    context: {
+      run: string;
+      role: SessionRole;
+      worktree: string;
+      timeoutMs: number;
+      readRoots?: string[];
+    },
   ): Promise<TurnResult>;
 }
