@@ -140,7 +140,7 @@ test("store: a planning round round-trips under plans/<id>/ with its bodies dire
   const bodies = store.planBodiesDir(saved.id);
   expect(bodies).toBe(join(dir, "plans", "2026-11-26T15-30-00-123Z", "bodies"));
   expect((await stat(bodies)).isDirectory()).toBe(true);
-  expect(await readdir(join(dir, "plans", saved.id))).toEqual(["bodies", "run.json"]);
+  expect((await readdir(join(dir, "plans", saved.id))).sort()).toEqual(["bodies", "run.json"]);
   // The dev and research runs do not see it, and events still go to the one log.
   expect(await store.all()).toEqual([]);
   expect(await store.unfinished()).toEqual([]);
