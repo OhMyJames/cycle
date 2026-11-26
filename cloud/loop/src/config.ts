@@ -1,11 +1,20 @@
 // The Loop server's configuration: which Projects it serves and the token each one needs. The file holds tokens, so it
 // is refused unless only its owner can read it (docs/protocol.md §17).
 
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { LoopForgeSchema } from "@cycle/protocol";
 import { z } from "zod";
+
+/** The real path where the directory exists (symlinks followed), else the absolute path. */
+const realOrResolved = (path: string): string => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+};
 
 export const ConfigSchema = z.object({
   projects: z
@@ -27,9 +36,14 @@ export const ConfigSchema = z.object({
       "projectKey must be unique",
     )
     .refine((projects) => {
-      const dirs = projects.flatMap((p) => (p.stateDir === undefined ? [] : [resolve(p.stateDir)]));
-      return new Set(dirs).size === dirs.length;
-    }, "stateDir must be unique"),
+      const dirs = projects.flatMap((p) =>
+        p.stateDir === undefined ? [] : [realOrResolved(p.stateDir)],
+      );
+      // No two the same place, and none inside another (they would read each other's runs).
+      return dirs.every((a, i) =>
+        dirs.every((b, j) => i === j || (a !== b && !a.startsWith(b + sep))),
+      );
+    }, "stateDir must be unique and not nested"),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

@@ -114,6 +114,8 @@ test("stateDir must be absolute and unique, /a and /a/ being the same", async ()
   };
   expect(await check([project("A", "relative/dir")])).toBe("config_invalid");
   expect(await check([project("A", "/s/a"), project("B", "/s/a/")])).toBe("config_invalid");
+  expect(await check([project("A", "/s/a"), project("B", "/s/a/inner")])).toBe("config_invalid");
+  expect(await check([project("A", "/s/a"), project("B", "/s/ab")])).toBeUndefined();
   expect(await check([project("A", "/s/a"), project("B", "/s/b")])).toBeUndefined();
 });
 

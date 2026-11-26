@@ -55,31 +55,56 @@ export const listen = async (
   socketPath: string,
   readRuns: RunsReader = runsList,
 ): Promise<Server> => {
-  // Requests that arrive while a read is under way share it: a burst reads the records once.
-  let inflight: ReturnType<typeof runsList> | undefined;
+  // A read in progress is never handed to a request that came after it started: such a request waits for one
+  // fresh read, which every request that arrives meanwhile shares.
+  let running: Promise<unknown> | undefined;
+  let next: ReturnType<typeof runsList> | undefined;
+  const start = (c: Config): ReturnType<typeof runsList> => {
+    const read = readRuns(c);
+    const done = read.then(
+      () => undefined,
+      () => undefined,
+    );
+    running = done;
+    void done.then(() => {
+      if (running === done) running = undefined;
+    });
+    return read;
+  };
   const sharedRuns: RunsReader = (c) => {
-    if (inflight === undefined) {
-      const read = readRuns(c).finally(() => {
-        inflight = undefined;
+    if (running === undefined) return start(c);
+    if (next === undefined) {
+      const after = running;
+      next = after.then(() => {
+        next = undefined;
+        return start(c);
       });
-      inflight = read;
     }
-    return inflight;
+    return next;
   };
   if (await alive(socketPath)) throw new Error("already_running");
   return new Promise((resolve, reject) => {
     rmSync(socketPath, { force: true });
     // Born closed to everyone but its owner: a chmod after listen leaves a moment when it is not.
     const umask = process.umask(0o177);
-    const server = createServer((socket) => {
+    const server = createServer({ allowHalfOpen: true }, (socket) => {
       socket.on("error", () => {});
       // One request at a time per connection, so replies come back in the order asked.
       let queue: Promise<void> = Promise.resolve();
       let pending = 0;
-      createInterface({ input: socket }).on("line", (line) => {
+      const lines = createInterface({ input: socket });
+      // The client has finished sending: answer what is queued, then close.
+      lines.on("close", () => {
+        void queue.then(() => socket.end());
+      });
+      lines.on("line", (line) => {
         if (line.trim() === "" || socket.destroyed) return;
         if (pending >= MAX_PENDING) {
-          socket.destroy();
+          let id: unknown = null;
+          try {
+            id = (JSON.parse(line) as { id?: unknown }).id ?? null;
+          } catch {}
+          socket.write(`${reply(id, { error: { code: -32000, message: "Too many requests" } })}\n`);
           return;
         }
         pending++;

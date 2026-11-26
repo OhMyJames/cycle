@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,6 +109,25 @@ describe("runs/list", () => {
     const result = await runsList({ projects: [{ ...first, stateDir: state }] });
     expect(result.projects[0]?.runs.map((r) => r.key)).toEqual(["OK-9", "OK-10"]);
     expect(result.projects[0]?.unavailable).toBe(false);
+  });
+
+  test("a run.json that cannot be read marks the list unavailable", async () => {
+    const state = join(dir, "state-eacces");
+    const good = readFileSync(join(cycState, "runs", "CYC-1", "run.json"), "utf8");
+    for (const key of ["OK-1", "OK-2"]) {
+      mkdirSync(join(state, "runs", key), { recursive: true });
+      writeFileSync(join(state, "runs", key, "run.json"), good.replace("CYC-1", key));
+    }
+    chmodSync(join(state, "runs", "OK-2", "run.json"), 0o000);
+    try {
+      const first = config.projects[0];
+      if (first === undefined) throw new Error("no project");
+      const result = await runsList({ projects: [{ ...first, stateDir: state }] });
+      expect(result.projects[0]?.runs.map((r) => r.key)).toEqual(["OK-1"]);
+      expect(result.projects[0]?.unavailable).toBe(true);
+    } finally {
+      chmodSync(join(state, "runs", "OK-2", "run.json"), 0o600);
+    }
   });
 
   test("a copied directory (key differs from its name) is skipped and flagged", async () => {
