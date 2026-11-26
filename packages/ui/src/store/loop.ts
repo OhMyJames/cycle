@@ -5,6 +5,8 @@ import type {
   LoopActResult,
   LoopBoardAnswer,
   LoopChatResult,
+  LoopManyAction,
+  LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectInfo,
   LoopTicketAnswer,
@@ -123,6 +125,22 @@ export class LoopSlice {
       .loopAct(projectKey, identifier, action, confirmed)
       .catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
     if (result.kind === "ok")
+      await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
+    return result;
+  };
+
+  /** A batch over the tickets waiting for approval. The board is read again once anything was written. */
+  actMany = async (
+    projectKey: string,
+    action: LoopManyAction,
+    identifiers: string[],
+    confirmed = false,
+    reason?: string,
+  ): Promise<LoopManyResult> => {
+    const result = await this.#kit.bridge
+      .loopActMany(projectKey, action, identifiers, confirmed, reason)
+      .catch((): LoopManyResult => ({ kind: "failed", reason: "offline" }));
+    if (result.kind === "done" && result.results.some((r) => r.outcome !== "failed"))
       await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
     return result;
   };

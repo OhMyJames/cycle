@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { LoopProjectInfo } from "@cycle/ui/api";
 import {
   actionsOf,
+  actOnMany,
   actOnTicket,
   answerBoard,
   answerTicket,
@@ -560,5 +561,237 @@ describe("a conversation about a ticket (CYC-389)", () => {
       sessionId: "s1",
       locationId: "local",
     });
+  });
+});
+
+describe("tickets waiting for approval (CYC-451)", () => {
+  const PENDING = 40;
+  const SKIP = 41;
+  const labels = [
+    { id: 11, name: "auto" },
+    { id: 5, name: "产品" },
+    { id: PENDING, name: "待批准" },
+    { id: SKIP, name: "Loop 跳过" },
+  ];
+  type Row = { id: number; n: number; columnId: number; labelIds: number[]; body?: string };
+  const BODY = "x\n\n## 验收标准\n\n1. 一\n2. 二\n3. 三\n\n## 依赖\n\n- no";
+  const NOTES = "Loop 规划\n\n拆小了，范围清楚。\n第二行\n\n盘点的理由：合适";
+  /** A tracker with a few tickets and their comments; it remembers every write. */
+  const world = (
+    rows: Row[],
+    opts: { labels?: typeof labels; commentsFail?: number[]; noComments?: boolean } = {},
+  ) => {
+    const writes: { tool: string; args: Record<string, unknown> }[] = [];
+    const fetchImpl = (async (_url: unknown, init: RequestInit) => {
+      const { params } = JSON.parse(String(init.body)) as {
+        params: { name: string; arguments: Record<string, unknown> };
+      };
+      const { name, arguments: args } = params;
+      let data: unknown;
+      if (name === "get_project")
+        data = {
+          project: {},
+          columns: columns.map((c, position) => ({ ...c, position })),
+          labels: opts.labels ?? labels,
+        };
+      else if (name === "list_issues")
+        data = rows
+          .filter((r) => r.columnId === args.columnId)
+          .map((r) => ({
+            id: r.id,
+            identifier: `CYC-${r.n}`,
+            title: `Ticket ${r.n}`,
+            priority: "high",
+            columnId: r.columnId,
+            labelIds: r.labelIds,
+          }));
+      else if (name === "get_issue_by_number") {
+        const r = rows.find((x) => x.n === args.sequenceNumber);
+        if (!r) return new Response("no", { status: 404 });
+        data = {
+          id: r.id,
+          identifier: `CYC-${r.n}`,
+          title: `Ticket ${r.n}`,
+          columnId: r.columnId,
+          labelIds: r.labelIds,
+          description: r.body ?? BODY,
+        };
+      } else if (name === "execute_read") {
+        if (opts.commentsFail?.includes(Number((args.arguments as { issueId?: number }).issueId)))
+          return new Response("no", { status: 500 });
+        data = {
+          items: opts.noComments
+            ? []
+            : [
+                { id: 2, body: "别的评论", createdAt: "2026-11-26T02:00:00Z" },
+                { id: 1, body: NOTES, createdAt: "2026-11-26T01:00:00Z" },
+              ],
+        };
+      } else {
+        writes.push({ tool: name, args });
+        data = { ok: true };
+      }
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    return { writes, fetchImpl };
+  };
+  const many = (
+    action: string,
+    ids: string[],
+    t: ReturnType<typeof world>,
+    confirmed: unknown = true,
+    reason?: unknown,
+    events: unknown[] = [],
+  ) =>
+    actOnMany(
+      loop,
+      "CYC",
+      action,
+      ids,
+      confirmed,
+      reason,
+      (e, p) => events.push([e, p]),
+      t.fetchImpl,
+    );
+
+  const backlogOf = async (t: ReturnType<typeof world>) => {
+    const b = await answerBoard(loop, "CYC", () => {}, t.fetchImpl);
+    if (b.kind !== "ok") throw new Error("expected a board");
+    return b.columns.find((c) => c.name === "Backlog")?.tickets ?? [];
+  };
+
+  test("the board marks Backlog tickets with 待批准, with the reason and the criteria count", async () => {
+    writeKey(0o600);
+    const t = world([
+      { id: 1, n: 1, columnId: 21, labelIds: [PENDING, 5] },
+      { id: 2, n: 2, columnId: 21, labelIds: [5] },
+      { id: 3, n: 3, columnId: 22, labelIds: [PENDING] },
+    ]);
+    const tickets = await backlogOf(t);
+    expect(tickets.find((x) => x.identifier === "CYC-1")?.pending).toEqual({
+      reason: "拆小了，范围清楚。 第二行",
+      criteria: 3,
+    });
+    expect(tickets.find((x) => x.identifier === "CYC-2")?.pending).toBeUndefined();
+  });
+
+  test("a failed read leaves that card without a reason; the rest of the board is as it was", async () => {
+    writeKey(0o600);
+    const t = world(
+      [
+        { id: 1, n: 1, columnId: 21, labelIds: [PENDING] },
+        { id: 2, n: 2, columnId: 21, labelIds: [PENDING] },
+      ],
+      { commentsFail: [1] },
+    );
+    const tickets = await backlogOf(t);
+    expect(tickets.find((x) => x.identifier === "CYC-1")?.pending?.reason).toBe("");
+    expect(tickets.find((x) => x.identifier === "CYC-2")?.pending?.reason).toBe(
+      "拆小了，范围清楚。 第二行",
+    );
+  });
+
+  test("no 待批准 label in the Project: no pending", async () => {
+    writeKey(0o600);
+    const t = world([{ id: 1, n: 1, columnId: 21, labelIds: [PENDING] }], {
+      labels: labels.filter((l) => l.id !== PENDING),
+    });
+    expect((await backlogOf(t)).every((x) => x.pending === undefined)).toBe(true);
+  });
+
+  test("approving many without confirmation writes nothing, not even a read", async () => {
+    writeKey(0o600);
+    const t = world([{ id: 1, n: 1, columnId: 21, labelIds: [PENDING] }]);
+    const seen: string[] = [];
+    const spy = (async (u: unknown, i: RequestInit) => {
+      seen.push(String(i.body));
+      return t.fetchImpl(u as never, i);
+    }) as unknown as typeof fetch;
+    for (const confirmed of [undefined, "yes", false])
+      expect(
+        await actOnMany(
+          loop,
+          "CYC",
+          "approve_many",
+          ["CYC-1"],
+          confirmed,
+          undefined,
+          () => {},
+          spy,
+        ),
+      ).toEqual({ kind: "failed", reason: "unconfirmed" });
+    expect(seen).toEqual([]);
+    expect(t.writes).toEqual([]);
+  });
+
+  test("approving many: Todo, auto on, 待批准 off, other labels kept; skips and results per ticket", async () => {
+    writeKey(0o600);
+    const t = world([
+      { id: 1, n: 1, columnId: 21, labelIds: [5, PENDING] },
+      { id: 2, n: 2, columnId: 22, labelIds: [PENDING] }, // not in Backlog any more
+      { id: 3, n: 3, columnId: 21, labelIds: [5] }, // no 待批准 now
+    ]);
+    const events: unknown[] = [];
+    const result = await many(
+      "approve_many",
+      ["CYC-1", "CYC-2", "CYC-3", "CYC-9"],
+      t,
+      true,
+      undefined,
+      events,
+    );
+    expect(result).toEqual({
+      kind: "done",
+      results: [
+        { identifier: "CYC-1", outcome: "ok" },
+        { identifier: "CYC-2", outcome: "skipped" },
+        { identifier: "CYC-3", outcome: "skipped" },
+        { identifier: "CYC-9", outcome: "failed", reason: "refused" },
+      ],
+    });
+    expect(t.writes).toEqual([
+      { tool: "update_issue", args: { issueId: 1, columnId: 22, labelIds: [5, 11] } },
+    ]);
+    expect(events).toEqual([
+      ["loop_tickets_acted", { action: "approve_many", ok: 1, skipped: 2, failed: 1 }],
+    ]);
+  });
+
+  test("returning many: 待批准 off, Loop 跳过 on, a reason becomes a comment, none means no comment", async () => {
+    writeKey(0o600);
+    const rows = [
+      { id: 1, n: 1, columnId: 21, labelIds: [5, PENDING] },
+      { id: 2, n: 2, columnId: 21, labelIds: [PENDING] },
+    ];
+    const a = world(rows);
+    expect((await many("return_many", ["CYC-1", "CYC-2"], a, true, "  不做了  ")).kind).toBe(
+      "done",
+    );
+    expect(a.writes).toEqual([
+      { tool: "update_issue", args: { issueId: 1, labelIds: [5, SKIP] } },
+      { tool: "add_comment", args: { issueId: 1, body: "不做了" } },
+      { tool: "update_issue", args: { issueId: 2, labelIds: [SKIP] } },
+      { tool: "add_comment", args: { issueId: 2, body: "不做了" } },
+    ]);
+    const b = world(rows);
+    await many("return_many", ["CYC-1"], b);
+    expect(b.writes.map((w) => w.tool)).toEqual(["update_issue"]);
+    expect(await many("return_many", ["CYC-1"], world(rows), false)).toEqual({
+      kind: "failed",
+      reason: "unconfirmed",
+    });
+  });
+
+  test("the single approve also takes 待批准 off", async () => {
+    writeKey(0o600);
+    const t = world([{ id: 7, n: 387, columnId: 21, labelIds: [5, PENDING] }]);
+    expect(
+      await actOnTicket(loop, "CYC", "CYC-387", "approve", true, () => {}, t.fetchImpl),
+    ).toEqual({ kind: "ok" });
+    expect(t.writes).toEqual([
+      { tool: "update_issue", args: { issueId: 7, columnId: 22, labelIds: [5, 11] } },
+    ]);
   });
 });

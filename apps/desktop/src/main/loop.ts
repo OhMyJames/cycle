@@ -19,6 +19,9 @@ import type {
   LoopChat,
   LoopChatFailure,
   LoopChatResult,
+  LoopManyAction,
+  LoopManyItem,
+  LoopManyResult,
   LoopNotice,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
@@ -200,13 +203,20 @@ export const chatOf = (stateType: string, role?: Role, auto = false): LoopChat =
         : "none";
 
 const AUTO = "auto";
+/** The labels of Loop's planning node (CYC-322): a shaped ticket waits for a person; a returned one is left alone. */
+const PENDING = "待批准";
+const SKIP = "Loop 跳过";
+/** The fixed first line of the comment that says why a ticket was shaped (tools/auto-loop `NOTES_HEADING`). */
+const NOTES_HEADING = "Loop 规划";
 
-/** The id of the `auto` label of a Project, by its name (labels are per Project). */
-const autoLabelOf = (project: Record<string, unknown>): number | undefined => {
+/** The id of a label of a Project, by its name (labels are per Project). */
+const labelOf = (project: Record<string, unknown>, name: string): number | undefined => {
   const labels = Array.isArray(project.labels) ? project.labels : [];
-  const found = labels.map(asRecord).find((l) => l.name === AUTO);
+  const found = labels.map(asRecord).find((l) => l.name === name);
   return typeof found?.id === "number" ? found.id : undefined;
 };
+const autoLabelOf = (project: Record<string, unknown>): number | undefined =>
+  labelOf(project, AUTO);
 
 const labelIdsOf = (row: Record<string, unknown>): number[] =>
   (Array.isArray(row.labelIds) ? row.labelIds : []).filter(
@@ -222,6 +232,46 @@ const DONE_SHOWN = 20;
 /** The most a list answers (the tracker's own limit): a column is shown whole, so its count is true. */
 const LIST_LIMIT = 500;
 
+const REASON_MAX = 200;
+
+/** Loop's reason in its newest `Loop 规划` comment: what follows the heading, up to the first blank line. */
+export const reasonOf = (comments: { body: string }[]): string | undefined => {
+  for (const { body } of comments) {
+    if (!body.startsWith(NOTES_HEADING)) continue;
+    const first =
+      body
+        .slice(NOTES_HEADING.length)
+        .trim()
+        .split(/\n\s*\n/, 1)[0] ?? "";
+    const text = first.replace(/\s+/g, " ").trim();
+    return text.length > REASON_MAX ? `${text.slice(0, REASON_MAX - 1)}…` : text;
+  }
+  return undefined;
+};
+
+/** What a person needs to decide on a ticket waiting for approval. A read that fails gives no reason, not an error. */
+const pendingOf = async (
+  t: Tracker,
+  projectKey: string,
+  row: Record<string, unknown>,
+): Promise<NonNullable<LoopTicket["pending"]>> => {
+  let criteria = typeof row.description === "string" ? acceptanceOf(row.description).length : 0;
+  try {
+    if (typeof row.description !== "string") {
+      const parsed = parseIdentifier(projectKey, row.identifier);
+      if (!parsed) throw new Error("identifier");
+      const issue = unwrap(await callTool(t, "get_issue_by_number", parsed));
+      criteria = acceptanceOf(
+        typeof issue.description === "string" ? issue.description : "",
+      ).length;
+    }
+    const reason = reasonOf(await cachedComments(t, row)) ?? "";
+    return { reason, criteria };
+  } catch {
+    return { reason: "", criteria };
+  }
+};
+
 /** Tickets by the kind of their column (never its name); read-only. */
 export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoardAnswer> => {
   try {
@@ -230,6 +280,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
     const project = unwrap(await callTool(t, "get_project", { projectKey }));
     const columns = columnsOf(project);
     const autoId = autoLabelOf(project);
+    const pendingId = labelOf(project, PENDING);
     if (columns.length === 0) throw new Error("no columns");
     const ticketsOf = async (
       column: Column,
@@ -239,7 +290,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
         await callTool(t, "list_issues", { projectKey, columnId: column.id, limit }),
       );
       const role = roleOf(columns, column);
-      return rows.map((row): LoopTicket & { at: string } => {
+      const tickets = rows.map((row): LoopTicket & { at: string } => {
         const r = asRecord(row);
         const auto = autoId !== undefined && labelIdsOf(r).includes(autoId);
         return {
@@ -252,6 +303,22 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
           chat: chatOf(column.stateType, role, auto),
         };
       });
+      if (column.stateType !== "backlog" || pendingId === undefined) return tickets;
+      // Only the tickets waiting for approval are read one by one, a few at a time: a failed read leaves that card
+      // without its reason and the rest of the board as it was.
+      const waiting = rows
+        .map((row, i) => ({ r: asRecord(row), ticket: tickets[i] }))
+        .filter(({ r }) => labelIdsOf(r).includes(pendingId));
+      let next = 0;
+      const lane = async () => {
+        while (next < waiting.length) {
+          const entry = waiting[next++];
+          if (entry?.ticket === undefined) continue;
+          entry.ticket.pending = await pendingOf(t, projectKey, entry.r);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, waiting.length) }, lane));
+      return tickets;
     };
     // The tracker's own board order: by `position` when every column has one, else as listed.
     const ordered = columns.every((c) => typeof c.position === "number")
@@ -367,6 +434,8 @@ type Read = {
   columns: Column[];
   auto: boolean;
   autoId: number | undefined;
+  pendingId: number | undefined;
+  skipId: number | undefined;
 };
 
 const readIssue = async (t: Tracker, projectKey: string, sequenceNumber: number): Promise<Read> => {
@@ -381,6 +450,8 @@ const readIssue = async (t: Tracker, projectKey: string, sequenceNumber: number)
     column,
     columns,
     autoId,
+    pendingId: labelOf(project, PENDING),
+    skipId: labelOf(project, SKIP),
     auto: autoId !== undefined && labelIdsOf(issue).includes(autoId),
   };
 };
@@ -479,7 +550,7 @@ export const actOnTicket = async (
   const tracker = await withKey(loop, fetchImpl);
   if (!tracker) return done({ kind: "failed", reason: "no_key" }, action);
   try {
-    const { issue, column, columns, auto, autoId } = await readIssue(
+    const { issue, column, columns, auto, autoId, pendingId } = await readIssue(
       tracker,
       parsed.projectKey,
       parsed.sequenceNumber,
@@ -497,7 +568,10 @@ export const actOnTicket = async (
     const args: Record<string, unknown> = { issueId: issue.id, columnId: target.id };
     if (action === "approve") {
       if (autoId === undefined) return done({ kind: "failed", reason: "refused" }, action);
-      args.labelIds = labels.includes(autoId) ? labels : [...labels, autoId];
+      // Approved by hand, it is not waiting any more: `待批准` goes too.
+      const withAuto = labels.includes(autoId) ? labels : [...labels, autoId];
+      args.labelIds =
+        pendingId === undefined ? withAuto : withAuto.filter((id) => id !== pendingId);
     } else if (action === "to_backlog" && autoId !== undefined && labels.includes(autoId)) {
       // Back in Backlog it is not approved any more, so Loop must not take it up from there.
       args.labelIds = labels.filter((id) => id !== autoId);
@@ -507,6 +581,108 @@ export const actOnTicket = async (
   } catch (error) {
     return done({ kind: "failed", reason: failureOf(error) }, action);
   }
+};
+
+const MANY_MAX = 100;
+const REASON_COMMENT_MAX = 2000;
+
+/**
+ * A batch over the tickets waiting for approval (CYC-451). Nothing is written without `confirmed`. Each ticket is read
+ * again just before its write and is only touched while it still is in Backlog with `待批准` (else `skipped`); one that
+ * fails does not stop the others. `labelIds` replaces all labels, so it is built from the fresh ones.
+ */
+export const actOnMany = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  action: unknown,
+  identifiers: unknown,
+  confirmed: unknown,
+  reason: unknown,
+  track: (
+    event: "loop_tickets_acted",
+    props: { action: LoopManyAction; ok: number; skipped: number; failed: number },
+  ) => void,
+  fetchImpl?: typeof fetch,
+): Promise<LoopManyResult> => {
+  if (action !== "approve_many" && action !== "return_many")
+    return { kind: "failed", reason: "refused" };
+  if (
+    typeof projectKey !== "string" ||
+    !Array.isArray(identifiers) ||
+    identifiers.length === 0 ||
+    identifiers.length > MANY_MAX
+  )
+    return { kind: "failed", reason: "refused" };
+  if (confirmed !== true) return { kind: "failed", reason: "unconfirmed" };
+  const tracker = await withKey(loop, fetchImpl);
+  if (!tracker) return { kind: "failed", reason: "no_key" };
+  const why = typeof reason === "string" ? reason.trim().slice(0, REASON_COMMENT_MAX) : "";
+  const results: LoopManyItem[] = [];
+  let project: Record<string, unknown>;
+  try {
+    project = unwrap(await callTool(tracker, "get_project", { projectKey }));
+  } catch (error) {
+    return { kind: "failed", reason: failureOf(error) };
+  }
+  const columns = columnsOf(project);
+  const autoId = labelOf(project, AUTO);
+  const pendingId = labelOf(project, PENDING);
+  const skipId = labelOf(project, SKIP);
+  const todo = columns
+    .filter((c) => c.stateType === "unstarted")
+    .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))[0];
+  const one = async (id: unknown): Promise<LoopManyItem> => {
+    const identifier = String(id);
+    const parsed = parseIdentifier(projectKey, id);
+    if (!parsed) return { identifier, outcome: "failed", reason: "refused" };
+    try {
+      const issue = unwrap(
+        await callTool(tracker, "get_issue_by_number", {
+          projectKey,
+          sequenceNumber: parsed.sequenceNumber,
+        }),
+      );
+      const column = columns.find((c) => c.id === issue.columnId);
+      if (column === undefined || typeof issue.id !== "number")
+        return { identifier, outcome: "failed", reason: "refused" };
+      const labels = labelIdsOf(issue);
+      if (column.stateType !== "backlog" || pendingId === undefined || !labels.includes(pendingId))
+        return { identifier, outcome: "skipped" };
+      const kept = labels.filter((l) => l !== pendingId);
+      if (action === "approve_many") {
+        if (autoId === undefined || todo === undefined)
+          return { identifier, outcome: "failed", reason: "refused" };
+        await callTool(tracker, "update_issue", {
+          issueId: issue.id,
+          columnId: todo.id,
+          labelIds: kept.includes(autoId) ? kept : [...kept, autoId],
+        });
+      } else {
+        if (skipId === undefined) return { identifier, outcome: "failed", reason: "refused" };
+        await callTool(tracker, "update_issue", {
+          issueId: issue.id,
+          labelIds: kept.includes(skipId) ? kept : [...kept, skipId],
+        });
+        // The labels are the decision; the comment is a courtesy, and its failure does not undo them.
+        if (why !== "")
+          await callTool(tracker, "add_comment", { issueId: issue.id, body: why }).catch(() => {});
+      }
+      return { identifier, outcome: "ok" };
+    } catch (error) {
+      return { identifier, outcome: "failed", reason: failureOf(error) };
+    }
+  };
+  const wanted = [...new Set(identifiers.map(String))];
+  for (const id of wanted) results.push(await one(id));
+  const count = (outcome: LoopManyItem["outcome"]) =>
+    results.filter((r) => r.outcome === outcome).length;
+  track("loop_tickets_acted", {
+    action,
+    ok: count("ok"),
+    skipped: count("skipped"),
+    failed: count("failed"),
+  });
+  return { kind: "done", results };
 };
 
 /** The agent a ticket conversation starts with: its own default model decides the model (Settings). */

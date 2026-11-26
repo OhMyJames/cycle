@@ -14,6 +14,8 @@ import type {
   LoopActResult,
   LoopBoardAnswer,
   LoopChatResult,
+  LoopManyAction,
+  LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
   LoopTicketAnswer,
@@ -80,6 +82,8 @@ export const fakeBridge = (
     loopTickets?: Record<string, LoopTicketAnswer>;
     /** What a state button comes to. Default: it worked. */
     loopAct?: LoopActResult;
+    /** What a batch comes to. Default: every ticket asked for worked. */
+    loopActMany?: LoopManyResult;
     /** What starting a conversation about a ticket comes to. Default: it started. */
     loopChat?: LoopChatResult;
     loopNotices?: Record<string, LoopNoticesAnswer>;
@@ -697,6 +701,20 @@ export const fakeBridge = (
       "loopNotices",
       async (projectKey: string): Promise<LoopNoticesAnswer> =>
         options.loopNotices?.[projectKey] ?? { kind: "no_key" },
+    ),
+    loopActMany: record(
+      "loopActMany",
+      async (
+        _projectKey: string,
+        _action: LoopManyAction,
+        identifiers: string[],
+        _confirmed?: boolean,
+        _reason?: string,
+      ): Promise<LoopManyResult> =>
+        options.loopActMany ?? {
+          kind: "done",
+          results: identifiers.map((identifier) => ({ identifier, outcome: "ok" as const })),
+        },
     ),
     loopAct: record(
       "loopAct",

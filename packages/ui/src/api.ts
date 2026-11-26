@@ -1311,6 +1311,17 @@ export type AppApi = {
     action: LoopAction,
     confirmed?: boolean,
   ): Promise<LoopActResult>;
+  /**
+   * Approves or returns a batch of the tickets waiting for approval (CYC-451). Main reads each ticket again and writes
+   * nothing unless `confirmed` is true. `reason` (return only) is posted as a comment on each returned ticket.
+   */
+  loopActMany(
+    projectKey: string,
+    action: LoopManyAction,
+    identifiers: string[],
+    confirmed?: boolean,
+    reason?: string,
+  ): Promise<LoopManyResult>;
 };
 
 /** A Project of the Loop server: what `projects/list` says, and nothing secret. */
@@ -1340,6 +1351,12 @@ export type LoopTicket = {
    * corrects it); `none` neither.
    */
   chat: LoopChat;
+  /**
+   * A Backlog ticket the planning node shaped and left for a person to approve (it has the `待批准` label). `reason` is
+   * the summary of Loop's newest `Loop 规划` comment, empty when it could not be read; `criteria` how many acceptance
+   * criteria the body has.
+   */
+  pending?: { reason: string; criteria: number };
 };
 
 export type LoopChat = "new" | "watch" | "none";
@@ -1372,6 +1389,16 @@ export type LoopActFailure =
   | "offline"
   | "refused";
 export type LoopActResult = { kind: "ok" } | { kind: "failed"; reason: LoopActFailure };
+
+/** `approve_many`: to Todo with `auto`, `待批准` off. `return_many`: `待批准` off, `Loop 跳过` on. */
+export type LoopManyAction = "approve_many" | "return_many";
+/** How one ticket of a batch came out: `skipped` is one that is not in Backlog any more or has no `待批准` now. */
+export type LoopManyItem =
+  | { identifier: string; outcome: "ok" | "skipped" }
+  | { identifier: string; outcome: "failed"; reason: LoopActFailure };
+export type LoopManyResult =
+  | { kind: "done"; results: LoopManyItem[] }
+  | { kind: "failed"; reason: LoopActFailure };
 
 /** One thing that needs a person. Order on the page: `permission`, then `blocked`, then `review`. */
 export type LoopNotice =
@@ -1543,6 +1570,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   loopBoard: true,
   loopTicket: true,
   loopAct: true,
+  loopActMany: true,
   loopChat: true,
   loopNotices: true,
 };

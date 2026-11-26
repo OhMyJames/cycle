@@ -24,6 +24,7 @@ export const MAIN_METHODS = [
   "loopBoard",
   "loopTicket",
   "loopAct",
+  "loopActMany",
   "loopChat",
   "loopNotices",
 ] as const satisfies readonly ApiMethod[];

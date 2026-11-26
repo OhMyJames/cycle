@@ -482,3 +482,82 @@ test("a short title is not clipped or masked", async () => {
   expect(text.scrollHeight).toBeLessThanOrEqual(text.clientHeight);
   expect(getComputedStyle(text).maskImage).toBe("none");
 });
+
+const waiting = (n: number, priority: string, reason: string): LoopTicket => ({
+  ...ticket(n, "Backlog"),
+  priority,
+  actions: ["approve"],
+  chat: "new",
+  pending: { reason, criteria: n % 10 },
+});
+
+test("tickets waiting for approval are a group on top of Backlog: pick, select all, approve after asking, return with a reason", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Backlog: [
+          waiting(701, "low", "Reason low"),
+          waiting(702, "urgent", "Reason urgent"),
+          ticket(703, "Backlog"),
+        ],
+      }),
+    },
+    loopActMany: {
+      kind: "done",
+      results: [
+        { identifier: "CYC-702", outcome: "ok" },
+        { identifier: "CYC-701", outcome: "skipped" },
+      ],
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  const group = await screen.findByRole("region", { name: "Awaiting approval" });
+  // By priority, each with its criteria count and Loop's reason; ordinary tickets stay outside the group.
+  const items = within(group).getAllByRole("listitem");
+  expect(items.map((li) => li.textContent)).toEqual([
+    expect.stringContaining("CYC-702"),
+    expect.stringContaining("CYC-701"),
+  ]);
+  expect(items[0]?.textContent).toContain("2 acceptance criteria");
+  expect(items[0]?.textContent).toContain("Reason urgent");
+  const approve = within(group).getByRole("button", { name: "Approve selected" });
+  expect((approve as HTMLButtonElement).disabled).toBe(true);
+  await user.click(within(group).getByRole("checkbox", { name: "Select all" }));
+  await user.click(approve);
+  expect(fake.calls.some(([name]) => name === "loopActMany")).toBe(false);
+  const dialog = await screen.findByRole("alertdialog");
+  expect(dialog.textContent).toContain("CYC-702 Ticket 702");
+  expect(dialog.textContent).toContain("CYC-701 Ticket 701");
+  await user.click(within(dialog).getByRole("button", { name: "Approve selected" }));
+  expect(await screen.findByText(/1 succeeded, 1 skipped, 0 failed/)).toBeTruthy();
+  expect(fake.calls.filter(([name]) => name === "loopActMany")).toEqual([
+    ["loopActMany", "CYC", "approve_many", ["CYC-702", "CYC-701"], true, undefined],
+  ]);
+  // Return: one ticket, with a reason; no second confirmation.
+  await user.click(within(group).getByRole("checkbox", { name: "Select CYC-701" }));
+  await user.type(within(group).getByRole("textbox"), "not now");
+  await user.click(within(group).getByRole("button", { name: "Return selected" }));
+  await waitFor(() =>
+    expect(fake.calls.filter(([name]) => name === "loopActMany")[1]).toEqual([
+      "loopActMany",
+      "CYC",
+      "return_many",
+      ["CYC-701"],
+      true,
+      "not now",
+    ]),
+  );
+});
+
+test("with nothing waiting for approval there is no group", async () => {
+  const { user: _user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Backlog: [ticket(710, "Backlog")] }) },
+  });
+  await screen.findByRole("region", { name: "Backlog" });
+  expect(screen.queryByRole("region", { name: "Awaiting approval" })).toBeNull();
+});
