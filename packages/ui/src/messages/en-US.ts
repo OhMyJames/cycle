@@ -683,6 +683,7 @@ export const enUS = {
     "Nothing was changed: itsaplan could not be reached. Check the connection and try again.",
   "loop.fail.refused": "Nothing was changed: itsaplan refused the change.",
   "loop.chat.start": "Talk with an agent",
+  "loop.chat.openMade": "Open the conversation",
   "loop.chat.watch":
     "Loop is working on this ticket. You can read it here, but not change it with an agent.",
   "loop.chat.fail.needs_model":

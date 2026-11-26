@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isUiEvent } from "@cycle/analytics/events";
@@ -338,7 +337,7 @@ export const startApp = async (options: AppOptions) => {
         options.loop,
         {
           locationId: "local",
-          cwd: options.loop?.chatCwd ?? homedir(),
+          cwd: options.loop?.chatCwd ?? "",
           agentDefaults: (agent) => manager.agentDefaults("local", agent),
           createSession: (params) => manager.createSession("local", params),
           prompt: (sessionId, text) => manager.prompt("local", sessionId, text),

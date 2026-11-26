@@ -1350,7 +1350,8 @@ export type LoopChatFailure =
   | "auth_required";
 export type LoopChatResult =
   | { kind: "started"; locationId: string; sessionId: string }
-  | { kind: "failed"; reason: LoopChatFailure };
+  /** `sessionId`: the session was made but its first message did not go; it can be opened. */
+  | { kind: "failed"; reason: LoopChatFailure; sessionId?: string; locationId?: string };
 
 /** `approve`: Backlog to Todo with `auto`. `to_backlog`: back to Backlog, `auto` off. `to_todo`: back to Todo. */
 export type LoopAction = "approve" | "to_backlog" | "to_todo";

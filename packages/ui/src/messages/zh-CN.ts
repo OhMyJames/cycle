@@ -615,6 +615,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.fail.offline": "没有改动：连不上 itsaplan。检查网络后再试。",
   "loop.fail.refused": "没有改动：itsaplan 拒绝了这次修改。",
   "loop.chat.start": "与 agent 对话",
+  "loop.chat.openMade": "打开这个会话",
   "loop.chat.watch": "Loop 正在处理这张工单。这里只能查看，不能用 agent 修改。",
   "loop.chat.fail.needs_model": "还没有为 Codex 设置默认模型。请先到设置里配置，再重试。",
   "loop.chat.fail.not_allowed": "这张工单已不在 Backlog 或 Todo，没有开始对话。",

@@ -6,7 +6,7 @@
 // The Loop server's code is not imported: only the protocol's types are.
 
 import { statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { connect } from "node:net";
 import type { EventProps } from "@cycle/analytics/events";
 import { LOOP_PROJECTS_LIST, LoopProjectsListResultSchema } from "@cycle/protocol";
@@ -255,7 +255,7 @@ export type LoopOptions = {
   socket: string;
   keyFile: string;
   trackerUrl: string;
-  /** Where a ticket conversation runs; the home folder when absent. */
+  /** Where a ticket conversation runs (made on first use). Without it no conversation is started. */
   chatCwd?: string;
 };
 
@@ -529,16 +529,30 @@ export const startTicketChat = async (
     return done("offline");
   }
   if (model === undefined || model === "") return done("needs_model");
+  // Never the home folder: without a folder of its own, nothing is made.
+  if (deps.cwd === "") return done("refused");
   try {
-    const made = await deps.createSession({
+    await mkdir(deps.cwd, { recursive: true });
+  } catch {
+    return done("refused");
+  }
+  let made: string | { problem: unknown };
+  try {
+    made = await deps.createSession({
       cwd: deps.cwd,
       agent: CHAT_AGENT,
       config: { model },
     });
-    if (typeof made !== "string") return done("refused");
-    await deps.prompt(made, firstMessage(String(identifier)));
-    return done("started", { kind: "started", locationId: deps.locationId, sessionId: made });
   } catch (error) {
     return done((error as { code?: unknown })?.code === -32000 ? "auth_required" : "offline");
   }
+  if (typeof made !== "string") return done("refused");
+  try {
+    await deps.prompt(made, firstMessage(String(identifier)));
+  } catch {
+    // The session exists: its id goes with the failure, so the person can open it and say the first thing themselves.
+    track("loop_ticket_chat", { result: "offline" });
+    return { kind: "failed", reason: "offline", sessionId: made, locationId: deps.locationId };
+  }
+  return done("started", { kind: "started", locationId: deps.locationId, sessionId: made });
 };

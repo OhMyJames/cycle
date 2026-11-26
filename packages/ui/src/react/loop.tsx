@@ -115,6 +115,7 @@ function TicketChat({
   const store = useAppStore();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<LoopChatFailure | undefined>();
+  const [orphan, setOrphan] = useState<{ locationId: string; sessionId: string } | undefined>();
   if (ticket.chat === "none") return null;
   if (ticket.chat === "watch")
     return (
@@ -125,10 +126,13 @@ function TicketChat({
   const start = async () => {
     setBusy(true);
     setFailure(undefined);
+    setOrphan(undefined);
     const result = await store.chatAboutLoopTicket(projectKey, ticket.identifier);
     setBusy(false);
     if (result.kind === "failed") {
       setFailure(result.reason);
+      if (result.sessionId !== undefined && result.locationId !== undefined)
+        setOrphan({ locationId: result.locationId, sessionId: result.sessionId });
       return;
     }
     onStarted();
@@ -149,6 +153,18 @@ function TicketChat({
         <p data-slot="loop-problem" data-kind="loop-chat-failure" role="alert">
           {t(`loop.chat.fail.${failure}`)}
         </p>
+      ) : null}
+      {orphan !== undefined ? (
+        <Button
+          data-variant="ghost"
+          data-kind="loop-chat-open"
+          onClick={() => {
+            onStarted();
+            void store.selectSession(orphan.locationId, orphan.sessionId);
+          }}
+        >
+          {t("loop.chat.openMade")}
+        </Button>
       ) : null}
     </span>
   );

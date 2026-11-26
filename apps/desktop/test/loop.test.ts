@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -390,7 +390,7 @@ describe("a conversation about a ticket (CYC-389)", () => {
     const events: unknown[] = [];
     const deps = {
       locationId: "local",
-      cwd: "/work",
+      cwd: join(dir, "work"),
       agentDefaults: async () => defaults,
       createSession: async (params: unknown) => {
         made.push(params);
@@ -435,7 +435,9 @@ describe("a conversation about a ticket (CYC-389)", () => {
         trackerWith(columnId),
       );
       expect(result).toEqual({ kind: "started", locationId: "local", sessionId: "s1" });
-      expect(made).toEqual([{ cwd: "/work", agent: "codex", config: { model: "deepseek-flash" } }]);
+      expect(made).toEqual([
+        { cwd: join(dir, "work"), agent: "codex", config: { model: "deepseek-flash" } },
+      ]);
       expect(prompts[0]).toContain("CYC-9");
       // Only the word of the outcome: no ticket, no text.
       expect(events).toEqual([["loop_ticket_chat", { result: "started" }]]);
@@ -459,5 +461,45 @@ describe("a conversation about a ticket (CYC-389)", () => {
       expect(made).toEqual([]);
       expect(events).toEqual([["loop_ticket_chat", { result: "needs_model" }]]);
     }
+  });
+
+  test("the session runs in the ticket-chat folder, made on first use, never the home folder", async () => {
+    writeKey(0o600);
+    const cwd = join(dir, "data", "ticket-chat");
+    const { made, deps, track } = setup({ model: "deepseek-flash" });
+    await startTicketChat(loop, { ...deps, cwd }, "CYC", "CYC-9", track, trackerWith(21));
+    expect(made).toEqual([{ cwd, agent: "codex", config: { model: "deepseek-flash" } }]);
+    expect(statSync(cwd).isDirectory()).toBe(true);
+    // No folder configured: nothing is made.
+    const none = setup({ model: "deepseek-flash" });
+    const result = await startTicketChat(
+      loop,
+      { ...none.deps, cwd: "" },
+      "CYC",
+      "CYC-9",
+      none.track,
+      trackerWith(21),
+    );
+    expect(result).toEqual({ kind: "failed", reason: "refused" });
+    expect(none.made).toEqual([]);
+  });
+
+  test("a first message that does not go leaves the session's id with the failure", async () => {
+    writeKey(0o600);
+    const { deps, track } = setup({ model: "deepseek-flash" });
+    const failing = {
+      ...deps,
+      cwd: join(dir, "chat2"),
+      prompt: async () => {
+        throw new Error("down");
+      },
+    };
+    const result = await startTicketChat(loop, failing, "CYC", "CYC-9", track, trackerWith(21));
+    expect(result).toEqual({
+      kind: "failed",
+      reason: "offline",
+      sessionId: "s1",
+      locationId: "local",
+    });
   });
 });

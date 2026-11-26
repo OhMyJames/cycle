@@ -123,6 +123,8 @@ const main = async () => {
     loop: {
       socket: join(dataHome ?? join(homedir(), ".cycle"), "loop.sock"),
       keyFile: join(userData, "itsaplan-key"),
+      // Ticket chats run in a folder of their own, never in the home folder (docs/protocol.md §17).
+      chatCwd: join(dataHome ?? join(homedir(), ".cycle"), "ticket-chat"),
       trackerUrl: trackerUrl(env.CYCLE_LOOP_PLAN_URL),
     },
     update: updateDeps(daemon, localEnv),
