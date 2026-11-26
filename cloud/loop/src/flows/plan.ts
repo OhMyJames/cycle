@@ -574,6 +574,7 @@ export class PlanFlow {
         stoppedReason: null,
         originalCommented: false,
         rewritten: false,
+        titleWritten: false,
         created: [],
         pendingCreate: null,
         linked: false,
@@ -607,7 +608,9 @@ export class PlanFlow {
   async #read(number: number): Promise<Issue | undefined> {
     try {
       return await this.#tracker().get(number);
-    } catch {
+    } catch (error) {
+      // The tracker out of reach is a wait, not "gone".
+      if (error instanceof Error && isNetworkError(error.message)) throw error;
       return undefined;
     }
   }
@@ -1115,7 +1118,7 @@ export class PlanFlow {
         hash === item.hash ||
         (item.rewritten && wrote !== null && hash === bodyHash(wrote.title, wrote.description)) ||
         // Stopped between the new title and the new description: the title is ours, the body is still the old one.
-        (!item.rewritten && wrote !== null && fresh.title === wrote.title);
+        (!item.rewritten && item.titleWritten && wrote !== null && fresh.title === wrote.title);
       const why = same ? this.#stillOurs(fresh) : "edited";
       if (why !== undefined) {
         await this.#abandon(ctx, item, fresh, why, save);
@@ -1160,6 +1163,8 @@ export class PlanFlow {
     }
     // 3. The new text; for a split, the parts.
     if (!item.rewritten) {
+      const newTitle = this.#host.need(expected() ?? undefined).title;
+      if (original.title !== newTitle) await step({ titleWritten: true });
       if (out.kind === "rewrite") {
         await tracker.setTitle(original, out.title);
         await tracker.setDescription(original, out.description);

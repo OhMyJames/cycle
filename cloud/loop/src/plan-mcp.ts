@@ -124,7 +124,7 @@ const createdId = (raw: unknown, tool: string): number => {
 
 const FIELD_WRITE_TIMEOUT_MS = 10_000;
 /** Default bound on one tracker request (`tuning.trackerTimeoutSeconds`). */
-const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_TIMEOUT_MS = 30_000;
 /** Waits before each retry of a read that failed on the network or with a 5xx. Writes are never retried. */
 const READ_RETRY_DELAYS_MS = [1000, 3000];
 /** Concurrent `get`s when a column is read in full. */
@@ -332,11 +332,18 @@ export class PlanTracker implements Tracker {
         throw new Error(
           `tracker ${name}: operation timed out after ${Math.round(timeoutMs / 1000)}s`,
         );
+      // A request that was never valid is not the network's fault.
+      if (
+        error instanceof TypeError &&
+        /invalid url|unable to parse|failed to parse url/i.test(error.message)
+      )
+        throw error;
       throw new RetryableError(
         `tracker ${name}: error connecting to the tracker: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
     if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
       const message = `tracker ${name}: HTTP ${response.status}`;
       throw response.status >= 500 ? new RetryableError(message) : new Error(message);
     }
@@ -369,8 +376,11 @@ export class PlanTracker implements Tracker {
    * one whose JSON-RPC `id` is this request's counts, notifications and others are ignored.
    */
   #message(text: string, name: string): unknown {
-    if (!text.startsWith("event:") && !text.startsWith("data:") && !text.startsWith(":"))
+    try {
       return JSON.parse(text);
+    } catch {
+      // not plain JSON: a stream
+    }
     for (const event of text.split(/\r?\n\r?\n/)) {
       const data = event
         .split(/\r?\n/)

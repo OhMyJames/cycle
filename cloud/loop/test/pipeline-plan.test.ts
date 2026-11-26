@@ -1091,3 +1091,23 @@ test("after a restart, a person's edit before the next write leaves the rest unw
   expect(commentsOn(s, "CYC-1").filter((c) => c.startsWith(NOTES_HEADING))).toEqual([]);
   expect(byKey(s, "CYC-1").labelIds).not.toContain(LABELS.pending);
 });
+
+test("a rewrite that keeps the title still gives way to a person's edit of the body before the first write", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
+      shape: [done(rewrite("原来的标题 1"))],
+      shape_qa: [done(PASS)],
+    },
+    [backlogItem(1)],
+  );
+  const turn = s.sessions.turn.bind(s.sessions);
+  s.sessions.turn = async (id, prompt, ctx) => {
+    const out = await turn(id, prompt, ctx);
+    if (ctx.role === "shape_qa") Object.assign(byKey(s, "CYC-1"), { description: "人改的正文" });
+    return out;
+  };
+  expect(await s.pipeline.step()).toMatchObject({ shaped: 0, abandoned: 1 });
+  expect(byKey(s, "CYC-1").description).toBe("人改的正文");
+  expect(commentsOn(s, "CYC-1")).toEqual([]);
+});

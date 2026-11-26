@@ -371,15 +371,13 @@ export class ResearchFlow implements Flow {
       const existing = (await tracker.listDocuments()).filter(
         (d) => d.parentId === bounds.folderId && d.title === title,
       );
-      const linked =
-        existing.length === 0
-          ? new Set<number>()
-          : new Set((await tracker.listIssueDocuments(issue)).map((d) => d.id));
-      // One not on this work item is used only when its text is the report: else it is some earlier run's.
-      let found = existing.find((d) => linked.has(d.id));
+      // Used only when its text is this report: a same-titled one with other text is some earlier run's.
+      let found: (typeof existing)[number] | undefined;
       for (const d of existing) {
-        if (found !== undefined) break;
-        if ((await tracker.getDocumentContent(d.id)).trim() === output.report.trim()) found = d;
+        if ((await tracker.getDocumentContent(d.id)).trim() === output.report.trim()) {
+          found = d;
+          break;
+        }
       }
       if (found !== undefined) {
         await progress({ docId: found.id });

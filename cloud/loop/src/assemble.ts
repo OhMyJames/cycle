@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type ConfigFile, readTuning } from "./config-file.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
-import { PlanTracker } from "./plan-mcp.ts";
+import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
 import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
@@ -111,7 +111,11 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     initial: file.tuning ?? {},
     reload: async () => {
       const next = await readTuning(configPath, file.projectKey);
-      tracker.setTimeoutMs((next.trackerTimeoutSeconds ?? 30) * 1000);
+      tracker.setTimeoutMs(
+        next.trackerTimeoutSeconds !== undefined
+          ? next.trackerTimeoutSeconds * 1000
+          : DEFAULT_TIMEOUT_MS,
+      );
       return next;
     },
   };

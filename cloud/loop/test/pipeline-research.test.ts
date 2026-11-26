@@ -639,3 +639,12 @@ test("a restart after the report was made, before its id was noted: the report i
   expect(s.tracker.written).toHaveLength(1);
   expect(s.tracker.docLinks).toEqual(["CYC-1:1000"]);
 });
+
+test("a same-titled report with other text is not taken for this run's", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  s.tracker.documents.push({ id: 555, title: "CYC-1 调研题目", parentId: 10 });
+  s.tracker.docContent[555] = "an earlier run's report";
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("researched");
+  expect(s.tracker.written.length).toBe(1);
+});
