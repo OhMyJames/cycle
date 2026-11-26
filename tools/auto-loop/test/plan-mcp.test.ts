@@ -463,7 +463,7 @@ test("comments come from list_issue_activity, every page, replies flattened in, 
 });
 
 const planning = {
-  labels: { pending: 40, awaitingAnswer: 41, skip: 42 },
+  labels: { pending: 40, awaitingAnswer: 41, skip: 42, fullProcess: null },
   backlogColumn: 21,
   epicTypeId: 17,
   templates: { feature: "f", bug: "b" },

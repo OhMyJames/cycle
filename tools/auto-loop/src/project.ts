@@ -22,8 +22,13 @@ export type PlanningSetup = Pick<
   "labels" | "backlogColumn" | "epicTypeId" | "templates"
 >;
 
-/** Names to look up for planning: its three labels. */
-export type PlanningNames = { pending: string; awaitingAnswer: string; skip: string };
+/** Names to look up for planning: its three labels, and the full-process label it keeps away from. */
+export type PlanningNames = {
+  pending: string;
+  awaitingAnswer: string;
+  skip: string;
+  fullProcess: string;
+};
 
 const rec = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
@@ -55,6 +60,12 @@ export const resolveProject = (
       throw new Error(`project ${names.projectKey}: no ${what} named "${name}"`);
     return id;
   };
+  const optionalByName = (rows: unknown, name: string): number | null => {
+    const id = Number(
+      list(rows).find((r) => String(r.name).toLowerCase() === name.toLowerCase())?.id,
+    );
+    return Number.isInteger(id) ? id : null;
+  };
   const featureTypeId = byName(data.issueTypes, names.featureType, "issue type");
   const bugTypeId = byName(data.issueTypes, names.bugType, "issue type");
   // Research is only looked up when it is on, so a project without the type or the folder still starts with it off.
@@ -75,6 +86,8 @@ export const resolveProject = (
             pending: byName(data.labels, planning.pending, "label"),
             awaitingAnswer: byName(data.labels, planning.awaitingAnswer, "label"),
             skip: byName(data.labels, planning.skip, "label"),
+            // Only kept away from: a project without the label has no work item carrying it.
+            fullProcess: optionalByName(data.labels, planning.fullProcess),
           },
           backlogColumn: pick("backlog", 0, "backlog"),
           epicTypeId: byName(data.issueTypes, "Epic", "issue type"),

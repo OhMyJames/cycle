@@ -247,7 +247,8 @@ export type Config = {
 };
 
 export type PlanningConfig = {
-  labels: { pending: number; awaitingAnswer: number; skip: number };
+  /** `fullProcess` is null when the project has no such label. */
+  labels: { pending: number; awaitingAnswer: number; skip: number; fullProcess: number | null };
   backlogColumn: number;
   epicTypeId: number;
   templates: { feature: string; bug: string };
