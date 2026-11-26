@@ -30,6 +30,7 @@ import {
   MAIN,
 } from "../src/main/layout.ts";
 import { POSTHOG_HOST, POSTHOG_KEY } from "../src/shared/posthog.ts";
+import { plistVersions } from "../src/shared/release.ts";
 import { removePlistDict, setPlistString } from "./plist.ts";
 
 const DESKTOP = new URL("..", import.meta.url).pathname;
@@ -84,7 +85,17 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   if (platform !== "darwin" && platform !== "linux")
     throw new Error(`Packaging is for macOS and Linux, not ${platform}.`);
   requirePinnedBun();
-  const version = String(json(join(DESKTOP, "package.json")).version);
+  const baseVersion = String(json(join(DESKTOP, "package.json")).version);
+  // `CYCLE_VERSION` names the version of this build (an alpha) without touching package.json.
+  const version = process.env.CYCLE_VERSION || baseVersion;
+  const plistVersion = plistVersions(version);
+  if (!plistVersion) throw new Error(`CYCLE_VERSION ${version} is not a version.`);
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", ...args], { cwd: ROOT })
+      .stdout.toString()
+      .trim();
+  const commit = git("rev-parse", "--short", "HEAD");
+  const subject = git("log", "-1", "--format=%s");
   const electron = electronDist();
 
   // The main process, preload and page; and the daemon with the agents' binaries beside it, for this platform.
@@ -116,7 +127,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   );
   writeFileSync(
     join(staging, BUILD_FILE),
-    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, platform, arch, electron: electron.version, ...posthogProject() }, null, 2)}\n`,
+    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, ...posthogProject() }, null, 2)}\n`,
   );
 
   const app = join(outDir, platform === "darwin" ? MAC_BUNDLE : "Cycle");
@@ -136,8 +147,8 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
       ["CFBundleIdentifier", BUNDLE_ID],
       ["CFBundleName", APP_NAME],
       ["CFBundleDisplayName", APP_NAME],
-      ["CFBundleShortVersionString", version],
-      ["CFBundleVersion", version],
+      ["CFBundleShortVersionString", plistVersion.CFBundleShortVersionString],
+      ["CFBundleVersion", plistVersion.CFBundleVersion],
     ] as const) {
       plist = setPlistString(plist, key, value);
     }

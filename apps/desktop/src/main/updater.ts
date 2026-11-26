@@ -31,7 +31,7 @@ const DEADLINE_MS = 30_000;
 
 export type UpdaterDeps = {
   /** What is running: its version and where it was built for. */
-  current: { version: string; platform: string; arch: string };
+  current: { version: string; baseVersion?: string; platform: string; arch: string };
   /** The installed bundle, `/Applications/Cycle.app`. */
   appPath: string;
   /** `owner/name`. */
@@ -277,6 +277,8 @@ export class Updater {
       const tag = release.tag_name;
       if (release.draft === true || typeof tag !== "string" || !tag.startsWith("v")) continue;
       const version = tag.slice(1);
+      // Only releases update the app from GitHub; a tag with `-` (a pre-release) is not one.
+      if (version.includes("-")) continue;
       if (!parseVersion(version) || !isNewer(version, this.#d.current.version)) continue;
       if (best !== undefined && !isNewer(version, best.version)) continue;
       const assets = new Map<string, string>();

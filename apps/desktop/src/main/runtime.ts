@@ -4,7 +4,12 @@
 import { type AgentWord, agentOf, type EventName, type EventProps } from "@cycle/analytics/events";
 import { type Channel, type ClientEvents, CycleClient, ProtocolMismatchError } from "@cycle/client";
 import type { AppEvent, LocationConfig, LocationStatus, SessionSummary } from "@cycle/ui";
-import { type DaemonStop, daemonTooOld, daemonUpgradeCommand } from "../shared/release.ts";
+import {
+  type DaemonStop,
+  daemonTooOld,
+  daemonUpgradeCommand,
+  parseVersion,
+} from "../shared/release.ts";
 import type { OpenBrowser } from "./connector-auth.ts";
 import type { EnvironmentStore } from "./environments.ts";
 import { LOCAL_LOCATION, locationOf, type Settings } from "./settings.ts";
@@ -23,6 +28,8 @@ export type ManagerOptions = {
   backoff?: { first: number; max: number };
   /** The version of this app: the one an update of a daemon puts there. Without it, nothing is said. */
   appVersion?: string;
+  /** The release an alpha app was cut from (build.json `baseVersion`): what a remote daemon is updated to then. */
+  appBaseVersion?: string;
   /** The Cycle protocol version asked of a daemon. Default: this build's. Another is for tests. */
   protocolVersion?: string;
   /**
@@ -395,14 +402,24 @@ export class Runtime {
           ? "daemon"
           : "app";
     const { appVersion } = this.options;
+    const target = appVersion === undefined ? undefined : this.#daemonTarget(appVersion);
     return {
       with: side,
       supported: error.supported,
       requested: error.requested,
-      ...(side === "daemon" && location.kind !== "local" && appVersion !== undefined
-        ? { command: daemonUpgradeCommand(appVersion) }
+      ...(side === "daemon" && location.kind !== "local" && target !== undefined
+        ? { command: daemonUpgradeCommand(target) }
         : {}),
     };
+  }
+
+  /**
+   * The version a remote daemon is updated to: the app's, or for an alpha (which has no release) the release it was
+   * cut from. Undefined when an alpha does not say, rather than a guess at a release that may not exist.
+   */
+  #daemonTarget(appVersion: string): string | undefined {
+    if (parseVersion(appVersion)?.alpha === undefined) return appVersion;
+    return this.options.appBaseVersion;
   }
 
   /** What a connected remote location's daemon is, and whether it is too old for this app to work with. */
@@ -410,7 +427,8 @@ export class Runtime {
     const version = client.serverVersion;
     if (location.kind === "local" || version === undefined) return {};
     const { appVersion } = this.options;
-    const old = appVersion !== undefined && daemonTooOld(version);
+    const target = appVersion === undefined ? undefined : this.#daemonTarget(appVersion);
+    const old = target !== undefined && daemonTooOld(version);
     // A daemon that is no longer too old has been updated: what was said about the update is done with.
     if (!old) this.#upgrading.delete(location.id);
     const doing = this.#upgrading.get(location.id);
@@ -420,8 +438,8 @@ export class Runtime {
         ...(old
           ? {
               upgrade: {
-                to: appVersion,
-                command: daemonUpgradeCommand(appVersion),
+                to: target,
+                command: daemonUpgradeCommand(target),
                 ...(doing !== undefined ? doing : {}),
               },
             }
