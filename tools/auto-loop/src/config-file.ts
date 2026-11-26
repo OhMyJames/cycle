@@ -83,6 +83,13 @@ export const ConfigFileSchema = z.object({
   devAgent: agent.optional(),
   qaAgent: agent.optional(),
   reviewAgent: agent.optional(),
+  /** Model and thinking effort per role; left out means the agent's own default. */
+  devModel: text.optional(),
+  qaModel: text.optional(),
+  reviewModel: text.optional(),
+  devEffort: text.optional(),
+  qaEffort: text.optional(),
+  reviewEffort: text.optional(),
   /** Workers for this Project (CYC-433); `--workers` overrides it. */
   workers: z.number().int().positive().optional(),
   /** Counts, timeouts and the idle interval (CYC-441). Read again before every step while the loop runs. */

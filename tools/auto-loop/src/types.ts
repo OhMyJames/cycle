@@ -120,6 +120,13 @@ export type Config = {
   devAgent: string;
   qaAgent: string;
   reviewAgent: string;
+  /** Model and effort per role; not set means the agent's default. */
+  devModel?: string;
+  qaModel?: string;
+  reviewModel?: string;
+  devEffort?: string;
+  qaEffort?: string;
+  reviewEffort?: string;
   /** Read and write nothing in the tracker or the repository: print what would happen. */
   dryRun: boolean;
 };
@@ -188,6 +195,8 @@ export interface Sessions {
   create(input: {
     role: SessionRole;
     agent: string;
+    model?: string;
+    effort?: string;
     title: string;
     cwd: string;
     worktree?: { base: string; name: string };
