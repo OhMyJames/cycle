@@ -131,6 +131,8 @@ export type Script = {
   dev: (TurnResult | Error)[];
   qa: (TurnResult | Error)[];
   review?: (TurnResult | Error)[];
+  research?: (TurnResult | Error)[];
+  research_qa?: (TurnResult | Error)[];
   /** Either a persistent error for every create of this role, or a per-attempt queue (null = succeed). */
   createError?: Partial<Record<SessionRole, Error | (Error | null)[]>>;
 };
@@ -145,6 +147,8 @@ export class FakeSessions implements Sessions {
     dev: (TurnResult | Error)[];
     qa: (TurnResult | Error)[];
     review: (TurnResult | Error)[];
+    research: (TurnResult | Error)[];
+    research_qa: (TurnResult | Error)[];
     createError: Partial<Record<SessionRole, Error | (Error | null)[]>>;
   };
   constructor(script: Script) {
@@ -156,6 +160,8 @@ export class FakeSessions implements Sessions {
       dev: [...script.dev],
       qa: [...script.qa],
       review: script.review !== undefined ? [...script.review] : [done(REVIEW_MERGE)],
+      research: [...(script.research ?? [])],
+      research_qa: [...(script.research_qa ?? [])],
       createError,
     };
   }

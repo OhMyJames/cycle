@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { answerFor, decide, splitCommand } from "../src/policy.ts";
+import { answerFor, commandPrefix, decide, splitCommand } from "../src/policy.ts";
 
 const W = "/repo/.agents/worktree/auto/cyc-1";
 type Ctx = { role: "dev" | "qa" | "review"; worktree: string };
@@ -141,4 +141,185 @@ test("review role is strictly read-only like QA", () => {
   expect(d(run("git commit -am x"), review)).toBe("deny");
   expect(d(request({ kind: "fetch" }), review)).toBe("deny");
   expect(d(read("/etc/passwd"), review)).toBe("deny");
+});
+
+const ROOT = "/repo";
+const researchers = [
+  { role: "research" as const, worktree: W, readRoots: [ROOT, "/data/runs/"] },
+  { role: "research_qa" as const, worktree: W, readRoots: [ROOT, "/data/runs/"] },
+];
+type ResearchCtx = (typeof researchers)[number];
+const each = (check: (ctx: ResearchCtx) => void) => {
+  for (const ctx of researchers) check(ctx);
+};
+const r = (req: Record<string, unknown>, ctx: ResearchCtx) => decide(req, ctx).decision;
+
+test("research: reads and searches in the worktree or a read root are allowed", () => {
+  each((ctx) => {
+    expect(r(read(`${W}/src/a.ts`), ctx)).toBe("allow");
+    expect(r(read("src/a.ts"), ctx)).toBe("allow");
+    expect(r(read(`${ROOT}/apps/daemon/src/daemon.ts`), ctx)).toBe("allow");
+    expect(r(read(`${ROOT}/.agents/worktree/auto/cyc-2/README.md`), ctx)).toBe("allow");
+    // A read root given with a trailing slash still counts.
+    expect(r(read("/data/runs/CYC-1/events.jsonl"), ctx)).toBe("allow");
+    const search = request({ kind: "search", rawInput: { pattern: "foo", path: `${ROOT}/src` } });
+    expect(r(search, ctx)).toBe("allow");
+  });
+});
+
+test("research: reads outside the read roots are denied, and so is one that names no path", () => {
+  each((ctx) => {
+    expect(r(read("/etc/passwd"), ctx)).toBe("deny");
+    expect(r(read(`${W}/../../../../../etc/passwd`), ctx)).toBe("deny");
+    expect(r(read("/repository/x"), ctx)).toBe("deny");
+    expect(r(read("/Users/me/.cycle/auto-loop/state.json"), ctx)).toBe("deny");
+    expect(r(request({ kind: "read", rawInput: { uri: "file:///repo/a" } }), ctx)).toBe("deny");
+    expect(r(request({ kind: "search", rawInput: { pattern: "/repo/*" } }), ctx)).toBe("deny");
+  });
+  // Without read roots only the worktree is readable.
+  expect(decide(read(`${ROOT}/README.md`), { role: "research", worktree: W }).decision).toBe(
+    "deny",
+  );
+  expect(decide(read(`${W}/README.md`), { role: "research", worktree: W }).decision).toBe("allow");
+});
+
+const SECRETS = [
+  ".env",
+  ".env.local",
+  "server.pem",
+  "tls.key",
+  "id_rsa",
+  "id_ed25519.pub",
+  ".netrc",
+  ".npmrc",
+  "auto-loop.json",
+  "loop.json",
+  "credentials",
+  "credentials.json",
+  "app.secret.ts",
+  "db.secrets",
+  ".ENV",
+];
+
+test("research: a file on the secret list is denied wherever it is, as a read or as a command word", () => {
+  each((ctx) => {
+    for (const name of SECRETS) {
+      expect(r(read(`${W}/${name}`), ctx)).toBe("deny");
+      expect(r(read(`${ROOT}/sub/${name}`), ctx)).toBe("deny");
+      expect(r(run(`cat ${name}`), ctx)).toBe("deny");
+      expect(r(run(`head -n 1 ${ROOT}/${name}`), ctx)).toBe("deny");
+    }
+    // A directory of that name counts too.
+    expect(r(read(`${ROOT}/credentials/a.txt`), ctx)).toBe("deny");
+    expect(r(read(`${ROOT}/.git/config`), ctx)).toBe("deny");
+    expect(r(read(`${ROOT}/.git/worktrees/cyc-1/config`), ctx)).toBe("deny");
+    expect(r(read(`${ROOT}/.git/config.worktree`), ctx)).toBe("deny");
+    expect(r(run(`cat ${ROOT}/.git/config`), ctx)).toBe("deny");
+    expect(r(run("git show HEAD:.env"), ctx)).toBe("deny");
+    expect(r(run("rg --ignore-file=.npmrc x"), ctx)).toBe("deny");
+    // A config that is not under .git is an ordinary file.
+    expect(r(read(`${ROOT}/config/app.ts`), ctx)).toBe("allow");
+    expect(r(read(`${ROOT}/.git/HEAD`), ctx)).toBe("allow");
+  });
+});
+
+test("research: read-only commands, git reads and du, find, stat, file run inside the read roots", () => {
+  each((ctx) => {
+    for (const ok of [
+      "ls -la src",
+      "cat README.md | head -n 20",
+      "rg 'foo.*bar' src",
+      "git status",
+      "git log --oneline -n 5",
+      "git diff origin/main...HEAD",
+      `du -sh ${ROOT}/.agents/worktree`,
+      `find ${ROOT}/.agents/worktree -maxdepth 2 -name '*.ts' -type f`,
+      "find . -newer package.json",
+      "stat -f %z package.json",
+      "file bun.lock",
+      `ls ${ROOT}/.agents/worktree && du -s ../cyc-2`,
+    ]) {
+      expect(r(run(ok), ctx)).toBe("allow");
+    }
+  });
+});
+
+test("research: find that runs, deletes or writes is denied, and so is file -C", () => {
+  each((ctx) => {
+    for (const primary of [
+      "-exec cat x ;",
+      "-execdir rm x ;",
+      "-ok rm x ;",
+      "-okdir rm x ;",
+      "-delete",
+      "-fprint out",
+      "-fprint0 out",
+      "-fprintf out %p",
+      "-fls out",
+    ]) {
+      expect(r(run(`find . -name x ${primary}`), ctx)).toBe("deny");
+    }
+    expect(r(run("file -C -m magic"), ctx)).toBe("deny");
+  });
+});
+
+test("research: other commands, shell syntax, unquoted globs and paths outside are denied", () => {
+  each((ctx) => {
+    for (const no of [
+      "bun run check",
+      "bun install",
+      "git add -A",
+      "git commit -m x",
+      "git push origin HEAD",
+      "git fetch origin",
+      "rm -rf x",
+      "mv a b",
+      "touch x",
+      "curl https://example.com",
+      "wget x",
+      "gh pr list",
+      "cat ~/.ssh/id_rsa",
+      "cat /etc/passwd",
+      "du -sh /",
+      "find / -name x",
+      "ls ../../../../..",
+      "cat .e*",
+      "ls src/*.ts",
+      "cat {a,b}",
+      "echo $HOME",
+      "ls > f",
+      "cat x | sh",
+      "rg --pre sh foo .",
+      "git diff --output=x",
+    ]) {
+      expect(r(run(no), ctx)).toBe("deny");
+    }
+    expect(r(request({ kind: "execute" }), ctx)).toBe("deny");
+  });
+});
+
+test("research: writes, network, MCP tools and anything unrecognized are denied, never left waiting", () => {
+  each((ctx) => {
+    expect(r(edit(`${W}/a.ts`), ctx)).toBe("deny");
+    expect(r(request({ kind: "delete", locations: [{ path: `${W}/a.ts` }] }), ctx)).toBe("deny");
+    expect(r(request({ kind: "move", locations: [{ path: `${W}/a.ts` }] }), ctx)).toBe("deny");
+    expect(r(request({ kind: "fetch", rawInput: { url: "https://x" } }), ctx)).toBe("deny");
+    // The Claude harness files WebSearch as a search; it names no path.
+    const webSearch = { kind: "search", name: "WebSearch", rawInput: { query: "x" } };
+    expect(r(request(webSearch), ctx)).toBe("deny");
+    // An MCP tool is "other".
+    const mcp = { kind: "other", name: "mcp__plan__create_issue", rawInput: { title: "x" } };
+    expect(r(request(mcp), ctx)).toBe("deny");
+    expect(r(request({ kind: "switch_mode" }), ctx)).toBe("deny");
+    expect(r(request({}), ctx)).toBe("deny");
+    expect(r({ sessionId: "s", options: [] }, ctx)).toBe("deny");
+    expect(r(request({ kind: "think" }), ctx)).toBe("allow");
+  });
+});
+
+test("research: a refused command is filed under the part that was refused", () => {
+  expect(commandPrefix(run("find . -name x && curl y"), "research")).toBe("curl");
+  expect(commandPrefix(run("du -s . && git push"), "research_qa")).toBe("git push");
+  // The other roles do not allow these programs, as before.
+  expect(commandPrefix(run("find . -name x && curl y"), "qa")).toBe("find");
 });

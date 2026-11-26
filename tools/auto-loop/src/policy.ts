@@ -3,11 +3,13 @@
 // Three answers. `allow`: the request is plainly inside the work (read the worktree, edit it, run the checks).
 // `deny`: never, for this role. `ask`: anything else is left unanswered, so the session waits in `requires_action`
 // and a person answers it in the desktop app. An unrecognized request is `ask`, never `allow`.
+//
+// The research roles (CYC-447) only read, and never wait for a person: what they may not do is `deny`.
 
 import { posix } from "node:path";
 import type { PermissionAnswer } from "@cycle/client";
 
-export type Role = "dev" | "qa" | "review";
+export type Role = "dev" | "qa" | "review" | "research" | "research_qa";
 export type Decision = { decision: "allow" | "deny" | "ask"; reason: string };
 
 type ToolCall = { kind?: unknown; rawInput?: unknown; locations?: unknown };
@@ -118,6 +120,8 @@ export const splitCommand = (command: string): string[][] | undefined => {
 
 const READ_ONLY = ["ls", "cat", "head", "tail", "wc", "rg", "grep", "pwd", "echo"];
 const GIT_READ = ["status", "diff", "log", "show", "rev-parse", "ls-files"];
+/** What a research session may run besides `READ_ONLY` and `GIT_READ`. */
+const RESEARCH_READ = ["du", "find", "stat", "file"];
 const DEV_RUN = [
   ["bun", "run", "check"],
   ["bun", "run", "format"],
@@ -135,10 +139,13 @@ const DEV_RUN = [
 const startsWith = (words: string[], prefix: string[]): boolean =>
   prefix.every((word, index) => words[index] === word);
 
+const isResearch = (role: Role): boolean => role === "research" || role === "research_qa";
+
 const simpleAllowed = (words: string[], role: Role): boolean => {
   const [program, sub] = words;
   if (program === undefined) return false;
   if (READ_ONLY.includes(program)) return true;
+  if (isResearch(role) && RESEARCH_READ.includes(program)) return true;
   if (program === "git" && sub !== undefined && GIT_READ.includes(sub)) return true;
   return role === "dev" && DEV_RUN.some((prefix) => startsWith(words, prefix));
 };
@@ -175,11 +182,138 @@ const commandOf = (call: ToolCall): string | undefined => {
   return undefined;
 };
 
+/**
+ * A file a research session may not read, wherever it is: secrets by name, and a `.git` directory's config (a remote's
+ * address can hold a token). Matched without case: the file systems it runs on mostly ignore it.
+ */
+const SECRET_NAME =
+  /^(\.env.*|.*\.pem|.*\.key|id_.*|\.netrc|\.npmrc|auto-loop\.json|loop\.json|credentials.*|.*\.secret.*)$/i;
+
+const secretIn = (path: string): boolean => {
+  const parts = path.split("/");
+  return parts.some(
+    (part, index) =>
+      SECRET_NAME.test(part) ||
+      (/^config(\..*)?$/i.test(part) && parts.slice(0, index).includes(".git")),
+  );
+};
+
+/** An absolute path inside the worktree or a read root, with no part of it on the secret list. */
+const readable = (path: string, worktree: string, readRoots: string[]): boolean =>
+  [worktree, ...readRoots].some((root) => inside(root, path)) && !secretIn(path);
+
+/** `find` primaries that run a program, delete, or write a file. */
+const FIND_WRITES = new Set([
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-delete",
+  "-fprint",
+  "-fprint0",
+  "-fprintf",
+  "-fls",
+]);
+/** `file -C` compiles a magic file: it writes. */
+const FILE_WRITES = /^(-C|--compile|-[A-Za-z]*C[A-Za-z]*)$/;
+
+/** Whether the command has a `*`, `?` or `[` the shell would expand: it can name a file no word spells out. */
+const globs = (command: string): boolean => {
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i] as string;
+    if (quote !== undefined) {
+      if (c === quote) quote = undefined;
+      else if (quote === '"' && c === "\\") i++;
+    } else if (c === "'" || c === '"') quote = c;
+    else if (c === "\\") i++;
+    else if (c === "*" || c === "?" || c === "[") return true;
+  }
+  return false;
+};
+
+/**
+ * A word of a research command that names, or may name, a place it may not read. As in `wanders`, but the place may be
+ * any read root, and no part may be on the secret list; the parts of `--opt=value` and `rev:path` count on their own.
+ * Every word is taken as a path: a search for `credentials` is refused with the file of that name.
+ */
+const strays = (word: string, worktree: string, readRoots: string[]): boolean => {
+  if (/[{}]/.test(word) || DANGEROUS_FLAG.test(word)) return true;
+  return word
+    .split(/[=:]/)
+    .filter((part) => part !== "")
+    .some((part) => {
+      if (part.startsWith("~")) return true;
+      const path = part.startsWith("/") ? posix.normalize(part) : posix.join(worktree, part);
+      return !readable(path, worktree, readRoots);
+    });
+};
+
+const researchCommand = (
+  command: string | undefined,
+  worktree: string,
+  readRoots: string[],
+): Decision => {
+  const deny = (reason: string): Decision => ({ decision: "deny", reason });
+  if (command === undefined) return deny("a command that could not be read");
+  const segments = splitCommand(command);
+  if (segments === undefined || segments.length === 0 || globs(command))
+    return deny("a command with shell syntax the policy does not read");
+  for (const words of segments) {
+    if (!simpleAllowed(words, "research")) return deny("a command outside the allowlist");
+    const [program] = words;
+    if (program === "find" && words.some((word) => FIND_WRITES.has(word)))
+      return deny("a find that runs a program, deletes or writes");
+    if (program === "file" && words.some((word) => FILE_WRITES.test(word)))
+      return deny("a file that writes");
+    if (words.slice(1).some((word) => strays(word, worktree, readRoots)))
+      return deny("a command that reaches outside the read roots or names a secret");
+  }
+  return { decision: "allow", reason: "an allowlisted command" };
+};
+
+/** The research roles: read the worktree and the read roots, run read-only commands; refuse the rest outright. */
+const decideResearch = (
+  request: Record<string, unknown>,
+  worktree: string,
+  readRoots: string[],
+): Decision => {
+  const call = toolCallOf(request);
+  if (call === undefined) return { decision: "deny", reason: "no tool call in the request" };
+  const kind = typeof call.kind === "string" ? call.kind : "other";
+  switch (kind) {
+    case "think":
+      return { decision: "allow", reason: "thinking" };
+    case "read":
+    case "search": {
+      const paths = pathsOf(call, worktree);
+      // A request that names no path (a web search, a URI) is not shown to be inside the read roots.
+      if (paths.length > 0 && paths.every((path) => readable(path, worktree, readRoots)))
+        return { decision: "allow", reason: `${kind} in the read roots` };
+      return { decision: "deny", reason: `${kind} outside the read roots or of a secret` };
+    }
+    case "edit":
+    case "delete":
+    case "move":
+      return { decision: "deny", reason: "Research is read-only" };
+    case "execute":
+      return researchCommand(commandOf(call), worktree, readRoots);
+    default:
+      return { decision: "deny", reason: `a ${kind} request` };
+  }
+};
+
 export const decide = (
   request: Record<string, unknown>,
-  context: { role: Role; worktree: string },
+  context: { role: Role; worktree: string; readRoots?: string[] },
 ): Decision => {
   const { role, worktree } = context;
+  if (isResearch(role)) {
+    const roots = (context.readRoots ?? []).map((root) =>
+      posix.normalize(root).replace(/(.)\/+$/, "$1"),
+    );
+    return decideResearch(request, worktree, roots);
+  }
   const call = toolCallOf(request);
   if (call === undefined) return { decision: "ask", reason: "no tool call in the request" };
   const kind = typeof call.kind === "string" ? call.kind : "other";

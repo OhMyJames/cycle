@@ -237,6 +237,38 @@ test("a request the policy allows writes no event, and a compound command is fil
   expect(JSON.stringify(events)).not.toContain("secrets");
 }, 15_000);
 
+test("the read roots a turn is given are the ones its research policy reads", async () => {
+  const { events, record } = recorder();
+  // Not under /tmp, the turn's worktree: the read root alone must make it readable.
+  const read = {
+    subject: {
+      type: "tool_call",
+      toolCall: {
+        toolCallId: "t1",
+        kind: "read",
+        locations: [{ path: "/srv/research-root/a.md" }],
+      },
+    },
+  };
+  const { sessions, sessionId } = await setup(
+    fakeAgent({
+      onPrompt: async ({ ask }) => {
+        await ask(read);
+        return undefined;
+      },
+    }),
+    record,
+  );
+  const research = { ...context, role: "research" as const };
+  await sessions.turn(sessionId, "work", { ...research, readRoots: ["/srv/research-root"] });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(events).toHaveLength(0);
+  await sessions.turn(sessionId, "work", research);
+  await new Promise((r) => setTimeout(r, 50));
+  expect(events).toHaveLength(1);
+  expect(events[0]?.data).toMatchObject({ role: "research", tool: "read", decision: "deny" });
+}, 15_000);
+
 test("create sets model and effort on the new session, and only the ones given", async () => {
   const fake = fakeAgent({}, { configOptions: [] });
   const { sessions } = await setup(fake);
