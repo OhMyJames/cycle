@@ -21,6 +21,7 @@ import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs
 import { join } from "node:path";
 import { z } from "zod";
 import { CriteriaBook } from "./criteria.ts";
+import type { StoreOps } from "./db/store.ts";
 
 export const PHASES = [
   "claimed",
@@ -408,6 +409,11 @@ export interface LoopStore {
   readProgress(key: string): Promise<string>;
   event(run: string, kind: string, data?: Record<string, string | number | boolean>): Promise<void>;
   events(): Promise<LoopEvent[]>;
+  /**
+   * One SQLite transaction: a run and the intents it calls for are written together or not at all (CYC-480). Only
+   * `loop.db` has it; the file store throws, and is used only where nothing is written.
+   */
+  transaction<T>(fn: (tx: StoreOps) => T): T;
 }
 
 export class RunStore implements LoopStore {
@@ -417,6 +423,10 @@ export class RunStore implements LoopStore {
   constructor(dir: string, now: () => Date) {
     this.#dir = dir;
     this.#now = now;
+  }
+
+  transaction<T>(_fn: (tx: StoreOps) => T): T {
+    throw new Error("the file store has no transactions: intents need loop.db");
   }
 
   #run(key: string): string {

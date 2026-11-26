@@ -7,10 +7,10 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { SqliteStore } from "../src/db/store.ts";
 import { NOTES_HEADING, ORIGINAL_HEADING } from "../src/flows/plan.ts";
 import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { computeStats } from "../src/stats.ts";
-import { RunStore } from "../src/store.ts";
 import type { Exec, Issue, PlanningConfig } from "../src/types.ts";
 import {
   CHECKED,
@@ -175,7 +175,7 @@ const setup = (
     }
     return base(argv, options);
   };
-  const store = new RunStore(cfg.stateDir, () => clock.now());
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const deps = (more: Partial<Deps> = {}): Deps => ({
     config: cfg,
     tracker,
@@ -203,8 +203,8 @@ const setup = (
   };
 };
 
-const events = async (store: RunStore) => await store.events();
-const kinds = async (store: RunStore) => (await events(store)).map((e) => e.kind);
+const events = async (store: SqliteStore) => await store.events();
+const kinds = async (store: SqliteStore) => (await events(store)).map((e) => e.kind);
 const byKey = (s: ReturnType<typeof setup>, key: string) =>
   s.tracker.issues.find((i) => i.key === key) as Issue;
 const commentsOn = (s: ReturnType<typeof setup>, key: string) =>
@@ -344,6 +344,8 @@ test("approved work comes first: with a Todo work item to take, no round starts"
   expect(s.tracker.moves).toEqual(["CYC-9:inProgress"]);
   expect(s.sessions.inputs.map((i) => i.role)).toEqual(["dev"]);
   expect(await s.store.plans()).toEqual([]);
+  // With loop.db there is no plans/ directory to list: no rounds, and no open one, is the same claim.
+  expect(await s.store.unfinishedPlans()).toEqual([]);
 
   // In a dry run likewise; with Todo empty, it says it would plan.
   const dry = setup(
@@ -931,8 +933,6 @@ test("nothing to plan makes no round: no directory under plans/, only the index"
   expect(await s.pipeline.step()).toEqual({ status: "idle" });
   expect(s.sessions.created).toEqual([]);
   expect(await s.store.plans()).toEqual([]);
-  const { readdir } = await import("node:fs/promises");
-  expect(await readdir(join(s.cfg.stateDir, "plans"))).toEqual(["index.json"]);
   expect(await s.store.loadPlanIndex()).toMatchObject({
     open: null,
     lastEndedAt: "2026-11-26T10:00:00.000Z",
@@ -942,7 +942,6 @@ test("nothing to plan makes no round: no directory under plans/, only the index"
   // Each interval the same: still no directory.
   s.clock.at = new Date("2026-11-26T10:31:00.000Z");
   expect(await s.pipeline.step()).toEqual({ status: "idle" });
-  expect(await readdir(join(s.cfg.stateDir, "plans"))).toEqual(["index.json"]);
 });
 
 test("a work item deleted in the middle of a round does not hold it up", async () => {

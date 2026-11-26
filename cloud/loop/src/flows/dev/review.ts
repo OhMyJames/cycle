@@ -130,9 +130,10 @@ export async function review(
   await assertNotClosed(h, run);
 
   const writeAndPostComment = async (body: string) => {
-    const { writeFile } = await import("node:fs/promises");
+    const { mkdir, writeFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const commentPath = join(config.stateDir, "runs", run.key, "review-comment.md");
+    await mkdir(join(config.stateDir, "runs", run.key), { recursive: true, mode: 0o700 });
     await writeFile(commentPath, body, { mode: 0o600 });
     return h.net(
       run.key,

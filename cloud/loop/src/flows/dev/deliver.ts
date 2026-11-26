@@ -27,7 +27,7 @@ export async function deliver(
     .filter((line) => line !== "" && !line.includes("checkpoint (auto-loop)"))
     .map((line) => `- ${line}`)
     .join("\n");
-  const { writeFile } = await import("node:fs/promises");
+  const { mkdir, writeFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
   const title = renderPrTitle(issue);
   const body = renderPr({
@@ -43,6 +43,7 @@ export async function deliver(
   const prCheck = validatePr(issue.key, title, body);
   if (!prCheck.ok) throw new Blocked(prCheck.reason);
   const bodyPath = join(config.stateDir, "runs", run.key, "pr-body.md");
+  await mkdir(join(config.stateDir, "runs", run.key), { recursive: true, mode: 0o700 });
   await writeFile(bodyPath, body, { mode: 0o600 });
 
   const { forge } = h.d;

@@ -3,8 +3,8 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SqliteStore } from "../src/db/store.ts";
 import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
-import { RunStore } from "../src/store.ts";
 import type { Issue, IssueDocument } from "../src/types.ts";
 import { config, FakeSessions, FakeTracker, issue, makeExec, type World } from "./helpers.ts";
 
@@ -57,7 +57,7 @@ export const setupFullFlow = async (
     ignoredDirs: "",
   };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
-  const store = new RunStore(cfg.stateDir, () => clock.now());
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const pipeline = new Pipeline({
     config: cfg,
     tracker,

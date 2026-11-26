@@ -126,6 +126,16 @@ export class FakeTracker implements Tracker {
   }
   async comment(i: Issue, text: string) {
     this.comments.push(`${i.key}:${text}`);
+    const thread = this.threads[i.key] ?? [];
+    thread.push({
+      id: thread.length + 1,
+      replyToId: null,
+      authorId: "loop",
+      authorName: "loop",
+      body: text,
+      createdAt: "2026-11-25T00:00:00Z",
+    });
+    this.threads[i.key] = thread;
   }
   async setLoopPhase(i: Issue, phase: string | null, _at?: Date, _signal?: AbortSignal) {
     if (this.failPhase) throw new Error("field write failed");
