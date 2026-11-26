@@ -310,6 +310,27 @@ describe("where Loop is running (CYC-458)", () => {
     }
   });
 
+  test("a read the page asked for is pushed too when it differs from what was told", async () => {
+    const socket = join(dir, "read.sock");
+    const server = await loopServer(socket, { runs: [["CYC", [run("CYC-1", "active")]]] });
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: (method, params) => loopRpc(socket, method, params),
+      changed: (runs) => told.push(runs),
+    });
+    try {
+      expect(await feed.read()).toEqual({ kind: "ok", running: { CYC: ["CYC-1"] } });
+      expect(told).toHaveLength(1);
+      expect(await feed.read()).toEqual({ kind: "ok", running: { CYC: ["CYC-1"] } });
+      expect(told).toHaveLength(1);
+      await new Promise((r) => server.close(r));
+      expect(await feed.read()).toEqual({ kind: "disconnected" });
+      expect(told).toHaveLength(2);
+    } finally {
+      server.close();
+    }
+  });
+
   test("a seq past the end of the log starts again from 0", async () => {
     const socket = join(dir, "ahead.sock");
     const asked: unknown[] = [];
@@ -337,7 +358,7 @@ describe("where Loop is running (CYC-458)", () => {
       expect(feed.lastSeq("CYC")).toBe(5);
       lines = 2; // the log was swapped for a shorter one
       await feed.tick();
-      expect(asked).toEqual([0, 5, 0, 2]);
+      expect(asked).toEqual([0, 5, 0]);
       expect(feed.lastSeq("CYC")).toBe(2);
     } finally {
       server.close();

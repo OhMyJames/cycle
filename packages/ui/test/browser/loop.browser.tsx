@@ -52,8 +52,10 @@ const withTickets = (tickets: Record<string, LoopTicket[]>): LoopBoardAnswer => 
   })),
 });
 
-const mount = async (script: Parameters<typeof fakeBridge>[0]) => {
-  const fake = fakeBridge({ connected: true, ...script });
+const mount = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
+  // The script itself is kept (not copied), so a test can change what the bridge answers later.
+  script.connected ??= true;
+  const fake = fakeBridge(script);
   await renderApp(fake.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Loop" }));
@@ -667,13 +669,16 @@ test("a pushed run state updates the page without reading again", async () => {
   expect(named("loopRuns").length).toBe(reads);
 });
 
-test("a read after the state changed is applied, not dropped", async () => {
-  const { emit } = await mount(
-    overviewScript({ loopRuns: { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } } }),
-  );
+test("reopening the Loop page reads the run state again, and applies what changed meanwhile", async () => {
+  const script = overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } });
+  const { user } = await mount(script);
   const projects = await screen.findByRole("region", { name: "Projects" });
-  await waitFor(() => expect(runState(projects, "CYC")).toBe("Running"));
-  // An earlier push said nothing runs; the page is then read again (reopened) and the read says Running.
-  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: [] } } }));
   await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
+  // Loop started while the page was closed, and nothing was pushed to it.
+  script.loopRuns = { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } };
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  const again = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(again, "CYC")).toBe("Running"));
 });

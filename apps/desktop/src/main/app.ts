@@ -220,6 +220,7 @@ export const startApp = async (options: AppOptions) => {
     ? loopFeed({
         call: (method, params) => loopRpc(options.loop?.socket ?? "", method, params),
         changed: (runs) => emit({ type: "loop-runs", runs }),
+        lazy: true,
       })
     : undefined;
   // Before anything is connected: until the person is signed in, no location is, and no session is read.

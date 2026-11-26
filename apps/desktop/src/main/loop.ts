@@ -139,6 +139,8 @@ export type FeedDeps = {
   call: (method: string, params?: unknown) => Promise<LoopRpcAnswer>;
   /** Told when the run state differs from the one told last. */
   changed: (runs: LoopRunsAnswer) => void;
+  /** Follow only once the page has asked for the run state. */
+  lazy?: boolean;
 };
 
 /** The most pages one poll of one Project takes in a row: a server that always says `hasMore` cannot keep it here. */
@@ -156,6 +158,9 @@ export const loopFeed = (deps: FeedDeps) => {
   let told: LoopRunsAnswer | undefined;
   let busy = false;
   let ticks = 0;
+  let wanted = !deps.lazy;
+  /** Events just made the runs be read: once more on the next tick, in case the record was written after the event. */
+  let recheck = false;
 
   const apply = (runs: LoopRunsAnswer, tell: boolean) => {
     const same = sameRuns(told, runs);
@@ -196,17 +201,20 @@ export const loopFeed = (deps: FeedDeps) => {
   };
 
   const tick = async (): Promise<void> => {
-    if (busy) return;
+    if (busy || !wanted) return;
     busy = true;
     try {
       // The runs are also read every so often, so a Project added to the server is followed.
-      let fresh = told?.kind !== "ok" || ++ticks % RUNS_REREAD_TICKS === 0;
+      const wasOk = told?.kind === "ok";
+      let fresh = !wasOk || recheck || ++ticks % RUNS_REREAD_TICKS === 0;
+      const forced = fresh;
       if (told?.kind === "ok")
         for (const projectKey of Object.keys(told.running))
           fresh = (await pull(projectKey)) || fresh;
       if (!fresh) return;
+      recheck = fresh && !forced;
       let runs = runningOf(await deps.call(LOOP_RUNS_LIST));
-      if (runs.kind === "ok") {
+      if (runs.kind === "ok" && !wasOk) {
         // The first read, and the first one after the server was away, catch up on every log from the last `seq` held.
         let more = false;
         for (const projectKey of Object.keys(runs.running)) more = (await pull(projectKey)) || more;
@@ -222,8 +230,10 @@ export const loopFeed = (deps: FeedDeps) => {
     tick,
     /** The page asked: read now, remember it as told, and answer. */
     async read(): Promise<LoopRunsAnswer> {
+      wanted = true;
       const runs = runningOf(await deps.call(LOOP_RUNS_LIST));
-      apply(runs, false);
+      // Pushed too (when it differs from what was told last), so a page that dropped its read for a newer push still gets it.
+      apply(runs, true);
       return runs;
     },
     /** The last `seq` applied for a Project (for tests and for looking). */
@@ -538,7 +548,8 @@ const pendingOf = async (
 export const readBoard = async (
   t: Tracker,
   projectKey: string,
-  running: ReadonlySet<string> = new Set(),
+  /** Asked alongside the tracker; awaited only when the tickets are built, so a slow Loop socket does not delay the tracker. */
+  runningAsk: Promise<ReadonlySet<string>> = Promise.resolve(new Set()),
 ): Promise<LoopBoardAnswer> => {
   try {
     // The tracker answers with the thing itself (`{project, columns, ...}`, a bare array of issues); some paths wrap it
@@ -558,6 +569,7 @@ export const readBoard = async (
       const rows = rowsOf(
         await callTool(t, "list_issues", { projectKey, columnId: column.id, limit }),
       );
+      const running = await runningAsk;
       const role = roleOf(columns, column);
       // Only In Progress is read ticket by ticket (`list_issues` has no field values), a few at a time. The write does
       // not move `updatedAt`, so nothing is cached by it.
@@ -658,7 +670,7 @@ export const answerBoard = async (
     board = await readBoard(
       { url: loop.trackerUrl, key, ...(fetchImpl ? { fetch: fetchImpl } : {}) },
       projectKey,
-      await running,
+      running,
     );
   }
   track("loop_board_read", { result: board.kind });
