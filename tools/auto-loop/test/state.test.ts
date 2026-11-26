@@ -51,7 +51,11 @@ test("lock: a live holder refuses, a dead one is taken over", async () => {
 });
 
 test("stats: rates from the event log", () => {
-  const e = (run: string, kind: string, extra: Record<string, string> = {}): LoopEvent => ({
+  const e = (
+    run: string,
+    kind: string,
+    extra: Record<string, string | boolean> = {},
+  ): LoopEvent => ({
     ts: "t",
     run,
     kind,
@@ -60,7 +64,7 @@ test("stats: rates from the event log", () => {
   const stats = computeStats([
     e("A", "claimed"),
     e("A", "verify"),
-    e("A", "delivered", { prUrl: "u" }),
+    e("A", "delivered", { prUrl: "u", autoMerge: true }),
     e("B", "claimed"),
     e("B", "verify"),
     e("B", "round_failed"),
@@ -71,6 +75,29 @@ test("stats: rates from the event log", () => {
   expect(stats.autonomousCompletionRate).toBe(0.5);
   expect(stats.interventionRate).toBe(0.5);
   expect(stats.reworkRate).toBe(0.5);
+  expect(stats.autoMerged).toBe(1);
+});
+
+test("stats: delivered without auto-merge is not autonomous", () => {
+  const e = (
+    run: string,
+    kind: string,
+    extra: Record<string, string | boolean> = {},
+  ): LoopEvent => ({
+    ts: "t",
+    run,
+    kind,
+    ...extra,
+  });
+  const stats = computeStats([
+    e("A", "claimed"),
+    e("A", "verify"),
+    e("A", "review_decided", { decision: "escalate" }),
+    e("A", "delivered", { prUrl: "u", autoMerge: false }),
+  ]);
+  expect(stats.delivered).toBe(1);
+  expect(stats.autoMerged).toBe(0);
+  expect(stats.autonomousCompletionRate).toBe(0);
 });
 
 test("the QA brief asks for the code-review skill, read-only", () => {
