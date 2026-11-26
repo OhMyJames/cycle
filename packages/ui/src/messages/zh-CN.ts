@@ -597,6 +597,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.offline.title": "Loop 服务没有运行",
   "loop.offline.body": "在这台电脑上启动它，就能看到它的项目。下面是它上次有的项目。",
   "loop.offline.note": "离线",
+  "loop.run.running": "运行中",
+  "loop.run.idle": "未运行",
   "loop.reload": "重新读取",
   "loop.noKey.title": "没有 itsaplan 密钥",
   "loop.noKey.body":

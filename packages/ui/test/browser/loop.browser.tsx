@@ -635,3 +635,34 @@ test("the counts of a batch stay when the reloaded board has nothing waiting any
   expect(await screen.findByText(/1 succeeded, 0 skipped, 0 failed/)).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Select all" })).toBeNull();
 });
+
+const runState = (projects: HTMLElement, key: string) =>
+  projects.querySelector<HTMLElement>(`[data-project="${key}"] [data-kind="loop-run"]`)
+    ?.textContent ?? null;
+
+test("a Project with a running record says Running, and one without says Not running", async () => {
+  await mount(overviewScript({ loopRuns: { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } } }));
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Running"));
+  expect(runState(projects, "DOC")).toBe("Not running");
+});
+
+test("a Loop server that does not answer is never shown as running, even with In Progress tickets", async () => {
+  await mount(overviewScript({ loopRuns: { kind: "disconnected" } }));
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+});
+
+test("a pushed run state updates the page without reading again", async () => {
+  const { named, emit } = await mount(
+    overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
+  );
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+  const reads = named("loopRuns").length;
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Running"));
+  act(() => emit({ type: "loop-runs", runs: { kind: "disconnected" } }));
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+  expect(named("loopRuns").length).toBe(reads);
+});

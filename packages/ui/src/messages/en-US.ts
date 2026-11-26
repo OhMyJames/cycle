@@ -660,6 +660,8 @@ export const enUS = {
   "loop.offline.body":
     "Start it on this computer to see its Projects. The Projects below are the ones it had last time.",
   "loop.offline.note": "Offline",
+  "loop.run.running": "Running",
+  "loop.run.idle": "Not running",
   "loop.reload": "Read again",
   "loop.noKey.title": "No itsaplan key",
   "loop.noKey.body":

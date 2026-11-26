@@ -26,6 +26,7 @@ import type {
   LoopManyResult,
   LoopNotice,
   LoopProjectInfo,
+  LoopRunsAnswer,
   LoopTicket,
   LoopTicketDetail,
 } from "../api.ts";
@@ -867,6 +868,7 @@ function Overview({
   const store = useAppStore();
   const boards = useAppState((s) => s.loop.boards);
   const noticeAnswers = useAppState((s) => s.loop.notices);
+  const runs = useAppState((s) => s.loop.runs);
   const notices = projects.flatMap((p) => {
     const answer = noticeAnswers[p.projectKey];
     return answer?.kind === "ok"
@@ -896,6 +898,7 @@ function Overview({
                   onClick={() => onOpenProject(p.projectKey)}
                 >
                   <span data-slot="loop-project-name">{p.name}</span>
+                  <RunState runs={runs} projectKey={p.projectKey} />
                   <span data-slot="loop-repo">{p.repo.displayName}</span>
                   {board === undefined || board === "loading" ? (
                     <span data-slot="loop-repo">{away ? "" : t("loop.loading")}</span>
@@ -936,6 +939,22 @@ function Overview({
   );
 }
 
+/**
+ * Whether Loop is running a Project: read-only, from the run data (CYC-458), never from a board column. Said in words, not
+ * by colour alone. Before the first read it says nothing; a server that did not answer is "not running", never "running".
+ */
+function RunState({ runs, projectKey }: { runs: LoopRunsAnswer | undefined; projectKey: string }) {
+  const { t } = useI18n();
+  if (runs === undefined) return null;
+  const running = runs.kind === "ok" && (runs.running[projectKey]?.length ?? 0) > 0;
+  const state = running ? "running" : "idle";
+  return (
+    <span data-slot="loop-run" data-kind="loop-run" data-state={state}>
+      {t(`loop.run.${state}`)}
+    </span>
+  );
+}
+
 export function LoopPage({
   view,
   onView,
@@ -955,8 +974,10 @@ export function LoopPage({
   const loop = useAppState((s) => s.loop);
   const { projects, connected } = loop;
 
+  // The run state is read once; after that main pushes it when Loop's events change it, so it is not read again here.
   useEffect(() => {
     void store.loadLoopProjects();
+    void store.loadLoopRuns();
   }, [store]);
 
   // What is shown: the overview, or the Project asked for (when the server has it).
