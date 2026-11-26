@@ -9,7 +9,7 @@ export AUTO_LOOP_PLAN_KEY=...        # itsaplan 的 key，只给 Loop 本身，�
 bun tools/auto-loop/src/cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西
 bun tools/auto-loop/src/cli.ts --once      # 处理一张
 bun tools/auto-loop/src/cli.ts             # 常驻，空闲时每 60 秒看一次（--interval 改）
-bun tools/auto-loop/src/cli.ts stats       # 自主完成率、介入率、返工率
+bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率
 ```
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。

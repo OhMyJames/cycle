@@ -2,8 +2,11 @@ import type { LoopEvent } from "./store.ts";
 
 export type Stats = {
   runs: number;
+  /** Runs with a `delivered` event, however it was delivered: auto-merged, escalated to a person, review system failure, auto-merge failed to enable, or merged outside the Loop. */
   delivered: number;
-  /** Delivered with no person's help, out of the runs that were started. */
+  /** Runs where the Loop itself enabled auto-merge and confirmed the merge (`delivered` with `autoMerge: true`), whether or not a person helped. */
+  autoMerged: number;
+  /** Auto-merged with no person's help (no permission_pending, blocked or resumed), out of the runs that were started. Escalations and outside merges do not count. */
   autonomousCompletionRate: number;
   /** Runs where a person had to step in (a waiting permission, a block, a resume), out of the runs started. */
   interventionRate: number;
@@ -27,6 +30,7 @@ export const computeStats = (events: LoopEvent[]): Stats => {
   }
   let delivered = 0;
   let autonomous = 0;
+  let autoMerged = 0;
   let intervened = 0;
   let checked = 0;
   let reworked = 0;
@@ -38,7 +42,10 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     if (helped) intervened++;
     if (done !== undefined) {
       delivered++;
-      if (!helped) autonomous++;
+      if (done.autoMerge === true) {
+        autoMerged++;
+        if (!helped) autonomous++;
+      }
       delivery.push({ run, at: done.ts, prUrl: String(done.prUrl ?? "") });
     }
     if (list.some((e) => e.kind === "verify")) {
@@ -50,6 +57,7 @@ export const computeStats = (events: LoopEvent[]): Stats => {
   return {
     runs,
     delivered,
+    autoMerged,
     autonomousCompletionRate: rate(autonomous, runs),
     interventionRate: rate(intervened, runs),
     reworkRate: rate(reworked, checked),
