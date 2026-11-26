@@ -11,7 +11,8 @@ import { createPrivateKey, type KeyObject, sign } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { sha256Hex, shellHash } from "../src/main/ui-crypto.ts";
+import { sha256Hex, shellHash, type UiKeys, verifySignature } from "../src/main/ui-crypto.ts";
+import { UI_KEYS } from "../src/main/ui-keys.ts";
 import {
   parseManifest,
   type UiManifest,
@@ -104,6 +105,16 @@ export const makeUiBundle = async (options: {
   };
 };
 
+/** Whether the signature made is one an app that has `keys` takes: the key that signed is the one built in under its id. */
+export const signatureHolds = async (made: MadeBundle, keys: UiKeys): Promise<boolean> =>
+  made.signatureFile !== undefined &&
+  verifySignature(
+    await readFile(made.manifestFile),
+    await readFile(made.signatureFile, "utf8"),
+    made.manifest.keyId,
+    keys,
+  );
+
 const git = (...args: string[]) =>
   Bun.spawnSync(["git", ...args], { cwd: ROOT })
     .stdout.toString()
@@ -149,6 +160,10 @@ if (import.meta.main) {
     zip: ditto,
     ...(key ? { signingKey: privateKeyFrom(key) } : {}),
   });
+  if (key && !(await signatureHolds(made, UI_KEYS)))
+    throw new Error(
+      `The signature is not one the apps take: no key ${made.manifest.keyId} built into them (src/main/ui-keys.ts) matches UI_SIGNING_KEY.`,
+    );
   console.log(
     JSON.stringify({ ...made, manifest: undefined, shell, uiVersion: made.manifest.uiVersion }),
   );

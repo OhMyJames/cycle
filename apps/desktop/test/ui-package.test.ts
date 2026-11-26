@@ -3,7 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { makeUiBundle, privateKeyFrom } from "../scripts/ui-package.ts";
+import { makeUiBundle, privateKeyFrom, signatureHolds } from "../scripts/ui-package.ts";
 import { verifySignature } from "../src/main/ui-crypto.ts";
 import { createUiStore, MANIFEST_FILE, SIGNATURE_FILE } from "../src/main/ui-store.ts";
 import { parseManifest } from "../src/shared/ui-bundle.ts";
@@ -80,6 +80,34 @@ test("with a key the signature holds for the manifest's bytes, in the PEM form a
     const sig = await readFile(made.signatureFile as string, "utf8");
     expect(verifySignature(bytes, sig, "k1", { k1: spki })).toBe(true);
   }
+});
+
+test("a signature is accepted only for the key built in under the id, not for another key, an unknown id or no keys", async () => {
+  const made = await makeUiBundle({
+    rendererDir: renderer,
+    shell: SHELL,
+    uiVersion: 321,
+    keyId: "k1",
+    outDir: join(dir, "out"),
+    zip: fakeZip,
+    signingKey: key.privateKey,
+  });
+  const other = generateKeyPairSync("ed25519")
+    .publicKey.export({ format: "der", type: "spki" })
+    .toString("base64");
+  expect(await signatureHolds(made, { k1: spki })).toBe(true);
+  expect(await signatureHolds(made, { k1: other })).toBe(false);
+  expect(await signatureHolds(made, { k2: spki })).toBe(false);
+  expect(await signatureHolds(made, {})).toBe(false);
+  const unsigned = await makeUiBundle({
+    rendererDir: renderer,
+    shell: SHELL,
+    uiVersion: 321,
+    keyId: "k1",
+    outDir: join(dir, "out2"),
+    zip: fakeZip,
+  });
+  expect(await signatureHolds(unsigned, { k1: spki })).toBe(false);
 });
 
 test.skipIf(process.platform !== "darwin")(
