@@ -16,7 +16,7 @@ export type Stats = {
   firstPassRate: number;
   /** Each `round_failed`, classed by the event just before it in its run (verify, qa_turn → qa, ci_failed → ci, review_decided → review, anything else → other): `events` is the count, `runs` the distinct runs with at least one. */
   reworkByStage: Record<ReworkStage, { events: number; runs: number }>;
-  /** Milliseconds from the first `claimed` to the first `delivered` of each delivered run (never below 0), nearest-rank percentiles (the value at rank ceil(p·n) of the sorted list). `null` when no run was delivered. */
+  /** Milliseconds from the first `claimed` to the first `delivered` of each delivered run (never below 0), nearest-rank percentiles (the value at rank ceil(p·n) of the sorted list). `null` when no run was delivered. Includes time a run was blocked; for a run not auto-merged, `delivered` is written when the pull request opens, for an auto-merged one after the merge. */
   durationMs: { median: number | null; p90: number | null };
   /** When each delivered run's pull request was opened: its review time is the time from here to its merge. */
   delivery: { run: string; at: string; prUrl: string }[];
@@ -146,6 +146,7 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     }
   }
   const runs = Array.from(byRun.values()).filter((l) => l.some((e) => e.kind === "claimed")).length;
+  const sortedDurations = [...durations].sort((a, b) => a - b);
   return {
     runs,
     delivered,
@@ -156,11 +157,8 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     firstPassRate: rate(firstPass, runs),
     reworkByStage,
     durationMs: {
-      median: percentile(
-        durations.sort((a, b) => a - b),
-        0.5,
-      ),
-      p90: percentile(durations, 0.9),
+      median: percentile(sortedDurations, 0.5),
+      p90: percentile(sortedDurations, 0.9),
     },
     delivery,
     permissions: permissionRows(events),
