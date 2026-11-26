@@ -32,6 +32,7 @@ import { ResearchFlow } from "./flows/research.ts";
 import { todoIntake } from "./flows/ticket.ts";
 import {
   changedReason,
+  DocsChanged,
   docChanges,
   NEEDS_SPEC,
   readFullFlowDocs,
@@ -677,6 +678,22 @@ export class Pipeline {
     }
   }
 
+  /** 大档 (CYC-453): the named documents as the run recorded them; a change since blocks the run. */
+  async #docTexts<N extends "Spec" | "Design" | "Plan">(
+    run: RunRecord,
+    issue: Issue,
+    names: readonly N[],
+  ): Promise<Record<Lowercase<N>, string> | undefined> {
+    try {
+      return await readFullFlowTexts(run.fullFlowDocs, this.#d.tracker, names, async () =>
+        docChanges(run.fullFlowDocs, await this.#d.tracker.listIssueDocuments(issue)),
+      );
+    } catch (error) {
+      if (error instanceof DocsChanged) throw new Blocked(changedReason(error.message));
+      throw error;
+    }
+  }
+
   /**
    * 大档 (CYC-328): the four documents must still be as the run began. A change blocks, for a person to say whether
    * the plan changed or a document was touched by mistake. When a person has put the run back (`rebase`), what they
@@ -1311,14 +1328,13 @@ export class Pipeline {
           (run.nodeModulesReleased
             ? "\n\nDependencies are not installed in this worktree (node_modules was removed while waiting for CI). Resolve package.json and bun.lock first if they are conflicted, then run `bun install` before `bun run check`.\n"
             : "");
-    const docs = await readFullFlowTexts(run.fullFlowDocs, this.#d.tracker);
     const prompt =
       conflictPrompt ??
       (run.findings !== null
         ? fixBrief(run.round, run.findings)
         : progress !== "" || byPerson
           ? continueBrief(issue, byPerson)
-          : devBrief(issue, book.items, docs));
+          : devBrief(issue, book.items, await this.#docTexts(run, issue, ["Design", "Plan"])));
 
     let sessionId = this.#need(run.devSessionId ?? undefined);
     let result: TurnResult;
@@ -1352,7 +1368,14 @@ export class Pipeline {
         run.key,
         sessionId,
         conflictPrompt ??
-          handoffBrief(issue, book.items, progress, gitLog.output, run.findings, docs),
+          handoffBrief(
+            issue,
+            book.items,
+            progress,
+            gitLog.output,
+            run.findings,
+            await this.#docTexts(run, issue, ["Design", "Plan"]),
+          ),
         { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
       );
     }
@@ -1485,7 +1508,7 @@ export class Pipeline {
       diff.output,
       checks === "" ? "(none)" : checks,
       run.resolvedFiles,
-      await readFullFlowTexts(run.fullFlowDocs, this.#d.tracker),
+      await this.#docTexts(run, issue, ["Spec", "Design", "Plan"]),
     );
     const verdict = await this.#judge(run, issue, worktree, before, prompt, save);
     if (!verdict.pass) {

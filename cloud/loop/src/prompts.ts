@@ -38,14 +38,26 @@ next: what is left, or "nothing" if every criterion should now pass
 </progress>`;
 
 /** 大档 (CYC-453): the full text of the documents a session works from; absent for a small work item. */
-export type FullFlowTexts = { spec: string; design: string; plan: string };
+export type DevDocs = { design: string; plan: string };
+export type FullFlowTexts = DevDocs & { spec: string };
 
-const docBlock = (name: string, text: string): string =>
-  `${name} (full text):\n---\n${text.trim()}\n---`;
+const MAX_DOC = 100_000;
+
+/** A document in a fence longer than any run of backticks inside it, cut (and said so) past `MAX_DOC`. */
+const docBlock = (name: string, text: string): string => {
+  const body = text.trim();
+  const cut = body.length > MAX_DOC;
+  const shown = cut
+    ? `${body.slice(0, MAX_DOC)}\n[cut: the document goes on; read it in full if you need the rest]`
+    : body;
+  const longest = Math.max(2, ...Array.from(shown.matchAll(/`+/g), (m) => m[0].length));
+  const fence = "`".repeat(longest + 1);
+  return `${name} (full text):\n${fence}markdown\n${shown}\n${fence}`;
+};
 
 const DEV_DOCS_RULE = `- This is a 完整流程 work item: build it by the Design and the Plan above, in the order the Plan gives. If you must depart from the Plan (a step done differently, skipped, added or reordered), say what and why in the progress block, under "done" for that turn. A departure with no reason written there is a defect.`;
 
-const devDocs = (docs: FullFlowTexts | undefined): string =>
+const devDocs = (docs: DevDocs | undefined): string =>
   docs === undefined
     ? ""
     : `\nThe work item is judged by its documents. The Design and the Plan were adopted by a person:\n${docBlock("Design", docs.design)}\n\n${docBlock("Plan", docs.plan)}\n`;
@@ -53,7 +65,7 @@ const devDocs = (docs: FullFlowTexts | undefined): string =>
 export const devBrief = (
   issue: Issue,
   criteria: Criterion[],
-  docs?: FullFlowTexts,
+  docs?: DevDocs,
 ): string => `You are the developer for work item ${issue.key}: ${issue.title}.
 
 Work in the current directory: it is a git worktree made for this work item. Do not leave it and do not switch worktrees. Read AGENTS.md first and follow it, including the notes it points to for the area you change.
@@ -125,7 +137,7 @@ export const handoffBrief = (
   progress: string,
   gitLog: string,
   findings?: string | null,
-  docs?: FullFlowTexts,
+  docs?: DevDocs,
 ): string => `You take over work item ${issue.key}: ${issue.title}. The developer before you could not be continued. Work in the current directory (a git worktree that already holds their commits). Read AGENTS.md first.
 
 The work item:
@@ -137,7 +149,7 @@ Criteria and where they stand:
 ${criteriaTable(criteria, true)}
 
 What the developer reported so far:
-${progress.trim() === "" ? "(nothing)" : progress.trim().slice(-6000)}
+${progress.trim() === "" ? "(nothing)" : progress.trim().slice(docs === undefined ? -6000 : -20000)}
 
 Commits so far:
 ${gitLog.trim() === "" ? "(none)" : gitLog.trim()}${
@@ -172,7 +184,7 @@ ${issue.description}
 ${
   docs === undefined
     ? ""
-    : `\nThis is a 完整流程 work item. A person adopted these documents; judge the change against them, not only the description:\n${docBlock("Spec", docs.spec)}\n\n${docBlock("Design", docs.design)}\n\n${docBlock("Plan", docs.plan)}\n\nReport every place where the change departs from the Plan (a step not done, done differently, added, or out of order) as a finding, even when the code works. A departure is "major" unless the developer's progress notes give a reason that holds, and then "minor" at least; also check it still follows the Design and meets the Spec.\n`
+    : `\nThis is a 完整流程 work item. A person adopted these documents; judge the change against them, not only the description:\n${docBlock("Spec", docs.spec)}\n\n${docBlock("Design", docs.design)}\n\n${docBlock("Plan", docs.plan)}\n\nReport every place where the change departs from the Plan (a step not done, done differently, added, or out of order) as a finding, even when the code works. You are not told why the developer departed: judge by effect. A departure that changes behavior the Spec or Design asks for, or leaves a Plan step undone, is "major"; one that reaches the same result by another way is "minor". Also check it still follows the Design and meets the Spec.\n`
 }
 The loop ran these checks, and these are their results:
 ${checks}

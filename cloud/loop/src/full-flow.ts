@@ -5,7 +5,6 @@
 
 import { type CriterionSpec, parseCriteria, verifyArgv } from "./criteria.ts";
 import { ALLOWED_COMMANDS } from "./preflight.ts";
-import type { FullFlowTexts } from "./prompts.ts";
 import type { Config, Issue, IssueDocument, Tracker } from "./types.ts";
 
 export const FULL_FLOW_DOCS = ["Intent", "Spec", "Design", "Plan"] as const;
@@ -117,16 +116,26 @@ export const docChanges = (recorded: DocVersion[], linked: IssueDocument[]): str
 export const changedReason = (changes: string): string =>
   `${NEEDS_SPEC} 文档在运行中变了：${changes}。请确认是计划变更还是误改；确认后把文档重新锁定，再把工单放回 Todo，自动化会按新版本继续。`;
 
-/** The full text of the Spec, Design and Plan a run started on, read by the ids it recorded. */
-export const readFullFlowTexts = async (
+/**
+ * The full text of the named documents a run started on, read by the ids it recorded. The versions are checked
+ * again after the read, so text edited since the run began is never given to a session: that throws `changed`.
+ */
+export const readFullFlowTexts = async <N extends (typeof FULL_FLOW_DOCS)[number]>(
   recorded: DocVersion[],
   tracker: Pick<Tracker, "getDocumentContent">,
-): Promise<FullFlowTexts | undefined> => {
+  names: readonly N[],
+  recheck?: () => Promise<string | undefined>,
+): Promise<Record<Lowercase<N>, string> | undefined> => {
   if (recorded.length === 0) return undefined;
-  const text = async (name: (typeof FULL_FLOW_DOCS)[number]): Promise<string> => {
+  const out = {} as Record<Lowercase<N>, string>;
+  for (const name of names) {
     const doc = recorded.find((d) => d.title.endsWith(` ${name}`));
     if (doc === undefined) throw new Error(`the run has no recorded ${name}`);
-    return tracker.getDocumentContent(doc.id);
-  };
-  return { spec: await text("Spec"), design: await text("Design"), plan: await text("Plan") };
+    out[name.toLowerCase() as Lowercase<N>] = await tracker.getDocumentContent(doc.id);
+  }
+  const changes = await recheck?.();
+  if (changes !== undefined) throw new DocsChanged(changes);
+  return out;
 };
+
+export class DocsChanged extends Error {}
