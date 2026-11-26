@@ -133,6 +133,20 @@ test("it assembles the new bundle from the installed files and only the files th
   expect(server.served()).toBe(made.zip.length + done.fetched);
 });
 
+test("a strict umask does not change the modes the fixture writes, nor the bundle assembled", async () => {
+  const before = process.umask(0o077);
+  try {
+    const made = await prepare(NEW);
+    const done = await run(made, serve(made.zip));
+    expect((await lstat(join(made.installed, "Contents/MacOS/Electron"))).mode & 0o777).toBe(0o755);
+    expect((await lstat(join(made.installed, "Contents/Info.plist"))).mode & 0o777).toBe(0o644);
+    expect((await lstat(join(done.app, "Contents/MacOS/Electron"))).mode & 0o777).toBe(0o755);
+    expect(await scanBundle(done.app)).toEqual(made.tree);
+  } finally {
+    process.umask(before);
+  }
+});
+
 test("a file that is the same size but not the same bytes is fetched, not taken", async () => {
   const made = await prepare(NEW, { ...OLD, "Contents/Info.plist": "version 9" });
   const done = await run(made, serve(made.zip));
