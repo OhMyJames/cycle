@@ -7,9 +7,6 @@ import { createInterface } from "node:readline";
  */
 
 /** An error with a JSON-RPC code: what the other side answered, or what a handler wants answered. */
-/** How long a malformed line waits to see whether the process is exiting before it is a protocol error. */
-const PARSE_GRACE_MS = 100;
-
 export class RpcError extends Error {
   constructor(
     readonly code: number,
@@ -125,13 +122,12 @@ export class LineJsonRpcProcess {
         error instanceof Error ? error : new Error(`Invalid ${this.#options.name} message`);
       // readline hands over the bytes after the last newline as one more line at EOF. A process
       // stopped while writing a large message therefore leaves half a JSON line. That is its exit,
-      // not a protocol disagreement: let the process's own close event provide the real reason. The
-      // stream's end can be seen a little before the exit is, so wait a short grace, not one turn.
+      // not a protocol disagreement: let the process's own close event provide the real reason.
       setTimeout(() => {
         if (this.#closed || this.#process.exitCode !== null || this.#process.signalCode !== null)
           return;
         this.close(reason);
-      }, PARSE_GRACE_MS).unref();
+      }, 0).unref();
     }
   }
 
