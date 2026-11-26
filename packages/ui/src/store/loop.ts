@@ -25,6 +25,9 @@ export type LoopState = {
 
 export const initialLoop = (): LoopState => ({ projects: [], boards: {}, notices: {} });
 
+/** How many reads in a row may fail before the Notices last read are dropped. */
+const NOTICE_FAILURES_KEPT = 3;
+
 export class LoopSlice {
   readonly #kit: StoreKit;
 
@@ -64,6 +67,7 @@ export class LoopSlice {
 
   /** The latest ask per Project: an answer that is not for it is old, and is dropped. */
   #requests = 0;
+  readonly #noticeFailures = new Map<string, number>();
   readonly #noticeAsk = new Map<string, number>();
 
   loadNotices = async (projectKey: string): Promise<void> => {
@@ -75,8 +79,13 @@ export class LoopSlice {
     if (this.#noticeAsk.get(projectKey) !== ask) return;
     this.#kit.set((s) => {
       const had = s.loop.notices[projectKey];
-      // A read that failed to reach the tracker leaves the Notices that were read; no key at all replaces them.
-      if (had?.kind === "ok" && answer.kind === "unreachable") return {};
+      // A read that failed to reach the tracker leaves the Notices that were read, for a few failures: after that they
+      // are too old to show as they are. No key at all replaces them at once.
+      if (answer.kind === "unreachable") {
+        const failures = (this.#noticeFailures.get(projectKey) ?? 0) + 1;
+        this.#noticeFailures.set(projectKey, failures);
+        if (had?.kind === "ok" && failures < NOTICE_FAILURES_KEPT) return {};
+      } else this.#noticeFailures.delete(projectKey);
       return { loop: { ...s.loop, notices: { ...s.loop.notices, [projectKey]: answer } } };
     });
   };

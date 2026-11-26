@@ -492,7 +492,7 @@ const escalated = (afterPrLine: string): boolean => {
   const header = afterPrLine.split("\n", 1)[0] ?? "";
   return !/结论为合并（merge：/.test(header) && ESCALATED.some((w) => header.includes(w));
 };
-const REVIEW_COMMENT = /^已开 PR：(\S+)\n([\s\S]*)$/;
+const REVIEW_COMMENT = /^已开 PR：(\S+)(?:\n([\s\S]*))?$/;
 /** The longest reason or conclusion kept: they are comments, and may be long. */
 const TEXT_MAX = 1500;
 
@@ -505,7 +505,9 @@ const cut = (text: string): string =>
  * The comments of a ticket, newest first by time (then id): the order the tracker answers in is not relied on.
  * `list_issue_activity` is not a listed tool: it goes through `execute_read`.
  */
-const commentsOf = async (t: Tracker, issueId: unknown): Promise<string[]> => {
+type Comment = { body: string; at: number | undefined };
+
+const commentsOf = async (t: Tracker, issueId: unknown): Promise<Comment[]> => {
   const answer = await callTool(t, "execute_read", {
     name: "list_issue_activity",
     arguments: { issueId, filter: "comments", order: "desc", limit: 25 },
@@ -521,22 +523,28 @@ const commentsOf = async (t: Tracker, issueId: unknown): Promise<string[]> => {
         String(y.createdAt ?? "").localeCompare(String(x.createdAt ?? "")) ||
         Number(y.id ?? 0) - Number(x.id ?? 0),
     )
-    .map((i) =>
-      (i.body as string)
-        .replace(/^\uFEFF/, "")
-        .replace(/\r\n?/g, "\n")
-        .trim(),
-    );
+    .map((i) => {
+      const at = Date.parse(String(i.createdAt ?? ""));
+      return {
+        body: (i.body as string)
+          .replace(/^\uFEFF/, "")
+          .replace(/\r\n?/g, "\n")
+          .trim(),
+        at: Number.isNaN(at) ? undefined : at,
+      };
+    });
 };
 
 /** What was read of a ticket's comments, until the ticket changes: the poll reads every Blocked and In Review ticket. */
-const commentCache = new Map<string, { at: number; comments: string[] }>();
+const commentCache = new Map<string, { at: number; comments: Comment[] }>();
 const CACHE_MAX = 200;
 /** A cached read is used for this long at most: a comment added without the ticket's update time moving is still read. */
 const CACHE_TTL_MS = 2 * 60_000;
 const CONCURRENCY = 4;
+/** How long before the ticket's move into Blocked Loop's own comment may have been written. */
+const BLOCK_COMMENT_SLACK_MS = 2 * 60_000;
 
-const cachedComments = async (t: Tracker, issue: Record<string, unknown>): Promise<string[]> => {
+const cachedComments = async (t: Tracker, issue: Record<string, unknown>): Promise<Comment[]> => {
   const key = `${t.url}#${String(issue.id)}#${String(issue.columnId)}#${String(issue.updatedAt ?? "")}`;
   // Without an update time there is nothing to tell a changed ticket by: read it.
   const cacheable = typeof issue.updatedAt === "string";
@@ -557,14 +565,19 @@ export const attentionOf = async (
   role: "blocked" | "review",
 ): Promise<Attention | undefined> => {
   if (role === "blocked") {
-    let comments: string[] = [];
+    let comments: Comment[] = [];
     try {
       comments = await cachedComments(t, issue);
     } catch {
       // A comment that cannot be read does not hide a Blocked ticket: it waits for a person, reason or not.
     }
-    for (const body of comments) {
+    // Loop comments, then moves the ticket: a comment from well before the ticket came to Blocked is an old reason
+    // (a person moved it here by hand), and is not shown as this one's.
+    const since = Date.parse(String(issue.statusSince ?? ""));
+    for (const { body, at } of comments) {
       const m = BLOCKED_COMMENT.exec(body);
+      if (m && at !== undefined && !Number.isNaN(since) && at < since - BLOCK_COMMENT_SLACK_MS)
+        break;
       if (m)
         return {
           kind: "blocked",
@@ -578,7 +591,7 @@ export const attentionOf = async (
   // ticket is taken for an escalation on a guess (the caller reports the read as failed and keeps what it knew).
   const comments = await cachedComments(t, issue);
   // Only the newest `已开 PR：` comment counts: an older escalation is stale once a later round has passed.
-  for (const body of comments) {
+  for (const { body } of comments) {
     const m = REVIEW_COMMENT.exec(body);
     if (!m) continue;
     return escalated(m[2] ?? "")

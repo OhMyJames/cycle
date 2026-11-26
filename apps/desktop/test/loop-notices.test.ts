@@ -498,3 +498,102 @@ describe("a Project that is no longer listed", () => {
     expect(told).toEqual([]);
   });
 });
+
+describe("round 3 rules", () => {
+  const project = {
+    name: "C",
+    projectKey: "CYC",
+    repo: { displayName: "o/r", forge: "github" as const },
+  };
+
+  test("a Loop server that does not answer forgets nothing: what appeared meanwhile is told", async () => {
+    let up = true;
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const told: string[] = [];
+    const poller = noticePoller({
+      projects: async () => {
+        if (!up) throw new Error("no answer");
+        return [project];
+      },
+      read: async () => answer,
+      alert: (_k, n) => told.push(n.identifier),
+    });
+    await poller.tick();
+    up = false;
+    await poller.tick();
+    up = true;
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    await poller.tick();
+    expect(told).toEqual(["CYC-1"]);
+  });
+
+  test("a Notice withheld while the window is in front is offered twice at most", async () => {
+    let offers = 0;
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const poller = noticePoller({
+      projects: async () => [project],
+      read: async () => answer,
+      alert: () => {
+        offers += 1;
+        return false;
+      },
+    });
+    await poller.tick();
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    for (let i = 0; i < 5; i++) await poller.tick();
+    expect(offers).toBe(2);
+  });
+
+  test("a newest PR comment with no header is not an escalation, and does not fall back to an older one", async () => {
+    const { fetchImpl } = world({
+      tickets: { 34: [{ id: 1, identifier: "CYC-1", columnId: 34 }] },
+      comments: { 1: ["已开 PR：https://github.com/o/r/pull/9", REVIEW] },
+    });
+    expect(await answerNotices(loop, "CYC", () => [], noop, fetchImpl)).toEqual({
+      kind: "ok",
+      notices: [],
+    });
+  });
+
+  test("a Blocked reason older than the move into Blocked is not shown as this one's", async () => {
+    const base = world({
+      tickets: { 35: [{ id: 7, identifier: "CYC-7", columnId: 35 }] },
+      comments: {},
+    }).fetchImpl;
+    const old = (async (u: unknown, init: RequestInit) => {
+      const body = String(init.body);
+      if (body.includes("list_issues")) {
+        const data = [
+          {
+            id: 7,
+            identifier: "CYC-7",
+            title: "T",
+            columnId: 35,
+            statusSince: "2026-03-01T00:00:00Z",
+          },
+        ];
+        return new Response(
+          JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+        );
+      }
+      if (!body.includes("execute_read")) return base(u as never, init);
+      const data = {
+        ok: true,
+        status: 200,
+        data: { items: [{ id: 1, createdAt: "2026-01-01T00:00:00Z", body: BLOCKED }] },
+      };
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, old);
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices[0]).toMatchObject({ kind: "blocked", reason: "" });
+  });
+});

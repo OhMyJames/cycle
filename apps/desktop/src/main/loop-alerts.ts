@@ -28,9 +28,13 @@ export type PollDeps = {
   alert: (projectKey: string, notice: Alertable) => unknown;
 };
 
+const MAX_WITHHELD = 2;
+
 /** One look at every Project. A Project that cannot be read keeps what was known of it: it is not "all clear". */
 export const noticePoller = (deps: PollDeps) => {
   const seen = new Map<string, Set<string>>();
+  /** How many looks a Notice was withheld at: the person at the window may have seen it on the page, so it is offered twice at most. */
+  const withheld = new Map<string, number>();
   let running = false;
   const once = async (): Promise<void> => {
     let projects: LoopProjectInfo[];
@@ -51,7 +55,12 @@ export const noticePoller = (deps: PollDeps) => {
       for (const notice of alerts) {
         try {
           // Not shown (the window is in front): not seen either, so it is told when the person has gone elsewhere.
-          if (deps.alert(projectKey, notice) === false) known.delete(keyOf(notice));
+          if (deps.alert(projectKey, notice) === false) {
+            const id = `${projectKey}/${keyOf(notice)}`;
+            const times = (withheld.get(id) ?? 0) + 1;
+            withheld.set(id, times);
+            if (times < MAX_WITHHELD) known.delete(keyOf(notice));
+          }
         } catch {
           // A notification that cannot be shown is one missed, not a poll that failed.
         }
@@ -89,7 +98,8 @@ export const showAlert = (deps: AlertDeps) => (projectKey: string, notice: Alert
   const window = deps.window();
   if (window === undefined || window.isDestroyed() || window.isFocused()) return false;
   if (!deps.supported()) return undefined;
-  const title = `${notice.identifier} ${notice.title}`.replace(/\s+/g, " ").trim().slice(0, 80);
+  const line = `${notice.identifier} ${notice.title}`.replace(/\s+/g, " ").trim();
+  const title = Array.from(line).slice(0, 80).join("");
   const notification = deps.create({ title, body: deps.say(notice.kind) });
   held.add(notification);
   const done = () => void held.delete(notification);

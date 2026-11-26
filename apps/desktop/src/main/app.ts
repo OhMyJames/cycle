@@ -484,7 +484,9 @@ export const startApp = async (options: AppOptions) => {
     const poller = noticePoller({
       projects: async () => {
         const answer = await readLoopProjects(loop.socket);
-        return answer.kind === "ok" ? answer.projects : [];
+        // Not an empty list: a server that did not answer lists no Project gone, and the poller keeps what it knew.
+        if (answer.kind !== "ok") throw new Error("the Loop server did not answer");
+        return answer.projects;
       },
       read: (projectKey) => answerNotices(loop, projectKey, sessionsNow, () => {}),
       alert: showAlert({
