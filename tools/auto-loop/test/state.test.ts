@@ -55,6 +55,7 @@ test("store: a run.json from before the conflict fields still loads, with confli
     ciFailedSha: null,
     conflictRound: 0,
     conflict: null,
+    resolvedFiles: [],
     worktree: "/wt",
     localBranch: "b",
     remoteBranch: "auto/cyc-1",
@@ -141,6 +142,15 @@ test("the QA brief asks for the code-review skill, read-only", () => {
   const brief = qaBrief(issue(), [], "diff", "checks");
   expect(brief).toContain('skill "code-review"');
   expect(brief).toContain("never pass --fix or --comment");
+});
+
+test("the QA brief points at the files Dev resolved a merge conflict in", () => {
+  const plain = qaBrief(issue(), [], "diff", "checks");
+  expect(plain).not.toContain("merge conflict");
+  const brief = qaBrief(issue(), [], "diff", "checks", ["src/a.ts", "src/b.ts"]);
+  expect(brief).toContain("merge conflict");
+  expect(brief).toContain("- src/a.ts");
+  expect(brief).toContain("- src/b.ts");
 });
 
 test("the PR review brief is read-only, references REVIEW.md, and requires one of three structured conclusions", () => {
