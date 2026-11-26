@@ -411,19 +411,30 @@ export class Pipeline {
       if (read.status === "merged") return;
       if (read.status === "closed") await this.#closedBlock(run, prUrl);
       if (read.status === "conflicting") {
-        const files = await this.#conflictFiles(worktree);
-        await store.event(run.key, "merge_conflict", { prUrl, files: files.length });
-        throw new Blocked(
-          `已开启自动合并，但 PR 与 ${config.baseBranch} 冲突，GitHub 不会合并它：${prUrl}。${
-            files.length > 0 ? `冲突文件：${files.join("、")}。` : ""
-          }需要把 ${config.baseBranch} 合并进该分支并解决冲突，推送后 CI 通过即会自动合并。`,
-        );
+        await this.#conflictBlock(run, prUrl, worktree, "已开启自动合并，但");
       }
       last = read.status === "mergeable" ? "PR 可合并但尚未合并" : "GitHub 尚未给出合并状态";
     }
     await store.event(run.key, "merge_timeout", { prUrl });
     throw new Blocked(
       `已开启自动合并，但 PR 在 ${Math.round(config.mergeTimeoutMs / 60_000)} 分钟内没有合并（${last}）：${prUrl}。`,
+    );
+  }
+
+  /** Records `merge_conflict` and blocks: the PR conflicts with the base, so GitHub runs no CI and will not merge it. */
+  async #conflictBlock(
+    run: RunRecord,
+    prUrl: string,
+    worktree: string,
+    lead: string,
+  ): Promise<never> {
+    const { config, store } = this.#d;
+    const files = await this.#conflictFiles(worktree);
+    await store.event(run.key, "merge_conflict", { prUrl, files: files.length });
+    throw new Blocked(
+      `${lead}PR 与 ${config.baseBranch} 冲突，GitHub 不会跑 CI 也不会合并它：${prUrl}。${
+        files.length > 0 ? `冲突文件：${files.join("、")}。` : ""
+      }需要把 ${config.baseBranch} 合并进该分支并解决冲突，推送后 CI 通过即会自动合并。`,
     );
   }
 
@@ -894,6 +905,8 @@ export class Pipeline {
     if (result.outcome === "error") {
       throw new Blocked(`读取 CI 状态失败：${tail(result.error)}`);
     }
+    if (result.outcome === "conflict")
+      await this.#conflictBlock(run, prUrl, worktree, "等待 CI 时发现");
     if (result.outcome === "timeout") {
       const pendingNames =
         result.status?.pending.map((c) => c.name).join("、") || config.ciChecks.join("、");
