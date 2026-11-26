@@ -13,7 +13,7 @@
 bun tools/auto-loop/src/cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西
 bun tools/auto-loop/src/cli.ts --once      # 处理一张
 bun tools/auto-loop/src/cli.ts             # 常驻，空闲时每 60 秒看一次（--interval 改）
-bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率
+bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率；另有 `permissions`：被留给人或被拒的权限请求，按「种类 + 命令前两个词」统计，列出被人允许最多的前 10 项及各自被允许、被拒绝的次数（事件 `permission_requested`、`permission_answered`，只记命令前两个词）
 ```
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。

@@ -5,10 +5,25 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CycleClient, connectUnix, type PermissionAnswer } from "@cycle/client";
 import { CycleErrorCode, META } from "@cycle/protocol";
-import { answerFor, decide } from "./policy.ts";
+import { answeredAs, answerFor, commandPrefix, decide, kindOf } from "./policy.ts";
 import { SessionLost, type SessionRole, type Sessions, type TurnResult } from "./types.ts";
 
+/** Writes one event of a run's log (kind and flat data, no free text). */
+export type RecordEvent = (
+  run: string,
+  kind: string,
+  data: Record<string, string | number | boolean>,
+) => void | Promise<void>;
+
+/** A request left for a person, kept until the app answers it. */
+type Left = {
+  run: string;
+  request: Record<string, unknown>;
+  data: Record<string, string>;
+};
+
 type Turn = {
+  run: string;
   role: SessionRole;
   worktree: string;
   text: string;
@@ -24,9 +39,17 @@ export class DaemonSessions implements Sessions {
   readonly #turns = new Map<string, Turn>();
   readonly #watched = new Set<string>();
   readonly #onWaiting: (sessionId: string, title: string) => void;
+  readonly #record: RecordEvent;
+  /** Requests left for a person, by the daemon's id, so the answer can be recorded with what was asked. */
+  readonly #left = new Map<string, Left>();
 
-  constructor(socketPath: string, onWaiting: (sessionId: string, title: string) => void) {
+  constructor(
+    socketPath: string,
+    onWaiting: (sessionId: string, title: string) => void,
+    record: RecordEvent = () => {},
+  ) {
     this.#onWaiting = onWaiting;
+    this.#record = record;
     this.#client = new CycleClient({
       name: "auto-loop",
       connect: () => connectUnix(socketPath),
@@ -34,7 +57,14 @@ export class DaemonSessions implements Sessions {
         update: (sessionId, update) => this.#update(sessionId, update as Record<string, unknown>),
         permission: (sessionId, request, requestId) =>
           this.#permission(sessionId, request, requestId),
-        resolved: (_sessionId, requestId) => {
+        resolved: (_sessionId, requestId, outcome) => {
+          const left = this.#left.get(String(requestId));
+          if (left !== undefined) {
+            this.#left.delete(String(requestId));
+            const answer = answeredAs(left.request, outcome);
+            if (answer !== undefined)
+              this.#emit(left.run, "permission_answered", { ...left.data, answer });
+          }
           const waiter = this.#waiters.get(String(requestId));
           waiter?.({ outcome: "cancelled" });
         },
@@ -50,6 +80,13 @@ export class DaemonSessions implements Sessions {
 
   async close(): Promise<void> {
     await this.#client.close();
+  }
+
+  #emit(run: string, kind: string, data: Record<string, string>): void {
+    // A failed write must not fail the session's permission handling.
+    try {
+      void Promise.resolve(this.#record(run, kind, data)).catch(() => {});
+    } catch {}
   }
 
   #update(sessionId: string, update: Record<string, unknown>): void {
@@ -91,7 +128,21 @@ export class DaemonSessions implements Sessions {
     if (turn === undefined) return wait(false);
     const verdict = decide(request, { role: turn.role, worktree: turn.worktree });
     const answer = answerFor(request, verdict);
+    const command = commandPrefix(request);
+    const data = {
+      role: turn.role,
+      // Not `kind`: that is the name of the event itself.
+      tool: kindOf(request),
+      ...(command !== undefined ? { command } : {}),
+    };
+    // `decide` names an unrecognized kind in its reason: that is the agent's word, so it is not recorded.
+    const reason =
+      data.tool === "other" && / request$/.test(verdict.reason)
+        ? "a request of an unrecognized kind"
+        : verdict.reason;
+    this.#emit(turn.run, "permission_requested", { ...data, decision: verdict.decision, reason });
     if (answer !== undefined) return answer;
+    if (requestId !== undefined) this.#left.set(requestId, { run: turn.run, request, data });
     // Not for the loop to decide: the request stays open until a person answers it in the app.
     this.#onWaiting(sessionId, typeof request.title === "string" ? request.title : "");
     return wait(true);
@@ -158,7 +209,7 @@ export class DaemonSessions implements Sessions {
   async turn(
     sessionId: string,
     prompt: string,
-    context: { role: SessionRole; worktree: string; timeoutMs: number },
+    context: { run: string; role: SessionRole; worktree: string; timeoutMs: number },
   ): Promise<TurnResult> {
     // After an update of Cycle the connection is down or coming back: a prompt sent now would be lost.
     await this.#connected();
@@ -175,6 +226,7 @@ export class DaemonSessions implements Sessions {
       finish = resolve;
     });
     const turn: Turn = {
+      run: context.run,
       role: context.role,
       worktree: context.worktree,
       text: "",

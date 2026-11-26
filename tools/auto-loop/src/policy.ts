@@ -230,7 +230,65 @@ export const decide = (
   }
 };
 
+const KINDS = new Set([
+  "read",
+  "edit",
+  "delete",
+  "move",
+  "search",
+  "execute",
+  "think",
+  "fetch",
+  "switch_mode",
+  "other",
+]);
+const PROGRAM = /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,39}$/;
+const SUBCOMMAND = /^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/;
+
+/** The kind of tool a request is for, as one of a fixed set of words ("other" for anything else). */
+export const kindOf = (request: Record<string, unknown>): string => {
+  const kind = toolCallOf(request)?.kind;
+  return typeof kind === "string" && KINDS.has(kind) ? kind : "other";
+};
+
+/**
+ * The first two words of a command request ("git mv", "bunx biome"), or undefined when the request is not a command
+ * or has no readable program. Never more: the arguments can hold paths and credentials. A leading `NAME=value` is
+ * skipped, and a second word that is a flag, a path, a URL or anything else that is not a plain subcommand is left out.
+ */
+export const commandPrefix = (request: Record<string, unknown>): string | undefined => {
+  const call = toolCallOf(request);
+  if (call === undefined || call.kind !== "execute") return undefined;
+  const command = commandOf(call);
+  if (command === undefined) return undefined;
+  const words = (splitCommand(command)?.[0] ?? command.trim().split(/\s+/)).filter(
+    (word) => word !== "",
+  );
+  while (words[0] !== undefined && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
+  const [program, sub] = words;
+  if (program === undefined || !PROGRAM.test(program)) return undefined;
+  return sub !== undefined && SUBCOMMAND.test(sub) ? `${program} ${sub}` : program;
+};
+
 type Option = { optionId?: unknown; kind?: unknown };
+
+/** Whether a person's selection in the app allowed or refused the request; undefined for a cancel or anything else. */
+export const answeredAs = (
+  request: Record<string, unknown>,
+  outcome: unknown,
+): "allow" | "deny" | undefined => {
+  // The daemon may hand the ACP outcome bare or wrapped in `{outcome}`.
+  let shape = outcome as { outcome?: unknown; optionId?: unknown } | undefined;
+  if (typeof shape?.outcome === "object" && shape.outcome !== null)
+    shape = shape.outcome as typeof shape;
+  if (shape?.outcome !== "selected") return undefined;
+  const options = Array.isArray(request.options) ? (request.options as Option[]) : [];
+  const kind = options.find((o) => o.optionId === shape.optionId)?.kind;
+  if (typeof kind !== "string") return undefined;
+  if (kind.startsWith("allow")) return "allow";
+  if (kind.startsWith("reject")) return "deny";
+  return undefined;
+};
 
 /** The answer for a decision, or undefined when it cannot be given (`ask`, or no matching option). */
 export const answerFor = (
