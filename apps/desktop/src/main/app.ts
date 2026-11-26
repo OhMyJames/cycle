@@ -550,6 +550,7 @@ export const startApp = async (options: AppOptions) => {
     const timer = setInterval(() => void poller.tick(), NOTICE_POLL_MS);
     timer.unref();
     void poller.tick();
+    // Not in a hidden window (a test's): nothing there is pushed by the feed; the page's own read (`loopRuns`) still answers.
     const feedTimer = setInterval(() => void loopRuns?.tick().catch(() => {}), LOOP_EVENTS_POLL_MS);
     feedTimer.unref();
     stopNotices = () => {

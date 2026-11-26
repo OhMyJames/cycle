@@ -38,6 +38,10 @@ export const initialLoop = (): LoopState => ({ projects: [], boards: {}, notices
 /** How many reads in a row may fail before the Notices last read are dropped. */
 const NOTICE_FAILURES_KEPT = 3;
 
+/** The tickets Loop is running in a Project, as one comparable string; none when it is not known. */
+const runKeys = (runs: LoopRunsAnswer | undefined, projectKey: string): string =>
+  runs?.kind === "ok" ? [...(runs.running[projectKey] ?? [])].sort().join(",") : "";
+
 export class LoopSlice {
   readonly #kit: StoreKit;
 
@@ -78,14 +82,18 @@ export class LoopSlice {
     this.#kit.set((s) => ({ loop: { ...s.loop, runs } }));
     // What a card says about Loop (watching, or not) comes from the run data: a Project whose running tickets changed
     // has its board read again. One that was never read is left to its first read.
-    const keys = (a: LoopRunsAnswer | undefined, key: string) =>
-      a?.kind === "ok" ? [...(a.running[key] ?? [])].sort().join(",") : "";
     for (const [projectKey, board] of Object.entries(this.#kit.state().loop.boards))
-      if (typeof board === "object" && keys(before, projectKey) !== keys(runs, projectKey))
+      if (typeof board === "object" && runKeys(before, projectKey) !== runKeys(runs, projectKey))
         void this.loadBoard(projectKey);
   };
 
+  readonly #boardAsk = new Map<string, number>();
+
   loadBoard = async (projectKey: string): Promise<void> => {
+    const ask = (this.#boardAsk.get(projectKey) ?? 0) + 1;
+    this.#boardAsk.set(projectKey, ask);
+    // The run state this read starts with: the cards' `watch` is made from it when main reads the board.
+    const started = runKeys(this.#kit.state().loop.runs, projectKey);
     const had = this.#kit.state().loop.boards[projectKey];
     // What was read before stays on screen while it is read again.
     if (had === undefined)
@@ -95,11 +103,16 @@ export class LoopSlice {
     const answer = await this.#kit.bridge
       .loopBoard(projectKey)
       .catch(() => ({ kind: "unreachable" }) as const);
+    // Only the latest ask for a Project counts: an older read, which may carry an older run state, is dropped.
+    if (this.#boardAsk.get(projectKey) !== ask) return;
     // A board that was read stays when a read again fails: it is still the last that is known.
     if (typeof had === "object" && had.kind === "ok" && answer.kind !== "ok") return;
     this.#kit.set((s) => ({
       loop: { ...s.loop, boards: { ...s.loop.boards, [projectKey]: answer } },
     }));
+    // The run state moved while this was being read (a first read can land after a push): it is read once more.
+    if (runKeys(this.#kit.state().loop.runs, projectKey) !== started)
+      void this.loadBoard(projectKey);
   };
 
   /** The latest ask per Project: an answer that is not for it is old, and is dropped. */

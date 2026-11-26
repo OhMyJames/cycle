@@ -697,3 +697,28 @@ test("a pushed run state that changes who Loop is running reads the board again"
   act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
   expect(named("loopBoard").length).toBe(after);
 });
+
+test("an older board read that lands last does not replace a newer one", async () => {
+  const { bridge, emit } = await mount(
+    overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
+  );
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() =>
+    expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 1"),
+  );
+  // Two reads in flight at once, answered in the opposite order.
+  const waiting: ((answer: LoopBoardAnswer) => void)[] = [];
+  bridge.loopBoard = () => new Promise<LoopBoardAnswer>((resolve) => waiting.push(resolve));
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  act(() =>
+    emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386", "CYC-388"] } } }),
+  );
+  await waitFor(() => expect(waiting.length).toBe(2));
+  act(() => waiting[1]?.(withTickets({ Todo: [ticket(388, "Todo"), ticket(389, "Todo")] })));
+  await waitFor(() =>
+    expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 2"),
+  );
+  act(() => waiting[0]?.(board));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 2");
+});

@@ -314,13 +314,17 @@ function TicketPage({
   const waitingOn = (id: string) => waitingTitles.split("\n").includes(`[${id}] Dev`);
   // Which tickets Loop is running changes what the page says of this one (watch or not): it is read again then.
   const runKey = useAppState((s) =>
-    s.loop.runs?.kind === "ok" && (s.loop.runs.running[projectKey] ?? []).includes(identifier)
-      ? "running"
-      : "idle",
+    s.loop.runs === undefined
+      ? "unknown"
+      : s.loop.runs.kind === "ok" && (s.loop.runs.running[projectKey] ?? []).includes(identifier)
+        ? "running"
+        : "idle",
   );
   useEffect(() => {
     let live = true;
     // `runKey` is not read in here: it is a dependency, so the ticket is read again when Loop's run state changes.
+    // Not before the run state is known: the ticket would be read twice.
+    if (runKey === "unknown") return;
     void runKey;
     void store.loadLoopTicket(projectKey, identifier).then((answer) => {
       // A read again that fails leaves the ticket that was shown.

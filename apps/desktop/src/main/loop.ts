@@ -216,6 +216,8 @@ export const loopFeed = (deps: FeedDeps) => {
           reset = true;
           fresh = true;
           last.set(projectKey, 0);
+          // A log that starts again has its own numbers: the old high-water mark does not apply to it.
+          high.set(projectKey, 0);
           continue;
         }
         return "broken";
