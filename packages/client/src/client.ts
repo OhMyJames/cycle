@@ -243,6 +243,8 @@ export type ClientOptions = {
   ackReturns?: boolean;
   /** The protocol version asked for in `initialize`. Default: this build's. Another is for tests. */
   protocolVersion?: string;
+  /** The release of the app this client is, told to the daemon in `initialize` (`META.appVersion`). */
+  appVersion?: string;
   /** Waits between attempts to reconnect, in ms. */
   backoff?: { first: number; max: number };
   name?: string;
@@ -1119,6 +1121,9 @@ export class CycleClient {
         _meta: {
           [META.protocolVersion]: this.#options.protocolVersion ?? CYCLE_PROTOCOL_VERSION,
           ...(this.#options.ackReturns ? { [META.ackReturns]: true } : {}),
+          ...(this.#options.appVersion !== undefined
+            ? { [META.appVersion]: this.#options.appVersion }
+            : {}),
         },
       } as never);
       const info = (answer as { info?: { version?: unknown } }).info;

@@ -5,10 +5,12 @@ import { parseCli } from "./args.ts";
 import { defaultDataDir, loadConfig, pathsFor } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { tailLines } from "./logger.ts";
-import { proxy } from "./proxy.ts";
+import { proxy, startDetached } from "./proxy.ts";
+import { compiled } from "./self.ts";
 import { onSignalsAndCrashes, serve } from "./serve.ts";
 import { askWorking, stopDaemon } from "./stop.ts";
 import { AlreadyRunningError, isListening, NotASocketError } from "./transport/server.ts";
+import { fetchBytes, installOf, recordedVersion, runInstallerScript, runUpdate } from "./update.ts";
 import { VERSION } from "./version.ts";
 
 const usage = (harnesses: readonly Harness[]): string => {
@@ -24,6 +26,11 @@ const usage = (harnesses: readonly Harness[]): string => {
   status  Say whether the daemon is running (exit 0) or not (exit 1), and where its log is.
   logs    Print the end of the daemon's log (what it did and what went wrong; never
           prompts, agent output or credentials). --lines <n>: how many, default 100.
+  update  Install the release that goes with the desktop app (the one it last connected as),
+          check it, replace this program, and move a running daemon onto it: it waits until no
+          session is working, then restarts the daemon, so there is no need to stop it first.
+          --version <x.y.z>  install this release instead
+          --now              switch at once: working sessions end as interrupted
   stop    Stop the daemon if it is running. If sessions are working (a turn, a request
           waiting for an answer, background tasks) they are listed, and it asks whether
           to wait for them or stop now; without a terminal it does not stop (exit 4).
@@ -73,6 +80,7 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
     "proxy",
     "status",
     "stop",
+    "update",
     "logs",
     ...(withCli.length > 0 ? ["login"] : []),
   ];
@@ -164,6 +172,49 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
     }
     process.stdout.write(tailLines(text, Number.isInteger(lines) && lines > 0 ? lines : 100));
     process.exit(0);
+  } else if (command === "update") {
+    const pidFile = join(paths.dataDir, "daemon.pid");
+    const code = await runUpdate({
+      version: VERSION,
+      requested: values.version,
+      now: values.now === true,
+      install: installOf(process.execPath, compiled()),
+      recorded: () => recordedVersion(paths.dataDir),
+      download: fetchBytes,
+      runInstaller: runInstallerScript,
+      isRunning: () => isListening(paths.socket),
+      stop: async (force) => {
+        const pid = Number(
+          (
+            await Bun.file(pidFile)
+              .text()
+              .catch(() => "")
+          ).trim(),
+        );
+        if (!Number.isInteger(pid) || pid <= 0) {
+          console.log(`${pidFile} has no pid: cannot tell the daemon to stop.`);
+          return 1;
+        }
+        return await stopDaemon({
+          force,
+          wait: !force,
+          interactive: false,
+          isRunning: () => isListening(paths.socket),
+          working: () => askWorking(paths.socket),
+          choose: async () => "cancel",
+          signal: () => process.kill(pid, "SIGTERM"),
+          say: (line) => console.log(line),
+        });
+      },
+      start: async () => {
+        startDetached(paths);
+        for (const at = Date.now(); Date.now() - at < 30_000; await Bun.sleep(100))
+          if (await isListening(paths.socket)) return true;
+        return false;
+      },
+      say: (line) => console.log(line),
+    });
+    process.exit(code);
   } else if (command === "stop") {
     const pidFile = join(paths.dataDir, "daemon.pid");
     const readPid = async () =>

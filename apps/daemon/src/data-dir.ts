@@ -11,6 +11,9 @@ export const DATA_DIR_ENV = "CYCLE_HOME";
 export const defaultDataDir = (env: Record<string, string | undefined> = process.env): string =>
   env[DATA_DIR_ENV] ?? join(homedir(), ".cycle");
 
+/** The app release a client last said it was, in `initialize`: what `cycle update` installs (docs/daemon.md "cycle update"). */
+export const appVersionPath = (dataDir: string): string => join(dataDir, "app-version");
+
 export const sessionsDir = (dataDir: string): string => join(dataDir, "sessions");
 /** One directory of attachment bytes for each session (decision 0013). */
 export const blobsDir = (dataDir: string): string => join(dataDir, "blobs");

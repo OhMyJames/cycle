@@ -71,6 +71,8 @@ agent 是 daemon 的子进程,daemon 停止时进行中的 turn 不会继续。�
 
 问用的是已有的 `session/list`,协议版本不同时按 daemon 说的版本再问一次,所以新的 `cycle` 可以这样停一个旧 daemon,升级时正是这样(`src/stop.ts`)。
 
+**`cycle update`**:一条命令更新到跟桌面端配套的版本,不用先 `cycle stop`。配套版本是桌面端最近一次连接时报的(`app-version` 文件,见 protocol.md §3);`--version <x.y.z>` 指定别的。步骤:下载该 release 的 `install.sh` 和 `.sha256` 并校验(不符就停,不替换);运行 `install.sh <tag>`(它再校验压缩包,装到本程序所在的 `<prefix>/share/cycle`);若 daemon 在运行,默认像 `stop --wait` 那样等没有会话在工作,再让旧进程退出并立即拉起新版本(不等下一次连接);`--now` 不等,像 `stop --force`。daemon 没在运行就只替换二进制。没记录过配套版本又没给 `--version` 退出码 2;目标等于本程序版本则什么也不做;二进制在桌面应用包里(`.app/Contents/`)或不在 `install.sh` 的位置时拒绝。每一步都会打印(`src/update.ts`)。
+
 **daemon 停止时**(收到 `SIGTERM`/`SIGINT`):对每个有进行中 turn 的 session,先把等待中的权限请求和表单写成 `aborted`(按取消回给 agent),再写一条 turn 的终态:`state_update` 为 `idle`、`stopReason: "error"`、`error.code` 为 `-32018`(`daemon_stopped`),然后结束 agent。此后 agent 发来的更新不再记录。终态算"值得看",所以会话显示未读;客户端重连补发时看到它。
 
 **没来得及写的**(崩溃、`kill -9`、比这条规则早的 daemon):索引里的 `turnOpen` 记着日志里有没有没结束的 turn。下一次加载这个 session 时(第一次 `session/list` 或附着),`turnOpen` 不是 `false` 就读一次日志核对,确有没结束的 turn 就补写同样的终态。旧索引里没有 `turnOpen` 的,各读一次日志。

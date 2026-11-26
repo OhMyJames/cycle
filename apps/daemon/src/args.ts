@@ -11,6 +11,10 @@ const OPTIONS = {
   force: { type: "boolean" },
   /** `stop`: wait until no session is working, then stop. */
   wait: { type: "boolean" },
+  /** `update`: the release to install, instead of the one the desktop app last said it is. */
+  version: { type: "string" },
+  /** `update`: switch to the new version now, without waiting for sessions to finish. */
+  now: { type: "boolean" },
 } as const;
 const WITH_VALUE = Object.entries(OPTIONS)
   .filter(([, option]) => option.type === "string")
