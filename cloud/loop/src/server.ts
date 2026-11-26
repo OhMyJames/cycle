@@ -3,8 +3,14 @@
 import { chmodSync, rmSync } from "node:fs";
 import { connect, createServer, type Server } from "node:net";
 import { createInterface } from "node:readline";
-import { LOOP_PROJECTS_LIST, LOOP_RUNS_LIST } from "@cycle/protocol";
+import {
+  LOOP_EVENTS_LIST,
+  LOOP_PROJECTS_LIST,
+  LOOP_RUNS_LIST,
+  LoopEventsListParamsSchema,
+} from "@cycle/protocol";
 import type { Config } from "./config.ts";
+import { eventsList } from "./events.ts";
 import { projectsList } from "./projects.ts";
 import { runsList, type StateDirOf } from "./runs.ts";
 
@@ -15,7 +21,7 @@ const answer = async (
 ): Promise<string | undefined> => {
   let id: unknown = null;
   try {
-    const message = JSON.parse(line) as { id?: unknown; method?: unknown };
+    const message = JSON.parse(line) as { id?: unknown; method?: unknown; params?: unknown };
     if (typeof message !== "object" || message === null) throw new Error();
     id = message.id ?? null;
     // A notification has no id and gets no answer.
@@ -31,6 +37,26 @@ const answer = async (
           id,
           error: { code: -32603, message: "Internal error" },
         });
+      }
+    }
+    if (message.method === LOOP_EVENTS_LIST) {
+      const params = LoopEventsListParamsSchema.safeParse(message.params);
+      const fail = (code: number, text: string, reason?: string): string =>
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: { code, message: text, ...(reason ? { data: { reason } } : {}) },
+        });
+      if (!params.success || !config.projects.some((p) => p.projectKey === params.data.projectKey))
+        return fail(-32602, "Invalid params");
+      const { projectKey, afterSeq, limit } = params.data;
+      try {
+        const result = await eventsList(projectKey, stateDirOf(projectKey), afterSeq, limit);
+        return JSON.stringify({ jsonrpc: "2.0", id, result });
+      } catch (error) {
+        return (error as Error).message === "seq_ahead"
+          ? fail(-32602, "Invalid params", "seq_ahead")
+          : fail(-32603, "Internal error");
       }
     }
     return JSON.stringify({

@@ -54,3 +54,37 @@ export type LoopProjectRuns = z.infer<typeof LoopProjectRunsSchema>;
 
 export const LoopRunsListResultSchema = z.object({ projects: z.array(LoopProjectRunsSchema) });
 export type LoopRunsListResult = z.infer<typeof LoopRunsListResultSchema>;
+
+export const LOOP_EVENTS_LIST = "events/list";
+
+/**
+ * One thing that happened in a Project's loop (docs/protocol.md §17). `seq` is the event's line number in
+ * `events.jsonl`, starting at 1. Only these four fields are sent: the rest of a line may hold paths or addresses.
+ */
+export const LoopEventSchema = z.object({
+  seq: z.number().int().min(1),
+  ts: z.string().min(1),
+  /** The work item key, or `plan-<round>` for a planning round. */
+  run: z.string().min(1),
+  kind: z.string().min(1),
+});
+export type LoopEvent = z.infer<typeof LoopEventSchema>;
+
+export const LoopEventsListParamsSchema = z.object({
+  projectKey: z.string().min(1),
+  /** The last `seq` the client has; only larger ones come back. 0 (the default) means from the start. */
+  afterSeq: z.number().int().min(0).default(0),
+  /** At most this many events (default 500, at most 1000). */
+  limit: z.number().int().min(1).max(1000).default(500),
+});
+export type LoopEventsListParams = z.input<typeof LoopEventsListParamsSchema>;
+
+export const LoopEventsListResultSchema = z.object({
+  projectKey: z.string().min(1),
+  events: z.array(LoopEventSchema),
+  /** The `seq` to send next time: the last event returned, or `afterSeq` when none was. */
+  lastSeq: z.number().int().min(0),
+  /** More events are already there; ask again at once with `lastSeq`. */
+  hasMore: z.boolean(),
+});
+export type LoopEventsListResult = z.infer<typeof LoopEventsListResultSchema>;
