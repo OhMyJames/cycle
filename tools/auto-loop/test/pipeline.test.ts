@@ -876,6 +876,32 @@ test("a run crashed while waiting for CI resumes in ci phase without re-running 
   expect(secondSessions.prompts.map((p) => p.role)).toEqual(["review"]);
 });
 
+test("CI waiting finds the PR conflicting with main: Blocked at once with the files, merge_conflict recorded", async () => {
+  const pending: CiResponse = {
+    headRefOid: "abc",
+    statusCheckRollup: [{ name: "check", status: "IN_PROGRESS", conclusion: null }],
+  };
+  const s = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)] },
+    { ciPollIntervalMs: 1000, ciTimeoutMs: 60_000 },
+    [],
+    { responses: [pending] },
+  );
+  s.world.prMerge = [["OPEN", "CONFLICTING"]];
+  s.world.mergeTreeOutput = "deadbeef\napps/desktop/src/main/main.ts\n";
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") {
+    expect(result.reason).toContain("冲突");
+    expect(result.reason).toContain("apps/desktop/src/main/main.ts");
+    expect(result.reason).not.toContain("超时");
+  }
+  const kinds = (await s.store.events()).map((e) => e.kind);
+  expect(kinds).toContain("merge_conflict");
+  expect(kinds).not.toContain("ci_timeout");
+});
+
 test("CI polling timeout ends in Blocked with pending check names", async () => {
   const pendingIntegration: CiResponse = {
     headRefOid: "abc",

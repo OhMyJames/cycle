@@ -375,7 +375,12 @@ test("waitForCi polls until green, returns logs on red, and stops on timeout", a
   const passed = await waitForCi({
     prRef: "https://github.com/o/r/pull/9",
     expectedHeadSha: "sha-1",
-    exec: async () => okExec(views.shift() ?? "{}"),
+    exec: async (argv) =>
+      okExec(
+        argv.includes("state,mergeable")
+          ? JSON.stringify({ state: "OPEN", mergeable: "MERGEABLE" })
+          : (views.shift() ?? "{}"),
+      ),
     cwd: "/wt",
     env: fullEnv,
     commandTimeoutMs: 5000,
@@ -413,6 +418,42 @@ test("waitForCi polls until green, returns logs on red, and stops on timeout", a
     },
   });
   expect(timedOut.outcome).toBe("timeout");
+});
+
+test("waitForCi stops at once on a conflicting PR but keeps waiting while mergeability is UNKNOWN", async () => {
+  const pending = JSON.stringify({
+    headRefOid: "sha-1",
+    statusCheckRollup: [checkRun("check", "IN_PROGRESS", null)],
+  });
+  const run = async (mergeable: string) => {
+    let nowMs = 0;
+    let sleeps = 0;
+    const result = await waitForCi({
+      prRef: "https://github.com/o/r/pull/9",
+      expectedHeadSha: "sha-1",
+      exec: async (argv) =>
+        okExec(
+          argv.includes("state,mergeable") ? JSON.stringify({ state: "OPEN", mergeable }) : pending,
+        ),
+      cwd: "/wt",
+      env: fullEnv,
+      commandTimeoutMs: 5000,
+      pollIntervalMs: 1000,
+      timeoutMs: 2500,
+      clock: { now: () => new Date(nowMs) },
+      sleep: async (ms) => {
+        sleeps++;
+        nowMs += ms;
+      },
+    });
+    return { result, sleeps };
+  };
+  const conflict = await run("CONFLICTING");
+  expect(conflict.result.outcome).toBe("conflict");
+  expect(conflict.sleeps).toBe(0);
+  const unknown = await run("UNKNOWN");
+  expect(unknown.result.outcome).toBe("timeout");
+  expect(unknown.sleeps).toBeGreaterThan(0);
 });
 
 test("postPrComment and enableAutoMerge invoke gh with deliverEnv and handle failures", async () => {

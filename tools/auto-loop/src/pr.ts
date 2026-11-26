@@ -129,6 +129,7 @@ export type WaitForCiResult =
   | { outcome: "passed"; status: CiStatus }
   | { outcome: "failed"; status: CiStatus; logs: string }
   | { outcome: "timeout"; status: CiStatus | null }
+  | { outcome: "conflict"; status: CiStatus }
   | { outcome: "error"; error: string };
 
 const RollupEntrySchema = z.object({
@@ -550,6 +551,18 @@ export const waitForCi = async (input: {
         timeoutMs: input.commandTimeoutMs,
       });
       return { outcome: "failed", status: read.status, logs };
+    }
+    // GitHub runs no CI on a PR that conflicts with its base, so pending checks would never finish. UNKNOWN (not yet
+    // computed) and unreadable states keep waiting.
+    const merge = await readPrMergeStatus({
+      prRef: input.prRef,
+      exec: input.exec,
+      cwd: input.cwd,
+      env: input.env,
+      timeoutMs: input.commandTimeoutMs,
+    });
+    if (merge.ok && merge.status === "conflicting") {
+      return { outcome: "conflict", status: read.status };
     }
     const elapsed = input.clock.now().getTime() - startedAt;
     if (elapsed >= input.timeoutMs || attempt + 1 >= maxPolls) {
