@@ -15,9 +15,12 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopNotice,
+  LoopNoticesAnswer,
   LoopProjectsAnswer,
   LoopTicket,
   LoopTicketAnswer,
+  LoopTicketDetail,
 } from "@cycle/ui/api";
 
 const PROJECTS_TIMEOUT_MS = 3000;
@@ -148,13 +151,29 @@ const rowsOf = (value: unknown): unknown[] => {
   throw new Error("unrecognized list");
 };
 
-type Column = { id: number; name: string; stateType: string };
+type Column = { id: number; name: string; stateType: string; position?: number };
 
-/** The buttons a ticket gets: Done has none, and in Doing a ticket with `auto` is Loop's, so it has none either. */
-export const actionsOf = (stateType: string, auto: boolean): LoopAction[] => {
+/** What a started column is for. Loop's own convention (tools/auto-loop/src/project.ts): the 1st is In Progress, the 2nd In Review, the 3rd Blocked, in board order. */
+export type Role = "progress" | "review" | "blocked";
+
+export const roleOf = (columns: Column[], column: Column): Role | undefined => {
+  const started = columns
+    .map((c, i) => ({ c, at: Number(c.position ?? i) }))
+    .filter((e) => e.c.stateType === "started")
+    .sort((a, b) => a.at - b.at)
+    .map((e) => e.c.id);
+  const nth = started.indexOf(column.id);
+  return nth === 0 ? "progress" : nth === 1 ? "review" : nth === 2 ? "blocked" : undefined;
+};
+
+/**
+ * The buttons a ticket gets: Done has none, and in Doing a ticket with `auto` is Loop's, so it has none either. The
+ * exception is Blocked: Loop has stopped there and waits for a person, who puts it back to Todo (or Backlog).
+ */
+export const actionsOf = (stateType: string, auto: boolean, role?: Role): LoopAction[] => {
   if (stateType === "backlog") return ["approve"];
   if (stateType === "unstarted") return ["to_backlog"];
-  if (stateType === "started") return auto ? [] : ["to_backlog", "to_todo"];
+  if (stateType === "started") return auto && role !== "blocked" ? [] : ["to_backlog", "to_todo"];
   return [];
 };
 
@@ -213,7 +232,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
               title: String(r.title ?? ""),
               priority: typeof r.priority === "string" ? r.priority : null,
               column: column.name,
-              actions: actionsOf(column.stateType, auto),
+              actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
             };
           });
         }),
@@ -364,11 +383,14 @@ export const answerTicket = async (
   const tracker = await withKey(loop, fetchImpl);
   if (!tracker) return { kind: "no_key" };
   try {
-    const { issue, column, auto } = await readIssue(
+    const { issue, column, columns, auto } = await readIssue(
       tracker,
       parsed.projectKey,
       parsed.sequenceNumber,
     );
+    const role = roleOf(columns, column);
+    const attention =
+      role === "blocked" || role === "review" ? await attentionOf(tracker, issue, role) : undefined;
     const body = typeof issue.description === "string" ? issue.description : "";
     track("loop_ticket_opened", {});
     return {
@@ -378,8 +400,9 @@ export const answerTicket = async (
         title: String(issue.title ?? ""),
         priority: typeof issue.priority === "string" ? issue.priority : null,
         column: column.name,
-        actions: actionsOf(column.stateType, auto),
+        actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
         body,
+        ...(attention ? { attention } : {}),
         acceptance: acceptanceOf(body),
         links: linksOf(issue, body),
       },
@@ -425,7 +448,7 @@ export const actOnTicket = async (
       parsed.projectKey,
       parsed.sequenceNumber,
     );
-    if (!actionsOf(column.stateType, auto).includes(action))
+    if (!actionsOf(column.stateType, auto, roleOf(columns, column)).includes(action))
       return done({ kind: "failed", reason: "not_allowed" }, action);
     // The first column of the kind, in the board's own order: Paused is also unstarted but is not where Todo is.
     const first = (type: string) =>
@@ -447,5 +470,177 @@ export const actOnTicket = async (
     return done({ kind: "ok" }, action);
   } catch (error) {
     return done({ kind: "failed", reason: failureOf(error) }, action);
+  }
+};
+
+// ---- Notices: what needs a person (docs/protocol.md §17) ----
+
+/** What Loop's `#block` writes: `自动化在「<阶段>」卡住了：<原因>`, then the Dev session's name in `「[<工单号>] Dev」`. */
+const BLOCKED_COMMENT =
+  /^自动化在「[^」]*」卡住了：([\s\S]*?)(?:\n\n现场已保留：Dev 会话「([^」]+)」|$)/;
+const REVIEW_COMMENT = /^已开 PR：(\S+)\n([\s\S]*)$/;
+/** The longest reason or conclusion kept: they are comments, and may be long. */
+const TEXT_MAX = 1500;
+
+type Attention = NonNullable<LoopTicketDetail["attention"]>;
+
+const cut = (text: string): string =>
+  text.length > TEXT_MAX ? `${text.slice(0, TEXT_MAX - 1)}…` : text;
+
+/** The comments of a ticket, newest first. `list_issue_activity` is not a listed tool: it goes through `execute_read`. */
+const commentsOf = async (t: Tracker, issueId: unknown): Promise<string[]> => {
+  const answer = await callTool(t, "execute_read", {
+    name: "list_issue_activity",
+    arguments: { issueId, filter: "comments", limit: 25 },
+  });
+  const items = unwrap(answer).items;
+  return (Array.isArray(items) ? items : [])
+    .map((i) => asRecord(i).body)
+    .filter((b): b is string => typeof b === "string");
+};
+
+/** Why a Blocked or In Review ticket needs a person, from Loop's newest matching comment. Undefined: not for a person. */
+export const attentionOf = async (
+  t: Tracker,
+  issue: Record<string, unknown>,
+  role: "blocked" | "review",
+): Promise<Attention | undefined> => {
+  let comments: string[] | undefined;
+  try {
+    comments = await commentsOf(t, issue.id);
+  } catch {}
+  // A comment that cannot be read does not hide the ticket: it is in a column that waits for a person.
+  if (comments === undefined) return { kind: role, text: "" };
+  if (role === "blocked") {
+    for (const body of comments) {
+      const m = BLOCKED_COMMENT.exec(body);
+      if (m)
+        return {
+          kind: "blocked",
+          text: cut((m[1] ?? "").trim()),
+          ...(m[2] ? { session: m[2] } : {}),
+        };
+    }
+    return { kind: "blocked", text: "" };
+  }
+  for (const body of comments) {
+    const m = REVIEW_COMMENT.exec(body);
+    if (m && body.includes("升级给人"))
+      return { kind: "review", text: cut((m[2] ?? "").trim()), prUrl: m[1] ?? "" };
+  }
+  // In Review for another reason (a PR merged outside the loop): nothing for a person to decide.
+  return undefined;
+};
+
+const TITLE_OF_DEV = /^\[([A-Za-z0-9_-]+-\d+)\] Dev$/;
+
+/** The ticket a Dev session belongs to, from its title `[CYC-1] Dev`. */
+export const ticketOfSession = (
+  title: string | undefined,
+  projectKey: string,
+): string | undefined => {
+  const id = TITLE_OF_DEV.exec((title ?? "").trim())?.[1];
+  return id?.startsWith(`${projectKey}-`) ? id : undefined;
+};
+
+export type SessionLike = {
+  locationId: string;
+  sessionId: string;
+  title?: string;
+  state: string;
+  archived: boolean;
+};
+
+const URGENCY = { permission: 0, blocked: 1, review: 2 } as const;
+
+/**
+ * The Notices of a Project, most urgent first: a session waiting on an answer (it is stuck right now), then Blocked,
+ * then escalated reviews. A Notice is derived from state, never stored: it is gone when its cause is.
+ */
+export const noticesOf = (
+  tickets: Extract<LoopNotice, { kind: "blocked" | "review" }>[],
+  sessions: readonly SessionLike[],
+  projectKey: string,
+): LoopNotice[] => {
+  const waiting: LoopNotice[] = [];
+  const seen = new Set<string>();
+  for (const s of sessions) {
+    if (s.state !== "requires_action" || s.archived) continue;
+    const identifier = ticketOfSession(s.title, projectKey);
+    if (identifier === undefined || seen.has(identifier)) continue;
+    seen.add(identifier);
+    waiting.push({
+      kind: "permission",
+      identifier,
+      locationId: s.locationId,
+      sessionId: s.sessionId,
+    });
+  }
+  const rank = (n: LoopNotice) => URGENCY[n.kind];
+  return [...waiting, ...tickets].sort((a, b) => rank(a) - rank(b));
+};
+
+/** The Blocked and escalated tickets of a Project (not the sessions: those are the daemon's). */
+export const readTicketNotices = async (
+  t: Tracker,
+  projectKey: string,
+): Promise<Extract<LoopNotice, { kind: "blocked" | "review" }>[]> => {
+  const project = unwrap(await callTool(t, "get_project", { projectKey }));
+  const columns = columnsOf(project);
+  if (columns.length === 0) throw new Error("no columns");
+  const out: Extract<LoopNotice, { kind: "blocked" | "review" }>[] = [];
+  for (const column of columns) {
+    const role = roleOf(columns, column);
+    if (role !== "blocked" && role !== "review") continue;
+    const rows = rowsOf(
+      await callTool(t, "list_issues", { projectKey, columnId: column.id, limit: LIST_LIMIT }),
+    );
+    const read = await Promise.all(
+      rows.map(async (row) => {
+        const r = asRecord(row);
+        const attention = await attentionOf(t, r, role);
+        return { r, attention };
+      }),
+    );
+    for (const { r, attention } of read) {
+      if (attention === undefined) continue;
+      const base = { identifier: String(r.identifier ?? ""), title: String(r.title ?? "") };
+      out.push(
+        role === "blocked"
+          ? { kind: "blocked", ...base, reason: attention.text }
+          : { kind: "review", ...base, conclusion: attention.text },
+      );
+    }
+  }
+  return out;
+};
+
+/** The page asked for the Notices: the key is read, the tickets are read, the sessions come from main's own lists. */
+export const answerNotices = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  sessions: () => Promise<readonly SessionLike[]> | readonly SessionLike[],
+  track: (
+    event: "loop_notices_read",
+    props: { permission: number; blocked: number; review: number },
+  ) => void,
+  fetchImpl?: typeof fetch,
+): Promise<LoopNoticesAnswer> => {
+  if (typeof projectKey !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(projectKey))
+    return { kind: "unreachable" };
+  const tracker = await withKey(loop, fetchImpl);
+  if (!tracker) return { kind: "no_key" };
+  try {
+    const tickets = await readTicketNotices(tracker, projectKey);
+    const notices = noticesOf(tickets, await sessions(), projectKey);
+    const count = (kind: LoopNotice["kind"]) => notices.filter((n) => n.kind === kind).length;
+    track("loop_notices_read", {
+      permission: count("permission"),
+      blocked: count("blocked"),
+      review: count("review"),
+    });
+    return { kind: "ok", notices };
+  } catch {
+    return { kind: "unreachable" };
   }
 };

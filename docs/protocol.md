@@ -1173,6 +1173,18 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - Done 没有按钮;Doing 里带 `auto` 的是 Loop 在处理的,也没有按钮。按钮由主进程按列的状态类型和 `auto` 标签决定,写之前再读一次工单,位置变了就拒绝(`not_allowed`)。
 - 失败给固定词,不透传 itsaplan 的文字:`unconfirmed`、`no_key`、`forbidden`(401/403)、`conflict`(409)、`not_allowed`、`offline`、`refused`。
 
+### Notice:需要人处理的事(桌面端派生,CYC-388)
+
+Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服务,也不存储、不记历史和已读:一条 Notice 在它的原因消失时就消失。
+
+- **来源和顺序**(按需要人处理的紧迫度):`permission`(daemon 里 Dev 会话在等权限或表单,会话标题为 `[<工单号>] Dev`,工单号属于该 Project)、`blocked`(Blocked 列的工单)、`review`(评审升级给人的工单)。
+- **列的角色**沿用 Loop 的约定(`tools/auto-loop/src/project.ts`):`started` 列按看板顺序,第 2 个是 In Review,第 3 个是 Blocked。
+- **原因取自 Loop 留在工单里的评论**(读 `list_issue_activity`,经 `execute_read`):Blocked 取 `自动化在「<阶段>」卡住了：<原因>`,并从「现场已保留：Dev 会话「[<工单号>] Dev」」取要接入的会话名;评审升级取以 `已开 PR：<地址>` 开头、含"升级给人"的最新评论(结论和 PR/MR 地址)。读不到评论时 Notice 仍在,原因为空。In Review 里不是评审升级的(如 PR 在自动化之外合并),不生成 Notice。
+- **Blocked 的按钮**:Loop 在 Blocked 已停手,所以带 `auto` 的 Blocked 工单也有"退回 Backlog"和"放回 Todo"(放回 Todo 不动标签,Loop 会在原会话里继续)。Doing 里其他带 `auto` 的仍没有按钮。
+- **接入会话**:工单页的"接入开发会话"按会话名在已连接的工作位置里找 `[<工单号>] Dev`,找到就在会话区打开,人在那里回答权限、给指示。
+- **系统通知**:只对 `blocked` 和 `review` 发。主进程每分钟读一次每个 Project,与上一次比较,只对新出现的发;每个 Project 第一次读不发;读失败不改变已知状态。`permission` 不发:会话自己的 attention 通知(`needs-you`)已经管,再发会重复。窗口在前台时不发。
+- **埋点**:`loop_notices_read`(各类几条)、`loop_notice_notified`(`kind`)、`loop_notice_opened`(`kind`)、`loop_session_joined`;不含原因、标题或评论文字。
+
 ### 错误
 
 沿用 §11 的数字 `code`;`data.reason` 固定词,不透传路径或令牌。未知方法返回 `-32601`。

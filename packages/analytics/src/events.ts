@@ -99,6 +99,14 @@ export const EVENTS = {
       "refused",
     ]),
   }),
+  /** The Loop page read a Project's Notices: how many of each kind, never which or what they say. */
+  loop_notices_read: o({ permission: z.number(), blocked: z.number(), review: z.number() }),
+  /** A system notification was shown for a Notice (Blocked or an escalated review; never a permission). */
+  loop_notice_notified: o({ kind: z.enum(["blocked", "review"]) }),
+  /** The person opened a Notice's ticket from the Notice area. */
+  loop_notice_opened: o({ kind: z.enum(["permission", "blocked", "review"]) }),
+  /** The person joined a ticket's Dev session from its page. */
+  loop_session_joined: o({}),
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),
@@ -457,6 +465,8 @@ export const UI_EVENTS = [
   "overview_item_revealed",
   "background_shown_from_conversation",
   "file_previewed",
+  "loop_notice_opened",
+  "loop_session_joined",
   "diff_view_changed",
   "diff_file_opened",
   "diff_edit_revealed",

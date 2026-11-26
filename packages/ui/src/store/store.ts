@@ -188,6 +188,9 @@ export class AppStore extends StoreBase {
         this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
         void this.focusSession(event.locationId, event.sessionId);
         return;
+      case "open-loop-ticket":
+        this.#loop.requestTicket(event.projectKey, event.identifier);
+        return;
       case "session-gone":
         this.#sessions.forget(event.locationId, event.sessionId);
         return;
@@ -335,6 +338,21 @@ export class AppStore extends StoreBase {
   loadLoopBoard = this.#loop.loadBoard;
   loadLoopTicket = this.#loop.loadTicket;
   actOnLoopTicket = this.#loop.act;
+  loadLoopNotices = this.#loop.loadNotices;
+
+  /** Shows the Dev session of a ticket (`[CYC-1] Dev`) in place of the Loop page; false when no session has that name. */
+  joinLoopSession = (identifier: string): boolean => {
+    for (const [locationId, list] of Object.entries(this.getState().sessions)) {
+      const found = list.find((x) => !x.archived && x.title?.trim() === `[${identifier}] Dev`);
+      if (found !== undefined) {
+        this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
+        void this.focusSession(locationId, found.sessionId);
+        this.track("loop_session_joined", {});
+        return true;
+      }
+    }
+    return false;
+  };
 
   // ---- connectors ----
 

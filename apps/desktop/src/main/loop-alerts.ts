@@ -1,0 +1,93 @@
+// Tells the person, with a system notification, that a ticket needs them: Blocked, or a review escalated to a person.
+// A session waiting on a permission is NOT told here: the session's own attention notification (attention.ts) already
+// does, and a second one would repeat it. Only a Notice that was not there at the last read is told, and the first
+// read of a Project says nothing (it is what was already there), as `attentionOf` does for sessions.
+import type { LoopNotice, LoopNoticesAnswer, LoopProjectInfo } from "@cycle/ui/api";
+import type { NotificationLike, NotifyWindow } from "./attention.ts";
+
+export type Alertable = Extract<LoopNotice, { kind: "blocked" | "review" }>;
+
+const keyOf = (n: LoopNotice): string => `${n.kind}:${n.identifier}`;
+
+/** The Notices to tell now: Blocked and review ones not in `before`. `before` undefined is the first read: nothing. */
+export const newAlerts = (
+  before: ReadonlySet<string> | undefined,
+  notices: LoopNotice[],
+): Alertable[] =>
+  before === undefined
+    ? []
+    : notices.filter(
+        (n): n is Alertable =>
+          (n.kind === "blocked" || n.kind === "review") && !before.has(keyOf(n)),
+      );
+
+export type PollDeps = {
+  projects: () => Promise<LoopProjectInfo[]>;
+  read: (projectKey: string) => Promise<LoopNoticesAnswer>;
+  alert: (projectKey: string, notice: Alertable) => void;
+};
+
+/** One look at every Project. A Project that cannot be read keeps what was known of it: it is not "all clear". */
+export const noticePoller = (deps: PollDeps) => {
+  const seen = new Map<string, Set<string>>();
+  return {
+    async tick(): Promise<void> {
+      let projects: LoopProjectInfo[];
+      try {
+        projects = await deps.projects();
+      } catch {
+        return;
+      }
+      for (const { projectKey } of projects) {
+        const answer = await deps.read(projectKey).catch(() => undefined);
+        if (answer?.kind !== "ok") continue;
+        const alerts = newAlerts(seen.get(projectKey), answer.notices);
+        seen.set(projectKey, new Set(answer.notices.map(keyOf)));
+        for (const notice of alerts) {
+          try {
+            deps.alert(projectKey, notice);
+          } catch {
+            // A notification that cannot be shown is one missed, not a poll that failed.
+          }
+        }
+      }
+    },
+  };
+};
+
+export type AlertDeps = {
+  window: () => NotifyWindow | undefined;
+  supported: () => boolean;
+  create: (options: { title: string; body: string }) => NotificationLike;
+  activate: () => void;
+  say: (kind: Alertable["kind"]) => string;
+  open: (projectKey: string, identifier: string) => void;
+  track: (kind: Alertable["kind"]) => void;
+};
+
+const held = new Set<NotificationLike>();
+
+/** The system notification for one Notice, only while the window is not in front: on the page the Notice is seen. */
+export const showAlert = (deps: AlertDeps) => (projectKey: string, notice: Alertable) => {
+  const window = deps.window();
+  if (window === undefined || window.isDestroyed() || window.isFocused()) return;
+  if (!deps.supported()) return;
+  const title = `${notice.identifier} ${notice.title}`.replace(/\s+/g, " ").trim().slice(0, 80);
+  const notification = deps.create({ title, body: deps.say(notice.kind) });
+  held.add(notification);
+  const done = () => void held.delete(notification);
+  notification.on("close", done);
+  notification.on("failed", done);
+  notification.on("click", () => {
+    done();
+    const target = deps.window();
+    if (target === undefined || target.isDestroyed()) return;
+    if (target.isMinimized()) target.restore();
+    target.show();
+    target.focus();
+    deps.activate();
+    deps.open(projectKey, notice.identifier);
+  });
+  notification.show();
+  deps.track(notice.kind);
+};

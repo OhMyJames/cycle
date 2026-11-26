@@ -35,7 +35,8 @@ import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
 import { fileEnvironments } from "./environments.ts";
 import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
-import { actOnTicket, answerBoard, answerTicket, readLoopProjects } from "./loop.ts";
+import { actOnTicket, answerBoard, answerNotices, answerTicket, readLoopProjects } from "./loop.ts";
+import { noticePoller, showAlert } from "./loop-alerts.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
 import { fileSettings } from "./settings.ts";
@@ -100,6 +101,9 @@ const updateResult = (
  * What a link the page asks to open may be: a web page, or an address to write to (the mail app). The page checks the same
  * list (`isSafeLink` in @cycle/ui) and asks the person first; this is the check that does not trust the page.
  */
+/** How often the Loop tickets are read for a new Blocked or escalated one. */
+const NOTICE_POLL_MS = 60_000;
+
 const OPENABLE = new Set(["https:", "http:", "mailto:"]);
 const isOpenable = (url: string): boolean => {
   try {
@@ -282,6 +286,8 @@ export const startApp = async (options: AppOptions) => {
     emit: (state) => emit({ type: "app-update", state }),
     quit: () => app.quit(),
   });
+  /** The sessions of every location as last read: what a waiting session is, for the Notices. */
+  const sessionsNow = async () => Object.values((await manager.locations()).sessions).flat();
   /** The most the page may put on the clipboard at once: a long output, not a file. */
   const MAX_COPY = 5_000_000;
   const methods: Handlers = {
@@ -324,6 +330,10 @@ export const startApp = async (options: AppOptions) => {
       ),
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
       actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
+        analytics.track(event, props),
+      ),
+    loopNotices: (projectKey: unknown) =>
+      answerNotices(options.loop, projectKey, sessionsNow, (event, props) =>
         analytics.track(event, props),
       ),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
@@ -466,11 +476,40 @@ export const startApp = async (options: AppOptions) => {
     updater.start();
   }
 
+  // Blocked tickets and escalated reviews are told with a system notification, also while the Loop page is not open.
+  // Not in a test's hidden window: it would read the tracker for nothing.
+  let stopNotices = () => {};
+  if (options.loop && !hidden) {
+    const loop = options.loop;
+    const poller = noticePoller({
+      projects: async () => {
+        const answer = await readLoopProjects(loop.socket);
+        return answer.kind === "ok" ? answer.projects : [];
+      },
+      read: (projectKey) => answerNotices(loop, projectKey, sessionsNow, () => {}),
+      alert: showAlert({
+        window: () => window,
+        supported: () => Notification.isSupported(),
+        create: (notification) => new Notification(notification),
+        activate: () => app.focus({ steal: true }),
+        say: (kind) => translator().t(`loop.alert.${kind}`),
+        open: (projectKey, identifier) =>
+          emit({ type: "open-loop-ticket", projectKey, identifier }),
+        track: (kind) => analytics.track("loop_notice_notified", { kind }),
+      }),
+    });
+    const timer = setInterval(() => void poller.tick(), NOTICE_POLL_MS);
+    timer.unref();
+    void poller.tick();
+    stopNotices = () => clearInterval(timer);
+  }
+
   app.on("window-all-closed", () => app.quit());
   // What is waiting to be reported goes out before the app ends, for as long as the sink allows (two seconds).
   let flushed = false;
   app.on("before-quit", (event) => {
     updater.stop();
+    stopNotices();
     account.close();
     void manager.close();
     // Also when it was just turned off: its last word may still be waiting.

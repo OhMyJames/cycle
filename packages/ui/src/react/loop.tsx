@@ -8,6 +8,7 @@ import type {
   LoopActFailure,
   LoopAction,
   LoopBoardAnswer,
+  LoopNotice,
   LoopTicket,
   LoopTicketDetail,
 } from "../api.ts";
@@ -100,6 +101,61 @@ function Ticket({
   );
 }
 
+/** What needs a person, most urgent first. Each opens its ticket's page, where the session is joined. */
+function Notices({
+  notices,
+  onOpen,
+}: {
+  notices: LoopNotice[];
+  onOpen: (notice: LoopNotice) => void;
+}) {
+  const { t } = useI18n();
+  if (notices.length === 0) return null;
+  return (
+    <section data-slot="loop-notices" data-kind="loop-notices" aria-label={t("loop.notices")}>
+      <h3 data-slot="loop-column-title">{t("loop.notices")}</h3>
+      <ul data-slot="loop-tickets">
+        {notices.map((notice) => (
+          <li
+            key={`${notice.kind}:${notice.identifier}`}
+            data-slot="loop-notice"
+            data-notice={notice.kind}
+          >
+            <span data-slot="loop-ticket-id">{notice.identifier}</span>
+            <button type="button" data-slot="loop-ticket-title" onClick={() => onOpen(notice)}>
+              {t(`loop.notice.${notice.kind}`)}
+              {notice.kind === "blocked" && notice.reason !== "" ? `: ${notice.reason}` : ""}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Opens the ticket's Dev session (`[CYC-1] Dev`) to answer it or give it instructions; says so when it is not there. */
+function JoinSession({ identifier }: { identifier: string }) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const [missing, setMissing] = useState(false);
+  return (
+    <span data-slot="loop-join">
+      <Button
+        data-variant="ghost"
+        data-kind="loop-join"
+        onClick={() => setMissing(!store.joinLoopSession(identifier))}
+      >
+        {t("loop.join")}
+      </Button>
+      {missing ? (
+        <span role="alert" data-slot="loop-problem">
+          {t("loop.join.missing")}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function TicketPage({
   projectKey,
   identifier,
@@ -145,6 +201,18 @@ function TicketPage({
             {ticket.priority !== null ? ` · ${ticket.priority}` : ""}
           </span>
           <TicketActions ticket={ticket} act={act} />
+          <JoinSession identifier={ticket.identifier} />
+          {ticket.attention !== undefined ? (
+            <section data-slot="loop-detail-section" data-attention={ticket.attention.kind}>
+              <h4>{t(`loop.attention.${ticket.attention.kind}`)}</h4>
+              {ticket.attention.text !== "" ? (
+                <pre data-slot="loop-detail-body">{ticket.attention.text}</pre>
+              ) : null}
+              {ticket.attention.prUrl !== undefined && ticket.attention.prUrl !== "" ? (
+                <AgentLink href={ticket.attention.prUrl}>{ticket.attention.prUrl}</AgentLink>
+              ) : null}
+            </section>
+          ) : null}
           <section data-slot="loop-detail-section">
             <h4>{t("loop.detail.body")}</h4>
             <pre data-slot="loop-detail-body">{ticket.body}</pre>
@@ -260,8 +328,23 @@ function Board({
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const reload = { label: t("loop.reload"), onAction: () => void store.loadLoopBoard(projectKey) };
-  const [open, setOpen] = useState<string | undefined>();
+  const reload = {
+    label: t("loop.reload"),
+    onAction: () => {
+      void store.loadLoopBoard(projectKey);
+      void store.loadLoopNotices(projectKey);
+    },
+  };
+  const notices = useAppState((s) => s.loop.notices[projectKey]);
+  const request = useAppState((s) => s.loop.request);
+  const [open, setOpen] = useState<string | undefined>(
+    request?.projectKey === projectKey ? request.identifier : undefined,
+  );
+  const askedN = request?.n;
+  // A pressed notification asks for its ticket, also while the board is already shown.
+  useEffect(() => {
+    if (askedN !== undefined && request?.projectKey === projectKey) setOpen(request.identifier);
+  }, [askedN, projectKey, request]);
   const [problem, setProblem] = useState<LoopActFailure | undefined>();
   const [version, setVersion] = useState(0);
   // Returns the words of a failure (the approve dialog shows them inline); the other buttons show them on the board.
@@ -329,6 +412,15 @@ function Board({
         </Button>
       </div>
       {alert}
+      {notices?.kind === "ok" ? (
+        <Notices
+          notices={notices.notices}
+          onOpen={(notice) => {
+            store.track("loop_notice_opened", { kind: notice.kind });
+            openTicket(notice.identifier);
+          }}
+        />
+      ) : null}
       <div data-slot="loop-columns">
         <Column
           id="doing"
@@ -391,6 +483,20 @@ export function LoopPage({
   useEffect(() => {
     if (chosenKey !== undefined && connected === true) void store.loadLoopBoard(chosenKey);
   }, [store, chosenKey, connected]);
+
+  // Sessions that wait on an answer are part of the Notices: they are read again when that set changes.
+  const waiting = useAppState((s) =>
+    Object.values(s.sessions)
+      .flat()
+      .filter((x) => x.state === "requires_action")
+      .map((x) => x.sessionId)
+      .sort()
+      .join(),
+  );
+  useEffect(() => {
+    if (chosenKey !== undefined && connected === true) void store.loadLoopNotices(chosenKey);
+    void waiting;
+  }, [store, chosenKey, connected, waiting]);
 
   const away = connected === false;
   const sections: PageSection[] =

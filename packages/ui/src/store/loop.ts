@@ -4,6 +4,7 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopNoticesAnswer,
   LoopProjectInfo,
   LoopTicketAnswer,
 } from "../api.ts";
@@ -16,9 +17,13 @@ export type LoopState = {
   connected?: boolean;
   /** Each Project's board as last read; `loading` while it is being read the first time. */
   boards: Record<string, LoopBoardAnswer | "loading">;
+  /** Each Project's Notices as last read. They are derived from state by main, so a read replaces the last whole. */
+  notices: Record<string, LoopNoticesAnswer>;
+  /** A pressed system notification asks for this ticket's page; `n` counts the asks, so the same ticket can be asked twice. */
+  request?: { projectKey: string; identifier: string; n: number };
 };
 
-export const initialLoop = (): LoopState => ({ projects: [], boards: {} });
+export const initialLoop = (): LoopState => ({ projects: [], boards: {}, notices: {} });
 
 export class LoopSlice {
   readonly #kit: StoreKit;
@@ -57,6 +62,26 @@ export class LoopSlice {
     }));
   };
 
+  loadNotices = async (projectKey: string): Promise<void> => {
+    const answer = await this.#kit.bridge
+      .loopNotices(projectKey)
+      .catch(() => ({ kind: "unreachable" }) as const);
+    this.#kit.set((s) => {
+      const had = s.loop.notices[projectKey];
+      // A read that failed leaves the Notices that were read: they are still the last that is known.
+      if (had?.kind === "ok" && answer.kind !== "ok") return {};
+      return { loop: { ...s.loop, notices: { ...s.loop.notices, [projectKey]: answer } } };
+    });
+  };
+
+  requestTicket = (projectKey: string, identifier: string): void =>
+    this.#kit.set((s) => ({
+      loop: {
+        ...s.loop,
+        request: { projectKey, identifier, n: (s.loop.request?.n ?? 0) + 1 },
+      },
+    }));
+
   loadTicket = (projectKey: string, identifier: string): Promise<LoopTicketAnswer> =>
     this.#kit.bridge
       .loopTicket(projectKey, identifier)
@@ -72,7 +97,8 @@ export class LoopSlice {
     const result = await this.#kit.bridge
       .loopAct(projectKey, identifier, action, confirmed)
       .catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
-    if (result.kind === "ok") await this.loadBoard(projectKey);
+    if (result.kind === "ok")
+      await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
     return result;
   };
 }
