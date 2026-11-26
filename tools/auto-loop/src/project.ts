@@ -3,7 +3,7 @@
 // they are taken in board order (`position`): Todo is the first `unstarted`; In Progress, In Review and Blocked are
 // the first, second and third `started`.
 
-import type { Config } from "./types.ts";
+import type { Config, LoopPhase } from "./types.ts";
 
 export type ProjectSetup = Pick<
   Config,
@@ -54,4 +54,60 @@ export const resolveProject = (
     featureTypeId,
     bugTypeId,
   };
+};
+
+/** The phases the loop mirrors onto a work item, and the option name each one has in the project's select field. */
+export const LOOP_PHASES = {
+  dev: "开发",
+  verify: "验证",
+  qa: "QA",
+  ci: "等 CI",
+  review: "评审",
+  merge: "等合并",
+} as const satisfies Record<LoopPhase, string>;
+
+export const PHASE_FIELD = "Loop 阶段";
+export const STARTED_FIELD = "Loop 阶段开始于";
+
+export type LoopFields = {
+  phaseFieldId: number;
+  startedFieldId: number;
+  optionIds: Record<LoopPhase, number>;
+};
+
+/**
+ * Finds the two custom fields and the option ids by name in the `list_custom_fields` reply. Anything wrong comes back
+ * as `problem`, a sentence for the warning (do not write), never an error: the fields only mirror the run record.
+ */
+export const resolveLoopFields = (reply: unknown): { fields: LoopFields } | { problem: string } => {
+  const body = rec(reply);
+  const rows = Array.isArray(reply) ? list(reply) : list(body.data ?? body.fields);
+  const id = (v: unknown): number =>
+    typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? Number(v) : Number.NaN;
+  // Only fields for every issue type count (a field scoped to one type fails for the others), and a name that
+  // matches twice is ambiguous.
+  const only = (name: string, fieldType: string): Record<string, unknown> | string => {
+    const named = rows.filter((f) => f.name === name);
+    if (named.length === 0) return `no field named 「${name}」`;
+    const global = named.filter((f) => (f.issueTypeId ?? null) === null);
+    if (global.length !== 1)
+      return `「${name}」 must be one field for every issue type (found ${named.length}, ${global.length} unscoped)`;
+    const field = global[0] as Record<string, unknown>;
+    if (field.fieldType !== fieldType) return `「${name}」 must be a ${fieldType} field`;
+    if (!Number.isInteger(id(field.id))) return `「${name}」 has no usable id`;
+    return field;
+  };
+  const phase = only(PHASE_FIELD, "select");
+  if (typeof phase === "string") return { problem: phase };
+  const started = only(STARTED_FIELD, "datetime");
+  if (typeof started === "string") return { problem: started };
+  const options = list(phase.options);
+  const optionIds = {} as Record<LoopPhase, number>;
+  for (const [key, name] of Object.entries(LOOP_PHASES)) {
+    const optionId = id(options.find((o) => o.value === name)?.id);
+    if (!Number.isInteger(optionId))
+      return { problem: `「${PHASE_FIELD}」 has no option 「${name}」` };
+    optionIds[key as LoopPhase] = optionId;
+  }
+  return { fields: { phaseFieldId: id(phase.id), startedFieldId: id(started.id), optionIds } };
 };

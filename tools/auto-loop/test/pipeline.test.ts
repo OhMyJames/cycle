@@ -1633,6 +1633,131 @@ test("two runs claiming at once never run git fetch at the same time", async () 
   );
 });
 
+test("the phase is mirrored from claim to delivery, each once, and cleared on delivery", async () => {
+  const { pipeline, tracker } = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  expect((await pipeline.step()).status).toBe("delivered");
+  expect(tracker.phases).toEqual([
+    "CYC-1:dev",
+    "CYC-1:verify",
+    "CYC-1:qa",
+    "CYC-1:ci",
+    "CYC-1:review",
+    "CYC-1:merge",
+    "CYC-1:clear",
+  ]);
+});
+
+test("Blocked clears the phase; put back in Todo, the resumed phase is written again", async () => {
+  const w = setup([ready()], { dev: [done(), done(), done(), done()], qa: [] }, {}, [
+    "bun run check",
+  ]);
+  await w.pipeline.step();
+  expect(w.tracker.phases.at(-1)).toBe("CYC-1:clear");
+  w.world.fail.clear();
+  w.sessions.script.qa.push(done(PASS));
+  w.sessions.script.dev.push(done());
+  (w.tracker.issues[0] as Issue).columnId = 22;
+  const before = w.tracker.phases.length;
+  await w.pipeline.step();
+  expect(w.tracker.phases[before]).toBe("CYC-1:verify");
+});
+
+test("a restarted process writes the phase of the run it continues", async () => {
+  const first = setup([ready()], { dev: [done()], qa: [] });
+  const original = first.sessions.turn.bind(first.sessions);
+  first.sessions.turn = async (id, prompt, ctx) => {
+    if (ctx.role === "qa") throw new Error("killed");
+    return original(id, prompt, ctx);
+  };
+  await expect(first.pipeline.step()).rejects.toThrow("killed");
+  const tracker = new FakeTracker(first.tracker.issues);
+  const second = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker,
+    sessions: new FakeSessions({ dev: [], qa: [done(PASS)] }),
+    exec: makeExec(first.world),
+    store: first.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+  });
+  await second.step();
+  expect(tracker.phases[0]).toBe("CYC-1:verify");
+});
+
+test("a failing phase write changes nothing about the outcome", async () => {
+  const ok = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const bad = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  bad.tracker.failPhase = true;
+  const a = await ok.pipeline.step();
+  const b = await bad.pipeline.step();
+  expect(b).toEqual(a);
+  expect(bad.tracker.moves).toEqual(ok.tracker.moves);
+  expect((await bad.store.events()).some((e) => e.kind === "phase_field_failed")).toBe(true);
+});
+
+const withCap = (w: ReturnType<typeof setup>, mirrorCapMs: number) =>
+  new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: w.tracker,
+    sessions: w.sessions,
+    exec: makeExec(w.world),
+    store: w.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+    sleep: async () => {},
+    mirrorCapMs,
+  });
+
+test("writes for one work item land in order even when an earlier one is slow", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const landed: string[] = [];
+  w.tracker.setLoopPhase = async (i, phase) => {
+    if (phase === "dev") await Bun.sleep(30);
+    landed.push(`${i.key}:${phase ?? "clear"}`);
+  };
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  await Bun.sleep(60);
+  expect(landed.slice(0, 3)).toEqual(["CYC-1:dev", "CYC-1:verify", "CYC-1:qa"]);
+  expect(landed.at(-1)).toBe("CYC-1:clear");
+});
+
+test("a write that never answers does not hold the run longer than the cap", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  w.tracker.setLoopPhase = () => new Promise(() => {});
+  const started = Date.now();
+  expect((await withCap(w, 20).step()).status).toBe("delivered");
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+test("delivery clears after a merge write that was still pending", async () => {
+  const w = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  const landed: string[] = [];
+  w.tracker.setLoopPhase = async (_i, phase) => {
+    if (phase === "merge") await Bun.sleep(40);
+    landed.push(phase ?? "clear");
+  };
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  expect(landed.slice(-2)).toEqual(["merge", "clear"]);
+});
+
+test("a failing write is reported once per kind and the run is unaffected", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  w.tracker.failPhase = true;
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  const failures = (await w.store.events()).filter((e) => e.kind === "phase_field_failed");
+  expect(failures).toHaveLength(1);
+});
+
 // CYC-441: the tuning is read again before every step; a step under way keeps the values it started with.
 const rejectTwice = (): Script => ({
   dev: Array.from({ length: 5 }, () => done()),
