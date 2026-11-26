@@ -1148,6 +1148,7 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 | --------------- | ---- | ------------ |
 | `projects/list` | 无   | `{projects}` |
 | `runs/list`     | 无   | `{projects}` |
+| `events/list`   | 见下 | 见下         |
 
 ```json
 {
@@ -1194,7 +1195,32 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - `kind`:`dev` 或 `research`。`state`:`done`(阶段为 done)、`blocked`(阶段为 blocked)、其余为 `active`。含已结束的记录,客户端自己按 `state` 过滤。
 - **`active` 不保证进程还活着**:Loop 异常退出后 `run.json` 还在,仍是 `active`。怎样判断运行仍然活着(待确认,心跳或锁)还没定,定了再加字段;在此之前客户端用 `updatedAt` 的新旧自行判断,不要把 `active` 当成"正在跑"的证明。
 - 字段逐个挑出,不含工单标题、阶段细节、worktree、分支、会话、PR 地址和阻塞原因。响应里没有令牌、仓库完整地址和本地路径。
-- 不提供 `loop/start`、`loop/stop`,也没有推送;事件流是另一张工单。
+- 不提供 `loop/start`、`loop/stop`,也事件流见下一节。
+
+### 运行事件流(`events/list`,CYC-457)
+
+按 `seq` 续传的事件流,数据读自 `<stateDir>/events.jsonl`(Loop 现有的全局事件日志,每个 Project 一份)。采用**客户端按 `seq` 轮询的方法**,不是服务推送的通知:连接断开后没有订阅状态要恢复,重连只需带上最后收到的 `seq`。桌面端想要"实时"就短间隔轮询;`hasMore` 为真时立即再取。
+
+| 方法          | 参数                              | 响应                                     |
+| ------------- | --------------------------------- | ---------------------------------------- |
+| `events/list` | `{projectKey, afterSeq?, limit?}` | `{projectKey, events, lastSeq, hasMore}` |
+
+```json
+{
+  "projectKey": "CYC",
+  "events": [{ "seq": 41, "ts": "2026-11-26T02:00:00.000Z", "run": "CYC-390", "kind": "phase" }],
+  "lastSeq": 41,
+  "hasMore": false
+}
+```
+
+- **`seq`**:事件在 `events.jsonl` 里的行号,从 1 起。文件只追加,所以同一条事件永远是同一个 `seq`,不会有两个;`seq` 严格递增。由服务读文件时按行号赋,引擎不改,旧行同样有 `seq`。没写完(还没有换行)的最后一行等写完再发;不是事件的行(损坏)占一个号但不发,所以 `seq` 可能有空洞,客户端不要假设连续。
+- **续传**:`afterSeq` 默认 0(从头),只返回 `seq > afterSeq` 的事件,按 `seq` 升序;`limit` 默认 500,最大 1000。`lastSeq` 是下次要带的值(返回的最后一条,没有就等于 `afterSeq`;被跳过的损坏行也计入,所以不会反复读到)。
+- **`seq` 太旧**:现在文件不截断、不轮转,任何 `seq` 都还在。以后若要轮转,`seq` 已不在文件里时返回 `-32602`,`data.reason` 为 `seq_gone`,客户端从 0 重取并自行去重。
+- **`seq` 超前**:`afterSeq` 大于文件现有行数(文件被换掉了),返回 `-32602`,`data.reason` 为 `seq_ahead`,客户端从 0 重取。
+- `projectKey` 不在配置里或参数不合法:`-32602`。`stateDir` 未知或文件读不了:`-32603`(同 `runs/list`),不返回空列表。
+- 每条事件只有 `seq`、`ts`、`run`(工单号或 `plan-<轮次>`)、`kind` 四个字段,其余字段一律不发(行里的附加字段可能含路径或地址)。响应里没有令牌、仓库完整地址和本地路径。
+- 不提供 `loop/start`、`loop/stop`;阶段显示归 CYC-442、CYC-443。
 
 ### 工单状态按钮(桌面端写 itsaplan,CYC-387)
 
