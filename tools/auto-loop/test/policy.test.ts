@@ -263,6 +263,47 @@ test("research: find that runs, deletes or writes is denied, and so is file -C",
   });
 });
 
+test("research: grep that recurses and rg that reads ignored or hidden files are denied; the plain forms run", () => {
+  each((ctx) => {
+    for (const no of [
+      `grep -r KEY ${ROOT}`,
+      "grep -R KEY .",
+      "grep -rn KEY .",
+      "grep -inR KEY .",
+      "grep --recursive KEY .",
+      "grep --dereference-recursive KEY .",
+      "grep -d recurse KEY .",
+      "grep --directories=recurse KEY .",
+      "rg -u KEY .",
+      "rg -uu KEY .",
+      "rg -uuu KEY .",
+      "rg -nu KEY .",
+      "rg --no-ignore KEY .",
+      "rg --no-ignore-vcs KEY .",
+      "rg --hidden KEY .",
+      "rg -. KEY .",
+      "rg --follow KEY .",
+      "rg -L KEY .",
+      "rg --unrestricted KEY .",
+    ]) {
+      expect(r(run(no), ctx)).toBe("deny");
+    }
+    for (const ok of [
+      `rg KEY ${ROOT}`,
+      "rg -n -i KEY src",
+      "rg -l KEY .",
+      "grep -n KEY src/a.ts",
+      "grep -il KEY src/a.ts src/b.ts",
+      "git log | grep -c x",
+    ]) {
+      expect(r(run(ok), ctx)).toBe("allow");
+    }
+  });
+  // The other roles keep what they had.
+  expect(d(run("grep -rn KEY src"), qa)).toBe("allow");
+  expect(d(run("rg --hidden KEY src"), qa)).toBe("allow");
+});
+
 test("research: other commands, shell syntax, unquoted globs and paths outside are denied", () => {
   each((ctx) => {
     for (const no of [

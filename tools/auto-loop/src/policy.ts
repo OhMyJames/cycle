@@ -214,6 +214,22 @@ const FIND_WRITES = new Set([
   "-fprintf",
   "-fls",
 ]);
+/**
+ * A grep that walks a directory reads every file under it, ignored or not: a read root's `.env` would be read under the
+ * name of the root. Combined short options with `r` or `R` count (`-rn`).
+ */
+const grepRecurses = (words: string[]): boolean =>
+  words.some(
+    (word, index) =>
+      /^-[^-]*[rR]/.test(word) ||
+      /^--(recursive|dereference-recursive|directories=recurse)$/.test(word) ||
+      ((word === "-d" || word === "--directories") && words[index + 1] === "recurse"),
+  );
+/** rg honours ignore files and skips hidden ones unless told otherwise (`-u`, `-.`, `-L` alone or combined). */
+const rgUnignores = (words: string[]): boolean =>
+  words.some(
+    (word) => /^-[^-]*[u.L]/.test(word) || /^--(no-ignore|hidden|follow|unrestricted)/.test(word),
+  );
 /** `file -C` compiles a magic file: it writes. */
 const FILE_WRITES = /^(-C|--compile|-[A-Za-z]*C[A-Za-z]*)$/;
 
@@ -266,6 +282,10 @@ const researchCommand = (
       return deny("a find that runs a program, deletes or writes");
     if (program === "file" && words.some((word) => FILE_WRITES.test(word)))
       return deny("a file that writes");
+    if (program === "grep" && grepRecurses(words))
+      return deny("a recursive grep, which reads ignored files");
+    if (program === "rg" && rgUnignores(words))
+      return deny("an rg that reads ignored or hidden files");
     if (words.slice(1).some((word) => strays(word, worktree, readRoots)))
       return deny("a command that reaches outside the read roots or names a secret");
   }
