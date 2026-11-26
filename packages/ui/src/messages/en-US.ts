@@ -1086,6 +1086,8 @@ export const enUS = {
   "update.available": "Version {version} is available",
   "update.availableLocal": "Local build {version}: {detail}",
   "update.reinstallLocal": "Reinstall local build {version}: {detail}",
+  "update.availableLocalBare": "Local build {version}",
+  "update.reinstallLocalBare": "Reinstall local build {version}",
   "update.availableFromAlpha": "Release {version} is available (you are on alpha {from})",
   "update.downloading": "Downloading {version}: {received} of {total} MB",
   "update.downloadingChanges": "Downloading the changes for {version}: {received} of {total} MB",

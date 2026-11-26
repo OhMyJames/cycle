@@ -19,25 +19,23 @@ const firstLine = (text: string | undefined): string =>
 /** Whether a version is an alpha build (`0.1.1-alpha.3+abc1234`). */
 const isAlpha = (version: string): boolean => /-alpha(\.|\+|$)/.test(version);
 
+/** The version without its `+meta`. */
+const baseOf = (version: string): string => version.split("+", 1)[0] ?? version;
+
 /** An available update: from this machine's build (what it is, or a reinstall), from an alpha to a release, or a release. */
 const availableLine = (
   update: Extract<UpdateState, { kind: "available" }>,
   t: Translator["t"],
 ): string => {
   if (update.source === "local") {
-    const commit = (update.commit ?? "").slice(0, 7);
-    const subject = firstLine(update.subject);
-    return t(
-      update.version === update.current ? "update.reinstallLocal" : "update.availableLocal",
-      {
-        version: update.version,
-        commit,
-        subject,
-        detail: [commit, subject].filter((x) => x !== "").join(" "),
-      },
-    );
+    const detail = [(update.commit ?? "").slice(0, 7), firstLine(update.subject)]
+      .filter((x) => x !== "")
+      .join(" ");
+    const reinstall = baseOf(update.version) === baseOf(update.current);
+    const key = reinstall ? "update.reinstallLocal" : "update.availableLocal";
+    return t(detail === "" ? `${key}Bare` : key, { version: update.version, detail });
   }
-  if (isAlpha(update.current)) {
+  if (update.source === "release" && isAlpha(update.current) && !isAlpha(update.version)) {
     return t("update.availableFromAlpha", { from: update.current, version: update.version });
   }
   return t("update.available", { version: update.version });

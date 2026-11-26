@@ -153,13 +153,13 @@ test("the same version from this machine is a reinstall", async () => {
     state: {
       current: "0.1.1-alpha.2+abc1234",
       kind: "available",
-      version: "0.1.1-alpha.2+abc1234",
+      version: "0.1.1-alpha.2+def5678",
       source: "local",
-      commit: "abc1234",
+      commit: "def5678",
       subject: "again",
     },
   });
-  expect(cards(nav())[0]?.textContent).toContain("Reinstall local build 0.1.1-alpha.2+abc1234");
+  expect(cards(nav())[0]?.textContent).toContain("Reinstall local build 0.1.1-alpha.2+def5678");
 });
 
 test("from an alpha to a release says which version to which; between releases it is as before", async () => {
