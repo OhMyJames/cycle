@@ -324,6 +324,13 @@ test("a round end to end: priority with a comment, 要问 with 待回答, a rewr
   // The round's own writes do not count as a change: the next step has nothing to do.
   expect(await s.pipeline.step()).toEqual({ status: "idle" });
   expect(s.sessions.created).toHaveLength(3);
+  // Every planning session is asked for by worktree name (CYC-459), never by a `cwd` of its own: a session whose cwd is
+  // the round's directory shows in the desktop as a workspace of its own.
+  expect(s.sessions.places.length).toBe(3);
+  for (const input of s.sessions.places) {
+    expect(input.cwd).toBe(join(dir, "repo"));
+    expect(input.worktree?.name).toBe("plan-2026-11-26T10-00-00-000Z");
+  }
   const round = (await s.store.plans())[0];
   expect(round).toMatchObject({ phase: "finished", worktree: null });
   expect(existsSync(join(dir, "repo/.agents/worktree/plan-2026-11-26T10-00-00-000Z"))).toBe(false);

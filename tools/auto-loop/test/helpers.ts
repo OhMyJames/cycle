@@ -247,6 +247,12 @@ export type Script = {
 export class FakeSessions implements Sessions {
   created: string[] = [];
   inputs: { role: SessionRole; model: string | undefined; effort: string | undefined }[] = [];
+  /** Where each session was asked to run: `cwd`, and the `worktree` the daemon was asked to make or find. */
+  places: {
+    role: SessionRole;
+    cwd: string;
+    worktree: { base: string; name: string } | undefined;
+  }[] = [];
   turns: string[] = [];
   prompts: { sessionId: string; role: SessionRole; prompt: string; readRoots?: string[] }[] = [];
   deleted = 0;
@@ -278,8 +284,15 @@ export class FakeSessions implements Sessions {
       createError,
     };
   }
-  async create(input: { role: SessionRole; cwd: string; model?: string; effort?: string }) {
+  async create(input: {
+    role: SessionRole;
+    cwd: string;
+    model?: string;
+    effort?: string;
+    worktree?: { base: string; name: string };
+  }) {
     this.inputs.push({ role: input.role, model: input.model, effort: input.effort });
+    this.places.push({ role: input.role, cwd: input.cwd, worktree: input.worktree });
     const err = this.script.createError[input.role];
     if (Array.isArray(err)) {
       const next = err.shift();
