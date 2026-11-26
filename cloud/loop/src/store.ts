@@ -525,10 +525,10 @@ export class RunStore implements LoopStore {
       if ((error as { code?: string }).code === "ENOENT") return [];
       throw error;
     }
-    return text
-      .split("\n")
-      .filter((line) => line !== "")
-      .map((line) => JSON.parse(line) as LoopEvent);
+    // A last line with no newline after it was cut off by a kill: it is not an event yet.
+    const lines = text.split("\n");
+    lines.pop();
+    return lines.filter((line) => line !== "").map((line) => JSON.parse(line) as LoopEvent);
   }
 }
 

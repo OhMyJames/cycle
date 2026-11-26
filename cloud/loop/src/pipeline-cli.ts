@@ -9,9 +9,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setUpProject } from "./assemble.ts";
 import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
-import { openStore } from "./db/store.ts";
 import { idleIntervalMs, parseWorkers, runLoops, workerSpecs } from "./loop.ts";
-import { computeStats } from "./stats.ts";
+import { readStats } from "./stats.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -39,8 +38,7 @@ if (args[0] === "stats") {
     );
     process.exit(2);
   }
-  const events = await openStore(only.stateDir, clock.now).events();
-  console.log(JSON.stringify(computeStats(events), null, 2));
+  console.log(JSON.stringify(await readStats(only.stateDir, clock.now), null, 2));
   process.exit(0);
 }
 

@@ -151,7 +151,11 @@ export class StoreOps {
   }
 
   save(record: RunRecord): RunRecord {
-    const next = { ...record, updatedAt: this.now().toISOString() };
+    return this.put({ ...record, updatedAt: this.now().toISOString() });
+  }
+
+  /** Writes the record as it is, `updatedAt` too: `save` stamps it, an import must not. */
+  put(next: RunRecord): RunRecord {
     const state: Record<string, unknown> = { ...next };
     for (const name of COLUMN_FIELDS) delete state[name];
     this.db
@@ -256,8 +260,16 @@ export class StoreOps {
   /** Saves the round and makes its `bodies/` directory the first time. */
   savePlan(round: PlanRoundInput): PlanRound {
     this.#planId(round.id);
-    const next = PlanRoundSchema.parse({ ...round, updatedAt: this.now().toISOString() });
+    const next = this.putPlan(
+      PlanRoundSchema.parse({ ...round, updatedAt: this.now().toISOString() }),
+    );
     mkdirSync(this.planBodiesDir(next.id), { recursive: true, mode: 0o700 });
+    return next;
+  }
+
+  /** Writes the round as it is, `updatedAt` too (an import keeps the time it had). */
+  putPlan(next: PlanRound): PlanRound {
+    this.#planId(next.id);
     const { queue, ...rest } = next;
     this.db.transaction(() => {
       this.db
@@ -459,6 +471,11 @@ export class SqliteStore implements LoopStore {
 
   private constructor(ops: StoreOps) {
     this.#ops = ops;
+  }
+
+  /** The database as a file under the name `file` (the import fills `loop.db.importing`, then renames it). */
+  static openFile(dir: string, file: string, now: () => Date): SqliteStore {
+    return new SqliteStore(new StoreOps(dir, openDb(dir, undefined, file), now));
   }
 
   static open(dir: string, now: () => Date): SqliteStore {

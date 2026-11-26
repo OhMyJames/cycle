@@ -2,6 +2,7 @@
 
 import { join } from "node:path";
 import { type ConfigFile, readTuning } from "./config-file.ts";
+import { type ImportResult, importLegacyState, needsImport } from "./db/import.ts";
 import { openStore } from "./db/store.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
@@ -109,8 +110,28 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     initial: file.tuning ?? {},
     reload: () => readTuning(configPath, file.projectKey),
   };
-  const store = openStore(stateDir, clock.now);
+  // The lock first: with it held no step is working on a run, so the files can be moved into loop.db (CYC-476).
   const release = dryRun ? async () => {} : await acquireLock(stateDir);
+  let imported: ImportResult | null = null;
+  try {
+    if (!dryRun && needsImport(stateDir)) {
+      imported = await importLegacyState(stateDir, clock.now);
+      plog(
+        `imported ${imported.runs} runs, ${imported.events} events and ${imported.plans} planning rounds into loop.db; stats are the same; the old files are kept as ${imported.kept.join(", ")}`,
+      );
+    }
+  } catch (error) {
+    await release();
+    throw error;
+  }
+  const store = openStore(stateDir, clock.now);
+  if (imported !== null) {
+    await store.event("storage", "storage_imported", {
+      runs: imported.runs,
+      events: imported.events,
+      plans: imported.plans,
+    });
+  }
   const sessions = new DaemonSessions(
     process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),
     (sessionId, title) => {

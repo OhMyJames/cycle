@@ -1,3 +1,4 @@
+import { openStore } from "./db/store.ts";
 import type { LoopEvent } from "./store.ts";
 
 export type Stats = {
@@ -238,3 +239,7 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     planning: planningStats(events),
   };
 };
+
+/** The stats of a state directory: from `loop.db` where there is one, otherwise from the files. */
+export const readStats = async (stateDir: string, now: () => Date): Promise<Stats> =>
+  computeStats(await openStore(stateDir, now).events());
