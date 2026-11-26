@@ -239,3 +239,26 @@ test("an In Progress ticket is only watched: a note, and no chat button", async 
   expect(screen.queryByRole("button", { name: /Talk with an agent/ })).toBeNull();
   expect(fake.named("loopChat")).toEqual([]);
 });
+
+const withTicketPage = () => openTicketPage("new");
+
+test("Escape on the ticket page goes back to the board, not out of the Loop", async () => {
+  const { user } = await withTicketPage();
+  await screen.findByRole("button", { name: "Back to the board" });
+  await user.keyboard("{Escape}");
+  await screen.findByRole("button", { name: "Ticket 700" });
+  expect(screen.queryByRole("button", { name: "Back to the board" })).toBeNull();
+  expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
+});
+
+test("leaving the Loop and coming back lands on the level it was left on", async () => {
+  const { user } = await withTicketPage();
+  await screen.findByRole("button", { name: "Back to the board" });
+  // Ticket → board → out of the Loop, one Escape each.
+  await user.keyboard("{Escape}");
+  await screen.findByRole("button", { name: "Ticket 700" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).toBeNull());
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await screen.findByRole("button", { name: "Ticket 700" });
+});

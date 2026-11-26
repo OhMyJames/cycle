@@ -345,8 +345,9 @@ function AppWindow() {
       ) : null}
       {pages.loop !== undefined ? (
         <LoopPage
-          projectKey={pages.loop.projectKey}
-          onProject={pages.showLoopProject}
+          view={pages.loop}
+          onView={pages.showLoopView}
+          onBack={pages.loopBack}
           onClose={pages.leaveLoop}
           banner={errorBanner}
         />
