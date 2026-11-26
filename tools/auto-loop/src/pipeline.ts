@@ -517,13 +517,19 @@ export class Pipeline {
     let last = "仍在等待 GitHub 自动合并";
     for (let poll = 0; poll < polls; poll++) {
       if (poll > 0) await sleep(config.mergePollIntervalMs);
-      const read = await readPrMergeStatus({
-        prRef: prUrl,
-        exec: this.#d.exec,
-        cwd: worktree,
-        env: this.#d.env,
-        timeoutMs: config.commandTimeoutMs,
-      });
+      const read = await this.#net(
+        run.key,
+        "gh pr view",
+        () =>
+          readPrMergeStatus({
+            prRef: prUrl,
+            exec: this.#d.exec,
+            cwd: worktree,
+            env: this.#d.env,
+            timeoutMs: config.commandTimeoutMs,
+          }),
+        (r) => (r.ok ? undefined : r.error),
+      );
       if (!read.ok) {
         last = `读取 PR 合并状态失败：${tail(read.error)}`;
         continue;
@@ -1072,9 +1078,12 @@ export class Pipeline {
       prUrl = findUrl(created.output);
       if (created.code !== 0 || prUrl === undefined) {
         // The pull request may already be there (a delivery that was cut off after it was made).
-        const existing = await this.#d.exec(
-          ["gh", "pr", "view", run.remoteBranch, "--json", "url", "--jq", ".url"],
-          { cwd: worktree, env, timeoutMs },
+        const existing = await this.#netExec(run.key, "gh pr view", () =>
+          this.#d.exec(["gh", "pr", "view", run.remoteBranch, "--json", "url", "--jq", ".url"], {
+            cwd: worktree,
+            env,
+            timeoutMs,
+          }),
         );
         prUrl = findUrl(existing.output);
         if (existing.code !== 0 || prUrl === undefined)
@@ -1119,22 +1128,18 @@ export class Pipeline {
       );
       if (!read.ok) throw new Blocked(`读取 CI 状态失败：${tail(read.error)}`);
       if (read.status.state === "failed") {
-        const failedChecks = read.status.failed;
-        const rerun = await this.#net(
-          run.key,
-          "gh run rerun",
-          () =>
-            rerunFailedCi({
-              failed: failedChecks,
-              ciRound: run.ciRound,
-              maxCiRetries: config.maxCiRetries,
-              exec: this.#d.exec,
-              cwd: worktree,
-              env: this.#d.env,
-              timeoutMs: config.commandTimeoutMs,
-            }),
-          (r) => (r.ok ? undefined : r.error),
-        );
+        // Not retried in place (a retry could rerun twice): on a network error the run waits, and the next step
+        // reads the CI status again before it reruns anything.
+        const rerun = await rerunFailedCi({
+          failed: read.status.failed,
+          ciRound: run.ciRound,
+          maxCiRetries: config.maxCiRetries,
+          exec: this.#d.exec,
+          cwd: worktree,
+          env: this.#d.env,
+          timeoutMs: config.commandTimeoutMs,
+        });
+        if (!rerun.ok && isNetworkError(rerun.error)) throw new NetworkWait("gh run rerun");
         if (!rerun.ok) throw new Blocked(`重新运行 CI 失败：${tail(rerun.error)}`);
         await store.event(run.key, "ci_rerun", { ciRound: run.ciRound, runs: rerun.runIds.length });
         staleFailedUrls = new Set(
@@ -1143,26 +1148,23 @@ export class Pipeline {
       }
     }
 
-    const result = await this.#net(
-      run.key,
-      "gh pr view",
-      () =>
-        waitForCi({
-          staleFailedUrls,
-          prRef: prUrl,
-          requiredChecks: config.ciChecks,
-          expectedHeadSha: headSha,
-          exec: this.#d.exec,
-          cwd: worktree,
-          env: this.#d.env,
-          commandTimeoutMs: config.commandTimeoutMs,
-          pollIntervalMs: config.ciPollIntervalMs,
-          timeoutMs: config.ciTimeoutMs,
-          clock,
-          sleep: this.#d.sleep ?? ((ms) => Bun.sleep(ms)),
-        }),
-      (r) => (r.outcome === "error" ? r.error : undefined),
-    );
+    // A network error is retried on the single poll read, so the CI timeout budget is not restarted by it.
+    const result = await waitForCi({
+      staleFailedUrls,
+      prRef: prUrl,
+      requiredChecks: config.ciChecks,
+      expectedHeadSha: headSha,
+      exec: this.#d.exec,
+      cwd: worktree,
+      env: this.#d.env,
+      commandTimeoutMs: config.commandTimeoutMs,
+      pollIntervalMs: config.ciPollIntervalMs,
+      timeoutMs: config.ciTimeoutMs,
+      clock,
+      sleep: this.#d.sleep ?? ((ms) => Bun.sleep(ms)),
+      guardRead: (read) =>
+        this.#net(run.key, "gh pr view", read, (r) => (r.ok ? undefined : r.error)),
+    });
 
     await this.#assertNotClosed(run);
     if (result.outcome === "error") {
@@ -1230,15 +1232,21 @@ export class Pipeline {
       if (headSha === "") {
         ciNotGreenReason = `读取 HEAD 提交失败：${tail(head.output)}`;
       } else {
-        const read = await readCiStatus({
-          prRef: prUrl,
-          requiredChecks: config.ciChecks,
-          expectedHeadSha: headSha,
-          exec: this.#d.exec,
-          cwd: worktree,
-          env: this.#d.env,
-          timeoutMs: config.commandTimeoutMs,
-        });
+        const read = await this.#net(
+          run.key,
+          "gh pr view",
+          () =>
+            readCiStatus({
+              prRef: prUrl,
+              requiredChecks: config.ciChecks,
+              expectedHeadSha: headSha,
+              exec: this.#d.exec,
+              cwd: worktree,
+              env: this.#d.env,
+              timeoutMs: config.commandTimeoutMs,
+            }),
+          (r) => (r.ok ? undefined : r.error),
+        );
         if (read.ok && read.status.state === "passed") {
           ciGreen = true;
           this.#ciGreenSha.set(run.key, headSha);
@@ -1331,14 +1339,20 @@ export class Pipeline {
       const { join } = await import("node:path");
       const commentPath = join(config.stateDir, "runs", run.key, "review-comment.md");
       await writeFile(commentPath, body, { mode: 0o600 });
-      return postPrComment({
-        prRef: prUrl,
-        bodyPath: commentPath,
-        exec: this.#d.exec,
-        cwd: worktree,
-        env: this.#d.env,
-        timeoutMs: config.commandTimeoutMs,
-      });
+      return this.#net(
+        run.key,
+        "gh pr comment",
+        () =>
+          postPrComment({
+            prRef: prUrl,
+            bodyPath: commentPath,
+            exec: this.#d.exec,
+            cwd: worktree,
+            env: this.#d.env,
+            timeoutMs: config.commandTimeoutMs,
+          }),
+        (r) => (r.ok ? undefined : r.error),
+      );
     };
 
     // No valid conclusion even after retries (or read-only violation): review system failure, not a code issue.
@@ -1424,13 +1438,19 @@ export class Pipeline {
       );
       await store.event(run.key, "review_decided", { decision: "merge" });
       if (ciGreen && commented.ok) {
-        const merged = await enableAutoMerge({
-          prRef: prUrl,
-          exec: this.#d.exec,
-          cwd: worktree,
-          env: this.#d.env,
-          timeoutMs: config.commandTimeoutMs,
-        });
+        const merged = await this.#net(
+          run.key,
+          "gh pr merge",
+          () =>
+            enableAutoMerge({
+              prRef: prUrl,
+              exec: this.#d.exec,
+              cwd: worktree,
+              env: this.#d.env,
+              timeoutMs: config.commandTimeoutMs,
+            }),
+          (r) => (r.ok ? undefined : r.error),
+        );
         if (merged.ok) {
           await this.#confirmMerged(run, prUrl, worktree);
           await tracker.comment(
@@ -1598,7 +1618,13 @@ export class Pipeline {
 
   /** `#net` for a command that returns an `ExecResult`. */
   #netExec(key: string, command: string, fn: () => Promise<ExecResult>): Promise<ExecResult> {
-    return this.#net(key, command, fn, (r) => (r.code !== 0 ? r.output : undefined));
+    return this.#net(key, command, fn, (r) =>
+      r.timedOut
+        ? "Connection timed out (the command timed out)"
+        : r.code !== 0
+          ? r.output
+          : undefined,
+    );
   }
 
   async #git(args: string[], cwd: string): Promise<ExecResult> {

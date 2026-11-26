@@ -25,23 +25,25 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 
 每个 Project 可选写一个 `tuning` 对象，字段都可不写，不写就用默认值；单位写在字段名里。
 
-| 字段                                      | 默认 | 范围   |
-| ----------------------------------------- | ---- | ------ |
-| `intervalSeconds`（空闲时查 Todo 的间隔） | 60   | 1–3600 |
-| `maxCriteria`                             | 8    | 1–20   |
-| `maxFixRounds`                            | 3    | 1–10   |
-| `maxCiRetries`                            | 2    | 0–10   |
-| `maxReviewRetries`                        | 2    | 0–10   |
-| `maxInterruptRetries`                     | 3    | 0–10   |
-| `maxQaRetries`                            | 2    | 0–10   |
-| `ciPollIntervalSeconds`                   | 30   | 5–600  |
-| `ciTimeoutMinutes`                        | 30   | 1–240  |
-| `mergePollIntervalSeconds`                | 30   | 5–600  |
-| `mergeTimeoutMinutes`                     | 10   | 1–240  |
-| `turnTimeoutMinutes`                      | 30   | 1–240  |
-| `commandTimeoutMinutes`                   | 20   | 1–240  |
+| 字段                                                     | 默认       | 范围   |
+| -------------------------------------------------------- | ---------- | ------ |
+| `intervalSeconds`（空闲时查 Todo 的间隔）                | 60         | 1–3600 |
+| `maxCriteria`                                            | 8          | 1–20   |
+| `maxFixRounds`                                           | 3          | 1–10   |
+| `maxCiRetries`                                           | 2          | 0–10   |
+| `maxReviewRetries`                                       | 2          | 0–10   |
+| `maxInterruptRetries`                                    | 3          | 0–10   |
+| `maxQaRetries`                                           | 2          | 0–10   |
+| `maxNetworkRetries`                                      | 3          | 0–10   |
+| `networkRetryDelaysSeconds`（数组，1–10 项，每项 1–600） | 10, 30, 60 | —      |
+| `ciPollIntervalSeconds`                                  | 30         | 5–600  |
+| `ciTimeoutMinutes`                                       | 30         | 1–240  |
+| `mergePollIntervalSeconds`                               | 30         | 5–600  |
+| `mergeTimeoutMinutes`                                    | 10         | 1–240  |
+| `turnTimeoutMinutes`                                     | 30         | 1–240  |
+| `commandTimeoutMinutes`                                  | 20         | 1–240  |
 
-全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
+除 `networkRetryDelaysSeconds`（整数数组）外全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
 
 - 启动时 `tuning` 不合法：报错并以退出码 2 退出。
 - 运行中：每次 `step()` 开始、领单之前重新读一次配置文件里本 Project 的 `tuning`，不用重启。合法就用新值；不合法或读不到，沿用上次的值，打一行日志（同一个问题只打一次），Loop 不停。
@@ -70,8 +72,9 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 
 ## 网络错误（CYC-444）
 
-访问 GitHub 的命令（`git fetch`、`git push`、`gh pr create` / `edit` / `view`、`gh run rerun`，包括读 PR 状态和读 CI 状态）失败时，先按输出判断是不是网络类错误（`src/network.ts`）：`Could not resolve host`、`Connection reset`、`Connection refused`、`Connection timed out`、`TLS handshake timeout`、`unable to access`、`i/o timeout`、`EOF`、HTTP 502/503/504 等。权限、认证（401/403/404）、找不到分支、合并冲突、推送被拒绝**不算**网络错误，照旧转 Blocked。
+访问 GitHub 的命令（`git fetch`、`git push`、`gh pr create` / `edit` / `view` / `comment` / `merge`、`gh run rerun`，包括读 PR 状态、读 CI 状态和等 CI 时的每一次轮询）失败时，先按输出判断是不是网络类错误（`src/network.ts`）：`Could not resolve host`、`Connection reset` / `refused` / `timed out`、`TLS handshake timeout`、`unable to access`、`i/o timeout`、`unexpected EOF`、HTTP 502/503/504，以及命令本身超时。权限、认证（401/403/404）、HTTP 400/422/429、SSL 证书、代理错误、找不到分支、合并冲突、推送被拒绝**不算**网络错误，照旧转 Blocked。
 
-- 网络类错误：原地重试，最多 3 次（`maxNetworkRetries`），间隔 10、30、60 秒（`networkRetryDelaysMs`）。重试每次记一条 `network_retry` 事件（命令名、第几次、是否成功），不记命令输出。
-- 重试用完仍是网络错误：不转 Blocked、不评论、不移列，这次 `step()` 返回 `network_wait`，记一条 `network_down` 事件。run 留在原阶段，Loop 等一个间隔（`--interval`）后再 `step()`；续跑规则会先接着做这张单，不领新单。
-- 这两个值在 `Config` 里，暂不进配置文件（CYC-441 之后可调）。itsaplan 调用和 agent 会话的断连不在这里处理。
+- 网络类错误：原地重试，最多 3 次（`maxNetworkRetries`），间隔 10、30、60 秒（`networkRetryDelaysSeconds`），都可在 `tuning` 里调。每次重试记一条 `network_retry` 事件（命令名、第几次、这次是否不再是网络错误），不记命令输出。等 CI 时只重试那一次轮询，不重置 CI 超时。`gh run rerun` 不原地重试（怕重复触发），遇网络错误直接等待，下一步重新读 CI 状态后再决定。
+- 重试用完仍是网络错误：不转 Blocked、不评论、不移列，这次 `step()` 返回 `network_wait`，记一条 `network_down` 事件。run 留在原阶段，Loop 等一个间隔（`--interval`）后再 `step()`；续跑规则会先接着做这张单。网络一直不通时每个间隔都会记一条 `network_down`，没有上限。
+- 已知的取舍：交付阶段（`delivering`）等待后按续跑规则回到 verify 再走 QA；评审阶段等待后评审会重来；`--workers N` 时等待期间别的 worker 仍可领新单；`--once` 遇到 `network_wait` 就以该结果结束。
+- itsaplan 调用和 agent 会话的断连不在这里处理。

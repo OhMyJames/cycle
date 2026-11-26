@@ -1796,3 +1796,40 @@ test("tuning that cannot be read or is invalid: the step goes on with the last g
   await s.pipeline.step();
   expect(s.pipeline.intervalSeconds).toBeUndefined();
 });
+
+test("a command timeout is treated as a network error and retried", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
+  const inner = makeExec(s.world);
+  let timeouts = 1;
+  const pipeline = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: s.tracker,
+    sessions: s.sessions,
+    exec: async (argv, o) => {
+      if (timeouts > 0 && argv.includes("push")) {
+        timeouts--;
+        return { code: 124, output: "", timedOut: true };
+      }
+      return inner(argv, o);
+    },
+    store: s.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
+    sleep: async () => {},
+  });
+  expect((await pipeline.step()).status).toBe("delivered");
+  expect((await s.store.events()).some((e) => e.kind === "network_retry")).toBe(true);
+});
+
+test("a network error while waiting for CI retries the one poll, not the whole wait", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
+  const { pipeline, left } = flaky(
+    s,
+    (l) => l.includes("gh pr view") && l.includes("statusCheckRollup"),
+    2,
+    "Post https://api.github.com/graphql: net/http: TLS handshake timeout",
+  );
+  expect((await pipeline.step()).status).toBe("delivered");
+  expect(left()).toBe(0);
+});

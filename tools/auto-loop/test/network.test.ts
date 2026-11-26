@@ -31,3 +31,17 @@ test("authentication, missing branch, conflict and rejection are not network err
   ])
     expect(isNetworkError(out)).toBe(false);
 });
+
+test("HTTP 400/422/429, SSL certificate and proxy errors, and a bare EOF word are not network errors", () => {
+  for (const out of [
+    "fatal: unable to access 'https://x/': The requested URL returned error: 400",
+    "fatal: unable to access 'https://x/': SSL certificate problem: unable to get local issuer certificate",
+    "fatal: unable to access 'https://x/': Proxy error",
+    "HTTP 429: rate limited",
+    "HTTP 422: Validation Failed",
+    "unexpected token at end of file: EOF marker missing",
+  ])
+    expect(isNetworkError(out)).toBe(false);
+  expect(isNetworkError("gh pr view 超时。")).toBe(true);
+  expect(isNetworkError("fatal: early EOF")).toBe(true);
+});

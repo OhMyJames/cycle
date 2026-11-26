@@ -516,6 +516,8 @@ export const waitForCi = async (input: {
   sleep: (ms: number) => Promise<void>;
   /** Job links of a red attempt that was just rerun: while only these are red, the new attempt has not shown up yet. */
   staleFailedUrls?: ReadonlySet<string> | undefined;
+  /** Wraps each status read, so a caller can retry a failed one without restarting the wait (CYC-444). */
+  guardRead?: (read: () => Promise<ReadCiStatusResult>) => Promise<ReadCiStatusResult>;
 }): Promise<WaitForCiResult> => {
   const startedAt = input.clock.now().getTime();
   const maxPolls =
@@ -525,15 +527,17 @@ export const waitForCi = async (input: {
   let lastStatus: CiStatus | null = null;
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
-    const read = await readCiStatus({
-      prRef: input.prRef,
-      requiredChecks: input.requiredChecks,
-      expectedHeadSha: input.expectedHeadSha,
-      exec: input.exec,
-      cwd: input.cwd,
-      env: input.env,
-      timeoutMs: input.commandTimeoutMs,
-    });
+    const poll = () =>
+      readCiStatus({
+        prRef: input.prRef,
+        requiredChecks: input.requiredChecks,
+        expectedHeadSha: input.expectedHeadSha,
+        exec: input.exec,
+        cwd: input.cwd,
+        env: input.env,
+        timeoutMs: input.commandTimeoutMs,
+      });
+    const read = await (input.guardRead ? input.guardRead(poll) : poll());
     if (!read.ok) return { outcome: "error", error: read.error };
     lastStatus = read.status;
     if (read.status.state === "passed") return { outcome: "passed", status: read.status };
