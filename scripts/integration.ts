@@ -74,7 +74,7 @@ const run = async (
     cwd: `${root}${cwd}`,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, TMPDIR: scratch },
+    env: { ...process.env, TMPDIR: scratch, CYCLE_TEST_REAL_AGENTS: "1" },
   });
   running = proc;
   let timedOut = false;
