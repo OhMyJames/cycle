@@ -20,6 +20,7 @@
     "build": "bun run --cwd apps/daemon build && bun run --cwd apps/desktop build",
     "start": "bun run --cwd apps/desktop start",
     "check": "bun scripts/check.ts",
+    "check:changed": "bun scripts/changed.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.model.json && tsc -p tsconfig.renderer.json",
     "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
