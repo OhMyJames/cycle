@@ -70,10 +70,16 @@ const setUp = async (file: ConfigFile) => {
   });
   const setup = resolveProject(await tracker.getProject(), file);
   tracker.setColumns(setup.columns);
-  const loopFields = await tracker.getCustomFields().then(resolveLoopFields, () => null);
+  let loopFields: ReturnType<typeof resolveLoopFields> = null;
+  let loopFieldsError = "";
+  try {
+    loopFields = resolveLoopFields(await tracker.getCustomFields());
+  } catch (error) {
+    loopFieldsError = ` (${error instanceof Error ? error.message : String(error)})`;
+  }
   if (loopFields === null)
     plog(
-      "warning: the project has no usable 「Loop 阶段」/「Loop 阶段开始于」 fields (or an option name differs); the phase will not be written",
+      `warning: the project has no usable 「Loop 阶段」/「Loop 阶段开始于」 fields (or an option name differs); the phase will not be written${loopFieldsError}`,
     );
   tracker.setLoopFields(loopFields);
   const config = {

@@ -1693,3 +1693,41 @@ test("a failing phase write changes nothing about the outcome", async () => {
   expect(bad.tracker.moves).toEqual(ok.tracker.moves);
   expect((await bad.store.events()).some((e) => e.kind === "phase_field_failed")).toBe(true);
 });
+
+test("a phase write that half-failed is written again when the same phase is resumed", async () => {
+  const w = setup([ready()], { dev: [done(), done(), done(), done()], qa: [] }, {}, [
+    "bun run check",
+  ]);
+  // Every write fails while the run goes to Blocked: the clear fails too and is kept to retry.
+  w.tracker.failPhase = true;
+  await w.pipeline.step();
+  expect(w.tracker.phases).toEqual([]);
+  w.tracker.failPhase = false;
+  w.world.fail.clear();
+  w.sessions.script.qa.push(done(PASS));
+  w.sessions.script.dev.push(done());
+  (w.tracker.issues[0] as Issue).columnId = 22;
+  await w.pipeline.step();
+  // The pending clear goes out first, then the resumed phase is written (nothing was skipped as "already written").
+  expect(w.tracker.phases[0]).toBe("CYC-1:clear");
+  expect(w.tracker.phases).toContain("CYC-1:verify");
+  expect(w.tracker.phases.at(-1)).toBe("CYC-1:clear");
+});
+
+test("a phase write that never answers counts as failed and the run goes on", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] }, {});
+  w.tracker.setLoopPhase = () => new Promise(() => {});
+  const timed = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: w.tracker,
+    sessions: w.sessions,
+    exec: makeExec(w.world),
+    store: w.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+    sleep: async () => {},
+    mirrorTimeoutMs: 5,
+  });
+  expect((await timed.step()).status).toBe("delivered");
+});

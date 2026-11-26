@@ -83,16 +83,18 @@ export const resolveLoopFields = (reply: unknown): LoopFields | null => {
   const body = rec(reply);
   const rows = Array.isArray(reply) ? list(reply) : list(body.data ?? body.fields);
   const phase = rows.find((f) => f.name === PHASE_FIELD && f.fieldType === "select");
-  const started = rows.find((f) => f.name === STARTED_FIELD);
-  const phaseFieldId = Number(phase?.id);
-  const startedFieldId = Number(started?.id);
+  const started = rows.find((f) => f.name === STARTED_FIELD && f.fieldType === "datetime");
+  const id = (v: unknown): number =>
+    typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? Number(v) : Number.NaN;
+  const phaseFieldId = id(phase?.id);
+  const startedFieldId = id(started?.id);
   if (!Number.isInteger(phaseFieldId) || !Number.isInteger(startedFieldId)) return null;
   const options = list(phase?.options);
   const optionIds = {} as Record<LoopPhase, number>;
   for (const [key, name] of Object.entries(LOOP_PHASES)) {
-    const id = Number(options.find((o) => o.value === name)?.id);
-    if (!Number.isInteger(id)) return null;
-    optionIds[key as LoopPhase] = id;
+    const optionId = id(options.find((o) => o.value === name)?.id);
+    if (!Number.isInteger(optionId)) return null;
+    optionIds[key as LoopPhase] = optionId;
   }
   return { phaseFieldId, startedFieldId, optionIds };
 };

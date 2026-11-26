@@ -80,6 +80,8 @@ export type Deps = {
   sleep?: (ms: number) => Promise<void>;
   /** True once the loop has been asked to stop: no new work item is taken, runs already under way go on. */
   stopped?: () => boolean;
+  /** How long a write of the phase fields may take before it counts as failed. Defaults to 10 s. */
+  mirrorTimeoutMs?: number;
 };
 
 /** A run cannot go on without a person. The message is what the person is told. */
@@ -108,6 +110,10 @@ export class Pipeline {
   #lock: Promise<void> = Promise.resolve();
   /** What was last written to each work item's phase fields (null = cleared); nothing is written twice in a row. */
   readonly #mirrored = new Map<string, LoopPhase | null>();
+  /** When each run entered the phase last written, so a retried write keeps the original time. */
+  readonly #entered = new Map<string, { phase: LoopPhase; at: Date }>();
+  /** Runs whose clear failed: the work item may still show a phase it is no longer in. */
+  readonly #pendingClears = new Map<string, Issue>();
 
   constructor(deps: Deps) {
     this.#d = deps;
@@ -117,6 +123,7 @@ export class Pipeline {
   async step(): Promise<StepResult> {
     if (this.#d.config.dryRun) return this.#dryRun();
 
+    await this.#retryClears();
     const chosen = await this.#exclusive(() => this.#choose());
     if ("result" in chosen) return chosen.result;
     try {
@@ -335,16 +342,52 @@ export class Pipeline {
     return this.#drive(current, issue, book, byPerson);
   }
 
-  /** Mirrors the phase onto the work item. A failed write is logged and never stops the run. */
+  /**
+   * Mirrors the phase onto the work item. The write is bounded in time and a failure is logged, never raised: the run
+   * goes on. After a failure the next call writes again (the two field writes are not atomic), and a clear that failed
+   * is tried again at the start of the next step.
+   */
   async #mirror(run: RunRecord, issue: Issue, phase: LoopPhase | null): Promise<void> {
-    if (this.#mirrored.has(run.key) && this.#mirrored.get(run.key) === phase) return;
+    const key = run.key;
+    if (this.#mirrored.has(key) && this.#mirrored.get(key) === phase) return;
+    const entered = this.#entered.get(key);
+    const at = phase !== null && entered?.phase === phase ? entered.at : this.#d.clock.now();
+    if (phase !== null) this.#entered.set(key, { phase, at });
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await this.#d.tracker.setLoopPhase(issue, phase, this.#d.clock.now());
-      this.#mirrored.set(run.key, phase);
+      await Promise.race([
+        this.#d.tracker.setLoopPhase(issue, phase, at),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("timed out")),
+            this.#d.mirrorTimeoutMs ?? 10_000,
+          );
+        }),
+      ]);
+      this.#pendingClears.delete(key);
+      if (phase === null) {
+        this.#mirrored.delete(key);
+        this.#entered.delete(key);
+      } else this.#mirrored.set(key, phase);
     } catch (error) {
+      this.#mirrored.delete(key);
+      if (phase === null) this.#pendingClears.set(key, issue);
+      else this.#pendingClears.delete(key);
       const reason = error instanceof Error ? error.message : String(error);
-      this.#d.log(`${run.key}: could not write the phase field: ${reason}`);
-      await this.#d.store.event(run.key, "phase_field_failed", { phase: phase ?? "clear" });
+      this.#d.log(`${key}: could not write the phase field: ${reason}`);
+      await this.#d.store
+        .event(key, "phase_field_failed", { phase: phase ?? "clear" })
+        .catch(() => {});
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async #retryClears(): Promise<void> {
+    for (const [key, issue] of [...this.#pendingClears]) {
+      if (this.#active.has(key)) continue;
+      this.#pendingClears.delete(key);
+      await this.#mirror({ key } as RunRecord, issue, null);
     }
   }
 

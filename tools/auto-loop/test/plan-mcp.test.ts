@@ -68,3 +68,10 @@ test("without resolved fields nothing is written", async () => {
   await t.setLoopPhase(issue(), "dev", new Date());
   expect(calls).toEqual([]);
 });
+
+test("a field of the wrong type is not taken", () => {
+  const bad = fields();
+  (bad.data[1] as { fieldType: string }).fieldType = "text";
+  expect(resolveLoopFields(bad)).toBeNull();
+  expect(resolveLoopFields({ data: [{ ...bad.data[0], id: null }, bad.data[1]] })).toBeNull();
+});
