@@ -155,3 +155,20 @@ test("readTuning reads one Project's tuning and throws on an unreadable file or 
   await expect(readTuning(path, "A")).rejects.toThrow("cannot be read");
   await expect(readTuning(join(dir, "missing.json"), "A")).rejects.toThrow("cannot be read");
 });
+
+test("the network retry values are tunable and become milliseconds", () => {
+  const t = parseConfigFiles(
+    JSON.stringify({
+      ...base,
+      tuning: { maxNetworkRetries: 2, networkRetryDelaysSeconds: [5, 20] },
+    }),
+  );
+  expect(JSON.stringify(t)).toContain("networkRetryDelaysSeconds");
+  expect(tuningToConfig({ maxNetworkRetries: 2, networkRetryDelaysSeconds: [5, 20] })).toEqual({
+    maxNetworkRetries: 2,
+    networkRetryDelaysMs: [5000, 20000],
+  });
+  expect(() =>
+    parseConfigFiles(JSON.stringify({ ...base, tuning: { networkRetryDelaysSeconds: [] } })),
+  ).toThrow("networkRetryDelaysSeconds");
+});
