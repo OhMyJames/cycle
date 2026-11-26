@@ -1662,7 +1662,7 @@ test("a failing check passes the mid-output assertion error on to Dev", async ()
   const inner = makeExec(s.world);
   let failOnce = true;
   const pipeline = new Pipeline({
-    config: config({ stateDir: dir }),
+    config: config({ stateDir: dir, maxVerifyRetries: 0 }),
     tracker: s.tracker,
     sessions: s.sessions,
     exec: async (argv, o) => {
@@ -1684,4 +1684,83 @@ test("a failing check passes the mid-output assertion error on to Dev", async ()
   expect(second).toContain("Expected: 42");
   expect(second).toContain("Received: 41");
   expect(second).toContain("Ran 1949 tests across 200 files.");
+});
+
+// verify retries (CYC-438)
+const verifyPipeline = (
+  s: ReturnType<typeof setup>,
+  over: Partial<Parameters<typeof config>[0]>,
+  runCheck: (n: number) => ExecResult,
+) => {
+  const inner = makeExec(s.world);
+  const counts = { check: 0 };
+  const pipeline = new Pipeline({
+    config: config({ stateDir: dir, ...over }),
+    tracker: s.tracker,
+    sessions: s.sessions,
+    exec: async (argv, o) => {
+      if (argv.join(" ") === "bun run check") return runCheck(++counts.check);
+      return inner(argv, o);
+    },
+    store: s.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+  });
+  return { pipeline, counts };
+};
+
+test("a flaky verify command is re-run once and passes without a fix round", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const { pipeline, counts } = verifyPipeline(s, {}, (n) => ({
+    code: n === 1 ? 1 : 0,
+    output: "flaky",
+    timedOut: false,
+  }));
+  await pipeline.step();
+  const events = await s.store.events();
+  const retried = events.filter((e) => e.kind === "verify_retried");
+  expect(retried).toHaveLength(1);
+  expect(retried[0]).toMatchObject({
+    round: 0,
+    command: "bun run check",
+    attempt: 1,
+    passed: true,
+  });
+  expect(events.some((e) => e.kind === "round_failed")).toBe(false);
+  expect(s.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(1);
+  expect(counts.check).toBe(2);
+});
+
+test("a verify command that fails again after the re-run goes back to Dev", async () => {
+  const s = setup([ready()], { dev: [done(), done()], qa: [done(PASS)] });
+  const { pipeline } = verifyPipeline(s, {}, (n) => ({
+    code: n <= 2 ? 1 : 0,
+    output: `fail ${n}`,
+    timedOut: false,
+  }));
+  await pipeline.step();
+  const events = await s.store.events();
+  expect(events.find((e) => e.kind === "verify_retried")).toMatchObject({ passed: false });
+  expect(events.some((e) => e.kind === "round_failed")).toBe(true);
+  const dev = s.sessions.prompts.filter((p) => p.role === "dev");
+  expect(dev[1]?.prompt).toContain("fail 2");
+});
+
+test("timed-out commands and maxVerifyRetries 0 are not re-run", async () => {
+  for (const [over, timedOut] of [
+    [{}, true],
+    [{ maxVerifyRetries: 0 }, false],
+  ] as const) {
+    const s = setup([ready()], { dev: [done(), done()], qa: [done(PASS)] });
+    const { pipeline, counts } = verifyPipeline(s, over, (n) => ({
+      code: n === 1 ? 1 : 0,
+      output: "x",
+      timedOut: timedOut && n === 1,
+    }));
+    await pipeline.step();
+    expect(counts.check).toBeLessThanOrEqual(2);
+    expect((await s.store.events()).some((e) => e.kind === "verify_retried")).toBe(false);
+    expect((await s.store.events()).some((e) => e.kind === "round_failed")).toBe(true);
+  }
 });

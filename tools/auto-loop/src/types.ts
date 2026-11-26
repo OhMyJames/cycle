@@ -90,6 +90,8 @@ export type Config = {
   maxInterruptRetries: number;
   /** Maximum number of fresh QA sessions tried after an unreadable verdict, a missing checklist, a timeout or an abnormal end. */
   maxQaRetries: number;
+  /** Maximum number of times a failed (not timed-out) verify command is re-run in place before the failure counts as a fix round. */
+  maxVerifyRetries: number;
   /** How often to poll GitHub CI status while waiting for checks to finish. */
   ciPollIntervalMs: number;
   /** Maximum time to wait for a single CI run to finish before blocking. */
@@ -132,6 +134,7 @@ export const defaultConfig = (
   maxReviewRetries: 2,
   maxInterruptRetries: 3,
   maxQaRetries: 2,
+  maxVerifyRetries: 1,
   ciPollIntervalMs: 30_000,
   ciTimeoutMs: 30 * 60_000,
   mergePollIntervalMs: 30_000,
