@@ -11,7 +11,7 @@ import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
 import { runLoops } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
-import { resolveProject } from "./project.ts";
+import { resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
 import { computeStats } from "./stats.ts";
@@ -70,6 +70,12 @@ const setUp = async (file: ConfigFile) => {
   });
   const setup = resolveProject(await tracker.getProject(), file);
   tracker.setColumns(setup.columns);
+  const loopFields = await tracker.getCustomFields().then(resolveLoopFields, () => null);
+  if (loopFields === null)
+    plog(
+      "warning: the project has no usable 「Loop 阶段」/「Loop 阶段开始于」 fields (or an option name differs); the phase will not be written",
+    );
+  tracker.setLoopFields(loopFields);
   const config = {
     ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
     ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),

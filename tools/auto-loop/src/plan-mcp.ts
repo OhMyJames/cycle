@@ -5,7 +5,8 @@
 // columnId, typeId, archived }[]`). `toIssue` reads these defensively and returns `null` when missing so selection
 // fails closed rather than treating an unknown issue as an eligible leaf.
 
-import type { Config, Issue, Priority, Stage, Tracker } from "./types.ts";
+import type { LoopFields } from "./project.ts";
+import type { Config, Issue, LoopPhase, Priority, Stage, Tracker } from "./types.ts";
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -69,6 +70,7 @@ export class PlanTracker implements Tracker {
   readonly #key: string;
   readonly #project: string;
   #columns: Config["columns"] | undefined;
+  #loopFields: LoopFields | null = null;
 
   /** `columns` may be left out until `setColumns` is called with what `get_project` resolved. */
   constructor(options: {
@@ -85,6 +87,36 @@ export class PlanTracker implements Tracker {
 
   setColumns(columns: Config["columns"]): void {
     this.#columns = columns;
+  }
+
+  /** The ids of the phase fields; `null` (the default) means the project has none and nothing is written. */
+  setLoopFields(fields: LoopFields | null): void {
+    this.#loopFields = fields;
+  }
+
+  /** The project's custom fields (`list_custom_fields`). */
+  async getCustomFields(): Promise<unknown> {
+    return this.#call("execute_read", {
+      name: "list_custom_fields",
+      arguments: { projectKey: this.#project },
+    });
+  }
+
+  async setLoopPhase(issue: Issue, phase: LoopPhase | null, at: Date): Promise<void> {
+    const f = this.#loopFields;
+    if (f === null) return;
+    const set = (fieldId: number, rest: Record<string, unknown>) =>
+      this.#call("execute_write", {
+        name: "set_issue_field_value",
+        arguments: { issueId: issue.id, fieldId, ...rest },
+      });
+    if (phase === null) {
+      await set(f.phaseFieldId, { optionIds: [] });
+      await set(f.startedFieldId, { value: null });
+      return;
+    }
+    await set(f.phaseFieldId, { optionIds: [f.optionIds[phase]] });
+    await set(f.startedFieldId, { value: at.toISOString() });
   }
 
   #column(stage: Stage): number {

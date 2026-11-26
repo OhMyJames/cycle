@@ -51,6 +51,7 @@ import {
   type ExecResult,
   type Issue,
   type Logger,
+  type LoopPhase,
   SessionLost,
   type SessionRole,
   type Sessions,
@@ -86,6 +87,18 @@ class Blocked extends Error {}
 
 const PR_STATE_READS = 3;
 
+const PHASE_OF: Record<RunRecord["phase"], LoopPhase | null> = {
+  claimed: "dev",
+  dev: "dev",
+  verify: "verify",
+  qa: "qa",
+  delivering: "ci",
+  ci: "ci",
+  review: "review",
+  blocked: null,
+  done: null,
+};
+
 const branchOf = (number: number) => `auto/cyc-${number}`;
 
 export class Pipeline {
@@ -93,6 +106,8 @@ export class Pipeline {
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
   #lock: Promise<void> = Promise.resolve();
+  /** What was last written to each work item's phase fields (null = cleared); nothing is written twice in a row. */
+  readonly #mirrored = new Map<string, LoopPhase | null>();
 
   constructor(deps: Deps) {
     this.#d = deps;
@@ -320,6 +335,19 @@ export class Pipeline {
     return this.#drive(current, issue, book, byPerson);
   }
 
+  /** Mirrors the phase onto the work item. A failed write is logged and never stops the run. */
+  async #mirror(run: RunRecord, issue: Issue, phase: LoopPhase | null): Promise<void> {
+    if (this.#mirrored.has(run.key) && this.#mirrored.get(run.key) === phase) return;
+    try {
+      await this.#d.tracker.setLoopPhase(issue, phase, this.#d.clock.now());
+      this.#mirrored.set(run.key, phase);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.#d.log(`${run.key}: could not write the phase field: ${reason}`);
+      await this.#d.store.event(run.key, "phase_field_failed", { phase: phase ?? "clear" });
+    }
+  }
+
   async #drive(
     start: RunRecord,
     issue: Issue,
@@ -335,8 +363,12 @@ export class Pipeline {
       for (;;) {
         if (run.prUrl !== null && run.phase !== "blocked" && run.phase !== "done") {
           const settled = await this.#guardPr(run, issue, save);
-          if (settled !== undefined) return settled;
+          if (settled !== undefined) {
+            await this.#mirror(run, issue, null);
+            return settled;
+          }
         }
+        await this.#mirror(run, issue, PHASE_OF[run.phase]);
         switch (run.phase) {
           case "claimed": {
             await this.#claim(run, issue, save);
@@ -366,6 +398,7 @@ export class Pipeline {
           case "review": {
             const done = await this.#review(run, issue, book, save);
             if (done !== undefined) {
+              await this.#mirror(run, issue, null);
               return {
                 status: "delivered",
                 key: run.key,
@@ -382,6 +415,7 @@ export class Pipeline {
       }
     } catch (error) {
       if (!(error instanceof Blocked)) throw error;
+      await this.#mirror(run, issue, null);
       return this.#block(run, issue, error.message, save);
     }
   }
@@ -1328,6 +1362,7 @@ export class Pipeline {
           timeoutMs: config.commandTimeoutMs,
         });
         if (merged.ok) {
+          await this.#mirror(run, issue, "merge");
           await this.#confirmMerged(run, prUrl, worktree);
           await tracker.comment(
             issue,

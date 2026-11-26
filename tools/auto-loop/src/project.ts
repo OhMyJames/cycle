@@ -3,7 +3,7 @@
 // they are taken in board order (`position`): Todo is the first `unstarted`; In Progress, In Review and Blocked are
 // the first, second and third `started`.
 
-import type { Config } from "./types.ts";
+import type { Config, LoopPhase } from "./types.ts";
 
 export type ProjectSetup = Pick<
   Config,
@@ -54,4 +54,45 @@ export const resolveProject = (
     featureTypeId,
     bugTypeId,
   };
+};
+
+/** The phases the loop mirrors onto a work item, and the option name each one has in the project's select field. */
+export const LOOP_PHASES = {
+  dev: "开发",
+  verify: "验证",
+  qa: "QA",
+  ci: "等 CI",
+  review: "评审",
+  merge: "等合并",
+} as const satisfies Record<LoopPhase, string>;
+
+export const PHASE_FIELD = "Loop 阶段";
+export const STARTED_FIELD = "Loop 阶段开始于";
+
+export type LoopFields = {
+  phaseFieldId: number;
+  startedFieldId: number;
+  optionIds: Record<LoopPhase, number>;
+};
+
+/**
+ * Finds the two custom fields and the option ids by name in the `list_custom_fields` reply. A missing field or option
+ * gives `null` (do not write), never an error: the fields only mirror the run record.
+ */
+export const resolveLoopFields = (reply: unknown): LoopFields | null => {
+  const body = rec(reply);
+  const rows = Array.isArray(reply) ? list(reply) : list(body.data ?? body.fields);
+  const phase = rows.find((f) => f.name === PHASE_FIELD && f.fieldType === "select");
+  const started = rows.find((f) => f.name === STARTED_FIELD);
+  const phaseFieldId = Number(phase?.id);
+  const startedFieldId = Number(started?.id);
+  if (!Number.isInteger(phaseFieldId) || !Number.isInteger(startedFieldId)) return null;
+  const options = list(phase?.options);
+  const optionIds = {} as Record<LoopPhase, number>;
+  for (const [key, name] of Object.entries(LOOP_PHASES)) {
+    const id = Number(options.find((o) => o.value === name)?.id);
+    if (!Number.isInteger(id)) return null;
+    optionIds[key as LoopPhase] = id;
+  }
+  return { phaseFieldId, startedFieldId, optionIds };
 };

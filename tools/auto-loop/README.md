@@ -31,3 +31,14 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 - 无人值守的权限请求：基线白名单自动放行，其余留在会话里等你在桌面端批准。
 - 清理（CYC-379）：每轮选单前检查已结束的 run；工单为 Done 且 PR 已合并时，删除它自己的 worktree 和本地分支。不强删：有未提交改动则只记 `cleanup_skipped_dirty` 事件留给人；不动会话和远端分支。
 - 状态在 `<stateDir>/runs/<KEY>/`（run.json、criteria.json、progress.md）和 `events.jsonl`，都在 worktree 之外。
+
+## 工单上的 Loop 阶段字段
+
+Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个自定义字段，让看板上能看出 In Progress 的工单走到了哪一步。字段由人在 itsaplan 里建（Loop 不自动建），启动时按名字解析字段 id 和选项 id（`list_custom_fields`），不写死：
+
+- 「Loop 阶段」：单选，选项 开发、验证、QA、等 CI、评审、等合并。
+- 「Loop 阶段开始于」：日期时间，写入进入该阶段的时间。
+
+阶段对应：`claimed`、`dev` → 开发；`verify` → 验证；`qa` → QA；`delivering`、`ci` → 等 CI；`review`（独立评审）→ 评审；评审结论为合并、开启自动合并后等合并 → 等合并；`done`、转 Blocked → 两个字段都清空。阶段没变时不重复写；进程重启续跑、或被人放回 Todo 后续跑，按当前阶段补写一次。
+
+字段只是镜像，真实状态以 run 记录为准：写失败只记一条日志和 `phase_field_failed` 事件，不影响推进。项目里缺这两个字段、或选项名对不上时，启动打一行警告，整个运行期间不写字段，Loop 照常工作。

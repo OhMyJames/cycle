@@ -94,6 +94,9 @@ export const done = (text = "<progress>done: x\nnext: y</progress>"): TurnResult
 export class FakeTracker implements Tracker {
   moves: string[] = [];
   comments: string[] = [];
+  /** `KEY:phase` per write, `KEY:clear` per clear. */
+  phases: string[] = [];
+  failPhase = false;
   /** A test can hold `listTodo`, `get` and `move` open until it releases them. */
   gates: { listTodo?: Promise<void>; get?: Promise<void>; move?: Promise<void> } = {};
   constructor(public issues: Issue[]) {}
@@ -117,6 +120,10 @@ export class FakeTracker implements Tracker {
   }
   async comment(i: Issue, text: string) {
     this.comments.push(`${i.key}:${text}`);
+  }
+  async setLoopPhase(i: Issue, phase: string | null) {
+    if (this.failPhase) throw new Error("field write failed");
+    this.phases.push(`${i.key}:${phase ?? "clear"}`);
   }
 }
 

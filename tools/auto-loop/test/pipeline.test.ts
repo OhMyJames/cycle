@@ -1626,3 +1626,70 @@ test("two runs claiming at once never run git fetch at the same time", async () 
     Array.from({ length: s.world.fetchLog.length / 2 }, () => "start,end").join(","),
   );
 });
+
+test("the phase is mirrored from claim to delivery, each once, and cleared on delivery", async () => {
+  const { pipeline, tracker } = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  expect((await pipeline.step()).status).toBe("delivered");
+  expect(tracker.phases).toEqual([
+    "CYC-1:dev",
+    "CYC-1:verify",
+    "CYC-1:qa",
+    "CYC-1:ci",
+    "CYC-1:review",
+    "CYC-1:merge",
+    "CYC-1:clear",
+  ]);
+});
+
+test("Blocked clears the phase; put back in Todo, the resumed phase is written again", async () => {
+  const w = setup([ready()], { dev: [done(), done(), done(), done()], qa: [] }, {}, [
+    "bun run check",
+  ]);
+  await w.pipeline.step();
+  expect(w.tracker.phases.at(-1)).toBe("CYC-1:clear");
+  w.world.fail.clear();
+  w.sessions.script.qa.push(done(PASS));
+  w.sessions.script.dev.push(done());
+  (w.tracker.issues[0] as Issue).columnId = 22;
+  const before = w.tracker.phases.length;
+  await w.pipeline.step();
+  expect(w.tracker.phases[before]).toBe("CYC-1:verify");
+});
+
+test("a restarted process writes the phase of the run it continues", async () => {
+  const first = setup([ready()], { dev: [done()], qa: [] });
+  const original = first.sessions.turn.bind(first.sessions);
+  first.sessions.turn = async (id, prompt, ctx) => {
+    if (ctx.role === "qa") throw new Error("killed");
+    return original(id, prompt, ctx);
+  };
+  await expect(first.pipeline.step()).rejects.toThrow("killed");
+  const tracker = new FakeTracker(first.tracker.issues);
+  const second = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker,
+    sessions: new FakeSessions({ dev: [], qa: [done(PASS)] }),
+    exec: makeExec(first.world),
+    store: first.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+  });
+  await second.step();
+  expect(tracker.phases[0]).toBe("CYC-1:verify");
+});
+
+test("a failing phase write changes nothing about the outcome", async () => {
+  const ok = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const bad = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  bad.tracker.failPhase = true;
+  const a = await ok.pipeline.step();
+  const b = await bad.pipeline.step();
+  expect(b).toEqual(a);
+  expect(bad.tracker.moves).toEqual(ok.tracker.moves);
+  expect((await bad.store.events()).some((e) => e.kind === "phase_field_failed")).toBe(true);
+});
