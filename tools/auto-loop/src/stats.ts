@@ -14,6 +14,56 @@ export type Stats = {
   reworkRate: number;
   /** When each delivered run's pull request was opened: its review time is the time from here to its merge. */
   delivery: { run: string; at: string; prUrl: string }[];
+  /** The requests the Loop left to a person or refused, by kind and command prefix: the ones a person allowed most first, at most 10 (CYC-423). Empty when there are none. */
+  permissions: PermissionRow[];
+};
+
+export type PermissionRow = {
+  kind: string;
+  /** The first two words of a command ("git mv"); absent for requests that are not commands. */
+  command?: string;
+  /** Times the request was left for a person (`ask`) or refused by the policy (`deny`). */
+  requested: number;
+  /** Times a person allowed it in the app. */
+  allowed: number;
+  /** Times a person refused it in the app. */
+  denied: number;
+};
+
+const PERMISSION_ROWS = 10;
+
+const permissionRows = (events: LoopEvent[]): PermissionRow[] => {
+  const rows = new Map<string, PermissionRow>();
+  for (const event of events) {
+    if (event.kind !== "permission_requested" && event.kind !== "permission_answered") continue;
+    if (event.decision === "allow") continue;
+    const kind = String(event.tool ?? "other");
+    const command = typeof event.command === "string" ? event.command : undefined;
+    const key = `${kind}\0${command ?? ""}`;
+    let row = rows.get(key);
+    if (row === undefined) {
+      row = {
+        kind,
+        ...(command !== undefined ? { command } : {}),
+        requested: 0,
+        allowed: 0,
+        denied: 0,
+      };
+      rows.set(key, row);
+    }
+    if (event.kind === "permission_requested") row.requested++;
+    else if (event.answer === "allow") row.allowed++;
+    else if (event.answer === "deny") row.denied++;
+  }
+  return Array.from(rows.values())
+    .sort(
+      (a, b) =>
+        b.allowed - a.allowed ||
+        b.requested - a.requested ||
+        a.kind.localeCompare(b.kind) ||
+        (a.command ?? "").localeCompare(b.command ?? ""),
+    )
+    .slice(0, PERMISSION_ROWS);
 };
 
 const INTERVENTIONS = new Set(["permission_pending", "blocked", "resumed"]);
@@ -62,5 +112,6 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     interventionRate: rate(intervened, runs),
     reworkRate: rate(reworked, checked),
     delivery,
+    permissions: permissionRows(events),
   };
 };

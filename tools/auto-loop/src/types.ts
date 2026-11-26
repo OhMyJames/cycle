@@ -183,6 +183,6 @@ export interface Sessions {
   turn(
     sessionId: string,
     prompt: string,
-    context: { role: SessionRole; worktree: string; timeoutMs: number },
+    context: { run: string; role: SessionRole; worktree: string; timeoutMs: number },
   ): Promise<TurnResult>;
 }
