@@ -120,9 +120,9 @@ describe("withSettingsLock", () => {
     let second = false;
     const first = withSettingsLock(path, async () => {
       // Looks abandoned (old mtime) until the holder's heartbeat touches it.
-      const old = new Date(Date.now() - 15_000);
+      const old = new Date(Date.now() - 25_000);
       utimesSync(`${path}.lock`, old, old);
-      await Bun.sleep(16_000);
+      await Bun.sleep(5_500);
       expect(second).toBe(false);
     });
     await Bun.sleep(100);
@@ -131,7 +131,7 @@ describe("withSettingsLock", () => {
     });
     await Promise.all([first, waiting]);
     expect(second).toBe(true);
-  }, 30_000);
+  }, 15_000);
 
   test("takes over a lock a dead process left behind", async () => {
     const path = agySettingsPath(tempHome());
