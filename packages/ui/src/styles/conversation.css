@@ -1903,6 +1903,11 @@ button[data-slot="review-file"]:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* A command's tokens: the code theme's light colour, or its dark one in a dark page. */
+[data-slot="tool-command"] [data-token] {
+  color: light-dark(var(--tok-l), var(--tok-d));
+}
+
 /* One call's change: its own lines, numbered as in the file, removed and added ones on a faint red and green. Sunken like
    the output, and as tall at most. */
 [data-slot="tool-diff"] {

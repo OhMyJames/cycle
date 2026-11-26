@@ -850,6 +850,31 @@ test("a command opens to itself and its output apart from its errors; a long out
   ]);
 });
 
+test("a shell command is coloured as bash in the code theme's colours, and is the same words and copy as plain text", async () => {
+  const command = 'git show :2:a.md | grep "x" > /tmp/o.txt; n=$(wc -l < a.md) && echo "$n"';
+  const { user, log, script } = await open(
+    you("u1"),
+    ...finished("hl", "Bash", { command, description: "Highlight me" }, { content: [] }),
+  );
+  await user.click(await screen.findByRole("button", { name: /Highlight me/ }));
+  const pre = () => log.querySelector('[data-slot="tool-command"]');
+  // Before the highlighter is ready, and after it: the words are the command's.
+  await waitFor(() => expect(pre()).not.toBeNull());
+  expect(pre()?.textContent).toBe(command);
+  await waitFor(() => expect(pre()?.querySelectorAll("[data-token]").length).toBeGreaterThan(3));
+  expect(pre()?.textContent).toBe(command);
+  const tokens = [...(pre()?.querySelectorAll<HTMLElement>("[data-token]") ?? [])];
+  // Command name, string, operator and variable are not one colour.
+  expect(tokens.find((token) => token.textContent === "git")).toBeTruthy();
+  const colours = new Set(tokens.map((token) => token.style.getPropertyValue("--tok-l")));
+  expect(colours.has("")).toBe(false);
+  expect(colours.size).toBeGreaterThan(2);
+  // A dark colour is given beside each light one.
+  expect(tokens.every((token) => token.style.getPropertyValue("--tok-d") !== "")).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Copy the command" }));
+  expect(script.calls.filter(([name]) => name === "copyText")).toEqual([["copyText", command]]);
+});
+
 test("a call at work shows on its row how long it has been going, from when the page first saw it", async () => {
   // Seen three seconds ago: a row drawn again goes on from there, not from nought.
   startedAt("local:s1:tool:slow", Date.now() - 3_000);

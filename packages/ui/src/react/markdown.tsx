@@ -317,7 +317,7 @@ const components: ComponentProps<typeof Streamdown>["components"] = {
  * JavaScript regex engine, so it needs no WebAssembly and the page's CSP stays as it is.
  */
 const plugins = new Map<CodeThemeId, ReturnType<typeof createCodePlugin>>();
-const pluginFor = (id: CodeThemeId) => {
+export const pluginFor = (id: CodeThemeId) => {
   let plugin = plugins.get(id);
   if (plugin === undefined) {
     plugin = createCodePlugin({ themes: [...themesOf(id)] as never });
