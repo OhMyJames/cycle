@@ -10,8 +10,11 @@ import type {
   EnvironmentsState,
   GitBranches,
   LocationConfig,
+  LoopAction,
+  LoopActResult,
   LoopBoardAnswer,
   LoopProjectsAnswer,
+  LoopTicketAnswer,
   PlanUsage,
   PluginFailure,
   PluginInfo,
@@ -72,6 +75,9 @@ export const fakeBridge = (
     analytics?: AnalyticsStatus;
     loopProjects?: LoopProjectsAnswer;
     loopBoards?: Record<string, LoopBoardAnswer>;
+    loopTickets?: Record<string, LoopTicketAnswer>;
+    /** What a state button comes to. Default: it worked. */
+    loopAct?: LoopActResult;
     /** What the daemon says it can do. Default: all of it. */
     capabilities?: {
       queue: boolean;
@@ -671,6 +677,20 @@ export const fakeBridge = (
       "loopBoard",
       async (projectKey: string): Promise<LoopBoardAnswer> =>
         options.loopBoards?.[projectKey] ?? { kind: "no_key" },
+    ),
+    loopTicket: record(
+      "loopTicket",
+      async (_projectKey: string, identifier: string): Promise<LoopTicketAnswer> =>
+        options.loopTickets?.[identifier] ?? { kind: "no_key" },
+    ),
+    loopAct: record(
+      "loopAct",
+      async (
+        _projectKey: string,
+        _identifier: string,
+        _action: LoopAction,
+        _confirmed?: boolean,
+      ): Promise<LoopActResult> => options.loopAct ?? { kind: "ok" },
     ),
   };
   return {

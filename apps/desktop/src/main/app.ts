@@ -35,7 +35,7 @@ import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
 import { fileEnvironments } from "./environments.ts";
 import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
-import { answerBoard, readLoopProjects } from "./loop.ts";
+import { actOnTicket, answerBoard, answerTicket, readLoopProjects } from "./loop.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
 import { fileSettings } from "./settings.ts";
@@ -318,6 +318,14 @@ export const startApp = async (options: AppOptions) => {
     },
     loopBoard: (projectKey: unknown) =>
       answerBoard(options.loop, projectKey, (event, props) => analytics.track(event, props)),
+    loopTicket: (projectKey: unknown, identifier: unknown) =>
+      answerTicket(options.loop, projectKey, identifier, (event, props) =>
+        analytics.trackUnchecked(event, props),
+      ),
+    loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
+      actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
+        analytics.trackUnchecked(event, props),
+      ),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
     // Through main, not the page's navigator.clipboard: the page is given no permissions. Text only, of a sane size.
     copyText: (text: unknown) => {

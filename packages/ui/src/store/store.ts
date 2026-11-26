@@ -333,6 +333,8 @@ export class AppStore extends StoreBase {
 
   loadLoopProjects = this.#loop.loadProjects;
   loadLoopBoard = this.#loop.loadBoard;
+  loadLoopTicket = this.#loop.loadTicket;
+  actOnLoopTicket = this.#loop.act;
 
   // ---- connectors ----
 

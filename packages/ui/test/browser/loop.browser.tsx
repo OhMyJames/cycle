@@ -22,6 +22,7 @@ const ticket = (n: number, column: string) => ({
   title: `Ticket ${n}`,
   priority: "high",
   column,
+  actions: [],
 });
 const board: LoopBoardAnswer = {
   kind: "ok",
@@ -116,4 +117,33 @@ test("the Backlog opens on 20 tickets and shows more when asked", async () => {
   await user.click(within(backlog).getByRole("button", { name: "Show 5 more" }));
   expect(within(backlog).getAllByRole("listitem")).toHaveLength(45);
   expect(within(backlog).queryByRole("button", { name: /more/ })).toBeNull();
+});
+
+test("Approve asks first; only the confirmation writes, and a failure is said, not hidden", async () => {
+  const backlog = { ...ticket(600, "Backlog"), actions: ["approve" as const] };
+  const doing = ticket(601, "In Progress");
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: { ...board, doing: [doing], backlog: [backlog] } },
+    loopAct: { kind: "failed", reason: "forbidden" },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  const column = await screen.findByRole("region", { name: "Backlog" });
+  // Loop's own ticket in Doing has no buttons.
+  expect(
+    within(screen.getByRole("region", { name: "Doing" })).queryByRole("button", {
+      name: /Approve|Back to/,
+    }),
+  ).toBeNull();
+  await user.click(within(column).getByRole("button", { name: "Approve" }));
+  expect(fake.calls.some(([name]) => name === "loopAct")).toBe(false);
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+  expect(await within(dialog).findByText(/did not accept your key/)).toBeTruthy();
+  expect(fake.calls.filter(([name]) => name === "loopAct")).toEqual([
+    ["loopAct", "CYC", "CYC-600", "approve", true],
+  ]);
 });
