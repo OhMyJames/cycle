@@ -59,19 +59,26 @@ export class DaemonSessions implements Sessions {
         permission: (sessionId, request, requestId) =>
           this.#permission(sessionId, request, requestId),
         resolved: (_sessionId, requestId, outcome) => {
-          const left = this.#left.get(String(requestId));
+          const key = String(requestId);
+          const left = this.#left.get(key);
           if (left !== undefined) {
-            this.#left.delete(String(requestId));
+            this.#left.delete(key);
             const answer = answeredAs(left.request, outcome);
             if (answer !== undefined)
               this.#emit(left.run, "permission_answered", { ...left.data, answer });
+          } else if (!this.#waiters.has(key)) {
+            // The answer got here before the request was handled: keep it for `#permission`.
+            this.#early.set(key, outcome);
           }
-          const waiter = this.#waiters.get(String(requestId));
+          const waiter = this.#waiters.get(key);
           waiter?.({ outcome: "cancelled" });
         },
       },
     });
   }
+
+  /** Outcomes of requests that were settled before this client had handled them, by the daemon's id. */
+  readonly #early = new Map<string, unknown>();
 
   readonly #waiters = new Map<string, (answer: PermissionAnswer) => void>();
 
@@ -148,8 +155,17 @@ export class DaemonSessions implements Sessions {
     if (verdict.decision !== "allow")
       this.#emit(turn.run, "permission_requested", { ...data, decision: verdict.decision, reason });
     if (answer !== undefined) return answer;
-    if (requestId !== undefined)
+    if (requestId !== undefined) {
+      const early = this.#early.get(requestId);
+      if (this.#early.delete(requestId)) {
+        // Settled by a person already: record the answer and leave nothing waiting.
+        const said = answeredAs(request, early);
+        if (said !== undefined)
+          this.#emit(turn.run, "permission_answered", { ...data, answer: said });
+        return { outcome: "cancelled" };
+      }
       this.#left.set(requestId, { sessionId, run: turn.run, request, data });
+    }
     // Not for the loop to decide: the request stays open until a person answers it in the app.
     this.#onWaiting(sessionId, typeof request.title === "string" ? request.title : "");
     return wait(true);
