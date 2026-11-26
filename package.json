@@ -25,6 +25,7 @@
     "format": "biome check --write .",
     "test": "bun test",
     "prepare": "git config core.hooksPath .githooks || true",
+    "pr-ship": "bun scripts/pr-ship.ts",
     "worktree:prune": "bun scripts/worktree-prune.ts",
     "test:integration": "bun scripts/integration.ts",
     "test:browser": "bun run --cwd packages/ui test:browser"
