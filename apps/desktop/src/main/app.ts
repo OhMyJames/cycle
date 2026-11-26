@@ -352,7 +352,10 @@ export const startApp = async (options: AppOptions) => {
     interfaceBooted: () => {
       pages.booted();
     },
-    applyInterfaceUpdate: () => pages.apply(),
+    applyInterfaceUpdate: () => {
+      analytics.track("interface_update_applied", {});
+      return pages.apply();
+    },
     // From the page, so only what the page may say, and checked: anything else is dropped.
     track: (event: unknown, props: unknown) => {
       if (typeof event === "string" && isUiEvent(event))
@@ -541,7 +544,9 @@ export const startApp = async (options: AppOptions) => {
   });
   contents.on("will-attach-webview", (event) => event.preventDefault());
   // A page from outside the app that falls over before it said it was drawn is not shown again.
-  contents.on("render-process-gone", (_event, details) => void pages.broke(details.reason));
+  contents.on("render-process-gone", (_event, details) => {
+    pages.broke(details.reason)?.catch((error) => console.warn(`[interface] ${String(error)}`));
+  });
   await pages.start();
   // Every location is connected from here, not when the person picks one: what is wrong with one is in its status.
   // Signed out, that waits for the sign-in.
@@ -549,7 +554,11 @@ export const startApp = async (options: AppOptions) => {
     connectWhenOpen = true;
     if (account.status().open) void manager.connectAll();
   });
-  interfaceUpdater?.start();
+  if (interfaceUpdater !== undefined && options.interface !== undefined) {
+    interfaceUpdater.noteInstalled((await options.interface.store.readState()).current);
+    pages.refresh();
+    interfaceUpdater.start();
+  }
   if (options.update !== undefined && options.update.disabled === undefined) {
     await cleanStale(options.update.appPath);
     updater.start();

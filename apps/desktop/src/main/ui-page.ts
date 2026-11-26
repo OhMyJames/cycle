@@ -28,6 +28,7 @@ export type PageSwitchDeps = {
 };
 
 export const createPageSwitch = (deps: PageSwitchDeps) => {
+  // Declared first: the store asks which bundle is showing.
   const set = deps.setTimeout ?? setTimeout;
   const clear = deps.clearTimeout ?? clearTimeout;
   const log = deps.log ?? (() => {});
@@ -44,6 +45,10 @@ export const createPageSwitch = (deps: PageSwitchDeps) => {
     chain = next.catch(() => undefined);
     return next;
   };
+
+  /** Whether the page has said it is drawn, for the page being loaded now. */
+  let drawn = false;
+  deps.store?.showing(() => running);
 
   const info = (): InterfaceState => {
     const shown = running ?? deps.bundledVersion;
@@ -65,16 +70,12 @@ export const createPageSwitch = (deps: PageSwitchDeps) => {
   /** Chooses the page, shows it, and (for a bundle) waits for it to say it is drawn. */
   const show = async (): Promise<void> => {
     disarm();
+    drawn = false;
     const page =
       deps.store !== undefined ? await deps.store.selectPage() : ({ kind: "bundled" } as const);
     if (page.kind === "ui") {
       url = pathToFileURL(join(page.dir, "index.html")).href;
       running = page.uiVersion;
-      const shown = page.uiVersion;
-      timer = set(
-        () => void failed(shown, "it did not say it had drawn itself in time"),
-        deps.bootMs ?? BOOT_MS,
-      );
     } else {
       url = deps.bundledUrl;
       running = undefined;
@@ -85,6 +86,19 @@ export const createPageSwitch = (deps: PageSwitchDeps) => {
     } catch (error) {
       if (running === undefined) throw error;
       await fail(running, error instanceof Error ? error.message : String(error));
+      return;
+    }
+    // The time to draw is counted from when the page has loaded, not from when it was asked for: a slow disk or a busy
+    // computer at login must not make a good bundle look broken.
+    if (running !== undefined && !drawn) {
+      const shown = running;
+      timer = set(
+        () =>
+          void failed(shown, "it did not say it had drawn itself in time").catch((error) =>
+            log(`Interface ${shown} could not be replaced: ${String(error)}`),
+          ),
+        deps.bootMs ?? BOOT_MS,
+      );
     }
   };
 
@@ -105,10 +119,13 @@ export const createPageSwitch = (deps: PageSwitchDeps) => {
     /** The first page. */
     start: () => serial(show),
     /** The page says it has drawn itself. */
-    booted: (): void => disarm(),
+    booted: (): void => {
+      drawn = true;
+      disarm();
+    },
     /** The page's process ended or its load failed: before it said it was drawn, that is a page that does not work. */
     broke: (reason: string): Promise<void> | undefined => {
-      if (timer === undefined || running === undefined) return undefined;
+      if (drawn || running === undefined) return undefined;
       return failed(running, reason);
     },
     /** Shows the newest page that is good, if it is not the one showing. */

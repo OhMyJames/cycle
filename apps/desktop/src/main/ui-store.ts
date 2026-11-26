@@ -22,7 +22,10 @@ export type UiState = {
 
 export type Page = { kind: "bundled" } | { kind: "ui"; uiVersion: number; dir: string };
 
-export type InstallResult = { ok: true; uiVersion: number } | { ok: false; reason: string };
+/** `transient`: the disk failed, not the bundle: asking again may work. */
+export type InstallResult =
+  | { ok: true; uiVersion: number }
+  | { ok: false; reason: string; transient?: true };
 
 export type UiStoreDeps = {
   root: string;
@@ -30,6 +33,8 @@ export type UiStoreDeps = {
   verify: (bytes: Uint8Array, signature: string, keyId: string) => boolean;
   /** The version of the page the app was built with: nothing at or below it is taken. */
   bundledVersion: number;
+  /** The shell of this app: a bundle made for another shell (an older app's) is not used. Unset: not checked. */
+  shell?: string;
   now?: () => number;
   log?: (message: string) => void;
 };
@@ -43,6 +48,8 @@ export const createUiStore = (deps: UiStoreDeps) => {
   const now = deps.now ?? Date.now;
   const log = deps.log ?? (() => {});
   const statePath = join(root, "state.json");
+  // The bundle the window is showing: its folder is not removed under it, whatever is installed meanwhile.
+  let inUse: () => number | undefined = () => undefined;
 
   const readState = async (): Promise<UiState> => {
     try {
@@ -130,13 +137,25 @@ export const createUiStore = (deps: UiStoreDeps) => {
       const candidate = [state.current, state.previous].find(
         (v): v is number => v !== undefined && !state.bad.includes(v),
       );
-      if (candidate === undefined) return { kind: "bundled" };
+      if (candidate === undefined) break;
       const dir = join(root, String(candidate));
       const checked = await verifyDir(dir);
-      if ("manifest" in checked) return { kind: "ui", uiVersion: candidate, dir };
-      log(`interface ${candidate} is not used: ${checked.reason}`);
+      const reason =
+        "reason" in checked
+          ? checked.reason
+          : deps.shell !== undefined && checked.manifest.shell !== deps.shell
+            ? "it is for another shell than this app's"
+            : checked.manifest.uiVersion <= deps.bundledVersion
+              ? "the app came with a newer page"
+              : undefined;
+      if (reason === undefined) {
+        await cleanup().catch(() => {});
+        return { kind: "ui", uiVersion: candidate, dir };
+      }
+      log(`interface ${candidate} is not used: ${reason}`);
       await markBad(candidate);
     }
+    await cleanup().catch(() => {});
     return { kind: "bundled" };
   };
 
@@ -171,7 +190,11 @@ export const createUiStore = (deps: UiStoreDeps) => {
       await cleanup();
       return { ok: true, uiVersion };
     } catch (error) {
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error),
+        transient: true,
+      };
     }
   };
 
@@ -179,7 +202,7 @@ export const createUiStore = (deps: UiStoreDeps) => {
   const cleanup = async (): Promise<void> => {
     const state = await readState();
     const keep = new Set(
-      [state.current, state.previous].flatMap((v) => (v === undefined ? [] : [String(v)])),
+      [state.current, state.previous, inUse()].flatMap((v) => (v === undefined ? [] : [String(v)])),
     );
     for (const name of await readdir(root).catch(() => [] as string[])) {
       const path = join(root, name);
@@ -199,7 +222,19 @@ export const createUiStore = (deps: UiStoreDeps) => {
     return dir;
   };
 
-  return { readState, selectPage, markBad, install, cleanup, newStaging, verifyDir };
+  return {
+    /** Says which bundle the window shows, asked again at each cleanup. */
+    showing: (fn: () => number | undefined): void => {
+      inUse = fn;
+    },
+    readState,
+    selectPage,
+    markBad,
+    install,
+    cleanup,
+    newStaging,
+    verifyDir,
+  };
 };
 
 export type UiStore = ReturnType<typeof createUiStore>;

@@ -163,7 +163,12 @@ export class UiUpdater {
         const result = await this.#d.store.install(staging, manifestBytes, signature);
         if (!result.ok) {
           await rm(staging, { recursive: true, force: true });
-          return settled(`The interface bundle was refused: ${result.reason}`);
+          const message = `The interface bundle was refused: ${result.reason}`;
+          if (result.transient === true) {
+            this.#log(message);
+            return keep();
+          }
+          return settled(message);
         }
         this.#etag = etag;
         this.#log(`Interface ${result.uiVersion} is ready.`);

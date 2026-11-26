@@ -206,6 +206,7 @@ const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) 
       root: join(userData, "ui"),
       verify,
       bundledVersion,
+      ...(shell !== undefined ? { shell } : {}),
       log: (message) => console.warn(`[interface] ${message}`),
     }),
     bundledVersion,

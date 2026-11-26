@@ -182,3 +182,34 @@ test("without a store only the page the app came with is ever shown", async () =
   expect(loads).toEqual([BUNDLED]);
   expect(pages.state()).toEqual({ bundled: 3, running: 3 });
 });
+
+test("the time to draw is counted from when the page has loaded, and not at all if it already said so", async () => {
+  const s = setup();
+  await s.take(5);
+  let finish = () => {};
+  const slow = createPageSwitch({
+    store: s.store,
+    bundledUrl: BUNDLED,
+    bundledVersion: 0,
+    load: () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    installed: () => undefined,
+    emit: () => {},
+    setTimeout: ((fn: () => void, ms: number) => {
+      s.timers.push({ fn, ms, cleared: false });
+      return s.timers.at(-1);
+    }) as never,
+    clearTimeout: ((t: { cleared: boolean }) => {
+      t.cleared = true;
+    }) as never,
+  });
+  const started = slow.start();
+  await Bun.sleep(10);
+  expect(s.timers).toHaveLength(0);
+  slow.booted();
+  finish();
+  await started;
+  expect(s.timers).toHaveLength(0);
+});

@@ -131,6 +131,7 @@ export const EVENTS = {
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),
+  interface_update_applied: o({}),
   /** The person chose light, dark, or to follow the system. */
   theme_changed: o({ theme: z.enum(["system", "light", "dark"]) }),
   /** The person chose the interface's language: one of those the app has, or the system's. */

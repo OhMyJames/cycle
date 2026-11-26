@@ -180,3 +180,30 @@ test("installing the same version again is harmless", async () => {
   expect(await s.selectPage()).toMatchObject({ uiVersion: 5 });
   expect(await readFile(join(root, "5", "index.html"), "utf8")).toBe("<p>5</p>");
 });
+
+test("a bundle left by an older app, for another shell or older than the page the app came with, is not used", async () => {
+  const old = store();
+  await take(old, 5);
+  const other = createUiStore({ root, verify, bundledVersion: 0, shell: "1".repeat(32) });
+  expect(await other.selectPage()).toEqual({ kind: "bundled" });
+  expect((await readdir(root)).sort()).toEqual(["state.json"]);
+
+  await take(store(), 8);
+  const newer = createUiStore({ root, verify, bundledVersion: 20, shell: "0".repeat(32) });
+  expect(await newer.selectPage()).toEqual({ kind: "bundled" });
+  const same = createUiStore({ root, verify, bundledVersion: 0, shell: "0".repeat(32) });
+  await take(same, 9);
+  expect(await same.selectPage()).toEqual({ kind: "ui", uiVersion: 9, dir: join(root, "9") });
+});
+
+test("installing more bundles does not remove the folder of the one the window shows", async () => {
+  const s = store();
+  await take(s, 5);
+  s.showing(() => 5);
+  await take(s, 7);
+  await take(s, 9);
+  expect((await readdir(root)).sort()).toEqual(["5", "7", "9", "state.json"]);
+  s.showing(() => undefined);
+  await take(s, 11);
+  expect((await readdir(root)).sort()).toEqual(["11", "9", "state.json"]);
+});
