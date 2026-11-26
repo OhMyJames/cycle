@@ -7,6 +7,8 @@
 ```sh
 # 配置文件（权限须为 0600，默认 ~/.cycle/auto-loop.json，或 --config <路径>）：
 #   { "repoRoot": "/abs/repo", "projectKey": "CYC", "stateDir": "/abs/state", "planKey": "..." }
+# 多个 Project：{ "projects": [ {上面的字段}, {…} ] }，一个进程各跑各的循环，一个卡住不影响另一个；
+#   每个 Project 的 stateDir 必须不同（相同则启动报错），锁各在自己的 <stateDir>/loop.lock
 # planKey 只给 Loop 本身，不会传给任何会话或命令
 bun tools/auto-loop/src/cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西
 bun tools/auto-loop/src/cli.ts --once      # 处理一张

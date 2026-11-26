@@ -61,8 +61,38 @@ export const parseConfigFile = (raw: string, source = "config"): ConfigFile => {
   };
 };
 
+/**
+ * A file lists Projects as `{ "projects": [ {...}, {...} ] }`; a file that is one Project's fields (CYC-392) still
+ * works and means a list of one. Two Projects must not share a stateDir: they would share runs and the lock.
+ */
+export const parseConfigFiles = (raw: string, source = "config"): ConfigFile[] => {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new Error(`${source}: not valid JSON`);
+  }
+  const list = (json as { projects?: unknown } | null)?.projects;
+  if (list === undefined) return [parseConfigFile(raw, source)];
+  if (!Array.isArray(list) || list.length === 0)
+    throw new Error(`${source}: projects must be a non-empty list`);
+  const projects = list.map((item, at) =>
+    parseConfigFile(JSON.stringify(item), `${source}: projects[${at}]`),
+  );
+  const seen = new Map<string, string>();
+  for (const p of projects) {
+    const other = seen.get(p.stateDir);
+    if (other !== undefined)
+      throw new Error(
+        `${source}: projects ${other} and ${p.projectKey} share stateDir ${p.stateDir}; each Project needs its own`,
+      );
+    seen.set(p.stateDir, p.projectKey);
+  }
+  return projects;
+};
+
 /** Reads the file; refuses one that group or others can read, because it holds the tracker key. */
-export const loadConfigFile = async (path: string): Promise<ConfigFile> => {
+export const loadConfigFiles = async (path: string): Promise<ConfigFile[]> => {
   const info = await stat(path).catch(() => {
     throw new Error(`config file not found: ${path}`);
   });
@@ -70,7 +100,13 @@ export const loadConfigFile = async (path: string): Promise<ConfigFile> => {
     throw new Error(
       `${path}: permissions ${(info.mode & 0o777).toString(8)} are too open, run chmod 600`,
     );
-  return parseConfigFile(await readFile(path, "utf8"), path);
+  return parseConfigFiles(await readFile(path, "utf8"), path);
+};
+
+export const loadConfigFile = async (path: string): Promise<ConfigFile> => {
+  const [first] = await loadConfigFiles(path);
+  if (first === undefined) throw new Error(`${path}: no project`);
+  return first;
 };
 
 /** Validates, then writes with mode 0600 (also when the file already existed with a wider mode). */
