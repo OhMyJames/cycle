@@ -1,8 +1,12 @@
 // The connection itself (docs/protocol.md §3): `initialize`, where a client says what it can do and is told what the
 // daemon can.
+
+import { rename, writeFile } from "node:fs/promises";
 import { type AgentApp, methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { CYCLE_PROTOCOL_VERSION, META } from "@cycle/protocol";
+import { appVersionPath } from "../data-dir.ts";
 import { RpcError, UNSUPPORTED_VERSION } from "../errors.ts";
+import { VERSION_FORMAT } from "../version.ts";
 import type { Core, Me } from "./core.ts";
 
 export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
@@ -21,6 +25,18 @@ export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
         supported: [CYCLE_PROTOCOL_VERSION],
         requested,
       });
+    }
+    // Only a client this daemon accepts says what the app is. Best effort: nothing depends on it being written.
+    const appVersion = params._meta?.[META.appVersion];
+    if (typeof appVersion === "string" && VERSION_FORMAT.test(appVersion)) {
+      const path = appVersionPath(core.dataDir);
+      // Written aside and renamed over, so a reader never sees half of it.
+      const aside = `${path}.${process.pid}.tmp`;
+      writeFile(aside, `${appVersion}\n`, { mode: 0o600 })
+        .then(() => rename(aside, path))
+        .catch((error: unknown) =>
+          core.log.warn("app_version_not_saved", { error: String(error) }),
+        );
     }
     return {
       protocolVersion: 2,

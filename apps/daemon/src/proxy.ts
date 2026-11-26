@@ -21,7 +21,7 @@ const tailOf = (path: string, chars: number): string => {
  * The last of what the daemon said, for an error that has to say why it did not start: its log, and what the runtime
  * wrote when it was not the daemon's own code that stopped it.
  */
-const logTail = (paths: Paths): string =>
+export const logTail = (paths: Paths): string =>
   [
     tailOf(paths.log, 1500) !== "" ? `Its log (${paths.log}):\n${tailOf(paths.log, 1500)}` : "",
     tailOf(paths.output, 1000) !== ""
@@ -36,7 +36,11 @@ const logTail = (paths: Paths): string =>
  * (`daemon.log`, rotated); its stdout and stderr go to `<data dir>/daemon.out`, for what the runtime itself says when
  * it fails before or beneath the daemon's code. With nobody watching, those files are the way to learn why.
  */
-export const startDetached = (paths: Paths): { exited: () => boolean } => {
+export const startDetached = (
+  paths: Paths,
+  /** The program to start, when it is not this process's own (an update has just replaced that file). */
+  command: string[] = selfCommand(),
+): { exited: () => boolean } => {
   mkdirSync(paths.dataDir, { recursive: true, mode: 0o700 });
   // One run's worth is enough to find a reason; the file does not grow for ever.
   try {
@@ -45,7 +49,7 @@ export const startDetached = (paths: Paths): { exited: () => boolean } => {
   const fd = openSync(paths.output, "a", 0o600);
   try {
     const child = Bun.spawn(
-      [...selfCommand(), "serve", "--data-dir", paths.dataDir, "--socket", paths.socket],
+      [...command, "serve", "--data-dir", paths.dataDir, "--socket", paths.socket],
       { detached: true, stdin: "ignore", stdout: fd, stderr: fd, env: process.env },
     );
     child.unref();

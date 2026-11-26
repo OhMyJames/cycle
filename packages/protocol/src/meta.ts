@@ -11,6 +11,11 @@ export const META = {
   ts: "cycle/ts",
   /** In `initialize`: Cycle's own protocol version, "major.minor". */
   protocolVersion: "cycle/protocolVersion",
+  /**
+   * In `initialize`: the release the desktop app is (an alpha reports the release it was cut from). The daemon keeps
+   * the last one it was told, and `cycle update` installs it (docs/protocol.md §3). Other clients do not send it.
+   */
+  appVersion: "cycle/appVersion",
   /** In the `initialize` response: what this daemon can do. */
   capabilities: "cycle/capabilities",
   /** In `session/new`: the agent to run. */

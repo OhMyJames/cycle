@@ -284,6 +284,10 @@ export class Runtime {
       connect: this.options.channelFor(location),
       name: "cycle-desktop",
       ackReturns: true,
+      // An alpha says the release it was cut from: that is what `cycle update` on the daemon's machine installs.
+      ...((this.options.appBaseVersion ?? this.options.appVersion) !== undefined
+        ? { appVersion: (this.options.appBaseVersion ?? this.options.appVersion) as string }
+        : {}),
       ...(this.options.protocolVersion !== undefined
         ? { protocolVersion: this.options.protocolVersion }
         : {}),
