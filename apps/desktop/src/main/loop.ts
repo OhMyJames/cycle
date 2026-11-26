@@ -480,6 +480,15 @@ const BLOCKED_COMMENT =
   /^自动化在「[^」]*」卡住了：([\s\S]*?)(?:\n\n现场已保留：Dev 会话「([^」]+)」|$)/;
 /** How Loop's comments say a person must decide: the review escalated, hit its round limit, failed, or auto-merge could not be turned on. */
 const ESCALATED = ["升级给人", "需要人工处理"];
+
+/**
+ * Loop writes a fixed header line after the PR line; the words are looked for there only. The line of a merged review
+ * carries the review's own sentence (`merge：<summary>`), which is free text and says nothing of a person.
+ */
+const escalated = (afterPrLine: string): boolean => {
+  const header = afterPrLine.split("\n", 1)[0] ?? "";
+  return !/结论为合并（merge：/.test(header) && ESCALATED.some((w) => header.includes(w));
+};
 const REVIEW_COMMENT = /^已开 PR：(\S+)\n([\s\S]*)$/;
 /** The longest reason or conclusion kept: they are comments, and may be long. */
 const TEXT_MAX = 1500;
@@ -489,7 +498,10 @@ type Attention = NonNullable<LoopTicketDetail["attention"]>;
 const cut = (text: string): string =>
   text.length > TEXT_MAX ? `${text.slice(0, TEXT_MAX - 1)}…` : text;
 
-/** The comments of a ticket, newest first. `list_issue_activity` is not a listed tool: it goes through `execute_read`. */
+/**
+ * The comments of a ticket, newest first by time (then id): the order the tracker answers in is not relied on.
+ * `list_issue_activity` is not a listed tool: it goes through `execute_read`.
+ */
 const commentsOf = async (t: Tracker, issueId: unknown): Promise<string[]> => {
   const answer = await callTool(t, "execute_read", {
     name: "list_issue_activity",
@@ -497,8 +509,33 @@ const commentsOf = async (t: Tracker, issueId: unknown): Promise<string[]> => {
   });
   const items = unwrap(answer).items;
   return (Array.isArray(items) ? items : [])
-    .map((i) => asRecord(i).body)
-    .filter((b): b is string => typeof b === "string");
+    .map(asRecord)
+    .filter((i) => typeof i.body === "string")
+    .sort(
+      (x, y) =>
+        String(y.createdAt ?? "").localeCompare(String(x.createdAt ?? "")) ||
+        Number(y.id ?? 0) - Number(x.id ?? 0),
+    )
+    .map((i) => i.body as string);
+};
+
+/** What was read of a ticket's comments, until the ticket changes: the poll reads every Blocked and In Review ticket. */
+const commentCache = new Map<string, string[]>();
+const CACHE_MAX = 200;
+const CONCURRENCY = 4;
+
+const cachedComments = async (t: Tracker, issue: Record<string, unknown>): Promise<string[]> => {
+  const key = `${t.url}#${String(issue.id)}#${String(issue.columnId)}#${String(issue.updatedAt ?? "")}`;
+  // Without an update time there is nothing to tell a changed ticket by: read it.
+  const cacheable = typeof issue.updatedAt === "string";
+  const hit = cacheable ? commentCache.get(key) : undefined;
+  if (hit !== undefined) return hit;
+  const read = await commentsOf(t, issue.id);
+  if (cacheable) {
+    if (commentCache.size >= CACHE_MAX) commentCache.clear();
+    commentCache.set(key, read);
+  }
+  return read;
 };
 
 /** Why a Blocked or In Review ticket needs a person, from Loop's newest matching comment. Undefined: not for a person. */
@@ -510,7 +547,7 @@ export const attentionOf = async (
   if (role === "blocked") {
     let comments: string[] = [];
     try {
-      comments = await commentsOf(t, issue.id);
+      comments = await cachedComments(t, issue);
     } catch {
       // A comment that cannot be read does not hide a Blocked ticket: it waits for a person, reason or not.
     }
@@ -527,12 +564,12 @@ export const attentionOf = async (
   }
   // Whether a review needs a person is only known from the comments: a read that fails throws, so that no In Review
   // ticket is taken for an escalation on a guess (the caller reports the read as failed and keeps what it knew).
-  const comments = await commentsOf(t, issue.id);
+  const comments = await cachedComments(t, issue);
   // Only the newest `已开 PR：` comment counts: an older escalation is stale once a later round has passed.
   for (const body of comments) {
     const m = REVIEW_COMMENT.exec(body);
     if (!m) continue;
-    return ESCALATED.some((word) => body.includes(word))
+    return escalated(m[2] ?? "")
       ? { kind: "review", text: cut((m[2] ?? "").trim()), prUrl: m[1] ?? "" }
       : undefined;
   }
@@ -603,13 +640,18 @@ export const readTicketNotices = async (
     const rows = rowsOf(
       await callTool(t, "list_issues", { projectKey, columnId: column.id, limit: LIST_LIMIT }),
     );
-    const read = await Promise.all(
-      rows.map(async (row) => {
-        const r = asRecord(row);
-        const attention = await attentionOf(t, r, role);
-        return { r, attention };
-      }),
-    );
+    const read: { r: Record<string, unknown>; attention: Attention | undefined }[] = [];
+    let next = 0;
+    // A few at a time: a column can be long, and a rate-limited tracker fails the whole read.
+    const lane = async () => {
+      while (next < rows.length) {
+        const r = asRecord(rows[next++]);
+        read.push({ r, attention: await attentionOf(t, r, role) });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, rows.length) }, lane));
+    // The lanes finish in any order; the page's order is the tracker's.
+    read.sort((x, y) => rows.indexOf(x.r) - rows.indexOf(y.r));
     for (const { r, attention } of read) {
       if (attention === undefined) continue;
       const base = { identifier: String(r.identifier ?? ""), title: String(r.title ?? "") };

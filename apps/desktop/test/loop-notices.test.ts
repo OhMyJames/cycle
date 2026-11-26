@@ -200,6 +200,29 @@ describe("Notices", () => {
     expect(answer.notices.map((n) => n.identifier)).toEqual(["CYC-1"]);
   });
 
+  test("only the header line counts, not the review's own sentence, and the API's order is not relied on", async () => {
+    const merged =
+      "已开 PR：https://github.com/o/r/pull/9\nCI（check）全部通过，独立评审结论为合并（merge：不需要升级给人，也不需要人工处理），已开启 GitHub 自动合并（squash）。";
+    const base = world({
+      tickets: { 34: [{ id: 1, identifier: "CYC-1", columnId: 34 }] },
+      comments: {},
+    }).fetchImpl;
+    // The tracker answers oldest first here: the newest (merge) is last.
+    const oldestFirst = (async (u: unknown, init: RequestInit) => {
+      if (!String(init.body).includes("execute_read")) return base(u as never, init);
+      const items = [
+        { id: 1, kind: "comment", createdAt: "2026-01-01T00:00:00Z", body: REVIEW },
+        { id: 2, kind: "comment", createdAt: "2026-01-02T00:00:00Z", body: merged },
+      ];
+      const data = { ok: true, status: 200, data: { items } };
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, oldestFirst);
+    expect(answer).toEqual({ kind: "ok", notices: [] });
+  });
+
   test("comments that cannot be read make the read fail, not an escalation of every In Review ticket", async () => {
     const base = world(state).fetchImpl;
     const failing = (async (u: unknown, init: RequestInit) =>
@@ -386,6 +409,35 @@ describe("overlapping ticks", () => {
     await poller.tick();
     release();
     await slow;
+    expect(told).toEqual(["CYC-1"]);
+  });
+});
+
+describe("a Notice that was not shown", () => {
+  test("is offered again until it is shown, then not again", async () => {
+    let shown = false;
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const told: string[] = [];
+    const poller = noticePoller({
+      projects: async () => [
+        { name: "C", projectKey: "CYC", repo: { displayName: "o/r", forge: "github" } },
+      ],
+      read: async () => answer,
+      alert: (_k, n) => {
+        if (!shown) return false; // the window is in front
+        told.push(n.identifier);
+        return true;
+      },
+    });
+    await poller.tick();
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    await poller.tick();
+    shown = true;
+    await poller.tick();
+    await poller.tick();
     expect(told).toEqual(["CYC-1"]);
   });
 });

@@ -23,6 +23,9 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 /** The Backlog is the longest column by far: it opens on this many and shows this many more at a time. */
 const BACKLOG_PAGE = 20;
 
+/** How often the Notices are read again while the page is open. */
+const NOTICES_REFRESH_MS = 30_000;
+
 /** Items with keys that stay unique when two read the same: the text, and how many came before with it. */
 const keyedItems = (items: string[]) => {
   const seen = new Map<string, number>();
@@ -496,6 +499,22 @@ export function LoopPage({
     if (chosenKey !== undefined && connected === true) void store.loadLoopNotices(chosenKey);
     void waiting;
   }, [store, chosenKey, connected, waiting]);
+  // A new Blocked or escalated ticket shows while the page is open, not only after Read again.
+  useEffect(() => {
+    if (chosenKey === undefined || connected !== true) return;
+    const timer = setInterval(() => void store.loadLoopNotices(chosenKey), NOTICES_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [store, chosenKey, connected]);
+  // A notification asked for a Project the server does not have: nothing will take the request, so it is dropped.
+  const request = useAppState((s) => s.loop.request);
+  useEffect(() => {
+    if (
+      request !== undefined &&
+      connected === true &&
+      !projects.some((p) => p.projectKey === request.projectKey)
+    )
+      store.takeLoopRequest(request.n);
+  }, [store, request, connected, projects]);
 
   const away = connected === false;
   const sections: PageSection[] =

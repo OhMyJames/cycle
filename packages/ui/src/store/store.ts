@@ -342,19 +342,13 @@ export class AppStore extends StoreBase {
   takeLoopRequest = this.#loop.takeRequest;
 
   /** Shows the Dev session of a ticket (`[CYC-1] Dev`) in place of the Loop page; false when no session has that name. */
-  joinLoopSession = (
-    identifier: string,
-    at?: { locationId: string; sessionId: string },
-  ): boolean => {
+  joinLoopSession = (identifier: string): boolean => {
     const wanted = `[${identifier}] Dev`;
     const sessions = Object.entries(this.getState().sessions).flatMap(([locationId, list]) =>
       list.filter((x) => !x.archived && x.title?.trim() === wanted).map((x) => ({ locationId, x })),
     );
-    // The one the Notice named, else one waiting on an answer, else the first.
-    const found =
-      sessions.find((e) => e.locationId === at?.locationId && e.x.sessionId === at.sessionId) ??
-      sessions.find((e) => e.x.state === "requires_action") ??
-      sessions[0];
+    // One waiting on an answer first, else the first.
+    const found = sessions.find((e) => e.x.state === "requires_action") ?? sessions[0];
     if (found === undefined) return false;
     this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
     void this.focusSession(found.locationId, found.x.sessionId);

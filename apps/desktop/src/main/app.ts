@@ -97,13 +97,13 @@ const updateResult = (
   }
 };
 
+/** How often the Loop tickets are read for a new Blocked or escalated one. */
+const NOTICE_POLL_MS = 60_000;
+
 /**
  * What a link the page asks to open may be: a web page, or an address to write to (the mail app). The page checks the same
  * list (`isSafeLink` in @cycle/ui) and asks the person first; this is the check that does not trust the page.
  */
-/** How often the Loop tickets are read for a new Blocked or escalated one. */
-const NOTICE_POLL_MS = 60_000;
-
 const OPENABLE = new Set(["https:", "http:", "mailto:"]);
 const isOpenable = (url: string): boolean => {
   try {

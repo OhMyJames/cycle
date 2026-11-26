@@ -24,7 +24,8 @@ export const newAlerts = (
 export type PollDeps = {
   projects: () => Promise<LoopProjectInfo[]>;
   read: (projectKey: string) => Promise<LoopNoticesAnswer>;
-  alert: (projectKey: string, notice: Alertable) => void;
+  /** `false`: it was not shown, and is offered again at the next look. */
+  alert: (projectKey: string, notice: Alertable) => unknown;
 };
 
 /** One look at every Project. A Project that cannot be read keeps what was known of it: it is not "all clear". */
@@ -42,10 +43,12 @@ export const noticePoller = (deps: PollDeps) => {
       const answer = await deps.read(projectKey).catch(() => undefined);
       if (answer?.kind !== "ok") continue;
       const alerts = newAlerts(seen.get(projectKey), answer.notices);
-      seen.set(projectKey, new Set(answer.notices.map(keyOf)));
+      const known = new Set(answer.notices.map(keyOf));
+      seen.set(projectKey, known);
       for (const notice of alerts) {
         try {
-          deps.alert(projectKey, notice);
+          // Not shown (the window is in front): not seen either, so it is told when the person has gone elsewhere.
+          if (deps.alert(projectKey, notice) === false) known.delete(keyOf(notice));
         } catch {
           // A notification that cannot be shown is one missed, not a poll that failed.
         }
@@ -81,8 +84,8 @@ const held = new Set<NotificationLike>();
 /** The system notification for one Notice, only while the window is not in front: on the page the Notice is seen. */
 export const showAlert = (deps: AlertDeps) => (projectKey: string, notice: Alertable) => {
   const window = deps.window();
-  if (window === undefined || window.isDestroyed() || window.isFocused()) return;
-  if (!deps.supported()) return;
+  if (window === undefined || window.isDestroyed() || window.isFocused()) return false;
+  if (!deps.supported()) return undefined;
   const title = `${notice.identifier} ${notice.title}`.replace(/\s+/g, " ").trim().slice(0, 80);
   const notification = deps.create({ title, body: deps.say(notice.kind) });
   held.add(notification);
@@ -101,4 +104,5 @@ export const showAlert = (deps: AlertDeps) => (projectKey: string, notice: Alert
   });
   notification.show();
   deps.track(notice.kind);
+  return true;
 };
