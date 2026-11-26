@@ -1054,7 +1054,9 @@ export class Pipeline {
   ): Promise<void> {
     const { config, sessions } = this.#d;
     let worktree = run.worktree ?? "";
-    if (run.devSessionId === null) {
+    // Only a worktree made in this call gets a real install; on resume `bun install` is a no-op.
+    const fresh = run.devSessionId === null;
+    if (fresh) {
       // The loop fetches itself: whether the daemon may is undecided (docs/protocol.md, "待定").
       // Fetching needs the remote's credentials; no session has run in the main checkout, so this is safe to give them.
       const fetched = await this.#netExec(run.key, "git fetch", () =>
@@ -1086,7 +1088,9 @@ export class Pipeline {
     }
     // A worktree made now has no node_modules.
     worktree = this.#need(worktree === "" ? undefined : worktree);
+    const before = fresh ? await this.#freeKb(worktree) : undefined;
     await this.#install(worktree);
+    if (fresh) await this.#recordInstall(run.key, worktree, before);
     await save({ phase: "dev" });
   }
 
@@ -1163,6 +1167,49 @@ export class Pipeline {
       return;
     }
     await store.event(run.key, "node_modules_released", { dirs: dirs.length });
+  }
+
+  /** Free space of the volume holding `dir`, in 1 KiB blocks (`df -k`); undefined when it cannot be read. */
+  async #freeKb(dir: string): Promise<number | undefined> {
+    try {
+      const out = await this.#d.exec(["df", "-kP", dir], {
+        cwd: dir,
+        env: verifyEnv(this.#d.env),
+        timeoutMs: 10_000,
+      });
+      if (out.code !== 0) return undefined;
+      // POSIX format: the Capacity column ("12%") sits right after Available, so anchor on it; a device name or
+      // mount point with spaces cannot shift it. The header must name the column.
+      const lines = out.output.trim().split("\n");
+      if (lines.length !== 2 || !/avail/i.test(lines[0] ?? "")) return undefined;
+      const row = (lines[1] ?? "").trim().split(/\s+/);
+      const cap = row.findIndex((t) => /^\d+%$/.test(t));
+      const field = cap > 0 ? (row[cap - 1] ?? "") : "";
+      const free = /^\d+$/.test(field) ? Number(field) : Number.NaN;
+      return Number.isSafeInteger(free) ? free : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** CYC-448: the volume's free-space drop across `bun install`. Numbers only; a failure never blocks the run. */
+  async #recordInstall(run: string, dir: string, before: number | undefined): Promise<void> {
+    try {
+      const after = before === undefined ? undefined : await this.#freeKb(dir);
+      // A negative drop means something else freed space meanwhile: not a usable sample.
+      if (before === undefined || after === undefined || before < after) {
+        await this.#d.store.event(run, "install_measured", { measured: false });
+        return;
+      }
+      await this.#d.store.event(run, "install_measured", {
+        measured: true,
+        freeKbBefore: before,
+        freeKbAfter: after,
+        usedKb: before - after,
+      });
+    } catch {
+      // Measuring is advisory.
+    }
   }
 
   // ---- research (CYC-447) ----
