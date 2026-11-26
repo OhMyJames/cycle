@@ -1,11 +1,29 @@
-import { type CriterionSpec, parseCriteria, verifyArgv } from "./criteria.ts";
+import { type CriterionSpec, listUnder, parseCriteria, verifyArgv } from "./criteria.ts";
 import type { Config, Issue } from "./types.ts";
 
-export type Preflight = { ok: true; specs: CriterionSpec[] } | { ok: false; reasons: string[] };
+export type Preflight =
+  | { ok: true; kind: "dev"; specs: CriterionSpec[] }
+  | { ok: true; kind: "research"; questions: string[] }
+  | { ok: false; reasons: string[] };
+
+/** `research` is optional so that a caller that only knows Feature and Bug (such as scout) still type-checks. */
+export type PreflightConfig = Pick<Config, "maxCriteria" | "featureTypeId" | "bugTypeId"> &
+  Partial<Pick<Config, "research">>;
+
+/** The verify commands a criterion may name (`parseVerify`), as a person or a session reads them. */
+export const ALLOWED_COMMANDS =
+  "bun run check, bun run test:browser, bun run test:integration [suite], bun test <path>";
 
 /** Required sections per type, as in the project's templates. 「验收标准」 is checked by the criteria rules below. */
 const FEATURE_SECTIONS = ["背景与证据", "范围", "非目标", "涉及面"];
 const BUG_SECTIONS = ["现象", "复现步骤", "预期与实际", "环境与版本", "严重度"];
+/** 「要回答的问题」 and 「结论」 are checked by their own rules below. */
+const RESEARCH_SECTIONS = ["方法与范围", "产出形式"];
+
+const QUESTIONS = /^(#{1,6})\s*要回答的问题/;
+export const CONCLUSION = "结论";
+/** What a template leaves in 「结论」 until the research is done, compared with blanks and brackets taken out. */
+const PLACEHOLDERS = new Set(["做完后回填", "待回填", "tbd"]);
 
 /** Whether a heading of this name is in the description with some content under it (until the next heading of the same or a higher level). */
 const hasSection = (description: string, name: string): boolean => {
@@ -23,6 +41,44 @@ const hasSection = (description: string, name: string): boolean => {
   return false;
 };
 
+/**
+ * The first section headed `name`, as line indexes into `description.split("\n")`: the heading, and the line after
+ * its last line (the next heading of the same or a higher level, or the end). Checking 「结论」 and replacing it both go
+ * through this, so what is judged empty is what gets replaced.
+ */
+export const findSection = (
+  description: string,
+  name: string,
+): { heading: number; end: number } | undefined => {
+  const lines = description.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const heading = /^(#{1,6})\s*(.*)$/.exec((lines[i] ?? "").trim());
+    if (heading === null || !(heading[2] ?? "").startsWith(name)) continue;
+    const level = (heading[1] ?? "").length;
+    let end = i + 1;
+    while (end < lines.length) {
+      const next = /^(#{1,6})\s/.exec((lines[end] ?? "").trim());
+      if (next !== null && (next[1] ?? "").length <= level) break;
+      end++;
+    }
+    return { heading: i, end };
+  }
+  return undefined;
+};
+
+/** Whether 「结论」 is still to be written: absent, empty, or only the template's placeholder. */
+export const conclusionIsEmpty = (description: string): boolean => {
+  const section = findSection(description, CONCLUSION);
+  if (section === undefined) return true;
+  const body = description
+    .split("\n")
+    .slice(section.heading + 1, section.end)
+    .join("")
+    .replace(/[\s()（）]/g, "")
+    .toLowerCase();
+  return body === "" || PLACEHOLDERS.has(body);
+};
+
 const missingSections = (
   issue: Issue,
   config: Pick<Config, "featureTypeId" | "bugTypeId">,
@@ -36,24 +92,24 @@ const missingSections = (
   return required.filter((name) => !hasSection(issue.description, name));
 };
 
+const missingSectionsReason = (missing: string[]): string =>
+  `Required sections are missing or empty: ${missing.map((n) => `「${n}」`).join(", ")}.`;
+
 /**
  * Whether a work item is fit to be taken, decided by rules and not by a model: it must say what is wanted, every
- * criterion must name a command the loop may run, and it must not be more than one session can do.
+ * criterion must name a command the loop may run, and it must not be more than one session can do. A research work
+ * item has questions instead of criteria, and is judged by `researchPreflight`.
  */
-export const preflight = (
-  issue: Issue,
-  config: Pick<Config, "maxCriteria" | "featureTypeId" | "bugTypeId">,
-): Preflight => {
+export const preflight = (issue: Issue, config: PreflightConfig): Preflight => {
+  if (config.research != null && issue.typeId === config.research.typeId) {
+    return researchPreflight(issue, config);
+  }
   const reasons: string[] = [];
   if (issue.description.trim() === "") {
     return { ok: false, reasons: ["The work item has no description."] };
   }
   const missing = missingSections(issue, config);
-  if (missing.length > 0) {
-    reasons.push(
-      `Required sections are missing or empty: ${missing.map((n) => `「${n}」`).join(", ")}.`,
-    );
-  }
+  if (missing.length > 0) reasons.push(missingSectionsReason(missing));
   const parsed = parseCriteria(issue.description);
   if (parsed.length === 0) {
     reasons.push("There is no list of acceptance criteria (a list under a 「验收标准」 heading).");
@@ -74,13 +130,48 @@ export const preflight = (
     const argv = verifyArgv(criterion.commands);
     if (!argv.ok) {
       reasons.push(
-        `${label} names a command the loop may not run: ${argv.rejected.map((c) => `\`${c}\``).join(", ")}. Allowed: bun run check, bun run test:browser, bun run test:integration [suite], bun test <path>.`,
+        `${label} names a command the loop may not run: ${argv.rejected.map((c) => `\`${c}\``).join(", ")}. Allowed: ${ALLOWED_COMMANDS}.`,
       );
       return;
     }
     specs.push({ text: criterion.text, verify: argv.argv });
   });
-  return reasons.length > 0 ? { ok: false, reasons } : { ok: true, specs };
+  return reasons.length > 0 ? { ok: false, reasons } : { ok: true, kind: "dev", specs };
+};
+
+/**
+ * A research work item is fit to be taken when it says what to answer (a numbered list, no more than one session can
+ * answer), how and in what form, and its conclusion is not written yet: a written one means someone has already
+ * answered it, and publishing would have nowhere to put the summary.
+ */
+export const researchPreflight = (issue: Issue, config: Pick<Config, "maxCriteria">): Preflight => {
+  if (issue.description.trim() === "") {
+    return { ok: false, reasons: ["The work item has no description."] };
+  }
+  const reasons: string[] = [];
+  const items = listUnder(issue.description, QUESTIONS);
+  if (items.length === 0) {
+    reasons.push(
+      "There is no list of questions (a numbered list under a 「要回答的问题」 heading).",
+    );
+  } else if (items.some((item) => !item.numbered)) {
+    reasons.push("The questions under 「要回答的问题」 must be a numbered list (1. 2. 3.).");
+  }
+  if (items.length > config.maxCriteria) {
+    reasons.push(
+      `It has ${items.length} questions, more than one session can answer (at most ${config.maxCriteria}). Please split it.`,
+    );
+  }
+  const missing = RESEARCH_SECTIONS.filter((name) => !hasSection(issue.description, name));
+  if (missing.length > 0) reasons.push(missingSectionsReason(missing));
+  if (!conclusionIsEmpty(issue.description)) {
+    reasons.push(
+      "The 「结论」 section is already written. Research is taken only while it is empty or holds 「（做完后回填）」.",
+    );
+  }
+  return reasons.length > 0
+    ? { ok: false, reasons }
+    : { ok: true, kind: "research", questions: items.map((item) => item.text) };
 };
 
 /** The comment that sends a work item back, in the words a person reads in the tracker. */
