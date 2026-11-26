@@ -48,6 +48,7 @@ test.skipIf(!ready)(
     const flags = [
       "--no-sandbox", // the test machine has no setuid chrome-sandbox; the window itself stays sandboxed
       "--disable-gpu",
+      "--use-mock-keychain", // its HOME is the test's, without a keychain: no "Keychain Not Found" window
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${join(root, "electron")}`,
     ];
