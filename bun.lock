@@ -33,7 +33,7 @@
     },
     "apps/desktop": {
       "name": "@cycle/desktop",
-      "version": "0.3.31",
+      "version": "0.3.32",
       "dependencies": {
         "@cycle/analytics": "workspace:*",
         "@cycle/client": "workspace:*",
