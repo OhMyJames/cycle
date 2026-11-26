@@ -226,6 +226,8 @@ export type World = {
   /** What `gh pr view --json state,mergeable` says after auto-merge is enabled, as [state, mergeable] (last sticks). */
   prMerge: [string, string][];
   mergeTreeOutput: string;
+  /** When set, every `git fetch` logs start/end here and takes a few ms. */
+  fetchLog?: string[];
 };
 
 export const makeExec =
@@ -237,6 +239,12 @@ export const makeExec =
     if (line.includes("diff --name-only")) return result("packages/client/src/a.ts\n");
     if (line.includes("status --porcelain")) return result(world.dirty ? " M a.ts\n" : "");
     if (line.includes("rev-parse HEAD")) return result(`${world.headSha}\n`);
+    if (world.fetchLog && / fetch /.test(` ${line} `)) {
+      world.fetchLog.push("start");
+      await Bun.sleep(20);
+      world.fetchLog.push("end");
+      return result("");
+    }
     for (const pattern of world.fail) if (line.includes(pattern)) return result("boom", 1);
     if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
     if (line.includes("gh pr view") && line.includes("state,mergeable")) {
