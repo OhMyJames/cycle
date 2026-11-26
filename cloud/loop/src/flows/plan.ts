@@ -574,7 +574,7 @@ export class PlanFlow {
         stoppedReason: null,
         originalCommented: false,
         rewritten: false,
-        titleWritten: false,
+        before: null,
         created: [],
         pendingCreate: null,
         linked: false,
@@ -1114,11 +1114,12 @@ export class PlanFlow {
       const fresh = await tracker.get(item.number);
       const wrote = expected();
       const hash = bodyHash(fresh.title, fresh.description);
+      // The old text; or the new one, whole (a restart before `rewritten` was saved) or with only the title written.
       const same =
         hash === item.hash ||
-        (item.rewritten && wrote !== null && hash === bodyHash(wrote.title, wrote.description)) ||
-        // Stopped between the new title and the new description: the title is ours, the body is still the old one.
-        (!item.rewritten && item.titleWritten && wrote !== null && fresh.title === wrote.title);
+        (wrote !== null &&
+          (hash === bodyHash(wrote.title, wrote.description) ||
+            (item.before !== null && hash === bodyHash(wrote.title, item.before.description))));
       const why = same ? this.#stillOurs(fresh) : "edited";
       if (why !== undefined) {
         await this.#abandon(ctx, item, fresh, why, save);
@@ -1163,8 +1164,8 @@ export class PlanFlow {
     }
     // 3. The new text; for a split, the parts.
     if (!item.rewritten) {
-      const newTitle = this.#host.need(expected() ?? undefined).title;
-      if (original.title !== newTitle) await step({ titleWritten: true });
+      if (item.before === null)
+        await step({ before: { title: original.title, description: original.description } });
       if (out.kind === "rewrite") {
         await tracker.setTitle(original, out.title);
         await tracker.setDescription(original, out.description);

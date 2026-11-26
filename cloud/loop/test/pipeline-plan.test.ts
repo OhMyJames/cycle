@@ -1111,3 +1111,50 @@ test("a rewrite that keeps the title still gives way to a person's edit of the b
   expect(byKey(s, "CYC-1").description).toBe("人改的正文");
   expect(commentsOn(s, "CYC-1")).toEqual([]);
 });
+
+for (const [name, title, killAfter] of [
+  ["the title unchanged, killed after the description", "原来的标题 1", "setDescription"],
+  ["a new title, killed after the title", "全新的标题", "setTitle"],
+] as const) {
+  test(`a restart in the middle of the rewrite (${name}) finishes the item`, async () => {
+    const s = setup(
+      {
+        triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
+        shape: [done(rewrite(title))],
+        shape_qa: [done(PASS)],
+      },
+      [backlogItem(1)],
+    );
+    const call = s.tracker[killAfter].bind(s.tracker);
+    s.tracker[killAfter] = async (i, text) => {
+      await call(i, text);
+      throw new Error("connection reset (killed)");
+    };
+    expect(await s.pipeline.step()).toMatchObject({ status: "network_wait" });
+    s.tracker[killAfter] = call;
+    expect(await s.restart().step()).toMatchObject({ status: "planned", shaped: 1 });
+    expect(byKey(s, "CYC-1").labelIds).toEqual([LABELS.pending]);
+    expect(commentsOn(s, "CYC-1").filter((c) => c.startsWith(NOTES_HEADING))).toHaveLength(1);
+  });
+}
+
+test("a person's edit between the title and the description writes is not overwritten", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
+      shape: [done(rewrite("全新的标题"))],
+      shape_qa: [done(PASS)],
+    },
+    [backlogItem(1)],
+  );
+  const setTitle = s.tracker.setTitle.bind(s.tracker);
+  s.tracker.setTitle = async (i, text) => {
+    await setTitle(i, text);
+    throw new Error("connection reset (killed)");
+  };
+  await s.pipeline.step();
+  s.tracker.setTitle = setTitle;
+  Object.assign(byKey(s, "CYC-1"), { description: "人改的正文" });
+  expect(await s.restart().step()).toMatchObject({ shaped: 0, abandoned: 1 });
+  expect(byKey(s, "CYC-1").description).toBe("人改的正文");
+});
