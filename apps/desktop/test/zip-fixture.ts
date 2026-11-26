@@ -1,5 +1,5 @@
 // Bundles on disk and the zip archives of them, for the tests of updating by the difference.
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { parseDirectory, parseEnd } from "../src/shared/zip.ts";
@@ -14,8 +14,12 @@ export const writeBundle = async (root: string, spec: Spec): Promise<void> => {
     const at = join(root, path);
     await mkdir(dirname(at), { recursive: true });
     if (typeof what === "object" && "link" in what) await symlink(what.link, at);
-    else if (typeof what === "string") await writeFile(at, what, { mode: 0o644 });
-    else await writeFile(at, what.text, { mode: what.mode });
+    else {
+      const mode = typeof what === "string" ? 0o644 : what.mode;
+      await writeFile(at, typeof what === "string" ? what : what.text);
+      // Not `writeFile`'s `mode`: the umask masks that, and the bundle must have exactly these modes.
+      await chmod(at, mode);
+    }
   }
 };
 
