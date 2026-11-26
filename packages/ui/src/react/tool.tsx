@@ -26,6 +26,7 @@ import { reveal } from "../reveal.ts";
 import { startedAt } from "../started.ts";
 import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
+import { CommandText } from "./command-text.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { Elapsed } from "./inline-ai-status.tsx";
@@ -884,7 +885,9 @@ export function Copyable({
         </button>
       ) : null}
       {kind === "command" ? (
-        <pre data-slot="tool-command">{clip(text)}</pre>
+        <pre data-slot="tool-command">
+          <CommandText text={clip(text)} />
+        </pre>
       ) : (
         <pre data-slot="tool-output">
           {shown.dropped > 0 ? `${t("tool.earlierCharacters", { count: shown.dropped })}\n` : null}
