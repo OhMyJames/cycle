@@ -85,6 +85,26 @@ export const ResearchSchema = z
   })
   .strict();
 
+/**
+ * The planning node for this Project (CYC-322): when the Todo column has nothing to take, it refills it from Backlog.
+ * Left out, or `enabled: false` (the default), means off. The labels are names looked up in the tracker.
+ */
+export const PlanningSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** On a work item the planner has rewritten or split, waiting for a person to approve it. */
+    pending: text.default("待批准"),
+    /** On a work item the planner asked a question about, waiting for an answer. */
+    awaitingAnswer: text.default("待回答"),
+    /** Put on by a person: the planner leaves the work item alone. */
+    skip: text.default("Loop 跳过"),
+    maxPending: whole(1, 50).default(5),
+    intervalMinutes: whole(1, 1440).default(30),
+    maxSplit: whole(2, 10).default(4),
+  })
+  .strict();
+export type PlanningFile = z.infer<typeof PlanningSchema>;
+
 export const ConfigFileSchema = z.object({
   /** Absolute path of the repository the Project's work happens in. */
   repoRoot: text,
@@ -114,6 +134,7 @@ export const ConfigFileSchema = z.object({
   /** Counts, timeouts and the idle interval (CYC-441). Read again before every step while the loop runs. */
   tuning: TuningSchema.optional(),
   research: ResearchSchema.optional(),
+  planning: PlanningSchema.optional(),
 });
 /** As parsed: a research section always has its `readRoots`, absolute and with `~` expanded. */
 export type ConfigFile = Omit<z.infer<typeof ConfigFileSchema>, "research"> & {

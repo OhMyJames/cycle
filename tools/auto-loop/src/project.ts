@@ -16,6 +16,15 @@ export type ResearchSetup = { typeId: number; backlogColumn: number; folderId: n
 /** Names to look up for research: the issue type, and the folder's title among the project's documents. */
 export type ResearchNames = { type: string; folder: string; documents: DocumentEntry[] };
 
+/** What `resolveProject` finds for the planning node (CYC-322); the counts come from the config file. */
+export type PlanningSetup = Pick<
+  NonNullable<Config["planning"]>,
+  "labels" | "backlogColumn" | "epicTypeId" | "templates"
+>;
+
+/** Names to look up for planning: its three labels. */
+export type PlanningNames = { pending: string; awaitingAnswer: string; skip: string };
+
 const rec = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
 const list = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.map(rec) : []);
@@ -24,7 +33,8 @@ export const resolveProject = (
   reply: unknown,
   names: { projectKey: string; autoLabel: string; featureType: string; bugType: string },
   research?: ResearchNames,
-): ProjectSetup & { research: ResearchSetup | null } => {
+  planning?: PlanningNames,
+): ProjectSetup & { research: ResearchSetup | null; planning: PlanningSetup | null } => {
   const body = rec(reply);
   const data = rec(body.data ?? body);
   const columns = list(data.columns).sort((a, b) => Number(a.position) - Number(b.position));
@@ -56,6 +66,23 @@ export const resolveProject = (
           backlogColumn: pick("backlog", 0, "backlog"),
           folderId: folder(research, names.projectKey),
         };
+  // Planning likewise: its labels, Epic and the templates are required only when it is on.
+  const planningSetup: PlanningSetup | null =
+    planning === undefined
+      ? null
+      : {
+          labels: {
+            pending: byName(data.labels, planning.pending, "label"),
+            awaitingAnswer: byName(data.labels, planning.awaitingAnswer, "label"),
+            skip: byName(data.labels, planning.skip, "label"),
+          },
+          backlogColumn: pick("backlog", 0, "backlog"),
+          epicTypeId: byName(data.issueTypes, "Epic", "issue type"),
+          templates: {
+            feature: template(data.issueTemplates, featureTypeId, names.featureType, names),
+            bug: template(data.issueTemplates, bugTypeId, names.bugType, names),
+          },
+        };
   return {
     columns: {
       todo: pick("unstarted", 0, "todo"),
@@ -76,7 +103,37 @@ export const resolveProject = (
     featureTypeId,
     bugTypeId,
     research: researchSetup,
+    planning: planningSetup,
   };
+};
+
+/**
+ * The body of the issue template for a type. A type may have several (CYC has 「Feature」 and 「Feature（完整流程）」):
+ * the one named like the type is taken; with none so named, a single one is, and more than one is an error rather
+ * than a guess.
+ */
+const template = (
+  rows: unknown,
+  typeId: number,
+  typeName: string,
+  names: { projectKey: string },
+): string => {
+  const ofType = list(rows).filter((t) => Number(t.typeId) === typeId);
+  const named = ofType.filter((t) => String(t.name).toLowerCase() === typeName.toLowerCase());
+  const chosen = named.length > 0 ? named : ofType;
+  const [only] = chosen;
+  if (only === undefined)
+    throw new Error(`project ${names.projectKey}: no issue template for type "${typeName}"`);
+  if (chosen.length > 1)
+    throw new Error(
+      `project ${names.projectKey}: ${chosen.length} issue templates for type "${typeName}" (${named.length} named "${typeName}"); name one "${typeName}"`,
+    );
+  const body = only.descriptionTemplate;
+  if (typeof body !== "string" || body.trim() === "")
+    throw new Error(
+      `project ${names.projectKey}: issue template "${only.name}" has no description`,
+    );
+  return body;
 };
 
 /**

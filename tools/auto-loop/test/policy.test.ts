@@ -144,10 +144,10 @@ test("review role is strictly read-only like QA", () => {
 });
 
 const ROOT = "/repo";
-const researchers = [
-  { role: "research" as const, worktree: W, readRoots: [ROOT, "/data/runs/"] },
-  { role: "research_qa" as const, worktree: W, readRoots: [ROOT, "/data/runs/"] },
-];
+// The planning node's roles (CYC-322) are under exactly the research rules: every `research:` test runs them too.
+const researchers = (["research", "research_qa", "triage", "shape", "shape_qa"] as const).map(
+  (role) => ({ role, worktree: W, readRoots: [ROOT, "/data/runs/"] }),
+);
 type ResearchCtx = (typeof researchers)[number];
 const each = (check: (ctx: ResearchCtx) => void) => {
   for (const ctx of researchers) check(ctx);
@@ -361,6 +361,26 @@ test("research: writes, network, MCP tools and anything unrecognized are denied,
 test("research: a refused command is filed under the part that was refused", () => {
   expect(commandPrefix(run("find . -name x && curl y"), "research")).toBe("curl");
   expect(commandPrefix(run("du -s . && git push"), "research_qa")).toBe("git push");
+  expect(commandPrefix(run("stat a && rm a"), "shape")).toBe("rm");
   // The other roles do not allow these programs, as before.
   expect(commandPrefix(run("find . -name x && curl y"), "qa")).toBe("find");
+});
+
+test("planning: a round's bodies directory given as an extra read root can be read, its neighbours cannot", () => {
+  const bodies = "/state/plans/2026-11-26T15-30-00-000Z/bodies";
+  for (const role of ["triage", "shape", "shape_qa"] as const) {
+    const ctx = { role, worktree: W, readRoots: [ROOT, bodies] };
+    expect(decide(read(`${bodies}/CYC-5.md`), ctx).decision).toBe("allow");
+    expect(decide(run(`cat ${bodies}/CYC-5.md`), ctx).decision).toBe("allow");
+    expect(decide(read("/state/plans/memory.json"), ctx).decision).toBe("deny");
+    expect(decide(read("/state/runs/CYC-5/run.json"), ctx).decision).toBe("deny");
+    // Without it, only the worktree and the repository.
+    expect(decide(read(`${bodies}/CYC-5.md`), { ...ctx, readRoots: [ROOT] }).decision).toBe("deny");
+    // Never left for a person.
+    expect(decide(run("bun run check"), ctx).decision).toBe("deny");
+    expect(decide(edit(`${bodies}/CYC-5.md`), ctx).decision).toBe("deny");
+  }
+  // The other roles ignore read roots, as before.
+  expect(decide(read(`${bodies}/CYC-5.md`), { ...qa, readRoots: [bodies] }).decision).toBe("deny");
+  expect(decide(read(`${bodies}/CYC-5.md`), { ...dev, readRoots: [bodies] }).decision).toBe("ask");
 });

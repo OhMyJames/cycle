@@ -10,8 +10,11 @@ import type {
   Config,
   DocumentEntry,
   Issue,
+  IssueComment,
   LoopPhase,
   NewIssue,
+  PlanningConfig,
+  PlanningTracker,
   Priority,
   Stage,
   Tracker,
@@ -89,12 +92,37 @@ const createdId = (raw: unknown, tool: string): number => {
 };
 
 const FIELD_WRITE_TIMEOUT_MS = 10_000;
+/** `list_issues` returns at most 500 and has no cursor. */
+const BACKLOG_LIMIT = 500;
+/** Comments per `list_issue_activity` page (its maximum), and pages read before giving up. */
+const ACTIVITY_PAGE = 100;
+const ACTIVITY_PAGES = 20;
+
+/** A comment from `list_issue_activity`, with its replies (which may also come nested under `replies`). */
+const toComments = (raw: unknown): IssueComment[] => {
+  const r = asRecord(raw);
+  const id = parseOptionalInt(r.id);
+  const replies = Array.isArray(r.replies) ? r.replies.flatMap(toComments) : [];
+  if (id === null || (r.kind !== undefined && r.kind !== "comment")) return replies;
+  return [
+    {
+      id,
+      replyToId: parseOptionalInt(r.replyToId),
+      authorId: String(r.actorUserId ?? r.authorId ?? ""),
+      authorName: String(r.actorName ?? r.authorName ?? ""),
+      body: String(r.body ?? ""),
+      createdAt: String(r.createdAt ?? ""),
+    },
+    ...replies,
+  ];
+};
 
 export class PlanTracker implements Tracker {
   readonly #url: string;
   readonly #key: string;
   readonly #project: string;
   #columns: Config["columns"] | undefined;
+  #backlog: number | undefined;
   #loopFields: LoopFields | null = null;
 
   /** `columns` may be left out until `setColumns` is called with what `get_project` resolved. */
@@ -112,6 +140,11 @@ export class PlanTracker implements Tracker {
 
   setColumns(columns: Config["columns"]): void {
     this.#columns = columns;
+  }
+
+  /** The Backlog column, resolved only when the planning node is on (CYC-322). */
+  setBacklogColumn(columnId: number): void {
+    this.#backlog = columnId;
   }
 
   /** The ids of the phase fields; `null` (the default) means the project has none and nothing is written. */
@@ -218,12 +251,22 @@ export class PlanTracker implements Tracker {
   }
 
   async listTodo(): Promise<Issue[]> {
+    return this.#listColumn(this.#column("todo"), 100);
+  }
+
+  /** `list_issues` has no paging: a Backlog that fills the page is refused rather than read in part. */
+  async listBacklog(): Promise<Issue[]> {
+    if (this.#backlog === undefined)
+      throw new Error("the project's Backlog column is not resolved");
+    const issues = await this.#listColumn(this.#backlog, BACKLOG_LIMIT);
+    if (issues.length >= BACKLOG_LIMIT)
+      throw new Error(`the Backlog has ${BACKLOG_LIMIT} or more issues; list_issues cannot page`);
+    return issues;
+  }
+
+  async #listColumn(columnId: number, limit: number): Promise<Issue[]> {
     const listed = asRecord(
-      await this.#call("list_issues", {
-        projectKey: this.#project,
-        columnId: this.#column("todo"),
-        limit: 100,
-      }),
+      await this.#call("list_issues", { projectKey: this.#project, columnId, limit }),
     );
     const rows = Array.isArray(listed.data)
       ? listed.data
@@ -306,6 +349,7 @@ export class PlanTracker implements Tracker {
       description: input.description,
       columnId: input.columnId,
       ...(input.parentId !== null ? { parentId: input.parentId } : {}),
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
     });
     const data = asRecord(payload(raw));
     const number = parseOptionalInt(data.sequenceNumber ?? data.number);
@@ -313,11 +357,109 @@ export class PlanTracker implements Tracker {
     return { id: createdId(raw, "create_issue"), number };
   }
 
-  async linkIssues(from: Issue, toId: number, kind: "relates"): Promise<void> {
+  async linkIssues(from: Issue, toId: number, kind: "relates" | "blocks"): Promise<void> {
     await this.#tool("execute_write", "link_issues", {
       issueId: from.id,
       targetIssueId: toId,
       kind,
     });
   }
+
+  /** `list_issue_activity` filtered to comments, oldest first, every page; replies are flattened in. */
+  async listComments(issue: Issue): Promise<IssueComment[]> {
+    const comments: IssueComment[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < ACTIVITY_PAGES; page++) {
+      const data = asRecord(
+        payload(
+          await this.#tool("execute_read", "list_issue_activity", {
+            issueId: issue.id,
+            filter: "comments",
+            order: "asc",
+            limit: ACTIVITY_PAGE,
+            ...(cursor !== undefined ? { cursor } : {}),
+          }),
+        ),
+      );
+      if (!Array.isArray(data.items))
+        throw new Error(
+          `unrecognized list_issue_activity reply: ${JSON.stringify(data).slice(0, 300)}`,
+        );
+      comments.push(...data.items.flatMap(toComments));
+      if (typeof data.nextCursor !== "string" || data.nextCursor === "") {
+        // Replies sit under their thread: put everything in time order.
+        return comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id - b.id);
+      }
+      cursor = data.nextCursor;
+    }
+    throw new Error(`${issue.key} has more than ${ACTIVITY_PAGES * ACTIVITY_PAGE} comments`);
+  }
+
+  async setTitle(issue: Issue, title: string): Promise<void> {
+    await this.#tool("execute_write", "update_issue", { issueId: issue.id, title });
+  }
+
+  async setType(issue: Issue, typeId: number): Promise<void> {
+    await this.#tool("execute_write", "update_issue", { issueId: issue.id, typeId });
+  }
+
+  async setPriority(issue: Issue, priority: Priority | null): Promise<void> {
+    await this.#tool("execute_write", "update_issue", { issueId: issue.id, priority });
+  }
+
+  async addLabel(issue: Issue, labelId: number): Promise<void> {
+    await this.#relabel(issue, (ids) => (ids.includes(labelId) ? ids : [...ids, labelId]));
+  }
+
+  async removeLabel(issue: Issue, labelId: number): Promise<void> {
+    await this.#relabel(issue, (ids) => ids.filter((id) => id !== labelId));
+  }
+
+  /**
+   * `labelIds` replaces every label, so the labels are read again first: a person may have changed them since `issue`
+   * was read. Nothing is written when nothing would change.
+   */
+  async #relabel(issue: Issue, change: (ids: number[]) => number[]): Promise<void> {
+    const now = (await this.get(issue.number)).labelIds;
+    const next = change(now);
+    if (next.length === now.length && next.every((id, i) => id === now[i])) return;
+    await this.#tool("execute_write", "update_issue", { issueId: issue.id, labelIds: next });
+  }
 }
+
+/**
+ * The tracker as the planning node may use it (CYC-322). The ids are bound here, from the resolved config: the
+ * planner cannot move a work item, cannot put on `auto` or any label but its own two, and creates issues only in
+ * Backlog, as a Feature or a Bug.
+ */
+export const planningTracker = (
+  tracker: Tracker,
+  config: Pick<Config, "featureTypeId" | "bugTypeId"> & { planning: PlanningConfig },
+): PlanningTracker => {
+  const { labels, backlogColumn, epicTypeId } = config.planning;
+  return {
+    get: (number) => tracker.get(number),
+    listBacklog: () => tracker.listBacklog(),
+    listTodo: () => tracker.listTodo(),
+    listComments: (issue) => tracker.listComments(issue),
+    comment: (issue, text) => tracker.comment(issue, text),
+    setTitle: (issue, title) => tracker.setTitle(issue, title),
+    setDescription: (issue, description) => tracker.setDescription(issue, description),
+    makeEpic: (issue) => tracker.setType(issue, epicTypeId),
+    setPriority: (issue, priority) => tracker.setPriority(issue, priority),
+    createIssue: (input) =>
+      tracker.createIssue({
+        typeId: input.kind === "Bug" ? config.bugTypeId : config.featureTypeId,
+        title: input.title,
+        description: input.description,
+        columnId: backlogColumn,
+        parentId: input.parentId,
+        priority: input.priority,
+      }),
+    linkBlocks: (from, toId) => tracker.linkIssues(from, toId, "blocks"),
+    markPending: (issue) => tracker.addLabel(issue, labels.pending),
+    unmarkPending: (issue) => tracker.removeLabel(issue, labels.pending),
+    markAwaitingAnswer: (issue) => tracker.addLabel(issue, labels.awaitingAnswer),
+    unmarkAwaitingAnswer: (issue) => tracker.removeLabel(issue, labels.awaitingAnswer),
+  };
+};

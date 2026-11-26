@@ -5,7 +5,14 @@
 //   <stateDir>/runs/CYC-318/criteria.json  the acceptance criteria and their evidence
 //   <stateDir>/runs/CYC-318/progress.md    what Dev said it did and means to do next
 //   <stateDir>/events.jsonl                one line per thing that happened, for the metrics
+//
+// The planning node (CYC-322) keeps its rounds apart from the work item runs:
+//
+//   <stateDir>/plans/<id>/run.json         one round: candidates, triage, the shaping queue and its write-back
+//   <stateDir>/plans/<id>/bodies/          the bodies the round's sessions read
+//   <stateDir>/plans/memory.json           per work item: last category, body hash, latest comment, stopped
 
+import type { Dirent } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -120,6 +127,80 @@ export const RunRecordSchema = z.object({
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
+/**
+ * One planning round's id (CYC-322): its start time with `:` and `.` replaced, so it can name a directory, a worktree
+ * and an event's `run` (as `plan-<id>`).
+ */
+export const planRoundId = (startedAt: Date): string =>
+  startedAt.toISOString().replace(/[:.]/g, "-");
+const PLAN_ROUND_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
+
+export const PLAN_PHASES = ["triage", "shaping", "finished", "abandoned"] as const;
+
+/**
+ * One work item in a round's shaping queue, and how far writing it back got. Each step is saved as soon as it is
+ * done, so a restart neither repeats nor skips one. Before split `k` is created, `pendingCreate` says so: after a
+ * restart the Backlog is searched for it (by parent and title) before creating it again.
+ */
+const ShapeItemSchema = z.object({
+  key: z.string(),
+  issueId: z.number().int(),
+  number: z.number().int(),
+  /** Hash of the title and body when shaping began: writing back checks a person has not changed them since. */
+  hash: z.string(),
+  state: z.enum(["waiting", "shape", "shape_qa", "writing", "done", "stopped"]),
+  /** Shape turns after the first, as `round` for a dev run. */
+  round: z.number().int().min(0),
+  shapeSessionId: z.string().nullable(),
+  qaSessionId: z.string().nullable(),
+  /** Why it stopped, for the event and the memory; null unless `state` is `stopped`. */
+  stoppedReason: z.string().nullable(),
+  originalCommented: z.boolean(),
+  rewritten: z.boolean(),
+  /** Numbers of the issues split off so far, in order. */
+  created: z.array(z.number().int()),
+  pendingCreate: z.object({ index: z.number().int().min(0), title: z.string() }).nullable(),
+  linked: z.boolean(),
+  notesCommented: z.boolean(),
+  labelled: z.boolean(),
+});
+export type ShapeItem = z.infer<typeof ShapeItemSchema>;
+
+/** A planning round (CYC-322): `<stateDir>/plans/<id>/run.json`. */
+export const PlanRoundSchema = z.object({
+  id: z.string().regex(PLAN_ROUND_ID),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+  phase: z.enum(PLAN_PHASES),
+  /** The detached worktree the round's sessions read, or null before it is made and after it is removed. */
+  worktree: z.string().nullable(),
+  triageSessionId: z.string().nullable(),
+  /** Keys of the Backlog work items the round looked at. */
+  candidates: z.array(z.string()),
+  /** What triage decided, once it passed the checks: a category and a priority per key, and what to shape, in order. */
+  triage: z
+    .object({
+      categories: z.record(z.string(), z.string()),
+      priorities: z.record(z.string(), z.enum(["urgent", "high", "medium", "low"])),
+      order: z.array(z.string()),
+    })
+    .nullable(),
+  queue: z.array(ShapeItemSchema),
+});
+export type PlanRound = z.infer<typeof PlanRoundSchema>;
+
+/** What the planner remembers about a work item between rounds, to skip one that has not changed. */
+const PlanMemoryEntrySchema = z.object({
+  category: z.string().nullable(),
+  bodyHash: z.string(),
+  /** ISO time of the latest comment when it was last looked at; null when it had none. */
+  lastCommentAt: z.string().nullable(),
+  /** Shaping stopped on it; it is not tried again until its body or comments change. */
+  stopped: z.boolean(),
+});
+const PlanMemorySchema = z.record(z.string(), PlanMemoryEntrySchema);
+export type PlanMemory = z.infer<typeof PlanMemorySchema>;
+
 export type LoopEvent = { ts: string; run: string; kind: string } & Record<
   string,
   string | number | boolean
@@ -180,6 +261,75 @@ export class RunStore {
   /** Runs that have not ended: the loop picks these up again after a restart. */
   async unfinished(): Promise<RunRecord[]> {
     return (await this.all()).filter((r) => r.phase !== "done");
+  }
+
+  #plan(id: string): string {
+    if (!PLAN_ROUND_ID.test(id)) throw new Error(`not a planning round id: ${id}`);
+    return join(this.#dir, "plans", id);
+  }
+
+  /** Where a round's work item bodies go; a read root of its sessions. */
+  planBodiesDir(id: string): string {
+    return join(this.#plan(id), "bodies");
+  }
+
+  async loadPlan(id: string): Promise<PlanRound | undefined> {
+    try {
+      return PlanRoundSchema.parse(
+        JSON.parse(await readFile(join(this.#plan(id), "run.json"), "utf8")),
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
+  /** Saves the round, making its directory and `bodies/` the first time. */
+  async savePlan(round: PlanRound): Promise<PlanRound> {
+    const dir = this.#plan(round.id);
+    const next = PlanRoundSchema.parse({ ...round, updatedAt: this.#now().toISOString() });
+    await mkdir(join(dir, "bodies"), { recursive: true, mode: 0o700 });
+    await writeAtomic(join(dir, "run.json"), `${JSON.stringify(next, null, 2)}\n`);
+    return next;
+  }
+
+  /** Rounds that have not ended, oldest first: picked up again after a restart. Apart from `unfinished()`. */
+  async unfinishedPlans(): Promise<PlanRound[]> {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(join(this.#dir, "plans"), { withFileTypes: true });
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return [];
+      throw error;
+    }
+    const ids = entries
+      .filter((e) => e.isDirectory() && PLAN_ROUND_ID.test(e.name))
+      .map((e) => e.name)
+      .sort();
+    const rounds = await Promise.all(ids.map((id) => this.loadPlan(id)));
+    return rounds.filter(
+      (r): r is PlanRound => r !== undefined && r.phase !== "finished" && r.phase !== "abandoned",
+    );
+  }
+
+  /** `plans/memory.json`; empty when there is none yet. */
+  async loadPlanMemory(): Promise<PlanMemory> {
+    try {
+      return PlanMemorySchema.parse(
+        JSON.parse(await readFile(join(this.#dir, "plans", "memory.json"), "utf8")),
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return {};
+      throw error;
+    }
+  }
+
+  async savePlanMemory(memory: PlanMemory): Promise<void> {
+    await mkdir(join(this.#dir, "plans"), { recursive: true, mode: 0o700 });
+    await writeAtomic(
+      join(this.#dir, "plans", "memory.json"),
+      `${JSON.stringify(PlanMemorySchema.parse(memory), null, 2)}\n`,
+    );
   }
 
   async saveCriteria(key: string, book: CriteriaBook): Promise<void> {

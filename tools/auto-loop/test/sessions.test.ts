@@ -281,6 +281,15 @@ test("the read roots a turn is given are the ones its research policy reads", as
   await new Promise((r) => setTimeout(r, 50));
   expect(events).toHaveLength(1);
   expect(events[0]?.data).toMatchObject({ role: "research", tool: "read", decision: "deny" });
+  // A planning role (CYC-322) takes its read roots from the turn the same way.
+  const shape = { ...context, role: "shape" as const };
+  await sessions.turn(sessionId, "work", { ...shape, readRoots: ["/srv/research-root"] });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(events).toHaveLength(1);
+  await sessions.turn(sessionId, "work", shape);
+  await new Promise((r) => setTimeout(r, 50));
+  expect(events).toHaveLength(2);
+  expect(events[1]?.data).toMatchObject({ role: "shape", tool: "read", decision: "deny" });
 }, 15_000);
 
 test("create sets model and effort on the new session, and only the ones given", async () => {
@@ -309,7 +318,15 @@ test("create puts a Claude session of a read-only role in default mode, and leav
   const fake = fakeAgent({}, { configOptions: [] });
   const { sessions } = await setup(fake);
   const modes = () => fake.log.configs.filter((c) => c.configId === "mode").map((c) => c.value);
-  for (const role of ["qa", "review", "research", "research_qa"] as const) {
+  for (const role of [
+    "qa",
+    "review",
+    "research",
+    "research_qa",
+    "triage",
+    "shape",
+    "shape_qa",
+  ] as const) {
     fake.log.configs.length = 0;
     await sessions.create({ role, agent: "claude", title: "t", cwd: "/tmp" });
     expect(modes()).toEqual(["default"]);
@@ -322,6 +339,11 @@ test("create puts a Claude session of a read-only role in default mode, and leav
 
 test("readOnlyMode maps only the read-only roles of a known agent", () => {
   expect(readOnlyMode("research", "claude")).toBe("default");
+  // The planning node's roles (CYC-322) too.
+  for (const role of ["triage", "shape", "shape_qa"] as const) {
+    expect(readOnlyMode(role, "claude")).toBe("default");
+    expect(readOnlyMode(role, "codex")).toBeUndefined();
+  }
   expect(readOnlyMode("dev", "claude")).toBeUndefined();
   expect(readOnlyMode("qa", "codex")).toBeUndefined();
 });
