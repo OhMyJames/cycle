@@ -13,6 +13,7 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopNoticesAnswer,
   LoopProjectsAnswer,
   LoopTicketAnswer,
   PlanUsage,
@@ -78,6 +79,7 @@ export const fakeBridge = (
     loopTickets?: Record<string, LoopTicketAnswer>;
     /** What a state button comes to. Default: it worked. */
     loopAct?: LoopActResult;
+    loopNotices?: Record<string, LoopNoticesAnswer>;
     /** What the daemon says it can do. Default: all of it. */
     capabilities?: {
       queue: boolean;
@@ -682,6 +684,11 @@ export const fakeBridge = (
       "loopTicket",
       async (_projectKey: string, identifier: string): Promise<LoopTicketAnswer> =>
         options.loopTickets?.[identifier] ?? { kind: "no_key" },
+    ),
+    loopNotices: record(
+      "loopNotices",
+      async (projectKey: string): Promise<LoopNoticesAnswer> =>
+        options.loopNotices?.[projectKey] ?? { kind: "no_key" },
     ),
     loopAct: record(
       "loopAct",

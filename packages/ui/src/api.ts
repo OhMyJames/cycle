@@ -877,7 +877,9 @@ export type AppEvent =
       rows: number;
     }
   /** A notification was pressed: show this session. */
-  | { type: "focus-session"; locationId: string; sessionId: string };
+  | { type: "focus-session"; locationId: string; sessionId: string }
+  /** A Loop notification was pressed: show this ticket on the Loop page. */
+  | { type: "open-loop-ticket"; projectKey: string; identifier: string };
 
 /** Whether the app reports how it is used (docs/analytics.md). `available` is false when there is nowhere to report to. */
 export type AnalyticsStatus = { available: boolean; enabled: boolean; noticed: boolean };
@@ -1292,6 +1294,8 @@ export type AppApi = {
   loopBoard(projectKey: string): Promise<LoopBoardAnswer>;
   /** One ticket's body, acceptance criteria and PR/MR links, read with the person's own key. */
   loopTicket(projectKey: string, identifier: string): Promise<LoopTicketAnswer>;
+  /** What needs a person in a Project: Blocked tickets, escalated reviews, sessions waiting on an answer (§17). */
+  loopNotices(projectKey: string): Promise<LoopNoticesAnswer>;
   /**
    * Changes one ticket's state with the person's own key. `approve` writes nothing unless `confirmed` is true: main
    * refuses it, whatever the page did. Never throws for a failed write: the reason comes back.
@@ -1341,7 +1345,35 @@ export type LoopActFailure =
   | "refused";
 export type LoopActResult = { kind: "ok" } | { kind: "failed"; reason: LoopActFailure };
 
+/** One thing that needs a person. Order on the page: `permission`, then `blocked`, then `review`. */
+export type LoopNotice =
+  /** A Dev session of a ticket waits on a permission or a form. */
+  | {
+      kind: "permission";
+      identifier: string;
+      locationId: string;
+      sessionId: string;
+    }
+  /** A ticket in Blocked; `reason` is Loop's own words from its comment (may be empty when it cannot be read). */
+  | { kind: "blocked"; identifier: string; title: string; reason: string }
+  /** A ticket whose review was escalated to a person. */
+  | { kind: "review"; identifier: string; title: string; conclusion: string };
+export type LoopNoticesAnswer =
+  | { kind: "ok"; notices: LoopNotice[] }
+  | { kind: "no_key" }
+  | { kind: "unreachable" };
+
 export type LoopTicketDetail = LoopTicket & {
+  /** Why a Blocked or escalated ticket needs a person, from Loop's comment on it. */
+  attention?: {
+    kind: "blocked" | "review";
+    /** The reason (blocked) or the review's conclusion (review), as Loop wrote it. */
+    text: string;
+    /** The title of the Dev session to join, `[CYC-1] Dev`. */
+    session?: string;
+    /** The PR/MR the review is about. */
+    prUrl?: string;
+  };
   /** The ticket's text as written (Markdown). */
   body: string;
   /** The items of its acceptance criteria section, one per line. */
@@ -1484,6 +1516,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   loopBoard: true,
   loopTicket: true,
   loopAct: true,
+  loopNotices: true,
 };
 
 export type ApiMethod = keyof AppApi;

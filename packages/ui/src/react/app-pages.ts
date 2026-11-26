@@ -108,6 +108,18 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setShownRequests(focusRequests);
     if (pageOpen) closePage();
   }
+  // A Loop notification was pressed: that Project's page, over whatever is open (the ticket is opened by the page).
+  const loopRequest = useAppState((s) => s.loop.request);
+  const [shownLoop, setShownLoop] = useState(loopRequest?.n);
+  if (shownLoop !== loopRequest?.n) {
+    setShownLoop(loopRequest?.n);
+    if (loopRequest !== undefined) {
+      setSettings(undefined);
+      setConnectors(undefined);
+      lastLoopProject.current = loopRequest.projectKey;
+      setLoop({ projectKey: loopRequest.projectKey });
+    }
+  }
   useEffect(() => {
     const opener = returnFocus.current;
     if (pageOpen || opener === undefined) return;
