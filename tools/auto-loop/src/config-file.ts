@@ -4,7 +4,8 @@
 // from the tracker at start (project.ts).
 
 import { chmod, readFile, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import type { Config } from "./types.ts";
 
@@ -66,6 +67,20 @@ export const tuningToConfig = (t: Tuning): Partial<Config> => {
   return out;
 };
 
+/**
+ * Research work items for this Project (CYC-447). Left out, or `enabled: false`, means off. `type` and `folder` are
+ * names looked up in the tracker; `readRoots` are directories a research session may read (default: `repoRoot`).
+ */
+export const ResearchSchema = z
+  .object({
+    enabled: z.boolean(),
+    type: text.default("Research"),
+    folder: text.default("调研"),
+    readRoots: z.array(text).min(1).optional(),
+    maxFollowups: whole(0, 20).default(5),
+  })
+  .strict();
+
 export const ConfigFileSchema = z.object({
   /** Absolute path of the repository the Project's work happens in. */
   repoRoot: text,
@@ -94,8 +109,16 @@ export const ConfigFileSchema = z.object({
   workers: z.number().int().positive().optional(),
   /** Counts, timeouts and the idle interval (CYC-441). Read again before every step while the loop runs. */
   tuning: TuningSchema.optional(),
+  research: ResearchSchema.optional(),
 });
-export type ConfigFile = z.infer<typeof ConfigFileSchema>;
+/** As parsed: a research section always has its `readRoots`, absolute and with `~` expanded. */
+export type ConfigFile = Omit<z.infer<typeof ConfigFileSchema>, "research"> & {
+  research?: z.infer<typeof ResearchSchema> & { readRoots: string[] };
+};
+
+/** `~` and `~/x` are the home directory; anything else is taken as written. */
+const expandHome = (path: string): string =>
+  path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 
 /** `invalid tuning.maxFixRounds: ...` for every bad field, so a person sees all of them at once. */
 const describeIssues = (error: z.ZodError): string =>
@@ -131,10 +154,19 @@ export const parseConfigFile = (raw: string, source = "config"): ConfigFile => {
     if (!isAbsolute(parsed.data[name]))
       throw new Error(`${source}: ${name} must be an absolute path`);
   }
+  const repoRoot = resolve(parsed.data.repoRoot);
+  const { research, ...rest } = parsed.data;
+  const readRoots = (research?.readRoots ?? [repoRoot]).map((root) => {
+    const path = expandHome(root);
+    if (!isAbsolute(path))
+      throw new Error(`${source}: research.readRoots must be absolute paths (got ${root})`);
+    return resolve(path);
+  });
   return {
-    ...parsed.data,
-    repoRoot: resolve(parsed.data.repoRoot),
+    ...rest,
+    repoRoot,
     stateDir: resolve(parsed.data.stateDir),
+    ...(research !== undefined ? { research: { ...research, readRoots } } : {}),
   };
 };
 

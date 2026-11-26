@@ -76,7 +76,19 @@ const setUp = async (file: ConfigFile) => {
     key: file.planKey,
     projectKey: file.projectKey,
   });
-  const setup = resolveProject(await tracker.getProject(), file);
+  // Research (CYC-447) is resolved only when it is on; the folder is a document, which `get_project` does not list.
+  const research = file.research?.enabled === true ? file.research : null;
+  const { research: found, ...setup } = resolveProject(
+    await tracker.getProject(),
+    file,
+    research === null
+      ? undefined
+      : {
+          type: research.type,
+          folder: research.folder,
+          documents: await tracker.listDocuments(),
+        },
+  );
   tracker.setColumns(setup.columns);
   // The phase fields only mirror the run: if they cannot be used, say why once and do not write them.
   let loopFields: LoopFields | null = null;
@@ -101,6 +113,10 @@ const setUp = async (file: ConfigFile) => {
     ...(file.devEffort !== undefined ? { devEffort: file.devEffort } : {}),
     ...(file.qaEffort !== undefined ? { qaEffort: file.qaEffort } : {}),
     ...(file.reviewEffort !== undefined ? { reviewEffort: file.reviewEffort } : {}),
+    research:
+      research === null || found === null
+        ? null
+        : { ...found, readRoots: research.readRoots, maxFollowups: research.maxFollowups },
     dryRun,
   };
   const tuning = {
