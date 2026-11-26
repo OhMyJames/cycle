@@ -1,11 +1,11 @@
 // `bun cloud/loop/src/cli.ts [--data-dir DIR]`: serves the Projects in `<data-dir>/loop.json` on
 // `<data-dir>/loop.sock` and runs each one's pipeline from the same file (pipeline-cli.ts reads it too),
-// resuming unfinished runs from their run.json. Every Project is set up before the socket opens or any loop starts.
+// resuming unfinished runs from their run.json. Stop it with SIGINT/SIGTERM (see handleStopSignals). Every Project is set up before the socket opens or any loop starts.
 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setUpProject } from "./assemble.ts";
-import { startServer, startupReason } from "./runtime.ts";
+import { handleStopSignals, startServer, startupReason } from "./runtime.ts";
 
 const arg = (name: string) => {
   const at = process.argv.indexOf(name);
@@ -39,17 +39,6 @@ try {
 }
 console.log(`loop: serving ${running.projectCount} project(s)`);
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => {
-    // The first asks to stop after this step; the second leaves now. A killed loop is picked up again on restart.
-    if (stopped.value) {
-      void Promise.allSettled(running.projects.map((p) => p.release())).finally(() =>
-        process.exit(130),
-      );
-    }
-    running.stop();
-    log("stopping after this step (again to leave now)");
-  });
-}
+handleStopSignals({ running, log, exit: (code) => process.exit(code) });
 await running.done;
 process.exit(0);

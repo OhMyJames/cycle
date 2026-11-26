@@ -99,3 +99,37 @@ export const startServer = async (
     projectCount: config.projects.length,
   };
 };
+
+/** Where stop requests come from: the process in production, an emitter in tests. */
+export type SignalSource = { on: (signal: "SIGINT" | "SIGTERM", handler: () => void) => unknown };
+
+/**
+ * How the server is stopped (CYC-456): the process is the switch, `SIGINT` or `SIGTERM` from a terminal, a process
+ * supervisor or `kill`. The first asks every loop to stop after its current step, so no new step starts; the second
+ * releases every Project's lock and leaves now with `exit(130)`. A loop killed mid-run is picked up from its
+ * run.json when the server starts again.
+ */
+export const handleStopSignals = (o: {
+  running: Pick<Running, "stop" | "projects">;
+  log: (line: string) => void;
+  exit: (code: number) => void;
+  source?: SignalSource;
+}): void => {
+  let asked = false;
+  let leaving = false;
+  const onSignal = () => {
+    if (asked) {
+      if (leaving) return;
+      leaving = true;
+      void Promise.allSettled(o.running.projects.map((p) => p.release())).finally(() =>
+        o.exit(130),
+      );
+      return;
+    }
+    asked = true;
+    o.running.stop();
+    o.log("stopping after this step (again to leave now)");
+  };
+  const source = o.source ?? process;
+  for (const signal of ["SIGINT", "SIGTERM"] as const) source.on(signal, onSignal);
+};

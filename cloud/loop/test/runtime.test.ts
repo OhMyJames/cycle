@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import type { ProjectUnit } from "../src/assemble.ts";
 import type { ConfigFile } from "../src/config-file.ts";
 import { Pipeline } from "../src/pipeline.ts";
-import { startPipelines, startServer, startupReason } from "../src/runtime.ts";
+import { handleStopSignals, startPipelines, startServer, startupReason } from "../src/runtime.ts";
 import { RunStore } from "../src/store.ts";
 import {
   config,
@@ -264,4 +265,131 @@ test("a Project that fails setup in startPipelines closes the ones already up", 
     ),
   ).rejects.toThrow("bad");
   expect(closed).toEqual(["A"]);
+});
+
+/** A Project whose step is held open until `finish` is called, so a stop can land in the middle of it. */
+const held = (released: string[]) => {
+  const started: number[] = [];
+  const finishes: (() => void)[] = [];
+  const unit = (name: string): ProjectUnit => ({
+    name,
+    pipeline: {
+      step: () => {
+        started.push(started.length);
+        return new Promise<{ status: string }>((resolve) => {
+          finishes.push(() => resolve({ status: "worked" }));
+        });
+      },
+      intervalSeconds: 0.001,
+    } as unknown as ProjectUnit["pipeline"],
+    release: async () => {
+      released.push(name);
+    },
+    close: async () => {},
+    workers: 1,
+  });
+  return {
+    started,
+    unit,
+    finish: () => {
+      for (const f of finishes.splice(0)) f();
+    },
+  };
+};
+
+test("the first stop signal lets the step in flight finish and starts no new one", {
+  timeout: 5000,
+}, async () => {
+  const released: string[] = [];
+  const h = held(released);
+  const source = new EventEmitter();
+  const exits: number[] = [];
+  const logs: string[] = [];
+  const running = await startPipelines(
+    [file("A")],
+    async () => h.unit("A"),
+    () => {},
+  );
+  handleStopSignals({
+    running,
+    log: (l) => logs.push(l),
+    exit: (c) => exits.push(c),
+    source: { on: (s, f) => source.on(s, f) },
+  });
+  await waitFor(() => h.started.length === 1);
+  source.emit("SIGTERM");
+  let ended = false;
+  void running.done.then(() => {
+    ended = true;
+  });
+  await Bun.sleep(30);
+  // The step is still running: the stop waits for it.
+  expect(ended).toBe(false);
+  expect(logs).toEqual(["stopping after this step (again to leave now)"]);
+  h.finish();
+  await running.done;
+  expect(h.started).toHaveLength(1);
+  expect(exits).toEqual([]);
+});
+
+test("the second stop signal releases every Project's lock and exits 130 at once", async () => {
+  const released: string[] = [];
+  const h = held(released);
+  const source = new EventEmitter();
+  const exits: number[] = [];
+  const running = await startPipelines(
+    [file("A"), file("B")],
+    async (f) => h.unit(f.projectKey),
+    () => {},
+  );
+  handleStopSignals({
+    running,
+    log: () => {},
+    exit: (c) => exits.push(c),
+    source: { on: (s, f) => source.on(s, f) },
+  });
+  await waitFor(() => h.started.length === 2);
+  source.emit("SIGINT");
+  expect(exits).toEqual([]);
+  source.emit("SIGINT");
+  source.emit("SIGINT");
+  await waitFor(() => exits.length > 0);
+  // The steps never finished, yet the locks are released and the exit happens once.
+  expect(released.sort()).toEqual(["A", "B"]);
+  expect(exits).toEqual([130]);
+  h.finish();
+  await running.done;
+});
+
+test("stop, then start again: the server comes back with the same Projects and steps run again", {
+  timeout: 5000,
+}, async () => {
+  await writeConfigs(["A"]);
+  const steps: string[] = [];
+  const source = new EventEmitter();
+  const boot = async () => {
+    const running = await startServer({
+      dataDir: dir,
+      log: () => {},
+      setUp: async () => counting("A", steps),
+    });
+    handleStopSignals({
+      running,
+      log: () => {},
+      exit: () => {},
+      source: { on: (s, f) => source.on(s, f) },
+    });
+    return running;
+  };
+  const first = await boot();
+  await waitFor(() => steps.length >= 2);
+  source.emit("SIGTERM");
+  await first.done;
+  expect(await exists(join(dir, "loop.sock"))).toBe(false);
+  source.removeAllListeners();
+  const before = steps.length;
+  const second = await boot();
+  await waitFor(() => steps.length >= before + 2);
+  source.emit("SIGINT");
+  await second.done;
 });
