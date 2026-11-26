@@ -158,7 +158,7 @@ const rowsOf = (value: unknown): unknown[] => {
 
 type Column = { id: number; name: string; stateType: string; position?: number };
 
-/** What a started column is for. Loop's own convention (tools/auto-loop/src/project.ts): the 1st is In Progress, the 2nd In Review, the 3rd Blocked, in board order. */
+/** What a started column is for. Loop's own convention (cloud/loop/src/project.ts): the 1st is In Progress, the 2nd In Review, the 3rd Blocked, in board order. */
 export type Role = "progress" | "review" | "blocked";
 
 export const roleOf = (columns: Column[], column: Column): Role | undefined => {
@@ -221,7 +221,7 @@ const columnsOf = (project: Record<string, unknown>): Column[] =>
 
 const STAGE_FIELD = "Loop 阶段";
 const STAGE_SINCE_FIELD = "Loop 阶段开始于";
-/** The option names Loop writes (tools/auto-loop/src/project.ts), as the page's fixed words: never the tracker's text. */
+/** The option names Loop writes (cloud/loop/src/project.ts), as the page's fixed words: never the tracker's text. */
 const STAGE_OF_OPTION = new Map<string, LoopStage>([
   ["开发", "develop"],
   ["验证", "verify"],

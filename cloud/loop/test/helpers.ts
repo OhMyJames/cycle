@@ -66,7 +66,7 @@ x
 
 ## 验收标准
 
-1. 开关可用。验证：\`bun test tools/auto-loop/test/a.test.ts\`
+1. 开关可用。验证：\`bun test cloud/loop/test/a.test.ts\`
 2. 门禁通过。验证：\`bun run check\`
 `;
 

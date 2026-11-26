@@ -2,7 +2,7 @@
 
 Status: accepted
 Date: 2026-11-26
-Basis: CYC-425(守卫和 `UI_CRITERIA_GUIDE` 的实现)、CYC-452(本笔记所在工单);代码在 `tools/auto-loop/`(`src/preflight.ts`)。
+Basis: CYC-425(守卫和 `UI_CRITERIA_GUIDE` 的实现)、CYC-452(本笔记所在工单);代码在 `cloud/loop/`(`src/preflight.ts`)。
 
 ## Problem
 

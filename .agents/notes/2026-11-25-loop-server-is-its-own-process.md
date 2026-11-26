@@ -6,7 +6,7 @@ Basis: Epic CYC-381 (Intent/Spec/Design/Plan docs 19–22 in itsaplan) and ticke
 
 ## Problem
 
-The Loop page needs a server that knows which Projects exist and holds the forge/repo credentials a Loop run will need. `tools/auto-loop` is a one-repo script that runs next to the tracker key. The desktop is a renderer-facing app and the daemon spawns agent sessions that inherit its environment and can read the user's files.
+The Loop page needs a server that knows which Projects exist and holds the forge/repo credentials a Loop run will need. `cloud/loop` is a one-repo script that runs next to the tracker key. The desktop is a renderer-facing app and the daemon spawns agent sessions that inherit its environment and can read the user's files.
 
 ## Decision
 
