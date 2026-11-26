@@ -98,6 +98,8 @@ export const PlanningSchema = z
     awaitingAnswer: text.default("待回答"),
     /** Put on by a person: the planner leaves the work item alone. */
     skip: text.default("Loop 跳过"),
+    /** Put on by a person: the work item goes through the full process (four documents), never the planner. */
+    fullProcess: text.default("完整流程"),
     maxPending: whole(1, 50).default(5),
     intervalMinutes: whole(1, 1440).default(30),
     maxSplit: whole(2, 10).default(4),

@@ -159,13 +159,19 @@ test("research folder: a title used twice is resolved to the one at the top of t
 });
 
 // The planning node (CYC-322).
-const planningNames = { pending: "待批准", awaitingAnswer: "待回答", skip: "Loop 跳过" };
+const planningNames = {
+  pending: "待批准",
+  awaitingAnswer: "待回答",
+  skip: "Loop 跳过",
+  fullProcess: "完整流程",
+};
 const withPlanning = () => {
   const p = project(allColumns, [
     { id: 7, name: "auto" },
     { id: 40, name: "待批准" },
     { id: 41, name: "待回答" },
     { id: 42, name: "Loop 跳过" },
+    { id: 12, name: "完整流程" },
   ]) as ReturnType<typeof project> & { data: { issueTemplates: Record<string, unknown>[] } };
   p.data.issueTypes.push({ id: 17, name: "Epic" });
   p.data.issueTemplates = [
@@ -187,7 +193,7 @@ test("planning off: nothing is resolved or required, even when the project has n
 test("planning on: labels, the first backlog column, Epic and the Feature and Bug templates are resolved", () => {
   const setup = resolveProject(withPlanning(), names, undefined, planningNames);
   expect(setup.planning).toEqual({
-    labels: { pending: 40, awaitingAnswer: 41, skip: 42 },
+    labels: { pending: 40, awaitingAnswer: 41, skip: 42, fullProcess: 12 },
     backlogColumn: 30,
     epicTypeId: 17,
     templates: { feature: "## 验收标准\n", bug: "## 现象\n" },
@@ -208,6 +214,10 @@ test("planning on: each missing piece names the Project and what is missing", ()
     p.data.labels = p.data.labels.filter((l) => l.id !== label);
     expect(() => on(p)).toThrow(`project X: no label named "${name}"`);
   }
+  // The full-process label is only kept away from: without it, no work item carries it.
+  const noFullProcess = withPlanning();
+  noFullProcess.data.labels = noFullProcess.data.labels.filter((l) => l.id !== 12);
+  expect(on(noFullProcess).planning?.labels.fullProcess).toBeNull();
   const noBacklog = withPlanning();
   noBacklog.data.columns = noBacklog.data.columns.filter((c) => c.stateType !== "backlog");
   expect(() => on(noBacklog)).toThrow("project X: no backlog column");
@@ -237,6 +247,7 @@ test("planning config: absent or not enabled means off; defaults fill the rest; 
     pending: "待批准",
     awaitingAnswer: "待回答",
     skip: "Loop 跳过",
+    fullProcess: "完整流程",
     maxPending: 5,
     intervalMinutes: 30,
     maxSplit: 4,
