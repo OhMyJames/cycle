@@ -154,7 +154,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
           (r) =>
             r.devSessionId === sessionId ||
             r.qaSessionId === sessionId ||
-            r.reviewSessionId === sessionId,
+            (r.kind === "dev" && r.dev.reviewSessionId === sessionId),
         );
         if (run !== undefined) return store.event(run.key, "permission_pending");
       });

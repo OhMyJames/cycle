@@ -1,12 +1,18 @@
 // What the flows of one work item in the tracker share: dev and research runs both come from the `Todo` column, go
 // on when a person puts them back, and stop in Blocked with a comment.
 
+import {
+  type BlockArgs,
+  type FlowHost,
+  type Intake,
+  PHASE_NAMES,
+  type Phase,
+} from "../engine/flow.ts";
 import { fullFlowPreflight, isFullFlow } from "../full-flow.ts";
 import { preflight, sendBackComment } from "../preflight.ts";
 import { pickNext } from "../select.ts";
 import type { RunRecord } from "../store.ts";
 import type { Issue } from "../types.ts";
-import { type BlockArgs, type FlowHost, type Intake, PHASE_NAMES, type Phase } from "./flow.ts";
 
 /**
  * The `Todo` column: the next work item `pickNext` chooses, checked by `preflight`, which also says its kind. One

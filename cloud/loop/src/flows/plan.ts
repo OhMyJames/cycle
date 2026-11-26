@@ -15,11 +15,12 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { StepResult } from "../engine/flow.ts";
+import { Blocked, type FlowHost, type Intake, type OwnRun, tail } from "../engine/flow.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "../env.ts";
 import { withRepoLock } from "../git-lock.ts";
 import { isNetworkError } from "../network.ts";
 import { RANK } from "../parse/blocks.ts";
-import type { StepResult } from "../pipeline.ts";
 import { planningTracker } from "../plan-mcp.ts";
 import {
   type BacklogSnapshot,
@@ -71,7 +72,6 @@ import {
   type SessionRole,
   type TurnResult,
 } from "../types.ts";
-import { Blocked, type FlowHost, type Intake, type OwnRun, tail } from "./flow.ts";
 
 /** The fixed first line of the comment that explains a shaped work item; the Loop page finds the reason by it. */
 export const NOTES_HEADING = "Loop 规划";

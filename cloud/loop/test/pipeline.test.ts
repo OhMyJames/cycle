@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Tuning } from "../src/config-file.ts";
 import { CriteriaBook } from "../src/criteria.ts";
 import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
-import { RunStore } from "../src/store.ts";
+import { applyPatch, devOf, RunStore } from "../src/store.ts";
 import {
   type Exec,
   type ExecResult,
@@ -139,7 +139,7 @@ test("happy path: Dev, checks, QA, push, PR, green CI, independent review merge,
   ).toBe(true);
   const run = await store.load("CYC-1");
   expect(run?.phase).toBe("done");
-  expect(run?.reviewSessionId).toBe("review-3");
+  expect(run && devOf(run).reviewSessionId).toBe("review-3");
   const criteria = await store.loadCriteria("CYC-1");
   expect(criteria.allPassed).toBe(true);
   expect(sessions.deleted).toBe(0);
@@ -488,7 +488,7 @@ test("CI all green after polling proceeds to review, auto-merge, and done", asyn
   expect(world.calls.some((c) => c.includes("gh pr merge"))).toBe(true);
   const run = await store.load("CYC-1");
   expect(run?.phase).toBe("done");
-  expect(run?.ciRound).toBe(0);
+  expect(run && devOf(run).ciRound).toBe(0);
 });
 
 test("red CI sends failure logs back to Dev, pushes fix to the same branch, then delivers when green", async () => {
@@ -565,7 +565,7 @@ test("red CI sends failure logs back to Dev, pushes fix to the same branch, then
   expect(s.tracker.moves).toEqual(["CYC-1:inProgress"]);
   const run = await s.store.load("CYC-1");
   expect(run?.phase).toBe("done");
-  expect(run?.ciRound).toBe(1);
+  expect(run && devOf(run).ciRound).toBe(1);
   expect(run?.round).toBe(1);
 });
 
@@ -598,8 +598,8 @@ test("red CI with no new Dev commit reruns the failed jobs and waits for the new
   const reruns = s.world.calls.filter((c) => c.includes("gh run rerun"));
   expect(reruns).toEqual(["gh run rerun 20 --failed"]);
   const run = await s.store.load("CYC-1");
-  expect(run?.ciRound).toBe(1);
-  expect(run?.ciFailedSha).toBe("abc");
+  expect(run && devOf(run).ciRound).toBe(1);
+  expect(run && devOf(run).ciFailedSha).toBe("abc");
 });
 
 test("CI failing past retry limit ends in Blocked with failed check and log reason", async () => {
@@ -662,7 +662,7 @@ test("CI failing past retry limit ends in Blocked with failed check and log reas
   const run = await store.load("CYC-1");
   expect(run?.phase).toBe("blocked");
   expect(run?.resumeFrom).toBe("ci");
-  expect(run?.ciRound).toBe(2);
+  expect(run && devOf(run).ciRound).toBe(2);
   expect(run?.worktree).toBe(WT);
   expect(sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(3);
   expect(sessions.deleted).toBe(0);
@@ -1120,30 +1120,31 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     title: "title",
     phase: "review",
     round: 0,
-    ciRound: 0,
-    ciFailedSha: null,
-    nodeModulesReleased: false,
-    fullFlowDocs: [],
-    conflictRound: 0,
-    conflict: null,
-    resolvedFiles: [],
     worktree: WT,
     localBranch: "worktree-auto/cyc-1",
     remoteBranch: "auto/cyc-1",
     devSessionId: "dev-1",
     qaSessionId: "qa-2",
-    reviewSessionId: null,
     replacedSessions: [],
     blockedReason: null,
     resumeFrom: null,
-    prUrl: "https://github.com/o/r/pull/9",
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
     kind: "dev",
-    research: null,
     startedAt: "2026-11-25T00:00:00.000Z",
     updatedAt: "2026-11-25T00:00:00.000Z",
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      fullFlowDocs: [],
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: "https://github.com/o/r/pull/9",
+    },
   });
 
   const result = await s.pipeline.step();
@@ -1299,30 +1300,31 @@ const doneRun = async (s: ReturnType<typeof setup>) => {
     title: "title",
     phase: "done",
     round: 0,
-    ciRound: 0,
-    ciFailedSha: null,
-    nodeModulesReleased: false,
-    fullFlowDocs: [],
-    conflictRound: 0,
-    conflict: null,
-    resolvedFiles: [],
     worktree: WT,
     localBranch: "worktree-auto/cyc-1",
     remoteBranch: "auto/cyc-1",
     devSessionId: "dev-1",
     qaSessionId: "qa-2",
-    reviewSessionId: "review-3",
     replacedSessions: [],
     blockedReason: null,
     resumeFrom: null,
-    prUrl: "https://github.com/o/r/pull/9",
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
     kind: "dev",
-    research: null,
     startedAt: "2026-11-25T00:00:00.000Z",
     updatedAt: "2026-11-25T00:00:00.000Z",
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      fullFlowDocs: [],
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: "review-3",
+      prUrl: "https://github.com/o/r/pull/9",
+    },
   });
 };
 
@@ -1398,7 +1400,7 @@ test("a Canceled run that was Blocked is cleaned too", async () => {
   await doneRun(s);
   const run = await s.store.load("CYC-1");
   if (run === undefined) throw new Error("no run");
-  await s.store.save({ ...run, phase: "blocked", prUrl: null });
+  await s.store.save(applyPatch(run, { phase: "blocked", dev: { prUrl: null } }));
   await s.pipeline.step();
   expect(removals(s)).toHaveLength(3);
   expect(await kindsOf(s)).toContain("cleaned");
@@ -1532,30 +1534,31 @@ test("two steps at once: only one goes on with an unfinished run", async () => {
     title: "t",
     phase: "claimed",
     round: 0,
-    ciRound: 0,
-    ciFailedSha: null,
-    nodeModulesReleased: false,
-    fullFlowDocs: [],
-    conflictRound: 0,
-    conflict: null,
-    resolvedFiles: [],
     worktree: null,
     localBranch: null,
     remoteBranch: "auto/cyc-1",
     devSessionId: null,
     qaSessionId: null,
-    reviewSessionId: null,
     replacedSessions: [],
     blockedReason: null,
     resumeFrom: null,
-    prUrl: null,
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
     kind: "dev",
-    research: null,
     startedAt: "2026-11-24T00:00:00Z",
     updatedAt: "2026-11-24T00:00:00Z",
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      fullFlowDocs: [],
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: null,
+    },
   });
   (s.tracker.issues[0] as Issue).columnId = 23;
   const g = gate();
@@ -2213,30 +2216,31 @@ test("a run that enters verify with node_modules released installs first", async
     title: "title",
     phase: "verify",
     round: 0,
-    ciRound: 0,
-    ciFailedSha: null,
-    nodeModulesReleased: true,
-    fullFlowDocs: [],
-    conflictRound: 0,
-    conflict: null,
-    resolvedFiles: [],
     worktree: WT,
     localBranch: "worktree-auto/cyc-1",
     remoteBranch: "auto/cyc-1",
     devSessionId: "dev-1",
     qaSessionId: null,
-    reviewSessionId: null,
     replacedSessions: [],
     blockedReason: null,
     resumeFrom: null,
-    prUrl: null,
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
     kind: "dev",
-    research: null,
     startedAt: "2026-11-25T00:00:00.000Z",
     updatedAt: "2026-11-25T00:00:00.000Z",
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: true,
+      fullFlowDocs: [],
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: null,
+    },
   });
   await s.pipeline.step();
   const install = s.world.calls.indexOf("bun install");
@@ -2256,7 +2260,7 @@ test("a failed rm keeps the released flag, so the next Dev or verify installs ag
   s.world.ignoredDirs = IGNORED;
   await s.pipeline.step();
   const run = await s.store.load("CYC-1");
-  expect(run?.nodeModulesReleased).toBe(true);
+  expect(run && devOf(run).nodeModulesReleased).toBe(true);
   expect((await s.store.events()).some((e) => e.kind === "node_modules_release_failed")).toBe(true);
 });
 

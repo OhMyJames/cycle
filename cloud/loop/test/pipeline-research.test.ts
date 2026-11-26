@@ -211,7 +211,7 @@ test("happy path: claim, research, QA, publish, Done; nothing installed, pushed 
   expect(run?.phase).toBe("done");
   expect(run?.devSessionId).toBe("research-1");
   expect(run?.qaSessionId).toBe("research_qa-2");
-  expect(run?.prUrl).toBeNull();
+  expect(run?.kind === "dev" ? run.dev.prUrl : null).toBeNull();
   const events = await s.store.events();
   expect(events.find((e) => e.kind === "claimed")).toMatchObject({
     runKind: "research",
@@ -621,7 +621,7 @@ test("a run.json from before research runs reads as a dev run", async () => {
   await writeFile(join(dir, "runs", "CYC-9", "run.json"), JSON.stringify(old));
   const loaded = await store.load("CYC-9");
   expect(loaded?.kind).toBe("dev");
-  expect(loaded?.research).toBeNull();
+  expect(loaded?.kind === "research" ? loaded.research : null).toBeNull();
   // A dev run's stats are unchanged by the new field: the claimed event of a dev run carries no runKind.
   expect(await store.unfinished()).toHaveLength(1);
 });

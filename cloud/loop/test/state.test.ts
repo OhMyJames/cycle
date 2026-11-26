@@ -20,6 +20,7 @@ import {
 import { computeStats } from "../src/stats.ts";
 import {
   acquireLock,
+  devOf,
   type LoopEvent,
   type LoopStore,
   type PlanRoundInput,
@@ -70,32 +71,34 @@ for (const kind of KINDS) {
       title: "t",
       phase: "ci",
       round: 0,
-      ciRound: 0,
-      ciFailedSha: null,
-      nodeModulesReleased: false,
-      fullFlowDocs: [],
-      conflictRound: 0,
-      conflict: null,
-      resolvedFiles: [],
       worktree: "/wt",
       localBranch: "b",
       remoteBranch: "auto/cyc-1",
       devSessionId: "d",
       qaSessionId: null,
-      reviewSessionId: null,
       replacedSessions: [],
       blockedReason: null,
       resumeFrom: null,
-      prUrl: null,
       findings: null,
       cleanedAt: null,
       cleanupNote: null,
       kind: "dev",
-      research: null,
       startedAt: "2026-11-25T00:00:00.000Z",
       updatedAt: "2026-11-25T00:00:00.000Z",
+      dev: {
+        ciRound: 0,
+        ciFailedSha: null,
+        nodeModulesReleased: false,
+        fullFlowDocs: [],
+        conflictRound: 0,
+        conflict: null,
+        resolvedFiles: [],
+        reviewSessionId: null,
+        prUrl: null,
+      },
     });
-    const { conflictRound: _a, conflict: _b, ...old } = saved;
+    const { conflictRound: _a, conflict: _b, ...oldDev } = devOf(saved);
+    const old = { ...saved, dev: oldDev };
     if (kind === "files") {
       await writeFile(join(dir, "runs", "CYC-1", "run.json"), JSON.stringify(old));
     } else {
@@ -112,7 +115,6 @@ for (const kind of KINDS) {
         worktree: _w,
         blockedReason: _b,
         resumeFrom: _f,
-        prUrl: _u,
         startedAt: _s,
         updatedAt: _a2,
         ...state
@@ -121,8 +123,8 @@ for (const kind of KINDS) {
       db.close();
     }
     const loaded = await store.load("CYC-1");
-    expect(loaded?.conflictRound).toBe(0);
-    expect(loaded?.conflict).toBeNull();
+    expect(loaded && devOf(loaded).conflictRound).toBe(0);
+    expect(loaded && devOf(loaded).conflict).toBeNull();
   });
 
   // The planning node's rounds (CYC-322) live in `plans/`, apart from the work item runs.

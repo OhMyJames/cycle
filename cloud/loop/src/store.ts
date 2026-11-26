@@ -71,16 +71,8 @@ const ResearchStateSchema = z.object({
 });
 export type ResearchState = z.infer<typeof ResearchStateSchema>;
 
-export const RunRecordSchema = z.object({
-  key: z.string(),
-  /** What kind of work item. A record from before research runs is a dev run. */
-  kind: z.enum(["dev", "research"]).default("dev"),
-  issueId: z.number().int(),
-  issueNumber: z.number().int(),
-  title: z.string(),
-  phase: z.enum(PHASES),
-  /** Fix rounds used so far: Dev turns after the first. */
-  round: z.number().int().min(0),
+/** What a dev run holds that a research run does not: the pull request, CI, the conflict merge and `node_modules`. */
+export const DevStateSchema = z.object({
   /** CI retry rounds used so far after a red CI run sent the ticket back to Dev. */
   ciRound: z.number().int().min(0).default(0),
   /** The HEAD commit whose CI run last came back red; the same commit again means no new CI run unless the failed jobs are rerun. */
@@ -104,6 +96,25 @@ export const RunRecordSchema = z.object({
     .default(null),
   /** The files a Dev conflict turn resolved: QA is told to look at them. */
   resolvedFiles: z.array(z.string()).default([]),
+  reviewSessionId: z.string().nullable().default(null),
+  /** The pull request; `runs.pr_url` keeps a copy as a column. */
+  prUrl: z.string().nullable().default(null),
+  /** 大档 (CYC-328): the Intent / Spec / Design / Plan documents and the versions the run started on; empty for a small one. */
+  fullFlowDocs: z
+    .array(z.object({ id: z.number().int(), title: z.string(), version: z.number().int() }))
+    .default([]),
+});
+export type DevState = z.infer<typeof DevStateSchema>;
+
+/** What every kind of run holds. */
+const RunCommonSchema = z.object({
+  key: z.string(),
+  issueId: z.number().int(),
+  issueNumber: z.number().int(),
+  title: z.string(),
+  phase: z.enum(PHASES),
+  /** Fix rounds used so far: Dev turns after the first. */
+  round: z.number().int().min(0),
   worktree: z.string().nullable(),
   /** The branch the daemon made: `worktree-auto/cyc-318`. */
   localBranch: z.string().nullable(),
@@ -111,19 +122,11 @@ export const RunRecordSchema = z.object({
   remoteBranch: z.string(),
   devSessionId: z.string().nullable(),
   qaSessionId: z.string().nullable(),
-  reviewSessionId: z.string().nullable().default(null),
   /** Sessions that could not be continued and were replaced, oldest first. */
   replacedSessions: z.array(z.string()),
   blockedReason: z.string().nullable(),
   /** The phase to go on from when a person puts a blocked work item back. */
   resumeFrom: z.enum(PHASES).nullable(),
-  prUrl: z.string().nullable(),
-  /** Research runs only; null for a dev run. */
-  research: ResearchStateSchema.nullable().default(null),
-  /** 大档 (CYC-328): the Intent / Spec / Design / Plan documents and the versions the run started on; empty for a small one. */
-  fullFlowDocs: z
-    .array(z.object({ id: z.number().int(), title: z.string(), version: z.number().int() }))
-    .default([]),
   /** What QA and the checks said last, for the Dev turn that follows. */
   findings: z.string().nullable(),
   /** When the worktree and local branch were removed after Done and merged; null while they are still there. */
@@ -133,7 +136,78 @@ export const RunRecordSchema = z.object({
   startedAt: z.string(),
   updatedAt: z.string(),
 });
-export type RunRecord = z.infer<typeof RunRecordSchema>;
+export type RunCommon = z.infer<typeof RunCommonSchema>;
+
+const DEV_FLAT = [
+  "ciRound",
+  "ciFailedSha",
+  "nodeModulesReleased",
+  "conflictRound",
+  "conflict",
+  "resolvedFiles",
+  "reviewSessionId",
+  "prUrl",
+  "fullFlowDocs",
+] as const;
+
+/** A record from before the union kept the dev fields beside the common ones: they move into `dev`. */
+const nestDevState = (input: unknown): unknown => {
+  if (typeof input !== "object" || input === null) return input;
+  const row = input as Record<string, unknown>;
+  const kind = row.kind ?? "dev";
+  if (kind !== "dev") {
+    const rest = { ...row };
+    for (const name of DEV_FLAT) delete rest[name];
+    return rest;
+  }
+  const rest: Record<string, unknown> = { ...row, kind };
+  const dev: Record<string, unknown> =
+    typeof row.dev === "object" && row.dev !== null ? { ...row.dev } : {};
+  for (const name of DEV_FLAT) {
+    if (name in rest && !(name in dev)) dev[name] = rest[name];
+    delete rest[name];
+  }
+  delete rest.research;
+  return { ...rest, dev };
+};
+
+/** A dev run's record (a Feature or a Bug), or a research run's: `kind` says which state it carries. */
+export const RunRecordSchema = z.preprocess(
+  nestDevState,
+  z.discriminatedUnion("kind", [
+    RunCommonSchema.extend({ kind: z.literal("dev"), dev: DevStateSchema }),
+    RunCommonSchema.extend({ kind: z.literal("research"), research: ResearchStateSchema }),
+  ]),
+) as unknown as z.ZodType<RunRecord>;
+export type RunRecord =
+  | (RunCommon & { kind: "dev"; dev: DevState })
+  | (RunCommon & { kind: "research"; research: ResearchState });
+
+/** A change to a run: the common fields as they are; `dev` is merged into the dev state, `research` replaces it. */
+export type RunPatch = Partial<RunCommon> & { dev?: Partial<DevState>; research?: ResearchState };
+
+export const applyPatch = (run: RunRecord, patch: RunPatch): RunRecord => {
+  const { dev, research, ...common } = patch;
+  if (run.kind === "dev") return { ...run, ...common, dev: { ...run.dev, ...dev } };
+  return { ...run, ...common, research: research ?? run.research };
+};
+
+/** The dev state of a dev run; a research run has none, and asking is a fault. */
+export const devOf = (run: RunRecord): DevState => {
+  if (run.kind !== "dev") throw new Error(`${run.key} is a ${run.kind} run, not a dev run`);
+  return run.dev;
+};
+
+/** The research state of a research run. */
+export const researchOf = (run: RunRecord): ResearchState => {
+  if (run.kind !== "research")
+    throw new Error(`${run.key} is a ${run.kind} run, not a research run`);
+  return run.research;
+};
+
+/** The pull request of a run: none for a kind that has no PR. */
+export const prUrlOf = (run: RunRecord): string | null =>
+  run.kind === "dev" ? run.dev.prUrl : null;
 
 /**
  * One planning round's id (CYC-322): its start time with `:` and `.` replaced, so it can name a directory, a worktree
@@ -302,7 +376,18 @@ export const writeAtomic = async (path: string, text: string): Promise<void> => 
 };
 
 /** What the loop reads and writes of its state, whichever way it is kept: files (`RunStore`) or `loop.db` (`SqliteStore`). */
+/**
+ * What a dev run's later phases need to know about CI and the checks, kept so a restart does not lose it: the commit
+ * the required checks last passed on (null when none, or after the review sent the run back), and what the last
+ * verification ran.
+ */
+export type CiState = { greenSha: string | null; checks: { command: string; passed: boolean }[] };
+export const NO_CI: CiState = { greenSha: null, checks: [] };
+
 export interface LoopStore {
+  loadCi(key: string): Promise<CiState>;
+  /** Changes the named parts of the run's CI state; the others stay as they are. */
+  saveCi(key: string, patch: Partial<CiState>): Promise<void>;
   load(key: string): Promise<RunRecord | undefined>;
   save(record: RunRecord): Promise<RunRecord>;
   all(): Promise<RunRecord[]>;
@@ -357,6 +442,24 @@ export class RunStore implements LoopStore {
       `${JSON.stringify(next, null, 2)}\n`,
     );
     return next;
+  }
+
+  async loadCi(key: string): Promise<CiState> {
+    try {
+      const parsed = JSON.parse(
+        await readFile(join(this.#run(key), "ci.json"), "utf8"),
+      ) as Partial<CiState>;
+      return { ...NO_CI, ...parsed };
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return NO_CI;
+      throw error;
+    }
+  }
+
+  async saveCi(key: string, patch: Partial<CiState>): Promise<void> {
+    const next = { ...(await this.loadCi(key)), ...patch };
+    await mkdir(this.#run(key), { recursive: true, mode: 0o700 });
+    await writeAtomic(join(this.#run(key), "ci.json"), `${JSON.stringify(next, null, 2)}\n`);
   }
 
   async all(): Promise<RunRecord[]> {

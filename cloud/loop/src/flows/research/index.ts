@@ -3,20 +3,7 @@
 // claimed → research → research_qa → publishing → done. The sessions only read; the loop checks the reply, has it
 // judged, and publishes it. There is no install, no commit, no push and no pull request.
 
-import { deliverEnv, GIT_SAFE } from "../../env.ts";
-import { withRepoLock } from "../../git-lock.ts";
-import type { StepResult } from "../../pipeline.ts";
-import { conclusionIsEmpty } from "../../preflight.ts";
-import {
-  formatFindings,
-  researchBrief,
-  researchContinueBrief,
-  researchFixBrief,
-  researchQaBrief,
-} from "../../prompts/index.ts";
-import { findSecrets } from "../../secrets.ts";
-import type { ResearchState, RunRecord } from "../../store.ts";
-import { type Config, type Issue, SessionLost, type TurnResult } from "../../types.ts";
+import type { StepResult } from "../../engine/flow.ts";
 import {
   type Accepted,
   type BlockArgs,
@@ -28,7 +15,21 @@ import {
   type Phase,
   type PhaseDef,
   tail,
-} from "../flow.ts";
+} from "../../engine/flow.ts";
+import { deliverEnv, GIT_SAFE } from "../../env.ts";
+import { withRepoLock } from "../../git-lock.ts";
+import { conclusionIsEmpty } from "../../preflight.ts";
+import {
+  formatFindings,
+  researchBrief,
+  researchContinueBrief,
+  researchFixBrief,
+  researchQaBrief,
+} from "../../prompts/index.ts";
+import { findSecrets } from "../../secrets.ts";
+import { type ResearchState, type RunRecord, researchOf } from "../../store.ts";
+import { type Config, type Issue, SessionLost, type TurnResult } from "../../types.ts";
+import { judge, newQaSession, nextRound } from "../dev/qa.ts";
 import { blockTicket, ticketStillWanted } from "../ticket.ts";
 import { checkResearch, parseResearch, replaceConclusion } from "./output.ts";
 
@@ -77,14 +78,17 @@ export class ResearchFlow implements Flow {
       throw new Error(`a ${accepted.kind} work item is not a research run`);
     return {
       specs: [],
-      research: {
-        questions: accepted.questions,
-        output: null,
-        docId: null,
-        docLinked: false,
-        conclusionDone: false,
-        followups: [],
-        commented: false,
+      state: {
+        kind: "research",
+        research: {
+          questions: accepted.questions,
+          output: null,
+          docId: null,
+          docLinked: false,
+          conclusionDone: false,
+          followups: [],
+          commented: false,
+        },
       },
       // `runKind` is what `stats` tells the runs apart by (`kind` is taken: it is the event's name).
       claimed: { runKind: "research", questions: accepted.questions.length },
@@ -107,6 +111,11 @@ export class ResearchFlow implements Flow {
 
   stillWanted(run: RunRecord) {
     return ticketStillWanted(this.#host, run);
+  }
+
+  /** A person's put-back changes nothing of its own: the record says how far publishing got. */
+  async putBack(run: RunRecord): Promise<RunRecord> {
+    return run;
   }
 
   /** Nothing to check again: it goes on from its own phase, and what it has published is in its record. */
@@ -195,7 +204,7 @@ export class ResearchFlow implements Flow {
   ): Promise<void> {
     const { config, store } = this.#host.d;
     const bounds = this.#host.need(config.research ?? undefined);
-    const state = this.#host.need(run.research ?? undefined);
+    const state = researchOf(run);
     const worktree = this.#host.need(run.worktree ?? undefined);
     const brief = () => {
       const first = researchBrief(issue, state.questions, {
@@ -261,7 +270,8 @@ export class ResearchFlow implements Flow {
         : `The reply did not pass the checks:\n${findings.map((f) => `- ${f}`).join("\n")}`,
     );
     if (findings.length > 0) {
-      await this.#host.nextRound(
+      await nextRound(
+        this.#host,
         run,
         `The loop's checks found:\n${findings.map((f) => `- ${f}`).join("\n")}`,
         save,
@@ -301,19 +311,20 @@ export class ResearchFlow implements Flow {
   ): Promise<void> {
     const { config } = this.#host.d;
     const bounds = this.#host.need(config.research ?? undefined);
-    const state = this.#host.need(run.research ?? undefined);
+    const state = researchOf(run);
     const output = this.#host.need(state.output ?? undefined);
     const worktree = this.#host.need(run.worktree ?? undefined);
     if (run.qaSessionId === null) {
-      const sessionId = await this.#host.newQaSession(run, issue);
+      const sessionId = await newQaSession(this.#host, this.qa, run, issue);
       await save({ qaSessionId: sessionId });
       run = { ...run, qaSessionId: sessionId };
     }
     const before = await this.#host.snapshot(worktree);
     const prompt = researchQaBrief(issue, state.questions, output, bounds.readRoots);
-    const verdict = await this.#host.judge(run, issue, worktree, before, prompt, save);
+    const verdict = await judge(this.#host, this.qa, run, issue, worktree, before, prompt, save);
     if (!verdict.pass) {
-      await this.#host.nextRound(
+      await nextRound(
+        this.#host,
         run,
         `Independent review found:\n${formatFindings(verdict)}`,
         save,
@@ -337,7 +348,7 @@ export class ResearchFlow implements Flow {
   ): Promise<StepResult> {
     const { config, tracker, store } = this.#host.d;
     const bounds = this.#host.need(config.research ?? undefined);
-    let state = this.#host.need(start.research ?? undefined);
+    let state = researchOf(start);
     const output = this.#host.need(state.output ?? undefined);
     const progress = async (patch: Partial<ResearchState>) => {
       state = { ...state, ...patch };
