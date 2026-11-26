@@ -137,6 +137,7 @@ export type Script = {
 
 export class FakeSessions implements Sessions {
   created: string[] = [];
+  inputs: { role: SessionRole; model: string | undefined; effort: string | undefined }[] = [];
   turns: string[] = [];
   prompts: { sessionId: string; role: SessionRole; prompt: string }[] = [];
   deleted = 0;
@@ -158,7 +159,8 @@ export class FakeSessions implements Sessions {
       createError,
     };
   }
-  async create(input: { role: SessionRole; cwd: string }) {
+  async create(input: { role: SessionRole; cwd: string; model?: string; effort?: string }) {
+    this.inputs.push({ role: input.role, model: input.model, effort: input.effort });
     const err = this.script.createError[input.role];
     if (Array.isArray(err)) {
       const next = err.shift();

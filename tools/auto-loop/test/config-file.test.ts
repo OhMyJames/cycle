@@ -172,3 +172,25 @@ test("the network retry values are tunable and become milliseconds", () => {
     parseConfigFiles(JSON.stringify({ ...base, tuning: { networkRetryDelaysSeconds: [] } })),
   ).toThrow("networkRetryDelaysSeconds");
 });
+
+test("model and effort per role are optional, and a blank one is refused", () => {
+  const plain = parseConfigFile(JSON.stringify(full));
+  expect(plain.devModel).toBeUndefined();
+  expect(plain.reviewEffort).toBeUndefined();
+  const set = parseConfigFile(
+    JSON.stringify({ ...full, devModel: "opus", qaEffort: "high", reviewModel: "sonnet" }),
+  );
+  expect([set.devModel, set.qaEffort, set.reviewModel]).toEqual(["opus", "high", "sonnet"]);
+  for (const name of [
+    "devModel",
+    "qaModel",
+    "reviewModel",
+    "devEffort",
+    "qaEffort",
+    "reviewEffort",
+  ])
+    for (const value of ["", "  "])
+      expect(() => parseConfigFile(JSON.stringify({ ...full, [name]: value }))).toThrow(
+        `invalid ${name}`,
+      );
+});

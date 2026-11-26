@@ -236,3 +236,21 @@ test("a request the policy allows writes no event, and a compound command is fil
   expect(events[0]?.data).toMatchObject({ command: "curl", decision: "deny" });
   expect(JSON.stringify(events)).not.toContain("secrets");
 }, 15_000);
+
+test("create sets model and effort on the new session, and sets nothing when they are not given", async () => {
+  const fake = fakeAgent({}, { configOptions: [] });
+  const { sessions } = await setup(fake);
+  expect(fake.log.configs).toEqual([]);
+  await sessions.create({
+    role: "dev",
+    agent: "fake",
+    model: "opus",
+    effort: "high",
+    title: "t",
+    cwd: "/tmp",
+  });
+  expect(fake.log.configs.map((c) => [c.configId, c.value])).toEqual([
+    ["model", "opus"],
+    ["effort", "high"],
+  ]);
+});

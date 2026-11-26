@@ -980,6 +980,8 @@ export class Pipeline {
       const created = await sessions.create({
         role: "dev",
         agent: config.devAgent,
+        ...(config.devModel ? { model: config.devModel } : {}),
+        ...(config.devEffort ? { effort: config.devEffort } : {}),
         title: `[${run.key}] Dev`,
         cwd: config.repoRoot,
         worktree: { base: config.baseRef, name: branchOf(issue.number) },
@@ -1052,6 +1054,8 @@ export class Pipeline {
       const created = await this.#d.sessions.create({
         role: "dev",
         agent: config.devAgent,
+        ...(config.devModel ? { model: config.devModel } : {}),
+        ...(config.devEffort ? { effort: config.devEffort } : {}),
         title: `[${run.key}] Dev`,
         // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
         cwd: config.repoRoot,
@@ -1542,6 +1546,8 @@ export class Pipeline {
         const created = await this.#d.sessions.create({
           role: "review",
           agent: config.reviewAgent,
+          ...(config.reviewModel ? { model: config.reviewModel } : {}),
+          ...(config.reviewEffort ? { effort: config.reviewEffort } : {}),
           title: `[${run.key}] Review`,
           cwd: config.repoRoot,
           worktree: { base: config.baseRef, name: branchOf(issue.number) },
@@ -1821,6 +1827,8 @@ export class Pipeline {
     const created = await this.#d.sessions.create({
       role: "qa",
       agent: config.qaAgent,
+      ...(config.qaModel ? { model: config.qaModel } : {}),
+      ...(config.qaEffort ? { effort: config.qaEffort } : {}),
       title: `[${run.key}] QA`,
       // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
       cwd: config.repoRoot,

@@ -1915,3 +1915,24 @@ test("git push rejected and an authentication failure are not retried: Blocked a
     expect((await s.store.events()).some((e) => e.kind === "network_retry")).toBe(false);
   }
 });
+
+test("each role's session is made with that role's model and effort", async () => {
+  const { pipeline, sessions } = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
+    {
+      devModel: "dm",
+      devEffort: "de",
+      qaModel: "qm",
+      qaEffort: "qe",
+      reviewModel: "rm",
+      reviewEffort: "re",
+    },
+  );
+  await pipeline.step();
+  expect(sessions.inputs).toEqual([
+    { role: "dev", model: "dm", effort: "de" },
+    { role: "qa", model: "qm", effort: "qe" },
+    { role: "review", model: "rm", effort: "re" },
+  ]);
+});

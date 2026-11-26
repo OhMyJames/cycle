@@ -158,6 +158,8 @@ export class DaemonSessions implements Sessions {
   async create(input: {
     role: SessionRole;
     agent: string;
+    model?: string;
+    effort?: string;
     title: string;
     cwd: string;
     worktree?: { base: string; name: string };
@@ -167,6 +169,8 @@ export class DaemonSessions implements Sessions {
       agent: input.agent,
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
     });
+    if (input.model) await this.#client.setConfig(sessionId, "model", input.model);
+    if (input.effort) await this.#client.setConfig(sessionId, "effort", input.effort);
     let cwd = input.cwd;
     let branch: string | null = null;
     if (input.worktree !== undefined) {

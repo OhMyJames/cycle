@@ -95,6 +95,12 @@ const setUp = async (file: ConfigFile) => {
     ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),
     ...(file.qaAgent !== undefined ? { qaAgent: file.qaAgent } : {}),
     ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),
+    ...(file.devModel !== undefined ? { devModel: file.devModel } : {}),
+    ...(file.qaModel !== undefined ? { qaModel: file.qaModel } : {}),
+    ...(file.reviewModel !== undefined ? { reviewModel: file.reviewModel } : {}),
+    ...(file.devEffort !== undefined ? { devEffort: file.devEffort } : {}),
+    ...(file.qaEffort !== undefined ? { qaEffort: file.qaEffort } : {}),
+    ...(file.reviewEffort !== undefined ? { reviewEffort: file.reviewEffort } : {}),
     dryRun,
   };
   const tuning = {
