@@ -73,6 +73,16 @@ mac-mini 上用同一 Developer ID 团队 `AGKXLGRXJ7` 对发布提交 0.3.6、0
 
 七个套件每次都全跑,不按改动挑选,也不记录历史耗时:全跑一遍约 35 秒,挑选省下的比维护挑选规则的代价小。理由和被否掉的做法见 [决定笔记](../.agents/notes/2026-11-21-integration-runs-every-suite.md)。`bun run test:integration web` 只跑名字里有 web 的。
 
+## 界面现象的验收写法
+
+给 Loop 工单写验收标准时,界面现象用现有的验证命令,不新增命令。三种写法:
+
+1. 整页流程(打包后的应用、浏览器里的端到端):`bun run test:integration web`,约 8 秒。Loop 运行时会补 `--strict`,所以没 build、没 Chromium 而整个跳过的会判失败;不要自己写 `--strict`。
+2. 组件:`bun run test:browser`,在无界面的 Chromium 里跑,约 78 秒。
+3. 其他测试文件:`bun test ./路径`,如 `bun test ./apps/desktop/test/integration/web.integration.ts`。路径可以带 `./`,不能以 `/` 开头、不能含 `..`、不能带 `--` 选项。Loop 会读汇总行:通过数为 0(全部跳过)或读不出汇总行,判未通过;有通过也有跳过算通过。
+
+不能写 `test:real` 系列:没有 token 时它整个跳过、退回码是 0,不能当验收。理由见[决定笔记](../.agents/notes/2026-11-26-loop-exit-code-zero-is-not-always-a-pass.md)。
+
 ## 固定等待
 
 2026-11-18 看过一遍现有的等待(`Bun.sleep`、`setTimeout`)。CI 上一次全选(2026-11-18,PR #35 的运行)六个套件合计约 34 秒:adapter 17.4、package 4.3、smoke 5.3、node 2.3、ssh 2.3、backend 2.5;这台开发机上同样跑一遍 adapter 要 42.7 秒。大头是适配器套件(真实 SDK 起进程)。
