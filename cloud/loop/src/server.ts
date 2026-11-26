@@ -8,25 +8,34 @@ import type { Config } from "./config.ts";
 import { projectsList } from "./projects.ts";
 import { runsList } from "./runs.ts";
 
-const answer = async (config: Config, line: string): Promise<string | undefined> => {
-  let id: unknown = null;
+const MAX_PENDING = 32;
+
+type RunsReader = (config: Config) => ReturnType<typeof runsList>;
+
+const reply = (id: unknown, body: object): string =>
+  JSON.stringify({ jsonrpc: "2.0", id, ...body });
+
+const answer = async (
+  config: Config,
+  line: string,
+  readRuns: RunsReader,
+): Promise<string | undefined> => {
+  let message: { id?: unknown; method?: unknown };
   try {
-    const message = JSON.parse(line) as { id?: unknown; method?: unknown };
+    message = JSON.parse(line) as { id?: unknown; method?: unknown };
     if (typeof message !== "object" || message === null) throw new Error();
-    id = message.id ?? null;
-    // A notification has no id and gets no answer.
-    if (message.id === undefined) return undefined;
-    if (message.method === LOOP_PROJECTS_LIST)
-      return JSON.stringify({ jsonrpc: "2.0", id, result: projectsList(config) });
-    if (message.method === LOOP_RUNS_LIST)
-      return JSON.stringify({ jsonrpc: "2.0", id, result: await runsList(config) });
-    return JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      error: { code: -32601, message: "Method not found" },
-    });
   } catch {
-    return JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32700, message: "Parse error" } });
+    return reply(null, { error: { code: -32700, message: "Parse error" } });
+  }
+  const id = message.id ?? null;
+  // A notification has no id and gets no answer.
+  if (message.id === undefined) return undefined;
+  try {
+    if (message.method === LOOP_PROJECTS_LIST) return reply(id, { result: projectsList(config) });
+    if (message.method === LOOP_RUNS_LIST) return reply(id, { result: await readRuns(config) });
+    return reply(id, { error: { code: -32601, message: "Method not found" } });
+  } catch {
+    return reply(id, { error: { code: -32603, message: "Internal error" } });
   }
 };
 
@@ -41,7 +50,22 @@ const alive = (socketPath: string): Promise<boolean> =>
     probe.once("error", () => resolve(false));
   });
 
-export const listen = async (config: Config, socketPath: string): Promise<Server> => {
+export const listen = async (
+  config: Config,
+  socketPath: string,
+  readRuns: RunsReader = runsList,
+): Promise<Server> => {
+  // Requests that arrive while a read is under way share it: a burst reads the records once.
+  let inflight: ReturnType<typeof runsList> | undefined;
+  const sharedRuns: RunsReader = (c) => {
+    if (inflight === undefined) {
+      const read = readRuns(c).finally(() => {
+        inflight = undefined;
+      });
+      inflight = read;
+    }
+    return inflight;
+  };
   if (await alive(socketPath)) throw new Error("already_running");
   return new Promise((resolve, reject) => {
     rmSync(socketPath, { force: true });
@@ -51,11 +75,22 @@ export const listen = async (config: Config, socketPath: string): Promise<Server
       socket.on("error", () => {});
       // One request at a time per connection, so replies come back in the order asked.
       let queue: Promise<void> = Promise.resolve();
+      let pending = 0;
       createInterface({ input: socket }).on("line", (line) => {
-        if (line.trim() === "") return;
+        if (line.trim() === "" || socket.destroyed) return;
+        if (pending >= MAX_PENDING) {
+          socket.destroy();
+          return;
+        }
+        pending++;
         queue = queue.then(async () => {
-          const reply = await answer(config, line);
-          if (reply !== undefined) socket.write(`${reply}\n`);
+          try {
+            if (socket.destroyed) return;
+            const out = await answer(config, line, sharedRuns);
+            if (out !== undefined && !socket.destroyed) socket.write(`${out}\n`);
+          } finally {
+            pending--;
+          }
         });
       });
     });

@@ -3,7 +3,7 @@
 
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { LoopForgeSchema } from "@cycle/protocol";
 import { z } from "zod";
 
@@ -27,7 +27,7 @@ export const ConfigSchema = z.object({
       "projectKey must be unique",
     )
     .refine((projects) => {
-      const dirs = projects.flatMap((p) => (p.stateDir === undefined ? [] : [p.stateDir]));
+      const dirs = projects.flatMap((p) => (p.stateDir === undefined ? [] : [resolve(p.stateDir)]));
       return new Set(dirs).size === dirs.length;
     }, "stateDir must be unique"),
 });

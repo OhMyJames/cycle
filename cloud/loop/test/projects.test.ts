@@ -99,6 +99,24 @@ describe("config", () => {
   });
 });
 
+test("stateDir must be absolute and unique, /a and /a/ being the same", async () => {
+  const project = (key: string, stateDir: string) => ({
+    name: key,
+    projectKey: key,
+    repo: { url: "https://github.com/a/b", forge: "github" },
+    token: "t",
+    stateDir,
+  });
+  const check = async (projects: unknown[]) => {
+    writeFileSync(file, JSON.stringify({ projects }));
+    chmodSync(file, 0o600);
+    return (await loadConfig(file).catch((e) => e)).reason;
+  };
+  expect(await check([project("A", "relative/dir")])).toBe("config_invalid");
+  expect(await check([project("A", "/s/a"), project("B", "/s/a/")])).toBe("config_invalid");
+  expect(await check([project("A", "/s/a"), project("B", "/s/b")])).toBeUndefined();
+});
+
 test("repoDisplayName takes owner/name from https, ssh and scp forms", () => {
   expect(repoDisplayName("https://u:p@github.com/a/b.git")).toBe("a/b");
   expect(repoDisplayName("ssh://git@host.example/a/b")).toBe("a/b");

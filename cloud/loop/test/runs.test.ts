@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LoopRunsListResultSchema } from "@cycle/protocol";
 import type { Config } from "../src/config.ts";
 import { runsList } from "../src/runs.ts";
+import { listen } from "../src/server.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "loop-runs-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -94,6 +96,33 @@ describe("runs/list", () => {
     expect(result.projects[0]?.unavailable).toBe(true);
   });
 
+  test("a stray file beside a valid run does not make the list unavailable", async () => {
+    const state = join(dir, "state-stray");
+    mkdirSync(join(state, "runs", "OK-9"), { recursive: true });
+    mkdirSync(join(state, "runs", "OK-10"), { recursive: true });
+    const good = readFileSync(join(cycState, "runs", "CYC-1", "run.json"), "utf8");
+    for (const key of ["OK-9", "OK-10"])
+      writeFileSync(join(state, "runs", key, "run.json"), good.replace("CYC-1", key));
+    writeFileSync(join(state, "runs", ".DS_Store"), "x");
+    const first = config.projects[0];
+    if (first === undefined) throw new Error("no project");
+    const result = await runsList({ projects: [{ ...first, stateDir: state }] });
+    expect(result.projects[0]?.runs.map((r) => r.key)).toEqual(["OK-9", "OK-10"]);
+    expect(result.projects[0]?.unavailable).toBe(false);
+  });
+
+  test("a copied directory (key differs from its name) is skipped and flagged", async () => {
+    const state = join(dir, "state-copy");
+    mkdirSync(join(state, "runs", "COPY-1"), { recursive: true });
+    const good = readFileSync(join(cycState, "runs", "CYC-1", "run.json"), "utf8");
+    writeFileSync(join(state, "runs", "COPY-1", "run.json"), good);
+    const first = config.projects[0];
+    if (first === undefined) throw new Error("no project");
+    const result = await runsList({ projects: [{ ...first, stateDir: state }] });
+    expect(result.projects[0]?.runs).toEqual([]);
+    expect(result.projects[0]?.unavailable).toBe(true);
+  });
+
   test("a Project with no stateDir gets an empty list", async () => {
     const first = config.projects[0];
     if (first === undefined) throw new Error("no project");
@@ -115,5 +144,44 @@ describe("runs/list", () => {
       "pull/9",
     ])
       expect(raw).not.toContain(secret);
+  });
+});
+
+describe("over the socket", () => {
+  test("replies come back in request order, a failing read is -32603", async () => {
+    const sock = join(dir, "order.sock");
+    let calls = 0;
+    const server = await listen(config, sock, async () => {
+      calls++;
+      if (calls === 2) throw new Error(`${dir} secret`);
+      await new Promise((r) => setTimeout(r, 100));
+      return { projects: [] };
+    });
+    try {
+      const lines: string[] = await new Promise((resolve) => {
+        const socket = connect(sock);
+        let buffer = "";
+        socket.on("data", (d) => {
+          buffer += d.toString();
+          const got = buffer.split("\n").filter(Boolean);
+          if (got.length === 3) {
+            socket.end();
+            resolve(got);
+          }
+        });
+        for (const [id, method] of [
+          [1, "runs/list"],
+          [2, "projects/list"],
+          [3, "runs/list"],
+        ] as const)
+          socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method })}\n`);
+      });
+      const parsed = lines.map((l) => JSON.parse(l));
+      expect(parsed.map((m) => m.id)).toEqual([1, 2, 3]);
+      expect(parsed[2].error.code).toBe(-32603);
+      expect(lines[2]).not.toContain("secret");
+    } finally {
+      server.close();
+    }
   });
 });

@@ -1,8 +1,14 @@
-import { readdir } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { LoopProjectRuns, LoopRun } from "@cycle/protocol";
 import type { Config } from "./config.ts";
 import { RunStore } from "./store.ts";
+
+const hasRunFile = (stateDir: string, name: string): Promise<boolean> =>
+  access(join(stateDir, "runs", name, "run.json")).then(
+    () => true,
+    () => false,
+  );
 
 const stateOf = (phase: string): LoopRun["state"] =>
   phase === "done" ? "done" : phase === "blocked" ? "blocked" : "active";
@@ -15,7 +21,9 @@ const projectRuns = async (
   if (stateDir === undefined) return { projectKey, runs: [], unavailable: false };
   let names: string[];
   try {
-    names = await readdir(join(stateDir, "runs"));
+    names = (await readdir(join(stateDir, "runs"), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
   } catch (error) {
     if ((error as { code?: string }).code === "ENOENT")
       return { projectKey, runs: [], unavailable: false };
@@ -25,12 +33,13 @@ const projectRuns = async (
   const store = new RunStore(stateDir, () => new Date());
   let unavailable = false;
   const loaded = await Promise.all(
-    names.map((name) =>
-      store.load(name).catch(() => {
-        unavailable = true;
-        return undefined;
-      }),
-    ),
+    names.map(async (name) => {
+      const record = await store.load(name).catch(() => undefined);
+      // A directory with no run.json is not a run; one that holds a record under another key is a copy.
+      if (record !== undefined && record.key === name) return record;
+      if (record !== undefined || (await hasRunFile(stateDir, name))) unavailable = true;
+      return undefined;
+    }),
   );
   if (unavailable) console.error(`loop: run_unreadable project=${projectKey}`);
   const runs: LoopRun[] = [];
@@ -43,7 +52,7 @@ const projectRuns = async (
         startedAt: r.startedAt,
         updatedAt: r.updatedAt,
       });
-  runs.sort((a, b) => a.key.localeCompare(b.key));
+  runs.sort((a, b) => a.key.localeCompare(b.key, "en", { numeric: true }));
   return { projectKey, runs, unavailable };
 };
 
