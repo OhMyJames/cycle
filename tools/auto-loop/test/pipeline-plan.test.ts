@@ -989,3 +989,31 @@ test("GitHub out of reach when the round fetches: a wait, and the round goes on 
   expect((await s.store.unfinishedPlans()).map((r) => r.phase)).toEqual(["triage"]);
   expect(await s.restart().step()).toMatchObject({ status: "planned", shaped: 1 });
 });
+
+test("a round asks about at most maxAsk work items, highest priority first; the rest wait, unwritten, for a later round", async () => {
+  const ask = (n: number, priority: string) => ({
+    key: `CYC-${n}`,
+    category: "要问",
+    priority,
+    reason: "只有人能定",
+    questions: ["要不要做？"],
+  });
+  const s = setup(
+    {
+      triage: [
+        done(triageReply([ask(1, "low"), ask(2, "high"), ask(3, "medium"), ask(4, "high")], [])),
+      ],
+    },
+    [1, 2, 3, 4].map((n) => backlogItem(n, { priority: null })),
+    { planning: { maxAsk: 2 } },
+  );
+  expect(await s.pipeline.step()).toMatchObject({ status: "planned", asked: 2 });
+  for (const n of [2, 4]) expect(byKey(s, `CYC-${n}`).labelIds).toEqual([LABELS.awaitingAnswer]);
+  for (const n of [1, 3]) {
+    expect(byKey(s, `CYC-${n}`).labelIds).toEqual([]);
+    expect(commentsOn(s, `CYC-${n}`).some((c) => c.includes("要不要做"))).toBe(false);
+  }
+  expect(
+    (await events(s.store)).filter((e) => e.kind === "plan_asked").map((e) => e.issue),
+  ).toEqual(["CYC-2", "CYC-4"]);
+});

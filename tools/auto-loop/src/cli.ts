@@ -16,7 +16,7 @@ import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
 import { computeStats } from "./stats.ts";
 import { acquireLock, RunStore } from "./store.ts";
-import { DEFAULT_CHECK_MINUTES, defaultConfig } from "./types.ts";
+import { DEFAULT_CHECK_MINUTES, DEFAULT_MAX_ASK, defaultConfig } from "./types.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -134,6 +134,7 @@ const setUp = async (file: ConfigFile) => {
             intervalMinutes: planning.intervalMinutes,
             maxSplit: planning.maxSplit,
             checkMinutes: planning.checkMinutes ?? DEFAULT_CHECK_MINUTES,
+            maxAsk: planning.maxAsk ?? DEFAULT_MAX_ASK,
           },
     dryRun,
   };

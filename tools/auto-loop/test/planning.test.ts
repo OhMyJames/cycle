@@ -761,3 +761,12 @@ test("the shape QA brief has the original, the comments and the result, and asks
   // QA's verdict is read as Dev's QA's is.
   expect(parseVerdict('<verdict>{"pass":true,"findings":[]}</verdict>')?.pass).toBe(true);
 });
+
+test("要问 with more than two questions is a finding: ask only what a person must decide", () => {
+  const body = Object.values(lines)
+    .join("\n")
+    .replace('"questions": ["是 A 还是 B？"]', '"questions": ["一？", "二？", "三？"]');
+  expect(findingsOf(triageReply(body))).toBe(
+    "CYC-2 is 要问 with 3 questions; ask at most 2, the ones only a person can decide.",
+  );
+});

@@ -105,6 +105,8 @@ export const PlanningSchema = z
     maxSplit: whole(2, 10).default(4),
     /** Minutes between two looks at the Backlog for a change, across the Project's workers. Left out means 5. */
     checkMinutes: whole(1, 60).optional(),
+    /** Most work items one round asks a person about (questions in a comment, 待回答). Left out means 3. */
+    maxAsk: whole(0, 20).optional(),
   })
   .strict();
 export type PlanningFile = z.infer<typeof PlanningSchema>;

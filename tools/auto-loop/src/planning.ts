@@ -10,7 +10,15 @@ import { suites } from "../../../scripts/integration-suites.ts";
 import { parseCriteria, parseVerify } from "./criteria.ts";
 import { findSection, type PreflightConfig, preflight } from "./preflight.ts";
 import type { PlanMemory } from "./store.ts";
-import type { BacklogRow, Config, Issue, IssueComment, PlanningConfig, Priority } from "./types.ts";
+import {
+  type BacklogRow,
+  type Config,
+  type Issue,
+  type IssueComment,
+  MAX_QUESTIONS,
+  type PlanningConfig,
+  type Priority,
+} from "./types.ts";
 
 /** What triage decides about a candidate. 能做 and 要拆 are shaped; 要问 is asked about; 不适合 is left alone. */
 export const CATEGORIES = ["能做", "要问", "要拆", "不适合"] as const;
@@ -357,6 +365,10 @@ export const checkTriage = (
       if (asked.length === 0 || asked.length !== (questions as unknown[]).length) {
         findings.push(
           `${key} is 要问 but has no "questions": give a list of the questions, each non-empty.`,
+        );
+      } else if (asked.length > MAX_QUESTIONS) {
+        findings.push(
+          `${key} is 要问 with ${asked.length} questions; ask at most ${MAX_QUESTIONS}, the ones only a person can decide.`,
         );
       } else triage.questions[key] = asked.map((q) => q.trim());
     }
