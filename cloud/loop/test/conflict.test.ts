@@ -2,8 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SqliteStore } from "../src/db/store.ts";
 import { Pipeline } from "../src/pipeline.ts";
-import { applyPatch, devOf, type RunPatch, type RunRecord, RunStore } from "../src/store.ts";
+import { applyPatch, devOf, type RunPatch, type RunRecord } from "../src/store.ts";
 import { type Exec, SessionLost } from "../src/types.ts";
 import {
   type CiResponse,
@@ -140,7 +141,7 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     return realTurn(id, prompt, ctx);
   };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
-  const store = new RunStore(cfg.stateDir, () => clock.now());
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const pipeline = new Pipeline({
     config: cfg,
     tracker,
@@ -168,7 +169,7 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
   };
 };
 
-const load = async (store: RunStore): Promise<RunRecord> => {
+const load = async (store: SqliteStore): Promise<RunRecord> => {
   const run = await store.load("CYC-1");
   if (run === undefined) throw new Error("no run");
   return run;

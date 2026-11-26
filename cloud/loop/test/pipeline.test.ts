@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Tuning } from "../src/config-file.ts";
 import { CriteriaBook } from "../src/criteria.ts";
+import { SqliteStore } from "../src/db/store.ts";
 import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
-import { applyPatch, devOf, RunStore } from "../src/store.ts";
+import { applyPatch, devOf } from "../src/store.ts";
 import {
   type Exec,
   type ExecResult,
@@ -69,7 +70,7 @@ const setup = (
   };
   const stop = { value: false };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
-  const store = new RunStore(cfg.stateDir, () => clock.now());
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const pipeline = new Pipeline({
     config: cfg,
     tracker,
@@ -446,7 +447,7 @@ test("dry run idle log reports type and leaf exclusions", async () => {
       mergeTreeOutput: "",
       ignoredDirs: "",
     }),
-    store: new RunStore(dir, () => new Date("2026-11-25T00:00:00Z")),
+    store: SqliteStore.open(dir, () => new Date("2026-11-25T00:00:00Z")),
     clock: { now: () => new Date("2026-11-25T00:00:00Z") },
     log: (line) => logs.push(line),
     env: { PATH: "/bin" },
@@ -1822,7 +1823,12 @@ test("a failing phase write changes nothing about the outcome", async () => {
   const b = await bad.pipeline.step();
   expect(b).toEqual(a);
   expect(bad.tracker.moves).toEqual(ok.tracker.moves);
-  expect((await bad.store.events()).some((e) => e.kind === "phase_field_failed")).toBe(true);
+  // The write stays an intent, pending, with the kind of failure and nothing else.
+  const pending = bad.store
+    .transaction((tx) => tx.pendingIntents())
+    .filter((i) => i.kind === "phase");
+  expect(pending.length).toBeGreaterThan(0);
+  expect(pending[0]?.lastError).toBe("error");
 });
 
 const withCap = (w: ReturnType<typeof setup>, mirrorCapMs: number) =>
@@ -1848,8 +1854,10 @@ test("writes for one work item land in order even when an earlier one is slow", 
   };
   expect((await w.pipeline.step()).status).toBe("delivered");
   await Bun.sleep(60);
-  expect(landed.slice(0, 3)).toEqual(["CYC-1:dev", "CYC-1:verify", "CYC-1:qa"]);
+  // Only the newest phase is written once the slow one lands; never out of order.
+  expect(landed[0]).toBe("CYC-1:dev");
   expect(landed.at(-1)).toBe("CYC-1:clear");
+  expect(landed.filter((l) => l === "CYC-1:clear")).toHaveLength(1);
 });
 
 test("a write that never answers does not hold the run longer than the cap", async () => {
@@ -1875,12 +1883,15 @@ test("delivery clears after a merge write that was still pending", async () => {
   expect(landed.slice(-2)).toEqual(["merge", "clear"]);
 });
 
-test("a failing write is reported once per kind and the run is unaffected", async () => {
+test("a failing write is retried by the next step and the run is unaffected", async () => {
   const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
   w.tracker.failPhase = true;
   expect((await w.pipeline.step()).status).toBe("delivered");
-  const failures = (await w.store.events()).filter((e) => e.kind === "phase_field_failed");
-  expect(failures).toHaveLength(1);
+  expect(w.tracker.phases).toEqual([]);
+  w.tracker.failPhase = false;
+  await w.pipeline.step();
+  expect(w.tracker.phases).toEqual(["CYC-1:clear"]);
+  expect(w.store.transaction((tx) => tx.pendingIntents())).toEqual([]);
 });
 
 // CYC-441: the tuning is read again before every step; a step under way keeps the values it started with.

@@ -8,10 +8,11 @@ import {
   PHASE_NAMES,
   type Phase,
 } from "../engine/flow.ts";
+import { writeIntent } from "../engine/reconcile.ts";
 import { fullFlowPreflight, isFullFlow } from "../full-flow.ts";
 import { preflight, sendBackComment } from "../preflight.ts";
 import { pickNext } from "../select.ts";
-import type { RunRecord } from "../store.ts";
+import { applyPatch, type RunRecord } from "../store.ts";
 import type { Issue } from "../types.ts";
 
 /**
@@ -50,10 +51,30 @@ export const todoIntake = (host: FlowHost): Intake => ({
   },
 
   async reject(issue, reasons) {
-    const { tracker, store } = host.d;
-    await tracker.comment(issue, sendBackComment(reasons));
-    await tracker.move(issue, "blocked");
-    await store.event(issue.key, "preflight_rejected", { reasons: reasons.length });
+    const { store } = host.d;
+    const body = sendBackComment(reasons);
+    const why = new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 12);
+    store.transaction((tx) => {
+      const seq = tx.countEvents(issue.key, "preflight_rejected") + 1;
+      // One comment for one reason, however many rounds see it; the move is written each time, and does nothing
+      // when the work item is already in Blocked.
+      writeIntent(tx, {
+        run: issue.key,
+        issue,
+        kind: "comment",
+        dedupe: `rejected:${issue.key}:${why}`,
+        payload: { body },
+      });
+      writeIntent(tx, {
+        run: issue.key,
+        issue,
+        kind: "move",
+        dedupe: `move:${issue.key}:rejected:${seq}`,
+        payload: { to: "blocked" },
+      });
+      tx.event(issue.key, "preflight_rejected", { reasons: reasons.length });
+    });
+    await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
   },
 });
 
@@ -77,18 +98,36 @@ export const ticketStillWanted = async (
  */
 export const blockTicket = async (
   host: FlowHost,
-  { run, issue, said, save, resumeFrom }: BlockArgs,
+  { run, issue, said, resumeFrom }: BlockArgs,
   how: { firstPhase: Phase; session: string; redact: (said: string) => string },
 ) => {
-  const { tracker, store } = host.d;
+  const { store } = host.d;
   const reason = how.redact(said);
   const from = run.phase === "blocked" || run.phase === "done" ? how.firstPhase : run.phase;
-  await save({ phase: "blocked", blockedReason: reason, resumeFrom: resumeFrom ?? from });
-  await tracker.comment(
-    issue,
-    `自动化在「${PHASE_NAMES[from]}」卡住了：${reason}\n\n现场已保留：${how.session}可在 Cycle 桌面端打开接管。处理后把工单放回 Todo，自动化会在原会话里继续。`,
-  );
-  await tracker.move(issue, "blocked");
-  await store.event(run.key, "blocked", { phase: from, round: run.round });
+  const body = `自动化在「${PHASE_NAMES[from]}」卡住了：${reason}\n\n现场已保留：${how.session}可在 Cycle 桌面端打开接管。处理后把工单放回 Todo，自动化会在原会话里继续。`;
+  // The run and what the tracker should show are written together; the reconciler brings the tracker to it, now or on
+  // a later step. `blockSeq` is which Blocked this is for the run: one comment each, the next Blocked comments again.
+  store.transaction((tx) => {
+    const blockSeq = tx.countEvents(run.key, "blocked") + 1;
+    tx.save(
+      applyPatch(run, { phase: "blocked", blockedReason: reason, resumeFrom: resumeFrom ?? from }),
+    );
+    writeIntent(tx, {
+      run: run.key,
+      issue,
+      kind: "comment",
+      dedupe: `blocked:${run.key}:${blockSeq}`,
+      payload: { body },
+    });
+    writeIntent(tx, {
+      run: run.key,
+      issue,
+      kind: "move",
+      dedupe: `move:${run.key}:${blockSeq}`,
+      payload: { to: "blocked" },
+    });
+    tx.event(run.key, "blocked", { phase: from, round: run.round });
+  });
+  await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
   return { status: "blocked" as const, key: run.key, reason };
 };

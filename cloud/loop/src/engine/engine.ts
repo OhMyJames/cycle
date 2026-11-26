@@ -26,7 +26,7 @@ import {
   type RunKind,
   type StepResult,
 } from "./flow.ts";
-import { PhaseMirror } from "./mirror.ts";
+import { Reconciler, writeIntent } from "./reconcile.ts";
 
 /** What the engine runs with beyond `Deps`: the flows and intakes, made with the host they may use. */
 export type Wiring = {
@@ -50,7 +50,7 @@ export class Engine {
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
   #lock: Promise<void> = Promise.resolve();
-  readonly #phases = new PhaseMirror();
+  readonly #reconcile = new Reconciler(() => this.#d);
 
   constructor(deps: Deps, wire: (host: FlowHost) => Wiring) {
     this.#deps = deps;
@@ -79,6 +79,7 @@ export class Engine {
       turn: (key, sessionId, prompt, context) => this.#turn(key, sessionId, prompt, context),
       mustHaveEnded: (who, result) => this.#mustHaveEnded(who, result),
       snapshot: (worktree) => this.#snapshot(worktree),
+      reconcile: this.#reconcile,
       clear: (run, issue) => this.#clear(run, issue),
       mirror: (key, issue, phase) => this.#mirror(key, issue, phase),
       clearPhase: (key, issue) => this.#clearKey(key, issue),
@@ -133,6 +134,8 @@ export class Engine {
 
   async #step(): Promise<StepResult> {
     if (this.#d.config.dryRun) return this.#dryRun();
+    // What an earlier step could not write to the tracker, before anything new is taken.
+    await this.#reconcile.flush(undefined, { capMs: this.#d.mirrorCapMs ?? 10_000 });
 
     const chosen = await this.#exclusive(() => this.#choose());
     if ("result" in chosen) return chosen.result;
@@ -233,7 +236,7 @@ export class Engine {
     issue: Issue,
     opening: Opening,
   ): Promise<{ key: string; run: RunRecord; issue: Issue; book: CriteriaBook }> {
-    const { tracker, store } = this.#d;
+    const { store } = this.#d;
     const book = CriteriaBook.fromSpecs(opening.specs);
     const run: RunRecord = {
       key: issue.key,
@@ -259,10 +262,19 @@ export class Engine {
     };
     this.#active.add(issue.key);
     try {
-      await store.saveCriteria(issue.key, book);
-      await store.save(run);
-      await tracker.move(issue, "inProgress");
-      await store.event(issue.key, "claimed", opening.claimed);
+      store.transaction((tx) => {
+        tx.saveCriteria(issue.key, book);
+        tx.save(run);
+        writeIntent(tx, {
+          run: issue.key,
+          issue,
+          kind: "move",
+          dedupe: `move:${issue.key}:claimed:${tx.countEvents(issue.key, "claimed") + 1}`,
+          payload: { to: "inProgress" },
+        });
+        tx.event(issue.key, "claimed", opening.claimed);
+      });
+      await this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 });
     } catch (error) {
       this.#active.delete(issue.key);
       throw error;
@@ -386,23 +398,32 @@ export class Engine {
   }
 
   async #resume(run: RunRecord, issue: Issue, byPerson: boolean): Promise<StepResult> {
-    const { store, tracker } = this.#d;
+    const { store } = this.#d;
     const book = await store.loadCriteria(run.key);
     let current = run;
     if (byPerson) {
       // A person has been at it: the budget of fix rounds starts again, from where it stopped. The flow resets its own.
-      current = await store.save(
-        await this.#flowOf(run).putBack({
-          ...run,
-          phase: run.resumeFrom ?? this.#flowOf(run).firstPhase,
-          round: 0,
-          blockedReason: null,
-          resumeFrom: null,
-          cleanupNote: null,
-        }),
-      );
-      await tracker.move(issue, "inProgress");
-      await store.event(run.key, "resumed", { phase: current.phase });
+      const putBack = await this.#flowOf(run).putBack({
+        ...run,
+        phase: run.resumeFrom ?? this.#flowOf(run).firstPhase,
+        round: 0,
+        blockedReason: null,
+        resumeFrom: null,
+        cleanupNote: null,
+      });
+      current = store.transaction((tx) => {
+        const saved = tx.save(putBack);
+        writeIntent(tx, {
+          run: run.key,
+          issue,
+          kind: "move",
+          dedupe: `move:${run.key}:resumed:${tx.countEvents(run.key, "resumed") + 1}`,
+          payload: { to: "inProgress" },
+        });
+        tx.event(run.key, "resumed", { phase: saved.phase });
+        return saved;
+      });
+      await this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 });
     } else {
       await store.event(run.key, "recovered", { phase: run.phase });
     }
@@ -412,9 +433,23 @@ export class Engine {
     return this.#drive(current, issue, book, byPerson);
   }
 
-  /** Queues the write of a phase (`null` clears) and goes on. */
+  /** Writes down the phase a work item should show (`null` clears), unless it is the one last written down. */
   #mirror(key: string, issue: Issue, phase: LoopPhase | null): void {
-    this.#phases.write(this.#d, key, issue, phase);
+    const { store, clock } = this.#d;
+    store.transaction((tx) => {
+      const last = tx.lastIntent(key, "phase");
+      if (last !== undefined && (last.payload as { phase: LoopPhase | null }).phase === phase)
+        return;
+      writeIntent(tx, {
+        run: key,
+        issue,
+        kind: "phase",
+        dedupe: `phase:${key}:${tx.countIntents(key, "phase") + 1}`,
+        payload: { phase, at: clock.now().toISOString() },
+      });
+    });
+    // In the background: the field only mirrors the run.
+    void this.#reconcile.flush(issue.id);
   }
 
   /** Delivery or Blocked: clears the phase, waits a short while for it to land, and forgets the run. */
@@ -423,9 +458,10 @@ export class Engine {
     await this.#clearKey(run.key, issue);
   }
 
-  /** Clears the phase written under `key`, waits a short while for it to land, and forgets it. */
+  /** Clears the phase written under `key` and waits a short while for it to land. */
   async #clearKey(key: string, issue: Issue): Promise<void> {
-    await this.#phases.clear(this.#d, key, issue);
+    this.#mirror(key, issue, null);
+    await this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 });
   }
 
   async #drive(

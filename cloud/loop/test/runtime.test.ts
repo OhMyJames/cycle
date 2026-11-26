@@ -194,7 +194,7 @@ test("a restart picks the run up from run.json: only the unfinished step runs", 
   const stateDir = join(dir, "state-CYC");
   const cfg = config({ stateDir });
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
-  const store = new RunStore(stateDir, clock.now);
+  const store = SqliteStore.open(stateDir, clock.now);
   const tracker = new FakeTracker([issue({ description: readyDescription })]);
   const world: World = {
     fail: new Set(),

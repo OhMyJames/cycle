@@ -379,9 +379,36 @@ export class StoreOps {
 
   /** The intents still to do, oldest first. */
   pendingIntents(): Intent[] {
-    const rows = this.db
-      .query("SELECT * FROM intents WHERE status = 'pending' ORDER BY id")
-      .all() as {
+    return this.#intents("SELECT * FROM intents WHERE status = 'pending' ORDER BY id");
+  }
+
+  /** The newest intent of a kind for a run, whatever its status. */
+  lastIntent(runKey: string, kind: string): Intent | undefined {
+    return this.#intents(
+      "SELECT * FROM intents WHERE run_key = ? AND kind = ? ORDER BY id DESC LIMIT 1",
+      runKey,
+      kind,
+    )[0];
+  }
+
+  /** How many intents of a kind a run has had: the sequence number of the next. */
+  countIntents(runKey: string, kind: string): number {
+    const row = this.db
+      .query("SELECT COUNT(*) AS n FROM intents WHERE run_key = ? AND kind = ?")
+      .get(runKey, kind) as { n: number };
+    return row.n;
+  }
+
+  /** How many events of a kind a run has had. */
+  countEvents(run: string, kind: string): number {
+    const row = this.db
+      .query("SELECT COUNT(*) AS n FROM events WHERE run = ? AND kind = ?")
+      .get(run, kind) as { n: number };
+    return row.n;
+  }
+
+  #intents(sql: string, ...args: string[]): Intent[] {
+    const rows = this.db.query(sql).all(...args) as {
       id: number;
       run_key: string;
       kind: string;

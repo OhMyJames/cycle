@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SqliteStore } from "../src/db/store.ts";
 import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import { type Issue, SessionLost } from "../src/types.ts";
@@ -107,7 +108,7 @@ const setup = (script: Partial<Script>, over = {}, issues: Issue[] = [researchIs
   const sessions = new FakeSessions({ dev: [], qa: [], ...script });
   const w = world();
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
-  const store = new RunStore(cfg.stateDir, () => clock.now());
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const deps = (more: Partial<Deps> = {}): Deps => ({
     config: cfg,
     tracker,
@@ -125,7 +126,7 @@ const setup = (script: Partial<Script>, over = {}, issues: Issue[] = [researchIs
   return { pipeline: new Pipeline(deps()), tracker, sessions, world: w, store, restart };
 };
 
-const kinds = async (store: RunStore) => (await store.events()).map((e) => e.kind);
+const kinds = async (store: SqliteStore) => (await store.events()).map((e) => e.kind);
 
 /** Calls that would build, push or open a pull request: a research run makes none. */
 const forbidden = (calls: string[]) =>

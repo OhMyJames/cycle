@@ -29,6 +29,7 @@ import type {
   Sessions,
   TurnResult,
 } from "../types.ts";
+import type { Reconciler } from "./reconcile.ts";
 
 export type StepResult =
   | { status: "idle" }
@@ -177,6 +178,8 @@ export type FlowHost = {
   ): Promise<TurnResult>;
   mustHaveEnded(who: string, result: TurnResult): void;
   snapshot(worktree: string): Promise<string>;
+  /** Does what is written down for the tracker (CYC-480). */
+  readonly reconcile: Reconciler;
   clear(run: RunRecord, issue: Issue): Promise<void>;
   /**
    * The phase field of a work item a run that is not its own is on (a planning round shaping it): written in the
