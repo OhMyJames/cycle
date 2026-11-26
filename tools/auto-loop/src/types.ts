@@ -273,9 +273,14 @@ export type PlanningConfig = {
   maxSplit: number;
   /** Minutes between two looks at the Backlog for a change, for the whole Project; `DEFAULT_CHECK_MINUTES` when left out. */
   checkMinutes?: number;
+  /** Most work items one round asks a person about; `DEFAULT_MAX_ASK` when left out. The rest wait for a later round. */
+  maxAsk?: number;
 };
 
 export const DEFAULT_CHECK_MINUTES = 5;
+export const DEFAULT_MAX_ASK = 3;
+/** Most questions on one work item: more means it is not ready to be asked about, only to be thought about. */
+export const MAX_QUESTIONS = 2;
 
 /**
  * A Backlog work item as one `list_issues` call returns it, without its body (CYC-322). `updatedAt` moves when the

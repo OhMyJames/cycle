@@ -20,7 +20,7 @@ import {
   MAX_SUMMARY,
   type ResearchOutput,
 } from "./research.ts";
-import type { Issue, IssueComment, Priority } from "./types.ts";
+import { type Issue, type IssueComment, MAX_QUESTIONS, type Priority } from "./types.ts";
 
 const criteriaTable = (criteria: Criterion[], withEvidence: boolean): string =>
   criteria
@@ -469,7 +469,7 @@ ${titles(input.board.epics.map((e) => `${e.key} ${e.title}: ${e.opening === "" ?
 Put each candidate in one category:
 - 能做: it can be made into one ready work item from what its body, its comments and the code say: what is wanted is clear, and each criterion can be checked by an allowed command. Example: 「Loop 清理已取消工单留下的 worktree」, with the cases named in its body.
 - 要拆: worth doing and clear enough, but more than one session's work, or its criteria belong to different parts of the product. It will be split into two or more work items.
-- 要问: it cannot be made ready without a person: what is wanted, or what done looks like, is unclear or can be read two ways, and the code does not settle it. Give the questions a person must answer, each answerable in a sentence.
+- 要问: rare. Only when a decision that only a person can make (what the product should do, what is in or out of scope) changes what gets built, and nothing settles it: not the body, its comments, the parent epic, linked work items, the code, nor a sensible default. A detail with a sensible default is not a question: put it under 能做 or 要拆, and shaping writes the default down marked 「待确认」. Open points the body already lists as 「待确认」 are not questions either, unless one of them blocks the whole work item. At most ${MAX_QUESTIONS} questions, each answerable in a sentence. Of all candidates, ask about only the few whose answers unblock the most valuable work; the loop writes at most a handful of questions per round, highest priority first, and the rest wait for a later round.
 - 不适合: not for the loop: it needs a real account, a real model or an outside system, or what it must do can only be judged by a person and cannot be written as the commands below. Being about the UI is not enough to be 不适合.
 
 How criteria must be written, which decides between 能做 and 不适合:

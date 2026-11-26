@@ -59,6 +59,7 @@ import { type PlanRound, planRoundId, type Shaped, type ShapeItem } from "../sto
 import {
   type BacklogRow,
   DEFAULT_CHECK_MINUTES,
+  DEFAULT_MAX_ASK,
   type Issue,
   type LoopPhase,
   type PlanningConfig,
@@ -321,7 +322,13 @@ export class PlanFlow {
       shaped: count("done"),
       asked:
         count("asked") +
-        Object.values(ctx.round.triage?.categories ?? {}).filter((c) => c === "要问").length,
+        (ctx.round.triage === null
+          ? 0
+          : askedThisRound(
+              ctx.round.triage,
+              ctx.round.candidates,
+              this.#planning().maxAsk ?? DEFAULT_MAX_ASK,
+            ).size),
       stopped: count("stopped"),
       abandoned: count("abandoned"),
     };
@@ -492,7 +499,12 @@ export class PlanFlow {
     // What triage decided, written back: a changed priority with a comment, questions with 待回答. 不适合 is only
     // remembered (at the end of the round), never written.
     const triage = this.#host.need(ctx.round.triage ?? undefined);
-    for (const key of ctx.round.candidates) await this.#writeTriage(ctx, key);
+    const asking = askedThisRound(
+      triage,
+      ctx.round.candidates,
+      this.#planning().maxAsk ?? DEFAULT_MAX_ASK,
+    );
+    for (const key of ctx.round.candidates) await this.#writeTriage(ctx, key, asking);
 
     // The queue: as many as there is room for among those waiting for approval, in triage's order.
     backlog = await tracker.listBacklog();
@@ -560,7 +572,7 @@ export class PlanFlow {
     return undefined;
   }
 
-  async #writeTriage(ctx: Ctx, key: string): Promise<void> {
+  async #writeTriage(ctx: Ctx, key: string, asking: ReadonlySet<string>): Promise<void> {
     const { store } = this.#d;
     const tracker = this.#tracker();
     const triage = this.#host.need(ctx.round.triage ?? undefined);
@@ -601,7 +613,9 @@ export class PlanFlow {
       }
       await mark("priority");
     }
-    if (triage.categories[key] === "要问") await this.#ask(ctx, issue, questions, done, mark);
+    // Over the round's limit, a 要问 is not written: it stays a candidate and is asked in a later round.
+    if (triage.categories[key] === "要问" && asking.has(key))
+      await this.#ask(ctx, issue, questions, done, mark);
   }
 
   /** 要问, from triage or from shaping: the questions in a comment, then 待回答. */
@@ -1290,3 +1304,28 @@ const unshaped = (s: Shaped): ShapeOutput =>
         epic: null,
         questions: null,
       };
+
+const RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+
+/**
+ * The 要问 work items whose questions a round writes: at most `limit`, highest suggested priority first, then in the
+ * candidates' order. Asking about every unclear work item at once floods people with questions (CYC-322 pilot: 31 in
+ * one round); the rest wait, still candidates, for a later round.
+ */
+export const askedThisRound = (
+  triage: { categories: Record<string, string>; priorities: Record<string, string> },
+  candidates: readonly string[],
+  limit: number,
+): Set<string> =>
+  new Set(
+    candidates
+      .map((key, index) => ({ key, index }))
+      .filter(({ key }) => triage.categories[key] === "要问")
+      .sort(
+        (a, b) =>
+          (RANK[triage.priorities[a.key] ?? ""] ?? 4) -
+            (RANK[triage.priorities[b.key] ?? ""] ?? 4) || a.index - b.index,
+      )
+      .slice(0, limit)
+      .map(({ key }) => key),
+  );
