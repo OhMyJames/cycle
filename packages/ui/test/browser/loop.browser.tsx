@@ -666,3 +666,14 @@ test("a pushed run state updates the page without reading again", async () => {
   await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
   expect(named("loopRuns").length).toBe(reads);
 });
+
+test("a read after the state changed is applied, not dropped", async () => {
+  const { emit } = await mount(
+    overviewScript({ loopRuns: { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } } }),
+  );
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Running"));
+  // An earlier push said nothing runs; the page is then read again (reopened) and the read says Running.
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: [] } } }));
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+});

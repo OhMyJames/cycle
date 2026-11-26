@@ -103,6 +103,7 @@ export const readLoopProjects = async (socketPath: string): Promise<LoopProjects
 };
 
 /**
+ * (The `chat: "watch"` of a card or ticket is fixed when the board or ticket is read; a pushed run state does not re-read them.)
  * Where Loop is running, by Project: the tickets that have an `active` run record. This is the whole rule (docs/protocol.md
  * §17): a server that did not answer, or an answer that is not the protocol's, says nothing is running, because a
  * Loop that died leaves its `run.json` behind as `active` but takes `loop.sock` with it. Never from a board column.
@@ -142,6 +143,8 @@ export type FeedDeps = {
 
 /** The most pages one poll of one Project takes in a row: a server that always says `hasMore` cannot keep it here. */
 const FEED_PAGES = 20;
+/** The run state is read again at least this often (ticks), for Projects that appear. */
+const RUNS_REREAD_TICKS = 15;
 
 /**
  * Keeps up with Loop's event stream (docs/protocol.md §17): per Project it asks `events/list` after the last `seq` it
@@ -152,6 +155,7 @@ export const loopFeed = (deps: FeedDeps) => {
   const last = new Map<string, number>();
   let told: LoopRunsAnswer | undefined;
   let busy = false;
+  let ticks = 0;
 
   const apply = (runs: LoopRunsAnswer, tell: boolean) => {
     const same = sameRuns(told, runs);
@@ -195,7 +199,8 @@ export const loopFeed = (deps: FeedDeps) => {
     if (busy) return;
     busy = true;
     try {
-      let fresh = told?.kind !== "ok";
+      // The runs are also read every so often, so a Project added to the server is followed.
+      let fresh = told?.kind !== "ok" || ++ticks % RUNS_REREAD_TICKS === 0;
       if (told?.kind === "ok")
         for (const projectKey of Object.keys(told.running))
           fresh = (await pull(projectKey)) || fresh;
@@ -648,12 +653,14 @@ export const answerBoard = async (
     return { kind: "unreachable" };
   let board: LoopBoardAnswer = { kind: "no_key" };
   const key = await readKeyFile(loop.keyFile);
-  if (key !== undefined)
+  if (key !== undefined) {
+    const running = runningKeys(loop, projectKey);
     board = await readBoard(
       { url: loop.trackerUrl, key, ...(fetchImpl ? { fetch: fetchImpl } : {}) },
       projectKey,
-      await runningKeys(loop, projectKey),
+      await running,
     );
+  }
   track("loop_board_read", { result: board.kind });
   return board;
 };
@@ -766,6 +773,8 @@ export const answerTicket = async (
   if (!parsed) return { kind: "unreachable" };
   const tracker = await withKey(loop, fetchImpl);
   if (!tracker) return { kind: "no_key" };
+  // Asked alongside the tracker, so a Loop socket that is slow to answer does not add to the tracker's time.
+  const runningAsk = runningKeys(loop, parsed.projectKey);
   try {
     const { issue, column, columns, auto } = await readIssue(
       tracker,
@@ -779,9 +788,7 @@ export const answerTicket = async (
           await attentionOf(tracker, issue, role).catch(() => undefined)
         : undefined;
     const body = typeof issue.description === "string" ? issue.description : "";
-    const running = (await runningKeys(loop, parsed.projectKey)).has(
-      String(issue.identifier ?? identifier),
-    );
+    const running = (await runningAsk).has(String(issue.identifier ?? identifier));
     track("loop_ticket_opened", {});
     return {
       kind: "ok",

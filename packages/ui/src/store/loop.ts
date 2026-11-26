@@ -59,15 +59,23 @@ export class LoopSlice {
   };
 
   loadRuns = async (): Promise<void> => {
+    const before = this.#pushes;
     const answer = await this.#kit.bridge
       .loopRuns()
       .catch(() => ({ kind: "disconnected" }) as const);
-    // A push that came while this was being read is newer: it is kept.
-    this.#kit.set((s) => (s.loop.runs === undefined ? { loop: { ...s.loop, runs: answer } } : {}));
+    // Only a push that came while this was being read is newer; otherwise this read is the latest (main has recorded it
+    // as told, so it will not push it again).
+    if (this.#pushes !== before) return;
+    this.#kit.set((s) => ({ loop: { ...s.loop, runs: answer } }));
   };
 
+  #pushes = 0;
+
   /** Main follows Loop's events and pushes the run state when it changes; it replaces what was held. */
-  setRuns = (runs: LoopRunsAnswer): void => this.#kit.set((s) => ({ loop: { ...s.loop, runs } }));
+  setRuns = (runs: LoopRunsAnswer): void => {
+    this.#pushes++;
+    this.#kit.set((s) => ({ loop: { ...s.loop, runs } }));
+  };
 
   loadBoard = async (projectKey: string): Promise<void> => {
     const had = this.#kit.state().loop.boards[projectKey];
