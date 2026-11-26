@@ -351,12 +351,15 @@ test("the second stop signal releases every Project's lock and exits 130 at once
   await waitFor(() => h.started.length === 2);
   source.emit("SIGINT");
   expect(exits).toEqual([]);
-  source.emit("SIGINT");
+  expect(released).toEqual([]);
   source.emit("SIGINT");
   await waitFor(() => exits.length > 0);
   // The steps never finished, yet the locks are released and the exit happens once.
   expect(released.sort()).toEqual(["A", "B"]);
   expect(exits).toEqual([130]);
+  // A third signal while leaving exits again rather than being swallowed.
+  source.emit("SIGINT");
+  expect(exits).toEqual([130, 130]);
   h.finish();
   await running.done;
 });

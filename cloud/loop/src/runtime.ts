@@ -119,7 +119,8 @@ export const handleStopSignals = (o: {
   let leaving = false;
   const onSignal = () => {
     if (asked) {
-      if (leaving) return;
+      // A release that hangs must not trap the process: a third signal leaves without waiting for it.
+      if (leaving) return o.exit(130);
       leaving = true;
       void Promise.allSettled(o.running.projects.map((p) => p.release())).finally(() =>
         o.exit(130),
