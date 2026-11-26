@@ -73,7 +73,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 ## 约定
 
 - 工单必须有「验收标准」列表，每条带 `验证：\`命令\``，命令只能是白名单形式；否则留言写明原因，并把工单移到 Blocked。
-- 大档（CYC-328）：带 `完整流程` 标签的工单不看描述，看它关联的四份文档，标题须为 `[CYC-<num>] Intent`、`Spec`、`Design`、`Plan`，每份恰好一份、未归档、已锁定（锁定即已采纳）；验收标准取自 Spec 的「验收标准」列表（规则同描述）。缺一份、未锁定、标题前缀不符或 Spec 的标准不合格：不领单，留言以 `[Blocked:需规格]` 开头，工单转 Blocked。领单时把四份文档的 version 记进 run.json（`fullFlowDocs`）；运行中每个阶段开始前重读，version 变了、被取消锁定或不再关联，转 Blocked（同样标 `[Blocked:需规格]`）。人确认后把文档重新锁定并放回 Todo，Loop 以当时的版本为新基线（事件 `docs_rebaselined`）继续。不带标签的工单行为不变。
+- 大档（CYC-328）：带 `完整流程` 标签的工单不看描述，看它关联的四份文档，标题须为 `[CYC-<num>] Intent`、`Spec`、`Design`、`Plan`，每份恰好一份、未归档、已锁定（锁定即已采纳）；验收标准取自 Spec 的「验收标准」列表（规则同描述）。缺一份、未锁定、标题前缀不符或 Spec 的标准不合格：不领单，留言以 `[Blocked:需规格]` 开头，工单转 Blocked。领单时把四份文档的 version 记进 run.json（`fullFlowDocs`）；运行中每个阶段开始前重读，version 变了、被取消锁定或不再关联，转 Blocked（同样标 `[Blocked:需规格]`）。人确认后把文档重新锁定并放回 Todo，Loop 以当时的版本为新基线（事件 `docs_rebaselined`）继续。大档的 PR 正文有「依据文档」一节，列四份文档的标题和链接 `<planUrl 的 origin>/<团队>/<项目>/docs/<documentId>`（团队和项目取自 `projectKey`，如 `infra.CYC`）；`projectKey` 不带团队前缀时只列标题，不编造地址（CYC-454）。不带标签的工单行为不变。
 - 验收状态只由 Loop 跑命令后设置（`criteria.json`），会话说“完成”不算数。
 - 卡住（Blocked）时保留 worktree 和会话；处理后把工单放回 Todo，会在原会话里继续（会话丢失则新开会话，凭 criteria + 进度 + git log 接手）。
 - verify 防抖（CYC-438）：检查命令（测试层或验收命令）非超时失败时，先原地重跑该命令，最多 `maxVerifyRetries` 次（默认 1，0 为关闭），每次重跑记 `verify_retried` 事件（`round`、`command`、`attempt`、`passed`）。重跑通过则按通过处理，不记 `round_failed`、不扣修复轮数、不唤醒 Dev；重试用完仍失败才按原流程回 Dev。超时的命令不重跑。

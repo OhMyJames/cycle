@@ -52,6 +52,47 @@ export const validatePr = (
 };
 
 /**
+ * The base of a document page's address, `<origin of planUrl>/<team>/<project>/docs`, from the `projectKey` (`infra.CYC`).
+ * Null when the key has no team prefix (or the url is unusable): the address cannot be made, so none is made up.
+ */
+export const docsBaseOf = (planUrl: string, projectKey: string): string | null => {
+  const [team, project, ...rest] = projectKey.split(".");
+  if (
+    team === undefined ||
+    team === "" ||
+    project === undefined ||
+    project === "" ||
+    rest.length > 0
+  )
+    return null;
+  try {
+    return `${new URL(planUrl).origin}/${encodeURIComponent(team)}/${encodeURIComponent(project)}/docs`;
+  } catch {
+    return null;
+  }
+};
+
+/** The 「依据文档」 section of a 大档 pull request: each document's title, linked when the base is known. */
+const renderDocuments = (
+  documents: { id: number; title: string }[],
+  docsBase: string | null,
+): string =>
+  documents.length === 0
+    ? ""
+    : `## 依据文档
+
+${documents
+  .map((d) => {
+    const title = d.title.replace(/\s+/g, " ").trim();
+    return docsBase === null
+      ? `- ${title}`
+      : `- [${title.replace(/([[\]\\])/g, "\\$1")}](${docsBase}/${d.id})`;
+  })
+  .join("\n")}
+
+`;
+
+/**
  * The pull request's text. Leads with `Closes <key>` so merging closes the work item in the tracker, followed by what
  * the change is for and whether each criterion held, so a person reads the intent and the evidence, not the diff first.
  */
@@ -62,6 +103,9 @@ export const renderPr = (input: {
   rounds: number;
   summary: string;
   sessions: { dev: string | null; qa: string | null };
+  /** 大档 (CYC-454): the Intent / Spec / Design / Plan documents; omitted or empty for a small one. */
+  documents?: { id: number; title: string }[];
+  docsBase?: string | null;
 }): string => {
   const rows = input.criteria
     .map(
@@ -76,7 +120,7 @@ export const renderPr = (input: {
 
 ${input.issue.key} ${input.issue.title}
 
-## 这次改了什么
+${renderDocuments(input.documents ?? [], input.docsBase ?? null)}## 这次改了什么
 
 ${input.summary.trim() === "" ? "（Dev 没有给出摘要）" : input.summary.trim()}
 

@@ -1644,6 +1644,8 @@ export class Pipeline {
       rounds: run.round,
       summary,
       sessions: { dev: run.devSessionId, qa: run.qaSessionId },
+      documents: run.fullFlowDocs,
+      docsBase: config.docsBase,
     });
     const prCheck = validatePr(issue.key, title, body);
     if (!prCheck.ok) throw new Blocked(prCheck.reason);

@@ -201,6 +201,8 @@ export type Config = {
   autoLabelId: number;
   /** The 「完整流程」 label (CYC-328): a work item with it needs its Intent / Spec / Design / Plan documents. Null: the project has none. */
   fullFlowLabelId: number | null;
+  /** Where a document's page lives, `<site>/<team>/<project>/docs`; a pull request links `<docsBase>/<documentId>`. Null: the project key has no team prefix, so no link can be made (CYC-454). */
+  docsBase: string | null;
   /** Issue type ids the loop may take (e.g. Feature, Bug). Configured by id, never hardcoded or matched by name. */
   allowedTypeIds: number[];
   /** The tracker's Feature and Bug type ids: which required sections the preflight checks for. */
@@ -353,6 +355,7 @@ export const defaultConfig = (
   reviewAgent: "claude",
   dryRun: false,
   fullFlowLabelId: null,
+  docsBase: null,
   research: null,
   planning: null,
   ...partial,
