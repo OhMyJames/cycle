@@ -117,6 +117,10 @@ export const RunRecordSchema = z.object({
   prUrl: z.string().nullable(),
   /** Research runs only; null for a dev run. */
   research: ResearchStateSchema.nullable().default(null),
+  /** 大档 (CYC-328): the Intent / Spec / Design / Plan documents and the versions the run started on; empty for a small one. */
+  fullFlowDocs: z
+    .array(z.object({ id: z.number().int(), title: z.string(), version: z.number().int() }))
+    .default([]),
   /** What QA and the checks said last, for the Dev turn that follows. */
   findings: z.string().nullable(),
   /** When the worktree and local branch were removed after Done and merged; null while they are still there. */

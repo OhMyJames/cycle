@@ -12,6 +12,7 @@ import type {
   DocumentEntry,
   Issue,
   IssueComment,
+  IssueDocument,
   LoopPhase,
   NewIssue,
   PlanningConfig,
@@ -385,6 +386,48 @@ export class PlanTracker implements Tracker {
         ? []
         : [{ id, title: String(d.title ?? ""), parentId: parseOptionalInt(d.parentId) }];
     });
+  }
+
+  async listIssueDocuments(issue: Pick<Issue, "id">): Promise<IssueDocument[]> {
+    const raw = payload(
+      await this.#tool("execute_read", "list_issue_documents", {
+        projectKey: this.#project,
+        issueId: issue.id,
+      }),
+    );
+    if (!Array.isArray(raw))
+      throw new Error(
+        `unrecognized list_issue_documents reply: ${JSON.stringify(raw).slice(0, 300)}`,
+      );
+    return raw.map(asRecord).flatMap((d) => {
+      const id = parseOptionalInt(d.id);
+      const version = parseOptionalInt(d.version);
+      return id === null || version === null
+        ? []
+        : [
+            {
+              id,
+              title: String(d.title ?? ""),
+              version,
+              locked: d.isLocked === true,
+              archived: d.archivedAt != null,
+            },
+          ];
+    });
+  }
+
+  async getDocumentContent(docId: number): Promise<string> {
+    const raw = asRecord(
+      payload(
+        await this.#tool("execute_read", "get_document", {
+          projectKey: this.#project,
+          documentId: docId,
+        }),
+      ),
+    );
+    if (typeof raw.content !== "string")
+      throw new Error(`tracker get_document: no content for ${docId}`);
+    return raw.content;
   }
 
   async createDocument(parentId: number, title: string, content: string): Promise<{ id: number }> {
