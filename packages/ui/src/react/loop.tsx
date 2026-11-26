@@ -8,6 +8,7 @@ import type {
   LoopActFailure,
   LoopAction,
   LoopBoardAnswer,
+  LoopBoardColumn,
   LoopChatFailure,
   LoopNotice,
   LoopProjectInfo,
@@ -352,14 +353,17 @@ function Column({
   id,
   title,
   tickets,
+  more,
   collapsible,
   pageSize,
   act,
   onOpen,
 }: {
-  id: "doing" | "todo" | "backlog" | "done";
+  id: number;
   title: string;
   tickets: LoopTicket[];
+  /** The column has tickets that are not in the list. */
+  more?: boolean;
   collapsible?: boolean;
   /** Show this many first, and this many more each time asked: for a column that can be very long. */
   pageSize?: number;
@@ -392,7 +396,9 @@ function Column({
         ) : (
           <h3 data-slot="loop-column-title">{title}</h3>
         )}
-        <span data-slot="loop-column-count">{tickets.length}</span>
+        <span data-slot="loop-column-count">
+          {more === true ? `${tickets.length}+` : tickets.length}
+        </span>
       </header>
       {open ? (
         tickets.length === 0 ? (
@@ -519,41 +525,50 @@ function Board({
       </div>
       {alert}
       <div data-slot="loop-columns">
-        <Column
-          id="doing"
-          title={t("loop.col.doing")}
-          tickets={answer.doing}
-          act={act}
-          onOpen={openTicket}
-        />
-        <Column
-          id="todo"
-          title={t("loop.col.todo")}
-          tickets={answer.todo}
-          act={act}
-          onOpen={openTicket}
-        />
-        <Column
-          id="backlog"
-          title={t("loop.col.backlog")}
-          tickets={answer.backlog}
-          pageSize={BACKLOG_PAGE}
-          act={act}
-          onOpen={openTicket}
-        />
+        {answer.columns
+          .filter((c) => c.stateType !== "completed")
+          .map((c) => (
+            <Column
+              key={c.id}
+              id={c.id}
+              title={c.name}
+              tickets={c.tickets}
+              more={c.more}
+              {...(c.stateType === "backlog" ? { pageSize: BACKLOG_PAGE } : {})}
+              act={act}
+              onOpen={openTicket}
+            />
+          ))}
       </div>
-      <Column
-        id="done"
-        title={t("loop.col.done")}
-        tickets={answer.done}
-        collapsible
-        act={act}
-        onOpen={openTicket}
-      />
+      {answer.columns
+        .filter((c) => c.stateType === "completed")
+        .map((c) => (
+          <Column
+            key={c.id}
+            id={c.id}
+            title={c.name}
+            tickets={c.tickets}
+            more={c.more}
+            collapsible
+            act={act}
+            onOpen={openTicket}
+          />
+        ))}
     </div>
   );
 }
 
+const STATE_OF = {
+  backlog: "backlog",
+  todo: "unstarted",
+  doing: "started",
+  done: "completed",
+} as const;
+/** The tickets of every column of one kind of state, for the overview's counts. */
+const countOf = (columns: LoopBoardColumn[], c: keyof typeof STATE_OF): number =>
+  columns
+    .filter((col) => col.stateType === STATE_OF[c])
+    .reduce((n, col) => n + col.tickets.length, 0);
 const COLUMNS = ["doing", "todo", "backlog", "done"] as const;
 
 /** The Loop overview: what needs the person, then one row per Project with its tickets per column. */
@@ -606,11 +621,13 @@ function Overview({
                     <span data-slot="loop-repo">{away ? "" : t("loop.loading")}</span>
                   ) : board.kind === "ok" ? (
                     <span data-slot="loop-project-counts">
-                      {COLUMNS.filter((c) => board[c].length > 0).map((c) => (
-                        <span key={c} data-slot="loop-project-count" data-column={c}>
-                          {t(`loop.col.${c}`)} {board[c].length}
-                        </span>
-                      ))}
+                      {COLUMNS.map((c) => [c, countOf(board.columns, c)] as const)
+                        .filter(([, n]) => n > 0)
+                        .map(([c, n]) => (
+                          <span key={c} data-slot="loop-project-count" data-column={c}>
+                            {t(`loop.col.${c}`)} {n}
+                          </span>
+                        ))}
                     </span>
                   ) : null}
                 </button>
