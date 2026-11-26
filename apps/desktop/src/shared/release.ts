@@ -72,24 +72,79 @@ export const archiveName = (version: string, platform: string, arch: string): st
 export const packName = (version: string, platform: string, arch: string): string =>
   `${APP_NAME.replaceAll(" ", "-")}-${version}-${platform}-${arch}.blocks`;
 
-const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
+const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-alpha\.(\d+))?(?:\+([0-9A-Za-z][0-9A-Za-z.-]*))?$/;
 
-/** Plain `major.minor.patch`: the only versions a release carries. */
-export const parseVersion = (text: string): readonly [number, number, number] | undefined => {
+export type ParsedVersion = {
+  readonly major: number;
+  readonly minor: number;
+  readonly patch: number;
+  /** N of `-alpha.N`; absent for a release. */
+  readonly alpha?: number;
+  /** What follows `+` (the short commit, maybe `.dirty`); never part of the order. */
+  readonly meta?: string;
+};
+
+/**
+ * `X.Y.Z[-alpha.N][+meta]`: a release, or an alpha build. `alpha` is the only pre-release identifier there is, so
+ * `-beta` and `-rc` are not versions.
+ */
+export const parseVersion = (text: string): ParsedVersion | undefined => {
   const match = VERSION.exec(text);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
+  if (!match) return undefined;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    ...(match[4] !== undefined ? { alpha: Number(match[4]) } : {}),
+    ...(match[5] !== undefined ? { meta: match[5] } : {}),
+  };
+};
+
+/** -1, 0 or 1 by semver: an alpha is older than the release of the same X.Y.Z; `+meta` is ignored. */
+const compare = (a: ParsedVersion, b: ParsedVersion): number => {
+  for (const key of ["major", "minor", "patch"] as const) {
+    if (a[key] !== b[key]) return a[key] > b[key] ? 1 : -1;
+  }
+  if (a.alpha === b.alpha) return 0;
+  if (a.alpha === undefined) return 1;
+  if (b.alpha === undefined) return -1;
+  return a.alpha > b.alpha ? 1 : -1;
 };
 
 /** Whether `candidate` is a later version than `current`. False when either is not a version. */
 export const isNewer = (candidate: string, current: string): boolean => {
   const a = parseVersion(candidate);
   const b = parseVersion(current);
-  if (!a || !b) return false;
-  for (let index = 0; index < 3; index += 1) {
-    const difference = (a[index] ?? 0) - (b[index] ?? 0);
-    if (difference !== 0) return difference > 0;
-  }
-  return false;
+  return a !== undefined && b !== undefined && compare(a, b) > 0;
+};
+
+/** Whether the two are the same version: they may differ only in `+meta`. False when either is not a version. */
+export const sameVersion = (a: string, b: string): boolean => {
+  const x = parseVersion(a);
+  const y = parseVersion(b);
+  return x !== undefined && y !== undefined && compare(x, y) === 0;
+};
+
+/** `X.Y.Z` of a version, without its alpha and `+meta`. Undefined when it is not a version. */
+export const baseRelease = (text: string): string | undefined => {
+  const v = parseVersion(text);
+  return v && `${v.major}.${v.minor}.${v.patch}`;
+};
+
+/**
+ * The two `Info.plist` numbers for a version, which can only be numeric: `CFBundleShortVersionString` is `X.Y.Z`;
+ * `CFBundleVersion` is N for an alpha (so it still rises between alphas) and `X.Y.Z` for a release.
+ */
+export const plistVersions = (
+  text: string,
+): { CFBundleShortVersionString: string; CFBundleVersion: string } | undefined => {
+  const v = parseVersion(text);
+  const base = baseRelease(text);
+  if (!v || base === undefined) return undefined;
+  return {
+    CFBundleShortVersionString: base,
+    CFBundleVersion: v.alpha === undefined ? base : String(v.alpha),
+  };
 };
 
 /**

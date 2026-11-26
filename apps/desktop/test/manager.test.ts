@@ -612,6 +612,18 @@ test("a remote host whose daemon is below the least the app works with is told s
   expect(daemon?.upgrade?.command).toContain("install.sh");
 });
 
+test("with an alpha app, a too-old remote daemon is updated to the alpha's base release", async () => {
+  const { manager } = await setup(fakeAgent(), "0.1.0");
+  const { m, events } = await manager("app", "9.9.10-alpha.5+abc1234", undefined, undefined, {
+    appBaseVersion: "9.9.9",
+  });
+  await m.saveLocation(far);
+  await m.connect("far");
+  const daemon = connectedStatus(events, "far")?.daemon;
+  expect(daemon?.upgrade?.to).toBe("9.9.9");
+  expect(daemon?.upgrade?.command).toContain("releases/download/v9.9.9/install.sh");
+});
+
 test("a daemon at or above the least, older than the app or not, or a development build, is not nagged about", async () => {
   for (const version of [MIN_DAEMON_VERSION, "9.0.0", "9.9.9", undefined]) {
     const { manager } = await setup(fakeAgent(), version);

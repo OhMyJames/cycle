@@ -6,7 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UpdateState } from "@cycle/ui/api";
 import { scanBundle } from "../src/main/delta.ts";
-import { SWAP_SCRIPT, type Swap, teamOf, Updater, verifySameTeam } from "../src/main/updater.ts";
+import {
+  SWAP_SCRIPT,
+  type Swap,
+  teamOf,
+  Updater,
+  verifyBySource,
+  verifySameTeam,
+} from "../src/main/updater.ts";
 import { archiveName, manifestFor, manifestName, type TreeEntry } from "../src/shared/release.ts";
 import { makeZip, type Spec, unzip, writeBundle, type ZipOptions } from "./zip-fixture.ts";
 
@@ -170,6 +177,14 @@ test("a release that is not newer, or whose tag is not a version, is no update",
   github.releases.push({ tag_name: "nightly", draft: false, assets: [] });
   const { updater } = make();
   expect((await updater.check(false)).kind).toBe("up-to-date");
+});
+
+test("a tag with a `-` is never chosen, and the release beside it is", async () => {
+  publish("0.9.0-alpha.5");
+  publish("0.8.0-beta");
+  publish("0.1.5");
+  const { updater } = make();
+  expect(await updater.check(false)).toMatchObject({ kind: "available", version: "0.1.5" });
 });
 
 test("a check that fails on the timer says nothing, and one the user asked for says why", async () => {
@@ -632,4 +647,175 @@ test("a release list that begins and then goes quiet ends the check", async () =
   });
   const { updater } = make({ fetch: half, deadlineMs: 50 });
   expect(await updater.check(true)).toMatchObject({ kind: "error" });
+});
+
+// ---- the local alpha repository ----
+
+/** Puts an alpha in a fake repository (a folder on disk), as the build script would. */
+const alphaDir = () => join(dir, "alpha");
+const putAlpha = async (
+  version: string,
+  options: {
+    folder?: string;
+    claimedSha?: string;
+    claimedSize?: number;
+    builtAt?: string;
+    commit?: string;
+    subject?: string;
+  } = {},
+) => {
+  const bytes = new TextEncoder().encode(`archive ${version}`);
+  const manifest = {
+    ...manifestFor(
+      { version, ...PLATFORM },
+      { sha256: options.claimedSha ?? sha(bytes), size: options.claimedSize ?? bytes.length },
+    ),
+    commit: options.commit ?? "abc1234",
+    subject: options.subject ?? "do a thing",
+    builtAt: options.builtAt ?? "2026-11-25T00:00:00Z",
+  };
+  const folder = join(alphaDir(), options.folder ?? version.replaceAll("+", "_"));
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, "manifest.json"), JSON.stringify(manifest));
+  await writeFile(join(folder, manifest.file), bytes);
+};
+const fakeAlpha = () => ({
+  dir: alphaDir(),
+  list: () => readdir(alphaDir()).catch(() => [] as string[]),
+  read: (path: string) => readFile(join(alphaDir(), path), "utf8"),
+  copy: async (path: string, to: string) => {
+    await writeFile(to, await readFile(join(alphaDir(), path)));
+  },
+});
+const withAlpha = (over: Partial<ConstructorParameters<typeof Updater>[0]> = {}) =>
+  make({ localAlpha: fakeAlpha(), ...over });
+
+test("a newer alpha in the local repository is offered, with its commit and subject; .partial is not read", async () => {
+  await putAlpha("0.1.1-alpha.1+abc1234", { commit: "abc1234", subject: "first" });
+  await putAlpha("0.1.1-alpha.9+zzz", { folder: ".partial" });
+  await putAlpha("0.1.1-alpha.8+zzz", { folder: "0.1.1-alpha.8_zzz.partial" });
+  await mkdir(join(alphaDir(), ".partial", "0.1.1-alpha.7_q"), { recursive: true });
+  const { updater } = withAlpha({ current: { version: "0.1.0", ...PLATFORM } });
+  expect(await updater.check(false)).toMatchObject({
+    kind: "available",
+    version: "0.1.1-alpha.1+abc1234",
+    source: "local",
+    commit: "abc1234",
+    subject: "first",
+  });
+});
+
+test("of GitHub and the local repository, the newer is offered; one side failing leaves the other", async () => {
+  publish("0.2.0");
+  await putAlpha("0.1.1-alpha.1+abc");
+  const first = withAlpha();
+  expect(await first.updater.check(false)).toMatchObject({
+    version: "0.2.0",
+    source: "release",
+  });
+  await rm(alphaDir(), { recursive: true, force: true });
+  github.releases = [];
+  publish("0.1.0");
+  await putAlpha("0.2.0-alpha.1+abc");
+  const second = withAlpha();
+  expect(await second.updater.check(false)).toMatchObject({
+    version: "0.2.0-alpha.1+abc",
+    source: "local",
+  });
+  github.status = 500;
+  const third = withAlpha();
+  expect(await third.updater.check(false)).toMatchObject({ source: "local" });
+});
+
+test("a local repository that cannot be read leaves GitHub's answer", async () => {
+  publish("0.2.0");
+  const { updater } = withAlpha({
+    localAlpha: {
+      ...fakeAlpha(),
+      list: async () => {
+        throw new Error("nope");
+      },
+    },
+  });
+  expect(await updater.check(false)).toMatchObject({ version: "0.2.0", source: "release" });
+});
+
+test("older, and the same version with the same +meta, are not offered; the same version with other +meta is a reinstall", async () => {
+  const current = { version: "0.2.0-alpha.3+abc", ...PLATFORM };
+  await putAlpha("0.2.0-alpha.2+zzz");
+  await putAlpha("0.2.0-alpha.3+abc");
+  expect((await withAlpha({ current }).updater.check(false)).kind).toBe("up-to-date");
+  await putAlpha("0.2.0-alpha.3+def");
+  expect(await withAlpha({ current }).updater.check(false)).toMatchObject({
+    kind: "available",
+    version: "0.2.0-alpha.3+def",
+    source: "local",
+  });
+});
+
+test("without a local repository, or with an empty one, it behaves as before", async () => {
+  publish("0.1.5");
+  expect(await make().updater.check(false)).toMatchObject({ version: "0.1.5", source: "release" });
+  expect(await withAlpha().updater.check(false)).toMatchObject({
+    version: "0.1.5",
+    source: "release",
+  });
+  github.releases = [];
+  expect((await withAlpha().updater.check(false)).kind).toBe("up-to-date");
+});
+
+test("a local alpha is copied, checked and swapped in, and verified as local", async () => {
+  await putAlpha("0.1.1-alpha.1+abc");
+  const sources: string[] = [];
+  const { updater, swaps, log } = withAlpha({
+    appPath: join(dir, "apps", "Cycle.app"),
+    verifyBundle: async (_n, _c, source) => {
+      sources.push(source);
+    },
+  });
+  await mkdir(join(dir, "apps"), { recursive: true });
+  await updater.check(false);
+  await updater.install();
+  expect(sources).toEqual(["local"]);
+  expect(swaps).toHaveLength(1);
+  expect(log).toContain("quit");
+});
+
+test("a local alpha whose size or SHA-256 differs from its manifest is not installed", async () => {
+  await mkdir(join(dir, "apps"), { recursive: true });
+  for (const bad of [{ claimedSha: "0".repeat(64) }, { claimedSize: 3 }]) {
+    await rm(alphaDir(), { recursive: true, force: true });
+    await putAlpha("0.1.1-alpha.1+abc", bad);
+    const { updater, swaps, log } = withAlpha();
+    await updater.check(false);
+    await expect(updater.install()).rejects.toThrow(/manifest|checksum/);
+    expect(swaps).toHaveLength(0);
+    expect(log).not.toContain("extract");
+    expect(updater.state.kind).toBe("error");
+  }
+});
+
+test("a local alpha needs a valid signature from the alpha certificate, and not the same team", async () => {
+  const listing = (authority: string) =>
+    `Authority=${authority}\nAuthority=Other\nTeamIdentifier=not set\n`;
+  const codesign =
+    (authority: string, valid = true) =>
+    async (args: string[]) => {
+      if (args[0] === "--verify") {
+        if (!valid) throw new Error("bad");
+        return "";
+      }
+      return args.at(-1) === "cur" ? "TeamIdentifier=T1\n" : listing(authority);
+    };
+  await verifyBySource(codesign("Cycle Alpha (local)"))("next", "cur", "local");
+  await expect(verifyBySource(codesign("Someone Else"))("next", "cur", "local")).rejects.toThrow(
+    /Cycle Alpha \(local\)/,
+  );
+  await expect(
+    verifyBySource(codesign("Cycle Alpha (local)", false))("next", "cur", "local"),
+  ).rejects.toThrow(/not valid/);
+  // A release is still held to the team.
+  await expect(
+    verifyBySource(codesign("Cycle Alpha (local)"))("next", "cur", "release"),
+  ).rejects.toThrow(/same team/);
 });
