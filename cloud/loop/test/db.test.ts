@@ -1,11 +1,25 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CriteriaBook } from "../src/criteria.ts";
 import { openDb } from "../src/db/db.ts";
 import { ALLOWED, MIGRATIONS, schemaVersion } from "../src/db/schema.ts";
 import { openStore, SqliteStore } from "../src/db/store.ts";
+import { Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
+import {
+  config,
+  done,
+  FakeSessions,
+  FakeTracker,
+  issue,
+  makeExec,
+  REVIEW_MERGE,
+  readyDescription,
+  type World,
+  WT,
+} from "./helpers.ts";
 
 const now = () => new Date("2026-11-26T00:00:00Z");
 const tmp = () => mkdtemp(join(tmpdir(), "al-db-"));
@@ -150,4 +164,83 @@ test("openStore: files without a loop.db, the database with one, and it makes no
   const store = openStore(dir, now);
   expect(store).toBeInstanceOf(SqliteStore);
   (store as SqliteStore).close();
+});
+
+test("CI that went green survives a reopened store: review does not run the CI check again", async () => {
+  const dir = await tmp();
+  const first = SqliteStore.open(dir, now);
+  await mkdir(join(dir, "runs", "CYC-1"), { recursive: true });
+  await first.saveCriteria(
+    "CYC-1",
+    CriteriaBook.fromSpecs([{ text: "门禁通过", verify: [["bun", "run", "check"]] }]),
+  );
+  await first.save({
+    key: "CYC-1",
+    issueId: 1,
+    issueNumber: 1,
+    title: "title",
+    phase: "review",
+    round: 0,
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "dev-1",
+    qaSessionId: "qa-2",
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    kind: "dev",
+    startedAt: "2026-11-25T00:00:00.000Z",
+    updatedAt: "2026-11-25T00:00:00.000Z",
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      fullFlowDocs: [],
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: "https://github.com/o/r/pull/9",
+    },
+  });
+  await first.saveCi("CYC-1", {
+    greenSha: "abc",
+    checks: [{ command: "bun run check", passed: true }],
+  });
+  first.close();
+
+  const store = SqliteStore.open(dir, now);
+  expect((await store.loadCi("CYC-1")).greenSha).toBe("abc");
+  const world: World = {
+    fail: new Set(),
+    calls: [],
+    dirty: false,
+    qaWrites: false,
+    headSha: "abc",
+    ciResponses: [],
+    ciLogs: {},
+    prState: "OPEN",
+    prMerge: [["MERGED", "UNKNOWN"]],
+    mergeTreeOutput: "",
+    ignoredDirs: "",
+  };
+  const pipeline = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: new FakeTracker([issue({ description: readyDescription })]),
+    sessions: new FakeSessions({ dev: [], qa: [], review: [done(REVIEW_MERGE)] }),
+    exec: makeExec(world),
+    store,
+    clock: { now },
+    log: () => {},
+    env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
+    sleep: async () => {},
+    stopped: () => false,
+  });
+  expect((await pipeline.step()).status).toBe("delivered");
+  expect(world.calls.some((c) => c.includes("statusCheckRollup"))).toBe(false);
+  store.close();
 });

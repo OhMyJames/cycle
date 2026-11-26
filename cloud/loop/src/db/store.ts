@@ -9,8 +9,10 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CriteriaBook } from "../criteria.ts";
 import {
+  type CiState,
   type LoopEvent,
   type LoopStore,
+  NO_CI,
   PLAN_ROUND_ID,
   type PlanIndex,
   PlanIndexSchema,
@@ -19,6 +21,7 @@ import {
   type PlanRound,
   type PlanRoundInput,
   PlanRoundSchema,
+  prUrlOf,
   type RunRecord,
   RunRecordSchema,
   RunStore,
@@ -90,7 +93,7 @@ const runColumns = (r: RunRecord) => ({
   worktree: r.worktree,
   blocked_reason: r.blockedReason,
   resume_from: r.resumeFrom,
-  pr_url: r.prUrl,
+  pr_url: prUrlOf(r),
   started_at: r.startedAt,
   updated_at: r.updatedAt,
 });
@@ -182,6 +185,24 @@ export class StoreOps {
     return (
       this.db.query("SELECT * FROM runs WHERE phase != 'done' ORDER BY key").all() as RunRow[]
     ).map(toRecord);
+  }
+
+  loadCi(key: string): CiState {
+    const row = this.db
+      .query("SELECT green_sha, checks FROM ci_state WHERE run_key = ?")
+      .get(key) as { green_sha: string | null; checks: string } | null;
+    return row === null ? NO_CI : { greenSha: row.green_sha, checks: JSON.parse(row.checks) };
+  }
+
+  saveCi(key: string, patch: Partial<CiState>): void {
+    const next = { ...this.loadCi(key), ...patch };
+    this.db
+      .query(
+        `INSERT INTO ci_state (run_key, green_sha, checks, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (run_key) DO UPDATE SET green_sha = excluded.green_sha, checks = excluded.checks,
+           updated_at = excluded.updated_at`,
+      )
+      .run(key, next.greenSha, JSON.stringify(next.checks), this.now().toISOString());
   }
 
   saveCriteria(key: string, book: CriteriaBook): void {
@@ -544,6 +565,12 @@ export class SqliteStore implements LoopStore {
   }
   async savePlanMemory(memory: PlanMemory) {
     this.#ops.savePlanMemory(memory);
+  }
+  async loadCi(key: string) {
+    return this.#ops.loadCi(key);
+  }
+  async saveCi(key: string, patch: Partial<CiState>) {
+    this.#ops.saveCi(key, patch);
   }
   async saveCriteria(key: string, book: CriteriaBook) {
     this.#ops.saveCriteria(key, book);

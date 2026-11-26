@@ -1,3 +1,4 @@
+import type { Tracker } from "../src/ports/tracker.ts";
 import {
   type Config,
   type DocumentEntry,
@@ -12,7 +13,6 @@ import {
   type SessionRole,
   type Sessions,
   type Stage,
-  type Tracker,
   type TurnResult,
 } from "../src/types.ts";
 

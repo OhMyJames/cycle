@@ -15,10 +15,12 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { StepResult } from "../engine/flow.ts";
+import { Blocked, type FlowHost, type Intake, type OwnRun, tail } from "../engine/flow.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "../env.ts";
 import { withRepoLock } from "../git-lock.ts";
 import { isNetworkError } from "../network.ts";
-import type { StepResult } from "../pipeline.ts";
+import { RANK } from "../parse/blocks.ts";
 import { planningTracker } from "../plan-mcp.ts";
 import {
   type BacklogSnapshot,
@@ -54,7 +56,7 @@ import {
   triageBrief,
   triageFixBrief,
   type Verdict,
-} from "../prompts.ts";
+} from "../prompts/index.ts";
 import { findSecrets } from "../secrets.ts";
 import { type PlanRound, planRoundId, type Shaped, type ShapeItem } from "../store.ts";
 import {
@@ -70,7 +72,6 @@ import {
   type SessionRole,
   type TurnResult,
 } from "../types.ts";
-import { Blocked, type FlowHost, type Intake, type OwnRun, tail } from "./flow.ts";
 
 /** The fixed first line of the comment that explains a shaped work item; the Loop page finds the reason by it. */
 export const NOTES_HEADING = "Loop 规划";
@@ -1415,8 +1416,6 @@ const unshaped = (s: Shaped): ShapeOutput =>
         epic: null,
         questions: null,
       };
-
-const RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 /**
  * The 要问 work items whose questions a round writes: at most `limit`, highest suggested priority first, then in the

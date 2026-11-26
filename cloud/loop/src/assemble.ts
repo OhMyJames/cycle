@@ -9,10 +9,10 @@ import { Pipeline } from "./pipeline.ts";
 import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
 import { gitWorkspace } from "./ports/git.ts";
 import { githubForge } from "./ports/github.ts";
+import { DaemonSessions } from "./ports/sessions.ts";
 import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
-import { DaemonSessions } from "./sessions.ts";
 import { acquireLock } from "./store.ts";
 import { DEFAULT_CHECK_MINUTES, DEFAULT_MAX_ASK, defaultConfig } from "./types.ts";
 
@@ -154,7 +154,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
           (r) =>
             r.devSessionId === sessionId ||
             r.qaSessionId === sessionId ||
-            r.reviewSessionId === sessionId,
+            (r.kind === "dev" && r.dev.reviewSessionId === sessionId),
         );
         if (run !== undefined) return store.event(run.key, "permission_pending");
       });

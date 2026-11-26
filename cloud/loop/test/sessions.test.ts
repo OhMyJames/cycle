@@ -8,7 +8,12 @@ import { CycleErrorCode } from "@cycle/protocol";
 // The fake agent is the daemon's own test double; there is no package export for it, so this test reaches into
 // apps/daemon/test by path (and `@cycle/daemon` is a devDependency for the same reason).
 import { fakeAgent } from "../../../apps/daemon/test/fake-agent.ts";
-import { DaemonSessions, LeftRequests, type RecordEvent, readOnlyMode } from "../src/sessions.ts";
+import {
+  DaemonSessions,
+  LeftRequests,
+  type RecordEvent,
+  readOnlyMode,
+} from "../src/ports/sessions.ts";
 
 let dir: string;
 let cleanup: (() => void | Promise<void>)[] = [];

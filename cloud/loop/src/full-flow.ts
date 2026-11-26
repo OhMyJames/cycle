@@ -3,9 +3,11 @@
 // (the convention for 已采纳). The criteria are the Spec's. The versions are recorded when the run starts, and a
 // change while it runs sends it to Blocked for a person to say whether the plan changed or a document was touched.
 
-import { type CriterionSpec, parseCriteria, verifyArgv } from "./criteria.ts";
+import { type CriterionSpec, parseCriteria } from "./criteria.ts";
+import { criterionSpecs } from "./parse/blocks.ts";
+import type { Tracker } from "./ports/tracker.ts";
 import { ALLOWED_COMMANDS } from "./preflight.ts";
-import type { Config, Issue, IssueDocument, Tracker } from "./types.ts";
+import type { Config, Issue, IssueDocument } from "./types.ts";
 
 export const FULL_FLOW_DOCS = ["Intent", "Spec", "Design", "Plan"] as const;
 
@@ -73,22 +75,12 @@ export const fullFlowPreflight = async (
       `The Spec has ${parsed.length} criteria, more than one session can finish (at most ${config.maxCriteria}).`,
     );
   }
-  const specs: CriterionSpec[] = [];
-  parsed.forEach((criterion, index) => {
-    const label = `Spec criterion ${index + 1}`;
-    if (criterion.commands.length === 0) {
-      reasons.push(`${label} names no command to check it. Add 「验证：\`bun test <path>\`」.`);
-      return;
-    }
-    const argv = verifyArgv(criterion.commands);
-    if (!argv.ok) {
-      reasons.push(
-        `${label} names a command the loop may not run: ${argv.rejected.map((c) => `\`${c}\``).join(", ")}. Allowed: ${ALLOWED_COMMANDS}.`,
-      );
-      return;
-    }
-    specs.push({ text: criterion.text, verify: argv.argv });
-  });
+  const { specs, reasons: bad } = criterionSpecs(
+    parsed,
+    (n) => `Spec criterion ${n}`,
+    ALLOWED_COMMANDS,
+  );
+  reasons.push(...bad);
   return reasons.length > 0
     ? { ok: false, reasons: marked(reasons) }
     : { ok: true, specs, docs: read.docs };

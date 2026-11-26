@@ -1,6 +1,6 @@
 import type { Criterion } from "./criteria.ts";
 import type { CiStatus, Forge, ReadCiStatusResult } from "./ports/forge.ts";
-import type { ReviewVerdict } from "./prompts.ts";
+import type { ReviewVerdict } from "./prompts/index.ts";
 import type { Clock, Issue } from "./types.ts";
 
 export { DEFAULT_CI_CHECKS } from "./ports/forge.ts";

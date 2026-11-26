@@ -181,8 +181,7 @@ test("importing a state directory with a run in progress keeps stats, renames th
   // The old run.json had no such fields: the defaults are what the files would give.
   expect(unfinished.find((r) => r.key === "CYC-5")).toMatchObject({
     kind: "dev",
-    ciRound: 0,
-    conflict: null,
+    dev: { ciRound: 0, conflict: null },
   });
   expect((await store.loadCriteria("CYC-3")).items).toHaveLength(1);
   expect(await store.readProgress("CYC-3")).toContain("in flight");
