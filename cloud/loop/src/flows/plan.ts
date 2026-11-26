@@ -18,6 +18,7 @@ import { basename, join } from "node:path";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "../env.ts";
 import { withRepoLock } from "../git-lock.ts";
 import { isNetworkError } from "../network.ts";
+import { RANK } from "../parse/blocks.ts";
 import type { StepResult } from "../pipeline.ts";
 import { planningTracker } from "../plan-mcp.ts";
 import {
@@ -54,7 +55,7 @@ import {
   triageBrief,
   triageFixBrief,
   type Verdict,
-} from "../prompts.ts";
+} from "../prompts/index.ts";
 import { findSecrets } from "../secrets.ts";
 import { type PlanRound, planRoundId, type Shaped, type ShapeItem } from "../store.ts";
 import {
@@ -1415,8 +1416,6 @@ const unshaped = (s: Shaped): ShapeOutput =>
         epic: null,
         questions: null,
       };
-
-const RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 /**
  * The 要问 work items whose questions a round writes: at most `limit`, highest suggested priority first, then in the

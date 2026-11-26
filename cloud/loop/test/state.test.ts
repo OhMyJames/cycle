@@ -16,7 +16,7 @@ import {
   researchFixBrief,
   researchQaBrief,
   reviewBrief,
-} from "../src/prompts.ts";
+} from "../src/prompts/index.ts";
 import { computeStats } from "../src/stats.ts";
 import {
   acquireLock,

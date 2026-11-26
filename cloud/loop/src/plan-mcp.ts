@@ -5,6 +5,7 @@
 // columnId, typeId, archived }[]`). `toIssue` reads these defensively and returns `null` when missing so selection
 // fails closed rather than treating an unknown issue as an eligible leaf.
 
+import type { Tracker } from "./ports/tracker.ts";
 import type { LoopFields } from "./project.ts";
 import type {
   BacklogRow,
@@ -19,7 +20,6 @@ import type {
   PlanningTracker,
   Priority,
   Stage,
-  Tracker,
 } from "./types.ts";
 
 const asRecord = (value: unknown): Record<string, unknown> =>

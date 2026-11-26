@@ -13,7 +13,7 @@
 import type { CriteriaBook } from "../criteria.ts";
 import type { Deps, StepResult } from "../pipeline.ts";
 import type { Preflight } from "../preflight.ts";
-import type { Verdict } from "../prompts.ts";
+import type { Verdict } from "../prompts/index.ts";
 import type { ResearchState, RunRecord } from "../store.ts";
 import type { Config, ExecResult, Issue, LoopPhase, SessionRole, TurnResult } from "../types.ts";
 

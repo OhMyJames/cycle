@@ -1,4 +1,5 @@
-import { type CriterionSpec, listUnder, parseCriteria, verifyArgv } from "./criteria.ts";
+import { type CriterionSpec, listUnder, parseCriteria } from "./criteria.ts";
+import { criterionSpecs } from "./parse/blocks.ts";
 import type { Config, Issue } from "./types.ts";
 
 export type Preflight =
@@ -145,22 +146,8 @@ export const preflight = (issue: Issue, config: PreflightConfig): Preflight => {
       `It has ${parsed.length} criteria, more than one session can finish (at most ${config.maxCriteria}). Please split it.`,
     );
   }
-  const specs: CriterionSpec[] = [];
-  parsed.forEach((criterion, index) => {
-    const label = `Criterion ${index + 1}`;
-    if (criterion.commands.length === 0) {
-      reasons.push(`${label} names no command to check it. Add 「验证：\`bun test <path>\`」.`);
-      return;
-    }
-    const argv = verifyArgv(criterion.commands);
-    if (!argv.ok) {
-      reasons.push(
-        `${label} names a command the loop may not run: ${argv.rejected.map((c) => `\`${c}\``).join(", ")}. Allowed: ${ALLOWED_COMMANDS}.`,
-      );
-      return;
-    }
-    specs.push({ text: criterion.text, verify: argv.argv });
-  });
+  const { specs, reasons: bad } = criterionSpecs(parsed, (n) => `Criterion ${n}`, ALLOWED_COMMANDS);
+  reasons.push(...bad);
   return reasons.length > 0 ? { ok: false, reasons } : { ok: true, kind: "dev", specs };
 };
 

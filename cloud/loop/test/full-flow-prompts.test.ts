@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import { readFullFlowTexts } from "../src/full-flow.ts";
-import { devBrief, fixBrief, handoffBrief, qaBrief } from "../src/prompts.ts";
+import { devBrief, fixBrief, handoffBrief, qaBrief } from "../src/prompts/index.ts";
 import { fourDocs, fullFlowIssue, setupFullFlow } from "./full-flow-helpers.ts";
 import { done, issue, PASS, REVIEW_MERGE } from "./helpers.ts";
 

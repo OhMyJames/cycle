@@ -28,7 +28,7 @@ import {
   tail,
 } from "./flows/flow.ts";
 import { PlanFlow } from "./flows/plan.ts";
-import { ResearchFlow } from "./flows/research.ts";
+import { ResearchFlow } from "./flows/research/index.ts";
 import { todoIntake } from "./flows/ticket.ts";
 import {
   changedReason,
@@ -43,6 +43,7 @@ import { isNetworkError } from "./network.ts";
 import type { At, Forge, PrState } from "./ports/forge.ts";
 import { gitWorkspace } from "./ports/git.ts";
 import { githubForge } from "./ports/github.ts";
+import type { Tracker } from "./ports/tracker.ts";
 import type { Done, Workspace } from "./ports/workspace.ts";
 import { renderPr, renderPrTitle, renderReviewComment, validatePr, waitForCi } from "./pr.ts";
 import {
@@ -61,7 +62,7 @@ import {
   type ReviewVerdict,
   reviewBrief,
   type Verdict,
-} from "./prompts.ts";
+} from "./prompts/index.ts";
 import type { LoopStore, RunRecord } from "./store.ts";
 import {
   type Clock,
@@ -74,7 +75,6 @@ import {
   SessionLost,
   type SessionRole,
   type Sessions,
-  type Tracker,
   type TurnResult,
 } from "./types.ts";
 

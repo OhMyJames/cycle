@@ -3,21 +3,20 @@
 // claimed → research → research_qa → publishing → done. The sessions only read; the loop checks the reply, has it
 // judged, and publishes it. There is no install, no commit, no push and no pull request.
 
-import { deliverEnv, GIT_SAFE } from "../env.ts";
-import { withRepoLock } from "../git-lock.ts";
-import type { StepResult } from "../pipeline.ts";
-import { conclusionIsEmpty } from "../preflight.ts";
+import { deliverEnv, GIT_SAFE } from "../../env.ts";
+import { withRepoLock } from "../../git-lock.ts";
+import type { StepResult } from "../../pipeline.ts";
+import { conclusionIsEmpty } from "../../preflight.ts";
 import {
   formatFindings,
   researchBrief,
   researchContinueBrief,
   researchFixBrief,
   researchQaBrief,
-} from "../prompts.ts";
-import { checkResearch, parseResearch, replaceConclusion } from "../research.ts";
-import { findSecrets } from "../secrets.ts";
-import type { ResearchState, RunRecord } from "../store.ts";
-import { type Config, type Issue, SessionLost, type TurnResult } from "../types.ts";
+} from "../../prompts/index.ts";
+import { findSecrets } from "../../secrets.ts";
+import type { ResearchState, RunRecord } from "../../store.ts";
+import { type Config, type Issue, SessionLost, type TurnResult } from "../../types.ts";
 import {
   type Accepted,
   type BlockArgs,
@@ -29,8 +28,9 @@ import {
   type Phase,
   type PhaseDef,
   tail,
-} from "./flow.ts";
-import { blockTicket, ticketStillWanted } from "./ticket.ts";
+} from "../flow.ts";
+import { blockTicket, ticketStillWanted } from "../ticket.ts";
+import { checkResearch, parseResearch, replaceConclusion } from "./output.ts";
 
 export class ResearchFlow implements Flow {
   readonly kind = "research";

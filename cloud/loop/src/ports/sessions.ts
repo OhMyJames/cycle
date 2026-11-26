@@ -5,8 +5,8 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CycleClient, connectUnix, type PermissionAnswer } from "@cycle/client";
 import { CycleErrorCode, META } from "@cycle/protocol";
-import { answeredAs, answerFor, commandPrefix, decide, kindOf } from "./policy.ts";
-import { SessionLost, type SessionRole, type Sessions, type TurnResult } from "./types.ts";
+import { answeredAs, answerFor, commandPrefix, decide, kindOf } from "../policy.ts";
+import { SessionLost, type SessionRole, type Sessions, type TurnResult } from "../types.ts";
 
 /** Writes one event of a run's log (kind and flat data, no free text). */
 export type RecordEvent = (
