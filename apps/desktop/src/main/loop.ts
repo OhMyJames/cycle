@@ -15,6 +15,7 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopBoardColumn,
   LoopChat,
   LoopChatFailure,
   LoopChatResult,
@@ -230,47 +231,50 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
     const columns = columnsOf(project);
     const autoId = autoLabelOf(project);
     if (columns.length === 0) throw new Error("no columns");
-    const ofType = (...types: string[]) => columns.filter((c) => types.includes(c.stateType));
-    const tickets = async (
-      cols: Column[],
+    const ticketsOf = async (
+      column: Column,
       limit: number,
-      newest = false,
-    ): Promise<LoopTicket[]> => {
-      const lists = await Promise.all(
-        cols.map(async (column) => {
-          const listed = await callTool(t, "list_issues", {
-            projectKey,
-            columnId: column.id,
-            limit,
-          });
-          const rows = rowsOf(listed);
-          return rows.map((row): LoopTicket & { at: string } => {
-            const r = asRecord(row);
-            const auto = autoId !== undefined && labelIdsOf(r).includes(autoId);
-            return {
-              at: String(r.updatedAt ?? ""),
-              identifier: String(r.identifier ?? ""),
-              title: String(r.title ?? ""),
-              priority: typeof r.priority === "string" ? r.priority : null,
-              column: column.name,
-              actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
-              chat: chatOf(column.stateType, roleOf(columns, column), auto),
-            };
-          });
-        }),
+    ): Promise<(LoopTicket & { at: string })[]> => {
+      const rows = rowsOf(
+        await callTool(t, "list_issues", { projectKey, columnId: column.id, limit }),
       );
-      const all = lists.flat();
-      // Several columns of one kind (two completed ones): the newest of all of them, not of whichever answered first.
-      if (newest) all.sort((a, b) => b.at.localeCompare(a.at));
-      return all.map(({ at: _at, ...ticket }) => ticket);
+      const role = roleOf(columns, column);
+      return rows.map((row): LoopTicket & { at: string } => {
+        const r = asRecord(row);
+        const auto = autoId !== undefined && labelIdsOf(r).includes(autoId);
+        return {
+          at: String(r.updatedAt ?? ""),
+          identifier: String(r.identifier ?? ""),
+          title: String(r.title ?? ""),
+          priority: typeof r.priority === "string" ? r.priority : null,
+          column: column.name,
+          actions: actionsOf(column.stateType, auto, role),
+          chat: chatOf(column.stateType, role, auto),
+        };
+      });
     };
-    const [doing, todo, backlog, done] = await Promise.all([
-      tickets(ofType("started"), LIST_LIMIT),
-      tickets(ofType("unstarted"), LIST_LIMIT),
-      tickets(ofType("backlog"), LIST_LIMIT),
-      tickets(ofType("completed"), DONE_SHOWN, true),
-    ]);
-    return { kind: "ok", doing, todo, backlog, done: done.slice(0, DONE_SHOWN) };
+    // The tracker's own board order: by `position` when every column has one, else as listed.
+    const ordered = columns.every((c) => typeof c.position === "number")
+      ? [...columns].sort((a, b) => Number(a.position) - Number(b.position))
+      : columns;
+    const shown = ordered.filter((c) => c.stateType !== "canceled");
+    const board = await Promise.all(
+      shown.map(async (column): Promise<LoopBoardColumn> => {
+        const completed = column.stateType === "completed";
+        // A completed column is the newest few; one more is asked for to know whether there are others.
+        const rows = await ticketsOf(column, completed ? DONE_SHOWN + 1 : LIST_LIMIT);
+        if (completed) rows.sort((a, b) => b.at.localeCompare(a.at));
+        const kept = completed ? rows.slice(0, DONE_SHOWN) : rows;
+        return {
+          id: column.id,
+          name: column.name,
+          stateType: column.stateType,
+          tickets: kept.map(({ at: _at, ...ticket }) => ticket),
+          more: rows.length > kept.length,
+        };
+      }),
+    );
+    return { kind: "ok", columns: board };
   } catch {
     return { kind: "unreachable" };
   }

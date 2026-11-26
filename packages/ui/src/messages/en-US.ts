@@ -643,6 +643,7 @@ export const enUS = {
   "loop.title": "Loop",
   "loop.sections": "Projects",
   "loop.projects": "Projects",
+  "loop.overview": "Overview",
   "loop.col.doing": "Doing",
   "loop.col.todo": "Todo",
   "loop.col.backlog": "Backlog",

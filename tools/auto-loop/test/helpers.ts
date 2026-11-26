@@ -94,6 +94,9 @@ export const done = (text = "<progress>done: x\nnext: y</progress>"): TurnResult
 export class FakeTracker implements Tracker {
   moves: string[] = [];
   comments: string[] = [];
+  /** `KEY:phase` per write, `KEY:clear` per clear. */
+  phases: string[] = [];
+  failPhase = false;
   /** A test can hold `listTodo`, `get` and `move` open until it releases them. */
   gates: { listTodo?: Promise<void>; get?: Promise<void>; move?: Promise<void> } = {};
   constructor(public issues: Issue[]) {}
@@ -117,6 +120,10 @@ export class FakeTracker implements Tracker {
   }
   async comment(i: Issue, text: string) {
     this.comments.push(`${i.key}:${text}`);
+  }
+  async setLoopPhase(i: Issue, phase: string | null, _at?: Date, _signal?: AbortSignal) {
+    if (this.failPhase) throw new Error("field write failed");
+    this.phases.push(`${i.key}:${phase ?? "clear"}`);
   }
 }
 
@@ -228,6 +235,8 @@ export type World = {
   mergeTreeOutput: string;
   /** When set, every `git fetch` logs start/end here and takes a few ms. */
   fetchLog?: string[];
+  /** Whether auto-merge is on for the PR (`--json autoMergeRequest`); `--auto` turns it on, `--disable-auto` off. */
+  autoMerge?: boolean;
 };
 
 export const makeExec =
@@ -246,6 +255,13 @@ export const makeExec =
       return result("");
     }
     for (const pattern of world.fail) if (line.includes(pattern)) return result("boom", 1);
+    if (line.includes("gh pr merge") && line.includes("--disable-auto")) world.autoMerge = false;
+    if (line.includes("gh pr merge") && line.includes("--auto")) world.autoMerge = true;
+    if (line.includes("gh pr view") && line.includes("autoMergeRequest")) {
+      return result(
+        JSON.stringify({ autoMergeRequest: world.autoMerge ? { mergeMethod: "SQUASH" } : null }),
+      );
+    }
     if (line.includes("gh pr create")) return result("https://github.com/o/r/pull/9\n");
     if (line.includes("gh pr view") && line.includes("state,mergeable")) {
       const [state, mergeable] =

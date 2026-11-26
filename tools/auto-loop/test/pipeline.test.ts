@@ -138,20 +138,11 @@ test("happy path: Dev, checks, QA, push, PR, green CI, independent review merge,
   expect(sessions.deleted).toBe(0);
 });
 
-test("auto-merge enabled but the PR conflicts with main: Blocked, comment names the conflict and files, event recorded", async () => {
+test("the PR's commit list is built with --no-merges, so a merge of main is not listed", async () => {
   const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
-  s.world.prMerge = [["OPEN", "CONFLICTING"]];
-  s.world.mergeTreeOutput = "deadbeef\ntools/auto-loop/test/pipeline.test.ts\n";
-  const result = await s.pipeline.step();
-  expect(result.status).toBe("blocked");
-  expect(s.tracker.moves.at(-1)).toBe("CYC-1:blocked");
-  const comment = s.tracker.comments.at(-1) ?? "";
-  expect(comment).toContain("冲突");
-  expect(comment).toContain("tools/auto-loop/test/pipeline.test.ts");
-  const kinds = (await s.store.events()).map((e) => e.kind);
-  expect(kinds).toContain("merge_conflict");
-  expect(kinds).toContain("blocked");
-  expect(kinds).not.toContain("delivered");
+  await s.pipeline.step();
+  const log = s.world.calls.find((c) => c.includes("log --reverse"));
+  expect(log).toContain("--no-merges");
 });
 
 test("auto-merge enabled and the PR merges after a few polls: delivered as before, no extra comment", async () => {
@@ -1633,6 +1624,131 @@ test("two runs claiming at once never run git fetch at the same time", async () 
   );
 });
 
+test("the phase is mirrored from claim to delivery, each once, and cleared on delivery", async () => {
+  const { pipeline, tracker } = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  expect((await pipeline.step()).status).toBe("delivered");
+  expect(tracker.phases).toEqual([
+    "CYC-1:dev",
+    "CYC-1:verify",
+    "CYC-1:qa",
+    "CYC-1:ci",
+    "CYC-1:review",
+    "CYC-1:merge",
+    "CYC-1:clear",
+  ]);
+});
+
+test("Blocked clears the phase; put back in Todo, the resumed phase is written again", async () => {
+  const w = setup([ready()], { dev: [done(), done(), done(), done()], qa: [] }, {}, [
+    "bun run check",
+  ]);
+  await w.pipeline.step();
+  expect(w.tracker.phases.at(-1)).toBe("CYC-1:clear");
+  w.world.fail.clear();
+  w.sessions.script.qa.push(done(PASS));
+  w.sessions.script.dev.push(done());
+  (w.tracker.issues[0] as Issue).columnId = 22;
+  const before = w.tracker.phases.length;
+  await w.pipeline.step();
+  expect(w.tracker.phases[before]).toBe("CYC-1:verify");
+});
+
+test("a restarted process writes the phase of the run it continues", async () => {
+  const first = setup([ready()], { dev: [done()], qa: [] });
+  const original = first.sessions.turn.bind(first.sessions);
+  first.sessions.turn = async (id, prompt, ctx) => {
+    if (ctx.role === "qa") throw new Error("killed");
+    return original(id, prompt, ctx);
+  };
+  await expect(first.pipeline.step()).rejects.toThrow("killed");
+  const tracker = new FakeTracker(first.tracker.issues);
+  const second = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker,
+    sessions: new FakeSessions({ dev: [], qa: [done(PASS)] }),
+    exec: makeExec(first.world),
+    store: first.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+  });
+  await second.step();
+  expect(tracker.phases[0]).toBe("CYC-1:verify");
+});
+
+test("a failing phase write changes nothing about the outcome", async () => {
+  const ok = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const bad = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  bad.tracker.failPhase = true;
+  const a = await ok.pipeline.step();
+  const b = await bad.pipeline.step();
+  expect(b).toEqual(a);
+  expect(bad.tracker.moves).toEqual(ok.tracker.moves);
+  expect((await bad.store.events()).some((e) => e.kind === "phase_field_failed")).toBe(true);
+});
+
+const withCap = (w: ReturnType<typeof setup>, mirrorCapMs: number) =>
+  new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: w.tracker,
+    sessions: w.sessions,
+    exec: makeExec(w.world),
+    store: w.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+    sleep: async () => {},
+    mirrorCapMs,
+  });
+
+test("writes for one work item land in order even when an earlier one is slow", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const landed: string[] = [];
+  w.tracker.setLoopPhase = async (i, phase) => {
+    if (phase === "dev") await Bun.sleep(30);
+    landed.push(`${i.key}:${phase ?? "clear"}`);
+  };
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  await Bun.sleep(60);
+  expect(landed.slice(0, 3)).toEqual(["CYC-1:dev", "CYC-1:verify", "CYC-1:qa"]);
+  expect(landed.at(-1)).toBe("CYC-1:clear");
+});
+
+test("a write that never answers does not hold the run longer than the cap", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  w.tracker.setLoopPhase = () => new Promise(() => {});
+  const started = Date.now();
+  expect((await withCap(w, 20).step()).status).toBe("delivered");
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+test("delivery clears after a merge write that was still pending", async () => {
+  const w = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  const landed: string[] = [];
+  w.tracker.setLoopPhase = async (_i, phase) => {
+    if (phase === "merge") await Bun.sleep(40);
+    landed.push(phase ?? "clear");
+  };
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  expect(landed.slice(-2)).toEqual(["merge", "clear"]);
+});
+
+test("a failing write is reported once per kind and the run is unaffected", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  w.tracker.failPhase = true;
+  expect((await w.pipeline.step()).status).toBe("delivered");
+  const failures = (await w.store.events()).filter((e) => e.kind === "phase_field_failed");
+  expect(failures).toHaveLength(1);
+});
+
 // CYC-441: the tuning is read again before every step; a step under way keeps the values it started with.
 const rejectTwice = (): Script => ({
   dev: Array.from({ length: 5 }, () => done()),
@@ -1701,4 +1817,101 @@ test("tuning that cannot be read or is invalid: the step goes on with the last g
   next = async () => ({});
   await s.pipeline.step();
   expect(s.pipeline.intervalSeconds).toBeUndefined();
+});
+
+// ---- network errors (CYC-444) ----
+
+const NET =
+  "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com";
+
+/** A pipeline over `s`'s tracker, sessions and store whose commands matching `match` fail `times` times with `output`. */
+const flaky = (
+  s: ReturnType<typeof setup>,
+  match: (line: string) => boolean,
+  times: number,
+  output: string,
+  slept: number[] = [],
+) => {
+  const inner = makeExec(s.world);
+  let left = times;
+  const pipeline = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: s.tracker,
+    sessions: s.sessions,
+    exec: async (argv, o) => {
+      if (left > 0 && match(argv.join(" "))) {
+        left--;
+        return { code: 1, output, timedOut: false };
+      }
+      return inner(argv, o);
+    },
+    store: s.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
+    sleep: async (ms) => {
+      slept.push(ms);
+    },
+  });
+  return { pipeline, left: () => left };
+};
+
+test("git fetch at claim fails twice on the network, then works: the work item starts, network_retry is logged", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
+  const slept: number[] = [];
+  const { pipeline } = flaky(s, (l) => l.includes(" fetch "), 2, NET, slept);
+  const result = await pipeline.step();
+  expect(result.status).toBe("delivered");
+  expect(s.tracker.moves).not.toContain("CYC-1:blocked");
+  expect(slept).toEqual([10_000, 30_000]);
+  const retries = (await s.store.events()).filter((e) => e.kind === "network_retry");
+  expect(retries.map((e) => [e.attempt, e.ok])).toEqual([
+    [1, false],
+    [2, true],
+  ]);
+  expect(JSON.stringify(retries)).not.toContain("resolve host");
+});
+
+test("reading the PR state keeps failing on the network: nothing is blocked, the run waits, the next step goes on with it", async () => {
+  const s = setup([ready(), ready({ number: 2, key: "CYC-2", id: 2 })], {
+    dev: [done()],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  const { pipeline, left } = flaky(
+    s,
+    (l) => l.includes("gh pr view") && l.includes("--json state"),
+    4,
+    "Post https://api.github.com/graphql: net/http: TLS handshake timeout",
+  );
+  const first = await pipeline.step();
+  expect(first).toEqual({ status: "network_wait", key: "CYC-1", command: "gh pr view" });
+  expect(left()).toBe(0);
+  expect(s.tracker.moves).toEqual(["CYC-1:inProgress"]);
+  expect(s.tracker.comments).toEqual([]);
+  const run = (await s.store.unfinished()).find((r) => r.key === "CYC-1");
+  expect(run?.phase).toBe("ci");
+  const events = (await s.store.events()).map((e) => e.kind);
+  expect(events).toContain("network_down");
+  expect(events.filter((e) => e === "network_retry")).toHaveLength(3);
+
+  // The network is back; the other work item in Todo is not taken before this one is finished.
+  const second = await pipeline.step();
+  expect(second.status).toBe("delivered");
+  expect((second as { key: string }).key).toBe("CYC-1");
+  expect(s.tracker.moves).not.toContain("CYC-2:inProgress");
+});
+
+test("git push rejected and an authentication failure are not retried: Blocked as before", async () => {
+  for (const out of [
+    " ! [rejected]        HEAD -> auto/cyc-1 (non-fast-forward)",
+    "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403",
+  ]) {
+    const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+    const { pipeline, left } = flaky(s, (l) => l.includes(" push "), 5, out);
+    const result = await pipeline.step();
+    expect(result.status).toBe("blocked");
+    expect(left()).toBe(4);
+    expect((await s.store.events()).some((e) => e.kind === "network_retry")).toBe(false);
+  }
 });

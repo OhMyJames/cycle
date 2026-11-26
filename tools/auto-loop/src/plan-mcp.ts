@@ -5,7 +5,8 @@
 // columnId, typeId, archived }[]`). `toIssue` reads these defensively and returns `null` when missing so selection
 // fails closed rather than treating an unknown issue as an eligible leaf.
 
-import type { Config, Issue, Priority, Stage, Tracker } from "./types.ts";
+import type { LoopFields } from "./project.ts";
+import type { Config, Issue, LoopPhase, Priority, Stage, Tracker } from "./types.ts";
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -64,11 +65,14 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
   };
 };
 
+const FIELD_WRITE_TIMEOUT_MS = 10_000;
+
 export class PlanTracker implements Tracker {
   readonly #url: string;
   readonly #key: string;
   readonly #project: string;
   #columns: Config["columns"] | undefined;
+  #loopFields: LoopFields | null = null;
 
   /** `columns` may be left out until `setColumns` is called with what `get_project` resolved. */
   constructor(options: {
@@ -87,6 +91,39 @@ export class PlanTracker implements Tracker {
     this.#columns = columns;
   }
 
+  /** The ids of the phase fields; `null` (the default) means the project has none and nothing is written. */
+  setLoopFields(fields: LoopFields | null): void {
+    this.#loopFields = fields;
+  }
+
+  /** The project's custom fields (`list_custom_fields`). */
+  async getCustomFields(): Promise<unknown> {
+    return this.#call("execute_read", {
+      name: "list_custom_fields",
+      arguments: { projectKey: this.#project },
+    });
+  }
+
+  /** Both fields in one go, each request bounded in time so a hung tracker cannot hold the queue for long. */
+  async setLoopPhase(issue: Issue, phase: LoopPhase | null, at: Date): Promise<void> {
+    const f = this.#loopFields;
+    if (f === null) return;
+    const set = async (fieldId: number, rest: Record<string, unknown>) => {
+      await this.#call(
+        "execute_write",
+        { name: "set_issue_field_value", arguments: { issueId: issue.id, fieldId, ...rest } },
+        FIELD_WRITE_TIMEOUT_MS,
+      );
+    };
+    if (phase === null) {
+      await set(f.phaseFieldId, { optionIds: [] });
+      await set(f.startedFieldId, { value: null });
+      return;
+    }
+    await set(f.phaseFieldId, { optionIds: [f.optionIds[phase]] });
+    await set(f.startedFieldId, { value: at.toISOString() });
+  }
+
   #column(stage: Stage): number {
     const id = this.#columns?.[stage];
     if (id === undefined) throw new Error("the project's columns are not resolved yet");
@@ -98,8 +135,9 @@ export class PlanTracker implements Tracker {
     return this.#call("get_project", { projectKey: this.#project });
   }
 
-  async #call(name: string, args: Record<string, unknown>): Promise<unknown> {
+  async #call(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
     const response = await fetch(this.#url, {
+      ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       method: "POST",
       headers: {
         "content-type": "application/json",

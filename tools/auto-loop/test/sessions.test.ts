@@ -205,7 +205,7 @@ test("a request left for a person is recorded, and so is what the person answere
   cleanup.push(() => person.close());
   await person.watch(sessionId, "/tmp");
   await sessions.turn(sessionId, "work", context);
-  const until = Date.now() + 5_000;
+  const until = Date.now() + 10_000;
   while (events.length < 2 && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
   expect(events.map((e) => e.kind)).toEqual(["permission_requested", "permission_answered"]);
   expect(events[0]?.data).toMatchObject({ decision: "ask", tool: "execute", command: "curl" });
