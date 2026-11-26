@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LoopRunsListResultSchema } from "@cycle/protocol";
@@ -74,6 +74,24 @@ describe("runs/list", () => {
       ["CYC-3", "blocked"],
     ]);
     expect(result.projects[1]?.runs).toEqual([]);
+  });
+
+  test("a corrupt record and a stray file do not hide a valid run, and the list says so", async () => {
+    const state = join(dir, "state-mixed");
+    mkdirSync(join(state, "runs", "BAD-1"), { recursive: true });
+    writeFileSync(join(state, "runs", "BAD-1", "run.json"), "{not json");
+    writeFileSync(join(state, "runs", "stray.txt"), "x");
+    mkdirSync(join(state, "runs", "OK-1"), { recursive: true });
+    const good = join(cycState, "runs", "CYC-1", "run.json");
+    writeFileSync(
+      join(state, "runs", "OK-1", "run.json"),
+      readFileSync(good, "utf8").replace("CYC-1", "OK-1"),
+    );
+    const first = config.projects[0];
+    if (first === undefined) throw new Error("no project");
+    const result = await runsList({ projects: [{ ...first, stateDir: state }] });
+    expect(result.projects[0]?.runs.map((r) => r.key)).toEqual(["OK-1"]);
+    expect(result.projects[0]?.unavailable).toBe(true);
   });
 
   test("a Project with no stateDir gets an empty list", async () => {

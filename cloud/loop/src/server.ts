@@ -49,9 +49,12 @@ export const listen = async (config: Config, socketPath: string): Promise<Server
     const umask = process.umask(0o177);
     const server = createServer((socket) => {
       socket.on("error", () => {});
+      // One request at a time per connection, so replies come back in the order asked.
+      let queue: Promise<void> = Promise.resolve();
       createInterface({ input: socket }).on("line", (line) => {
         if (line.trim() === "") return;
-        void answer(config, line).then((reply) => {
+        queue = queue.then(async () => {
+          const reply = await answer(config, line);
           if (reply !== undefined) socket.write(`${reply}\n`);
         });
       });

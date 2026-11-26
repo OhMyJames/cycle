@@ -3,6 +3,7 @@
 
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { LoopForgeSchema } from "@cycle/protocol";
 import { z } from "zod";
 
@@ -15,13 +16,20 @@ export const ConfigSchema = z.object({
         repo: z.object({ url: z.string().min(1), forge: LoopForgeSchema }),
         token: z.string().min(1),
         /** Where this Project's runs are kept (`<stateDir>/runs/<KEY>/run.json`). Never sent to a client. */
-        stateDir: z.string().min(1).optional(),
+        stateDir: z
+          .string()
+          .refine((v) => isAbsolute(v), "stateDir must be an absolute path")
+          .optional(),
       }),
     )
     .refine(
       (projects) => new Set(projects.map((p) => p.projectKey)).size === projects.length,
       "projectKey must be unique",
-    ),
+    )
+    .refine((projects) => {
+      const dirs = projects.flatMap((p) => (p.stateDir === undefined ? [] : [p.stateDir]));
+      return new Set(dirs).size === dirs.length;
+    }, "stateDir must be unique"),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

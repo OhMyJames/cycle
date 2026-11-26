@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 /**
- * The Loop server's methods (`projects/list`, `runs/list`) (docs/protocol.md §17). The Loop server is its own process, not the daemon, so
- * its methods are not `_cycle/*`. A response never holds a token, a repository address or a local path.
+ * The Loop server's methods, `projects/list` and `runs/list` (docs/protocol.md §17). The Loop server is its own
+ * process, not the daemon, so its methods are not `_cycle/*`. A response never holds a token, a repository address
+ * or a local path.
  */
 
 export const LOOP_PROJECTS_LIST = "projects/list";
@@ -27,7 +28,10 @@ export type LoopProject = z.infer<typeof LoopProjectSchema>;
 export const LoopProjectsListResultSchema = z.object({ projects: z.array(LoopProjectSchema) });
 export type LoopProjectsListResult = z.infer<typeof LoopProjectsListResultSchema>;
 
-/** Where a run is, in three words. `active` means the Loop has not finished or blocked it; it does not prove a process is alive. */
+/**
+ * Where a run is, in three words. `active` means the Loop has not finished or blocked it; it does not prove a
+ * process is alive.
+ */
 export const LoopRunStateSchema = z.enum(["active", "blocked", "done"]);
 export type LoopRunState = z.infer<typeof LoopRunStateSchema>;
 
@@ -45,6 +49,8 @@ export type LoopRun = z.infer<typeof LoopRunSchema>;
 export const LoopProjectRunsSchema = z.object({
   projectKey: z.string().min(1),
   runs: z.array(LoopRunSchema),
+  /** True when some of the Project's run records could not be read: `runs` may be missing some. */
+  unavailable: z.boolean(),
 });
 export type LoopProjectRuns = z.infer<typeof LoopProjectRunsSchema>;
 
