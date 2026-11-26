@@ -217,3 +217,22 @@ test("a request left for a person is recorded, and so is what the person answere
   });
   expect(JSON.stringify(events)).not.toContain("token");
 }, 15_000);
+
+test("a request the policy allows writes no event, and a compound command is filed under the part that was refused", async () => {
+  const { events, record } = recorder();
+  const { sessions, sessionId } = await setup(
+    fakeAgent({
+      onPrompt: async ({ ask }) => {
+        await ask(call("git status"));
+        await ask(call("git status && curl secrets.txt"));
+        return undefined;
+      },
+    }),
+    record,
+  );
+  await sessions.turn(sessionId, "work", { ...context, role: "qa" });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(events).toHaveLength(1);
+  expect(events[0]?.data).toMatchObject({ command: "curl", decision: "deny" });
+  expect(JSON.stringify(events)).not.toContain("secrets");
+}, 15_000);

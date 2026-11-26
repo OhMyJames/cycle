@@ -251,23 +251,47 @@ export const kindOf = (request: Record<string, unknown>): string => {
   return typeof kind === "string" && KINDS.has(kind) ? kind : "other";
 };
 
+/** Programs whose second word is a subcommand, not an argument: for anything else only the program is recorded. */
+const SUBCOMMAND_PROGRAMS = new Set([
+  "git",
+  "bun",
+  "bunx",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "gh",
+  "cargo",
+  "docker",
+  "kubectl",
+  "go",
+  "uv",
+  "pip",
+  "brew",
+  "systemctl",
+]);
+
 /**
- * The first two words of a command request ("git mv", "bunx biome"), or undefined when the request is not a command
- * or has no readable program. Never more: the arguments can hold paths and credentials. A leading `NAME=value` is
- * skipped, and a second word that is a flag, a path, a URL or anything else that is not a plain subcommand is left out.
+ * The first two words of the command that made a request ask or deny ("git mv", "bunx biome"), or undefined when the
+ * request is not a command, uses shell syntax this policy does not read, or has no readable program. Never more: the
+ * arguments can hold paths and credentials. The second word is kept only for programs that have subcommands. In a
+ * compound command it is the first simple command the policy did not allow.
  */
-export const commandPrefix = (request: Record<string, unknown>): string | undefined => {
+export const commandPrefix = (request: Record<string, unknown>, role: Role): string | undefined => {
   const call = toolCallOf(request);
   if (call === undefined || call.kind !== "execute") return undefined;
   const command = commandOf(call);
   if (command === undefined) return undefined;
-  const words = (splitCommand(command)?.[0] ?? command.trim().split(/\s+/)).filter(
-    (word) => word !== "",
-  );
+  const segments = splitCommand(command);
+  if (segments === undefined || segments.length === 0) return undefined;
+  const chosen = segments.find((words) => !simpleAllowed(words, role)) ?? segments[0];
+  const words = [...(chosen ?? [])];
   while (words[0] !== undefined && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
   const [program, sub] = words;
   if (program === undefined || !PROGRAM.test(program)) return undefined;
-  return sub !== undefined && SUBCOMMAND.test(sub) ? `${program} ${sub}` : program;
+  return sub !== undefined && SUBCOMMAND_PROGRAMS.has(program) && SUBCOMMAND.test(sub)
+    ? `${program} ${sub}`
+    : program;
 };
 
 type Option = { optionId?: unknown; kind?: unknown };

@@ -36,6 +36,7 @@ const permissionRows = (events: LoopEvent[]): PermissionRow[] => {
   const rows = new Map<string, PermissionRow>();
   for (const event of events) {
     if (event.kind !== "permission_requested" && event.kind !== "permission_answered") continue;
+    if (event.decision === "allow") continue;
     const kind = String(event.tool ?? "other");
     const command = typeof event.command === "string" ? event.command : undefined;
     const key = `${kind}\0${command ?? ""}`;

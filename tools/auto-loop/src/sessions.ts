@@ -17,6 +17,7 @@ export type RecordEvent = (
 
 /** A request left for a person, kept until the app answers it. */
 type Left = {
+  sessionId: string;
   run: string;
   request: Record<string, unknown>;
   data: Record<string, string>;
@@ -82,11 +83,14 @@ export class DaemonSessions implements Sessions {
     await this.#client.close();
   }
 
+  /** Events go out one at a time, in the order they happened. */
+  #queue: Promise<void> = Promise.resolve();
+
   #emit(run: string, kind: string, data: Record<string, string>): void {
-    // A failed write must not fail the session's permission handling.
-    try {
-      void Promise.resolve(this.#record(run, kind, data)).catch(() => {});
-    } catch {}
+    // A failed write must not fail the session's permission handling, but it is not silent.
+    this.#queue = this.#queue
+      .then(() => this.#record(run, kind, data))
+      .catch((error) => console.error(`could not record ${kind} for ${run}: ${String(error)}`));
   }
 
   #update(sessionId: string, update: Record<string, unknown>): void {
@@ -128,7 +132,7 @@ export class DaemonSessions implements Sessions {
     if (turn === undefined) return wait(false);
     const verdict = decide(request, { role: turn.role, worktree: turn.worktree });
     const answer = answerFor(request, verdict);
-    const command = commandPrefix(request);
+    const command = commandPrefix(request, turn.role);
     const data = {
       role: turn.role,
       // Not `kind`: that is the name of the event itself.
@@ -140,9 +144,12 @@ export class DaemonSessions implements Sessions {
       data.tool === "other" && / request$/.test(verdict.reason)
         ? "a request of an unrecognized kind"
         : verdict.reason;
-    this.#emit(turn.run, "permission_requested", { ...data, decision: verdict.decision, reason });
+    // Only what the policy did not allow is recorded: the allowed ones are routine.
+    if (verdict.decision !== "allow")
+      this.#emit(turn.run, "permission_requested", { ...data, decision: verdict.decision, reason });
     if (answer !== undefined) return answer;
-    if (requestId !== undefined) this.#left.set(requestId, { run: turn.run, request, data });
+    if (requestId !== undefined)
+      this.#left.set(requestId, { sessionId, run: turn.run, request, data });
     // Not for the loop to decide: the request stays open until a person answers it in the app.
     this.#onWaiting(sessionId, typeof request.title === "string" ? request.title : "");
     return wait(true);
@@ -266,6 +273,8 @@ export class DaemonSessions implements Sessions {
     } finally {
       clearInterval(timer);
       this.#turns.delete(sessionId);
+      // A request nobody answered before the turn ended is not answered later by anyone the Loop would credit.
+      for (const [id, left] of this.#left) if (left.sessionId === sessionId) this.#left.delete(id);
     }
   }
 }
