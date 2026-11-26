@@ -17,6 +17,7 @@ import { AgentLink } from "./agent-link.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronDownIcon, ChevronRightIcon } from "./icons.tsx";
+import { type LoopView, viewProject } from "./loop-nav.ts";
 import { PageLayout, type PageSection } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -415,10 +416,17 @@ function Column({
 function Board({
   projectKey,
   answer,
+  openIdentifier,
+  onOpen,
+  onBack,
   onChatStarted,
 }: {
   projectKey: string;
   answer: LoopBoardAnswer | "loading" | undefined;
+  /** The ticket whose page is shown, if any: it is the Loop's navigation state, not the board's. */
+  openIdentifier: string | undefined;
+  onOpen: (identifier: string) => void;
+  onBack: () => void;
   onChatStarted: () => void;
 }) {
   const { t } = useI18n();
@@ -432,13 +440,13 @@ function Board({
   };
   const notices = useAppState((s) => s.loop.notices[projectKey]);
   const request = useAppState((s) => s.loop.request);
-  const [open, setOpen] = useState<string | undefined>();
+  const open = openIdentifier;
   // A pressed notification asks for its ticket once: it is taken (cleared) here, so reopening the page does not repeat it.
   useEffect(() => {
     if (request === undefined || request.projectKey !== projectKey) return;
-    setOpen(request.identifier);
+    onOpen(request.identifier);
     store.takeLoopRequest(request.n);
-  }, [request, projectKey, store]);
+  }, [request, projectKey, store, onOpen]);
   const [problem, setProblem] = useState<LoopActFailure | undefined>();
   const [version, setVersion] = useState(0);
   // Returns the words of a failure (the approve dialog shows them inline); the other buttons show them on the board.
@@ -454,7 +462,7 @@ function Board({
   };
   const openTicket = (identifier: string) => {
     setProblem(undefined);
-    setOpen(identifier);
+    onOpen(identifier);
   };
   const alert =
     problem !== undefined ? (
@@ -493,7 +501,7 @@ function Board({
         onChatStarted={onChatStarted}
         onBack={() => {
           setProblem(undefined);
-          setOpen(undefined);
+          onBack();
         }}
         problem={alert}
       />
@@ -553,13 +561,16 @@ function Board({
 }
 
 export function LoopPage({
-  projectKey,
-  onProject,
+  view,
+  onView,
+  onBack,
   onClose,
   banner,
 }: {
-  projectKey: string | undefined;
-  onProject: (key: string) => void;
+  view: LoopView;
+  onView: (view: LoopView) => void;
+  /** One level up; out of the Loop from the top. */
+  onBack: () => void;
   onClose: () => void;
   banner?: React.ReactNode;
 }) {
@@ -573,6 +584,7 @@ export function LoopPage({
   }, [store]);
 
   // The Project shown: the one asked for, else the first the server has.
+  const projectKey = viewProject(view);
   const chosen = projects.find((p) => p.projectKey === projectKey) ?? projects[0];
   const chosenKey = chosen?.projectKey;
   useEffect(() => {
@@ -648,6 +660,15 @@ export function LoopPage({
             <Board
               projectKey={p.projectKey}
               answer={loop.boards[p.projectKey]}
+              openIdentifier={
+                view.at === "ticket" && view.projectKey === p.projectKey
+                  ? view.identifier
+                  : undefined
+              }
+              onOpen={(identifier) =>
+                onView({ at: "ticket", projectKey: p.projectKey, identifier })
+              }
+              onBack={onBack}
               onChatStarted={onClose}
             />
           ),
@@ -658,7 +679,7 @@ export function LoopPage({
       title={t("loop.title")}
       sectionsLabel={t("loop.sections")}
       backLabel={t("settings.back")}
-      onBack={onClose}
+      onBack={onBack}
       banner={
         <>
           {banner}
@@ -675,7 +696,7 @@ export function LoopPage({
       }
       sections={sections}
       value={chosen?.projectKey ?? "projects"}
-      onValueChange={onProject}
+      onValueChange={(key) => onView({ at: "project", projectKey: key, tab: "kanban" })}
     />
   );
 }

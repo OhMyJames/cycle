@@ -27,6 +27,8 @@ export const ConfigFileSchema = z.object({
   devAgent: agent.optional(),
   qaAgent: agent.optional(),
   reviewAgent: agent.optional(),
+  /** Workers for this Project (CYC-433); `--workers` overrides it. */
+  workers: z.number().int().positive().optional(),
 });
 export type ConfigFile = z.infer<typeof ConfigFileSchema>;
 

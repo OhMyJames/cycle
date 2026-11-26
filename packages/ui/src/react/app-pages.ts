@@ -1,6 +1,7 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { CONNECTORS_SECTIONS, type ConnectorsSection } from "../connectors-sections.ts";
 import type { SettingsSection } from "../settings-sections.ts";
+import { enter, type LoopView, up } from "./loop-nav.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /**
@@ -18,8 +19,8 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
   const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
   // The Loop page: open or not, and which Project it was left on (the Projects are its sections).
-  const [loop, setLoop] = useState<{ projectKey: string | undefined } | undefined>(undefined);
-  const lastLoopProject = useRef<string | undefined>(undefined);
+  const [loop, setLoop] = useState<LoopView | undefined>(undefined);
+  const lastLoopView = useRef<LoopView | undefined>(undefined);
   const pageOpen = settings !== undefined || connectors !== undefined || loop !== undefined;
 
   // Settings, from wherever it is asked for: over the sessions, or in place of the Connectors page.
@@ -60,12 +61,19 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const openLoop = () => {
     setSettings(undefined);
     setConnectors(undefined);
-    setLoop({ projectKey: lastLoopProject.current });
+    setLoop(enter(lastLoopView.current));
     store.track("panel_opened", { panel: "loop", via: "click" });
   };
-  const showLoopProject = (projectKey: string) => {
-    lastLoopProject.current = projectKey;
-    setLoop({ projectKey });
+  // Moving inside the Loop: where it is now is where it comes back to.
+  const showLoopView = (view: LoopView) => {
+    lastLoopView.current = view;
+    setLoop(view);
+  };
+  // Escape or Back: one level up, and out of the Loop from the top.
+  const loopBack = () => {
+    const parent = loop === undefined ? undefined : up(loop);
+    if (parent === undefined) leaveLoop();
+    else showLoopView(parent);
   };
   const leaveLoop = () => {
     returnFocus.current = '[data-page-open="loop"]';
@@ -116,8 +124,7 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     if (loopRequest !== undefined) {
       setSettings(undefined);
       setConnectors(undefined);
-      lastLoopProject.current = loopRequest.projectKey;
-      setLoop({ projectKey: loopRequest.projectKey });
+      showLoopView({ at: "project", projectKey: loopRequest.projectKey, tab: "kanban" });
     }
   }
   useEffect(() => {
@@ -132,7 +139,8 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     connectors,
     loop,
     openLoop,
-    showLoopProject,
+    showLoopView,
+    loopBack,
     leaveLoop,
     pageOpen,
     openSettings,

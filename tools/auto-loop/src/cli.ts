@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// bun tools/auto-loop/src/cli.ts [--once] [--dry-run] [--interval SECONDS]
+// bun tools/auto-loop/src/cli.ts [--once] [--dry-run] [--interval SECONDS] [--workers N]
 // bun tools/auto-loop/src/cli.ts stats [--project KEY]
 //
 // Configuration is a file (mode 0600), not environment variables: --config <path>, or <dataDir>/auto-loop.json.
@@ -8,7 +8,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
-import { runLoops } from "./loop.ts";
+import { effectiveWorkers, parseWorkers, runLoops, workerSpecs } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
@@ -56,6 +56,13 @@ if (!Number.isFinite(seconds) || seconds <= 0) {
 }
 const once = flag("--once") || flag("--dry-run");
 const dryRun = flag("--dry-run");
+let workersFlag: number | undefined;
+try {
+  workersFlag = flag("--workers") ? parseWorkers(value("--workers") ?? "") : undefined;
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
 let stop = false;
 
 // Everything one Project owns: tracker, store, lock, daemon connection, pipeline.
@@ -117,12 +124,16 @@ const setUp = async (file: ConfigFile) => {
     clock,
     log: plog,
     env: process.env,
+    stopped: () => stop,
   });
   const close = async () => {
     await release();
     if (!dryRun) await sessions.close();
   };
-  return { name, pipeline, release, close };
+  const workers = effectiveWorkers({ once, dryRun, flag: workersFlag, file: file.workers });
+  if (workers > 4)
+    plog(`warning: ${workers} workers; each one holds a session and a worktree, watch memory`);
+  return { name, pipeline, release, close, workers };
 };
 
 // Set up every Project before any loop starts, so a bad one stops the process rather than half of it.
@@ -147,14 +158,19 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 try {
   await runLoops(
-    projects.map((p) => ({
-      name: p.name,
-      step: () => p.pipeline.step(),
-      once,
-      intervalMs: seconds * 1000,
-      log,
-      stopped: () => stop,
-    })),
+    projects.flatMap((p) =>
+      workerSpecs(
+        {
+          step: () => p.pipeline.step(),
+          once,
+          intervalMs: seconds * 1000,
+          log,
+          stopped: () => stop,
+        },
+        p.name,
+        p.workers,
+      ),
+    ),
   );
 } finally {
   await Promise.allSettled(projects.map((p) => p.close()));

@@ -39,3 +39,23 @@ export const runLoops = async (specs: LoopSpec[]): Promise<void> => {
   const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
   if (failed !== undefined) throw failed.reason;
 };
+
+/** `--workers`: absent means 1; anything but a positive integer is an error. */
+export const parseWorkers = (raw: string | undefined): number => {
+  if (raw === undefined) return 1;
+  if (!/^[1-9][0-9]*$/.test(raw.trim()) || !Number.isSafeInteger(Number(raw)))
+    throw new Error("--workers takes a whole number of 1 or more.");
+  return Number(raw);
+};
+
+/** How many workers a Project gets: one for `--once` and `--dry-run`, else the flag, else the file, else one. */
+export const effectiveWorkers = (o: {
+  once: boolean;
+  dryRun: boolean;
+  flag: number | undefined;
+  file: number | undefined;
+}): number => (o.once || o.dryRun ? 1 : (o.flag ?? o.file ?? 1));
+
+/** N specs for one Project, sharing its step. With one worker the name is the Project's own. */
+export const workerSpecs = (base: Omit<LoopSpec, "name">, name: string, n: number): LoopSpec[] =>
+  Array.from({ length: n }, (_, i) => ({ ...base, name: n === 1 ? name : `${name}#${i + 1}` }));
