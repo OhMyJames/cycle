@@ -179,6 +179,9 @@ export class FakeTracker implements Tracker {
   async listBacklog() {
     return this.issues.filter((i) => i.columnId === 21);
   }
+  async listInProgress() {
+    return this.issues.filter((i) => i.columnId === 23);
+  }
   async listComments(i: Issue) {
     return this.threads[i.key] ?? [];
   }

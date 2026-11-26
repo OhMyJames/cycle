@@ -281,6 +281,34 @@ test("toIssue reads parentId, from the field or from the parent object", () => {
   expect(toIssue({ ...base, parentId: null, parent: null }, "CYC").parentId).toBeNull();
 });
 
+test("toIssue reads the parent's number and title and the links' keys and titles, when the reply has them", () => {
+  const base = { id: 824, sequenceNumber: 443, columnId: 22, subtasks: [] };
+  const read = toIssue(
+    {
+      ...base,
+      parentId: 759,
+      parent: { id: 759, sequenceNumber: 381, title: "Loop 页面" },
+      links: [
+        {
+          kind: "blocks",
+          direction: "inward",
+          issue: { id: 812, sequenceNumber: 431, title: "看板改版" },
+        },
+        { kind: "relates", direction: "outward", issue: { id: 9 } },
+      ],
+    },
+    "CYC",
+  );
+  expect(read.parent).toEqual({ number: 381, key: "CYC-381", title: "Loop 页面" });
+  expect(read.links).toEqual([
+    { kind: "blocks", direction: "inward", key: "CYC-431", title: "看板改版" },
+  ]);
+  expect(read.blockerColumnIds).toEqual([-1]);
+  const bare = toIssue({ ...base, parent: { id: 5 } }, "CYC");
+  expect("parent" in bare).toBe(false);
+  expect("links" in bare).toBe(false);
+});
+
 // The planning node's operations (CYC-322).
 const raw = (over: Record<string, unknown> = {}) => ({
   id: 827,
@@ -536,6 +564,7 @@ test("the planning tracker has no move, no generic label, type or link, and noth
     "linkBlocks",
     "listBacklog",
     "listComments",
+    "listInProgress",
     "listTodo",
     "makeEpic",
     "markAwaitingAnswer",

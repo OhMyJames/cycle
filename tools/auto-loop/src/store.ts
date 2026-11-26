@@ -137,6 +137,22 @@ const PLAN_ROUND_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 export const PLAN_PHASES = ["triage", "shaping", "finished", "abandoned"] as const;
 
+/** A shaping reply that passed the checks and QA, as it is written back. */
+const ShapedSchema = z.object({
+  kind: z.enum(["rewrite", "split"]),
+  /** Rewrite: the new title and body (empty for a split). */
+  title: z.string(),
+  description: z.string(),
+  notes: z.string(),
+  /** Split: the parts, the first replacing the work item (under a parent) or each a child of the Epic. */
+  parts: z.array(
+    z.object({ type: z.enum(["Feature", "Bug"]), title: z.string(), description: z.string() }),
+  ),
+  /** Split of a work item with no parent: what it becomes as an Epic. */
+  epic: z.object({ title: z.string(), description: z.string() }).nullable(),
+});
+export type Shaped = z.infer<typeof ShapedSchema>;
+
 /**
  * One work item in a round's shaping queue, and how far writing it back got. Each step is saved as soon as it is
  * done, so a restart neither repeats nor skips one. Before split `k` is created, `pendingCreate` says so: after a
@@ -148,7 +164,20 @@ const ShapeItemSchema = z.object({
   number: z.number().int(),
   /** Hash of the title and body when shaping began: writing back checks a person has not changed them since. */
   hash: z.string(),
-  state: z.enum(["waiting", "shape", "shape_qa", "writing", "done", "stopped"]),
+  /**
+   * `asked`: shaping asked questions instead (a comment and 待回答). `abandoned`: a person changed the work item, it
+   * left Backlog or was marked to skip, so nothing was written.
+   */
+  state: z.enum([
+    "waiting",
+    "shape",
+    "shape_qa",
+    "writing",
+    "done",
+    "stopped",
+    "asked",
+    "abandoned",
+  ]),
   /** Shape turns after the first, as `round` for a dev run. */
   round: z.number().int().min(0),
   shapeSessionId: z.string().nullable(),
@@ -163,6 +192,18 @@ const ShapeItemSchema = z.object({
   linked: z.boolean(),
   notesCommented: z.boolean(),
   labelled: z.boolean(),
+  /** What the loop's checks or QA said last, for the next shaping turn; null for the first. */
+  findings: z.string().nullable().default(null),
+  /** The reply that passed the checks and QA: what is written back. Null until then. */
+  output: ShapedSchema.nullable().default(null),
+  /** Links of the `blocks` chain made so far, in order. */
+  linkedCount: z.number().int().min(0).default(0),
+  /** For `asked`: the questions, and how far asking got. */
+  questions: z.array(z.string()).nullable().default(null),
+  askCommented: z.boolean().default(false),
+  askLabelled: z.boolean().default(false),
+  /** For `stopped`: the comment that says why is posted. */
+  stopCommented: z.boolean().default(false),
 });
 export type ShapeItem = z.infer<typeof ShapeItemSchema>;
 
@@ -183,11 +224,26 @@ export const PlanRoundSchema = z.object({
       categories: z.record(z.string(), z.string()),
       priorities: z.record(z.string(), z.enum(["urgent", "high", "medium", "low"])),
       order: z.array(z.string()),
+      reasons: z.record(z.string(), z.string()).default({}),
+      questions: z.record(z.string(), z.array(z.string())).default({}),
     })
     .nullable(),
   queue: z.array(ShapeItemSchema),
+  /** Triage turns after the first. */
+  triageRound: z.number().int().min(0).default(0),
+  /** What the loop's checks said of triage's last reply, for its next turn; null for the first. */
+  triageFindings: z.array(z.string()).nullable().default(null),
+  /** Per candidate, the triage write-backs done (`priority`, `priorityComment`, `askComment`, `askLabel`). */
+  triageDone: z.record(z.string(), z.array(z.string())).default({}),
+  /** Why the round stopped before shaping (triage could not be used); null otherwise. */
+  stoppedReason: z.string().nullable().default(null),
+  /** When the round ended, and the Backlog's fingerprint taken after its own writes (`backlogFingerprint`). */
+  endedAt: z.string().nullable().default(null),
+  fingerprint: z.string().nullable().default(null),
 });
 export type PlanRound = z.infer<typeof PlanRoundSchema>;
+/** A round as it may be saved: the fields added after the first rounds may be left out, and take their defaults. */
+export type PlanRoundInput = z.input<typeof PlanRoundSchema>;
 
 /** What the planner remembers about a work item between rounds, to skip one that has not changed. */
 const PlanMemoryEntrySchema = z.object({
@@ -285,7 +341,7 @@ export class RunStore {
   }
 
   /** Saves the round, making its directory and `bodies/` the first time. */
-  async savePlan(round: PlanRound): Promise<PlanRound> {
+  async savePlan(round: PlanRoundInput): Promise<PlanRound> {
     const dir = this.#plan(round.id);
     const next = PlanRoundSchema.parse({ ...round, updatedAt: this.#now().toISOString() });
     await mkdir(join(dir, "bodies"), { recursive: true, mode: 0o700 });
@@ -295,6 +351,19 @@ export class RunStore {
 
   /** Rounds that have not ended, oldest first: picked up again after a restart. Apart from `unfinished()`. */
   async unfinishedPlans(): Promise<PlanRound[]> {
+    return (await this.plans()).filter((r) => r.phase !== "finished" && r.phase !== "abandoned");
+  }
+
+  /** Writes one work item's body where the round's sessions read it: `bodies/<key>.md`. */
+  async writePlanBody(id: string, key: string, text: string): Promise<void> {
+    if (!/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(key)) throw new Error(`not a work item key: ${key}`);
+    const dir = this.planBodiesDir(id);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await writeAtomic(join(dir, `${key}.md`), text);
+  }
+
+  /** Every round, oldest first. */
+  async plans(): Promise<PlanRound[]> {
     let entries: Dirent[];
     try {
       entries = await readdir(join(this.#dir, "plans"), { withFileTypes: true });
@@ -307,9 +376,7 @@ export class RunStore {
       .map((e) => e.name)
       .sort();
     const rounds = await Promise.all(ids.map((id) => this.loadPlan(id)));
-    return rounds.filter(
-      (r): r is PlanRound => r !== undefined && r.phase !== "finished" && r.phase !== "abandoned",
-    );
+    return rounds.filter((r): r is PlanRound => r !== undefined);
   }
 
   /** `plans/memory.json`; empty when there is none yet. */

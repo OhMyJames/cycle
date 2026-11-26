@@ -19,7 +19,7 @@ import { computeStats } from "../src/stats.ts";
 import {
   acquireLock,
   type LoopEvent,
-  type PlanRound,
+  type PlanRoundInput,
   planRoundId,
   RunStore,
 } from "../src/store.ts";
@@ -93,7 +93,7 @@ test("store: a run.json from before the conflict fields still loads, with confli
 });
 
 // The planning node's rounds (CYC-322) live in `plans/`, apart from the work item runs.
-const round = (startedAt: Date, over: Partial<PlanRound> = {}): PlanRound => ({
+const round = (startedAt: Date, over: Partial<PlanRoundInput> = {}): PlanRoundInput => ({
   id: planRoundId(startedAt),
   startedAt: startedAt.toISOString(),
   updatedAt: startedAt.toISOString(),

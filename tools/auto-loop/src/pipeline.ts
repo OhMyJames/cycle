@@ -4,7 +4,8 @@
 // writing where the run is, so a loop that is killed, or a work item a person put back, goes on from the same place.
 //
 // What one kind of run does differently (its phases, how it goes on and how it stops) is its flow, in flows/; the
-// dev flow's phases are the steps in this file, which share the PR guard, conflicts and CI with it.
+// dev flow's phases are the steps in this file, which share the PR guard, conflicts and CI with it. The planning node
+// (CYC-322) is asked after `Todo`, only when it is on; a round is a run of its own that drives itself (flows/plan.ts).
 //
 // This file decides; it does not touch the world. The tracker, the daemon's sessions, git and the shell are the
 // interfaces in types.ts.
@@ -22,9 +23,11 @@ import {
   type FlowHost,
   type Intake,
   type Opening,
+  type OwnRun,
   type RunKind,
   tail,
 } from "./flows/flow.ts";
+import { PlanFlow } from "./flows/plan.ts";
 import { ResearchFlow } from "./flows/research.ts";
 import { todoIntake } from "./flows/ticket.ts";
 import { withRepoLock } from "./git-lock.ts";
@@ -89,7 +92,19 @@ export type StepResult =
   | { status: "researched"; key: string; docId: number; followups: string[] }
   | { status: "blocked"; key: string; reason: string }
   /** GitHub could not be reached after the retries: the run stays where it was and the loop waits (CYC-444). */
-  | { status: "network_wait"; key: string; command: string };
+  | { status: "network_wait"; key: string; command: string }
+  /** A planning round ended (CYC-322): how many work items it shaped, asked about, stopped on and left alone. */
+  | {
+      status: "planned";
+      key: string;
+      shaped: number;
+      asked: number;
+      stopped: number;
+      abandoned: number;
+    }
+  /** A planning round stopped before shaping (triage could not be used): nothing was written. */
+  | { status: "plan_stopped"; key: string; reason: string }
+  | { status: "would-plan"; key: string };
 
 export type Deps = {
   config: Config;
@@ -127,8 +142,10 @@ export class Pipeline {
   readonly #deps: Deps;
   /** What each kind of run does differently (flows/). */
   readonly #flows: Record<RunKind, Flow>;
-  /** Where new runs come from, asked in order. */
-  readonly #intakes: Intake[];
+  /** Where new work items come from: the `Todo` column. */
+  readonly #todo: Intake;
+  /** The planning node (CYC-322): asked after `Todo`, and only when it is on. */
+  readonly #plan: PlanFlow;
   /** The `tuning` in force for new steps: the last one that was read and valid. */
   #tuning: Tuning;
   #lastTuningProblem: string | null = null;
@@ -176,7 +193,13 @@ export class Pipeline {
       }),
       research: new ResearchFlow(host),
     };
-    this.#intakes = [todoIntake(host)];
+    this.#todo = todoIntake(host);
+    this.#plan = new PlanFlow(host);
+  }
+
+  /** Where new runs come from, asked in order: `Todo` first (approved work), then the planning node when it is on. */
+  #intakes(config: Config): Intake[] {
+    return config.planning === null ? [this.#todo] : [this.#todo, this.#plan.intake()];
   }
 
   /** What a flow may use. `d` is a getter: the config is the one of the step that calls. */
@@ -196,6 +219,8 @@ export class Pipeline {
       newQaSession: (run, issue) => this.#newQaSession(run, issue),
       nextRound: (run, findings, save, to) => this.#nextRound(run, findings, save, to),
       clear: (run, issue) => this.#clear(run, issue),
+      mirror: (key, issue, phase) => this.#mirror(key, issue, phase),
+      clearPhase: (key, issue) => this.#clearKey(key, issue),
     };
   }
 
@@ -251,12 +276,24 @@ export class Pipeline {
     const chosen = await this.#exclusive(() => this.#choose());
     if ("result" in chosen) return chosen.result;
     try {
+      if ("own" in chosen) return await this.#goOwn(chosen.own);
       if (chosen.resume !== undefined) {
         return await this.#resume(chosen.resume.run, chosen.resume.issue, chosen.resume.byPerson);
       }
       return await this.#drive(chosen.run, chosen.issue, chosen.book, false);
     } finally {
       this.#active.delete(chosen.key);
+    }
+  }
+
+  /** A run of its own: GitHub out of reach is a wait, as for any run; it stays where it was and goes on later. */
+  async #goOwn(own: OwnRun): Promise<StepResult> {
+    try {
+      return await own.go();
+    } catch (error) {
+      if (!(error instanceof NetworkWait)) throw error;
+      await this.#d.store.event(own.key, "network_down", { command: error.command });
+      return { status: "network_wait", key: own.key, command: error.command };
     }
   }
 
@@ -278,6 +315,7 @@ export class Pipeline {
     | { result: StepResult }
     | { key: string; resume: { run: RunRecord; issue: Issue; byPerson: boolean } }
     | { key: string; resume?: undefined; run: RunRecord; issue: Issue; book: CriteriaBook }
+    | { key: string; own: OwnRun }
   > {
     const { config, store } = this.#d;
     await this.#cleanup();
@@ -297,9 +335,20 @@ export class Pipeline {
 
     if (this.#d.stopped?.() === true) return { result: { status: "idle" } };
     const held = new Set([...this.#active, ...unfinished.map((r) => r.key)]);
-    for (const intake of this.#intakes) {
+    for (const intake of this.#intakes(config)) {
       const want = await intake.want(held);
       if ("idle" in want) continue;
+      if ("begin" in want) {
+        const own = want.begin;
+        this.#active.add(own.key);
+        try {
+          await own.open();
+        } catch (error) {
+          this.#active.delete(own.key);
+          throw error;
+        }
+        return { key: own.key, own };
+      }
       if ("reject" in want) {
         await intake.reject(want.reject, want.reasons);
         return { result: { status: "rejected", key: want.reject.key, reasons: want.reasons } };
@@ -371,7 +420,16 @@ export class Pipeline {
    * A run another step is on is not touched. A failure here never stops the loop from taking work.
    */
   async #cleanup(): Promise<void> {
-    const { store, log } = this.#d;
+    const { config, store, log } = this.#d;
+    if (config.planning !== null) {
+      try {
+        await this.#plan.cleanup(this.#active);
+      } catch (error) {
+        log(
+          `cleanup of planning worktrees failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     for (const run of await store.all()) {
       if (run.cleanedAt !== null || run.worktree === null) continue;
       if (run.phase !== "done" && run.phase !== "blocked") continue;
@@ -465,12 +523,13 @@ export class Pipeline {
 
   /** `--dry-run`: pick and check, and say what would happen. Writes nothing anywhere. */
   async #dryRun(): Promise<StepResult> {
-    for (const intake of this.#intakes) {
+    for (const intake of this.#intakes(this.#d.config)) {
       const want = await intake.want(new Set());
       if ("idle" in want) {
         this.#d.log(want.idle);
         continue;
       }
+      if ("begin" in want) return want.begin.would;
       if ("reject" in want)
         return { status: "rejected", key: want.reject.key, reasons: want.reasons };
       return this.#flows[want.accepted.kind].wouldTake(want.take, want.accepted);
@@ -516,8 +575,7 @@ export class Pipeline {
   }
 
   /** Queues the write of a phase (`null` clears) and goes on. A failed write is reported once and not retried. */
-  #mirror(run: RunRecord, issue: Issue, phase: LoopPhase | null): void {
-    const key = run.key;
+  #mirror(key: string, issue: Issue, phase: LoopPhase | null): void {
     if (this.#mirrored.has(key) && this.#mirrored.get(key) === phase) return;
     this.#mirrored.set(key, phase);
     const at = this.#d.clock.now();
@@ -542,8 +600,13 @@ export class Pipeline {
   /** Delivery or Blocked: clears the phase, waits a short while for it to land, and forgets the run. */
   async #clear(run: RunRecord, issue: Issue): Promise<void> {
     for (const id of this.#keptNoted) if (id.startsWith(`${run.key}:`)) this.#keptNoted.delete(id);
-    this.#mirror(run, issue, null);
-    const queue = this.#queues.get(run.key);
+    await this.#clearKey(run.key, issue);
+  }
+
+  /** Clears the phase written under `key`, waits a short while for it to land, and forgets it. */
+  async #clearKey(key: string, issue: Issue): Promise<void> {
+    this.#mirror(key, issue, null);
+    const queue = this.#queues.get(key);
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (queue !== undefined)
       await Promise.race([
@@ -553,8 +616,8 @@ export class Pipeline {
         }),
       ]);
     clearTimeout(timer);
-    this.#mirrored.delete(run.key);
-    this.#failed.delete(run.key);
+    this.#mirrored.delete(key);
+    this.#failed.delete(key);
   }
 
   async #drive(
@@ -578,7 +641,7 @@ export class Pipeline {
             return settled;
           }
         }
-        this.#mirror(run, issue, this.#fieldOf(run));
+        this.#mirror(run.key, issue, this.#fieldOf(run));
         if (run.phase === "blocked" || run.phase === "done") return { status: "idle" };
         const phase = flow.phases[run.phase];
         if (phase === undefined) throw new Error(`a ${flow.kind} run has no phase ${run.phase}`);
@@ -1935,7 +1998,7 @@ export class Pipeline {
           (r) => (r.ok ? undefined : r.error),
         );
         if (merged.ok) {
-          this.#mirror(run, issue, "merge");
+          this.#mirror(run.key, issue, "merge");
           const outcome = await this.#confirmMerged(run, prUrl, worktree);
           if (outcome === "conflict") {
             // Not delivered: merge the base in (auto-merge is turned off first), then CI and review run again.

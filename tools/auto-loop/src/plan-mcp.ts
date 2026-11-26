@@ -32,6 +32,33 @@ const parseOptionalInt = (value: unknown): number | null => {
   return null;
 };
 
+/** The parent's number and title, when the reply carries them; nothing otherwise (CYC-322). */
+const parentOf = (raw: unknown, projectKey: string): Pick<Issue, "parent"> => {
+  const p = asRecord(raw);
+  const number = parseOptionalInt(p.sequenceNumber);
+  if (number === null) return {};
+  return { parent: { number, key: `${projectKey}-${number}`, title: String(p.title ?? "") } };
+};
+
+/** The links with the other issue's key and title, when the reply carries them; nothing otherwise (CYC-322). */
+const linksOf = (raw: unknown, projectKey: string): Pick<Issue, "links"> => {
+  if (!Array.isArray(raw)) return {};
+  const links = raw.map(asRecord).flatMap((l) => {
+    const other = asRecord(l.issue);
+    const number = parseOptionalInt(other.sequenceNumber);
+    if (number === null || typeof l.kind !== "string") return [];
+    return [
+      {
+        kind: l.kind,
+        direction: String(l.direction ?? ""),
+        key: `${projectKey}-${number}`,
+        title: String(other.title ?? ""),
+      },
+    ];
+  });
+  return { links };
+};
+
 export const toIssue = (raw: unknown, projectKey: string): Issue => {
   const r = asRecord(raw);
   const number = Number(r.sequenceNumber ?? r.number);
@@ -75,6 +102,8 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     subtaskCount,
     blockerColumnIds,
     parentId: parseOptionalInt(r.parentId ?? asRecord(r.parent).id),
+    ...parentOf(r.parent, projectKey),
+    ...linksOf(r.links, projectKey),
   };
 };
 
@@ -252,6 +281,10 @@ export class PlanTracker implements Tracker {
 
   async listTodo(): Promise<Issue[]> {
     return this.#listColumn(this.#column("todo"), 100);
+  }
+
+  async listInProgress(): Promise<Issue[]> {
+    return this.#listColumn(this.#column("inProgress"), 100);
   }
 
   /** `list_issues` has no paging: a Backlog that fills the page is refused rather than read in part. */
@@ -441,6 +474,7 @@ export const planningTracker = (
     get: (number) => tracker.get(number),
     listBacklog: () => tracker.listBacklog(),
     listTodo: () => tracker.listTodo(),
+    listInProgress: () => tracker.listInProgress(),
     listComments: (issue) => tracker.listComments(issue),
     comment: (issue, text) => tracker.comment(issue, text),
     setTitle: (issue, title) => tracker.setTitle(issue, title),

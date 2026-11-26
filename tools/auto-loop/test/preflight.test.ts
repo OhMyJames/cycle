@@ -205,7 +205,7 @@ test("UI_CRITERIA_GUIDE names the three ways, the ./ rule and test:real; ALLOWED
     "bun run test:integration web",
     "bun run test:browser",
     "bun test ./",
-    "`./`",
+    "必须以 `./` 开头",
     "test:real",
   ]) {
     expect(UI_CRITERIA_GUIDE).toContain(word);

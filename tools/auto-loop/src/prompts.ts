@@ -561,6 +561,8 @@ export const shapeBrief = (
     rules: string;
     maxCriteria: number;
     readRoots: string[];
+    /** A work item of this project written well, to follow in form (not in content); left out when there is none. */
+    example?: { key: string; title: string; description: string };
   },
 ): string => `You are shaping work item ${issue.key}: ${issue.title}, a ${input.format.type} in Backlog, so that a person can approve it as written and the loop can then build it. You only write text: the loop checks it, an independent reviewer compares it with the original, and only then does the loop write it to the work item, keep the original in a comment and mark it 待批准 for a person.
 
@@ -594,7 +596,16 @@ The project's rules for work items (from the cycle-workflow skill):
 ---
 ${input.rules}
 ---
-
+${
+  input.example === undefined
+    ? ""
+    : `
+A work item of this project written well (${input.example.key}: ${input.example.title}). Follow its form: the opening paragraph, the evidence, the scope, the non-goals and how each criterion names its command. Not its content.
+---
+${input.example.description}
+---
+`
+}
 Rules you must keep:
 - Every sentence of the original lands somewhere in what you write (in a split, in one of the parts). Drop nothing.
 - Add nothing without grounds in the original, its comments or the code (name the file). What you cannot ground, write under 「待确认」, not as fact.

@@ -5,6 +5,10 @@
 // what one kind of run does differently: its phases, how it starts again, how it stops, when its worktree can go.
 // An `Intake` is where new runs come from. A new kind is a new flow (and, when its work comes from somewhere else,
 // a new intake), not another branch in the pipeline.
+//
+// A `Flow` is one work item's run: a `RunRecord`, phases the pipeline drives, Blocked when it cannot go on. A run that
+// is not one work item's (the planning round, CYC-322) is an `OwnRun` its intake hands over: the pipeline holds its
+// key and calls it, and the run keeps its own record and drives itself (flows/plan.ts).
 
 import type { CriteriaBook } from "../criteria.ts";
 import type { Deps, StepResult } from "../pipeline.ts";
@@ -105,6 +109,12 @@ export type FlowHost = {
   newQaSession(run: RunRecord, issue: Issue): Promise<string>;
   nextRound(run: RunRecord, findings: string, save: Save, to?: "dev" | "research"): Promise<void>;
   clear(run: RunRecord, issue: Issue): Promise<void>;
+  /**
+   * The phase field of a work item a run that is not its own is on (a planning round shaping it): written in the
+   * background as for any run, by the work item's key; `clearPhase` clears it and waits a short while for it to land.
+   */
+  mirror(key: string, issue: Issue, phase: LoopPhase | null): void;
+  clearPhase(key: string, issue: Issue): Promise<void>;
 };
 
 /** How a run that cannot go on is stopped. */
@@ -150,16 +160,35 @@ export interface Flow {
   whenDone(run: RunRecord): Promise<"remove" | "keep" | { note: string }>;
 }
 
+/**
+ * A run that is not one work item's (CYC-322: a planning round). It has no `RunRecord`, no phase field of its own and
+ * no Blocked: it keeps its own record, drives itself to the end and decides itself what a stop means. `Pipeline` only
+ * holds its key while a step is on it, as for any run.
+ */
+export type OwnRun = {
+  /** What `#active` holds while a step is on it, and the `run` of its events. */
+  key: string;
+  /** Writes what says the run has started. Called while the choice is still locked, so no other step starts it too. */
+  open: () => Promise<void>;
+  /** Drives the run, after the choice. */
+  go: () => Promise<StepResult>;
+  /** `--dry-run`: what would be started, said instead of `open` and `go`. */
+  would: StepResult;
+};
+
 /** Where new runs come from. `Pipeline` asks its intakes in order and takes the first that has something. */
 export interface Intake {
   /**
-   * The next thing to take, skipping the keys in `held`: accepted (with its kind), rejected (with the reasons), or
-   * nothing, with a line that says why for `--dry-run`.
+   * The next thing to take, skipping the keys in `held`: accepted (with its kind), rejected (with the reasons), a
+   * run of its own to start or go on with (`begin`), or nothing, with a line that says why for `--dry-run`.
    */
   want(
     held: ReadonlySet<string>,
   ): Promise<
-    { take: Issue; accepted: Accepted } | { reject: Issue; reasons: string[] } | { idle: string }
+    | { take: Issue; accepted: Accepted }
+    | { reject: Issue; reasons: string[] }
+    | { begin: OwnRun }
+    | { idle: string }
   >;
   /** What is done with a work item the intake would not take. */
   reject(issue: Issue, reasons: string[]): Promise<void>;

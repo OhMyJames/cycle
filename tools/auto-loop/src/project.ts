@@ -167,8 +167,11 @@ const folder = (research: ResearchNames, projectKey: string): number => {
   return only.id;
 };
 
-/** The phases of research (CYC-447): their options may be missing, and then those phases are not mirrored. */
-type OptionalPhase = "research" | "researchQa";
+/**
+ * The phases of research (CYC-447) and of the planning node (CYC-322): their options may be missing, and then those
+ * phases are not mirrored.
+ */
+type OptionalPhase = "research" | "researchQa" | "plan" | "planQa";
 type RequiredPhase = Exclude<LoopPhase, OptionalPhase>;
 
 /** The phases the loop mirrors onto a work item, and the option name each one has in the project's select field. */
@@ -184,6 +187,8 @@ export const LOOP_PHASES = {
 export const OPTIONAL_LOOP_PHASES = {
   research: "调研",
   researchQa: "调研 QA",
+  plan: "规划",
+  planQa: "规划 QA",
 } as const satisfies Record<OptionalPhase, string>;
 
 export const PHASE_FIELD = "Loop 阶段";
