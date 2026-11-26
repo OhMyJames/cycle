@@ -295,6 +295,13 @@ export class Pipeline {
     const book = await store.loadCriteria(run.key);
     let current = run;
     if (byPerson) {
+      // A conflict turn that blocked before it was judged leaves the merge open, markers and all: back it out, or the
+      // next checkpoint would commit them.
+      const saved = run.conflict;
+      if (saved?.state === "dev" && saved.preMergeSha !== undefined && run.worktree !== null) {
+        const failed = await this.#rollbackMerge(run.worktree, saved.preMergeSha);
+        if (failed !== "") throw new Error(`conflict rollback on resume failed: ${failed}`);
+      }
       // A person has been at it: the budget of fix rounds starts again, from where it stopped.
       current = {
         ...run,
@@ -303,6 +310,7 @@ export class Pipeline {
         ciRound: 0,
         conflictRound: 0,
         conflict: null,
+        resolvedFiles: [],
         blockedReason: null,
         resumeFrom: null,
       };
@@ -493,7 +501,7 @@ export class Pipeline {
 
   /**
    * The PR conflicts with the base while CI is awaited: merge the base into the branch here, once. A clean merge goes on
-   * through verify, QA, push and CI; a real conflict is backed out and blocks. Out of attempts, it blocks as before.
+   * through verify, QA, push and CI; a real conflict is handed to the Dev session, and judged from the repository after its turn. Out of attempts, it blocks as before.
    */
   async #handleConflict(
     run: RunRecord,
@@ -635,17 +643,16 @@ export class Pipeline {
     const open = async () =>
       (await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree)).code === 0;
     const problems: string[] = [];
-    const unmerged = (await open()) ? await this.#unmergedFiles(worktree) : [];
-    if (unmerged.length > 0) problems.push(`仍有未解决的文件：${unmerged.join("、")}`);
+    // Anchored at the start of a line, with the files taken literally.
     const markers = await this.#git(
       [
+        "--literal-pathspecs",
         "grep",
         "--no-index",
         "-l",
+        "-E",
         "-e",
-        "<".repeat(7),
-        "-e",
-        ">".repeat(7),
+        `^(${"<".repeat(7)}|${">".repeat(7)})( |$)`,
         "--",
         ...conflict.files,
       ],
@@ -659,6 +666,12 @@ export class Pipeline {
           .join("、")}`,
       );
     else if (markers.code !== 1) problems.push(`检查冲突标记失败：${tail(markers.output)}`);
+    // A file fixed but not staged still counts as unmerged: stage the files that are clean of markers.
+    if (problems.length === 0 && (await open())) {
+      await this.#git(["--literal-pathspecs", "add", "-A", "--", ...conflict.files], worktree);
+      const unmerged = await this.#unmergedFiles(worktree);
+      if (unmerged.length > 0) problems.push(`仍有未解决的文件：${unmerged.join("、")}`);
+    }
     if (problems.length === 0 && (await open())) {
       const committed = await this.#git(["commit", "--no-edit"], worktree);
       if (committed.code !== 0) problems.push(`完成合并提交失败：${tail(committed.output)}`);
@@ -670,25 +683,21 @@ export class Pipeline {
       );
       if (ancestor.code !== 0)
         problems.push(`${config.baseRef} 不在当前分支的历史里（合并被撤回或没有完成）`);
+      const kept = await this.#git(
+        ["merge-base", "--is-ancestor", conflict.preMergeSha, "HEAD"],
+        worktree,
+      );
+      if (kept.code !== 0) problems.push("分支原来的提交不在当前历史里（被 rebase 或重置过）");
     }
     if (problems.length === 0) {
       await store.event(run.key, "conflict_resolved", { files: conflict.files.length });
-      await save({ conflict: null, resolvedFiles: conflict.files });
+      await save({
+        conflict: null,
+        resolvedFiles: [...new Set([...run.resolvedFiles, ...conflict.files])],
+      });
       return;
     }
-    // Back to before the merge: abort an open one, otherwise return to the commit it started from.
-    let rollback = "";
-    if (await open()) {
-      const aborted = await this.#git(["merge", "--abort"], worktree);
-      if (aborted.code !== 0) rollback = `撤回合并失败，工作区留在合并中：${tail(aborted.output)}`;
-    }
-    if (rollback === "") {
-      const head = await this.#git(["rev-parse", "HEAD"], worktree);
-      if (head.output.trim() !== conflict.preMergeSha) {
-        const reset = await this.#git(["reset", "--hard", conflict.preMergeSha], worktree);
-        if (reset.code !== 0) rollback = `退回合并前的提交失败：${tail(reset.output)}`;
-      }
-    }
+    const rollback = await this.#rollbackMerge(worktree, conflict.preMergeSha);
     await store.event(run.key, "conflict_unresolved", { files: conflict.files.length });
     await save({ conflict: null });
     throw new Blocked(
@@ -696,6 +705,17 @@ export class Pipeline {
         rollback === "" ? "已撤回合并，工作区回到合并前。" : rollback
       }`,
     );
+  }
+
+  /** Back to before the merge: abort an open one, then reset to the commit it started from. "" when done. */
+  async #rollbackMerge(worktree: string, preMergeSha: string): Promise<string> {
+    const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
+    if (open.code === 0) {
+      const aborted = await this.#git(["merge", "--abort"], worktree);
+      if (aborted.code !== 0) return `撤回合并失败，工作区留在合并中：${tail(aborted.output)}`;
+    }
+    const reset = await this.#git(["reset", "--hard", preMergeSha], worktree);
+    return reset.code === 0 ? "" : `退回合并前的提交失败：${tail(reset.output)}`;
   }
 
   /**

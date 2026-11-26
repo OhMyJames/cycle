@@ -42,6 +42,7 @@ type Git = {
   markers: boolean;
   ancestor: boolean;
   theirs: string;
+  keepsOwn: boolean;
 };
 
 const setup = (git: Partial<Git> = {}, over = {}) => {
@@ -69,6 +70,7 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     unmerged: git.conflicted ?? "",
     markers: false,
     ancestor: true,
+    keepsOwn: true,
     theirs: "main: rename the widget\n",
     ...git,
   };
@@ -99,6 +101,8 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     }
     if (line.includes("merge-base --is-ancestor")) {
       world.calls.push(line);
+      if (line.includes("is-ancestor abc "))
+        return { code: state.keepsOwn ? 0 : 1, output: "", timedOut: false };
       return { code: state.ancestor ? 0 : 1, output: "", timedOut: false };
     }
     if (line.includes(" grep ")) {
@@ -387,7 +391,7 @@ test("Dev aborted the merge itself: nothing is checkpointed, Blocked", async () 
   expect(result.status).toBe("blocked");
   if (result.status === "blocked") expect(result.reason).toContain("src/a.ts");
   expect(checkpoints(s.world.calls)).toHaveLength(0);
-  expect(gitCalls(s.world.calls, "reset --hard")).toHaveLength(0);
+  expect(gitCalls(s.world.calls, "reset --hard abc")).toHaveLength(1);
 });
 
 test("Dev committed something that is not the merge: the branch goes back to preMergeSha", async () => {
@@ -468,4 +472,42 @@ test("a person putting the Blocked ticket back resets the conflict count and con
   expect(run.conflictRound).toBe(0);
   expect(run.conflict).toBeNull();
   expect((await s.store.events()).some((e) => e.kind === "resumed")).toBe(true);
+});
+
+test("a conflict turn that blocked before judgement: the resume backs the merge out first", async () => {
+  const s = setup();
+  await resumeInCi(s, { ...inConflictTurn, phase: "blocked", resumeFrom: "dev" });
+  s.state.mergeHead = true;
+  s.tracker.issues[0] = issue({ description: readyDescription, columnId: 22 });
+  s.world.prMerge = [["OPEN", "MERGEABLE"]];
+  s.world.ciResponses = [];
+  s.sessions.script.dev.push(done());
+  await s.pipeline.step();
+  const calls = s.world.calls;
+  expect(gitCalls(calls, "merge --abort")).toHaveLength(1);
+  expect(gitCalls(calls, "reset --hard abc")).toHaveLength(1);
+  expect(calls.findIndex((c) => c.includes("merge --abort"))).toBeLessThan(
+    calls.findIndex((c) => c.includes("checkpoint (auto-loop)")) === -1
+      ? Number.MAX_SAFE_INTEGER
+      : calls.findIndex((c) => c.includes("checkpoint (auto-loop)")),
+  );
+  const run = await load(s.store);
+  expect(run.conflict).toBeNull();
+});
+
+test("a resolution fixed but not staged is staged by the loop before the unmerged check", async () => {
+  const s = setup({ conflicted: "src/a.ts\n" });
+  s.sessions.script.dev.push(done());
+  resolve(s, false);
+  await s.pipeline.step();
+  expect(gitCalls(s.world.calls, "add -A -- src/a.ts")).toHaveLength(1);
+});
+
+test("a branch that no longer holds its own commits is not resolved", async () => {
+  const s = setup({ conflicted: "src/a.ts\n", keepsOwn: false });
+  s.sessions.script.dev.push(done());
+  resolve(s, true);
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(gitCalls(s.world.calls, "reset --hard abc")).toHaveLength(1);
 });
