@@ -71,6 +71,7 @@ const followupIssue = (draft: Followup, typeId: number): Issue => ({
   typeId,
   subtaskCount: 0,
   blockerColumnIds: [],
+  parentId: null,
 });
 
 const answers = (report: string, n: number): boolean =>

@@ -1,9 +1,11 @@
 import {
   type Config,
+  type DocumentEntry,
   defaultConfig,
   type Exec,
   type ExecResult,
   type Issue,
+  type NewIssue,
   type SessionRole,
   type Sessions,
   type Stage,
@@ -30,6 +32,7 @@ export const issue = (over: Partial<Issue> = {}): Issue => ({
   typeId: 20,
   subtaskCount: 0,
   blockerColumnIds: [],
+  parentId: null,
   ...over,
 });
 
@@ -114,7 +117,7 @@ export class FakeTracker implements Tracker {
   async move(i: Issue, stage: Stage) {
     await this.gates.move;
     this.moves.push(`${i.key}:${stage}`);
-    const col = { todo: 22, inProgress: 23, inReview: 34, blocked: 35 }[stage];
+    const col = { todo: 22, inProgress: 23, inReview: 34, blocked: 35, done: 24 }[stage];
     const found = this.issues.find((x) => x.number === i.number);
     if (found) found.columnId = col;
   }
@@ -124,6 +127,50 @@ export class FakeTracker implements Tracker {
   async setLoopPhase(i: Issue, phase: string | null, _at?: Date, _signal?: AbortSignal) {
     if (this.failPhase) throw new Error("field write failed");
     this.phases.push(`${i.key}:${phase ?? "clear"}`);
+  }
+  documents: DocumentEntry[] = [{ id: 10, title: "调研", parentId: null }];
+  /** Every document written, with its content. */
+  written: { id: number; parentId: number; title: string; content: string }[] = [];
+  /** `KEY:docId` per link. */
+  docLinks: string[] = [];
+  /** `KEY:relates:toId` per link. */
+  issueLinks: string[] = [];
+  async listDocuments() {
+    return this.documents;
+  }
+  async createDocument(parentId: number, title: string, content: string) {
+    const id = 1000 + this.written.length;
+    this.written.push({ id, parentId, title, content });
+    this.documents.push({ id, title, parentId });
+    return { id };
+  }
+  async linkDocument(i: Issue, docId: number) {
+    this.docLinks.push(`${i.key}:${docId}`);
+  }
+  async setDescription(i: Issue, description: string) {
+    const found = this.issues.find((x) => x.number === i.number);
+    if (!found) throw new Error("no issue");
+    found.description = description;
+  }
+  async createIssue(input: NewIssue) {
+    const number = Math.max(0, ...this.issues.map((i) => i.number)) + 1;
+    const created = issue({
+      id: 2000 + number,
+      number,
+      key: `CYC-${number}`,
+      title: input.title,
+      description: input.description,
+      priority: null,
+      columnId: input.columnId,
+      labelIds: [],
+      typeId: input.typeId,
+      parentId: input.parentId,
+    });
+    this.issues.push(created);
+    return { id: created.id, number };
+  }
+  async linkIssues(i: Issue, toId: number, kind: "relates") {
+    this.issueLinks.push(`${i.key}:${kind}:${toId}`);
   }
 }
 

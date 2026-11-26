@@ -6,7 +6,16 @@
 // fails closed rather than treating an unknown issue as an eligible leaf.
 
 import type { LoopFields } from "./project.ts";
-import type { Config, Issue, LoopPhase, Priority, Stage, Tracker } from "./types.ts";
+import type {
+  Config,
+  DocumentEntry,
+  Issue,
+  LoopPhase,
+  NewIssue,
+  Priority,
+  Stage,
+  Tracker,
+} from "./types.ts";
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -62,7 +71,21 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     typeId,
     subtaskCount,
     blockerColumnIds,
+    parentId: parseOptionalInt(r.parentId ?? asRecord(r.parent).id),
   };
+};
+
+/** A reply is `{ ok, status, data }`; older shapes carry the payload at the top. */
+const payload = (raw: unknown): unknown => {
+  const body = asRecord(raw);
+  return body.data !== undefined ? body.data : raw;
+};
+
+/** The id (and number) of what a create returned. Thrown when missing: the caller saves them to resume without duplicating. */
+const createdId = (raw: unknown, tool: string): number => {
+  const id = parseOptionalInt(asRecord(payload(raw)).id);
+  if (id === null) throw new Error(`tracker ${tool}: no id in the reply`);
+  return id;
 };
 
 const FIELD_WRITE_TIMEOUT_MS = 10_000;
@@ -136,7 +159,10 @@ export class PlanTracker implements Tracker {
       await set(f.startedFieldId, { value: null });
       return;
     }
-    await set(f.phaseFieldId, { optionIds: [f.optionIds[phase]] });
+    // The research options are optional in the project: without one, that phase is not mirrored at all.
+    const optionId = f.optionIds[phase];
+    if (optionId === undefined) return;
+    await set(f.phaseFieldId, { optionIds: [optionId] });
     await set(f.startedFieldId, { value: at.toISOString() });
   }
 
@@ -234,5 +260,64 @@ export class PlanTracker implements Tracker {
 
   async comment(issue: Issue, text: string): Promise<void> {
     await this.#call("add_comment", { issueId: issue.id, body: text });
+  }
+
+  async listDocuments(): Promise<DocumentEntry[]> {
+    const raw = payload(
+      await this.#tool("execute_read", "list_documents", { projectKey: this.#project }),
+    );
+    if (!Array.isArray(raw))
+      throw new Error(`unrecognized list_documents reply: ${JSON.stringify(raw).slice(0, 300)}`);
+    return raw.map(asRecord).flatMap((d) => {
+      const id = parseOptionalInt(d.id);
+      return id === null
+        ? []
+        : [{ id, title: String(d.title ?? ""), parentId: parseOptionalInt(d.parentId) }];
+    });
+  }
+
+  async createDocument(parentId: number, title: string, content: string): Promise<{ id: number }> {
+    const raw = await this.#tool("execute_write", "create_document", {
+      projectKey: this.#project,
+      parentId,
+      title,
+      content,
+    });
+    return { id: createdId(raw, "create_document") };
+  }
+
+  async linkDocument(issue: Issue, docId: number): Promise<void> {
+    await this.#tool("execute_write", "link_document_issue", {
+      projectKey: this.#project,
+      documentId: docId,
+      issueId: issue.id,
+    });
+  }
+
+  async setDescription(issue: Issue, description: string): Promise<void> {
+    await this.#tool("execute_write", "update_issue", { issueId: issue.id, description });
+  }
+
+  async createIssue(input: NewIssue): Promise<{ id: number; number: number }> {
+    const raw = await this.#tool("execute_write", "create_issue", {
+      projectKey: this.#project,
+      typeId: input.typeId,
+      title: input.title,
+      description: input.description,
+      columnId: input.columnId,
+      ...(input.parentId !== null ? { parentId: input.parentId } : {}),
+    });
+    const data = asRecord(payload(raw));
+    const number = parseOptionalInt(data.sequenceNumber ?? data.number);
+    if (number === null) throw new Error("tracker create_issue: no sequenceNumber in the reply");
+    return { id: createdId(raw, "create_issue"), number };
+  }
+
+  async linkIssues(from: Issue, toId: number, kind: "relates"): Promise<void> {
+    await this.#tool("execute_write", "link_issues", {
+      issueId: from.id,
+      targetIssueId: toId,
+      kind,
+    });
   }
 }

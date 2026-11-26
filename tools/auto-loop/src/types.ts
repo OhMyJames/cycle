@@ -26,12 +26,35 @@ export type Issue = {
    * omitted `links` (fails closed). A blocker whose column is unknown is `-1`, which is never Done or Canceled.
    */
   blockerColumnIds: number[] | null;
+  /** The parent issue's internal id, or null for a top-level issue. */
+  parentId: number | null;
 };
 
 /** Where the loop moves a work item. The tracker maps these to the project's columns. */
-export type Stage = "todo" | "inProgress" | "inReview" | "blocked";
+export type Stage = "todo" | "inProgress" | "inReview" | "blocked" | "done";
 
-export type LoopPhase = "dev" | "verify" | "qa" | "ci" | "review" | "merge";
+export type LoopPhase =
+  | "dev"
+  | "verify"
+  | "qa"
+  | "ci"
+  | "review"
+  | "merge"
+  | "research"
+  | "researchQa";
+
+/** A document in the project's tree (`list_documents`), without its content. */
+export type DocumentEntry = { id: number; title: string; parentId: number | null };
+
+/** An issue the loop creates. No labels and no priority: a person decides those. */
+export type NewIssue = {
+  typeId: number;
+  title: string;
+  description: string;
+  columnId: number;
+  /** The parent issue's internal id, or null for a top-level issue. */
+  parentId: number | null;
+};
 
 export interface Tracker {
   /** The work items in the `Todo` column. Choosing among them is `pickNext`'s job, not the tracker's. */
@@ -44,6 +67,17 @@ export interface Tracker {
    * only: the run record is the truth. A tracker with no such fields does nothing.
    */
   setLoopPhase(issue: Issue, phase: LoopPhase | null, at: Date): Promise<void>;
+  /** The project's active documents, without content. */
+  listDocuments(): Promise<DocumentEntry[]>;
+  /** A Markdown document under the document `parentId`. */
+  createDocument(parentId: number, title: string, content: string): Promise<{ id: number }>;
+  linkDocument(issue: Issue, docId: number): Promise<void>;
+  /** Replaces the whole description. */
+  setDescription(issue: Issue, description: string): Promise<void>;
+  /** Returns the new issue's internal id and its number. */
+  createIssue(input: NewIssue): Promise<{ id: number; number: number }>;
+  /** A link from `from` to the issue whose internal id is `toId`. */
+  linkIssues(from: Issue, toId: number, kind: "relates"): Promise<void>;
 }
 
 export type ExecResult = { code: number; output: string; timedOut: boolean };

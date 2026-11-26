@@ -3,12 +3,18 @@
 // they are taken in board order (`position`): Todo is the first `unstarted`; In Progress, In Review and Blocked are
 // the first, second and third `started`.
 
-import type { Config, LoopPhase } from "./types.ts";
+import type { Config, DocumentEntry, LoopPhase } from "./types.ts";
 
 export type ProjectSetup = Pick<
   Config,
   "columns" | "autoLabelId" | "allowedTypeIds" | "featureTypeId" | "bugTypeId"
 >;
+
+/** What `resolveProject` finds for research (CYC-447); the rest of `Config.research` comes from the config file. */
+export type ResearchSetup = { typeId: number; backlogColumn: number; folderId: number };
+
+/** Names to look up for research: the issue type, and the folder's title among the project's documents. */
+export type ResearchNames = { type: string; folder: string; documents: DocumentEntry[] };
 
 const rec = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
@@ -17,7 +23,8 @@ const list = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.ma
 export const resolveProject = (
   reply: unknown,
   names: { projectKey: string; autoLabel: string; featureType: string; bugType: string },
-): ProjectSetup => {
+  research?: ResearchNames,
+): ProjectSetup & { research: ResearchSetup | null } => {
   const body = rec(reply);
   const data = rec(body.data ?? body);
   const columns = list(data.columns).sort((a, b) => Number(a.position) - Number(b.position));
@@ -40,6 +47,15 @@ export const resolveProject = (
   };
   const featureTypeId = byName(data.issueTypes, names.featureType, "issue type");
   const bugTypeId = byName(data.issueTypes, names.bugType, "issue type");
+  // Research is only looked up when it is on, so a project without the type or the folder still starts with it off.
+  const researchSetup: ResearchSetup | null =
+    research === undefined
+      ? null
+      : {
+          typeId: byName(data.issueTypes, research.type, "issue type"),
+          backlogColumn: pick("backlog", 0, "backlog"),
+          folderId: folder(research, names.projectKey),
+        };
   return {
     columns: {
       todo: pick("unstarted", 0, "todo"),
@@ -50,11 +66,40 @@ export const resolveProject = (
       canceled: pick("canceled", 0, "canceled"),
     },
     autoLabelId: byName(data.labels, names.autoLabel, "label"),
-    allowedTypeIds: [...new Set([featureTypeId, bugTypeId])],
+    allowedTypeIds: [
+      ...new Set([
+        featureTypeId,
+        bugTypeId,
+        ...(researchSetup === null ? [] : [researchSetup.typeId]),
+      ]),
+    ],
     featureTypeId,
     bugTypeId,
+    research: researchSetup,
   };
 };
+
+/**
+ * The folder by its exact title. Titles are not unique: when several match, the one at the top of the tree is taken,
+ * and if that still leaves more than one, it is an error rather than a guess.
+ */
+const folder = (research: ResearchNames, projectKey: string): number => {
+  const named = research.documents.filter((d) => d.title === research.folder);
+  const top = named.filter((d) => d.parentId === null);
+  if (named.length === 0)
+    throw new Error(`project ${projectKey}: no document named "${research.folder}"`);
+  const chosen = named.length === 1 ? named : top;
+  const [only] = chosen;
+  if (only === undefined || chosen.length > 1)
+    throw new Error(
+      `project ${projectKey}: ${named.length} documents named "${research.folder}" (${top.length} at the top level); rename all but one`,
+    );
+  return only.id;
+};
+
+/** The phases of research (CYC-447): their options may be missing, and then those phases are not mirrored. */
+type OptionalPhase = "research" | "researchQa";
+type RequiredPhase = Exclude<LoopPhase, OptionalPhase>;
 
 /** The phases the loop mirrors onto a work item, and the option name each one has in the project's select field. */
 export const LOOP_PHASES = {
@@ -64,7 +109,12 @@ export const LOOP_PHASES = {
   ci: "等 CI",
   review: "评审",
   merge: "等合并",
-} as const satisfies Record<LoopPhase, string>;
+} as const satisfies Record<RequiredPhase, string>;
+
+export const OPTIONAL_LOOP_PHASES = {
+  research: "调研",
+  researchQa: "调研 QA",
+} as const satisfies Record<OptionalPhase, string>;
 
 export const PHASE_FIELD = "Loop 阶段";
 export const STARTED_FIELD = "Loop 阶段开始于";
@@ -72,7 +122,7 @@ export const STARTED_FIELD = "Loop 阶段开始于";
 export type LoopFields = {
   phaseFieldId: number;
   startedFieldId: number;
-  optionIds: Record<LoopPhase, number>;
+  optionIds: Record<RequiredPhase, number> & Partial<Record<OptionalPhase, number>>;
 };
 
 /**
@@ -102,12 +152,17 @@ export const resolveLoopFields = (reply: unknown): { fields: LoopFields } | { pr
   const started = only(STARTED_FIELD, "datetime");
   if (typeof started === "string") return { problem: started };
   const options = list(phase.options);
-  const optionIds = {} as Record<LoopPhase, number>;
+  const optionOf = (name: string) => id(options.find((o) => o.value === name)?.id);
+  const optionIds = {} as LoopFields["optionIds"];
   for (const [key, name] of Object.entries(LOOP_PHASES)) {
-    const optionId = id(options.find((o) => o.value === name)?.id);
+    const optionId = optionOf(name);
     if (!Number.isInteger(optionId))
       return { problem: `「${PHASE_FIELD}」 has no option 「${name}」` };
-    optionIds[key as LoopPhase] = optionId;
+    optionIds[key as RequiredPhase] = optionId;
+  }
+  for (const [key, name] of Object.entries(OPTIONAL_LOOP_PHASES)) {
+    const optionId = optionOf(name);
+    if (Number.isInteger(optionId)) optionIds[key as OptionalPhase] = optionId;
   }
   return { fields: { phaseFieldId: id(phase.id), startedFieldId: id(started.id), optionIds } };
 };

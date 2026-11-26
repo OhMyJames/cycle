@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   loadConfigFile,
@@ -95,6 +95,102 @@ test("a project missing a column or label fails with what is missing", () => {
     [6, "f", "canceled", 6],
   ];
   expect(() => resolveProject(project(cols, []), names)).toThrow('label named "auto"');
+});
+
+const allColumns: [number, string, string, number][] = [
+  [30, "Backlog", "backlog", 0],
+  [31, "Icebox", "backlog", 8],
+  [1, "a", "unstarted", 1],
+  [2, "b", "started", 2],
+  [3, "c", "started", 3],
+  [4, "d", "started", 4],
+  [5, "e", "completed", 5],
+  [6, "f", "canceled", 6],
+];
+const withResearch = () => {
+  const p = project(allColumns);
+  p.data.issueTypes.push({ id: 23, name: "Research" });
+  return p;
+};
+const documents = [
+  { id: 13, title: "调研：agy 怎么接入 Cycle（CYC-157）", parentId: null },
+  { id: 10, title: "调研", parentId: null },
+  { id: 11, title: "CYC-121 调研", parentId: 10 },
+];
+const research = { type: "Research", folder: "调研", documents };
+
+test("research off: the Research type is not taken, even when the project has it", () => {
+  const setup = resolveProject(withResearch(), names);
+  expect(setup.allowedTypeIds).toEqual([1, 2]);
+  expect(setup.research).toBeNull();
+});
+
+test("research on: the type is taken, and the first backlog column and the folder are resolved", () => {
+  const setup = resolveProject(withResearch(), names, research);
+  expect(setup.allowedTypeIds).toEqual([1, 2, 23]);
+  expect(setup.research).toEqual({ typeId: 23, backlogColumn: 30, folderId: 10 });
+});
+
+test("research on: a missing type, backlog column or folder names the Project and what is missing", () => {
+  expect(() => resolveProject(project(allColumns), names, research)).toThrow(
+    'project X: no issue type named "Research"',
+  );
+  const noBacklog = withResearch();
+  noBacklog.data.columns = noBacklog.data.columns.filter((c) => c.stateType !== "backlog");
+  expect(() => resolveProject(noBacklog, names, research)).toThrow("project X: no backlog column");
+  expect(() =>
+    resolveProject(withResearch(), names, { ...research, documents: documents.slice(0, 1) }),
+  ).toThrow('project X: no document named "调研"');
+  expect(() =>
+    resolveProject(withResearch(), names, {
+      ...research,
+      documents: [...documents, { id: 50, title: "调研", parentId: null }],
+    }),
+  ).toThrow('project X: 2 documents named "调研" (2 at the top level)');
+});
+
+test("research folder: a title used twice is resolved to the one at the top of the tree", () => {
+  const setup = resolveProject(withResearch(), names, {
+    ...research,
+    documents: [...documents, { id: 51, title: "调研", parentId: 18 }],
+  });
+  expect(setup.research?.folderId).toBe(10);
+});
+
+test("research config: absent or not enabled means off; defaults fill the rest", () => {
+  expect(parseConfigFile(JSON.stringify(full)).research).toBeUndefined();
+  expect(
+    parseConfigFile(JSON.stringify({ ...full, research: { enabled: false } })).research?.enabled,
+  ).toBe(false);
+  expect(
+    parseConfigFile(JSON.stringify({ ...full, research: { enabled: true } })).research,
+  ).toEqual({
+    enabled: true,
+    type: "Research",
+    folder: "调研",
+    readRoots: ["/r"],
+    maxFollowups: 5,
+  });
+});
+
+test("research config: readRoots expand ~ and must be absolute; bad fields are named", () => {
+  const roots = (readRoots: string[]) =>
+    parseConfigFile(JSON.stringify({ ...full, research: { enabled: true, readRoots } })).research
+      ?.readRoots;
+  expect(roots(["~/x/../y", "/a/b/"])).toEqual([join(homedir(), "y"), "/a/b"]);
+  expect(roots(["~"])).toEqual([homedir()]);
+  expect(() => roots(["rel/dir"])).toThrow("research.readRoots must be absolute");
+  expect(() => roots(["~other/x"])).toThrow("research.readRoots must be absolute");
+  expect(() => roots([])).toThrow("research.readRoots");
+  expect(() =>
+    parseConfigFile(JSON.stringify({ ...full, research: { enabled: true, maxFollowups: -1 } })),
+  ).toThrow("research.maxFollowups");
+  expect(() =>
+    parseConfigFile(JSON.stringify({ ...full, research: { enabled: true, typo: 1 } })),
+  ).toThrow("research");
+  expect(() => parseConfigFile(JSON.stringify({ ...full, research: {} }))).toThrow(
+    "research.enabled",
+  );
 });
 
 test("workers must be a positive integer, and the error names the Project's position", () => {
