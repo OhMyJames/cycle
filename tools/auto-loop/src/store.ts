@@ -35,6 +35,13 @@ export const RunRecordSchema = z.object({
   ciRound: z.number().int().min(0).default(0),
   /** The HEAD commit whose CI run last came back red; the same commit again means no new CI run unless the failed jobs are rerun. */
   ciFailedSha: z.string().nullable().default(null),
+  /** Times the loop merged the base into the branch after a conflict found while waiting for CI. Counted apart from fix rounds. */
+  conflictRound: z.number().int().min(0).default(0),
+  /** Set from the moment a conflict merge is started until it ends clean or is aborted: a restart picks it up from here. */
+  conflict: z
+    .object({ state: z.literal("merging") })
+    .nullable()
+    .default(null),
   worktree: z.string().nullable(),
   /** The branch the daemon made: `worktree-auto/cyc-318`. */
   localBranch: z.string().nullable(),

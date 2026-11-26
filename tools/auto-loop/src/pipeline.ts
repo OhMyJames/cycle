@@ -172,6 +172,8 @@ export class Pipeline {
       round: 0,
       ciRound: 0,
       ciFailedSha: null,
+      conflictRound: 0,
+      conflict: null,
       worktree: null,
       localBranch: null,
       remoteBranch: branchOf(issue.number),
@@ -481,6 +483,87 @@ export class Pipeline {
       `${lead}PR 与 ${config.baseBranch} 冲突，GitHub 不会跑 CI 也不会合并它：${prUrl}。${
         files.length > 0 ? `冲突文件：${files.join("、")}。` : ""
       }需要把 ${config.baseBranch} 合并进该分支并解决冲突，推送后 CI 通过即会自动合并。`,
+    );
+  }
+
+  /**
+   * The PR conflicts with the base while CI is awaited: merge the base into the branch here, once. A clean merge goes on
+   * through verify, QA, push and CI; a real conflict is backed out and blocks. Out of attempts, it blocks as before.
+   */
+  async #handleConflict(
+    run: RunRecord,
+    prUrl: string,
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    const { config } = this.#d;
+    // A merge the loop started and a restart cut off is continued; it is not a second attempt.
+    if (run.conflict === null && run.conflictRound >= config.maxConflictRounds) {
+      const files = await this.#conflictFiles(worktree);
+      await this.#d.store.event(run.key, "merge_conflict", { prUrl, files: files.length });
+      throw new Blocked(
+        `等待 CI 时发现 PR 与 ${config.baseBranch} 冲突，已自动处理过 ${run.conflictRound} 次，不再自动合并：${prUrl}。${
+          files.length > 0 ? `冲突文件：${files.join("、")}。` : ""
+        }需要人把 ${config.baseBranch} 合并进该分支并解决冲突。`,
+      );
+    }
+    await this.#startMerge(run, prUrl, worktree, save);
+  }
+
+  /** Safe to run again at any point: after the count is saved, after a clean merge, or with a merge left open. */
+  async #startMerge(
+    run: RunRecord,
+    prUrl: string,
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    const { config, store } = this.#d;
+    const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
+    if (open.code !== 0) {
+      const status = await this.#git(["status", "--porcelain"], worktree);
+      if (status.code !== 0) throw new Blocked(`读取工作区状态失败：${tail(status.output)}`);
+      if (status.output.trim() !== "")
+        throw new Blocked(
+          `PR 与 ${config.baseBranch} 冲突，但工作区有未提交的改动，不自动合并：\n${tail(status.output)}`,
+        );
+      const fetched = await this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
+        cwd: worktree,
+        env: deliverEnv(this.#d.env),
+        timeoutMs: config.commandTimeoutMs,
+      });
+      if (fetched.code !== 0) throw new Blocked(`合并前 git fetch 失败：${tail(fetched.output)}`);
+    }
+    // The count is saved before the merge, so a kill in the middle cannot let the same attempt be taken twice.
+    if (run.conflict === null)
+      await save({ conflictRound: run.conflictRound + 1, conflict: { state: "merging" } });
+    const attempt = run.conflict === null ? run.conflictRound + 1 : run.conflictRound;
+    let merged: ExecResult | undefined;
+    if (open.code !== 0) {
+      merged = await this.#git(["merge", "--no-edit", config.baseRef], worktree);
+      if (merged.code === 0) {
+        await store.event(run.key, "conflict_merge", { result: "clean", conflictRound: attempt });
+        await save({ conflict: null, phase: "verify" });
+        return;
+      }
+    }
+    const listed = await this.#git(["diff", "--name-only", "--diff-filter=U"], worktree);
+    const files = listed.output
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "");
+    const aborted = await this.#git(["merge", "--abort"], worktree);
+    await store.event(run.key, "conflict_merge", {
+      result: "conflict",
+      conflictRound: attempt,
+      files: files.length,
+    });
+    await save({ conflict: null });
+    if (aborted.code !== 0)
+      throw new Blocked(`合并冲突后撤回合并失败，工作区留在合并中：${tail(aborted.output)}`);
+    throw new Blocked(
+      files.length > 0
+        ? `PR 与 ${config.baseBranch} 冲突：Loop 在工单工作区合并 ${config.baseRef} 后，真实冲突文件：${files.join("、")}。已撤回合并（${prUrl}）。`
+        : `Loop 合并 ${config.baseRef} 失败，但没有读到冲突文件，已撤回合并：${tail(merged?.output ?? "")}`,
     );
   }
 
@@ -965,8 +1048,10 @@ export class Pipeline {
     if (result.outcome === "error") {
       throw new Blocked(`读取 CI 状态失败：${tail(result.error)}`);
     }
-    if (result.outcome === "conflict")
-      await this.#conflictBlock(run, prUrl, worktree, "等待 CI 时发现");
+    if (result.outcome === "conflict") {
+      await this.#handleConflict(run, prUrl, worktree, save);
+      return;
+    }
     if (result.outcome === "timeout") {
       const pendingNames =
         result.status?.pending.map((c) => c.name).join("、") || config.ciChecks.join("、");

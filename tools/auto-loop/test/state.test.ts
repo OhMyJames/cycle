@@ -41,6 +41,43 @@ test("store: events and progress append; unfinished lists runs not done", async 
   expect(await store.unfinished()).toEqual([]);
 });
 
+test("store: a run.json from before the conflict fields still loads, with conflictRound 0 and conflict null", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "al-"));
+  const store = new RunStore(dir, now);
+  const saved = await store.save({
+    key: "CYC-1",
+    issueId: 1,
+    issueNumber: 1,
+    title: "t",
+    phase: "ci",
+    round: 0,
+    ciRound: 0,
+    ciFailedSha: null,
+    conflictRound: 0,
+    conflict: null,
+    worktree: "/wt",
+    localBranch: "b",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "d",
+    qaSessionId: null,
+    reviewSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    prUrl: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    startedAt: "2026-11-25T00:00:00.000Z",
+    updatedAt: "2026-11-25T00:00:00.000Z",
+  });
+  const { conflictRound: _a, conflict: _b, ...old } = saved;
+  await writeFile(join(dir, "runs", "CYC-1", "run.json"), JSON.stringify(old));
+  const loaded = await store.load("CYC-1");
+  expect(loaded?.conflictRound).toBe(0);
+  expect(loaded?.conflict).toBeNull();
+});
+
 test("lock: a live holder refuses, a dead one is taken over", async () => {
   const dir = await mkdtemp(join(tmpdir(), "al-"));
   const release = await acquireLock(dir, () => true, 111);

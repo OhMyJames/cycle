@@ -84,6 +84,8 @@ export type Config = {
   ciChecks: string[];
   /** Maximum number of times a red CI run is sent back to Dev before blocking. */
   maxCiRetries: number;
+  /** Times the loop merges the base into the branch itself after a conflict found while waiting for CI. Not in the config file. */
+  maxConflictRounds: number;
   /** Maximum number of retries when PR review fails, times out, or produces no valid conclusion. */
   maxReviewRetries: number;
   /** Maximum number of times one turn is sent again, in the same session, after the daemon stopped in the middle of it. */
@@ -131,6 +133,7 @@ export const defaultConfig = (
   maxFixRounds: 3,
   ciChecks: ["check", "browser", "integration"],
   maxCiRetries: 2,
+  maxConflictRounds: 1,
   maxReviewRetries: 2,
   maxInterruptRetries: 3,
   maxQaRetries: 2,
