@@ -1,6 +1,7 @@
 // The app's entry. Everything is in app.ts; this says where things are.
 import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { copyFile, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +21,7 @@ import { startApp, stayInBackground } from "./app.ts";
 import { localHome } from "./home.ts";
 import { BUILD_FILE, daemonCommand, loginShellPath } from "./layout.ts";
 import { filePreferencesStore } from "./preferences.ts";
-import { SWAP_SCRIPT, verifySameTeam } from "./updater.ts";
+import { SWAP_SCRIPT, verifyBySource } from "./updater.ts";
 import { fileFrameStore } from "./window-frame.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -155,6 +156,22 @@ const localRelease = (url: string | undefined) => {
   return { apiBase: base, assetPrefix: `${base}/dl/` };
 };
 
+/** The alpha repository, `<CYCLE_HOME>/alpha`, which only the installed app reads. */
+const localAlphaRepo = () => {
+  if (!packaged) return undefined;
+  const home =
+    env.CYCLE_HOME !== undefined && env.CYCLE_HOME !== ""
+      ? env.CYCLE_HOME
+      : join(homedir(), ".cycle");
+  const dir = join(home, "alpha");
+  return {
+    dir,
+    list: () => readdir(dir).catch(() => [] as string[]),
+    read: (path: string) => readFile(join(dir, path), "utf8"),
+    copy: (path: string, to: string) => copyFile(join(dir, path), to),
+  };
+};
+
 /** What the updater needs from this machine. Only an installed macOS app can replace itself. */
 const updateDeps = (daemon: string[], localEnv: Record<string, string>) => {
   const info = packaged
@@ -187,7 +204,8 @@ const updateDeps = (daemon: string[], localEnv: Record<string, string>) => {
         : "Updates are for the installed macOS app.",
     extract: (zip: string, into: string) =>
       run("/usr/bin/ditto", ["-x", "-k", zip, into], 300_000).then(() => {}),
-    verifyBundle: verifySameTeam(codesign),
+    verifyBundle: verifyBySource(codesign),
+    localAlpha: localAlphaRepo(),
     log: (message: string) => console.warn(`[update] ${message}`),
     // The daemon the old app started runs from inside it and would outlive the swap, with its Claude gone.
     handOff: async (swap: { appPath: string; newApp: string; oldApp: string; staging: string }) => {
