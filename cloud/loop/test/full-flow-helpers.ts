@@ -14,7 +14,7 @@ export const specText = `# Spec
 
 ## 验收标准
 
-1. 大档通过预检。验证：\`bun test ./tools/auto-loop/test/full-flow-preflight.test.ts\`
+1. 大档通过预检。验证：\`bun test ./cloud/loop/test/full-flow-preflight.test.ts\`
 2. 门禁通过。验证：\`bun run check\`
 `;
 

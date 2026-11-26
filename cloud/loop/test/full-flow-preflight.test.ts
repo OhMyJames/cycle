@@ -19,7 +19,7 @@ test("a 完整流程 work item with four locked documents is taken, with the Spe
   const criteria = await s.store.loadCriteria("CYC-1");
   expect(criteria.allPassed).toBe(true);
   expect(criteria.items.map((c) => c.verify)).toEqual([
-    [["bun", "test", "./tools/auto-loop/test/full-flow-preflight.test.ts"]],
+    [["bun", "test", "./cloud/loop/test/full-flow-preflight.test.ts"]],
     [["bun", "run", "check"]],
   ]);
 });

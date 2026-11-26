@@ -40,8 +40,8 @@ const FAIL = `${CHECKED}<verdict>{"pass":false,"findings":[{"severity":"major","
 /** A body that passes the same preflight as a work item the loop takes, with a `bun test ./…` path in the worktree. */
 const good = (lead: string) =>
   `${lead}：给人看的开头一段，说明做什么、为什么、做完是什么样。\n\n${readyDescription.replace(
-    "bun test tools/",
-    "bun test ./tools/",
+    "bun test cloud/",
+    "bun test ./cloud/",
   )}`;
 
 const triageReply = (lines: Record<string, unknown>[], order: string[]) =>
@@ -161,8 +161,8 @@ const setup = (
     if (at !== -1 && argv[at + 1] === "add") {
       w.calls.push(argv.filter((a) => a !== "-c" && !a.startsWith("core.")).join(" "));
       const path = argv[argv.length - 2] as string;
-      await mkdir(join(path, "tools/auto-loop/test"), { recursive: true });
-      await writeFile(join(path, "tools/auto-loop/test/a.test.ts"), "");
+      await mkdir(join(path, "cloud/loop/test"), { recursive: true });
+      await writeFile(join(path, "cloud/loop/test/a.test.ts"), "");
       await mkdir(join(path, ".claude/skills/cycle-workflow"), { recursive: true });
       await copyFile(join(REPO, SKILL), join(path, SKILL));
       return { code: 0, output: "", timedOut: false };
@@ -451,7 +451,7 @@ test("the loop's own checks send a reply back: a bun test path without ./ is a f
   const s = setup(
     {
       triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
-      shape: [done(rewrite("标题", good("x").replace("./tools/", "tools/"))), done(rewrite())],
+      shape: [done(rewrite("标题", good("x").replace("./cloud/", "cloud/"))), done(rewrite())],
       shape_qa: [done(PASS)],
     },
     [backlogItem(1)],

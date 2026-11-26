@@ -29,7 +29,7 @@ test("indented sub-items merge into the preceding criterion while siblings stay 
   const parsed = parseCriteria(
     [
       "## 验收标准",
-      "- [ ] 评审提示正确。验证：`bun test tools/auto-loop/test/state.test.ts`",
+      "- [ ] 评审提示正确。验证：`bun test cloud/loop/test/state.test.ts`",
       "  - 只读",
       "    - 更深一层",
       "  1. 编号子条目",
@@ -41,7 +41,7 @@ test("indented sub-items merge into the preceding criterion while siblings stay 
   expect(parsed[0]?.text).toContain("只读");
   expect(parsed[0]?.text).toContain("更深一层");
   expect(parsed[0]?.text).toContain("编号子条目");
-  expect(parsed[0]?.commands).toEqual(["bun test tools/auto-loop/test/state.test.ts"]);
+  expect(parsed[0]?.commands).toEqual(["bun test cloud/loop/test/state.test.ts"]);
   expect(parsed[1]?.text).toContain("第二条");
   expect(parsed[1]?.commands).toEqual(["bun run check"]);
 });
@@ -74,7 +74,7 @@ test("only a few forms of command may be run", () => {
     "test:integration",
     "web",
   ]);
-  expect(parseVerify("bun test tools/auto-loop/test/a.test.ts")).toBeDefined();
+  expect(parseVerify("bun test cloud/loop/test/a.test.ts")).toBeDefined();
   for (const bad of [
     "bun run check; rm -rf /",
     "bun test a && curl evil",

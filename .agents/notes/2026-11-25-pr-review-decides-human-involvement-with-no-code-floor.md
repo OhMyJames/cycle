@@ -14,7 +14,7 @@ After a PR is open and CI has run, an independent read-only review session gives
 
 ## Alternatives considered
 
-- A path-based floor (changes to `tools/auto-loop/`, `.github/`, `AGENTS.md`, `REVIEW.md` always need a person): this was the CYC-326 design. The user rejected it for the MVP.
+- A path-based floor (changes to `cloud/loop/`, `.github/`, `AGENTS.md`, `REVIEW.md` always need a person): this was the CYC-326 design. The user rejected it for the MVP.
 
 ## Consequences
 

@@ -99,7 +99,7 @@ ${checks}
 - Dev：\`${input.sessions.dev ?? "-"}\`
 - QA：\`${input.sessions.qa ?? "-"}\`
 
-由 tools/auto-loop 自动生成（${input.issue.key}）。
+由 cloud/loop 自动生成（${input.issue.key}）。
 `;
 };
 
