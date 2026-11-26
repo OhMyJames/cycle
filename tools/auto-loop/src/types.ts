@@ -86,6 +86,8 @@ export type Config = {
   maxCiRetries: number;
   /** Maximum number of retries when PR review fails, times out, or produces no valid conclusion. */
   maxReviewRetries: number;
+  /** Maximum number of times one turn is sent again, in the same session, after the daemon stopped in the middle of it. */
+  maxInterruptRetries: number;
   /** Maximum number of fresh QA sessions tried after an unreadable verdict, a missing checklist, a timeout or an abnormal end. */
   maxQaRetries: number;
   /** How often to poll GitHub CI status while waiting for checks to finish. */
@@ -123,6 +125,7 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   ciChecks: ["check", "browser", "integration"],
   maxCiRetries: 2,
   maxReviewRetries: 2,
+  maxInterruptRetries: 3,
   maxQaRetries: 2,
   ciPollIntervalMs: 30_000,
   ciTimeoutMs: 30 * 60_000,
@@ -161,6 +164,8 @@ export type TurnResult = {
   text: string;
   /** Cancelled because it ran past the limit (not counting the time it waited for a person). */
   timedOut: boolean;
+  /** The turn ended because the daemon stopped (`error.code` is `DaemonStopped`), not because the agent failed. */
+  interrupted?: boolean;
 };
 
 /** The session cannot be continued (its agent has no record of it, or the daemon no longer has it). */

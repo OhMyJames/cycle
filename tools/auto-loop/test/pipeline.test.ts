@@ -448,6 +448,57 @@ test("an unreadable QA verdict every time blocks as a QA system fault after maxQ
   expect(s.tracker.comments.at(-1)).toContain("不是代码问题");
 });
 
+const stopped = (): TurnResult => ({
+  stopReason: "error",
+  text: "",
+  timedOut: false,
+  interrupted: true,
+});
+
+test("a Dev turn the daemon interrupted is sent again in the same session, with no fix round used", async () => {
+  const s = setup([ready()], { dev: [stopped(), done()], qa: [done(PASS)] });
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  const dev = s.sessions.prompts.filter((p) => p.role === "dev");
+  expect(dev).toHaveLength(2);
+  expect(dev[1]?.sessionId).toBe(dev[0]?.sessionId);
+  expect(dev[1]?.prompt).toBe(dev[0]?.prompt);
+  expect((await s.store.load("CYC-1"))?.round).toBe(0);
+  expect(s.tracker.moves).not.toContain("CYC-1:blocked");
+  expect((await s.store.events()).filter((e) => e.kind === "turn_resent")).toHaveLength(1);
+});
+
+test("a QA turn the daemon interrupted is sent again, and does not block", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [stopped(), done(PASS)] });
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  const qa = s.sessions.prompts.filter((p) => p.role === "qa");
+  expect(qa).toHaveLength(2);
+  expect(qa[1]?.sessionId).toBe(qa[0]?.sessionId);
+  expect(s.sessions.created.filter((id) => id.startsWith("qa"))).toHaveLength(1);
+  expect(s.tracker.moves).not.toContain("CYC-1:blocked");
+});
+
+test("a turn the daemon interrupts every time blocks after maxInterruptRetries resends", async () => {
+  const s = setup(
+    [ready()],
+    { dev: [stopped(), stopped(), stopped(), done()], qa: [] },
+    { maxInterruptRetries: 2 },
+  );
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(s.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(3);
+  expect(s.tracker.comments.at(-1)).toContain("daemon 反复中断");
+  expect((await s.store.events()).filter((e) => e.kind === "turn_resent")).toHaveLength(2);
+});
+
+test("an abnormal end that is not the daemon's stop blocks at once", async () => {
+  const s = setup([ready()], {
+    dev: [{ stopReason: "error", text: "", timedOut: false }, done()],
+    qa: [],
+  });
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(s.sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(1);
+  expect((await s.store.events()).filter((e) => e.kind === "turn_resent")).toHaveLength(0);
+});
+
 test("a crashed run is picked up where it stopped", async () => {
   const first = setup([ready()], { dev: [done()], qa: [] });
   const original = first.sessions.turn.bind(first.sessions);
