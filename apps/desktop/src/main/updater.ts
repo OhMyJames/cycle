@@ -10,8 +10,8 @@
 // hash. The swap is made by a small script after this process has exited, because replacing the bundle
 // of a running Electron app under its feet can break it.
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { access, constants, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { access, constants, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -52,7 +52,14 @@ export type LocalAlpha = {
 
 export type UpdaterDeps = {
   /** What is running: its version and where it was built for. */
-  current: { version: string; baseVersion?: string; platform: string; arch: string };
+  current: {
+    version: string;
+    baseVersion?: string;
+    /** When the running build was made (ISO), from its build.json: what tells a later build of the same version from an earlier one. */
+    builtAt?: string;
+    platform: string;
+    arch: string;
+  };
   /** The installed bundle, `/Applications/Cycle.app`. */
   appPath: string;
   /** `owner/name`. */
@@ -308,6 +315,9 @@ export class Updater {
     if (local === undefined) return undefined;
     const { platform, arch, version: running } = this.#d.current;
     const runningMeta = parseVersion(running)?.meta ?? "";
+    const runningBuiltAt = this.#d.current.builtAt
+      ? Date.parse(this.#d.current.builtAt) || undefined
+      : undefined;
     let best: { pending: Pending; builtAt: number } | undefined;
     for (const name of await local.list()) {
       // Half-written builds are in `.partial` folders; nothing that starts with a dot or ends in it is read.
@@ -319,11 +329,15 @@ export class Updater {
         if (manifest.platform !== platform || manifest.arch !== arch) continue;
         if (name !== manifest.version.replaceAll("+", "_")) continue;
         const newer = isNewer(manifest.version, running);
+        const builtAt = typeof extra.builtAt === "string" ? Date.parse(extra.builtAt) || 0 : 0;
+        // The same version made again (another `+meta`) is a reinstall, but only of a build later than the one
+        // running: of two builds of one version the older would otherwise be offered over the newer, and back.
+        // A running build that does not say when it was made cannot be compared, and takes any other build.
         const reinstall =
           sameVersion(manifest.version, running) &&
-          (parseVersion(manifest.version)?.meta ?? "") !== runningMeta;
+          (parseVersion(manifest.version)?.meta ?? "") !== runningMeta &&
+          (runningBuiltAt === undefined || builtAt > runningBuiltAt);
         if (!newer && !reinstall) continue;
-        const builtAt = typeof extra.builtAt === "string" ? Date.parse(extra.builtAt) || 0 : 0;
         if (best !== undefined) {
           const b = best.pending.version;
           if (isNewer(b, manifest.version)) continue;
@@ -633,12 +647,13 @@ export class Updater {
       throw new Error("There is no local alpha repository.");
     const { manifest } = pending;
     await local.copy(pending.archivePath, to);
-    const bytes = await readFile(to);
-    if (bytes.length !== manifest.size)
+    if ((await stat(to)).size !== manifest.size)
       throw new Error(
         "The local alpha's size does not match its manifest, so it was not installed.",
       );
-    if (createHash("sha256").update(bytes).digest("hex") !== manifest.sha256)
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(to)) hash.update(chunk as Buffer);
+    if (hash.digest("hex") !== manifest.sha256)
       throw new Error("The local alpha does not match its checksum, so it was not installed.");
   }
 

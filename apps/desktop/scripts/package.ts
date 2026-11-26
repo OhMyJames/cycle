@@ -90,10 +90,15 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   const version = process.env.CYCLE_VERSION || baseVersion;
   const plistVersion = plistVersions(version);
   if (!plistVersion) throw new Error(`CYCLE_VERSION ${version} is not a version.`);
-  const git = (...args: string[]) =>
-    Bun.spawnSync(["git", ...args], { cwd: ROOT })
-      .stdout.toString()
-      .trim();
+  // No git, or no repository (a source archive), is no commit, not a failed build.
+  const git = (...args: string[]): string => {
+    try {
+      const done = Bun.spawnSync(["git", ...args], { cwd: ROOT });
+      return done.exitCode === 0 ? done.stdout.toString().trim() : "";
+    } catch {
+      return "";
+    }
+  };
   const commit = git("rev-parse", "--short", "HEAD");
   const subject = git("log", "-1", "--format=%s");
   const electron = electronDist();
@@ -127,7 +132,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   );
   writeFileSync(
     join(staging, BUILD_FILE),
-    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, ...posthogProject() }, null, 2)}\n`,
+    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion, builtAt: new Date().toISOString(), ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, ...posthogProject() }, null, 2)}\n`,
   );
 
   const app = join(outDir, platform === "darwin" ? MAC_BUNDLE : "Cycle");
