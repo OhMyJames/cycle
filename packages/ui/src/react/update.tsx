@@ -12,6 +12,37 @@ import { useAppState, useAppStore } from "./store-context.tsx";
 const megabytes = (bytes: number, total: number): string =>
   (bytes / 1e6).toFixed(total < 10e6 ? 1 : 0);
 
+/** The first line of a commit message, and the commit's first seven characters. */
+const firstLine = (text: string | undefined): string =>
+  (text ?? "").split(/\r?\n/, 1)[0]?.trim() ?? "";
+
+/** Whether a version is an alpha build (`0.1.1-alpha.3+abc1234`). */
+const isAlpha = (version: string): boolean => /-alpha(\.|\+|$)/.test(version);
+
+/** An available update: from this machine's build (what it is, or a reinstall), from an alpha to a release, or a release. */
+const availableLine = (
+  update: Extract<UpdateState, { kind: "available" }>,
+  t: Translator["t"],
+): string => {
+  if (update.source === "local") {
+    const commit = (update.commit ?? "").slice(0, 7);
+    const subject = firstLine(update.subject);
+    return t(
+      update.version === update.current ? "update.reinstallLocal" : "update.availableLocal",
+      {
+        version: update.version,
+        commit,
+        subject,
+        detail: [commit, subject].filter((x) => x !== "").join(" "),
+      },
+    );
+  }
+  if (isAlpha(update.current)) {
+    return t("update.availableFromAlpha", { from: update.current, version: update.version });
+  }
+  return t("update.available", { version: update.version });
+};
+
 /** What the update is doing, in a few words, or nothing when there is nothing to say. */
 export const updateLine = (update: UpdateState, t: Translator["t"]): string => {
   switch (update.kind) {
@@ -20,7 +51,7 @@ export const updateLine = (update: UpdateState, t: Translator["t"]): string => {
     case "up-to-date":
       return t("update.upToDate");
     case "available":
-      return t("update.available", { version: update.version });
+      return availableLine(update, t);
     case "downloading":
       return t(update.how === "difference" ? "update.downloadingChanges" : "update.downloading", {
         version: update.version,

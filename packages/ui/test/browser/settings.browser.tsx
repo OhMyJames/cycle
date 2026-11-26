@@ -175,6 +175,15 @@ test("with no location connected, the defaults say so and lead to the locations"
   expect(await screen.findByRole("heading", { name: "Work in", level: 2 })).toBeTruthy();
 });
 
+test("Settings shows the whole version, with its +meta", async () => {
+  const { user } = await mount({
+    update: { current: "0.1.1-alpha.2+abc1234", kind: "up-to-date", checkedAt: 0 },
+  });
+  await openSettings(user);
+  const page = await screen.findByRole("tabpanel", { name: "General" });
+  expect(within(page).getByText("Cycle 0.1.1-alpha.2+abc1234")).toBeTruthy();
+});
+
 test("an update that is ready can be started from Settings, after the same question", async () => {
   const { user, named } = await mount({
     update: { current: "0.1.0", kind: "available", version: "0.2.0" },
