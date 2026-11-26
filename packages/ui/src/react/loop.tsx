@@ -2,6 +2,12 @@
 // board. It takes the window in place of the sessions, as Connectors does. The Projects are the page's sections: with
 // the server away they stay listed, greyed, and say so. A ticket changes state only by a button (approve, back to
 // Backlog, back to Todo; never by dragging); which buttons it has is decided by main, and approving asks first.
+//
+// The board's layout (CYC-431) follows SakaniUI's KanbanBoardBlock (https://www.sakaniui.com/docs/blocks/kanban-board,
+// MIT, samzydd/Sakaniui): equal columns side by side, a head of dot + name + count, cards of id and priority, a title,
+// and the buttons at the foot. Only the layout is borrowed: nothing of it is imported or copied, and none of its
+// dragging, "Move to" menu, arrow-key moves or multi-select is here, as they would move a ticket without the
+// confirmation CYC-387 asks for. The columns are itsaplan's own, in its order.
 import { Button } from "@ui-sdk/react/button";
 import {
   SegmentedControl,
@@ -93,21 +99,24 @@ function Ticket({
   act: Act;
   onOpen: (identifier: string) => void;
 }) {
+  // The title button stretches over the whole card (CSS), so the card opens the ticket by click or keyboard; the
+  // buttons sit above it, so pressing one does not open it.
   return (
     <li data-slot="loop-ticket">
-      <span data-slot="loop-ticket-id">{ticket.identifier}</span>
+      <span data-slot="loop-ticket-head">
+        <span data-slot="loop-ticket-id">{ticket.identifier}</span>
+        {ticket.priority !== null ? (
+          <span data-slot="loop-ticket-priority">{ticket.priority}</span>
+        ) : null}
+      </span>
       <button
         type="button"
         data-slot="loop-ticket-title"
         title={ticket.title}
         onClick={() => onOpen(ticket.identifier)}
       >
-        {ticket.title}
+        <span data-slot="loop-ticket-text">{ticket.title}</span>
       </button>
-      <span data-slot="loop-ticket-meta">
-        {ticket.column}
-        {ticket.priority !== null ? ` · ${ticket.priority}` : ""}
-      </span>
       <TicketActions ticket={ticket} act={act} />
     </li>
   );
@@ -357,6 +366,7 @@ function TicketPage({
 function Column({
   id,
   title,
+  stateType,
   tickets,
   more,
   collapsible,
@@ -366,9 +376,11 @@ function Column({
 }: {
   id: number;
   title: string;
+  stateType: string;
   tickets: LoopTicket[];
   /** The column has tickets that are not in the list. */
   more?: boolean;
+  /** Starts folded to its count; a press unfolds it. */
   collapsible?: boolean;
   /** Show this many first, and this many more each time asked: for a column that can be very long. */
   pageSize?: number;
@@ -379,11 +391,18 @@ function Column({
   const [open, setOpen] = useState(collapsible !== true);
   const [shown, setShown] = useState(pageSize ?? Number.POSITIVE_INFINITY);
   const visible = tickets.slice(0, shown);
+  const count = (
+    <span data-slot="loop-column-count">
+      {more === true ? `${tickets.length}+` : tickets.length}
+    </span>
+  );
   return (
     <section
       data-slot="loop-column"
       data-column={id}
+      data-state-type={stateType}
       data-open={open || undefined}
+      data-folded={open ? undefined : ""}
       aria-label={title}
     >
       <header data-slot="loop-column-head">
@@ -396,14 +415,16 @@ function Column({
             onClick={() => setOpen((v) => !v)}
           >
             {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-            <span data-slot="loop-column-title">{title}</span>
+            <span data-slot="loop-column-dot" aria-hidden="true" />
+            {open ? <span data-slot="loop-column-title">{title}</span> : null}
           </Button>
         ) : (
-          <h3 data-slot="loop-column-title">{title}</h3>
+          <>
+            <span data-slot="loop-column-dot" aria-hidden="true" />
+            <h3 data-slot="loop-column-title">{title}</h3>
+          </>
         )}
-        <span data-slot="loop-column-count">
-          {more === true ? `${tickets.length}+` : tickets.length}
-        </span>
+        {count}
       </header>
       {open ? (
         tickets.length === 0 ? (
@@ -426,6 +447,33 @@ function Column({
         </Button>
       ) : null}
     </section>
+  );
+}
+
+/** The columns' places while the board is read: its columns are not known yet, so three, each with cards of no words. */
+function BoardSkeleton() {
+  const { t } = useI18n();
+  return (
+    <div data-slot="loop-board" data-kind="loop-board" aria-busy="true">
+      <div data-slot="loop-columns" role="status" aria-label={t("loop.loading")}>
+        {[0, 1, 2].map((c) => (
+          <div key={c} data-slot="loop-column" data-skeleton="">
+            <div data-slot="loop-column-head">
+              <span data-slot="loop-skeleton" data-size="title" />
+            </div>
+            <ul data-slot="loop-tickets">
+              {[0, 1, 2].map((i) => (
+                <li key={i} data-slot="loop-ticket" data-skeleton="">
+                  <span data-slot="loop-skeleton" data-size="id" />
+                  <span data-slot="loop-skeleton" data-size="line" />
+                  <span data-slot="loop-skeleton" data-size="line-short" />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -484,8 +532,7 @@ function Board({
         {t(`loop.fail.${problem}`)}
       </p>
     ) : null;
-  if (answer === undefined || answer === "loading")
-    return <StateBlock tone="loading" title={t("loop.loading")} />;
+  if (answer === undefined || answer === "loading") return <BoardSkeleton />;
   if (answer.kind === "no_key")
     return (
       <StateBlock
@@ -530,35 +577,21 @@ function Board({
       </div>
       {alert}
       <div data-slot="loop-columns">
-        {answer.columns
-          .filter((c) => c.stateType !== "completed")
-          .map((c) => (
-            <Column
-              key={c.id}
-              id={c.id}
-              title={c.name}
-              tickets={c.tickets}
-              more={c.more}
-              {...(c.stateType === "backlog" ? { pageSize: BACKLOG_PAGE } : {})}
-              act={act}
-              onOpen={openTicket}
-            />
-          ))}
-      </div>
-      {answer.columns
-        .filter((c) => c.stateType === "completed")
-        .map((c) => (
+        {answer.columns.map((c) => (
           <Column
             key={c.id}
             id={c.id}
             title={c.name}
+            stateType={c.stateType}
             tickets={c.tickets}
             more={c.more}
-            collapsible
+            {...(c.stateType === "backlog" ? { pageSize: BACKLOG_PAGE } : {})}
+            {...(c.stateType === "completed" ? { collapsible: true } : {})}
             act={act}
             onOpen={openTicket}
           />
         ))}
+      </div>
     </div>
   );
 }
