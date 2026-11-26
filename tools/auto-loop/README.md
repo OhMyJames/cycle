@@ -5,7 +5,9 @@
 ## 运行
 
 ```sh
-export AUTO_LOOP_PLAN_KEY=...        # itsaplan 的 key，只给 Loop 本身，不会传给任何会话或命令
+# 配置文件（权限须为 0600，默认 ~/.cycle/auto-loop.json，或 --config <路径>）：
+#   { "repoRoot": "/abs/repo", "projectKey": "CYC", "stateDir": "/abs/state", "planKey": "..." }
+# planKey 只给 Loop 本身，不会传给任何会话或命令
 bun tools/auto-loop/src/cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西
 bun tools/auto-loop/src/cli.ts --once      # 处理一张
 bun tools/auto-loop/src/cli.ts             # 常驻，空闲时每 60 秒看一次（--interval 改）
@@ -14,7 +16,9 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
 
-可选环境变量：`AUTO_LOOP_PLAN_URL`、`AUTO_LOOP_PROJECT`（默认 CYC）、`AUTO_LOOP_TYPE_IDS`（逗号分隔的类型 id，默认 `20,25` 即 Feature/Bug）、`AUTO_LOOP_STATE`、`CYCLE_SOCKET`。三类会话用的 agent 默认都是 `claude`，可用 `AUTO_LOOP_DEV_AGENT`、`AUTO_LOOP_QA_AGENT`、`AUTO_LOOP_REVIEW_AGENT` 单独改（填 agent id，如 `agy`）。
+配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。改配置后重启生效。
+
+启动时按 projectKey 调 `get_project` 解析列、标签和类型 id：列按 stateType 选，同一 stateType 有多列时按看板顺序（`unstarted` 第一列为 Todo；`started` 的第一、二、三列依次为 In Progress、In Review、Blocked）。一个 stateDir 对应一个 Project，锁在 `<stateDir>/loop.lock`。
 
 ## 约定
 
