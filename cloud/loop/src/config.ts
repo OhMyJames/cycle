@@ -14,6 +14,8 @@ export const ConfigSchema = z.object({
         projectKey: z.string().min(1),
         repo: z.object({ url: z.string().min(1), forge: LoopForgeSchema }),
         token: z.string().min(1),
+        /** Where this Project's runs are kept (`<stateDir>/runs/<KEY>/run.json`). Never sent to a client. */
+        stateDir: z.string().min(1).optional(),
       }),
     )
     .refine(

@@ -1145,6 +1145,7 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 | 方法            | 参数 | 响应         |
 | --------------- | ---- | ------------ |
 | `projects/list` | 无   | `{projects}` |
+| `runs/list`     | 无   | `{projects}` |
 
 ```json
 {
@@ -1162,6 +1163,35 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - `repo.displayName`:`owner/name` 形式,从仓库地址取,不含主机、协议和凭据。`repo.forge`:`github` 或 `gitlab`。
 - 响应里没有令牌、仓库完整地址和本地路径。以后加字段(运行状态、调度)时仍遵守这一条:能让别人拿到凭据或路径的字段不进这个方法。
 - 服务只读本进程的配置,不访问 itsaplan;看板内容由桌面端用使用者自己的账号读(见决定笔记 [2026-11-25-desktop-holds-a-personal-itsaplan-key-for-now](../.agents/notes/2026-11-25-desktop-holds-a-personal-itsaplan-key-for-now.md))。
+
+### 运行记录(`runs/list`,CYC-390)
+
+返回配置里每个 Project 的运行记录,数据读自 Loop 现有的 `<stateDir>/runs/<KEY>/run.json`(每张工单一份)。用来纠正"In Progress 即在跑"的已知误差;工单所处阶段不在这里,改用工单字段(CYC-442、CYC-443)。
+
+```json
+{
+  "projects": [
+    {
+      "projectKey": "CYC",
+      "runs": [
+        {
+          "key": "CYC-390",
+          "kind": "dev",
+          "state": "active",
+          "startedAt": "2026-11-26T01:00:00.000Z",
+          "updatedAt": "2026-11-26T02:00:00.000Z"
+        }
+      ]
+    }
+  ]
+}
+```
+
+- 每个配置里的 Project 都有一项,顺序同 `projects/list`;没有运行记录(或配置没给 `stateDir`、读不出来)的 Project 返回 `runs: []`,不报错。`runs` 按 `key` 排序。
+- `kind`:`dev` 或 `research`。`state`:`done`(阶段为 done)、`blocked`(阶段为 blocked)、其余为 `active`。含已结束的记录,客户端自己按 `state` 过滤。
+- **`active` 不保证进程还活着**:Loop 异常退出后 `run.json` 还在,仍是 `active`。怎样判断运行仍然活着(待确认,心跳或锁)还没定,定了再加字段;在此之前客户端用 `updatedAt` 的新旧自行判断,不要把 `active` 当成"正在跑"的证明。
+- 字段逐个挑出,不含工单标题、阶段细节、worktree、分支、会话、PR 地址和阻塞原因。响应里没有令牌、仓库完整地址和本地路径。
+- 不提供 `loop/start`、`loop/stop`,也没有推送;事件流是另一张工单。
 
 ### 工单状态按钮(桌面端写 itsaplan,CYC-387)
 
