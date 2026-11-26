@@ -154,7 +154,8 @@ export class Pipeline {
   /** The `tuning` in force for new steps: the last one that was read and valid. */
   #tuning: Tuning;
   #lastTuningProblem: string | null = null;
-  #keptNoted = new Set<string>();
+  /** `node_modules_kept` events already written, by run, CI round and reason; a run's entries go when it ends. */
+  readonly #keptNoted = new Set<string>();
   /** The config one step runs with, fixed when it starts: a change to the file does not reach a step under way. */
   readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
@@ -557,6 +558,7 @@ export class Pipeline {
 
   /** Delivery or Blocked: clears the phase, waits a short while for it to land, and forgets the run. */
   async #clear(run: RunRecord, issue: Issue): Promise<void> {
+    for (const id of this.#keptNoted) if (id.startsWith(`${run.key}:`)) this.#keptNoted.delete(id);
     this.#mirror(run, issue, null);
     const queue = this.#queues.get(run.key);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1139,7 +1141,7 @@ export class Pipeline {
     const before = fresh ? await this.#freeKb(worktree) : undefined;
     await this.#install(worktree);
     if (fresh) await this.#recordInstall(run.key, worktree, before);
-    await save({ phase: "dev" });
+    await save({ phase: "dev", nodeModulesReleased: false });
   }
 
   /** Installs again when `node_modules` was released; an install that fails is Blocked. */
@@ -1163,6 +1165,14 @@ export class Pipeline {
     if (installed.code !== 0) throw new Blocked(`bun install 失败：${tail(installed.output)}`);
   }
 
+  /** `node_modules_kept`, once per run, CI round and reason: a wait that is entered again does not repeat it. */
+  async #noteKept(run: RunRecord, reason: string): Promise<void> {
+    const id = `${run.key}:${run.ciRound}:${reason}`;
+    if (this.#keptNoted.has(id)) return;
+    this.#keptNoted.add(id);
+    await this.#d.store.event(run.key, "node_modules_kept", { reason, ciRound: run.ciRound });
+  }
+
   /**
    * CYC-450: while the run only waits for CI or the merge, the worktree's `node_modules` is not needed, so it is
    * deleted (when `releaseNodeModules` is on). Only git-ignored directories named `node_modules` go, and only when
@@ -1173,30 +1183,15 @@ export class Pipeline {
     worktree: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<void> {
-    const { config, store: runStore } = this.#d;
+    const { config, store } = this.#d;
     if (!config.releaseNodeModules || run.nodeModulesReleased) return;
-    // The same reason is written once per run, not on every re-entry of the CI wait.
-    const store = {
-      event: async (
-        key: string,
-        kind: string,
-        data?: Record<string, string | number | boolean>,
-      ) => {
-        if (kind === "node_modules_kept") {
-          const id = `${key}:${String(data?.reason)}`;
-          if (this.#keptNoted.has(id)) return;
-          this.#keptNoted.add(id);
-        }
-        await runStore.event(key, kind, data);
-      },
-    };
     const status = await this.#git(["status", "--porcelain"], worktree);
     if (status.code !== 0) {
-      await store.event(run.key, "node_modules_kept", { reason: "status_failed" });
+      await this.#noteKept(run, "status_failed");
       return;
     }
     if (status.output.trim() !== "") {
-      await store.event(run.key, "node_modules_kept", { reason: "dirty" });
+      await this.#noteKept(run, "dirty");
       return;
     }
     const listed = await this.#git(
@@ -1204,7 +1199,7 @@ export class Pipeline {
       worktree,
     );
     if (listed.code !== 0) {
-      await store.event(run.key, "node_modules_kept", { reason: "list_failed" });
+      await this.#noteKept(run, "list_failed");
       return;
     }
     const dirs = listed.output
@@ -1616,7 +1611,10 @@ export class Pipeline {
             config.baseRef,
             conflict.files,
             await this.#theirCommits(worktree, conflict.preMergeSha, conflict.files),
-          );
+          ) +
+          (run.nodeModulesReleased
+            ? "\n\nDependencies are not installed in this worktree (node_modules was removed while waiting for CI). Resolve package.json and bun.lock first if they are conflicted, then run `bun install` before `bun run check`.\n"
+            : "");
     const prompt =
       conflictPrompt ??
       (run.findings !== null

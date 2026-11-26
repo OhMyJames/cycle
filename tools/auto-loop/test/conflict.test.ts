@@ -446,6 +446,7 @@ test("node_modules released, then a conflict turn: Dev starts with no install in
     return turn(id, prompt, ctx);
   };
   await s.pipeline.step();
+  expect(devPrompts(s).at(-1)).toContain("Dependencies are not installed");
   const order = log.filter((c) => c === "turn:dev" || c === "bun install");
   expect(order[0]).toBe("turn:dev");
   expect(order).toContain("bun install");

@@ -57,7 +57,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 
 除 `networkRetryDelaysSeconds`（整数数组）和 `releaseNodeModules`（布尔）外全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
 
-**`releaseNodeModules`（CYC-450）**：默认关。打开后，进入等 CI（以及开启自动合并后等合并）时删除该 worktree 里被 git 忽略、名为 `node_modules` 的目录（约 1.4G），写事件 `node_modules_released`；只有 worktree 没有未提交改动时才删，否则写 `node_modules_kept` 并保留，删除只用 `rm -rf` 删这些目录，不碰其他文件。CI 红了打回 Dev 时，在启动 Dev 会话前先 `bun install`（写 `node_modules_restored`），安装失败走现有 Blocked 路径。等 CI 和等合并的阶段不跑依赖本地 `node_modules` 的命令；独立评审会话只读，`REVIEW.md` 不要求它跑 `bun`。
+**`releaseNodeModules`（CYC-450）**：默认关。打开后，进入等 CI 时删除该 worktree 里被 git 忽略、名为 `node_modules` 的目录（约 1.4G），写事件 `node_modules_released`。只有 worktree 没有未提交改动时才删，否则写 `node_modules_kept`（带原因，每个 run、每轮 CI、每种原因只写一次）并保留；删除只用 `rm -rf` 删这些目录，不碰其他文件；`rm` 失败写 `node_modules_release_failed`，run 照常继续，但已记为「已释放」，下次进入 Dev 或 verify 前会重装。只在等 CI 时释放，不在开启自动合并后的等合并阶段再释放：CI 前已经释放过，那一步只在上次没释放成功时才有用，不值得让已开启自动合并的 review 步骤冒失败的风险。回到 Dev 或进入 verify 前先 `bun install`（写 `node_modules_restored`），安装失败走现有 Blocked 路径。例外：Dev 处理合并冲突那一轮不先装（冲突中的 `package.json` 或 `bun.lock` 会让安装失败或改写锁文件），冲突简报会告诉 Dev 依赖未安装，解决清单文件后自己 `bun install`；之后进 verify 时仍会按记录重装。等 CI 的阶段不跑依赖本地 `node_modules` 的命令；独立评审会话只读，`REVIEW.md` 不要求它跑 `bun`。
 
 - 启动时 `tuning` 不合法：报错并以退出码 2 退出。
 - 运行中：每次 `step()` 开始、领单之前重新读一次配置文件里本 Project 的 `tuning`，不用重启。合法就用新值；不合法或读不到，沿用上次的值，打一行日志（同一个问题只打一次），Loop 不停。
