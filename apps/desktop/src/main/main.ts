@@ -35,6 +35,14 @@ const packaged = existsSync(join(here, "..", BUILD_FILE));
 // app is opened again by the updater, which `--user-data-dir` does not survive. Before anything reads the folder.
 if (env.CYCLE_USER_DATA !== undefined && env.CYCLE_USER_DATA !== "")
   app.setPath("userData", env.CYCLE_USER_DATA);
+// Only a test sets these (a stand-in sign-in provider, its own data folder), and a test runs the app with a HOME of its
+// own that has no keychain: Chromium's key for cookies and safeStorage would then ask macOS for one, which shows the
+// person a "Keychain Not Found" window. A test's app uses Chromium's stand-in keychain instead. Before "ready".
+if (
+  (env.CYCLE_SSO_ISSUER !== undefined && env.CYCLE_SSO_ISSUER !== "") ||
+  (env.CYCLE_USER_DATA !== undefined && env.CYCLE_USER_DATA !== "")
+)
+  app.commandLine.appendSwitch("use-mock-keychain");
 
 const run = (program: string, args: string[], timeoutMs: number, env?: Record<string, string>) =>
   new Promise<string>((done, fail) => {
