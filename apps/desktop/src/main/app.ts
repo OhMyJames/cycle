@@ -36,6 +36,7 @@ import { dispatch, type Handlers } from "./dispatch.ts";
 import { fileEnvironments } from "./environments.ts";
 import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
 import {
+  actOnMany,
   actOnTicket,
   answerBoard,
   answerNotices,
@@ -337,6 +338,16 @@ export const startApp = async (options: AppOptions) => {
       ),
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
       actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
+        analytics.track(event, props),
+      ),
+    loopActMany: (
+      projectKey: unknown,
+      action: unknown,
+      identifiers: unknown,
+      confirmed: unknown,
+      reason: unknown,
+    ) =>
+      actOnMany(options.loop, projectKey, action, identifiers, confirmed, reason, (event, props) =>
         analytics.track(event, props),
       ),
     loopChat: (projectKey: unknown, identifier: unknown) =>

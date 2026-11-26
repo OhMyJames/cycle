@@ -690,6 +690,20 @@ export const enUS = {
   "loop.approve.title": "Approve {id}?",
   "loop.approve.body":
     "It moves to Todo and gets the auto label, so Loop can take it on its next round.",
+  "loop.pending": "Awaiting approval",
+  "loop.pending.all": "Select all",
+  "loop.pending.pick": "Select",
+  "loop.pending.criteria": "{count} acceptance criteria",
+  "loop.pending.why": "Reason for returning (optional)",
+  "loop.pending.approve": "Approve selected",
+  "loop.pending.return": "Return selected",
+  "loop.pending.approve.title": "Approve {count} tickets?",
+  "loop.pending.approve.body":
+    "They move to Todo and get the auto label, so Loop can take them on its next rounds.",
+  "loop.pending.done": "Done: {ok} succeeded, {skipped} skipped, {failed} failed.",
+  "loop.pending.more":
+    "The Backlog is longer than what is listed: some waiting tickets may not be shown.",
+  "loop.pending.commentLost": "{count} returned, but the reason could not be posted as a comment.",
   "loop.hint": "Change a ticket state with its buttons.",
   "loop.fail.unconfirmed": "Not approved: it was not confirmed.",
   "loop.fail.no_key": "Nothing was changed: there is no itsaplan key.",

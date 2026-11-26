@@ -113,6 +113,13 @@ export const EVENTS = {
       "refused",
     ]),
   }),
+  /** The person approved or returned a batch of tickets waiting for approval: which, and how many came out how; never which tickets. */
+  loop_tickets_acted: o({
+    action: z.enum(["approve_many", "return_many"]),
+    ok: z.number(),
+    skipped: z.number(),
+    failed: z.number(),
+  }),
   /** The Loop page read a Project's Notices: how many of each kind, never which or what they say. */
   loop_notices_read: o({ permission: z.number(), blocked: z.number(), review: z.number() }),
   /** A system notification was shown for a Notice (Blocked or an escalated review; never a permission). */

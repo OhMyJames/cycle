@@ -6,9 +6,11 @@
 // The board's layout (CYC-431) follows SakaniUI's KanbanBoardBlock (https://www.sakaniui.com/docs/blocks/kanban-board,
 // MIT, samzydd/Sakaniui): equal columns side by side, a head of dot + name + count, cards of id and priority, a title,
 // and the buttons at the foot. Only the layout is borrowed: nothing of it is imported or copied, and none of its
-// dragging, "Move to" menu, arrow-key moves or multi-select is here, as they would move a ticket without the
-// confirmation CYC-387 asks for. The columns are itsaplan's own, in its order.
+// dragging, "Move to" menu or arrow-key moves is here, as they would move a ticket without the confirmation CYC-387
+// asks for. The one multi-select is the group of tickets waiting for approval (CYC-451): approving a batch asks first and
+// lists the titles; returning a batch is the way to say no, and only takes labels off and puts Loop 跳过 on. The columns are itsaplan's own, in its order.
 import { Button } from "@ui-sdk/react/button";
+import { Input } from "@ui-sdk/react/input";
 import {
   SegmentedControl,
   SegmentedControlIndicator,
@@ -21,6 +23,7 @@ import type {
   LoopBoardAnswer,
   LoopBoardColumn,
   LoopChatFailure,
+  LoopManyResult,
   LoopNotice,
   LoopProjectInfo,
   LoopTicket,
@@ -388,6 +391,186 @@ function TicketPage({
   );
 }
 
+const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+const priorityRank = (p: string | null): number => PRIORITY_RANK[p ?? ""] ?? 4;
+
+/** The tickets the planning node left for a person (CYC-451): chosen a batch at a time, approved or returned. */
+function PendingGroup({
+  projectKey,
+  tickets,
+  more,
+  outcome,
+  onOutcome,
+  onOpen,
+}: {
+  projectKey: string;
+  tickets: LoopTicket[];
+  /** The Backlog has tickets that were not listed, so some waiting ones may not be here. */
+  more: boolean;
+  /** Kept by the Board: the board is read again after a batch, and the group may be gone by then. */
+  outcome: LoopManyResult | undefined;
+  onOutcome: (result: LoopManyResult | undefined) => void;
+  onOpen: (identifier: string) => void;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [asking, setAsking] = useState(false);
+  const [why, setWhy] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | undefined>();
+  // Stable by priority, then as the tracker lists them.
+  const sorted = [...tickets].sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
+  // A ticket gone from the group (the board was read again) is not still chosen.
+  const chosen = sorted.filter((x) => picked.has(x.identifier));
+  const all = sorted.length > 0 && chosen.length === sorted.length;
+  const toggle = (identifier: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(identifier)) next.add(identifier);
+      return next;
+    });
+  const run = async (action: "approve_many" | "return_many"): Promise<string | undefined> => {
+    setBusy(true);
+    onOutcome(undefined);
+    setProblem(undefined);
+    const result = await store.actOnLoopMany(
+      projectKey,
+      action,
+      chosen.map((x) => x.identifier),
+      true,
+      action === "return_many" ? why : undefined,
+    );
+    setBusy(false);
+    if (result.kind === "failed") {
+      const words = t(`loop.fail.${result.reason}`);
+      setProblem(words);
+      return words;
+    }
+    onOutcome(result);
+    setPicked(new Set());
+    if (action === "return_many") setWhy("");
+    return undefined;
+  };
+  const lost =
+    outcome?.kind === "done"
+      ? outcome.results.filter((r) => r.outcome === "ok" && r.commentFailed === true).length
+      : 0;
+  const count = (kind: "ok" | "skipped" | "failed") =>
+    outcome?.kind === "done" ? outcome.results.filter((r) => r.outcome === kind).length : 0;
+  return (
+    <section data-slot="loop-pending" data-kind="loop-pending" aria-label={t("loop.pending")}>
+      {tickets.length > 0 ? (
+        <>
+          <header data-slot="loop-pending-head">
+            <h4 data-slot="loop-column-title">{t("loop.pending")}</h4>
+            <span data-slot="loop-column-count">{tickets.length}</span>
+            <label data-slot="loop-pending-all">
+              <input
+                type="checkbox"
+                checked={all}
+                onChange={() =>
+                  setPicked(all ? new Set() : new Set(sorted.map((x) => x.identifier)))
+                }
+              />
+              {t("loop.pending.all")}
+            </label>
+          </header>
+          <ul data-slot="loop-tickets">
+            {sorted.map((ticket) => (
+              <li key={ticket.identifier} data-slot="loop-ticket" data-pending="">
+                <span data-slot="loop-ticket-head">
+                  <input
+                    type="checkbox"
+                    data-slot="loop-pending-pick"
+                    aria-label={`${t("loop.pending.pick")} ${ticket.identifier}`}
+                    checked={picked.has(ticket.identifier)}
+                    onChange={() => toggle(ticket.identifier)}
+                  />
+                  <span data-slot="loop-ticket-id">{ticket.identifier}</span>
+                  {ticket.priority !== null ? (
+                    <span data-slot="loop-ticket-priority">{ticket.priority}</span>
+                  ) : null}
+                  <span data-slot="loop-ticket-meta">
+                    {ticket.pending?.criteria !== undefined
+                      ? t("loop.pending.criteria", { count: ticket.pending.criteria })
+                      : null}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  data-slot="loop-ticket-title"
+                  title={ticket.title}
+                  onClick={() => onOpen(ticket.identifier)}
+                >
+                  <span data-slot="loop-ticket-text">{ticket.title}</span>
+                </button>
+                {ticket.pending?.reason ? (
+                  <p data-slot="loop-pending-reason">{ticket.pending.reason}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <div data-slot="loop-pending-bar">
+            <Input
+              value={why}
+              aria-label={t("loop.pending.why")}
+              placeholder={t("loop.pending.why")}
+              onChange={(event) => setWhy(event.currentTarget.value)}
+            />
+            <Button
+              data-variant="ghost"
+              data-kind="loop-return-many"
+              disabled={chosen.length === 0 || busy}
+              onClick={() => void run("return_many")}
+            >
+              {t("loop.pending.return")}
+            </Button>
+            <Button
+              data-kind="loop-approve-many"
+              disabled={chosen.length === 0 || busy}
+              onClick={() => setAsking(true)}
+            >
+              {t("loop.pending.approve")}
+            </Button>
+          </div>
+          {problem !== undefined ? (
+            <p data-slot="loop-problem" role="alert">
+              {problem}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {more ? <p data-slot="loop-problem">{t("loop.pending.more")}</p> : null}
+      {lost > 0 ? (
+        <p data-slot="loop-problem" role="alert">
+          {t("loop.pending.commentLost", { count: lost })}
+        </p>
+      ) : null}
+      {outcome?.kind === "done" ? (
+        <p data-slot="loop-problem" role="status">
+          {t("loop.pending.done", {
+            ok: count("ok"),
+            skipped: count("skipped"),
+            failed: count("failed"),
+          })}
+        </p>
+      ) : null}
+      {asking ? (
+        <ConfirmDialog
+          open
+          onOpenChange={setAsking}
+          title={t("loop.pending.approve.title", { count: chosen.length })}
+          description={t("loop.pending.approve.body")}
+          detail={chosen.map((x) => [x.identifier, x.title].join(" ")).join("\n")}
+          confirmLabel={t("loop.pending.approve")}
+          onConfirm={() => run("approve_many")}
+        />
+      ) : null}
+    </section>
+  );
+}
+
 function Column({
   id,
   title,
@@ -396,8 +579,12 @@ function Column({
   more,
   collapsible,
   pageSize,
+  pending,
+  batch,
+  onBatch,
   act,
   onOpen,
+  projectKey,
 }: {
   id: number;
   title: string;
@@ -409,6 +596,11 @@ function Column({
   collapsible?: boolean;
   /** Show this many first, and this many more each time asked: for a column that can be very long. */
   pageSize?: number;
+  /** The tickets waiting for approval, drawn as a group above the column's own tickets and left out of them. */
+  pending?: LoopTicket[];
+  batch?: LoopManyResult | undefined;
+  onBatch?: (result: LoopManyResult | undefined) => void;
+  projectKey: string;
   act: Act;
   onOpen: (identifier: string) => void;
 }) {
@@ -418,7 +610,9 @@ function Column({
   const visible = tickets.slice(0, shown);
   const count = (
     <span data-slot="loop-column-count">
-      {more === true ? `${tickets.length}+` : tickets.length}
+      {more === true
+        ? `${tickets.length + (pending?.length ?? 0)}+`
+        : tickets.length + (pending?.length ?? 0)}
     </span>
   );
   return (
@@ -451,9 +645,21 @@ function Column({
         )}
         {count}
       </header>
+      {open && pending !== undefined && (pending.length > 0 || batch !== undefined) ? (
+        <PendingGroup
+          projectKey={projectKey}
+          tickets={pending}
+          more={more === true}
+          outcome={batch}
+          onOutcome={onBatch ?? (() => {})}
+          onOpen={onOpen}
+        />
+      ) : null}
       {open ? (
         tickets.length === 0 ? (
-          <p data-slot="loop-column-empty">{t("loop.column.empty")}</p>
+          (pending?.length ?? 0) > 0 ? null : (
+            <p data-slot="loop-column-empty">{t("loop.column.empty")}</p>
+          )
         ) : (
           <ul data-slot="loop-tickets">
             {visible.map((ticket) => (
@@ -536,6 +742,8 @@ function Board({
   }, [request, projectKey, store, onOpen]);
   const [problem, setProblem] = useState<LoopActFailure | undefined>();
   const [version, setVersion] = useState(0);
+  // The result of the last batch stays here: the board is read again after it, and the group may be gone with it.
+  const [batch, setBatch] = useState<LoopManyResult | undefined>();
   // Returns the words of a failure (the approve dialog shows them inline); the other buttons show them on the board.
   const act: Act = async (ticket, action, confirmed) => {
     setProblem(undefined);
@@ -602,20 +810,29 @@ function Board({
       </div>
       {alert}
       <div data-slot="loop-columns">
-        {answer.columns.map((c) => (
-          <Column
-            key={c.id}
-            id={c.id}
-            title={c.name}
-            stateType={c.stateType}
-            tickets={c.tickets}
-            more={c.more}
-            {...(c.stateType === "backlog" ? { pageSize: BACKLOG_PAGE } : {})}
-            {...(c.stateType === "completed" ? { collapsible: true } : {})}
-            act={act}
-            onOpen={openTicket}
-          />
-        ))}
+        {answer.columns.map((c) => {
+          const waiting =
+            c.stateType === "backlog" ? c.tickets.filter((x) => x.pending !== undefined) : [];
+          return (
+            <Column
+              key={c.id}
+              id={c.id}
+              projectKey={projectKey}
+              title={c.name}
+              stateType={c.stateType}
+              tickets={
+                waiting.length > 0 ? c.tickets.filter((x) => x.pending === undefined) : c.tickets
+              }
+              pending={waiting}
+              {...(c.stateType === "backlog" ? { batch, onBatch: setBatch } : {})}
+              more={c.more}
+              {...(c.stateType === "backlog" ? { pageSize: BACKLOG_PAGE } : {})}
+              {...(c.stateType === "completed" ? { collapsible: true } : {})}
+              act={act}
+              onOpen={openTicket}
+            />
+          );
+        })}
       </div>
     </div>
   );

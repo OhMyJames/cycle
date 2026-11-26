@@ -174,6 +174,7 @@ test.skipIf(!ready)(
           "loopBoard",
           "loopTicket",
           "loopAct",
+          "loopActMany",
           "loopChat",
           "loopNotices",
           "loopProjects",
