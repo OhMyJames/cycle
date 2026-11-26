@@ -10,6 +10,7 @@ import type {
   LoopBoardAnswer,
   LoopChatFailure,
   LoopNotice,
+  LoopProjectInfo,
   LoopTicket,
   LoopTicketDetail,
 } from "../api.ts";
@@ -180,8 +181,8 @@ function Notices({
   notices,
   onOpen,
 }: {
-  notices: LoopNotice[];
-  onOpen: (notice: LoopNotice) => void;
+  notices: { projectKey: string; notice: LoopNotice }[];
+  onOpen: (projectKey: string, notice: LoopNotice) => void;
 }) {
   const { t } = useI18n();
   if (notices.length === 0) return null;
@@ -189,14 +190,18 @@ function Notices({
     <section data-slot="loop-notices" data-kind="loop-notices" aria-label={t("loop.notices")}>
       <h3 data-slot="loop-column-title">{t("loop.notices")}</h3>
       <ul data-slot="loop-tickets">
-        {notices.map((notice) => (
+        {notices.map(({ projectKey, notice }) => (
           <li
-            key={`${notice.kind}:${notice.identifier}`}
+            key={`${projectKey}:${notice.kind}:${notice.identifier}`}
             data-slot="loop-notice"
             data-notice={notice.kind}
           >
             <span data-slot="loop-ticket-id">{notice.identifier}</span>
-            <button type="button" data-slot="loop-ticket-title" onClick={() => onOpen(notice)}>
+            <button
+              type="button"
+              data-slot="loop-ticket-title"
+              onClick={() => onOpen(projectKey, notice)}
+            >
               {t(`loop.notice.${notice.kind}`)}
               {notice.kind === "blocked" && notice.reason !== "" ? `: ${notice.reason}` : ""}
             </button>
@@ -440,10 +445,8 @@ function Board({
     label: t("loop.reload"),
     onAction: () => {
       void store.loadLoopBoard(projectKey);
-      void store.loadLoopNotices(projectKey);
     },
   };
-  const notices = useAppState((s) => s.loop.notices[projectKey]);
   const request = useAppState((s) => s.loop.request);
   const open = openIdentifier;
   // A pressed notification asks for its ticket once: it is taken (cleared) here, so reopening the page does not repeat it.
@@ -520,15 +523,6 @@ function Board({
         </Button>
       </div>
       {alert}
-      {notices?.kind === "ok" ? (
-        <Notices
-          notices={notices.notices}
-          onOpen={(notice) => {
-            store.track("loop_notice_opened", { kind: notice.kind });
-            openTicket(notice.identifier);
-          }}
-        />
-      ) : null}
       <div data-slot="loop-columns">
         {answer.columns
           .filter((c) => c.stateType !== "completed")
@@ -563,6 +557,91 @@ function Board({
   );
 }
 
+const COLUMNS = ["doing", "todo", "backlog", "done"] as const;
+
+/** The Loop overview: what needs the person, then one row per Project with its tickets per column. */
+function Overview({
+  projects,
+  away,
+  onOpenProject,
+  onOpenTicket,
+}: {
+  projects: LoopProjectInfo[];
+  away: boolean;
+  onOpenProject: (projectKey: string) => void;
+  onOpenTicket: (projectKey: string, identifier: string) => void;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const boards = useAppState((s) => s.loop.boards);
+  const noticeAnswers = useAppState((s) => s.loop.notices);
+  const notices = projects.flatMap((p) => {
+    const answer = noticeAnswers[p.projectKey];
+    return answer?.kind === "ok"
+      ? answer.notices.map((notice) => ({ projectKey: p.projectKey, notice }))
+      : [];
+  });
+  return (
+    <div data-slot="loop-overview" data-kind="loop-overview">
+      <Notices
+        notices={notices}
+        onOpen={(projectKey, notice) => {
+          store.track("loop_notice_opened", { kind: notice.kind });
+          onOpenTicket(projectKey, notice.identifier);
+        }}
+      />
+      <section data-slot="loop-projects" aria-label={t("loop.projects")}>
+        <h3 data-slot="loop-column-title">{t("loop.projects")}</h3>
+        <ul data-slot="loop-project-list">
+          {projects.map((p) => {
+            const board = boards[p.projectKey];
+            return (
+              <li key={p.projectKey} data-slot="loop-project-row" data-project={p.projectKey}>
+                <button
+                  type="button"
+                  data-slot="loop-project-open"
+                  disabled={away}
+                  onClick={() => onOpenProject(p.projectKey)}
+                >
+                  <span data-slot="loop-project-name">{p.name}</span>
+                  <span data-slot="loop-repo">{p.repo.displayName}</span>
+                  {board === undefined || board === "loading" ? (
+                    <span data-slot="loop-repo">{away ? "" : t("loop.loading")}</span>
+                  ) : board.kind === "ok" ? (
+                    <span data-slot="loop-project-counts">
+                      {COLUMNS.filter((c) => board[c].length > 0).map((c) => (
+                        <span key={c} data-slot="loop-project-count" data-column={c}>
+                          {t(`loop.col.${c}`)} {board[c].length}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
+                </button>
+                {board !== undefined && board !== "loading" && board.kind !== "ok" ? (
+                  <span data-slot="loop-project-failed" data-kind="loop-project-failed">
+                    <span data-slot="loop-problem">
+                      {board.kind === "no_key"
+                        ? t("loop.noKey.title")
+                        : t("loop.unreachable.title")}
+                    </span>
+                    <Button
+                      data-variant="ghost"
+                      aria-label={`${t("loop.reload")} ${p.name}`}
+                      onClick={() => void store.loadLoopBoard(p.projectKey)}
+                    >
+                      {t("loop.reload")}
+                    </Button>
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
 export function LoopPage({
   view,
   onView,
@@ -586,13 +665,30 @@ export function LoopPage({
     void store.loadLoopProjects();
   }, [store]);
 
-  // The Project shown: the one asked for, else the first the server has.
+  // What is shown: the overview, or the Project asked for (when the server has it).
   const projectKey = viewProject(view);
-  const chosen = projects.find((p) => p.projectKey === projectKey) ?? projects[0];
+  const chosen = projects.find((p) => p.projectKey === projectKey);
   const chosenKey = chosen?.projectKey;
+  const onOverview = chosen === undefined;
+  const allKeys = projects.map((p) => p.projectKey).join("\n");
+
+  // Entering with nowhere remembered: the board when there is only one Project, else the overview.
+  const landing = view.at === "overview" && view.landing === true;
   useEffect(() => {
-    if (chosenKey !== undefined && connected === true) void store.loadLoopBoard(chosenKey);
-  }, [store, chosenKey, connected]);
+    if (!landing || connected !== true || projects.length === 0) return;
+    const only = projects.length === 1 ? projects[0] : undefined;
+    onView(
+      only !== undefined
+        ? { at: "project", projectKey: only.projectKey, tab: "kanban" }
+        : { at: "overview" },
+    );
+  }, [landing, connected, projects, onView]);
+
+  useEffect(() => {
+    if (connected !== true) return;
+    if (chosenKey !== undefined) void store.loadLoopBoard(chosenKey);
+    else for (const key of allKeys.split("\n")) if (key !== "") void store.loadLoopBoard(key);
+  }, [store, chosenKey, connected, allKeys]);
 
   // Sessions that wait on an answer are part of the Notices: they are read again when that set changes.
   const waiting = useAppState((s) =>
@@ -603,16 +699,18 @@ export function LoopPage({
       .sort()
       .join(),
   );
+  // The Notices are on the overview: every Project's, read when it opens, when that set changes, and every so often, so
+  // a new Blocked or escalated ticket shows while the page is open, not only after Read again.
   useEffect(() => {
-    if (chosenKey !== undefined && connected === true) void store.loadLoopNotices(chosenKey);
+    if (!onOverview || connected !== true) return;
+    const read = () => {
+      for (const key of allKeys.split("\n")) if (key !== "") void store.loadLoopNotices(key);
+    };
+    read();
     void waiting;
-  }, [store, chosenKey, connected, waiting]);
-  // A new Blocked or escalated ticket shows while the page is open, not only after Read again.
-  useEffect(() => {
-    if (chosenKey === undefined || connected !== true) return;
-    const timer = setInterval(() => void store.loadLoopNotices(chosenKey), NOTICES_REFRESH_MS);
+    const timer = setInterval(read, NOTICES_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [store, chosenKey, connected]);
+  }, [store, onOverview, connected, allKeys, waiting]);
   // A notification asked for a Project the server does not have, or whose board cannot be read: no Board will take
   // the request, and it would open an old ticket on a later visit, so it is dropped.
   const request = useAppState((s) => s.loop.request);
@@ -627,55 +725,60 @@ export function LoopPage({
   }, [store, request, requestedBoard, connected, projects]);
 
   const away = connected === false;
-  const sections: PageSection[] =
-    projects.length === 0
-      ? [
-          {
-            id: "projects",
-            label: t("loop.projects"),
-            content:
-              connected === undefined ? (
-                <StateBlock tone="loading" title={t("loop.loading")} />
-              ) : away ? null : (
-                <StateBlock
-                  tone="empty"
-                  title={t("loop.noProjects.title")}
-                  body={t("loop.noProjects.body")}
-                  action={{
-                    label: t("loop.reload"),
-                    onAction: () => void store.loadLoopProjects(),
-                  }}
-                />
-              ),
-          },
-        ]
-      : projects.map((p) => ({
-          id: p.projectKey,
-          label: p.name,
-          note: away ? t("loop.offline.note") : p.projectKey,
-          disabled: away,
-          heading: (
-            <>
-              {p.name} <span data-slot="loop-repo">{p.repo.displayName}</span>
-            </>
-          ),
-          content: (
-            <Board
-              projectKey={p.projectKey}
-              answer={loop.boards[p.projectKey]}
-              openIdentifier={
-                view.at === "ticket" && view.projectKey === p.projectKey
-                  ? view.identifier
-                  : undefined
-              }
-              onOpen={(identifier) =>
-                onView({ at: "ticket", projectKey: p.projectKey, identifier })
-              }
-              onBack={onBack}
-              onChatStarted={onClose}
-            />
-          ),
-        }));
+  const overview: PageSection = {
+    id: "overview",
+    label: t("loop.overview"),
+    content:
+      projects.length === 0 ? (
+        connected === undefined ? (
+          <StateBlock tone="loading" title={t("loop.loading")} />
+        ) : away ? null : (
+          <StateBlock
+            tone="empty"
+            title={t("loop.noProjects.title")}
+            body={t("loop.noProjects.body")}
+            action={{
+              label: t("loop.reload"),
+              onAction: () => void store.loadLoopProjects(),
+            }}
+          />
+        )
+      ) : (
+        <Overview
+          projects={projects}
+          away={away}
+          onOpenProject={(key) => onView({ at: "project", projectKey: key, tab: "kanban" })}
+          onOpenTicket={(key, identifier) => onView({ at: "ticket", projectKey: key, identifier })}
+        />
+      ),
+  };
+  const sections: PageSection[] = [
+    overview,
+    ...projects.map((p) => ({
+      id: p.projectKey,
+      group: t("loop.projects"),
+      label: p.name,
+      note: away ? t("loop.offline.note") : p.projectKey,
+      disabled: away,
+      heading: (
+        <>
+          {p.name} <span data-slot="loop-repo">{p.repo.displayName}</span>
+        </>
+      ),
+      content: (
+        <Board
+          projectKey={p.projectKey}
+          answer={loop.boards[p.projectKey]}
+          openIdentifier={
+            view.at === "ticket" && view.projectKey === p.projectKey ? view.identifier : undefined
+          }
+          onOpen={(identifier) => onView({ at: "ticket", projectKey: p.projectKey, identifier })}
+          onBack={onBack}
+          onChatStarted={onClose}
+        />
+      ),
+    })),
+  ];
 
   return (
     <PageLayout
@@ -698,8 +801,14 @@ export function LoopPage({
         </>
       }
       sections={sections}
-      value={chosen?.projectKey ?? "projects"}
-      onValueChange={(key) => onView({ at: "project", projectKey: key, tab: "kanban" })}
+      value={chosenKey ?? "overview"}
+      onValueChange={(key) =>
+        onView(
+          key === "overview"
+            ? { at: "overview" }
+            : { at: "project", projectKey: key, tab: "kanban" },
+        )
+      }
     />
   );
 }
