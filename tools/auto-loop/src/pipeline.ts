@@ -248,6 +248,9 @@ export class Pipeline {
       await store.event(issue.key, "preflight_rejected", { reasons: pre.reasons.length });
       return { result: { status: "rejected", key: issue.key, reasons: pre.reasons } };
     }
+    // Unreachable until the research flow lands (CYC-447 step 4): the research type is not in `allowedTypeIds` yet.
+    if (pre.kind === "research")
+      throw new Error(`${issue.key}: research runs are not wired up yet`);
 
     const book = CriteriaBook.fromSpecs(pre.specs);
     const run: RunRecord = {
@@ -372,6 +375,8 @@ export class Pipeline {
     }
     const pre = preflight(issue, config);
     if (!pre.ok) return { status: "rejected", key: issue.key, reasons: pre.reasons };
+    if (pre.kind === "research")
+      throw new Error(`${issue.key}: research runs are not wired up yet`);
     return { status: "would-take", key: issue.key, criteria: pre.specs.length };
   }
 

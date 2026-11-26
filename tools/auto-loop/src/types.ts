@@ -129,6 +129,18 @@ export type Config = {
   reviewEffort?: string;
   /** Read and write nothing in the tracker or the repository: print what would happen. */
   dryRun: boolean;
+  /**
+   * Research work items (CYC-447), or null when the Project has not turned them on. `backlogColumn` and `folderId`
+   * are where follow-up drafts and the report go; `readRoots` is what the read-only sessions may read besides their
+   * worktree.
+   */
+  research: {
+    typeId: number;
+    backlogColumn: number;
+    folderId: number;
+    readRoots: string[];
+    maxFollowups: number;
+  } | null;
 };
 
 /** Everything that is not per Project. `columns`, labels and type ids come from `resolveProject`, paths from the config file. */
@@ -168,6 +180,7 @@ export const defaultConfig = (
   qaAgent: "claude",
   reviewAgent: "claude",
   dryRun: false,
+  research: null,
   ...partial,
 });
 

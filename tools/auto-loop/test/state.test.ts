@@ -9,6 +9,10 @@ import {
   parseReviewVerdict,
   parseVerdict,
   qaBrief,
+  researchBrief,
+  researchContinueBrief,
+  researchFixBrief,
+  researchQaBrief,
   reviewBrief,
 } from "../src/prompts.ts";
 import { computeStats } from "../src/stats.ts";
@@ -151,6 +155,70 @@ test("the QA brief points at the files Dev resolved a merge conflict in", () => 
   expect(brief).toContain("merge conflict");
   expect(brief).toContain("- src/a.ts");
   expect(brief).toContain("- src/b.ts");
+});
+
+const researchIssue = issue({
+  key: "CYC-445",
+  title: "Measure worktrees",
+  description: "## 要回答的问题\n1. a?",
+});
+
+test("the research brief is read-only, names its bounds and limits, and the blocks the loop reads", () => {
+  const brief = researchBrief(researchIssue, ["a?", "b?"], {
+    readRoots: ["/repo", "/data/runs"],
+    maxFollowups: 4,
+    maxCriteria: 6,
+  });
+  expect(brief).toContain("CYC-445: Measure worktrees");
+  expect(brief).toContain("READ-ONLY");
+  expect(brief).toContain("do not use MCP tools");
+  expect(brief).toContain("- /repo\n- /data/runs");
+  expect(brief).toContain("1. a?\n2. b?");
+  expect(brief).toContain("## 要回答的问题\n1. a?");
+  expect(brief).toContain("「未验证」");
+  expect(brief).toContain("never as `NAME=value`");
+  expect(brief).toContain("「背景与证据」, 「范围」, 「非目标」, 「涉及面」 and 「验收标准」");
+  expect(brief).toContain(
+    "「现象」, 「复现步骤」, 「预期与实际」, 「环境与版本」, 「严重度」 and 「验收标准」",
+  );
+  expect(brief).toContain("at most 6 items");
+  expect(brief).toContain("bun run check, bun run test:browser");
+  expect(brief).toContain("zero to 4 <followup> blocks");
+  expect(brief).toContain("at most 600 characters");
+  expect(brief).toMatch(
+    /<summary>[\s\S]*<report>[\s\S]*「## 问题 N」[\s\S]*<followup type="Feature"/,
+  );
+});
+
+test("the research fix and continue briefs ask for the complete blocks again", () => {
+  const fix = researchFixBrief(2, "- The summary is 700 characters long", 5);
+  expect(fix).toContain("fix round 2");
+  expect(fix).toContain("The summary is 700 characters long");
+  expect(fix).toContain("complete blocks again");
+  expect(fix).toContain("zero to 5 <followup> blocks");
+  const byPerson = researchContinueBrief(researchIssue, true, 5);
+  expect(byPerson).toContain("A person looked at CYC-445");
+  expect(byPerson).toContain("## 要回答的问题\n1. a?");
+  expect(researchContinueBrief(researchIssue, false, 5)).toContain("The loop was restarted");
+});
+
+test("the research QA brief carries the report and drafts, the four checks, and the verdict block", () => {
+  const brief = researchQaBrief(researchIssue, ["a?"], {
+    summary: "能删一半。",
+    report: "## 问题 1\n答。",
+    followups: [{ type: "Feature", title: "Delete stale worktrees", body: "## 背景与证据\nx" }],
+  });
+  expect(brief).toContain("independent reviewer of the research for work item CYC-445");
+  expect(brief).toContain("READ-ONLY");
+  expect(brief).toContain("能删一半。");
+  expect(brief).toContain("## 问题 1\n答。");
+  expect(brief).toContain("Follow-up 1: Feature — Delete stale worktrees");
+  expect(brief).toContain("「未验证」");
+  expect(brief).toContain("「方法与范围」");
+  expect(brief).toContain("at least three pieces of evidence");
+  expect(brief).toContain('"What I checked"');
+  expect(brief).toContain("<verdict>");
+  expect(brief).not.toContain("code-review");
 });
 
 test("the PR review brief is read-only, references REVIEW.md, and requires one of three structured conclusions", () => {

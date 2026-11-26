@@ -25,7 +25,7 @@ export type CriterionSpec = { text: string; verify: string[][] };
 export type ParsedCriterion = { text: string; commands: string[] };
 
 const HEADING = /^(#{1,6})\s*(验收标准|验收|acceptance criteria|acceptance)(?!\w)/i;
-const ITEM = /^([ \t]*)(?:\d+[.)]|[-*+])\s+(?:\[[ xX]\]\s+)?(.+)$/;
+const ITEM = /^([ \t]*)(\d+[.)]|[-*+])\s+(?:\[[ xX]\]\s+)?(.+)$/;
 const MARKER = /(?:验证|verify)\s*[:：]/i;
 
 const indentOf = (prefix: string): number => {
@@ -36,12 +36,17 @@ const indentOf = (prefix: string): number => {
   return width;
 };
 
-/** The criteria in the work item's description: the list items under a heading such as `## 验收标准`. */
-export const parseCriteria = (description: string): ParsedCriterion[] => {
+export type ListItem = { text: string; numbered: boolean };
+
+/**
+ * The top-level list items under the first heading `heading` matches, up to the next heading. Deeper items and
+ * indented lines are folded into the item above them.
+ */
+export const listUnder = (description: string, heading: RegExp): ListItem[] => {
   const lines = description.split("\n");
-  const start = lines.findIndex((line) => HEADING.test(line.trim()));
+  const start = lines.findIndex((line) => heading.test(line.trim()));
   if (start === -1) return [];
-  const items: string[] = [];
+  const items: ListItem[] = [];
   let baseIndent: number | undefined;
   for (const line of lines.slice(start + 1)) {
     if (/^#{1,6}\s/.test(line.trim())) break;
@@ -50,21 +55,26 @@ export const parseCriteria = (description: string): ParsedCriterion[] => {
       const indent = indentOf(item[1] ?? "");
       if (baseIndent === undefined || indent <= baseIndent) {
         baseIndent ??= indent;
-        items.push((item[2] ?? "").trim());
+        items.push({ text: (item[3] ?? "").trim(), numbered: /^\d/.test(item[2] ?? "") });
         continue;
       }
     }
-    if (line.trim() !== "" && /^\s+/.test(line) && items.length > 0) {
-      items[items.length - 1] += ` ${line.trim()}`;
+    const last = items.at(-1);
+    if (line.trim() !== "" && /^\s+/.test(line) && last !== undefined) {
+      last.text += ` ${line.trim()}`;
     }
   }
-  return items.map((text) => {
+  return items;
+};
+
+/** The criteria in the work item's description: the list items under a heading such as `## 验收标准`. */
+export const parseCriteria = (description: string): ParsedCriterion[] =>
+  listUnder(description, HEADING).map(({ text }) => {
     const marker = MARKER.exec(text);
     const rest = marker === null ? "" : text.slice(marker.index + marker[0].length);
     const commands = Array.from(rest.matchAll(/`([^`]+)`/g), (m) => (m[1] as string).trim());
     return { text, commands };
   });
-};
 
 const SAFE_WORD = /^[\w.:/@=+-]+$/;
 const SAFE_PATH = /^(?!-)(?!\/)[\w./-]+$/;
