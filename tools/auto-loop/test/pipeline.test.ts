@@ -1963,12 +1963,18 @@ test("a replaced Dev session is made with the Dev model and effort again", async
 
 // ---- CYC-448: measured disk use of bun install ----
 
-const dfExec = (s: ReturnType<typeof setup>, free: number[], failDf = false) => {
+const dfExec = (
+  s: ReturnType<typeof setup>,
+  free: (number | "bad" | "exit1")[],
+  failDf = false,
+) => {
   const base = makeExec(s.world);
   return async (argv: string[], o: Parameters<typeof base>[1]) => {
     if (argv[0] === "df") {
       if (failDf) throw new Error("spawn df ENOENT");
       const n = free.length > 1 ? free.shift() : free[0];
+      if (n === "exit1") return { code: 1, output: "", timedOut: false };
+      if (n === "bad") return { code: 0, output: "garbage\n", timedOut: false };
       return {
         code: 0,
         output: `Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s1 1000 1 ${n} 1% /secret/mount\n`,
@@ -2008,4 +2014,57 @@ test("when df is unavailable, install_measured says so and bun install and the r
   expect(s.world.calls.some((c) => c === "bun install")).toBe(true);
   expect((await s.store.events()).some((e) => e.kind === "dev_session")).toBe(true);
   expect(s.tracker.moves.at(-1)).not.toBe("CYC-1:blocked");
+});
+
+const installEvents = async (s: ReturnType<typeof setup>) =>
+  (await s.store.events()).filter((e) => e.kind === "install_measured");
+
+test.each([
+  ["df exits non-zero", ["exit1"]],
+  ["df output is unparseable", ["bad"]],
+  ["only the first reading works", [5000, "bad"]],
+  ["free space grew during the install", [3000, 5000]],
+] as const)(
+  "install_measured is measured:false when %s, and the run carries on",
+  async (_n, free) => {
+    const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+    await withExec(s, dfExec(s, [...free])).step();
+    expect(await installEvents(s)).toMatchObject([{ measured: false }]);
+    expect(s.world.calls).toContain("bun install");
+  },
+);
+
+test("a device name with spaces does not shift the Available column", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  const base = makeExec(s.world);
+  const free = [900, 400];
+  const exec: Exec = async (argv, o) =>
+    argv[0] === "df"
+      ? {
+          code: 0,
+          output: `Filesystem 1024-blocks Used Available Capacity Mounted on\nmy disk 1000 1 ${free.shift()} 1% /Volumes/My Disk\n`,
+          timedOut: false,
+        }
+      : base(argv, o);
+  await withExec(s, exec).step();
+  expect(await installEvents(s)).toMatchObject([{ measured: true, usedKb: 500 }]);
+});
+
+test("a failed bun install writes no install_measured event", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] }, {}, ["bun install"]);
+  await withExec(s, dfExec(s, [5000, 3000])).step();
+  expect(await installEvents(s)).toEqual([]);
+});
+
+test("resuming on an existing worktree reinstalls but does not measure (bun install is a no-op there)", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [] }, {}, ["bun install"]);
+  expect((await w.pipeline.step()).status).toBe("blocked");
+  expect(await installEvents(w)).toEqual([]);
+  const installs = w.world.calls.filter((c) => c === "bun install").length;
+  w.world.fail.clear();
+  w.sessions.script.qa.push(done(PASS));
+  (w.tracker.issues[0] as Issue).columnId = 22;
+  await withExec(w, dfExec(w, [5000, 4999])).step();
+  expect(w.world.calls.filter((c) => c === "bun install").length).toBeGreaterThan(installs);
+  expect(await installEvents(w)).toEqual([]);
 });
