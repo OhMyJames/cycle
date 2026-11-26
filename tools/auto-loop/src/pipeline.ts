@@ -1085,13 +1085,51 @@ export class Pipeline {
     }
     // A worktree made now has no node_modules.
     worktree = this.#need(worktree === "" ? undefined : worktree);
+    const before = await this.#freeKb(worktree);
     const installed = await this.#d.exec(["bun", "install"], {
       cwd: worktree,
       env: verifyEnv(this.#d.env),
       timeoutMs: config.commandTimeoutMs,
     });
     if (installed.code !== 0) throw new Blocked(`bun install 失败：${tail(installed.output)}`);
+    await this.#recordInstall(run.key, worktree, before);
     await save({ phase: "dev" });
+  }
+
+  /** Free space of the volume holding `dir`, in 1 KiB blocks (`df -k`); undefined when it cannot be read. */
+  async #freeKb(dir: string): Promise<number | undefined> {
+    try {
+      const out = await this.#d.exec(["df", "-k", dir], {
+        cwd: dir,
+        env: verifyEnv(this.#d.env),
+        timeoutMs: 10_000,
+      });
+      if (out.code !== 0) return undefined;
+      const row = out.output.trim().split("\n").at(-1)?.trim().split(/\s+/);
+      const free = Number(row?.[3]);
+      return Number.isSafeInteger(free) && free >= 0 ? free : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** CYC-448: the volume's free-space drop across `bun install`. Numbers only; a failure never blocks the run. */
+  async #recordInstall(run: string, dir: string, before: number | undefined): Promise<void> {
+    try {
+      const after = before === undefined ? undefined : await this.#freeKb(dir);
+      if (before === undefined || after === undefined) {
+        await this.#d.store.event(run, "install_measured", { measured: false });
+        return;
+      }
+      await this.#d.store.event(run, "install_measured", {
+        measured: true,
+        freeKbBefore: before,
+        freeKbAfter: after,
+        usedKb: before - after,
+      });
+    } catch {
+      // Measuring is advisory.
+    }
   }
 
   // ---- research (CYC-447) ----

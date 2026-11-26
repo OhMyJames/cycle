@@ -142,3 +142,12 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 - 重试用完仍是网络错误：不转 Blocked、不评论、不移列，这次 `step()` 返回 `network_wait`，记一条 `network_down` 事件。run 留在原阶段，Loop 等一个间隔（`--interval`）后再 `step()`；续跑规则会先接着做这张单。网络一直不通时每个间隔都会记一条 `network_down`，没有上限。
 - 已知的取舍：交付阶段（`delivering`）等待后按续跑规则回到 verify 再走 QA；评审阶段等待后评审会重来；`--workers N` 时等待期间别的 worker 仍可领新单；`--once` 遇到 `network_wait` 就以该结果结束。
 - itsaplan 调用和 agent 会话的断连不在这里处理。
+
+## 安装依赖的真实磁盘占用（CYC-448）
+
+`du` 量出每个 worktree 的 `node_modules` 约 1.4G，但 macOS APFS 上 bun 可能用 clonefile，`du` 会把共享块重复计算；inode 不同且 links=1 既符合克隆也符合真复制，只读手段分不出来。所以改成测卷：
+
+- 方法：`bun install` 前后各跑一次 `df -k <worktree>`，取"可用块数"（1 KiB 为单位），差值写进一条 `install_measured` 事件：`measured`、`freeKbBefore`、`freeKbAfter`、`usedKb`。事件里只有数字，没有路径和命令输出。
+- 测量失败（`df` 不可用、输出读不出）只记 `{ measured: false }`，不阻断 `bun install` 和后续流程。
+- 局限：差值是整个卷的变化，同卷上有别的写入时会有噪声；看多次的 `usedKb` 取低值。
+- 结论：测量结果要在 Loop 实际跑过几张单之后，从 `events.jsonl` 里读 `usedKb`。`usedKb` 明显小于 `du` 的 1.4G，说明已经在克隆；接近 1.4G，才把 `bunfig.toml` 的 `[install] backend` 固定为 `clonefile`（bun 在 macOS 上默认就是 clonefile，固定只在默认被改动或回退到复制时才有意义）。在拿到数据前不改 `bunfig.toml`，也不做 worktree 共享 `node_modules`。

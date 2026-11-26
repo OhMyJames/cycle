@@ -6,7 +6,13 @@ import type { Tuning } from "../src/config-file.ts";
 import { CriteriaBook } from "../src/criteria.ts";
 import { type Deps, Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
-import { type ExecResult, type Issue, SessionLost, type TurnResult } from "../src/types.ts";
+import {
+  type Exec,
+  type ExecResult,
+  type Issue,
+  SessionLost,
+  type TurnResult,
+} from "../src/types.ts";
 import {
   CHECKED,
   type CiResponse,
@@ -1953,4 +1959,53 @@ test("a replaced Dev session is made with the Dev model and effort again", async
   const devs = sessions.inputs.filter((i) => i.role === "dev");
   expect(devs.length).toBe(2);
   for (const d of devs) expect(d).toEqual({ role: "dev", model: "dm", effort: "de" });
+});
+
+// ---- CYC-448: measured disk use of bun install ----
+
+const dfExec = (s: ReturnType<typeof setup>, free: number[], failDf = false) => {
+  const base = makeExec(s.world);
+  return async (argv: string[], o: Parameters<typeof base>[1]) => {
+    if (argv[0] === "df") {
+      if (failDf) throw new Error("spawn df ENOENT");
+      const n = free.length > 1 ? free.shift() : free[0];
+      return {
+        code: 0,
+        output: `Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s1 1000 1 ${n} 1% /secret/mount\n`,
+        timedOut: false,
+      };
+    }
+    return base(argv, o);
+  };
+};
+
+const withExec = (s: ReturnType<typeof setup>, exec: Exec) =>
+  new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: s.tracker,
+    sessions: s.sessions,
+    exec,
+    store: s.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
+    sleep: async () => {},
+  });
+
+test("the free-space drop across bun install is recorded as install_measured, numbers only", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  await withExec(s, dfExec(s, [5000, 3500])).step();
+  const ev = (await s.store.events()).find((e) => e.kind === "install_measured");
+  expect(ev).toMatchObject({ measured: true, freeKbBefore: 5000, freeKbAfter: 3500, usedKb: 1500 });
+  expect(JSON.stringify(ev)).not.toContain("/secret");
+});
+
+test("when df is unavailable, install_measured says so and bun install and the run carry on", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+  await withExec(s, dfExec(s, [1], true)).step();
+  const ev = (await s.store.events()).find((e) => e.kind === "install_measured");
+  expect(ev).toMatchObject({ measured: false });
+  expect(s.world.calls.some((c) => c === "bun install")).toBe(true);
+  expect((await s.store.events()).some((e) => e.kind === "dev_session")).toBe(true);
+  expect(s.tracker.moves.at(-1)).not.toBe("CYC-1:blocked");
 });
