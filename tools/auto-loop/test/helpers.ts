@@ -188,7 +188,7 @@ export class FakeSessions implements Sessions {
   created: string[] = [];
   inputs: { role: SessionRole; model: string | undefined; effort: string | undefined }[] = [];
   turns: string[] = [];
-  prompts: { sessionId: string; role: SessionRole; prompt: string }[] = [];
+  prompts: { sessionId: string; role: SessionRole; prompt: string; readRoots?: string[] }[] = [];
   deleted = 0;
   readonly script: {
     dev: (TurnResult | Error)[];
@@ -225,13 +225,18 @@ export class FakeSessions implements Sessions {
     this.created.push(id);
     return {
       sessionId: id,
-      cwd: input.role === "dev" ? WT : input.cwd,
+      cwd: input.role === "dev" || input.role === "research" ? WT : input.cwd,
       branch: "worktree-auto/cyc-1",
     };
   }
-  async turn(sessionId: string, prompt: string, ctx: { role: SessionRole }) {
+  async turn(sessionId: string, prompt: string, ctx: { role: SessionRole; readRoots?: string[] }) {
     this.turns.push(`${sessionId}: ${prompt.slice(0, 30)}`);
-    this.prompts.push({ sessionId, role: ctx.role, prompt });
+    this.prompts.push({
+      sessionId,
+      role: ctx.role,
+      prompt,
+      ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
+    });
     const next = this.script[ctx.role].shift();
     if (next === undefined) throw new Error(`no scripted ${ctx.role} turn`);
     if (next instanceof Error) throw next;

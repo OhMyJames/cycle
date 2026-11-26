@@ -1130,6 +1130,8 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
+    kind: "dev",
+    research: null,
     startedAt: "2026-11-25T00:00:00.000Z",
     updatedAt: "2026-11-25T00:00:00.000Z",
   });
@@ -1305,6 +1307,8 @@ const doneRun = async (s: ReturnType<typeof setup>) => {
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
+    kind: "dev",
+    research: null,
     startedAt: "2026-11-25T00:00:00.000Z",
     updatedAt: "2026-11-25T00:00:00.000Z",
   });
@@ -1423,6 +1427,8 @@ test("two steps at once: only one goes on with an unfinished run", async () => {
     findings: null,
     cleanedAt: null,
     cleanupNote: null,
+    kind: "dev",
+    research: null,
     startedAt: "2026-11-24T00:00:00Z",
     updatedAt: "2026-11-24T00:00:00Z",
   });
