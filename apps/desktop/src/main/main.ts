@@ -154,7 +154,15 @@ const trackerUrl = (custom: string | undefined): string => {
 };
 
 /** What the build recorded about itself (`package`), or nothing in a run from source. */
-const buildInfo = (): { version: string; posthogKey?: string; posthogHost?: string } | undefined =>
+const buildInfo = ():
+  | {
+      version: string;
+      shell?: string;
+      uiVersion?: number;
+      posthogKey?: string;
+      posthogHost?: string;
+    }
+  | undefined =>
   packaged ? JSON.parse(readFileSync(join(here, "..", BUILD_FILE), "utf8")) : undefined;
 
 const localRelease = (url: string | undefined) => {
