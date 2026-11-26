@@ -343,16 +343,19 @@ export class Pipeline {
   }
 
   /**
-   * Before choosing, removes the worktree and local branch of every run whose work item is Done and whose PR is
-   * merged. Anything else is left alone; a worktree with uncommitted changes is left for a person (CYC-379).
-   * A failure here never stops the loop from taking work.
+   * Before choosing, tidies the worktrees of runs that are over or stuck (CYC-379, CYC-449):
+   * - a work item in Done whose PR is merged, or one in Canceled: the worktree and local branch are removed. Never
+   *   forced; a worktree with uncommitted changes is left for a person, with one event;
+   * - Done but the PR closed without merging: one `cleanup_skipped_unmerged` event, nothing removed;
+   * - Blocked for longer than `blockedReminderDays`: one `blocked_stale` event, nothing removed.
+   * A run another step is on is not touched. A failure here never stops the loop from taking work.
    */
   async #cleanup(): Promise<void> {
     const { store, log } = this.#d;
     for (const run of await store.all()) {
-      if (run.phase !== "done" || run.cleanedAt !== null) continue;
-      // A research run never had a pull request: its work item in Done is all there is to wait for.
-      if (run.worktree === null || (run.kind !== "research" && run.prUrl === null)) continue;
+      if (run.cleanedAt !== null || run.worktree === null) continue;
+      if (run.phase !== "done" && run.phase !== "blocked") continue;
+      if (this.#active.has(run.key)) continue;
       try {
         await this.#cleanupRun(run, run.worktree);
       } catch (error) {
@@ -364,10 +367,10 @@ export class Pipeline {
   }
 
   async #cleanupRun(run: RunRecord, worktree: string): Promise<void> {
-    const { config, tracker, store, clock } = this.#d;
-    const note = async (kind: string) => {
+    const { config, tracker, store } = this.#d;
+    const note = async (kind: string, data: Record<string, string | number | boolean> = {}) => {
       if (run.cleanupNote === kind) return;
-      await store.event(run.key, kind);
+      await store.event(run.key, kind, data);
       await store.save({ ...run, cleanupNote: kind });
     };
     // Only the work item's own worktree: `.../auto/cyc-<n>`.
@@ -375,18 +378,43 @@ export class Pipeline {
     if (!worktree.replace(/\/+$/, "").endsWith(own)) return;
 
     const issue = await tracker.get(run.issueNumber);
+    if (issue.columnId === config.columns.canceled)
+      return this.#removeWorktree(run, worktree, note);
+
+    if (run.phase === "blocked") {
+      const days = config.blockedReminderDays;
+      if (days <= 0) return;
+      const since = Date.parse(run.updatedAt);
+      const waited = Math.floor((this.#d.clock.now().getTime() - since) / 86_400_000);
+      if (Number.isNaN(since) || waited < days) return;
+      return note("blocked_stale", { days: waited });
+    }
+
     if (issue.columnId !== config.columns.done) return;
+    // A research run never had a pull request: its work item in Done is all there is to wait for.
     if (run.kind !== "research") {
+      if (run.prUrl === null) return;
       const read = await readPrState({
-        prRef: run.prUrl ?? "",
+        prRef: run.prUrl,
         exec: this.#d.exec,
         cwd: config.repoRoot,
         env: this.#d.env,
         timeoutMs: config.commandTimeoutMs,
       });
-      if (!read.ok || read.state !== "MERGED") return;
+      if (!read.ok) return;
+      if (read.state === "CLOSED") return note("cleanup_skipped_unmerged");
+      if (read.state !== "MERGED") return;
     }
+    return this.#removeWorktree(run, worktree, note);
+  }
 
+  /** The safe removal shared by Done and Canceled: no --force, dirty means an event for a person. */
+  async #removeWorktree(
+    run: RunRecord,
+    worktree: string,
+    note: (kind: string) => Promise<void>,
+  ): Promise<void> {
+    const { config, store, clock } = this.#d;
     const status = await this.#git(["status", "--porcelain"], worktree);
     if (status.code !== 0) return note("cleanup_failed");
     if (status.output.trim() !== "") return note("cleanup_skipped_dirty");
@@ -461,6 +489,7 @@ export class Pipeline {
         resolvedFiles: [],
         blockedReason: null,
         resumeFrom: null,
+        cleanupNote: null,
       };
       current = await store.save(current);
       await tracker.move(issue, "inProgress");

@@ -35,6 +35,7 @@ export const TuningSchema = z
     mergeTimeoutMinutes: whole(1, 240),
     turnTimeoutMinutes: whole(1, 240),
     commandTimeoutMinutes: whole(1, 240),
+    blockedReminderDays: whole(0, 365),
   })
   .partial()
   .strict();
@@ -51,6 +52,7 @@ export const tuningToConfig = (t: Tuning): Partial<Config> => {
     "maxInterruptRetries",
     "maxQaRetries",
     "maxNetworkRetries",
+    "blockedReminderDays",
   ] as const) {
     if (t[name] !== undefined) out[name] = t[name];
   }

@@ -1364,6 +1364,87 @@ test("a worktree with uncommitted changes is kept and an event says so, once", a
   expect((await s.store.load("CYC-1"))?.cleanedAt).toBeNull();
 });
 
+// ---- Canceled, closed PR and long-Blocked runs (CYC-449) ----
+
+const kindsOf = async (s: ReturnType<typeof setup>) => (await s.store.events()).map((e) => e.kind);
+
+test("a Canceled work item with a clean worktree loses worktree and local branches", async () => {
+  const s = setup([ready({ columnId: 25 })], { dev: [], qa: [] });
+  await doneRun(s);
+  await s.pipeline.step();
+  expect(removals(s)).toEqual([
+    `git worktree remove ${WT}`,
+    "git branch -D worktree-auto/cyc-1",
+    "git branch -D auto/cyc-1",
+  ]);
+  expect((await s.store.load("CYC-1"))?.cleanedAt).not.toBeNull();
+  expect(await kindsOf(s)).toContain("cleaned");
+});
+
+test("a Canceled run that was Blocked is cleaned too", async () => {
+  const s = setup([ready({ columnId: 25 })], { dev: [], qa: [] });
+  await doneRun(s);
+  const run = await s.store.load("CYC-1");
+  if (run === undefined) throw new Error("no run");
+  await s.store.save({ ...run, phase: "blocked", prUrl: null });
+  await s.pipeline.step();
+  expect(removals(s)).toHaveLength(3);
+  expect(await kindsOf(s)).toContain("cleaned");
+});
+
+test("a Canceled work item with uncommitted changes is kept, one event", async () => {
+  const s = setup([ready({ columnId: 25 })], { dev: [], qa: [] });
+  s.world.dirty = true;
+  await doneRun(s);
+  await s.pipeline.step();
+  await s.pipeline.step();
+  expect(removals(s)).toEqual([]);
+  expect((await kindsOf(s)).filter((k) => k === "cleanup_skipped_dirty")).toHaveLength(1);
+  expect((await s.store.load("CYC-1"))?.cleanedAt).toBeNull();
+});
+
+test("Done with the PR closed unmerged: one event, nothing removed", async () => {
+  const s = setup([ready({ columnId: 24 })], { dev: [], qa: [] });
+  s.world.prState = "CLOSED";
+  await doneRun(s);
+  await s.pipeline.step();
+  await s.pipeline.step();
+  expect(removals(s)).toEqual([]);
+  expect((await kindsOf(s)).filter((k) => k === "cleanup_skipped_unmerged")).toHaveLength(1);
+  expect((await s.store.load("CYC-1"))?.cleanedAt).toBeNull();
+});
+
+const blockedRun = async (s: ReturnType<typeof setup>) => {
+  await doneRun(s);
+  const run = await s.store.load("CYC-1");
+  if (run === undefined) throw new Error("no run");
+  await s.store.save({ ...run, phase: "blocked", blockedReason: "x", resumeFrom: "dev" });
+};
+
+test("a run Blocked past the limit gets one reminder and keeps its worktree", async () => {
+  const later = { now: () => new Date("2026-12-05T00:00:00Z") };
+  const s = setup([ready({ columnId: 35 })], { dev: [], qa: [] }, {}, [], {}, { clock: later });
+  await blockedRun(s);
+  await s.pipeline.step();
+  await s.pipeline.step();
+  expect(removals(s)).toEqual([]);
+  expect((await kindsOf(s)).filter((k) => k === "blocked_stale")).toHaveLength(1);
+});
+
+test("a run Blocked within the limit, or with the reminder off, gets none", async () => {
+  const later = { now: () => new Date("2026-12-05T00:00:00Z") };
+  for (const [over, clock] of [
+    [{}, { now: () => new Date("2026-11-27T00:00:00Z") }],
+    [{ blockedReminderDays: 0 }, later],
+  ] as const) {
+    const s = setup([ready({ columnId: 35 })], { dev: [], qa: [] }, over, [], {}, { clock });
+    await blockedRun(s);
+    await s.pipeline.step();
+    expect(await kindsOf(s)).not.toContain("blocked_stale");
+    expect(removals(s)).toEqual([]);
+  }
+});
+
 // ---- concurrent steps (CYC-410) ----
 
 const gate = () => {
