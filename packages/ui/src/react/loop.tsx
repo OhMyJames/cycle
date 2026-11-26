@@ -8,6 +8,7 @@ import type {
   LoopActFailure,
   LoopAction,
   LoopBoardAnswer,
+  LoopChatFailure,
   LoopNotice,
   LoopTicket,
   LoopTicketDetail,
@@ -104,6 +105,75 @@ function Ticket({
   );
 }
 
+/** What the person can do with an agent on this ticket: start a conversation, or only look when Loop has it. */
+function TicketChat({
+  projectKey,
+  ticket,
+  onStarted,
+}: {
+  projectKey: string;
+  ticket: LoopTicketDetail;
+  onStarted: () => void;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<LoopChatFailure | undefined>();
+  const [orphan, setOrphan] = useState<{ locationId: string; sessionId: string } | undefined>();
+  if (ticket.chat === "none") return null;
+  if (ticket.chat === "watch")
+    return (
+      <p data-slot="loop-chat-note" data-kind="loop-watch">
+        {t("loop.chat.watch")}
+      </p>
+    );
+  const start = async () => {
+    setBusy(true);
+    setFailure(undefined);
+    setOrphan(undefined);
+    const result = await store.chatAboutLoopTicket(projectKey, ticket.identifier);
+    setBusy(false);
+    if (result.kind === "failed") {
+      setFailure(result.reason);
+      if (result.sessionId !== undefined && result.locationId !== undefined)
+        setOrphan({ locationId: result.locationId, sessionId: result.sessionId });
+      return;
+    }
+    onStarted();
+    await store.selectSession(result.locationId, result.sessionId);
+  };
+  return (
+    <span data-slot="loop-chat">
+      <Button
+        data-variant="ghost"
+        data-kind="loop-chat"
+        disabled={busy}
+        aria-label={`${t("loop.chat.start")} ${ticket.identifier}`}
+        onClick={() => void start()}
+      >
+        {t("loop.chat.start")}
+      </Button>
+      {failure !== undefined ? (
+        <p data-slot="loop-problem" data-kind="loop-chat-failure" role="alert">
+          {t(`loop.chat.fail.${failure}`)}
+        </p>
+      ) : null}
+      {orphan !== undefined ? (
+        <Button
+          data-variant="ghost"
+          data-kind="loop-chat-open"
+          onClick={() => {
+            onStarted();
+            void store.selectSession(orphan.locationId, orphan.sessionId);
+          }}
+        >
+          {t("loop.chat.openMade")}
+        </Button>
+      ) : null}
+    </span>
+  );
+}
+
 /** What needs a person, most urgent first. Each opens its ticket's page, where the session is joined. */
 function Notices({
   notices,
@@ -170,12 +240,14 @@ function TicketPage({
   identifier,
   act,
   onBack,
+  onChatStarted,
   problem,
 }: {
   projectKey: string;
   identifier: string;
   act: Act;
   onBack: () => void;
+  onChatStarted: () => void;
   problem: ReactNode;
 }) {
   const { t } = useI18n();
@@ -219,6 +291,7 @@ function TicketPage({
             {ticket.priority !== null ? ` · ${ticket.priority}` : ""}
           </span>
           <TicketActions ticket={ticket} act={act} />
+          <TicketChat projectKey={projectKey} ticket={ticket} onStarted={onChatStarted} />
           {ticket.attention !== undefined || waitingOn(ticket.identifier) ? (
             <JoinSession identifier={ticket.identifier} session={ticket.attention?.session} />
           ) : null}
@@ -342,9 +415,11 @@ function Column({
 function Board({
   projectKey,
   answer,
+  onChatStarted,
 }: {
   projectKey: string;
   answer: LoopBoardAnswer | "loading" | undefined;
+  onChatStarted: () => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -415,6 +490,7 @@ function Board({
         projectKey={projectKey}
         identifier={open}
         act={act}
+        onChatStarted={onChatStarted}
         onBack={() => {
           setProblem(undefined);
           setOpen(undefined);
@@ -568,7 +644,13 @@ export function LoopPage({
               {p.name} <span data-slot="loop-repo">{p.repo.displayName}</span>
             </>
           ),
-          content: <Board projectKey={p.projectKey} answer={loop.boards[p.projectKey]} />,
+          content: (
+            <Board
+              projectKey={p.projectKey}
+              answer={loop.boards[p.projectKey]}
+              onChatStarted={onClose}
+            />
+          ),
         }));
 
   return (

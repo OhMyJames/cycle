@@ -1297,6 +1297,11 @@ export type AppApi = {
   /** What needs a person in a Project: Blocked tickets, escalated reviews, sessions waiting on an answer (§17). */
   loopNotices(projectKey: string): Promise<LoopNoticesAnswer>;
   /**
+   * Opens a conversation with an agent about a Backlog or Todo ticket (CYC-389): main reads the ticket again, takes the
+   * default model of the agent, makes the session with the ticket's number in its first message.
+   */
+  loopChat(projectKey: string, identifier: string): Promise<LoopChatResult>;
+  /**
    * Changes one ticket's state with the person's own key. `approve` writes nothing unless `confirmed` is true: main
    * refuses it, whatever the page did. Never throws for a failed write: the reason comes back.
    */
@@ -1329,7 +1334,30 @@ export type LoopTicket = {
   column: string;
   /** The buttons this ticket gets, from its column and label (main decides; the page only draws them). */
   actions: LoopAction[];
+  /**
+   * What the person can do with an agent here (main decides from the column): `new` a conversation about it (Backlog,
+   * Todo); `watch` only look, as In Progress is taken to be Loop's (a ticket Loop left there when it died is too: CYC-390
+   * corrects it); `none` neither.
+   */
+  chat: LoopChat;
 };
+
+export type LoopChat = "new" | "watch" | "none";
+
+/** Why a conversation was not made: fixed words. `needs_model`: the agent's default model is not set (Settings). */
+export type LoopChatFailure =
+  | "needs_model"
+  | "not_allowed"
+  | "no_key"
+  | "offline"
+  | "refused"
+  | "failed"
+  | "no_folder"
+  | "auth_required";
+export type LoopChatResult =
+  | { kind: "started"; locationId: string; sessionId: string }
+  /** `sessionId`: the session was made but its first message did not go; it can be opened. */
+  | { kind: "failed"; reason: LoopChatFailure; sessionId?: string; locationId?: string };
 
 /** `approve`: Backlog to Todo with `auto`. `to_backlog`: back to Backlog, `auto` off. `to_todo`: back to Todo. */
 export type LoopAction = "approve" | "to_backlog" | "to_todo";
@@ -1516,6 +1544,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   loopBoard: true,
   loopTicket: true,
   loopAct: true,
+  loopChat: true,
   loopNotices: true,
 };
 

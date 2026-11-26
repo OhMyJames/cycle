@@ -35,7 +35,14 @@ import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
 import { fileEnvironments } from "./environments.ts";
 import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
-import { actOnTicket, answerBoard, answerNotices, answerTicket, readLoopProjects } from "./loop.ts";
+import {
+  actOnTicket,
+  answerBoard,
+  answerNotices,
+  answerTicket,
+  readLoopProjects,
+  startTicketChat,
+} from "./loop.ts";
 import { noticePoller, showAlert } from "./loop-alerts.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
@@ -71,7 +78,7 @@ export type AppOptions = {
    * Loop (docs/protocol.md §17): the Loop server's socket on this computer, the file holding the person's own itsaplan
    * key (mode 0600), and the tracker's MCP address. Without it, the page says Loop is not connected.
    */
-  loop?: { socket: string; keyFile: string; trackerUrl: string };
+  loop?: { socket: string; keyFile: string; trackerUrl: string; chatCwd?: string };
   /** How the app updates itself. Without it, updating is off. */
   update?: Omit<UpdaterDeps, "emit" | "quit">;
 };
@@ -331,6 +338,20 @@ export const startApp = async (options: AppOptions) => {
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
       actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
         analytics.track(event, props),
+      ),
+    loopChat: (projectKey: unknown, identifier: unknown) =>
+      startTicketChat(
+        options.loop,
+        {
+          locationId: "local",
+          cwd: options.loop?.chatCwd ?? "",
+          agentDefaults: (agent) => manager.agentDefaults("local", agent),
+          createSession: (params) => manager.createSession("local", params),
+          prompt: (sessionId, text) => manager.prompt("local", sessionId, text),
+        },
+        projectKey,
+        identifier,
+        (event, props) => analytics.track(event, props),
       ),
     loopNotices: (projectKey: unknown) =>
       answerNotices(options.loop, projectKey, sessionsNow, (event, props) =>

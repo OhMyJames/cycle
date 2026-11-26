@@ -1,4 +1,4 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { LoopBoardAnswer, LoopProjectInfo } from "../../src/api.ts";
@@ -23,6 +23,7 @@ const ticket = (n: number, column: string) => ({
   priority: "high",
   column,
   actions: [],
+  chat: "none" as const,
 });
 const board: LoopBoardAnswer = {
   kind: "ok",
@@ -120,7 +121,11 @@ test("the Backlog opens on 20 tickets and shows more when asked", async () => {
 });
 
 test("Approve asks first; only the confirmation writes, and a failure is said, not hidden", async () => {
-  const backlog = { ...ticket(600, "Backlog"), actions: ["approve" as const] };
+  const backlog = {
+    ...ticket(600, "Backlog"),
+    actions: ["approve" as const],
+    chat: "new" as const,
+  };
   const doing = ticket(601, "In Progress");
   const user = userEvent.setup();
   const fake = fakeBridge({
@@ -152,6 +157,7 @@ test("a failed Back to Backlog on the ticket page is said there, and gone after 
   const mine = {
     ...ticket(602, "In Review"),
     actions: ["to_backlog" as const, "to_todo" as const],
+    chat: "none" as const,
   };
   const user = userEvent.setup();
   const fake = fakeBridge({
@@ -175,4 +181,61 @@ test("a failed Back to Backlog on the ticket page is said there, and gone after 
   expect(problem()?.textContent).toMatch(/could not be reached/);
   await user.click(screen.getByRole("button", { name: "Back to the board" }));
   expect(problem()).toBeNull();
+});
+
+const openTicketPage = async (
+  chat: "new" | "watch",
+  script: Parameters<typeof fakeBridge>[0] = {},
+) => {
+  const mine = { ...ticket(700, chat === "new" ? "Backlog" : "In Progress"), chat };
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: { ...board, backlog: chat === "new" ? [mine] : [], doing: chat === "new" ? [] : [mine] },
+    },
+    loopTickets: {
+      "CYC-700": { kind: "ok", ticket: { ...mine, body: "text", acceptance: [], links: [] } },
+    },
+    ...script,
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 700" }));
+  return { user, fake };
+};
+
+test("a Backlog ticket's page has the chat button: it asks main and opens the session", async () => {
+  const { user, fake } = await openTicketPage("new");
+  await user.click(await screen.findByRole("button", { name: "Talk with an agent CYC-700" }));
+  await waitFor(() => expect(fake.named("loopChat")).toEqual([["loopChat", "CYC", "CYC-700"]]));
+  await waitFor(() => expect(fake.named("openSession").length).toBeGreaterThan(0));
+  expect(fake.named("openSession")[0]?.slice(1)).toEqual(["local", "chat-1"]);
+});
+
+test("with no default model the page says to set one in Settings", async () => {
+  const { user } = await openTicketPage("new", {
+    loopChat: { kind: "failed", reason: "needs_model" },
+  });
+  await user.click(await screen.findByRole("button", { name: "Talk with an agent CYC-700" }));
+  expect(await screen.findByText(/Set one in Settings/)).toBeTruthy();
+});
+
+test("a session made whose first message did not go can still be opened", async () => {
+  const { user, fake } = await openTicketPage("new", {
+    loopChat: { kind: "failed", reason: "offline", locationId: "local", sessionId: "orphan-1" },
+  });
+  await user.click(await screen.findByRole("button", { name: "Talk with an agent CYC-700" }));
+  await user.click(await screen.findByRole("button", { name: "Open the conversation" }));
+  await waitFor(() =>
+    expect(fake.named("openSession")[0]?.slice(1)).toEqual(["local", "orphan-1"]),
+  );
+});
+
+test("an In Progress ticket is only watched: a note, and no chat button", async () => {
+  const { fake } = await openTicketPage("watch");
+  expect(await screen.findByText(/Loop is working on this ticket/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Talk with an agent/ })).toBeNull();
+  expect(fake.named("loopChat")).toEqual([]);
 });

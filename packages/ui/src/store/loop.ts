@@ -4,6 +4,7 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopChatResult,
   LoopNoticesAnswer,
   LoopProjectInfo,
   LoopTicketAnswer,
@@ -124,5 +125,12 @@ export class LoopSlice {
     if (result.kind === "ok")
       await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
     return result;
+  };
+
+  /** Talk about a ticket with an agent: on success the new session is opened in place of the page. */
+  chat = async (projectKey: string, identifier: string): Promise<LoopChatResult> => {
+    return this.#kit.bridge
+      .loopChat(projectKey, identifier)
+      .catch((): LoopChatResult => ({ kind: "failed", reason: "offline" }));
   };
 }

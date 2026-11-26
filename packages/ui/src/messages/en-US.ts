@@ -682,6 +682,21 @@ export const enUS = {
   "loop.fail.offline":
     "Nothing was changed: itsaplan could not be reached. Check the connection and try again.",
   "loop.fail.refused": "Nothing was changed: itsaplan refused the change.",
+  "loop.chat.start": "Talk with an agent",
+  "loop.chat.openMade": "Open the conversation",
+  "loop.chat.watch":
+    "Loop is working on this ticket. You can read it here, but not change it with an agent.",
+  "loop.chat.fail.needs_model":
+    "No default model is set for Codex. Set one in Settings, then try again.",
+  "loop.chat.fail.not_allowed":
+    "This ticket is no longer in Backlog or Todo, so no conversation was started.",
+  "loop.chat.fail.no_key": "No conversation was started: there is no itsaplan key.",
+  "loop.chat.fail.offline": "No conversation was started: the agent or itsaplan did not answer.",
+  "loop.chat.fail.refused": "No conversation was started: it was refused.",
+  "loop.chat.fail.failed":
+    "No conversation was started: the agent could not start or did not take the message.",
+  "loop.chat.fail.no_folder": "No conversation was started: its working folder could not be made.",
+  "loop.chat.fail.auth_required": "Sign in to Codex in Settings, then try again.",
   "loop.detail.back": "Back to the board",
   "loop.detail.loading": "Reading the ticket",
   "loop.detail.failed": "Could not read the ticket",
