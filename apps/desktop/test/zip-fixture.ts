@@ -16,8 +16,8 @@ export const writeBundle = async (root: string, spec: Spec): Promise<void> => {
     if (typeof what === "object" && "link" in what) await symlink(what.link, at);
     else {
       const mode = typeof what === "string" ? 0o644 : what.mode;
-      await writeFile(at, typeof what === "string" ? what : what.text);
-      // Not `writeFile`'s `mode`: the umask masks that, and the bundle must have exactly these modes.
+      await writeFile(at, typeof what === "string" ? what : what.text, { mode });
+      // The umask takes bits from the mode given to writeFile; the table must say what the spec says.
       await chmod(at, mode);
     }
   }
