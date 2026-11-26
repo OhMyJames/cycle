@@ -22,7 +22,7 @@ export const UI_CRITERIA_GUIDE = [
   "界面现象用现有的验证命令写，三种写法：",
   "1. 整页流程（打包后的应用、浏览器里的端到端）：`bun run test:integration web`，约 8 秒。Loop 运行时会补 `--strict`，所以没 build、没 Chromium 而整个跳过的会判失败；不要自己写 `--strict`。",
   "2. 组件：`bun run test:browser`，在无界面的 Chromium 里跑，约 78 秒。",
-  "3. 其他测试文件：`bun test ./路径`，如 `bun test ./apps/desktop/test/integration/web.integration.ts`。路径可以带 `./`，不能以 `/` 开头、不能含 `..`、不能带 `--` 选项。Loop 会读汇总行：通过数为 0（全部跳过）或读不出汇总行，判未通过；有通过也有跳过算通过。",
+  "3. 其他测试文件：`bun test ./路径`，如 `bun test ./apps/desktop/test/integration/web.integration.ts`。路径必须以 `./` 开头（不带 `./` 时 bun 把它当成名字过滤，可能一个测试都找不到），不能以 `/` 开头、不能含 `..`、不能带 `--` 选项。Loop 会读汇总行：通过数为 0（全部跳过）或读不出汇总行，判未通过；有通过也有跳过算通过。",
   "不能写 `test:real` 系列：没有 token 时它整个跳过、退回码是 0，不能当验收。",
 ].join("\n");
 

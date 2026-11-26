@@ -10,7 +10,7 @@ import { suites } from "../../../scripts/integration-suites.ts";
 import { parseCriteria, parseVerify } from "./criteria.ts";
 import { findSection, type PreflightConfig, preflight } from "./preflight.ts";
 import type { PlanMemory } from "./store.ts";
-import type { Config, Issue, IssueComment, PlanningConfig, Priority } from "./types.ts";
+import type { BacklogRow, Config, Issue, IssueComment, PlanningConfig, Priority } from "./types.ts";
 
 /** What triage decides about a candidate. 能做 and 要拆 are shaped; 要问 is asked about; 不适合 is left alone. */
 export const CATEGORIES = ["能做", "要问", "要拆", "不适合"] as const;
@@ -81,11 +81,85 @@ export const backlogFingerprint = (
     ),
   );
 
+/** The Backlog as the planner last saw it: a signature per row, and the latest comment of each watched row. */
+export type BacklogSnapshot = {
+  rows: Record<string, string>;
+  comments: Record<string, string | null>;
+};
+
+/**
+ * What of a row says it changed. `updatedAt` moves with the title, body, labels, priority and column, but not with a
+ * comment (itsaplan, checked 2026-11-26), so comments are read apart.
+ */
+const rowSignature = (row: BacklogRow): string =>
+  JSON.stringify([
+    row.title,
+    row.updatedAt,
+    [...row.labelIds].sort((a, b) => a - b),
+    row.typeId,
+    row.columnId,
+  ]);
+
+/** The rows whose comments matter: those that could be candidates. A comment on the others starts no round. */
+export const watchedRows = (rows: BacklogRow[], rules: CandidateRules): BacklogRow[] => {
+  const excluded = excludedLabels(rules);
+  return rows.filter(
+    (r) =>
+      r.columnId === rules.planning.backlogColumn &&
+      (r.typeId === rules.featureTypeId || r.typeId === rules.bugTypeId) &&
+      !r.labelIds.some((id) => excluded.includes(id)),
+  );
+};
+
+/** The Backlog now, to compare with next time. `latest` reads a row's latest comment. */
+export const takeSnapshot = async (
+  rows: BacklogRow[],
+  rules: CandidateRules,
+  latest: (row: BacklogRow) => Promise<string | null>,
+): Promise<BacklogSnapshot> => {
+  const comments: Record<string, string | null> = {};
+  for (const row of watchedRows(rows, rules)) comments[row.key] = await latest(row);
+  return { rows: Object.fromEntries(rows.map((r) => [r.key, rowSignature(r)])), comments };
+};
+
+/**
+ * Whether the Backlog changed since `before` in a way that matters to planning: a work item added or gone, its
+ * title, body or labels changed (its row), or a new comment on one that could be a candidate. Comments are read only
+ * when every row is as it was, and only until the first that changed. No snapshot yet counts as changed.
+ */
+export const backlogChanged = async (
+  before: BacklogSnapshot | null,
+  rows: BacklogRow[],
+  rules: CandidateRules,
+  latest: (row: BacklogRow) => Promise<string | null>,
+): Promise<boolean> => {
+  if (before === null) return true;
+  if (rows.length !== Object.keys(before.rows).length) return true;
+  if (rows.some((r) => before.rows[r.key] !== rowSignature(r))) return true;
+  for (const row of watchedRows(rows, rules)) {
+    if (!(row.key in before.comments)) return true;
+    if ((await latest(row)) !== before.comments[row.key]) return true;
+  }
+  return false;
+};
+
 // ---------------------------------------------------------------------------------------------------------------
 // Candidates and when to plan
 
 export type CandidateRules = Pick<Config, "autoLabelId" | "featureTypeId" | "bugTypeId"> & {
   planning: Pick<PlanningConfig, "labels" | "backlogColumn">;
+};
+
+/** `auto`, 待批准, 待回答, Loop 跳过 and 完整流程: a work item with one of them is never a candidate. */
+const excludedLabels = (rules: CandidateRules): number[] => {
+  const { labels } = rules.planning;
+  return [
+    rules.autoLabelId,
+    labels.pending,
+    labels.awaitingAnswer,
+    labels.skip,
+    labels.fullProcess,
+  ].filter((id): id is number => id !== null);
 };
 
 /**
@@ -100,14 +174,8 @@ export const candidates = (
   memory: PlanMemory,
   latestComments: Record<string, string | null>,
 ): Issue[] => {
-  const { labels, backlogColumn } = rules.planning;
-  const excluded = [
-    rules.autoLabelId,
-    labels.pending,
-    labels.awaitingAnswer,
-    labels.skip,
-    labels.fullProcess,
-  ].filter((id): id is number => id !== null);
+  const { backlogColumn } = rules.planning;
+  const excluded = excludedLabels(rules);
   return backlog.filter((issue) => {
     if (issue.columnId !== backlogColumn) return false;
     if (issue.typeId !== rules.featureTypeId && issue.typeId !== rules.bugTypeId) return false;

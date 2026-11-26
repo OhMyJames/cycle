@@ -159,14 +159,14 @@ Task、Tech Governance、Operations 等旧类型不再新建。存量的按内�
 Loop 的预检只认这一节,格式是硬约束:
 
 - 小节标题必须是 `## 验收标准`(或「验收」「acceptance criteria」)。
-- 每条是一个列表项,必须带 `验证：` 加一条 Loop 允许的命令:`bun run check`、`bun run test:browser`、`bun run test:integration [套件]`、`bun test <路径>`。只能人看的现象不写在这一节,放进下面的「合并后由人验收」。
+- 每条是一个列表项,必须带 `验证：` 加一条 Loop 允许的命令:`bun run check`、`bun run test:browser`、`bun run test:integration [套件]`、`bun test ./<路径>`(路径以 `./` 开头)。只能人看的现象不写在这一节,放进下面的「合并后由人验收」。
 - 条数有上限(`maxCriteria`),超了说明工单太大,要拆。
 
 **界面现象怎么写成验收命令**(不新增命令,用现有的三种):
 
 1. 整页流程(打包后的应用、浏览器里的端到端):`bun run test:integration web`,约 8 秒。Loop 运行时会补 `--strict`,所以没 build、没 Chromium 而整个跳过的会判失败;不要自己写 `--strict`。
 2. 组件:`bun run test:browser`,在无界面的 Chromium 里跑,约 78 秒。
-3. 其他测试文件:`bun test ./路径`,如 `bun test ./apps/desktop/test/integration/web.integration.ts`。路径可以带 `./`,不能以 `/` 开头、不能含 `..`、不能带 `--` 选项。Loop 会读汇总行:通过数为 0(全部跳过)或读不出汇总行,判未通过;有通过也有跳过算通过。
+3. 其他测试文件:`bun test ./路径`,如 `bun test ./apps/desktop/test/integration/web.integration.ts`。路径必须以 `./` 开头(不带 `./` 时 bun 把它当成名字过滤,可能一个测试都找不到),不能以 `/` 开头、不能含 `..`、不能带 `--` 选项。Loop 会读汇总行:通过数为 0(全部跳过)或读不出汇总行,判未通过;有通过也有跳过算通过。
 
 不能写 `test:real` 系列:没有 token 时它整个跳过、退回码是 0,不能当验收。为什么退回码 0 不等于通过,见[决定笔记](../../../.agents/notes/2026-11-26-loop-exit-code-zero-is-not-always-a-pass.md)。
 

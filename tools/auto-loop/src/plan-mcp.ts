@@ -7,6 +7,7 @@
 
 import type { LoopFields } from "./project.ts";
 import type {
+  BacklogRow,
   Config,
   DocumentEntry,
   Issue,
@@ -30,6 +31,33 @@ const parseOptionalInt = (value: unknown): number | null => {
     return Number.isInteger(n) ? n : null;
   }
   return null;
+};
+
+/** The parent's number and title, when the reply carries them; nothing otherwise (CYC-322). */
+const parentOf = (raw: unknown, projectKey: string): Pick<Issue, "parent"> => {
+  const p = asRecord(raw);
+  const number = parseOptionalInt(p.sequenceNumber);
+  if (number === null) return {};
+  return { parent: { number, key: `${projectKey}-${number}`, title: String(p.title ?? "") } };
+};
+
+/** The links with the other issue's key and title, when the reply carries them; nothing otherwise (CYC-322). */
+const linksOf = (raw: unknown, projectKey: string): Pick<Issue, "links"> => {
+  if (!Array.isArray(raw)) return {};
+  const links = raw.map(asRecord).flatMap((l) => {
+    const other = asRecord(l.issue);
+    const number = parseOptionalInt(other.sequenceNumber);
+    if (number === null || typeof l.kind !== "string") return [];
+    return [
+      {
+        kind: l.kind,
+        direction: String(l.direction ?? ""),
+        key: `${projectKey}-${number}`,
+        title: String(other.title ?? ""),
+      },
+    ];
+  });
+  return { links };
 };
 
 export const toIssue = (raw: unknown, projectKey: string): Issue => {
@@ -75,6 +103,8 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     subtaskCount,
     blockerColumnIds,
     parentId: parseOptionalInt(r.parentId ?? asRecord(r.parent).id),
+    ...parentOf(r.parent, projectKey),
+    ...linksOf(r.links, projectKey),
   };
 };
 
@@ -254,6 +284,10 @@ export class PlanTracker implements Tracker {
     return this.#listColumn(this.#column("todo"), 100);
   }
 
+  async listInProgress(): Promise<Issue[]> {
+    return this.#listColumn(this.#column("inProgress"), 100);
+  }
+
   /** `list_issues` has no paging: a Backlog that fills the page is refused rather than read in part. */
   async listBacklog(): Promise<Issue[]> {
     if (this.#backlog === undefined)
@@ -264,7 +298,44 @@ export class PlanTracker implements Tracker {
     return issues;
   }
 
+  /**
+   * The Backlog in one `list_issues` call, rows as listed (no `get` per issue, so no bodies): what the planning node
+   * compares to see whether the Backlog changed (CYC-322).
+   */
+  async listBacklogRows(): Promise<BacklogRow[]> {
+    if (this.#backlog === undefined)
+      throw new Error("the project's Backlog column is not resolved");
+    const rows = await this.#rows(this.#backlog, BACKLOG_LIMIT);
+    if (rows.length >= BACKLOG_LIMIT)
+      throw new Error(`the Backlog has ${BACKLOG_LIMIT} or more issues; list_issues cannot page`);
+    return rows.map(asRecord).flatMap((r) => {
+      const number = parseOptionalInt(r.sequenceNumber ?? r.number);
+      const id = parseOptionalInt(r.id);
+      if (number === null || id === null) return [];
+      return [
+        {
+          id,
+          key: `${this.#project}-${number}`,
+          number,
+          title: String(r.title ?? ""),
+          typeId: parseOptionalInt(r.typeId),
+          labelIds: Array.isArray(r.labelIds) ? r.labelIds.map(Number) : [],
+          columnId: Number(r.columnId),
+          updatedAt: String(r.updatedAt ?? ""),
+        },
+      ];
+    });
+  }
+
   async #listColumn(columnId: number, limit: number): Promise<Issue[]> {
+    const rows = await this.#rows(columnId, limit);
+    // The list may not carry the description: read each in full.
+    return Promise.all(
+      rows.map((row) => this.get(Number(asRecord(row).sequenceNumber ?? asRecord(row).number))),
+    );
+  }
+
+  async #rows(columnId: number, limit: number): Promise<unknown[]> {
     const listed = asRecord(
       await this.#call("list_issues", { projectKey: this.#project, columnId, limit }),
     );
@@ -279,10 +350,7 @@ export class PlanTracker implements Tracker {
             : undefined;
     if (rows === undefined)
       throw new Error(`unrecognized list_issues reply: ${JSON.stringify(listed).slice(0, 300)}`);
-    // The list may not carry the description: read each in full.
-    return Promise.all(
-      rows.map((row) => this.get(Number(asRecord(row).sequenceNumber ?? asRecord(row).number))),
-    );
+    return rows;
   }
 
   async get(number: number): Promise<Issue> {
@@ -366,7 +434,7 @@ export class PlanTracker implements Tracker {
   }
 
   /** `list_issue_activity` filtered to comments, oldest first, every page; replies are flattened in. */
-  async listComments(issue: Issue): Promise<IssueComment[]> {
+  async listComments(issue: Pick<Issue, "id" | "key">): Promise<IssueComment[]> {
     const comments: IssueComment[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < ACTIVITY_PAGES; page++) {
@@ -441,6 +509,8 @@ export const planningTracker = (
     get: (number) => tracker.get(number),
     listBacklog: () => tracker.listBacklog(),
     listTodo: () => tracker.listTodo(),
+    listInProgress: () => tracker.listInProgress(),
+    listBacklogRows: () => tracker.listBacklogRows(),
     listComments: (issue) => tracker.listComments(issue),
     comment: (issue, text) => tracker.comment(issue, text),
     setTitle: (issue, title) => tracker.setTitle(issue, title),

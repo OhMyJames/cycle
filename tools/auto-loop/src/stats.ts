@@ -25,6 +25,62 @@ export type Stats = {
   delivery: { run: string; at: string; prUrl: string }[];
   /** The requests the Loop left to a person or refused, by kind and command prefix: the ones a person allowed most first, at most 10 (CYC-423). Empty when there are none. */
   permissions: PermissionRow[];
+  /** The planning node (CYC-322), counted apart: its rounds are not runs and are in none of the numbers above. */
+  planning: PlanningStats;
+};
+
+export type PlanningStats = {
+  /** Rounds started (`plan_started`), and those that ended because triage could not be used. */
+  rounds: number;
+  triageStopped: number;
+  /** Triage's categories over every round (`plan_triaged`): 能做, 要问, 要拆, 不适合. */
+  categories: { can: number; ask: number; split: number; unfit: number };
+  priorityChanged: number;
+  /** Work items asked about, by triage or by shaping (`plan_asked`). */
+  asked: number;
+  /** Work items shaped and written back (`plan_shaped`), stopped (`plan_shape_stopped`), left alone (`plan_abandoned`). */
+  shaped: number;
+  stopped: number;
+  abandoned: number;
+  /** Fix rounds per shaped work item, on average; null when none was shaped. */
+  meanFixRounds: number | null;
+  /**
+   * Of the work items the planner left waiting for approval (each part of a split counts), the share a dev run later
+   * claimed. From the events alone: a dev run claims only a work item a person put in Todo with `auto`, so a claim
+   * is the approval as the loop sees it; one approved and not yet claimed counts as not approved yet.
+   */
+  approvalRate: number;
+};
+
+const planningStats = (events: LoopEvent[]): PlanningStats => {
+  const of = (kind: string) => events.filter((e) => e.kind === kind);
+  const triaged = of("plan_triaged");
+  const sum = (field: string) => triaged.reduce((n, e) => n + Number(e[field] ?? 0), 0);
+  const shaped = of("plan_shaped");
+  const offered = shaped.flatMap((e) =>
+    String(e.keys ?? e.issue ?? "")
+      .split(",")
+      .filter((k) => k !== "")
+      .map((key) => ({ key, ts: e.ts })),
+  );
+  const approved = offered.filter(({ key, ts }) =>
+    events.some((e) => e.run === key && e.kind === "claimed" && e.ts >= ts),
+  ).length;
+  return {
+    rounds: of("plan_started").length,
+    triageStopped: of("plan_finished").filter((e) => e.outcome === "triage_stopped").length,
+    categories: { can: sum("can"), ask: sum("ask"), split: sum("split"), unfit: sum("unfit") },
+    priorityChanged: of("plan_priority_changed").length,
+    asked: of("plan_asked").length,
+    shaped: shaped.length,
+    stopped: of("plan_shape_stopped").length,
+    abandoned: of("plan_abandoned").length,
+    meanFixRounds:
+      shaped.length === 0
+        ? null
+        : shaped.reduce((n, e) => n + Number(e.rounds ?? 0), 0) / shaped.length,
+    approvalRate: rate(approved, offered.length),
+  };
 };
 
 export type ReworkStage = "verify" | "qa" | "ci" | "review" | "other";
@@ -179,5 +235,6 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     },
     delivery,
     permissions: permissionRows(events),
+    planning: planningStats(events),
   };
 };

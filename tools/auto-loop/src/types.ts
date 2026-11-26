@@ -28,6 +28,10 @@ export type Issue = {
   blockerColumnIds: number[] | null;
   /** The parent issue's internal id, or null for a top-level issue. */
   parentId: number | null;
+  /** The parent's number and title, when the tracker said them (the planning node shows them; CYC-322). */
+  parent?: { number: number; key: string; title: string };
+  /** Links to other issues, when the tracker said them: `outward` is this issue blocking or relating to the other. */
+  links?: { kind: string; direction: string; key: string; title: string }[];
 };
 
 /** Where the loop moves a work item. The tracker maps these to the project's columns. */
@@ -41,7 +45,10 @@ export type LoopPhase =
   | "review"
   | "merge"
   | "research"
-  | "researchQa";
+  | "researchQa"
+  /** The planning node shaping a Backlog work item (CYC-322); optional options, like research's. */
+  | "plan"
+  | "planQa";
 
 /** A document in the project's tree (`list_documents`), without its content. */
 export type DocumentEntry = { id: number; title: string; parentId: number | null };
@@ -94,8 +101,12 @@ export interface Tracker {
   linkIssues(from: Issue, toId: number, kind: "relates" | "blocks"): Promise<void>;
   /** The work items in the Backlog column, read in full (CYC-322). */
   listBacklog(): Promise<Issue[]>;
+  /** The work items in the In Progress column, read in full: the planning node shows their titles (CYC-322). */
+  listInProgress(): Promise<Issue[]>;
+  /** The Backlog as one list call returns it, without bodies: the planning node's cheap look for a change. */
+  listBacklogRows(): Promise<BacklogRow[]>;
   /** Every comment on the issue, replies included, oldest first. */
-  listComments(issue: Issue): Promise<IssueComment[]>;
+  listComments(issue: Pick<Issue, "id" | "key">): Promise<IssueComment[]>;
   setTitle(issue: Issue, title: string): Promise<void>;
   setType(issue: Issue, typeId: number): Promise<void>;
   setPriority(issue: Issue, priority: Priority | null): Promise<void>;
@@ -113,7 +124,9 @@ export interface PlanningTracker {
   get(number: number): Promise<Issue>;
   listBacklog(): Promise<Issue[]>;
   listTodo(): Promise<Issue[]>;
-  listComments(issue: Issue): Promise<IssueComment[]>;
+  listInProgress(): Promise<Issue[]>;
+  listBacklogRows(): Promise<BacklogRow[]>;
+  listComments(issue: Pick<Issue, "id" | "key">): Promise<IssueComment[]>;
   comment(issue: Issue, text: string): Promise<void>;
   setTitle(issue: Issue, title: string): Promise<void>;
   setDescription(issue: Issue, description: string): Promise<void>;
@@ -258,6 +271,25 @@ export type PlanningConfig = {
   intervalMinutes: number;
   /** Most issues one work item is split into. */
   maxSplit: number;
+  /** Minutes between two looks at the Backlog for a change, for the whole Project; `DEFAULT_CHECK_MINUTES` when left out. */
+  checkMinutes?: number;
+};
+
+export const DEFAULT_CHECK_MINUTES = 5;
+
+/**
+ * A Backlog work item as one `list_issues` call returns it, without its body (CYC-322). `updatedAt` moves when the
+ * title, body, labels, priority or column change; a new comment does not move it.
+ */
+export type BacklogRow = {
+  id: number;
+  key: string;
+  number: number;
+  title: string;
+  typeId: number | null;
+  labelIds: number[];
+  columnId: number;
+  updatedAt: string;
 };
 
 /** Everything that is not per Project. `columns`, labels and type ids come from `resolveProject`, paths from the config file. */

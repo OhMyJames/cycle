@@ -240,6 +240,17 @@ test("planning on: each missing piece names the Project and what is missing", ()
   expect(() => on(empty)).toThrow('project X: issue template "Bug" has no description');
 });
 
+test("planning config: checkMinutes is a whole number of 1 to 60, left out when not given (5 is applied at start)", () => {
+  const parse = (checkMinutes: unknown) =>
+    parseConfigFile(JSON.stringify({ ...full, planning: { enabled: true, checkMinutes } })).planning
+      ?.checkMinutes;
+  expect(parseConfigFile(JSON.stringify({ ...full, planning: {} })).planning).not.toHaveProperty(
+    "checkMinutes",
+  );
+  expect(parse(10)).toBe(10);
+  for (const bad of [0, 61, 2.5]) expect(() => parse(bad)).toThrow("planning");
+});
+
 test("planning config: absent or not enabled means off; defaults fill the rest; bad fields are named", () => {
   expect(parseConfigFile(JSON.stringify(full)).planning).toBeUndefined();
   const defaults = {
