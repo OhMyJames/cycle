@@ -14,7 +14,7 @@
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "../env.ts";
 import { withRepoLock } from "../git-lock.ts";
 import type { StepResult } from "../pipeline.ts";
@@ -787,8 +787,10 @@ export class PlanFlow {
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       title,
-      // The round's own worktree: no `worktree` asked of the daemon, so it makes none and no branch.
-      cwd: worktree,
+      // The round's own worktree, by name: the daemon finds it there (it makes none, and no branch) and files the
+      // session under the project, as it does a dev session. A `cwd` inside it would make it a workspace of its own.
+      cwd: config.repoRoot,
+      worktree: { base: config.baseRef, name: basename(worktree) },
     });
     return created.sessionId;
   }
