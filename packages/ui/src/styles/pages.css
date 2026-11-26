@@ -879,7 +879,7 @@
   color: var(--cycle-ink-secondary);
 }
 
-/* A long title is two lines at most, and its end fades out; the whole of it is on hover and on the ticket's page. */
+/* A long title is two lines at most, cut at its end; the whole of it is on hover and on the ticket's page. */
 [data-slot="loop-ticket"] > [data-slot="loop-ticket-title"] {
   min-width: 0;
   font-size: var(--cycle-text-ui);
@@ -907,11 +907,21 @@
 }
 
 [data-slot="loop-ticket-text"] {
-  display: block;
-  max-height: 2.8em;
+  /* Two lines at most; only a longer title is cut, with an ellipsis, and a short one is untouched. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 0.6em), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 0.6em), transparent);
+}
+
+[data-slot="loop-ticket"]:has(> button[data-slot="loop-ticket-title"]:focus-visible) {
+  outline: 2px solid var(--cycle-focus-ring);
+  outline-offset: 1px;
+}
+
+[data-slot="loop-ticket"] > button[data-slot="loop-ticket-title"]:focus-visible {
+  outline: none;
 }
 
 button[data-slot="loop-ticket-title"] {

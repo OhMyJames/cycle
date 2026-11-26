@@ -433,6 +433,14 @@ test("a card opens its ticket, a button on it does not, and cancelling Approve w
 
 test("at 720px the page has no sideways scrollbar and the columns scroll by themselves", async () => {
   await page.viewport(720, 800);
+  try {
+    await checkNarrow();
+  } finally {
+    await page.viewport(1280, 800);
+  }
+});
+
+const checkNarrow = async () => {
   await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   const strip = document.querySelector<HTMLElement>('[data-slot="loop-columns"]');
@@ -444,7 +452,12 @@ test("at 720px the page has no sideways scrollbar and the columns scroll by them
   expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth);
   strip.scrollLeft = 40;
   expect(strip.scrollLeft).toBeGreaterThan(0);
-});
+  const done = screen.getByRole("region", { name: "Done" });
+  const folded = done.getBoundingClientRect().width;
+  expect(folded).toBeLessThan(16 * 16 * 0.5);
+  await userEvent.click(screen.getByRole("button", { name: "Show done" }));
+  expect(done.getBoundingClientRect().width).toBeGreaterThan(folded);
+};
 
 test("while the board is read each column shows skeleton cards", async () => {
   const fake = fakeBridge({
@@ -461,4 +474,11 @@ test("while the board is read each column shows skeleton cards", async () => {
     expect(document.querySelectorAll('[data-slot="loop-column"][data-skeleton]').length).toBe(3),
   );
   expect(document.querySelectorAll('[data-slot="loop-ticket"][data-skeleton]').length).toBe(9);
+});
+
+test("a short title is not clipped or masked", async () => {
+  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  const text = (await screen.findByText("Ticket 386")) as HTMLElement;
+  expect(text.scrollHeight).toBeLessThanOrEqual(text.clientHeight);
+  expect(getComputedStyle(text).maskImage).toBe("none");
 });
