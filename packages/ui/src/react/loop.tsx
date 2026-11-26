@@ -312,15 +312,24 @@ function TicketPage({
       .join("\n"),
   );
   const waitingOn = (id: string) => waitingTitles.split("\n").includes(`[${id}] Dev`);
+  // Which tickets Loop is running changes what the page says of this one (watch or not): it is read again then.
+  const runKey = useAppState((s) =>
+    s.loop.runs?.kind === "ok" ? (s.loop.runs.running[projectKey] ?? []).join(",") : "",
+  );
   useEffect(() => {
     let live = true;
+    void runKey;
     void store.loadLoopTicket(projectKey, identifier).then((answer) => {
-      if (live) setTicket(answer.kind === "ok" ? answer.ticket : "failed");
+      // A read again that fails leaves the ticket that was shown.
+      if (live)
+        setTicket((had) =>
+          answer.kind === "ok" ? answer.ticket : typeof had === "object" ? had : "failed",
+        );
     });
     return () => {
       live = false;
     };
-  }, [store, projectKey, identifier]);
+  }, [store, projectKey, identifier, runKey]);
   return (
     <div data-slot="loop-ticket-page" data-kind="loop-ticket-page">
       <Button data-variant="ghost" onClick={onBack}>

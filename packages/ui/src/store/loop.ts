@@ -74,7 +74,15 @@ export class LoopSlice {
   /** Main follows Loop's events and pushes the run state when it changes; it replaces what was held. */
   setRuns = (runs: LoopRunsAnswer): void => {
     this.#pushes++;
+    const before = this.#kit.state().loop.runs;
     this.#kit.set((s) => ({ loop: { ...s.loop, runs } }));
+    // What a card says about Loop (watching, or not) comes from the run data: a Project whose running tickets changed
+    // has its board read again. One that was never read is left to its first read.
+    const keys = (a: LoopRunsAnswer | undefined, key: string) =>
+      a?.kind === "ok" ? [...(a.running[key] ?? [])].sort().join(",") : "";
+    for (const [projectKey, board] of Object.entries(this.#kit.state().loop.boards))
+      if (typeof board === "object" && keys(before, projectKey) !== keys(runs, projectKey))
+        void this.loadBoard(projectKey);
   };
 
   loadBoard = async (projectKey: string): Promise<void> => {

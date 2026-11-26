@@ -682,3 +682,18 @@ test("reopening the Loop page reads the run state again, and applies what change
   const again = await screen.findByRole("region", { name: "Projects" });
   await waitFor(() => expect(runState(again, "CYC")).toBe("Running"));
 });
+
+test("a pushed run state that changes who Loop is running reads the board again", async () => {
+  const { named, emit, user } = await mount(
+    overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
+  );
+  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
+  await screen.findByRole("region", { name: "In Progress" });
+  const reads = named("loopBoard").length;
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  await waitFor(() => expect(named("loopBoard").length).toBeGreaterThan(reads));
+  // The same state pushed again changes nothing: no read.
+  const after = named("loopBoard").length;
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  expect(named("loopBoard").length).toBe(after);
+});

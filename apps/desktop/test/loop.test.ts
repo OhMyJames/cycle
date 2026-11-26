@@ -9,6 +9,7 @@ import {
   actOnMany,
   actOnTicket,
   answerBoard,
+  answerRuns,
   answerTicket,
   loopFeed,
   loopRpc,
@@ -329,6 +330,78 @@ describe("where Loop is running (CYC-458)", () => {
     } finally {
       server.close();
     }
+  });
+
+  test("events/list that keeps failing does not make runs/list be read every tick, and backs off", async () => {
+    const socket = join(dir, "broken.sock");
+    let runsReads = 0;
+    let eventAsks = 0;
+    const server = createServer((c) =>
+      c.on("data", (chunk) => {
+        const req = JSON.parse(chunk.toString("utf8").split("\n")[0] ?? "{}") as { method: string };
+        if (req.method === "runs/list") {
+          runsReads++;
+          const result = { projects: [{ projectKey: "CYC", runs: [run("CYC-1", "active")] }] };
+          c.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result })}\n`);
+        } else {
+          eventAsks++;
+          c.write(
+            `${JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "Internal error" } })}\n`,
+          );
+        }
+      }),
+    );
+    await new Promise<void>((r) => server.listen(socket, r));
+    try {
+      const feed = loopFeed({
+        call: (method, params) => loopRpc(socket, method, params),
+        changed: () => {},
+      });
+      for (let i = 0; i < 12; i++) await feed.tick();
+      // Runs were read at the start (and once more as a recheck); the failing events are asked less and less often.
+      expect(runsReads).toBeLessThanOrEqual(3);
+      expect(eventAsks).toBeLessThanOrEqual(6);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("the log that was there at the start is read to its end, and is not news", async () => {
+    const socket = join(dir, "cold.sock");
+    const server = await loopServer(socket, {
+      runs: [["CYC", [run("CYC-1", "active")]]],
+      reply: (_method, params) => {
+        const after = Number(params.afterSeq);
+        const events = [event(1), event(2), event(3)].filter((e) => e.seq > after);
+        return { projectKey: "CYC", events, lastSeq: 3, hasMore: false };
+      },
+    });
+    try {
+      const feed = loopFeed({
+        call: (method, params) => loopRpc(socket, method, params),
+        changed: () => {},
+      });
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(3);
+      await feed.tick();
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(3);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("loop_runs_read is sent with the result alone", async () => {
+    const sent: unknown[] = [];
+    const track = (event: string, props: unknown) => sent.push([event, props]);
+    expect(await answerRuns(undefined, track)).toEqual({ kind: "disconnected" });
+    const runs = { kind: "ok" as const, running: { CYC: ["CYC-1"] } };
+    expect(await answerRuns({ read: async () => runs }, track)).toEqual(runs);
+    // Never a Project, a ticket or a count: the one fixed word.
+    expect(sent).toEqual([
+      ["loop_runs_read", { result: "disconnected" }],
+      ["loop_runs_read", { result: "ok" }],
+    ]);
   });
 
   test("a seq past the end of the log starts again from 0", async () => {

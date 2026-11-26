@@ -40,6 +40,7 @@ import {
   actOnTicket,
   answerBoard,
   answerNotices,
+  answerRuns,
   answerTicket,
   loopFeed,
   loopRpc,
@@ -343,11 +344,7 @@ export const startApp = async (options: AppOptions) => {
         ? await readLoopProjects(options.loop.socket)
         : ({ kind: "disconnected" } as const);
     },
-    loopRuns: async () => {
-      const runs = loopRuns ? await loopRuns.read() : ({ kind: "disconnected" } as const);
-      analytics.track("loop_runs_read", { result: runs.kind });
-      return runs;
-    },
+    loopRuns: () => answerRuns(loopRuns, (event, props) => analytics.track(event, props)),
     loopBoard: (projectKey: unknown) =>
       answerBoard(options.loop, projectKey, (event, props) => analytics.track(event, props)),
     loopTicket: (projectKey: unknown, identifier: unknown) =>
