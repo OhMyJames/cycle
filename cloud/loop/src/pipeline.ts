@@ -13,7 +13,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Tuning, tuningToConfig } from "./config-file.ts";
 import { CriteriaBook, type Criterion } from "./criteria.ts";
-import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
+import { verifyEnv } from "./env.ts";
 import { summarizeFailure } from "./failure.ts";
 import { devFlow } from "./flows/dev.ts";
 import {
@@ -38,25 +38,13 @@ import {
   readFullFlowDocs,
   readFullFlowTexts,
 } from "./full-flow.ts";
-import { withRepoLock } from "./git-lock.ts";
 import { testLayers } from "./layers.ts";
 import { isNetworkError } from "./network.ts";
-import {
-  disableAutoMerge,
-  enableAutoMerge,
-  type PrState,
-  postPrComment,
-  readAutoMerge,
-  readCiStatus,
-  readPrMergeStatus,
-  readPrState,
-  renderPr,
-  renderPrTitle,
-  renderReviewComment,
-  rerunFailedCi,
-  validatePr,
-  waitForCi,
-} from "./pr.ts";
+import type { At, Forge, PrState } from "./ports/forge.ts";
+import { gitWorkspace } from "./ports/git.ts";
+import { githubForge } from "./ports/github.ts";
+import type { Done, Workspace } from "./ports/workspace.ts";
+import { renderPr, renderPrTitle, renderReviewComment, validatePr, waitForCi } from "./pr.ts";
 import {
   conflictBrief,
   continueBrief,
@@ -119,6 +107,10 @@ export type Deps = {
   tracker: Tracker;
   sessions: Sessions;
   exec: Exec;
+  /** Pull requests, CI, merging and PR comments: every `gh` the loop runs (CYC-477). */
+  forge: Forge;
+  /** git, worktrees and dependency install: every `git` the loop runs (CYC-477). */
+  workspace: Workspace;
   store: LoopStore;
   clock: Clock;
   log: Logger;
@@ -145,6 +137,10 @@ class NetworkWait extends Error {
 }
 
 const PR_STATE_READS = 3;
+
+/** What a caller gives: the ports are made from `exec` and `env` when it does not bring its own. */
+export type DepsInput = Omit<Deps, "forge" | "workspace"> &
+  Partial<Pick<Deps, "forge" | "workspace">>;
 
 export class Pipeline {
   readonly #deps: Deps;
@@ -175,7 +171,19 @@ export class Pipeline {
   /** The kinds of failure already reported for each run: one log line and one event per kind. */
   readonly #failed = new Map<string, Set<string>>();
 
-  constructor(deps: Deps) {
+  constructor(input: DepsInput) {
+    const deps: Deps = {
+      ...input,
+      forge: input.forge ?? githubForge({ exec: input.exec, env: input.env }),
+      workspace:
+        input.workspace ??
+        gitWorkspace({
+          exec: input.exec,
+          env: input.env,
+          repoRoot: input.config.repoRoot,
+          remote: input.config.remote,
+        }),
+    };
     this.#deps = deps;
     this.#tuning = deps.tuning?.initial ?? {};
     const host = this.#host();
@@ -490,24 +498,13 @@ export class Pipeline {
     worktree: string,
     note: (kind: string) => Promise<void>,
   ): Promise<void> {
-    const { config, store, clock } = this.#d;
-    const status = await this.#git(["status", "--porcelain"], worktree);
-    if (status.code !== 0) return note("cleanup_failed");
-    if (status.output.trim() !== "") return note("cleanup_skipped_dirty");
-
-    // No --force: git itself refuses a worktree with changes in it.
-    const removed = await this.#git(["worktree", "remove", worktree], config.repoRoot);
-    if (removed.code !== 0) return note("cleanup_failed");
-    for (const branch of new Set([run.localBranch, branchOf(run.issueNumber)])) {
-      if (branch === null) continue;
-      const exists = await this.#git(
-        ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
-        config.repoRoot,
-      );
-      if (exists.code !== 0) continue;
-      const deleted = await this.#git(["branch", "-D", branch], config.repoRoot);
-      if (deleted.code !== 0) return note("cleanup_failed");
-    }
+    const { config, store, clock, workspace } = this.#d;
+    const branches = [...new Set([run.localBranch, branchOf(run.issueNumber)])].filter(
+      (b): b is string => b !== null,
+    );
+    const removal = await workspace.remove(this.#at(config.repoRoot), worktree, branches);
+    if (removal === "failed") return note("cleanup_failed");
+    if (removal === "dirty") return note("cleanup_skipped_dirty");
     await store.event(run.key, "cleaned");
     if (run.phase !== "done") {
       // Blocked, then Canceled: the run is not over. If a person puts the work item back, it starts again from the
@@ -729,14 +726,7 @@ export class Pipeline {
       const read = await this.#net(
         run.key,
         "gh pr view",
-        () =>
-          readPrState({
-            prRef: prUrl,
-            exec: this.#d.exec,
-            cwd: run.worktree ?? config.repoRoot,
-            env: this.#d.env,
-            timeoutMs: config.commandTimeoutMs,
-          }),
+        () => this.#d.forge.prState(this.#at(run.worktree ?? config.repoRoot), prUrl),
         (r) => (r.ok ? undefined : r.error),
       );
       if (read.ok) return { prUrl, state: read.state };
@@ -793,14 +783,7 @@ export class Pipeline {
       const read = await this.#net(
         run.key,
         "gh pr view",
-        () =>
-          readPrMergeStatus({
-            prRef: prUrl,
-            exec: this.#d.exec,
-            cwd: worktree,
-            env: this.#d.env,
-            timeoutMs: config.commandTimeoutMs,
-          }),
+        () => this.#d.forge.prMergeStatus(this.#at(worktree), prUrl),
         (r) => (r.ok ? undefined : r.error),
       );
       if (!read.ok) {
@@ -831,22 +814,10 @@ export class Pipeline {
     const { config } = this.#d;
     // Before anything else: pushing to a PR with auto-merge on does not turn it off (we have write access), so it would
     // merge on green CI without the new commits being reviewed again. Read it every time; an unreadable state blocks.
-    const auto = await readAutoMerge({
-      prRef: prUrl,
-      exec: this.#d.exec,
-      cwd: worktree,
-      env: this.#d.env,
-      timeoutMs: config.commandTimeoutMs,
-    });
+    const auto = await this.#d.forge.autoMergeOn(this.#at(worktree), prUrl);
     if (!auto.ok) throw new Blocked(`处理冲突前读取自动合并状态失败，不推送：${tail(auto.error)}`);
     if (auto.enabled) {
-      const off = await disableAutoMerge({
-        prRef: prUrl,
-        exec: this.#d.exec,
-        cwd: worktree,
-        env: this.#d.env,
-        timeoutMs: config.commandTimeoutMs,
-      });
+      const off = await this.#d.forge.autoMerge(this.#at(worktree), prUrl, false);
       if (!off.ok) throw new Blocked(`处理冲突前关闭自动合并失败，不推送：${tail(off.error)}`);
       await this.#d.store.event(run.key, "auto_merge_disabled", { prUrl });
     }
@@ -873,32 +844,25 @@ export class Pipeline {
     worktree: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<{ files: string[]; preMergeSha: string } | undefined> {
-    const { config, store } = this.#d;
-    const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
-    if (open.code !== 0) {
-      const status = await this.#git(["status", "--porcelain"], worktree);
-      if (status.code !== 0) throw new Blocked(`读取工作区状态失败：${tail(status.output)}`);
-      if (status.output.trim() !== "")
+    const { config, store, workspace } = this.#d;
+    const at = this.#at(worktree);
+    const open = await workspace.mergeInProgress(at);
+    if (!open) {
+      const status = await workspace.status(at);
+      if (!status.ok) throw new Blocked(`读取工作区状态失败：${tail(status.error)}`);
+      if (status.porcelain.trim() !== "")
         throw new Blocked(
-          `PR 与 ${config.baseBranch} 冲突，但工作区有未提交的改动，不自动合并：\n${tail(status.output)}`,
+          `PR 与 ${config.baseBranch} 冲突，但工作区有未提交的改动，不自动合并：\n${tail(status.porcelain)}`,
         );
-      const fetched = await this.#netExec(run.key, "git fetch", () =>
-        withRepoLock(config.repoRoot, () =>
-          this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
-            cwd: worktree,
-            env: deliverEnv(this.#d.env),
-            timeoutMs: config.commandTimeoutMs,
-          }),
-        ),
-      );
+      const fetched = await this.#netExec(run.key, "git fetch", () => workspace.fetchMain(at));
       if (fetched.code !== 0) throw new Blocked(`合并前 git fetch 失败：${tail(fetched.output)}`);
     }
     // HEAD before the merge, saved with the count: a failed resolution goes back to it.
     let preMergeSha = run.conflict?.preMergeSha;
     if (preMergeSha === undefined) {
-      const head = await this.#git(["rev-parse", "HEAD"], worktree);
-      if (head.code !== 0) throw new Blocked(`读取 HEAD 提交失败：${tail(head.output)}`);
-      preMergeSha = head.output.trim();
+      const head = await workspace.head(at);
+      if (!head.ok) throw new Blocked(`读取 HEAD 提交失败：${tail(head.error)}`);
+      preMergeSha = head.sha;
     }
     // The count is saved before the merge, so a kill in the middle cannot let the same attempt be taken twice.
     if (run.conflict === null)
@@ -907,37 +871,37 @@ export class Pipeline {
         conflict: { state: "merging", preMergeSha },
       });
     const attempt = run.conflict === null ? run.conflictRound + 1 : run.conflictRound;
-    let merged: ExecResult | undefined;
-    if (open.code !== 0) {
-      merged = await this.#git(["merge", "--no-edit", config.baseRef], worktree);
-      if (merged.code === 0) {
+    let merged: Done | undefined;
+    if (!open) {
+      merged = await workspace.mergeMain(at, config.baseRef);
+      if (merged.ok) {
         await store.event(run.key, "conflict_merge", { result: "clean", conflictRound: attempt });
         await save({ conflict: null, phase: "verify" });
         return undefined;
       }
     }
     // A merge that failed without starting leaves nothing to abort: say what git said.
-    const started = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
-    if (started.code !== 0) {
+    const started = await workspace.mergeInProgress(at);
+    if (!started) {
       await store.event(run.key, "conflict_merge", { result: "failed", conflictRound: attempt });
       await save({ conflict: null });
       throw new Blocked(
-        `Loop 合并 ${config.baseRef} 失败，没有开始合并：${tail(merged?.output ?? "")}`,
+        `Loop 合并 ${config.baseRef} 失败，没有开始合并：${tail(mergeOutput(merged))}`,
       );
     }
-    const files = await this.#unmergedFiles(worktree);
+    const files = await workspace.unmergedFiles(at);
     if (files.length === 0) {
-      const aborted = await this.#git(["merge", "--abort"], worktree);
+      const aborted = await workspace.abortMerge(at);
       await store.event(run.key, "conflict_merge", {
         result: "conflict",
         conflictRound: attempt,
         files: 0,
       });
       await save({ conflict: null });
-      if (aborted.code !== 0)
-        throw new Blocked(`合并冲突后撤回合并失败，工作区留在合并中：${tail(aborted.output)}`);
+      if (!aborted.ok)
+        throw new Blocked(`合并冲突后撤回合并失败，工作区留在合并中：${tail(aborted.error)}`);
       throw new Blocked(
-        `Loop 合并 ${config.baseRef} 停在合并中，但没有读到冲突文件，已撤回合并：${tail(merged?.output ?? "")}`,
+        `Loop 合并 ${config.baseRef} 停在合并中，但没有读到冲突文件，已撤回合并：${tail(mergeOutput(merged))}`,
       );
     }
     await store.event(run.key, "conflict_merge", {
@@ -949,24 +913,14 @@ export class Pipeline {
     return { files, preMergeSha };
   }
 
-  async #unmergedFiles(worktree: string): Promise<string[]> {
-    const listed = await this.#git(["diff", "--name-only", "--diff-filter=U"], worktree);
-    return listed.output
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l !== "");
-  }
-
   /** Titles of the commits on the base, not in the branch before the merge, that touch the conflicted files. */
   async #theirCommits(worktree: string, preMergeSha: string, files: string[]): Promise<string[]> {
-    const log = await this.#git(
-      ["log", "--format=%s", `${preMergeSha}..${this.#d.config.baseRef}`, "--", ...files],
-      worktree,
+    return this.#d.workspace.theirCommits(
+      this.#at(worktree),
+      preMergeSha,
+      this.#d.config.baseRef,
+      files,
     );
-    return log.output
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l !== "");
   }
 
   /**
@@ -981,55 +935,28 @@ export class Pipeline {
     worktree: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<void> {
-    const { config, store } = this.#d;
-    const open = async () =>
-      (await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree)).code === 0;
+    const { config, store, workspace } = this.#d;
+    const at = this.#at(worktree);
+    const open = () => workspace.mergeInProgress(at);
     const problems: string[] = [];
-    // Anchored at the start of a line, with the files taken literally.
-    const markers = await this.#git(
-      [
-        "--literal-pathspecs",
-        "grep",
-        "--no-index",
-        "-l",
-        "-E",
-        "-e",
-        `^(${"<".repeat(7)}|${">".repeat(7)})( |$)`,
-        "--",
-        ...conflict.files,
-      ],
-      worktree,
-    );
-    if (markers.code === 0)
-      problems.push(
-        `仍有冲突标记：${markers.output
-          .split("\n")
-          .filter((l) => l.trim() !== "")
-          .join("、")}`,
-      );
-    else if (markers.code !== 1) problems.push(`检查冲突标记失败：${tail(markers.output)}`);
+    const markers = await workspace.conflictMarkers(at, conflict.files);
+    if (markers.kind === "found") problems.push(`仍有冲突标记：${markers.files.join("、")}`);
+    else if (markers.kind === "error") problems.push(`检查冲突标记失败：${tail(markers.output)}`);
     // A file fixed but not staged still counts as unmerged: stage the files that are clean of markers.
     if (problems.length === 0 && (await open())) {
-      await this.#git(["--literal-pathspecs", "add", "-A", "--", ...conflict.files], worktree);
-      const unmerged = await this.#unmergedFiles(worktree);
+      await workspace.stage(at, conflict.files);
+      const unmerged = await workspace.unmergedFiles(at);
       if (unmerged.length > 0) problems.push(`仍有未解决的文件：${unmerged.join("、")}`);
     }
     if (problems.length === 0 && (await open())) {
-      const committed = await this.#git(["commit", "--no-edit"], worktree);
-      if (committed.code !== 0) problems.push(`完成合并提交失败：${tail(committed.output)}`);
+      const committed = await workspace.commitMerge(at);
+      if (!committed.ok) problems.push(`完成合并提交失败：${tail(committed.error)}`);
     }
     if (problems.length === 0) {
-      const ancestor = await this.#git(
-        ["merge-base", "--is-ancestor", config.baseRef, "HEAD"],
-        worktree,
-      );
-      if (ancestor.code !== 0)
+      if (!(await workspace.isAncestor(at, config.baseRef)))
         problems.push(`${config.baseRef} 不在当前分支的历史里（合并被撤回或没有完成）`);
-      const kept = await this.#git(
-        ["merge-base", "--is-ancestor", conflict.preMergeSha, "HEAD"],
-        worktree,
-      );
-      if (kept.code !== 0) problems.push("分支原来的提交不在当前历史里（被 rebase 或重置过）");
+      if (!(await workspace.isAncestor(at, conflict.preMergeSha)))
+        problems.push("分支原来的提交不在当前历史里（被 rebase 或重置过）");
     }
     if (problems.length === 0) {
       await store.event(run.key, "conflict_resolved", { files: conflict.files.length });
@@ -1051,13 +978,14 @@ export class Pipeline {
 
   /** Back to before the merge: abort an open one, then reset to the commit it started from. "" when done. */
   async #rollbackMerge(worktree: string, preMergeSha: string): Promise<string> {
-    const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
-    if (open.code === 0) {
-      const aborted = await this.#git(["merge", "--abort"], worktree);
-      if (aborted.code !== 0) return `撤回合并失败，工作区留在合并中：${tail(aborted.output)}`;
+    const { workspace } = this.#d;
+    const at = this.#at(worktree);
+    if (await workspace.mergeInProgress(at)) {
+      const aborted = await workspace.abortMerge(at);
+      if (!aborted.ok) return `撤回合并失败，工作区留在合并中：${tail(aborted.error)}`;
     }
-    const reset = await this.#git(["reset", "--hard", preMergeSha], worktree);
-    return reset.code === 0 ? "" : `退回合并前的提交失败：${tail(reset.output)}`;
+    const reset = await workspace.resetHard(at, preMergeSha);
+    return reset.ok ? "" : `退回合并前的提交失败：${tail(reset.error)}`;
   }
 
   /**
@@ -1070,48 +998,20 @@ export class Pipeline {
     worktree: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<{ files: string[]; preMergeSha: string } | undefined> {
-    const { config } = this.#d;
+    const { config, workspace } = this.#d;
     const saved = this.#need(run.conflict ?? undefined);
-    const open = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
-    const merged = await this.#git(
-      ["merge-base", "--is-ancestor", config.baseRef, "HEAD"],
-      worktree,
-    );
-    if (
-      saved.preMergeSha !== undefined &&
-      saved.files !== undefined &&
-      (open.code === 0 || merged.code === 0)
-    )
+    const at = this.#at(worktree);
+    const open = await workspace.mergeInProgress(at);
+    const merged = await workspace.isAncestor(at, config.baseRef);
+    if (saved.preMergeSha !== undefined && saved.files !== undefined && (open || merged))
       return { files: saved.files, preMergeSha: saved.preMergeSha };
     return this.#startMerge(run, worktree, save);
   }
 
   /** Best effort: names the files a merge of the base into the PR head would conflict on. */
   async #conflictFiles(worktree: string): Promise<string[]> {
-    const { config, exec, env } = this.#d;
-    const opts = { cwd: worktree, env: deliverEnv(env), timeoutMs: config.commandTimeoutMs };
-    await withRepoLock(config.repoRoot, () =>
-      exec(["git", ...GIT_SAFE, "fetch", config.remote], opts),
-    );
-    const merged = await exec(
-      [
-        "git",
-        ...GIT_SAFE,
-        "merge-tree",
-        "--write-tree",
-        "--name-only",
-        "--no-messages",
-        "HEAD",
-        config.baseRef,
-      ],
-      opts,
-    );
-    if (merged.code !== 1) return [];
-    return merged.output
-      .split("\n")
-      .slice(1)
-      .map((l) => l.trim())
-      .filter((l) => l !== "");
+    const { config, workspace } = this.#d;
+    return workspace.conflictProbe(this.#at(worktree), config.baseRef);
   }
 
   /** Re-reads the state in the middle of a step, before acting on a PR that may have been closed meanwhile. */
@@ -1135,13 +1035,7 @@ export class Pipeline {
       // The loop fetches itself: whether the daemon may is undecided (docs/protocol.md, "待定").
       // Fetching needs the remote's credentials; no session has run in the main checkout, so this is safe to give them.
       const fetched = await this.#netExec(run.key, "git fetch", () =>
-        withRepoLock(config.repoRoot, () =>
-          this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
-            cwd: config.repoRoot,
-            env: deliverEnv(this.#d.env),
-            timeoutMs: config.commandTimeoutMs,
-          }),
-        ),
+        this.#d.workspace.fetchMain(this.#at(config.repoRoot)),
       );
       if (fetched.code !== 0) throw new Blocked(`git fetch 失败：${tail(fetched.output)}`);
       const created = await sessions.create({
@@ -1182,12 +1076,8 @@ export class Pipeline {
   }
 
   async #install(worktree: string): Promise<void> {
-    const installed = await this.#d.exec(["bun", "install"], {
-      cwd: worktree,
-      env: verifyEnv(this.#d.env),
-      timeoutMs: this.#d.config.commandTimeoutMs,
-    });
-    if (installed.code !== 0) throw new Blocked(`bun install 失败：${tail(installed.output)}`);
+    const installed = await this.#d.workspace.install(this.#at(worktree));
+    if (!installed.ok) throw new Blocked(`bun install 失败：${tail(installed.error)}`);
   }
 
   /** `node_modules_kept`, once per run, CI round and reason: a wait that is entered again does not repeat it. */
@@ -1208,44 +1098,19 @@ export class Pipeline {
     worktree: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<void> {
-    const { config, store } = this.#d;
+    const { config, store, workspace } = this.#d;
     if (!config.releaseNodeModules || run.nodeModulesReleased) return;
-    const status = await this.#git(["status", "--porcelain"], worktree);
-    if (status.code !== 0) {
-      await this.#noteKept(run, "status_failed");
+    const found = await workspace.nodeModulesDirs(this.#at(worktree));
+    if (!found.ok) {
+      await this.#noteKept(run, found.reason);
       return;
     }
-    if (status.output.trim() !== "") {
-      await this.#noteKept(run, "dirty");
-      return;
-    }
-    const listed = await this.#git(
-      ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
-      worktree,
-    );
-    if (listed.code !== 0) {
-      await this.#noteKept(run, "list_failed");
-      return;
-    }
-    const dirs = listed.output
-      .split("\0")
-      .map((l) => l.trim().replace(/\/+$/, ""))
-      .filter(
-        (d) =>
-          d !== "" &&
-          !d.startsWith("/") &&
-          !d.split("/").includes("..") &&
-          d.split("/").at(-1) === "node_modules",
-      );
+    const dirs = found.dirs;
     if (dirs.length === 0) return;
     // Marked first: if rm stops halfway or the loop dies, the next Dev or verify installs again.
     await save({ nodeModulesReleased: true });
-    const removed = await this.#d.exec(["rm", "-rf", "--", ...dirs], {
-      cwd: worktree,
-      env: verifyEnv(this.#d.env),
-      timeoutMs: config.commandTimeoutMs,
-    });
-    if (removed.code !== 0) {
+    const removed = await workspace.releaseNodeModules(this.#at(worktree), dirs);
+    if (!removed.ok) {
       await store.event(run.key, "node_modules_release_failed", { reason: "rm_failed" });
       return;
     }
@@ -1254,25 +1119,7 @@ export class Pipeline {
 
   /** Free space of the volume holding `dir`, in 1 KiB blocks (`df -k`); undefined when it cannot be read. */
   async #freeKb(dir: string): Promise<number | undefined> {
-    try {
-      const out = await this.#d.exec(["df", "-kP", dir], {
-        cwd: dir,
-        env: verifyEnv(this.#d.env),
-        timeoutMs: 10_000,
-      });
-      if (out.code !== 0) return undefined;
-      // POSIX format: the Capacity column ("12%") sits right after Available, so anchor on it; a device name or
-      // mount point with spaces cannot shift it. The header must name the column.
-      const lines = out.output.trim().split("\n");
-      if (lines.length !== 2 || !/avail/i.test(lines[0] ?? "")) return undefined;
-      const row = (lines[1] ?? "").trim().split(/\s+/);
-      const cap = row.findIndex((t) => /^\d+%$/.test(t));
-      const field = cap > 0 ? (row[cap - 1] ?? "") : "";
-      const free = /^\d+$/.test(field) ? Number(field) : Number.NaN;
-      return Number.isSafeInteger(free) ? free : undefined;
-    } catch {
-      return undefined;
-    }
+    return this.#d.workspace.freeKb(this.#at(dir));
   }
 
   /** CYC-448: the volume's free-space drop across `bun install`. Numbers only; a failure never blocks the run. */
@@ -1347,7 +1194,7 @@ export class Pipeline {
     } catch (error) {
       if (!(error instanceof SessionLost)) throw error;
       // It cannot be continued: a new one takes over from what is on disk, not from a replay of the log.
-      const gitLog = await this.#git(["log", "--oneline", `${config.baseRef}..HEAD`], worktree);
+      const gitLog = await this.#d.workspace.log(this.#at(worktree), config.baseRef);
       const created = await this.#d.sessions.create({
         role: "dev",
         agent: config.devAgent,
@@ -1372,7 +1219,7 @@ export class Pipeline {
             issue,
             book.items,
             progress,
-            gitLog.output,
+            gitLog,
             run.findings,
             await this.#docTexts(run, issue, ["Design", "Plan"]),
           ),
@@ -1390,11 +1237,7 @@ export class Pipeline {
     // Decide first: the checkpoint below would commit conflict markers along with everything else.
     if (conflict !== undefined) await this.#judgeConflict(run, conflict, worktree, save);
     // What is on disk is the checkpoint. Work Dev left uncommitted is committed here, so it is not lost.
-    const dirty = await this.#git(["status", "--porcelain"], worktree);
-    if (dirty.output.trim() !== "") {
-      await this.#git(["add", "-A"], worktree);
-      await this.#git(["commit", "-m", `${run.key}: checkpoint (auto-loop)`], worktree);
-    }
+    await this.#d.workspace.checkpoint(this.#at(worktree), `${run.key}: checkpoint (auto-loop)`);
     await save({ phase: "verify", findings: null });
   }
 
@@ -1407,8 +1250,7 @@ export class Pipeline {
     const worktree = this.#need(run.worktree ?? undefined);
     // Every way into verify (after Dev, a clean conflict merge, a resume) passes here.
     await this.#restoreNodeModules(run, worktree, save);
-    const changed = await this.#git(["diff", "--name-only", `${config.baseRef}...HEAD`], worktree);
-    const files = changed.output.split("\n").filter((line) => line.trim() !== "");
+    const files = await this.#d.workspace.changedFiles(this.#at(worktree), config.baseRef);
     const failures: string[] = [];
     if (files.length === 0) failures.push("There is no change on the branch.");
 
@@ -1498,14 +1340,14 @@ export class Pipeline {
       run = { ...run, qaSessionId: sessionId };
     }
     const before = await this.#snapshot(worktree);
-    const diff = await this.#git(["diff", `${config.baseRef}...HEAD`], worktree);
+    const diff = await this.#d.workspace.diff(this.#at(worktree), config.baseRef);
     const checks = (this.#checks.get(run.key) ?? [])
       .map((c) => `- ${c.command}: ${c.passed ? "passed" : "failed"}`)
       .join("\n");
     const prompt = qaBrief(
       issue,
       book.items,
-      diff.output,
+      diff,
       checks === "" ? "(none)" : checks,
       run.resolvedFiles,
       await this.#docTexts(run, issue, ["Spec", "Design", "Plan"]),
@@ -1613,22 +1455,15 @@ export class Pipeline {
   ): Promise<void> {
     const { config } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
-    const env = deliverEnv(this.#d.env);
-    const timeoutMs = config.commandTimeoutMs;
+    const at = this.#at(worktree);
 
     const pushed = await this.#netExec(run.key, "git push", () =>
-      this.#d.exec(
-        ["git", ...GIT_SAFE, "push", config.remote, `HEAD:refs/heads/${run.remoteBranch}`],
-        { cwd: worktree, env, timeoutMs },
-      ),
+      this.#d.workspace.push(at, run.remoteBranch),
     );
     if (pushed.code !== 0) throw new Blocked(`git push 失败：${tail(pushed.output)}`);
 
-    const commits = await this.#git(
-      ["log", "--reverse", "--no-merges", "--format=%s", `${config.baseRef}..HEAD`],
-      worktree,
-    );
-    const summary = commits.output
+    const commits = await this.#d.workspace.commitSubjects(at, config.baseRef);
+    const summary = commits
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line !== "" && !line.includes("checkpoint (auto-loop)"))
@@ -1652,58 +1487,38 @@ export class Pipeline {
     const bodyPath = join(config.stateDir, "runs", run.key, "pr-body.md");
     await writeFile(bodyPath, body, { mode: 0o600 });
 
+    const { forge } = this.#d;
     let prUrl: string | undefined;
     if (run.prUrl !== null) {
       // Pushing a CI fix to the same branch: keep the existing pull request and refresh its description.
       const prUrlNow = run.prUrl;
-      const edited = await this.#netExec(run.key, "gh pr edit", () =>
-        this.#d.exec(["gh", "pr", "edit", prUrlNow, "--title", title, "--body-file", bodyPath], {
-          cwd: worktree,
-          env,
-          timeoutMs,
-        }),
+      const edited = await this.#netForge(run.key, "gh pr edit", () =>
+        forge.editPr(at, prUrlNow, { title, bodyPath }),
       );
-      if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
+      if (!edited.ok) throw new Blocked(`gh pr edit 失败：${tail(edited.error)}`);
       prUrl = run.prUrl;
     } else {
-      const created = await this.#netExec(run.key, "gh pr create", () =>
-        this.#d.exec(
-          [
-            "gh",
-            "pr",
-            "create",
-            "--base",
-            config.baseBranch,
-            "--head",
-            run.remoteBranch,
-            "--title",
-            title,
-            "--body-file",
-            bodyPath,
-          ],
-          { cwd: worktree, env, timeoutMs },
-        ),
+      const created = await this.#netForge(run.key, "gh pr create", () =>
+        forge.createPr(at, {
+          base: config.baseBranch,
+          head: run.remoteBranch,
+          title,
+          bodyPath,
+        }),
       );
-      prUrl = findUrl(created.output);
-      if (created.code !== 0 || prUrl === undefined) {
+      if (created.ok) {
+        prUrl = created.url;
+      } else {
         // The pull request may already be there (a delivery that was cut off after it was made).
-        const existing = await this.#netExec(run.key, "gh pr view", () =>
-          this.#d.exec(["gh", "pr", "view", run.remoteBranch, "--json", "url", "--jq", ".url"], {
-            cwd: worktree,
-            env,
-            timeoutMs,
-          }),
+        const existing = await this.#netForge(run.key, "gh pr view", () =>
+          forge.prFor(at, run.remoteBranch),
         );
-        prUrl = findUrl(existing.output);
-        if (existing.code !== 0 || prUrl === undefined)
-          throw new Blocked(`gh pr create 失败：${tail(created.output)}`);
-        const edited = await this.#netExec(run.key, "gh pr edit", () =>
-          this.#d.exec(
-            ["gh", "pr", "edit", run.remoteBranch, "--title", title, "--body-file", bodyPath],
-            { cwd: worktree, env, timeoutMs },
-          ),
+        if (!existing.ok) throw new Blocked(`gh pr create 失败：${tail(created.error)}`);
+        prUrl = existing.url;
+        const edited = await this.#netForge(run.key, "gh pr edit", () =>
+          forge.editPr(at, run.remoteBranch, { title, bodyPath }),
         );
-        if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
+        if (!edited.ok) throw new Blocked(`gh pr edit 失败：${tail(edited.error)}`);
       }
     }
     await save({ phase: "ci", prUrl });
@@ -1713,9 +1528,9 @@ export class Pipeline {
     const { config, store, clock } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     const prUrl = this.#need(run.prUrl ?? undefined);
-    const head = await this.#git(["rev-parse", "HEAD"], worktree);
-    if (head.code !== 0) throw new Blocked(`读取 HEAD 提交失败：${tail(head.output)}`);
-    const headSha = head.output.trim();
+    const head = await this.#d.workspace.head(this.#at(worktree));
+    if (!head.ok) throw new Blocked(`读取 HEAD 提交失败：${tail(head.error)}`);
+    const headSha = head.sha;
 
     // No new commit since the red run: a push starts no CI, so rerun the failed jobs and wait for that result.
     let staleFailedUrls: Set<string> | undefined;
@@ -1723,30 +1538,16 @@ export class Pipeline {
       const read = await this.#net(
         run.key,
         "gh pr view",
-        () =>
-          readCiStatus({
-            prRef: prUrl,
-            requiredChecks: config.ciChecks,
-            expectedHeadSha: headSha,
-            exec: this.#d.exec,
-            cwd: worktree,
-            env: this.#d.env,
-            timeoutMs: config.commandTimeoutMs,
-          }),
+        () => this.#d.forge.ciStatus(this.#at(worktree), prUrl, headSha, config.ciChecks),
         (r) => (r.ok ? undefined : r.error),
       );
       if (!read.ok) throw new Blocked(`读取 CI 状态失败：${tail(read.error)}`);
       if (read.status.state === "failed") {
         // Not retried in place (a retry could rerun twice): on a network error the run waits, and the next step
         // reads the CI status again before it reruns anything.
-        const rerun = await rerunFailedCi({
-          failed: read.status.failed,
+        const rerun = await this.#d.forge.rerunFailed(this.#at(worktree), read.status.failed, {
           ciRound: run.ciRound,
           maxCiRetries: config.maxCiRetries,
-          exec: this.#d.exec,
-          cwd: worktree,
-          env: this.#d.env,
-          timeoutMs: config.commandTimeoutMs,
         });
         if (!rerun.ok && isNetworkError(rerun.error)) throw new NetworkWait("gh run rerun");
         if (!rerun.ok) throw new Blocked(`重新运行 CI 失败：${tail(rerun.error)}`);
@@ -1765,9 +1566,8 @@ export class Pipeline {
       prRef: prUrl,
       requiredChecks: config.ciChecks,
       expectedHeadSha: headSha,
-      exec: this.#d.exec,
+      forge: this.#d.forge,
       cwd: worktree,
-      env: this.#d.env,
       commandTimeoutMs: config.commandTimeoutMs,
       pollIntervalMs: config.ciPollIntervalMs,
       timeoutMs: config.ciTimeoutMs,
@@ -1833,29 +1633,20 @@ export class Pipeline {
     const { config, store, tracker } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     const prUrl = this.#need(run.prUrl ?? undefined);
-    const head = await this.#git(["rev-parse", "HEAD"], worktree);
-    const headSha = head.code === 0 ? head.output.trim() : "";
+    const head = await this.#d.workspace.head(this.#at(worktree));
+    const headSha = head.ok ? head.sha : "";
 
     // Confirm CI is green for this exact HEAD (re-checks via GitHub after a crash recovery).
     let ciGreen = headSha !== "" && this.#ciGreenSha.get(run.key) === headSha;
     let ciNotGreenReason: string | null = null;
     if (!ciGreen) {
       if (headSha === "") {
-        ciNotGreenReason = `读取 HEAD 提交失败：${tail(head.output)}`;
+        ciNotGreenReason = `读取 HEAD 提交失败：${tail(head.ok ? "" : head.error)}`;
       } else {
         const read = await this.#net(
           run.key,
           "gh pr view",
-          () =>
-            readCiStatus({
-              prRef: prUrl,
-              requiredChecks: config.ciChecks,
-              expectedHeadSha: headSha,
-              exec: this.#d.exec,
-              cwd: worktree,
-              env: this.#d.env,
-              timeoutMs: config.commandTimeoutMs,
-            }),
+          () => this.#d.forge.ciStatus(this.#at(worktree), prUrl, headSha, config.ciChecks),
           (r) => (r.ok ? undefined : r.error),
         );
         if (read.ok && read.status.state === "passed") {
@@ -1869,7 +1660,7 @@ export class Pipeline {
       }
     }
 
-    const diff = await this.#git(["diff", `${config.baseRef}...HEAD`], worktree);
+    const diff = await this.#d.workspace.diff(this.#at(worktree), config.baseRef);
     const maxAttempts = Math.max(1, config.maxReviewRetries + 1);
     let reviewSessionId = run.reviewSessionId;
     let verdict: ReviewVerdict | undefined;
@@ -1901,7 +1692,7 @@ export class Pipeline {
           issue,
           prUrl,
           book.items,
-          diff.output,
+          diff,
           config.ciChecks,
           retryNote,
           run.resolvedFiles,
@@ -1956,15 +1747,7 @@ export class Pipeline {
       return this.#net(
         run.key,
         "gh pr comment",
-        () =>
-          postPrComment({
-            prRef: prUrl,
-            bodyPath: commentPath,
-            exec: this.#d.exec,
-            cwd: worktree,
-            env: this.#d.env,
-            timeoutMs: config.commandTimeoutMs,
-          }),
+        () => this.#d.forge.comment(this.#at(worktree), prUrl, commentPath),
         (r) => (r.ok ? undefined : r.error),
       );
     };
@@ -2055,14 +1838,7 @@ export class Pipeline {
         const merged = await this.#net(
           run.key,
           "gh pr merge",
-          () =>
-            enableAutoMerge({
-              prRef: prUrl,
-              exec: this.#d.exec,
-              cwd: worktree,
-              env: this.#d.env,
-              timeoutMs: config.commandTimeoutMs,
-            }),
+          () => this.#d.forge.autoMerge(this.#at(worktree), prUrl, true),
           (r) => (r.ok ? undefined : r.error),
         );
         if (merged.ok) {
@@ -2211,9 +1987,7 @@ export class Pipeline {
 
   /** The commit and the changed files: two snapshots equal means nothing was written in between. */
   async #snapshot(worktree: string): Promise<string> {
-    const head = await this.#git(["rev-parse", "HEAD"], worktree);
-    const status = await this.#git(["status", "--porcelain"], worktree);
-    return `${head.output.trim()}\n${status.output}`;
+    return this.#d.workspace.snapshot(this.#at(worktree));
   }
 
   /**
@@ -2257,12 +2031,20 @@ export class Pipeline {
     );
   }
 
-  async #git(args: string[], cwd: string): Promise<ExecResult> {
-    return this.#d.exec(["git", ...GIT_SAFE, ...args], {
-      cwd,
-      env: verifyEnv(this.#d.env),
-      timeoutMs: this.#d.config.commandTimeoutMs,
-    });
+  /** `#net` for a port result: `ok`, or an `error` that says whether the network is to blame. */
+  #netForge<T extends { ok: boolean }>(
+    key: string,
+    command: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    return this.#net(key, command, fn, (r) =>
+      r.ok ? undefined : String((r as { error?: unknown }).error ?? ""),
+    );
+  }
+
+  /** Where a port command runs, and for how long. */
+  #at(cwd: string): At {
+    return { cwd, timeoutMs: this.#d.config.commandTimeoutMs };
   }
 
   #need<T>(value: T | undefined): T {
@@ -2271,11 +2053,8 @@ export class Pipeline {
   }
 }
 
-const findUrl = (text: string): string | undefined =>
-  text
-    .split("\n")
-    .reverse()
-    .find((line) => /^https:\/\/\S+$/.test(line.trim()))
-    ?.trim();
+/** The text of a failed merge, for the message that says what git said. */
+const mergeOutput = (done: Done | undefined): string =>
+  done !== undefined && !done.ok ? done.error : "";
 
 export type { Criterion };

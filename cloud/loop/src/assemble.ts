@@ -7,6 +7,8 @@ import { openStore } from "./db/store.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
+import { gitWorkspace } from "./ports/git.ts";
+import { githubForge } from "./ports/github.ts";
 import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
@@ -154,6 +156,13 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     tracker,
     sessions,
     exec: runCommand,
+    forge: githubForge({ exec: runCommand, env: process.env }),
+    workspace: gitWorkspace({
+      exec: runCommand,
+      env: process.env,
+      repoRoot: config.repoRoot,
+      remote: config.remote,
+    }),
     store,
     clock,
     log: plog,

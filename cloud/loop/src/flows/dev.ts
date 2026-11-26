@@ -2,7 +2,6 @@
 // which share the PR guard, conflict handling and CI state with it; this says which they are and what is particular
 // to a dev run.
 
-import { readPrState } from "../pr.ts";
 import type { Flow, FlowHost, PhaseDef } from "./flow.ts";
 import { blockTicket, ticketStillWanted } from "./ticket.ts";
 
@@ -74,13 +73,10 @@ export const devFlow = (host: FlowHost, steps: DevSteps): Flow => ({
   async whenDone(run) {
     const { config } = host.d;
     if (run.prUrl === null) return "keep";
-    const read = await readPrState({
-      prRef: run.prUrl,
-      exec: host.d.exec,
-      cwd: config.repoRoot,
-      env: host.d.env,
-      timeoutMs: config.commandTimeoutMs,
-    });
+    const read = await host.d.forge.prState(
+      { cwd: config.repoRoot, timeoutMs: config.commandTimeoutMs },
+      run.prUrl,
+    );
     if (!read.ok) return "keep";
     if (read.state === "CLOSED") return { note: "cleanup_skipped_unmerged" };
     if (read.state !== "MERGED") return "keep";

@@ -3,7 +3,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Deps, Pipeline } from "../src/pipeline.ts";
+import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import type { Issue, IssueDocument } from "../src/types.ts";
 import { config, FakeSessions, FakeTracker, issue, makeExec, type World } from "./helpers.ts";
