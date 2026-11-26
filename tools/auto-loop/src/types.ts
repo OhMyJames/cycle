@@ -109,17 +109,22 @@ export type Config = {
   dryRun: boolean;
 };
 
-export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): Config => ({
+/** Everything that is not per Project. `columns`, labels and type ids come from `resolveProject`, paths from the config file. */
+export const defaultConfig = (
+  partial: Pick<
+    Config,
+    | "repoRoot"
+    | "stateDir"
+    | "columns"
+    | "autoLabelId"
+    | "allowedTypeIds"
+    | "featureTypeId"
+    | "bugTypeId"
+  >,
+): Config => ({
   remote: "origin",
   baseRef: "origin/main",
   baseBranch: "main",
-  // infra.CYC (get_project, 2026-11-25).
-  columns: { todo: 22, inProgress: 23, inReview: 34, blocked: 35, done: 24, canceled: 25 },
-  autoLabelId: 11,
-  // Feature (20), Bug (25).
-  allowedTypeIds: [20, 25],
-  featureTypeId: 20,
-  bugTypeId: 25,
   maxCriteria: 8,
   maxFixRounds: 3,
   ciChecks: ["check", "browser", "integration"],
@@ -139,21 +144,6 @@ export const defaultConfig = (partial: Pick<Config, "repoRoot" | "stateDir">): C
   dryRun: false,
   ...partial,
 });
-
-/** Parses a comma-separated list of positive integer issue type ids (e.g. `AUTO_LOOP_TYPE_IDS=20,25`). */
-export const parseAllowedTypeIds = (raw: string): number[] => {
-  const parts = raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part !== "");
-  if (parts.length === 0) throw new Error("AUTO_LOOP_TYPE_IDS must contain at least one type id.");
-  return parts.map((part) => {
-    const id = Number(part);
-    if (!Number.isInteger(id) || id <= 0)
-      throw new Error(`invalid type id in AUTO_LOOP_TYPE_IDS: ${part}`);
-    return id;
-  });
-};
 
 export type SessionRole = "dev" | "qa" | "review";
 

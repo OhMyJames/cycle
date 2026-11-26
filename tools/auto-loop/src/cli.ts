@@ -2,20 +2,20 @@
 // bun tools/auto-loop/src/cli.ts [--once] [--dry-run] [--interval SECONDS]
 // bun tools/auto-loop/src/cli.ts stats
 //
-// Environment: AUTO_LOOP_PLAN_KEY (required), AUTO_LOOP_PLAN_URL, AUTO_LOOP_PROJECT (default CYC),
-// AUTO_LOOP_TYPE_IDS (comma-separated issue type ids, default 20,25), AUTO_LOOP_STATE (default <dataDir>/auto-loop),
-// AUTO_LOOP_DEV_AGENT / AUTO_LOOP_QA_AGENT / AUTO_LOOP_REVIEW_AGENT (agent id of each session, default claude),
-// CYCLE_HOME / CYCLE_SOCKET for the daemon.
+// Configuration is a file (mode 0600), not environment variables: --config <path>, or <dataDir>/auto-loop.json.
+// See config-file.ts for the fields. CYCLE_HOME / CYCLE_SOCKET still locate the daemon.
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { loadConfigFile } from "./config-file.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
+import { resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
 import { computeStats } from "./stats.ts";
 import { acquireLock, RunStore } from "./store.ts";
-import { defaultConfig, parseAllowedTypeIds } from "./types.ts";
+import { defaultConfig } from "./types.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -25,7 +25,12 @@ const value = (name: string) => {
 };
 
 const dataDir = process.env.CYCLE_HOME ?? join(homedir(), ".cycle");
-const stateDir = resolve(process.env.AUTO_LOOP_STATE ?? join(dataDir, "auto-loop"));
+const configPath = resolve(value("--config") ?? join(dataDir, "auto-loop.json"));
+const file = await loadConfigFile(configPath).catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+});
+const { stateDir } = file;
 const clock = { now: () => new Date() };
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
 
@@ -35,38 +40,20 @@ if (args[0] === "stats") {
   process.exit(0);
 }
 
-const key = process.env.AUTO_LOOP_PLAN_KEY;
-if (key === undefined || key === "") {
-  console.error("AUTO_LOOP_PLAN_KEY is not set.");
-  process.exit(2);
-}
-const repoRoot = resolve(import.meta.dir, "../../..");
-const rawTypeIds = process.env.AUTO_LOOP_TYPE_IDS;
-const allowedTypeIds =
-  rawTypeIds !== undefined && rawTypeIds.trim() !== ""
-    ? parseAllowedTypeIds(rawTypeIds)
-    : undefined;
-const agentFromEnv = (name: string): string | undefined => {
-  const value = process.env[name]?.trim();
-  return value === undefined || value === "" ? undefined : value;
-};
-const devAgent = agentFromEnv("AUTO_LOOP_DEV_AGENT");
-const qaAgent = agentFromEnv("AUTO_LOOP_QA_AGENT");
-const reviewAgent = agentFromEnv("AUTO_LOOP_REVIEW_AGENT");
+const tracker = new PlanTracker({
+  url: file.planUrl,
+  key: file.planKey,
+  projectKey: file.projectKey,
+});
+const setup = resolveProject(await tracker.getProject(), file);
+tracker.setColumns(setup.columns);
 const config = {
-  ...defaultConfig({ repoRoot, stateDir }),
-  ...(devAgent !== undefined ? { devAgent } : {}),
-  ...(qaAgent !== undefined ? { qaAgent } : {}),
-  ...(reviewAgent !== undefined ? { reviewAgent } : {}),
-  ...(allowedTypeIds !== undefined ? { allowedTypeIds } : {}),
+  ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
+  ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),
+  ...(file.qaAgent !== undefined ? { qaAgent: file.qaAgent } : {}),
+  ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),
   dryRun: flag("--dry-run"),
 };
-const tracker = new PlanTracker({
-  url: process.env.AUTO_LOOP_PLAN_URL ?? "https://plan.ops.shrimpdot.ai/api/mcp",
-  key,
-  projectKey: process.env.AUTO_LOOP_PROJECT ?? "CYC",
-  columns: config.columns,
-});
 const store = new RunStore(stateDir, clock.now);
 const release = config.dryRun ? async () => {} : await acquireLock(stateDir);
 const sessions = new DaemonSessions(

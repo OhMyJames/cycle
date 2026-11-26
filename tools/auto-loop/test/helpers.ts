@@ -17,7 +17,15 @@ export const issue = (over: Partial<Issue> = {}): Issue => ({
 });
 
 export const config = (over: Partial<Config> = {}): Config => ({
-  ...defaultConfig({ repoRoot: "/repo", stateDir: "/state" }),
+  ...defaultConfig({
+    repoRoot: "/repo",
+    stateDir: "/state",
+    columns: { todo: 22, inProgress: 23, inReview: 34, blocked: 35, done: 24, canceled: 25 },
+    autoLabelId: 11,
+    allowedTypeIds: [20, 25],
+    featureTypeId: 20,
+    bugTypeId: 25,
+  }),
   ...over,
 });
 
