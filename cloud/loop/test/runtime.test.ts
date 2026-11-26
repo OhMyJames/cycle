@@ -6,8 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectUnit } from "../src/assemble.ts";
 import type { ConfigFile } from "../src/config-file.ts";
+import { SqliteStore } from "../src/db/store.ts";
 import { Pipeline } from "../src/pipeline.ts";
 import { handleStopSignals, startPipelines, startServer, startupReason } from "../src/runtime.ts";
+import { readStats } from "../src/stats.ts";
 import { RunStore } from "../src/store.ts";
 import {
   config,
@@ -395,4 +397,17 @@ test("stop, then start again: the server comes back with the same Projects and s
   await waitFor(() => steps.length >= before + 2);
   source.emit("SIGINT");
   await second.done;
+});
+
+test("stats reads loop.db when there is one, and the files otherwise", async () => {
+  const at = () => new Date("2026-11-26T00:00:00Z");
+  const files = new RunStore(dir, at);
+  await files.event("CYC-1", "claimed");
+  expect((await readStats(dir, at)).runs).toBe(1);
+
+  const db = SqliteStore.open(dir, at);
+  await db.event("CYC-7", "claimed");
+  await db.event("CYC-8", "claimed");
+  db.close();
+  expect((await readStats(dir, at)).runs).toBe(2);
 });

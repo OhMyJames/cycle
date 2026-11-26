@@ -10,9 +10,13 @@ export const DB_FILE = "loop.db";
 export const dbPath = (stateDir: string): string => join(stateDir, DB_FILE);
 
 /** Opens (and makes, if it is not there) the database and brings its schema up to date. */
-export const openDb = (stateDir: string, migrations: readonly string[] = MIGRATIONS): Database => {
+export const openDb = (
+  stateDir: string,
+  migrations: readonly string[] = MIGRATIONS,
+  file: string = DB_FILE,
+): Database => {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  const path = dbPath(stateDir);
+  const path = join(stateDir, file);
   // Made owner-only before SQLite writes anything to it; the -wal and -shm files copy its mode.
   closeSync(openSync(path, "a", 0o600));
   chmodSync(path, 0o600);

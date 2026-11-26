@@ -24,6 +24,20 @@ bun cloud/loop/src/pipeline-cli.ts stats       # 自主完成率（只算 Loop �
 
 配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。`devModel`、`qaModel`、`reviewModel`、`devEffort`、`qaEffort`、`reviewEffort`（可选，非空字符串）：按角色指定会话的模型和思考强度，创建会话后通过 `setConfig` 设置；省略表示沿用 agent 默认配置，空白串校验失败。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
 
+## 把旧状态导入 SQLite（CYC-476）
+
+stateDir 里有 `loop.db` 就读写 SQLite，没有就读写文件（`runs/`、`events.jsonl`、`plans/`）。切换方式：合并后**重启一次 Loop**，不用停机等 run 做完。**切换前先备份整个 stateDir**。
+
+启动时先拿 `<stateDir>/loop.lock`，再选存储；`loop.db` 不存在而 `runs/` 或 `events.jsonl` 存在时导入（`--dry-run` 不导入）：
+
+1. 用文件算一份 `stats`；
+2. 在 `loop.db.importing` 里建表，把 `runs/*/run.json`（按现有 schema 和旧默认值）、`criteria.json`、`progress.md`、`events.jsonl`（丢掉末尾半行）、`plans/` 在一个事务里写入；
+3. 用 SQLite 算 `stats`，逐字段比较，并把 run、进度、验收标准、规划记录读回来和文件比；
+4. 全部一致：`loop.db.importing` 改名为 `loop.db`，`runs`、`events.jsonl`、`plans` 改名为 `*.imported-<日期>`（不删），写一条 `storage_imported` 事件，照常启动；规划轮次的 `bodies/` 会复制回新的 `plans/`；
+5. 不一致或任何一步出错：删掉 `loop.db.importing`，旧文件不动，进程以非零退出码退出，日志写明哪一项不同。修好原因（或把坏文件挪走）后再启动即可。
+
+进行中的 run 也能导入：拿到锁之后、第一个 step 之前没有 step 在处理 run，导入后从 SQLite 读出并续跑。`pipeline-cli.ts stats` 同样是有 `loop.db` 读 SQLite，否则读文件。
+
 ## 冲突处理（CYC-411）
 
 PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
