@@ -1090,6 +1090,18 @@ export class Pipeline {
     await save({ phase: "dev" });
   }
 
+  /** Installs again when `node_modules` was released; an install that fails is Blocked. */
+  async #restoreNodeModules(
+    run: RunRecord,
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    if (!run.nodeModulesReleased) return;
+    await this.#install(worktree);
+    await save({ nodeModulesReleased: false });
+    await this.#d.store.event(run.key, "node_modules_restored");
+  }
+
   async #install(worktree: string): Promise<void> {
     const installed = await this.#d.exec(["bun", "install"], {
       cwd: worktree,
@@ -1112,7 +1124,11 @@ export class Pipeline {
     const { config, store } = this.#d;
     if (!config.releaseNodeModules || run.nodeModulesReleased) return;
     const status = await this.#git(["status", "--porcelain"], worktree);
-    if (status.code !== 0 || status.output.trim() !== "") {
+    if (status.code !== 0) {
+      await store.event(run.key, "node_modules_kept", { reason: "status_failed" });
+      return;
+    }
+    if (status.output.trim() !== "") {
       await store.event(run.key, "node_modules_kept", { reason: "dirty" });
       return;
     }
@@ -1120,7 +1136,10 @@ export class Pipeline {
       ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
       worktree,
     );
-    if (listed.code !== 0) return;
+    if (listed.code !== 0) {
+      await store.event(run.key, "node_modules_kept", { reason: "list_failed" });
+      return;
+    }
     const dirs = listed.output
       .split("\n")
       .map((l) => l.trim().replace(/\/+$/, ""))
@@ -1132,16 +1151,17 @@ export class Pipeline {
           d.split("/").at(-1) === "node_modules",
       );
     if (dirs.length === 0) return;
+    // Marked first: if rm stops halfway or the loop dies, the next Dev or verify installs again.
+    await save({ nodeModulesReleased: true });
     const removed = await this.#d.exec(["rm", "-rf", "--", ...dirs], {
       cwd: worktree,
       env: verifyEnv(this.#d.env),
       timeoutMs: config.commandTimeoutMs,
     });
     if (removed.code !== 0) {
-      await store.event(run.key, "node_modules_kept", { reason: "rm_failed" });
+      await store.event(run.key, "node_modules_release_failed", { reason: "rm_failed" });
       return;
     }
-    await save({ nodeModulesReleased: true });
     await store.event(run.key, "node_modules_released", { dirs: dirs.length });
   }
 
@@ -1467,11 +1487,7 @@ export class Pipeline {
     const { config, store } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     // Released while waiting for CI or the merge: installed again before the session starts.
-    if (run.nodeModulesReleased) {
-      await this.#install(worktree);
-      await save({ nodeModulesReleased: false });
-      await store.event(run.key, "node_modules_restored");
-    }
+    await this.#restoreNodeModules(run, worktree, save);
     const progress = await store.readProgress(run.key);
     // A conflict turn: the merge of the base is in the worktree (made again if it is not), and Dev is asked to finish it.
     let conflict: { files: string[]; preMergeSha: string } | undefined;
@@ -1558,6 +1574,8 @@ export class Pipeline {
   ): Promise<void> {
     const { config, store, clock } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
+    // Every way into verify (after Dev, a clean conflict merge, a resume) passes here.
+    await this.#restoreNodeModules(run, worktree, save);
     const changed = await this.#git(["diff", "--name-only", `${config.baseRef}...HEAD`], worktree);
     const files = changed.output.split("\n").filter((line) => line.trim() !== "");
     const failures: string[] = [];

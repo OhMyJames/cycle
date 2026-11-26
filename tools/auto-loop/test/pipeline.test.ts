@@ -2079,3 +2079,68 @@ test("release on, worktree with uncommitted changes: nothing is deleted", async 
   expect(rmCalls(s.world.calls)).toEqual([]);
   expect((await s.store.events()).some((e) => e.kind === "node_modules_kept")).toBe(true);
 });
+
+test("a run that enters verify with node_modules released installs first", async () => {
+  const s = setup(
+    [ready({ columnId: 23 })],
+    { dev: [], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
+    { releaseNodeModules: true },
+  );
+  await s.store.saveCriteria(
+    "CYC-1",
+    (await import("../src/criteria.ts")).CriteriaBook.fromSpecs([
+      { text: "门禁通过", verify: [["bun", "run", "check"]] },
+    ]),
+  );
+  await s.store.save({
+    key: "CYC-1",
+    issueId: 1,
+    issueNumber: 1,
+    title: "title",
+    phase: "verify",
+    round: 0,
+    ciRound: 0,
+    ciFailedSha: null,
+    nodeModulesReleased: true,
+    conflictRound: 0,
+    conflict: null,
+    resolvedFiles: [],
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "dev-1",
+    qaSessionId: null,
+    reviewSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    prUrl: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    kind: "dev",
+    research: null,
+    startedAt: "2026-11-25T00:00:00.000Z",
+    updatedAt: "2026-11-25T00:00:00.000Z",
+  });
+  await s.pipeline.step();
+  const install = s.world.calls.indexOf("bun install");
+  const check = s.world.calls.findIndex((c) => c.startsWith("bun run check"));
+  expect(install).toBeGreaterThanOrEqual(0);
+  expect(install).toBeLessThan(check);
+  expect((await s.store.events()).some((e) => e.kind === "node_modules_restored")).toBe(true);
+});
+
+test("a failed rm keeps the released flag, so the next Dev or verify installs again", async () => {
+  const s = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
+    { releaseNodeModules: true },
+    ["rm -rf"],
+  );
+  s.world.ignoredDirs = IGNORED;
+  await s.pipeline.step();
+  const run = await s.store.load("CYC-1");
+  expect(run?.nodeModulesReleased).toBe(true);
+  expect((await s.store.events()).some((e) => e.kind === "node_modules_release_failed")).toBe(true);
+});
