@@ -31,6 +31,16 @@ const columns = [
   { id: 24, name: "Done", stateType: "completed" },
   { id: 25, name: "Canceled", stateType: "canceled" },
 ];
+/** The tracker's board order is `position`, not the order of the array: Canceled sits before In Review and Blocked. */
+const boardColumns = [
+  { id: 34, name: "In Review", stateType: "started", position: 5 },
+  { id: 25, name: "Canceled", stateType: "canceled", position: 4 },
+  { id: 21, name: "Backlog", stateType: "backlog", position: 0 },
+  { id: 22, name: "Todo", stateType: "unstarted", position: 1 },
+  { id: 35, name: "Blocked", stateType: "started", position: 6 },
+  { id: 23, name: "In Progress", stateType: "started", position: 2 },
+  { id: 24, name: "Done", stateType: "completed", position: 3 },
+];
 const issue = (n: number, columnId: number) => ({
   identifier: `CYC-${n}`,
   title: `Ticket ${n}`,
@@ -56,7 +66,7 @@ const tracker = () => {
     // The tracker's own shape: the project with its columns, and a bare array of issues.
     const data =
       name === "get_project"
-        ? { project: {}, columns, labels: [{ id: 11, name: "auto" }] }
+        ? { project: {}, columns: boardColumns, labels: [{ id: 11, name: "auto" }] }
         : [issue(Number(args.columnId) * 10, Number(args.columnId))];
     return new Response(
       JSON.stringify({
@@ -78,11 +88,22 @@ describe("the board", () => {
     const events: unknown[] = [];
     const board = await answerBoard(loop, "CYC", (e, p) => events.push([e, p]), fetchImpl);
     if (board.kind !== "ok") throw new Error("expected a board");
-    expect(board.doing.map((t) => t.identifier).sort()).toEqual(["CYC-230", "CYC-340"]);
-    expect(board.doing.map((t) => t.column).sort()).toEqual(["In Progress", "In Review"]);
-    expect(board.todo.map((t) => t.identifier)).toEqual(["CYC-220"]);
-    expect(board.backlog.map((t) => t.identifier)).toEqual(["CYC-210"]);
-    expect(board.done.map((t) => t.identifier)).toEqual(["CYC-240"]);
+    expect(board.columns.map((c) => c.name)).toEqual([
+      "Backlog",
+      "Todo",
+      "In Progress",
+      "Done",
+      "In Review",
+      "Blocked",
+    ]);
+    const ids = (name: string) =>
+      board.columns.find((c) => c.name === name)?.tickets.map((t) => t.identifier);
+    expect(ids("In Progress")).toEqual(["CYC-230"]);
+    expect(ids("In Review")).toEqual(["CYC-340"]);
+    expect(ids("Blocked")).toEqual(["CYC-350"]);
+    expect(ids("Todo")).toEqual(["CYC-220"]);
+    expect(ids("Backlog")).toEqual(["CYC-210"]);
+    expect(ids("Done")).toEqual(["CYC-240"]);
     // Canceled is not asked for at all.
     expect(seen.some((s) => s.args.columnId === 25)).toBe(false);
     expect(seen.every((s) => s.auth === `Bearer ${KEY}`)).toBe(true);
@@ -280,15 +301,45 @@ describe("state buttons", () => {
     const { fetchImpl } = tracker();
     const answer = await answerBoard(loop, "CYC", () => {}, fetchImpl);
     if (answer.kind !== "ok") throw new Error("expected a board");
+    const of = (name: string) => answer.columns.find((c) => c.name === name)?.tickets[0];
     // Doing: the auto one (In Progress) is Loop's and has no buttons; the other has.
-    expect(answer.doing.find((t) => t.column === "In Progress")?.actions).toEqual([]);
-    expect(answer.doing.find((t) => t.column === "In Review")?.actions).toEqual([
-      "to_backlog",
-      "to_todo",
-    ]);
-    expect(answer.backlog[0]?.actions).toEqual(["approve"]);
-    expect(answer.todo[0]?.actions).toEqual(["to_backlog"]);
-    expect(answer.done[0]?.actions).toEqual([]);
+    expect(of("In Progress")?.actions).toEqual([]);
+    expect(of("In Review")?.actions).toEqual(["to_backlog", "to_todo"]);
+    expect(of("Backlog")?.actions).toEqual(["approve"]);
+    expect(of("Todo")?.actions).toEqual(["to_backlog"]);
+    expect(of("Done")?.actions).toEqual([]);
+  });
+
+  test("a completed column keeps the newest 20 and says there are more; Backlog is whole", async () => {
+    writeKey(0o600);
+    const rows = (id: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        ...issue(1000 + i, id),
+        updatedAt: `2026-01-${String(i + 1).padStart(2, "0")}`,
+      }));
+    const fetchImpl = (async (_u: unknown, init: RequestInit) => {
+      const { name, arguments: args } = JSON.parse(String(init.body)).params;
+      const data =
+        name === "get_project"
+          ? { project: {}, columns: boardColumns, labels: [] }
+          : args.columnId === 24
+            ? rows(24, Math.min(25, args.limit))
+            : args.columnId === 21
+              ? rows(21, 30)
+              : [];
+      return new Response(
+        JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } }),
+      );
+    }) as unknown as typeof fetch;
+    const answer = await answerBoard(loop, "CYC", () => {}, fetchImpl);
+    if (answer.kind !== "ok") throw new Error("expected a board");
+    const done = answer.columns.find((c) => c.name === "Done");
+    expect(done?.tickets).toHaveLength(20);
+    expect(done?.more).toBe(true);
+    expect(done?.tickets[0]?.identifier).toBe("CYC-1020");
+    const backlog = answer.columns.find((c) => c.name === "Backlog");
+    expect(backlog?.tickets).toHaveLength(30);
+    expect(backlog?.more).toBe(false);
   });
 
   test("a plain-text tool error is a refusal, not offline", async () => {
@@ -373,7 +424,7 @@ describe("a conversation about a ticket (CYC-389)", () => {
       };
       const data =
         params.name === "get_project"
-          ? { project: {}, columns, labels: [{ id: 11, name: "auto" }] }
+          ? { project: {}, columns: boardColumns, labels: [{ id: 11, name: "auto" }] }
           : { id: 9, identifier: "CYC-9", title: "T", columnId, labelIds: [] };
       return new Response(
         JSON.stringify({

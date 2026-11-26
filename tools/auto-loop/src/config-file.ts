@@ -26,6 +26,8 @@ export const TuningSchema = z
     maxReviewRetries: whole(0, 10),
     maxInterruptRetries: whole(0, 10),
     maxQaRetries: whole(0, 10),
+    maxNetworkRetries: whole(0, 10),
+    networkRetryDelaysSeconds: z.array(whole(1, 600)).min(1).max(10),
     ciPollIntervalSeconds: whole(5, 600),
     ciTimeoutMinutes: whole(1, 240),
     mergePollIntervalSeconds: whole(5, 600),
@@ -47,9 +49,12 @@ export const tuningToConfig = (t: Tuning): Partial<Config> => {
     "maxReviewRetries",
     "maxInterruptRetries",
     "maxQaRetries",
+    "maxNetworkRetries",
   ] as const) {
     if (t[name] !== undefined) out[name] = t[name];
   }
+  if (t.networkRetryDelaysSeconds !== undefined)
+    out.networkRetryDelaysMs = t.networkRetryDelaysSeconds.map((n) => n * 1000);
   if (t.ciPollIntervalSeconds !== undefined) out.ciPollIntervalMs = t.ciPollIntervalSeconds * 1000;
   if (t.ciTimeoutMinutes !== undefined) out.ciTimeoutMs = t.ciTimeoutMinutes * 60_000;
   if (t.mergePollIntervalSeconds !== undefined)
