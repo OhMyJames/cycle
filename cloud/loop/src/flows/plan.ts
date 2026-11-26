@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "../env.ts";
 import { withRepoLock } from "../git-lock.ts";
+import { isNetworkError } from "../network.ts";
 import type { StepResult } from "../pipeline.ts";
 import { planningTracker } from "../plan-mcp.ts";
 import {
@@ -96,6 +97,14 @@ type Ctx = {
 
 /** A session changed the round's worktree: what it said is not trusted, and asking again would not help. */
 class Tampered extends Blocked {}
+
+/** What kind of error, and nothing of what it said. */
+const errorKind = (error: unknown): string =>
+  error instanceof Error
+    ? error.message.startsWith("tracker ")
+      ? "tracker"
+      : error.name
+    : "unknown";
 
 const ENDED: ReadonlySet<PlanRound["phase"]> = new Set(["finished", "abandoned"]);
 const ITEM_DONE: ReadonlySet<ShapeItem["state"]> = new Set(["done", "abandoned"]);
@@ -254,8 +263,44 @@ export class PlanFlow {
         await store.event(key, "plan_started", { candidates: keys.length });
       },
       go: () => this.#run(id),
+      fail: (error) => this.#fail(id, error),
       would: { status: "would-plan", key },
     };
+  }
+
+  /**
+   * A round that failed as a whole (something other than the network): `plan_failed`, and the round ends, so the next
+   * one can begin. Only the kind of the error is recorded.
+   */
+  async #fail(id: string, error: unknown): Promise<StepResult> {
+    const { store, clock } = this.#d;
+    const key = planKey(id);
+    await store.event(key, "plan_failed", { error: errorKind(error) });
+    const round = await store.loadPlan(id);
+    const endedAt = clock.now().toISOString();
+    if (round !== undefined && !ENDED.has(round.phase)) {
+      let worktree = round.worktree;
+      try {
+        if (worktree !== null && (await this.#removeWorktree(worktree))) worktree = null;
+      } catch {
+        // kept in the leftovers below, for cleanup
+      }
+      await store.savePlan({
+        ...round,
+        phase: "abandoned",
+        stoppedReason: round.stoppedReason ?? "规划出错",
+        endedAt,
+        worktree,
+      });
+      const index = await store.loadPlanIndex();
+      await store.savePlanIndex({
+        ...index,
+        open: index.open === id ? null : index.open,
+        lastEndedAt: endedAt,
+        leftovers: worktree === null ? index.leftovers : [...index.leftovers, { id, worktree }],
+      });
+    }
+    return { status: "plan_stopped", key, reason: "规划出错，这一轮结束了" };
   }
 
   #goOn(round: PlanRound): OwnRun {
@@ -264,6 +309,7 @@ export class PlanFlow {
       key,
       open: () => this.#d.store.event(key, "recovered", { phase: round.phase }),
       go: () => this.#run(round.id),
+      fail: (error) => this.#fail(round.id, error),
       would: { status: "would-plan", key },
     };
   }
@@ -814,7 +860,23 @@ export class PlanFlow {
         else if (state === "asked") return await this.#asked(ctx, item(), save);
         else if (state === "stopped") return await this.#stopped(ctx, item(), save);
       } catch (error) {
-        if (!(error instanceof Blocked)) throw error;
+        if (!(error instanceof Blocked)) {
+          // A network error goes up (the step waits); anything else stops this one item, and the next is taken.
+          if (isNetworkError(error instanceof Error ? error.message : String(error))) throw error;
+          await this.#d.store.event(ctx.key, "plan_item_failed", {
+            issue: item().key,
+            error: errorKind(error),
+          });
+          // Failed while stopping (the work item cannot be read): give it up, or the same failure repeats.
+          const failedStopping = state === "stopped" || state === "asked";
+          await save(
+            failedStopping
+              ? { state: "abandoned" }
+              : { state: "stopped", stoppedReason: "规划时出错", stopCommented: true },
+          );
+          if (!failedStopping) return;
+          continue;
+        }
         await save({ state: "stopped", stoppedReason: error.message });
         await this.#d.store.event(ctx.key, "plan_shape_stopped", {
           issue: item().key,
@@ -1031,6 +1093,28 @@ export class PlanFlow {
     const out = this.#host.need(item.output ?? undefined);
     const reason = triage.reasons[item.key] ?? "";
 
+    // Before every step that writes: still the text this round began with (or the one it wrote itself), still in
+    // Backlog, not marked to skip. Otherwise the round leaves it as it is. A restart gets the same check.
+    const expected = (): { title: string; description: string } | null =>
+      out.kind === "rewrite" ? out : out.epic !== null ? out.epic : (out.parts[0] ?? null);
+    const guard = async (): Promise<Issue | undefined> => {
+      const fresh = await tracker.get(item.number);
+      const wrote = expected();
+      const hash = bodyHash(fresh.title, fresh.description);
+      const same =
+        hash === item.hash ||
+        (item.rewritten && wrote !== null && hash === bodyHash(wrote.title, wrote.description)) ||
+        // Stopped between the new title and the new description: the title is ours, the body is still the old one.
+        (!item.rewritten && wrote !== null && fresh.title === wrote.title);
+      const why = same ? this.#stillOurs(fresh) : "edited";
+      if (why !== undefined) {
+        await this.#abandon(ctx, item, fresh, why, save);
+        return undefined;
+      }
+      return fresh;
+    };
+
+    let original: Issue;
     if (!item.originalCommented) {
       // 0. Nothing shaped like a credential leaves the machine; only the kinds are said.
       const kinds = findSecrets(
@@ -1050,19 +1134,20 @@ export class PlanFlow {
         );
       }
       // 1. Not over a person: changed since shaping began, out of Backlog, or marked to skip leaves it alone.
-      const fresh = await tracker.get(item.number);
-      const why =
-        bodyHash(fresh.title, fresh.description) !== item.hash ? "edited" : this.#stillOurs(fresh);
-      if (why !== undefined) return this.#abandon(ctx, item, fresh, why, save);
+      const fresh = await guard();
+      if (fresh === undefined) return;
       // 2. The original, as it was.
       await this.#commentOnce(
         fresh,
         `${ORIGINAL_HEADING}\n\n标题：${fresh.title}\n\n${fresh.description}`,
       );
       await step({ originalCommented: true });
+      original = fresh;
+    } else {
+      const fresh = await guard();
+      if (fresh === undefined) return;
+      original = fresh;
     }
-
-    let original = await tracker.get(item.number);
     // 3. The new text; for a split, the parts.
     if (!item.rewritten) {
       if (out.kind === "rewrite") {
@@ -1099,6 +1184,9 @@ export class PlanFlow {
           )?.number;
         }
         if (number === undefined) {
+          const fresh = await guard();
+          if (fresh === undefined) return;
+          original = fresh;
           await step({ pendingCreate: { index: k, title: part.title } });
           number = (
             await tracker.createIssue({
@@ -1116,6 +1204,7 @@ export class PlanFlow {
       chain = out.epic !== null ? parts : [original, ...parts];
       // In order, each blocking the next.
       for (let j = item.linkedCount; j < chain.length - 1; j++) {
+        if ((await guard()) === undefined) return;
         await tracker.linkBlocks(chain[j] as Issue, (chain[j + 1] as Issue).id);
         await step({ linkedCount: j + 1 });
       }
@@ -1124,6 +1213,7 @@ export class PlanFlow {
 
     // 4. What was done and why, under the fixed first line.
     if (!item.notesCommented) {
+      if ((await guard()) === undefined) return;
       const list =
         out.kind === "split"
           ? `\n\n拆成了：\n${[
@@ -1140,6 +1230,7 @@ export class PlanFlow {
 
     // 5. 待批准 on each work item a person is to approve: the rewritten one, or every part (not the Epic).
     if (!item.labelled) {
+      if ((await guard()) === undefined) return;
       for (const i of chain) await tracker.markPending(i);
       await step({ labelled: true });
     }

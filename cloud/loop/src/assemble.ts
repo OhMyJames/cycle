@@ -40,6 +40,9 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     url: file.planUrl,
     key: file.planKey,
     projectKey: file.projectKey,
+    ...(file.tuning?.trackerTimeoutSeconds !== undefined
+      ? { timeoutMs: file.tuning.trackerTimeoutSeconds * 1000 }
+      : {}),
   });
   // Research (CYC-447) is resolved only when it is on; the folder is a document, which `get_project` does not list.
   const research = file.research?.enabled === true ? file.research : null;
@@ -106,7 +109,11 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   };
   const tuning = {
     initial: file.tuning ?? {},
-    reload: () => readTuning(configPath, file.projectKey),
+    reload: async () => {
+      const next = await readTuning(configPath, file.projectKey);
+      tracker.setTimeoutMs((next.trackerTimeoutSeconds ?? 30) * 1000);
+      return next;
+    },
   };
   const store = new RunStore(stateDir, clock.now);
   const release = dryRun ? async () => {} : await acquireLock(stateDir);
