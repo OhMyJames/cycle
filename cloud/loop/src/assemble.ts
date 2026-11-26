@@ -5,6 +5,7 @@ import { type ConfigFile, readTuning } from "./config-file.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
+import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
@@ -76,6 +77,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   tracker.setLoopFields(loopFields);
   const config = {
     ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
+    docsBase: docsBaseOf(file.planUrl, file.projectKey),
     ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),
     ...(file.qaAgent !== undefined ? { qaAgent: file.qaAgent } : {}),
     ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),
