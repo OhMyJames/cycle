@@ -1,9 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LoopEventsListResultSchema } from "@cycle/protocol";
+import type { Config } from "../src/config.ts";
 import { eventsList } from "../src/events.ts";
+import { listen } from "../src/server.ts";
 import { RunStore } from "../src/store.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "loop-events-"));
@@ -87,5 +90,52 @@ describe("events/list", () => {
       "worktree",
     ])
       expect(raw).not.toContain(secret);
+  });
+});
+
+describe("over the socket", () => {
+  const config: Config = {
+    projects: [
+      {
+        name: "Cycle",
+        projectKey: "CYC",
+        repo: { url: "https://github.com/clawdot/cycle.git", forge: "github" },
+        token: "ghp_SOCKETTOKEN",
+      },
+    ],
+  };
+  const ask = (
+    sock: string,
+    params: unknown,
+  ): Promise<{ result?: unknown; error?: { code: number } }> =>
+    new Promise((resolve) => {
+      const socket = connect(sock);
+      socket.once("data", (d) => {
+        socket.end();
+        resolve(JSON.parse(d.toString()));
+      });
+      socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "events/list", params })}\n`);
+    });
+
+  test("events/list through the server returns events and resumes", async () => {
+    const state = fresh("sock");
+    await write(state, 3);
+    const server = await listen(config, join(dir, "e.sock"), (k) =>
+      k === "CYC" ? state : undefined,
+    );
+    try {
+      const all = await ask(join(dir, "e.sock"), { projectKey: "CYC" });
+      expect(LoopEventsListResultSchema.parse(all.result).events.map((e) => e.seq)).toEqual([
+        1, 2, 3,
+      ]);
+      const rest = await ask(join(dir, "e.sock"), { projectKey: "CYC", afterSeq: 2 });
+      expect(LoopEventsListResultSchema.parse(rest.result).events.map((e) => e.seq)).toEqual([3]);
+      expect((await ask(join(dir, "e.sock"), { projectKey: "NOPE" })).error?.code).toBe(-32602);
+      expect((await ask(join(dir, "e.sock"), { projectKey: "CYC", afterSeq: 9 })).error?.code).toBe(
+        -32602,
+      );
+    } finally {
+      server.close();
+    }
   });
 });

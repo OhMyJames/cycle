@@ -86,7 +86,11 @@ export const startServer = async (
   const files = await loadConfigFiles(path);
   let server: Server | undefined;
   const running = await startPipelines(files, o.setUp, o.log, o.stopped, async () => {
-    server = await listen(config, join(o.dataDir, "loop.sock"));
+    server = await listen(
+      config,
+      join(o.dataDir, "loop.sock"),
+      (key) => files.find((f) => f.projectKey === key)?.stateDir,
+    );
   });
   const opened = server;
   if (opened === undefined) throw new Error("failed");
