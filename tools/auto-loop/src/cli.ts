@@ -7,8 +7,8 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
-import { effectiveWorkers, parseWorkers, runLoops, workerSpecs } from "./loop.ts";
+import { type ConfigFile, loadConfigFiles, readTuning } from "./config-file.ts";
+import { effectiveWorkers, idleIntervalMs, parseWorkers, runLoops, workerSpecs } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
 import { resolveProject } from "./project.ts";
@@ -49,8 +49,9 @@ if (args[0] === "stats") {
   process.exit(0);
 }
 
-const seconds = Number(value("--interval") ?? 60);
-if (!Number.isFinite(seconds) || seconds <= 0) {
+const intervalFlag = value("--interval");
+const seconds = intervalFlag === undefined ? undefined : Number(intervalFlag);
+if (seconds !== undefined && (!Number.isFinite(seconds) || seconds <= 0)) {
   console.error("--interval takes a number of seconds above 0.");
   process.exit(2);
 }
@@ -84,6 +85,10 @@ const setUp = async (file: ConfigFile) => {
     ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),
     dryRun,
   };
+  const tuning = {
+    initial: file.tuning ?? {},
+    reload: () => readTuning(configPath, file.projectKey),
+  };
   const store = new RunStore(stateDir, clock.now);
   const release = dryRun ? async () => {} : await acquireLock(stateDir);
   const sessions = new DaemonSessions(
@@ -113,6 +118,7 @@ const setUp = async (file: ConfigFile) => {
     log: plog,
     env: process.env,
     stopped: () => stop,
+    tuning,
   });
   const close = async () => {
     await release();
@@ -151,7 +157,7 @@ try {
         {
           step: () => p.pipeline.step(),
           once,
-          intervalMs: seconds * 1000,
+          intervalMs: () => idleIntervalMs(seconds, p.pipeline.intervalSeconds),
           log,
           stopped: () => stop,
         },

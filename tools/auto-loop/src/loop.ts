@@ -6,7 +6,8 @@ export type LoopSpec = {
   step: () => Promise<{ status: string }>;
   /** Stop after one step, and let an error escape. */
   once: boolean;
-  intervalMs: number;
+  /** A function is asked at every wait, so a change shows from the next one. */
+  intervalMs: number | (() => number);
   log: (line: string) => void;
   stopped: () => boolean;
   sleep?: (ms: number) => Promise<void>;
@@ -29,7 +30,8 @@ export const runLoop = async (spec: LoopSpec): Promise<void> => {
       pause = true;
     }
     if (spec.once) break;
-    if (pause && !spec.stopped()) await sleep(spec.intervalMs);
+    if (pause && !spec.stopped())
+      await sleep(typeof spec.intervalMs === "function" ? spec.intervalMs() : spec.intervalMs);
   } while (!spec.stopped());
 };
 
@@ -59,3 +61,9 @@ export const effectiveWorkers = (o: {
 /** N specs for one Project, sharing its step. With one worker the name is the Project's own. */
 export const workerSpecs = (base: Omit<LoopSpec, "name">, name: string, n: number): LoopSpec[] =>
   Array.from({ length: n }, (_, i) => ({ ...base, name: n === 1 ? name : `${name}#${i + 1}` }));
+
+/** The idle interval: `--interval`, else the `tuning`'s `intervalSeconds`, else 60 seconds. */
+export const idleIntervalMs = (
+  flagSeconds: number | undefined,
+  tuningSeconds: number | undefined,
+) => (flagSeconds ?? tuningSeconds ?? 60) * 1000;
