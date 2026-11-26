@@ -1,3 +1,6 @@
+// (CYC-475: `db/store.ts` keeps the same in `<stateDir>/loop.db`, and is used where that file exists; `LoopStore` is
+// what both implement.)
+//
 // What the loop remembers between turns, restarts and crashes: one directory per work item under the state directory,
 // and one event log. Nothing here is inside a worktree, so a session cannot edit it (CYC-318).
 //
@@ -138,7 +141,7 @@ export type RunRecord = z.infer<typeof RunRecordSchema>;
  */
 export const planRoundId = (startedAt: Date): string =>
   startedAt.toISOString().replace(/[:.]/g, "-");
-const PLAN_ROUND_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
+export const PLAN_ROUND_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 export const PLAN_PHASES = ["triage", "shaping", "finished", "abandoned"] as const;
 
@@ -258,7 +261,7 @@ const PlanMemoryEntrySchema = z.object({
   /** Shaping stopped on it; it is not tried again until its body or comments change. */
   stopped: z.boolean(),
 });
-const PlanMemorySchema = z.record(z.string(), PlanMemoryEntrySchema);
+export const PlanMemorySchema = z.record(z.string(), PlanMemoryEntrySchema);
 export type PlanMemory = z.infer<typeof PlanMemorySchema>;
 
 /** The Backlog as the planner last saw it (`takeSnapshot`): a signature per row, the latest comment of the watched ones. */
@@ -271,7 +274,7 @@ const BacklogSnapshotSchema = z.object({
  * `plans/index.json`: what the planning intake needs on an idle step, so it reads no past round (CYC-322). One per
  * Project, shared by its workers.
  */
-const PlanIndexSchema = z.object({
+export const PlanIndexSchema = z.object({
   /** The round started and not ended, if any. */
   open: z.string().nullable().default(null),
   /** When the Backlog was last looked at for a change: at most once every `checkMinutes`. */
@@ -290,13 +293,37 @@ export type LoopEvent = { ts: string; run: string; kind: string } & Record<
   string | number | boolean
 >;
 
-const writeAtomic = async (path: string, text: string): Promise<void> => {
+export const writeAtomic = async (path: string, text: string): Promise<void> => {
   const temp = `${path}.${process.pid}.tmp`;
   await writeFile(temp, text, { mode: 0o600 });
   await rename(temp, path);
 };
 
-export class RunStore {
+/** What the loop reads and writes of its state, whichever way it is kept: files (`RunStore`) or `loop.db` (`SqliteStore`). */
+export interface LoopStore {
+  load(key: string): Promise<RunRecord | undefined>;
+  save(record: RunRecord): Promise<RunRecord>;
+  all(): Promise<RunRecord[]>;
+  unfinished(): Promise<RunRecord[]>;
+  planBodiesDir(id: string): string;
+  loadPlan(id: string): Promise<PlanRound | undefined>;
+  savePlan(round: PlanRoundInput): Promise<PlanRound>;
+  unfinishedPlans(): Promise<PlanRound[]>;
+  writePlanBody(id: string, key: string, text: string): Promise<void>;
+  plans(): Promise<PlanRound[]>;
+  loadPlanIndex(): Promise<PlanIndex>;
+  savePlanIndex(index: PlanIndex): Promise<void>;
+  loadPlanMemory(): Promise<PlanMemory>;
+  savePlanMemory(memory: PlanMemory): Promise<void>;
+  saveCriteria(key: string, book: CriteriaBook): Promise<void>;
+  loadCriteria(key: string): Promise<CriteriaBook>;
+  appendProgress(key: string, round: number, text: string): Promise<void>;
+  readProgress(key: string): Promise<string>;
+  event(run: string, kind: string, data?: Record<string, string | number | boolean>): Promise<void>;
+  events(): Promise<LoopEvent[]>;
+}
+
+export class RunStore implements LoopStore {
   readonly #dir: string;
   readonly #now: () => Date;
 
