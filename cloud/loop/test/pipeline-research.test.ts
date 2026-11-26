@@ -625,3 +625,26 @@ test("a run.json from before research runs reads as a dev run", async () => {
   // A dev run's stats are unchanged by the new field: the claimed event of a dev run carries no runKind.
   expect(await store.unfinished()).toHaveLength(1);
 });
+
+test("a restart after the report was made, before its id was noted: the report is found by title and used", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  const create = s.tracker.createDocument.bind(s.tracker);
+  s.tracker.createDocument = async (...args) => {
+    await create(...args);
+    throw new Error("killed");
+  };
+  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  s.tracker.createDocument = create;
+  expect((await s.restart().step()).status).toBe("researched");
+  expect(s.tracker.written).toHaveLength(1);
+  expect(s.tracker.docLinks).toEqual(["CYC-1:1000"]);
+});
+
+test("a same-titled report with other text is not taken for this run's", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  s.tracker.documents.push({ id: 555, title: "CYC-1 调研题目", parentId: 10 });
+  s.tracker.docContent[555] = "an earlier run's report";
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("researched");
+  expect(s.tracker.written.length).toBe(1);
+});

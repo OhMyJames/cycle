@@ -307,9 +307,17 @@ export class Pipeline {
     try {
       return await own.go();
     } catch (error) {
-      if (!(error instanceof NetworkWait)) throw error;
-      await this.#d.store.event(own.key, "network_down", { command: error.command });
-      return { status: "network_wait", key: own.key, command: error.command };
+      if (error instanceof NetworkWait) {
+        await this.#d.store.event(own.key, "network_down", { command: error.command });
+        return { status: "network_wait", key: own.key, command: error.command };
+      }
+      // The tracker out of reach is a wait too; anything else ends the run, or every step would fail at the same place.
+      if (error instanceof Error && isNetworkError(error.message)) {
+        await this.#d.store.event(own.key, "network_down", { command: "tracker" });
+        return { status: "network_wait", key: own.key, command: "tracker" };
+      }
+      if (own.fail === undefined) throw error;
+      return own.fail(error);
     }
   }
 

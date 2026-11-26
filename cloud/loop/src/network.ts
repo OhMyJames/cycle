@@ -18,6 +18,7 @@ const NETWORK_PATTERNS: RegExp[] = [
   /\b50[234] (bad gateway|service unavailable|gateway time-?out)/i,
   /\b(bad gateway|service unavailable|gateway time-?out)\b/i,
   /error connecting to /i,
+  /^tracker \S+: HTTP 5\d\d\b/m,
   /(gh|git)\b[^\n]* 超时/,
   /returned error: 50[234]/i,
   /the remote end hung up unexpectedly/i,
