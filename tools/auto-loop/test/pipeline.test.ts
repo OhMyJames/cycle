@@ -414,11 +414,38 @@ test("QA that changes the worktree is not trusted", async () => {
   };
   const result = await s.pipeline.step();
   expect(result.status).toBe("blocked");
+  expect(s.sessions.created.filter((id) => id.startsWith("qa"))).toHaveLength(1);
+  expect((await s.store.events()).some((e) => e.kind === "qa_retry")).toBe(false);
 });
 
-test("an unreadable QA verdict blocks instead of delivering", async () => {
-  const { pipeline } = setup([ready()], { dev: [done()], qa: [done("looks fine")] });
-  expect((await pipeline.step()).status).toBe("blocked");
+test("an unreadable QA verdict is retried in a fresh session, then passes", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done("looks fine"), done(PASS)] });
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  expect(s.sessions.created.filter((id) => id.startsWith("qa"))).toHaveLength(2);
+  const retries = (await s.store.events()).filter((e) => e.kind === "qa_retry");
+  expect(retries).toHaveLength(1);
+});
+
+test("a QA turn that times out or ends abnormally is retried", async () => {
+  const s = setup([ready()], {
+    dev: [done()],
+    qa: [{ ...done("x"), timedOut: true }, { ...done("x"), stopReason: "max_tokens" }, done(PASS)],
+  });
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  expect((await s.store.events()).filter((e) => e.kind === "qa_retry")).toHaveLength(2);
+});
+
+test("an unreadable QA verdict every time blocks as a QA system fault after maxQaRetries + 1 runs", async () => {
+  const s = setup(
+    [ready()],
+    { dev: [done()], qa: [done("a"), done("b"), done("c"), done("d")] },
+    { maxQaRetries: 2 },
+  );
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(s.sessions.created.filter((id) => id.startsWith("qa"))).toHaveLength(3);
+  expect(s.sessions.script.qa).toHaveLength(1);
+  expect(s.tracker.comments.at(-1)).toContain("QA 系统故障");
+  expect(s.tracker.comments.at(-1)).toContain("不是代码问题");
 });
 
 test("a crashed run is picked up where it stopped", async () => {
@@ -484,12 +511,16 @@ test("dry run picks and checks and writes nothing", async () => {
   expect(await store.events()).toEqual([]);
 });
 
-test("a QA pass that does not say what was checked is not accepted", async () => {
-  const { pipeline } = setup([ready()], {
-    dev: [done()],
-    qa: [done(`<verdict>{"pass":true,"findings":[]}</verdict>`)],
-  });
-  expect((await pipeline.step()).status).toBe("blocked");
+test("a QA pass that does not say what was checked is retried, then blocked as a QA system fault", async () => {
+  const bare = done(`<verdict>{"pass":true,"findings":[]}</verdict>`);
+  const s = setup(
+    [ready()],
+    { dev: [done()], qa: [bare, bare, bare, done(PASS)] },
+    { maxQaRetries: 2 },
+  );
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(s.sessions.created.filter((id) => id.startsWith("qa"))).toHaveLength(3);
+  expect(s.tracker.comments.at(-1)).toContain("QA 系统故障");
 });
 
 test("existing PR fallback runs gh pr edit to update title and body with Closes keyword", async () => {

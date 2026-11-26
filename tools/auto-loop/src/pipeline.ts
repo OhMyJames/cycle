@@ -38,6 +38,7 @@ import {
   qaBrief,
   type ReviewVerdict,
   reviewBrief,
+  type Verdict,
 } from "./prompts.ts";
 import { pickNext } from "./select.ts";
 import type { RunRecord, RunStore } from "./store.ts";
@@ -664,16 +665,9 @@ export class Pipeline {
     const { config, store } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
     if (run.qaSessionId === null) {
-      const created = await this.#d.sessions.create({
-        role: "qa",
-        agent: config.qaAgent,
-        title: `[${run.key}] QA`,
-        // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
-        cwd: config.repoRoot,
-        worktree: { base: config.baseRef, name: branchOf(issue.number) },
-      });
-      await save({ qaSessionId: created.sessionId });
-      run = { ...run, qaSessionId: created.sessionId };
+      const sessionId = await this.#newQaSession(run, issue);
+      await save({ qaSessionId: sessionId });
+      run = { ...run, qaSessionId: sessionId };
     }
     const before = await this.#snapshot(worktree);
     const diff = await this.#git(["diff", `${config.baseRef}...HEAD`], worktree);
@@ -682,42 +676,67 @@ export class Pipeline {
       .join("\n");
     const prompt = qaBrief(issue, book.items, diff.output, checks === "" ? "(none)" : checks);
 
-    let result: TurnResult;
-    try {
-      result = await this.#d.sessions.turn(this.#need(run.qaSessionId ?? undefined), prompt, {
-        role: "qa",
-        worktree,
-        timeoutMs: config.turnTimeoutMs,
+    const maxAttempts = Math.max(1, config.maxQaRetries + 1);
+    let verdict: Verdict | undefined;
+    let lastFailure = "";
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        // A retry is a new QA session from the same brief; the old one is not trusted.
+        await store.event(run.key, "qa_retry", { round: run.round, attempt, reason: lastFailure });
+        const created = await this.#newQaSession(run, issue);
+        await save({ qaSessionId: created });
+        run = { ...run, qaSessionId: created };
+      }
+      const turnOptions = { role: "qa" as const, worktree, timeoutMs: config.turnTimeoutMs };
+      let result: TurnResult;
+      try {
+        result = await this.#d.sessions.turn(
+          this.#need(run.qaSessionId ?? undefined),
+          prompt,
+          turnOptions,
+        );
+      } catch (error) {
+        if (!(error instanceof SessionLost)) throw error;
+        // QA keeps nothing worth carrying over: a new one starts from the same brief.
+        const created = await this.#newQaSession(run, issue);
+        await save({ qaSessionId: created });
+        run = { ...run, qaSessionId: created };
+        result = await this.#d.sessions.turn(created, prompt, turnOptions);
+      }
+      await store.event(run.key, "qa_turn", {
+        round: run.round,
+        attempt,
+        stop: result.stopReason,
       });
-    } catch (error) {
-      if (!(error instanceof SessionLost)) throw error;
-      // QA keeps nothing worth carrying over: a new one starts from the same brief.
-      const created = await this.#d.sessions.create({
-        role: "qa",
-        agent: config.qaAgent,
-        title: `[${run.key}] QA`,
-        // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
-        cwd: config.repoRoot,
-        worktree: { base: config.baseRef, name: branchOf(issue.number) },
-      });
-      await save({ qaSessionId: created.sessionId });
-      result = await this.#d.sessions.turn(created.sessionId, prompt, {
-        role: "qa",
-        worktree,
-        timeoutMs: config.turnTimeoutMs,
-      });
+
+      // Read-only, kept by a check and not by trust: the same commit and the same files as before.
+      const after = await this.#snapshot(worktree);
+      if (before !== after) throw new Blocked("QA 会话修改了工作区，自动化不信任这次审查结果。");
+
+      if (result.timedOut) {
+        lastFailure = "QA 会话单回合超时被取消。";
+        continue;
+      }
+      if (result.stopReason !== "end_turn") {
+        lastFailure = `QA 会话回合异常结束（${result.stopReason}）。`;
+        continue;
+      }
+      const parsed = parseVerdict(result.text);
+      if (parsed === undefined) {
+        lastFailure = "QA 没有给出可以读取的审查结论。";
+        continue;
+      }
+      if (!listsWhatWasChecked(result.text)) {
+        lastFailure = "QA 没有写明它检查了什么，自动化不接受没有依据的通过。";
+        continue;
+      }
+      verdict = parsed;
+      break;
     }
-    await store.event(run.key, "qa_turn", { round: run.round, stop: result.stopReason });
-    this.#mustHaveEnded("QA", result);
-
-    // Read-only, kept by a check and not by trust: the same commit and the same files as before.
-    const after = await this.#snapshot(worktree);
-    if (before !== after) throw new Blocked("QA 会话修改了工作区，自动化不信任这次审查结果。");
-
-    const verdict = parseVerdict(result.text);
-    if (verdict === undefined) throw new Blocked("QA 没有给出可以读取的审查结论。");
-    if (!listsWhatWasChecked(result.text))
-      throw new Blocked("QA 没有写明它检查了什么，自动化不接受没有依据的通过。");
+    if (verdict === undefined)
+      throw new Blocked(
+        `QA 系统故障（不是代码问题）：共尝试 ${maxAttempts} 次仍没有可用的审查结论。最后一次：${lastFailure}`,
+      );
     if (!verdict.pass) {
       await this.#nextRound(run, `Independent review found:\n${formatFindings(verdict)}`, save);
       return;
@@ -1216,6 +1235,19 @@ export class Pipeline {
       );
     }
     await save({ phase: "dev", round: run.round + 1, findings });
+  }
+
+  async #newQaSession(run: RunRecord, issue: Issue): Promise<string> {
+    const { config } = this.#d;
+    const created = await this.#d.sessions.create({
+      role: "qa",
+      agent: config.qaAgent,
+      title: `[${run.key}] QA`,
+      // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
+      cwd: config.repoRoot,
+      worktree: { base: config.baseRef, name: branchOf(issue.number) },
+    });
+    return created.sessionId;
   }
 
   #mustHaveEnded(who: string, result: TurnResult): void {
