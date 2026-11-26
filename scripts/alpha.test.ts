@@ -19,6 +19,7 @@ import {
   ensureCert,
   failuresOf,
   folderOf,
+  inApp,
   type Run,
   versionsIn,
   watchOnce,
@@ -61,6 +62,7 @@ const fake = (over: Partial<Deps> = {}): Fake => {
         const m = /(\d+)$/.exec(dir);
         return desc(m ? Number(m[1]) : 50);
       },
+      changedFiles: () => ["packages/ui/src/a.ts"],
     },
     build: async (dir, version) => {
       calls.push(`build ${version}`);
@@ -230,6 +232,102 @@ describe("watch", () => {
     await watchOnce(d);
     expect(d.calls.some((c) => c.startsWith("log Building"))).toBe(false);
     expect(existsSync(join(d.repo, ".lock"))).toBe(false);
+  });
+});
+
+describe("watch skips commits that do not change the app", () => {
+  const seedWithCommit = (repo: string, version: string, commit: string) => {
+    seed(repo, version);
+    writeFileSync(join(repo, folderOf(version), "manifest.json"), JSON.stringify({ commit }));
+  };
+  const built = (d: Fake) => d.calls.some((c) => c.startsWith("build"));
+
+  test("only paths outside the app: no build, logged, not judged again", async () => {
+    const asked: string[] = [];
+    const d = fake({
+      git: {
+        ...fake().git,
+        changedFiles: (from, to) => {
+          asked.push(`${from}..${to}`);
+          return ["tools/x.ts", ".agents/notes/a.md", "README.md", "packages/ui/test/a.test.ts"];
+        },
+      },
+    });
+    seedWithCommit(d.repo, "0.3.32-alpha.90+c90", "full90");
+    expect(await watchOnce(d)).toEqual([]);
+    expect(built(d)).toBe(false);
+    expect(d.calls.some((c) => c.startsWith("log Skipping full100"))).toBe(true);
+    expect(await watchOnce(d)).toEqual([]);
+    expect(asked).toEqual(["full90..full100"]);
+  });
+
+  for (const path of ["packages/ui/src/a.ts", "apps/daemon/src/a.ts", "bun.lock"]) {
+    test(`any app path (${path}) builds`, async () => {
+      const d = fake({
+        git: { ...fake().git, changedFiles: () => ["tools/x.ts", path] },
+      });
+      seedWithCommit(d.repo, "0.3.32-alpha.90+c90", "full90");
+      expect(await watchOnce(d)).toEqual(["0.3.32-alpha.100+c100"]);
+    });
+  }
+
+  test("no earlier alpha, no commit in its manifest, or a failed comparison: builds", async () => {
+    const none = fake();
+    expect(await watchOnce(none)).toHaveLength(1);
+    const blank = fake({
+      repo: join(tmp, "blank"),
+      git: { ...fake().git, changedFiles: () => ["tools/x.ts"] },
+    });
+    seed(blank.repo, "0.3.32-alpha.90+c90");
+    expect(await watchOnce(blank)).toHaveLength(1);
+    const broken = fake({
+      repo: join(tmp, "broken"),
+      git: {
+        ...fake().git,
+        changedFiles: () => {
+          throw new Error("bad object");
+        },
+      },
+    });
+    seedWithCommit(broken.repo, "0.3.32-alpha.90+c90", "gone");
+    expect(await watchOnce(broken)).toHaveLength(1);
+  });
+
+  test("buildNow does not look at the changes", async () => {
+    const d = fake({
+      git: {
+        ...fake().git,
+        changedFiles: () => {
+          throw new Error("must not be asked");
+        },
+      },
+    });
+    seedWithCommit(d.repo, "0.3.32-alpha.40+c40", "full40");
+    expect(await buildNow(d)).toBe("built");
+  });
+
+  test("the table", () => {
+    for (const p of [
+      "tools/a",
+      ".agents/a",
+      ".claude/a",
+      ".github/a",
+      "docs/a",
+      "README.md",
+      "a/test/b.ts",
+      "test/b.ts",
+    ])
+      expect(inApp(p)).toBe(false);
+    for (const p of [
+      "packages/ui/a",
+      "apps/daemon/a",
+      "bun.lock",
+      "apps/desktop/README.md",
+      "package.json",
+      "scripts/x.ts",
+      "latest/a.ts",
+    ])
+      expect(inApp(p)).toBe(true);
   });
 });
 

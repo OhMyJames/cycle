@@ -53,6 +53,8 @@ export type Git = {
   checkout: (commit: string) => string;
   /** Describes the code in `dir`. */
   describe: (dir: string) => Described;
+  /** The files changed from commit `from` to commit `to`. Throws when it cannot tell (e.g. `from` is unknown). */
+  changedFiles: (from: string, to: string) => string[];
 };
 
 export type Built = { app: string; platform: string; arch: string };
@@ -134,6 +136,38 @@ export const prune = (
   }
   return removed;
 };
+
+/** Paths that are not packed into the app. A path not matching any of these is taken as in the app. */
+export const NOT_IN_APP: RegExp[] = [
+  /^tools\//,
+  /^\.agents\//,
+  /^\.claude\//,
+  /^\.github\//,
+  /^docs\//,
+  /^[^/]+\.md$/, // *.md in the root
+  /(^|\/)test\//, // any test/ directory
+];
+
+export const inApp = (path: string): boolean => !NOT_IN_APP.some((re) => re.test(path));
+
+type Skipped = Record<string, { reason: string; at: string }>;
+
+const skippedOf = (repo: string): Skipped => readJson(join(repo, "skipped.json"), {});
+
+/** The commit of the newest alpha in the repository, when its manifest names one. */
+const latestAlphaCommit = (repo: string): string | undefined => {
+  const newest = versionsIn(repo).sort(newestFirst)[0];
+  if (!newest) return undefined;
+  const c = readJson<{ commit?: unknown }>(
+    join(repo, folderOf(newest), "manifest.json"),
+    {},
+  ).commit;
+  return typeof c === "string" && c !== "" ? c : undefined;
+};
+
+/** The first changed file that goes into the app between the newest alpha and `commit`; `undefined` when none does. Throws when it cannot compare. */
+const appChange = (d: Deps, from: string, commit: string): string | undefined =>
+  d.git.changedFiles(from, commit).find(inApp);
 
 const LOCK = ".lock";
 
@@ -234,10 +268,29 @@ export const watchOnce = async (d: Deps): Promise<string[]> => {
     d.git.fetch();
     const commit = d.git.remote();
     if (commit in failuresOf(d.repo)) return built;
+    if (commit in skippedOf(d.repo)) return built;
     const dir = d.git.checkout(commit);
     const info = d.git.describe(dir);
     const version = alphaVersion(info);
     if (versionsIn(d.repo).includes(version)) return built;
+    const from = latestAlphaCommit(d.repo);
+    if (from) {
+      let touched: string | undefined = "";
+      try {
+        touched = appChange(d, from, commit);
+      } catch {
+        // Cannot compare: build as usual.
+      }
+      if (touched === undefined) {
+        const reason = `no file changed since the latest alpha (${from.slice(0, 7)}) goes into the app`;
+        mkdirSync(d.repo, { recursive: true });
+        const skipped = skippedOf(d.repo);
+        skipped[commit] = { reason, at: d.now().toISOString() };
+        writeFileSync(join(d.repo, "skipped.json"), `${JSON.stringify(skipped, null, 2)}\n`);
+        d.log(`Skipping ${commit.slice(0, 7)} (${info.subject}): ${reason}.`);
+        return built;
+      }
+    }
     if (!lock(d)) return built;
     try {
       sweepPartials(d.repo);
@@ -395,6 +448,10 @@ const realGit = (root: string): Git => {
       else git(tree, "checkout", "--detach", "--force", commit);
       return tree;
     },
+    changedFiles: (from, to) =>
+      git(root, "diff", "--name-only", "--no-renames", "-z", from, to)
+        .split("\0")
+        .filter((f) => f !== ""),
     describe: (dir) => ({
       short: git(dir, "rev-parse", "--short", "HEAD"),
       count: Number(git(dir, "rev-list", "--count", "HEAD")),
