@@ -61,6 +61,7 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     prState: "OPEN",
     prMerge: [["OPEN", "CONFLICTING"]],
     mergeTreeOutput: "",
+    ignoredDirs: "",
   };
   const state: Git = {
     merge: 0,

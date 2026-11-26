@@ -293,6 +293,8 @@ export type World = {
   /** What `gh pr view --json state,mergeable` says after auto-merge is enabled, as [state, mergeable] (last sticks). */
   prMerge: [string, string][];
   mergeTreeOutput: string;
+  /** What `git ls-files --others --ignored --directory` prints: the ignored directories in the worktree. */
+  ignoredDirs: string;
   /** When set, every `git fetch` logs start/end here and takes a few ms. */
   fetchLog?: string[];
   /** Whether auto-merge is on for the PR (`--json autoMergeRequest`); `--auto` turns it on, `--disable-auto` off. */
@@ -307,6 +309,7 @@ export const makeExec =
     const result = (output: string, code = 0): ExecResult => ({ code, output, timedOut: false });
     if (line.includes("diff --name-only")) return result("packages/client/src/a.ts\n");
     if (line.includes("status --porcelain")) return result(world.dirty ? " M a.ts\n" : "");
+    if (line.includes("ls-files --others --ignored")) return result(world.ignoredDirs);
     if (line.includes("rev-parse HEAD")) return result(`${world.headSha}\n`);
     if (world.fetchLog && / fetch /.test(` ${line} `)) {
       world.fetchLog.push("start");

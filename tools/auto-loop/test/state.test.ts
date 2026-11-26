@@ -57,6 +57,7 @@ test("store: a run.json from before the conflict fields still loads, with confli
     round: 0,
     ciRound: 0,
     ciFailedSha: null,
+    nodeModulesReleased: false,
     conflictRound: 0,
     conflict: null,
     resolvedFiles: [],

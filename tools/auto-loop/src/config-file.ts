@@ -35,6 +35,7 @@ export const TuningSchema = z
     mergeTimeoutMinutes: whole(1, 240),
     turnTimeoutMinutes: whole(1, 240),
     commandTimeoutMinutes: whole(1, 240),
+    releaseNodeModules: z.boolean(),
   })
   .partial()
   .strict();
@@ -54,6 +55,7 @@ export const tuningToConfig = (t: Tuning): Partial<Config> => {
   ] as const) {
     if (t[name] !== undefined) out[name] = t[name];
   }
+  if (t.releaseNodeModules !== undefined) out.releaseNodeModules = t.releaseNodeModules;
   if (t.networkRetryDelaysSeconds !== undefined)
     out.networkRetryDelaysMs = t.networkRetryDelaysSeconds.map((n) => n * 1000);
   if (t.ciPollIntervalSeconds !== undefined) out.ciPollIntervalMs = t.ciPollIntervalSeconds * 1000;

@@ -52,8 +52,11 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 | `mergeTimeoutMinutes`                                    | 10         | 1–240  |
 | `turnTimeoutMinutes`                                     | 30         | 1–240  |
 | `commandTimeoutMinutes`                                  | 20         | 1–240  |
+| `releaseNodeModules`（布尔，见下）                       | false      | —      |
 
-除 `networkRetryDelaysSeconds`（整数数组）外全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
+除 `networkRetryDelaysSeconds`（整数数组）和 `releaseNodeModules`（布尔）外全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
+
+**`releaseNodeModules`（CYC-450）**：默认关。打开后，进入等 CI（以及开启自动合并后等合并）时删除该 worktree 里被 git 忽略、名为 `node_modules` 的目录（约 1.4G），写事件 `node_modules_released`；只有 worktree 没有未提交改动时才删，否则写 `node_modules_kept` 并保留，删除只用 `rm -rf` 删这些目录，不碰其他文件。CI 红了打回 Dev 时，在启动 Dev 会话前先 `bun install`（写 `node_modules_restored`），安装失败走现有 Blocked 路径。等 CI 和等合并的阶段不跑依赖本地 `node_modules` 的命令；独立评审会话只读，`REVIEW.md` 不要求它跑 `bun`。
 
 - 启动时 `tuning` 不合法：报错并以退出码 2 退出。
 - 运行中：每次 `step()` 开始、领单之前重新读一次配置文件里本 Project 的 `tuning`，不用重启。合法就用新值；不合法或读不到，沿用上次的值，打一行日志（同一个问题只打一次），Loop 不停。

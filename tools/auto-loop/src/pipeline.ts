@@ -302,6 +302,7 @@ export class Pipeline {
       round: 0,
       ciRound: 0,
       ciFailedSha: null,
+      nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,
       resolvedFiles: [],
@@ -1085,13 +1086,63 @@ export class Pipeline {
     }
     // A worktree made now has no node_modules.
     worktree = this.#need(worktree === "" ? undefined : worktree);
+    await this.#install(worktree);
+    await save({ phase: "dev" });
+  }
+
+  async #install(worktree: string): Promise<void> {
     const installed = await this.#d.exec(["bun", "install"], {
+      cwd: worktree,
+      env: verifyEnv(this.#d.env),
+      timeoutMs: this.#d.config.commandTimeoutMs,
+    });
+    if (installed.code !== 0) throw new Blocked(`bun install 失败：${tail(installed.output)}`);
+  }
+
+  /**
+   * CYC-450: while the run only waits for CI or the merge, the worktree's `node_modules` is not needed, so it is
+   * deleted (when `releaseNodeModules` is on). Only git-ignored directories named `node_modules` go, and only when
+   * the worktree has no uncommitted change. A failure to delete is not a failure of the run.
+   */
+  async #releaseNodeModules(
+    run: RunRecord,
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    const { config, store } = this.#d;
+    if (!config.releaseNodeModules || run.nodeModulesReleased) return;
+    const status = await this.#git(["status", "--porcelain"], worktree);
+    if (status.code !== 0 || status.output.trim() !== "") {
+      await store.event(run.key, "node_modules_kept", { reason: "dirty" });
+      return;
+    }
+    const listed = await this.#git(
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+      worktree,
+    );
+    if (listed.code !== 0) return;
+    const dirs = listed.output
+      .split("\n")
+      .map((l) => l.trim().replace(/\/+$/, ""))
+      .filter(
+        (d) =>
+          d !== "" &&
+          !d.startsWith("/") &&
+          !d.split("/").includes("..") &&
+          d.split("/").at(-1) === "node_modules",
+      );
+    if (dirs.length === 0) return;
+    const removed = await this.#d.exec(["rm", "-rf", "--", ...dirs], {
       cwd: worktree,
       env: verifyEnv(this.#d.env),
       timeoutMs: config.commandTimeoutMs,
     });
-    if (installed.code !== 0) throw new Blocked(`bun install 失败：${tail(installed.output)}`);
-    await save({ phase: "dev" });
+    if (removed.code !== 0) {
+      await store.event(run.key, "node_modules_kept", { reason: "rm_failed" });
+      return;
+    }
+    await save({ nodeModulesReleased: true });
+    await store.event(run.key, "node_modules_released", { dirs: dirs.length });
   }
 
   // ---- research (CYC-447) ----
@@ -1415,6 +1466,12 @@ export class Pipeline {
   ): Promise<void> {
     const { config, store } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
+    // Released while waiting for CI or the merge: installed again before the session starts.
+    if (run.nodeModulesReleased) {
+      await this.#install(worktree);
+      await save({ nodeModulesReleased: false });
+      await store.event(run.key, "node_modules_restored");
+    }
     const progress = await store.readProgress(run.key);
     // A conflict turn: the merge of the base is in the worktree (made again if it is not), and Dev is asked to finish it.
     let conflict: { files: string[]; preMergeSha: string } | undefined;
@@ -1847,6 +1904,8 @@ export class Pipeline {
       }
     }
 
+    await this.#releaseNodeModules(run, worktree, save);
+
     // A network error is retried on the single poll read, so the CI timeout budget is not restarted by it.
     const result = await waitForCi({
       staleFailedUrls,
@@ -2155,6 +2214,7 @@ export class Pipeline {
         );
         if (merged.ok) {
           this.#mirror(run, issue, "merge");
+          await this.#releaseNodeModules(run, worktree, save);
           const outcome = await this.#confirmMerged(run, prUrl, worktree);
           if (outcome === "conflict") {
             // Not delivered: merge the base in (auto-merge is turned off first), then CI and review run again.

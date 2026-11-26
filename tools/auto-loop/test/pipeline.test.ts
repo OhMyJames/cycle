@@ -6,7 +6,13 @@ import type { Tuning } from "../src/config-file.ts";
 import { CriteriaBook } from "../src/criteria.ts";
 import { type Deps, Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
-import { type ExecResult, type Issue, SessionLost, type TurnResult } from "../src/types.ts";
+import {
+  type Exec,
+  type ExecResult,
+  type Issue,
+  SessionLost,
+  type TurnResult,
+} from "../src/types.ts";
 import {
   CHECKED,
   type CiResponse,
@@ -59,6 +65,7 @@ const setup = (
     prState: "OPEN",
     prMerge: [["MERGED", "UNKNOWN"]],
     mergeTreeOutput: "",
+    ignoredDirs: "",
   };
   const stop = { value: false };
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
@@ -437,6 +444,7 @@ test("dry run idle log reports type and leaf exclusions", async () => {
       prState: "OPEN",
       prMerge: [["MERGED", "UNKNOWN"]],
       mergeTreeOutput: "",
+      ignoredDirs: "",
     }),
     store: new RunStore(dir, () => new Date("2026-11-25T00:00:00Z")),
     clock: { now: () => new Date("2026-11-25T00:00:00Z") },
@@ -1114,6 +1122,7 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     round: 0,
     ciRound: 0,
     ciFailedSha: null,
+    nodeModulesReleased: false,
     conflictRound: 0,
     conflict: null,
     resolvedFiles: [],
@@ -1291,6 +1300,7 @@ const doneRun = async (s: ReturnType<typeof setup>) => {
     round: 0,
     ciRound: 0,
     ciFailedSha: null,
+    nodeModulesReleased: false,
     conflictRound: 0,
     conflict: null,
     resolvedFiles: [],
@@ -1411,6 +1421,7 @@ test("two steps at once: only one goes on with an unfinished run", async () => {
     round: 0,
     ciRound: 0,
     ciFailedSha: null,
+    nodeModulesReleased: false,
     conflictRound: 0,
     conflict: null,
     resolvedFiles: [],
@@ -1953,4 +1964,118 @@ test("a replaced Dev session is made with the Dev model and effort again", async
   const devs = sessions.inputs.filter((i) => i.role === "dev");
   expect(devs.length).toBe(2);
   for (const d of devs) expect(d).toEqual({ role: "dev", model: "dm", effort: "de" });
+});
+
+// ---- CYC-450: node_modules is released while waiting for CI or the merge ----
+
+const REDCI: CiResponse = {
+  headRefOid: "sha-1",
+  statusCheckRollup: [
+    { name: "check", status: "COMPLETED", conclusion: "SUCCESS" },
+    { name: "browser", status: "COMPLETED", conclusion: "FAILURE" },
+    { name: "integration", status: "COMPLETED", conclusion: "SUCCESS" },
+  ],
+};
+const IGNORED = "node_modules/\ntools/auto-loop/node_modules/\nout/\n";
+const rmCalls = (calls: string[]) => calls.filter((c) => c.startsWith("rm -rf"));
+
+test("release on: node_modules is deleted before waiting for CI, and an event is written", async () => {
+  const s = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
+    { releaseNodeModules: true },
+  );
+  s.world.ignoredDirs = IGNORED;
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  expect(rmCalls(s.world.calls)).toEqual(["rm -rf -- node_modules tools/auto-loop/node_modules"]);
+  const rm = s.world.calls.findIndex((c) => c.startsWith("rm -rf"));
+  const poll = s.world.calls.findIndex((c) => c.includes("statusCheckRollup"));
+  expect(rm).toBeGreaterThan(s.world.calls.findIndex((c) => c.includes("gh pr create")));
+  expect(rm).toBeLessThan(poll);
+  const events = await s.store.events();
+  expect(events.filter((e) => e.kind === "node_modules_released")).toHaveLength(1);
+});
+
+test("release on: red CI installs again before the Dev session starts; a failed install is Blocked", async () => {
+  for (const installFails of [false, true]) {
+    let plain: Exec = async () => ({ code: 0, output: "", timedOut: false });
+    let installs = 0;
+    let log: string[] = [];
+    const s = setup(
+      [ready()],
+      { dev: [done(), done()], qa: [done(PASS), done(PASS)] },
+      { releaseNodeModules: true },
+      [],
+      { responses: [REDCI, greenCi("sha-2")] },
+      {
+        exec: async (argv, o) => {
+          if (argv[0] === "bun" && argv[1] === "install" && ++installs === 2 && installFails) {
+            log.push("bun install");
+            return { code: 1, output: "no network", timedOut: false };
+          }
+          return plain(argv, o);
+        },
+      },
+    );
+    plain = makeExec(s.world);
+    log = s.world.calls;
+    s.world.headSha = "sha-1";
+    s.world.ignoredDirs = IGNORED;
+    const originalTurn = s.sessions.turn.bind(s.sessions);
+    s.sessions.turn = async (id, prompt, ctx) => {
+      if (ctx.role === "dev") log.push("turn:dev");
+      return originalTurn(id, prompt, ctx);
+    };
+    const result = await s.pipeline.step();
+    const order = log.filter(
+      (c) => c === "turn:dev" || c.startsWith("rm -rf") || c === "bun install",
+    );
+    const head = [
+      "bun install",
+      "turn:dev",
+      "rm -rf -- node_modules tools/auto-loop/node_modules",
+      "bun install",
+    ];
+    expect(order.slice(0, 4)).toEqual(head);
+    if (installFails) {
+      expect(result.status).toBe("blocked");
+      expect(order).toHaveLength(4);
+      expect(s.tracker.moves.at(-1)).toBe("CYC-1:blocked");
+    } else {
+      expect(order[4]).toBe("turn:dev");
+      expect((await s.store.events()).some((e) => e.kind === "node_modules_restored")).toBe(true);
+    }
+  }
+});
+
+test("release off (default): nothing is deleted and no event is written", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
+  s.world.ignoredDirs = IGNORED;
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  expect(rmCalls(s.world.calls)).toEqual([]);
+  expect((await s.store.events()).filter((e) => e.kind.startsWith("node_modules"))).toEqual([]);
+});
+
+test("release on, worktree with uncommitted changes: nothing is deleted", async () => {
+  let plain: Exec = async () => ({ code: 0, output: "", timedOut: false });
+  const s = setup(
+    [ready()],
+    { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] },
+    { releaseNodeModules: true },
+    [],
+    {},
+    {
+      exec: async (argv, o) => {
+        const out = await plain(argv, o);
+        // Something is edited in the worktree once the PR is up.
+        if (argv.join(" ").includes("gh pr create")) s.world.dirty = true;
+        return out;
+      },
+    },
+  );
+  plain = makeExec(s.world);
+  s.world.ignoredDirs = IGNORED;
+  await s.pipeline.step();
+  expect(rmCalls(s.world.calls)).toEqual([]);
+  expect((await s.store.events()).some((e) => e.kind === "node_modules_kept")).toBe(true);
 });

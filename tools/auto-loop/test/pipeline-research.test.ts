@@ -98,6 +98,7 @@ const world = (): World => ({
   prState: "OPEN",
   prMerge: [["MERGED", "UNKNOWN"]],
   mergeTreeOutput: "",
+  ignoredDirs: "",
 });
 
 const setup = (script: Partial<Script>, over = {}, issues: Issue[] = [researchIssue()]) => {
