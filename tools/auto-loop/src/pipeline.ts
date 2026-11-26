@@ -433,6 +433,24 @@ export class Pipeline {
       if (deleted.code !== 0) return note("cleanup_failed");
     }
     await store.event(run.key, "cleaned");
+    if (run.phase !== "done") {
+      // Blocked, then Canceled: the run is not over. If a person puts the work item back, it starts again from the
+      // claim with a new worktree and sessions, so nothing points at what was just removed and it is cleaned later.
+      await store.save({
+        ...run,
+        worktree: null,
+        localBranch: null,
+        devSessionId: null,
+        qaSessionId: null,
+        reviewSessionId: null,
+        prUrl: null,
+        findings: null,
+        resumeFrom: "claimed",
+        cleanedAt: null,
+        cleanupNote: null,
+      });
+      return;
+    }
     await store.save({ ...run, cleanedAt: clock.now().toISOString(), cleanupNote: null });
   }
 

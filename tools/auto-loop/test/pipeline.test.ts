@@ -1390,6 +1390,36 @@ test("a Canceled run that was Blocked is cleaned too", async () => {
   await s.pipeline.step();
   expect(removals(s)).toHaveLength(3);
   expect(await kindsOf(s)).toContain("cleaned");
+  // Not left pointing at what was removed: a resume starts from the claim with a new worktree.
+  const after = await s.store.load("CYC-1");
+  expect(after).toMatchObject({
+    phase: "blocked",
+    worktree: null,
+    devSessionId: null,
+    resumeFrom: "claimed",
+    cleanedAt: null,
+  });
+});
+
+test("a Canceled+Blocked run that is put back starts again with a new worktree", async () => {
+  const s = setup([ready({ columnId: 25 })], { dev: [], qa: [] });
+  await doneRun(s);
+  const run = await s.store.load("CYC-1");
+  if (run === undefined) throw new Error("no run");
+  await s.store.save({ ...run, phase: "blocked", resumeFrom: "dev" });
+  await s.pipeline.step();
+  const found = s.tracker.issues[0];
+  if (found === undefined) throw new Error("no issue");
+  found.columnId = 22;
+  await s.store.saveCriteria(
+    "CYC-1",
+    CriteriaBook.fromSpecs([{ text: "works", verify: [["bun", "test"]] }]),
+  );
+  await s.pipeline.step().catch(() => undefined);
+  const after = await s.store.load("CYC-1");
+  expect(s.sessions.created.length).toBeGreaterThan(0);
+  expect(after?.worktree).not.toBeNull();
+  expect(after?.cleanedAt).toBeNull();
 });
 
 test("a Canceled work item with uncommitted changes is kept, one event", async () => {
