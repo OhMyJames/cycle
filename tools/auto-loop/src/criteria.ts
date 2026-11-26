@@ -5,6 +5,7 @@
 // status to `passed`.
 
 import { z } from "zod";
+import { summarizeFailure } from "./failure.ts";
 import type { Exec } from "./types.ts";
 
 export const CriterionSchema = z.object({
@@ -174,8 +175,10 @@ export class CriteriaBook {
         timeoutMs: run.timeoutMs,
       });
       const outcome = result.timedOut ? "timed out" : `exit ${result.code}`;
-      evidence.push(`$ ${argv.join(" ")}\n${outcome}\n${tail(result.output, 1500)}`);
-      if (result.code !== 0 || result.timedOut) {
+      const failed = result.code !== 0 || result.timedOut;
+      const shown = failed ? summarizeFailure(result.output) : tail(result.output, 1500);
+      evidence.push(`$ ${argv.join(" ")}\n${outcome}\n${shown}`);
+      if (failed) {
         passed = false;
         break;
       }

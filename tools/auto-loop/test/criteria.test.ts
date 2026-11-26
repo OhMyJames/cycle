@@ -155,3 +155,40 @@ test("reset puts everything back to pending", async () => {
   book.reset();
   expect(book.items[0]).toMatchObject({ status: "pending", evidence: null, checkedAt: null });
 });
+
+const LONG_FAILURE = [
+  "bun test v1.3",
+  "a.test.ts:",
+  "(pass) one [1ms]",
+  "error: expect(received).toBe(expected)",
+  "Expected: 42",
+  "Received: 41",
+  "      at <anonymous> (/w/src/bundle.test.ts:12:9)",
+  "(fail) it assembles the new bundle... [16.92ms]",
+  ...Array.from({ length: 120 }, (_, i) => `(pass) later test number ${i} [1ms]`),
+  " 1948 pass",
+  " 1 fail",
+  "Ran 1949 tests across 200 files.",
+].join("\n");
+
+test("a failing command's evidence keeps the mid-output assertion error and the summary", async () => {
+  expect(LONG_FAILURE.length).toBeGreaterThan(3000);
+  const book = CriteriaBook.fromSpecs([{ text: "a", verify: [["bun", "run", "check"]] }]);
+  const exec: Exec = async () => ({ code: 1, output: LONG_FAILURE, timedOut: false });
+  const done = await book.verify(1, { ...base, exec });
+  expect(done.evidence).toContain("Expected: 42");
+  expect(done.evidence).toContain("Received: 41");
+  expect(done.evidence).toContain("at <anonymous>");
+  expect(done.evidence).toContain("Ran 1949 tests across 200 files.");
+  expect(done.evidence?.length).toBeLessThan(4000);
+});
+
+test("short failing output is kept as is, and a passing command still keeps only the tail", async () => {
+  const book = CriteriaBook.fromSpecs([{ text: "a", verify: [["bun", "run", "check"]] }]);
+  const short: Exec = async () => ({ code: 1, output: "error: nope", timedOut: false });
+  expect((await book.verify(1, { ...base, exec: short })).evidence).toContain("\nerror: nope");
+  const big: Exec = async () => ({ code: 0, output: `HEAD${"x".repeat(2000)}`, timedOut: false });
+  const passed = await book.verify(1, { ...base, exec: big });
+  expect(passed.evidence).not.toContain("HEAD");
+  expect(passed.evidence).toContain("…xxx");
+});
