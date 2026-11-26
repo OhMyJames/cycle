@@ -37,11 +37,21 @@ export const RunRecordSchema = z.object({
   ciFailedSha: z.string().nullable().default(null),
   /** Times the loop merged the base into the branch after a conflict found while waiting for CI. Counted apart from fix rounds. */
   conflictRound: z.number().int().min(0).default(0),
-  /** Set from the moment a conflict merge is started until it ends clean or is aborted: a restart picks it up from here. */
+  /**
+   * Set from the moment a conflict merge is started until it ends clean, is resolved or is rolled back: a restart picks
+   * it up from here. `merging`: the merge is being made. `dev`: it stopped on a real conflict and the Dev session has
+   * the turn; `files` are the conflicted paths and `preMergeSha` is HEAD before the merge, to go back to.
+   */
   conflict: z
-    .object({ state: z.literal("merging") })
+    .object({
+      state: z.enum(["merging", "dev"]),
+      preMergeSha: z.string().optional(),
+      files: z.array(z.string()).optional(),
+    })
     .nullable()
     .default(null),
+  /** The files a Dev conflict turn resolved: QA is told to look at them. */
+  resolvedFiles: z.array(z.string()).default([]),
   worktree: z.string().nullable(),
   /** The branch the daemon made: `worktree-auto/cyc-318`. */
   localBranch: z.string().nullable(),
