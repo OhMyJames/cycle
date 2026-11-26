@@ -1394,7 +1394,8 @@ export type LoopActResult = { kind: "ok" } | { kind: "failed"; reason: LoopActFa
 export type LoopManyAction = "approve_many" | "return_many";
 /** How one ticket of a batch came out: `skipped` is one that is not in Backlog any more or has no `待批准` now. */
 export type LoopManyItem =
-  | { identifier: string; outcome: "ok" | "skipped" }
+  | { identifier: string; outcome: "ok"; commentFailed?: true }
+  | { identifier: string; outcome: "skipped" }
   | { identifier: string; outcome: "failed"; reason: LoopActFailure };
 export type LoopManyResult =
   | { kind: "done"; results: LoopManyItem[] }

@@ -237,7 +237,8 @@ const REASON_MAX = 200;
 /** Loop's reason in its newest `Loop 规划` comment: what follows the heading, up to the first blank line. */
 export const reasonOf = (comments: { body: string }[]): string | undefined => {
   for (const { body } of comments) {
-    if (!body.startsWith(NOTES_HEADING)) continue;
+    // The heading is the whole first line: another comment that merely starts with the words is not Loop's.
+    if (body.split("\n", 1)[0]?.trim() !== NOTES_HEADING) continue;
     const first =
       body
         .slice(NOTES_HEADING.length)
@@ -666,8 +667,12 @@ export const actOnMany = async (
           labelIds: kept.includes(skipId) ? kept : [...kept, skipId],
         });
         // The labels are the decision; the comment is a courtesy, and its failure does not undo them.
-        if (why !== "")
-          await callTool(tracker, "add_comment", { issueId: issue.id, body: why }).catch(() => {});
+        if (why !== "") {
+          const posted = await callTool(tracker, "add_comment", { issueId: issue.id, body: why })
+            .then(() => true)
+            .catch(() => false);
+          if (!posted) return { identifier, outcome: "ok", commentFailed: true };
+        }
       }
       return { identifier, outcome: "ok" };
     } catch (error) {
@@ -675,7 +680,17 @@ export const actOnMany = async (
     }
   };
   const wanted = [...new Set(identifiers.map(String))];
-  for (const id of wanted) results.push(await one(id));
+  // A few at a time, as the board's reads are; the results keep the order asked for.
+  const done: LoopManyItem[] = new Array(wanted.length);
+  let next = 0;
+  const lane = async () => {
+    while (next < wanted.length) {
+      const at = next++;
+      done[at] = await one(wanted[at]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, wanted.length) }, lane));
+  results.push(...done);
   const count = (outcome: LoopManyItem["outcome"]) =>
     results.filter((r) => r.outcome === outcome).length;
   track("loop_tickets_acted", {

@@ -688,6 +688,9 @@ export const enUS = {
   "loop.pending.approve.body":
     "They move to Todo and get the auto label, so Loop can take them on its next rounds.",
   "loop.pending.done": "Done: {ok} succeeded, {skipped} skipped, {failed} failed.",
+  "loop.pending.more":
+    "The Backlog is longer than what is listed: some waiting tickets may not be shown.",
+  "loop.pending.commentLost": "{count} returned, but the reason could not be posted as a comment.",
   "loop.hint": "Change a ticket state with its buttons.",
   "loop.fail.unconfirmed": "Not approved: it was not confirmed.",
   "loop.fail.no_key": "Nothing was changed: there is no itsaplan key.",

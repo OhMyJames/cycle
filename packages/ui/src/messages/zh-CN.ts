@@ -622,6 +622,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.pending.approve.title": "批准这 {count} 张工单？",
   "loop.pending.approve.body": "它们会移到 Todo 并打上 auto，Loop 之后几轮就能领取。",
   "loop.pending.done": "做完了：成功 {ok} 张，跳过 {skipped} 张，失败 {failed} 张。",
+  "loop.pending.more": "Backlog 比列出的更长：可能有待批准的工单没有显示。",
+  "loop.pending.commentLost": "{count} 张已退回，但原因没能发成评论。",
   "loop.hint": "用工单上的按钮改变它的状态。",
   "loop.fail.unconfirmed": "没有批准：未经确认。",
   "loop.fail.no_key": "没有改动：没有 itsaplan 密钥。",

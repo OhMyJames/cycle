@@ -6,6 +6,7 @@ import type {
   LoopBoardAnswer,
   LoopChatResult,
   LoopManyAction,
+  LoopManyItem,
   LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectInfo,
@@ -25,6 +26,9 @@ export type LoopState = {
   /** A pressed system notification asks for this ticket's page; `n` counts the asks, so the same ticket can be asked twice. */
   request?: { projectKey: string; identifier: string; n: number };
 };
+
+/** The most tickets main takes in one batch (`MANY_MAX` there). */
+const MANY_CHUNK = 100;
 
 export const initialLoop = (): LoopState => ({ projects: [], boards: {}, notices: {} });
 
@@ -137,9 +141,27 @@ export class LoopSlice {
     confirmed = false,
     reason?: string,
   ): Promise<LoopManyResult> => {
-    const result = await this.#kit.bridge
-      .loopActMany(projectKey, action, identifiers, confirmed, reason)
-      .catch((): LoopManyResult => ({ kind: "failed", reason: "offline" }));
+    // The main process takes at most this many at a time: a longer selection goes in chunks, results merged.
+    const results: LoopManyItem[] = [];
+    let result: LoopManyResult = { kind: "done", results };
+    for (let i = 0; i < identifiers.length; i += MANY_CHUNK) {
+      const chunk = identifiers.slice(i, i + MANY_CHUNK);
+      const answer = await this.#kit.bridge
+        .loopActMany(projectKey, action, chunk, confirmed, reason)
+        .catch((): LoopManyResult => ({ kind: "failed", reason: "offline" }));
+      if (answer.kind === "done") {
+        results.push(...answer.results);
+        continue;
+      }
+      if (results.length === 0) {
+        result = answer;
+        break;
+      }
+      // Some were done: the rest are reported failed, so the counts are true.
+      for (const identifier of identifiers.slice(i))
+        results.push({ identifier, outcome: "failed", reason: answer.reason });
+      break;
+    }
     if (result.kind === "done" && result.results.some((r) => r.outcome !== "failed"))
       await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
     return result;

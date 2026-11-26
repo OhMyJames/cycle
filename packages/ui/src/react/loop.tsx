@@ -373,10 +373,18 @@ const priorityRank = (p: string | null): number => PRIORITY_RANK[p ?? ""] ?? 4;
 function PendingGroup({
   projectKey,
   tickets,
+  more,
+  outcome,
+  onOutcome,
   onOpen,
 }: {
   projectKey: string;
   tickets: LoopTicket[];
+  /** The Backlog has tickets that were not listed, so some waiting ones may not be here. */
+  more: boolean;
+  /** Kept by the Board: the board is read again after a batch, and the group may be gone by then. */
+  outcome: LoopManyResult | undefined;
+  onOutcome: (result: LoopManyResult | undefined) => void;
   onOpen: (identifier: string) => void;
 }) {
   const { t } = useI18n();
@@ -385,7 +393,6 @@ function PendingGroup({
   const [asking, setAsking] = useState(false);
   const [why, setWhy] = useState("");
   const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<LoopManyResult | undefined>();
   const [problem, setProblem] = useState<string | undefined>();
   // Stable by priority, then as the tracker lists them.
   const sorted = [...tickets].sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
@@ -400,7 +407,7 @@ function PendingGroup({
     });
   const run = async (action: "approve_many" | "return_many"): Promise<string | undefined> => {
     setBusy(true);
-    setOutcome(undefined);
+    onOutcome(undefined);
     setProblem(undefined);
     const result = await store.actOnLoopMany(
       projectKey,
@@ -415,88 +422,104 @@ function PendingGroup({
       setProblem(words);
       return words;
     }
-    setOutcome(result);
+    onOutcome(result);
     setPicked(new Set());
     if (action === "return_many") setWhy("");
     return undefined;
   };
+  const lost =
+    outcome?.kind === "done"
+      ? outcome.results.filter((r) => r.outcome === "ok" && r.commentFailed === true).length
+      : 0;
   const count = (kind: "ok" | "skipped" | "failed") =>
     outcome?.kind === "done" ? outcome.results.filter((r) => r.outcome === kind).length : 0;
   return (
     <section data-slot="loop-pending" data-kind="loop-pending" aria-label={t("loop.pending")}>
-      <header data-slot="loop-pending-head">
-        <h4 data-slot="loop-column-title">{t("loop.pending")}</h4>
-        <span data-slot="loop-column-count">{tickets.length}</span>
-        <label data-slot="loop-pending-all">
-          <input
-            type="checkbox"
-            checked={all}
-            onChange={() => setPicked(all ? new Set() : new Set(sorted.map((x) => x.identifier)))}
-          />
-          {t("loop.pending.all")}
-        </label>
-      </header>
-      <ul data-slot="loop-tickets">
-        {sorted.map((ticket) => (
-          <li key={ticket.identifier} data-slot="loop-ticket" data-pending="">
-            <span data-slot="loop-ticket-head">
+      {tickets.length > 0 ? (
+        <>
+          <header data-slot="loop-pending-head">
+            <h4 data-slot="loop-column-title">{t("loop.pending")}</h4>
+            <span data-slot="loop-column-count">{tickets.length}</span>
+            <label data-slot="loop-pending-all">
               <input
                 type="checkbox"
-                data-slot="loop-pending-pick"
-                aria-label={`${t("loop.pending.pick")} ${ticket.identifier}`}
-                checked={picked.has(ticket.identifier)}
-                onChange={() => toggle(ticket.identifier)}
+                checked={all}
+                onChange={() =>
+                  setPicked(all ? new Set() : new Set(sorted.map((x) => x.identifier)))
+                }
               />
-              <span data-slot="loop-ticket-id">{ticket.identifier}</span>
-              {ticket.priority !== null ? (
-                <span data-slot="loop-ticket-priority">{ticket.priority}</span>
-              ) : null}
-              <span data-slot="loop-ticket-meta">
-                {ticket.pending?.criteria !== undefined
-                  ? t("loop.pending.criteria", { count: ticket.pending.criteria })
-                  : null}
-              </span>
-            </span>
-            <button
-              type="button"
-              data-slot="loop-ticket-title"
-              title={ticket.title}
-              onClick={() => onOpen(ticket.identifier)}
+              {t("loop.pending.all")}
+            </label>
+          </header>
+          <ul data-slot="loop-tickets">
+            {sorted.map((ticket) => (
+              <li key={ticket.identifier} data-slot="loop-ticket" data-pending="">
+                <span data-slot="loop-ticket-head">
+                  <input
+                    type="checkbox"
+                    data-slot="loop-pending-pick"
+                    aria-label={`${t("loop.pending.pick")} ${ticket.identifier}`}
+                    checked={picked.has(ticket.identifier)}
+                    onChange={() => toggle(ticket.identifier)}
+                  />
+                  <span data-slot="loop-ticket-id">{ticket.identifier}</span>
+                  {ticket.priority !== null ? (
+                    <span data-slot="loop-ticket-priority">{ticket.priority}</span>
+                  ) : null}
+                  <span data-slot="loop-ticket-meta">
+                    {ticket.pending?.criteria !== undefined
+                      ? t("loop.pending.criteria", { count: ticket.pending.criteria })
+                      : null}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  data-slot="loop-ticket-title"
+                  title={ticket.title}
+                  onClick={() => onOpen(ticket.identifier)}
+                >
+                  <span data-slot="loop-ticket-text">{ticket.title}</span>
+                </button>
+                {ticket.pending?.reason ? (
+                  <p data-slot="loop-pending-reason">{ticket.pending.reason}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <div data-slot="loop-pending-bar">
+            <Input
+              value={why}
+              aria-label={t("loop.pending.why")}
+              placeholder={t("loop.pending.why")}
+              onChange={(event) => setWhy(event.currentTarget.value)}
+            />
+            <Button
+              data-variant="ghost"
+              data-kind="loop-return-many"
+              disabled={chosen.length === 0 || busy}
+              onClick={() => void run("return_many")}
             >
-              <span data-slot="loop-ticket-text">{ticket.title}</span>
-            </button>
-            {ticket.pending?.reason ? (
-              <p data-slot="loop-pending-reason">{ticket.pending.reason}</p>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      <div data-slot="loop-pending-bar">
-        <Input
-          value={why}
-          aria-label={t("loop.pending.why")}
-          placeholder={t("loop.pending.why")}
-          onChange={(event) => setWhy(event.currentTarget.value)}
-        />
-        <Button
-          data-variant="ghost"
-          data-kind="loop-return-many"
-          disabled={chosen.length === 0 || busy}
-          onClick={() => void run("return_many")}
-        >
-          {t("loop.pending.return")}
-        </Button>
-        <Button
-          data-kind="loop-approve-many"
-          disabled={chosen.length === 0 || busy}
-          onClick={() => setAsking(true)}
-        >
-          {t("loop.pending.approve")}
-        </Button>
-      </div>
-      {problem !== undefined ? (
+              {t("loop.pending.return")}
+            </Button>
+            <Button
+              data-kind="loop-approve-many"
+              disabled={chosen.length === 0 || busy}
+              onClick={() => setAsking(true)}
+            >
+              {t("loop.pending.approve")}
+            </Button>
+          </div>
+          {problem !== undefined ? (
+            <p data-slot="loop-problem" role="alert">
+              {problem}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {more ? <p data-slot="loop-problem">{t("loop.pending.more")}</p> : null}
+      {lost > 0 ? (
         <p data-slot="loop-problem" role="alert">
-          {problem}
+          {t("loop.pending.commentLost", { count: lost })}
         </p>
       ) : null}
       {outcome?.kind === "done" ? (
@@ -532,6 +555,8 @@ function Column({
   collapsible,
   pageSize,
   pending,
+  batch,
+  onBatch,
   act,
   onOpen,
   projectKey,
@@ -548,6 +573,8 @@ function Column({
   pageSize?: number;
   /** The tickets waiting for approval, drawn as a group above the column's own tickets and left out of them. */
   pending?: LoopTicket[];
+  batch?: LoopManyResult | undefined;
+  onBatch?: (result: LoopManyResult | undefined) => void;
   projectKey: string;
   act: Act;
   onOpen: (identifier: string) => void;
@@ -593,8 +620,15 @@ function Column({
         )}
         {count}
       </header>
-      {open && pending !== undefined && pending.length > 0 ? (
-        <PendingGroup projectKey={projectKey} tickets={pending} onOpen={onOpen} />
+      {open && pending !== undefined && (pending.length > 0 || batch !== undefined) ? (
+        <PendingGroup
+          projectKey={projectKey}
+          tickets={pending}
+          more={more === true}
+          outcome={batch}
+          onOutcome={onBatch ?? (() => {})}
+          onOpen={onOpen}
+        />
       ) : null}
       {open ? (
         tickets.length === 0 ? (
@@ -683,6 +717,8 @@ function Board({
   }, [request, projectKey, store, onOpen]);
   const [problem, setProblem] = useState<LoopActFailure | undefined>();
   const [version, setVersion] = useState(0);
+  // The result of the last batch stays here: the board is read again after it, and the group may be gone with it.
+  const [batch, setBatch] = useState<LoopManyResult | undefined>();
   // Returns the words of a failure (the approve dialog shows them inline); the other buttons show them on the board.
   const act: Act = async (ticket, action, confirmed) => {
     setProblem(undefined);
@@ -763,6 +799,7 @@ function Board({
                 waiting.length > 0 ? c.tickets.filter((x) => x.pending === undefined) : c.tickets
               }
               pending={waiting}
+              {...(c.stateType === "backlog" ? { batch, onBatch: setBatch } : {})}
               more={c.more}
               {...(c.stateType === "backlog" ? { pageSize: BACKLOG_PAGE } : {})}
               {...(c.stateType === "completed" ? { collapsible: true } : {})}

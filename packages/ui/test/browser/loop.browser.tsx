@@ -586,3 +586,29 @@ test("a Backlog of only waiting tickets does not say it is empty", async () => {
   const column = await screen.findByRole("region", { name: "Backlog" });
   expect(within(column).queryByText("Nothing here")).toBeNull();
 });
+
+test("the counts of a batch stay when the reloaded board has nothing waiting any more", async () => {
+  const user = userEvent.setup();
+  const before = withTickets({ Backlog: [waiting(740, "high", "Why")] });
+  const after = withTickets({ Backlog: [ticket(741, "Backlog")] });
+  // The board changes once the batch has been asked for.
+  let asked: () => boolean = () => false;
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      get CYC() {
+        return asked() ? after : before;
+      },
+    },
+  });
+  asked = () => fake.calls.some(([name]) => name === "loopActMany");
+  const bridge = fake.bridge;
+  await renderApp(bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  const group = await screen.findByRole("region", { name: "Awaiting approval" });
+  await user.click(within(group).getByRole("checkbox", { name: "Select all" }));
+  await user.click(within(group).getByRole("button", { name: "Return selected" }));
+  expect(await screen.findByText(/1 succeeded, 0 skipped, 0 failed/)).toBeTruthy();
+  expect(screen.queryByRole("checkbox", { name: "Select all" })).toBeNull();
+});

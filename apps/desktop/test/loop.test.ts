@@ -769,9 +769,13 @@ describe("tickets waiting for approval (CYC-451)", () => {
     expect((await many("return_many", ["CYC-1", "CYC-2"], a, true, "  不做了  ")).kind).toBe(
       "done",
     );
-    expect(a.writes).toEqual([
+    // Tickets are written a few at a time: the order between them is not fixed, within one it is.
+    const of = (id: number) => a.writes.filter((w) => w.args.issueId === id);
+    expect(of(1)).toEqual([
       { tool: "update_issue", args: { issueId: 1, labelIds: [5, SKIP] } },
       { tool: "add_comment", args: { issueId: 1, body: "不做了" } },
+    ]);
+    expect(of(2)).toEqual([
       { tool: "update_issue", args: { issueId: 2, labelIds: [SKIP] } },
       { tool: "add_comment", args: { issueId: 2, body: "不做了" } },
     ]);
