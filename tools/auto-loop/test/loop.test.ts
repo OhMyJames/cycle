@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { loadConfigFiles, parseConfigFiles } from "../src/config-file.ts";
 import {
   effectiveWorkers,
+  idleIntervalMs,
   type LoopSpec,
   parseWorkers,
+  runLoop,
   runLoops,
   workerSpecs,
 } from "../src/loop.ts";
@@ -162,4 +164,34 @@ test("two workers: one stuck in step, the other goes on; each leaves after its c
   expect(calls).toBe(4);
   expect(logs.some((l) => l.startsWith("[P#1]"))).toBe(true);
   expect(logs.some((l) => l.startsWith("[P#2]"))).toBe(true);
+});
+
+test("idle interval: --interval, else the tuning's intervalSeconds, else 60 seconds", () => {
+  expect(idleIntervalMs(5, 20)).toBe(5000);
+  expect(idleIntervalMs(undefined, 20)).toBe(20_000);
+  expect(idleIntervalMs(undefined, undefined)).toBe(60_000);
+});
+
+test("a changed interval shows at the next idle wait", async () => {
+  let stop = false;
+  let seconds: number | undefined;
+  const waits: number[] = [];
+  let n = 0;
+  await runLoop({
+    name: "A",
+    once: false,
+    log: () => {},
+    stopped: () => stop,
+    intervalMs: () => idleIntervalMs(undefined, seconds),
+    step: async () => {
+      n += 1;
+      if (n === 2) seconds = 7;
+      if (n === 3) stop = true;
+      return { status: "idle" };
+    },
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  expect(waits).toEqual([60_000, 7000]);
 });

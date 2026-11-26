@@ -13,13 +13,41 @@
 bun tools/auto-loop/src/cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西
 bun tools/auto-loop/src/cli.ts --once      # 处理一张
 bun tools/auto-loop/src/cli.ts --workers 2 # 每个 Project 起 2 个 worker 并发（见下）
-bun tools/auto-loop/src/cli.ts             # 常驻，空闲时每 60 秒看一次（--interval 改）
+bun tools/auto-loop/src/cli.ts             # 常驻，空闲时每 60 秒看一次（`--interval` 或配置文件 `tuning.intervalSeconds` 改）
 bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自己开启自动合并并确认合并、且没人介入的）、autoMerged、介入率、返工率；另有 `permissions`：被留给人或被拒的权限请求，按「种类 + 命令前两个词」统计，列出被人允许最多的前 10 项及各自被允许、被拒绝的次数（事件 `permission_requested`、`permission_answered`，只记命令前两个词）
 ```
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
 
 配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
+
+## 调参（tuning，CYC-441）
+
+每个 Project 可选写一个 `tuning` 对象，字段都可不写，不写就用默认值；单位写在字段名里。
+
+| 字段                                      | 默认 | 范围   |
+| ----------------------------------------- | ---- | ------ |
+| `intervalSeconds`（空闲时查 Todo 的间隔） | 60   | 1–3600 |
+| `maxCriteria`                             | 8    | 1–20   |
+| `maxFixRounds`                            | 3    | 1–10   |
+| `maxCiRetries`                            | 2    | 0–10   |
+| `maxReviewRetries`                        | 2    | 0–10   |
+| `maxInterruptRetries`                     | 3    | 0–10   |
+| `maxQaRetries`                            | 2    | 0–10   |
+| `ciPollIntervalSeconds`                   | 30   | 5–600  |
+| `ciTimeoutMinutes`                        | 30   | 1–240  |
+| `mergePollIntervalSeconds`                | 30   | 5–600  |
+| `mergeTimeoutMinutes`                     | 10   | 1–240  |
+| `turnTimeoutMinutes`                      | 30   | 1–240  |
+| `commandTimeoutMinutes`                   | 20   | 1–240  |
+
+全部是整数。超出范围、类型不对、或写了表里没有的字段（如 `ciChecks`，不开放），整份 `tuning` 都不用，错误里写明字段名。
+
+- 启动时 `tuning` 不合法：报错并以退出码 2 退出。
+- 运行中：每次 `step()` 开始、领单之前重新读一次配置文件里本 Project 的 `tuning`，不用重启。合法就用新值；不合法或读不到，沿用上次的值，打一行日志（同一个问题只打一次），Loop 不停。
+- 一张单从领到交付用领单那一步的值，中途改文件不影响正在做的单；改动从下一次 `step()`（下一张单）起生效。多个 worker 时各自按自己那一步的值。
+- 空闲间隔：`--interval` 优先，其次 `intervalSeconds`，再其次 60 秒；每次空闲等待前取当前值。
+- `repoRoot`、`projectKey`、`stateDir`、`planKey`、各 agent、`workers` 运行中不重读，改了要重启。
 
 启动时按 projectKey 调 `get_project` 解析列、标签和类型 id：列按 stateType 选，同一 stateType 有多列时按看板顺序（`unstarted` 第一列为 Todo；`started` 的第一、二、三列依次为 In Progress、In Review、Blocked）。一个 stateDir 对应一个 Project，锁在 `<stateDir>/loop.lock`。
 

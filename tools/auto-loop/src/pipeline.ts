@@ -6,6 +6,8 @@
 // This file decides; it does not touch the world. The tracker, the daemon's sessions, git and the shell are the
 // interfaces in types.ts.
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import { type Tuning, tuningToConfig } from "./config-file.ts";
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { summarizeFailure } from "./failure.ts";
@@ -82,6 +84,11 @@ export type Deps = {
   sleep?: (ms: number) => Promise<void>;
   /** True once the loop has been asked to stop: no new work item is taken, runs already under way go on. */
   stopped?: () => boolean;
+  /**
+   * The Project's `tuning` (CYC-441): what it is at start, and how to read it again. `step()` reads before it takes
+   * anything; a read that throws keeps the last good value. Without it, `config` is used as it is.
+   */
+  tuning?: { initial: Tuning; reload: () => Promise<Tuning> };
 };
 
 /** A run cannot go on without a person. The message is what the person is told. */
@@ -99,17 +106,58 @@ const PR_STATE_READS = 3;
 const branchOf = (number: number) => `auto/cyc-${number}`;
 
 export class Pipeline {
-  readonly #d: Deps;
+  readonly #deps: Deps;
+  /** The `tuning` in force for new steps: the last one that was read and valid. */
+  #tuning: Tuning;
+  #lastTuningProblem: string | null = null;
+  /** The config one step runs with, fixed when it starts: a change to the file does not reach a step under way. */
+  readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
   #lock: Promise<void> = Promise.resolve();
 
   constructor(deps: Deps) {
-    this.#d = deps;
+    this.#deps = deps;
+    this.#tuning = deps.tuning?.initial ?? {};
+  }
+
+  /** The deps with the config of the step this code runs in. */
+  get #d(): Deps {
+    return { ...this.#deps, config: this.#stepConfig.getStore() ?? this.#configNow() };
+  }
+
+  #configNow(): Config {
+    return { ...this.#deps.config, ...tuningToConfig(this.#tuning) };
+  }
+
+  /** Seconds to wait when idle, from the `tuning` in force; undefined when it does not say. */
+  get intervalSeconds(): number | undefined {
+    return this.#tuning.intervalSeconds;
+  }
+
+  async #reloadTuning(): Promise<void> {
+    const source = this.#deps.tuning;
+    if (source === undefined) return;
+    try {
+      this.#tuning = await source.reload();
+      if (this.#lastTuningProblem !== null) this.#deps.log("tuning 恢复正常，按配置文件里的值");
+      this.#lastTuningProblem = null;
+    } catch (error) {
+      const problem = error instanceof Error ? error.message : String(error);
+      // One line per distinct problem, not one per idle poll.
+      if (problem !== this.#lastTuningProblem)
+        this.#deps.log(`tuning 读取失败，沿用上次的值：${problem}`);
+      this.#lastTuningProblem = problem;
+    }
   }
 
   /** Takes up one thing: a run to go on with, or else the next work item. Several steps may run at once. */
   async step(): Promise<StepResult> {
+    await this.#reloadTuning();
+    return this.#stepConfig.run(this.#configNow(), () => this.#step());
+  }
+
+  async #step(): Promise<StepResult> {
     if (this.#d.config.dryRun) return this.#dryRun();
 
     const chosen = await this.#exclusive(() => this.#choose());
