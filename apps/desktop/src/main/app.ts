@@ -94,6 +94,8 @@ export type AppOptions = {
     /** The version of the page the app came with. */
     bundledVersion: number;
     updater: Omit<UiUpdaterDeps, "emit" | "store" | "holdOff" | "bundledVersion">;
+    /** How long a page from outside the app has to say it has drawn itself (a test shortens it). */
+    bootMs?: number;
   };
 };
 
@@ -324,6 +326,7 @@ export const startApp = async (options: AppOptions) => {
     ...(options.interface !== undefined ? { store: options.interface.store } : {}),
     bundledUrl,
     bundledVersion,
+    ...(options.interface?.bootMs !== undefined ? { bootMs: options.interface.bootMs } : {}),
     load: (url) => contents.loadURL(url),
     installed: () => interfaceUpdater?.state.installed,
     emit: (state) => emit({ type: "interface-update", state }),

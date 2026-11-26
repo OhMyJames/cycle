@@ -209,6 +209,9 @@ const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) 
       log: (message) => console.warn(`[interface] ${message}`),
     }),
     bundledVersion,
+    ...(!packaged && Number(env.CYCLE_UI_BOOT_MS) > 0
+      ? { bootMs: Number(env.CYCLE_UI_BOOT_MS) }
+      : {}),
     updater: {
       shell,
       hasKeys: Object.keys(keys).length > 0,
