@@ -3,7 +3,13 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfigFiles, parseConfigFiles } from "../src/config-file.ts";
-import { type LoopSpec, runLoops } from "../src/loop.ts";
+import {
+  effectiveWorkers,
+  type LoopSpec,
+  parseWorkers,
+  runLoops,
+  workerSpecs,
+} from "../src/loop.ts";
 
 const p = (key: string, stateDir: string) => ({
   repoRoot: "/r",
@@ -85,4 +91,75 @@ test("a bad Project is named by its position", () => {
   expect(() => parseConfigFiles(JSON.stringify({ projects: [p("A", "/sa"), bad] }))).toThrow(
     "projects[1]: missing required planKey",
   );
+});
+
+test("parseWorkers: absent is 1, only positive integers pass", () => {
+  expect(parseWorkers(undefined)).toBe(1);
+  expect(parseWorkers("3")).toBe(3);
+  for (const bad of ["0", "-1", "1.5", "abc", ""]) expect(() => parseWorkers(bad)).toThrow();
+});
+
+test("effective workers: once and dry-run give 1, then flag over file over 1", () => {
+  const o = { once: false, dryRun: false, flag: undefined, file: undefined };
+  expect(effectiveWorkers({ ...o, once: true, flag: 3, file: 3 })).toBe(1);
+  expect(effectiveWorkers({ ...o, dryRun: true, flag: 3 })).toBe(1);
+  expect(effectiveWorkers({ ...o, flag: 2, file: 5 })).toBe(2);
+  expect(effectiveWorkers({ ...o, file: 5 })).toBe(5);
+  expect(effectiveWorkers(o)).toBe(1);
+});
+
+test("workerSpecs: names carry #1, #2 only when there is more than one", () => {
+  const base = {
+    step: async () => ({ status: "idle" }),
+    once: false,
+    intervalMs: 1,
+    log: () => {},
+    stopped: () => false,
+  };
+  expect(workerSpecs(base, "CYC", 2).map((s) => s.name)).toEqual(["CYC#1", "CYC#2"]);
+  expect(workerSpecs(base, "CYC", 1).map((s) => s.name)).toEqual(["CYC"]);
+});
+
+test("two workers: one stuck in step, the other goes on; each leaves after its current step", {
+  timeout: 5000,
+}, async () => {
+  let stop = false;
+  let release: (v: { status: string }) => void = () => {};
+  let fast = 0;
+  let calls = 0;
+  const logs: string[] = [];
+  const specs = workerSpecs(
+    {
+      step: () => {
+        calls += 1;
+        if (calls === 1)
+          return new Promise<{ status: string }>((r) => {
+            release = r;
+          });
+        fast += 1;
+        if (fast === 3) stop = true;
+        return Promise.resolve({ status: "idle" });
+      },
+      once: false,
+      intervalMs: 1,
+      log: (l) => logs.push(l),
+      stopped: () => stop,
+    },
+    "P",
+    2,
+  );
+  const all = runLoops(specs);
+  while (!stop) await Bun.sleep(1);
+  expect(fast).toBe(3);
+  let finished = false;
+  void all.then(() => {
+    finished = true;
+  });
+  await Bun.sleep(20);
+  expect(finished).toBe(false);
+  release({ status: "idle" });
+  await all;
+  expect(calls).toBe(4);
+  expect(logs.some((l) => l.startsWith("[P#1]"))).toBe(true);
+  expect(logs.some((l) => l.startsWith("[P#2]"))).toBe(true);
 });

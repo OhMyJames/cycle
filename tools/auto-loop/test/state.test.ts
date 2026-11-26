@@ -234,3 +234,20 @@ test("stats: permissions ranked by what people allowed, at most 10, empty withou
     denied: 1,
   });
 });
+
+test("stats: events of two runs written interleaved give the same result as in run order", () => {
+  const e = (
+    run: string,
+    kind: string,
+    extra: Record<string, string | boolean> = {},
+  ): LoopEvent => ({ ts: "t", run, kind, ...extra });
+  const a = [
+    e("A", "claimed"),
+    e("A", "verify"),
+    e("A", "delivered", { prUrl: "u", autoMerge: true }),
+  ];
+  const b = [e("B", "claimed"), e("B", "verify"), e("B", "round_failed"), e("B", "blocked")];
+  const inOrder = computeStats([...a, ...b]);
+  const mixed = computeStats([b[0], a[0], a[1], b[1], b[2], a[2], b[3]] as LoopEvent[]);
+  expect(mixed).toEqual(inOrder);
+});

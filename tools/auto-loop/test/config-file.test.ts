@@ -2,7 +2,12 @@ import { expect, test } from "bun:test";
 import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfigFile, parseConfigFile, writeConfigFile } from "../src/config-file.ts";
+import {
+  loadConfigFile,
+  parseConfigFile,
+  parseConfigFiles,
+  writeConfigFile,
+} from "../src/config-file.ts";
 import { resolveProject } from "../src/project.ts";
 import { acquireLock } from "../src/store.ts";
 
@@ -88,4 +93,16 @@ test("a project missing a column or label fails with what is missing", () => {
     [6, "f", "canceled", 6],
   ];
   expect(() => resolveProject(project(cols, []), names)).toThrow('label named "auto"');
+});
+
+test("workers must be a positive integer, and the error names the Project's position", () => {
+  const base = { repoRoot: "/r", projectKey: "A", stateDir: "/s", planKey: "k" };
+  expect(parseConfigFiles(JSON.stringify({ ...base, workers: 2 }))[0]?.workers).toBe(2);
+  expect(parseConfigFiles(JSON.stringify(base))[0]?.workers).toBeUndefined();
+  for (const bad of [0, -1, 1.5, "2"])
+    expect(() =>
+      parseConfigFiles(
+        JSON.stringify({ projects: [base, { ...base, stateDir: "/t", workers: bad }] }),
+      ),
+    ).toThrow("projects[1]: invalid workers");
 });
