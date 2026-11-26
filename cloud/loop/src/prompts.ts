@@ -37,9 +37,23 @@ done: what you did this turn
 next: what is left, or "nothing" if every criterion should now pass
 </progress>`;
 
+/** 大档 (CYC-453): the full text of the documents a session works from; absent for a small work item. */
+export type FullFlowTexts = { spec: string; design: string; plan: string };
+
+const docBlock = (name: string, text: string): string =>
+  `${name} (full text):\n---\n${text.trim()}\n---`;
+
+const DEV_DOCS_RULE = `- This is a 完整流程 work item: build it by the Design and the Plan above, in the order the Plan gives. If you must depart from the Plan (a step done differently, skipped, added or reordered), say what and why in the progress block, under "done" for that turn. A departure with no reason written there is a defect.`;
+
+const devDocs = (docs: FullFlowTexts | undefined): string =>
+  docs === undefined
+    ? ""
+    : `\nThe work item is judged by its documents. The Design and the Plan were adopted by a person:\n${docBlock("Design", docs.design)}\n\n${docBlock("Plan", docs.plan)}\n`;
+
 export const devBrief = (
   issue: Issue,
   criteria: Criterion[],
+  docs?: FullFlowTexts,
 ): string => `You are the developer for work item ${issue.key}: ${issue.title}.
 
 Work in the current directory: it is a git worktree made for this work item. Do not leave it and do not switch worktrees. Read AGENTS.md first and follow it, including the notes it points to for the area you change.
@@ -48,14 +62,14 @@ The work item:
 ---
 ${issue.description}
 ---
-
+${devDocs(docs)}
 The loop will check these criteria itself by running the commands; saying they pass does not make them pass:
 ${criteriaTable(criteria, false)}
 
 How to work:
 - Make the change and the tests it needs. Run \`bun run check\` before you finish.
 - Commit as you go (\`git add -A && git commit -m "<what and why>"\`). Do not push and do not open a pull request: the loop does that.
-- If the work item cannot be done as written, say so in the progress block under "next" and stop; do not guess.
+- If the work item cannot be done as written, say so in the progress block under "next" and stop; do not guess.${docs === undefined ? "" : `\n${DEV_DOCS_RULE}`}
 
 ${PROGRESS_RULE}`;
 
@@ -111,13 +125,14 @@ export const handoffBrief = (
   progress: string,
   gitLog: string,
   findings?: string | null,
+  docs?: FullFlowTexts,
 ): string => `You take over work item ${issue.key}: ${issue.title}. The developer before you could not be continued. Work in the current directory (a git worktree that already holds their commits). Read AGENTS.md first.
 
 The work item:
 ---
 ${issue.description}
 ---
-
+${devDocs(docs)}${docs === undefined ? "" : `${DEV_DOCS_RULE}\n`}
 Criteria and where they stand:
 ${criteriaTable(criteria, true)}
 
@@ -143,6 +158,7 @@ export const qaBrief = (
   diff: string,
   checks: string,
   conflictFiles: string[] = [],
+  docs?: FullFlowTexts,
 ): string => `You are an independent reviewer for work item ${issue.key}: ${issue.title}. You did not write this change and you are not told how it was made.
 
 You are READ-ONLY. Do not edit, create, delete or commit anything, and do not run the test suites: the loop already ran them and its results are below. You may read files in the current directory (a git worktree holding the change) and use git status, git diff, git log, rg and ls.
@@ -153,7 +169,11 @@ The work item:
 ---
 ${issue.description}
 ---
-
+${
+  docs === undefined
+    ? ""
+    : `\nThis is a 完整流程 work item. A person adopted these documents; judge the change against them, not only the description:\n${docBlock("Spec", docs.spec)}\n\n${docBlock("Design", docs.design)}\n\n${docBlock("Plan", docs.plan)}\n\nReport every place where the change departs from the Plan (a step not done, done differently, added, or out of order) as a finding, even when the code works. A departure is "major" unless the developer's progress notes give a reason that holds, and then "minor" at least; also check it still follows the Design and meets the Spec.\n`
+}
 The loop ran these checks, and these are their results:
 ${checks}
 

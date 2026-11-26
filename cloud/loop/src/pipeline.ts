@@ -30,7 +30,13 @@ import {
 import { PlanFlow } from "./flows/plan.ts";
 import { ResearchFlow } from "./flows/research.ts";
 import { todoIntake } from "./flows/ticket.ts";
-import { changedReason, docChanges, NEEDS_SPEC, readFullFlowDocs } from "./full-flow.ts";
+import {
+  changedReason,
+  docChanges,
+  NEEDS_SPEC,
+  readFullFlowDocs,
+  readFullFlowTexts,
+} from "./full-flow.ts";
 import { withRepoLock } from "./git-lock.ts";
 import { testLayers } from "./layers.ts";
 import { isNetworkError } from "./network.ts";
@@ -1305,13 +1311,14 @@ export class Pipeline {
           (run.nodeModulesReleased
             ? "\n\nDependencies are not installed in this worktree (node_modules was removed while waiting for CI). Resolve package.json and bun.lock first if they are conflicted, then run `bun install` before `bun run check`.\n"
             : "");
+    const docs = await readFullFlowTexts(run.fullFlowDocs, this.#d.tracker);
     const prompt =
       conflictPrompt ??
       (run.findings !== null
         ? fixBrief(run.round, run.findings)
         : progress !== "" || byPerson
           ? continueBrief(issue, byPerson)
-          : devBrief(issue, book.items));
+          : devBrief(issue, book.items, docs));
 
     let sessionId = this.#need(run.devSessionId ?? undefined);
     let result: TurnResult;
@@ -1344,7 +1351,8 @@ export class Pipeline {
       result = await this.#turn(
         run.key,
         sessionId,
-        conflictPrompt ?? handoffBrief(issue, book.items, progress, gitLog.output, run.findings),
+        conflictPrompt ??
+          handoffBrief(issue, book.items, progress, gitLog.output, run.findings, docs),
         { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
       );
     }
@@ -1477,6 +1485,7 @@ export class Pipeline {
       diff.output,
       checks === "" ? "(none)" : checks,
       run.resolvedFiles,
+      await readFullFlowTexts(run.fullFlowDocs, this.#d.tracker),
     );
     const verdict = await this.#judge(run, issue, worktree, before, prompt, save);
     if (!verdict.pass) {
