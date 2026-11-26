@@ -5,4 +5,6 @@ import type { UiKeys } from "./ui-crypto.ts";
  * and always runs the page it was built with. To rotate: add the new key in a release, sign with it from then on, and take
  * the old one out once no app that has only it is in use (docs/desktop.md, "Interface updates").
  */
-export const UI_KEYS: UiKeys = {};
+export const UI_KEYS: UiKeys = {
+  k1: "MCowBQYDK2VwAyEApj2hKxVjPpg+vPl1qT9VTliz3DpRLzb5sEEt90rWKqQ=",
+};
