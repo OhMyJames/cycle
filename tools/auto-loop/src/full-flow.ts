@@ -114,4 +114,4 @@ export const docChanges = (recorded: DocVersion[], linked: IssueDocument[]): str
 };
 
 export const changedReason = (changes: string): string =>
-  `${NEEDS_SPEC} 文档在运行中变了：${changes}。请确认是计划变更还是误改；确认后把文档重新锁定，再把工单放回 Todo，自动化会按新版本继续。`;
+  `${NEEDS_SPEC} 文档在运行中变了：${changes}。请确认是计划变更还是误改。`;

@@ -388,6 +388,10 @@ export class PlanTracker implements Tracker {
     });
   }
 
+  /**
+   * `list_issue_documents` gives only `documentId`, `title` and `archived`; the lock, the version and the content come
+   * from `get_document`. A reply of another shape is an error, never a document read as unlocked.
+   */
   async listIssueDocuments(issue: Pick<Issue, "id">): Promise<IssueDocument[]> {
     const raw = payload(
       await this.#tool("execute_read", "list_issue_documents", {
@@ -399,35 +403,49 @@ export class PlanTracker implements Tracker {
       throw new Error(
         `unrecognized list_issue_documents reply: ${JSON.stringify(raw).slice(0, 300)}`,
       );
-    return raw.map(asRecord).flatMap((d) => {
-      const id = parseOptionalInt(d.id);
-      const version = parseOptionalInt(d.version);
-      return id === null || version === null
-        ? []
-        : [
-            {
-              id,
-              title: String(d.title ?? ""),
-              version,
-              locked: d.isLocked === true,
-              archived: d.archivedAt != null,
-            },
-          ];
-    });
+    const docs: IssueDocument[] = [];
+    for (const item of raw) {
+      const d = asRecord(item);
+      const id = parseOptionalInt(d.documentId);
+      if (id === null || typeof d.title !== "string" || typeof d.archived !== "boolean")
+        throw new Error(
+          `unrecognized list_issue_documents item: ${JSON.stringify(item).slice(0, 300)}`,
+        );
+      if (d.archived) continue;
+      const full = await this.#document(id);
+      docs.push({
+        id,
+        title: d.title,
+        version: full.version,
+        locked: full.locked,
+        archived: full.archived,
+      });
+    }
+    return docs;
   }
 
   async getDocumentContent(docId: number): Promise<string> {
-    const raw = asRecord(
-      payload(
-        await this.#tool("execute_read", "get_document", {
-          projectKey: this.#project,
-          documentId: docId,
-        }),
-      ),
+    return (await this.#document(docId)).content;
+  }
+
+  /** One `get_document` reply, strictly read: `isLocked` and `version` are what a run's safety rests on. */
+  async #document(docId: number) {
+    const raw = payload(
+      await this.#tool("execute_read", "get_document", {
+        projectKey: this.#project,
+        documentId: docId,
+      }),
     );
-    if (typeof raw.content !== "string")
-      throw new Error(`tracker get_document: no content for ${docId}`);
-    return raw.content;
+    const d = asRecord(raw);
+    const version = parseOptionalInt(d.version);
+    if (
+      version === null ||
+      typeof d.isLocked !== "boolean" ||
+      typeof d.content !== "string" ||
+      d.archivedAt === undefined
+    )
+      throw new Error(`unrecognized get_document reply: ${JSON.stringify(raw).slice(0, 300)}`);
+    return { version, locked: d.isLocked, archived: d.archivedAt !== null, content: d.content };
   }
 
   async createDocument(parentId: number, title: string, content: string): Promise<{ id: number }> {

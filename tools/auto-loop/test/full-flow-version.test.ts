@@ -53,17 +53,3 @@ test("documents that do not change never block", async () => {
   const s = await setupFullFlow([fullFlowIssue()], fourDocs(), happy);
   expect((await s.pipeline.step()).status).toBe("delivered");
 });
-
-test("once a person confirms and puts it back, the run goes on from the new versions", async () => {
-  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), happy);
-  changeFromCall(s, 3, (docs) => {
-    (docs[2] as { version: number }).version = 4;
-  });
-  expect((await s.pipeline.step()).status).toBe("blocked");
-  const found = s.tracker.issues[0];
-  if (found) found.columnId = 22;
-  const result = await s.pipeline.step();
-  expect(result.status).toBe("delivered");
-  const rebased = (await s.store.events()).filter((e) => e.kind === "docs_rebaselined");
-  expect(rebased).toHaveLength(1);
-});

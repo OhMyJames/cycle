@@ -30,7 +30,7 @@ import {
 import { PlanFlow } from "./flows/plan.ts";
 import { ResearchFlow } from "./flows/research.ts";
 import { todoIntake } from "./flows/ticket.ts";
-import { changedReason, docChanges, NEEDS_SPEC, readFullFlowDocs } from "./full-flow.ts";
+import { changedReason, docChanges } from "./full-flow.ts";
 import { withRepoLock } from "./git-lock.ts";
 import { testLayers } from "./layers.ts";
 import { isNetworkError } from "./network.ts";
@@ -635,12 +635,9 @@ export class Pipeline {
     const flow = this.#flowOf(start);
     try {
       let announce = byPerson;
-      // A person put a 大档 run back: the documents they confirmed are the new baseline, once.
-      let rebase = byPerson;
       for (;;) {
         if (run.fullFlowDocs.length > 0 && run.phase !== "blocked" && run.phase !== "done") {
-          await this.#checkDocs(run, issue, save, rebase);
-          rebase = false;
+          await this.#checkDocs(run, issue);
         }
         if (run.prUrl !== null && run.phase !== "blocked" && run.phase !== "done") {
           const settled = await this.#guardPr(run, issue, save);
@@ -673,26 +670,10 @@ export class Pipeline {
 
   /**
    * 大档 (CYC-328): the four documents must still be as the run began. A change blocks, for a person to say whether
-   * the plan changed or a document was touched by mistake. When a person has put the run back (`rebase`), what they
-   * left, if all four are present and locked, becomes the new baseline.
+   * the plan changed or a document was touched by mistake.
    */
-  async #checkDocs(
-    run: RunRecord,
-    issue: Issue,
-    save: (patch: Partial<RunRecord>) => Promise<void>,
-    rebase: boolean,
-  ): Promise<void> {
+  async #checkDocs(run: RunRecord, issue: Issue): Promise<void> {
     const linked = await this.#d.tracker.listIssueDocuments(issue);
-    if (rebase) {
-      const read = readFullFlowDocs(issue, linked);
-      if (!read.ok) throw new Blocked(`${NEEDS_SPEC} ${read.reasons.join(" ")}`);
-      const changes = docChanges(run.fullFlowDocs, linked);
-      if (changes !== undefined) {
-        await save({ fullFlowDocs: read.docs });
-        await this.#d.store.event(run.key, "docs_rebaselined", { changes });
-      }
-      return;
-    }
     const changes = docChanges(run.fullFlowDocs, linked);
     if (changes !== undefined) throw new Blocked(changedReason(changes));
   }

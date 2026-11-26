@@ -608,3 +608,74 @@ test("the planning tracker has no move, no generic label, type or link, and noth
     "unmarkPending",
   ]);
 });
+
+// The replies of the real itsaplan (CYC-328): the list has `documentId`, `title` and `archived` and nothing else; the
+// lock, the version and the content are on `get_document`.
+const realList = [
+  {
+    documentId: 101,
+    title: "[CYC-1] Spec",
+    icon: null,
+    isPrivate: false,
+    archived: false,
+    createdAt: "2026-11-26T00:00:00Z",
+  },
+  {
+    documentId: 102,
+    title: "[CYC-1] Plan",
+    icon: null,
+    isPrivate: false,
+    archived: false,
+    createdAt: "2026-11-26T00:00:00Z",
+  },
+  {
+    documentId: 103,
+    title: "[CYC-1] Old",
+    icon: null,
+    isPrivate: false,
+    archived: true,
+    createdAt: "2026-11-26T00:00:00Z",
+  },
+];
+const realDoc = (id: number) => ({
+  id,
+  title: id === 101 ? "[CYC-1] Spec" : "[CYC-1] Plan",
+  isLocked: id === 101,
+  archivedAt: null,
+  version: id + 4,
+  content: `body ${id}`,
+});
+
+test("issue documents are read as the real itsaplan returns them: the list, then get_document for lock and version", async () => {
+  for (const catalog of ["full", "trimmed"] as const) {
+    const { t, calls } = tracker(catalog, {
+      list_issue_documents: realList,
+      get_document: (a: Record<string, unknown>) => realDoc(Number(a.documentId)),
+    });
+    expect(await t.listIssueDocuments(issue())).toEqual([
+      { id: 101, title: "[CYC-1] Spec", version: 105, locked: true, archived: false },
+      { id: 102, title: "[CYC-1] Plan", version: 106, locked: false, archived: false },
+    ]);
+    // The archived one is not read again.
+    expect(calls.filter((c) => c.name === "get_document")).toHaveLength(2);
+    expect(await t.getDocumentContent(101)).toBe("body 101");
+  }
+});
+
+test("a reply of another shape is an error, not an unlocked or missing document", async () => {
+  const bad = (replies: Record<string, unknown>) =>
+    tracker("full", replies).t.listIssueDocuments(issue());
+  // What the first parser expected: `id`, `version` and `isLocked` on the list item.
+  await expect(
+    bad({ list_issue_documents: [{ id: 101, title: "[CYC-1] Spec", version: 3, isLocked: true }] }),
+  ).rejects.toThrow("list_issue_documents item");
+  await expect(bad({ list_issue_documents: { documents: [] } })).rejects.toThrow(
+    "list_issue_documents reply",
+  );
+  await expect(
+    bad({
+      list_issue_documents: realList.slice(0, 1),
+      get_document: { id: 101, title: "x", content: "c", version: 3 },
+    }),
+  ).rejects.toThrow("get_document reply");
+});
