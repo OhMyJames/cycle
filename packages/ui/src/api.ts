@@ -1290,6 +1290,18 @@ export type AppApi = {
   loopProjects(): Promise<LoopProjectsAnswer>;
   /** One Project's itsaplan board, read with the person's own key, which stays in the main process. */
   loopBoard(projectKey: string): Promise<LoopBoardAnswer>;
+  /** One ticket's body, acceptance criteria and PR/MR links, read with the person's own key. */
+  loopTicket(projectKey: string, identifier: string): Promise<LoopTicketAnswer>;
+  /**
+   * Changes one ticket's state with the person's own key. `approve` writes nothing unless `confirmed` is true: main
+   * refuses it, whatever the page did. Never throws for a failed write: the reason comes back.
+   */
+  loopAct(
+    projectKey: string,
+    identifier: string,
+    action: LoopAction,
+    confirmed?: boolean,
+  ): Promise<LoopActResult>;
 };
 
 /** A Project of the Loop server: what `projects/list` says, and nothing secret. */
@@ -1311,7 +1323,36 @@ export type LoopTicket = {
   priority: string | null;
   /** The name of the board column it is in (In Progress, In Review, Blocked...). */
   column: string;
+  /** The buttons this ticket gets, from its column and label (main decides; the page only draws them). */
+  actions: LoopAction[];
 };
+
+/** `approve`: Backlog to Todo with `auto`. `to_backlog`: back to Backlog, `auto` off. `to_todo`: back to Todo. */
+export type LoopAction = "approve" | "to_backlog" | "to_todo";
+
+/** Why a write did not happen: fixed words, never the tracker's text. */
+export type LoopActFailure =
+  | "unconfirmed"
+  | "no_key"
+  | "forbidden"
+  | "conflict"
+  | "not_allowed"
+  | "offline"
+  | "refused";
+export type LoopActResult = { kind: "ok" } | { kind: "failed"; reason: LoopActFailure };
+
+export type LoopTicketDetail = LoopTicket & {
+  /** The ticket's text as written (Markdown). */
+  body: string;
+  /** The items of its acceptance criteria section, one per line. */
+  acceptance: string[];
+  /** Pull or merge request addresses (https only). */
+  links: string[];
+};
+export type LoopTicketAnswer =
+  | { kind: "ok"; ticket: LoopTicketDetail }
+  | { kind: "no_key" }
+  | { kind: "unreachable" };
 
 /**
  * The columns are chosen by the kind of state, never by name: `doing` is every started column, `todo` every unstarted
@@ -1441,6 +1482,8 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   setAnalytics: true,
   loopProjects: true,
   loopBoard: true,
+  loopTicket: true,
+  loopAct: true,
 };
 
 export type ApiMethod = keyof AppApi;

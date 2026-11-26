@@ -1,6 +1,12 @@
 // The Loop page's reads (docs/protocol.md §17): the Projects of the Loop server on this computer, and each Project's
 // board. Both come through main; the key that reads the board never gets here.
-import type { LoopBoardAnswer, LoopProjectInfo } from "../api.ts";
+import type {
+  LoopAction,
+  LoopActResult,
+  LoopBoardAnswer,
+  LoopProjectInfo,
+  LoopTicketAnswer,
+} from "../api.ts";
 import type { StoreKit } from "./core.ts";
 
 export type LoopState = {
@@ -49,5 +55,24 @@ export class LoopSlice {
     this.#kit.set((s) => ({
       loop: { ...s.loop, boards: { ...s.loop.boards, [projectKey]: answer } },
     }));
+  };
+
+  loadTicket = (projectKey: string, identifier: string): Promise<LoopTicketAnswer> =>
+    this.#kit.bridge
+      .loopTicket(projectKey, identifier)
+      .catch(() => ({ kind: "unreachable" }) as const);
+
+  /** A state button. A write that went through reads the board again; one that did not leaves it as it was. */
+  act = async (
+    projectKey: string,
+    identifier: string,
+    action: LoopAction,
+    confirmed = false,
+  ): Promise<LoopActResult> => {
+    const result = await this.#kit.bridge
+      .loopAct(projectKey, identifier, action, confirmed)
+      .catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
+    if (result.kind === "ok") await this.loadBoard(projectKey);
+    return result;
   };
 }

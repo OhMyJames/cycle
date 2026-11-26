@@ -1163,6 +1163,16 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - 响应里没有令牌、仓库完整地址和本地路径。以后加字段(运行状态、调度)时仍遵守这一条:能让别人拿到凭据或路径的字段不进这个方法。
 - 服务只读本进程的配置,不访问 itsaplan;看板内容由桌面端用使用者自己的账号读(见决定笔记 [2026-11-25-desktop-holds-a-personal-itsaplan-key-for-now](../.agents/notes/2026-11-25-desktop-holds-a-personal-itsaplan-key-for-now.md))。
 
+### 工单状态按钮(桌面端写 itsaplan,CYC-387)
+
+写入不经过 Loop 服务:桌面主进程用使用者自己的 key 直接写 itsaplan,审计上分得清是人批准的。页面只有三个按钮,不支持拖动:
+
+- `approve` 批准:Backlog 移到 Todo 并打 `auto`。**必须确认**:主进程在 `confirmed !== true` 时什么都不写。
+- `to_backlog` 退回 Backlog:从 Todo 或 Doing 退回,同时去掉 `auto`。默认不确认。
+- `to_todo` 放回 Todo:从 Doing 放回。默认不确认。
+- Done 没有按钮;Doing 里带 `auto` 的是 Loop 在处理的,也没有按钮。按钮由主进程按列的状态类型和 `auto` 标签决定,写之前再读一次工单,位置变了就拒绝(`not_allowed`)。
+- 失败给固定词,不透传 itsaplan 的文字:`unconfirmed`、`no_key`、`forbidden`(401/403)、`conflict`(409)、`not_allowed`、`offline`、`refused`。
+
 ### 错误
 
 沿用 §11 的数字 `code`;`data.reason` 固定词,不透传路径或令牌。未知方法返回 `-32601`。
