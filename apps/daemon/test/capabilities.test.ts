@@ -30,6 +30,23 @@ const sessionRow = async (c: Awaited<ReturnType<typeof connectClient>>) =>
     unknown
   >;
 
+/** Waits until the session list shows `ready` for the first session, and returns that row. */
+const rowWhen = async (
+  c: Awaited<ReturnType<typeof connectClient>>,
+  ready: (row: Record<string, unknown>) => boolean,
+  what: string,
+  ms = 10_000,
+) => {
+  const started = Date.now();
+  let row = await sessionRow(c);
+  while (!ready(row)) {
+    if (Date.now() - started > ms) throw new Error(`timed out waiting for ${what}`);
+    await Bun.sleep(5);
+    row = await sessionRow(c);
+  }
+  return row;
+};
+
 // ---- attachments ----
 
 test("an agent's prompt capabilities are in the agent list", async () => {
@@ -185,8 +202,9 @@ test("directories, MCP servers and system prompt are sent to the agent, kept, an
   expect(fake.log.news[0]).toMatchObject({ cwd: "/tmp", additionalDirectories: [dir], ...setup });
 
   // The agent goes away (it was let go, or crashed); the next prompt starts another.
+  const announced = c.listChanged();
   fake.crash();
-  await Bun.sleep(30);
+  await until(() => c.listChanged() > announced, "the exit to be announced");
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("again") });
   await until(() => fake.log.resumes.length === 1, "the agent to be resumed");
   expect(fake.log.resumes[0]).toMatchObject({
@@ -222,8 +240,9 @@ test("a setting not on record is recorded as the agent resumed it", async () => 
   const c = await connectClient(daemon);
   const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   expect((await sessionRow(c))["cycle/config"]).toBeUndefined();
+  const announced = c.listChanged();
   fake.crash();
-  await Bun.sleep(30);
+  await until(() => c.listChanged() > announced, "the exit to be announced");
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("again") });
   await until(() => fake.log.resumes.length === 1, "the agent to be resumed");
   // The record is written behind the resume: look a few times, for no more than a second.
@@ -252,8 +271,9 @@ test("a saved setting the agent refuses on resume is not left on record as in fo
 
   // The agent is updated and no longer takes "plan"; it resumes the session in "auto".
   fake.control.rejectConfig.add("mode");
+  const announced = c.listChanged();
   fake.crash();
-  await Bun.sleep(30);
+  await until(() => c.listChanged() > announced, "the exit to be announced");
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("again") });
   await until(() => fake.log.resumes.length === 1, "the agent to be resumed");
 
@@ -287,8 +307,9 @@ test("a saved setting the agent no longer has is dropped from the record, with a
   await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
 
   fake.control.rejectConfig.add("mode");
+  const announced = c.listChanged();
   fake.crash();
-  await Bun.sleep(30);
+  await until(() => c.listChanged() > announced, "the exit to be announced");
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("again") });
 
   await until(
@@ -397,11 +418,12 @@ test("a setting the agent changes itself is on record, and applied again when it
   await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("go") });
   await until(() => c.ended() >= 1, "the turn to end");
-  await Bun.sleep(30);
+  await rowWhen(c, (r) => r["cycle/config"] !== undefined, "the settings to be listed");
   expect((await sessionRow(c))["cycle/config"]).toEqual({ mode: "acceptEdits", model: "default" });
 
+  const announced = c.listChanged();
   fake.crash();
-  await Bun.sleep(30);
+  await until(() => c.listChanged() > announced, "the exit to be announced");
   fake.log.configs.length = 0;
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("again") });
   await until(() => fake.log.configs.length === 2, "the settings to be applied");
@@ -426,13 +448,15 @@ test("the agent's title names a session until the user does", async () => {
     const before = c.ended();
     await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text(what) });
     await until(() => c.ended() > before, "the turn to end");
-    await Bun.sleep(30);
   };
   await turn("one");
-  expect((await sessionRow(c)).title).toBe("Fixing the login bug");
+  await rowWhen(c, (r) => r.title === "Fixing the login bug", "the agent's title to be listed");
 
   await c.agent.request("_cycle/session/set_title", { sessionId, title: "My name for it" });
   await turn("two");
+  // Proving something did not happen (the agent's second title is not taken): there is nothing to
+  // wait for, so give it a moment to show up wrongly.
+  await Bun.sleep(30);
   expect((await sessionRow(c)).title).toBe("My name for it");
   // Clients are not shown the agent's second title either, here or when they come back for the history.
   const told = (client: typeof c) =>
@@ -474,8 +498,7 @@ test("the first message names a session at once, until the agent names it", asyn
   expect((await sessionRow(c)).title).toBe("the login button does nothing");
   finish();
   await until(() => c.ended() >= 1, "the turn to end");
-  await Bun.sleep(30);
-  expect((await sessionRow(c)).title).toBe("Fixing the login bug");
+  await rowWhen(c, (r) => r.title === "Fixing the login bug", "the agent's title to be listed");
   // The name for the meantime is not in the history: only what the agent said is.
   expect(
     c.seen
@@ -498,6 +521,8 @@ test("the first message does not rename a session the person named, nor name one
     const before = c.ended();
     await c.agent.request(methods.agent.session.prompt, { sessionId, prompt } as never);
     await until(() => c.ended() > before, "the turn to end");
+    // Every check after a turn here is that no title appeared, so there is no condition to wait
+    // for: give a wrong title a moment to show up.
     await Bun.sleep(30);
   };
   const titleOf = async (sessionId: string) =>
@@ -597,8 +622,7 @@ test("a usage update whose cost is null still gives the list its context", async
   const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("go") });
-  await until(() => c.ended() >= 1, "the turn to end");
-  await Bun.sleep(30);
+  await rowWhen(c, (r) => r["cycle/usage"] !== undefined, "the usage to be listed");
   expect((await sessionRow(c))["cycle/usage"]).toEqual({ used: 10, size: 1000 });
 });
 
@@ -643,8 +667,12 @@ test("the latest usage is in the session list, and survives a restart", async ()
   await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
   expect((await sessionRow(c))["cycle/usage"]).toBeUndefined();
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("go") });
-  await until(() => c.ended() >= 1, "the turn to end");
-  await Bun.sleep(30);
+  // The first update (1200) lands before the last one: wait for the last.
+  await rowWhen(
+    c,
+    (r) => (r["cycle/usage"] as { used?: number } | undefined)?.used === 5000,
+    "the latest usage to be listed",
+  );
   const expected = { used: 5000, size: 200000, cost: { amount: 0.08, currency: "USD" } };
   expect((await sessionRow(c))["cycle/usage"]).toEqual(expected);
   await daemon.close();
@@ -864,6 +892,8 @@ test("a name the user gave before agents named sessions is not replaced by the a
   await d.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
   await d.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("go") });
   await until(() => d.ended() >= 1, "the turn to end");
+  // Proving something did not happen (the agent's title does not replace the old name): there is
+  // nothing to wait for, so give it a moment to show up wrongly.
   await Bun.sleep(30);
   expect((await sessionRow(d)).title).toBe("Old name");
 });
