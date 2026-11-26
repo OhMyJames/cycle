@@ -729,3 +729,61 @@ export const enableAutoMerge = async (input: {
   }
   return { ok: true };
 };
+
+export type ReadAutoMergeResult = { ok: true; enabled: boolean } | { ok: false; error: string };
+
+const AutoMergeViewSchema = z.object({ autoMergeRequest: z.unknown().nullable() });
+
+/**
+ * Reads whether auto-merge is on for a pull request (`gh pr view --json autoMergeRequest`) using `deliverEnv`. A failed
+ * or unreadable read is an error, never taken as off.
+ */
+export const readAutoMerge = async (input: {
+  prRef: string;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}): Promise<ReadAutoMergeResult> => {
+  const done = await input.exec(["gh", "pr", "view", input.prRef, "--json", "autoMergeRequest"], {
+    cwd: input.cwd,
+    env: deliverEnv(input.env),
+    timeoutMs: input.timeoutMs,
+  });
+  if (done.timedOut) return { ok: false, error: "gh pr view 超时。" };
+  if (done.code !== 0) {
+    return { ok: false, error: `gh pr view 失败（exit ${done.code}）：${done.output.trim()}` };
+  }
+  try {
+    const view = AutoMergeViewSchema.parse(JSON.parse(done.output));
+    return { ok: true, enabled: view.autoMergeRequest != null };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `gh pr view 返回无法解析的 JSON：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+};
+
+/** Turns auto-merge off (`gh pr merge <pr> --disable-auto`) using `deliverEnv`. */
+export const disableAutoMerge = async (input: {
+  prRef: string;
+  exec: Exec;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  timeoutMs: number;
+}): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const done = await input.exec(["gh", "pr", "merge", input.prRef, "--disable-auto"], {
+    cwd: input.cwd,
+    env: deliverEnv(input.env),
+    timeoutMs: input.timeoutMs,
+  });
+  if (done.timedOut) return { ok: false, error: "gh pr merge --disable-auto 超时。" };
+  if (done.code !== 0) {
+    return {
+      ok: false,
+      error: `gh pr merge --disable-auto 失败（exit ${done.code}）：${done.output.trim()}`,
+    };
+  }
+  return { ok: true };
+};

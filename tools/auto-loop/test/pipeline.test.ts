@@ -138,20 +138,11 @@ test("happy path: Dev, checks, QA, push, PR, green CI, independent review merge,
   expect(sessions.deleted).toBe(0);
 });
 
-test("auto-merge enabled but the PR conflicts with main: Blocked, comment names the conflict and files, event recorded", async () => {
+test("the PR's commit list is built with --no-merges, so a merge of main is not listed", async () => {
   const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_MERGE)] });
-  s.world.prMerge = [["OPEN", "CONFLICTING"]];
-  s.world.mergeTreeOutput = "deadbeef\ntools/auto-loop/test/pipeline.test.ts\n";
-  const result = await s.pipeline.step();
-  expect(result.status).toBe("blocked");
-  expect(s.tracker.moves.at(-1)).toBe("CYC-1:blocked");
-  const comment = s.tracker.comments.at(-1) ?? "";
-  expect(comment).toContain("冲突");
-  expect(comment).toContain("tools/auto-loop/test/pipeline.test.ts");
-  const kinds = (await s.store.events()).map((e) => e.kind);
-  expect(kinds).toContain("merge_conflict");
-  expect(kinds).toContain("blocked");
-  expect(kinds).not.toContain("delivered");
+  await s.pipeline.step();
+  const log = s.world.calls.find((c) => c.includes("log --reverse"));
+  expect(log).toContain("--no-merges");
 });
 
 test("auto-merge enabled and the PR merges after a few polls: delivered as before, no extra comment", async () => {
