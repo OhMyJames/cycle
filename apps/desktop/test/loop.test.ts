@@ -10,6 +10,7 @@ import {
   answerBoard,
   answerTicket,
   readLoopProjects,
+  startTicketChat,
 } from "../src/main/loop.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "desktop-loop-"));
@@ -360,5 +361,103 @@ describe("state buttons", () => {
     expect(answer.ticket.actions).toEqual(["approve"]);
     expect(events).toEqual([["loop_ticket_opened", {}]]);
     expect(JSON.stringify(answer)).not.toContain(KEY);
+  });
+});
+
+describe("a conversation about a ticket (CYC-389)", () => {
+  /** A tracker whose ticket CYC-9 sits in the given column. */
+  const trackerWith = (columnId: number) =>
+    (async (_url: unknown, init: RequestInit) => {
+      const { params } = JSON.parse(String(init.body)) as {
+        params: { name: string };
+      };
+      const data =
+        params.name === "get_project"
+          ? { project: {}, columns, labels: [{ id: 11, name: "auto" }] }
+          : { id: 9, identifier: "CYC-9", title: "T", columnId, labelIds: [] };
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { content: [{ type: "text", text: JSON.stringify(data) }] },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+  const setup = (defaults: Record<string, string>) => {
+    const made: unknown[] = [];
+    const prompts: string[] = [];
+    const events: unknown[] = [];
+    const deps = {
+      locationId: "local",
+      cwd: "/work",
+      agentDefaults: async () => defaults,
+      createSession: async (params: unknown) => {
+        made.push(params);
+        return "s1";
+      },
+      prompt: async (_id: string, text: string) => {
+        prompts.push(text);
+      },
+    };
+    const track = ((e: string, p: unknown) => events.push([e, p])) as never;
+    return { made, prompts, events, deps, track };
+  };
+
+  test("chat is new in Backlog and Todo, watch in a started column, none elsewhere", async () => {
+    const { chatOf } = await import("../src/main/loop.ts");
+    expect(chatOf("backlog")).toBe("new");
+    expect(chatOf("unstarted")).toBe("new");
+    expect(chatOf("started")).toBe("watch");
+    expect(chatOf("completed")).toBe("none");
+  });
+
+  test("the ticket's page says what it gets", async () => {
+    writeKey(0o600);
+    const answer = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(21));
+    if (answer.kind !== "ok") throw new Error("expected a ticket");
+    expect(answer.ticket.chat).toBe("new");
+    const doing = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(23));
+    if (doing.kind !== "ok") throw new Error("expected a ticket");
+    expect(doing.ticket.chat).toBe("watch");
+  });
+
+  test("a Backlog or Todo ticket gets a session with its number and the default model", async () => {
+    writeKey(0o600);
+    for (const columnId of [21, 22]) {
+      const { made, prompts, events, deps, track } = setup({ model: "deepseek-flash" });
+      const result = await startTicketChat(
+        loop,
+        deps,
+        "CYC",
+        "CYC-9",
+        track,
+        trackerWith(columnId),
+      );
+      expect(result).toEqual({ kind: "started", locationId: "local", sessionId: "s1" });
+      expect(made).toEqual([{ cwd: "/work", agent: "codex", config: { model: "deepseek-flash" } }]);
+      expect(prompts[0]).toContain("CYC-9");
+      // Only the word of the outcome: no ticket, no text.
+      expect(events).toEqual([["loop_ticket_chat", { result: "started" }]]);
+    }
+  });
+
+  test("In Progress is only to watch: no session is made", async () => {
+    writeKey(0o600);
+    const { made, deps, track } = setup({ model: "deepseek-flash" });
+    const result = await startTicketChat(loop, deps, "CYC", "CYC-9", track, trackerWith(23));
+    expect(result).toEqual({ kind: "failed", reason: "not_allowed" });
+    expect(made).toEqual([]);
+  });
+
+  test("with no default model it says so and makes nothing", async () => {
+    writeKey(0o600);
+    for (const defaults of [{}, { model: "  " }]) {
+      const { made, events, deps, track } = setup(defaults);
+      const result = await startTicketChat(loop, deps, "CYC", "CYC-9", track, trackerWith(21));
+      expect(result).toEqual({ kind: "failed", reason: "needs_model" });
+      expect(made).toEqual([]);
+      expect(events).toEqual([["loop_ticket_chat", { result: "needs_model" }]]);
+    }
   });
 });

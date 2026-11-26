@@ -85,6 +85,18 @@ export const EVENTS = {
   loop_board_read: o({ result: z.enum(["ok", "no_key", "unreachable"]) }),
   /** The person opened a ticket's page on the Loop page. */
   loop_ticket_opened: o({}),
+  /** The person asked to talk about a ticket with an agent: how it came out; never which ticket or what was said. */
+  loop_ticket_chat: o({
+    result: z.enum([
+      "started",
+      "needs_model",
+      "not_allowed",
+      "no_key",
+      "offline",
+      "refused",
+      "auth_required",
+    ]),
+  }),
   /** The person pressed a state button on the Loop page: which, and how it came out; never which ticket. */
   loop_ticket_acted: o({
     action: z.enum(["approve", "to_backlog", "to_todo"]),

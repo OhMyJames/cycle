@@ -23,6 +23,7 @@ const ticket = (n: number, column: string) => ({
   priority: "high",
   column,
   actions: [],
+  chat: "none" as const,
 });
 const board: LoopBoardAnswer = {
   kind: "ok",
@@ -120,7 +121,11 @@ test("the Backlog opens on 20 tickets and shows more when asked", async () => {
 });
 
 test("Approve asks first; only the confirmation writes, and a failure is said, not hidden", async () => {
-  const backlog = { ...ticket(600, "Backlog"), actions: ["approve" as const] };
+  const backlog = {
+    ...ticket(600, "Backlog"),
+    actions: ["approve" as const],
+    chat: "new" as const,
+  };
   const doing = ticket(601, "In Progress");
   const user = userEvent.setup();
   const fake = fakeBridge({
@@ -152,6 +157,7 @@ test("a failed Back to Backlog on the ticket page is said there, and gone after 
   const mine = {
     ...ticket(602, "In Review"),
     actions: ["to_backlog" as const, "to_todo" as const],
+    chat: "watch" as const,
   };
   const user = userEvent.setup();
   const fake = fakeBridge({

@@ -8,6 +8,7 @@ import type {
   LoopActFailure,
   LoopAction,
   LoopBoardAnswer,
+  LoopChatFailure,
   LoopTicket,
   LoopTicketDetail,
 } from "../api.ts";
@@ -100,17 +101,72 @@ function Ticket({
   );
 }
 
+/** What the person can do with an agent on this ticket: start a conversation, or only look when Loop has it. */
+function TicketChat({
+  projectKey,
+  ticket,
+  onStarted,
+}: {
+  projectKey: string;
+  ticket: LoopTicketDetail;
+  onStarted: () => void;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<LoopChatFailure | undefined>();
+  if (ticket.chat === "none") return null;
+  if (ticket.chat === "watch")
+    return (
+      <p data-slot="loop-chat-note" data-kind="loop-watch">
+        {t("loop.chat.watch")}
+      </p>
+    );
+  const start = async () => {
+    setBusy(true);
+    setFailure(undefined);
+    const result = await store.chatAboutLoopTicket(projectKey, ticket.identifier);
+    setBusy(false);
+    if (result.kind === "failed") {
+      setFailure(result.reason);
+      return;
+    }
+    onStarted();
+    await store.selectSession(result.locationId, result.sessionId);
+  };
+  return (
+    <span data-slot="loop-chat">
+      <Button
+        data-variant="ghost"
+        data-kind="loop-chat"
+        disabled={busy}
+        aria-label={`${t("loop.chat.start")} ${ticket.identifier}`}
+        onClick={() => void start()}
+      >
+        {t("loop.chat.start")}
+      </Button>
+      {failure !== undefined ? (
+        <p data-slot="loop-problem" data-kind="loop-chat-failure" role="alert">
+          {t(`loop.chat.fail.${failure}`)}
+        </p>
+      ) : null}
+    </span>
+  );
+}
+
 function TicketPage({
   projectKey,
   identifier,
   act,
   onBack,
+  onChatStarted,
   problem,
 }: {
   projectKey: string;
   identifier: string;
   act: Act;
   onBack: () => void;
+  onChatStarted: () => void;
   problem: ReactNode;
 }) {
   const { t } = useI18n();
@@ -145,6 +201,7 @@ function TicketPage({
             {ticket.priority !== null ? ` · ${ticket.priority}` : ""}
           </span>
           <TicketActions ticket={ticket} act={act} />
+          <TicketChat projectKey={projectKey} ticket={ticket} onStarted={onChatStarted} />
           <section data-slot="loop-detail-section">
             <h4>{t("loop.detail.body")}</h4>
             <pre data-slot="loop-detail-body">{ticket.body}</pre>
@@ -254,9 +311,11 @@ function Column({
 function Board({
   projectKey,
   answer,
+  onChatStarted,
 }: {
   projectKey: string;
   answer: LoopBoardAnswer | "loading" | undefined;
+  onChatStarted: () => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -313,6 +372,7 @@ function Board({
         projectKey={projectKey}
         identifier={open}
         act={act}
+        onChatStarted={onChatStarted}
         onBack={() => {
           setProblem(undefined);
           setOpen(undefined);
@@ -425,7 +485,13 @@ export function LoopPage({
               {p.name} <span data-slot="loop-repo">{p.repo.displayName}</span>
             </>
           ),
-          content: <Board projectKey={p.projectKey} answer={loop.boards[p.projectKey]} />,
+          content: (
+            <Board
+              projectKey={p.projectKey}
+              answer={loop.boards[p.projectKey]}
+              onChatStarted={onClose}
+            />
+          ),
         }));
 
   return (

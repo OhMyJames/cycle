@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isUiEvent } from "@cycle/analytics/events";
@@ -35,7 +36,13 @@ import { notifyAttention } from "./attention.ts";
 import { dispatch, type Handlers } from "./dispatch.ts";
 import { fileEnvironments } from "./environments.ts";
 import { extensionOf, imageBytes, imageFileName, isClipboardType } from "./image-out.ts";
-import { actOnTicket, answerBoard, answerTicket, readLoopProjects } from "./loop.ts";
+import {
+  actOnTicket,
+  answerBoard,
+  answerTicket,
+  readLoopProjects,
+  startTicketChat,
+} from "./loop.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
 import { fileSettings } from "./settings.ts";
@@ -70,7 +77,7 @@ export type AppOptions = {
    * Loop (docs/protocol.md §17): the Loop server's socket on this computer, the file holding the person's own itsaplan
    * key (mode 0600), and the tracker's MCP address. Without it, the page says Loop is not connected.
    */
-  loop?: { socket: string; keyFile: string; trackerUrl: string };
+  loop?: { socket: string; keyFile: string; trackerUrl: string; chatCwd?: string };
   /** How the app updates itself. Without it, updating is off. */
   update?: Omit<UpdaterDeps, "emit" | "quit">;
 };
@@ -325,6 +332,20 @@ export const startApp = async (options: AppOptions) => {
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
       actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
         analytics.track(event, props),
+      ),
+    loopChat: (projectKey: unknown, identifier: unknown) =>
+      startTicketChat(
+        options.loop,
+        {
+          locationId: "local",
+          cwd: options.loop?.chatCwd ?? homedir(),
+          agentDefaults: (agent) => manager.agentDefaults("local", agent),
+          createSession: (params) => manager.createSession("local", params),
+          prompt: (sessionId, text) => manager.prompt("local", sessionId, text),
+        },
+        projectKey,
+        identifier,
+        (event, props) => analytics.track(event, props),
       ),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
     // Through main, not the page's navigator.clipboard: the page is given no permissions. Text only, of a sane size.

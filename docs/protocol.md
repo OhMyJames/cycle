@@ -1173,6 +1173,15 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - Done 没有按钮;Doing 里带 `auto` 的是 Loop 在处理的,也没有按钮。按钮由主进程按列的状态类型和 `auto` 标签决定,写之前再读一次工单,位置变了就拒绝(`not_allowed`)。
 - 失败给固定词,不透传 itsaplan 的文字:`unconfirmed`、`no_key`、`forbidden`(401/403)、`conflict`(409)、`not_allowed`、`offline`、`refused`。
 
+### 与工单对话(桌面端,CYC-389)
+
+工单页的"与 agent 对话"按钮:桌面主进程再读一次工单,按列的状态类型决定,然后用本机 daemon 新开会话。
+
+- Backlog / Todo(`chat: "new"`):新开 codex 会话,模型取该 agent 在设置里的默认模型;第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
+- In Progress(`chat: "watch"`):只读旁观,不提供对话。这一列暂时被当作"Loop 正在跑"的判据;已知误差:Loop 异常退出留在 In Progress 的工单会被误判为在跑,CYC-390 用运行数据纠正。其余列(如 Blocked,接入原会话见 CYC-388)为 `none`。
+- 默认模型没设:不创建会话,返回 `needs_model`,页面提示去设置里配置,而不是创建失败。
+- 失败给固定词:`needs_model`、`not_allowed`(工单已不在 Backlog/Todo)、`no_key`、`offline`、`refused`、`auth_required`。埋点 `loop_ticket_chat` 只记结果。
+
 ### 错误
 
 沿用 §11 的数字 `code`;`data.reason` 固定词,不透传路径或令牌。未知方法返回 `-32601`。

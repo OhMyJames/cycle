@@ -335,6 +335,7 @@ export class AppStore extends StoreBase {
   loadLoopBoard = this.#loop.loadBoard;
   loadLoopTicket = this.#loop.loadTicket;
   actOnLoopTicket = this.#loop.act;
+  chatAboutLoopTicket = this.#loop.chat;
 
   // ---- connectors ----
 

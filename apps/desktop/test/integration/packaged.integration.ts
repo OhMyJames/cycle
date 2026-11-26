@@ -173,6 +173,7 @@ test.skipIf(!ready)(
           "loopBoard",
           "loopTicket",
           "loopAct",
+          "loopChat",
           "loopProjects",
           "setVaultItem",
           "removeVaultItem",

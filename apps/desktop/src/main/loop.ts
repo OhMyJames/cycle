@@ -15,6 +15,9 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopChat,
+  LoopChatFailure,
+  LoopChatResult,
   LoopProjectsAnswer,
   LoopTicket,
   LoopTicketAnswer,
@@ -158,6 +161,18 @@ export const actionsOf = (stateType: string, auto: boolean): LoopAction[] => {
   return [];
 };
 
+/**
+ * What an agent may do with a ticket, by the kind of its column (CYC-389). Backlog and Todo: a new conversation.
+ * In Progress (started): only to look, because for now that column is the sign that Loop is running it; a ticket
+ * Loop left there when it died is taken for running too (CYC-390 corrects it with the run data). Anything else: nothing.
+ */
+export const chatOf = (stateType: string): LoopChat =>
+  stateType === "backlog" || stateType === "unstarted"
+    ? "new"
+    : stateType === "started"
+      ? "watch"
+      : "none";
+
 const AUTO = "auto";
 
 /** The id of the `auto` label of a Project, by its name (labels are per Project). */
@@ -214,6 +229,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
               priority: typeof r.priority === "string" ? r.priority : null,
               column: column.name,
               actions: actionsOf(column.stateType, auto),
+              chat: chatOf(column.stateType),
             };
           });
         }),
@@ -235,7 +251,13 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
   }
 };
 
-export type LoopOptions = { socket: string; keyFile: string; trackerUrl: string };
+export type LoopOptions = {
+  socket: string;
+  keyFile: string;
+  trackerUrl: string;
+  /** Where a ticket conversation runs; the home folder when absent. */
+  chatCwd?: string;
+};
 
 /** The page asked for a board: the key is read, the board is read, and only the kind of the outcome is reported. */
 export const answerBoard = async (
@@ -334,7 +356,7 @@ const readIssue = async (t: Tracker, projectKey: string, sequenceNumber: number)
   };
 };
 
-export type Track = <N extends "loop_ticket_opened" | "loop_ticket_acted">(
+export type Track = <N extends "loop_ticket_opened" | "loop_ticket_acted" | "loop_ticket_chat">(
   event: N,
   props: EventProps<N>,
 ) => void;
@@ -379,6 +401,7 @@ export const answerTicket = async (
         priority: typeof issue.priority === "string" ? issue.priority : null,
         column: column.name,
         actions: actionsOf(column.stateType, auto),
+        chat: chatOf(column.stateType),
         body,
         acceptance: acceptanceOf(body),
         links: linksOf(issue, body),
@@ -447,5 +470,75 @@ export const actOnTicket = async (
     return done({ kind: "ok" }, action);
   } catch (error) {
     return done({ kind: "failed", reason: failureOf(error) }, action);
+  }
+};
+
+/** The agent a ticket conversation starts with: its own default model decides the model (Settings). */
+export const CHAT_AGENT = "codex";
+
+/** What the chat needs of the app: the local daemon's calls, so this file does not know the manager. */
+export type ChatDeps = {
+  locationId: string;
+  /** Where the session runs. */
+  cwd: string;
+  agentDefaults: (agent: string) => Promise<Record<string, string>>;
+  createSession: (params: {
+    cwd: string;
+    agent: string;
+    config: Record<string, string>;
+  }) => Promise<string | { problem: unknown }>;
+  prompt: (sessionId: string, text: string) => Promise<void>;
+};
+
+/** The first message: the ticket's number, so the agent reads it through itsaplan (the connector) and works on it. */
+const firstMessage = (identifier: string): string =>
+  `Let's work on ticket ${identifier} together. Read it in itsaplan first. Help me refine the requirement: fix the text, add acceptance criteria, and ask what is unclear. Do not move it to another column; I will approve it myself.`;
+
+/**
+ * The person asked to talk about a ticket with an agent. The ticket is read again: only Backlog and Todo get a new
+ * conversation (`not_allowed` otherwise, and nothing is made). The agent's default model is needed: without it nothing
+ * is made, and the page says to set it in Settings (`needs_model`) instead of a session failing.
+ */
+export const startTicketChat = async (
+  loop: LoopOptions | undefined,
+  deps: ChatDeps,
+  projectKey: unknown,
+  identifier: unknown,
+  track: Track,
+  fetchImpl?: typeof fetch,
+): Promise<LoopChatResult> => {
+  const done = (reason: LoopChatFailure | "started", result?: LoopChatResult): LoopChatResult => {
+    track("loop_ticket_chat", { result: reason });
+    return result ?? { kind: "failed", reason: reason as LoopChatFailure };
+  };
+  const parsed = parseIdentifier(projectKey, identifier);
+  if (!parsed) return { kind: "failed", reason: "refused" };
+  const tracker = await withKey(loop, fetchImpl);
+  if (!tracker) return done("no_key");
+  let ticket: Read;
+  try {
+    ticket = await readIssue(tracker, parsed.projectKey, parsed.sequenceNumber);
+  } catch (error) {
+    return done(failureOf(error) === "offline" ? "offline" : "refused");
+  }
+  if (chatOf(ticket.column.stateType) !== "new") return done("not_allowed");
+  let model: string | undefined;
+  try {
+    model = (await deps.agentDefaults(CHAT_AGENT)).model?.trim();
+  } catch {
+    return done("offline");
+  }
+  if (model === undefined || model === "") return done("needs_model");
+  try {
+    const made = await deps.createSession({
+      cwd: deps.cwd,
+      agent: CHAT_AGENT,
+      config: { model },
+    });
+    if (typeof made !== "string") return done("refused");
+    await deps.prompt(made, firstMessage(String(identifier)));
+    return done("started", { kind: "started", locationId: deps.locationId, sessionId: made });
+  } catch (error) {
+    return done((error as { code?: unknown })?.code === -32000 ? "auth_required" : "offline");
   }
 };
