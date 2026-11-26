@@ -174,6 +174,8 @@ export type OwnRun = {
   open: () => Promise<void>;
   /** Drives the run, after the choice. */
   go: () => Promise<StepResult>;
+  /** An error from `go` that is not the network's: the run ends here, so the next one can begin. */
+  fail?: (error: unknown) => Promise<StepResult>;
   /** `--dry-run`: what would be started, said instead of `open` and `go`. */
   would: StepResult;
 };

@@ -123,6 +123,43 @@ const createdId = (raw: unknown, tool: string): number => {
 };
 
 const FIELD_WRITE_TIMEOUT_MS = 10_000;
+/** Default bound on one tracker request (`tuning.trackerTimeoutSeconds`). */
+export const DEFAULT_TIMEOUT_MS = 30_000;
+/** Waits before each retry of a read that failed on the network or with a 5xx. Writes are never retried. */
+const READ_RETRY_DELAYS_MS = [1000, 3000];
+/** Concurrent `get`s when a column is read in full. */
+const LIST_CONCURRENCY = 8;
+
+const REQUEST_ID = 1;
+
+const isRead = (name: string): boolean => name.startsWith("get_") || name.startsWith("list_");
+
+/** A failure worth reading again: the request never got an answer, or the server answered 5xx. */
+class RetryableError extends Error {}
+
+/** Results of `fn` over `items`, at most `limit` running at once, in order. */
+const mapLimit = async <T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> => {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const i = next++;
+      try {
+        out[i] = await fn(items[i] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+};
 /** `list_issues` returns at most 500 and has no cursor. */
 const BACKLOG_LIMIT = 500;
 /** Comments per `list_issue_activity` page (its maximum), and pages read before giving up. */
@@ -155,6 +192,8 @@ export class PlanTracker implements Tracker {
   #columns: Config["columns"] | undefined;
   #backlog: number | undefined;
   #loopFields: LoopFields | null = null;
+  #timeoutMs: number;
+  readonly #retryDelaysMs: number[];
 
   /** `columns` may be left out until `setColumns` is called with what `get_project` resolved. */
   constructor(options: {
@@ -162,11 +201,22 @@ export class PlanTracker implements Tracker {
     key: string;
     projectKey: string;
     columns?: Config["columns"];
+    /** Bound on one request; default 30 seconds. */
+    timeoutMs?: number;
+    /** Waits before each retry of a read; default 1 s, 3 s. */
+    retryDelaysMs?: number[];
   }) {
+    this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.#retryDelaysMs = options.retryDelaysMs ?? READ_RETRY_DELAYS_MS;
     this.#url = options.url;
     this.#key = options.key;
     this.#project = options.projectKey;
     this.#columns = options.columns;
+  }
+
+  /** `tuning.trackerTimeoutSeconds`, read again each step. */
+  setTimeoutMs(ms: number): void {
+    this.#timeoutMs = ms;
   }
 
   setColumns(columns: Config["columns"]): void {
@@ -242,23 +292,74 @@ export class PlanTracker implements Tracker {
   }
 
   async #call(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
-    const response = await fetch(this.#url, {
-      ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${this.#key}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name, arguments: args },
-      }),
-    });
-    if (!response.ok) throw new Error(`tracker ${name}: HTTP ${response.status}`);
-    const body = asRecord(JSON.parse(await this.#json(response)));
+    const delays = isRead(name) || name === "execute_read" ? this.#retryDelaysMs : [];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.#callOnce(name, args, timeoutMs ?? this.#timeoutMs);
+      } catch (error) {
+        const wait = delays[attempt];
+        if (!(error instanceof RetryableError) || wait === undefined) throw error;
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    }
+  }
+
+  async #callOnce(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await fetch(this.#url, {
+        signal: AbortSignal.timeout(timeoutMs),
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${this.#key}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: REQUEST_ID,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+      });
+    } catch (error) {
+      // A request that ran out of time is not read again: it already waited the whole bound.
+      if (error instanceof Error && error.name === "TimeoutError")
+        throw new Error(
+          `tracker ${name}: operation timed out after ${Math.round(timeoutMs / 1000)}s`,
+        );
+      // A request that was never valid is not the network's fault.
+      if (
+        error instanceof TypeError &&
+        /invalid url|unable to parse|failed to parse url/i.test(error.message)
+      )
+        throw error;
+      throw new RetryableError(
+        `tracker ${name}: error connecting to the tracker: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      const message = `tracker ${name}: HTTP ${response.status}`;
+      throw response.status >= 500 ? new RetryableError(message) : new Error(message);
+    }
+    let raw: string;
+    try {
+      raw = await response.text();
+    } catch (error) {
+      if (error instanceof Error && error.name === "TimeoutError")
+        throw new Error(
+          `tracker ${name}: operation timed out after ${Math.round(timeoutMs / 1000)}s`,
+        );
+      throw new RetryableError(
+        `tracker ${name}: error connecting to the tracker: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const body = asRecord(this.#message(raw, name));
     if (body.error !== undefined) throw new Error(`tracker ${name}: ${JSON.stringify(body.error)}`);
     const result = asRecord(body.result);
     const text = (result.content as { text?: string }[] | undefined)?.[0]?.text ?? "";
@@ -270,15 +371,32 @@ export class PlanTracker implements Tracker {
     }
   }
 
-  /** A reply is plain JSON or one server-sent event. */
-  async #json(response: Response): Promise<string> {
-    const text = await response.text();
-    if (!text.startsWith("event:") && !text.startsWith("data:")) return text;
-    return text
-      .split("\n")
-      .filter((l) => l.startsWith("data:"))
-      .map((l) => l.slice(5).trim())
-      .join("");
+  /**
+   * A reply is plain JSON or a server-sent stream. In a stream, each event's `data:` lines are one message; only the
+   * one whose JSON-RPC `id` is this request's counts, notifications and others are ignored.
+   */
+  #message(text: string, name: string): unknown {
+    try {
+      return JSON.parse(text);
+    } catch {
+      // not plain JSON: a stream
+    }
+    for (const event of text.split(/\r?\n\r?\n/)) {
+      const data = event
+        .split(/\r?\n/)
+        .filter((l) => l.startsWith("data:"))
+        .map((l) => l.slice(5).trim())
+        .join("\n");
+      if (data === "") continue;
+      let message: unknown;
+      try {
+        message = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (asRecord(message).id === REQUEST_ID) return message;
+    }
+    throw new Error(`tracker ${name}: no reply to the request in the stream`);
   }
 
   async listTodo(): Promise<Issue[]> {
@@ -331,8 +449,8 @@ export class PlanTracker implements Tracker {
   async #listColumn(columnId: number, limit: number): Promise<Issue[]> {
     const rows = await this.#rows(columnId, limit);
     // The list may not carry the description: read each in full.
-    return Promise.all(
-      rows.map((row) => this.get(Number(asRecord(row).sequenceNumber ?? asRecord(row).number))),
+    return mapLimit(rows, LIST_CONCURRENCY, (row) =>
+      this.get(Number(asRecord(row).sequenceNumber ?? asRecord(row).number)),
     );
   }
 

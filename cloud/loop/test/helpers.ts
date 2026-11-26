@@ -139,7 +139,7 @@ export class FakeTracker implements Tracker {
     return this.issueDocs[key] ?? [];
   }
   async getDocumentContent(docId: number) {
-    return this.docContent[docId] ?? "";
+    return this.docContent[docId] ?? this.written.find((w) => w.id === docId)?.content ?? "";
   }
   documents: DocumentEntry[] = [{ id: 10, title: "调研", parentId: null }];
   /** Every document written, with its content. */

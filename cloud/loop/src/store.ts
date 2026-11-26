@@ -194,6 +194,8 @@ const ShapeItemSchema = z.object({
   stoppedReason: z.string().nullable(),
   originalCommented: z.boolean(),
   rewritten: z.boolean(),
+  /** The text as it was, kept before the first write of the new one: a restart between the two writes is told by it. */
+  before: z.object({ title: z.string(), description: z.string() }).nullable().default(null),
   /** Numbers of the issues split off so far, in order. */
   created: z.array(z.number().int()),
   pendingCreate: z.object({ index: z.number().int().min(0), title: z.string() }).nullable(),

@@ -69,6 +69,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 | `mergeTimeoutMinutes`                                    | 10         | 1–240  |
 | `turnTimeoutMinutes`                                     | 30         | 1–240  |
 | `commandTimeoutMinutes`                                  | 20         | 1–240  |
+| `trackerTimeoutSeconds`（itsaplan 每个请求的超时）       | 30         | 5–120  |
 | `releaseNodeModules`（布尔，见下）                       | false      | —      |
 | `blockedReminderDays`（Blocked 多少天后提醒，0 为关闭）  | 7          | 0–365  |
 

@@ -367,9 +367,26 @@ export class ResearchFlow implements Flow {
     // 1. The report, under the research folder, on the work item.
     const title = `${start.key} ${issue.title}`;
     if (state.docId === null) {
-      const created = await tracker.createDocument(bounds.folderId, title, output.report);
-      await progress({ docId: created.id });
-      await store.event(start.key, "report_created", { docId: created.id });
+      // Made before a restart and not yet noted? Then it is in the research folder under this title: use it.
+      const existing = (await tracker.listDocuments()).filter(
+        (d) => d.parentId === bounds.folderId && d.title === title,
+      );
+      // Used only when its text is this report: a same-titled one with other text is some earlier run's.
+      let found: (typeof existing)[number] | undefined;
+      for (const d of existing) {
+        if ((await tracker.getDocumentContent(d.id)).trim() === output.report.trim()) {
+          found = d;
+          break;
+        }
+      }
+      if (found !== undefined) {
+        await progress({ docId: found.id });
+        await store.event(start.key, "report_reused", { docId: found.id });
+      } else {
+        const created = await tracker.createDocument(bounds.folderId, title, output.report);
+        await progress({ docId: created.id });
+        await store.event(start.key, "report_created", { docId: created.id });
+      }
     }
     const docId = this.#host.need(state.docId ?? undefined);
     if (!state.docLinked) {

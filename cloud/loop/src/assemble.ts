@@ -6,7 +6,7 @@ import { type ImportResult, importLegacyState, needsImport } from "./db/import.t
 import { openStore } from "./db/store.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
-import { PlanTracker } from "./plan-mcp.ts";
+import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
 import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
@@ -42,6 +42,9 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     url: file.planUrl,
     key: file.planKey,
     projectKey: file.projectKey,
+    ...(file.tuning?.trackerTimeoutSeconds !== undefined
+      ? { timeoutMs: file.tuning.trackerTimeoutSeconds * 1000 }
+      : {}),
   });
   // Research (CYC-447) is resolved only when it is on; the folder is a document, which `get_project` does not list.
   const research = file.research?.enabled === true ? file.research : null;
@@ -108,7 +111,15 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   };
   const tuning = {
     initial: file.tuning ?? {},
-    reload: () => readTuning(configPath, file.projectKey),
+    reload: async () => {
+      const next = await readTuning(configPath, file.projectKey);
+      tracker.setTimeoutMs(
+        next.trackerTimeoutSeconds !== undefined
+          ? next.trackerTimeoutSeconds * 1000
+          : DEFAULT_TIMEOUT_MS,
+      );
+      return next;
+    },
   };
   // The lock first: with it held no step is working on a run, so the files can be moved into loop.db (CYC-476).
   const release = dryRun ? async () => {} : await acquireLock(stateDir);

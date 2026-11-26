@@ -343,6 +343,14 @@ test("tuning: written fields are used, the others stay unset so the defaults app
   expect(parseConfigFiles(JSON.stringify(base))[0]?.tuning).toBeUndefined();
 });
 
+test("tuning: trackerTimeoutSeconds is accepted within 5–120", () => {
+  for (const n of [5, 30, 120])
+    expect(
+      parseConfigFiles(JSON.stringify({ ...base, tuning: { trackerTimeoutSeconds: n } }))[0]
+        ?.tuning,
+    ).toEqual({ trackerTimeoutSeconds: n });
+});
+
 test("tuning: out of range, wrong type or unknown fields are errors that name the field", () => {
   const bad: [Record<string, unknown>, string][] = [
     [{ maxFixRounds: 0 }, "tuning.maxFixRounds"],
@@ -351,6 +359,8 @@ test("tuning: out of range, wrong type or unknown fields are errors that name th
     [{ ciPollIntervalSeconds: "30" }, "tuning.ciPollIntervalSeconds"],
     [{ maxQaRetries: 1.5 }, "tuning.maxQaRetries"],
     [{ intervalSeconds: -1 }, "tuning.intervalSeconds"],
+    [{ trackerTimeoutSeconds: 4 }, "tuning.trackerTimeoutSeconds"],
+    [{ trackerTimeoutSeconds: 121 }, "tuning.trackerTimeoutSeconds"],
     [{ ciChecks: ["x"] }, "tuning"],
   ];
   for (const [tuning, name] of bad)
