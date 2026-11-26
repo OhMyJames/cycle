@@ -882,3 +882,36 @@ button[data-slot="loop-ticket-title"] {
   font: inherit;
   font-size: var(--cycle-text-ui);
 }
+
+[data-slot="loop-crumbs"] {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--cycle-space-1, 4px);
+}
+
+[data-slot="loop-crumb"] {
+  all: unset;
+  cursor: pointer;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-crumb"]:hover {
+  text-decoration: underline;
+}
+
+[data-slot="loop-crumb"]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+[data-slot="loop-tabs"] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+[data-slot="loop-tab-note"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
