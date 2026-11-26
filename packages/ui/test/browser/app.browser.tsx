@@ -1082,7 +1082,7 @@ test("a newer interface that is ready is offered with Reload, and not while the 
   await accountMenu();
   expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
   await emit({ type: "interface-update", state: { bundled: 100, running: 100, ready: 120 } });
-  expect(screen.getByText("The interface was updated")).toBeTruthy();
+  expect(screen.getByText("A newer interface is ready")).toBeTruthy();
   // The whole app has an update: it carries the newest page itself, so there is only that one to act on.
   await emit({
     type: "app-update",

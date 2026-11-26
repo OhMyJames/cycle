@@ -26,4 +26,4 @@ A page is loaded only if its manifest carries an Ed25519 signature made by a key
 
 - A leak of the signing key lets its holder run a page in every app that trusts it, until a release removes the key: rotate by adding a new `keyId` in a release, signing with it, then dropping the old one.
 - Anyone who can write to the user's `<userData>/ui/` can at worst make the app fall back to the bundled page; a changed file fails its hash. Same-user code is out of scope, as it can change the app itself.
-- If a build of the shell stops being byte-identical between the release runner and `ui-release`, bundles are silently not found. This is checked at release time against the shell recorded in the release manifest.
+- If a build of the shell stops being byte-identical between the release runner and `ui-release`, bundles are silently not found. The release workflow warns (does not fail) when `ui-latest` has no manifest for the shell it just built, using the shell recorded in the release manifest.
