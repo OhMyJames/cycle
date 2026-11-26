@@ -10,16 +10,6 @@ import { loadConfigFiles } from "./config-file.ts";
 import { idleIntervalMs, runLoops, workerSpecs } from "./loop.ts";
 import { listen } from "./server.ts";
 
-export class PipelineConfigError extends Error {}
-
-/** Every Project in the server's config needs a pipeline file entry, or the process would serve one it never works. */
-export const checkCovered = (projectKeys: string[], files: ConfigFile[]): void => {
-  const have = new Set(files.map((f) => f.projectKey));
-  const missing = projectKeys.filter((k) => !have.has(k));
-  if (missing.length > 0)
-    throw new PipelineConfigError(`no pipeline config for Project ${missing.join(", ")}`);
-};
-
 export type Running = {
   /** Ask every loop to stop after its current step. */
   stop: () => void;
@@ -73,8 +63,6 @@ export const startPipelines = async (
 
 export type ServerOptions = {
   dataDir: string;
-  /** The pipeline config file (`auto-loop.json`). */
-  pipelinesPath: string;
   setUp: (file: ConfigFile) => Promise<ProjectUnit>;
   log: (line: string) => void;
   stopped?: { value: boolean };
@@ -85,19 +73,17 @@ export const startupReason = (error: unknown): string =>
   error instanceof ConfigError ? error.reason : error instanceof Error ? error.message : "failed";
 
 /**
- * The whole startup: read both config files, check every Project has a pipeline, set every Project up, and only then
+ * The whole startup: read `loop.json` (Projects and pipelines in one file), set every Project up, and only then
  * open `loop.sock` and start the loops. Clients therefore never see a Project nothing is running, and a failure at
  * any step leaves nothing running and no socket open.
  */
 export const startServer = async (
   o: ServerOptions,
 ): Promise<Running & { server: Server; projectCount: number }> => {
-  const config = await loadConfig(join(o.dataDir, "loop.json"));
-  const files = await loadConfigFiles(o.pipelinesPath);
-  checkCovered(
-    config.projects.map((p) => p.projectKey),
-    files,
-  );
+  const path = join(o.dataDir, "loop.json");
+  const config = await loadConfig(path);
+  // The same file: each Project's entry carries its pipeline fields, and one missing a required one fails here.
+  const files = await loadConfigFiles(path);
   let server: Server | undefined;
   const running = await startPipelines(files, o.setUp, o.log, o.stopped, async () => {
     server = await listen(config, join(o.dataDir, "loop.sock"));

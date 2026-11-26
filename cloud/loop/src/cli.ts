@@ -1,9 +1,9 @@
-// `bun cloud/loop/src/cli.ts [--data-dir DIR] [--pipelines FILE]`: serves the Projects in `<data-dir>/loop.json` on
-// `<data-dir>/loop.sock` and runs each one's pipeline from `<data-dir>/auto-loop.json` (the file pipeline-cli.ts reads),
+// `bun cloud/loop/src/cli.ts [--data-dir DIR]`: serves the Projects in `<data-dir>/loop.json` on
+// `<data-dir>/loop.sock` and runs each one's pipeline from the same file (pipeline-cli.ts reads it too),
 // resuming unfinished runs from their run.json. Every Project is set up before the socket opens or any loop starts.
 
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { setUpProject } from "./assemble.ts";
 import { startServer, startupReason } from "./runtime.ts";
 
@@ -12,7 +12,7 @@ const arg = (name: string) => {
   return at === -1 ? undefined : process.argv[at + 1];
 };
 const dataDir = arg("--data-dir") ?? process.env.CYCLE_HOME ?? join(homedir(), ".cycle");
-const configPath = resolve(arg("--pipelines") ?? join(dataDir, "auto-loop.json"));
+const configPath = join(dataDir, "loop.json");
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
 const stopped = { value: false };
 
@@ -20,7 +20,6 @@ let running: Awaited<ReturnType<typeof startServer>>;
 try {
   running = await startServer({
     dataDir,
-    pipelinesPath: configPath,
     stopped,
     log,
     setUp: (file) =>

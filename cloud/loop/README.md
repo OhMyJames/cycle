@@ -5,9 +5,12 @@
 ## 运行
 
 ```sh
-# 配置文件（权限须为 0600，默认 ~/.cycle/auto-loop.json，或 --config <路径>）：
-#   { "repoRoot": "/abs/repo", "projectKey": "CYC", "stateDir": "/abs/state", "planKey": "..." }
-# 多个 Project：{ "projects": [ {上面的字段}, {…} ] }，一个进程各跑各的循环，一个卡住不影响另一个；
+# 配置只有一个文件 loop.json（权限须为 0600，默认 ~/.cycle/loop.json，或 --config <路径>），server 和本 CLI 读同一份；
+#   Project 条目 = server 的字段（name、projectKey、repo、token）+ 流水线字段：
+#   { "projects": [ { "name": "Cycle", "projectKey": "CYC", "repo": {…}, "token": "...",
+#       "repoRoot": "/abs/repo", "stateDir": "/abs/state", "planKey": "..." }, {…} ] }
+#   缺 repoRoot、stateDir、planKey 之一则启动失败并说明缺什么；不再读 auto-loop.json
+# 多个 Project 即 projects 里多个条目，一个进程各跑各的循环，一个卡住不影响另一个；
 #   每个 Project 的 stateDir 必须不同（相同则启动报错），锁各在自己的 <stateDir>/loop.lock
 # planKey 只给 Loop 本身，不会传给任何会话或命令
 bun cloud/loop/src/pipeline-cli.ts --dry-run   # 只挑单、预检、打印，不写任何东西

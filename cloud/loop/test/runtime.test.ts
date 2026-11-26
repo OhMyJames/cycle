@@ -6,13 +6,7 @@ import { join } from "node:path";
 import type { ProjectUnit } from "../src/assemble.ts";
 import type { ConfigFile } from "../src/config-file.ts";
 import { Pipeline } from "../src/pipeline.ts";
-import {
-  checkCovered,
-  PipelineConfigError,
-  startPipelines,
-  startServer,
-  startupReason,
-} from "../src/runtime.ts";
+import { startPipelines, startServer, startupReason } from "../src/runtime.ts";
 import { RunStore } from "../src/store.ts";
 import {
   config,
@@ -53,35 +47,24 @@ const counting = (name: string, steps: string[], closed: string[] = []): Project
   workers: 1,
 });
 
-/** Writes loop.json (Projects) and auto-loop.json (pipelines) for these keys. */
-const writeConfigs = async (loopKeys: string[], pipelineKeys: string[]) => {
+/** Writes the one loop.json: every key is a Project; those in `bare` lack the pipeline fields. */
+const writeConfigs = async (keys: string[], bare: string[] = []) => {
   const loop = join(dir, "loop.json");
   await writeFile(
     loop,
     JSON.stringify({
-      projects: loopKeys.map((k) => ({
+      projects: keys.map((k) => ({
         name: k,
         projectKey: k,
         repo: { url: "https://github.com/o/r.git", forge: "github" },
-        token: "tok",
+        token: "tok-secret",
+        ...(bare.includes(k)
+          ? {}
+          : { repoRoot: "/r", stateDir: join(dir, `state-${k}`), planKey: "k" }),
       })),
     }),
   );
   await chmod(loop, 0o600);
-  const pipelines = join(dir, "auto-loop.json");
-  await writeFile(
-    pipelines,
-    JSON.stringify({
-      projects: pipelineKeys.map((k) => ({
-        repoRoot: "/r",
-        projectKey: k,
-        stateDir: join(dir, `state-${k}`),
-        planKey: "k",
-      })),
-    }),
-  );
-  await chmod(pipelines, 0o600);
-  return pipelines;
 };
 
 const exists = (path: string) =>
@@ -105,38 +88,50 @@ const listProjects = (socketPath: string): Promise<unknown> =>
     socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "projects/list" })}\n`);
   });
 
-test("a Project in loop.json without a pipeline entry stops startup with the reason and opens no socket", async () => {
-  const pipelines = await writeConfigs(["A", "B"], ["A"]);
+test("a Project in loop.json missing pipeline fields stops startup with the reason and opens no socket", async () => {
+  await writeConfigs(["A", "B"], ["B"]);
   const setUp = async () => counting("x", []);
-  const error = await startServer({ dataDir: dir, pipelinesPath: pipelines, setUp, log: () => {} })
+  const error = await startServer({ dataDir: dir, setUp, log: () => {} })
     .then(() => undefined)
     .catch((e: unknown) => e);
-  expect(error).toBeInstanceOf(PipelineConfigError);
-  expect(startupReason(error)).toBe("no pipeline config for Project B");
+  const reason = startupReason(error);
+  expect(reason).toContain("projects[1]");
+  expect(reason).toContain("missing required repoRoot, stateDir, planKey");
+  expect(reason).not.toContain("tok-secret");
   expect(await exists(join(dir, "loop.sock"))).toBe(false);
 });
 
+test("only an auto-loop.json is not a config: startup fails naming the missing loop.json", async () => {
+  await writeFile(
+    join(dir, "auto-loop.json"),
+    JSON.stringify({ repoRoot: "/r", projectKey: "A", stateDir: "/s", planKey: "k" }),
+    { mode: 0o600 },
+  );
+  const setUp = async () => counting("x", []);
+  const reason = await startServer({ dataDir: dir, setUp, log: () => {} }).then(
+    () => "started",
+    startupReason,
+  );
+  expect(reason).toBe("config_missing");
+});
+
 test("a loose loop.json or a missing one is named by its fixed word", async () => {
-  const pipelines = await writeConfigs(["A"], ["A"]);
+  await writeConfigs(["A"]);
   await chmod(join(dir, "loop.json"), 0o644);
   const setUp = async () => counting("x", []);
-  const reason = (p: string) =>
-    startServer({ dataDir: dir, pipelinesPath: p, setUp, log: () => {} }).then(
-      () => "started",
-      startupReason,
-    );
-  expect(await reason(pipelines)).toBe("config_mode");
+  const reason = () =>
+    startServer({ dataDir: dir, setUp, log: () => {} }).then(() => "started", startupReason);
+  expect(await reason()).toBe("config_mode");
   await rm(join(dir, "loop.json"));
-  expect(await reason(pipelines)).toBe("config_missing");
+  expect(await reason()).toBe("config_missing");
 });
 
 test("a Project that cannot be set up fails startup, closes the others, and never opens the socket", async () => {
-  const pipelines = await writeConfigs(["A", "B"], ["A", "B"]);
+  await writeConfigs(["A", "B"]);
   const steps: string[] = [];
   const closed: string[] = [];
   const error = await startServer({
     dataDir: dir,
-    pipelinesPath: pipelines,
     log: () => {},
     setUp: async (f) => {
       if (f.projectKey === "B") throw new Error("B: no such column");
@@ -150,11 +145,10 @@ test("a Project that cannot be set up fails startup, closes the others, and neve
 });
 
 test("the socket opens only after every Project is set up", async () => {
-  const pipelines = await writeConfigs(["A", "B"], ["A", "B"]);
+  await writeConfigs(["A", "B"]);
   const seen: boolean[] = [];
   const running = await startServer({
     dataDir: dir,
-    pipelinesPath: pipelines,
     log: () => {},
     setUp: async (f) => {
       seen.push(await exists(join(dir, "loop.sock")));
@@ -170,11 +164,10 @@ test("the socket opens only after every Project is set up", async () => {
 test("steps run with no client ever connected, and keep running through a client that connects and drops", {
   timeout: 5000,
 }, async () => {
-  const pipelines = await writeConfigs(["A", "B"], ["A", "B"]);
+  await writeConfigs(["A", "B"]);
   const steps: string[] = [];
   const running = await startServer({
     dataDir: dir,
-    pipelinesPath: pipelines,
     log: () => {},
     setUp: async (f) => counting(f.projectKey, steps),
   });
@@ -194,7 +187,7 @@ test("steps run with no client ever connected, and keep running through a client
 test("a restart picks the run up from run.json: only the unfinished step runs", {
   timeout: 10_000,
 }, async () => {
-  const pipelines = await writeConfigs(["CYC"], ["CYC"]);
+  await writeConfigs(["CYC"]);
   const stateDir = join(dir, "state-CYC");
   const cfg = config({ stateDir });
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
@@ -242,7 +235,6 @@ test("a restart picks the run up from run.json: only the unfinished step runs", 
   const pipeline = make(second);
   const running = await startServer({
     dataDir: dir,
-    pipelinesPath: pipelines,
     log: () => {},
     setUp: async () => ({
       name: "CYC",
@@ -272,9 +264,4 @@ test("a Project that fails setup in startPipelines closes the ones already up", 
     ),
   ).rejects.toThrow("bad");
   expect(closed).toEqual(["A"]);
-});
-
-test("checkCovered names the missing Project", () => {
-  expect(() => checkCovered(["A", "B"], [file("A")])).toThrow("B");
-  expect(() => checkCovered(["A"], [file("A")])).not.toThrow();
 });

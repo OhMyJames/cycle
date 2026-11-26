@@ -2,7 +2,7 @@
 // bun cloud/loop/src/pipeline-cli.ts [--once] [--dry-run] [--interval SECONDS] [--workers N]
 // bun cloud/loop/src/pipeline-cli.ts stats [--project KEY]
 //
-// Configuration is a file (mode 0600), not environment variables: --config <path>, or <dataDir>/auto-loop.json.
+// Configuration is a file (mode 0600), not environment variables: --config <path>, or <dataDir>/loop.json.
 // See config-file.ts for the fields. CYCLE_HOME / CYCLE_SOCKET still locate the daemon.
 
 import { homedir } from "node:os";
@@ -21,7 +21,7 @@ const value = (name: string) => {
 };
 
 const dataDir = process.env.CYCLE_HOME ?? join(homedir(), ".cycle");
-const configPath = resolve(value("--config") ?? join(dataDir, "auto-loop.json"));
+const configPath = resolve(value("--config") ?? join(dataDir, "loop.json"));
 const files = await loadConfigFiles(configPath).catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(2);
