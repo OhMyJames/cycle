@@ -48,6 +48,9 @@ import { noticePoller, showAlert } from "./loop-alerts.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
 import { fileSettings } from "./settings.ts";
+import { createPageSwitch } from "./ui-page.ts";
+import type { UiStore } from "./ui-store.ts";
+import { UiUpdater, type UiUpdaterDeps } from "./ui-updater.ts";
 import { cleanStale, Updater, type UpdaterDeps } from "./updater.ts";
 import { type FrameStore, keepFrame, MIN_SIZE, restoredFrame } from "./window-frame.ts";
 
@@ -82,6 +85,18 @@ export type AppOptions = {
   loop?: { socket: string; keyFile: string; trackerUrl: string; chatCwd?: string };
   /** How the app updates itself. Without it, updating is off. */
   update?: Omit<UpdaterDeps, "emit" | "quit">;
+  /**
+   * Interface updates: the page may be one taken from outside the app (docs/desktop.md, "Interface updates"). Without it,
+   * the window shows the page the app came with and nothing else.
+   */
+  interface?: {
+    store: UiStore;
+    /** The version of the page the app came with. */
+    bundledVersion: number;
+    updater: Omit<UiUpdaterDeps, "emit" | "store" | "holdOff" | "bundledVersion">;
+    /** How long a page from outside the app has to say it has drawn itself (a test shortens it). */
+    bootMs?: number;
+  };
 };
 
 /** What asking for an update came to, in the words of the dictionary; the states that are not an answer say nothing. */
@@ -185,7 +200,7 @@ export const startApp = async (options: AppOptions) => {
   if (hidden) stayInBackground();
   await app.whenReady();
   if (process.platform === "darwin") createRequire(options.preloadPath)("./ime-paste.node");
-  const indexUrl = pathToFileURL(join(options.rendererDir, "index.html")).href;
+  const bundledUrl = pathToFileURL(join(options.rendererDir, "index.html")).href;
   let window: BrowserWindow | undefined;
 
   const usage = options.analytics ?? offAnalytics;
@@ -294,6 +309,29 @@ export const startApp = async (options: AppOptions) => {
     emit: (state) => emit({ type: "app-update", state }),
     quit: () => app.quit(),
   });
+  // The page the window shows: the one the app came with, or a newer one taken from outside it that has proved to work.
+  const bundledVersion = options.interface?.bundledVersion ?? 0;
+  const interfaceUpdater =
+    options.interface !== undefined
+      ? new UiUpdater({
+          ...options.interface.updater,
+          store: options.interface.store,
+          bundledVersion,
+          // A whole-app update carries the newest page itself.
+          holdOff: () => ["available", "downloading", "installing"].includes(updater.state.kind),
+          emit: () => pages.refresh(),
+        })
+      : undefined;
+  const pages = createPageSwitch({
+    ...(options.interface !== undefined ? { store: options.interface.store } : {}),
+    bundledUrl,
+    bundledVersion,
+    ...(options.interface?.bootMs !== undefined ? { bootMs: options.interface.bootMs } : {}),
+    load: (url) => contents.loadURL(url),
+    installed: () => interfaceUpdater?.state.installed,
+    emit: (state) => emit({ type: "interface-update", state }),
+    log: (message) => console.warn(`[interface] ${message}`),
+  });
   /** The sessions of every location as last read: what a waiting session is, for the Notices. */
   const sessionsNow = async () => Object.values((await manager.locations()).sessions).flat();
   /** The most the page may put on the clipboard at once: a long output, not a file. */
@@ -309,6 +347,14 @@ export const startApp = async (options: AppOptions) => {
     installUpdate: () => {
       analytics.track("update_install_started", {});
       return updater.install();
+    },
+    interfaceState: () => pages.state(),
+    interfaceBooted: () => {
+      pages.booted();
+    },
+    applyInterfaceUpdate: () => {
+      analytics.track("interface_update_applied", {});
+      return pages.apply();
     },
     // From the page, so only what the page may say, and checked: anything else is dropped.
     track: (event: unknown, props: unknown) => {
@@ -423,7 +469,8 @@ export const startApp = async (options: AppOptions) => {
   const call = dispatch(manager, methods, () => account.status().open);
   for (const method of API_METHODS) {
     ipcMain.handle(channel(method), (event, ...args: unknown[]) => {
-      if (event.senderFrame?.url !== indexUrl) throw new Error("Refused: not from the app's page");
+      if (event.senderFrame?.url !== pages.url())
+        throw new Error("Refused: not from the app's page");
       return call(method, args);
     });
   }
@@ -491,18 +538,27 @@ export const startApp = async (options: AppOptions) => {
     return { action: "deny" };
   });
   contents.on("will-navigate", (event, url) => {
-    if (url === indexUrl) return;
+    if (url === pages.url()) return;
     event.preventDefault();
     if (isOpenable(url)) void shell.openExternal(url);
   });
   contents.on("will-attach-webview", (event) => event.preventDefault());
-  await window.loadURL(indexUrl);
+  // A page from outside the app that falls over before it said it was drawn is not shown again.
+  contents.on("render-process-gone", (_event, details) => {
+    pages.broke(details.reason)?.catch((error) => console.warn(`[interface] ${String(error)}`));
+  });
+  await pages.start();
   // Every location is connected from here, not when the person picks one: what is wrong with one is in its status.
   // Signed out, that waits for the sign-in.
   void accountReady.then(() => {
     connectWhenOpen = true;
     if (account.status().open) void manager.connectAll();
   });
+  if (interfaceUpdater !== undefined && options.interface !== undefined) {
+    interfaceUpdater.noteInstalled((await options.interface.store.readState()).current);
+    pages.refresh();
+    interfaceUpdater.start();
+  }
   if (options.update !== undefined && options.update.disabled === undefined) {
     await cleanStale(options.update.appPath);
     updater.start();
@@ -543,6 +599,7 @@ export const startApp = async (options: AppOptions) => {
   let flushed = false;
   app.on("before-quit", (event) => {
     updater.stop();
+    interfaceUpdater?.stop();
     stopNotices();
     account.close();
     void manager.close();

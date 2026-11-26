@@ -27,6 +27,13 @@ describe("dispatch", () => {
     expect(call("track", ["x", { a: 1 }])).toEqual({ main: "track", args: ["x", { a: 1 }] });
   });
 
+  test("the page can say it has drawn itself, and ask for the interface, while signed out", () => {
+    // A signed-out person sees the sign-in page; a page from outside the app that could not report would be marked bad.
+    const call = dispatch(partial, own(), () => false);
+    for (const method of ["interfaceState", "interfaceBooted", "applyInterfaceUpdate"])
+      expect(call(method, [])).toEqual({ main: method, args: [] });
+  });
+
   test("the manager's methods go to the manager, as its own method", () => {
     const call = dispatch(partial, own());
     expect(call("sessions", ["local"])).toEqual({

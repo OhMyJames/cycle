@@ -88,6 +88,10 @@ export class AppStore extends StoreBase {
       // An event that came while this was asked is newer than the answer.
       this.set((s) => (s.update === undefined ? { update } : {}));
     });
+    void this.attempt(async () => {
+      const state = await this.bridge.interfaceState();
+      this.set((s) => (s.interface === undefined ? { interface: state } : {}));
+    });
     void this.attempt(async () => this.set({ analytics: await this.bridge.analytics() }));
     // Read before the page is ready: its first words are already in the language that was chosen.
     const preferences = this.bridge.preferences().then(
@@ -183,6 +187,9 @@ export class AppStore extends StoreBase {
         return;
       case "app-update":
         this.set({ update: event.state });
+        return;
+      case "interface-update":
+        this.set({ interface: event.state });
         return;
       case "focus-session":
         this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
@@ -497,6 +504,11 @@ export class AppStore extends StoreBase {
   /** How it goes comes back in the location's status. */
   upgradeDaemon = async (locationId: string, when?: "now" | "later"): Promise<void> => {
     await this.attempt(() => this.bridge.upgradeDaemon(locationId, when));
+  };
+
+  /** Shows the newer page; the page loads again, so nothing after this is waited for. */
+  applyInterfaceUpdate = async (): Promise<void> => {
+    await this.attempt(() => this.bridge.applyInterfaceUpdate());
   };
 
   /** Main says how it goes through app-update events; an error it throws is shown as any other. */

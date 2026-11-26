@@ -1066,6 +1066,9 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "update.confirmDescription":
     "Cycle 会关闭，再以新版本打开。本机上正在工作的会话会被中断；其他工作位置上的会话照常进行。",
   "update.current": "Cycle {version}",
+  "interface.ready": "有更新的界面可用",
+  "interface.reload": "重新加载",
+  "interface.version": "界面 {version}",
 
   "codeTheme.label": "代码配色",
 

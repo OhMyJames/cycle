@@ -115,6 +115,35 @@ export function UpdateNotice() {
   );
 }
 
+/**
+ * A newer page is on this computer: it shows after a reload (the page loads again, the sessions stay) or the next start.
+ * Not shown while the whole app has an update to install: that one carries the newest page too.
+ */
+export function InterfaceNotice() {
+  const store = useAppStore();
+  const { t } = useI18n();
+  const ready = useAppState((s) => s.interface?.ready);
+  const wholeAppWaiting = useAppState(
+    (s) =>
+      s.update?.kind === "available" ||
+      s.update?.kind === "downloading" ||
+      s.update?.kind === "installing",
+  );
+  if (ready === undefined || wholeAppWaiting) return null;
+  return (
+    <AppNotice
+      tone="info"
+      icon={<RefreshIcon />}
+      text={t("interface.ready")}
+      actions={
+        <Button data-variant="outline" onClick={() => void store.applyInterfaceUpdate()}>
+          {t("interface.reload")}
+        </Button>
+      }
+    />
+  );
+}
+
 /** The version an update in the notices is about. */
 const versionOf = (update: UpdateState): string =>
   "version" in update && typeof update.version === "string" ? update.version : "";

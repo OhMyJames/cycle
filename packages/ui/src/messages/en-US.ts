@@ -1181,6 +1181,9 @@ export const enUS = {
   "update.confirmDescription":
     "Cycle closes and opens again as the new version. A session on Local that is working is interrupted; sessions on other locations carry on.",
   "update.current": "Cycle {version}",
+  "interface.ready": "A newer interface is ready",
+  "interface.reload": "Reload",
+  "interface.version": "UI {version}",
 
   // The code colours choice
   "codeTheme.label": "Code colours",

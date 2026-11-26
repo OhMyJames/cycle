@@ -57,6 +57,10 @@ CYCLE_SIGNED_FROM="$fixtures/old" CYCLE_SIGNED_TO="$fixtures/new" \
 
 常规发布中签名前的更新测试仍走 `CYCLE_PACKAGED_APP`，会调高临时副本的版本并用 ad hoc 重签。该测试验证差分下载与重启，真实签名验收单独记录。
 
+### 界面热更新(CYC-469)
+
+`bun test ./apps/desktop/test/integration/interface.integration.ts`(macOS,不在 `bun run test:integration` 的套件里):构建 `apps/desktop`,用测试自己的密钥签一个页面包,由本机的回环服务器充当 `ui-latest`,从源码运行真实的 Electron,走完整个流程:后台取到包、点 Reload 才换页面且草稿保留、重启后仍是新页面、不绘制的包 2.5 秒后退回、磁盘上被改过的包不被使用。应用从源码运行时才读 `CYCLE_UI_KEYS`、`CYCLE_UI_URL`、`CYCLE_UI_BOOT_MS`。其余的单元测试在 `bun test ./apps/desktop/test`(`ui-*.test.ts`)。真实发布的验收见 CYC-469 的 Spec:正式版上改一处界面文案,合并后几分钟内应用出现 Reload,点后生效,没有发版。
+
 ### CYCL-105 实测记录
 
 mac-mini 上用同一 Developer ID 团队 `AGKXLGRXJ7` 对发布提交 0.3.6、0.3.7 分别签名并公证。原始清单和 zip 的 SHA-256 均保存在[验收日志](https://github.com/OhMyJames/Cycle-V1/actions/runs/44703626920)中。

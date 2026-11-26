@@ -21,6 +21,9 @@ import { startApp, stayInBackground } from "./app.ts";
 import { localHome } from "./home.ts";
 import { BUILD_FILE, daemonCommand, loginShellPath } from "./layout.ts";
 import { filePreferencesStore } from "./preferences.ts";
+import { shellHash, verifySignature } from "./ui-crypto.ts";
+import { UI_KEYS } from "./ui-keys.ts";
+import { createUiStore } from "./ui-store.ts";
 import { SWAP_SCRIPT, verifyBySource } from "./updater.ts";
 import { fileFrameStore } from "./window-frame.ts";
 
@@ -136,6 +139,7 @@ const main = async () => {
       trackerUrl: trackerUrl(env.CYCLE_LOOP_PLAN_URL),
     },
     update: updateDeps(daemon, localEnv),
+    interface: interfaceOptions(userData, info),
     ...(hidden ? { show: false } : {}),
   });
 };
@@ -153,8 +157,86 @@ const trackerUrl = (custom: string | undefined): string => {
   }
 };
 
+/**
+ * Interface updates (docs/desktop.md). The installed app takes bundles signed by the keys built into it, from the
+ * repository's release, for the shell it was built with. A run from source has no build.json: its shell is taken from the
+ * files it runs, and a test may name a key and a loopback address of its own (an installed app cannot be pointed
+ * anywhere else, nor given a key).
+ */
+const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) => {
+  const shell =
+    info?.shell ??
+    (packaged
+      ? undefined
+      : (() => {
+          try {
+            return shellHash(
+              readFileSync(join(here, "main.mjs")),
+              readFileSync(join(here, "preload.cjs")),
+            );
+          } catch {
+            return undefined;
+          }
+        })());
+  const testKeys = (() => {
+    if (packaged || !env.CYCLE_UI_KEYS) return {};
+    try {
+      return JSON.parse(env.CYCLE_UI_KEYS) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  })();
+  const keys = { ...UI_KEYS, ...testKeys };
+  const bundledVersion = info?.uiVersion ?? 0;
+  const loopback = (() => {
+    if (packaged || !env.CYCLE_UI_URL) return undefined;
+    try {
+      const u = new URL(env.CYCLE_UI_URL);
+      return u.protocol === "http:" && ["127.0.0.1", "localhost"].includes(u.hostname)
+        ? `${u.origin}/`
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const verify = (bytes: Uint8Array, signature: string, keyId: string) =>
+    verifySignature(bytes, signature, keyId, keys);
+  return {
+    store: createUiStore({
+      root: join(userData, "ui"),
+      verify,
+      bundledVersion,
+      ...(shell !== undefined ? { shell } : {}),
+      log: (message) => console.warn(`[interface] ${message}`),
+    }),
+    bundledVersion,
+    ...(!packaged && Number(env.CYCLE_UI_BOOT_MS) > 0
+      ? { bootMs: Number(env.CYCLE_UI_BOOT_MS) }
+      : {}),
+    updater: {
+      shell,
+      hasKeys: Object.keys(keys).length > 0,
+      verify,
+      repo: RELEASE_REPO,
+      ...(loopback !== undefined ? { baseUrl: loopback } : {}),
+      fetch,
+      extract: (zip: string, into: string) =>
+        run("/usr/bin/ditto", ["-x", "-k", zip, into], 300_000).then(() => {}),
+      log: (message: string) => console.warn(`[interface] ${message}`),
+    },
+  };
+};
+
 /** What the build recorded about itself (`package`), or nothing in a run from source. */
-const buildInfo = (): { version: string; posthogKey?: string; posthogHost?: string } | undefined =>
+const buildInfo = ():
+  | {
+      version: string;
+      shell?: string;
+      uiVersion?: number;
+      posthogKey?: string;
+      posthogHost?: string;
+    }
+  | undefined =>
   packaged ? JSON.parse(readFileSync(join(here, "..", BUILD_FILE), "utf8")) : undefined;
 
 const localRelease = (url: string | undefined) => {

@@ -9,6 +9,7 @@ import type {
   Environment,
   EnvironmentsState,
   GitBranches,
+  InterfaceState,
   LocationConfig,
   LoopAction,
   LoopActResult,
@@ -75,6 +76,7 @@ export const fakeBridge = (
     snapshot?: () => SessionSnapshot | Promise<SessionSnapshot>;
     connected?: boolean;
     update?: UpdateState;
+    interface?: InterfaceState;
     /** Whether usage statistics are on. Default: nowhere to report to. */
     analytics?: AnalyticsStatus;
     loopProjects?: LoopProjectsAnswer;
@@ -628,6 +630,12 @@ export const fakeBridge = (
       async () => options.update ?? { current: "0.1.0", kind: "up-to-date" as const, checkedAt: 0 },
     ),
     installUpdate: record("installUpdate", async () => {}),
+    interfaceState: record(
+      "interfaceState",
+      async () => options.interface ?? { bundled: 100, running: 100 },
+    ),
+    interfaceBooted: record("interfaceBooted", async () => {}),
+    applyInterfaceUpdate: record("applyInterfaceUpdate", async () => {}),
     upgradeDaemon: record("upgradeDaemon", async () => {}),
     environments: record("environments", async () => environmentsNow()),
     saveEnvironment: record("saveEnvironment", async (environment: Environment) => {

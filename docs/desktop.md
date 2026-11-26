@@ -260,6 +260,21 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 - 测试用的 `CYCLE_UPDATE_URL` 只接受 `127.0.0.1` 或 `localhost`,不能把应用指到别处。
 - 测试用的 `CYCLE_TEST_HIDDEN_WINDOW=1` 让应用不显示窗口、不发系统通知;macOS 上应用也不进 Dock、不能到前台。窗口里的页面照常运行,测试经 DevTools 读它。
 
+## 界面热更新(CYC-469)
+
+只改页面(`apps/desktop/src/renderer`、`packages/ui`)时,不发版、不换应用包:安装好的应用后台取一份 CI 签名的页面包,校验通过后,下次启动或点 "Reload" 就用它。壳(`main`、`preload`、原生模块、两端接口)变了,仍走上面的整包更新。决定见 `.agents/notes/2026-11-26-interface-bundles-signed-by-ci-key-not-by-github-account.md`。
+
+- **壳哈希**:`shell` = `main.mjs` 和 `preload.cjs` 的字节(各带 8 字节长度前缀)的 SHA-256 前 32 位十六进制,不含 `ime-paste.node`(签名会改它的字节)。`package` 把它和 `uiVersion`(`git rev-list --count HEAD`,main 上单调递增)写进 `build.json`。页面包只给同一个 `shell` 的应用用,所以页面和壳不兼容的问题不会出现:壳的任何变化都会换哈希,旧壳不再拿到新页面。`preload` 里 `window.cycle` 的方法来自 `API_METHODS`,新增方法也会换哈希。
+- **发布**:`.github/workflows/ui-release.yml` 在每个 main 提交上构建、打包页面(`bun run ui-package`)、用 `ui-release` 环境里的私钥 `UI_SIGNING_KEY` 签名,发布(`bun run ui-publish`)到滚动 release `ui-latest`(预发布、非 latest;tag 不以 `v` 开头,所以整包更新器的发布列表读取会跳过它)。资产:`ui-<shell>.json`(清单:`uiVersion`、`keyId`、归档名、大小、SHA-256、页面每个文件的 SHA-256)、`ui-<shell>.json.sig`(对清单原始字节的 Ed25519 签名,base64)、`ui-<shell>-<uiVersion>.zip`。先传 zip,再传签名,最后传清单(清单是指针)。同一 `shell` 里已发布的 `uiVersion` 不低于本次时不发布(排队的旧提交不覆盖新的)。每个 `shell` 留最近 3 个 zip;最近 3 次整包发布(清单里的 `shell` 字段)用的 `shell` 和一周内发布过的 `shell` 留着,其余整组删。
+- **取包**(`src/main/ui-updater.ts`):启动时和之后每 5 分钟,直接取 `https://github.com/OhMyJames/cycle/releases/download/ui-latest/ui-<自己的 shell>.json`(带 `If-None-Match`;这是下载地址,不走 API 限额;404 = 没有)和 `.sig`。依次检查:清单合格(`parseManifest`,路径无 `..`、绝对路径、反斜杠);签名由壳里公钥表(`src/main/ui-keys.ts`,按 `keyId`)中的钥匙签出;`shell` 是自己的;`uiVersion` 高于见过的最高版本(`state.json` 的 `floor`,也不低于自带页面的版本,防回滚);zip 的大小和 SHA-256;解开后的文件集合正好等于清单所列、每个文件的 SHA-256 都对(多一个、少一个、符号链接都不行)。都过了才改名进 `<userData>/ui/<uiVersion>/`。整包更新有待装版本时不取。任何失败都只写日志(`[interface] …`),下次再试。**公钥表为空时整个功能关闭**:不发请求,只用自带页面。
+- **用哪个页面**(`src/main/ui-store.ts`、`ui-page.ts`):`<userData>/ui/state.json` 记 `current`、`previous`、`floor`、`bad`。每次启动选页面时都**重新验签、逐文件校验**:通过的 `current`,否则 `previous`,否则包内自带的页面(从不删除、从不标坏)。页面仍是 `file://`,所以 `localStorage`(草稿、置顶)在页面包之间保留;`ipcMain` 的来源检查和 `will-navigate` 都跟着当前页面的地址走。
+- **没起来就退回**:加载页面包时,页面要在 15 秒内调用 `interfaceBooted()`(`main.tsx` 里的 `Booted` 组件,React 第一次渲染提交后),否则、或渲染进程在这之前退出、或加载失败,这个版本进 `bad`,换 `previous`,最后换自带页面。已经报过启动的页面之后崩溃不算它的错。
+- **生效**:取到的页面包不立刻换。侧栏通知出现 "A newer interface is ready" 和 "Reload"(整包更新有待装版本时不显示,整包自带最新页面);点 "Reload" 调 `applyInterfaceUpdate()`,窗口重新加载,会话状态在 main 里,不丢。不点,下次启动就用。账号菜单的版本后面、设置页 Updates 里,在页面版本和自带的不同时多一个 "UI <版本>"。
+- **第一次**:新接口(`interfaceState`、`interfaceBooted`、`applyInterfaceUpdate`)和公钥都在壳里,所以带上这个功能的第一个整包版本要正常发;之后只改页面的提交才不需要发版。更早的版本没有这套逻辑,什么都不会变。
+- **密钥**:私钥只在 GitHub Environment `ui-release`(只许 `main` 分支使用)的 secret `UI_SIGNING_KEY` 里,PKCS#8 Ed25519(PEM 或 DER 的 base64),`ui-package` 签名后用壳里的公钥再验一次,对不上就失败,不会发出没有壳认的包。**轮换**:生成新钥匙,公钥以新的 `keyId`(如 `k2`)加进 `UI_KEYS`,随一个整包版本发出;等没有只认旧钥匙的应用在用后,把 `UI_SIGNING_KEY`(和 `UI_SIGNING_KEY_ID`)换成新的,最后从表里去掉旧的。私钥怀疑泄露:删掉 secret 立即停发,换钥匙,旧公钥随下一个整包版本去掉(在那之前装着旧壳的应用仍认旧钥匙,所以要尽快发版)。
+- **清除**:删除 `<userData>/ui/` 即回到自带页面。
+- **测试**:`test/ui-bundle.test.ts`(清单、哈希、签名)、`ui-store.test.ts`、`ui-updater.test.ts`(假 `fetch`、假解压)、`ui-page.test.ts`(回退、计时,假窗口)、`ui-package.test.ts`、`ui-publish.test.ts`(假 `gh`);`test/integration/interface.integration.ts` 在 macOS 上用真实的 Electron(从 `dist` 运行)走完整个流程:取包、Reload、草稿保留、重启、不绘制的包被放弃、改过的包不被使用。从源码运行时,应用可由环境变量 `CYCLE_UI_KEYS`(JSON,`keyId` → SPKI base64)、`CYCLE_UI_URL`(只许回环地址)、`CYCLE_UI_BOOT_MS` 指向测试用的钥匙和地址;**安装好的应用不读这些变量**。
+
 ## 窗口的大小和位置
 
 应用再打开时,窗口回到上次的大小、位置,以及是否最大化、是否全屏(`apps/desktop/src/main/window-frame.ts`)。主进程把它写在应用数据目录的 `window-frame.json` 里:移动、改大小停下约半秒后写一次,关窗时再写一次;存的是正常状态下的框,所以从最大化或全屏退出时回到原来的大小。启动时只在当前接着的屏幕上恢复:窗口横竖都至少有 100px 落在某块屏幕的可用区域内才用它,并挪进、缩进那块屏幕(不小于最小尺寸 720×480),标题栏总能拿到;那块屏幕拔掉了、文件读不懂,就用默认的 1200×800,在主屏幕居中。Mac 上的 `hiddenInset` 标题栏不变。测试的隐藏窗口(`CYCLE_TEST_HIDDEN_WINDOW=1`)不读也不写这个文件。没有用户动作,不埋点。

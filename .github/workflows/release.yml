@@ -80,11 +80,17 @@ jobs:
       SIGN: ${{ (github.event_name == 'push' && vars.RELEASE_SIGN == 'true') || inputs.sign }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The app records the number of commits it was built at (the version of its page, docs/desktop.md "界面热更新"):
+          # from a shallow clone that would be 1.
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run --cwd apps/desktop package
+      - name: The build knows its place in history
+        run: test "$(jq -r .uiVersion "$BUNDLE/build.json")" -ge 100
 
       # What is inside the app has to work on this platform: the compiled daemon, and the Claude
       # binary of the darwin SDK package. Checked before signing and again after, because the hardened
@@ -188,6 +194,18 @@ jobs:
           path: assets
           merge-multiple: true
       - run: ls -l assets
+      # Not a stop: an app of this release takes interface updates only if a bundle for its shell is on `ui-latest`
+      # (ui-release.yml makes one for each commit on main; the one for this commit may still be on its way).
+      - name: A bundle for this release's shell exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shell=$(jq -r '.shell // empty' assets/latest-darwin-arm64.json)
+          if [ -z "$shell" ]; then
+            echo "::warning::This release's manifest names no shell: its app will take no interface updates."
+          elif ! gh release download ui-latest --repo "$GITHUB_REPOSITORY" -p "ui-$shell.json" -O /dev/null 2>/dev/null; then
+            echo "::warning::No interface bundle for shell $shell is on ui-latest yet: the app of this release takes no interface update until ui-release has published one."
+          fi
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
