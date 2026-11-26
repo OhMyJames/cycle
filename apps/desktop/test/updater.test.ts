@@ -819,21 +819,3 @@ test("a local alpha needs a valid signature from the alpha certificate, and not 
     verifyBySource(codesign("Cycle Alpha (local)"))("next", "cur", "release"),
   ).rejects.toThrow(/same team/);
 });
-
-test("of two builds of one version, the one running is not offered the other if it is older, and the older is offered the newer", async () => {
-  await putAlpha("0.2.0-alpha.3+aaa", { builtAt: "2026-11-25T01:00:00Z" });
-  await putAlpha("0.2.0-alpha.3+bbb", { builtAt: "2026-11-25T02:00:00Z" });
-  const running = (meta: string, builtAt: string) => ({
-    version: `0.2.0-alpha.3+${meta}`,
-    builtAt,
-    ...PLATFORM,
-  });
-  // Running the older: the newer is offered. Running the newer: nothing, the older is not offered back.
-  expect(
-    await withAlpha({ current: running("aaa", "2026-11-25T01:00:00Z") }).updater.check(false),
-  ).toMatchObject({ kind: "available", version: "0.2.0-alpha.3+bbb" });
-  expect(
-    (await withAlpha({ current: running("bbb", "2026-11-25T02:00:00Z") }).updater.check(false))
-      .kind,
-  ).toBe("up-to-date");
-});

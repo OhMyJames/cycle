@@ -55,8 +55,6 @@ export type UpdaterDeps = {
   current: {
     version: string;
     baseVersion?: string;
-    /** When the running build was made (ISO), from its build.json: what tells a later build of the same version from an earlier one. */
-    builtAt?: string;
     platform: string;
     arch: string;
   };
@@ -315,9 +313,6 @@ export class Updater {
     if (local === undefined) return undefined;
     const { platform, arch, version: running } = this.#d.current;
     const runningMeta = parseVersion(running)?.meta ?? "";
-    const runningBuiltAt = this.#d.current.builtAt
-      ? Date.parse(this.#d.current.builtAt) || undefined
-      : undefined;
     let best: { pending: Pending; builtAt: number } | undefined;
     for (const name of await local.list()) {
       // Half-written builds are in `.partial` folders; nothing that starts with a dot or ends in it is read.
@@ -330,13 +325,10 @@ export class Updater {
         if (name !== manifest.version.replaceAll("+", "_")) continue;
         const newer = isNewer(manifest.version, running);
         const builtAt = typeof extra.builtAt === "string" ? Date.parse(extra.builtAt) || 0 : 0;
-        // The same version made again (another `+meta`) is a reinstall, but only of a build later than the one
-        // running: of two builds of one version the older would otherwise be offered over the newer, and back.
-        // A running build that does not say when it was made cannot be compared, and takes any other build.
+        // The same version made again (another `+meta`) is offered as a reinstall.
         const reinstall =
           sameVersion(manifest.version, running) &&
-          (parseVersion(manifest.version)?.meta ?? "") !== runningMeta &&
-          (runningBuiltAt === undefined || builtAt > runningBuiltAt);
+          (parseVersion(manifest.version)?.meta ?? "") !== runningMeta;
         if (!newer && !reinstall) continue;
         if (best !== undefined) {
           const b = best.pending.version;
