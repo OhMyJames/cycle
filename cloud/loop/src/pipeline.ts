@@ -30,7 +30,14 @@ import {
 import { PlanFlow } from "./flows/plan.ts";
 import { ResearchFlow } from "./flows/research.ts";
 import { todoIntake } from "./flows/ticket.ts";
-import { changedReason, docChanges, NEEDS_SPEC, readFullFlowDocs } from "./full-flow.ts";
+import {
+  changedReason,
+  DocsChanged,
+  docChanges,
+  NEEDS_SPEC,
+  readFullFlowDocs,
+  readFullFlowTexts,
+} from "./full-flow.ts";
 import { withRepoLock } from "./git-lock.ts";
 import { testLayers } from "./layers.ts";
 import { isNetworkError } from "./network.ts";
@@ -668,6 +675,22 @@ export class Pipeline {
       if (!(error instanceof Blocked)) throw error;
       await this.#clear(run, issue);
       return flow.block({ run, issue, said: error.message, save, resumeFrom: error.resumeFrom });
+    }
+  }
+
+  /** 大档 (CYC-453): the named documents as the run recorded them; a change since blocks the run. */
+  async #docTexts<N extends "Spec" | "Design" | "Plan">(
+    run: RunRecord,
+    issue: Issue,
+    names: readonly N[],
+  ): Promise<Record<Lowercase<N>, string> | undefined> {
+    try {
+      return await readFullFlowTexts(run.fullFlowDocs, this.#d.tracker, names, async () =>
+        docChanges(run.fullFlowDocs, await this.#d.tracker.listIssueDocuments(issue)),
+      );
+    } catch (error) {
+      if (error instanceof DocsChanged) throw new Blocked(changedReason(error.message));
+      throw error;
     }
   }
 
@@ -1311,7 +1334,7 @@ export class Pipeline {
         ? fixBrief(run.round, run.findings)
         : progress !== "" || byPerson
           ? continueBrief(issue, byPerson)
-          : devBrief(issue, book.items));
+          : devBrief(issue, book.items, await this.#docTexts(run, issue, ["Design", "Plan"])));
 
     let sessionId = this.#need(run.devSessionId ?? undefined);
     let result: TurnResult;
@@ -1344,7 +1367,15 @@ export class Pipeline {
       result = await this.#turn(
         run.key,
         sessionId,
-        conflictPrompt ?? handoffBrief(issue, book.items, progress, gitLog.output, run.findings),
+        conflictPrompt ??
+          handoffBrief(
+            issue,
+            book.items,
+            progress,
+            gitLog.output,
+            run.findings,
+            await this.#docTexts(run, issue, ["Design", "Plan"]),
+          ),
         { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
       );
     }
@@ -1477,6 +1508,7 @@ export class Pipeline {
       diff.output,
       checks === "" ? "(none)" : checks,
       run.resolvedFiles,
+      await this.#docTexts(run, issue, ["Spec", "Design", "Plan"]),
     );
     const verdict = await this.#judge(run, issue, worktree, before, prompt, save);
     if (!verdict.pass) {
