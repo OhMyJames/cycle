@@ -103,6 +103,8 @@ export const PlanningSchema = z
     maxPending: whole(1, 50).default(5),
     intervalMinutes: whole(1, 1440).default(30),
     maxSplit: whole(2, 10).default(4),
+    /** Minutes between two looks at the Backlog for a change, across the Project's workers. Left out means 5. */
+    checkMinutes: whole(1, 60).optional(),
   })
   .strict();
 export type PlanningFile = z.infer<typeof PlanningSchema>;

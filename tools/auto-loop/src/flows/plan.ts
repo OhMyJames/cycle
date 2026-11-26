@@ -20,7 +20,8 @@ import { withRepoLock } from "../git-lock.ts";
 import type { StepResult } from "../pipeline.ts";
 import { planningTracker } from "../plan-mcp.ts";
 import {
-  backlogFingerprint,
+  type BacklogSnapshot,
+  backlogChanged,
   bodyHash,
   type CandidateRules,
   type Category,
@@ -36,6 +37,7 @@ import {
   type ShapeRules,
   shapeKind,
   shouldPlan,
+  takeSnapshot,
   workflowRules,
 } from "../planning.ts";
 import {
@@ -55,6 +57,8 @@ import {
 import { findSecrets } from "../secrets.ts";
 import { type PlanRound, planRoundId, type Shaped, type ShapeItem } from "../store.ts";
 import {
+  type BacklogRow,
+  DEFAULT_CHECK_MINUTES,
   type Issue,
   type LoopPhase,
   type PlanningConfig,
@@ -125,7 +129,9 @@ export class PlanFlow {
 
   /**
    * Asked after `Todo` has nothing to take, so approved work comes first. A round started and not ended goes on
-   * (always: the checks of each work item are in its write-back); else a new one starts when `shouldPlan` says so.
+   * (always: the checks of each work item are in its write-back); else, at most once every `checkMinutes` for the
+   * whole Project, the Backlog is looked at, and a new round starts when `shouldPlan` says so and there is a candidate.
+   * Only `plans/index.json` is read on the way: no past round.
    */
   intake(): Intake {
     return {
@@ -134,22 +140,33 @@ export class PlanFlow {
         const planning = config.planning;
         if (planning === null) return { idle: "planning is off" };
         if ([...held].some(isPlanKey)) return { idle: "a planning round is under way" };
-        const rounds = await store.plans();
-        const open = rounds.find((r) => !ENDED.has(r.phase));
-        if (open !== undefined) return { begin: this.#goOn(open) };
+        const index = await store.loadPlanIndex();
+        if (index.open !== null) {
+          const open = await store.loadPlan(index.open);
+          if (open !== undefined && !ENDED.has(open.phase)) return { begin: this.#goOn(open) };
+        }
 
-        const backlog = await this.#tracker().listBacklog();
-        const pending = backlog.filter((i) => i.labelIds.includes(planning.labels.pending)).length;
-        const last = rounds.filter((r) => r.endedAt !== null).at(-1);
-        const lastEndedAt = last?.endedAt ? new Date(last.endedAt) : null;
         const now = clock.now();
+        const every = (planning.checkMinutes ?? DEFAULT_CHECK_MINUTES) * 60_000;
+        if (index.lastCheckedAt !== null && now.getTime() - Date.parse(index.lastCheckedAt) < every)
+          return { idle: "planning: the Backlog was looked at a short while ago" };
+        if (!config.dryRun)
+          await store.savePlanIndex({ ...index, lastCheckedAt: now.toISOString() });
+
+        // One list call: the rows say the labels, the titles and when each last changed.
+        const tracker = this.#tracker();
+        const rows = await tracker.listBacklogRows();
+        const pending = rows.filter((r) => r.labelIds.includes(planning.labels.pending)).length;
+        const lastEndedAt = index.lastEndedAt === null ? null : new Date(index.lastEndedAt);
         const waited =
           lastEndedAt === null ||
           now.getTime() - lastEndedAt.getTime() >= planning.intervalMinutes * 60_000;
-        // The fingerprint reads comments, so it is taken only when it can decide: under the limit, inside the interval.
-        const backlogChanged =
+        // Comments are read only when they can decide: under the limit, inside the interval, every row as it was.
+        const changed =
           !waited && pending < planning.maxPending
-            ? (await this.#fingerprint(backlog)) !== last?.fingerprint
+            ? await backlogChanged(index.snapshot, rows, this.#rules(), (row) =>
+                this.#latestComment(row),
+              )
             : false;
         const go = shouldPlan({
           freeWorker: true,
@@ -160,15 +177,39 @@ export class PlanFlow {
           lastEndedAt,
           intervalMinutes: planning.intervalMinutes,
           now,
-          backlogChanged,
+          backlogChanged: changed,
         });
         if (!go)
           return {
             idle: `planning: ${pending} of ${planning.maxPending} waiting for approval, ${
-              waited ? "interval passed" : backlogChanged ? "Backlog changed" : "Backlog unchanged"
+              waited ? "interval passed" : changed ? "Backlog changed" : "Backlog unchanged"
             }`,
           };
-        return { begin: this.#start(planRoundId(now)) };
+
+        // Only now is the Backlog read in full, to choose the candidates.
+        const backlog = await tracker.listBacklog();
+        const memory = await store.loadPlanMemory();
+        const latest: Record<string, string | null> = {};
+        for (const issue of backlog)
+          if (issue.key in memory)
+            latest[issue.key] = latestCommentAt(await tracker.listComments(issue));
+        const found = candidates(backlog, this.#rules(), memory, latest);
+        if (found.length === 0) {
+          // Nothing to plan: remembered as a round that ended, with no round and no directory.
+          if (!config.dryRun)
+            await store.savePlanIndex({
+              ...(await store.loadPlanIndex()),
+              lastEndedAt: now.toISOString(),
+              snapshot: await this.#snapshot(rows),
+            });
+          return { idle: "planning: no candidate in Backlog" };
+        }
+        return {
+          begin: this.#start(
+            planRoundId(now),
+            found.map((i) => i.key),
+          ),
+        };
       },
       reject: async () => {
         throw new Error("the planning node takes no work item, so it rejects none");
@@ -176,7 +217,16 @@ export class PlanFlow {
     };
   }
 
-  #start(id: string): OwnRun {
+  async #latestComment(row: BacklogRow): Promise<string | null> {
+    return latestCommentAt(await this.#tracker().listComments(row));
+  }
+
+  /** The Backlog as `backlogChanged` compares it next time: the rows, and the latest comment of the watched ones. */
+  #snapshot(rows: BacklogRow[]): Promise<BacklogSnapshot> {
+    return takeSnapshot(rows, this.#rules(), (row) => this.#latestComment(row));
+  }
+
+  #start(id: string, keys: string[]): OwnRun {
     const key = planKey(id);
     const { store, clock } = this.#d;
     return {
@@ -190,7 +240,7 @@ export class PlanFlow {
           phase: "triage",
           worktree: null,
           triageSessionId: null,
-          candidates: [],
+          candidates: keys,
           triage: null,
           queue: [],
           triageRound: 0,
@@ -198,9 +248,9 @@ export class PlanFlow {
           triageDone: {},
           stoppedReason: null,
           endedAt: null,
-          fingerprint: null,
         });
-        await store.event(key, "plan_started");
+        await store.savePlanIndex({ ...(await store.loadPlanIndex()), open: id });
+        await store.event(key, "plan_started", { candidates: keys.length });
       },
       go: () => this.#run(id),
       would: { status: "would-plan", key },
@@ -217,15 +267,23 @@ export class PlanFlow {
     };
   }
 
-  /** Removes the worktrees of rounds that ended and still have one (a removal that failed then). */
+  /** Removes the worktrees of rounds that ended and still have one (a removal that failed then), from the index. */
   async cleanup(active: ReadonlySet<string>): Promise<void> {
     const { store } = this.#d;
-    for (const round of await store.plans()) {
-      if (!ENDED.has(round.phase) || round.worktree === null) continue;
-      if (active.has(planKey(round.id))) continue;
-      if (await this.#removeWorktree(round.worktree))
-        await store.savePlan({ ...round, worktree: null });
+    const index = await store.loadPlanIndex();
+    if (index.leftovers.length === 0) return;
+    const left = [];
+    for (const entry of index.leftovers) {
+      if (active.has(planKey(entry.id)) || !(await this.#removeWorktree(entry.worktree))) {
+        left.push(entry);
+        continue;
+      }
+      // The one round read here: its record stops pointing at a worktree that is gone.
+      const round = await store.loadPlan(entry.id);
+      if (round !== undefined) await store.savePlan({ ...round, worktree: null });
     }
+    if (left.length !== index.leftovers.length)
+      await store.savePlanIndex({ ...(await store.loadPlanIndex()), leftovers: left });
   }
 
   // ---- the round ----
@@ -1138,7 +1196,7 @@ export class PlanFlow {
 
   /**
    * What the round leaves for the next: per candidate, its category, the hash of its title and body and its latest
-   * comment, taken after the round's own writes; the Backlog's fingerprint, likewise. Then the worktree goes.
+   * comment, taken after the round's own writes; the Backlog's snapshot in the index, likewise. Then the worktree goes.
    */
   async #end(ctx: Ctx): Promise<void> {
     const { store, clock } = this.#d;
@@ -1159,7 +1217,7 @@ export class PlanFlow {
       }
       await store.savePlanMemory(memory);
     }
-    const fingerprint = await this.#fingerprint(await tracker.listBacklog());
+    const snapshot = await this.#snapshot(await tracker.listBacklogRows());
     let worktree = ctx.round.worktree;
     if (worktree !== null && (await this.#removeWorktree(worktree))) worktree = null;
     const count = (state: ShapeItem["state"]) =>
@@ -1171,24 +1229,21 @@ export class PlanFlow {
       stopped: count("stopped"),
       abandoned: count("abandoned"),
     });
+    const endedAt = clock.now().toISOString();
     await ctx.save({
       phase: ctx.round.stoppedReason === null ? "finished" : "abandoned",
-      endedAt: clock.now().toISOString(),
-      fingerprint,
+      endedAt,
       worktree,
     });
-  }
-
-  /**
-   * The Backlog as planning sees it (`backlogFingerprint`). Comments are read only for the work items that could be
-   * candidates: a comment on one with `auto`, 待批准, 待回答 or Loop 跳过 does not make a round worth starting.
-   */
-  async #fingerprint(backlog: Issue[]): Promise<string> {
-    const tracker = this.#tracker();
-    const latest: Record<string, string | null> = {};
-    for (const issue of candidates(backlog, this.#rules(), {}, {}))
-      latest[issue.key] = latestCommentAt(await tracker.listComments(issue));
-    return backlogFingerprint(backlog, latest);
+    const index = await store.loadPlanIndex();
+    await store.savePlanIndex({
+      ...index,
+      open: null,
+      lastEndedAt: endedAt,
+      snapshot,
+      leftovers:
+        worktree === null ? index.leftovers : [...index.leftovers, { id: ctx.round.id, worktree }],
+    });
   }
 }
 

@@ -417,6 +417,37 @@ test("the Backlog is listed by its column and read in full; unset or a full page
   await expect(full.t.listBacklog()).rejects.toThrow("500 or more");
 });
 
+test("the Backlog's rows are one list_issues call, with no get per issue", async () => {
+  // As list_issues returns them in infra.CYC (2026-11-26), trimmed.
+  const row = {
+    id: 787,
+    sequenceNumber: 409,
+    title: "Loop 页面：在工单详情页补充运行工作流进度与关键运行信息",
+    columnId: 21,
+    typeId: 20,
+    labelIds: [5, 6, 12],
+    updatedAt: "2026-11-26T06:08:07.007Z",
+    statusSince: "2026-11-25T23:25:00.633Z",
+  };
+  const { t, calls } = tracker("full", { list_issues: { ok: true, data: [row] } });
+  await expect(t.listBacklogRows()).rejects.toThrow("Backlog column is not resolved");
+  t.setBacklogColumn(21);
+  expect(await t.listBacklogRows()).toEqual([
+    {
+      id: 787,
+      key: "CYC-409",
+      number: 409,
+      title: row.title,
+      typeId: 20,
+      labelIds: [5, 6, 12],
+      columnId: 21,
+      updatedAt: "2026-11-26T06:08:07.007Z",
+    },
+  ]);
+  expect(calls.map((c) => c.name)).toEqual(["list_issues"]);
+  expect(calls[0]?.arguments).toEqual({ projectKey: "CYC", columnId: 21, limit: 500 });
+});
+
 // `list_issue_activity` with filter `comments`, as read from infra.CYC (CYC-334), trimmed.
 const comment = (id: number, createdAt: string, over: Record<string, unknown> = {}) => ({
   id,
@@ -563,6 +594,7 @@ test("the planning tracker has no move, no generic label, type or link, and noth
     "get",
     "linkBlocks",
     "listBacklog",
+    "listBacklogRows",
     "listComments",
     "listInProgress",
     "listTodo",

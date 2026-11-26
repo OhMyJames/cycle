@@ -182,7 +182,29 @@ export class FakeTracker implements Tracker {
   async listInProgress() {
     return this.issues.filter((i) => i.columnId === 23);
   }
-  async listComments(i: Issue) {
+  /** Rows as one list call returns them; `updatedAt` follows what the issue holds, not its comments, as itsaplan's. */
+  async listBacklogRows() {
+    return this.issues
+      .filter((i) => i.columnId === 21)
+      .map((i) => ({
+        id: i.id,
+        key: i.key,
+        number: i.number,
+        title: i.title,
+        typeId: i.typeId,
+        labelIds: i.labelIds,
+        columnId: i.columnId,
+        updatedAt: JSON.stringify([
+          i.title,
+          i.description,
+          i.priority,
+          i.typeId,
+          i.labelIds,
+          i.parentId,
+        ]),
+      }));
+  }
+  async listComments(i: Pick<Issue, "id" | "key">) {
     return this.threads[i.key] ?? [];
   }
   #found(i: Issue): Issue {

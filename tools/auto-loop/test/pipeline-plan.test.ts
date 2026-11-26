@@ -482,11 +482,12 @@ test("over the fix rounds: shaping stops with one comment, writes nothing else, 
   expect((await s.store.loadPlanMemory())["CYC-1"]).toMatchObject({ stopped: true });
   expect(s.tracker.phases).toContain("CYC-1:clear");
 
-  // After the interval, a new round: CYC-1 unchanged is not a candidate, CYC-2 waits for approval: nothing to do.
+  // After the interval: CYC-1 unchanged is not a candidate, CYC-2 waits for approval: nothing to do, and no round.
   s.clock.at = new Date("2026-11-26T11:00:00.000Z");
   const before = s.sessions.created.length;
-  expect(await s.pipeline.step()).toMatchObject({ status: "planned", shaped: 0 });
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
   expect(s.sessions.created).toHaveLength(before);
+  expect(await s.store.plans()).toHaveLength(1);
   // A new comment from a person makes it a candidate again.
   s.tracker.threads["CYC-1"]?.push({
     id: 99,
@@ -793,6 +794,148 @@ test("a worktree that could not be removed when the round ended is removed by a 
   expect(await s.pipeline.step()).toEqual({ status: "idle" });
   expect((await s.store.plans())[0]?.worktree).toBeNull();
   expect(existsSync(path)).toBe(false);
+});
+
+/** Counts the tracker reads and the round records read, from now on. */
+const spy = (s: ReturnType<typeof setup>) => {
+  const n = { rows: 0, backlog: 0, get: 0, comments: 0, loadPlan: 0, plans: 0 };
+  const t = s.tracker;
+  const wrap = <K extends "listBacklogRows" | "listBacklog" | "get" | "listComments">(
+    name: K,
+    field: keyof typeof n,
+  ) => {
+    const original = (t[name] as (...a: unknown[]) => Promise<unknown>).bind(t);
+    (t as unknown as Record<string, unknown>)[name] = async (...a: unknown[]) => {
+      n[field]++;
+      return original(...a);
+    };
+  };
+  wrap("listBacklogRows", "rows");
+  wrap("listBacklog", "backlog");
+  wrap("get", "get");
+  wrap("listComments", "comments");
+  const loadPlan = s.store.loadPlan.bind(s.store);
+  s.store.loadPlan = async (id) => {
+    n.loadPlan++;
+    return loadPlan(id);
+  };
+  const plans = s.store.plans.bind(s.store);
+  s.store.plans = async () => {
+    n.plans++;
+    return plans();
+  };
+  return n;
+};
+
+const unfit = (key: string) => ({
+  key,
+  category: "不适合",
+  priority: "medium",
+  reason: "要真实账号",
+});
+
+test("an idle step looks at the Backlog at most once every checkMinutes, in one list call, and reads no past round", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1"), unfit("CYC-3")], ["CYC-1"]))],
+      shape: [done(rewrite())],
+      shape_qa: [done(PASS)],
+    },
+    [backlogItem(1), backlogItem(3)],
+  );
+  expect(await s.pipeline.step()).toMatchObject({ status: "planned", shaped: 1 });
+  const n = spy(s);
+  // Inside checkMinutes (5): nothing is read at all, in this process or a new one (the index is on disk).
+  s.clock.at = new Date("2026-11-26T10:04:00.000Z");
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(await s.restart().step()).toEqual({ status: "idle" });
+  expect(n).toEqual({ rows: 0, backlog: 0, get: 0, comments: 0, loadPlan: 0, plans: 0 });
+  // After it, inside the interval: one list call, and the comments of the one watched work item (CYC-3; CYC-1
+  // waits for approval), each read once. No issue is read in full and no past round is read.
+  s.clock.at = new Date("2026-11-26T10:06:00.000Z");
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(n).toEqual({ rows: 1, backlog: 0, get: 0, comments: 1, loadPlan: 0, plans: 0 });
+  // And not again for the next five minutes.
+  s.clock.at = new Date("2026-11-26T10:10:00.000Z");
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(n.rows).toBe(1);
+});
+
+test("checkMinutes comes from the config", async () => {
+  const s = setup({ triage: [done(triageReply([unfit("CYC-1")], []))] }, [backlogItem(1)], {
+    planning: { checkMinutes: 20 },
+  });
+  await s.pipeline.step();
+  const n = spy(s);
+  s.clock.at = new Date("2026-11-26T10:15:00.000Z");
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(n.rows).toBe(0);
+  s.clock.at = new Date("2026-11-26T10:21:00.000Z");
+  await s.pipeline.step();
+  expect(n.rows).toBe(1);
+});
+
+test("inside the interval, a new comment or an edit by a person starts a round; an edited row needs no comment read", async () => {
+  const s = setup(
+    {
+      triage: [
+        done(triageReply([unfit("CYC-1"), unfit("CYC-2")], [])),
+        done(triageReply([can("CYC-1")], ["CYC-1"])),
+        done(triageReply([can("CYC-2")], ["CYC-2"])),
+      ],
+      shape: [done(rewrite()), done(rewrite("第二张"))],
+      shape_qa: [done(PASS), done(PASS)],
+    },
+    [backlogItem(1), backlogItem(2)],
+  );
+  expect(await s.pipeline.step()).toMatchObject({ status: "planned", shaped: 0 });
+  // A person answers on CYC-1: the rows are as they were, so the comments are read, and the new one counts.
+  s.tracker.threads["CYC-1"] = [
+    {
+      id: 99,
+      replyToId: null,
+      authorId: "p",
+      authorName: "person",
+      body: "补充：只要在第二列显示。",
+      createdAt: "2026-11-26T10:05:00.000Z",
+    },
+  ];
+  s.clock.at = new Date("2026-11-26T10:06:00.000Z");
+  expect(await s.pipeline.step()).toMatchObject({ status: "planned", shaped: 1 });
+  // A person rewrites CYC-2: its row's updatedAt moved, which is enough; no comment is read to find it.
+  byKey(s, "CYC-2").description = "人重写了正文，说清楚了。";
+  s.clock.at = new Date("2026-11-26T10:12:00.000Z");
+  const n = spy(s);
+  const listComments = s.tracker.listComments.bind(s.tracker);
+  let readBeforeTheRound = 0;
+  s.tracker.listComments = async (i) => {
+    if (n.backlog === 0) readBeforeTheRound++;
+    return listComments(i);
+  };
+  expect(await s.pipeline.step()).toMatchObject({ status: "planned", shaped: 1 });
+  expect(readBeforeTheRound).toBe(0);
+  expect(n.rows).toBeGreaterThanOrEqual(1);
+});
+
+test("nothing to plan makes no round: no directory under plans/, only the index", async () => {
+  // An Epic and a work item already waiting for approval: no candidate.
+  const s = setup({}, [epicItem(), backlogItem(1, { labelIds: [LABELS.pending] })]);
+  const n = spy(s);
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(s.sessions.created).toEqual([]);
+  expect(await s.store.plans()).toEqual([]);
+  const { readdir } = await import("node:fs/promises");
+  expect(await readdir(join(s.cfg.stateDir, "plans"))).toEqual(["index.json"]);
+  expect(await s.store.loadPlanIndex()).toMatchObject({
+    open: null,
+    lastEndedAt: "2026-11-26T10:00:00.000Z",
+  });
+  expect(await kinds(s.store)).toEqual([]);
+  expect(n.loadPlan).toBe(0);
+  // Each interval the same: still no directory.
+  s.clock.at = new Date("2026-11-26T10:31:00.000Z");
+  expect(await s.pipeline.step()).toEqual({ status: "idle" });
+  expect(await readdir(join(s.cfg.stateDir, "plans"))).toEqual(["index.json"]);
 });
 
 test("a work item deleted in the middle of a round does not hold it up", async () => {

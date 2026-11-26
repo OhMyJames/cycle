@@ -142,13 +142,21 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 默认关闭，关闭时 Loop 的行为和以前完全一样（不读 Backlog、不碰 `plans/`）。Todo 里没有能领的单时，规划节点把 Backlog 里的 Feature、Bug 整理成人能直接批准的样子，留在 Backlog 打上「待批准」，等人在 Loop 页面批准。它**不移列、不打 `auto`、不进 Blocked**，只通过 `PlanningTracker`（类型上没有移列和任意标签）写 tracker。
 
-**开启**：在配置文件的 Project 里写 `"planning": { "enabled": true }`。可选字段：`pending`、`awaitingAnswer`、`skip`、`fullProcess`（四个标签名，默认 `待批准`、`待回答`、`Loop 跳过`、`完整流程`）、`maxPending`（默认 5）、`intervalMinutes`（默认 30）、`maxSplit`（默认 4）。启动时解析标签、Backlog 列、Epic 类型和 Feature、Bug 的模板，缺了就拒绝启动。
+**开启**：在配置文件的 Project 里写 `"planning": { "enabled": true }`。可选字段：`pending`、`awaitingAnswer`、`skip`、`fullProcess`（四个标签名，默认 `待批准`、`待回答`、`Loop 跳过`、`完整流程`）、`maxPending`（默认 5）、`intervalMinutes`（默认 30）、`maxSplit`（默认 4）、`checkMinutes`（多久看一次 Backlog 有没有变，1 到 60，默认 5）。启动时解析标签、Backlog 列、Epic 类型和 Feature、Bug 的模板，缺了就拒绝启动。
 
-**什么时候开一轮**：worker 空闲、Todo 那边没有能领的（Todo 先问，人已批准的活优先）、Backlog 里带「待批准」的少于 `maxPending`、没有别的一轮在跑（一次一轮），并且距上一轮结束满 `intervalMinutes`，或者 Backlog 从上一轮结束后变了。「变了」看指纹（`backlogFingerprint`）：每张的标题和正文、标签、可能成为候选的那些工单的最新评论时间。指纹在一轮**自己的写入之后**才取，所以规划节点自己发的评论、打的标签不会让下一轮马上又开。间隔内每次空闲都要读一遍 Backlog 和候选工单的评论，Backlog 大时这是主要开销。
+**什么时候开一轮**：worker 空闲、Todo 那边没有能领的（Todo 先问，人已批准的活优先）、Backlog 里带「待批准」的少于 `maxPending`、没有别的一轮在跑（一次一轮），并且距上一轮结束满 `intervalMinutes`，或者 Backlog 从上一轮结束后变了。
+
+看 Backlog 的开销是有上限的：
+
+- 同一个 Project 的所有 worker 加起来，最多每 `checkMinutes` 看一次；上次看的时间记在 `<stateDir>/plans/index.json`，不是每个 worker 各记各的。没到时间的空闲 step 不读 tracker。
+- 看一次是**一个** `list_issues` 调用（`listBacklogRows`），用它返回的每行的标题、标签、类型、列和 `updatedAt`，不逐张读全文。改标题、正文、标签、优先级、列都会改 `updatedAt`；**评论不会**（2026-11-26 在 infra.CYC 上核对过：CYC-320 的评论晚于它的 `updatedAt`）。所以只有每一行都和上次一样时，才逐张读「可能成为候选」的那些工单的评论（`watchedRows`），读到第一张有新评论就停。
+- 比较的基准（每行的签名、各工单的最新评论时间，`takeSnapshot`）在一轮**自己的写入之后**才取，所以规划节点自己发的评论、打的标签不会让下一轮马上又开。
+- 要开一轮时才逐张读全文选候选。一张候选都没有时**不建这一轮**（不留 `plans/<id>` 目录），只在索引里记下结束时间和基准，下一次照样按间隔来。
+- 空闲 step 不读任何过去的一轮：没结束的一轮的 id、上一轮的结束时间和基准、没删掉的 worktree 都在 `plans/index.json` 里。
 
 **一轮**是一个 `plan` 种类的 run，不属于某张工单：记录在 `<stateDir>/plans/<开始时间>/run.json`，事件的 `run` 是 `plan-<开始时间>`，涉及某张工单的事件另带 `issue: "CYC-n"`。阶段 `triage → shaping(i) → shape_qa(i) → writing(i) → … → finished`：
 
-1. 筛候选（`candidates`）：Backlog 里的 Feature、Bug 叶子，去掉带 `auto`、待批准、待回答、Loop 跳过、完整流程的，去掉上一轮归为「不适合」或加工停下、之后没改过也没新评论的。一张都没有就直接结束这一轮。
+1. 筛候选（`candidates`）：Backlog 里的 Feature、Bug 叶子，去掉带 `auto`、待批准、待回答、Loop 跳过、完整流程的，去掉上一轮归为「不适合」或加工停下、之后没改过也没新评论的。一张都没有就不开这一轮（见上）。
 2. `git fetch`（和其他 run 共用仓库锁），`git worktree add --detach <repoRoot>/.agents/worktree/plan-<开始时间> origin/main`：不建分支、不跑 `bun install`。每张候选的全文写到 `plans/<id>/bodies/CYC-n.md`，这个目录加进三个会话的 `readRoots`（另加 `research.readRoots`，有的话）。
 3. 盘点会话（角色 `triage`，只读）：候选摘要表（编号、标题、类型、优先级、父级、链接、首段、长度）和看板全局（Todo、In Progress、待批准的标题，Epic 的标题和首段）。回复按 `checkTriage` 检查，不合格退回同一会话，最多 `maxFixRounds` 轮；用完、会话出错或改了 worktree，这一轮结束（`plan_stopped`），什么都不写。
 4. 写回盘点：优先级变了的，先发评论写原值、新值和理由，再改优先级；「要问」的发评论列出问题，打「待回答」；「不适合」只记进 `plans/memory.json`，不写工单。
@@ -158,7 +166,7 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
    - QA 会话（`shape_qa`）只拿原文、评论和结果，先写「What I checked」再给 `<verdict>`；不通过退回加工会话，占一个修复轮次；给不出可用结论时按 `maxQaRetries` 换新会话。
    - 超过 `maxFixRounds`、会话出错、会话改了 worktree、发现凭据：这张**停下**，发一条评论说原因（有凭据时只写种类），记进 memory，之后标题、正文、评论都没变就不再加工；接着做下一张。
 6. 写回（每步做完马上存进这一轮的记录，重启后从没做完的一步接着做）：0）扫一遍要写的全部文字，有凭据形状就停下；1）重读，标题或正文和开始加工时的哈希不同、已不在 Backlog、或已有「Loop 跳过」，就放弃这张（`plan_abandoned`），什么都不写；2）评论「加工前的工单」保存原标题和原正文；3）改写：换标题和正文。拆分：有父级时原工单换成第一份，其余各份建成同一父级下的兄弟；没有父级时原工单改成 Epic（类型、标题、正文），所有份都建成它的子工单；新建的在 Backlog、优先级继承原工单，按顺序用 `blocks` 连起来；4）评论，第一行固定是「Loop 规划」，下面是说明、盘点理由，拆分时列出各张；5）给要等批准的每张打「待批准」（改写的那张，或拆出的每一份，Epic 不打）。
-7. 结束：memory 里记下每张候选的归类、标题和正文的哈希、最新评论时间、是否停下（都在这一轮写完之后读），存下 Backlog 指纹，删掉 worktree（`--force`：它是这一轮自己的、只读的，没有人的改动）。删不掉的，之后 `#cleanup` 再删。
+7. 结束：memory 里记下每张候选的归类、标题和正文的哈希、最新评论时间、是否停下（都在这一轮写完之后读），在索引里存下 Backlog 的基准，删掉 worktree（`--force`：它是这一轮自己的、只读的，没有人的改动）。删不掉的记进索引，之后 `#cleanup` 再删。
 
 加工中的工单写阶段字段「规划」「规划 QA」（项目里有这两个选项才写），写回、放弃或停下时清空；盘点不写字段。
 
@@ -166,7 +174,7 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 **规划和开发不撞位置**：一轮的记录在 `plans/`，开发和调研在 `runs/`；worktree 是 `plan-<开始时间>`，开发是 `auto/cyc-n`。人批准（移到 Todo、打 `auto`）后，开发 run 照常领单。
 
-**事件**（不记正文）：`plan_started`、`plan_triaged`（候选数，`can`、`ask`、`split`、`unfit` 各几张，`queued`）、`plan_priority_changed`（`from`、`to`）、`plan_asked`（问题数）、`plan_shaped`（`form`：rewrite 或 split，`parts`、`rounds`，`keys`：等批准的各张）、`plan_shape_stopped`、`plan_abandoned`（`why`：edited、moved、skip、pending）、`plan_finished`（`outcome`，各状态张数）；另有 `triage_turn`、`shape_turn`、`shape_qa_turn`、`qa_retry`、`secrets_found`、`recovered`。
+**事件**（不记正文）：`plan_started`（候选数）、`plan_triaged`（候选数，`can`、`ask`、`split`、`unfit` 各几张，`queued`）、`plan_priority_changed`（`from`、`to`）、`plan_asked`（问题数）、`plan_shaped`（`form`：rewrite 或 split，`parts`、`rounds`，`keys`：等批准的各张）、`plan_shape_stopped`、`plan_abandoned`（`why`：edited、moved、skip、pending、gone）、`plan_finished`（`outcome`，各状态张数）；另有 `triage_turn`、`shape_turn`、`shape_qa_turn`、`qa_retry`、`secrets_found`、`recovered`。
 
 **stats** 的 `planning` 一节单独计：轮数、盘点停下的轮数、各归类张数、改优先级和提问的次数、加工、停下、放弃的张数、平均修复轮次，以及批准率：加工后等批准的各张里，后来被开发 run 领走（有 `claimed` 事件）的比例。只看事件：已批准但还没被领走的算作还没批准。
 

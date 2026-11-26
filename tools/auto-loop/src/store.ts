@@ -11,6 +11,7 @@
 //   <stateDir>/plans/<id>/run.json         one round: candidates, triage, the shaping queue and its write-back
 //   <stateDir>/plans/<id>/bodies/          the bodies the round's sessions read
 //   <stateDir>/plans/memory.json           per work item: last category, body hash, latest comment, stopped
+//   <stateDir>/plans/index.json            the open round, the last look at the Backlog and what it saw
 
 import type { Dirent } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -237,9 +238,8 @@ export const PlanRoundSchema = z.object({
   triageDone: z.record(z.string(), z.array(z.string())).default({}),
   /** Why the round stopped before shaping (triage could not be used); null otherwise. */
   stoppedReason: z.string().nullable().default(null),
-  /** When the round ended, and the Backlog's fingerprint taken after its own writes (`backlogFingerprint`). */
+  /** When the round ended. */
   endedAt: z.string().nullable().default(null),
-  fingerprint: z.string().nullable().default(null),
 });
 export type PlanRound = z.infer<typeof PlanRoundSchema>;
 /** A round as it may be saved: the fields added after the first rounds may be left out, and take their defaults. */
@@ -256,6 +256,30 @@ const PlanMemoryEntrySchema = z.object({
 });
 const PlanMemorySchema = z.record(z.string(), PlanMemoryEntrySchema);
 export type PlanMemory = z.infer<typeof PlanMemorySchema>;
+
+/** The Backlog as the planner last saw it (`takeSnapshot`): a signature per row, the latest comment of the watched ones. */
+const BacklogSnapshotSchema = z.object({
+  rows: z.record(z.string(), z.string()),
+  comments: z.record(z.string(), z.string().nullable()),
+});
+
+/**
+ * `plans/index.json`: what the planning intake needs on an idle step, so it reads no past round (CYC-322). One per
+ * Project, shared by its workers.
+ */
+const PlanIndexSchema = z.object({
+  /** The round started and not ended, if any. */
+  open: z.string().nullable().default(null),
+  /** When the Backlog was last looked at for a change: at most once every `checkMinutes`. */
+  lastCheckedAt: z.string().nullable().default(null),
+  /** When the last round ended, or the last look found nothing to plan (which makes no round). */
+  lastEndedAt: z.string().nullable().default(null),
+  /** The Backlog then, taken after the round's own writes. */
+  snapshot: BacklogSnapshotSchema.nullable().default(null),
+  /** Worktrees of ended rounds that could not be removed then; `#cleanup` tries again. */
+  leftovers: z.array(z.object({ id: z.string(), worktree: z.string() })).default([]),
+});
+export type PlanIndex = z.infer<typeof PlanIndexSchema>;
 
 export type LoopEvent = { ts: string; run: string; kind: string } & Record<
   string,
@@ -377,6 +401,26 @@ export class RunStore {
       .sort();
     const rounds = await Promise.all(ids.map((id) => this.loadPlan(id)));
     return rounds.filter((r): r is PlanRound => r !== undefined);
+  }
+
+  /** `plans/index.json`; empty when there is none yet. */
+  async loadPlanIndex(): Promise<PlanIndex> {
+    try {
+      return PlanIndexSchema.parse(
+        JSON.parse(await readFile(join(this.#dir, "plans", "index.json"), "utf8")),
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return PlanIndexSchema.parse({});
+      throw error;
+    }
+  }
+
+  async savePlanIndex(index: PlanIndex): Promise<void> {
+    await mkdir(join(this.#dir, "plans"), { recursive: true, mode: 0o700 });
+    await writeAtomic(
+      join(this.#dir, "plans", "index.json"),
+      `${JSON.stringify(PlanIndexSchema.parse(index), null, 2)}\n`,
+    );
   }
 
   /** `plans/memory.json`; empty when there is none yet. */
