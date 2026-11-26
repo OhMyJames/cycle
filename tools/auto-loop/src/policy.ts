@@ -230,7 +230,89 @@ export const decide = (
   }
 };
 
+const KINDS = new Set([
+  "read",
+  "edit",
+  "delete",
+  "move",
+  "search",
+  "execute",
+  "think",
+  "fetch",
+  "switch_mode",
+  "other",
+]);
+const PROGRAM = /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,39}$/;
+const SUBCOMMAND = /^[A-Za-z][A-Za-z0-9_.:-]{0,39}$/;
+
+/** The kind of tool a request is for, as one of a fixed set of words ("other" for anything else). */
+export const kindOf = (request: Record<string, unknown>): string => {
+  const kind = toolCallOf(request)?.kind;
+  return typeof kind === "string" && KINDS.has(kind) ? kind : "other";
+};
+
+/** Programs whose second word is a subcommand, not an argument: for anything else only the program is recorded. */
+const SUBCOMMAND_PROGRAMS = new Set([
+  "git",
+  "bun",
+  "bunx",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "gh",
+  "cargo",
+  "docker",
+  "kubectl",
+  "go",
+  "uv",
+  "pip",
+  "brew",
+  "systemctl",
+]);
+
+/**
+ * The first two words of the command that made a request ask or deny ("git mv", "bunx biome"), or undefined when the
+ * request is not a command, uses shell syntax this policy does not read, or has no readable program. Never more: the
+ * arguments can hold paths and credentials. The second word is kept only for programs that have subcommands. In a
+ * compound command it is the first simple command the policy did not allow.
+ */
+export const commandPrefix = (request: Record<string, unknown>, role: Role): string | undefined => {
+  const call = toolCallOf(request);
+  if (call === undefined || call.kind !== "execute") return undefined;
+  const command = commandOf(call);
+  if (command === undefined) return undefined;
+  const segments = splitCommand(command);
+  if (segments === undefined || segments.length === 0) return undefined;
+  const chosen = segments.find((words) => !simpleAllowed(words, role)) ?? segments[0];
+  const words = [...(chosen ?? [])];
+  while (words[0] !== undefined && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
+  const [program, sub] = words;
+  if (program === undefined || !PROGRAM.test(program)) return undefined;
+  return sub !== undefined && SUBCOMMAND_PROGRAMS.has(program) && SUBCOMMAND.test(sub)
+    ? `${program} ${sub}`
+    : program;
+};
+
 type Option = { optionId?: unknown; kind?: unknown };
+
+/** Whether a person's selection in the app allowed or refused the request; undefined for a cancel or anything else. */
+export const answeredAs = (
+  request: Record<string, unknown>,
+  outcome: unknown,
+): "allow" | "deny" | undefined => {
+  // The daemon may hand the ACP outcome bare or wrapped in `{outcome}`.
+  let shape = outcome as { outcome?: unknown; optionId?: unknown } | undefined;
+  if (typeof shape?.outcome === "object" && shape.outcome !== null)
+    shape = shape.outcome as typeof shape;
+  if (shape?.outcome !== "selected") return undefined;
+  const options = Array.isArray(request.options) ? (request.options as Option[]) : [];
+  const kind = options.find((o) => o.optionId === shape.optionId)?.kind;
+  if (typeof kind !== "string") return undefined;
+  if (kind.startsWith("allow")) return "allow";
+  if (kind.startsWith("reject")) return "deny";
+  return undefined;
+};
 
 /** The answer for a decision, or undefined when it cannot be given (`ask`, or no matching option). */
 export const answerFor = (

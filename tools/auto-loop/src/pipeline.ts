@@ -1338,7 +1338,7 @@ export class Pipeline {
   ): Promise<TurnResult> {
     const { config, store } = this.#d;
     for (let resend = 0; ; resend++) {
-      const result = await this.#d.sessions.turn(sessionId, prompt, context);
+      const result = await this.#d.sessions.turn(sessionId, prompt, { ...context, run: key });
       if (result.interrupted !== true || result.timedOut) return result;
       if (resend >= config.maxInterruptRetries)
         throw new Blocked(

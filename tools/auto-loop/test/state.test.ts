@@ -150,3 +150,50 @@ test("the PR review brief is read-only, references REVIEW.md, and requires one o
     listsWhatWasChecked('<review>{"decision":"merge","summary":"ok","reasons":[]}</review>'),
   ).toBe(false);
 });
+
+test("stats: permissions ranked by what people allowed, at most 10, empty without events", () => {
+  expect(computeStats([]).permissions).toEqual([]);
+  const e = (kind: string, extra: Record<string, string>): LoopEvent => ({
+    ts: "t",
+    run: "A",
+    kind,
+    tool: "execute",
+    ...extra,
+  });
+  const events: LoopEvent[] = [
+    e("permission_requested", { command: "git mv", decision: "ask" }),
+    e("permission_answered", { command: "git mv", answer: "allow" }),
+    e("permission_requested", { command: "bunx biome", decision: "ask" }),
+    e("permission_requested", { command: "bunx biome", decision: "ask" }),
+    e("permission_answered", { command: "bunx biome", answer: "allow" }),
+    e("permission_answered", { command: "bunx biome", answer: "allow" }),
+    e("permission_requested", { command: "rm", decision: "ask" }),
+    e("permission_answered", { command: "rm", answer: "deny" }),
+    { ts: "t", run: "A", kind: "permission_requested", tool: "edit", decision: "ask" },
+  ];
+  for (let i = 0; i < 12; i++)
+    events.push(e("permission_requested", { command: `tool${i}`, decision: "ask" }));
+  const rows = computeStats(events).permissions;
+  expect(rows).toHaveLength(10);
+  expect(rows[0]).toEqual({
+    kind: "execute",
+    command: "bunx biome",
+    requested: 2,
+    allowed: 2,
+    denied: 0,
+  });
+  expect(rows[1]).toEqual({
+    kind: "execute",
+    command: "git mv",
+    requested: 1,
+    allowed: 1,
+    denied: 0,
+  });
+  expect(rows.find((r) => r.command === "rm")).toEqual({
+    kind: "execute",
+    command: "rm",
+    requested: 1,
+    allowed: 0,
+    denied: 1,
+  });
+});

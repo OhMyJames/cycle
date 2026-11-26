@@ -93,6 +93,7 @@ const setUp = async (file: ConfigFile) => {
         if (run !== undefined) return store.event(run.key, "permission_pending");
       });
     },
+    (run, kind, data) => store.event(run, kind, data),
   );
   if (!dryRun) await sessions.start();
   const pipeline = new Pipeline({
